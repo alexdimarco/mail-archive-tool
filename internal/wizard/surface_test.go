@@ -22,6 +22,24 @@ func TestSurfaceChoiceRoutes(t *testing.T) {
 	}
 }
 
+// covers: MA-805, MA-651, R33
+// The first step offers to open an archive someone already has, encrypted or not
+// (design-encrypted-archives-phase3 §7.1): it opens MailArchive Desktop — where the
+// folder is chosen and an encrypted one unlocked — never a password dialog here; the
+// local item stays first, the default.
+func TestTheFirstStepOpensAnArchiveInDesktop(t *testing.T) {
+	if surfaceChoices[0] != surfaceLocalItem || !surfaceOpensDesktop(surfaceOpenItem) {
+		t.Fatalf("choices %v", surfaceChoices)
+	}
+	found := false
+	for _, c := range surfaceChoices {
+		found = found || c == surfaceOpenItem
+	}
+	if !found {
+		t.Fatal("the open item is not offered")
+	}
+}
+
 // covers: MA-652, R14
 // Removing a scheduled backup from the wizard's health view confirms first;
 // removeConfirmed maps the dialog answer: OK removes, Cancel or a dismissed dialog

@@ -386,6 +386,12 @@ func serveInstance(ctx context.Context, h *instance.Holder, o *launchOpts, env *
 	// lets go of the account's lock, within DrainBudget (XC6, MA-514).
 	life := NewLifecycle(ctx)
 	dcfg.Lifecycle = life
+	// The encrypted archives opened here lock first at Shut down — before any other
+	// drain, so a slow export's cannot use the budget up — and refuse every unlock
+	// after; jobs keep their own leases (phase3 §3.2; the P3-3 plan, 3c).
+	dcfg.Keys = newArchiveKeys(dcfg.Store, readerLockedNote)
+	life.OnDrain(func(context.Context) error { dcfg.Keys.lockAll(true); return nil })
+	dcfg.Keys.startReaper(life.Context().Done())
 	dcfg.ReaderURL = "http://" + readerLn.Addr().String() + sess.Prefix()
 	dcfg.Sessions = sess.Opened
 	dcfg.Former = former

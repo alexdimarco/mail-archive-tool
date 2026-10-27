@@ -119,6 +119,8 @@ type Unlocked struct {
 	forked    bool
 	adopted   bool // this open recorded a folder that was not recorded
 	warnings  []string
+
+	parent *Unlocked // the open a lease was copied from: a heal through the lease heals it too
 }
 
 // Adopted reports that this open recorded its folder, which was not recorded: an
@@ -230,6 +232,7 @@ func (u *Unlocked) Lease() (*Unlocked, error) {
 		return nil, ErrLocked
 	}
 	l := newUnlocked(u.out, o, u.how, u.write)
+	l.parent = u
 	return l, nil
 }
 
@@ -589,7 +592,8 @@ func remember(u *Unlocked, s vault.Store) error {
 
 // Heal rewrites the key file's damaged or stale copy from the trusted one, with
 // the key itself, never the password (§3.6). It takes the archive lock, so a
-// caller heals before its run takes that lock.
+// caller heals before its run takes that lock. Healed through a lease, the open it
+// was copied from no longer owes the heal either.
 func Heal(u *Unlocked) error {
 	k, _, err := u.acquire()
 	if err != nil {
@@ -599,8 +603,10 @@ func Heal(u *Unlocked) error {
 	if err := vault.Heal(u.out, u.id, vault.KeySecret(k)); err != nil {
 		return err
 	}
-	u.mu.Lock()
-	u.needsHeal = false
-	u.mu.Unlock()
+	for h := u; h != nil; h = h.parent {
+		h.mu.Lock()
+		h.needsHeal = false
+		h.mu.Unlock()
+	}
 	return nil
 }

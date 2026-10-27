@@ -83,14 +83,16 @@ func OutcomeIsRed(outcome string) bool {
 // takes on disk: times, the status and the outcome, and the last finished verdict a
 // running record carries in the same shape (A18).
 type encryptedLastVerify struct {
-	Version   int                  `json:"version"`
-	Status    string               `json:"status"`
-	Started   time.Time            `json:"started"`
-	Finished  *time.Time           `json:"finished"`
-	Outcome   string               `json:"outcome,omitempty"`
-	Encrypted bool                 `json:"encrypted"`
-	Tier      int                  `json:"tier,omitempty"`
-	Previous  *encryptedLastVerify `json:"previous,omitempty"`
+	Version     int                  `json:"version"`
+	Status      string               `json:"status"`
+	Started     time.Time            `json:"started"`
+	Finished    *time.Time           `json:"finished"`
+	Outcome     string               `json:"outcome,omitempty"`
+	Encrypted   bool                 `json:"encrypted"`
+	Tier        int                  `json:"tier,omitempty"`
+	LastChecked *time.Time           `json:"last_checked,omitempty"`
+	Standing    *encryptedLastVerify `json:"standing,omitempty"`
+	Previous    *encryptedLastVerify `json:"previous,omitempty"`
 }
 
 // minimisedVerify is v in the allow-listed shape. A carried verdict with no outcome
@@ -98,13 +100,26 @@ type encryptedLastVerify struct {
 // carried: it would read as a finished check that found nothing (the adversarial
 // pass, LEAK-03).
 func minimisedVerify(v LastVerify) *encryptedLastVerify {
-	e := &encryptedLastVerify{Version: v.Version, Status: v.Status, Started: v.Started, Finished: v.Finished, Outcome: v.Outcome, Encrypted: true, Tier: v.Tier}
+	e := &encryptedLastVerify{Version: v.Version, Status: v.Status, Started: v.Started, Finished: v.Finished, Outcome: v.Outcome, Encrypted: true, Tier: v.Tier, LastChecked: v.LastChecked}
 	if v.Previous != nil && KnownOutcome(v.Previous.Outcome) {
 		p := *v.Previous
 		p.Version, p.Previous = v.Version, nil
 		e.Previous = minimisedVerify(p)
 	}
+	if v.Standing != nil {
+		s := *v.Standing
+		s.Version, s.Previous, s.Standing = v.Version, nil, nil
+		e.Standing = minimisedVerify(s)
+	}
 	return e
+}
+
+// backOf is what ReadLastVerify would read back of e, for checkVerdicts.
+func backOf(e *encryptedLastVerify) *LastVerify {
+	if e == nil {
+		return nil
+	}
+	return &LastVerify{Status: e.Status, Outcome: e.Outcome, Encrypted: true, Tier: e.Tier, LastChecked: e.LastChecked, Standing: backOf(e.Standing)}
 }
 
 // marshalLastVerify is the bytes WriteLastVerify writes: v as it is, or — for an
@@ -115,10 +130,8 @@ func marshalLastVerify(v LastVerify) ([]byte, error) {
 		return json.MarshalIndent(v, "", "  ")
 	}
 	e := minimisedVerify(v)
-	back := LastVerify{Status: e.Status, Outcome: e.Outcome, Encrypted: true, Tier: e.Tier}
-	if e.Previous != nil {
-		back.Previous = &LastVerify{Status: e.Previous.Status, Outcome: e.Previous.Outcome, Encrypted: true, Tier: e.Previous.Tier}
-	}
+	back := *backOf(e)
+	back.Previous = backOf(e.Previous)
 	if err := checkVerdicts(back); err != nil {
 		return nil, fmt.Errorf("state: an encrypted archive's verify record: %w", err)
 	}
@@ -134,15 +147,18 @@ func encryptedIntegrityAttention(v LastVerify) string {
 	}
 	how := "The check looked at its files without the password:\n" +
 		"it can tell whether they are all present and unchanged, not read the messages."
+	removed := "removed automatically once a check finds every file intact."
 	if TierOf(&v) == TierFull {
 		how = "The check opened every file with the archive's key: it read the messages\n" +
 			"themselves, as well as checking that every file is present."
+		// Only a check with the key clears what one found (the P3-2b pass, REC-05).
+		removed = "removed automatically once a check with the key\n(mailarchive verify -full) finds every file intact."
 	}
 	return fmt.Sprintf("This email archive needs your attention.\n\n"+
 		"Checked:  %s\n"+
 		"Finding:  %s.\n\n"+
 		"This archive is encrypted. %s\n\n"+
 		"What to do: open MailArchive and look at this archive's status. This file is\n"+
-		"removed automatically once a check finds every file intact.\n",
-		when, OutcomeTextFor(v.Outcome, TierOf(&v)), how)
+		"%s\n",
+		when, OutcomeTextFor(v.Outcome, TierOf(&v)), how, removed)
 }

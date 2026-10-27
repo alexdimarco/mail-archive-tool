@@ -17,8 +17,8 @@ import (
 
 // Chunk problem kinds.
 const (
-	ChunkMissing   = "missing"   // the file is gone
-	ChunkChanged   = "modified"  // its size or bytes are not the ones the pointer names
+	ChunkMissing   = "missing"    // the file is gone
+	ChunkChanged   = "modified"   // its size or bytes are not the ones the pointer names
 	ChunkNotOpened = "unreadable" // its bytes are the pointer's, but it does not open with the key
 )
 
@@ -34,9 +34,12 @@ type ChunkProblem struct {
 
 // CheckChunks reads and opens every chunk the committed pointer names — both copies
 // of every manifest section, every history and index chunk — and returns each one
-// it could not, never stopping at the first (§8). A locked key ends it with the
-// key's error, never a problem; so does a stopped ctx.
-func (s *Store) CheckChunks(ctx context.Context) ([]ChunkProblem, error) {
+// it could not, never stopping at the first (§8). hold, when not nil, is called
+// before each chunk is opened and its release after, so the key is held only while
+// a chunk is opened, never across the reads (the P3-2b pass, KEY-02); its error —
+// a locked key — ends the pass with that error, as the key's own does. So does a
+// stopped ctx.
+func (s *Store) CheckChunks(ctx context.Context, hold func() (release func(), err error)) ([]ChunkProblem, error) {
 	var out []ChunkProblem
 	copyOf := map[uint32]int{}
 	for _, sec := range []struct {
@@ -54,8 +57,17 @@ func (s *Store) CheckChunks(ctx context.Context) ([]ChunkProblem, error) {
 			}
 			sealed, _, err := readChunk(s.out, e)
 			if err == nil {
+				release := func() {}
+				if hold != nil {
+					r, herr := hold()
+					if herr != nil {
+						return out, herr
+					}
+					release = r
+				}
 				var plain []byte
 				plain, err = s.opts.Key.OpenChunk(sec.kind, e.Gen, e.I, sealed)
+				release()
 				if errors.Is(err, vault.ErrKeyDestroyed) {
 					return out, err
 				}
@@ -77,6 +89,20 @@ func (s *Store) CheckChunks(ctx context.Context) ([]ChunkProblem, error) {
 		}
 	}
 	return out, nil
+}
+
+// PointerCopyOnly reports that c's verdict rests only on a copy of the record
+// pointer being missing or not matching the file list. A keyed load that
+// authenticated a pointer and opened every message has seen past it: the next
+// backup rewrites that copy (the P3-2b pass, FID-01, CRIT-01). No other keyless
+// reason is seen past — a link where a folder should be stops every backup.
+func (c Check) PointerCopyOnly() bool { return c.Reason == reasonPointerBad }
+
+// RecordMarks is what the record itself says it lacks: a lost stretch of the go-back
+// timeline and a search index behind its records — losses no chunk shows, kept in
+// the sealed header (the P3-2b pass, VERD-05).
+func (s *Store) RecordMarks() (historyGap, indexBehind bool) {
+	return s.hdr.HistoryGap != nil, s.hdr.IndexBehind != nil
 }
 
 // List problem kinds.

@@ -11,12 +11,14 @@ import (
 	"encoding/json"
 	"fmt"
 	"html/template"
+	"io"
 	"log"
 	"net/http"
 	"os"
 	"os/user"
 	"path/filepath"
 	"runtime"
+	"sort"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -25,13 +27,17 @@ import (
 	"mail-archive-tool/internal/app"
 	"mail-archive-tool/internal/archindex"
 	"mail-archive-tool/internal/backupalert"
+	"mail-archive-tool/internal/encmark"
+	"mail-archive-tool/internal/encrecord"
 	"mail-archive-tool/internal/graph"
 	"mail-archive-tool/internal/graphconfig"
 	"mail-archive-tool/internal/instance"
+	"mail-archive-tool/internal/keyring"
 	"mail-archive-tool/internal/localweb"
 	"mail-archive-tool/internal/lockfile"
 	"mail-archive-tool/internal/presync"
 	"mail-archive-tool/internal/schedule"
+	"mail-archive-tool/internal/seal"
 	"mail-archive-tool/internal/server"
 	"mail-archive-tool/internal/uninstall"
 	"mail-archive-tool/internal/wizard"
@@ -100,6 +106,10 @@ type Config struct {
 	// what the workspace's Graph session and every preview and run are built on, and its
 	// Drain stops and finalizes the running export. Nil: the background context, no drain.
 	Lifecycle *Lifecycle
+	// Keys is the Desktop's encrypted archives open now (phase3 §3.1; the P3-3 plan,
+	// 3c): in memory only, locked at Shut down. Nil: none is ever opened here, and an
+	// encrypted archive's reader stays the keyless refusal.
+	Keys *archiveKeys
 	// StateDir is the per-user, local, non-roaming state directory the run records, the
 	// journal and the fingerprint ledger live in (design §4.16, §4.19); see StateDir().
 	// Empty: the workspace can preview but cannot start an export.
@@ -202,9 +212,10 @@ func (cfg Config) signInState() (string, bool) {
 // dashboard holds the per-process CSRF token and the live capture state, and the
 // extraction workspace's: its session, its export slot and its sign-in slot.
 type dashboard struct {
-	cfg  Config
-	csrf string
-	cap  *captureState
+	cfg     Config
+	csrf    string
+	cap     *captureState
+	pending *pendingSecrets // the Encryption card's prepared key changes (3e)
 
 	boot  string // this process's epoch: a page that carries another one was made before a restart (R-y)
 	life  *Lifecycle
@@ -246,6 +257,10 @@ func newDashboard(cfg Config) *dashboard {
 	if cfg.StateDir != "" && !cfg.WorkspaceOff {
 		_ = d.ex.rec.Launch()
 	}
+	// Prepared key changes go when their archive locks, and every one at Shut down (3e).
+	d.pending = newPendingSecrets()
+	cfg.Keys.whenLocked(d.pending.discardFor)
+	d.life.OnDrain(func(context.Context) error { d.pending.discardFor(""); return nil })
 	d.life.OnDrain(d.drain)
 	return d
 }
@@ -312,11 +327,31 @@ func (d *dashboard) router() localweb.Router {
 	mux.HandleFunc("/api/verify", d.verifyAction)
 	mux.HandleFunc("/api/rebuild", d.rebuildAction)
 	mux.HandleFunc("/api/health", d.healthAction)
+	// This computer's record of encrypted archives, without a key (phase3 §4.3).
+	mux.HandleFunc("/encryption.js", func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "text/javascript; charset=utf-8")
+		w.Write([]byte(encryptionJS))
+	})
+	mux.HandleFunc("/api/open-archive", d.api(d.openArchiveAction))
+	mux.HandleFunc("/api/encryption/unlock", d.api(d.unlockAction))
+	mux.HandleFunc("/api/encryption/lock", d.api(d.lockAction))
+	mux.HandleFunc("/api/encryption/change-password", d.api(d.changePasswordAction))
+	mux.HandleFunc("/api/encryption/new-recovery-key", d.api(d.newRecoveryAction))
+	mux.HandleFunc("/api/encryption/new-recovery-key/save-file", d.api(d.saveRecoveryFileAction))
+	mux.HandleFunc("/api/encryption/new-recovery-key/confirm", d.api(d.confirmRecoveryAction))
+	mux.HandleFunc("/api/encryption/new-recovery-key/cancel", d.api(d.cancelRecoveryAction))
+	mux.HandleFunc("/api/encryption/remember", d.api(d.rememberAction))
+	mux.HandleFunc("/api/encryption/restore", d.api(d.restoreAction))
+	mux.HandleFunc("/api/encryption/forget/plan", d.api(d.forgetPlanAction))
+	mux.HandleFunc("/api/encryption/forget", d.api(d.forgetAction))
+	mux.HandleFunc("/api/encryption/forget-all", d.api(d.forgetAllAction))
+	mux.HandleFunc("/api/encryption/repair-record", d.api(d.repairRecordAction))
+	mux.HandleFunc("/api/encryption/dismiss-lost", d.api(d.dismissLostAction))
 	mux.HandleFunc("/api/browser-link", d.browserLink)
 	if !d.cfg.WorkspaceOff {
 		d.registerWorkspace(mux)
 	}
-	return localweb.Routed(dashboardHeaders(mux), mux)
+	return localweb.Routed(dashboardHeaders(touching(d.cfg.Keys, mux)), mux)
 }
 
 // registerWorkspace registers the Extraction workspace's two page shells, its scripts and
@@ -495,6 +530,8 @@ func (d *dashboard) saveSettings(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, map[string]any{"ok": false, "error": msg})
 		return
 	}
+	// A switch locks every encrypted archive but the new current one (K4).
+	d.cfg.Keys.lockExcept(d.cfg.effectiveOut())
 	writeJSON(w, map[string]any{"ok": true})
 }
 
@@ -573,6 +610,10 @@ func (cfg Config) cards() []card {
 	out = append(out, card{"Capture", "Idle", "good"})
 
 	sc := card{"Weekly backup", "Not installed", "warn"}
+	if archiveKind(cfg.effectiveOut()) == kindEncrypted {
+		// Status asks no schedule of an encrypted archive; this card says the same (X10).
+		return append(out, card{"Weekly backup", "Not available for encrypted archives yet", ""})
+	}
 	if eo := cfg.effectiveOut(); eo != "" {
 		_, st := cfg.backupTask()
 		switch st {
@@ -627,11 +668,32 @@ func (d *dashboard) pauseArchive(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
-	if err := wizard.PauseArchive(path, "paused from MailArchive Desktop"); err != nil {
+	const reason = "paused from MailArchive Desktop"
+	// An encrypted archive open here keeps the reason sealed in its record; its pause
+	// file stays the empty marker (phase3 §6, E6; the P3-3 plan, 3d). Pausing is a
+	// safety action: a note that cannot be saved does not stop it, and is told.
+	note := ""
+	if e := d.cfg.Keys.get(path); e != nil {
+		if err := d.sealPauseNote(e, reason); err != nil {
+			note = "Paused. The note saying why could not be saved in the encrypted archive (" + err.Error() + ")."
+		}
+	}
+	if err := wizard.PauseArchive(path, reason); err != nil {
 		writeJSON(w, map[string]any{"ok": false, "error": err.Error()})
 		return
 	}
-	writeJSON(w, map[string]any{"ok": true})
+	writeJSON(w, map[string]any{"ok": true, "note": note})
+}
+
+// sealPauseNote seals note into the encrypted archive e opened, on a write lease of
+// its own; "" clears it.
+func (d *dashboard) sealPauseNote(e *keyEntry, note string) error {
+	lease, err := e.u.LeaseForWrite(keyring.OpenOptions{Store: d.cfg.Store})
+	if err != nil {
+		return err
+	}
+	defer lease.Destroy()
+	return keyring.SetPauseNote(d.life.Context(), lease, note, log.New(io.Discard, "", 0))
 }
 
 // resumeArchive makes the named archive writable again and restores its backup schedule.
@@ -643,6 +705,11 @@ func (d *dashboard) resumeArchive(w http.ResponseWriter, r *http.Request) {
 	if err := wizard.ResumeArchive(path); err != nil {
 		writeJSON(w, map[string]any{"ok": false, "error": err.Error()})
 		return
+	}
+	// Writable again: an encrypted archive open here has its sealed note cleared; one
+	// that is locked keeps it until it is (E6).
+	if e := d.cfg.Keys.get(path); e != nil {
+		_ = d.sealPauseNote(e, "")
 	}
 	writeJSON(w, map[string]any{"ok": true})
 }
@@ -700,6 +767,11 @@ func (d *dashboard) uninstallAction(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	exe, _ := os.Executable()
+	// The Desktop's own encrypted archives are locked first, their readers' working
+	// copies removed, so neither the plan nor the removal meets them as another
+	// program's (phase3 §7.4; the P3-3 plan, 3c). The real run refuses every unlock
+	// after it.
+	d.cfg.Keys.lockAll(in.Confirm)
 	rep, err := uninstallRun(filepath.Dir(cfgPath), d.knownArchivePaths(), exe, !in.Confirm)
 	if err != nil {
 		writeJSON(w, map[string]any{"ok": false, "error": err.Error()})
@@ -717,6 +789,9 @@ func (d *dashboard) uninstallAction(w http.ResponseWriter, r *http.Request) {
 	if len(rep.Scratch) > 0 { // only when there is any: an encrypted archive's leftover working copies
 		plan["scratchFiles"] = rep.Scratch
 	}
+	if encryptedRecordKept() { // only when there is any (K8, A20)
+		plan["encryptedRecordKept"] = true
+	}
 	writeJSON(w, plan)
 }
 
@@ -725,20 +800,43 @@ func (d *dashboard) uninstallAction(w http.ResponseWriter, r *http.Request) {
 // READS the index (never reconciles/writes during an uninstall); an absent or unreadable
 // index yields none, and ConfigTargets still self-guards on the config dir.
 func (d *dashboard) knownArchivePaths() []string {
-	if strings.TrimSpace(d.cfg.IndexPath) == "" {
-		return nil
-	}
-	idx, err := archindex.ReadFile(d.cfg.IndexPath)
-	if err != nil {
-		return nil
-	}
 	var paths []string
-	for _, e := range idx.Entries {
-		if p := strings.TrimSpace(e.Path); p != "" {
-			paths = append(paths, p)
+	seen := map[string]bool{}
+	if strings.TrimSpace(d.cfg.IndexPath) != "" {
+		if idx, err := archindex.ReadFile(d.cfg.IndexPath); err == nil {
+			for _, e := range idx.Entries {
+				if p := strings.TrimSpace(e.Path); p != "" {
+					paths = append(paths, p)
+					seen[encrecord.Spelling(p)] = true
+				}
+			}
 		}
 	}
+	// The encrypted archives this computer recorded are kept too, and guarded the
+	// same way, though one made at the command line is in no Desktop index (the
+	// P3-3 plan, 3b).
+	if rec, err := encrecord.Load(); err == nil {
+		var recorded []string
+		for _, e := range rec.Archives {
+			for _, p := range e.Paths {
+				if !seen[p.Spelling] {
+					seen[p.Spelling] = true
+					recorded = append(recorded, p.Spelling)
+				}
+			}
+		}
+		sort.Strings(recorded)
+		paths = append(paths, recorded...)
+	}
 	return paths
+}
+
+// encryptedRecordKept reports that this computer's record of encrypted archives
+// holds any archive: an uninstall keeps it and the keys remembered with it (K8, A20),
+// and its plan says so.
+func encryptedRecordKept() bool {
+	rec, err := encrecord.Load()
+	return err == nil && len(rec.Archives) > 0
 }
 
 func (cfg Config) overview(csrf string) string { return cfg.overviewFor(csrf, "") }
@@ -790,6 +888,21 @@ func (cfg Config) overviewFor(csrf, epoch string) string {
 		ShowRepair    bool
 		ShowRemove    bool
 		ShowBackupOff bool
+		// Encrypted: the current archive is encrypted, so it is never scheduled (O5).
+		Encrypted bool
+		// The Encryption card (phase3 §7.1; the P3-3 plan, 3c), for an encrypted current
+		// archive the Desktop can open here: whether it is open, whether this computer
+		// remembers its key, and what its open found (a key-file copy owed a heal, a
+		// fork, a lost record) — derived live, never stored.
+		ShowEncryption bool
+		EncRunNow      bool   // a backup job was set up here for it: Run now runs it (3d)
+		EncPauseNote   string // why it was paused, sealed in its record: shown while it is paused and open (E6)
+		EncNotSetUp    string // what is unfinished about a new archive whose first backup has not run (§5.1 step 7)
+		EncKeysMissing bool   // a recorded archive whose key files are missing or damaged: put them back (§9.4, §9.5)
+		EncRecordKept  bool   // this computer recorded encrypted archives: the Danger zone offers to forget them all (K8)
+		EncUnlocked    bool
+		EncRemembered  bool
+		EncWarnings    []string
 		// Local-archive scheduling (design-thunderbird-presync-desktop): a localOnly
 		// archive the Desktop can reconstruct + schedule from its OWN record (on an
 		// adapter platform) shows a create form (ShowLocalCreate) in place of the
@@ -914,6 +1027,40 @@ func (cfg Config) overviewFor(csrf, epoch string) string {
 	}
 	data.ShowRemove = data.HasSchedule || !data.LocalOnly
 	data.ShowBackupOff = data.LocalOnly && !data.HasSchedule && !data.ShowLocalCreate
+	// An encrypted archive is never scheduled (phase3 O5, A14): no install, edit or
+	// repair is offered — every one would be refused — and Remove only for a schedule
+	// it was handed with (the P3-3 plan, 3b).
+	if data.Encrypted = archiveKind(data.OutDir) == kindEncrypted; data.Encrypted {
+		data.ShowInstall, data.ShowRepair, data.ShowLocalCreate, data.ShowLocalEdit, data.ShowBackupOff = false, false, false, false, false
+		data.ShowRemove = data.HasSchedule
+	}
+	data.EncRecordKept = cfg.Keys != nil && encryptedRecordKept()
+	// A recorded archive whose key files are gone cannot be unlocked: its card offers
+	// to put them back (§9.4, §9.5; 3e).
+	if cfg.Keys != nil && data.OutDir != "" && keysMissingHere(data.OutDir) {
+		data.ShowEncryption, data.EncKeysMissing = true, true
+		abs, _ := keyOf(data.OutDir)
+		data.EncRemembered = hasRemembered(abs, cfg.Store)
+	}
+	// Rendering never opens anything: a remembered key opens the archive when the
+	// reader or a job needs it (O3), not when the page is drawn.
+	if data.Encrypted && cfg.Keys != nil && app.UnlockableAt(data.OutDir) {
+		data.ShowEncryption = true
+		data.EncRunNow = schedule.BuildKindEvidence(data.OutDir).Has(schedule.KindRunJob)
+		data.EncNotSetUp = encmark.NotSetUp(data.OutDir)
+		abs, _ := keyOf(data.OutDir)
+		data.EncRemembered = hasRemembered(abs, cfg.Store)
+		if e := cfg.Keys.get(data.OutDir); e != nil {
+			data.EncUnlocked = true
+			if seal.IsSealed(data.OutDir) {
+				data.EncPauseNote, _ = keyring.PauseNote(e.u)
+			}
+			if e.u.NeedsHeal() {
+				data.EncWarnings = append(data.EncWarnings, "One copy of this archive's key file is damaged or missing; a backup into it rewrites it from the good one.")
+			}
+			data.EncWarnings = append(data.EncWarnings, e.u.Warnings()...)
+		}
+	}
 	if c != nil {
 		data.Configured = strings.TrimSpace(c.Tenant) != ""
 		data.Tenant, data.ClientID, data.Auth = c.Tenant, c.ClientID, authLabel(c.Auth)
@@ -1049,6 +1196,7 @@ pre{white-space:pre-wrap;overflow-wrap:anywhere;background:var(--bg);border:1px 
     {{if .KindLine}}<p class="lede" id="archiveKind" style="margin-top:-14px">{{.KindLine}}</p>{{end}}
     {{if not .OutDir}}<div class="card" id="noArchive">
       <h2>No archive chosen yet</h2>
+      <p><button class="btn" type="button" data-open-archive title="Choose an archive folder you already have — from another computer, a drive or a backup copy, encrypted or not.">Open an archive folder…</button></p>
       {{if .Offer}}<p>The MailArchive wizard (mailarchive wizard) last used <span class="mono">{{.Offer}}</span>. Use this archive?</p>{{end}}
       <button class="btn" id="useOffer" type="button" data-path="{{.Offer}}"{{if not .Offer}} hidden{{end}} title="Open this archive in MailArchive Desktop — read it, check its health, and keep it backed up.">Use this archive</button>{{if .Offer}} <span class="card-sub">Nothing changes until you click it.</span>{{end}}
       <p class="steps">{{if .Offer}}To pick a different folder, type{{else}}MailArchive Desktop has no archive to read yet. To open one you already have (for example one made from Thunderbird), type{{end}} its folder in <b>Settings → Archive location</b> below (the folder that holds the .mailarchive-manifest.json file) and click <b>Save settings</b>.</p>
@@ -1062,7 +1210,8 @@ pre{white-space:pre-wrap;overflow-wrap:anywhere;background:var(--bg);border:1px 
           <span class="mono archive-path">{{.Path}}</span>
           {{if .KindLabel}}<span class="archive-kind">{{.KindLabel}}</span>{{end}}
           {{if .SourceLostSince}}<span class="archive-tag">This archive's source hasn't been reachable since {{.SourceLostSince}} — reconnect the source (its mailbox or mail folder) to resume backups.</span>{{end}}
-          {{if not .Available}}<span class="archive-tag">Not reachable right now — reconnect the drive or folder and it comes back. Nothing was removed.</span>{{else if .Sealed}}<span class="archive-tag">Paused (read-only) — Resume it to make changes.</span> <button class="btn secondary" type="button" data-resume-archive data-path="{{.Path}}" title="Make this archive writable again so backups and changes can resume.">Resume</button>{{else}}{{if .Current}}<span class="archive-tag current">Current archive</span>{{else}}<button class="btn secondary" type="button" data-switch-archive data-path="{{.Path}}" title="Make this the current archive — what every tool here reads and what the weekly backup keeps.">Switch to this archive</button>{{end}} <button class="btn secondary" type="button" data-pause-archive data-path="{{.Path}}" title="Make this archive read-only so nothing can change it. You can Resume it any time; nothing is deleted.">Pause (make read-only)</button>{{end}}
+          {{if eq .Kind "encrypted"}}<button class="btn secondary" type="button" data-forget-archive data-path="{{.Path}}" title="Stop protecting this folder as an encrypted archive on this computer — for example after you removed the archive on purpose. Nothing in the folder is changed.">Forget this encrypted archive here</button>{{end}}
+          {{if .Problem}}<span class="archive-tag">{{.Problem}}</span>{{else if not .Available}}<span class="archive-tag">Not reachable right now — reconnect the drive or folder and it comes back. Nothing was removed.</span>{{else if .Sealed}}<span class="archive-tag">Paused (read-only) — Resume it to make changes.</span> <button class="btn secondary" type="button" data-resume-archive data-path="{{.Path}}" title="Make this archive writable again so backups and changes can resume.">Resume</button>{{else}}{{if .Current}}<span class="archive-tag current">Current archive</span>{{else}}<button class="btn secondary" type="button" data-switch-archive data-path="{{.Path}}" title="Make this the current archive — what every tool here reads and what the weekly backup keeps.">Switch to this archive</button>{{end}} <button class="btn secondary" type="button" data-pause-archive data-path="{{.Path}}" title="Make this archive read-only so nothing can change it. You can Resume it any time; nothing is deleted.">Pause (make read-only)</button>{{end}}
         </li>{{end}}
       </ul>
     </div>{{end}}
@@ -1071,6 +1220,7 @@ pre{white-space:pre-wrap;overflow-wrap:anywhere;background:var(--bg);border:1px 
       <h2>Add another archive</h2>
       <p class="card-sub">Keep a second mailbox or mail source as its own archive on this computer. The wizard's windows open here; the new archive joins <b>Your archives</b> without changing your current one.</p>
       <button class="btn secondary" id="addArchiveBtn" type="button" title="Create a new, additional archive with the MailArchive wizard. The wizard's windows open on your computer; the new archive is added without changing your current one.">Add another archive…</button>
+      <button class="btn secondary" type="button" data-open-archive title="Choose an archive folder you already have — from another computer, a drive or a backup copy, encrypted or not. It becomes your current archive.">Open an archive folder…</button>
       <div class="note" id="addArchiveNote" hidden></div>
     </div>{{end}}
 
@@ -1166,8 +1316,58 @@ pre{white-space:pre-wrap;overflow-wrap:anywhere;background:var(--bg);border:1px 
       </div>
     </div>
 
+    {{if .ShowEncryption}}<div class="card" id="sec-encryption">
+      <h2>Encryption</h2>
+      {{if .EncNotSetUp}}<p class="card-sub warn" id="encNotSetUp">Finish setting up: {{.EncNotSetUp}}{{if .EncRunNow}} Unlock it, then click Run now on the Weekly backup card.{{end}}</p>{{end}}
+      {{if .EncUnlocked}}<p class="card-sub" id="encState">Unlocked: you can read this archive's messages, search it and go back in time.{{if .EncRemembered}} This computer remembers its key.{{end}}</p>
+      {{if .EncPauseNote}}<p class="card-sub" id="encPauseNote">Paused: {{.EncPauseNote}}</p>{{end}}
+      {{range .EncWarnings}}<p class="card-sub warn">{{.}}</p>{{end}}
+      <button class="btn secondary" type="button" id="encLock" title="Close this archive: its messages are unreadable again until it is unlocked.">Lock</button>
+      <details class="small" id="encKeys"><summary>Change the password, make a new recovery key, or change whether this computer remembers the key</summary>
+        <div id="encChangePw">
+          <label for="encNewPw">New password</label> <input type="password" id="encNewPw" autocomplete="new-password" spellcheck="false">
+          <label for="encNewPw2">Type it again</label> <input type="password" id="encNewPw2" autocomplete="new-password" spellcheck="false">
+          <button class="btn secondary" type="button" id="encChangePwBtn">Change the password</button>
+        </div>
+        <div id="encRecovery">
+          <button class="btn secondary" type="button" id="encNewKeyBtn" title="Make a new recovery key. The earlier one works until you type the new one back.">Make a new recovery key</button>
+        </div>
+        {{if .EncRemembered}}<button class="btn secondary" type="button" id="encForgetKey" title="This computer stops remembering the key: the archive then asks for its password here.">Forget the key on this computer</button>{{else}}<button class="btn secondary" type="button" id="encRememberKey" title="This computer remembers the key: the archive then opens by itself here, for anyone using this computer's account.">Remember the key on this computer</button>{{end}}
+      </details>
+      {{else if .EncKeysMissing}}<p class="card-sub warn" id="encState">This archive's key files are missing or damaged, so it cannot be unlocked. Put them back from its recovery file and recovery key{{if .EncRemembered}}, or from the key this computer remembers{{end}}: you choose a new password, and get a new recovery key.</p>
+      <div id="encRestoreForm">
+        <label for="encRestoreKey">Recovery key</label> <input type="text" id="encRestoreKey" autocomplete="off" spellcheck="false" autocapitalize="off">
+        <label for="encRestorePw">New password</label> <input type="password" id="encRestorePw" autocomplete="new-password" spellcheck="false">
+        <label for="encRestorePw2">Type it again</label> <input type="password" id="encRestorePw2" autocomplete="new-password" spellcheck="false">
+        <button class="btn" type="button" id="encRestoreFileBtn" title="Choose the recovery file saved with this archive's recovery key.">Choose the recovery file and put back the key file</button>
+        {{if .EncRemembered}}<button class="btn secondary" type="button" id="encRestoreRememberedBtn" title="No recovery key needed: the key this computer remembers rebuilds the key file.">Put it back from the key this computer remembers</button>{{end}}
+      </div>
+      {{else}}<p class="card-sub" id="encState">Locked: its messages, search and go-back open only with its password or recovery key.{{if .EncRemembered}} This computer remembers its key, so reading it opens it by itself unless you locked it here.{{end}}</p>
+      <form id="encUnlockForm" autocomplete="off">
+        <label class="small" for="encSecret">Password or recovery key</label>
+        <input type="password" id="encSecret" autocomplete="off" spellcheck="false" autocapitalize="off">
+        <label class="small"><input type="checkbox" id="encRemember"{{if .EncNotSetUp}} checked{{end}}> Remember the key on this computer — it then opens by itself here, for anyone using this computer's account</label>
+        <button class="btn" type="submit" id="encUnlock">Unlock</button>
+      </form>{{end}}
+      <div id="encNewKeyBox" hidden>
+        <p class="card-sub">Your new recovery key:</p>
+        <p class="mono" id="encNewKey"></p>
+        <p class="card-sub warn" id="encNewKeyWarn"></p>
+        <button class="btn secondary" type="button" id="encSaveFileBtn" title="Save its recovery file in a folder you choose, outside the archive: with the recovery key it puts back lost key files.">Save the recovery file…</button>
+        <button class="btn secondary" type="button" id="encSavedBtn">I have saved the recovery key</button>
+        <div id="encTypeBack" hidden>
+          <label for="encTypedKey">Type the recovery key from where you saved it</label> <input type="text" id="encTypedKey" autocomplete="off" spellcheck="false" autocapitalize="off">
+          <button class="btn" type="button" id="encUseKeyBtn">Use this recovery key</button>
+          <button class="btn secondary" type="button" id="encShowAgainBtn">Show it again</button>
+        </div>
+        <button class="btn secondary" type="button" id="encCancelKeyBtn">Cancel</button>
+      </div>
+      <p class="small" id="encNote" hidden></p>
+    </div>{{end}}
+
     <div class="card" id="sec-backup">
       <h2>Weekly backup</h2>
+      {{if .Encrypted}}<p class="card-sub" id="backupEncrypted">Scheduled backups of an encrypted archive aren't available yet: a backup into it needs its password, so it runs only while you are here to give it.{{if .EncRunNow}}{{if not .EncUnlocked}} Unlock it on its Encryption card, then click Run now.{{end}}{{else}} An archive made at the command line is backed up there (mailarchive at a terminal).{{end}}</p>{{end}}
       {{if .ShowBackupOff}}<p class="card-sub steps" id="backupOff">A scheduled backup isn't set up here for this archive. To keep this local-files archive current on a schedule, set one up in the MailArchive wizard (mailarchive wizard) — answer "Keep this archive current?" at the end — or run the mailarchive schedule command that Status &amp; health prints for this archive.</p>{{else}}
       {{if .HasSchedule}}<p class="card-sub" id="schedKind">This archive's scheduled backup: {{.ScheduleKind}}.</p>{{end}}
       {{if .ShowInstall}}<p class="card-sub">Run a capture automatically on a schedule. It runs even when this app is closed (as long as you stay signed in to your computer), using your saved Microsoft sign-in.</p>{{end}}
@@ -1180,7 +1380,7 @@ pre{white-space:pre-wrap;overflow-wrap:anywhere;background:var(--bg);border:1px 
       </div>
       {{if .LocalPresyncOfferable}}<label class="checkline"><input type="checkbox" id="schedPresync"{{if .LocalPresyncOn}} checked{{end}}> Sync Thunderbird before each backup</label>
       <p class="note" id="schedPresyncNote">{{.PresyncNoticeText}}</p>{{end}}{{end}}
-      <div style="margin-top:14px">{{if or .ShowInstall .ShowLocalCreate .ShowLocalEdit}}<button class="btn" id="schedInstall" title="Create or update the scheduled backup for this archive, using the settings above.">Install / update</button> {{end}}{{if .ShowRepair}}{{if not .ShowLocalEdit}}<button class="btn" id="schedRepair" title="Re-point the weekly backup at this archive and fix a broken or stale schedule entry. Your cadence and any Thunderbird-sync setting are kept; nothing in the archive changes.">Repair</button> {{end}}<button class="btn" id="runBackupBtn" type="button" title="{{if .LocalPresyncOn}}Run this archive's backup now, instead of waiting for its schedule. Because Thunderbird sync is on, it first opens Thunderbird, waits for its mail, then closes it (which can run Thunderbird's on-exit actions, for example emptying Trash) before archiving.{{else}}Run this archive's weekly backup right now, instead of waiting for its schedule.{{end}}">Run now</button> {{end}}{{if .ShowRemove}}<button class="btn secondary" id="schedRemove" title="Delete the scheduled weekly backup. Your archive and everything in it are kept.">Remove</button>{{end}}</div>
+      <div style="margin-top:14px">{{if or .ShowInstall .ShowLocalCreate .ShowLocalEdit}}<button class="btn" id="schedInstall" title="Create or update the scheduled backup for this archive, using the settings above.">Install / update</button> {{end}}{{if .ShowRepair}}{{if not .ShowLocalEdit}}<button class="btn" id="schedRepair" title="Re-point the weekly backup at this archive and fix a broken or stale schedule entry. Your cadence and any Thunderbird-sync setting are kept; nothing in the archive changes.">Repair</button> {{end}}<button class="btn" id="runBackupBtn" type="button" title="{{if .LocalPresyncOn}}Run this archive's backup now, instead of waiting for its schedule. Because Thunderbird sync is on, it first opens Thunderbird, waits for its mail, then closes it (which can run Thunderbird's on-exit actions, for example emptying Trash) before archiving.{{else}}Run this archive's weekly backup right now, instead of waiting for its schedule.{{end}}">Run now</button> {{end}}{{if .EncRunNow}}<button class="btn" id="runBackupBtn" type="button" title="Back up this encrypted archive now, while it is unlocked here."{{if not .EncUnlocked}} disabled{{end}}>Run now</button> {{end}}{{if .ShowRemove}}<button class="btn secondary" id="schedRemove" title="Delete the scheduled weekly backup. Your archive and everything in it are kept.">Remove</button>{{end}}</div>
       <div class="note" id="runBackupNote" hidden></div>
       <div class="note" id="schedState" hidden></div>{{end}}
     </div>
@@ -1226,6 +1426,8 @@ pre{white-space:pre-wrap;overflow-wrap:anywhere;background:var(--bg);border:1px 
       <h2>Status &amp; health</h2>
       <div id="healthPosture" class="small"></div>
       <pre id="healthBody" class="small" style="min-height:0;max-height:220px">Loading…</pre>
+      <div id="healthActions" class="row" hidden></div>
+      <pre id="healthActionNote" class="small" hidden></pre>
     </div>
 
     <div class="card">
@@ -1260,10 +1462,13 @@ pre{white-space:pre-wrap;overflow-wrap:anywhere;background:var(--bg);border:1px 
         <div style="margin-top:10px"><button class="btn" id="uninstallGo" type="button">Remove</button> <button class="btn secondary" id="uninstallCancel" type="button">Cancel</button></div>
       </div>
       <div class="note" id="uninstallNote" hidden></div>
+      {{if .EncRecordKept}}<p class="card-sub">Uninstalling keeps this computer's record of its encrypted archives and the keys it remembers for them. To remove those too:</p>
+      <button class="btn secondary" id="forgetAllBtn" type="button" title="Forget every encrypted archive this computer recorded, and every key it remembers for them. The archives are not changed.">Forget every encrypted archive on this computer…</button>{{end}}
     </div>
   </div></main>
 </div>
-<script src="dashboard.js"></script>
+<script src="dashboard.js"></script>{{if .ShowEncryption}}
+<script src="encryption.js"></script>{{end}}
 {{if .Export}}<script src="signin.js"></script>{{end}}
 </body></html>`))
 
@@ -1365,16 +1570,59 @@ document.querySelectorAll('[data-switch-archive]').forEach(b=>b.addEventListener
   $('outDir').value=b.dataset.path;
   if(await doSave(''))setTimeout(()=>location.reload(),500);
 }));
+// Open an archive folder…: the system's folder picker, then a switch to the folder
+// chosen through the same settings save (an encrypted one then unlocks on its card).
+document.querySelectorAll('[data-open-archive]').forEach(b=>b.addEventListener('click',async()=>{
+  const n=$('settingsNote');
+  try{const d=await(await fetch('api/open-archive',{method:'POST',headers:{'Content-Type':'application/json','X-CSRF-Token':csrf},body:'{}'})).json();
+    if(d.canceled)return;
+    if(!d.ok){if(n){n.hidden=false;n.textContent=d.error||'Could not open that folder.';}return;}
+    $('outDir').value=d.path;
+    if(await doSave(''))setTimeout(()=>location.reload(),500);
+  }catch(e){if(n){n.hidden=false;n.textContent='Error: '+e;}}
+}));
 // Pause (make read-only) / Resume, per archive row. Errors surface in the Settings note.
 const archAction=(sel,path)=>document.querySelectorAll(sel).forEach(b=>b.addEventListener('click',async()=>{
   const n=$('settingsNote');
   try{const r=await(await fetch(path,{method:'POST',headers:{'Content-Type':'application/json','X-CSRF-Token':csrf},body:JSON.stringify({path:b.dataset.path})})).json();
+    if(r.ok&&r.note&&n){n.hidden=false;n.textContent=r.note;setTimeout(()=>location.reload(),3000);return;}
     if(r.ok){location.reload();return;}
     if(n){n.hidden=false;n.textContent=r.error||'Could not do that.';}
   }catch(e){if(n){n.hidden=false;n.textContent='Error: '+e;}}
 }));
 archAction('[data-pause-archive]','api/pause-archive');
 archAction('[data-resume-archive]','api/resume-archive');
+// Forget every encrypted archive on this computer (K8): only with the word typed.
+const fab=$('forgetAllBtn');
+if(fab)fab.addEventListener('click',async()=>{
+  const n=$('uninstallNote'),say=t=>{if(n){n.hidden=false;n.textContent=t;}};
+  const typed=prompt("This computer will forget every encrypted archive it recorded, and every key it remembers for them. The archives and their messages are not changed — but an archive whose password and recovery key you no longer have can then never be opened again.\n\nType FORGET to go ahead.")||'';
+  if(!typed)return;
+  try{const d=await(await fetch('api/encryption/forget-all',{method:'POST',headers:{'Content-Type':'application/json','X-CSRF-Token':csrf},body:JSON.stringify({typed:typed})})).json();
+    say(d.ok?(d.lines||[]).join('\n'):(d.error||'Could not forget them.'));
+    if(d.ok)setTimeout(()=>location.reload(),4000);
+  }catch(e){say('Error: '+e);}
+});
+// Forget this encrypted archive here (§4.6): the plan shown first, then confirmed; a
+// folder that may have been tampered with only with its path typed back.
+document.querySelectorAll('[data-forget-archive]').forEach(b=>b.addEventListener('click',async()=>{
+  const n=$('settingsNote'),say=t=>{if(n){n.hidden=false;n.textContent=t;}};
+  const send=(p,body)=>fetch(p,{method:'POST',headers:{'Content-Type':'application/json','X-CSRF-Token':csrf},body:JSON.stringify(body)}).then(r=>r.json());
+  try{
+    const p=await send('api/encryption/forget/plan',{path:b.dataset.path});
+    if(!p.ok){say(p.error||'Could not forget it.');return;}
+    const text=(p.lines||[]).join('\n');
+    let typed='';
+    if(p.strong){typed=prompt(text+'\n\nTo forget it anyway, type the folder\'s path exactly as shown:')||'';if(!typed)return;}
+    else if(!confirm(text+'\n\nForget this folder?'))return;
+    let whole=false,keys=false;
+    if(p.last){whole=confirm('It is the last folder this computer recorded for the archive. Forget the whole archive on this computer?');
+      if(whole&&p.remembered)keys=confirm('Also forget its remembered key?');}
+    const d=await send('api/encryption/forget',{token:p.token,typed:typed,whole:whole,keys:keys});
+    if(d.ok){location.reload();return;}
+    say(d.error||'Could not forget it.');
+  }catch(e){say('Error: '+e);}
+}));
 
 // Uninstall (Danger zone): "Uninstall…" fetches the plan (a dry run that changes nothing)
 // and shows it; "Remove" performs it; "Cancel" closes. Archives are never touched.
@@ -1386,10 +1634,13 @@ function uninstallPlanText(d){
   const lines=['This will remove:',
     '- scheduled backups: '+((d.schedules||[]).length),
     '- settings and log files: '+((d.configFiles||[]).length)];
+  const scratch=d.scratchFiles||[];
+  if(scratch.length){lines.push("- leftover working copies in MailArchive's working folder: "+scratch.length);scratch.forEach(f=>lines.push('     '+f));}
   if(d.clearedSignIn)lines.push('- the saved Microsoft sign-in');
   lines.push('');
   lines.push('It will KEEP your '+kept.length+' archive(s) — your mail is never deleted:');
   (kept.length?kept:['(none recorded)']).forEach(a=>lines.push('   '+a));
+  if(d.encryptedRecordKept)lines.push("It also keeps this computer's record of its encrypted archives and the keys it remembers for them, so a new install opens them as before.");
   return lines.join('\n');
 }
 const unBtn=$('uninstallBtn');
@@ -1508,7 +1759,25 @@ async function health(){
   try{const d=await(await fetch('api/health')).json();
     if(p)p.textContent=d.posture?('Posture: '+d.posture):'';
     b.textContent=(d.summary||[]).join('\n')||'No archive yet.';
+    healthActions(d.actions||[]);
   }catch(e){b.textContent='Could not read status.';}
+}
+// The record's own actions, offered only with their warning (phase3 §4.3).
+const recordActionText={
+  'repair-record':['Repair the record','api/encryption/repair-record',"Rebuild this computer's damaged record of encrypted archives from what still reads? The damaged copies are kept beside it; every rebuilt folder stays protected until its archive is opened with its password."],
+  'dismiss-lost':['Dismiss this warning','api/encryption/dismiss-lost',"MailArchive will stop warning that its record lost this archive. Until a backup into it, or remembering its key, records it again, MailArchive does not keep unencrypted backups out of this folder. Dismiss it?"]};
+function healthActions(actions){
+  const box=$('healthActions'),note=$('healthActionNote');if(!box)return;
+  while(box.firstChild)box.removeChild(box.firstChild);
+  box.hidden=!actions.length;
+  actions.forEach(a=>{const t=recordActionText[a];if(!t)return;
+    const btn=document.createElement('button');btn.className='btn secondary';btn.type='button';btn.textContent=t[0];
+    btn.addEventListener('click',async()=>{if(!confirm(t[2]))return;
+      try{const d=await(await post(t[1])).json();
+        if(note){note.hidden=false;note.textContent=d.ok?((d.lines||['Done.']).join('\n')):(d.error||'Could not do that.');}
+      }catch(e){if(note){note.hidden=false;note.textContent='Could not do that.';}}
+      health();});
+    box.appendChild(btn);});
 }
 health();
 function job(path){const r=$('captureResult');if(r)r.hidden=true;

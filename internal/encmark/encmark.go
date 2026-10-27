@@ -357,22 +357,28 @@ func Here(out string) (bool, string, error) {
 // LostHere reports whether out's key files claim an archive a keyed open found
 // missing from this computer's record while its key is remembered here (a lost
 // record, §4.3): status warns until a backup or a remember records it again.
-func LostHere(out string) bool {
+func LostHere(out string) bool { return len(LostIDs(out)) > 0 }
+
+// LostIDs are the ids LostHere warns of at out: those its key files claim that the
+// lost list holds and the record does not, so acknowledging the warning there clears
+// only that folder's ids (§4.3; the P3-3 plan, 3b).
+func LostIDs(out string) []string {
 	lost, err := encrecord.Lost()
 	if err != nil || len(lost) == 0 {
-		return false
+		return nil
 	}
 	rec, rerr := load()
+	var ids []string
 	for _, id := range vault.Claims(out).IDs {
 		// A stale mark for an id the record now lists is no warning (CON-06).
 		if rerr == nil && rec.Archives[id.String()] != nil {
 			continue
 		}
 		if slices.Contains(lost, id.String()) {
-			return true
+			ids = append(ids, id.String())
 		}
 	}
-	return false
+	return ids
 }
 
 // NotSetUp says what is unfinished about an encrypted archive at out that has a key

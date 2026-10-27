@@ -445,9 +445,11 @@ func save(out string, v *Vault) error {
 
 // lockArchive takes the archive-folder lock (A9): the same lock every export,
 // capture and reindex of this archive takes, so a vault rewrite can never
-// interleave with a backup run.
-func lockArchive(out, verb string) (*lockfile.Lock, error) {
-	l, err := lockfile.AcquireAs(filepath.Join(out, lockfile.Name), verb)
+// interleave with a backup run. It names no verb: the lock file stays beside the
+// archive in plaintext, and an encrypted archive's discloses only its host=, as a
+// keyed run's does (A18; phase3 P3-3 plan).
+func lockArchive(out string) (*lockfile.Lock, error) {
+	l, err := lockfile.AcquireAs(filepath.Join(out, lockfile.Name), "")
 	if err == nil {
 		lockedHook()
 	}
@@ -552,7 +554,7 @@ func (p *PendingCreate) Commit() (*Key, error) {
 	if err := requireDir(p.out); err != nil {
 		return nil, err
 	}
-	l, err := lockArchive(p.out, "encrypt")
+	l, err := lockArchive(p.out)
 	if err != nil {
 		return nil, err
 	}
@@ -588,11 +590,11 @@ func (p *PendingCreate) Commit() (*Key, error) {
 // change, and saves the result (both copies, which also heals them). Building
 // on the copy the secret opened, at a generation above every copy, also
 // settles a fork.
-func mutate(out string, want ID, verb string, current Secret, change func(*Opened) (*Vault, error)) error {
+func mutate(out string, want ID, current Secret, change func(*Opened) (*Vault, error)) error {
 	if err := requireDir(out); err != nil {
 		return err
 	}
-	l, err := lockArchive(out, verb)
+	l, err := lockArchive(out)
 	if err != nil {
 		return err
 	}
@@ -621,7 +623,7 @@ func mutate(out string, want ID, verb string, current Secret, change func(*Opene
 // byte stay as they are (A10). ErrPartiallySaved means the new password IS in
 // effect.
 func ChangePasswordAt(out string, want ID, current Secret, newPassword string) error {
-	return mutate(out, want, "change-password", current, func(o *Opened) (*Vault, error) {
+	return mutate(out, want, current, func(o *Opened) (*Vault, error) {
 		return o.Vault.WithPassword(o.Key, newPassword)
 	})
 }
@@ -694,7 +696,7 @@ func (p *PendingRecovery) Commit() error {
 	if err := requireDir(p.out); err != nil {
 		return err
 	}
-	l, err := lockArchive(p.out, "new-recovery-key")
+	l, err := lockArchive(p.out)
 	if err != nil {
 		return err
 	}
@@ -742,7 +744,7 @@ func Heal(out string, want ID, current Secret) error {
 	if err := requireDir(out); err != nil {
 		return err
 	}
-	l, err := lockArchive(out, "heal-vault")
+	l, err := lockArchive(out)
 	if err != nil {
 		return err
 	}

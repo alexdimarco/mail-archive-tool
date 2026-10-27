@@ -114,7 +114,7 @@ func TestTheCLIMakesAnEncryptedArchiveAtTheTerminal(t *testing.T) {
 	defer u.Destroy()
 	tr := a.transcript()
 	assure.Reached(t, len(a.shown) == 2 && a.shown[0] == a.shown[1], "the key shown, and shown again on Enter alone")
-	for _, want := range []string{passwordHint, "at least 12", "did not match", "Remember the key"} {
+	for _, want := range []string{keyring.PasswordHint, "at least 12", "did not match", "Remember the key"} {
 		if !strings.Contains(tr, want) {
 			t.Fatalf("the terminal never said %q:\n%s", want, tr)
 		}

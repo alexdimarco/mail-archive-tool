@@ -5,6 +5,7 @@
 package health
 
 import (
+	"bytes"
 	"errors"
 	"fmt"
 	"os"
@@ -23,6 +24,7 @@ import (
 	"mail-archive-tool/internal/schedule"
 	"mail-archive-tool/internal/state"
 	"mail-archive-tool/internal/util"
+	"mail-archive-tool/internal/vault"
 )
 
 // Input is everything known about an archive before judging it.
@@ -47,6 +49,9 @@ type Input struct {
 	// NotSetUp: an encrypted archive with a key file and no backup yet, in words
 	// (phase3 §5.1 step 7), a WARN.
 	NotSetUp string
+	// KeyCopiesDiffer: the encrypted archive's two key-file copies are not the same
+	// bytes, so one is owed a heal (the P3-3 plan, 3b).
+	KeyCopiesDiffer bool
 
 	// Surface names who reads the report: "" for the CLI (commands and SQLite's
 	// words are fine), "desktop" for MailArchive Desktop's Status & health card,
@@ -424,8 +429,12 @@ func Assess(in Input, now time.Time) Report {
 	if in.RecordLost {
 		r.warn("encrypted_record_lost", "this computer remembers this archive's key, but its record of encrypted archives no longer lists the archive, so the record does not keep unencrypted backups out of it — run a backup into it, or open it and remember its key, to record it again")
 	}
+	if in.KeyCopiesDiffer {
+		// Keyless, so status and the Desktop say the same (X10; the P3-3 plan, 3b).
+		r.warn("encrypted_key_copy_differs", "one of this encrypted archive's two key-file copies is missing or differs from the other — open it with its password or recovery key, or run a backup into it, and MailArchive rewrites it from the good one")
+	}
 	if in.Encrypted {
-		r.note("encrypted", "this archive is encrypted ("+in.EncryptedWhy+"): its message counts, search index and history are sealed — open it in MailArchive with its password to see them")
+		r.note("encrypted", "this archive is encrypted ("+in.EncryptedWhy+"): its message counts, search index and history are sealed — "+openToSee(in.Surface))
 		// Its last backup finished with the sealed index still missing messages: the
 		// one thing about the index status can say without the key (owner ruling
 		// 2026-10-25, "keep and warn").
@@ -633,7 +642,7 @@ func assessKeyless(r *Report, in Input, now time.Time) {
 			if in.HasVerifyDescriptor {
 				sched = fmt.Sprintf("; check its log %s (the verify started %s local time) — the next scheduled run of %q also replaces this record", verifyLogHint(in), lv.Started.Local().Format("2006-01-02 15:04"), in.VerifyDesc.Name)
 			}
-			r.warn("verify_never_finished", fmt.Sprintf("the verify started %s UTC never finished (Ctrl-C, crash, kill, or power loss) — run `mailarchive verify -out %q` again; the last finished verify's verdict is still reported%s", started, in.Out, sched))
+			r.warn("verify_never_finished", fmt.Sprintf("the verify started %s UTC never finished (Ctrl-C, crash, kill, or power loss) — run `%s` again; the last finished verify's verdict is still reported%s", started, verifyCommand(in.Out, lv), sched))
 		}
 		judge = lv.Previous != nil
 		if judge {
@@ -643,7 +652,7 @@ func assessKeyless(r *Report, in Input, now time.Time) {
 	// A check stopped on purpose (phase3 §8) attests nothing and changes nothing: a
 	// note, and the last finished verdict it carries is judged as usual.
 	if judge && lv.Status == state.VerifyStopped {
-		r.note("verify_stopped", fmt.Sprintf("the last check (started %s UTC) was stopped before it finished — the last finished check's result still stands; run `mailarchive verify -out %q` to check again", lv.Started.UTC().Format("2006-01-02 15:04"), in.Out))
+		r.note("verify_stopped", fmt.Sprintf("the last check (started %s UTC) was stopped before it finished — the last finished check's result still stands; run `%s` to check again", lv.Started.UTC().Format("2006-01-02 15:04"), verifyCommand(in.Out, lv)))
 		judge = lv.Previous != nil
 		if judge {
 			lv = *lv.Previous
@@ -662,11 +671,23 @@ func assessKeyless(r *Report, in Input, now time.Time) {
 			check = "check with the key"
 		}
 		reason := fmt.Sprintf("the last %s of this encrypted archive (%s UTC): %s", check, when, state.OutcomeTextFor(lv.Outcome, state.TierOf(&lv)))
+		if state.TierOf(&lv) == state.TierFull && state.OutcomeIsRed(lv.Outcome) {
+			reason += fullRedClears(in.Out) // the P3-2b pass, REC-05
+		}
 		switch {
 		case state.OutcomeIsRed(lv.Outcome):
 			r.red("verify_"+lv.Outcome, reason)
 		case lv.Outcome == state.OutcomeNotAttested, lv.Outcome == state.OutcomeNewerFormat:
 			r.warn("verify_"+lv.Outcome, reason)
+		}
+		// A red a check with the key found, kept beneath a newer one a check without
+		// the key found: both are told (the P3-2b pass, REC-06).
+		if s := lv.Standing; s != nil {
+			since := ""
+			if s.Finished != nil {
+				since = s.Finished.UTC().Format("2006-01-02 15:04")
+			}
+			r.red("verify_"+s.Outcome, fmt.Sprintf("an earlier check with the key of this encrypted archive (%s UTC) found: %s%s", since, state.OutcomeTextFor(s.Outcome, state.TierFull), fullRedClears(in.Out)))
 		}
 	} else if judge && lv.Status == state.VerifyDone {
 		when := ""
@@ -1120,6 +1141,13 @@ func assessVerifySchedule(r *Report, in Input, now time.Time) {
 		}
 	}
 	done := st == state.LastVerifyPresent && lv.Status == state.VerifyDone && lv.Finished != nil
+	// When the last check finished: a red a check with the key found keeps its own
+	// times while later checks without the key keep it standing, so their time is
+	// beside it (the P3-2b pass, REC-01).
+	var checked time.Time
+	if done {
+		checked = lv.CheckedAt()
+	}
 	if in.HasVerifyDescriptor {
 		vd := in.VerifyDesc
 		period := IntervalOf(vd.Interval)
@@ -1131,7 +1159,7 @@ func assessVerifySchedule(r *Report, in Input, now time.Time) {
 		lastWhat := ""
 		switch {
 		case done:
-			last, lastWhat = *lv.Finished, fmt.Sprintf("the last verify was %s ago", HumanAge(now.Sub(*lv.Finished)))
+			last, lastWhat = checked, fmt.Sprintf("the last verify was %s ago", HumanAge(now.Sub(checked)))
 		case pending:
 			last, lastWhat = lv.Started, fmt.Sprintf("the last verify started %s ago and has not finished", HumanAge(now.Sub(lv.Started)))
 		}
@@ -1163,8 +1191,8 @@ func assessVerifySchedule(r *Report, in Input, now time.Time) {
 	if in.VerifyDescErr != nil && !errors.Is(in.VerifyDescErr, os.ErrNotExist) {
 		r.warn("verify_descriptor_unreadable", in.VerifyDescErr.Error())
 	}
-	if isVerifyJob(in.Desc.Job) && done && now.Sub(*lv.Finished) > 2*IntervalOf(in.Desc.Interval) {
-		r.warn("verify_stale", fmt.Sprintf("the last verify was %s ago, more than twice the %s verify schedule period — schedule it, or run `mailarchive verify -out %q`", HumanAge(now.Sub(*lv.Finished)), in.Desc.Interval, in.Out))
+	if isVerifyJob(in.Desc.Job) && done && now.Sub(checked) > 2*IntervalOf(in.Desc.Interval) {
+		r.warn("verify_stale", fmt.Sprintf("the last verify was %s ago, more than twice the %s verify schedule period — schedule it, or run `mailarchive verify -out %q`", HumanAge(now.Sub(checked)), in.Desc.Interval, in.Out))
 	}
 }
 
@@ -1488,6 +1516,7 @@ func Gather(out, nameOverride string) Input {
 	in.RecordLost = encmark.LostHere(out)
 	if in.Encrypted && in.EncryptedCase == encmark.None {
 		in.NotSetUp = encmark.NotSetUp(out)
+		in.KeyCopiesDiffer = keyCopiesDiffer(out)
 	}
 	mpath := filepath.Join(out, ".mailarchive-manifest.json")
 	if _, serr := os.Stat(mpath); serr == nil && !in.Encrypted {
@@ -1896,7 +1925,7 @@ func Summary(in Input, rep Report) []string {
 		}
 	} else if in.Encrypted {
 		// Sealed, not absent: the counts and the timeline are inside the archive (F15).
-		lines = append(lines, "Messages:   sealed — this archive is encrypted; open it in MailArchive with its password to see its messages")
+		lines = append(lines, "Messages:   sealed — this archive is encrypted; "+openToSee(in.Surface))
 	} else if in.HasManifestFile {
 		lines = append(lines, "Messages:   (manifest present but unreadable — see the posture below)")
 	} else {
@@ -2006,6 +2035,50 @@ func Summary(in Input, rep Report) []string {
 
 // verifyVerdict renders a finished verify record as "<when> → attested" or
 // "<when> → NOT attested (…)" for Summary.
+// openToSee says how to see an encrypted archive's sealed contents, in the words of
+// the surface that shows it (U16; the P3-3 plan, 3b): the Desktop's own way, or the
+// command line's.
+func openToSee(surface string) string {
+	switch surface {
+	case "desktop", "gui":
+		return "open it in MailArchive Desktop with its password or recovery key to see them"
+	}
+	return "open it with its password or recovery key to see them (`mailarchive serve`, `search` or `extract`, with -password-file or at a terminal)"
+}
+
+// keyCopiesDiffer reports that an encrypted archive's two key-file copies are not
+// the same bytes — one missing, damaged or stale. Every save writes the same bytes
+// to both (vault.save), so a difference is owed a heal; both gone is another case,
+// told by the record's own words. Read without the key, bounded, never through a
+// link.
+func keyCopiesDiffer(out string) bool {
+	a, aerr := util.ReadRegularFile(filepath.Join(out, vault.FileName), maxKeyFileRead)
+	b, berr := util.ReadRegularFile(filepath.Join(out, vault.BackupName), maxKeyFileRead)
+	if aerr != nil && berr != nil {
+		return false
+	}
+	return aerr != nil || berr != nil || !bytes.Equal(a, b)
+}
+
+// maxKeyFileRead bounds the key-file read: a real one is a few kilobytes.
+const maxKeyFileRead = 1 << 20
+
+// verifyCommand is the verify that finishes or repeats lv's check: with -full for a
+// check with the key, which a check without it can neither finish nor clear (the
+// P3-2b pass, REC-07).
+func verifyCommand(out string, lv state.LastVerify) string {
+	if lv.Encrypted && state.TierOf(&lv) == state.TierFull {
+		return fmt.Sprintf("mailarchive verify -full -out %q", out)
+	}
+	return fmt.Sprintf("mailarchive verify -out %q", out)
+}
+
+// fullRedClears says what clears a red a check with the key found (the owner's
+// ruling, phase3 §8; the P3-2b pass, REC-05, CRIT-02).
+func fullRedClears(out string) string {
+	return fmt.Sprintf(" — then run `mailarchive verify -full -out %q`: only a check with the key clears this, or restoring the folder from a backup copy", out)
+}
+
 func verifyVerdict(lv state.LastVerify) string {
 	when := lv.Finished.UTC().Format("2006-01-02 15:04")
 	if lv.Encrypted {
@@ -2166,6 +2239,11 @@ type JSONLastVerify struct {
 	// Tier is an encrypted archive's check, 1 without the key or 2 with it (phase3
 	// §8): a new optional key.
 	Tier int `json:"tier,omitempty"`
+	// LastChecked and Standing: when a check without the key last kept a red a check
+	// with the key found standing, and that red kept beneath a newer one (the P3-2b
+	// pass, REC-01, REC-06): new optional keys.
+	LastChecked *time.Time      `json:"last_checked,omitempty"`
+	Standing    *JSONLastVerify `json:"standing,omitempty"`
 	// Previous is the last finished verdict a running record carries (F79): a
 	// new optional key, omitted otherwise, so JSONVersion is unchanged.
 	Previous *JSONLastVerify `json:"previous,omitempty"`
@@ -2198,6 +2276,14 @@ func jsonLastVerify(lv state.LastVerify) *JSONLastVerify {
 		p := *lv.Previous
 		p.Previous = nil
 		j.Previous = jsonLastVerify(p)
+	}
+	if lv.Encrypted {
+		j.LastChecked = lv.LastChecked
+		if lv.Standing != nil {
+			s := *lv.Standing
+			s.Previous, s.Standing = nil, nil
+			j.Standing = jsonLastVerify(s)
+		}
 	}
 	return j
 }

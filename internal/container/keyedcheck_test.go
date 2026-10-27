@@ -32,8 +32,23 @@ func checkedLoad(t *testing.T, out string, units UnitFiles) *Store {
 func TestCheckChunksNamesEveryChunkItCannotOpen(t *testing.T) {
 	out := readable(t)
 	s := checkedLoad(t, out, unitLister)
-	if p, err := s.CheckChunks(context.Background()); err != nil || len(p) != 0 {
-		t.Fatalf("positive twin: %v %v", p, err)
+	// The key is held once per chunk opened, released each time (the P3-2b pass,
+	// KEY-02); a hold that fails — the key locked — ends the pass with its error.
+	held, released := 0, 0
+	hold := func() (func(), error) { held++; return func() { released++ }, nil }
+	if p, err := s.CheckChunks(context.Background(), hold); err != nil || len(p) != 0 || held == 0 || held != released ||
+		held != len(s.ptr.Manifest)+len(s.ptr.History)+len(s.ptr.Index) {
+		t.Fatalf("positive twin: %v %v held=%d released=%d", p, err, held, released)
+	}
+	lockedAt, calls := 2, 0
+	_, err := s.CheckChunks(context.Background(), func() (func(), error) {
+		if calls++; calls == lockedAt {
+			return nil, vault.ErrKeyDestroyed
+		}
+		return func() {}, nil
+	})
+	if !errors.Is(err, vault.ErrKeyDestroyed) || calls != lockedAt {
+		t.Fatalf("a hold that fails ends the pass: %v after %d", err, calls)
 	}
 	var second Entry
 	for _, e := range s.ptr.Manifest {
@@ -49,7 +64,7 @@ func TestCheckChunksNamesEveryChunkItCannotOpen(t *testing.T) {
 	ib, _ := os.ReadFile(filepath.Join(out, ix.Name.Path()))
 	os.WriteFile(filepath.Join(out, ix.Name.Path()), ib[:len(ib)-1], 0o600)
 
-	p, err := s.CheckChunks(context.Background())
+	p, err := s.CheckChunks(context.Background(), nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -72,8 +87,30 @@ func TestCheckChunksNamesEveryChunkItCannotOpen(t *testing.T) {
 		t.Fatal(err)
 	}
 	k.Destroy()
-	_, err = ls.CheckChunks(context.Background())
+	_, err = ls.CheckChunks(context.Background(), nil)
 	assure.Reached(t, errors.Is(err, vault.ErrKeyDestroyed), "a locked key is the key's error")
+}
+
+// covers: MA-803, R37
+// What tier 2 may see past, and what the record itself says it lacks (the P3-2b
+// pass, FID-01, CRIT-01, VERD-05): a missing copy of the record pointer is a
+// pointer-copy verdict, a whole archive's is not; the record's marks for a lost
+// stretch of the go-back timeline and an index behind are read from its header.
+func TestTheKeyedCheckReadsWhatTheKeylessCheckCannot(t *testing.T) {
+	whole := wholeArchive(t)
+	if c := CheckKeyless(whole, 0); c.PointerCopyOnly() || c.Outcome != state.OutcomeIntact {
+		t.Fatalf("positive twin: %+v", c)
+	}
+	os.Remove(filepath.Join(whole, MirrorName))
+	c := CheckKeyless(whole, 0)
+	out := readable(t)
+	s := checkedLoad(t, out, unitLister)
+	if gap, behind := s.RecordMarks(); gap || behind {
+		t.Fatal("a whole record has no marks")
+	}
+	s.hdr.HistoryGap, s.hdr.IndexBehind = &Gap{From: 1}, &Behind{Since: 1}
+	gap, behind := s.RecordMarks()
+	assure.Reached(t, gap && behind && c.PointerCopyOnly() && state.OutcomeIsRed(c.Outcome), "the marks read, the pointer copy named")
 }
 
 // covers: MA-799, R37

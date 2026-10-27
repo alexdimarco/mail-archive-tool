@@ -423,7 +423,7 @@ func (p *PendingRestore) Commit() error {
 	if err := p.sameFolder(); err != nil {
 		return err
 	}
-	l, err := lockArchive(p.out, "restore-key-file")
+	l, err := lockArchive(p.out)
 	if err != nil {
 		return err
 	}

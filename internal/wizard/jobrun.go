@@ -49,6 +49,53 @@ func RunJobInProcess(jobPath string, logger *log.Logger) (string, error) {
 	return exportSummary(j.Out, j.KeepRaw, result), nil
 }
 
+// RunJobInProcessKeyed is RunJobInProcess for an encrypted archive: the Desktop's
+// attended Run now (design-encrypted-archives-phase3 §6; the P3-3 plan, 3d). The key
+// arrives only through apply, which the Desktop builds from a write lease
+// (keyring.Apply) — the wizard never imports internal/keyring (§3.1). It runs
+// attended, not as the schedule would (Unattended off: a scheduled keyed run stays
+// refused, A14), stops when ctx is cancelled, refuses an absent out, a paused
+// archive and an Outlook job before apply is called, and says what it did in words
+// that name no file of the archive (U16).
+func RunJobInProcessKeyed(ctx context.Context, jobPath string, logger *log.Logger, apply func(*app.Options) (done func(), err error)) (string, error) {
+	j, err := job.Read(jobPath)
+	if err != nil {
+		return "", err
+	}
+	if err := app.RequireExistingOut(j.Out); err != nil {
+		return "", err
+	}
+	if err := seal.RefuseWrite(j.Out); err != nil {
+		return "", err
+	}
+	if j.Outlook {
+		return "", fmt.Errorf("this is an Outlook backup; Run now is not available for it here yet")
+	}
+	opts := optsForJob(j, j.Inputs, logger.Writer())
+	opts.Unattended = false
+	done, err := apply(&opts)
+	if err != nil {
+		return "", err
+	}
+	defer done()
+	logger.Printf("Running the backup now for the encrypted archive %s", j.Out)
+	result, runErr := app.Run(ctx, opts, logger, nil)
+	if runErr != nil {
+		return "", runErr
+	}
+	return encryptedSummary(result), nil
+}
+
+// encryptedSummary is what a keyed run says: no counts kept anywhere, no file of the
+// archive named — its pages, report and index are sealed (U16).
+func encryptedSummary(result app.Result) string {
+	s := fmt.Sprintf("Backup complete: %d message(s) added or updated. They are sealed in the encrypted archive; open it in MailArchive Desktop to read them.", result.Stats.Exported)
+	if result.IndexBehind {
+		s += " The search index is missing some messages; the next backup, or Rebuild search index, brings it up to date."
+	}
+	return s
+}
+
 // optsForJob builds the app.Options a scheduled (RunHeadless) or Run-now
 // (RunJobInProcess) local backup uses from the job's recorded answers, so the two
 // run the SAME way. inputs is the set to archive (the job's inputs, or the

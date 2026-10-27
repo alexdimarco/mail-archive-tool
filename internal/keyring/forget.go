@@ -177,6 +177,46 @@ func sameEntry(a, b encrecord.Entry) bool {
 	})
 }
 
+// ForgetAll forgets every encrypted archive this computer recorded (§4.6, K8, A20 —
+// what uninstall keeps): each one's remembered key first, then the record, emptied,
+// and the lost list — keys first, so a crash between leaves the record still naming
+// archives whose keys may be gone, never a remembered key the record no longer names.
+// Nothing in any archive folder changes. It returns how many archives it forgot.
+func ForgetAll(s vault.Store) (int, error) {
+	rec, err := encrecord.Load()
+	if err != nil {
+		return 0, err
+	}
+	n := 0
+	for idHex := range rec.Archives {
+		n++
+		if s == nil {
+			continue
+		}
+		id, perr := parseID(idHex)
+		if perr != nil {
+			continue
+		}
+		if err := vault.Forget(s, id); err != nil {
+			return 0, fmt.Errorf("the key remembered for archive %s could not be forgotten, so nothing else was: %w", idHex, err)
+		}
+	}
+	if _, err := update("forget every archive", func(r *encrecord.Record) error {
+		for id := range r.Archives {
+			delete(r.Archives, id)
+		}
+		return nil
+	}); err != nil {
+		return 0, err
+	}
+	if lost, err := encrecord.Lost(); err == nil {
+		for _, id := range lost {
+			_ = encrecord.ClearLost(id)
+		}
+	}
+	return n, nil
+}
+
 // ForgetKey removes the key this computer remembers for the archive at out (§9.3):
 // the recorded id's, or the one its key files claim. Nothing in the folder changes.
 func ForgetKey(out string, s vault.Store) (vault.ID, error) {

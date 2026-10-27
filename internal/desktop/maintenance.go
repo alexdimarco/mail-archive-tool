@@ -26,6 +26,9 @@ func (d *dashboard) runJob(fn func(*log.Logger) (string, error)) error {
 	}
 	c.running, c.device, c.lines, c.result, c.errMsg = true, nil, nil, "", ""
 	c.mu.Unlock()
+	// The archive the job runs on, taken as it starts: a switch while it runs does not
+	// change how its failure is worded (the P3-3 plan, 3d).
+	out := d.cfg.effectiveOut()
 	go func() {
 		defer func() {
 			if r := recover(); r != nil {
@@ -34,7 +37,7 @@ func (d *dashboard) runJob(fn func(*log.Logger) (string, error)) error {
 		}()
 		result, err := fn(log.New(c, "", 0))
 		if err != nil {
-			c.finish("", jobErrorText(d.cfg.effectiveOut(), err))
+			c.finish("", jobErrorText(out, err))
 			return
 		}
 		c.finish(result, "")
@@ -149,5 +152,9 @@ func (d *dashboard) healthAction(w http.ResponseWriter, r *http.Request) {
 	if d.cfg.localOnly() {
 		summary = append(summary, newMailLine(d.cfg.goos(), out))
 	}
-	writeJSON(w, map[string]any{"posture": rep.Posture, "summary": summary})
+	reply := map[string]any{"posture": rep.Posture, "summary": summary}
+	if actions := recordActions(out); len(actions) > 0 { // only when there is any (the P3-3 plan, 3b)
+		reply["actions"] = actions
+	}
+	writeJSON(w, reply)
 }

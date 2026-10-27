@@ -955,6 +955,21 @@ shows it as stopped, with that verdict beside it (CON-04).
   naming it. Status says "the last check with the key" for a tier-2 verdict and carries `tier` in
   `-json`.
 
+*Amended after the P3-2b adversarial pass (2026-10-26; MA-803,
+review-encrypted-archives-phase3-p32b-adversarial):*
+- **Tier 2 is red only when mail is lost, reason by reason.** The keyless verdict keeps its own
+  remedy. A pointer-copy red becomes amber ("run a backup") once the keyed load authenticated the
+  record; every other keyless red keeps its outcome.
+- **The record's own marks** (a lost go-back stretch, an index behind) are amber; a unit this
+  computer could not read is amber; both copies of a record part gone is red.
+- **The standing red** keeps its own times with a `last_checked` time beside it; a newer keyless
+  red is recorded on top with the standing one beneath (`standing`), both allow-listed (times,
+  status, outcome, tier). A check with the key that finds only amber removes the red notice.
+- **A lock of the key part way** puts the record back byte for byte. **On a read-only medium**,
+  a lock another path holds refuses the check.
+- **The CLI** refuses a busy archive before any key is asked, and names `-full` when a check
+  with the key stopped.
+
 ## 9. The keys after creation
 
 The CLI's key verbs need a foreground terminal; Desktop's card is attended by nature.
@@ -1483,6 +1498,107 @@ Implementer's calls, vetoable:
 - **`search` prints logical paths** (`-json` and the human form): they name the message in the
   reader, not a file on disk; `-paths` stays refused.
 - **Keyed `extract` takes the archive's `extract` lock,** as a plaintext extract does.
+
+*Planned for P3-3 (2026-10-26), from a read-only map of the code (6 mappers and a critic, at
+cd7e46a).* Built in seven sub-slices, each test-first with prove-fail and prove-pass, the
+unfiltered suite green, and its catalog rows (from MA-800) landing with its tests:
+- **3a groundwork** (nothing visible): test sandboxes (desktop TestMain adds XDG_CACHE_HOME,
+  `encrecord.SetDirForTest` and a no-op alert sender; wizard TestMain sandboxes HOME, XDG and
+  AppData/LOCALAPPDATA; every key test passes its own file secret store); keyring additions —
+  `(*Unlocked).LeaseForWrite` (leases, refuses an unusable record and a bad folder case, adopts,
+  asks the re-record question; heal left to the caller), a heal that clears the parent's
+  NeedsHeal, a read-only `keyring.Forgotten(out)` so a re-record is asked before any key is
+  derived, `keyring.Pause` over a sealed pause note (`Store.SetPauseNote`/`PauseNote`,
+  `app.SealPauseNote`); the CLI's shared wording and file helpers moved out of package main (CLI
+  tests unchanged); the fixtures.
+- **3b display fixes that need no key:** the "encrypted" label (MA-731 today asserts the kind,
+  not what is rendered — a shipped gap); rows showing each folder's record case; the backup and
+  status cards for an encrypted archive (no schedule, O5); the uninstall plan listing scratch
+  leftovers (MA-739, a shipped gap in the Desktop rendering) and that the record and keys are
+  kept; the keyless U16 wording; the record's WARN/RED in Desktop words with Repair and Dismiss;
+  the heal-owed WARN; a plaintext golden of the overview and the health reply as the regression
+  guard.
+- **3c the registry, the reader, unlock and lock:** `Config.Keys` (in-memory, never persisted,
+  nil-safe, created in serveInstance beside the Lifecycle); the Desktop reader serving
+  `keyring.ReaderSource` for the current archive when unlocked and the locked page otherwise;
+  `/api/encryption/unlock` and `/lock` (guarded POSTs, K14 asked in the page, single-flight);
+  silent opening from a remembered key (O3); the idle lock, the lock on a switch and the Shut-down
+  order (cancel jobs, close the registry, discard pending secrets, lock all — never waiting);
+  the Encryption card; uninstall closing the Desktop's own readers; Open an archive folder and
+  the first-launch entry; CI's filtered Desktop race line.
+- **3d Run now, the heal, the keyed pause:** runJob gains a context; an attended keyed twin of
+  RunJobInProcess; write lease, then Heal, then the run, then the lease destroyed; the keyed pause;
+  Finish setting up (§5.1 step 7); the design-named tests (a damaged mirror rewritten by Run now;
+  an idle lock during Run now, under the race detector).
+- **3e the key verbs on the card:** one store of pending secret items (random 128-bit token,
+  single use, each discarded by its own 10-minute timer, on Cancel, on a second prepare, on a lock
+  or switch of that archive and at Shut down); change the password; a new recovery key with its
+  recovery file; Remember / forget the key; Put back the key file; forget per row; forget-all.
+- **3f Desktop create** (Add another archive with the encrypt choice; the password and the
+  recovery key in the page; Commit, register, write the run job, an attended first backup).
+- **3g the standalone wizard** (the hook seam — wizard never imports keyring, the hook is wired
+  where both binaries reach it; the macOS and Windows step; the Linux stop K11; the keyed run core
+  with E2, E3, U16).
+- **Gates:** an adversarial pass after 3c (key lifetime, secrets over HTTP) and one at the end;
+  the friction review and the X walk at P3-8.
+
+*The implementer's calls for P3-3 (vetoable; the owner's standing instruction of 2026-10-26 is to
+decide what is clear and raise only what is not):*
+- **The registry** is keyed by the folder spelling the open used (absolute), with the opened
+  archive id kept beside it as a check — §3.1's "path source".
+- **Unlocking is on the Encryption card, for the current archive only.** A switch locks every
+  archive but the new current one. A row shows Locked/Unlocked, Forget, and Pause/Resume.
+- **Remember on unlock:** off for a plain unlock (as the CLI's `-remember`), on by default in
+  Finish setting up (§5.1 step 7).
+- **Lock on a remembered archive** holds it locked for this Desktop process until Unlock is
+  clicked (no password asked then); O3's silent re-open is for a fresh process or a switch.
+- **Idle (K4)** counts what a person does — dashboard POSTs, page loads, and the reader's page and
+  message loads — never the dashboard's own polling or the reader's script fetches.
+- **Writes take a write lease** (`LeaseForWrite`); a read unlock still records nothing.
+- **The key-file operations' lock names no verb** (the heal, create, a password change, a new
+  recovery key, a restore): the lock file stays beside the archive in plaintext, so it discloses
+  only its `host=`, as a keyed run's does (A18). Until 3a every one wrote its verb, which left the
+  last key operation's name readable beside the archive — a small leak, closed here.
+- **The keyed pause** keeps the fixed reason; if the sealed note cannot be committed the pause
+  still seals with the empty marker and says the note was not saved (pause is a safety action);
+  Resume clears the note when unlocked, else leaves it; the note shows on the card when unlocked.
+- **The index-behind WARN** is cleared by a keyed reindex as well as by the next backup.
+- **Run now's job** (no schedule may be installed, O5): Desktop and wizard create write the run-job
+  file in the settings folder after Commit, with no schedule and with the recorded archive id
+  (A15); the card shows Run now from that job alone, disabled while locked. An archive made at the
+  CLI has no job, and the card says to back it up with `mailarchive` at a terminal.
+- **After a Desktop create's first backup** its key is destroyed (the new archive is not current,
+  MA-696); with Remember on it re-opens by itself when chosen.
+- **The heal-owed WARN is keyless:** `status` and Desktop compare the bytes of the two key-file
+  copies — every save writes the same bytes to both (`vault.save`) — as WARN
+  `encrypted_key_copy_differs`, "open it with its password, or run a backup, to repair it".
+- **The search index remedy in Desktop** is a keyed "Rebuild search index" (`keyring.Reindex`,
+  P3-2a); the reader takes its remedy text as options, so the CLI's text is unchanged.
+- **K9's download line** ("this file is not encrypted") is added to the reader in P3-3.
+- **Open an archive folder** registers the folder and makes it current, with the Switch
+  confirmation; a plaintext folder picked there is registered and offered Switch, as today. A
+  fresh Desktop's first card offers "Open an archive folder…" and "Make a new archive"; the
+  wizard's first step gains "Open an archive folder".
+- **The locked reader page** names the way ("open MailArchive Desktop: Encryption card") in
+  words, with no link: the dashboard lives behind a per-session prefix, and X12 keeps session data
+  off the reader. (A deviation from §7.1's "a link".)
+- **The key-change confirmation** for a password unlock (K13): "This archive is unlocked here, so
+  its password can be changed without typing the current one. Anyone using this computer while it
+  is unlocked could do the same: encryption protects a copy of the archive that leaves this
+  computer, not this computer."
+- **The recovery file** is written by the server to a folder the person picks with the native
+  dialog (owner-only, never on the page), so "saved" is a fact for CRIT-01's branch; X14's
+  preview is owed.
+- **Forget the key** while unlocked by it locks the archive at once.
+- **Forget-all** (K8, beside uninstall) is in P3-3.
+- **E3's log** lives in `instance.Dir()` (where the record lives; %LOCALAPPDATA% on Windows, not
+  roaming), named by the archive id, rotated like the run log, owned by uninstall.
+- **Uninstall** refuses whole when a reader scratch file is held by a live reader ("close it, then
+  uninstall again"), and counts recorded encrypted archives among the kept archives (R36).
+- **Test seams:** keyring may export test-only hooks that panic outside a test binary (as
+  `vault.UseTestCost`).
+- **Out of P3-3:** Desktop verify -full; the program-copies step (P3-5 adds it to both front
+  ends); new X rows (P3-8).
 
 *Amended in P3-1a — what the slice built, and what stays pending:*
 - Built: `internal/keyring` (open by password, recovery key or remembered key; the recorded id

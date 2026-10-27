@@ -312,6 +312,14 @@ type LastVerify struct {
 	// Tier is an encrypted archive's check: 1 without the key, 2 with it (phase3
 	// §8); absent from a plaintext record and from one written before tiers were.
 	Tier int `json:"tier,omitempty"`
+	// LastChecked is when a check without the key last finished while a red a check
+	// with the key found stood: that red is kept with its own times, so staleness
+	// reads this (the P3-2b pass, REC-01). Encrypted records only.
+	LastChecked *time.Time `json:"last_checked,omitempty"`
+	// Standing is a red a check with the key found, kept beneath a newer red a check
+	// without the key found: neither hides the other, and it returns to the top once
+	// that newer red is gone (the P3-2b pass, REC-06). Encrypted records only.
+	Standing *LastVerify `json:"standing,omitempty"`
 	// Previous carries the last FINISHED verdict inside a "running" record, so
 	// a verify that never finishes (crash, kill, power loss) cannot erase it:
 	// status keeps judging it until a new verdict is final (F79). Absent on a
@@ -335,6 +343,42 @@ func LastVerdict(out string) *LastVerify {
 	return &v
 }
 
+// flatStanding is a standing verdict with nothing nested in it.
+func flatStanding(s *LastVerify) *LastVerify {
+	if s == nil {
+		return nil
+	}
+	c := *s
+	c.Previous, c.Standing = nil, nil
+	return &c
+}
+
+// StandingRed is the red a check with the key found that still stands in v (the
+// owner's ruling, design-encrypted-archives-phase3 §8): v itself when it is one,
+// else the one it keeps beneath a newer red; nil when none stands.
+func StandingRed(v *LastVerify) *LastVerify {
+	switch {
+	case v == nil:
+		return nil
+	case v.Status == VerifyDone && TierOf(v) == TierFull && OutcomeIsRed(v.Outcome):
+		return flatStanding(v)
+	}
+	return flatStanding(v.Standing)
+}
+
+// CheckedAt is when v's check last finished: its own finish, or a later check
+// without the key that kept it standing (LastChecked); zero while none finished.
+func (v LastVerify) CheckedAt() time.Time {
+	var t time.Time
+	if v.Finished != nil {
+		t = *v.Finished
+	}
+	if v.LastChecked != nil && v.LastChecked.After(t) {
+		t = *v.LastChecked
+	}
+	return t
+}
+
 // LastVerify statuses. A stopped check was ended on purpose (Ctrl-C, or Desktop's
 // Cancel; phase3 §8): like a running record it carries the last finished verdict
 // and has no outcome of its own.
@@ -350,16 +394,28 @@ const (
 func WriteLastVerify(out string, v LastVerify) error {
 	v.Version = 1
 	v.Status = util.StripControl(v.Status)
+	v.Standing = flatStanding(v.Standing)
 	if v.Previous != nil {
 		p := *v.Previous
 		p.Status, p.Previous = util.StripControl(p.Status), nil
+		p.Standing = flatStanding(p.Standing)
 		v.Previous = &p
 	}
 	data, err := marshalLastVerify(v)
 	if err != nil {
 		return err
 	}
-	path := filepath.Join(out, LastVerifyName)
+	if err := writeLastVerifyFile(out, data); err != nil {
+		return err
+	}
+	if v.Status == VerifyDone {
+		updateIntegritySidecar(out, v)
+	}
+	return nil
+}
+
+// writeLastVerifyFile replaces the last-verify record with data, atomically.
+func writeLastVerifyFile(out string, data []byte) error {
 	tmp, err := os.CreateTemp(out, ".mailarchive-lastverify-*.tmp")
 	if err != nil {
 		return err
@@ -378,13 +434,27 @@ func WriteLastVerify(out string, v LastVerify) error {
 		os.Remove(tmp.Name())
 		return err
 	}
-	if err := replaceFile(tmp.Name(), path); err != nil {
-		return err
+	return replaceFile(tmp.Name(), filepath.Join(out, LastVerifyName))
+}
+
+// SnapshotLastVerify keeps the last-verify record as it is now and returns what
+// puts it back exactly: its own bytes, or no record when there was none — so a
+// check whose key was locked part way records nothing, its running record
+// included (design-encrypted-archives-phase3 §8; the P3-2b pass, KEY-01, REC-02).
+// A record that could not be read is not rewritten from what was read of it: the
+// running record is removed, and the archive has no record.
+func SnapshotLastVerify(out string) (putBack func() error) {
+	path := filepath.Join(out, LastVerifyName)
+	data, err := util.ReadRegularFile(path, maxLastVerifySize)
+	if err != nil {
+		return func() error {
+			if err := os.Remove(path); err != nil && !errors.Is(err, fs.ErrNotExist) {
+				return err
+			}
+			return nil
+		}
 	}
-	if v.Status == VerifyDone {
-		updateIntegritySidecar(out, v)
-	}
-	return nil
+	return func() error { return writeLastVerifyFile(out, data) }
 }
 
 // updateIntegritySidecar writes verify's ARCHIVE-INTEGRITY-ATTENTION.txt when a
@@ -398,6 +468,10 @@ func updateIntegritySidecar(out string, v LastVerify) {
 	case v.Encrypted && OutcomeIsRed(v.Outcome):
 		_ = writeSidecarAtomic(path, []byte(encryptedIntegrityAttention(v)))
 	case v.Encrypted && v.Outcome == OutcomeIntact:
+		_ = os.Remove(path)
+	case v.Encrypted && TierOf(&v) == TierFull && v.Outcome == OutcomeNotAttested:
+		// A check with the key replaces the verdict before it, and found the messages
+		// intact: an earlier red notice no longer holds (the P3-2b pass, REC-03).
 		_ = os.Remove(path)
 	case v.Encrypted:
 		// not_attested or newer_format: no new finding, so an earlier notice stays.
@@ -460,7 +534,9 @@ func ReadLastVerify(out string) (LastVerify, LastVerifyState, error) {
 	}
 	if v.Previous != nil {
 		v.Previous.Previous = nil
+		v.Previous.Standing = flatStanding(v.Previous.Standing)
 	}
+	v.Standing = flatStanding(v.Standing)
 	if err := checkVerdicts(v); err != nil {
 		return v, LastVerifyUnreadable, err
 	}
@@ -495,6 +571,15 @@ func checkVerdicts(v LastVerify) error {
 		}
 		if o.Tier != 0 && o.Tier != TierKeyless && o.Tier != TierFull {
 			return errors.New("its check's tier is not one MailArchive writes")
+		}
+		// A standing verdict is only ever a finished red a check with the key found.
+		if s := o.Standing; s != nil && (!s.Encrypted || s.Status != VerifyDone || s.Tier != TierFull || !OutcomeIsRed(s.Outcome)) {
+			return errors.New("the verdict it keeps standing is not one MailArchive writes")
+		}
+	}
+	for _, o := range []*LastVerify{&v, v.Previous} {
+		if o != nil && !o.Encrypted && (o.Standing != nil || o.LastChecked != nil) {
+			return errors.New("its verify record is not one MailArchive writes")
 		}
 	}
 	return nil

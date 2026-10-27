@@ -54,18 +54,23 @@ func (s *sealedCheck) Load() (*state.Manifest, error) {
 	return m, nil
 }
 
-// Chunks opens every chunk the record names.
+// Chunks opens every chunk the record names, holding the key only while each one is
+// opened, never across the reads (the P3-2b pass, KEY-02).
 func (s *sealedCheck) Chunks(ctx context.Context) ([]container.ChunkProblem, error) {
-	if _, _, err := s.u.acquire(); err != nil {
-		return nil, checkLocked(err)
-	}
-	defer s.u.release()
-	p, err := s.store.CheckChunks(ctx)
+	p, err := s.store.CheckChunks(ctx, func() (func(), error) {
+		if _, _, err := s.u.acquire(); err != nil {
+			return nil, err
+		}
+		return s.u.release, nil
+	})
 	return p, checkLocked(err)
 }
 
 // FileList compares the record with the archive's file list.
 func (s *sealedCheck) FileList() ([]container.ListProblem, bool) { return s.store.CrossCheck() }
+
+// Marks is what the loaded record says it lacks.
+func (s *sealedCheck) Marks() (historyGap, indexBehind bool) { return s.store.RecordMarks() }
 
 // Unit reads one unit whole within the memory budget, holding the key only to name
 // and to open it (§3.2).
@@ -92,6 +97,11 @@ func (s *sealedCheck) Unit(ctx context.Context, rec state.Record, kind vault.Uni
 		return rel, checkLocked(err)
 	}
 	defer s.u.release()
-	_, err = (&export.Units{Root: s.out, Key: k}).Open(rec.Unit, kind, su, sealed)
-	return rel, checkLocked(err)
+	if _, err = (&export.Units{Root: s.out, Key: k}).Open(rec.Unit, kind, su, sealed); err != nil {
+		if locked := checkLocked(err); locked != err {
+			return rel, locked
+		}
+		return rel, fmt.Errorf("%w: %s: %w", app.ErrUnitDoesNotOpen, rel, err)
+	}
+	return rel, nil
 }

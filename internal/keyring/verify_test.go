@@ -11,6 +11,7 @@ import (
 
 	"mail-archive-tool/internal/app"
 	"mail-archive-tool/internal/assure"
+	"mail-archive-tool/internal/memguard"
 	"mail-archive-tool/internal/state"
 )
 
@@ -94,6 +95,111 @@ func TestVerifyFullOpensEveryMessage(t *testing.T) {
 
 	rep, err = VerifyFull(context.Background(), u, app.VerifyOptions{}, quiet, nil)
 	assure.Reached(t, err == nil && rep.Outcome == state.OutcomeIntact, "only verify -full clears it")
+}
+
+// covers: MA-803, R37
+// What the key's own reads find, on a real archive (the P3-2b pass, FID-02): a file
+// both checks see is listed once, by the key's finding — a message file gone or
+// changed in place is "unreadable"/"missing" with its part, red; a chunk changed in
+// place is named with its part, amber (FID-04); a search index behind its records,
+// which no chunk shows, is amber (VERD-05).
+func TestVerifyFullReadsWhatTheKeylessCheckCannot(t *testing.T) {
+	out, u := fullFixture(t)
+	unit := aUnitFile(t, out)
+	rel, _ := filepath.Rel(out, unit)
+	b, _ := os.ReadFile(unit)
+	os.Remove(unit)
+	rep, err := VerifyFull(context.Background(), u, app.VerifyOptions{}, quiet, nil)
+	summary := strings.Join(app.VerifySummary(rep), "\n")
+	if err != nil || strings.Count(summary, filepath.ToSlash(rel)) != 1 || !strings.Contains(summary, "missing: "+filepath.ToSlash(rel)+" (a message") {
+		t.Fatalf("a file both checks name is listed once, with its part: %v\n%s", err, summary)
+	}
+	os.WriteFile(unit, b, 0o600)
+	changed := append([]byte(nil), b...)
+	changed[len(changed)/2] ^= 1
+	os.WriteFile(unit, changed, 0o600)
+	rep, err = VerifyFull(context.Background(), u, app.VerifyOptions{}, quiet, nil)
+	summary = strings.Join(app.VerifySummary(rep), "\n")
+	if err != nil || rep.Outcome != state.OutcomeDamaged || !strings.Contains(summary, "unreadable: "+filepath.ToSlash(rel)) {
+		t.Fatalf("a message changed in place: %v\n%s", err, summary)
+	}
+	os.WriteFile(unit, b, 0o600)
+
+	// A chunk the record names, changed in place (chunks/ may also hold superseded
+	// ones the next backup removes, which the record does not name): each is tried
+	// until one is named.
+	var chunks []string
+	filepath.WalkDir(filepath.Join(out, "chunks"), func(p string, d fs.DirEntry, err error) error {
+		if err == nil && !d.IsDir() {
+			chunks = append(chunks, p)
+		}
+		return nil
+	})
+	named := false
+	for _, chunk := range chunks {
+		cb, _ := os.ReadFile(chunk)
+		cb[len(cb)/2] ^= 1
+		os.WriteFile(chunk, cb, 0o600)
+		crel, _ := filepath.Rel(out, chunk)
+		rep, err = VerifyFull(context.Background(), u, app.VerifyOptions{}, quiet, nil)
+		summary = strings.Join(app.VerifySummary(rep), "\n")
+		cb[len(cb)/2] ^= 1
+		os.WriteFile(chunk, cb, 0o600)
+		if strings.Contains(summary, filepath.ToSlash(crel)) {
+			if err != nil || rep.Outcome != state.OutcomeNotAttested || !strings.Contains(summary, "part ") {
+				t.Fatalf("a chunk changed in place: %v\n%s", err, summary)
+			}
+			named = true
+			break
+		}
+	}
+	if !named {
+		t.Fatal("no chunk the record names was found changed")
+	}
+
+	// A backup with indexing off leaves the index behind its records.
+	w, err := Open(out, Password(testPassword), OpenOptions{Write: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer w.Destroy()
+	box := filepath.Join(t.TempDir(), "Later")
+	os.WriteFile(box, []byte(strings.Replace(sampleMbox, "abc@example.com", "later@example.com", 1)), 0o600)
+	opts := app.Options{Inputs: []string{box}, Out: out, Index: false, KeepRaw: true}
+	done, err := Apply(&opts, w)
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, err = app.Run(context.Background(), opts, quiet, nil)
+	done()
+	if err != nil {
+		t.Fatal(err)
+	}
+	rep, err = VerifyFull(context.Background(), u, app.VerifyOptions{}, quiet, nil)
+	summary = strings.Join(app.VerifySummary(rep), "\n")
+	assure.Reached(t, err == nil && rep.Outcome == state.OutcomeNotAttested && strings.Contains(summary, "search index is missing messages"), "an index behind is amber")
+}
+
+// covers: MA-803, R37
+// The chunk pass holds the key per chunk: a lock that lands after the record was
+// read ends the pass with the lock, never damage and never a pass on a locked key
+// (the P3-2b pass, KEY-02).
+func TestALockAfterTheLoadEndsTheChunkPass(t *testing.T) {
+	_, u := fullFixture(t)
+	l, err := u.Lease()
+	if err != nil {
+		t.Fatal(err)
+	}
+	s := &sealedCheck{u: l, out: l.Out(), guard: memguard.Process}
+	if _, err := s.Load(); err != nil {
+		t.Fatal(err)
+	}
+	if p, err := s.Chunks(context.Background()); err != nil || len(p) != 0 {
+		t.Fatalf("positive twin: %v %v", p, err)
+	}
+	l.Lock()
+	_, err = s.Chunks(context.Background())
+	assure.Reached(t, errors.Is(err, app.ErrCheckLocked), "a lock after the load ends the chunk pass")
 }
 
 // covers: MA-799, R37

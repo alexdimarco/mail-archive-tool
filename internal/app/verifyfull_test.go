@@ -15,6 +15,7 @@ import (
 
 	"mail-archive-tool/internal/assure"
 	"mail-archive-tool/internal/container"
+	"mail-archive-tool/internal/export"
 	"mail-archive-tool/internal/health"
 	"mail-archive-tool/internal/lockfile"
 	"mail-archive-tool/internal/memguard"
@@ -34,9 +35,13 @@ type fakeSealed struct {
 	listOK   bool
 	unitErr  error
 	chunkErr error
+	// gap and behind are the record's own marks (Marks).
+	gap, behind bool
 	// onChunks and onUnit run as those reads do, for a stop or a change mid-check.
 	onChunks, onUnit func()
 }
+
+func (f *fakeSealed) Marks() (bool, bool) { return f.gap, f.behind }
 
 func (f *fakeSealed) Load() (*state.Manifest, error) { return f.m, f.loadErr }
 func (f *fakeSealed) Chunks(context.Context) ([]container.ChunkProblem, error) {
@@ -77,17 +82,23 @@ func TestAFullCheckCallsEachFindingByTheOwnersRules(t *testing.T) {
 		outcome string
 		names   []string
 	}{
-		"intact":                {fakeSealed{listOK: true}, state.OutcomeIntact, nil},
-		"a message missing":     {fakeSealed{listOK: true, unitErr: fs.ErrNotExist}, state.OutcomeDamaged, []string{"missing", "a message", "restore the whole archive folder"}},
-		"a message damaged":     {fakeSealed{listOK: true, unitErr: errors.New("does not open")}, state.OutcomeDamaged, []string{"unreadable", "a message's original"}},
-		"a message too large":   {fakeSealed{listOK: true, unitErr: memguard.ErrTooLarge}, state.OutcomeNotAttested, []string{"too large", "more memory"}},
-		"a record copy":         {fakeSealed{listOK: true, chunks: []container.ChunkProblem{{Path: "chunks/aa/x", Section: vault.ContainerManifest, Position: 2, Copy: 2, Kind: "modified"}}}, state.OutcomeNotAttested, []string{"chunks/aa/x", "part 2, copy 2 of 2", "run a backup"}},
-		"the search index":      {fakeSealed{listOK: true, chunks: []container.ChunkProblem{{Path: "chunks/bb/y", Section: vault.ContainerIndex, Position: 1, Kind: "missing"}}}, state.OutcomeNotAttested, []string{"the search index, part 1", "reindex -rebuild"}},
-		"the go-back timeline":  {fakeSealed{listOK: true, chunks: []container.ChunkProblem{{Path: "chunks/cc/z", Section: vault.ContainerHistory, Position: 0, Kind: "missing"}}}, state.OutcomeNotAttested, []string{"the go-back timeline, part 0", "messages are intact"}},
-		"the file list differs": {fakeSealed{listOK: true, list: []container.ListProblem{{Path: "units/dd/w", Kind: container.ListUnlisted}}}, state.OutcomeNotAttested, []string{"units/dd/w", "file list"}},
-		"no file list":          {fakeSealed{}, state.OutcomeNotAttested, []string{"file list could not be compared"}},
-		"an unfinished save":    {fakeSealed{loadErr: fmt.Errorf("%w: x", container.ErrUnfinishedSave)}, state.OutcomeUnfinishedSave, nil},
-		"a record unreadable":   {fakeSealed{loadErr: fmt.Errorf("%w: x", container.ErrRecord)}, state.OutcomeDamaged, []string{"restore the whole archive folder"}},
+		"intact":                 {fakeSealed{listOK: true}, state.OutcomeIntact, nil},
+		"a message missing":      {fakeSealed{listOK: true, unitErr: fs.ErrNotExist}, state.OutcomeDamaged, []string{"missing", "a message", "restore the whole archive folder"}},
+		"a message damaged":      {fakeSealed{listOK: true, unitErr: fmt.Errorf("%w: x", ErrUnitDoesNotOpen)}, state.OutcomeDamaged, []string{"unreadable", "a message's original"}},
+		"not its record's bytes": {fakeSealed{listOK: true, unitErr: fmt.Errorf("%w: x", export.ErrUnitStore)}, state.OutcomeDamaged, []string{"unreadable"}},
+		"a message too large":    {fakeSealed{listOK: true, unitErr: memguard.ErrTooLarge}, state.OutcomeNotAttested, []string{"too large=2", "memory limit"}},
+		// Access or a drive error is not lost mail (the P3-2b pass, CRIT-05).
+		"not readable here": {fakeSealed{listOK: true, unitErr: fs.ErrPermission}, state.OutcomeNotAttested, []string{"could not be read here=2", "fix that, then check again"}},
+		// What the record itself says it lacks (VERD-05).
+		"a go-back gap in the record": {fakeSealed{listOK: true, gap: true}, state.OutcomeNotAttested, []string{"go-back timeline was lost", "messages are intact"}},
+		"an index behind its record":  {fakeSealed{listOK: true, behind: true}, state.OutcomeNotAttested, []string{"search index is missing messages", "reindex -rebuild"}},
+		"a record copy":               {fakeSealed{listOK: true, chunks: []container.ChunkProblem{{Path: "chunks/aa/x", Section: vault.ContainerManifest, Position: 2, Copy: 2, Kind: "modified"}}}, state.OutcomeNotAttested, []string{"chunks/aa/x", "part 2, copy 2 of 2", "run a backup"}},
+		"the search index":            {fakeSealed{listOK: true, chunks: []container.ChunkProblem{{Path: "chunks/bb/y", Section: vault.ContainerIndex, Position: 1, Kind: "missing"}}}, state.OutcomeNotAttested, []string{"the search index, part 1", "reindex -rebuild"}},
+		"the go-back timeline":        {fakeSealed{listOK: true, chunks: []container.ChunkProblem{{Path: "chunks/cc/z", Section: vault.ContainerHistory, Position: 0, Kind: "missing"}}}, state.OutcomeNotAttested, []string{"the go-back timeline, part 0", "messages are intact"}},
+		"the file list differs":       {fakeSealed{listOK: true, list: []container.ListProblem{{Path: "units/dd/w", Kind: container.ListUnlisted}}}, state.OutcomeNotAttested, []string{"units/dd/w", "file list"}},
+		"no file list":                {fakeSealed{}, state.OutcomeNotAttested, []string{"file list could not be compared"}},
+		"an unfinished save":          {fakeSealed{loadErr: fmt.Errorf("%w: x", container.ErrUnfinishedSave)}, state.OutcomeUnfinishedSave, nil},
+		"a record unreadable":         {fakeSealed{loadErr: fmt.Errorf("%w: x", container.ErrRecord)}, state.OutcomeDamaged, []string{"restore the whole archive folder"}},
 	} {
 		t.Run(name, func(t *testing.T) {
 			out := sealedArchive(t)
@@ -132,7 +143,7 @@ func TestAKeylessCheckKeepsAFullChecksRed(t *testing.T) {
 	}
 	summary := strings.Join(VerifySummary(rep), "\n")
 	if rep.Outcome != state.OutcomeIntact || rep.StandingOutcome != state.OutcomeDamaged || rep.ExitCode() != 2 || rep.Attested() ||
-		!strings.Contains(summary, "on 2026-10-20") || !strings.Contains(summary, "only `mailarchive verify -full` can clear it") {
+		!strings.Contains(summary, "on 2026-10-20") || !strings.Contains(summary, "cannot see inside the messages: it stands until `mailarchive verify -full` passes") {
 		t.Fatalf("report %+v:\n%s", rep, summary)
 	}
 	v, _, _ := state.ReadLastVerify(out)

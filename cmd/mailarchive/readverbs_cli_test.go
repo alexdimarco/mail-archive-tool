@@ -3,18 +3,21 @@ package main
 import (
 	"context"
 	"errors"
+	"flag"
 	"io"
 	"io/fs"
 	"log"
 	"os"
 	"path/filepath"
 	"strings"
+	"sync/atomic"
 	"testing"
 
 	"mail-archive-tool/internal/app"
 	"mail-archive-tool/internal/assure"
 	"mail-archive-tool/internal/encrecord"
 	"mail-archive-tool/internal/keyring"
+	"mail-archive-tool/internal/lockfile"
 	"mail-archive-tool/internal/vault"
 )
 
@@ -183,6 +186,46 @@ func TestVerifyFullAtTheCommandLine(t *testing.T) {
 	code, msg = refused(runVerify([]string{"-out", plain, "-full", "-password-file", pwFile}))
 	assure.Refused(t, code, msg, assure.Code(1), assure.Names("-full", "not one this computer can check", plain),
 		assure.NoSideEffect(func() bool { return len(filesUnder(t, plain)) == 0 }))
+}
+
+// covers: MA-803, R37
+// verify -full at the command line, after the P3-2b pass: a busy archive is refused
+// before any key is asked or derived — a wrong password file is not what is told
+// (FID-07); key flags on an archive that is not encrypted say so, never "add -full"
+// (FID-07); a stopped check with the key names -full in how to finish it (KEY-03).
+func TestVerifyFullAfterThePass(t *testing.T) {
+	out, pwFile := backedUpArchive(t)
+	wrong := filepath.Join(t.TempDir(), "wrong")
+	os.WriteFile(wrong, []byte("not the password at all\n"), 0o600)
+	holder, err := lockfile.AcquireAs(filepath.Join(out, lockfile.Name), "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	code, msg := refused(runVerify([]string{"-out", out, "-full", "-password-file", wrong}))
+	assure.Refused(t, code, msg, assure.Code(1), assure.Names(out, "being written"), assure.Forbid("password"))
+	holder.Release()
+
+	plain := t.TempDir()
+	code, msg = refused(runVerify([]string{"-out", plain, "-password-file", pwFile}))
+	assure.Refused(t, code, msg, assure.Code(1), assure.Names("-password-file", "not encrypted"), assure.Forbid("add -full"))
+
+	u, err := keyring.Open(out, keyring.Password(flowPassword), keyring.OpenOptions{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer u.Destroy()
+	fs := flag.NewFlagSet("verify", flag.ContinueOnError)
+	o := verifyFlags(fs)
+	fs.Parse([]string{"-out", out})
+	o.keyed = u
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	var stopCode atomic.Int32
+	stopCode.Store(130)
+	var stderr strings.Builder
+	err = checkArchive(ctx, o, log.New(io.Discard, "", 0), &stopCode, &stderr)
+	var ee *exitError
+	assure.Reached(t, errors.As(err, &ee) && ee.code == 130 && strings.Contains(stderr.String(), "mailarchive verify -full -out"), "the stop names -full")
 }
 
 // covers: MA-797, R37

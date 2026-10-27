@@ -77,10 +77,15 @@ const (
 const (
 	surfaceLocalItem   = "Archive a mail file on this computer (Outlook, Thunderbird, mbox)"
 	surfaceDesktopItem = "Microsoft 365, folder export, browsing & tools (open MailArchive Desktop)"
+	// surfaceOpenItem opens an archive someone already has — from another computer,
+	// a drive or a backup copy, encrypted or not — in MailArchive Desktop, where its
+	// "Open an archive folder…" button is and where an encrypted one is unlocked: the
+	// wizard never asks for a password (design-encrypted-archives-phase3 §7.1, K11).
+	surfaceOpenItem = "Open an archive folder I already have, encrypted or not (in MailArchive Desktop)"
 )
 
 // surfaceChoices is the first step's list, local item first (and defaulted).
-var surfaceChoices = []string{surfaceLocalItem, surfaceDesktopItem}
+var surfaceChoices = []string{surfaceLocalItem, surfaceDesktopItem, surfaceOpenItem}
 
 // OpenDesktop launches MailArchive Desktop in the SAME process (MA-612/R33 — never a
 // child). The cmd layer wires it: it may import internal/desktop, but the wizard may
@@ -400,7 +405,9 @@ type wizardChoice struct {
 // Desktop (the Microsoft 365 / tools surface) rather than continuing into the
 // local-file wizard. Pure, so MA-651 tables it: only the Desktop item opens
 // Desktop; the local item, an empty pick and anything else stay local.
-func surfaceOpensDesktop(pick string) bool { return pick == surfaceDesktopItem }
+func surfaceOpensDesktop(pick string) bool {
+	return pick == surfaceDesktopItem || pick == surfaceOpenItem
+}
 
 // openDesktopSurface hands off to MailArchive Desktop IN-PROCESS (MA-612/R33 — never
 // a child). If the cmd layer wired no launcher, it names the command instead of

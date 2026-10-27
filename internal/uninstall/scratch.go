@@ -10,6 +10,7 @@ import (
 	"strings"
 
 	"mail-archive-tool/internal/job"
+	"mail-archive-tool/internal/lockfile"
 	"mail-archive-tool/internal/util"
 )
 
@@ -29,6 +30,12 @@ var readerScratch = regexp.MustCompile(`^reader-([0-9]+)-[0-9]+\.db(\.lock)?$`)
 // folder holds something it never writes: removing what it does not know could
 // delete someone's files, so nothing is removed and the owner is told where to look.
 var ErrScratchUnexpected = errors.New("MailArchive's working folder holds something MailArchive did not put there")
+
+// ErrScratchInUse refuses the whole uninstall because a reader of an encrypted
+// archive — `mailarchive serve` or `search`, or another MailArchive Desktop — still
+// has its working copy of the search index open: nothing is removed (design-encrypted-
+// archives-phase3 §7.4; the P3-3 plan, 3c).
+var ErrScratchInUse = errors.New("an encrypted archive is still open in another MailArchive window or command (serve or search) — close it, then uninstall again")
 
 // ScratchTargets is what uninstall removes of the scratch folder at root, deepest
 // first: the files an encrypted archive's run leaves — -copy-first snapshots in
@@ -98,7 +105,19 @@ func ScratchTargets(root string, knownArchives []string) ([]string, error) {
 				if !e.Type().IsRegular() || !owned(e.Name()) {
 					return nil, unexpected(filepath.Join(sub, e.Name()))
 				}
-				files = append(files, filepath.Join(sub, e.Name()))
+				p := filepath.Join(sub, e.Name())
+				// A live reader holds its scratch index under an OS lock on the lock file
+				// beside it (app.HoldReaderScratch): taken here for the instant, never kept.
+				if strings.HasSuffix(e.Name(), ".db.lock") {
+					f, herr := lockfile.HoldFile(p)
+					if errors.Is(herr, lockfile.ErrHeld) {
+						return nil, fmt.Errorf("%w (%s)", ErrScratchInUse, p)
+					}
+					if f != nil {
+						f.Close()
+					}
+				}
+				files = append(files, p)
 			}
 			dirs = append(dirs, sub)
 		}

@@ -41,6 +41,7 @@ import (
 	"mail-archive-tool/internal/graphconfig"
 	"mail-archive-tool/internal/index"
 	"mail-archive-tool/internal/keyring"
+	"mail-archive-tool/internal/lockfile"
 	"mail-archive-tool/internal/outlookcom"
 	"mail-archive-tool/internal/runlog"
 	"mail-archive-tool/internal/schedule"
@@ -846,6 +847,11 @@ func runVerify(args []string) error {
 		if *o.unattended {
 			return errNeedsKeyToRead(dir, "checking it with its key (-full)")
 		}
+		// A busy archive needs no key to refuse: before any password is asked or
+		// derived (the P3-2b pass, FID-07).
+		if lockfile.Held(filepath.Join(dir, lockfile.Name)) {
+			return fmt.Errorf("%w: %s is being written by another MailArchive (a backup or another check) — check it once that finishes", lockfile.ErrHeld, dir)
+		}
 		if err := readKeyAvailable(stdAsker(), dir, "checking it with its key (-full)", k); err != nil {
 			return err
 		}
@@ -858,6 +864,11 @@ func runVerify(args []string) error {
 		}
 		defer u.Destroy()
 		o.keyed = u
+	case !app.EncryptedArchiveAt(dir):
+		// Not encrypted: -full would be refused too, so it is not offered (FID-07).
+		if err := refuseReadKeyFlags(fs); err != nil {
+			return err
+		}
 	default:
 		if given := readKeyFlagsGiven(fs); given != "" {
 			return fmt.Errorf("%s: for the check with the key — add -full, or leave them out", given)
@@ -904,7 +915,13 @@ func checkArchive(ctx context.Context, o *verifyOpts, logger *log.Logger, stopCo
 		rep, verr = app.Verify(abspath(*o.out), app.VerifyOptions{Record: *o.record, Ctx: ctx}, logger, nil)
 	}
 	if errors.Is(verr, app.ErrVerifyStopped) {
-		fmt.Fprintf(stderr, "mailarchive: verify stopped: the archive was not fully checked and no new verdict was recorded; the last finished verdict still stands (see `mailarchive status`). Run `mailarchive verify -out %q` again to finish.\n", abspath(*o.out))
+		// A stopped check with the key is finished only by another (the P3-2b pass,
+		// KEY-03).
+		again := fmt.Sprintf("mailarchive verify -out %q", abspath(*o.out))
+		if o.keyed != nil {
+			again = fmt.Sprintf("mailarchive verify -full -out %q", abspath(*o.out))
+		}
+		fmt.Fprintf(stderr, "mailarchive: verify stopped: the archive was not fully checked and no new verdict was recorded; the last finished verdict still stands (see `mailarchive status`). Run `%s` again to finish.\n", again)
 		return &exitError{code: int(stopCode.Load())}
 	}
 	if verr != nil {
@@ -995,7 +1012,7 @@ func verifyUsage(fs *flag.FlagSet) func() {
 
 Usage:
   mailarchive verify -out DIR [-json] [-record]
-  mailarchive verify -out DIR -full [-password-file FILE | -recovery-key-file FILE] [-json]
+  mailarchive verify -out DIR -full [-password-file FILE | -recovery-key-file FILE] [-remember] [-json]
 
 Re-hashes every archived file the manifest records and reports each as ok,
 modified, missing or unrecorded, plus any stray file as unexpected. Fixity is
@@ -1003,11 +1020,11 @@ detected for files written by this version or later, or baselined with -record.
 
 An encrypted archive is checked without its key: every file present and
 unchanged. With -full it is checked with its key: every file opened, every
-message read, each damaged file named. Only -full clears what -full found.
+message read, each damaged file named. Only -full clears a red -full found.
 
 Exit: 0 attested (every recorded file checked and intact, none unrecorded);
 2 not attested (any modified/missing/unrecorded, each named); 1 refusal/error;
-130 or 143 stopped by Ctrl-C or a terminate signal (nothing recorded).
+130 or 143 stopped by Ctrl-C or a terminate signal (no new verdict recorded).
 
 verify holds the archive's exclusive lock for its whole run, so a scheduled
 backup that fires meanwhile refuses — run verify OUTSIDE the backup window.

@@ -51,10 +51,11 @@ func keyVerbFlags(name, usage string, args []string, opens bool, extra func(*fla
 // remembered asks the K13 confirmation when the remembered key, not a secret the
 // person gave, authorises a key change.
 func confirmByRemembered(a asker, u *keyring.Unlocked, what string) error {
-	if u.How() != keyring.ByRememberedKey {
+	question := keyring.KeyChangeQuestion(u.How(), false, what)
+	if question == "" {
 		return nil
 	}
-	ok, err := askYes(a, "This computer remembers the archive's key, so "+what+" without the current password. Anyone using this computer's account could do the same: encryption protects a copy of the archive that leaves this computer, not this computer. Go ahead?", false)
+	ok, err := askYes(a, question, false)
 	if err != nil {
 		return err
 	}
@@ -160,24 +161,16 @@ func newRecoveryKey(a asker, out string, k *keyFlags) error {
 	return nil
 }
 
-// earlierKeyWarning is what a new recovery key does not withdraw (§9.2, §9.4): the
-// master key is never re-keyed.
-const earlierKeyWarning = "The earlier recovery key no longer opens this archive's key file. But together with a recovery file, a key file or a copy of the archive saved with it, it still opens the archive — destroy recovery files saved with your earlier recovery key, and those copies."
-
-// noRecoveryFileWarning replaces it when no recovery file was saved for the new key:
-// the earlier pair is then the only way to put back lost key files (the P3-1b pass,
-// CRIT-01).
-const noRecoveryFileWarning = "The earlier recovery key no longer opens this archive's key file. No recovery file was saved for the new recovery key, so it cannot put back lost key files — your earlier recovery file still can, with your earlier recovery key: keep that pair together and safe. If it was exposed, destroy it, and save a new recovery file now with `mailarchive new-recovery-key -out DIR -recovery-file-out FILE`. A copy of the archive or a key file saved with the earlier recovery key still opens with it."
-
 // sayWithdrawal says what a new recovery key does and does not withdraw, by whether
-// its recovery file was saved.
+// its recovery file was saved (§9.2, §9.4; the P3-1b pass, CRIT-01): the master key
+// is never re-keyed.
 func sayWithdrawal(a asker, k *keyFlags) {
 	if k.recoveryFileOut == nil || *k.recoveryFileOut == "" {
-		a.say("%s", noRecoveryFileWarning)
+		a.say("%s", keyring.NoRecoveryFileWarning("`mailarchive new-recovery-key -out DIR -recovery-file-out FILE`"))
 		return
 	}
-	a.say("%s", earlierKeyWarning)
-	a.say("%s", recoveryFileNote)
+	a.say("%s", keyring.EarlierKeyWarning)
+	a.say("%s", keyring.RecoveryFileNote)
 }
 
 // askRecoveryFileOut offers to save the new recovery key's recovery file when
@@ -195,7 +188,7 @@ func askRecoveryFileOut(a asker, k *keyFlags, out string) error {
 		if ans = strings.TrimSpace(ans); ans == "" {
 			return nil
 		}
-		if _, err := checkNewFileOut("The recovery file", "the recovery file", ans, out); err != nil {
+		if _, err := keyring.CheckNewFileOut("The recovery file", "the recovery file", ans, out); err != nil {
 			a.say("%v", err)
 			continue
 		}

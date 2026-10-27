@@ -75,6 +75,8 @@ func kindLine(kind string) string {
 		return "This archive holds both Microsoft 365 mail and mail from local files (for example Thunderbird)."
 	case kindEmpty:
 		return "This archive has no mail in it yet."
+	case kindEncrypted:
+		return "This archive is encrypted: its messages, its search index and what it was made from are sealed, and open only with its password or recovery key." // MA-731
 	}
 	return ""
 }

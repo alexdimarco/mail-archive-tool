@@ -8,6 +8,8 @@ import (
 	"os"
 	"strings"
 
+	"mail-archive-tool/internal/app"
+	"mail-archive-tool/internal/keyring"
 	"mail-archive-tool/internal/schedule"
 	"mail-archive-tool/internal/server"
 	"mail-archive-tool/internal/wizard"
@@ -119,6 +121,12 @@ func (d *dashboard) scheduleInstall(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	out := d.cfg.effectiveOut()
+	// An encrypted archive is never scheduled (phase3 O5): refused before any setting
+	// is written, in schedule.Install's own words (the P3-3 plan, 3b).
+	if archiveKind(out) == kindEncrypted {
+		writeJSON(w, map[string]any{"ok": false, "error": schedule.ErrEncryptedArchive.Error() + ": scheduled backups of an encrypted archive are not available yet; nothing was installed"})
+		return
+	}
 	// A LOCAL Thunderbird/mbox archive (local stores, no Microsoft 365) schedules a
 	// RUN-JOB that re-archives it — the Desktop's local-schedule card — reconstructed
 	// from the archive's OWN record and carrying the optional pre-sync, never a
@@ -319,15 +327,57 @@ func (d *dashboard) runBackup(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "refused: same-origin, tokened, local requests only", http.StatusForbidden)
 		return
 	}
-	ev := schedule.BuildKindEvidence(d.cfg.effectiveOut())
+	out := d.cfg.effectiveOut()
+	ev := schedule.BuildKindEvidence(out)
 	if !ev.Has(schedule.KindRunJob) || ev.JobPath == "" {
 		writeJSON(w, map[string]any{"ok": false, "error": "this archive has no run-job backup to run here"})
 		return
 	}
 	jobPath := ev.JobPath
+	if archiveKind(out) == kindEncrypted {
+		d.runBackupKeyed(w, out, jobPath)
+		return
+	}
 	if err := d.runJob(func(logger *log.Logger) (string, error) {
 		return wizard.RunJobInProcess(jobPath, logger)
 	}); err != nil {
+		writeJSON(w, map[string]any{"ok": false, "error": err.Error()})
+		return
+	}
+	writeJSON(w, map[string]any{"ok": true})
+}
+
+// runBackupKeyed is Run now for an encrypted archive (design-encrypted-archives-
+// phase3 §3.2, §3.6, §6; the P3-3 plan, 3d): only while it is unlocked here, on a
+// write lease of its own, taken as Run now is clicked — so a Lock, an idle lock or a
+// switch after it does not stop the run — and destroyed when the run ends, or at
+// once if the run cannot start; healed first, a failed heal only a warning, a fork
+// never healed. Shut down cancels it.
+func (d *dashboard) runBackupKeyed(w http.ResponseWriter, out, jobPath string) {
+	e := d.cfg.Keys.get(out)
+	if e == nil {
+		writeJSON(w, map[string]any{"ok": false, "error": "This encrypted archive is locked: unlock it on its Encryption card, then click Run now again."})
+		return
+	}
+	lease, err := e.u.LeaseForWrite(keyring.OpenOptions{Store: d.cfg.Store})
+	if err != nil {
+		writeJSON(w, map[string]any{"ok": false, "error": err.Error()})
+		return
+	}
+	if err := d.runJob(func(logger *log.Logger) (string, error) {
+		defer lease.Destroy()
+		if lease.NeedsHeal() && !lease.Forked() {
+			if herr := keyring.Heal(lease); herr != nil {
+				logger.Printf("warning: one copy of this archive's key file is damaged and could not be rewritten: %v", herr)
+			} else {
+				logger.Printf("The damaged copy of this archive's key file was rewritten from the good one.")
+			}
+		}
+		return wizard.RunJobInProcessKeyed(d.life.Context(), jobPath, logger, func(o *app.Options) (func(), error) {
+			return keyring.Apply(o, lease)
+		})
+	}); err != nil {
+		lease.Destroy() // the run never started: its key goes now
 		writeJSON(w, map[string]any{"ok": false, "error": err.Error()})
 		return
 	}

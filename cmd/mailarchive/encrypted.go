@@ -6,18 +6,12 @@ import (
 	"fmt"
 	"io"
 	"os"
-	"path/filepath"
 	"strings"
 
-	"golang.org/x/text/unicode/norm"
-
-	"mail-archive-tool/internal/encmark"
 	"mail-archive-tool/internal/graphconfig"
 	"mail-archive-tool/internal/keyring"
 	"mail-archive-tool/internal/tty"
-	"mail-archive-tool/internal/util"
 	"mail-archive-tool/internal/vault"
-	"mail-archive-tool/internal/winsec"
 )
 
 // keyFlags are export's and graph's encryption flags (design-encrypted-archives-phase3
@@ -178,15 +172,13 @@ func (a ttyAsker) line(prompt string) (string, error) { return tty.ReadLine(a.in
 
 func (a ttyAsker) say(format string, args ...any) { fmt.Fprintf(a.out, format+"\n", args...) }
 
-// recoveryWarning is the G4 warning, shown in full with every recovery key.
-const recoveryWarning = "Save this recovery key in your password manager now. If you lose both your password and this key, the archive can never be opened — not by you, not by us. There is no reset."
-
+// showKey shows the recovery key with the G4 warning in full (keyring.RecoveryWarning).
 func (a ttyAsker) showKey(key string) error {
 	erase := tty.CanErase(a.out)
 	if erase {
 		fmt.Fprint(a.out, "\x1b[?1049h\x1b[H\x1b[2J")
 	}
-	fmt.Fprintf(a.out, "Your recovery key:\n\n    %s\n\n%s\n\n", key, recoveryWarning)
+	fmt.Fprintf(a.out, "Your recovery key:\n\n    %s\n\n%s\n\n", key, keyring.RecoveryWarning)
 	if !erase {
 		fmt.Fprintln(a.out, "This terminal cannot take the key off the screen afterwards: once you have saved it, clear the screen and its scrollback yourself.")
 	}
@@ -258,24 +250,17 @@ func askYes(a asker, question string, def bool) (bool, error) {
 	}
 }
 
-// passwordHint is said before a new password is asked for (§5.1 step 2).
-const passwordHint = "Use at least 12 characters; a longer phrase is stronger. A copy of the archive made before you change the password keeps the old one."
-
-// askNewPassword asks for a new password twice, checking its length before any key
-// is made from it.
+// askNewPassword asks for a new password twice, checking it before any key is made
+// from it.
 func askNewPassword(a asker) (string, error) {
-	a.say("%s", passwordHint)
+	a.say("%s", keyring.PasswordHint)
 	for tries := 0; tries < 3; tries++ {
 		pw, err := a.secret("Choose a password: ")
 		if err != nil {
 			return "", err
 		}
-		if n := len([]rune(norm.NFC.String(pw))); n < vault.MinPasswordRunes {
-			a.say("That has %d characters; use at least %d (a passphrase of several words is easiest).", n, vault.MinPasswordRunes)
-			continue
-		}
-		if err := keyring.CheckNewPassword(pw); err != nil {
-			a.say("That password reads as a recovery key, so it could not be typed at a prompt; choose another.")
+		if problem := keyring.NewPasswordProblem(pw); problem != "" {
+			a.say("%s", problem)
 			continue
 		}
 		again, err := a.secret("Type it again: ")
@@ -319,72 +304,20 @@ func confirmRecoveryKey(a asker, key string) error {
 // checkRecoveryKeyOut refuses a -recovery-key-out inside the archive folder or any
 // encrypted archive, or over a file that exists, before anything is asked.
 func checkRecoveryKeyOut(path, out string) (string, error) {
-	return checkNewFileOut("-recovery-key-out", "the recovery key", path, out)
-}
-
-// checkNewFileOut refuses a new file (flag names it, what says what it holds)
-// inside the archive folder or any encrypted archive, or over a file that exists.
-func checkNewFileOut(flag, what, path, out string) (string, error) {
-	abs := abspath(path)
-	if util.Within(util.ResolveExisting(out), util.ResolveExisting(abs)) {
-		return "", fmt.Errorf("%s %s is inside the archive folder %s; save %s outside it", flag, abs, out, what)
-	}
-	if dir, why, _ := encmark.AtOrAbove(filepath.Dir(abs)); dir != "" {
-		return "", fmt.Errorf("%s %s is inside the encrypted archive %s (%s); save %s outside every archive", flag, abs, dir, why, what)
-	}
-	if _, err := os.Lstat(abs); err == nil {
-		return "", fmt.Errorf("%s %s already exists; choose a new file", flag, abs)
-	}
-	return abs, nil
+	return keyring.CheckNewFileOut("-recovery-key-out", "the recovery key", path, out)
 }
 
 // writeRecoveryKeyFile saves the recovery key to a NEW file outside the archive and
 // every encrypted archive (§5.2), once the key was entered again and just before it
 // is committed (the P3-1a pass, SEC-01).
 func writeRecoveryKeyFile(path, out string, id vault.ID, key string) (string, error) {
-	return writeNewFile("-recovery-key-out", "the recovery key", path, out, []byte(keyring.RecoveryKeyFileText(id, key)))
+	return keyring.WriteNewFile("-recovery-key-out", "the recovery key", path, out, []byte(keyring.RecoveryKeyFileText(id, key)))
 }
 
 // writeRecoveryFileOut saves the recovery file (§9.4) to a NEW file, the same way:
 // it opens nothing without the recovery key, but is kept as carefully.
 func writeRecoveryFileOut(path, out string, data []byte) (string, error) {
-	return writeNewFile("-recovery-file-out", "the recovery file", path, out, data)
-}
-
-// writeNewFile makes a NEW file owner-only and only then writes data, flushed and
-// its folder synced (the P3-1a pass, SEC-09). If it cannot be restricted, it is
-// removed and the run refused: a recovery key or file is never left where others
-// may read it.
-func writeNewFile(flag, what, path, out string, data []byte) (string, error) {
-	abs, err := checkNewFileOut(flag, what, path, out)
-	if err != nil {
-		return "", err
-	}
-	f, err := os.OpenFile(abs, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0o600)
-	if err != nil {
-		if errors.Is(err, os.ErrExist) {
-			return "", fmt.Errorf("%s %s already exists; choose a new file", flag, abs)
-		}
-		return "", fmt.Errorf("%s %s: %w", flag, abs, err)
-	}
-	if err := winsec.RestrictToOwner(abs); err != nil {
-		f.Close()
-		os.Remove(abs)
-		return "", fmt.Errorf("%s %s could not be made readable only by you (%v); nothing was saved — choose a folder of your own, or leave out %s", flag, abs, err, flag)
-	}
-	_, werr := f.Write(data)
-	if werr == nil {
-		werr = f.Sync()
-	}
-	if cerr := f.Close(); werr == nil {
-		werr = cerr
-	}
-	if werr != nil {
-		os.Remove(abs)
-		return "", fmt.Errorf("%s %s could not be written: %w", flag, abs, werr)
-	}
-	util.SyncDir(filepath.Dir(abs))
-	return abs, nil
+	return keyring.WriteNewFile("-recovery-file-out", "the recovery file", path, out, data)
 }
 
 // saveKeyCopies writes the -recovery-key-out and -recovery-file-out copies of a new
@@ -423,7 +356,7 @@ func checkKeyCopies(k *keyFlags, out string) error {
 		}
 	}
 	if k.recoveryFileOut != nil && *k.recoveryFileOut != "" {
-		if _, err := checkNewFileOut("-recovery-file-out", "the recovery file", *k.recoveryFileOut, out); err != nil {
+		if _, err := keyring.CheckNewFileOut("-recovery-file-out", "the recovery file", *k.recoveryFileOut, out); err != nil {
 			return err
 		}
 	}
@@ -437,9 +370,6 @@ func voidFiles(a asker, paths []string) {
 	}
 }
 
-// recoveryFileNote is said when a recovery file is saved.
-const recoveryFileNote = "The recovery file opens nothing on its own: with the recovery key it puts back the archive's key files if they are lost (`mailarchive restore-key-file`). Keep it with your backups, and the recovery key apart from it."
-
 // voidRecoveryKeyFile overwrites and removes a -recovery-key-out file whose key never
 // took effect, so it is not later mistaken for the archive's recovery key, and says
 // so (the P3-1a pass, SEC-01, CON-03).
@@ -447,14 +377,7 @@ func voidRecoveryKeyFile(a asker, path string) {
 	if path == "" {
 		return
 	}
-	if f, err := os.OpenFile(path, os.O_WRONLY, 0); err == nil {
-		if fi, serr := f.Stat(); serr == nil {
-			f.Write(make([]byte, fi.Size()))
-			f.Sync()
-		}
-		f.Close()
-	}
-	if err := os.Remove(path); err != nil && !errors.Is(err, os.ErrNotExist) {
+	if err := keyring.VoidFile(path); err != nil {
 		a.say("warning: %s holds a recovery key that is NOT in effect and could not be removed (%v) — delete it yourself", path, err)
 		return
 	}
@@ -532,7 +455,7 @@ func createEncrypted(a asker, out string, k *keyFlags, rememberSet bool, credent
 		return nil, err
 	}
 	if k.recoveryFileOut != nil && *k.recoveryFileOut != "" {
-		a.say("%s", recoveryFileNote)
+		a.say("%s", keyring.RecoveryFileNote)
 	}
 	for _, w := range u.Warnings() {
 		a.say("warning: %s", w)
@@ -617,14 +540,7 @@ func openBySecret(a asker, out string, k *keyFlags, store vault.Store, o keyring
 			if perr != nil {
 				return nil, perr
 			}
-			s := keyring.Typed(typed)
-			u, err = keyring.Open(out, s, o)
-			// What reads as a recovery key may be a password of that shape set before
-			// such passwords were refused: tried as one too, through a whole open, so
-			// its own cost question is asked (the P3-1a pass, SEC-03, CRIT-10).
-			if errors.Is(err, vault.ErrWrongSecret) && s.IsRecoveryKey() {
-				u, err = keyring.Open(out, keyring.Password(typed), o)
-			}
+			u, err = keyring.OpenTyped(out, typed, o)
 			if !errors.Is(err, vault.ErrWrongSecret) {
 				break
 			}

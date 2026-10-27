@@ -6,6 +6,7 @@ import (
 	"time"
 
 	"mail-archive-tool/internal/archindex"
+	"mail-archive-tool/internal/encmark"
 	"mail-archive-tool/internal/seal"
 	"mail-archive-tool/internal/state"
 )
@@ -33,6 +34,11 @@ type ArchiveRow struct {
 	// local mail folder) has been unreachable past the surface threshold (§5.7, S3-C6); ""
 	// when the source is reachable or the streak has not crossed the threshold.
 	SourceLostSince string
+	// Problem is, for a folder this computer recorded as an encrypted archive that no
+	// longer holds it — emptied, replanted, a link, its key files gone — that case's
+	// own words (design-encrypted-archives-phase3 §4.5): shown in place of Switch and
+	// Pause, never as a normal archive (the P3-3 plan, 3b).
+	Problem string
 }
 
 // KindLabel is the short, plain-words form of Kind for the archive list ("" when
@@ -47,6 +53,8 @@ func (r ArchiveRow) KindLabel() string {
 		return "Microsoft 365 + local files"
 	case kindEmpty:
 		return "empty"
+	case kindEncrypted:
+		return "encrypted" // MA-731
 	}
 	return ""
 }
@@ -113,16 +121,38 @@ func (cfg Config) archiveRows(idx archindex.Index) []ArchiveRow {
 		if avail {
 			kind = archindex.Kind(e.Path)
 		}
+		problem := ""
+		if kind == archindex.KindEncrypted {
+			problem = recordedProblem(e.Path)
+		}
 		rows = append(rows, ArchiveRow{
 			Path:            e.Path,
 			Current:         current != "" && cleanPath(e.Path) == current,
-			Available:       avail,
+			Available:       avail && problem == "",
 			Sealed:          seal.IsSealed(e.Path),
 			Kind:            kind,
 			SourceLostSince: sourceLostSince(e.Path),
+			Problem:         problem,
 		})
 	}
 	return rows
+}
+
+// recordedProblem is, for a folder this computer recorded as an encrypted archive,
+// the words of a case in which it no longer holds that archive (§4.5); "" for an
+// intact one, a folder not recorded, and a path repair rebuilt that is not proven
+// yet. archindex reads an encrypted folder by its markers alone, so an emptied
+// recorded folder would otherwise list as a normal archive.
+func recordedProblem(path string) string {
+	res, err := encmark.At(path)
+	if err != nil || !res.Recorded {
+		return ""
+	}
+	switch res.Case {
+	case encmark.None, encmark.Unproven:
+		return ""
+	}
+	return res.Why
 }
 
 // sourceLostSince returns a "since DATE" string when the archive's SOURCE has been unreachable

@@ -173,13 +173,21 @@ func tryLockFor(f *os.File, grace time.Duration) error {
 // Holding the lock for that instant is a probe's cost, which is why Acquire retries
 // briefly before it refuses (see acquireGrace), and why a probe that meets another probe
 // retries too.
-func Held(path string) bool {
+func Held(path string) bool { return held(path, os.O_RDWR) }
+
+// HeldReadOnly is Held through a read-only handle, for a medium that cannot be
+// written — a read-only mount of a folder another computer's backup may be writing
+// (design-encrypted-archives-phase3 §8; the P3-2b pass, OUT-4): the OS lock is taken
+// for the instant without writing anything.
+func HeldReadOnly(path string) bool { return held(path, os.O_RDONLY) }
+
+func held(path string, mode int) bool {
 	// Never follow a symlink or junction: a planted link is not a held lock, and on
 	// Windows noFollow is 0, so this Lstat is the only guard (mirrors AcquireAs).
 	if fi, err := os.Lstat(path); err == nil && !fi.Mode().IsRegular() {
 		return false
 	}
-	f, err := os.OpenFile(path, os.O_RDWR|noFollow, 0)
+	f, err := os.OpenFile(path, mode|noFollow, 0)
 	if err != nil {
 		return false
 	}

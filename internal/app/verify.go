@@ -120,6 +120,15 @@ type Report struct {
 	// NotSaved: the result could not be saved in the archive (a read-only medium);
 	// the exit is the result's all the same.
 	NotSaved bool `json:"not_saved,omitempty"`
+	// TooLarge and Unread count the messages a check with the key could not open:
+	// too large for MailArchive's memory limit, or not readable on this computer
+	// (access, a drive error) — neither is lost mail (the P3-2b pass, VERD-04,
+	// CRIT-05).
+	TooLarge int `json:"too_large,omitempty"`
+	Unread   int `json:"unread,omitempty"`
+	// KeyedLoad: the check with the key read the record, so its counts are messages;
+	// otherwise no message was opened and the counts are the keyless check's files.
+	KeyedLoad bool `json:"-"`
 }
 
 // verifyJSONVersion is the schema version of the `verify -json` document, so a
@@ -362,14 +371,22 @@ func verifyKeyless(ctx context.Context, out string, onProgress func(Report)) (Re
 	if onProgress != nil {
 		onProgress(rep)
 	}
-	// A red found with the key stands: a keyless check cannot see what it saw, so it
-	// writes that verdict back unchanged and says so (the owner's ruling, phase3 §8).
-	if previous != nil && state.TierOf(previous) == state.TierFull && state.OutcomeIsRed(previous.Outcome) {
-		_ = state.WriteLastVerify(out, *previous)
-		rep.StandingOutcome, rep.StandingSince = previous.Outcome, previous.Finished
+	finished := time.Now().UTC()
+	// A red found with the key stands until a check with the key passes (the owner's
+	// ruling, phase3 §8). A keyless check that finds no red of its own writes it back,
+	// with this check's time beside it for staleness (the P3-2b pass, REC-01); one that
+	// finds a red of its own records that, keeping the standing red beneath it so
+	// neither hides the other (REC-06).
+	if standing := state.StandingRed(previous); standing != nil {
+		rep.StandingOutcome, rep.StandingSince = standing.Outcome, standing.Finished
+		if !state.OutcomeIsRed(rep.Outcome) {
+			standing.LastChecked = &finished
+			_ = state.WriteLastVerify(out, *standing)
+			return rep, nil
+		}
+		_ = state.WriteLastVerify(out, state.LastVerify{Status: state.VerifyDone, Started: started, Finished: &finished, Encrypted: true, Tier: state.TierKeyless, Outcome: rep.Outcome, Standing: standing})
 		return rep, nil
 	}
-	finished := time.Now().UTC()
 	_ = state.WriteLastVerify(out, state.LastVerify{Status: state.VerifyDone, Started: started, Finished: &finished, Encrypted: true, Tier: state.TierKeyless, Outcome: rep.Outcome})
 	return rep, nil
 }
@@ -795,11 +812,27 @@ func keylessSummary(r Report) []string {
 		"its files only — reading its messages needs its password or recovery key",
 		fmt.Sprintf("files checked=%d · ok=%d · missing=%d · modified=%d", r.Checked, r.OK, r.Missing, r.Modified),
 	}
-	if r.Tier == state.TierFull {
+	switch {
+	case r.Tier == state.TierFull && r.KeyedLoad:
+		counts := fmt.Sprintf("message files checked=%d · ok=%d · missing=%d · damaged=%d", r.Checked, r.OK, r.Missing, r.Modified)
+		if r.TooLarge > 0 {
+			counts += fmt.Sprintf(" · too large=%d", r.TooLarge)
+		}
+		if r.Unread > 0 {
+			counts += fmt.Sprintf(" · could not be read here=%d", r.Unread)
+		}
 		out = []string{
 			fmt.Sprintf("Check with the key of the encrypted archive %s", r.Out),
 			"every file opened with its key: its record, search index, go-back timeline and messages",
-			fmt.Sprintf("message files checked=%d · ok=%d · missing=%d · damaged=%d", r.Checked, r.OK, r.Missing, r.Modified),
+			counts,
+		}
+	case r.Tier == state.TierFull:
+		// The record did not load: no message was opened, and the counts are the
+		// keyless check's files (the P3-2b pass, VERD-02).
+		out = []string{
+			fmt.Sprintf("Check with the key of the encrypted archive %s", r.Out),
+			"its record could not be read with the key, so no message was opened; its files were checked without the key",
+			fmt.Sprintf("files checked=%d · ok=%d · missing=%d · modified=%d", r.Checked, r.OK, r.Missing, r.Modified),
 		}
 	}
 	for _, p := range r.Problems {
@@ -852,8 +885,13 @@ func keylessSummary(r Report) []string {
 		if r.StandingSince != nil {
 			when = "on " + r.StandingSince.UTC().Format("2006-01-02")
 		}
-		out = append(out, fmt.Sprintf("NOT attested: a check with the key %s found: %s", when, state.OutcomeTextFor(r.StandingOutcome, state.TierFull)),
-			"  a check without the key cannot see that: only `mailarchive verify -full` can clear it")
+		stands := "  it stands until `mailarchive verify -full` passes, or the folder is restored from a backup copy"
+		if r.StandingOutcome == state.OutcomeDamaged {
+			// What a check without the key can see, it judges itself; inside the
+			// messages it cannot see (the P3-2b pass, REC-04).
+			stands = "  a check without the key cannot see inside the messages:" + stands[1:]
+		}
+		out = append(out, fmt.Sprintf("NOT attested: a check with the key %s found: %s", when, state.OutcomeTextFor(r.StandingOutcome, state.TierFull)), stands)
 	}
 	if r.NotSaved {
 		out = append(out, "note: the result could not be saved in the archive (read-only); status keeps its previous result")

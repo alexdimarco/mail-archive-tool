@@ -52,6 +52,13 @@ jobs:
         if: matrix.os == 'ubuntu-latest'
         run: go test -race -count=1 ./internal/keyring/ ./internal/vault/ ./internal/tty/ ./internal/memguard/ ./internal/server/
 
+      # The Desktop keeps encrypted archives open in a long-running process: its
+      # registry's unlock, lock, idle lock and Shut down are owed under the race
+      # detector too (phase3 §3.2, K4; the P3-3 plan, 3c).
+      - name: Race detector (the Desktop's open archives)
+        if: matrix.os == 'ubuntu-latest'
+        run: go test -race -count=1 -run 'Encryption|Unlock|Remembered|Locks|Lock|OpenAnArchive|Records|RunNow' ./internal/desktop/
+
       - name: Vulnerability scan (reachable code)
         if: matrix.os == 'ubuntu-latest'
         run: go run golang.org/x/vuln/cmd/govulncheck@v1.8.0 ./...
