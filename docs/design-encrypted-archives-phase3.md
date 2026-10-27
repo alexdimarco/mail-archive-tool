@@ -1421,7 +1421,8 @@ review before P3-5 is coded. O7's change to the release process is made in P3-5.
   - The copy's search index above 256 MiB may spill sorted subjects and senders to the system's
     temporary folder, deleted at once; a smaller one keeps that work in memory (LEAK-05, CRIT-04).
   - A copy stopped or failed part way is marked unfinished inside its folder only. MailArchive
-    does not remember it after it closes; the plan says so (CRIT-03, the owner's call).
+    does not remember it after it closes; the plan says so (CRIT-03; the owner ruled this,
+    option B, on 2026-10-27).
 - **The old unencrypted copy** after encrypting stays readable until removed (O2).
 - **Encryption authenticates an archive as it stands when encrypted.**
 - **The master key is never re-keyed.** An earlier recovery key with a file saved alongside it

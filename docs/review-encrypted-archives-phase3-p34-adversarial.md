@@ -55,7 +55,7 @@ The two central defects:
 | KEY-02 | a Lock does not stop a running copy, and nothing said so | by design; said where the person acts — the plan, the start reply, and the Lock reply while a copy runs (MA-830) |
 | KEY-03 | the docs said a lock mid-copy stops the copy | DecryptCopy's comment and §16 step 4 corrected; the mid-copy branch kept as defence |
 | CRIT-02 | the card said the copy "shows in Activity as it goes"; it showed nothing until the end | a counts-only progress line to Activity, at most every few seconds (MA-830) |
-| CRIT-03 | a stopped copy is not remembered after a restart | **owner's call, pending.** Built as option B: the plan, the CLI and §14 say so; no tracker |
+| CRIT-03 | a stopped copy is not remembered after a restart | **owner ruled B, 2026-10-27** ("B is good"): the plan, the CLI and §14 say so; no tracker — a tracker would itself be a record on this computer of where readable mail sits |
 | FID-02 | the start's recheck was unguarded | MA-828's tests reach it through DecryptSealed |
 | FID-03 | the lock held during the copy was untested | a backup's lock taken mid-copy is refused (TestTheCopyHoldsTheLockAndItsFilesModes) |
 | FID-06 | the report and history content were untested | compared with the archive's (TestTheCopysReportAndHistoryAreTheArchives) |
