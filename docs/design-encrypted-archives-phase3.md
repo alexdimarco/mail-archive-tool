@@ -847,6 +847,30 @@ A read-only open is not an adoption (§3.3). The note spells out these clicks.
 - **Not built here:** the Desktop's unlock (P3-3); read-only media without the archive lock for
   extract (it takes the lock, as a plaintext extract does).
 
+*Amended after the P3-2a adversarial pass (2026-10-26; MA-798,
+review-encrypted-archives-phase3-p32a-adversarial):*
+- **Ending a reader.** `Reader.Close`, which `serve` and `search` call as they end, waits (within
+  ten seconds) for a load in progress and the requests using the view, so a scratch index's file
+  is gone before the process ends. `Lock` stays immediate. Locking the open a reader reads through
+  locks the reader too. A load that finishes after a lock is closed, never served.
+- **The scratch index's lock.** A reader holds an OS lock on a lock file beside its index,
+  `reader-<pid>-<n>.db.lock` (the index's own file carries SQLite's locks), taken before the index
+  is made. The sweep removes an index whose lock file it can hold, or that has none, whatever pid
+  its name carries. Uninstall owns both names.
+- **The write deadline renews with each write**, fifteen seconds by default: a download that
+  makes progress runs as long as it needs; one whose client stops reading ends within the
+  deadline and gives back its memory, so it holds back neither an unlock nor Lock.
+- **What is missing is never damage.** An index chunk gone while the record holds still makes
+  search "unavailable — part of the search index is missing"; the reader stays open. A history
+  chunk gone is a partial timeline. A unit gone is loaded for again only when the record moved
+  (a peek), and a unit whose bytes are not its record's never. The record pointer's peek covers
+  both copies, so one planted copy never stops a read the other serves.
+- **No usable index.** The folder pages are built from the index; without one they, and search,
+  say so and name `reindex -rebuild`. Each message still opens by its own link.
+- **The API** builds its answer while the index is in use and writes it after.
+- **Keyed `reindex -rebuild`** stops between messages at the first Ctrl-C or SIGTERM, saving
+  nothing (exit 130 or 143); a second signal ends it at once.
+
 ## 8. Checking with the key
 
 **`verify -full`** (tier 2, through `keyring.VerifyFull`) is read-only. It runs under the archive

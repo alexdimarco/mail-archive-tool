@@ -660,22 +660,40 @@ type Peeked struct {
 	SHA256 [32]byte // the digest of its bytes (zero: no pointer)
 }
 
-// PeekFile reads out's record pointer without the key, for a reader that loads
+// PeekFile reads out's record pointers without the key, for a reader that loads
 // without the archive lock (design-encrypted-archives-phase3 §7.3): what it returns
-// before and after a load differs when a backup committed in between. The primary
-// pointer is the commit point — renamed first — so its bytes tell every commit; the
-// claimed generation is compared, never trusted. No pointer yet is the zero Peeked;
-// only an error reading it is an error.
+// before and after a load differs when a backup committed in between. The digest
+// covers both copies — the primary, renamed first at a commit, and its mirror — and
+// a copy that cannot be read counts as what kind of failure it is, so one damaged or
+// planted copy never stops a read the other copy serves: the load's own two-copy
+// rule decides (the P3-2a pass, OUT-F). The claimed generation is compared, never
+// trusted. No pointer at all is the zero Peeked; it never fails.
 func PeekFile(out string) (Peeked, error) {
-	raw, _, err := readFile(out, PointerName, MaxPointerSize)
-	if errors.Is(err, fs.ErrNotExist) {
+	h := sha256.New()
+	var p Peeked
+	any := false
+	for _, name := range []string{PointerName, MirrorName} {
+		raw, _, err := readFile(out, name, MaxPointerSize)
+		switch {
+		case errors.Is(err, fs.ErrNotExist):
+			h.Write([]byte("\x00absent\x00"))
+		case err != nil:
+			any = true
+			h.Write([]byte("\x00unreadable\x00"))
+		default:
+			any = true
+			if _, gen, perr := Peek(raw); perr == nil && p.Gen == 0 {
+				p.Gen = gen
+			}
+			sum := sha256.Sum256(raw)
+			h.Write(sum[:])
+		}
+	}
+	if !any {
 		return Peeked{}, nil
 	}
-	if err != nil {
-		return Peeked{}, err
-	}
-	_, gen, _ := Peek(raw)
-	return Peeked{Gen: gen, SHA256: sha256.Sum256(raw)}, nil
+	copy(p.SHA256[:], h.Sum(nil))
+	return p, nil
 }
 
 // Fresh reports whether the archive has no record yet: its first commit is owed.

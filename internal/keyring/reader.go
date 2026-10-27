@@ -3,6 +3,7 @@ package keyring
 import (
 	"errors"
 	"fmt"
+	"io"
 	"io/fs"
 	"net/http"
 	"strings"
@@ -31,24 +32,28 @@ import (
 type ReaderOptions struct {
 	// LockedNote is what the reader says once locked, and how to unlock it again.
 	LockedNote string
-	// WriteTimeout bounds each file response's write, so a client that stops
-	// reading cannot hold the memory budget past it (§3.2). Zero: five minutes.
+	// WriteTimeout bounds how long a file response may make no progress, so a
+	// client that stops reading gives back its memory budget within it (§3.2).
+	// Zero: fifteen seconds.
 	WriteTimeout time.Duration
 	// Guard is the memory guard unit reads share (§3.7). Nil: the process's.
 	Guard *memguard.Guard
 }
 
-// Reader is an encrypted archive's server.Source. Lock ends it.
+// Reader is an encrypted archive's server.Source. Lock ends it; Close ends it and
+// waits until what it held is gone.
 type Reader struct {
 	u   *Unlocked
 	out string
 	o   ReaderOptions
 
-	mu       sync.Mutex
+	locked atomic.Bool
+	loadMu sync.Mutex // one load at a time; requests that need a view wait behind it (§7.4)
+
+	mu       sync.Mutex // guards the fields below, briefly: never held across a load
 	view     *readView
 	peekedAt time.Time
-	stale    bool // a request missed something: load again, peek or not
-	locked   bool
+	stale    bool // a request missed something while the record moved: load again
 }
 
 // readView is one loaded generation of the sealed record.
@@ -60,8 +65,9 @@ type readView struct {
 
 	ixMu   sync.RWMutex
 	ix     *index.Index
-	ixErr  error // the index cannot be used: none yet, or damaged
-	behind bool  // the record says the index is behind the archive
+	hold   io.Closer // the OS lock on a scratch index's file, while it is open
+	ixErr  error     // the index cannot be used: none yet, damaged, or missing in part
+	behind bool      // the record says the index is behind the archive
 	closed bool
 
 	pagesOnce sync.Once
@@ -69,17 +75,22 @@ type readView struct {
 	pagesErr  error
 }
 
-// Seams for tests: the clock freshness is judged by, a hook between a load's two
-// peeks (a test commits there), and one between a request's view and its unit read
-// (a test locks there).
+// Seams for tests: the clock freshness is judged by; a hook between a load's two
+// peeks (a test commits there); hooks around a request's unit read (a test locks
+// there); and the record load itself (a test fails or locks one).
 var (
-	readerNow    = time.Now
-	readerLoad   = func() {}
-	readerBefore = func() {}
+	readerNow          = time.Now
+	readerLoad         = func() {}
+	readerBefore       = func() {}
+	readerBetween      = func() {}
+	readerLoadManifest = container.LoadManifest
 )
 
 // readerPeekEvery is how often a reader looks for a backup's commit (§7.3).
 const readerPeekEvery = 2 * time.Second
+
+// readerCloseWait bounds how long Close waits for requests still using the view.
+var readerCloseWait = 10 * time.Second
 
 // readerIndexBudget is the largest index a reader loads into memory (§7.4).
 var readerIndexBudget int64 = 256 << 20
@@ -88,16 +99,22 @@ var readerIndexBudget int64 = 256 << 20
 var readerLoads atomic.Uint64
 
 // errBusy refuses a load that two commits in a row overtook (§7.3).
-var errBusy = errors.New("a backup is running on this archive; try again in a moment")
+var errBusy = fmt.Errorf("%w: a backup is running on this archive; try again in a moment", server.ErrUnavailable)
 
 // errNoIndex is an encrypted archive with no search index yet.
-var errNoIndex = errors.New("this encrypted archive has no search index yet — `mailarchive reindex -rebuild` builds one")
+var errNoIndex = fmt.Errorf("%w: search is unavailable — this encrypted archive has no search index yet; `mailarchive reindex -rebuild` builds one", server.ErrUnavailable)
+
+// indexUnusable is search unavailable for a reason, naming the remedy (§7.4).
+func indexUnusable(why string, err error) error {
+	return fmt.Errorf("%w: search is unavailable — %s; `mailarchive reindex -rebuild` rebuilds it (%v)", server.ErrUnavailable, why, err)
+}
 
 // ReaderSource is the reader of the encrypted archive u opened (§3.1, §7.2). It
-// loads the record now, so a refusal is told before anything is served.
+// sweeps the scratch indexes gone readers left, and loads the record now, so a
+// refusal is told before anything is served.
 func ReaderSource(u *Unlocked, o ReaderOptions) (*Reader, error) {
 	if o.WriteTimeout <= 0 {
-		o.WriteTimeout = 5 * time.Minute
+		o.WriteTimeout = 15 * time.Second
 	}
 	if o.Guard == nil {
 		o.Guard = memguard.Process
@@ -105,22 +122,49 @@ func ReaderSource(u *Unlocked, o ReaderOptions) (*Reader, error) {
 	r := &Reader{u: u, out: u.Out(), o: o}
 	app.SweepReaderScratch(r.out, u.ArchiveID())
 	if _, err := r.ensure(); err != nil {
+		r.Close()
 		return nil, err
 	}
 	return r, nil
 }
 
-// Lock ends the reader: every request from now gets the locked page; the index and
-// rendered pages are dropped once the requests using them end. It never waits.
+// Lock ends the reader: every request from now gets the locked page; the index,
+// the rendered pages and a scratch index's file go once the requests using them
+// end. It never waits.
 func (r *Reader) Lock() {
-	r.mu.Lock()
-	r.locked = true
-	v := r.view
-	r.view = nil
-	r.mu.Unlock()
-	if v != nil {
+	r.locked.Store(true)
+	if v := r.take(); v != nil {
 		go v.close()
 	}
+}
+
+// Close is Lock for a reader's last holder — serve or search ending: it waits,
+// within a bound, for a load in progress and for the requests still using the view,
+// so a scratch index's plaintext file is gone before the process ends (§7.4).
+func (r *Reader) Close() {
+	r.locked.Store(true)
+	done := make(chan struct{})
+	go func() {
+		r.loadMu.Lock() // a load in progress publishes nothing once locked, and closes its view
+		r.loadMu.Unlock()
+		if v := r.take(); v != nil {
+			v.close()
+		}
+		close(done)
+	}()
+	select {
+	case <-done:
+	case <-time.After(readerCloseWait):
+	}
+}
+
+// take removes the current view, for its holder to close.
+func (r *Reader) take() *readView {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	v := r.view
+	r.view = nil
+	return v
 }
 
 // LockedNote implements server.Source.
@@ -131,11 +175,17 @@ func (r *Reader) LockedNote() string {
 	return ""
 }
 
+// isLocked reports a lock of the reader, or of the open it reads through — which
+// locks the reader too, so what it held is dropped as at its own lock (§3.2).
 func (r *Reader) isLocked() bool {
-	r.mu.Lock()
-	locked := r.locked
-	r.mu.Unlock()
-	return locked || r.u.isLocked()
+	if r.locked.Load() {
+		return true
+	}
+	if r.u.isLocked() {
+		r.Lock()
+		return true
+	}
+	return false
 }
 
 // IndexNotice is the search page's note on an index behind the archive (§7.4).
@@ -155,44 +205,78 @@ func lockedErr(err error) error {
 	return err
 }
 
-// ensure is the current view: reloaded when a peek, at most every two seconds,
-// shows a backup committed since it was loaded (§7.3).
+// ensure is the current view: loaded again when a peek, at most every two seconds,
+// shows a backup committed since it was loaded, or when a request missed something
+// while the record moved (§7.3). A view a load finishes after a lock is closed,
+// never served.
 func (r *Reader) ensure() (*readView, error) {
-	r.mu.Lock()
-	defer r.mu.Unlock()
-	if r.locked || r.u.isLocked() {
+	if r.isLocked() {
 		return nil, server.ErrLocked
 	}
-	now := readerNow()
-	if r.view != nil && !r.stale && now.Sub(r.peekedAt) < readerPeekEvery {
-		return r.view, nil
+	if v := r.fresh(); v != nil {
+		return v, nil
 	}
-	if r.view != nil && !r.stale {
-		if p, err := container.PeekFile(r.out); err == nil && p == r.view.peek {
-			r.peekedAt = now
-			return r.view, nil
+	r.loadMu.Lock()
+	defer r.loadMu.Unlock()
+	if r.isLocked() {
+		return nil, server.ErrLocked
+	}
+	if v := r.fresh(); v != nil {
+		return v, nil
+	}
+	r.mu.Lock()
+	cur, stale := r.view, r.stale
+	r.mu.Unlock()
+	if cur != nil && !stale {
+		if p, err := container.PeekFile(r.out); err == nil && p == cur.peek {
+			r.mu.Lock()
+			r.peekedAt = readerNow()
+			r.mu.Unlock()
+			return cur, nil
 		}
 	}
-	r.stale = false
 	v, err := r.load()
 	if err != nil {
 		return nil, err
 	}
-	if old := r.view; old != nil {
+	if r.isLocked() {
+		v.close()
+		return nil, server.ErrLocked
+	}
+	r.mu.Lock()
+	old := r.view
+	r.view, r.peekedAt, r.stale = v, readerNow(), false
+	r.mu.Unlock()
+	if old != nil {
 		go old.close()
 	}
-	r.view, r.peekedAt = v, now
 	return v, nil
 }
 
-// reload makes the next ensure load the record again: a unit or a chunk a request
-// missed is looked for once more in what is current (§7.3).
-func (r *Reader) reload(seen *readView) {
+// fresh is the current view when it was peeked at within readerPeekEvery.
+func (r *Reader) fresh() *readView {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	if r.view != nil && !r.stale && readerNow().Sub(r.peekedAt) < readerPeekEvery {
+		return r.view
+	}
+	return nil
+}
+
+// moved reports whether the record moved since seen was loaded, and if so makes
+// the next ensure load it again: a unit or chunk a request missed is looked for once
+// more in what is current — only when there is something new to look in (§7.3).
+func (r *Reader) moved(seen *readView) bool {
+	p, err := container.PeekFile(r.out)
+	if err == nil && p == seen.peek {
+		return false
+	}
 	r.mu.Lock()
 	if r.view == seen {
 		r.stale = true
 	}
 	r.mu.Unlock()
+	return true
 }
 
 // load reads the record: peek, load, peek again; on a change, once more; on a
@@ -223,7 +307,7 @@ func (r *Reader) loadOnce(peek container.Peeked) (*readView, error) {
 		return nil, lockedErr(err)
 	}
 	defer r.u.release()
-	m, s, err := container.LoadManifest(r.out, container.LoadOptions{Key: k, ReadOnly: true})
+	m, s, err := readerLoadManifest(r.out, container.LoadOptions{Key: k, ReadOnly: true})
 	if err != nil {
 		return nil, lockedErr(err)
 	}
@@ -240,30 +324,45 @@ func (r *Reader) loadOnce(peek container.Peeked) (*readView, error) {
 		}
 	default:
 		img, err := s.IndexImage()
-		if errors.Is(err, fs.ErrNotExist) {
-			return nil, err // a chunk a backup's sweep removed: load() reloads
-		}
 		if err != nil {
-			if err := lockedErr(err); errors.Is(err, server.ErrLocked) {
-				return nil, err
+			if lerr := lockedErr(err); errors.Is(lerr, server.ErrLocked) {
+				return nil, lerr
 			}
-			v.ixErr = fmt.Errorf("search is unavailable: the search index is damaged — `mailarchive reindex -rebuild` rebuilds it (%w)", err)
+			v.ixErr = indexWhy(err)
 			break
 		}
 		if v.ix, err = index.OpenMemory(img); err != nil {
-			v.ixErr = fmt.Errorf("search is unavailable: the search index is damaged — `mailarchive reindex -rebuild` rebuilds it (%w)", err)
+			v.ixErr = indexUnusable("the search index is damaged", err)
 		}
 	}
 	return v, nil
 }
 
+// indexWhy is search unavailable for an index that could not be read: part of it
+// missing — never called damage (§7.3) — or damaged. A load whose record moved
+// meanwhile is loaded again (load), so a chunk a backup swept is not reported.
+func indexWhy(err error) error {
+	if errors.Is(err, fs.ErrNotExist) {
+		// The cause is not quoted: the index layer words every unreadable chunk as damage.
+		return fmt.Errorf("%w: search is unavailable — part of the search index is missing; `mailarchive reindex -rebuild` rebuilds it", server.ErrUnavailable)
+	}
+	return indexUnusable("the search index is damaged", err)
+}
+
 // scratchIndex loads the index into the reader's scratch file now, under the key
-// the load holds: a damaged image leaves search unavailable, a chunk gone or a lock
-// is the load's error.
+// the load holds, and holds an OS lock on the file while it is open, so a sweep
+// never takes a live reader's (§7.4): an image that cannot be read leaves search
+// unavailable, a lock is the load's error.
 func (r *Reader) scratchIndex(v *readView, s *container.Store) error {
 	path, err := app.ReaderScratch(r.out, r.u.ArchiveID(), readerLoads.Add(1))
 	if err != nil {
-		v.ixErr = fmt.Errorf("search is unavailable: no working folder for the search index (%w)", err)
+		v.ixErr = indexUnusable("there is no working folder for the search index", err)
+		return nil
+	}
+	// The lock first, then the file: a sweep never finds this index without it.
+	hold, err := app.HoldReaderScratch(path)
+	if err != nil {
+		v.ixErr = indexUnusable("its working copy could not be made", err)
 		return nil
 	}
 	var bad error
@@ -279,27 +378,30 @@ func (r *Reader) scratchIndex(v *readView, s *container.Store) error {
 		if ix != nil {
 			ix.Close()
 		}
-		if errors.Is(err, fs.ErrNotExist) {
-			return err
-		}
+		hold.Close()
 		if lerr := lockedErr(err); errors.Is(lerr, server.ErrLocked) {
 			return lerr
 		}
-		v.ixErr = fmt.Errorf("search is unavailable: the search index is damaged — `mailarchive reindex -rebuild` rebuilds it (%w)", err)
+		v.ixErr = indexWhy(err)
 		return nil
 	}
-	v.ix = ix
+	v.ix, v.hold = ix, hold
 	return nil
 }
 
-// close drops the view's index and pages once the requests using them end.
+// close drops the view's index, its scratch file and its pages once the requests
+// using them end.
 func (v *readView) close() {
 	v.ixMu.Lock()
 	defer v.ixMu.Unlock()
 	v.closed = true
 	if v.ix != nil {
-		v.ix.Close()
+		v.ix.Close() // removes a scratch index's file
 		v.ix = nil
+	}
+	if v.hold != nil {
+		v.hold.Close()
+		v.hold = nil
 	}
 	v.pages = nil
 }
@@ -336,7 +438,8 @@ func (r *Reader) UseIndex(f func(*index.Index) error) error {
 
 // GoBack implements server.Source: the decrypted manifest and history; a record's
 // message is present when it has a page unit — an encrypted archive's messages are
-// never removed by deleting a file (the owner's ruling, 2026-10-26).
+// never removed by deleting a file (the owner's ruling, 2026-10-26). A history chunk
+// missing while the record held still is a partial timeline, never an error (§7.3).
 func (r *Reader) GoBack() (server.GoBack, error) {
 	for attempt := 0; ; attempt++ {
 		v, err := r.ensure()
@@ -344,9 +447,12 @@ func (r *Reader) GoBack() (server.GoBack, error) {
 			return server.GoBack{}, err
 		}
 		events, err := r.history(v)
-		if errors.Is(err, fs.ErrNotExist) && attempt == 0 {
-			r.reload(v)
+		missing := errors.Is(err, fs.ErrNotExist)
+		if missing && attempt == 0 && r.moved(v) {
 			continue
+		}
+		if missing {
+			events, err = v.store.History(), nil // the gone chunk stands as a barrier
 		}
 		if err != nil {
 			return server.GoBack{}, err
@@ -392,7 +498,9 @@ func (r *Reader) Files() http.Handler {
 
 // open is the bytes of one archive-relative path: a rendered folder or root page,
 // or a record's page, attachment zip or original, read whole within the memory
-// budget (§7.4). A unit missed is looked for once more in what is current (§7.3).
+// budget (§7.4). A unit gone is looked for once more when the record moved since
+// the view was loaded (§7.3); a unit whose bytes are not its record's is damage,
+// never a reason to load again.
 func (r *Reader) open(req *http.Request, rel string) ([]byte, func(), error) {
 	for attempt := 0; ; attempt++ {
 		v, err := r.ensure()
@@ -407,6 +515,10 @@ func (r *Reader) open(req *http.Request, rel string) ([]byte, func(), error) {
 			return nil, nil, fs.ErrNotExist
 		}
 		release, err := r.o.Guard.Reserve(req.Context(), 2*sealed.Size)
+		if errors.Is(err, memguard.ErrTooLarge) {
+			// Named by the message's own size, not the reservation's (§7.4).
+			return nil, nil, fmt.Errorf("%w (%d MB)", memguard.ErrTooLarge, (sealed.Size+(1<<20)-1)>>20)
+		}
 		if err != nil {
 			return nil, nil, err
 		}
@@ -416,15 +528,16 @@ func (r *Reader) open(req *http.Request, rel string) ([]byte, func(), error) {
 			return data, release, nil
 		}
 		release()
-		if attempt == 0 && (errors.Is(err, fs.ErrNotExist) || errors.Is(err, export.ErrUnitStore)) {
-			r.reload(v)
+		if attempt == 0 && errors.Is(err, fs.ErrNotExist) && r.moved(v) {
 			continue
 		}
 		return nil, nil, err
 	}
 }
 
-// page is a rendered folder or root page, rendered once per view.
+// page is a rendered folder or root page, rendered once per view. With no usable
+// index there are none to render: the request is told why, never as damage to a
+// message.
 func (r *Reader) page(v *readView, rel string) ([]byte, bool, error) {
 	if rel != "index.html" && !isFolderPage(rel) {
 		return nil, false, nil
@@ -432,20 +545,17 @@ func (r *Reader) page(v *readView, rel string) ([]byte, bool, error) {
 	var page []byte
 	var ok bool
 	err := r.withIndex(func(cur *readView) error {
-		if cur != v {
-			v = cur
-		}
-		v.pagesOnce.Do(func() {
-			if v.ixErr != nil {
-				v.pagesErr = v.ixErr
+		cur.pagesOnce.Do(func() {
+			if cur.ixErr != nil {
+				cur.pagesErr = fmt.Errorf("%w — the folder pages are built from the search index; each message still opens by its own link", cur.ixErr)
 				return
 			}
-			v.pages, v.pagesErr = pages.Render(v.ix, v.gaps)
+			cur.pages, cur.pagesErr = pages.Render(cur.ix, cur.gaps)
 		})
-		if v.pagesErr != nil {
-			return v.pagesErr
+		if cur.pagesErr != nil {
+			return cur.pagesErr
 		}
-		page, ok = v.pages[rel]
+		page, ok = cur.pages[rel]
 		return nil
 	})
 	if err != nil {
@@ -520,6 +630,7 @@ func (r *Reader) readUnit(unit string, kind vault.UnitKind, s state.SealedUnit) 
 	if err != nil {
 		return nil, err
 	}
+	readerBetween()
 	if k, _, err = r.u.acquire(); err != nil {
 		return nil, lockedErr(err)
 	}

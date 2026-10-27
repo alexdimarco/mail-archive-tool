@@ -55,25 +55,32 @@ func Serve(src Source) http.Handler {
 	gb := &gobackServer{src: src}
 	mux.HandleFunc("/goback", gb.serveGoback)
 
+	// The answers are built while the index is in use and written after: a client
+	// that stops reading never keeps the index from closing at a lock.
 	mux.HandleFunc("/api/search", func(w http.ResponseWriter, r *http.Request) {
 		q := parseQuery(r)
+		var answer map[string]any
 		err := src.UseIndex(func(ix *index.Index) error {
 			results, total, err := ix.Search(q)
 			if err != nil {
 				return err
 			}
-			writeJSON(w, map[string]any{
-				"total":   total,
-				"results": results,
-				"limit":   q.Limit,
-				"offset":  q.Offset,
-			})
+			answer = map[string]any{"total": total, "results": results, "limit": q.Limit, "offset": q.Offset}
 			return nil
 		})
-		apiError(w, src, err)
+		if err != nil {
+			apiError(w, src, err)
+			return
+		}
+		writeJSON(w, answer)
 	})
 
 	mux.HandleFunc("/api/facets", func(w http.ResponseWriter, r *http.Request) {
+		notice := ""
+		if n, ok := src.(interface{ IndexNotice() string }); ok {
+			notice = n.IndexNotice() // §7.4: an index behind the archive
+		}
+		var facets map[string]any
 		err := src.UseIndex(func(ix *index.Index) error {
 			folders, err := ix.Folders()
 			if err != nil {
@@ -81,14 +88,17 @@ func Serve(src Source) http.Handler {
 			}
 			years, _ := ix.Years()
 			count, _ := ix.Count()
-			facets := map[string]any{"folders": folders, "years": years, "total": count}
-			if n, ok := src.(interface{ IndexNotice() string }); ok && n.IndexNotice() != "" {
-				facets["notice"] = n.IndexNotice() // §7.4: an index behind the archive
-			}
-			writeJSON(w, facets)
+			facets = map[string]any{"folders": folders, "years": years, "total": count}
 			return nil
 		})
-		apiError(w, src, err)
+		if err != nil {
+			apiError(w, src, err)
+			return
+		}
+		if notice != "" {
+			facets["notice"] = notice
+		}
+		writeJSON(w, facets)
 	})
 
 	// Serve the exported pages, .eml files and attachment zips — and nothing else
@@ -109,8 +119,12 @@ func apiError(w http.ResponseWriter, src Source, err error) {
 	}
 	body := map[string]any{"error": err.Error()}
 	code := http.StatusInternalServerError
-	if errors.Is(err, ErrLocked) {
+	switch {
+	case errors.Is(err, ErrLocked):
 		body = map[string]any{"locked": true, "error": src.LockedNote()}
+		code = http.StatusServiceUnavailable
+	case errors.Is(err, ErrUnavailable):
+		body = map[string]any{"error": strings.TrimPrefix(err.Error(), ErrUnavailable.Error()+": ")}
 		code = http.StatusServiceUnavailable
 	}
 	w.Header().Set("Content-Type", "application/json; charset=utf-8")

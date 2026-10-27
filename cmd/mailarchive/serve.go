@@ -91,7 +91,7 @@ func serveMain(ctx context.Context, args []string, env *linkEnv) error {
 		if err != nil {
 			return err
 		}
-		defer r.Lock()
+		defer r.Close() // waits, so a scratch index's plaintext file is gone before the process ends
 		src = r
 		_ = r.UseIndex(func(ix *index.Index) error {
 			count, _ = ix.Count()

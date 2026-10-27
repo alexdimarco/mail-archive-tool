@@ -191,6 +191,28 @@ func Held(path string) bool {
 	return false
 }
 
+// HoldFile takes Acquire's exclusive OS lock on an existing regular file without
+// writing to it, for as long as its holder uses the file: closing the handle it
+// returns releases it, and so does the process's end. A file another holder has is
+// ErrHeld. It is how a sweep tells a live holder's file from a crashed one's
+// whatever pid its name carries (design-encrypted-archives-phase3 §7.4).
+func HoldFile(path string) (*os.File, error) {
+	if fi, err := os.Lstat(path); err != nil {
+		return nil, err
+	} else if !fi.Mode().IsRegular() {
+		return nil, fmt.Errorf("lockfile: %s is not a regular file", path)
+	}
+	f, err := os.OpenFile(path, os.O_RDWR|noFollow, 0)
+	if err != nil {
+		return nil, err
+	}
+	if err := tryLock(f); err != nil {
+		f.Close()
+		return nil, fmt.Errorf("%w: %s", ErrHeld, path)
+	}
+	return f, nil
+}
+
 // Holder returns the pid/started/host line written by the current holder, or
 // "" when the file is absent or unreadable. The content is untrusted (any
 // writer of the archive directory can change it): control characters are

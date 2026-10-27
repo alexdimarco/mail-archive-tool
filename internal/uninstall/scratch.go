@@ -23,7 +23,7 @@ const snapshotPrefix = ".mailarchive-snapshot-"
 
 // readerScratch is an encrypted archive's reader's scratch index (app.ReaderScratch;
 // the scratch test pins that the two agree).
-var readerScratch = regexp.MustCompile(`^reader-([0-9]+)-[0-9]+\.db$`)
+var readerScratch = regexp.MustCompile(`^reader-([0-9]+)-[0-9]+\.db(\.lock)?$`)
 
 // ErrScratchUnexpected refuses the whole uninstall because MailArchive's scratch
 // folder holds something it never writes: removing what it does not know could

@@ -112,6 +112,44 @@ func TestAReadOnlyLoadWritesNothing(t *testing.T) {
 	}
 }
 
+// covers: MA-798, MA-795, R37
+// A reader's load keeps the in-archive file-list rules: a record one save older
+// than its file list is ErrUnfinishedSave read-only too, writing nothing (§7.3: the
+// tests expect that; the P3-2a pass, FID-11).
+func TestAReadOnlyLoadKeepsTheFileListRules(t *testing.T) {
+	out := fresh(t)
+	saveN(t, out, 1, 0, 3)
+	snap := snapshotRecord(t, out)
+	saveN(t, out, 2, 3, 3)
+	restore(t, out, snap)
+	before := treeBytes(t, out)
+	_, _, err := LoadManifest(out, readOnly(keys[0]))
+	rc, msg := refusal(err)
+	assure.Refused(t, rc, msg, assure.Code(1), assure.Names(out), assure.NoSideEffect(func() bool { return reflect.DeepEqual(before, treeBytes(t, out)) }))
+	if !errors.Is(err, ErrUnfinishedSave) {
+		t.Fatalf("want ErrUnfinishedSave, got %v", err)
+	}
+}
+
+// covers: MA-798, MA-795
+// PeekFile covers both pointer copies: a damaged or planted primary — a link, a
+// folder — never makes it fail, and its result still changes at a commit (OUT-F).
+func TestPeekFileNeverFailsOnOneDamagedCopy(t *testing.T) {
+	out := readable(t)
+	ptr := filepath.Join(out, PointerName)
+	raw, _ := os.ReadFile(ptr)
+	os.Remove(ptr)
+	os.Mkdir(ptr, 0o700)
+	p1, err := PeekFile(out)
+	if err != nil {
+		t.Fatalf("a folder at the primary pointer: %v", err)
+	}
+	os.Remove(ptr)
+	os.WriteFile(ptr, raw, 0o600)
+	p2, err := PeekFile(out)
+	assure.Reached(t, err == nil && p2 != p1, "the primary told apart when it is readable again")
+}
+
 // covers: MA-795
 // PeekFile sees every commit without the key: its result changes when a backup
 // commits, not otherwise; a folder with no pointer yet is the zero result (§7.3).

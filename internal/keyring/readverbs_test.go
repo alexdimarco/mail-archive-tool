@@ -120,8 +120,11 @@ func TestKeyedReindexRebuildsTheIndexAndRemovesNothing(t *testing.T) {
 	if _, err := Reindex(ctx, w, quiet); !errors.Is(err, context.Canceled) || read(container.PointerName) != beforeStop || read(lockfile.Name) != lockBefore {
 		t.Fatalf("a reindex stopped before it starts: %v", err)
 	}
-	if _, err := Reindex(&stopAfter{Context: context.Background(), n: 1}, w, quiet); !errors.Is(err, context.Canceled) || read(container.PointerName) != beforeStop {
-		t.Fatalf("a reindex stopped mid-run: %v", err)
+	// Stopped once it started: it reads no message more, and saves nothing (the P3-2a
+	// pass, CRIT-01).
+	beforeStop = read(container.PointerName)
+	if stopRep, err := Reindex(&stopAfter{Context: context.Background(), n: 1}, w, quiet); !errors.Is(err, context.Canceled) || stopRep.Added != 0 || read(container.PointerName) != beforeStop {
+		t.Fatalf("a reindex stopped mid-run: %v, %+v", err, stopRep)
 	}
 
 	// A paused archive is refused.
@@ -172,7 +175,7 @@ func TestALargeIndexIsReadFromTheReadersOwnScratchFile(t *testing.T) {
 	}
 
 	// A load again gets a file of its own; the old view's goes, the new one's stays.
-	r.reload(v)
+	loadAgain(r)
 	v2, err := r.ensure()
 	if err != nil || v2 == v || v2.ix == nil {
 		t.Fatalf("the reload: %v", err)
@@ -222,7 +225,7 @@ func scratchFiles(t *testing.T) []string {
 	}
 	var files []string
 	filepath.WalkDir(cache, func(p string, d fs.DirEntry, err error) error {
-		if err == nil && !d.IsDir() && strings.HasPrefix(d.Name(), "reader-") {
+		if err == nil && !d.IsDir() && strings.HasPrefix(d.Name(), "reader-") && strings.HasSuffix(d.Name(), ".db") {
 			files = append(files, p)
 		}
 		return nil

@@ -50,7 +50,7 @@ jobs:
       # the reader's unit reads may run (phase3 §3.7, MA-794).
       - name: Race detector (encrypted archives' keys)
         if: matrix.os == 'ubuntu-latest'
-        run: go test -race -count=1 ./internal/keyring/ ./internal/vault/ ./internal/tty/ ./internal/memguard/
+        run: go test -race -count=1 ./internal/keyring/ ./internal/vault/ ./internal/tty/ ./internal/memguard/ ./internal/server/
 
       - name: Vulnerability scan (reachable code)
         if: matrix.os == 'ubuntu-latest'

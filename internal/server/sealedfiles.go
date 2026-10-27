@@ -43,36 +43,61 @@ func SealedFiles(open SealedOpen, lockedNote func() string, writeTimeout time.Du
 			return
 		case !fileAllowed(len(segs), segs[len(segs)-1]):
 			// A folder named without its slash is sent to it, as FileServer does.
-			if _, release, err := open(r, strings.Join(segs, "/")+"/index.html"); err == nil {
+			_, release, err := open(r, strings.Join(segs, "/")+"/index.html")
+			if err == nil {
 				release()
 				localRedirect(w, r, segs[len(segs)-1]+"/")
+				return
+			}
+			if !errors.Is(err, fs.ErrNotExist) && sealedError(w, err, lockedNote) {
 				return
 			}
 			http.NotFound(w, r)
 			return
 		}
 		data, release, err := open(r, strings.Join(segs, "/"))
-		switch {
-		case err == nil:
-		case errors.Is(err, ErrLocked):
-			serveLocked(w, lockedNote())
-			return
-		case errors.Is(err, fs.ErrNotExist):
-			http.NotFound(w, r)
-			return
-		case errors.Is(err, memguard.ErrTooLarge):
-			http.Error(w, "This message is "+strings.TrimPrefix(err.Error(), "memguard: ")+".", http.StatusServiceUnavailable)
-			return
-		case errors.Is(err, context.Canceled), errors.Is(err, context.DeadlineExceeded):
-			return
-		default:
-			http.Error(w, "This message could not be read from the archive: "+err.Error(), http.StatusInternalServerError)
+		if err != nil {
+			sealedError(w, err, lockedNote)
 			return
 		}
 		defer release()
-		_ = http.NewResponseController(w).SetWriteDeadline(time.Now().Add(writeTimeout))
-		http.ServeContent(w, r, segs[len(segs)-1], time.Time{}, bytes.NewReader(data))
+		http.ServeContent(progressWriter{w, http.NewResponseController(w), writeTimeout}, r, segs[len(segs)-1], time.Time{}, bytes.NewReader(data))
 	}))
+}
+
+// sealedError answers a sealed open that failed, in its own words: the locked
+// page; 404; a message too large; a reason it is unavailable now; a cancelled
+// request nothing; anything else a message that could not be read. It reports
+// whether it answered.
+func sealedError(w http.ResponseWriter, err error, lockedNote func() string) bool {
+	switch {
+	case errors.Is(err, ErrLocked):
+		serveLocked(w, lockedNote())
+	case errors.Is(err, fs.ErrNotExist):
+		http.Error(w, "404 page not found", http.StatusNotFound)
+	case errors.Is(err, memguard.ErrTooLarge):
+		http.Error(w, "This message is "+strings.TrimPrefix(err.Error(), "memguard: ")+".", http.StatusServiceUnavailable)
+	case errors.Is(err, ErrUnavailable):
+		http.Error(w, strings.TrimPrefix(err.Error(), ErrUnavailable.Error()+": "), http.StatusServiceUnavailable)
+	case errors.Is(err, context.Canceled), errors.Is(err, context.DeadlineExceeded):
+	default:
+		http.Error(w, "This message could not be read from the archive: "+err.Error(), http.StatusInternalServerError)
+	}
+	return true
+}
+
+// progressWriter renews the write deadline before each write, so a response
+// that makes progress runs as long as it needs, while one whose client stops
+// reading ends within timeout and gives back its memory budget (§3.2).
+type progressWriter struct {
+	http.ResponseWriter
+	rc      *http.ResponseController
+	timeout time.Duration
+}
+
+func (p progressWriter) Write(b []byte) (int, error) {
+	_ = p.rc.SetWriteDeadline(time.Now().Add(p.timeout))
+	return p.ResponseWriter.Write(b)
 }
 
 // localRedirect sends a relative redirect, as http.FileServer does, keeping the

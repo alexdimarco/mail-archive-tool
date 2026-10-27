@@ -119,13 +119,21 @@ func TestTheReadVerbsUnlockAnEncryptedArchive(t *testing.T) {
 		assure.Refused(t, code, msg, assure.Code(1), assure.Names(out, "encrypted archive", "password or recovery key", "-password-file"))
 	}
 
-	err = runSearch([]string{"-out", out, "-password-file", pwFile, "-paths", "x"})
+	// -paths and a non-loopback serve are refused first, before even the want of a
+	// key is judged — with no secret at all — writing nothing (the P3-2a pass, FID-08).
+	tree := filesUnder(t, out)
+	unchanged := func() bool { return len(filesUnder(t, out)) == len(tree) }
+	err = runSearch([]string{"-out", out, "-paths", "x"})
 	code, msg := refused(err)
-	assure.Refused(t, code, msg, assure.Code(1), assure.Names("-paths", "-json"))
+	assure.Refused(t, code, msg, assure.Code(1), assure.Names("-paths", "-json"), assure.Forbid("password-file"), assure.NoSideEffect(unchanged))
 
-	err = serveMain(context.Background(), []string{"-out", out, "-addr", "0.0.0.0:0", "-password-file", pwFile}, osLinkEnv())
+	err = serveMain(context.Background(), []string{"-out", out, "-addr", "0.0.0.0:0"}, osLinkEnv())
 	code, msg = refused(err)
-	assure.Refused(t, code, msg, assure.Code(1), assure.Names("loopback", out))
+	assure.Refused(t, code, msg, assure.Code(1), assure.Names("loopback", out), assure.Forbid("password-file"), assure.NoSideEffect(unchanged))
+
+	err = serveMain(context.Background(), []string{"-out", out, "-addr", "127.0.0.1:0"}, osLinkEnv())
+	code, msg = refused(err)
+	assure.Refused(t, code, msg, assure.Code(1), assure.Names(out, "password or recovery key", "-password-file", "-recovery-key-file"), assure.NoSideEffect(unchanged))
 
 	plain := t.TempDir()
 	err = runSearch([]string{"-out", plain, "-password-file", pwFile, "x"})
@@ -145,6 +153,7 @@ func TestReindexOnAnEncryptedArchiveOnlyRebuilds(t *testing.T) {
 	assure.Refused(t, code, msg, assure.Code(1), assure.Names("-rebuild", "never removes a message"))
 	err = runReindex([]string{"-out", out, "-rebuild", "-password-file", pwFile})
 	code, msg = refused(err)
-	assure.Refused(t, code, msg, assure.Code(1), assure.Names("terminal"),
+	assure.Refused(t, code, msg, assure.Code(1), assure.Names("terminal", "password or recovery key", "-rebuild"),
+		assure.Forbid("Desktop", "backups"), // no remedy that does not exist (the P3-2a pass, REG-02)
 		assure.NoSideEffect(func() bool { b := filesUnder(t, out); return len(b) == len(before) }))
 }

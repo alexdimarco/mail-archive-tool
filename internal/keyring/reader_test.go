@@ -94,6 +94,13 @@ func readerFor(t *testing.T, o ReaderOptions) (string, *Unlocked, *Reader, *http
 	return out, u, r, ts
 }
 
+// loadAgain makes the reader's next ensure load the record again.
+func loadAgain(r *Reader) {
+	r.mu.Lock()
+	r.stale = true
+	r.mu.Unlock()
+}
+
 // get fetches path without following a redirect.
 func get(t *testing.T, ts *httptest.Server, path string) (int, http.Header, string) {
 	t.Helper()
@@ -332,8 +339,10 @@ func TestAMessageTooLargeForTheBudgetIsRefusedInPlainWords(t *testing.T) {
 }
 
 // covers: MA-796, R37
-// A unit that is gone is looked for once more in what is current, then reported as
-// not found — never as damage (§7.3).
+// A unit that is gone is reported as not found, never as damage; it is looked for
+// once more in a fresh load only when the record moved since the view was loaded —
+// asking again for a unit gone from a record that holds still, or for one whose
+// bytes are not its record's, loads nothing (§7.3; the P3-2a pass, OUT-D).
 func TestAMissingUnitIsNotFoundNotDamage(t *testing.T) {
 	out, u, r, ts := readerFor(t, ReaderOptions{})
 	rec := aMessage(t, r)
@@ -341,21 +350,41 @@ func TestAMissingUnitIsNotFoundNotDamage(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	rel, err := (&export.Units{Root: out, Key: k}).Locate(rec.Unit, vault.UnitMessage, *rec.Sealed.HTML)
+	units := &export.Units{Root: out, Key: k}
+	pageRel, err := units.Locate(rec.Unit, vault.UnitMessage, *rec.Sealed.HTML)
+	emlRel, err2 := units.Locate(rec.Unit, vault.UnitOriginal, *rec.Sealed.EML)
 	u.release()
-	if err != nil {
-		t.Fatal(err)
+	if err != nil || err2 != nil {
+		t.Fatal(err, err2)
 	}
 	loads := 0
 	orig := readerLoad
 	readerLoad = func() { loads++ }
 	defer func() { readerLoad = orig }()
-	os.Remove(filepath.Join(out, rel))
-	code, _, body := get(t, ts, "/files/"+rec.Path)
-	if code != http.StatusNotFound || strings.Contains(body, "damaged") {
-		t.Fatalf("a unit gone: %d %s", code, body)
+
+	os.Remove(filepath.Join(out, pageRel))
+	for i := 0; i < 3; i++ {
+		if code, _, body := get(t, ts, "/files/"+rec.Path); code != http.StatusNotFound || strings.Contains(body, "damaged") {
+			t.Fatalf("a unit gone: %d %s", code, body)
+		}
 	}
-	assure.Reached(t, loads == 1, "the record loaded once more before reporting")
+	b, _ := os.ReadFile(filepath.Join(out, emlRel))
+	b[len(b)-1] ^= 1
+	os.WriteFile(filepath.Join(out, emlRel), b, 0o600)
+	eml := strings.TrimSuffix(rec.Path, ".html") + ".eml"
+	if code, _, _ := get(t, ts, "/files/"+eml); code != http.StatusInternalServerError || loads != 0 {
+		t.Fatalf("a unit whose bytes are not its record's: %d, %d loads", code, loads)
+	}
+
+	// The record moved since the view was loaded: looked for once more.
+	w, err := Open(out, Password(testPassword), OpenOptions{Write: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	readBackup(t, w)
+	w.Destroy()
+	code, _, _ := get(t, ts, "/files/"+rec.Path)
+	assure.Reached(t, code == http.StatusNotFound && loads == 1, "loaded once more, then not found")
 }
 
 // covers: MA-796, R37
@@ -400,7 +429,7 @@ func TestTheReaderSeesABackupsCommit(t *testing.T) {
 		}
 	}
 	now = now.Add(3 * time.Second)
-	r.reload(v2)
+	loadAgain(r)
 	if _, err := r.load(); err != nil || n != 2 {
 		t.Fatalf("a load overtaken once: %v after %d loads", err, n)
 	}

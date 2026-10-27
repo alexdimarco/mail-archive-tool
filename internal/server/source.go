@@ -31,6 +31,11 @@ type Source interface {
 // ErrLocked is a read of an encrypted archive that was locked.
 var ErrLocked = errors.New("server: this encrypted archive is locked")
 
+// ErrUnavailable is a read an encrypted archive cannot answer now, for a reason
+// its text gives in plain words — search unavailable, a backup running — never a
+// message's damage.
+var ErrUnavailable = errors.New("server: unavailable")
+
 // Timeline is how much of the history timeline a go-back view can use.
 type Timeline int
 

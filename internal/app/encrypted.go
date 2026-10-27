@@ -4,19 +4,19 @@ import (
 	"encoding/hex"
 	"errors"
 	"fmt"
+	"io"
 	"io/fs"
 	"log"
 	"os"
 	"path/filepath"
 	"regexp"
-	"strconv"
 	"time"
 
 	"mail-archive-tool/internal/container"
 	"mail-archive-tool/internal/export"
 	"mail-archive-tool/internal/index"
 	"mail-archive-tool/internal/job"
-	"mail-archive-tool/internal/procs"
+	"mail-archive-tool/internal/lockfile"
 	"mail-archive-tool/internal/state"
 	"mail-archive-tool/internal/util"
 	"mail-archive-tool/internal/vault"
@@ -151,8 +151,9 @@ func indexScratchPath(out string, id vault.ID) (string, error) {
 	return filepath.Join(d, "index", "search.db"), nil
 }
 
-// ReaderScratchName matches a reader's scratch index: reader-<pid>-<n>.db.
-var ReaderScratchName = regexp.MustCompile(`^reader-([0-9]+)-[0-9]+\.db$`)
+// ReaderScratchName matches a reader's scratch index, reader-<pid>-<n>.db, and the
+// lock file beside it that says it is in use, reader-<pid>-<n>.db.lock.
+var ReaderScratchName = regexp.MustCompile(`^reader-([0-9]+)-[0-9]+\.db(\.lock)?$`)
 
 // ReaderScratch is where an encrypted archive's reader works on an index above the
 // memory budget (design-encrypted-archives-phase3 §7.4, A33): a file of its own in
@@ -174,23 +175,73 @@ func ReaderScratch(out string, id vault.ID, n uint64) (string, error) {
 
 // SweepReaderScratch removes the scratch indexes readers of the archive id at out
 // left when their process ended without closing them: plaintext, they end with the
-// next keyed open (§7.4). A live reader's is kept.
+// next keyed open (§7.4). A live reader holds an OS lock on the lock file beside its
+// index for as long as it uses it (HoldReaderScratch) — beside, since the index's
+// own file carries SQLite's locks — so an index whose lock file can be held, or has
+// none, is a gone reader's, whatever pid its name carries, a pid reused since
+// included.
 func SweepReaderScratch(out string, id vault.ID) {
 	d, err := archiveScratch(out, id)
 	if err != nil {
 		return
 	}
-	entries, _ := os.ReadDir(filepath.Join(d, "index"))
+	dir := filepath.Join(d, "index")
+	entries, _ := os.ReadDir(dir)
 	for _, e := range entries {
 		m := ReaderScratchName.FindStringSubmatch(e.Name())
-		if m == nil || !e.Type().IsRegular() {
+		if m == nil || m[2] != "" || !e.Type().IsRegular() {
 			continue
 		}
-		pid, err := strconv.Atoi(m[1])
-		if err == nil && pid != os.Getpid() && !procs.Alive(pid) {
-			os.Remove(filepath.Join(d, "index", e.Name()))
+		db := filepath.Join(dir, e.Name())
+		f, err := lockfile.HoldFile(db + ".lock")
+		if err != nil && !errors.Is(err, fs.ErrNotExist) {
+			continue // a live reader's, or one that cannot be judged: kept
+		}
+		os.Remove(db)
+		if f != nil {
+			f.Close()
+			os.Remove(db + ".lock")
 		}
 	}
+	// A lock file whose index is gone, and that no reader holds.
+	entries, _ = os.ReadDir(dir)
+	for _, e := range entries {
+		if m := ReaderScratchName.FindStringSubmatch(e.Name()); m != nil && m[2] != "" {
+			p := filepath.Join(dir, e.Name())
+			if f, err := lockfile.HoldFile(p); err == nil {
+				f.Close()
+				os.Remove(p)
+			}
+		}
+	}
+}
+
+// HoldReaderScratch is a reader's OS lock on the lock file beside its scratch index
+// at db, made now and kept for as long as the index is open; closing it releases
+// the lock and removes the lock file.
+func HoldReaderScratch(db string) (io.Closer, error) {
+	f, err := os.OpenFile(db+".lock", os.O_CREATE|os.O_EXCL|os.O_WRONLY, 0o600)
+	if err != nil {
+		return nil, err
+	}
+	f.Close()
+	h, err := lockfile.HoldFile(db + ".lock")
+	if err != nil {
+		os.Remove(db + ".lock")
+		return nil, err
+	}
+	return heldScratch{h, db + ".lock"}, nil
+}
+
+type heldScratch struct {
+	f    *os.File
+	path string
+}
+
+func (h heldScratch) Close() error {
+	err := h.f.Close()
+	os.Remove(h.path)
+	return err
 }
 
 // removeScratchIndex removes the scratch index a crashed run of the archive id at out

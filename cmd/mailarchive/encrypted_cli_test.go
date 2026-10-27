@@ -119,6 +119,15 @@ func TestEveryKeylessCommandRefusesAnEncryptedArchive(t *testing.T) {
 			}
 			assure.Refused(t, rc, msg, assure.Code(1), assure.Names(out, "encrypted archive", "password or recovery key"),
 				assure.NoSideEffect(func() bool { return reflect.DeepEqual(filesUnder(t, out), before) }))
+			// Amended in P3-2a (MA-797): the read verbs name the secret files that would
+			// unlock them; reindex names -rebuild, a write at a terminal (the P3-2a pass,
+			// REG-01).
+			switch name {
+			case "search", "extract", "serve":
+				assure.Refused(t, rc, msg, assure.Code(1), assure.Names("-password-file", "-recovery-key-file"))
+			case "reindex":
+				assure.Refused(t, rc, msg, assure.Code(1), assure.Names("-rebuild", "terminal"))
+			}
 		})
 	}
 

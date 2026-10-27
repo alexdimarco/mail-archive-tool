@@ -156,7 +156,7 @@ func closeRunIndex(idx *index.Index, sealed bool, logger *log.Logger) {
 // catchUp catches si's index up to manifest (catchUpIndex), and with it any damage
 // already found: the index is whole again or still marked behind.
 func (si *sealedIndex) catchUp(manifest *state.Manifest, units *export.Units, store *container.Store, logger *log.Logger) {
-	if _, err := catchUpIndex(si.idx, manifest, units, store, logger); err != nil {
+	if _, err := catchUpIndex(context.Background(), si.idx, manifest, units, store, logger); err != nil {
 		logger.Printf("warning: %v", err)
 	}
 	si.damaged = false
@@ -222,7 +222,7 @@ type IndexCatchUp struct {
 // longer behind; the run's next commit seals it. A record the index could not take —
 // its scratch drive full, say — keeps it behind, so a later run adds it (the
 // adversarial pass's LOC-02, FID-03).
-func catchUpIndex(idx *index.Index, manifest *state.Manifest, units *export.Units, store *container.Store, logger *log.Logger) (rep IndexCatchUp, err error) {
+func catchUpIndex(ctx context.Context, idx *index.Index, manifest *state.Manifest, units *export.Units, store *container.Store, logger *log.Logger) (rep IndexCatchUp, err error) {
 	defer func() {
 		if err != nil {
 			// What it could not add waits for a later run — also for an index that was
@@ -247,6 +247,11 @@ func catchUpIndex(idx *index.Index, manifest *state.Manifest, units *export.Unit
 	sort.Strings(keys)
 	lostBefore := idx.Lost()
 	for _, key := range keys {
+		// A stop is seen between messages: nothing more is read (the P3-2a pass,
+		// CRIT-01).
+		if err := ctx.Err(); err != nil {
+			return rep, err
+		}
 		rec := records[key]
 		segs, ok := validRelPath(rec.Path)
 		m := deriveSealedMessage(units, rec)
@@ -359,7 +364,10 @@ func RebuildEncrypted(ctx context.Context, opts Options, logger *log.Logger) (In
 	}
 	defer si.idx.Close()
 	store.MarkIndexBehind()
-	rep, err := catchUpIndex(si.idx, manifest, units, store, logger)
+	rep, err := catchUpIndex(ctx, si.idx, manifest, units, store, logger)
+	if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
+		return rep, err // stopped: nothing is saved
+	}
 	if err != nil {
 		return rep, withKind(state.FailIndex, err)
 	}

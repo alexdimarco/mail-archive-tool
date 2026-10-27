@@ -595,7 +595,7 @@ func runSearch(args []string) error {
 		if err != nil {
 			return err
 		}
-		defer r.Lock()
+		defer r.Close() // waits, so a scratch index's plaintext file is gone before the process ends
 		if n := r.IndexNotice(); n != "" {
 			fmt.Fprintln(os.Stderr, "note: "+n)
 		}
@@ -768,8 +768,11 @@ func reindexEncrypted(dir string, o *reindexOpts, k *keyFlags) error {
 	if !*o.rebuild {
 		return fmt.Errorf("%s is an encrypted archive: reindex only rebuilds its search index there, and never removes a message — run mailarchive reindex -rebuild -out %s at a terminal, with its password or recovery key", dir, quoteForHint(dir))
 	}
-	if *o.unattended {
-		return errNeedsTerminal(dir, "rebuilding its search index")
+	// A rebuild writes the archive's record: it needs a person at a terminal, as a
+	// keyed backup does — and neither Desktop nor a schedule can do it in this
+	// version (the P3-2a pass, REG-02).
+	if *o.unattended || !stdAsker().attended() {
+		return fmt.Errorf("%s is an encrypted archive: rebuilding its search index needs you at a terminal with its password or recovery key — run mailarchive reindex -rebuild -out %s in a terminal", dir, quoteForHint(dir))
 	}
 	if err := app.RefuseLogInside(*o.log); err != nil {
 		return err
@@ -784,9 +787,21 @@ func reindexEncrypted(dir string, o *reindexOpts, k *keyFlags) error {
 		return err
 	}
 	defer closeLog()
-	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
-	defer stop()
+	// The first Ctrl-C or SIGTERM stops it between messages, saving nothing; a
+	// second ends it at once (as verify; the P3-2a pass, CRIT-01).
+	sigs := make(chan os.Signal, 2)
+	signal.Notify(sigs, os.Interrupt, syscall.SIGTERM)
+	defer signal.Stop(sigs)
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	var stopped atomic.Int32
+	unwatch := watchVerifyStop(sigs, cancel, &stopped, os.Exit)
 	rep, err := keyring.Reindex(ctx, u, logger)
+	unwatch()
+	if c := stopped.Load(); c != 0 {
+		fmt.Fprintln(os.Stderr, "mailarchive: reindex stopped: nothing was saved; the archive keeps its earlier search index")
+		return &exitError{code: int(c)}
+	}
 	if err != nil {
 		logger.Printf("FAILED: %v", err)
 		return err

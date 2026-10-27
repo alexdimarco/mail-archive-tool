@@ -10,7 +10,7 @@ import (
 	"mail-archive-tool/internal/assure"
 )
 
-// covers: MA-797, MA-759, R36, R37
+// covers: MA-797, MA-798, MA-759, R36, R37
 // Uninstall owns the scratch index an encrypted archive's reader works on above the
 // memory budget — index/reader-<pid>-<n>.db, the shape app.ReaderScratch names, the
 // two patterns pinned equal — and still refuses the whole uninstall for any other
@@ -24,12 +24,15 @@ func TestUninstallOwnsAReadersScratchIndex(t *testing.T) {
 	if err := os.WriteFile(reader, []byte("plaintext index"), 0o600); err != nil {
 		t.Fatal(err)
 	}
+	os.WriteFile(reader+".lock", nil, 0o600)
 	got, err := ScratchTargets(root, nil)
-	found := false
+	found := 0
 	for _, p := range got {
-		found = found || p == reader
+		if p == reader || p == reader+".lock" {
+			found++
+		}
 	}
-	assure.Reached(t, err == nil && found, "the reader's scratch index owned")
+	assure.Reached(t, err == nil && found == 2, "the reader's scratch index and its lock file owned")
 
 	for _, name := range []string{"reader-4242.db", "reader-x-1.db", "reader-1-2.db-journal"} {
 		bad := filepath.Join(filepath.Dir(files[2]), name)
