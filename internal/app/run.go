@@ -519,9 +519,10 @@ func Run(ctx context.Context, opts Options, logger *log.Logger, onProgress Progr
 	}
 	// One run per archive at a time (R5): a scheduled run overlapping a manual
 	// one would otherwise interleave manifest/index/file writes.
-	lock, err := lockfile.AcquireAs(filepath.Join(opts.Out, lockfile.Name), lockVerb(opts, "export"))
+	lockPath := filepath.Join(opts.Out, lockfile.Name)
+	lock, err := lockfile.AcquireAs(lockPath, lockVerb(opts, "export"))
 	if err != nil {
-		return Result{}, withKind(state.FailArchiveUnwritable, err) // a held lock is named by ErrHeld first
+		return Result{}, withKind(state.FailArchiveUnwritable, busyRefusal(lockPath, err)) // a held lock is named by ErrHeld first
 	}
 	defer lock.Release()
 	// Again under the lock: an encryption that finished while this run waited

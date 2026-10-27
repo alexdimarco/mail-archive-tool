@@ -144,9 +144,10 @@ func RunGraph(ctx context.Context, g GraphOptions, opts Options, logger *log.Log
 	if err := os.MkdirAll(opts.Out, 0o755); err != nil {
 		return Result{}, withKind(state.FailArchiveUnwritable, fmt.Errorf("create output dir: %w", err))
 	}
-	lock, err := lockfile.AcquireAs(filepath.Join(opts.Out, lockfile.Name), lockVerb(opts, "graph"))
+	lockPath := filepath.Join(opts.Out, lockfile.Name)
+	lock, err := lockfile.AcquireAs(lockPath, lockVerb(opts, "graph"))
 	if err != nil {
-		return Result{}, withKind(state.FailArchiveUnwritable, err) // a held lock is named by ErrHeld first
+		return Result{}, withKind(state.FailArchiveUnwritable, busyRefusal(lockPath, err)) // a held lock is named by ErrHeld first
 	}
 	defer lock.Release()
 	if opts.Key == nil {

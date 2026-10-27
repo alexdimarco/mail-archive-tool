@@ -397,7 +397,9 @@ func Assess(in Input, now time.Time) Report {
 	// brand-new empty archive and the no-schedule remedy below would invite a
 	// SECOND schedule install. Say the location is unreachable and that nothing is
 	// wrong with the archive, and suppress the no-schedule advice.
-	if in.OutAbsent {
+	// A folder this computer recorded as an encrypted archive says so in its case's own
+	// words below, which ask first whether the drive is plugged in: said once.
+	if in.OutAbsent && in.EncryptedCase != encmark.Gone && in.EncryptedCase != encmark.Unproven {
 		r.warn("out_absent", fmt.Sprintf("the archive location %s is not reachable — if it is on a removable or network drive, connect it and check again; nothing is wrong with the archive itself", in.Out))
 	}
 
@@ -1501,6 +1503,34 @@ func jobOutOf(job []string) string {
 	return ""
 }
 
+// NoArchive is status's refusal of a folder with no archive to report on — no
+// manifest, schedule record or last-run record — or nil when there is one. An
+// encrypted archive, and a folder this computer recorded as one, is always reported
+// on: a recorded folder that is gone is "is the drive plugged in?" in its case's
+// words, never "run an export into it first" (P3-8 friction).
+func NoArchive(in Input) error {
+	if in.HasManifestFile || in.HasDescriptorFile || in.HasVerifyDescriptorFile || in.LastRunState != state.LastRunAbsent ||
+		in.Encrypted || in.EncryptedCase != encmark.None {
+		return nil
+	}
+	return fmt.Errorf("no archive at %s: no manifest, schedule descriptor or last-run record (run an export into it first, or check the path)", in.Out)
+}
+
+// plainEncryptedWhy is what showed a folder is an encrypted archive, in words for
+// the person reading status or MailArchive Desktop: the folder's markers are named
+// by what they are, never by an internal file's name (X10; P3-8 friction). Any
+// other reason — a recorded folder's case, "an encrypted archive this computer
+// made" — is already in plain words and kept.
+func plainEncryptedWhy(why string) string {
+	switch {
+	case strings.Contains(why, "key file"):
+		return "it holds an encrypted archive's key file"
+	case strings.HasPrefix(why, "it holds "), strings.HasPrefix(why, "its manifest "):
+		return "it holds an encrypted archive's sealed files"
+	}
+	return why
+}
+
 // Gather collects the facts about an archive. nameOverride checks that
 // schedule name instead of the descriptor's.
 func Gather(out, nameOverride string) Input {
@@ -1544,7 +1574,7 @@ func Gather(out, nameOverride string) Input {
 	// is keyless — the run records, the lock, the schedule — and says it is
 	// encrypted (phase2a §5).
 	if enc, why, _ := encmark.Here(out); enc {
-		in.Encrypted, in.EncryptedWhy = true, why
+		in.Encrypted, in.EncryptedWhy = true, plainEncryptedWhy(why)
 	}
 	if res, _ := encmark.At(out); res.RecordErr != nil {
 		in.RecordProblem = util.StripControl(res.RecordErr.Error())

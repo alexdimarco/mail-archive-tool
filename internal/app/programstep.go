@@ -78,6 +78,14 @@ var programIdentity = func() (string, bool) {
 	return bi.Main.Version, container.ExactVersion(bi.Main.Version) && !modified
 }
 
+// ReleaseBuild reports whether this program is a release build, by the one test the
+// program copies use (programIdentity, C12): MailArchive Desktop words its copies
+// checkbox by it instead of keeping a copy of the check.
+func ReleaseBuild() bool {
+	_, release := programIdentity()
+	return release
+}
+
 // programWaitMax bounds the program step's wait for its download (§5, R20).
 var programWaitMax = 10 * time.Minute
 

@@ -70,6 +70,13 @@ func refuseStoreIntoEncrypted(exp *export.Exporter, token string) error {
 	return nil
 }
 
+// caseRefusal is RefuseKeyless's refusal of a recorded folder in its case's own
+// words: the text is the case's alone, and it still matches ErrEncryptedNeedsKey.
+type caseRefusal struct{ msg string }
+
+func (e *caseRefusal) Error() string { return e.msg }
+func (e *caseRefusal) Unwrap() error { return ErrEncryptedNeedsKey }
+
 // RefuseKeyless refuses op on out — before any lock, log, read or write — when
 // out is an encrypted archive, or sits inside one, or any of extra (a -manifest
 // folder, an extract destination) is or sits inside one, as encmark recognises it —
@@ -92,6 +99,13 @@ func RefuseKeyless(op, out string, extra ...string) error {
 			// Not known to be encrypted: this computer's record cannot be used, and the
 			// folder holds MailArchive files (§4.3; the P3-0 adversarial pass, REG-02).
 			return fmt.Errorf("%w: %v; refusing to %s %s until it is fixed — `mailarchive status` names the fix", encmark.ErrRecordUnusable, res.RecordErr, op, abs)
+		}
+		if res.Recorded && res.Case != encmark.None && res.Why != "" {
+			// A recorded folder that no longer holds its archive whole: "open it with its
+			// password" cannot work there, so it is refused in its case's own words — the
+			// drive question for a folder gone, restore-key-file for key files missing —
+			// naming the folder once (P3-8 friction, B12; as the CLI's keylessRefusal).
+			return &caseRefusal{msg: res.Why}
 		}
 		dir, why := "", ""
 		if res.Encrypted {
