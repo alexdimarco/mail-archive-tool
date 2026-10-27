@@ -912,6 +912,29 @@ shows it as stopped, with that verdict beside it (CON-04).
 
 **CON-01's keyed side** gets its own review (E9).
 
+*Owner rulings and the plan for P3-2b (2026-10-26):*
+- **What tier 2 calls each finding** (the owner: "amber unless mail lost"). Red (`damaged`) only
+  when a message itself is damaged or gone — a unit, or a record the archive cannot load. Amber
+  (`not_attested`) with the remedy named when a spare copy of the record is bad ("run a backup";
+  the owner's tier-1 wording, CRIT-1), when the search index is bad ("`reindex -rebuild`"), and
+  when part of the go-back timeline is lost (the mail is intact; go-back to past dates stays
+  partial for good). A load refusal keeps its own outcome (`unfinished_save`, `restored_older`,
+  `newer_format`); `ErrRecord`, `ErrNotSealed` and `ErrInventoryDamaged` are `damaged`.
+- **A tier-2 red stays** (the owner: "keep it red"). A later tier-1 check that finds nothing
+  writes the standing tier-2 record back unchanged, prints its own result with "a check with the
+  key on DATE found damage — only `verify -full` can clear it", and exits 2.
+- **History and index chunks have one copy;** only the manifest's sections have two. "Both copies
+  of every manifest chunk, the history and the index" is read as: both copies of every manifest
+  chunk, and every history and index chunk.
+- **Implementer's calls, vetoable:** tier 2 runs tier 1 first and goes on when it is red, to name
+  every damaged part; one run records one verdict, the worse of the two; a damaged file is named on
+  the terminal and in `-json` by its file in the archive and its part (the message, its
+  attachments, its original; a manifest section and copy; a history or index chunk), never by the
+  message's folder or subject; the record and the attention file stay minimised (A18); a unit too
+  large for the memory budget is `not_attested`, named; `-full` on a plaintext archive is refused
+  naming it; a scheduled `verify -full` is refused (unattended keyed work is Phase 4, O5); plain
+  `verify` on a read-only medium stays refused at the lock, as today.
+
 ## 9. The keys after creation
 
 The CLI's key verbs need a foreground terminal; Desktop's card is attended by nature.
