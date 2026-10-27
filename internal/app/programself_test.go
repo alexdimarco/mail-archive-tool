@@ -19,6 +19,7 @@ import (
 	"mail-archive-tool/internal/assure"
 	"mail-archive-tool/internal/container"
 	"mail-archive-tool/internal/progcache"
+	"mail-archive-tool/internal/util"
 )
 
 // covers: MA-842, R37
@@ -64,6 +65,7 @@ func TestASelfCopyIsNeverOfAReplacedProgram(t *testing.T) {
 	stand := filepath.Join(t.TempDir(), "mailarchive")
 	os.WriteFile(stand, []byte("the program that started"), 0o755)
 	fi, _ := os.Stat(stand)
+	fi = util.PinIdentity(fi) // as selfAtStart takes it: on Windows, else the swap matches itself (B1)
 	orig := selfExecutable
 	selfExecutable = func() (string, os.FileInfo) { return stand, fi }
 	defer func() { selfExecutable = orig }()

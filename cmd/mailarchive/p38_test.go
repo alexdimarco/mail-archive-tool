@@ -5,6 +5,7 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"mail-archive-tool/internal/assure"
@@ -42,6 +43,29 @@ func TestRestoreFromTheRememberedKeyChecksFirst(t *testing.T) {
 	code, msg = refused(err)
 	assure.Refused(t, code, msg, assure.Code(1), assure.Names("does not remember"),
 		assure.NoSideEffect(func() bool { return len(a.prompts) == 0 && !exists(filepath.Join(out, vault.FileName)) }))
+}
+
+// covers: MA-851, R37
+// status of a folder this computer recorded as an encrypted archive, its drive
+// unplugged (the folder gone), reports on it — the RED asking for the drive — instead
+// of refusing with "run an export into it first" (P3-8 friction review, w3 c3). A path
+// that never held an archive is still refused that way.
+func TestStatusOfAnUnpluggedEncryptedArchiveReportsOnIt(t *testing.T) {
+	flowRecord(t)
+	out := filepath.Join(t.TempDir(), "archive")
+	c := &scripted{isAttended: true, answers: []string{flowPassword, flowPassword, "", "", keyAnswer}}
+	u, err := createEncrypted(c, out, noKeyFlags(), false, nil)
+	if err != nil {
+		t.Fatalf("%v\n%s", err, c.transcript())
+	}
+	u.Destroy()
+	if err := os.Rename(out, out+"-unplugged"); err != nil {
+		t.Fatal(err)
+	}
+	gone := runStatus([]string{"-out", out})
+	never := runStatus([]string{"-out", filepath.Join(t.TempDir(), "never")})
+	assure.Reached(t, gone == nil && never != nil && strings.Contains(never.Error(), "run an export into it first"),
+		"reported on, not refused")
 }
 
 // covers: MA-850, R37

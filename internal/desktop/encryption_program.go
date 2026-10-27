@@ -4,7 +4,6 @@ import (
 	"io"
 	"log"
 	"net/http"
-	"runtime/debug"
 	"time"
 
 	"mail-archive-tool/internal/app"
@@ -46,23 +45,10 @@ func (d *dashboard) programCopiesAction(w http.ResponseWriter, r *http.Request) 
 	writeJSON(w, map[string]any{"ok": true, "lines": []string{line}})
 }
 
-// releaseBuild reports whether this program is a release build: an exact
-// vMAJOR.MINOR.PATCH from a clean checkout, the test the program copies use (internal/app's
-// programIdentity, C12). Only a release keeps copies for every platform; a development
-// build keeps only itself. A var, so a test can be either.
-var releaseBuild = func() bool {
-	bi, ok := debug.ReadBuildInfo()
-	if !ok {
-		return false
-	}
-	modified := true
-	for _, s := range bi.Settings {
-		if s.Key == "vcs.modified" {
-			modified = s.Value != "false"
-		}
-	}
-	return container.ExactVersion(bi.Main.Version) && !modified
-}
+// releaseBuild reports whether this program is a release build, the test the program
+// copies use (C12). Only a release keeps copies for every platform; a development build
+// keeps only itself. A var, so a test can be either.
+var releaseBuild = app.ReleaseBuild
 
 // programCopiesLabel is the words of the checkbox that keeps copies of MailArchive in an
 // encrypted archive: what this build will keep, never a release's promise from a

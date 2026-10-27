@@ -38,8 +38,10 @@ func runStatus(args []string) error {
 	// A manifest FILE that exists but does not load (newer format, corrupt) is
 	// an archive with a problem, not "no archive": let Assess RED it rather than
 	// giving the wrong "run an export first" advice (friction #7a).
-	if !in.HasManifestFile && !in.HasDescriptorFile && !in.HasVerifyDescriptorFile && in.LastRunState == state.LastRunAbsent {
-		return fmt.Errorf("no archive at %s: no manifest, schedule descriptor or last-run record (run an export into it first, or check the path)", in.Out)
+	// An encrypted archive, or a folder this computer recorded as one, is reported on —
+	// a drive unplugged is a RED asking for the drive — never "run an export" (P3-8).
+	if err := health.NoArchive(in); err != nil {
+		return err
 	}
 	// Extractability (design K4): compute the count of records with a preserved
 	// original (.eml) present on disk via the shared app.ExtractableCount helper

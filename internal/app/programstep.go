@@ -277,6 +277,7 @@ type programRoot struct {
 func (r *programRoot) close() {
 	if r != nil && r.root != nil {
 		r.root.Close()
+		r.root = nil // closed once: a later close is nothing
 	}
 }
 
@@ -887,6 +888,7 @@ func (s *programStepState) write(pr *programRoot, dir string, set container.Prog
 		return ProgramStopped
 	}
 	if !*next.Keep && len(pr.entries()) == 0 {
+		pr.close() // Windows will not remove a folder held open (P3-8 Windows lab)
 		os.Remove(dir)
 	}
 	// What landed, for the step's one line (B23): a copy replaced in place counts as
