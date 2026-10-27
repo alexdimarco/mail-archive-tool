@@ -32,7 +32,7 @@ func TestReleasesAreUnchangeableAndExactlyTheirTag(t *testing.T) {
 		return string(b)
 	}
 	yml := read(".github/workflows/release.yml")
-	for _, want := range []string{"--draft", "gh release download", "cmp \"$check/SHA256SUMS\" dist/SHA256SUMS", "--draft=false", `^v[0-9]+\.[0-9]+\.[0-9]+$`} {
+	for _, want := range []string{"--draft", "gh release download", "cmp \"$check/SHA256SUMS\" dist/SHA256SUMS", "sha256sum -c SHA256SUMS", "--draft=false", `^v[0-9]+\.[0-9]+\.[0-9]+$`} {
 		if !strings.Contains(yml, want) {
 			t.Errorf("release.yml lacks %q", want)
 		}
@@ -40,8 +40,8 @@ func TestReleasesAreUnchangeableAndExactlyTheirTag(t *testing.T) {
 	if strings.Contains(yml, "--clobber") || strings.Contains(yml, "gh release upload") {
 		t.Error("release.yml can still replace a published release's files")
 	}
-	if strings.Index(yml, "--draft=false") < strings.Index(yml, "cmp \"$check/SHA256SUMS\"") {
-		t.Error("release.yml publishes before checking the uploaded checksums")
+	if strings.Index(yml, "--draft=false") < strings.Index(yml, "cmp \"$check/SHA256SUMS\"") || strings.Index(yml, "--draft=false") < strings.Index(yml, "sha256sum -c SHA256SUMS") {
+		t.Error("release.yml publishes before checking the uploaded checksums and assets")
 	}
 	br := read("packaging/build-release.sh")
 	for _, f := range []string{"mailarchive-linux-amd64", "mailarchive-linux-arm64", "mailarchive.exe", "mailarchivew.exe"} {

@@ -155,12 +155,20 @@ func programOdd(out string) (int, []string) {
 		return 1, []string{ProgramDir}
 	}
 	n, names := 0, []string(nil)
+	lower := map[string]int{}
+	for _, e := range entries {
+		lower[strings.ToLower(e.Name())]++
+	}
 	for _, e := range entries {
 		name := e.Name()
-		if util.IsLitter(name) || programTemp.MatchString(name) {
+		regular := e.Type().IsRegular() || util.IsHydratedCloudFile(filepath.Join(dir, name))
+		if util.IsLitter(name) || (programTemp.MatchString(name) && regular) {
 			continue
 		}
-		odd := !e.Type().IsRegular() || !programName.MatchString(name) || strings.HasSuffix(strings.ToLower(name), "-attachments.zip")
+		// A name twice in letter case only is a twin beside a kept copy (the PG pass,
+		// SWAP-02); a folder or a link with the step's temporary name is not its own
+		// (SWAP-03).
+		odd := !regular || !programName.MatchString(name) || strings.HasSuffix(strings.ToLower(name), "-attachments.zip") || lower[strings.ToLower(name)] > 1
 		if !odd {
 			if fi, err := e.Info(); err != nil || fi.Size() > ProgramMaxFile {
 				odd = true

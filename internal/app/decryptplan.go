@@ -175,8 +175,46 @@ func dirExists(p string) bool {
 // by identity (CheckDestinationOther). It writes nothing; it returns what the copy
 // checks again before it starts.
 func (e *CopyExportEnv) CheckDecryptDestination(parent, out string, archives, settings []string) (*CopyOutside, error) {
+	all, known, err := e.checkDecryptPaths(parent, out, archives, settings)
+	if err != nil {
+		return nil, err
+	}
+	outside, err := e.CheckDestinationOther(parent, all, out)
+	if err != nil {
+		var r *CopyRefusal
+		if errors.As(err, &r) {
+			return nil, copyWording(r, parent)
+		}
+		return nil, err
+	}
+	// The other archives this computer knows, each on its own, so a refusal names the
+	// archive and its cause — never a share or FUSE mount the folder is not on (the PG
+	// pass, FIX-02; R-f2 kept for them, CRIT-07).
+	for _, k := range known {
+		o, err := e.CheckDestinationOther(parent, []string{k}, out)
+		if err != nil {
+			var r *CopyRefusal
+			if errors.As(err, &r) && r.ID == "R-f2" {
+				return nil, refuse("R-f2", fmt.Sprintf("MailArchive couldn't confirm that %s is outside the archive %s, which this computer knows — that archive is on a network share or a FUSE mount, or too large or partly unreadable to check — so no unencrypted copy was made. Choose a folder on another drive; if that archive is no longer used, remove it from Your archives in MailArchive Desktop.", parent, k))
+			}
+			if errors.As(err, &r) {
+				return nil, copyWording(r, parent)
+			}
+			return nil, err
+		}
+		outside.archives = append(outside.archives, o.archives...)
+		outside.sets = append(outside.sets, o.sets...)
+	}
+	return outside, nil
+}
+
+// checkDecryptPaths is the copy's checks that walk no archive: the path, inside an
+// encrypted archive, MailArchive's own folders, and inside an archive by path. It
+// returns the archives to compare by identity: those named and those found above the
+// folder, and apart the others this computer knows.
+func (e *CopyExportEnv) checkDecryptPaths(parent, out string, archives, settings []string) (all, known []string, _ error) {
 	if r := checkCopyParent(parent); r != nil {
-		return nil, r
+		return nil, nil, r
 	}
 	if res, _ := encmark.At(parent); res.Encrypted || res.ByRecordErr {
 		why := res.Why
@@ -190,7 +228,7 @@ func (e *CopyExportEnv) CheckDecryptDestination(parent, out string, archives, se
 				where = "is an encrypted archive"
 			}
 		}
-		return nil, refuse("R-enc", fmt.Sprintf("The folder %s %s — %s. An unencrypted copy is never made inside one: choose a folder outside it.", parent, where, why))
+		return nil, nil, refuse("R-enc", fmt.Sprintf("The folder %s %s — %s. An unencrypted copy is never made inside one: choose a folder outside it.", parent, where, why))
 	}
 	rp := util.ResolveExisting(parent)
 	for _, d := range append(mailarchiveOwnDirs(), settings...) {
@@ -198,26 +236,22 @@ func (e *CopyExportEnv) CheckDecryptDestination(parent, out string, archives, se
 			continue
 		}
 		if util.Within(util.ResolveExisting(d), rp) {
-			return nil, refuse("R-set", fmt.Sprintf("The folder %s is inside %s, where MailArchive keeps its settings or working files — uninstalling MailArchive removes it. Choose a folder of your own for the unencrypted copy.", parent, d))
+			return nil, nil, refuse("R-set", fmt.Sprintf("The folder %s is inside %s, where MailArchive keeps its settings or working files — uninstalling MailArchive removes it. Choose a folder of your own for the unencrypted copy.", parent, d))
 		}
 	}
-	all := append([]string{out}, archives...)
+	all = append([]string{out}, archives...)
 	all = append(all, ArchivesAbove(parent)...)
-	all = append(all, knownArchives()...)
-	for _, a := range all {
+	for _, k := range knownArchives() {
+		if !slices.Contains(all, k) {
+			known = append(known, k)
+		}
+	}
+	for _, a := range append(append([]string(nil), all...), known...) {
 		if overlap, how := util.Overlap(parent, strings.TrimSpace(a)); overlap && how != "contains" && strings.TrimSpace(a) != "" {
-			return nil, copyRefusalF(a)
+			return nil, nil, copyRefusalF(a)
 		}
 	}
-	outside, err := e.CheckDestinationOther(parent, all, out)
-	if err != nil {
-		var r *CopyRefusal
-		if errors.As(err, &r) {
-			return nil, copyWording(r, parent)
-		}
-		return nil, err
-	}
-	return outside, nil
+	return all, known, nil
 }
 
 // knownArchives are the archive folders this computer knows: the Desktop's list, its
@@ -333,7 +367,9 @@ func sealedSize(out string) int64 {
 // (X14): the destination again, and the plan itself — the archive's record and the
 // new folder's name as they were planned — else ErrDecryptStale.
 func (p *DecryptPlan) Recheck(e *CopyExportEnv, archives, settings []string) error {
-	if _, err := e.CheckDecryptDestination(p.Parent, p.Out, archives, settings); err != nil {
+	// The path checks again; identity against the sets the plan walked, never a second
+	// walk of every archive under the lock (the PG pass, FIX-02).
+	if _, _, err := e.checkDecryptPaths(p.Parent, p.Out, archives, settings); err != nil {
 		return err
 	}
 	if err := p.outside.Recheck(e, p.Parent); err != nil {

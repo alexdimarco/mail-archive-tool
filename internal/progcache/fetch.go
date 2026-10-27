@@ -137,7 +137,7 @@ func (f *Fetcher) Fetch(ctx context.Context, version string) Result {
 		defer cancel()
 	}
 	var r Result
-	sums, class := f.sums(ctx, dir, version)
+	sums, sumsDigest, class := f.sums(ctx, dir, version)
 	if class == "" {
 		for _, a := range Assets {
 			want, ok := sums[a]
@@ -148,7 +148,7 @@ func (f *Fetcher) Fetch(ctx context.Context, version string) Result {
 			if f.Cache.Verified(version)[a] == want {
 				continue
 			}
-			cl, notPub := f.asset(ctx, dir, version, a, want)
+			cl, notPub := f.asset(ctx, dir, version, a, want, sumsDigest)
 			if notPub {
 				r.NotPublished = append(r.NotPublished, a)
 				continue
@@ -160,6 +160,11 @@ func (f *Fetcher) Fetch(ctx context.Context, version string) Result {
 				}
 			}
 		}
+	}
+	if class == "" && len(r.NotPublished) > 0 {
+		// Some of the release's assets are not published: an outcome that counts, so the
+		// download does not start again on every run (NET-1).
+		class = ClassNotPublished
 	}
 	r.Class = class
 	r.Verified = f.Cache.Verified(version)
@@ -239,10 +244,10 @@ func parseSums(b []byte) (map[string]string, error) {
 // sums is version's checksums: the cached SHA256SUMS when verified, else downloaded
 // and written atomically, its digest recorded in verified (R18). A release without
 // one is not published.
-func (f *Fetcher) sums(ctx context.Context, dir, version string) (map[string]string, string) {
+func (f *Fetcher) sums(ctx context.Context, dir, version string) (map[string]string, string, string) {
 	if b, err := f.Cache.Sums(version); err == nil {
 		if m, err := parseSums(b); err == nil {
-			return m, ""
+			return m, hexSHA(b), ""
 		}
 	}
 	// The same idle limit as an asset's download (R17): a server that answers nothing
@@ -255,35 +260,35 @@ func (f *Fetcher) sums(ctx context.Context, dir, version string) (map[string]str
 	resp, class := f.get(rctx, version, SumsName, 0)
 	if class != "" {
 		if stalled.Load() {
-			return nil, ClassStalled
+			return nil, "", ClassStalled
 		}
-		return nil, class
+		return nil, "", class
 	}
 	defer resp.Body.Close()
 	if resp.StatusCode == http.StatusNotFound {
-		return nil, ClassNotPublished
+		return nil, "", ClassNotPublished
 	}
 	if resp.StatusCode != http.StatusOK {
-		return nil, ClassServer
+		return nil, "", ClassServer
 	}
 	b, err := io.ReadAll(io.LimitReader(resp.Body, maxSums+1))
 	switch {
 	case err != nil && stalled.Load():
-		return nil, ClassStalled
+		return nil, "", ClassStalled
 	case err != nil && ctx.Err() != nil:
-		return nil, ClassCancelled
+		return nil, "", ClassCancelled
 	case err != nil:
-		return nil, ClassNetwork
+		return nil, "", ClassNetwork
 	case len(b) > maxSums:
-		return nil, ClassTooLarge
+		return nil, "", ClassTooLarge
 	}
 	m, err := parseSums(b)
 	if err != nil {
-		return nil, ClassServer
+		return nil, "", ClassServer
 	}
 	l, err := f.Cache.lock()
 	if err != nil {
-		return nil, ClassBusy
+		return nil, "", ClassBusy
 	}
 	defer l.Release()
 	v := f.Cache.readVerified(dir)
@@ -291,12 +296,12 @@ func (f *Fetcher) sums(ctx context.Context, dir, version string) (map[string]str
 		v = verified{Sums: hexSHA(b), Assets: map[string]string{}} // checked against other sums: check again
 	}
 	if err := util.WriteFileAtomic0600(filepath.Join(dir, SumsName), b); err != nil {
-		return nil, ClassBusy
+		return nil, "", ClassBusy
 	}
 	if err := writeJSON(filepath.Join(dir, verifiedName), v); err != nil {
-		return nil, ClassBusy
+		return nil, "", ClassBusy
 	}
-	return m, ""
+	return m, hexSHA(b), ""
 }
 
 // get requests one file of version from offset, every response checked by the
@@ -336,7 +341,7 @@ func (f *Fetcher) get(ctx context.Context, version, name string, offset int64) (
 // asset downloads one asset into its partial file — held under its own OS lock, never
 // the cache's (R17) — resuming what an earlier attempt left, checks it against want
 // and moves it into place under the cache's lock.
-func (f *Fetcher) asset(ctx context.Context, dir, version, asset, want string) (class string, notPublished bool) {
+func (f *Fetcher) asset(ctx context.Context, dir, version, asset, want, sumsDigest string) (class string, notPublished bool) {
 	part := filepath.Join(dir, asset+partialSuffix)
 	if fi, err := os.Lstat(part); err == nil && !fi.Mode().IsRegular() {
 		return ClassBusy, false
@@ -351,38 +356,60 @@ func (f *Fetcher) asset(ctx context.Context, dir, version, asset, want string) (
 	if err != nil {
 		return ClassBusy, false
 	}
-	class, notPublished = f.download(ctx, hold, version, asset)
-	if class != "" || notPublished {
-		hold.Close()
-		if class != ClassCancelled && class != ClassStalled && class != ClassNetwork && class != ClassServer {
-			os.Remove(part) // a refused or too-large file is not resumed
+	// A partial an earlier attempt finished but could not move — the cache was busy, or
+	// the program ended — is moved as it is, never asked for again (NET-2).
+	if h, err := hashOf(hold, f.maxFile()); err != nil || h != want {
+		class, notPublished = f.download(ctx, hold, version, asset)
+		if class != "" || notPublished {
+			hold.Close()
+			if class != ClassCancelled && class != ClassStalled && class != ClassNetwork && class != ClassServer {
+				os.Remove(part) // a refused or too-large file is not resumed
+			}
+			return class, notPublished
 		}
-		return class, notPublished
+		hold.Sync()
+		got, herr := hashOf(hold, f.maxFile())
+		if herr != nil {
+			hold.Close()
+			return ClassNetwork, false
+		}
+		if got != want {
+			hold.Close()
+			os.Remove(part)
+			return f.mismatch(dir), false
+		}
 	}
-	hold.Sync()
-	hold.Seek(0, io.SeekStart)
-	h := sha256.New()
-	_, herr := io.Copy(h, io.LimitReader(hold, f.maxFile()+1))
 	hold.Close()
-	if herr != nil {
-		return ClassNetwork, false
-	}
-	if hex.EncodeToString(h.Sum(nil)) != want {
-		os.Remove(part)
-		return f.mismatch(dir), false
-	}
 	l, err := f.Cache.lock()
 	if err != nil {
 		return ClassBusy, false
 	}
 	defer l.Release()
+	v := f.Cache.readVerified(dir)
+	if v.Sums != sumsDigest {
+		// The checksum file was fetched again meanwhile: want came from another one, so
+		// the file is not recorded as verified (NET-4).
+		os.Remove(part)
+		return ClassBusy, false
+	}
 	if err := os.Rename(part, filepath.Join(dir, asset)); err != nil {
 		return ClassBusy, false
 	}
-	v := f.Cache.readVerified(dir)
 	v.Assets[asset] = want
 	writeJSON(filepath.Join(dir, verifiedName), v)
 	return "", false
+}
+
+// hashOf is the SHA-256 of an open file from its start, read up to max+1 bytes.
+func hashOf(f *os.File, max int64) (string, error) {
+	if _, err := f.Seek(0, io.SeekStart); err != nil {
+		return "", err
+	}
+	h := sha256.New()
+	if _, err := io.Copy(h, io.LimitReader(f, max+1)); err != nil {
+		return "", err
+	}
+	return hex.EncodeToString(h.Sum(nil)), nil
 }
 
 // mismatch deletes SHA256SUMS with the asset (R18) and counts it: two in a row are

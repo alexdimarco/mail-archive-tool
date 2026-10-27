@@ -23,6 +23,9 @@ import (
 	"mail-archive-tool/internal/state"
 	"mail-archive-tool/internal/util"
 	"mail-archive-tool/internal/vault"
+
+	"golang.org/x/text/cases"
+	"golang.org/x/text/unicode/norm"
 )
 
 // The unencrypted copy itself (phase 3 §10, P3-4): DecryptSealed executes a
@@ -113,10 +116,15 @@ var copyTop = map[string]bool{
 	"search.db-wal": true, "search.db-shm": true, "search.db-journal": true, "attachments-report.tsv": true, "index.html": true,
 }
 
+// foldName folds a name as a case-insensitive volume compares it: Unicode case
+// folding after NFC, so "ſearch.db" and "Search.DB" are both search.db (the PG pass,
+// FIX-04).
+func foldName(s string) string { return cases.Fold().String(norm.NFC.String(s)) }
+
 // hasPageName says a segment takes a folder page's name, in any case.
 func hasPageName(segs []string) bool {
 	for _, s := range segs {
-		if indexPageName.MatchString(strings.ToLower(s)) {
+		if indexPageName.MatchString(foldName(s)) {
 			return true
 		}
 	}
@@ -202,7 +210,9 @@ func (e *CopyExportEnv) DecryptSealed(ctx context.Context, p *DecryptPlan, archi
 		return c.rep, c.stop(ErrCopyStopped)
 	}
 	if err := cr.Remove(CopyMarkerName); err != nil {
-		return c.rep, fmt.Errorf("%w: its unfinished mark could not be removed: %w", ErrCopyFailed, err)
+		// Left unfinished as any other failure: the manifest goes, the folder is named
+		// (the PG pass, FIX-06).
+		return c.rep, c.failErr(fmt.Errorf("its unfinished mark could not be removed: %w", err))
 	}
 	syncRoot(cr)
 	c.rep.Unfinished = false
@@ -347,7 +357,7 @@ func (c *copier) record(ctx context.Context, r state.Record) error {
 		return c.leftOut(rawPath(r.Path), "its recorded path is not a safe path inside an archive")
 	case r.Unit == "" || r.Sealed == nil:
 		return c.leftOut(r.Path, "the archive holds no sealed files for it")
-	case copyTop[strings.ToLower(segs[0])] || hasPageName(segs) || hasDotSegment(segs):
+	case copyTop[foldName(segs[0])] || hasPageName(segs) || hasDotSegment(segs):
 		return c.leftOut(r.Path, "its name is one the copy keeps for its own files")
 	}
 	stem := strings.TrimSuffix(r.Path, ".html")
@@ -509,7 +519,7 @@ func (c *copier) index(ctx context.Context) error {
 		}
 		if err == nil {
 			if err = index.CheckImageFile(dbPath); err == nil {
-				idx, err = openCopyIndex(dbPath, small)
+				idx, err = copyIndexOpen(dbPath, small)
 			}
 		}
 	}
@@ -517,7 +527,9 @@ func (c *copier) index(ctx context.Context) error {
 	if err != nil {
 		removeRootDB(c.root)
 		c.rep.Index = "rebuilt"
-		if idx, err = openCopyIndex(dbPath, small); err == nil {
+		// A rebuilt index covers every copied message: judged by what it indexes, never by
+		// the image it replaces (the PG pass, FIX-05).
+		if idx, err = copyIndexOpen(dbPath, copyNeed(c.m, 0) <= copyIndexMemory); err == nil {
 			if err = indexCopied(ctx, c.p.Dest, c.m, idx); err != nil {
 				idx.Close()
 				idx = nil
@@ -551,6 +563,9 @@ var errIndexNotAsIs = errors.New("the archive's index is not used as it is")
 var copyIndexMemory int64 = 256 << 20
 
 // openCopyIndex opens the copy's index, its temporary work kept in memory when small.
+// copyIndexOpen is how the copier opens its index; a var so a test can see the choice.
+var copyIndexOpen = openCopyIndex
+
 func openCopyIndex(path string, small bool) (*index.Index, error) {
 	if small {
 		return index.OpenTempInMemory(path)

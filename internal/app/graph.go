@@ -401,6 +401,7 @@ func RunGraph(ctx context.Context, g GraphOptions, opts Options, logger *log.Log
 	}
 	lastCheckpoint := 0
 	var lockLost error
+	var volumeFatal *RunFatalError // the archive's volume could no longer be written: the program step is skipped (R1)
 	// saveErr is the most recent manifest save's outcome; a run whose last save
 	// failed kept no progress and fails (F53), exactly as Run does.
 	var saveErr error
@@ -503,6 +504,7 @@ func RunGraph(ctx context.Context, g GraphOptions, opts Options, logger *log.Log
 				// mailbox would fail the same way, so the run stops here, with what it
 				// kept (§4.6).
 				unread = len(g.Mailboxes) - i - 1
+				volumeFatal = fatal
 				break
 			}
 			if trip != nil {
@@ -554,7 +556,7 @@ func RunGraph(ctx context.Context, g GraphOptions, opts Options, logger *log.Log
 		}
 		result.IndexBehind = opts.Index && sealed.IndexBehind()
 		// The program copies, under the lock, after the last save (program design R1).
-		if lockLost == nil && saveErr == nil && ctx.Err() == nil {
+		if volumeFatal == nil && lockLost == nil && saveErr == nil && ctx.Err() == nil {
 			result.Program = programStep(programEnv{ctx: ctx, out: opts.Out, store: sealed, save: manifest.Save,
 				stillHeld: lock.StillHeld, logger: logger, runStart: encStart, download: download})
 		}

@@ -154,7 +154,8 @@ func TestWhatTheReleaseDoesNotPublishIsSaid(t *testing.T) {
 	r := newRelease(t, "v1.5.0", a)
 	f := r.fetcher(t)
 	res := f.Fetch(context.Background(), "v1.5.0")
-	if res.Class != "" || len(res.Verified) != 3 || len(res.NotPublished) != 1 || res.NotPublished[0] != Assets[3] {
+	// The rest verified; the attempt counts (NET-1): not again until a version changes.
+	if ok, _ := f.ShouldTry("v1.5.0"); res.Class != ClassNotPublished || ok || len(res.Verified) != 3 || len(res.NotPublished) != 1 || res.NotPublished[0] != Assets[3] {
 		t.Fatalf("one asset unpublished: %+v", res)
 	}
 	res = f.Fetch(context.Background(), "v9.9.9")
@@ -166,7 +167,7 @@ func TestWhatTheReleaseDoesNotPublishIsSaid(t *testing.T) {
 	delete(r2.files, "v1.5.0/"+Assets[1])
 	f2 := r2.fetcher(t)
 	res = f2.Fetch(context.Background(), "v1.5.0")
-	assure.Reached(t, res.Class == "" && len(res.NotPublished) == 1 && res.NotPublished[0] == Assets[1] && len(res.Verified) == 3, fmt.Sprintf("listed, not served: %+v", res))
+	assure.Reached(t, res.Class == ClassNotPublished && len(res.NotPublished) == 1 && res.NotPublished[0] == Assets[1] && len(res.Verified) == 3, fmt.Sprintf("listed, not served: %+v", res))
 
 	// A release whose SHA256SUMS changed — an asset withdrawn — verifies nothing of the
 	// old list: the withdrawn asset is no longer verified (R18).

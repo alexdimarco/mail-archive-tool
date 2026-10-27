@@ -234,6 +234,31 @@ func TestEveryEncryptedPathLeavesOnlyTheAllowedTree(t *testing.T) {
 	src, _ := leakStore(t, ms)
 
 	scenarios := map[string]func(t *testing.T) string{
+		// The program copies (the PG pass, INT-04): the release's copies and this
+		// computer's own, observed at each point of the program step too.
+		"release copies kept": func(t *testing.T) string {
+			r := newFakeReleases(t, "v1.5.0")
+			asRelease(t, "v1.5.0", r)
+			out, k := encryptedOut(t)
+			programFault = func(p string) error { requireTree(t, "the program step at "+p, out, leak.InFlight); return nil }
+			t.Cleanup(func() { programFault = nil })
+			if _, err := Run(context.Background(), Options{Inputs: []string{src}, Out: out, Key: k, Index: true, ProgramCopies: ProgramCopiesOn}, discard(), nil); err != nil {
+				t.Fatal(err)
+			}
+			if len(programFiles(t, out)) != 5 {
+				t.Fatalf("fixture: the copies were not kept: %v", programFiles(t, out))
+			}
+			return out
+		},
+		"this computer's own program kept": func(t *testing.T) string {
+			asDevBuild(t)
+			isolatedCache(t)
+			out, k := encryptedOut(t)
+			if _, err := Run(context.Background(), Options{Inputs: []string{src}, Out: out, Key: k, ProgramCopies: ProgramCopiesOn}, discard(), nil); err != nil {
+				t.Fatal(err)
+			}
+			return out
+		},
 		"an incremental re-run": func(t *testing.T) string {
 			out, k := encryptedOut(t)
 			for i := 0; i < 2; i++ {

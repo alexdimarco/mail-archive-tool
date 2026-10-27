@@ -152,6 +152,20 @@ func TestTheCopysProgressShowsAsCountsOnly(t *testing.T) {
 	assure.Reached(t, buf.String() == "Unencrypted copy: 1 of 9 messages so far\nUnencrypted copy: 4 of 9 messages so far\n", "progress: "+buf.String())
 }
 
+// covers: MA-846, R37
+// A copy's failure is worded by how far it got, not by a look at the path (the PG pass,
+// FIX-01): a copy whose folder was made and then moved away says its folder holds
+// readable mail, to find and delete; one that never made its folder says nothing was
+// made.
+func TestACopysFailureIsWordedByHowFarItGot(t *testing.T) {
+	gone := &app.DecryptPlan{Name: "Enc-unencrypted-2026-10-27", Dest: filepath.Join(t.TempDir(), "moved-away")}
+	failed := fmt.Errorf("%w: its folder was moved or replaced", app.ErrCopyFailed)
+	made := copyFailureText(gone, app.DecryptReport{Unfinished: true}, failed)
+	never := copyFailureText(gone, app.DecryptReport{}, failed)
+	assure.Reached(t, strings.Contains(made, "moved or replaced") && strings.Contains(made, "READABLE") && strings.Contains(made, gone.Name) &&
+		strings.Contains(never, "nothing was made"), made+" | "+never)
+}
+
 // covers: MA-830, R37
 // The positive twin of asking twice (FID-08): a folder that may leave this computer,
 // confirmed twice, is copied to.

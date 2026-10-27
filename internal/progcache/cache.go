@@ -205,8 +205,26 @@ func (c *Cache) lock() (*lockfile.Lock, error) {
 	return l, err
 }
 
-// Busy says another MailArchive holds the cache's lock now.
-func Busy(root string) bool { return lockfile.Held(filepath.Join(root, lockName)) }
+// Busy says another MailArchive is using the cache now: its lock is held, or a
+// download holds one of its partial files (NET-3).
+func Busy(root string) bool {
+	if lockfile.Held(filepath.Join(root, lockName)) {
+		return true
+	}
+	entries, _ := os.ReadDir(root)
+	for _, e := range entries {
+		if !e.IsDir() || !container.ExactVersion(e.Name()) {
+			continue
+		}
+		for _, a := range Assets {
+			p := filepath.Join(root, e.Name(), a+partialSuffix)
+			if fi, err := os.Lstat(p); err == nil && fi.Mode().IsRegular() && lockfile.Held(p) {
+				return true
+			}
+		}
+	}
+	return false
+}
 
 // verified is the record of a version's checked files (R18): the SHA256SUMS digest
 // and, per asset, its SHA-256 from SHA256SUMS.
@@ -449,25 +467,48 @@ func UninstallTargets(root string) ([]string, error) {
 	if Busy(root) {
 		return nil, fmt.Errorf("%w: a download of MailArchive's program copies is under way — let it finish, then uninstall again", ErrBusy)
 	}
-	var out []string
-	entries, _ := os.ReadDir(root)
-	for _, e := range entries {
-		d := filepath.Join(root, e.Name())
-		if e.IsDir() && container.ExactVersion(e.Name()) {
-			for _, n := range versionNames() {
-				if fi, err := os.Lstat(filepath.Join(d, n)); err == nil && fi.Mode().IsRegular() {
-					out = append(out, filepath.Join(d, n))
-				}
+	// Every entry is either one the cache writes — its fixed names, an atomic write's
+	// leftover temporary file, the system's litter — or the whole uninstall is refused
+	// before anything is removed, so the plan and the run agree (NET-6).
+	// own lists dir's files, each a name the cache writes, an atomic write's leftover
+	// temporary file or the system's litter; a version folder (at the root) is listed by
+	// its caller. Anything else refuses.
+	own := func(dir string, names []string, versions bool) ([]string, []string, error) {
+		known := map[string]bool{}
+		for _, n := range names {
+			known[n] = true
+		}
+		var files, dirs []string
+		entries, err := os.ReadDir(dir)
+		if err != nil {
+			return nil, nil, err
+		}
+		for _, e := range entries {
+			n := e.Name()
+			switch {
+			case versions && e.IsDir() && container.ExactVersion(n):
+				dirs = append(dirs, filepath.Join(dir, n))
+			case e.Type().IsRegular() && (known[n] || strings.HasPrefix(n, ".tmp-") || util.IsLitter(n)):
+				files = append(files, filepath.Join(dir, n))
+			default:
+				return nil, nil, fmt.Errorf("%w: %s holds %s, which MailArchive did not put there — remove it, then uninstall again; nothing was removed", ErrUnsafe, dir, strconv.QuoteToASCII(n))
 			}
-			out = append(out, d)
 		}
+		return files, dirs, nil
 	}
-	for _, n := range []string{formatName, expectsName, lockName} {
-		if fi, err := os.Lstat(filepath.Join(root, n)); err == nil && fi.Mode().IsRegular() {
-			out = append(out, filepath.Join(root, n))
+	top, versionDirs, err := own(root, []string{formatName, expectsName, lockName}, true)
+	if err != nil {
+		return nil, err
+	}
+	var out []string
+	for _, d := range versionDirs {
+		files, _, err := own(d, versionNames(), false)
+		if err != nil {
+			return nil, err
 		}
+		out = append(append(out, files...), d)
 	}
-	return append(out, root), nil
+	return append(append(out, top...), root), nil
 }
 
 // attempt is a version's attempt record (R17, R19).

@@ -47,6 +47,7 @@ const (
 	ProgramSkipped    = "skipped"
 	ProgramKeptAsIs   = "kept as it is"
 	ProgramStopped    = "stopped"
+	ProgramCancelled  = "cancelled" // Ctrl-C or Cancel: nothing new written (R17)
 )
 
 // programIdentity is this program's version and whether it is a release build — an
@@ -71,8 +72,12 @@ var programWaitMax = 10 * time.Minute
 
 // programFetcher makes the download's fetcher; a var so a test serves its own release.
 var programFetcher = func(c *progcache.Cache, this string) *progcache.Fetcher {
-	return &progcache.Fetcher{Cache: c, This: this}
+	return &progcache.Fetcher{Cache: c, This: this, Overall: programDownloadMax}
 }
+
+// programDownloadMax is a download's overall limit (R17): a server that sends a byte
+// inside every idle window cannot keep it running for the life of the process (NET-5).
+const programDownloadMax = 60 * time.Minute
 
 // programPlaceholder reports an online-only placeholder; a var so a test can inject one
 // (R4).
@@ -114,18 +119,22 @@ func startProgramDownload(ctx context.Context, store *container.Store) *programD
 	if container.CompareVersions(ps.Version, this) > 0 {
 		c.SetExpects(ps.Version)
 	}
-	want := this
-	if e := c.Expects(); container.CompareVersions(e, want) > 0 {
-		want = e
-	}
-	if len(c.Verified(want)) == len(progcache.Assets) {
-		return nil
-	}
+	// The newer version an archive here expects first, then this program's own: one
+	// that cannot be had never keeps the other from being fetched (NET-7).
 	f := programFetcher(c, this)
-	if ok, _ := f.ShouldTry(want); !ok {
-		return nil
+	versions := []string{this}
+	if e := c.Expects(); container.CompareVersions(e, this) > 0 {
+		versions = []string{e, this}
 	}
-	return &programDownload{task: progcache.Downloads.Start(ctx, f, want), fetcher: f, version: want}
+	for _, want := range versions {
+		if len(c.Verified(want)) == len(progcache.Assets) {
+			return nil // the best version wanted is here already
+		}
+		if ok, _ := f.ShouldTry(want); ok {
+			return &programDownload{task: progcache.Downloads.Start(ctx, f, want), fetcher: f, version: want}
+		}
+	}
+	return nil
 }
 
 // programEnv is what the step works with.
@@ -141,8 +150,9 @@ type programEnv struct {
 }
 
 type programStepState struct {
-	env programEnv
-	o   ProgramOutcome
+	env    programEnv
+	o      ProgramOutcome
+	failed bool // a planned file could not be written: the outcome is incomplete
 }
 
 func (s *programStepState) warn(format string, a ...any) {
@@ -279,15 +289,17 @@ func (r *programRoot) judgeOne(f container.ProgramFile) (judged, string) {
 	if programPlaceholder(path) {
 		return jUnchecked, ""
 	}
-	if !fi.Mode().IsRegular() {
+	if !fi.Mode().IsRegular() && !programCloudFile(path) {
 		return jBlocked, ""
 	}
 	if fi.Size() != f.Size {
 		return jChanged, ""
 	}
+	beforeOpen("same", path)
 	if !r.same() {
 		return jUnreadable, ""
 	}
+	beforeOpen("open", path)
 	h, err := hashRegular(path, fi, f.Size)
 	switch {
 	case err != nil:
@@ -339,6 +351,12 @@ func (s *programStepState) run(set container.ProgramSet) string {
 	defer pr.close()
 	if set.State == container.ProgramIntent {
 		set = s.resolveIntent(pr, set)
+		// The note names what the finished update landed (DUR-04); its digest is sealed
+		// only when it was written (DUR-03).
+		note := []byte(EncryptedNoteFor(&set))
+		if export.WriteFileAtomic(filepath.Join(env.out, "README.txt"), note) == nil {
+			env.store.SetNoteDigest(NoteDigest(note))
+		}
 		if err := s.commit(set); err != nil {
 			s.warn("the earlier update of the program copies could not be recorded as finished: %v", err)
 			return ProgramStopped
@@ -355,7 +373,10 @@ func (s *programStepState) run(set container.ProgramSet) string {
 		}
 		defer cache.Prune(this)
 	}
-	s.awaitDownload()
+	if !s.awaitDownload() {
+		s.warn("cancelled: nothing new was written to the program folder")
+		return ProgramCancelled
+	}
 
 	state := map[string]judged{}
 	if pr != nil {
@@ -382,15 +403,9 @@ func (s *programStepState) run(set container.ProgramSet) string {
 		s.warn("a folder, a link or a special file stands where the copy for %s belongs; it was left as it is", systemName(b))
 	}
 	if len(plan.add) == 0 && len(plan.remove) == 0 {
-		if !sameFiles(set.Files, plan.keep) {
-			set.Files = plan.keep
-			if err := s.commit(set); err != nil {
-				s.warn("could not record the program copies' state: %v", err)
-			}
-		}
-		return s.classOf(plan, false)
+		return s.recordKept(set, plan)
 	}
-	return s.write(pr, dir, set, plan, cache, v.cacheVersion)
+	return s.write(pr, dir, set, plan, cache, v)
 }
 
 // sameFiles says two entry lists are the same.
@@ -418,7 +433,7 @@ func (s *programStepState) classOf(plan programPlan, wrote bool) string {
 			return ProgramIncomplete
 		}
 	}
-	if len(plan.blocked) > 0 {
+	if len(plan.blocked) > 0 || s.failed {
 		return ProgramIncomplete
 	}
 	if wrote {
@@ -439,29 +454,59 @@ func (s *programStepState) sweep(pr *programRoot, set container.ProgramSet) {
 	}
 	for _, e := range pr.entries() {
 		name := e.Name()
+		regular := e.Type().IsRegular() || programCloudFile(filepath.Join(pr.dir, name))
 		switch {
 		case util.IsLitter(name):
 			continue
 		case isProgramTemp(name):
-			if fi, err := e.Info(); err == nil && fi.ModTime().Before(s.env.runStart) && fi.Mode().IsRegular() {
+			fi, err := e.Info()
+			switch {
+			case err == nil && regular && fi.ModTime().Before(s.env.runStart):
 				pr.root.Remove(name)
+			default:
+				// Not one of the step's own: a folder or a link with its name, or a file
+				// dated after this run began (SWAP-03).
+				s.warn("something in the program folder that MailArchive did not put there was left as it is: %s", strconv.QuoteToASCII(name))
 			}
 			continue
 		}
 		want, ok := sealed[strings.ToLower(name)]
-		switch {
-		case ok && want == name:
-		case ok:
-			if _, err := pr.root.Lstat(want); errors.Is(err, fs.ErrNotExist) {
+		if ok && want != name {
+			nfi, e1 := pr.root.Lstat(name)
+			wfi, e2 := pr.root.Lstat(want)
+			switch {
+			case errors.Is(e2, fs.ErrNotExist), e1 == nil && e2 == nil && os.SameFile(nfi, wfi):
+				// Only its letter case changed — on a volume that ignores case the two
+				// spellings are one file: renamed back to its sealed spelling (R12, CRIT-03).
 				pr.root.Rename(name, want)
+				continue
 			}
-		case e.Type().IsRegular() && container.ProgramNameOK(name):
+			ok = false // a twin beside the sealed file: not MailArchive's (SWAP-02)
+		}
+		switch {
+		case ok:
+		case regular && container.ProgramNameOK(name):
 			if err := pr.root.Remove(name); err == nil {
 				s.warn("a file in the program folder that MailArchive did not put there was removed: %s", name)
 			}
 		default:
 			s.warn("something in the program folder that MailArchive did not put there was left as it is: %s", strconv.QuoteToASCII(name))
 		}
+	}
+}
+
+// programCloudFile reports a fully downloaded cloud file (OneDrive): a reparse entry
+// Go's mode bits call irregular, read as a regular file (CRIT-01); a var so a test can
+// inject one.
+var programCloudFile = util.IsHydratedCloudFile
+
+// programBeforeOpen runs at the points between judging a kept file and opening it —
+// fault injection only, so a test can swap the folder or the file there (CRIT-06).
+var programBeforeOpen func(point, path string)
+
+func beforeOpen(point, path string) {
+	if programBeforeOpen != nil {
+		programBeforeOpen(point, path)
 	}
 }
 
@@ -482,8 +527,8 @@ func (s *programStepState) resolveIntent(pr *programRoot, set container.ProgramS
 			return ""
 		}
 		fi, err := pr.root.Lstat(name)
-		if err != nil || !fi.Mode().IsRegular() {
-			return ""
+		if err != nil || !(fi.Mode().IsRegular() || programCloudFile(filepath.Join(pr.dir, name))) || !pr.same() {
+			return "" // R3: the folder is still the one held before each open (CRIT-06)
 		}
 		h, _ := hashRegular(filepath.Join(pr.dir, name), fi, size)
 		return h
@@ -538,21 +583,24 @@ func (s *programStepState) commit(set container.ProgramSet) error {
 }
 
 // awaitDownload waits for the run's download up to programWaitMax, or until the run is
-// cancelled (R17, R20); a wait that runs out counts as that day's attempt.
-func (s *programStepState) awaitDownload() {
+// cancelled (R17, R20); a wait that runs out counts as that day's attempt. It reports
+// false when the run was cancelled: the step then writes nothing new (DUR-06, INT-01).
+func (s *programStepState) awaitDownload() bool {
 	d := s.env.download
 	if d == nil {
-		return
+		return s.env.ctx.Err() == nil
 	}
 	s.env.logger.Printf("Waiting for the download of MailArchive %s for the archive's program copies (up to %v)…", d.version, programWaitMax)
 	if res, ok := d.task.Wait(s.env.ctx, programWaitMax); !ok {
-		if s.env.ctx.Err() == nil {
-			d.fetcher.CountAttempt(d.version, progcache.ClassWaitRanOut)
-			s.warn("the download of MailArchive %s did not finish within the wait; this computer's own program is kept instead", d.version)
+		if s.env.ctx.Err() != nil {
+			return false
 		}
+		d.fetcher.CountAttempt(d.version, progcache.ClassWaitRanOut)
+		s.warn("the download of MailArchive %s did not finish within the wait; this computer's own program is kept instead", d.version)
 	} else if res.Class != "" {
 		s.warn("the download of MailArchive %s did not complete (%s)", d.version, res.Class)
 	}
+	return s.env.ctx.Err() == nil
 }
 
 // programCacheVersion is the verified cached version release copies are written from:
@@ -584,8 +632,11 @@ type staged struct {
 	file *os.File
 }
 
-// write carries out a plan by the staged protocol (§4.3, R2, R5, R8–R11).
-func (s *programStepState) write(pr *programRoot, dir string, set container.ProgramSet, plan programPlan, cache *progcache.Cache, cacheVersion string) string {
+// write carries out a plan by the staged protocol (§4.3, R2, R5, R8–R11). Only what
+// was written lands: a file that could not be staged or put in place keeps its earlier
+// entry, and every removal that depended on it does not happen — the plan is decided
+// again without it (DUR-01, DUR-02).
+func (s *programStepState) write(pr *programRoot, dir string, set container.ProgramSet, plan programPlan, cache *progcache.Cache, v programView) string {
 	env := s.env
 	if err := env.stillHeld(); err != nil {
 		return ProgramStopped // the lock is gone: nothing more is written (R2)
@@ -598,13 +649,16 @@ func (s *programStepState) write(pr *programRoot, dir string, set container.Prog
 		}
 		defer pr.close()
 	}
+	failed := map[string]bool{}
 	var need int64 = 256 << 20
 	for _, a := range plan.add {
 		need += a.file.Size
 	}
-	if free, err := util.FreeBytes(env.out); err == nil && int64(free) < need && len(plan.add) > 0 {
-		s.warn("the drive has too little free space for the program copies (they need %s); nothing was written", humanBytes(need))
-		plan.add = nil
+	if free, err := programFreeBytes(env.out); err == nil && int64(free) < need && len(plan.add) > 0 {
+		s.warn("the drive has too little free space for the program copies (they need %s); nothing new was written", humanBytes(need))
+		for _, a := range plan.add {
+			failed[a.file.Name] = true
+		}
 	}
 	// 1. Stage.
 	var stagedFiles []staged
@@ -617,33 +671,40 @@ func (s *programStepState) write(pr *programRoot, dir string, set container.Prog
 		}
 	}()
 	for _, a := range plan.add {
-		st, err := s.stage(pr, a, cache, cacheVersion)
+		if failed[a.file.Name] {
+			continue
+		}
+		st, err := s.stage(pr, a, cache, v.cacheVersion)
 		if err != nil {
 			s.warn("the copy for %s was not written: %v", systemName(a.file.Platform), err)
+			failed[a.file.Name] = true
 			continue
 		}
 		stagedFiles = append(stagedFiles, st)
+	}
+	if len(failed) > 0 {
+		s.failed = true
+		plan = s.replan(v, failed)
 	}
 	pr.sync()
 	if err := programAt("staged"); err != nil {
 		return ProgramStopped
 	}
-	// 2. The landed set as planned, and its note.
-	landed := append([]container.ProgramFile(nil), plan.keep...)
-	var incoming []container.ProgramFile
-	top := set.Version
-	for _, st := range stagedFiles {
-		incoming = append(incoming, st.add.file)
-		landed = append(landed, st.add.file)
-		if st.add.file.Origin == container.OriginRelease && container.CompareVersions(st.add.file.Version, top) > 0 {
-			top = st.add.file.Version
-		}
+	if env.ctx.Err() != nil {
+		s.warn("cancelled: nothing new was written to the program folder")
+		return ProgramCancelled
 	}
-	next := set
-	next.Files, next.State, next.Version = landed, container.ProgramLanded, top
-	next.Incoming, next.Removing, next.Note = nil, nil, nil
+	if len(stagedFiles) == 0 && len(plan.remove) == 0 {
+		return s.recordKept(set, plan)
+	}
+	// 2. The set as planned, and its note.
+	next := landedSet(set, plan, stagedFiles, nil)
 	note := []byte(EncryptedNoteFor(&next))
 	// 3. The intent commit.
+	var incoming []container.ProgramFile
+	for _, st := range stagedFiles {
+		incoming = append(incoming, st.add.file)
+	}
 	intent := set
 	intent.State, intent.Incoming, intent.Removing = container.ProgramIntent, incoming, plan.remove
 	intent.Note = &container.ProgramNote{Current: env.store.NoteDigest(), Incoming: NoteDigest(note)}
@@ -657,14 +718,17 @@ func (s *programStepState) write(pr *programRoot, dir string, set container.Prog
 	if err := env.stillHeld(); err != nil {
 		return ProgramStopped
 	}
-	// 4. Renames, removals, the note.
+	// 4. Renames; then, decided again without any that failed, removals and the note.
+	renamed := map[string]bool{}
 	for i := range stagedFiles {
 		st := &stagedFiles[i]
 		if err := pr.root.Rename(st.tmp, st.add.file.Name); err != nil {
 			s.warn("the copy for %s could not be put in place: %v", systemName(st.add.file.Platform), err)
+			failed[st.add.file.Name] = true
 			continue
 		}
 		st.tmp = ""
+		renamed[st.add.file.Name] = true
 		ofi, err1 := st.file.Stat()
 		nfi, err2 := pr.root.Lstat(st.add.file.Name)
 		if err1 != nil || err2 != nil || !os.SameFile(ofi, nfi) {
@@ -674,20 +738,29 @@ func (s *programStepState) write(pr *programRoot, dir string, set container.Prog
 			return ProgramStopped
 		}
 	}
+	if len(renamed) < len(stagedFiles) {
+		s.failed = true
+		plan = s.replan(v, failed)
+		next = landedSet(set, plan, stagedFiles, renamed)
+		note = []byte(EncryptedNoteFor(&next))
+	}
 	for _, name := range plan.remove {
 		if fi, err := pr.root.Lstat(name); err == nil && (fi.Mode().IsRegular() || fi.Mode()&fs.ModeSymlink != 0) {
 			pr.root.Remove(name)
 		}
 	}
-	if err := export.WriteFileAtomic(filepath.Join(env.out, "README.txt"), note); err != nil {
-		s.warn("could not write README.txt: %v", err)
+	noteWritten := programWriteNote(filepath.Join(env.out, "README.txt"), note) == nil
+	if !noteWritten {
+		s.warn("could not write README.txt")
 	}
 	pr.sync()
 	if err := programAt("renamed"); err != nil {
 		return ProgramStopped
 	}
-	// 5. The landed commit.
-	env.store.SetNoteDigest(NoteDigest(note))
+	// 5. The landed commit — the note's digest only when the note was written (DUR-03).
+	if noteWritten {
+		env.store.SetNoteDigest(NoteDigest(note))
+	}
 	if err := s.commit(next); err != nil {
 		s.warn("the program copies were updated but could not be recorded: %v", err)
 		return ProgramStopped
@@ -695,8 +768,57 @@ func (s *programStepState) write(pr *programRoot, dir string, set container.Prog
 	if !*next.Keep && len(pr.entries()) == 0 {
 		os.Remove(dir)
 	}
-	return s.classOf(programPlan{keep: next.Files, blocked: plan.blocked}, len(stagedFiles) > 0 || len(plan.remove) > 0)
+	return s.classOf(programPlan{keep: next.Files, blocked: plan.blocked}, len(renamed) > 0 || len(plan.remove) > 0)
 }
+
+// replan decides again with the failed files taken out, warning nothing twice.
+func (s *programStepState) replan(v programView, failed map[string]bool) programPlan {
+	return decide(v.withoutFailed(failed))
+}
+
+// recordKept seals a plan that writes and removes nothing — its kept entries' counters
+// may have changed.
+func (s *programStepState) recordKept(set container.ProgramSet, plan programPlan) string {
+	if !sameFiles(set.Files, plan.keep) {
+		set.Files = plan.keep
+		if err := s.commit(set); err != nil {
+			s.warn("could not record the program copies' state: %v", err)
+		}
+	}
+	return s.classOf(plan, false)
+}
+
+// landedSet is the set a plan lands: its kept entries and the staged files still in
+// it — those put in place, when renamed is given. The high-water mark rises only to the
+// version of a platform copy that lands, never by a checksum file alone (DUR-01).
+func landedSet(set container.ProgramSet, plan programPlan, stagedFiles []staged, renamed map[string]bool) container.ProgramSet {
+	inPlan := map[string]bool{}
+	for _, a := range plan.add {
+		inPlan[a.file.Name] = true
+	}
+	landed := append([]container.ProgramFile(nil), plan.keep...)
+	top := set.Version
+	for _, st := range stagedFiles {
+		f := st.add.file
+		if !inPlan[f.Name] || (renamed != nil && !renamed[f.Name]) {
+			continue
+		}
+		landed = append(landed, f)
+		if f.Origin == container.OriginRelease && f.Platform != container.PlatformChecksums && container.CompareVersions(f.Version, top) > 0 {
+			top = f.Version
+		}
+	}
+	next := set
+	next.Files, next.State, next.Version = landed, container.ProgramLanded, top
+	next.Incoming, next.Removing, next.Note = nil, nil, nil
+	return next
+}
+
+// programFreeBytes is the archive drive's free space; a var so a test can fill it.
+var programFreeBytes = util.FreeBytes
+
+// programWriteNote writes the note; a var so a test can fail it (DUR-03).
+var programWriteNote = export.WriteFileAtomic
 
 // stage writes one file under a new temporary name, through the folder's handle,
 // created exclusively (R11); its hash is the plan's for a release file and the bytes

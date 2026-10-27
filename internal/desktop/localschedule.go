@@ -176,6 +176,9 @@ func (d *dashboard) scheduleInstallLocal(w http.ResponseWriter, r *http.Request,
 			return
 		}
 		exe = e
+	} else if kerr := schedule.RefuseKeptCopy(exe); kerr != nil {
+		writeJSON(w, map[string]any{"ok": false, "error": kerr.Error()}) // a kept copy (INT-02)
+		return
 	}
 	jobPath, err := job.PathFor(j.Name)
 	if err != nil {

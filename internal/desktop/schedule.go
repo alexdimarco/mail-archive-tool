@@ -71,6 +71,8 @@ func (cfg Config) backupSpecFor(out string) (schedule.Spec, error) {
 			return schedule.Spec{}, err
 		}
 		exe = e
+	} else if err := schedule.RefuseKeptCopy(exe); err != nil {
+		return schedule.Spec{}, err // the launched program is a kept copy (INT-02)
 	}
 	if exe == "" {
 		return schedule.Spec{}, errors.New("cannot determine the program path to schedule")

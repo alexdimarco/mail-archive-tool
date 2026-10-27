@@ -231,6 +231,11 @@ PG5 lands before PG2 and is a release gate:
 - **Network attacker:** HTTPS to GitHub's hosts only; the checksums come from the same release over
   the same channel, so they prove agreement with the release, under §5's condition.
 - **Disk exhaustion:** the free-space margin, the per-file ceilings, the cache's pruning.
+- **Lost renames under a kept landed commit** *(added 2026-10-27, the PG pass's CRIT-02)*:
+  where folder sync is best effort (Windows), a power cut can keep the landed commit and
+  lose its renames; a later run that cannot write the new version then takes the older
+  genuine copies for changed and removes them. R9's test is an open-gap encoder until
+  this is closed.
 
 ## 9. Slices and tests
 
@@ -267,6 +272,11 @@ Condition 20's targeted re-review of §4 and §5 (lenses 3, 5, 6) confirmed 38 o
 - **R3.** (RINT-03). Name the mechanism for each operation in program/. The folder is confined as now (Lstat, realDir, IsLinkLike). Listing, creating temporary files, renames and removals go through the os.Root. Content reads of existing kept files are path-based in judgeFile's shape (Root.Lstat, then OpenRegularFile, then SameFile), with a check that program/ is still the same folder before each open, because Root.OpenFile on Windows refuses every reparse point, cloud files included. Add a Windows OneDrive lab row (pending) and a unit test that injects a refused open.
 
 - **R4.** (RINT-04, RDUR-06, RSEC-02). Detect a placeholder before any open. On Windows: a cloud reparse tag together with RECALL_ON_DATA_ACCESS or RECALL_ON_OPEN from Lstat's attribute data. On macOS: SF_DATALESS. Never decide it from Go's mode bits or the OFFLINE attribute. A placeholder counts as present but unchecked: decide counts it present, and it is never opened, rewritten or removed. Any other irregular or reparse entry at a sealed name is judged 'changed'. A read error is never grounds for a rewrite or a removal. After two runs unchecked, a lasting line reads 'not checked since DATE (kept online only)', and verify -full reports it too. Tests: an injected placeholder predicate, and a non-cloud reparse file at a sealed name.
+
+  *(Settled 2026-10-27 by the PG adversarial pass, CRIT-01 and CRIT-05: a cloud file whose
+  bytes are on the disk — a cloud reparse tag with neither RECALL attribute — is a regular
+  file, judged by size and hash, not "any other reparse entry"; and an unreadable kept copy
+  is never rewritten or removed, but told every run and counted toward "incomplete".)*
 
 - **R5.** (RDUR-01). The header's note_sha256 is the only digest that governs. The intent commit records program.note {current, incoming}. While state is intent, refreshNote silently accepts either one and renders the note from the last landed set. The landed commit sets the header digest and clears program.note. Tests: a stop between steps 3 and 4, and between 4 and 5, gives no tamper warning at the next run.
 

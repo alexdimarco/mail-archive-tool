@@ -39,10 +39,12 @@ var ErrTranslocated = errors.New("Mail Archive is running from a temporary copy 
 // would stop working. It carries no path.
 var ErrKeptCopy = errors.New("Mail Archive is running from a copy kept inside an encrypted archive; a backup may replace or remove that copy, so a schedule cannot run it. Do this: copy the program out of the archive folder (or download it again from the official release page), open it from there, and install the schedule (or choose Repair) again.")
 
-// refuseKeptCopy refuses a program inside an encrypted archive — in its program
+// RefuseKeptCopy refuses a program inside an encrypted archive — in its program
 // folder or anywhere in it — or named as a self-copy (mailarchive-self-…), on any
 // part of its path.
-func refuseKeptCopy(p string) error {
+// It is exported for a caller that already holds the program's path (the Desktop's
+// launched Exe), so no path to a schedule skips it (the PG pass, INT-02).
+func RefuseKeptCopy(p string) error {
 	if res, _ := encmark.At(filepath.Dir(p)); res.Encrypted {
 		return ErrKeptCopy
 	}
@@ -107,7 +109,7 @@ func ProgramForSchedule(wrapped bool) (exe string, reason Reason, err error) {
 		return exe, reason, err
 	}
 	for _, p := range []string{self, exe} {
-		if kerr := refuseKeptCopy(p); kerr != nil {
+		if kerr := RefuseKeptCopy(p); kerr != nil {
 			return "", ReasonNone, kerr
 		}
 	}

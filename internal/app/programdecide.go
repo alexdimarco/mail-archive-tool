@@ -129,6 +129,14 @@ func decide(v programView) programPlan {
 			p.add = append(p.add, programAdd{file: f, asset: f.Name})
 			opens[plat] = true
 			versions[v.cacheVersion] = true
+		case has && st == jUnreadable:
+			// Never grounds for a rewrite or a removal (R4), but never silent: it is told on
+			// every run and counts toward the lasting "incomplete" line (SWAP-01, CRIT-05).
+			e.MissingRuns++
+			p.keep = append(p.keep, e)
+			p.warnings = append(p.warnings, fmt.Sprintf("the copy of MailArchive for %s in this archive cannot be read; it was left as it is", plat))
+			opens[plat] = e.Reads >= programReads
+			versions[e.Version] = true
 		case has && st.present():
 			if st == jOK {
 				e.MissingRuns, e.UncheckedSince = 0, ""
@@ -209,10 +217,13 @@ func decide(v programView) programPlan {
 			if st != jAbsent {
 				p.remove = append(p.remove, s.Name) // a release copy arrived for its platform
 			}
-		case s.Platform == v.selfPlatform && !thisOpens && (st == jOK || st == jUnchecked || st == jUnreadable) && s.Name == v.selfName && s.Version == v.selfVersion():
+		case s.Platform == v.selfPlatform && !thisOpens && st.present() &&
+			((s.Name == v.selfName && s.Version == v.selfVersion()) || container.CompareVersions(s.Version, v.selfVersion()) > 0):
+			// This system's own copy — this program's, or a newer one another computer of
+			// the same system wrote: kept, never replaced by an older program (CRIT-04).
 			p.keep = append(p.keep, s)
 			ownWritten = true
-		case s.Platform == v.selfPlatform && !thisOpens:
+		case s.Platform == v.selfPlatform && !thisOpens && v.selfName != "":
 			if st != jAbsent {
 				p.remove = append(p.remove, s.Name) // replaced by this program's own
 			}
@@ -229,6 +240,27 @@ func decide(v programView) programPlan {
 	}
 	p.remove = dedupe(p.remove, p.add)
 	return p
+}
+
+// withoutFailed is v with the files that could not be written taken out of what it
+// offers (DUR-01, DUR-02): deciding again keeps each failed file's earlier entry, and
+// every removal that depended on it — the platform's self-copy, the older checksum
+// file — does not happen.
+func (v programView) withoutFailed(failed map[string]bool) programView {
+	w := v
+	w.cacheAssets = map[string]progcache.Asset{}
+	for a, x := range v.cacheAssets {
+		if !failed[a] {
+			w.cacheAssets[a] = x
+		}
+	}
+	if failed["SHA256SUMS-"+v.cacheVersion] {
+		w.cacheSums = progcache.Asset{}
+	}
+	if failed[v.selfName] {
+		w.selfName = ""
+	}
+	return w
 }
 
 // selfVersion is the version a self-copy of this program records: its release version,

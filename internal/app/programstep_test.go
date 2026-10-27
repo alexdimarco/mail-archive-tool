@@ -282,8 +282,11 @@ func TestAStoppedUpdateIsAcceptedWithoutTheCache(t *testing.T) {
 	asDevBuild(t)
 	_, logged := backup(t, out, key, ProgramCopiesUnset)
 	ps := sealedSet(t, out, key)
+	note, _ := os.ReadFile(filepath.Join(out, "README.txt"))
 	assure.Reached(t, ps.State == container.ProgramLanded && ps.Version == "v1.6.0" && onDiskMatchesSet(t, out, ps) && len(ps.Files) == 5 &&
-		!strings.Contains(logged, "was changed") && !strings.Contains(logged, "changed or removed"), "the update accepted:\n"+logged)
+		!strings.Contains(logged, "was changed") && !strings.Contains(logged, "changed or removed") &&
+		strings.Contains(string(note), "MailArchive v1.6.0") && !strings.Contains(string(note), "SHA256SUMS-v1.5.0"), // DUR-04
+		"the update accepted, its note too:\n"+logged)
 }
 
 // covers: MA-841, R37

@@ -113,7 +113,7 @@ func (d *dashboard) copyStartAction(w http.ResponseWriter, r *http.Request) {
 		defer d.copying.Store("")
 		rep, err := decryptCopy(d.life.Context(), lease, env, plan, archives, settings, logger, copyProgress(logger, time.Now))
 		if err != nil {
-			return "", spokenErr(copyFailureText(plan, err))
+			return "", spokenErr(copyFailureText(plan, rep, err))
 		}
 		msg := fmt.Sprintf("Unencrypted copy made at %s: %d of %d messages copied.", rep.Dest, rep.Copied, rep.Messages)
 		if rep.Skipped > 0 {
@@ -175,7 +175,7 @@ func (e spokenErr) Error() string { return string(e) }
 // copyFailureText words a copy that did not finish for the person: what happened, and
 // where the folder of readable mail it left is. It never shows the engine's wrapped
 // cause, which can name a message's file.
-func copyFailureText(plan *app.DecryptPlan, err error) string {
+func copyFailureText(plan *app.DecryptPlan, rep app.DecryptReport, err error) string {
 	var r *app.CopyRefusal
 	switch {
 	case errors.As(err, &r):
@@ -183,7 +183,9 @@ func copyFailureText(plan *app.DecryptPlan, err error) string {
 	case errors.Is(err, app.ErrDecryptStale), errors.Is(err, lockfile.ErrHeld):
 		return err.Error()
 	}
-	if _, lerr := os.Lstat(plan.Dest); lerr != nil {
+	// How far the copy got, not a look at the path: a folder moved away mid-copy still
+	// holds readable mail (the PG pass, FIX-01).
+	if !rep.Unfinished {
 		if errors.Is(err, app.ErrCopyLocked) {
 			return "The archive was locked before the copy began; nothing was made. Unlock it, then make the copy again."
 		}
@@ -192,6 +194,9 @@ func copyFailureText(plan *app.DecryptPlan, err error) string {
 	what := "The unencrypted copy did not finish."
 	if errors.Is(err, app.ErrCopyStopped) {
 		what = "The unencrypted copy was stopped."
+	}
+	if _, lerr := os.Lstat(plan.Dest); lerr != nil {
+		return what + " Its folder, " + plan.Name + ", was moved or replaced while the copy was made: wherever it is now, it holds part of the copy, READABLE by anyone who can open it — find it and delete it, then make the copy again."
 	}
 	return what + " The folder " + plan.Dest + " holds part of it, READABLE by anyone who can open it — delete it, then make the copy again."
 }

@@ -49,6 +49,8 @@ var (
 	invShardRe = regexp.MustCompile(`^[0-9a-f]{2,4}\.[1-9][0-9]*$`)
 	rootTempRe = regexp.MustCompile(`^\.mailarchive-[a-z-]*[0-9]+\.tmp$`)
 	unitTempRe = regexp.MustCompile(`^\.mailarchive-[0-9]+\.tmp$`)
+	// programTempRe is the program step's staging name (program design R11).
+	programTempRe = regexp.MustCompile(`^\.mailarchive-program-[0-9]{1,20}\.tmp$`)
 )
 
 // CheckTree is every path under root an encrypted archive may not hold, in mode:
@@ -83,8 +85,18 @@ func CheckTree(root string, mode Mode, exempt map[string]bool) []Violation {
 		}
 		switch {
 		case len(parts) == 1 && t.IsDir():
-			if !shardedDirs[name] && name != container.InventoryDir {
-				add(rel, "a folder other than units/, chunks/ or inventory/")
+			if !shardedDirs[name] && name != container.InventoryDir && name != container.ProgramDir {
+				add(rel, "a folder other than units/, chunks/, inventory/ or program/")
+				return filepath.SkipDir
+			}
+		case parts[0] == container.ProgramDir:
+			// The copies of MailArchive (program design §1, §3): regular files of §3's
+			// names; in flight also the step's own temporary files (the PG pass, INT-04).
+			if len(parts) == 2 && t.IsRegular() && (container.ProgramNameOK(name) || (mode == InFlight && programTempRe.MatchString(name))) {
+				return nil
+			}
+			add(rel, "not a program copy")
+			if t.IsDir() {
 				return filepath.SkipDir
 			}
 		case len(parts) == 1:

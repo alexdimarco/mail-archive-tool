@@ -1412,7 +1412,12 @@ review before P3-5 is coded. O7's change to the release process is made in P3-5.
 - **An unencrypted copy being made** *(added 2026-10-27 from the P3-4 pass)*:
   - Its destination is held before its last checks and compared with its path before and after
     them. A folder above it swapped for a link and back again while the checks run is not caught.
-    That needs write access to a folder above the destination (CRIT-05).
+    That needs write access to a folder above the destination (CRIT-05). *(Corrected 2026-10-27,
+    the PG pass's FIX-03: the window also covers the copy's own folder, and spans every step
+    written by path — the index, the folder pages, the report, the README and the manifest — so
+    a swap there and back while the pages are written sends them, with subjects and senders,
+    elsewhere while the copy reports itself whole. Writing them through the held folder closes
+    it; until then it needs write access to the destination's parent.)*
   - The copy's search index above 256 MiB may spill sorted subjects and senders to the system's
     temporary folder, deleted at once; a smaller one keeps that work in memory (LEAK-05, CRIT-04).
   - A copy stopped or failed part way is marked unfinished inside its folder only. MailArchive

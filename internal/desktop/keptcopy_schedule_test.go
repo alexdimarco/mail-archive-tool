@@ -36,4 +36,17 @@ func TestTheDesktopNeverSchedulesAKeptCopy(t *testing.T) {
 	if !errors.Is(err, schedule.ErrKeptCopy) || spec.Exe != "" {
 		t.Fatalf("a kept copy: err %v, spec %q; want ErrKeptCopy and no spec", err, spec.Exe)
 	}
+	// As launch() builds it — the program's path already set (the PG pass, INT-02).
+	launched := cfg
+	launched.Exe = filepath.Join(archive, "program", "mailarchive-self-linux-amd64")
+	schedule.SelfResolver = func() (string, error) { return filepath.Join(t.TempDir(), "mailarchive"), nil }
+	spec, err = launched.backupSpec()
+	if !errors.Is(err, schedule.ErrKeptCopy) || spec.Exe != "" {
+		t.Fatalf("a launched kept copy: err %v, spec %q; want ErrKeptCopy and no spec", err, spec.Exe)
+	}
+	healthy := cfg
+	healthy.Exe = filepath.Join(t.TempDir(), "mailarchive")
+	if _, err := healthy.backupSpec(); err != nil {
+		t.Fatalf("healthy twin with Exe set: %v", err)
+	}
 }

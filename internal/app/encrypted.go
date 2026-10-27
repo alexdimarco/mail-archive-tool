@@ -405,7 +405,7 @@ func openEncrypted(opts Options, stillHeld func() error, runStart time.Time, log
 	}
 	// The note beside the archive, checked against the digest the record sealed and
 	// written again, its new digest sealed by this run's commit (§13.1).
-	refreshNote(opts.Out, store, logger)
+	refreshNote(opts.Out, store, logger, manifest.Save)
 	sealProgramChoice(store, opts.ProgramCopies, logger)
 	return manifest, units, store, nil
 }

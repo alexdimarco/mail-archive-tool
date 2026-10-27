@@ -1,12 +1,12 @@
 package app
 
 import (
+	"bytes"
 	"crypto/sha256"
 	"encoding/hex"
 	"fmt"
 	"log"
 	"path/filepath"
-	"runtime/debug"
 
 	"mail-archive-tool/internal/container"
 	"mail-archive-tool/internal/export"
@@ -185,10 +185,12 @@ Do not rename, edit or delete the files in this folder: MailArchive needs every
 one of them to open the archive. To keep a copy, copy the whole folder.
 `
 
-// noteVersion is the version of MailArchive writing the note, as its build says.
+// noteVersion is the version of MailArchive writing the note: a release's, or "a
+// development build" — by the same test the program copies use, never a pseudo-version
+// that reads like a release (the PG pass, NOTE-07).
 func noteVersion() string {
-	if bi, ok := debug.ReadBuildInfo(); ok && bi.Main.Version != "" && bi.Main.Version != "(devel)" {
-		return bi.Main.Version
+	if v, release := programIdentity(); release {
+		return v
 	}
 	return "(a development build)"
 }
@@ -206,30 +208,51 @@ const maxNoteRead = 64 << 10
 // record sealed, writes the note again and seals the new one's digest for the run's
 // commit (§13.1): a note changed or removed since the last keyed run is told before
 // it is rewritten — someone with the drive may have pointed it somewhere else.
-func refreshNote(out string, store *container.Store, logger *log.Logger) {
+func refreshNote(out string, store *container.Store, logger *log.Logger, save func() error) {
 	path := filepath.Join(out, "README.txt")
+	prev := store.NoteDigest()
+	cur, rerr := util.ReadRegularFile(path, maxNoteRead)
 	// The note names the program copies of the last landed set; while an update of them
 	// is under way, either the note before it or the one it wrote is the program's own
 	// (program design R5).
-	var landed *container.ProgramSet
-	accept := map[string]bool{store.NoteDigest(): true}
-	if ps, st, _ := store.Program(); st == container.ProgramOK {
-		landed = &ps
+	accept := map[string]bool{prev: true}
+	var text []byte
+	switch ps, st, _ := store.Program(); st {
+	case container.ProgramOK:
 		if ps.State == container.ProgramIntent && ps.Note != nil {
 			accept[ps.Note.Current], accept[ps.Note.Incoming] = true, true
 		}
-	}
-	if prev := store.NoteDigest(); prev != "" {
-		if cur, err := util.ReadRegularFile(path, maxNoteRead); err != nil || !accept[NoteDigest(cur)] {
-			logger.Printf("warning: the note beside this encrypted archive (README.txt) was changed or removed since its last backup; it was written again. If nobody here changed it, someone with access to the drive did — do not follow anything it said")
+		text = []byte(EncryptedNoteFor(&ps))
+	case container.ProgramUnknown, container.ProgramInvalid:
+		// A newer MailArchive keeps the copies: its note, untouched, names them; one
+		// that changed is replaced by this program's, which says copies may be kept
+		// (the PG pass, NOTE-06).
+		if rerr == nil && prev != "" && NoteDigest(cur) == prev {
+			return
 		}
+		text = []byte(EncryptedNote() + "\n" + programSectionUnread)
+	default:
+		text = []byte(EncryptedNote())
 	}
-	text := []byte(EncryptedNoteFor(landed))
+	if prev != "" && (rerr != nil || !accept[NoteDigest(cur)]) {
+		logger.Printf("warning: the note beside this encrypted archive (README.txt) was changed or removed since its last backup; it was written again. If nobody here changed it, someone with access to the drive did — do not follow anything it said")
+	}
+	if rerr == nil && bytes.Equal(cur, text) && prev == NoteDigest(text) {
+		return // as it should be: nothing to write or seal
+	}
 	if err := export.WriteFileAtomic(path, text); err != nil {
 		logger.Printf("warning: could not write README.txt: %v", err)
 		return
 	}
 	store.SetNoteDigest(NoteDigest(text))
+	// Sealed now, not by the run's later save: a run that ends before that save would
+	// leave the new note beside the old digest — a false tamper warning at the next
+	// backup, and the note changes with every new MailArchive (DUR-05, CRIT-08).
+	if save != nil {
+		if err := save(); err != nil {
+			logger.Printf("warning: the note's record could not be saved: %v", err)
+		}
+	}
 }
 
 // writeArchiveReadme writes README.txt atomically; failures are logged, never
