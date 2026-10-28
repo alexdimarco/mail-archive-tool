@@ -347,7 +347,12 @@ func PrepareRestore(out string, want ID, src RestoreSource, newPassword string) 
 	if err != nil {
 		return nil, err
 	}
-	os.SameFile(dir, dir) // its identity fixed now, compared at Commit (P3-8 Windows lab, B1)
+	// Its identity fixed now, compared at Commit (P3-8 Windows lab, B1). A pin that
+	// does not take would read it at Commit, from whatever folder is there then: the
+	// restore is not prepared (WINPATH-1).
+	if _, pinned := util.PinIdentity(dir); !pinned {
+		return nil, fmt.Errorf("%w: %s changed while the key file was being prepared; nothing was written — try again", ErrConflict, out)
+	}
 	now := clock()
 	if now.Before(releaseFloor) {
 		return nil, fmt.Errorf("%w: it reads %s, before this MailArchive was made (%s) — set the clock, then try again", ErrClock, now.UTC().Format(time.DateOnly), releaseFloor.Format(time.DateOnly))

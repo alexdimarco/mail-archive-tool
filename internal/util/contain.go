@@ -15,20 +15,22 @@ import (
 
 // ResolveExisting returns p as an absolute, symlink-resolved path, resolving the
 // deepest ancestor that exists (so a not-yet-created path still resolves a
-// symlinked parent) and re-appending the non-existent tail.
+// symlinked parent) and re-appending the non-existent tail. On Windows a junction
+// is followed too, and a volume mounted in a folder is kept as spelled
+// (resolveLinks).
 func ResolveExisting(p string) string {
 	abs, err := filepath.Abs(p)
 	if err != nil {
 		abs = p
 	}
 	abs = filepath.Clean(abs)
+	if resolved, ok := resolveLinks(abs); ok {
+		return resolved
+	}
 	cur := abs
 	var tail []string
 	for {
 		if resolved, rerr := filepath.EvalSymlinks(cur); rerr == nil {
-			if final, ok := finalPath(resolved); ok {
-				resolved = final // through a Windows junction too (B2)
-			}
 			parts := append([]string{resolved}, reverseStrings(tail)...)
 			return filepath.Join(parts...)
 		}

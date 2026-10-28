@@ -168,13 +168,19 @@ func (e *UnusableError) Unwrap() error { return e.Err }
 // cannot be looked up (always "" off Windows); a var so a test can name accounts.
 var accountName = lookupAccountName
 
+// inCommandPrompt is where the record's icacls commands are run: a Command Prompt,
+// since PowerShell reads $ and ` inside double quotes, so an account or folder name
+// holding one would name another account or path there (the P3-8 fixes' pass,
+// WINACL-3; the secret file's refusal says the same).
+const inCommandPrompt = "a Command Prompt (not PowerShell, which reads $ and ` inside quotes as something else)"
+
 // windowsOwnerRefusal is the Windows refusal of a record copy another account owns
 // (the only permission Windows checks here): it names the owner and this account by
 // name, and gives the icacls commands that end the refusal when run as printed in a
-// Command Prompt or PowerShell — /setowner to this account, for this copy and for
-// the other copy when another account owns it too, so fixing one never meets a second
-// refusal. The account is spelled out, never "%USERNAME%", which PowerShell does not
-// expand (the P3-8 Windows lab, B11; the secret file's refusal does the same).
+// Command Prompt — /setowner to this account, for this copy and for the other copy
+// when another account owns it too, so fixing one never meets a second refusal. The
+// account is spelled out, never "%USERNAME%", which PowerShell does not expand (the
+// P3-8 Windows lab, B11; the secret file's refusal does the same).
 func windowsOwnerRefusal(path string, err error) string {
 	head := fmt.Sprintf("this computer's record of encrypted archives (%s)", path)
 	type copyOwner struct{ path, owner string }
@@ -226,9 +232,9 @@ func windowsOwnerRefusal(path string, err error) string {
 		fmt.Fprintf(&b, "; its other copy (%s) is owned by %s", c.path, shown(c.owner))
 	}
 	if len(foreign) == 1 {
-		b.WriteString(". To make it yours, run this in a Command Prompt or PowerShell, then try again:")
+		b.WriteString(". To make it yours, run this in " + inCommandPrompt + ", then try again:")
 	} else {
-		b.WriteString(". To make them yours, run these in a Command Prompt or PowerShell, one after the other, then try again:")
+		b.WriteString(". To make them yours, run these in " + inCommandPrompt + ", one after the other, then try again:")
 	}
 	for _, c := range foreign {
 		fmt.Fprintf(&b, "\n  icacls \"%s\" /setowner \"%s\"", c.path, arg(me))

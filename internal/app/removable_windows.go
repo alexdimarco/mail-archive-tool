@@ -14,11 +14,14 @@ import (
 
 // removableDrive says abs is on a drive that can leave this computer (K5): Windows
 // calls its volume removable (a USB stick or card) or optical, or calls it fixed but
-// it hangs off a USB, FireWire or SD/MMC bus — an external disk, which Windows
-// reports as fixed (the P3-8 Windows lab, B31). The volume is the one mounted where
-// abs is, so a removable volume mounted inside a folder on C: is judged as itself,
-// not as C:. A disk on another external bus (Thunderbolt NVMe, eSATA) cannot be told
-// from an internal one here and is not caught.
+// its medium is marked removable or it hangs off a USB or FireWire bus — an external
+// disk, which Windows reports as fixed (the P3-8 Windows lab, B31). A fixed disk on
+// the SD or MMC bus is not counted: that is the soldered-in eMMC many small laptops
+// and tablets start from, while an SD card in a reader is reported removable (the
+// P3-8 fixes' pass, WINACL-2). The volume is the one mounted where abs is, so a
+// removable volume mounted inside a folder on C: is judged as itself, not as C:. A
+// disk on another external bus (Thunderbolt NVMe, eSATA) cannot be told from an
+// internal one here and is not caught.
 func removableDrive(abs string) bool { return volumes.leaves(abs) }
 
 // volumeOS is what removableDrive asks Windows; a var so a test can stand in drives
@@ -53,7 +56,9 @@ func (v volumeOS) leaves(abs string) bool {
 	return false
 }
 
-// The storage buses (STORAGE_BUS_TYPE) a disk that leaves with its owner hangs off.
+// The storage buses (STORAGE_BUS_TYPE) named here: the two a fixed disk that leaves
+// with its owner hangs off, and the SD and MMC buses, which a fixed disk sits on when
+// it is the computer's own soldered-in eMMC.
 const (
 	busType1394 = 0x4
 	busTypeUsb  = 0x7
@@ -61,10 +66,11 @@ const (
 	busTypeMmc  = 0xD
 )
 
-// busLeaves says a disk on bus bt is external: USB, FireWire, or an SD or MMC card.
+// busLeaves says a fixed disk on bus bt is external: USB or FireWire. Not SD or MMC,
+// whose fixed disks are internal eMMC (WINACL-2).
 func busLeaves(bt uint32) bool {
 	switch bt {
-	case busTypeUsb, busType1394, busTypeSd, busTypeMmc:
+	case busTypeUsb, busType1394:
 		return true
 	}
 	return false

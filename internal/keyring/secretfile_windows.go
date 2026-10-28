@@ -16,8 +16,8 @@ import (
 // its owner must be this user and no other account may read it (§3.4). The decision
 // is winsec's; the refusal names the owner and the accounts that can read it, and
 // gives the icacls commands that make the file this account's alone, spelled with
-// this account's own name so they work as typed in a Command Prompt or PowerShell
-// (the P3-8 Windows lab, B11).
+// this account's own name so they work as typed in a Command Prompt (the P3-8
+// Windows lab, B11; not PowerShell, WINACL-3).
 func ownersOnly(f *os.File, path string) string {
 	h := windows.Handle(f.Fd())
 	err := winsec.CheckSecretFile(h)
@@ -90,17 +90,28 @@ func fileAccess(h windows.Handle) (me account, owner *account, readers []reader,
 	if err != nil {
 		return me, nil, nil, false, false
 	}
+	owner, readers, readable = accessOf(sd, me)
+	return me, owner, readers, readable, true
+}
+
+// accessOf is fileAccess's reading of a security descriptor for the account me. An
+// entry is me's own when its account field names me — by SID, or by an alias such as
+// "LA", which Windows writes for the built-in Administrator — so me's own entry is
+// never listed as another reader, nor removed by the remedy (the P3-8 fixes' pass,
+// WINACL-1).
+func accessOf(sd *windows.SECURITY_DESCRIPTOR, me account) (owner *account, readers []reader, readable bool) {
 	if o, _, err := sd.Owner(); err != nil || o == nil {
 		owner = &account{name: "an account Windows does not name"}
 	} else if o.String() != me.sid {
 		a := accountOf(o.String())
 		owner = &a
 	}
+	isMe := winsec.UserEntry(me.sid)
 	sddl := sd.String()
-	readable = winsec.DACLReadableByOthers(sddl, me.sid)
+	readable = winsec.DACLReadableByOthersFor(sddl, isMe)
 	i := strings.Index(sddl, "D:")
 	if i < 0 {
-		return me, owner, nil, readable, true
+		return owner, nil, readable
 	}
 	dacl := sddl[i+2:]
 	if s := strings.Index(dacl, "S:"); s >= 0 {
@@ -109,7 +120,7 @@ func fileAccess(h windows.Handle) (me account, owner *account, readers []reader,
 	seen := map[string]bool{}
 	for _, ace := range topLevelEntries(dacl) {
 		f := strings.Split(ace, ";")
-		if len(f) < 6 || !winsec.DACLReadableByOthers("D:("+ace+")", me.sid) {
+		if len(f) < 6 || !winsec.DACLReadableByOthersFor("D:("+ace+")", isMe) {
 			continue
 		}
 		r := reader{account: accountOf(f[5]), inherited: strings.Contains(f[1], "ID")}
@@ -119,7 +130,7 @@ func fileAccess(h windows.Handle) (me account, owner *account, readers []reader,
 			readers = append(readers, r)
 		}
 	}
-	return me, owner, readers, readable, true
+	return owner, readers, readable
 }
 
 // topLevelEntries splits an SDDL access list into its entries at their top-level
@@ -143,6 +154,11 @@ func topLevelEntries(dacl string) []string {
 	return out
 }
 
+// notPowerShell says why the commands are for a Command Prompt only: PowerShell reads
+// $ and ` inside double quotes, so an account or folder name holding one would name
+// another account or path there (the P3-8 fixes' pass, WINACL-3).
+const notPowerShell = "a Command Prompt (not PowerShell, which reads $ and ` inside quotes as something else)"
+
 // secretFileRefusal says what is wrong with the secret file at path — another
 // account owns it, other accounts can read it — naming them, and the commands that
 // make it this account's alone: /setowner for an owner that is not me (nothing else
@@ -157,7 +173,7 @@ func secretFileRefusal(path string, me account, owner *account, readers []reader
 	var names, remove []string
 	for _, r := range readers {
 		names = append(names, r.shown())
-		if !r.inherited {
+		if !r.inherited && r.sid != me.sid { // never this account's own entry (WINACL-1)
 			remove = append(remove, `"`+r.arg()+`"`)
 		}
 	}
@@ -182,9 +198,9 @@ func secretFileRefusal(path string, me account, owner *account, readers []reader
 	var b strings.Builder
 	b.WriteString(strings.Join(why, ", and "))
 	if len(cmds) == 1 {
-		b.WriteString(". To make it yours alone, run this in a Command Prompt or PowerShell, then try again:")
+		b.WriteString(". To make it yours alone, run this in " + notPowerShell + ", then try again:")
 	} else {
-		b.WriteString(". To make it yours alone, run these in a Command Prompt or PowerShell, one after the other, then try again:")
+		b.WriteString(". To make it yours alone, run these in " + notPowerShell + ", one after the other, then try again:")
 	}
 	for _, c := range cmds {
 		b.WriteString("\n  " + c)

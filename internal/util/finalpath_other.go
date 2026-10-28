@@ -2,5 +2,6 @@
 
 package util
 
-// finalPath is p: off Windows, filepath.EvalSymlinks already follows every link.
-func finalPath(p string) (string, bool) { return p, true }
+// resolveLinks is not needed off Windows: filepath.EvalSymlinks already follows
+// every link there.
+func resolveLinks(abs string) (string, bool) { return "", false }

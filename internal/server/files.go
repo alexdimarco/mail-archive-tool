@@ -155,8 +155,14 @@ func checkEntry(root *os.Root, segs []string) ([]fs.FileInfo, entryKind, bool) {
 		if k == entryRefused || (i < len(segs)-1 && k != entryDir) {
 			return nil, entryRefused, false
 		}
-		// Pinned: each is compared with what is opened later (P3-8 Windows lab, B1).
-		infos, kind = append(infos, util.PinIdentity(info)), k
+		// Pinned: each is compared with what is opened later (P3-8 Windows lab, B1). A
+		// pin that does not take is refused: its identity would be read at the
+		// comparison, from whatever is there then (WINPATH-1).
+		pinned, ok := util.PinIdentity(info)
+		if !ok {
+			return nil, entryRefused, false
+		}
+		infos, kind = append(infos, pinned), k
 	}
 	if kind == entryFile && !fileAllowed(len(segs), segs[len(segs)-1]) {
 		return nil, entryRefused, false

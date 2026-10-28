@@ -22,7 +22,7 @@ import (
 // explicit grant to Users is removed, a grant to Everyone passed down from the
 // folder is dropped, and a file owned by Administrators is given back with
 // /setowner. Never "%USERNAME%", which PowerShell does not expand. The commands are
-// run as printed through the real Command Prompt and PowerShell, and the next read
+// run as printed through the real Command Prompt, the shell they name, and the next read
 // opens the archive. The owner case needs an account that may give a file to
 // Administrators (elevated, or SYSTEM); unelevated it is said and left out.
 func TestASecretFileRefusalOnWindowsGivesCommandsThatEndIt(t *testing.T) {
@@ -87,11 +87,11 @@ func TestASecretFileRefusalOnWindowsGivesCommandsThatEndIt(t *testing.T) {
 	if icacls(shared, "/grant", "*S-1-1-0:(OI)(CI)R") != nil {
 		t.Fatal("could not grant Everyone on the folder")
 	}
-	cases = append(cases, tcase{"a grant to Everyone passed down from the folder", newFile(shared), []string{everyone}, "powershell"})
+	cases = append(cases, tcase{"a grant to Everyone passed down from the folder", newFile(shared), []string{everyone}, "cmd"})
 
 	foreign := newFile(t.TempDir())
 	if icacls(foreign, "/setowner", "*S-1-5-32-544") == nil {
-		cases = append(cases, tcase{"a file owned by Administrators", foreign, []string{admins, "/setowner", "Run as administrator"}, "powershell"})
+		cases = append(cases, tcase{"a file owned by Administrators", foreign, []string{admins, "/setowner", "Run as administrator"}, "cmd"})
 	} else {
 		t.Log("this account cannot give a file to Administrators (it is not elevated): the owner case runs elevated or as SYSTEM")
 	}
@@ -100,7 +100,7 @@ func TestASecretFileRefusalOnWindowsGivesCommandsThatEndIt(t *testing.T) {
 		s, err := PasswordFile(c.path)
 		code, msg := refusal(err)
 		assure.Refused(t, code, msg, assure.Code(1),
-			assure.Names(append([]string{c.path, me.name, "icacls", "Command Prompt or PowerShell"}, c.names...)...),
+			assure.Names(append([]string{c.path, me.name, "icacls", "Command Prompt (not PowerShell"}, c.names...)...),
 			assure.Forbid("%USERNAME%", testPassword), assure.NoSideEffect(func() bool { return s.text == "" }))
 		var cmds []string
 		for _, l := range strings.Split(msg, "\n") {
@@ -122,6 +122,14 @@ func TestASecretFileRefusalOnWindowsGivesCommandsThatEndIt(t *testing.T) {
 // PowerShell, failing the test when the shell reports an error.
 func runAsTyped(t *testing.T, shell, line string) {
 	t.Helper()
+	if b, err := typedIn(shell, line); err != nil {
+		t.Fatalf("%s: %s: %v: %s", shell, line, err, b)
+	}
+}
+
+// typedIn runs line as a person would type it into the Command Prompt or PowerShell,
+// and returns what the shell printed and whether it reported an error.
+func typedIn(shell, line string) ([]byte, error) {
 	var cmd *exec.Cmd
 	switch shell {
 	case "cmd":
@@ -135,9 +143,7 @@ func runAsTyped(t *testing.T, shell, line string) {
 		}
 		cmd = exec.Command("powershell.exe", "-NoProfile", "-NonInteractive", "-EncodedCommand", base64.StdEncoding.EncodeToString(b))
 	}
-	if b, err := cmd.CombinedOutput(); err != nil {
-		t.Fatalf("%s: %s: %v: %s", shell, line, err, b)
-	}
+	return cmd.CombinedOutput()
 }
 
 // accountForTest is an account's SID and DOMAIN\name, looked up apart from the code

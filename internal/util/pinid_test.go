@@ -21,11 +21,11 @@ func TestAPinnedIdentityIsTheFileAsItWas(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	start := PinIdentity(fi)
+	start, _ := PinIdentity(fi)
 	// The positive twin on a separate pinned identity: comparing start itself would
 	// fix its identity, pinned or not.
 	twin, _ := os.Stat(p)
-	twin = PinIdentity(twin)
+	twin, _ = PinIdentity(twin)
 	again, _ := os.Stat(p)
 	if !os.SameFile(twin, again) {
 		t.Fatal("positive twin: the same file matches")

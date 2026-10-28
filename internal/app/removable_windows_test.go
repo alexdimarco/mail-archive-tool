@@ -68,9 +68,10 @@ func TestAnExternalOrFolderMountedDriveIsJudgedByItsOwnVolumeOnWindows(t *testin
 	}
 	internal := disk{dt: windows.DRIVE_FIXED, bus: 0xB} // SATA
 	v := stand(map[string]disk{
-		`C:\`:          internal,
-		`C:\mnt\usb\`:  {dt: windows.DRIVE_REMOVABLE},
-		`C:\mnt\card\`: {dt: windows.DRIVE_FIXED, bus: busTypeSd},
+		`C:\`:         internal,
+		`C:\mnt\usb\`: {dt: windows.DRIVE_REMOVABLE},
+		// A card in a reader reports a removable medium (WINACL-2).
+		`C:\mnt\card\`: {dt: windows.DRIVE_FIXED, bus: busTypeSd, rm: true},
 		`D:\`:          {dt: windows.DRIVE_FIXED, bus: 0x11}, // NVMe
 		`E:\`:          {dt: windows.DRIVE_FIXED, bus: busTypeUsb},
 		`F:\`:          {dt: windows.DRIVE_FIXED, bus: busType1394},

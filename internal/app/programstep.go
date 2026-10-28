@@ -309,24 +309,30 @@ func openProgramDir(dir string, create bool) (*programRoot, error) {
 	if !fi.IsDir() {
 		return nil, fmt.Errorf("the program folder is %s, not a folder", util.ModeKind(fi.Mode()))
 	}
-	fi = util.PinIdentity(fi) // compared on every later check (R3; B1)
+	// Pinned: compared with the folder opened (B1). A pin that did not take would
+	// read its identity later, from whatever is there then (WINPATH-1).
+	fi, pinned := util.PinIdentity(fi)
+	if !pinned {
+		return nil, fmt.Errorf("the program folder changed while it was opened")
+	}
 	root, err := os.OpenRoot(dir)
 	if err != nil {
 		return nil, err
 	}
-	r := &programRoot{dir: dir, root: root, fi: fi}
-	if hf, err := root.Open("."); err != nil {
+	hf, err := root.Open(".")
+	if err != nil {
 		root.Close()
 		return nil, err
-	} else {
-		hfi, serr := hf.Stat()
-		hf.Close()
-		if serr != nil || !os.SameFile(hfi, fi) {
-			root.Close()
-			return nil, fmt.Errorf("the program folder changed while it was opened")
-		}
 	}
-	return r, nil
+	hfi, serr := hf.Stat()
+	hf.Close()
+	if serr != nil || !os.SameFile(hfi, fi) {
+		root.Close()
+		return nil, fmt.Errorf("the program folder changed while it was opened")
+	}
+	// The identity every later check compares is the open handle's own (R3): read from
+	// the folder held, never from its path again.
+	return &programRoot{dir: dir, root: root, fi: hfi}, nil
 }
 
 // entries lists the program folder through its handle.
@@ -350,7 +356,13 @@ func (r *programRoot) judgeOne(f container.ProgramFile) (judged, string) {
 	case err != nil:
 		return jUnreadable, ""
 	}
-	fi = util.PinIdentity(fi) // the file judged, compared when it is opened (B1)
+	// Pinned: the file judged, compared when it is opened (B1). A pin that did not
+	// take would read its identity at the open, from whatever is there then: this run
+	// cannot read it (WINPATH-1).
+	fi, pinned := util.PinIdentity(fi)
+	if !pinned {
+		return jUnreadable, ""
+	}
 	path := filepath.Join(r.dir, f.Name)
 	if programPlaceholder(path) {
 		return jUnchecked, ""

@@ -21,8 +21,8 @@ import (
 // covers: MA-853, R37
 // On Windows, a record whose copies another account owns is refused naming that
 // account and this one by name, and the icacls commands it prints, run exactly as
-// printed through the real Command Prompt (the record alone) and PowerShell (both
-// copies), give the copies back so the record loads (the P3-8 Windows lab, B11,
+// printed through the real Command Prompt, the shell it names (WINACL-3), give the
+// copies back so the record loads (the P3-8 Windows lab, B11,
 // carried to the record). The record is never rewritten while refused. Giving a file
 // to another account needs an elevated account or SYSTEM; unelevated it is said and
 // the test stops there.
@@ -44,7 +44,7 @@ func TestTheRecordsWindowsRefusalEndsWhenItsCommandsAreRun(t *testing.T) {
 		shell  string
 	}{
 		{"the record alone", []string{p}, "cmd"},
-		{"both copies", []string{p, m}, "powershell"},
+		{"both copies", []string{p, m}, "cmd"},
 	} {
 		for _, f := range c.copies {
 			if b, err := exec.Command("icacls", f, "/setowner", "*S-1-5-32-545").CombinedOutput(); err != nil {
@@ -60,7 +60,7 @@ func TestTheRecordsWindowsRefusalEndsWhenItsCommandsAreRun(t *testing.T) {
 		_, uerr := Update("test", func(r *Record) error { return r.Add(idB, t.TempDir(), false, time.Now()) })
 		msg := err.Error()
 		assure.Refused(t, code(uerr), msg, assure.Code(1),
-			assure.Names(append([]string{users, me, "not yours", "/setowner", "Command Prompt or PowerShell"}, c.copies...)...),
+			assure.Names(append([]string{users, me, "not yours", "/setowner", "Command Prompt (not PowerShell"}, c.copies...)...),
 			assure.Forbid("%USERNAME%"),
 			assure.NoSideEffect(func() bool { after, _ := os.ReadFile(p); return bytes.Equal(before, after) }))
 		var cmds []string
@@ -84,6 +84,14 @@ func TestTheRecordsWindowsRefusalEndsWhenItsCommandsAreRun(t *testing.T) {
 // PowerShell, failing the test when the shell reports an error.
 func runAsTypedForTest(t *testing.T, shell, line string) {
 	t.Helper()
+	if b, err := typedInForTest(shell, line); err != nil {
+		t.Fatalf("%s: %s: %v: %s", shell, line, err, b)
+	}
+}
+
+// typedInForTest runs line as a person would type it into the Command Prompt or
+// PowerShell, and returns what the shell printed and whether it reported an error.
+func typedInForTest(shell, line string) ([]byte, error) {
 	var cmd *exec.Cmd
 	switch shell {
 	case "cmd":
@@ -97,9 +105,7 @@ func runAsTypedForTest(t *testing.T, shell, line string) {
 		}
 		cmd = exec.Command("powershell.exe", "-NoProfile", "-NonInteractive", "-EncodedCommand", base64.StdEncoding.EncodeToString(b))
 	}
-	if b, err := cmd.CombinedOutput(); err != nil {
-		t.Fatalf("%s: %s: %v: %s", shell, line, err, b)
-	}
+	return cmd.CombinedOutput()
 }
 
 // nameOfForTest is the DOMAIN\name of the account sidText names, looked up apart

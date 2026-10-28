@@ -14,6 +14,16 @@ import (
 // OS with synthetic SDDL. Fail-closed: no readable DACL, a NULL DACL, or rights it
 // cannot show exclude reading count as readable.
 func DACLReadableByOthers(sddl, userSid string) bool {
+	return DACLReadableByOthersFor(sddl, func(field string) bool { return userSid != "" && field == userSid })
+}
+
+// DACLReadableByOthersFor is DACLReadableByOthers with the user's own entries told by
+// isUser, which is given an entry's account field as the access-list text spells it.
+// Windows spells some accounts by a two-letter alias there — the built-in
+// Administrator (RID 500) as "LA" — so a check that knows only the user's SID must
+// resolve the alias to tell the user's own entry (the P3-8 fixes' pass, WINACL-1;
+// UserEntry on Windows does).
+func DACLReadableByOthersFor(sddl string, isUser func(field string) bool) bool {
 	i := strings.Index(sddl, "D:")
 	if i < 0 {
 		return true
@@ -47,7 +57,7 @@ func DACLReadableByOthers(sddl, userSid string) bool {
 		if !rightsIncludeRead(rights) {
 			continue
 		}
-		if userSid != "" && sid == userSid {
+		if isUser != nil && isUser(sid) {
 			continue
 		}
 		switch sid {

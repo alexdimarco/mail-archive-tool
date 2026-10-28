@@ -72,7 +72,7 @@ func TestTheRecordsWindowsRefusalGivesItBackWithSetowner(t *testing.T) {
 	owners[FileName] = users
 	ue, msg := refused()
 	assure.Refused(t, code(ue), msg, assure.Code(1),
-		assure.Names(p, `BUILTIN\Users`, `PC\alex`, "not yours", "Command Prompt or PowerShell", "Run as administrator",
+		assure.Names(p, `BUILTIN\Users`, `PC\alex`, "not yours", "Command Prompt (not PowerShell", "Run as administrator",
 			`icacls "`+p+`" /setowner "PC\alex"`),
 		assure.Forbid("%USERNAME%", "/grant", "/inheritance", m), assure.NoSideEffect(unchanged))
 	if cmds := commands(msg); len(cmds) != 1 {

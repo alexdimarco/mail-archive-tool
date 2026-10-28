@@ -22,17 +22,24 @@ import (
 // written only while the file on disk is still the one this process started from.
 
 // selfAtStart is the running program's file as the process started (R14).
-var selfAtStart = func() (s struct {
+var selfAtStart = selfFile(os.Executable)
+
+// selfFile is the program's file that exe names, its identity pinned now: compared
+// later, so a file swapped in meanwhile does not match it (B1). A pin that does not
+// take leaves no identity, and a self-copy is then refused (WINPATH-1).
+func selfFile(exe func() (string, error)) (s struct {
 	path string
 	fi   os.FileInfo
 }) {
-	if exe, err := os.Executable(); err == nil {
-		s.path = util.ResolveExisting(exe)
+	if p, err := exe(); err == nil {
+		s.path = util.ResolveExisting(p)
 		fi, _ := os.Stat(s.path)
-		s.fi = util.PinIdentity(fi) // the file as the process started, compared later (B1)
+		if fi, ok := util.PinIdentity(fi); ok {
+			s.fi = fi
+		}
 	}
 	return
-}()
+}
 
 // selfExecutable is the running program's path and its identity at start; a var so a
 // test can stand a file in for it.
@@ -42,9 +49,8 @@ var selfExecutable = func() (string, os.FileInfo) { return selfAtStart.path, sel
 // binary's whole run (another package's TestMain), so a test's self-copy is a small
 // file rather than the test binary. Never called outside tests.
 func UseTestProgram(path string) {
-	fi, _ := os.Stat(path)
-	fi = util.PinIdentity(fi)
-	selfExecutable = func() (string, os.FileInfo) { return path, fi }
+	s := selfFile(func() (string, error) { return path, nil })
+	selfExecutable = func() (string, os.FileInfo) { return path, s.fi }
 }
 
 // appBundle is the .app bundle exe runs from, or "".
