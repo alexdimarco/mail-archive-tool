@@ -2,6 +2,7 @@ package desktop
 
 import (
 	"bytes"
+	"encoding/json"
 	"fmt"
 	"net/http"
 	"os"
@@ -65,6 +66,17 @@ func refusedCode(body string) int {
 		return 2
 	}
 	return 0
+}
+
+// said is what a Desktop reply says, as the page shows it: the reply's error and note decoded
+// from JSON, so a Windows path in it reads with single backslashes, as the refusal names it.
+// A body that is not a JSON reply is returned as it is.
+func said(body string) string {
+	var r struct{ Error, Note string }
+	if err := json.Unmarshal([]byte(body), &r); err != nil || r.Error+r.Note == "" {
+		return body
+	}
+	return strings.TrimSpace(r.Error + " " + r.Note)
 }
 
 // archivedStore is the one local store the archive at out was made from.

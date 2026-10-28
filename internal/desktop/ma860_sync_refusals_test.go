@@ -78,7 +78,7 @@ func TestSyncOnIsRefusedOffMacOSAndWindows(t *testing.T) {
 	}
 	u := snapshot(lin)
 	body := lin.post(`{"interval":"daily","time":"04:00","presync":true}`)
-	assure.Refused(t, refusedCode(body), body,
+	assure.Refused(t, refusedCode(body), said(body),
 		assure.Names("Thunderbird sync works on macOS and Windows only, so nothing was changed."),
 		assure.NoSideEffect(u.holds))
 	if fileBytes(lin.jobPath) != nil {
@@ -97,7 +97,7 @@ func TestSyncOnIsRefusedForAnArchiveNotFromThunderbird(t *testing.T) {
 	}
 	u := snapshot(g)
 	body := g.post(`{"interval":"weekly","time":"03:00","presync":true}`)
-	assure.Refused(t, refusedCode(body), body,
+	assure.Refused(t, refusedCode(body), said(body),
 		assure.Names("wasn't made from a Thunderbird profile on this computer", "Nothing was changed."),
 		assure.NoSideEffect(u.holds))
 }
@@ -128,7 +128,7 @@ func TestSyncOnIsRefusedWhileTheProfileIsAway(t *testing.T) {
 	}
 	u := snapshot(g)
 	body := g.post(`{"interval":"weekly","time":"03:00","presync":true}`)
-	assure.Refused(t, refusedCode(body), body,
+	assure.Refused(t, refusedCode(body), said(body),
 		assure.Names("Thunderbird sync can't be switched on", "the mail folder this archive was made from", "isn't on this computer right now", "Nothing was changed."),
 		assure.NoSideEffect(u.holds))
 	// The folder is named as the archive recorded it (resolved, and in lower case where the
@@ -241,7 +241,7 @@ func TestAnUnreadableJobFileIsNeverOverwritten(t *testing.T) {
 		c.plant()
 		u := snapshot(g)
 		body := g.post(`{"interval":"weekly","time":"06:00","presync":false}`)
-		assure.Refused(t, refusedCode(body), body,
+		assure.Refused(t, refusedCode(body), said(body),
 			assure.Names("This archive's backup settings file "+g.jobPath+" can't be read", c.why, "Re-create the backup in the MailArchive wizard", "Nothing was changed."),
 			assure.NoSideEffect(u.holds))
 		if fi, err := os.Lstat(g.jobPath); err != nil || (c.name == "link") != (fi.Mode()&os.ModeSymlink != 0) {

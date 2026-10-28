@@ -66,7 +66,7 @@ func TestRemoveKeepsAJobFileWhoseEntryItDidNotRemove(t *testing.T) {
 	}
 	before := fileBytes(other)
 	body := postJSON(g.h, "/api/schedule-remove", g.csrf, `{}`).Body.String()
-	assure.Refused(t, refusedCode(body), body,
+	assure.Refused(t, refusedCode(body), said(body),
 		assure.Names("was not removed", other, "mailarchive schedule -out "+link+" -name "+schedule.DefaultNameFor(target)+" -remove"),
 		assure.NoSideEffect(func() bool { return string(fileBytes(other)) == string(before) && g.fake.tasks[target] }))
 
@@ -75,7 +75,7 @@ func TestRemoveKeepsAJobFileWhoseEntryItDidNotRemove(t *testing.T) {
 	g.fake.tasks = map[string]bool{}
 	g.fake.unknown = true
 	body = postJSON(g.h, "/api/schedule-remove", g.csrf, `{}`).Body.String()
-	assure.Refused(t, refusedCode(body), body,
+	assure.Refused(t, refusedCode(body), said(body),
 		assure.Names("was not removed", other),
 		assure.NoSideEffect(func() bool { return string(fileBytes(other)) == string(before) }))
 	g.fake.unknown = false

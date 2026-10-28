@@ -54,7 +54,7 @@ func TestACaptureRepairNeverResetsACadenceItCantRead(t *testing.T) {
 	g.fake.removed = nil
 	u := g.snapshot()
 	body := g.post(`{}`)
-	assure.Refused(t, refusedCode(body), body,
+	assure.Refused(t, refusedCode(body), said(body),
 		assure.Names("can't read how often the installed backup runs", away, "Nothing was changed."),
 		assure.NoSideEffect(func() bool { return u.holds() && len(g.fake.removed) == 0 }))
 
@@ -65,7 +65,7 @@ func TestACaptureRepairNeverResetsACadenceItCantRead(t *testing.T) {
 	g.fake.tasks = map[string]bool{g.out: true}
 	u = g.snapshot()
 	body = g.post(`{}`)
-	assure.Refused(t, refusedCode(body), body,
+	assure.Refused(t, refusedCode(body), said(body),
 		assure.Names("can't read how often the installed backup runs", g.out),
 		assure.NoSideEffect(func() bool { return u.holds() && len(g.fake.removed) == 0 }))
 }
@@ -86,7 +86,7 @@ func TestACaptureRepairAfterAMoveUsesTheRecordThatMoved(t *testing.T) {
 	g.fake.tasks = map[string]bool{away: true}
 	u := g.snapshot()
 	body := g.post(`{}`)
-	assure.Refused(t, refusedCode(body), body,
+	assure.Refused(t, refusedCode(body), said(body),
 		assure.Names("can't read how often the installed backup runs", away),
 		assure.NoSideEffect(func() bool { return u.holds() && len(g.fake.removed) == 0 }))
 
