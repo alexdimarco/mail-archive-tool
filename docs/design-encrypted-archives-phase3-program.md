@@ -215,7 +215,9 @@ PG5 lands before PG2 and is a release gate:
   the Windows pair) has `Main.Version` equal to the tag and `vcs.modified=false` (closes SC33, with
   a catalog row).
 - **No tag carrying PG2 ships until the operator has confirmed GitHub's immutable releases are on**,
-  recorded in the release checklist (an owner step).
+  recorded in the release checklist (an owner step). *Confirmed 2026-10-27: the owner switched on
+  "Enable release immutability"; `GET /repos/alexdimarco/mail-archive-tool/immutable-releases`
+  answers `{"enabled":true}`. Releases published before then (v1.4.0 and earlier) stay changeable.*
 
 ## 8. Leak budget and threats (adds to parent §14; C19)
 

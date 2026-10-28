@@ -1196,6 +1196,7 @@ h1{font-size:1.8rem;letter-spacing:-.02em;margin:0 0 4px}.lede{color:var(--muted
 .note{margin-top:12px;padding:10px 12px;border-radius:9px;font-size:.9rem;background:var(--accent-soft);border:1px solid color-mix(in srgb,var(--accent) 30%,var(--line))}
 .card-sub{color:var(--muted);font-size:.9rem;margin:-4px 0 14px}
 .btn{display:inline-flex;align-items:center;justify-content:center;padding:9px 15px;border-radius:8px;border:0;background:var(--accent);color:#fff;font-weight:750;cursor:pointer}
+[hidden]{display:none!important}
 .btn.secondary{background:var(--panel);color:var(--accent);border:1px solid var(--accent)}
 .btn:disabled{opacity:.5;cursor:not-allowed}
 label{display:block;font-weight:700;margin:14px 0 5px}
