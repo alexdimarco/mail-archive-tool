@@ -6,6 +6,7 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"fmt"
+	"io"
 	"io/fs"
 	"net/http"
 	"net/http/httptest"
@@ -301,6 +302,87 @@ func TestADownloadResumesAndAStallEndsIt(t *testing.T) {
 		resumed = resumed || rg == "v1.5.0/"+Assets[0]+" bytes=10-"
 	}
 	assure.Reached(t, res.Class == "" && f.Cache.Verified("v1.5.0")[Assets[0]] == sha(want[Assets[0]]) && resumed, fmt.Sprintf("resumed: %v", r.ranges))
+}
+
+// cutTransport answers from files, but the body of cut, after its first keep bytes,
+// holds until the request is ended and then ends cleanly with io.EOF: what a server
+// that closes its chunked body once the client gives up looks like (fault injection;
+// the race CI hit once with the real test server, made certain).
+type cutTransport struct {
+	files map[string][]byte
+	cut   string
+	keep  int
+}
+
+func (c *cutTransport) RoundTrip(req *http.Request) (*http.Response, error) {
+	name := strings.TrimPrefix(req.URL.Path, "/")
+	b, ok := c.files[name]
+	if !ok {
+		return &http.Response{StatusCode: http.StatusNotFound, Header: http.Header{}, Body: http.NoBody, Request: req}, nil
+	}
+	var body io.Reader = bytes.NewReader(b)
+	if strings.HasSuffix(name, "/"+c.cut) {
+		body = io.MultiReader(bytes.NewReader(b[:c.keep]), endsWhenDone{req.Context()})
+	}
+	return &http.Response{StatusCode: http.StatusOK, Header: http.Header{}, ContentLength: -1, Body: io.NopCloser(body), Request: req}, nil
+}
+
+// endsWhenDone blocks until ctx ends, then reports a clean end of body.
+type endsWhenDone struct{ ctx context.Context }
+
+func (e endsWhenDone) Read([]byte) (int, error) { <-e.ctx.Done(); return 0, io.EOF }
+
+// covers: MA-836, R37
+// A stall or a cancel is never taken for a finished file, even when the body then ends
+// cleanly (R17, R18): the asset's partial is kept to resume, no checksum mismatch is
+// counted and SHA256SUMS stays; a checksum file cut the same way is not kept and
+// nothing is said to be unpublished.
+func TestABodyEndingAfterAStallIsNotTakenAsComplete(t *testing.T) {
+	want := assets(2000)
+	r := newRelease(t, "v1.5.0", want)
+	cutFetcher := func(cut string, keep int) *Fetcher {
+		f := r.fetcher(t)
+		f.BaseURL, f.Idle = "https://release.test", 300*time.Millisecond
+		f.Trusted = func(h string) bool { return h == "release.test" }
+		f.Client = &http.Client{Transport: &cutTransport{files: r.files, cut: cut, keep: keep}}
+		return f
+	}
+	kept := func(f *Fetcher) string {
+		dir := filepath.Join(f.Cache.Root(), "v1.5.0")
+		fi, perr := os.Stat(filepath.Join(dir, Assets[0]+partialSuffix))
+		_, serr := os.Stat(filepath.Join(dir, SumsName))
+		if perr != nil || fi.Size() != 10 || serr != nil || f.Cache.readAttempt(dir).Mismatches != 0 {
+			return fmt.Sprintf("partial %v %v, sums %v, attempt %+v", fi, perr, serr, f.Cache.readAttempt(dir))
+		}
+		return ""
+	}
+
+	// The idle limit ends the read, then the body ends cleanly: stalled.
+	f := cutFetcher(Assets[0], 10)
+	res := f.Fetch(context.Background(), "v1.5.0")
+	why := kept(f)
+	assure.Reached(t, res.Class == ClassStalled && why == "" && len(res.Verified) == 3, fmt.Sprintf("a stall then a clean end: %+v %s", res, why))
+
+	// The caller cancels after the first bytes, then the body ends cleanly: cancelled.
+	fc := cutFetcher(Assets[0], 10)
+	fc.Idle = time.Minute
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	fc.onBytes = func(n int64) {
+		if n == 10 {
+			cancel()
+		}
+	}
+	res = fc.Fetch(ctx, "v1.5.0")
+	why = kept(fc)
+	assure.Reached(t, res.Class == ClassCancelled && why == "", fmt.Sprintf("a cancel then a clean end: %+v %s", res, why))
+
+	// SHA256SUMS cut after its first line by a stall: not kept, nothing unpublished.
+	sums := r.files["v1.5.0/"+SumsName]
+	fs := cutFetcher(SumsName, bytes.IndexByte(sums, '\n')+1)
+	res = fs.Fetch(context.Background(), "v1.5.0")
+	_, serr := os.Stat(filepath.Join(fs.Cache.Root(), "v1.5.0", SumsName))
+	assure.Reached(t, res.Class == ClassStalled && len(res.NotPublished) == 0 && os.IsNotExist(serr), fmt.Sprintf("a cut checksum file: %+v, sums %v", res, serr))
 }
 
 // covers: MA-837, R37

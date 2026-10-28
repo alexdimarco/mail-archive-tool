@@ -273,9 +273,9 @@ func (f *Fetcher) sums(ctx context.Context, dir, version string) (map[string]str
 	}
 	b, err := io.ReadAll(io.LimitReader(resp.Body, maxSums+1))
 	switch {
-	case err != nil && stalled.Load():
+	case stalled.Load(): // even at a clean end: a body cut by the idle limit is not the file
 		return nil, "", ClassStalled
-	case err != nil && ctx.Err() != nil:
+	case ctx.Err() != nil:
 		return nil, "", ClassCancelled
 	case err != nil:
 		return nil, "", ClassNetwork
@@ -484,15 +484,17 @@ func (f *Fetcher) download(ctx context.Context, part *os.File, version, asset st
 				f.onBytes(total)
 			}
 		}
-		if err == io.EOF {
-			return "", false
-		}
 		if err != nil {
+			// A body that ends after the idle limit or a cancel ended the request is not a
+			// finished file, even at a clean io.EOF: a server may close its body once the
+			// client gives up. Its partial is kept to resume, never hashed as complete.
 			switch {
 			case stalled.Load():
 				return ClassStalled, false
 			case ctx.Err() != nil:
 				return ClassCancelled, false
+			case err == io.EOF:
+				return "", false
 			}
 			return ClassNetwork, false
 		}
