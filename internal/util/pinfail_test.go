@@ -46,7 +46,14 @@ func TestAPinThatDoesNotTakeSaysSo(t *testing.T) {
 	if runtime.GOOS == "windows" && ok {
 		t.Fatal("on Windows a file removed before its pin cannot be pinned, and the pin said it took")
 	}
-	assure.Reached(t, !ok || !os.SameFile(pinned, decoy),
+	// The file number alone: on Windows the pin's own question. Off Windows Linux may
+	// give the decoy the removed file's number at once, so the identity is the file as
+	// it was by StillSame (number, size and times) there.
+	same := os.SameFile(pinned, decoy)
+	if runtime.GOOS != "windows" {
+		same = StillSame(pinned, decoy)
+	}
+	assure.Reached(t, !ok || !same,
 		"a pin either says it did not take or holds the file as it was, never the decoy")
 	if _, ok := PinIdentity(nil); ok {
 		t.Fatal("nothing was pinned, and the pin said it took")

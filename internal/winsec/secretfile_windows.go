@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"strings"
+	"unsafe"
 
 	"golang.org/x/sys/windows"
 )
@@ -24,24 +25,52 @@ func CheckSecretFile(h windows.Handle) error {
 	if err != nil {
 		return fmt.Errorf("%w: its access list cannot be read: %w", ErrNotOwnersOnly, err)
 	}
-	tu, err := windows.GetCurrentProcessToken().GetTokenUser()
+	tok := windows.GetCurrentProcessToken()
+	tu, err := tok.GetTokenUser()
 	if err != nil {
 		return err
 	}
-	return checkSecretSD(sd, tu.User.Sid.String())
+	def, _ := tokenDefaultOwner(tok)
+	return checkSecretSD(sd, tu.User.Sid.String(), def)
 }
 
 // checkSecretSD is CheckSecretFile's decision on a security descriptor read, for the
-// user whose SID is user.
-func checkSecretSD(sd *windows.SECURITY_DESCRIPTOR, user string) error {
+// user whose SID is user. The owner may be the user, or the owner this process's
+// token gives every file it makes (def): an administrator running elevated makes
+// files Administrators own, its own password and recovery-key files included — and
+// MailArchive's own lock check accepts the same owner (internal/instance). Who else
+// may read the file is judged the same either way (P3-8's CI run on windows-latest).
+func checkSecretSD(sd *windows.SECURITY_DESCRIPTOR, user, def string) error {
 	owner, _, err := sd.Owner()
-	if err != nil || owner == nil || owner.String() != user {
+	if err != nil || owner == nil || (owner.String() != user && (def == "" || owner.String() != def)) {
 		return fmt.Errorf("%w: it is not owned by you", ErrNotOwnersOnly)
 	}
 	if DACLReadableByOthersFor(sd.String(), UserEntry(user)) {
 		return fmt.Errorf("%w: other accounts can read it", ErrNotOwnersOnly)
 	}
 	return nil
+}
+
+// tokenOwner is the TOKEN_OWNER structure GetTokenInformation(TokenOwner) fills.
+type tokenOwner struct{ Owner *windows.SID }
+
+// tokenDefaultOwner is the SID new objects this token creates are owned by (as
+// internal/instance reads it for the lock check).
+func tokenDefaultOwner(tok windows.Token) (string, error) {
+	var n uint32
+	_ = windows.GetTokenInformation(tok, windows.TokenOwner, nil, 0, &n) // reports the size needed
+	if n == 0 {
+		return "", errors.New("no token owner size")
+	}
+	b := make([]byte, n)
+	if err := windows.GetTokenInformation(tok, windows.TokenOwner, &b[0], n, &n); err != nil {
+		return "", err
+	}
+	o := (*tokenOwner)(unsafe.Pointer(&b[0])).Owner
+	if o == nil {
+		return "", errors.New("no token owner")
+	}
+	return o.String(), nil // read before b can be collected
 }
 
 // UserEntry tells whether an access-list account field names the account whose SID

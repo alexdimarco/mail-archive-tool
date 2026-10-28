@@ -85,7 +85,9 @@ func selfSource() (string, error) {
 		return "", errors.New("this program's own file could not be found")
 	}
 	now, err := os.Stat(exe)
-	if err != nil || !os.SameFile(now, start) {
+	// Not only the same file number, which Linux gives a re-created file at once (P3-8's
+	// CI run): its size and times too.
+	if err != nil || !util.StillSame(start, now) {
 		return "", errors.New("this program's file was replaced since it started")
 	}
 	if runtime.GOOS == "windows" && !strings.EqualFold(filepath.Base(exe), "mailarchive.exe") {
