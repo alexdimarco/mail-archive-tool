@@ -39,6 +39,11 @@ a.pill{text-decoration:none;color:var(--accent)}
 button{display:inline-flex;align-items:center;justify-content:center;padding:9px 15px;font-weight:650;cursor:pointer;border:1px solid var(--line);border-radius:8px;background:var(--panel);color:var(--text)}
 button:hover:not(:disabled){border-color:var(--accent);color:var(--accent)}
 button:disabled{opacity:.45;cursor:default}
+button:active:not(:disabled){background:var(--accent-soft);transform:translateY(1px)}
+button[aria-busy=true]{cursor:progress;opacity:.75}
+button[aria-busy=true]::before{content:"";display:inline-block;width:.85em;height:.85em;margin-right:7px;border:2px solid currentColor;border-right-color:transparent;border-radius:50%;animation:busy-spin .8s linear infinite}
+@keyframes busy-spin{to{transform:rotate(360deg)}}
+@media (prefers-reduced-motion:reduce){button[aria-busy=true]::before{animation:none}}
 .empty{color:var(--muted);text-align:center;padding:40px}
 </style></head>
 <body>
@@ -85,9 +90,22 @@ function zipURL(p){return fileURL(p.replace(/\.html$/,'-attachments.zip'));}
 function fmtDate(s){if(!s)return '';const d=new Date(s);return isNaN(d)?'':d.toISOString().slice(0,10);}
 function esc(s){return (s||'').replace(/[&<>]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;'}[c]));}
 
-async function search(){
+// busy shows that Prev or Next is working (MA-872): the button is disabled and marked
+// aria-busy, its label becomes the working label and the results line says what is loading.
+// It returns done, which search calls when the reply arrives, success or error, before the
+// results are drawn (drawing them sets which of Prev and Next can be pressed).
+function busy(b,label,text){
+  const was=b.textContent,had=document.activeElement===b;
+  b.disabled=true;b.setAttribute('aria-busy','true');b.textContent=label;$('#meta').textContent=text;
+  return ()=>{b.removeAttribute('aria-busy');b.textContent=was;b.disabled=false;
+    if(had&&(!document.activeElement||document.activeElement===document.body))b.focus();};
+}
+async function search(done){
   const p=new URLSearchParams(state());
-  const r=await fetch('api/search?'+p);const d=await r.json();
+  let d;
+  try{const r=await fetch('api/search?'+p);d=await r.json();}
+  catch(e){d={error:'The archive reader could not be reached. Is it still running?'};}
+  finally{if(done)done();}
   if(d.error){$('#results').innerHTML='<div class="empty">'+esc(d.error)+'</div>';$('#meta').textContent='';return;}
   lastTotal=d.total;render(d);
 }
@@ -120,7 +138,7 @@ async function facets(){
 let t;const go=()=>{offset=0;search();};
 $('#q').addEventListener('input',()=>{clearTimeout(t);t=setTimeout(go,180);});
 for(const id of ['#sort','#folder','#year','#attach'])$(id).addEventListener('change',go);
-$('#prev').onclick=()=>{if(offset>0){offset-=limit;search();window.scrollTo(0,0);}};
-$('#next').onclick=()=>{if(offset+limit<lastTotal){offset+=limit;search();window.scrollTo(0,0);}};
+$('#prev').onclick=()=>{if(offset>0){offset-=limit;search(busy($('#prev'),'Loading…','Loading the previous results…'));window.scrollTo(0,0);}};
+$('#next').onclick=()=>{if(offset+limit<lastTotal){offset+=limit;search(busy($('#next'),'Loading…','Loading the next results…'));window.scrollTo(0,0);}};
 facets();search();
 `

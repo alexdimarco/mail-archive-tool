@@ -45,6 +45,13 @@ h1{font-size:1.8rem;letter-spacing:-.02em;margin:0 0 4px}.lede{color:var(--muted
 .btn.secondary{background:var(--panel);color:var(--accent);border:1px solid var(--accent)}
 .btn.small{padding:5px 10px;font-size:.85rem}
 .btn:disabled{opacity:.5;cursor:not-allowed}
+.btn:active:not(:disabled){filter:brightness(.85);transform:translateY(1px)}
+.btn-link:active:not(:disabled){opacity:.7}
+.btn[aria-busy=true],button[aria-busy=true]{cursor:progress;opacity:.75}
+button[aria-busy=true]::before{content:"";display:inline-block;width:.85em;height:.85em;margin-right:7px;border:2px solid currentColor;border-right-color:transparent;border-radius:50%;vertical-align:-2px;animation:busy-spin .8s linear infinite}
+@keyframes busy-spin{to{transform:rotate(360deg)}}
+@media(prefers-reduced-motion:reduce){button[aria-busy=true]::before{animation:none}}
+.busy-note{margin-left:8px;color:var(--muted);font-size:.85rem}
 label{display:block;font-weight:700;margin:14px 0 5px}
 input[type=text],input:not([type]),select{width:100%;padding:10px 11px;border:1px solid var(--line);border-radius:8px;background:var(--panel);color:var(--text)}
 select{font:inherit}

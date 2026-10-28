@@ -19,6 +19,21 @@ function el(tag,text,cls){const e=document.createElement(tag);if(text!==undefine
 function clear(e){while(e.firstChild)e.removeChild(e.firstChild);}
 function show(id,text){const e=$(id);if(!e)return;e.hidden=!text;e.textContent=text||'';}
 function fmt(n){return Number(n).toLocaleString('en-US');}
+// busy shows that a pressed button is working (MA-872): the button is disabled and marked
+// aria-busy, its label becomes the working label (an empty one keeps the label), and the note
+// (an element or its id, or else a line put beside the button) says what is happening. It
+// returns done, which the reply calls, success or error: done() gives the button back;
+// done(true) leaves it disabled, for a page about to change or a run whose own progress takes over.
+function busy(b,label,note,text){
+  if(!b)return()=>{};
+  const was=b.textContent,had=document.activeElement===b;
+  let n=typeof note==='string'?$(note):note,own=null;
+  if(!n&&text){own=el('span',null,'busy-note');own.setAttribute('role','status');b.after(own);n=own;}
+  b.disabled=true;b.setAttribute('aria-busy','true');if(label)b.textContent=label;
+  if(n&&text){n.hidden=false;n.textContent=text;}
+  return keep=>{b.removeAttribute('aria-busy');if(label)b.textContent=was;b.disabled=!!keep;if(own)own.remove();
+    if(had&&!keep&&b.isConnected&&(!document.activeElement||document.activeElement===document.body))b.focus();};
+}
 `
 
 // scoped puts a whole script, its shared helpers included, inside one function. Classic
@@ -52,8 +67,11 @@ function render(d){
     setTimeout(()=>location.reload(),900);}
   if(d.state==='failed'&&started){stop();btn.disabled=false;show('banner',d.error||'The sign-in did not finish.');}
 }
-function poll(answer,initial){
+// poll asks how the sign-in is going; done, when given, is the pressed Keep or Sign out
+// button's busy (MA-872), given back when the reply arrives.
+function poll(answer,initial,done){
   api('api/m365/signin-status',answer?{answer:answer}:(initial?{initial:true}:{})).then(d=>{
+    if(done)done();
     if(!d.ok){stop();btn.disabled=false;show('banner',d.error||RESTART);return;}
     render(d);
     // a page reloaded while a sign-in is running picks the polling back up
@@ -62,15 +80,17 @@ function poll(answer,initial){
 }
 function stop(){if(timer){clearInterval(timer);timer=null;}}
 btn.addEventListener('click',()=>{
-  btn.disabled=true;show('banner','');
+  show('banner','');
+  const done=busy(btn,'Starting…',null,'Starting the Microsoft 365 sign-in…');
   api('api/m365/signin',{}).then(d=>{
-    if(!d.ok){btn.disabled=false;show('banner',d.error||'Could not start the sign-in.');return;}
+    if(!d.ok){done();show('banner',d.error||'Could not start the sign-in.');return;}
+    done(true); // stays disabled while the sign-in runs; the polling gives it back when it ends
     started=true;poll();if(!timer)timer=setInterval(()=>poll(),1500);
   });
 });
 const k=$('signInKeep'),o=$('signInOut');
-if(k)k.addEventListener('click',()=>poll('keep'));
-if(o)o.addEventListener('click',()=>poll('signout'));
+if(k)k.addEventListener('click',()=>poll('keep',false,busy(k,'Keeping…',null,'Saving your answer…')));
+if(o)o.addEventListener('click',()=>poll('signout',false,busy(o,'Signing out…',null,'Saving your answer…')));
 poll(undefined,true);
 })();
 `)
@@ -120,9 +140,9 @@ $('srcKind').addEventListener('change',()=>{
 $('otherPath').addEventListener('input',()=>{if(st.archivePath){resetPick();}$('otherNote').textContent='';});
 // Browse chooses the other archive folder, and checking it names the mailboxes it holds, or says why it is not one
 $('browseOther').addEventListener('click',()=>{
-  $('otherNote').textContent='A folder picker has opened — it may be behind this window.';
+  const done=busy($('browseOther'),'Choosing…','otherNote','A folder picker has opened — it may be behind this window.');
   api('api/workspace/browse',{title:'Choose the archive\'s top folder'}).then(d=>{
-    $('otherNote').textContent='';
+    done();$('otherNote').textContent='';
     if(d.path){$('otherPath').value=d.path;checkOther();}
     else if(d.unavailable||d.disabled||d.busy)show('banner',errText(d));
   });
@@ -164,9 +184,10 @@ function loadSource(){
   });
 }
 $('loadFolders').addEventListener('click',()=>{
-  $('loadFolders').disabled=true;show('banner','');
+  show('banner','');
+  const done=busy($('loadFolders'),'Loading…','selNote','Loading the folders…');
   api('api/workspace/folders',{source:srcReq(true)}).then(d=>{
-    $('loadFolders').disabled=false;
+    done();show('selNote','');
     if(!d.ok){showErr(d);return;}
     if(st.src==='m365')st.upn=d.upn;
     else{
@@ -277,15 +298,23 @@ $('inclSub').addEventListener('change',()=>{
 });
 
 // ---- the message list ----------------------------------------------------------
+// Opening a folder redraws the tree (to mark it current), so the redrawn name is the one that
+// shows it is working (MA-872): the folder's name stays, and the list's note says what loads.
 function openFolder(id){
   st.current=id;st.rows=[];st.cursor='';st.more=false;
   $('selectFolder').disabled=false;
-  renderTree();loadRows(false);
+  renderTree();
+  let nb=null;
+  for(const n of $('tree').querySelectorAll('[data-key]')){if(n.dataset.key==='n:'+id){nb=n;break;}}
+  loadRows(false,busy(nb,'','listNote','Loading the messages in '+st.byId[id].name+'…'));
 }
-function loadRows(more){
+// loadRows asks for a page of the open folder's messages; done, when given, is the pressed
+// button's busy (MA-872), given back when the reply arrives.
+function loadRows(more,done){
   const body={folder:st.current,source:srcReq()};
   if(more){body.cursor=st.cursor;if(st.rows.length)body.after=st.rows[st.rows.length-1].h;}
   api('api/workspace/messages',body).then(d=>{
+    if(done){done();show('listNote','');}
     if(!d.ok){
       showErr(d);
       if(d.reload&&more){st.rows=[];loadRows(false);}
@@ -298,7 +327,7 @@ function loadRows(more){
     renderRows();
   });
 }
-$('loadMore').addEventListener('click',()=>loadRows(true));
+$('loadMore').addEventListener('click',()=>loadRows(true,busy($('loadMore'),'Loading…','listNote','Loading more messages…')));
 function rowChecked(h){
   const cov=covering(st.current);
   if(cov)return cov.exclude.indexOf(h)<0;
@@ -373,15 +402,17 @@ $('clearSel').addEventListener('click',()=>{
 
 // ---- destination -------------------------------------------------------------------
 $('browse').addEventListener('click',()=>{
-  $('browseNote').textContent='A folder picker has opened — it may be behind this window.';
+  const done=busy($('browse'),'Choosing…','browseNote','A folder picker has opened — it may be behind this window.');
   api('api/workspace/browse',{title:'Choose the folder to export into'}).then(d=>{
-    $('browseNote').textContent='';
+    done();$('browseNote').textContent='';
     if(d.path)$('destPath').value=d.path;
     else if(d.unavailable||d.disabled||d.busy)show('banner',errText(d));
   });
 });
 $('mkdir').addEventListener('click',()=>{
+  const done=busy($('mkdir'),'Creating…',null,'Creating the folder…');
   api('api/workspace/mkdir',{parent:$('destPath').value,name:$('newName').value}).then(d=>{
+    done();
     if(!d.ok){showErr(d);return;}
     $('destPath').value=d.path;$('newName').value='';show('banner','');
   });
@@ -390,7 +421,9 @@ $('mkdir').addEventListener('click',()=>{
 // ---- preview and start --------------------------------------------------------------
 $('previewBtn').addEventListener('click',()=>{
   show('banner','');
+  const done=busy($('previewBtn'),'Previewing…',null,'Preparing the preview…');
   api('api/workspace/preview',selection()).then(d=>{
+    done();
     if(!d.ok){showErr(d);return;}
     resumePreview(d.previewId);
   });
@@ -419,7 +452,9 @@ $('destPath').addEventListener('input',()=>{$('destPath').dataset.touched='1';})
 $('rePreviewBtn').addEventListener('click',()=>{
   if(!st.retry)return;
   show('banner','');
+  const done=busy($('rePreviewBtn'),'Previewing…',null,'Preparing the preview for this destination…');
   api('api/exports/retry',{runId:st.retry.run,which:st.retry.which,dest:$('destPath').value}).then(d=>{
+    done();
     if(!d.ok){showErr(d);return;}
     resumePreview(d.previewId);
   });
@@ -466,9 +501,9 @@ function renderPreview(p){
   if((p.samplePaths||[]).length){const ul=el('ul',null,'plain');p.samplePaths.forEach(s=>ul.appendChild(el('li',s,'mono')));body.appendChild(ul);}
 }
 $('startBtn').addEventListener('click',()=>{
-  $('startBtn').disabled=true;
+  const done=busy($('startBtn'),'Starting…',null,'Starting the export…');
   api('api/exports/start',{previewId:st.previewId}).then(d=>{
-    $('startBtn').disabled=false;
+    done(!!d.ok); // a started export leaves this page
     if(!d.ok){showErr(d);$('previewCard').hidden=true;return;}
     st.leaving=true; // the export started: leaving this page is not losing a selection
     location.href='exports';
@@ -486,7 +521,7 @@ loadSource();
 // exportsJS is the Export activity page: the running export with Cancel, and the history
 // with each card's actions.
 var exportsJS = scoped(commonJS + `(function(){
-let busy=false;
+let loading=false;
 const LABELS={
   'open-folder':'Open folder','check-this-export':'Check this export','export-failed-again':'Export failed messages again',
   'export-remaining':'Export the remaining messages','export-these-again':'Export these messages again','finish-as-partial':'Finish as partial',
@@ -517,7 +552,8 @@ function renderRun(p){
 }
 $('cancelBtn').addEventListener('click',()=>{
   if(!runId)return;
-  api('api/exports/cancel',{runId:runId}).then(d=>{if(!d.ok)note(d.error);});
+  const done=busy($('cancelBtn'),'Cancelling…',null,'Asking the export to stop…');
+  api('api/exports/cancel',{runId:runId}).then(d=>{done();if(!d.ok)note(d.error);});
 });
 // A tab whose MailArchive Desktop has gone says so (the answer has no HTTP status when the
 // request itself failed), instead of keeping a Running card frozen; it clears when the app answers.
@@ -568,7 +604,7 @@ function cardEl(c){
     if(a==='export-these-again'&&c.remaining)label='Export these '+fmt(c.remaining)+' messages again';
     const b=el('button',label,'btn small'+(a==='open-folder'||a==='check-this-export'?' secondary':''));b.type='button';
     b.dataset.run=c.run;b.dataset.act=a;
-    b.addEventListener('click',()=>act(a,c,box));acts.appendChild(b);
+    b.addEventListener('click',()=>act(a,c,box,b));acts.appendChild(b);
   });
   box.appendChild(acts);
   const res=el('div');res.className='cardres';res.setAttribute('aria-live','polite');
@@ -582,29 +618,46 @@ function saveReceipt(c){
   document.body.appendChild(a);a.click();document.body.removeChild(a);
 }
 function resultOf(box){return box.querySelector('.cardres');}
-function act(a,c,box){
+// What a card's button says, and its card's note, while its request runs (MA-872).
+const WORKING={
+  'open-folder':['Opening…','Opening the export folder…'],'check-this-export':['Checking…','Checking this export against its manifest…'],
+  'export-failed-again':['Preparing…','Preparing the export…'],'export-remaining':['Preparing…','Preparing the export…'],'export-these-again':['Preparing…','Preparing the export…'],
+  'finish-as-partial':['Finishing…','Finishing this export as a partial one…'],'check-and-finish':['Finishing…','Checking and finishing this export…'],
+  'look-again':['Looking…','Looking for the export folder again…'],'locate':['Choosing…','A folder picker has opened — it may be behind this window.'],
+  'this-folder-is-gone':['Saving…','Marking this folder as gone…']};
+// the card button working now: a history redraw while it works puts the focus back on it
+let pressed=null;
+function act(a,c,box,b){
+  if(a==='finish-as-partial'&&!confirm('Finish this export as a partial one? Its README, manifest and checksums will list only what was written.'))return;
+  if(a==='this-folder-is-gone'&&!confirm('Tell MailArchive this folder is gone? You can then export its messages again.'))return;
   const out=resultOf(box);clear(out);note('');
+  pressed={run:c.run,act:a};
+  const w=WORKING[a]||['Working…','Working on it…'];
+  const release=busy(b,w[0],out,w[1]),free=()=>{pressed=null;release();};
+  // every reply gives the button back and clears the working note before it is read
+  const call=(path,body)=>api(path,body).then(d=>{free();clear(out);return d;});
   // A refusal is kept by the server on this run's card (it comes back with the next history
   // answer, which rebuilds every card), and is shown at once here and in the page's alert.
   const fail=d=>{const t=d.error||'That did not work.';out.appendChild(el('div',t,'note warnbox'));note(t);};
   const done=d=>{if(!d.ok)fail(d);loadHistory(true);};
   switch(a){
-  case 'open-folder':api('api/exports/open-folder',{runId:c.run}).then(d=>{if(!d.ok){fail(d);loadHistory(true);}});break;
-  case 'check-this-export':api('api/exports/check',{runId:c.run}).then(d=>{
+  case 'open-folder':call('api/exports/open-folder',{runId:c.run}).then(d=>{if(!d.ok){fail(d);loadHistory(true);}});break;
+  case 'check-this-export':call('api/exports/check',{runId:c.run}).then(d=>{
       if(!d.ok){fail(d);loadHistory(true);return;}
       out.appendChild(el('div',(d.green?'GREEN':'RED')+': '+fmt(d.files)+' files checked','v '+(d.green?'good':'bad')));
       (d.problems||[]).forEach(p=>out.appendChild(el('div',p,'note warnbox')));
       if(d.remedy)out.appendChild(el('div',d.remedy,'note warnbox'));
     });break;
-  case 'export-failed-again':api('api/exports/retry',{runId:c.run,which:'failed'}).then(d=>{if(!d.ok){done(d);return;}location.href='workspace#preview='+d.previewId;});break;
-  case 'export-remaining':case 'export-these-again':api('api/exports/retry',{runId:c.run,which:'rest'}).then(d=>{if(!d.ok){done(d);return;}location.href='workspace#preview='+d.previewId;});break;
-  case 'finish-as-partial':if(confirm('Finish this export as a partial one? Its README, manifest and checksums will list only what was written.'))api('api/exports/finish',{runId:c.run}).then(done);break;
-  case 'check-and-finish':api('api/exports/finish',{runId:c.run}).then(done);break;
-  case 'look-again':api('api/exports/locate',{runId:c.run,action:'again'}).then(done);break;
+  case 'export-failed-again':call('api/exports/retry',{runId:c.run,which:'failed'}).then(d=>{if(!d.ok){done(d);return;}location.href='workspace#preview='+d.previewId;});break;
+  case 'export-remaining':case 'export-these-again':call('api/exports/retry',{runId:c.run,which:'rest'}).then(d=>{if(!d.ok){done(d);return;}location.href='workspace#preview='+d.previewId;});break;
+  case 'finish-as-partial':call('api/exports/finish',{runId:c.run}).then(done);break;
+  case 'check-and-finish':call('api/exports/finish',{runId:c.run}).then(done);break;
+  case 'look-again':call('api/exports/locate',{runId:c.run,action:'again'}).then(done);break;
+  // the picker's answer keeps the button working while the chosen folder is checked
   case 'locate':api('api/workspace/browse',{title:'Choose the export folder'}).then(d=>{
-      if(!d.path){if(!d.canceled)fail(d);return;}
-      api('api/exports/locate',{runId:c.run,action:'locate',path:d.path}).then(done);});break;
-  case 'this-folder-is-gone':if(confirm('Tell MailArchive this folder is gone? You can then export its messages again.'))api('api/exports/locate',{runId:c.run,action:'gone'}).then(done);break;
+      if(!d.path){free();clear(out);if(!d.canceled)fail(d);return;}
+      call('api/exports/locate',{runId:c.run,action:'locate',path:d.path}).then(done);});break;
+  case 'this-folder-is-gone':call('api/exports/locate',{runId:c.run,action:'gone'}).then(done);break;
   }
 }
 // The Sign in card: shown when a retry was refused for the sign-in, or the saved sign-in was
@@ -620,14 +673,16 @@ function renderSignIn(s){
 // that was pressed (the same run, the same action), so a keyboard user keeps their place.
 function loadHistory(force){
   const h=$('history');
-  if(busy||(!force&&h.contains(document.activeElement)))return;
-  busy=true;
+  if(loading||(!force&&h.contains(document.activeElement)))return;
+  loading=true;
   api('api/exports/history',{}).then(d=>{
-    busy=false;
+    loading=false;
     if(!d.ok){note(d.error);return;}
     renderSignIn(d.signIn);
     const a=document.activeElement;
-    const keep=(a&&h.contains(a)&&a.dataset)?{run:a.dataset.run,act:a.dataset.act}:null;
+    // a button disabled while it works can lose the focus to the page: it is given back by the pressed record
+    const keep=(a&&h.contains(a)&&a.dataset)?{run:a.dataset.run,act:a.dataset.act}:((!a||a===document.body)?pressed:null);
+    pressed=null;
     clear(h);
     (d.runs||[]).forEach(c=>h.appendChild(cardEl(c)));
     $('historyEmpty').hidden=(d.runs||[]).length>0;

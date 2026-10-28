@@ -1205,6 +1205,13 @@ h1{font-size:1.8rem;letter-spacing:-.02em;margin:0 0 4px}.lede{color:var(--muted
 [hidden]{display:none!important}
 .btn.secondary{background:var(--panel);color:var(--accent);border:1px solid var(--accent)}
 .btn:disabled{opacity:.5;cursor:not-allowed}
+.btn:active:not(:disabled){filter:brightness(.85);transform:translateY(1px)}
+.btn-link:active:not(:disabled){opacity:.7}
+.btn[aria-busy=true],button[aria-busy=true]{cursor:progress;opacity:.75}
+button[aria-busy=true]::before{content:"";display:inline-block;width:.85em;height:.85em;margin-right:7px;border:2px solid currentColor;border-right-color:transparent;border-radius:50%;vertical-align:-2px;animation:busy-spin .8s linear infinite}
+@keyframes busy-spin{to{transform:rotate(360deg)}}
+@media(prefers-reduced-motion:reduce){button[aria-busy=true]::before{animation:none}}
+.busy-note{margin-left:8px;color:var(--muted);font-size:.85rem}
 label{display:block;font-weight:700;margin:14px 0 5px}
 input{width:100%;padding:10px 11px;border:1px solid var(--line);border-radius:8px;background:var(--panel);color:var(--text)}
 input[type=checkbox],input[type=radio]{width:auto;padding:0;margin:0;vertical-align:middle}
@@ -1570,14 +1577,31 @@ const dashboardJS = `const csrf=document.querySelector('meta[name=csrf]').conten
 const $=id=>document.getElementById(id);
 const post=path=>fetch(path,{method:'POST',headers:{'X-CSRF-Token':csrf}});
 
+// busy shows that a pressed button is working (MA-872): the button is disabled and marked
+// aria-busy, its label becomes the working label (an empty one keeps the label), and the note
+// (the card's own, or else a line put beside the button) says what is happening. It returns
+// done, which the reply calls, success or error: done() gives the button back; done(true)
+// leaves it disabled, for a page about to reload or a job whose own progress takes over.
+function busy(b,label,note,text){
+  if(!b)return()=>{};
+  const was=b.textContent,had=document.activeElement===b;
+  let n=note,own=null;
+  if(!n&&text){own=document.createElement('span');own.className='busy-note';own.setAttribute('role','status');b.after(own);n=own;}
+  b.disabled=true;b.setAttribute('aria-busy','true');if(label)b.textContent=label;
+  if(n&&text){n.hidden=false;n.textContent=text;}
+  return keep=>{b.removeAttribute('aria-busy');if(label)b.textContent=was;b.disabled=!!keep;if(own)own.remove();
+    if(had&&!keep&&b.isConnected&&(!document.activeElement||document.activeElement===document.body))b.focus();};
+}
+
 // "Use another browser…": a fresh one-time link to copy into a browser that is not
 // the default one the shortcut opens.
 const ab=$('anotherBrowser');
 if(ab)ab.addEventListener('click',async()=>{
-  const n=$('linkNote');
+  const n=$('linkNote'),done=busy(ab,'Making a link…',n,'Making a one-time link…');
   try{const d=await(await post('api/browser-link')).json();
     if(n){n.hidden=false;n.textContent=d.ok?('Copy this link into the other browser — it works once, for ten minutes: '+d.link):(d.error||'Could not make a link.');}
   }catch(e){if(n){n.hidden=false;n.textContent='Error: '+e;}}
+  finally{done();}
 });
 
 // Shut down: stop the server from the page so the next launch starts clean and no
@@ -1587,10 +1611,10 @@ const sd=$('shutdownBtn');
 if(sd)sd.addEventListener('click',async()=>{
   const n=$('shutdownNote');
   if(sd.dataset.armed!=='1'){sd.dataset.armed='1';sd.textContent='Confirm shut down';if(n){n.hidden=false;n.textContent='Click again to stop MailArchive Desktop. You can reopen it any time; your archives and schedules are untouched.';}return;}
-  sd.disabled=true;sd.textContent='Shutting down…';
+  const done=busy(sd,'Shutting down…',n,'Stopping MailArchive Desktop…');
   const stopped=()=>{document.body.innerHTML='<div style="max-width:40rem;margin:4rem auto;text-align:center"><h1>MailArchive Desktop has stopped.</h1><p>You can close this tab. Your archives and schedules are untouched — reopen MailArchive any time.</p></div>';};
   try{const d=await(await post('api/shutdown')).json();
-    if(!d.ok){sd.disabled=false;sd.dataset.armed='';sd.textContent='Shut down';if(n){n.hidden=false;n.textContent=d.error||'Could not shut down.';}return;}
+    if(!d.ok){done();sd.dataset.armed='';sd.textContent='Shut down';if(n){n.hidden=false;n.textContent=d.error||'Could not shut down.';}return;}
     stopped();
   }catch(e){stopped();}
 });
@@ -1600,12 +1624,11 @@ if(sd)sd.addEventListener('click',async()=>{
 // and the page reloads to show it.
 const aab=$('addArchiveBtn');
 if(aab)aab.addEventListener('click',async()=>{
-  const n=$('addArchiveNote');aab.disabled=true;
-  if(n){n.hidden=false;n.textContent='Opening the MailArchive wizard on your computer — follow its steps to add an archive, then this page refreshes.';}
+  const n=$('addArchiveNote'),done=busy(aab,'Waiting for the wizard…',n,'Opening the MailArchive wizard on your computer — follow its steps to add an archive, then this page refreshes.');
   try{const d=await(await post('api/add-archive')).json();
-    if(d.ok){if(n){n.textContent=d.message||'Archive added.';}location.reload();return;}
-    aab.disabled=false;if(n){n.hidden=false;n.textContent=d.canceled?(d.message||'No archive was added.'):(d.error||'Could not add an archive.');}
-  }catch(e){aab.disabled=false;if(n){n.hidden=false;n.textContent='Error: '+e;}}
+    if(d.ok){done(true);if(n){n.textContent=d.message||'Archive added.';}location.reload();return;}
+    done();if(n){n.hidden=false;n.textContent=d.canceled?(d.message||'No archive was added.'):(d.error||'Could not add an archive.');}
+  }catch(e){done();if(n){n.hidden=false;n.textContent='Error: '+e;}}
 });
 
 // Backup alerts: a provider choice prefills the server/port/security; Save persists the
@@ -1616,17 +1639,19 @@ document.querySelectorAll('input[name=alertProvider]').forEach(r=>r.addEventList
 function alBody(){const cp=$('alertClearPassword');return {enabled:$('alertEnabled').checked,onFailure:$('alertOnFailure').checked,onSuccess:$('alertOnSuccess').checked,onPause:$('alertOnPause').checked,provider:alProvider(),host:$('alertHost').value,port:parseInt($('alertPort').value,10)||0,security:$('alertSecurity').value,from:$('alertFrom').value,to:$('alertTo').value,username:$('alertUsername').value,password:$('alertPassword').value,clearPassword:cp?cp.checked:false};}
 function alPost(path,body){return fetch(path,{method:'POST',headers:{'Content-Type':'application/json','X-CSRF-Token':csrf},body:JSON.stringify(body)}).then(r=>r.json());}
 const alSave=$('alertSave');
-if(alSave)alSave.addEventListener('click',async()=>{const n=$('alertNote');alSave.disabled=true;try{const d=await alPost('api/alert-settings',alBody());if(n){n.hidden=false;n.textContent=d.ok?'Alert settings saved.':(d.error||'Could not save the alert settings.');}if(d.ok)$('alertPassword').value='';}catch(e){if(n){n.hidden=false;n.textContent='Error: '+e;}}alSave.disabled=false;});
+if(alSave)alSave.addEventListener('click',async()=>{const n=$('alertNote'),done=busy(alSave,'Saving…',n,'Saving the alert settings…');try{const d=await alPost('api/alert-settings',alBody());if(n){n.hidden=false;n.textContent=d.ok?'Alert settings saved.':(d.error||'Could not save the alert settings.');}if(d.ok)$('alertPassword').value='';}catch(e){if(n){n.hidden=false;n.textContent='Error: '+e;}}finally{done();}});
 const alTest=$('alertTest');
-if(alTest)alTest.addEventListener('click',async()=>{const n=$('alertNote');alTest.disabled=true;if(n){n.hidden=false;n.textContent='Saving and sending a test email…';}try{const s=await alPost('api/alert-settings',alBody());if(!s.ok){if(n)n.textContent=s.error||'Could not save the alert settings.';alTest.disabled=false;return;}$('alertPassword').value='';const d=await alPost('api/alert-test',{});if(n){n.hidden=false;n.textContent=d.ok?(d.message||'Test email sent.'):(d.error||'Could not send a test email.');}}catch(e){if(n){n.hidden=false;n.textContent='Error: '+e;}}alTest.disabled=false;});
+if(alTest)alTest.addEventListener('click',async()=>{const n=$('alertNote'),done=busy(alTest,'Sending…',n,'Saving and sending a test email…');try{const s=await alPost('api/alert-settings',alBody());if(!s.ok){if(n)n.textContent=s.error||'Could not save the alert settings.';return;}$('alertPassword').value='';const d=await alPost('api/alert-test',{});if(n){n.hidden=false;n.textContent=d.ok?(d.message||'Test email sent.'):(d.error||'Could not send a test email.');}}catch(e){if(n){n.hidden=false;n.textContent='Error: '+e;}}finally{done();}});
 
 const clr=$('clearSignin');
 if(clr)clr.addEventListener('click',async()=>{
-  const n=$('note');
+  const n=$('note'),done=busy(clr,'Signing out…',n,'Clearing the saved sign-in…');
+  let keep=false;
   try{const d=await(await post('api/clear-signin')).json();
     if(n){n.hidden=false;n.textContent=d.ok?'Signed out. The next capture will sign in again.':(d.error||'Could not clear the sign-in.');}
-    if(d.ok)setTimeout(()=>location.reload(),900);
+    if(d.ok){keep=true;setTimeout(()=>location.reload(),900);}
   }catch(e){if(n){n.hidden=false;n.textContent='Error: '+e;}}
+  finally{done(keep);}
 });
 
 // Saving a new archive location while the weekly backup is installed asks first (XC22): the
@@ -1651,56 +1676,70 @@ async function doSave(backup){
 // as typing the folder and clicking Save settings (same checks), and nothing is saved until this click.
 const useOffer=$('useOffer');
 if(useOffer)useOffer.addEventListener('click',async()=>{
+  const done=busy(useOffer,'Opening…',$('settingsNote'),'Opening this archive…');
   $('outDir').value=useOffer.dataset.path;
-  if(await doSave(''))setTimeout(()=>location.reload(),500);
+  const ok=await doSave('');done(ok);
+  if(ok)setTimeout(()=>location.reload(),500);
 });
 // "Switch to this archive": the per-row button on the Your-archives list. Same save
 // as typing the folder and clicking Save settings (same checks, same weekly-backup
 // question), so switching can never skip them; nothing changes until the click.
 document.querySelectorAll('[data-switch-archive]').forEach(b=>b.addEventListener('click',async()=>{
+  const done=busy(b,'Switching…',$('settingsNote'),'Switching to this archive…');
   $('outDir').value=b.dataset.path;
-  if(await doSave(''))setTimeout(()=>location.reload(),500);
+  const ok=await doSave('');done(ok);
+  if(ok)setTimeout(()=>location.reload(),500);
 }));
 // Open an archive folder…: the system's folder picker, then a switch to the folder
 // chosen through the same settings save (an encrypted one then unlocks on its card).
 document.querySelectorAll('[data-open-archive]').forEach(b=>b.addEventListener('click',async()=>{
-  const n=$('settingsNote');
+  const n=$('settingsNote'),done=busy(b,'Choosing…',n,'A folder picker has opened — it may be behind this window.');
+  let keep=false;
   try{const d=await(await fetch('api/open-archive',{method:'POST',headers:{'Content-Type':'application/json','X-CSRF-Token':csrf},body:'{}'})).json();
-    if(d.canceled)return;
+    if(d.canceled){if(n)n.hidden=true;return;}
     if(!d.ok){if(n){n.hidden=false;n.textContent=d.error||'Could not open that folder.';}return;}
     $('outDir').value=d.path;
-    if(await doSave(''))setTimeout(()=>location.reload(),500);
+    if(await doSave('')){keep=true;setTimeout(()=>location.reload(),500);}
   }catch(e){if(n){n.hidden=false;n.textContent='Error: '+e;}}
+  finally{done(keep);}
 }));
 // Pause (make read-only) / Resume, per archive row. Errors surface in the Settings note.
-const archAction=(sel,path)=>document.querySelectorAll(sel).forEach(b=>b.addEventListener('click',async()=>{
-  const n=$('settingsNote');
+const archAction=(sel,path,label,text)=>document.querySelectorAll(sel).forEach(b=>b.addEventListener('click',async()=>{
+  const n=$('settingsNote'),done=busy(b,label,n,text);
+  let keep=false;
   try{const r=await(await fetch(path,{method:'POST',headers:{'Content-Type':'application/json','X-CSRF-Token':csrf},body:JSON.stringify({path:b.dataset.path})})).json();
-    if(r.ok&&r.note&&n){n.hidden=false;n.textContent=r.note;setTimeout(()=>location.reload(),3000);return;}
-    if(r.ok){location.reload();return;}
+    if(r.ok&&r.note&&n){keep=true;n.hidden=false;n.textContent=r.note;setTimeout(()=>location.reload(),3000);return;}
+    if(r.ok){keep=true;location.reload();return;}
     if(n){n.hidden=false;n.textContent=r.error||'Could not do that.';}
   }catch(e){if(n){n.hidden=false;n.textContent='Error: '+e;}}
+  finally{done(keep);}
 }));
-archAction('[data-pause-archive]','api/pause-archive');
-archAction('[data-resume-archive]','api/resume-archive');
+archAction('[data-pause-archive]','api/pause-archive','Pausing…','Making this archive read-only…');
+archAction('[data-resume-archive]','api/resume-archive','Resuming…','Making this archive writable again…');
 // Forget every encrypted archive on this computer (K8): only with the word typed.
 const fab=$('forgetAllBtn');
 if(fab)fab.addEventListener('click',async()=>{
   const n=$('uninstallNote'),say=t=>{if(n){n.hidden=false;n.textContent=t;}};
   const typed=prompt("This computer will forget every encrypted archive it recorded, and every key it remembers for them. The archives and their messages are not changed — but an archive whose password and recovery key you no longer have can then never be opened again.\n\nType FORGET to go ahead.")||'';
   if(!typed)return;
+  const done=busy(fab,'Forgetting…',n,'Forgetting the encrypted archives this computer recorded…');
+  let keep=false;
   try{const d=await(await fetch('api/encryption/forget-all',{method:'POST',headers:{'Content-Type':'application/json','X-CSRF-Token':csrf},body:JSON.stringify({typed:typed})})).json();
     say(d.ok?(d.lines||[]).join('\n'):(d.error||'Could not forget them.'));
-    if(d.ok)setTimeout(()=>location.reload(),4000);
+    if(d.ok){keep=true;setTimeout(()=>location.reload(),4000);}
   }catch(e){say('Error: '+e);}
+  finally{done(keep);}
 });
 // Forget this encrypted archive here (§4.6): the plan shown first, then confirmed; a
-// folder that may have been tampered with only with its path typed back.
+// folder that may have been tampered with only with its path typed back. The button is
+// busy while each request runs, and given back while the questions are asked.
 document.querySelectorAll('[data-forget-archive]').forEach(b=>b.addEventListener('click',async()=>{
   const n=$('settingsNote'),say=t=>{if(n){n.hidden=false;n.textContent=t;}};
   const send=(p,body)=>fetch(p,{method:'POST',headers:{'Content-Type':'application/json','X-CSRF-Token':csrf},body:JSON.stringify(body)}).then(r=>r.json());
+  let done=busy(b,'Checking…',n,'Reading what this computer recorded for this folder…');
   try{
     const p=await send('api/encryption/forget/plan',{path:b.dataset.path});
+    done();if(n)n.hidden=true;
     if(!p.ok){say(p.error||'Could not forget it.');return;}
     const text=(p.lines||[]).join('\n');
     let typed='';
@@ -1709,10 +1748,11 @@ document.querySelectorAll('[data-forget-archive]').forEach(b=>b.addEventListener
     let whole=false,keys=false;
     if(p.last){whole=confirm('It is the last folder this computer recorded for the archive. Forget the whole archive on this computer?');
       if(whole&&p.remembered)keys=confirm('Also forget its remembered key?');}
+    done=busy(b,'Forgetting…',n,'Forgetting this folder on this computer…');
     const d=await send('api/encryption/forget',{token:p.token,typed:typed,whole:whole,keys:keys});
-    if(d.ok){location.reload();return;}
-    say(d.error||'Could not forget it.');
-  }catch(e){say('Error: '+e);}
+    if(d.ok){done(true);location.reload();return;}
+    done();say(d.error||'Could not forget it.');
+  }catch(e){done();say('Error: '+e);}
 }));
 
 // Uninstall (Danger zone): "Uninstall…" fetches the plan (a dry run that changes nothing)
@@ -1738,26 +1778,30 @@ function uninstallPlanText(d){
 const unBtn=$('uninstallBtn');
 if(unBtn)unBtn.addEventListener('click',async()=>{
   const p=$('uninstallPanel'),pl=$('uninstallPlan'),n=$('uninstallNote');
-  if(n)n.hidden=true;
+  const done=busy(unBtn,'Preparing…',n,'Working out what an uninstall would remove. Nothing is removed yet…');
   try{const d=await uninstallReq(false);
     if(!d.ok){if(n){n.hidden=false;n.textContent=d.error||'Could not prepare the uninstall.';}return;}
+    if(n)n.hidden=true;
     if(pl)pl.textContent=uninstallPlanText(d);
     if(p)p.hidden=false;
   }catch(e){if(n){n.hidden=false;n.textContent='Error: '+e;}}
+  finally{done();}
 });
 const unGo=$('uninstallGo'),unCancel=$('uninstallCancel');
 if(unGo)unGo.addEventListener('click',async()=>{
   const p=$('uninstallPanel'),n=$('uninstallNote');
+  const done=busy(unGo,'Removing…',n,"Removing MailArchive's backups, settings and sign-in…");
   try{const d=await uninstallReq(true);
     if(p)p.hidden=true;
     if(n){n.hidden=false;n.textContent=d.ok?('Removed MailArchive backups, settings and sign-in; your archives are untouched. '+(d.binaryNote||'')):(d.error||'Could not uninstall.');}
   }catch(e){if(n){n.hidden=false;n.textContent='Error: '+e;}}
+  finally{done();}
 });
 if(unCancel)unCancel.addEventListener('click',()=>{const p=$('uninstallPanel'),n=$('uninstallNote');if(p)p.hidden=true;if(n){n.hidden=false;n.textContent='Nothing was removed.';}});
-if(save)save.addEventListener('click',()=>doSave(''));
+if(save)save.addEventListener('click',async()=>{const done=busy(save,'Saving…',$('settingsNote'),'Saving your settings…');await doSave('');done();});
 const keepB=$('settingsKeep'),removeB=$('settingsRemoveBackup'),cancelB=$('settingsCancel');
-if(keepB)keepB.addEventListener('click',()=>doSave('keep'));
-if(removeB)removeB.addEventListener('click',()=>doSave('remove'));
+if(keepB)keepB.addEventListener('click',async()=>{const done=busy(keepB,'Saving…',$('settingsNote'),'Saving your settings and keeping the backup…');await doSave('keep');done();});
+if(removeB)removeB.addEventListener('click',async()=>{const done=busy(removeB,'Saving…',$('settingsNote'),'Saving your settings and removing the scheduled backup…');await doSave('remove');done();});
 if(cancelB)cancelB.addEventListener('click',()=>{
   const n=$('settingsNote'),c=$('settingsConfirm');
   if(c)c.hidden=true;
@@ -1779,11 +1823,12 @@ function markNav(){
 }
 window.addEventListener('hashchange',markNav);markNav();
 if(btn)btn.addEventListener('click',async()=>{
-  btn.disabled=true;const r=$('captureResult');if(r)r.hidden=true;
+  const r=$('captureResult'),done=busy(btn,'Starting…',r,'Starting to archive your mail now…');
   try{const d=await(await post('api/capture')).json();
-    if(!d.ok){btn.disabled=false;if(r){r.hidden=false;r.textContent=d.error||'Could not start.';}return;}
+    if(!d.ok){done();if(r){r.hidden=false;r.textContent=d.error||'Could not start.';}return;}
+    done(true);if(r)r.hidden=true; // the activity log takes over; the button comes back when the run ends
     start();
-  }catch(e){btn.disabled=false;if(r){r.hidden=false;r.textContent='Error: '+e;}}
+  }catch(e){done();if(r){r.hidden=false;r.textContent='Error: '+e;}}
 });
 function start(){if(!polling){polling=true;poll();}}
 async function poll(){
@@ -1812,9 +1857,9 @@ fetch('api/activity').then(r=>r.json()).then(d=>{if(d.running)start();}).catch((
 for(const [id,path] of [['jobSkipProgram','api/job/skip-program'],['jobCancel','api/job/cancel']]){
   const b=$(id);
   if(b)b.addEventListener('click',async()=>{
-    b.disabled=true;
+    const done=id==='jobCancel'?busy(b,'Cancelling…',null,'Asking the backup to stop…'):busy(b,'Skipping…',null,'Asking the backup to stop waiting for the download…');
     try{const d=await(await post(path)).json();if(!d.ok){const r=$('captureResult');if(r){r.hidden=false;r.textContent=d.error||'Could not do that.';}}}catch(e){}
-    b.disabled=false;b.hidden=true;
+    done();b.hidden=true;
   });
 }
 
@@ -1827,30 +1872,33 @@ async function schedState(){
     else n.textContent='Not installed.';
   }catch(e){}
 }
-function schedPost(path){
+// schedPost sends the schedule request; done is the pressed button's busy (MA-872), given back
+// when the reply arrives, or when the request fails.
+function schedPost(path,done){
   const n=$('schedState');
   // Repair/Remove cards render no interval/time inputs (only the Install card does), so read
   // them defensively — a missing input must not throw and silently kill the click.
   const iv=$('schedInterval'),tm=$('schedTime'),ps=$('schedPresync');
   const body={interval:iv?iv.value:'',time:tm?tm.value:'',presync:ps?ps.checked:false};
   return fetch(path,{method:'POST',headers:{'Content-Type':'application/json','X-CSRF-Token':csrf},body:JSON.stringify(body)})
-    .then(r=>r.json()).then(d=>{if(n){n.hidden=false;n.textContent=d.ok?'Saved.':(d.error||'Failed.');}
-      return schedState().then(()=>{if(n&&d.left){n.hidden=false;n.textContent='Removed. Left in place: '+d.left+' cannot be read, so removal cannot tell which schedule it records - '+d.remedy+'.';}});});
+    .then(r=>r.json()).then(d=>{done();if(n){n.hidden=false;n.textContent=d.ok?'Saved.':(d.error||'Failed.');}
+      return schedState().then(()=>{if(n&&d.left){n.hidden=false;n.textContent='Removed. Left in place: '+d.left+' cannot be read, so removal cannot tell which schedule it records - '+d.remedy+'.';}});})
+    .catch(e=>{done();if(n){n.hidden=false;n.textContent='Error: '+e;}});
 }
 const si=$('schedInstall'),sr=$('schedRemove'),srp=$('schedRepair');
-if(si)si.addEventListener('click',()=>schedPost('api/schedule-install'));
-if(srp)srp.addEventListener('click',()=>schedPost('api/schedule-install'));
-if(sr)sr.addEventListener('click',()=>schedPost('api/schedule-remove'));
+if(si)si.addEventListener('click',()=>schedPost('api/schedule-install',busy(si,'Saving…',$('schedState'),'Setting up the scheduled backup…')));
+if(srp)srp.addEventListener('click',()=>schedPost('api/schedule-install',busy(srp,'Repairing…',$('schedState'),'Repairing the scheduled backup…')));
+if(sr)sr.addEventListener('click',()=>schedPost('api/schedule-remove',busy(sr,'Removing…',$('schedState'),'Removing the scheduled backup…')));
 // "Run now" runs this archive's recorded run-job backup immediately (local archives have no
 // "Archive now"), streaming progress through the shared activity state.
 const rbBtn=$('runBackupBtn');
 if(rbBtn)rbBtn.addEventListener('click',async()=>{
-  const n=$('runBackupNote');rbBtn.disabled=true;
-  if(n){n.hidden=false;n.textContent='Running the backup now…';}
+  const n=$('runBackupNote'),done=busy(rbBtn,'Running…',n,'Running the backup now…');
   try{const d=await(await post('api/run-backup')).json();
-    if(!d.ok){rbBtn.disabled=false;if(n){n.hidden=false;n.textContent=d.error||'Could not start the backup.';}return;}
+    if(!d.ok){done();if(n){n.hidden=false;n.textContent=d.error||'Could not start the backup.';}return;}
+    done(true); // stays disabled while its progress shows in the note; pollBackup gives it back at the end
     pollBackup();
-  }catch(e){rbBtn.disabled=false;if(n){n.hidden=false;n.textContent='Error: '+e;}}
+  }catch(e){done();if(n){n.hidden=false;n.textContent='Error: '+e;}}
 });
 async function pollBackup(){
   const n=$('runBackupNote'),b=$('runBackupBtn');
@@ -1874,8 +1922,8 @@ async function health(){
 }
 // The record's own actions, offered only with their warning (phase3 §4.3).
 const recordActionText={
-  'repair-record':['Repair the record','api/encryption/repair-record',"Rebuild this computer's damaged record of encrypted archives from what still reads? The damaged copies are kept beside it; every rebuilt folder stays protected until its archive is opened with its password."],
-  'dismiss-lost':['Dismiss this warning','api/encryption/dismiss-lost',"MailArchive will stop warning that its record lost this archive. Until a backup into it, or remembering its key, records it again, MailArchive does not keep unencrypted backups out of this folder. Dismiss it?"]};
+  'repair-record':['Repair the record','api/encryption/repair-record',"Rebuild this computer's damaged record of encrypted archives from what still reads? The damaged copies are kept beside it; every rebuilt folder stays protected until its archive is opened with its password.",'Repairing…','Rebuilding the record from what still reads…'],
+  'dismiss-lost':['Dismiss this warning','api/encryption/dismiss-lost',"MailArchive will stop warning that its record lost this archive. Until a backup into it, or remembering its key, records it again, MailArchive does not keep unencrypted backups out of this folder. Dismiss it?",'Dismissing…','Dismissing the warning…']};
 function healthActions(actions){
   const box=$('healthActions'),note=$('healthActionNote');if(!box)return;
   while(box.firstChild)box.removeChild(box.firstChild);
@@ -1883,18 +1931,23 @@ function healthActions(actions){
   actions.forEach(a=>{const t=recordActionText[a];if(!t)return;
     const btn=document.createElement('button');btn.className='btn secondary';btn.type='button';btn.textContent=t[0];
     btn.addEventListener('click',async()=>{if(!confirm(t[2]))return;
+      const done=busy(btn,t[3],note,t[4]);
       try{const d=await(await post(t[1])).json();
         if(note){note.hidden=false;note.textContent=d.ok?((d.lines||['Done.']).join('\n')):(d.error||'Could not do that.');}
       }catch(e){if(note){note.hidden=false;note.textContent='Could not do that.';}}
+      finally{done();}
       health();});
     box.appendChild(btn);});
 }
 health();
-function job(path){const r=$('captureResult');if(r)r.hidden=true;
-  post(path).then(x=>x.json()).then(d=>{if(d.ok)start();else if(r){r.hidden=false;r.textContent=d.error||'Could not start.';}});}
+// job starts a check or a rebuild; done is the pressed button's busy (MA-872), given back
+// when the reply arrives, as the activity log takes over.
+function job(path,done){const r=$('captureResult');
+  post(path).then(x=>x.json()).then(d=>{done();if(r)r.hidden=true;if(d.ok)start();else if(r){r.hidden=false;r.textContent=d.error||'Could not start.';}})
+    .catch(e=>{done();if(r){r.hidden=false;r.textContent='Error: '+e;}});}
 const vb=$('verifyBtn'),rb=$('rebuildBtn');
-if(vb)vb.addEventListener('click',()=>job('api/verify'));
-if(rb)rb.addEventListener('click',()=>{if(confirm('Rebuild the search index from the archive files? This can take a while for a large archive.'))job('api/rebuild');});
+if(vb)vb.addEventListener('click',()=>job('api/verify',busy(vb,'Starting…',$('captureResult'),'Starting the integrity check…')));
+if(rb)rb.addEventListener('click',()=>{if(confirm('Rebuild the search index from the archive files? This can take a while for a large archive.'))job('api/rebuild',busy(rb,'Starting…',$('captureResult'),'Starting to rebuild the search index…'));});
 
 // Microsoft 365 configuration: the config form's auth toggle, Save, and Edit/Cancel.
 function m365AuthSel(){const a=document.querySelector('input[name=m365auth]:checked');const row=$('m365SecretRow');if(row)row.hidden=!(a&&a.value==='app');}
@@ -1907,11 +1960,11 @@ const saveM365=$('saveM365');
 if(saveM365)saveM365.addEventListener('click',async()=>{
   const n=$('m365Note'),a=document.querySelector('input[name=m365auth]:checked');
   const body={tenant:$('m365Tenant').value,clientId:$('m365ClientId').value,auth:a?a.value:'device',secret:$('m365Secret')?$('m365Secret').value:''};
-  saveM365.disabled=true;
+  const done=busy(saveM365,'Saving…',n,'Saving the Microsoft 365 configuration…');
   try{const d=await(await fetch('api/m365/configure',{method:'POST',headers:{'Content-Type':'application/json','X-CSRF-Token':csrf},body:JSON.stringify(body)})).json();
-    if(d.ok){if(n){n.hidden=false;n.textContent='Saved. '+(d.auth==='device'?'Click Archive now (or Sign in) to connect with a Microsoft device code.':(d.configured?'Secret stored.':'No secret stored.'));}
+    if(d.ok){done(true);if(n){n.hidden=false;n.textContent='Saved. '+(d.auth==='device'?'Click Archive now (or Sign in) to connect with a Microsoft device code.':(d.configured?'Secret stored.':'No secret stored.'));}
       if($('m365Secret'))$('m365Secret').value='';setTimeout(()=>location.reload(),900);}
-    else{if(n){n.hidden=false;n.textContent=d.error||'Could not save.';}saveM365.disabled=false;}
-  }catch(e){if(n){n.hidden=false;n.textContent='Error: '+e;}saveM365.disabled=false;}
+    else{done();if(n){n.hidden=false;n.textContent=d.error||'Could not save.';}}
+  }catch(e){done();if(n){n.hidden=false;n.textContent='Error: '+e;}}
 });
 `
