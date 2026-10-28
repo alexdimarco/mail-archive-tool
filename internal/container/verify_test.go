@@ -686,11 +686,28 @@ func TestAKeylessCheckSaysWhatItCannotAttest(t *testing.T) {
 	t.Run("leftovers", func(t *testing.T) {
 		out := wholeArchive(t)
 		before := keyless(t, out, 0).Leftovers
+		// The superseded part is named for a prefix no live part has: a fixed name
+		// would, now and then, overwrite a live part of the same prefix and generation.
+		raw, _ := os.ReadFile(filepath.Join(out, InventoryName))
+		top, err := ParseTop(raw)
+		if err != nil {
+			t.Fatal(err)
+		}
+		live := map[string]bool{}
+		for _, r := range top.Shards {
+			live[r.Name] = true
+		}
+		stale := ""
+		for i := 255; i >= 0 && stale == ""; i-- {
+			if n := ShardName(fmt.Sprintf("%02x", i), 1); !live[n] {
+				stale = n
+			}
+		}
 		// Under units/ and chunks/ — a regular file where a shard folder belongs
 		// included, which no sweep removes — they are unnamed, and nothing is said of
 		// their removal; under inventory/ they are superseded parts the next backup
 		// removes (the fix re-verification, FV-C-04).
-		for _, rel := range []string{"units/ee/ee" + strings.Repeat("0", 30), "chunks/ab/ab" + strings.Repeat("1", 30), "units/zz", InventoryDir + "/ff.1"} {
+		for _, rel := range []string{"units/ee/ee" + strings.Repeat("0", 30), "chunks/ab/ab" + strings.Repeat("1", 30), "units/zz", stale} {
 			p := filepath.Join(out, filepath.FromSlash(rel))
 			os.MkdirAll(filepath.Dir(p), 0o755)
 			os.WriteFile(p, []byte("x"), 0o600)
