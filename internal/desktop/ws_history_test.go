@@ -359,7 +359,8 @@ func TestAWedgedRunIsFinishedAsPartialAfterARestart(t *testing.T) {
 		if took := time.Since(began); took > time.Second {
 			t.Fatalf("the history took %v: it waited on a probe", took)
 		}
-		if hasAct(card, "finish-as-partial") {
+		// the action and the probe's "not responding" can land on different draws: wait for both
+		if l, _ := card["label"].(string); hasAct(card, "finish-as-partial") && strings.Contains(l, "the destination is not responding") {
 			break
 		}
 		time.Sleep(20 * time.Millisecond)
