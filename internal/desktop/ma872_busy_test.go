@@ -296,6 +296,36 @@ func TestEveryDesktopButtonThatSendsGoesThroughBusy(t *testing.T) {
 }
 
 // covers: MA-872, R37
+// The Scheduled backup card's Repair and Remove keep their reply in sight: the state line the
+// card redraws after the reply starts with what the press got ("Repaired.", "Removed." or the
+// refusal), not the bare state, which reads the same before and after a Repair (the live friction
+// walk of 2026-10-28 found the reply overwritten at once). Each button names its own word.
+func TestTheCardsRepairAndRemoveReplyStaysAfterTheStateRedraw(t *testing.T) {
+	f := jsFuncs(dashboardJS)
+	cp, st := f["cardPost"], f["schedState"]
+	if cp == "" || st == "" {
+		t.Fatal("cardPost or schedState not found in the page script")
+	}
+	if !strings.Contains(cp, "schedState(said)") || strings.Contains(cp, "schedState()") {
+		t.Errorf("cardPost redraws the state line without the reply:\n%s", cp)
+	}
+	// a Remove that went through draws the page again, after the reply was in sight, so the card
+	// stops offering Repair and Run now and Settings stops showing the removed cadence
+	if !strings.Contains(cp, "else if(d.ok&&path==='api/schedule-remove')setTimeout(()=>location.reload(),2500)") {
+		t.Errorf("a Remove that went through leaves the card and Settings as they were:\n%s", cp)
+	}
+	// every branch of the state line starts with the reply
+	if n := strings.Count(st, "n.textContent=pre+"); n != 3 {
+		t.Errorf("schedState puts the reply in front of %d of its 3 state lines:\n%s", n, st)
+	}
+	for _, w := range []string{"'Repairing the scheduled backup…'),'Repaired.')", "'Removing the scheduled backup…'),'Removed.')"} {
+		if !strings.Contains(dashboardJS, w) {
+			t.Errorf("a card button does not name its own reply word %q", w)
+		}
+	}
+}
+
+// covers: MA-872, R37
 // Each Desktop style block (the Overview's, and the workspace and export pages') carries a pressed
 // rule for .btn (darker, one pixel down) and a busy rule (progress cursor and a spinner that stops
 // turning under prefers-reduced-motion), with [hidden] still winning; and the pages served carry them.

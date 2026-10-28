@@ -2074,29 +2074,35 @@ for(const [id,path] of [['jobSkipProgram','api/job/skip-program'],['jobCancel','
   });
 }
 
-async function schedState(){
+// schedState draws the card's state line; lead is the reply a pressed button just got, kept in
+// front of the state so the press is still seen after the refresh (MA-872).
+async function schedState(lead){
   const n=$('schedState');if(!n)return;
+  const pre=lead?lead+' ':'';
   try{const d=await(await fetch('api/schedule-state')).json();
     n.hidden=false;
-    if(!d.schedulerAvailable)n.textContent='The OS scheduler is unavailable on this machine.';
-    else if(d.state==='installed')n.textContent='Installed'+(d.interval?(' ('+d.interval+(d.at?' at '+d.at:'')+')'):'')+'.';
-    else n.textContent='Not installed.';
+    if(!d.schedulerAvailable)n.textContent=pre+'The OS scheduler is unavailable on this machine.';
+    else if(d.state==='installed')n.textContent=pre+(lead?'Now: installed':'Installed')+(d.interval?(' ('+d.interval+(d.at?' at '+d.at:'')+')'):'')+'.';
+    else n.textContent=pre+(lead?'Now: not installed.':'Not installed.');
   }catch(e){}
 }
 // cardPost sends the Scheduled backup card's Repair or Remove; done is the pressed button's busy
 // (MA-872), given back when the reply arrives, or when the request fails. The card carries no
 // schedule inputs (Settings is the one editor, design-desktop-settings-card ruling 1), so a Repair
 // is an empty body: it keeps the installed cadence and sync (C-2, C-5), whatever Settings shows.
-function cardPost(path,done){
+function cardPost(path,done,okWord){
   const n=$('schedState');
   return fetch(path,{method:'POST',headers:{'Content-Type':'application/json','X-CSRF-Token':csrf},body:JSON.stringify({drawnFor:drawnFor})})
-    .then(r=>r.json()).then(d=>{done();if(n){n.hidden=false;n.textContent=d.ok?(d.note||'Done.'):(d.error||'Failed.');}
-      return schedState().then(()=>{if(n&&d.left){n.hidden=false;n.textContent='Removed. Left in place: '+d.left+' cannot be read, so removal cannot tell which schedule it records - '+d.remedy+'.';}});})
+    .then(r=>r.json()).then(d=>{done();const said=d.ok?(d.note||okWord):(d.error||'Failed.');if(n){n.hidden=false;n.textContent=said;}
+      return schedState(said).then(()=>{if(n&&d.left){n.hidden=false;n.textContent='Removed. Left in place: '+d.left+' cannot be read, so removal cannot tell which schedule it records - '+d.remedy+'.';}
+        // a Remove changes what the card and Settings offer (no Repair or Run now; How often back
+        // to none): the page is drawn again once the reply has been read
+        else if(d.ok&&path==='api/schedule-remove')setTimeout(()=>location.reload(),2500);});})
     .catch(e=>{done();if(n){n.hidden=false;n.textContent='Error: '+e;}});
 }
 const sr=$('schedRemove'),srp=$('schedRepair');
-if(srp)srp.addEventListener('click',()=>cardPost('api/schedule-install',busy(srp,'Repairing…',$('schedState'),'Repairing the scheduled backup…')));
-if(sr)sr.addEventListener('click',()=>cardPost('api/schedule-remove',busy(sr,'Removing…',$('schedState'),'Removing the scheduled backup…')));
+if(srp)srp.addEventListener('click',()=>cardPost('api/schedule-install',busy(srp,'Repairing…',$('schedState'),'Repairing the scheduled backup…'),'Repaired.'));
+if(sr)sr.addEventListener('click',()=>cardPost('api/schedule-remove',busy(sr,'Removing…',$('schedState'),'Removing the scheduled backup…'),'Removed.'));
 // "Run now" runs this archive's recorded run-job backup immediately (local archives have no
 // "Archive now"), streaming progress through the shared activity state.
 const rbBtn=$('runBackupBtn');
