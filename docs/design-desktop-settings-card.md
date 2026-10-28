@@ -443,6 +443,11 @@ Scheduler first, job file last, on purpose: a refused install leaves no decoy jo
 ## 10. Existing installs, rollback and mixed versions (C-19)
 
 Nothing changes on disk until the owner clicks Save; no write on page load — **aspirational** (MA-864).
+*Proven in slice A6, scoped by the owner on 2026-10-28:* "no write on page load" covers the backup's
+settings and records. The status check the page runs on load (`health.Gather`, as `mailarchive
+status`) keeps its own housekeeping in the archive: it rewrites the archive lock, SQLite leaves
+`search.db-wal`/`-shm` beside the index, and a writable probe is written and removed. MA-864 holds that
+housekeeping to exactly this.
 The one exception (rev4.1): section 8's start-up clean-up of a BackupFor that names a run-job, which
 clears that one settings field and nothing else.
 - **Local schedule:** Settings shows the installed cadence, time and sync as the card did

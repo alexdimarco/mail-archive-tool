@@ -127,8 +127,9 @@ func changeLines(ch []diskChange) string {
 // /api/health and `mailarchive status` run) touches whenever it looks at an archive, written by no
 // backup setting or record: it test-acquires the archive lock (rewriting .mailarchive.lock), opens
 // the search index read-only (SQLite keeps search.db-wal and -shm beside it), and writes and removes
-// a probe file to see the folder is writable (the archive folder's own time). See
-// TestLoadingTheOverviewLeavesTheArchiveUntouched, the open gap they leave.
+// a probe file to see the folder is writable (the archive folder's own time). The owner ruled on
+// 2026-10-28 that "no write on page load" covers the backup's settings and records, not these;
+// TestLoadingTheOverviewWritesOnlyTheStatusChecksHousekeeping holds them to what they are.
 func statusProbeFiles(out string) map[string]bool {
 	return map[string]bool{out: true, filepath.Join(out, lockfile.Name): true,
 		filepath.Join(out, "search.db-wal"): true, filepath.Join(out, "search.db-shm"): true}
@@ -242,21 +243,30 @@ func TestLoadingTheOverviewWritesNothing(t *testing.T) {
 }
 
 // covers: MA-864, R37
-// Open gap (MA-864's "loading the page writes nothing", taken whole): found building slice A6 on
-// 2026-10-28. The page's status request (/api/health, health.Gather — the same check `mailarchive
-// status` runs) writes into the archive on every load: it test-acquires the archive lock, rewriting
-// .mailarchive.lock with its own process; it opens search.db read-only, and SQLite leaves
-// search.db-wal and search.db-shm beside it; and it writes and removes a probe file to see the folder
-// is writable. None is a backup setting or record, and each is the status check's design, not this
-// one's, so the fix is an owner ruling: scope section 10's "no write on page load" to the backup's
-// settings and records, or change the status check's probes. When it is ruled and this passes,
-// REMOVE the Skip so it becomes a permanent guard.
-func TestLoadingTheOverviewLeavesTheArchiveUntouched(t *testing.T) {
-	t.Skip("MA-864 open gap: the status check the page runs on load (health.Gather) rewrites the archive's lock file, leaves SQLite's search.db-wal/-shm and writes a probe file; scoping section 10's \"no write on page load\" or changing the status probes is an owner decision")
+// The owner's ruling of 2026-10-28 on the gap slice A6 found: "no write on page load" covers the
+// backup's settings and records; the status check the page runs on load (/api/health,
+// health.Gather, the same check `mailarchive status` runs) keeps its housekeeping in the archive.
+// That housekeeping is held to what it is, so nothing else can hide in it: the archive lock is
+// rewritten, never removed; SQLite's search.db-wal and -shm may appear or change beside the index;
+// the archive folder's own time moves (the writable probe, written and removed); and no other file
+// in the archive is added, changed or removed, the probe included.
+func TestLoadingTheOverviewWritesOnlyTheStatusChecksHousekeeping(t *testing.T) {
 	g, roots := existingInstall(t)
-	if ch := loadThreeTimes(t, g, roots); len(ch) > 0 {
-		t.Errorf("loading the page wrote to disk:\n%s", changeLines(ch))
+	lock := filepath.Join(g.out, lockfile.Name)
+	sawLock := false
+	for _, c := range loadThreeTimes(t, g, roots) {
+		sawLock = sawLock || c.path == lock
+		switch {
+		case !statusProbeFiles(g.out)[c.path]:
+			t.Errorf("loading the page wrote outside the status check's housekeeping: %s", c)
+		case c.path == lock && (c.gone || c.added):
+			t.Errorf("loading the page removed or made the archive lock instead of rewriting it: %s", c)
+		case c.path != lock && c.path != g.out && c.gone:
+			t.Errorf("loading the page removed a search index side file: %s", c)
+		}
 	}
+	// the snapshot reads the archive: the housekeeping it holds to is seen happening
+	assure.Reached(t, sawLock, "the status check's rewrite of the archive lock seen by the snapshot")
 }
 
 // settingsWithEveryField is a settings file an earlier version could have left: every field set,
