@@ -67,7 +67,8 @@ require_stamped() {
 }
 require_stamped "$DIST/mailarchive.exe"
 require_stamped "$DIST/mailarchivew.exe"
-if [[ "$VERSION" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+# v0.0.0 is the lab builds' placeholder (windows-msi-lab.yml), never a release tag.
+if [[ "$VERSION" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ && "$VERSION" != v0.0.0 ]]; then
   bash "$ROOT/packaging/require-release-stamp.sh" "$VERSION" \
     "$DIST/mailarchive-linux-amd64" "$DIST/mailarchive-linux-arm64" \
     "$DIST/mailarchive.exe" "$DIST/mailarchivew.exe"

@@ -26,7 +26,7 @@ GOOS=darwin GOARCH=arm64 go build -o "$WORK/mailarchive-arm64" ./cmd/mailarchive
 GOOS=darwin GOARCH=amd64 go build -o "$WORK/mailarchive-amd64" ./cmd/mailarchive
 # A release's macOS slices are exactly the release, checked before they are fused
 # (design-encrypted-archives-phase3-program §7; SC33).
-if [[ "${RELEASE_TAG:-}" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+if [[ "${RELEASE_TAG:-}" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ && "${RELEASE_TAG:-}" != v0.0.0 ]]; then # v0.0.0: a lab build's placeholder
   bash "$ROOT/packaging/require-release-stamp.sh" "$RELEASE_TAG" "$WORK/mailarchive-arm64" "$WORK/mailarchive-amd64"
 fi
 
