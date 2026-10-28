@@ -17,6 +17,7 @@ import (
 	"time"
 
 	"mail-archive-tool/internal/container"
+	"mail-archive-tool/internal/encmark"
 	"mail-archive-tool/internal/lockfile"
 	"mail-archive-tool/internal/seal"
 	"mail-archive-tool/internal/state"
@@ -880,7 +881,7 @@ func keylessSummary(r Report) []string {
 	}
 	if r.Tier != state.TierFull {
 		// What a check without the key cannot see, said once (P3-8 friction, T2-3).
-		out = append(out, fmt.Sprintf("note: the program folder and README.txt are checked only by `mailarchive verify -full -out %q`, which needs the password or recovery key", r.Out))
+		out = append(out, fmt.Sprintf("note: the program folder and README.txt are checked only by `mailarchive verify -full -out %s`, which needs the password or recovery key", encmark.CommandPath(r.Out)))
 	}
 	for _, f := range r.ProgramFindings {
 		// The note's finding names the note; the others are about the copies (P3-8

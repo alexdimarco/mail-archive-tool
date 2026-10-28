@@ -71,7 +71,9 @@ func PlanForget(out string, s vault.Store) (ForgetPlan, error) {
 	p.Last = len(p.Others) == 0
 	if s != nil {
 		if id, err := parseID(m.ID); err == nil {
-			if _, err := s.Get(vault.Account(id)); err == nil {
+			// Held, even when the store will not read it (a key file others can read):
+			// it is offered for forgetting all the same (the P3-8 pass, F1's twin).
+			if _, err := s.Get(vault.Account(id)); err == nil || !errors.Is(err, os.ErrNotExist) {
 				p.Remembered = true
 			}
 		}

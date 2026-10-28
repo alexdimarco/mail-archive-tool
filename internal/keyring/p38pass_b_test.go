@@ -43,6 +43,10 @@ func TestAKeyTheStoreWillNotReadIsStillForgotten(t *testing.T) {
 	}
 	held, unreadable, err = KeyRemembered(out, s)
 	assure.Reached(t, held && unreadable != nil && err == nil, "a key the store will not read is held, with why")
+	// Forgetting the whole archive offers that key too (F1's twin in PlanForget).
+	if p, perr := PlanForget(out, s); perr != nil || !p.Remembered {
+		t.Fatalf("the forget plan offers the unreadable key: %v %+v", perr, p)
+	}
 	if _, err := ForgetKey(out, s); err != nil {
 		t.Fatal(err)
 	}
