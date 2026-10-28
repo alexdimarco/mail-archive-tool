@@ -13,9 +13,24 @@ import (
 type backupFake struct {
 	tasks   map[string]bool
 	removed []string
+	unknown bool // the scheduler can't answer by entry name (schedule.SchedulerUnavailable)
 }
 
 func (b *backupFake) installedFor(out string) bool { return b.tasks[out] }
+
+// entryState answers by entry name, as the OS scheduler does: installed when a task's folder
+// derives that name, else not installed.
+func (b *backupFake) entryState(name string) schedule.State {
+	if b.unknown {
+		return schedule.SchedulerUnavailable
+	}
+	for out, on := range b.tasks {
+		if on && strings.EqualFold(schedule.DefaultNameFor(out), name) {
+			return schedule.Installed
+		}
+	}
+	return schedule.NotInstalled
+}
 func (b *backupFake) removeFor(out string) error {
 	b.removed = append(b.removed, out)
 	delete(b.tasks, out)
@@ -26,7 +41,7 @@ func (b *backupFake) removeFor(out string) error {
 // task is named for the archive location, schedule.DefaultNameFor), and not a fixed yes or no.
 func useBackupFake(e *wsEnv, b *backupFake) {
 	e.cfg.BackupInstalled, e.cfg.RemoveBackup = nil, nil
-	e.cfg.BackupInstalledFor, e.cfg.RemoveBackupFor = b.installedFor, b.removeFor
+	e.cfg.BackupInstalledFor, e.cfg.RemoveBackupFor, e.cfg.EntryState = b.installedFor, b.removeFor, b.entryState
 	e.d.cfg = e.cfg
 }
 

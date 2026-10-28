@@ -40,7 +40,12 @@ func TestACaptureRepairNeverResetsACadenceItCantRead(t *testing.T) {
 		t.Fatalf("the positive twin: %s %+v", body, g.installs)
 	}
 
-	// The earlier location's drive is unplugged: its entry is installed, its record unreadable.
+	// The earlier location's drive is unplugged: its entry is installed, its record unreadable, and
+	// this folder holds no capture record either (with one, it is the record that moved with the
+	// folder, and the Repair uses it: TestACaptureRepairAfterAMoveUsesTheRecordThatMoved).
+	if err := schedule.RemoveDescriptor(g.out); err != nil {
+		t.Fatal(err)
+	}
 	away := filepath.Join(t.TempDir(), "unplugged", "Mail")
 	if err := SaveSettings(g.settings, Settings{Out: g.out, BackupFor: away, Interval: "daily", WeeklyTime: "06:00"}); err != nil {
 		t.Fatal(err)
@@ -57,15 +62,45 @@ func TestACaptureRepairNeverResetsACadenceItCantRead(t *testing.T) {
 	if err := SaveSettings(g.settings, Settings{Out: g.out}); err != nil {
 		t.Fatal(err)
 	}
-	if err := schedule.RemoveDescriptor(g.out); err != nil {
-		t.Fatal(err)
-	}
 	g.fake.tasks = map[string]bool{g.out: true}
 	u = g.snapshot()
 	body = g.post(`{}`)
 	assure.Refused(t, refusedCode(body), body,
 		assure.Names("can't read how often the installed backup runs", g.out),
 		assure.NoSideEffect(func() bool { return u.holds() && len(g.fake.removed) == 0 }))
+}
+
+// covers: MA-876, R37
+// A capture Repair after the archive folder moved (Save and keep the backup) keeps its cadence (the
+// part A re-verification, 2026-10-28): the entry is still named for the earlier folder, which is
+// gone, and the record that moved with the folder is a capture's, as Settings shows it. The Repair
+// reads that record, installs under the current folder's name at its cadence, and removes the
+// earlier folder's entry. Positive twin first, the refusal it replaces: with no record here either,
+// the Repair is refused (TestACaptureRepairNeverResetsACadenceItCantRead) — here it goes through.
+func TestACaptureRepairAfterAMoveUsesTheRecordThatMoved(t *testing.T) {
+	g := captureRig(t)
+	away := filepath.Join(t.TempDir(), "moved-away", "Mail")
+	if err := SaveSettings(g.settings, Settings{Out: g.out, BackupFor: away}); err != nil {
+		t.Fatal(err)
+	}
+	g.fake.tasks = map[string]bool{away: true}
+	u := g.snapshot()
+	body := g.post(`{}`)
+	assure.Refused(t, refusedCode(body), body,
+		assure.Names("can't read how often the installed backup runs", away),
+		assure.NoSideEffect(func() bool { return u.holds() && len(g.fake.removed) == 0 }))
+
+	writeCaptureDescriptor(t, g.out, schedule.Daily, "05:00")
+	body = g.post(`{}`)
+	if !strings.Contains(body, `"ok":true`) || len(g.installs) != 1 {
+		t.Fatalf("the Repair after a move was refused: %s", body)
+	}
+	if in := g.installs[0]; !samePath(in.Out, g.out) || in.Interval != schedule.Daily || in.At != "05:00" {
+		t.Errorf("the Repair installed %+v; want the current folder at daily 05:00", in)
+	}
+	if len(g.fake.removed) != 1 || g.fake.removed[0] != away || g.fake.tasks[away] {
+		t.Errorf("the earlier folder's entry was not removed: removed %v, tasks %v", g.fake.removed, g.fake.tasks)
+	}
 }
 
 // covers: MA-876, R37

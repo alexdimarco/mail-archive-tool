@@ -226,11 +226,8 @@ func TestEveryEarlyExitOfTheLocalJobGoesThroughTheStreak(t *testing.T) {
 // sent and the alert streak cleared. Positive twin first: spanning 29 days, nothing is removed.
 func TestTheLocalJobAutoPausesLikeTheCapture(t *testing.T) {
 	g := newLocalRunRig(t)
-	var removed []string
-	orig := removeLiveEntry
-	removeLiveEntry = func(s schedule.Spec) error { removed = append(removed, s.Name); return nil }
-	t.Cleanup(func() { removeLiveEntry = orig })
 	name := schedule.DefaultNameFor(g.out)
+	rec := recordRemovals(t, name) // the entry is installed
 	if err := schedule.WriteDescriptor(g.out, schedule.Descriptor{Name: name, Interval: "hourly", At: "00:10", Job: []string{"mailarchive", "-out", g.out}}); err != nil {
 		t.Fatal(err)
 	}
@@ -245,14 +242,14 @@ func TestTheLocalJobAutoPausesLikeTheCapture(t *testing.T) {
 	seed(29)
 	RunHeadless(failJob)
 	s, _ := state.ReadSourceStreak(g.out)
-	if s.ConsecutiveFails != 2 || len(removed) != 0 || strings.Contains(g.results(), "paused") {
-		t.Fatalf("29 days: streak %+v, removed %v, sent %q", s, removed, g.results())
+	if s.ConsecutiveFails != 2 || len(*rec) != 0 || strings.Contains(g.results(), "paused") {
+		t.Fatalf("29 days: streak %+v, removed %v, sent %q", s, *rec, g.results())
 	}
 
 	seed(31)
 	RunHeadless(failJob)
-	if len(removed) != 1 || removed[0] != name {
-		t.Fatalf("31 days: the local job did not auto-pause its own entry: removed %v", removed)
+	if len(*rec) != 1 || (*rec)[0] != name {
+		t.Fatalf("31 days: the local job did not auto-pause its own entry: removed %v", *rec)
 	}
 	if !strings.HasSuffix(g.results(), "paused") {
 		t.Errorf("the auto-pause email did not go: %q", g.results())

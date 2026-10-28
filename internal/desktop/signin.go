@@ -135,6 +135,13 @@ func (d *dashboard) backupInstalled() bool {
 	return path != ""
 }
 
+// backupIsRunJob reports whether the installed scheduled backup is a run-job (namesRunJob of the
+// folder its entry is named for): it backs up local mail files, never the signed-in account.
+func (d *dashboard) backupIsRunJob() bool {
+	task, _ := d.cfg.backupTask()
+	return task != "" && namesRunJob(task)
+}
+
 // signInAction starts the sign-in job and returns at once; the page polls signin-status.
 func (d *dashboard) signInAction(w http.ResponseWriter, r *http.Request) {
 	var in struct{}
@@ -243,9 +250,11 @@ func (d *dashboard) runSignIn(job *signInJob) {
 	job.mu.Lock()
 	job.upn, job.prev, job.archive = upn, prev, d.cfg.effectiveOut()
 	job.mu.Unlock()
-	// XC7: with a weekly backup installed, a sign-in as another account than the one it was
-	// archiving is not persisted until the user says so.
-	if d.backupInstalled() && prev != "" && !strings.EqualFold(prev, upn) {
+	// XC7: with a scheduled capture installed, a sign-in as another account than the one it was
+	// archiving is not persisted until the user says so. A run-job backs up the local mail folder
+	// fixed in its own job file, which a sign-in never changes, so it asks nothing (as a location
+	// save gives a run-job its own words; MA-404).
+	if d.backupInstalled() && prev != "" && !strings.EqualFold(prev, upn) && !d.backupIsRunJob() {
 		job.mu.Lock()
 		job.state = "confirm"
 		job.mu.Unlock()

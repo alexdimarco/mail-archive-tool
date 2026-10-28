@@ -38,6 +38,10 @@ func (cfg Config) m365Ready() error {
 	return nil
 }
 
+// autoPauseIfDue is a seam over wizard.AutoPauseIfDue, so a test sees the run's own verdict the
+// capture hands it (MA-890) without a real scheduler.
+var autoPauseIfDue = wizard.AutoPauseIfDue
+
 // HeadlessCapture runs one incremental capture with NO dashboard and NO prompt —
 // the command a SCHEDULED weekly backup runs (design DC1: a scheduled capture must
 // succeed whether or not the dashboard app is open). It reads the saved config +
@@ -125,7 +129,7 @@ func HeadlessCapture(cfg Config, logw io.Writer) error {
 	// never fails the run. Its email goes whatever the streak said, and the streak ends. Only a
 	// run that itself found the source unreachable pauses, and only a pause that stopped this
 	// archive's own entry is told (MA-890).
-	paused, perr := wizard.AutoPauseIfDue(out, app.FoundSourceUnreachable(err))
+	paused, perr := autoPauseIfDue(out, app.FoundSourceUnreachable(err))
 	if perr != nil {
 		logger.Printf("auto-pause: %v", perr)
 	}

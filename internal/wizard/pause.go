@@ -24,6 +24,10 @@ import (
 // without touching the real host scheduler.
 var removeLiveEntry = schedule.RemoveLiveEntry
 
+// queryLiveEntry is a seam over the host scheduler's answer about a named entry, so a test of
+// AutoPauseIfDue decides what is running without asking the real scheduler.
+var queryLiveEntry = schedule.Query
+
 func PauseArchive(out, reason string) error {
 	// Remove the live entries this archive OWNS, each proven "ours" through bound.go
 	// (RecordedBackupName/RecordedVerifyName) exactly as `-out X -remove` and the GUI remove
@@ -90,9 +94,11 @@ func ResumeArchive(out string) error {
 // calls it after it finishes (so the streak it reads is up to date), saying whether that run
 // itself found the source unreachable (app.FoundSourceUnreachable): only such a run pauses, so
 // a failure that says nothing about the source never pauses on an old streak a re-enable left
-// (MA-890). It reports paused only when it removed this archive's own backup entry — with no
-// bound entry to remove (no readable descriptor, or one that is not this archive's) nothing was
-// stopped, so it says so in its error and the caller sends no auto-pause email (MA-890). Below
+// (MA-890). It reports paused only when it removed this archive's own backup entry and the
+// scheduler said that entry was installed just before — with no bound entry (no readable
+// descriptor, or one that is not this archive's), or none running under the bound name (an
+// earlier auto-pause already stopped it), nothing was stopped, so it says so in its error and the
+// caller sends no auto-pause email (MA-890). The verify is stopped only with such a backup. Below
 // the threshold it does nothing.
 func AutoPauseIfDue(out string, runFoundSourceUnreachable bool) (bool, error) {
 	if !runFoundSourceUnreachable {
@@ -102,21 +108,27 @@ func AutoPauseIfDue(out string, runFoundSourceUnreachable bool) (bool, error) {
 	if err != nil || !streak.AutoPauseDue() {
 		return false, nil
 	}
-	paused := false
 	name, nerr := schedule.RecordedBackupName(out)
-	if nerr == nil {
-		if rerr := removeLiveEntry(schedule.Spec{Name: name, Out: out, WrapperPath: schedule.DefaultWrapperPath(name)}); rerr != nil {
-			return false, rerr
-		}
-		paused = true
+	if nerr != nil {
+		return false, fmt.Errorf("auto-pause is due, but this archive records no backup schedule of its own to stop (%v), so nothing was paused", nerr)
 	}
+	// Only an entry the scheduler said was there is stopped: the removal succeeds on a missing
+	// entry on every system, so "removed" alone is not "was running". A scheduler that can't
+	// answer (Windows' SchedulerUnavailable) is not "installed", so it never reports a pause. The
+	// removal itself stays unconditional, so a missing entry's leftover side files still go.
+	wasLive := queryLiveEntry(name) == schedule.Installed
+	if rerr := removeLiveEntry(schedule.Spec{Name: name, Out: out, WrapperPath: schedule.DefaultWrapperPath(name)}); rerr != nil {
+		return false, rerr
+	}
+	if !wasLive {
+		return false, fmt.Errorf("auto-pause is due, but no live backup schedule was running under %s, so nothing was paused", name)
+	}
+	// The verify goes only with a backup this pause stopped: a "nothing was paused" result never
+	// leaves a verify stopped with no email (the part A re-verification).
 	if vname, ok := schedule.RecordedVerifyName(out); ok {
 		if rerr := removeLiveEntry(schedule.Spec{Name: vname, Out: out, WrapperPath: schedule.DefaultWrapperPath(vname)}); rerr != nil {
-			return paused, rerr
+			return true, rerr
 		}
-	}
-	if !paused {
-		return false, fmt.Errorf("auto-pause is due, but this archive records no backup schedule of its own to stop (%v), so nothing was paused", nerr)
 	}
 	return true, nil
 }

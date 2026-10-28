@@ -388,8 +388,9 @@ func (d *dashboard) scheduleInstallCapture(w http.ResponseWriter, in scheduleReq
 
 // captureCadence is the cadence a capture install or repair builds from (3.6 step 4): the posted
 // interval and time; with none posted (the card's Repair), the installed descriptor's — the one
-// recorded for the folder the capture is named for, which may be the earlier location's (BackupFor);
-// with nothing installed and no descriptor either, weekly at 03:00. An installed entry whose
+// recorded for the folder the capture is named for, which may be the earlier location's (BackupFor),
+// else, when that one can't be read, a capture's record in the current folder (it moved with the
+// folder; MA-876); with nothing installed and no descriptor either, weekly at 03:00. An installed entry whose
 // descriptor can't be read (its drive unplugged, the file gone or damaged) is refused before
 // anything is written, never reset to a default (MA-876). A posted interval MailArchive does not
 // know is refused before anything is written, never turned into another cadence.
@@ -401,6 +402,14 @@ func (d *dashboard) captureCadence(interval, at string) (schedule.Interval, stri
 			p = d.cfg.effectiveOut()
 		}
 		dsc, err := schedule.ReadDescriptor(p)
+		if (err != nil || strings.TrimSpace(dsc.Interval) == "") && installed && !samePath(p, d.cfg.effectiveOut()) {
+			// The entry is named for an earlier folder whose record can't be read (the archive folder
+			// was moved and kept its backup): the record that moved with the folder is the capture's,
+			// as Settings shows it, so a capture's record there gives the cadence (MA-876).
+			if cur, cerr := schedule.ReadDescriptor(d.cfg.effectiveOut()); cerr == nil && schedule.KindOf(cur.Job) == schedule.KindCapture {
+				dsc, err = cur, nil
+			}
+		}
 		switch {
 		case err == nil && strings.TrimSpace(dsc.Interval) != "":
 			interval, at = dsc.Interval, dsc.At
@@ -554,24 +563,26 @@ func (d *dashboard) jobEntryLeft(jobPath string, removed []string) string {
 			return ""
 		}
 	}
-	if !d.cfg.entryMayBeInstalled(name, jobPath) {
+	if !d.cfg.entryMayBeInstalled(name) {
 		return ""
 	}
 	return "The scheduled backup " + name + " was not removed: it was set up for this archive folder spelled another way, so Remove here does not reach it. Its settings file " + jobPath +
 		" is kept so that backup can still run. Remove it with the command line: mailarchive schedule -out " + d.cfg.effectiveOut() + " -name " + name + " -remove, then click Remove here again."
 }
 
-// entryMayBeInstalled reports whether the scheduler may hold an entry called name, the run-job
-// whose job file is jobPath: anything but a definite "not installed" counts. A test's stand-in
-// scheduler is asked about the folder the job file names, when the name is that folder's.
-func (cfg Config) entryMayBeInstalled(name, jobPath string) bool {
-	if cfg.BackupInstalledFor != nil {
-		if j, err := job.Read(jobPath); err == nil && strings.EqualFold(schedule.DefaultNameFor(j.Out), name) {
-			return cfg.BackupInstalledFor(j.Out)
-		}
-		return false
+// entryMayBeInstalled reports whether the scheduler may hold an entry called name: anything but a
+// definite "not installed" counts, so a scheduler that can't answer keeps the job file (MA-875).
+func (cfg Config) entryMayBeInstalled(name string) bool {
+	return cfg.entryState(name) != schedule.NotInstalled
+}
+
+// entryState is what the scheduler holds under the entry name: the test's stand-in when set
+// (Config.EntryState), else the OS scheduler's answer.
+func (cfg Config) entryState(name string) schedule.State {
+	if cfg.EntryState != nil {
+		return cfg.EntryState(name)
 	}
-	return schedule.Query(name) != schedule.NotInstalled
+	return schedule.Query(name)
 }
 
 // removeBackup removes the weekly backup, wherever its task is named for (the archive the settings

@@ -346,7 +346,7 @@ func (a *ArchiveSource) readManifest() ([]byte, archiveStamp, error) {
 }
 
 func archiveTooBig(dir string, size int64) *CopyRefusal {
-	return refuse("R-o4", fmt.Sprintf("%s's manifest is larger than MailArchive reads from another archive folder (%s; the limit is 1 GB) — nothing was read beyond that check, and nothing was written. If you trust this archive, make it the archive location in Settings (Save asks first when a weekly backup is installed).", printable(dir), humanBytes(size)))
+	return refuse("R-o4", fmt.Sprintf("%s's manifest is larger than MailArchive reads from another archive folder (%s; the limit is 1 GB) — nothing was read beyond that check, and nothing was written. If you trust this archive, make it the archive location in Settings (Save asks first when a scheduled backup is installed).", printable(dir), humanBytes(size)))
 }
 
 // archiveNewer is R-p for a manifest or an index a newer MailArchive wrote.

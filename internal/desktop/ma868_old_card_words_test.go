@@ -50,12 +50,14 @@ func oldCardWordsIn(name string, src []byte) ([]string, error) {
 // Structural: no Desktop text, tooltip, health remedy or README line names the "Weekly backup
 // card", "Install / update" or "set up on this card" (X11), or says "weekly backup" at all (the
 // owner's ruling of 2026-10-28: it is the scheduled backup). The checker reads every string in the
-// Desktop's and the health report's source (templates, scripts, replies and remedies) and the
+// Desktop's, the health report's and the engine's (internal/app, whose refusals the Desktop shows
+// word for word, R-o4 among them) source (templates, scripts, replies and remedies) and the
 // README. Positive twin first: a planted source naming the old card is caught, as is each phrase.
 func TestNoTextNamesTheOldBackupCard(t *testing.T) {
 	for _, w := range []string{"click Repair on this archive's Weekly backup card", "then click Install / update", "set up on this card or in the wizard",
 		"The weekly backup was removed, but the settings were not saved", "Signed in as a — your weekly backup will now archive a into b.",
-		"The weekly backup is installed, but the earlier one", "what the weekly backup runs"} {
+		"The weekly backup is installed, but the earlier one", "what the weekly backup runs",
+		"If you trust this archive, make it the archive location in Settings (Save asks first when a weekly backup is installed)."} {
 		found, err := oldCardWordsIn("planted.go", []byte("package p\nvar s = "+strconv.Quote(w)+"\n"))
 		if err != nil || len(found) == 0 {
 			t.Fatalf("the positive twin: the checker does not catch %q (%v)", w, err)
@@ -66,7 +68,8 @@ func TestNoTextNamesTheOldBackupCard(t *testing.T) {
 	}
 
 	var all []string
-	for _, dir := range []string{".", filepath.Join("..", "health")} {
+	// internal/app too: its refusals reach the Desktop word for word (R-o4 among them).
+	for _, dir := range []string{".", filepath.Join("..", "health"), filepath.Join("..", "app")} {
 		files, err := filepath.Glob(filepath.Join(dir, "*.go"))
 		if err != nil || len(files) == 0 {
 			t.Fatalf("no source in %s: %v", dir, err)

@@ -79,8 +79,11 @@ func (s SourceStreak) Observe(reachable bool, kind string, now time.Time) Source
 		return s
 	}
 	// The clock went backwards past the latest unreachable run (it was ahead, and was put right):
-	// the span starts again here, so it never runs negative and never stalls the thresholds.
-	if s.FirstUnreachable.IsZero() || (!s.LastUnreachable.IsZero() && now.Before(s.LastUnreachable)) {
+	// the span starts again here, so it never runs negative and never stalls the thresholds. So
+	// does a stored first time this record can't trust, before MinPlausibleTime or after now: a
+	// v1.5.0 record set it once from whatever the clock read, and kept it for good (MA-891).
+	if s.FirstUnreachable.IsZero() || s.FirstUnreachable.Before(MinPlausibleTime) || now.Before(s.FirstUnreachable) ||
+		(!s.LastUnreachable.IsZero() && now.Before(s.LastUnreachable)) {
 		s.FirstUnreachable = now
 	}
 	s.LastUnreachable = now

@@ -30,9 +30,11 @@ func writeRunJobFor(t *testing.T, out string) string {
 // The card's Remove deletes a run-job's job file only with the entry it names (the part A pass):
 // a job file named for another spelling of this archive folder (here a link to it), whose entry
 // is still installed, is kept, the entry left as it was, and the reply says the backup was not
-// removed and how to remove it. Once that entry is gone (removed at the command line), Remove
-// deletes the job file. Positive twin first: the job file named for this spelling goes with its
-// entry.
+// removed and how to remove it; so is one whose entry the scheduler can't answer about. Once that
+// entry is gone (removed at the command line), Remove deletes the job file. The stand-in scheduler
+// answers by entry name (Config.EntryState), so the decision a real computer makes — anything but
+// a definite "not installed" keeps the file — is the one tested (the part A re-verification).
+// Positive twin first: the job file named for this spelling goes with its entry.
 func TestRemoveKeepsAJobFileWhoseEntryItDidNotRemove(t *testing.T) {
 	isolateHome(t)
 	target := filepath.Join(t.TempDir(), "Mail")
@@ -68,8 +70,17 @@ func TestRemoveKeepsAJobFileWhoseEntryItDidNotRemove(t *testing.T) {
 		assure.Names("was not removed", other, "mailarchive schedule -out "+link+" -name "+schedule.DefaultNameFor(target)+" -remove"),
 		assure.NoSideEffect(func() bool { return string(fileBytes(other)) == string(before) && g.fake.tasks[target] }))
 
-	// That entry removed at the command line: Remove now deletes the job file.
+	// The scheduler can't answer about that entry (Windows' SchedulerUnavailable): the job file is
+	// kept, as for an entry that is installed — only a definite "not installed" lets it go.
 	g.fake.tasks = map[string]bool{}
+	g.fake.unknown = true
+	body = postJSON(g.h, "/api/schedule-remove", g.csrf, `{}`).Body.String()
+	assure.Refused(t, refusedCode(body), body,
+		assure.Names("was not removed", other),
+		assure.NoSideEffect(func() bool { return string(fileBytes(other)) == string(before) }))
+	g.fake.unknown = false
+
+	// That entry removed at the command line: Remove now deletes the job file.
 	if body := postJSON(g.h, "/api/schedule-remove", g.csrf, `{}`).Body.String(); !strings.Contains(body, `"ok":true`) {
 		t.Fatalf("with its entry gone: %s", body)
 	}

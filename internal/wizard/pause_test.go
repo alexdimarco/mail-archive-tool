@@ -113,12 +113,9 @@ func TestMA680_PauseBindsScheduleNameBeforeRemoving(t *testing.T) {
 // NEVER seals. Below the threshold it does nothing. Amended 2026-10-28 (design-desktop-
 // settings-card 3.7, slice A4, R3C-9 accepted by the owner): it counted 30 runs until then.
 func TestMA690_AutoPauseRemovesScheduleWhenDue(t *testing.T) {
-	var removed []string
-	orig := removeLiveEntry
-	removeLiveEntry = func(s schedule.Spec) error { removed = append(removed, s.Name); return nil }
-	defer func() { removeLiveEntry = orig }()
-
 	out := t.TempDir()
+	rec := recordRemovals(t, schedule.DefaultNameFor(out)) // the entry is installed
+
 	if err := schedule.WriteDescriptor(out, schedule.Descriptor{
 		Name: schedule.DefaultNameFor(out), Interval: "daily", At: "02:00",
 		Job: []string{"mailarchive", "-out", out},
@@ -131,8 +128,8 @@ func TestMA690_AutoPauseRemovesScheduleWhenDue(t *testing.T) {
 	if err := state.WriteSourceStreak(out, state.SourceStreak{ConsecutiveFails: 700, FirstUnreachable: t0, LastUnreachable: t0.Add(state.AutoPauseAfter - time.Hour)}); err != nil {
 		t.Fatal(err)
 	}
-	if paused, err := AutoPauseIfDue(out, true); err != nil || paused || len(removed) != 0 {
-		t.Fatalf("must not auto-pause below the threshold: paused=%v err=%v removed=%v", paused, err, removed)
+	if paused, err := AutoPauseIfDue(out, true); err != nil || paused || len(*rec) != 0 {
+		t.Fatalf("must not auto-pause below the threshold: paused=%v err=%v removed=%v", paused, err, *rec)
 	}
 
 	// At the threshold: auto-pause removes this archive's bound entry, keeps the descriptor,
@@ -144,8 +141,8 @@ func TestMA690_AutoPauseRemovesScheduleWhenDue(t *testing.T) {
 	if err != nil || !paused {
 		t.Fatalf("must auto-pause at the threshold: paused=%v err=%v", paused, err)
 	}
-	if len(removed) != 1 || removed[0] != schedule.DefaultNameFor(out) {
-		t.Fatalf("must remove this archive's bound entry, got %v", removed)
+	if len(*rec) != 1 || (*rec)[0] != schedule.DefaultNameFor(out) {
+		t.Fatalf("must remove this archive's bound entry, got %v", *rec)
 	}
 	if seal.IsSealed(out) {
 		t.Fatal("auto-pause must NOT seal the archive (S3-C5)")

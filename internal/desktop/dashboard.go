@@ -136,6 +136,10 @@ type Config struct {
 	// for the configured archive alone and are used before these.
 	BackupInstalledFor func(out string) bool
 	RemoveBackupFor    func(out string) error
+	// EntryState says what the scheduler holds under an entry name (tests, the OS scheduler's
+	// stand-in); nil asks the OS scheduler (schedule.Query). Remove's job-file decision reads it
+	// (MA-875).
+	EntryState func(name string) schedule.State
 	// InstallBackup installs the weekly backup task (tests, the OS scheduler's stand-in); nil hands the
 	// Spec to the OS scheduler (schedule.Install).
 	InstallBackup func(spec schedule.Spec) error
@@ -1507,7 +1511,7 @@ pre{white-space:pre-wrap;overflow-wrap:anywhere;background:var(--bg);border:1px 
       {{if .SwitchLocks}}<p class="card-sub warn" id="switchLocksSettings">{{template "switchLocks" .}}</p>{{end}}
       {{if .Set.Unknown}}<p class="card-sub" id="settingsUnknown">{{.Set.Unknown}}</p>{{end}}
       {{if .Set.AutoPaused}}<p class="card-sub warn" id="settingsAutoPaused">{{.Set.AutoPaused}}</p>{{end}}
-      {{if .Set.Sched}}<div id="schedFields" data-sched-fields data-installed-interval="{{if .Set.Installed}}{{.Set.Interval}}{{end}}" data-installed-at="{{if .Set.Installed}}{{.Set.At}}{{end}}" data-installed-sync="{{if .Set.SyncOn}}1{{end}}" data-must-post="{{if .Set.MustPost}}1{{end}}">
+      {{if .Set.Sched}}<div id="schedFields" data-sched-fields data-installed-interval="{{if .Set.Installed}}{{.Set.Interval}}{{end}}" data-installed-at="{{if .Set.Installed}}{{.Set.At}}{{end}}" data-installed-sync="{{if .Set.SyncOn}}1{{end}}" data-must-post="{{if .Set.MustPost}}1{{end}}" data-was-installed="{{if or .Set.Installed .Set.CadenceUnknown}}1{{end}}">
       <div class="row2">
         <div><label for="schedInterval">How often</label>
           <select id="schedInterval" data-kind-field>{{if .Set.CadenceUnknown}}<option value="" selected>As installed (can't be read right now)</option>{{end}}{{if .Set.SchedNone}}<option value=""{{if not .Set.Interval}} selected{{end}}>No scheduled backup</option>{{end}}{{if .Set.SchedHourly}}<option value="hourly"{{if eq .Set.Interval "hourly"}} selected{{end}}>Hourly</option>{{end}}<option value="daily"{{if eq .Set.Interval "daily"}} selected{{end}}>Daily</option><option value="weekly"{{if eq .Set.Interval "weekly"}} selected{{end}}>Weekly (Sunday)</option></select></div>
@@ -1835,6 +1839,10 @@ settingsState();
 // after it answers ok with no question, a changed schedule to api/schedule-install (step 3). The
 // note says what happened (step 6): never "saved" and "Nothing was changed" together.
 const save=$('saveSettings');
+// keptNoteKey holds, for this tab only, a first install's note across the reload that draws the
+// card again (MA-893): shown once in the Settings note when the page is drawn, then forgotten.
+const keptNoteKey='mailarchive.settingsNote';
+try{const kept=sessionStorage.getItem(keptNoteKey);if(kept){sessionStorage.removeItem(keptNoteKey);const n=$('settingsNote');if(n){n.hidden=false;n.textContent=kept;}}}catch(e){}
 async function doSave(backup){
   const n=$('settingsNote'),c=$('settingsConfirm');
   const say=t=>{if(n){n.hidden=false;n.textContent=t;}};
@@ -1857,9 +1865,17 @@ async function doSave(backup){
     if(schedChanged()){
       // A first install (nothing was installed) draws the page again, so the Scheduled backup card
       // shows its Remove, Repair and Run now in place of "No scheduled backup is set up" (MA-893).
-      const wasNone=!(schedFields&&schedFields.dataset.installedInterval);
+      // "Was installed" is its own page fact: an installed capture whose cadence can't be read has
+      // no installed interval, and its edit is an edit. A reply's note (Hourly's cost, a recreated
+      // record) is carried across the reload, so it stays in sight; where the browser keeps nothing
+      // for the tab, the page is not drawn again and the note stays, with how to see the buttons.
+      const wasNone=!(schedFields&&(schedFields.dataset.installedInterval||schedFields.dataset.wasInstalled==='1'));
       const r=await schedPost();
-      if(r.ok&&wasNone){parts.push('Backup schedule set up.'+(r.note?' '+r.note:''));say(parts.join(' '));setTimeout(()=>location.reload(),r.note?3000:600);return true;}
+      if(r.ok&&wasNone){parts.push('Backup schedule set up.'+(r.note?' '+r.note:''));
+        let kept=!r.note;
+        if(r.note){try{sessionStorage.setItem(keptNoteKey,parts.join(' '));kept=true;}catch(e){}}
+        if(kept){say(parts.join(' '));setTimeout(()=>location.reload(),600);return true;}
+        parts.push('Reload the page to see Remove, Repair and Run now on the Scheduled backup card.');say(parts.join(' '));schedState();return true;}
       if(r.ok){parts.push('Backup schedule updated.'+(r.note?' '+r.note:''));schedState();}
       else parts.push('The backup schedule was not changed: '+(r.reason||r.error||'it could not be saved.'));
     }

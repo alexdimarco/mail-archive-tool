@@ -87,7 +87,7 @@ func newA3Rig(t *testing.T, out, goos string, mod ...func(*Config)) *a3Rig {
 	g.jobPath = jp
 	t.Cleanup(func() { os.Remove(jp) })
 	g.cfg = Config{Out: out, GOOS: goos, Exe: "/opt/mailarchive", SettingsPath: g.settings,
-		BackupInstalledFor: g.fake.installedFor, RemoveBackupFor: g.fake.removeFor,
+		BackupInstalledFor: g.fake.installedFor, RemoveBackupFor: g.fake.removeFor, EntryState: g.fake.entryState,
 		InstallBackup: func(s schedule.Spec) error {
 			if len(g.next) > 0 {
 				f := g.next[0]
