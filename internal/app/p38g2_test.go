@@ -15,6 +15,7 @@ import (
 
 	"mail-archive-tool/internal/assure"
 	"mail-archive-tool/internal/container"
+	"mail-archive-tool/internal/encmark"
 	"mail-archive-tool/internal/export"
 	"mail-archive-tool/internal/health"
 	"mail-archive-tool/internal/state"
@@ -132,7 +133,7 @@ func TestADamagedMessageIsNamedAndItsRepairSaidOnce(t *testing.T) {
 	assure.Reached(t, rep.Outcome == state.OutcomeDamaged && src.named &&
 		strings.Contains(summary, "dated 2026-03-14 09:30 UTC") && strings.Contains(summary, "from Ada Lovelace <ada@example.com>") &&
 		strings.Contains(summary, "“Quarterly figures”") && strings.Count(summary, "restore the whole archive folder") == 1 &&
-		strings.Contains(summary, "-mode full") && strings.Contains(summary, fmt.Sprintf("mailarchive verify -full -out %q", out)) &&
+		strings.Contains(summary, "-mode full") && strings.Contains(summary, "mailarchive verify -full -out "+encmark.CommandPath(out)) && // as F2 prints it, per system
 		strings.Contains(twin, "the message dated ") && strings.Contains(twin, ", in "),
 		"named:\n"+summary+"\n\ntwin:\n"+twin)
 }
