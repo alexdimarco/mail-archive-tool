@@ -40,6 +40,7 @@ Windows: SmartScreen → *More info → Run anyway*. Verify downloads against `S
 - **Every button shows it was pressed.** A button turns grey with a spinner and a "Working…" label until its job is done, and the card then says what happened ("Repaired.", "Removed.").
 - **Fewer emails when a backup keeps failing:** one alert per failing streak and one when it recovers. An archive whose mail source can't be reached is flagged after **3 days** and its backups are paused after **30 days**, counted in days, not runs.
 - **Fixed:** the Desktop could count its own settings file as a backup job, which could refuse a Microsoft 365 backup or let Remove delete that settings file. Remove now deletes only real backup-job files.
+- **Fixed:** a download of the program copies kept in an encrypted archive that stalled could be counted as damaged and started over, instead of resuming where it stopped.
 
 ### New in 1.5 — encrypted archives
 - **Make an encrypted archive.** Everything in it — messages, attachments, the search index, the folder list and what it was made from — is encrypted on the drive and opens only with its **password** or its **recovery key**. Make one in MailArchive Desktop (**Add another archive → Make a new encrypted archive…**) or at a terminal: `mailarchive -encrypt -out NEWFOLDER -input MAIL`. You choose a password; MailArchive shows a **recovery key once** and asks you to type it back. Keep both safe: if you lose the password and the recovery key, nobody can open the archive — there is no reset.
