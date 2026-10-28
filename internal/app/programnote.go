@@ -25,6 +25,16 @@ func EncryptedNoteFor(ps *container.ProgramSet) string {
 }
 
 // systemName names a release platform or a self-copy's <os>-<arch> in words.
+// ProgramCopiesLabel is the choice to keep copies of MailArchive, as the Desktop's box
+// and -encrypt's question put it: what this build will keep, never a release's promise
+// from a development build (P3-8 friction review).
+func ProgramCopiesLabel(release bool) string {
+	if release {
+		return "Keep a copy of MailArchive for Mac, Windows and Linux in the archive so it can be opened years from now (about 134 MB each time a new version updates it)"
+	}
+	return "Keep a copy of this program in the archive so it can be opened years from now. This is a development build of MailArchive: it keeps only a copy of itself, for this kind of computer — not the copies for Mac, Windows and Linux a release keeps"
+}
+
 // SystemName is a platform's name as the person reads it ("Mac", "Linux (ARM)"), for a
 // front end that tells of a kept copy.
 func SystemName(platform string) string { return systemName(platform) }

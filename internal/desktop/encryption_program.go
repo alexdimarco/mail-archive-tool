@@ -53,12 +53,7 @@ var releaseBuild = app.ReleaseBuild
 // programCopiesLabel is the words of the checkbox that keeps copies of MailArchive in an
 // encrypted archive: what this build will keep, never a release's promise from a
 // development build (P3-8, Tier C).
-func programCopiesLabel(release bool) string {
-	if release {
-		return "Keep a copy of MailArchive for Mac, Windows and Linux in the archive so it can be opened years from now (about 134 MB each time a new version updates it)"
-	}
-	return "Keep a copy of this program in the archive so it can be opened years from now. This is a development build of MailArchive: it keeps only a copy of itself, for this kind of computer — not the copies for Mac, Windows and Linux a release keeps"
-}
+func programCopiesLabel(release bool) string { return app.ProgramCopiesLabel(release) }
 
 // programCardLine is what the card says of the copies the sealed set keeps, whether
 // keeping them is on, and whether the switch is offered: not for a set a newer

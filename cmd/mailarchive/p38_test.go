@@ -69,6 +69,16 @@ func TestStatusOfAnUnpluggedEncryptedArchiveReportsOnIt(t *testing.T) {
 }
 
 // covers: MA-850, R37
+// -encrypt's program-copies question says what this build keeps: a development build
+// (as a test binary is) does not promise the copies for Mac, Windows and Linux and their
+// size that a release keeps (P3-8 friction review, w4 c1 at the command line).
+func TestTheCopiesQuestionSaysWhatThisBuildKeeps(t *testing.T) {
+	q := programCopiesQuestion()
+	assure.Reached(t, strings.Contains(q, "development build") && !strings.Contains(q, "134 MB") && strings.HasSuffix(q, "?"),
+		"the question: "+q)
+}
+
+// covers: MA-850, R37
 // repair-record on a record that needs no repair succeeds (exit 0), saying there is
 // nothing to repair — the owner's X1 ruling, 2026-10-27 — and repairs nothing.
 func TestRepairRecordOnAHealthyRecordSucceeds(t *testing.T) {

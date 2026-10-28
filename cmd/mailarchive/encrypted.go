@@ -511,7 +511,8 @@ func createEncrypted(a asker, out string, k *keyFlags, rememberSet bool, credent
 }
 
 // programCopiesQuestion is design §5.1 step 4's question, on by default.
-const programCopiesQuestion = "Keep a copy of MailArchive for Mac, Windows and Linux in the archive so it can be opened years from now (about 134 MB each time a new version updates it)?"
+// programCopiesQuestion is -encrypt's question: the Desktop's words for this build.
+func programCopiesQuestion() string { return app.ProgramCopiesLabel(app.ReleaseBuild()) + "?" }
 
 // askProgramCopies asks, while a new encrypted archive is made, whether to keep
 // copies of MailArchive in it — unless -program-copies said — and says what was
@@ -521,7 +522,7 @@ func askProgramCopies(a asker, k *keyFlags) error {
 		k.programCopies = new(string)
 	}
 	if *k.programCopies == "" {
-		keep, err := askYes(a, programCopiesQuestion, true)
+		keep, err := askYes(a, programCopiesQuestion(), true)
 		if err != nil {
 			return err
 		}

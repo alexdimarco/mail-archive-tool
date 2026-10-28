@@ -55,7 +55,7 @@ func TestEncryptAsksAboutProgramCopiesAndSaysTheChoice(t *testing.T) {
 	}
 	u.Destroy()
 	tr := a.transcript()
-	assure.Reached(t, strings.Contains(tr, "Keep a copy of MailArchive for Mac, Windows and Linux") && strings.Contains(tr, "[Y/n]") &&
+	assure.Reached(t, strings.Contains(tr, app.ProgramCopiesLabel(app.ReleaseBuild())) && strings.Contains(tr, "[Y/n]") &&
 		strings.Contains(tr, "Copies of MailArchive will be kept") && k.programChoice(true) == app.ProgramCopiesOn,
 		"the question asked, on by default, and the choice said: "+tr)
 
