@@ -1,6 +1,7 @@
 package desktop
 
 import (
+	"bytes"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -226,7 +227,45 @@ func (d *dashboard) installer() func(schedule.Spec) error {
 // before anything is written — scheduler entry, descriptor, job file and settings file — and
 // every install still passes the kind guard inside schedule.Install, unchanged (part B changes
 // the guard; part A does not).
+//
+// Every refusal's reply also carries "reason": the refusal without its own "Nothing was
+// changed.", which the Settings card quotes inside its combined reply (3.6 step 6, R3C-16).
 func (d *dashboard) scheduleInstall(w http.ResponseWriter, r *http.Request) {
+	rw := &reasonWriter{ResponseWriter: w}
+	d.scheduleInstallRouted(rw, r)
+	rw.finish()
+}
+
+// reasonWriter holds a schedule-install reply until it is complete, then adds "reason" to a
+// refusal (scheduleReason) and sends it.
+type reasonWriter struct {
+	http.ResponseWriter
+	buf    bytes.Buffer
+	status int
+}
+
+func (rw *reasonWriter) WriteHeader(code int)        { rw.status = code }
+func (rw *reasonWriter) Write(b []byte) (int, error) { return rw.buf.Write(b) }
+
+func (rw *reasonWriter) finish() {
+	body := rw.buf.Bytes()
+	var m map[string]any
+	if json.Unmarshal(body, &m) == nil && m["ok"] == false {
+		if msg, ok := m["error"].(string); ok {
+			m["reason"] = scheduleReason(msg)
+			var b bytes.Buffer
+			if json.NewEncoder(&b).Encode(m) == nil {
+				body = b.Bytes()
+			}
+		}
+	}
+	if rw.status != 0 {
+		rw.ResponseWriter.WriteHeader(rw.status)
+	}
+	_, _ = rw.ResponseWriter.Write(body)
+}
+
+func (d *dashboard) scheduleInstallRouted(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost || !server.GuardLocalPOST(r, d.csrf) {
 		http.Error(w, csrfRefused, http.StatusForbidden)
 		return
@@ -610,7 +649,7 @@ func noRunNowText(goos, out string) string {
 	if archiveKind(out) == kindEncrypted {
 		return "Run now has nothing to run: no backup was set up on this computer for this encrypted archive. " + encBackupHow(goos, out, false)
 	}
-	return "Run now has nothing to run: no backup was set up on this computer for this archive. A Microsoft 365 archive is brought up to date with Archive now; an archive of local mail files with its scheduled backup, set up on this card or in the MailArchive wizard (mailarchive wizard)."
+	return "Run now has nothing to run: no backup was set up on this computer for this archive. A Microsoft 365 archive is brought up to date with Archive now; an archive of local mail files with its scheduled backup, set up with How often in Settings or in the MailArchive wizard (mailarchive wizard)."
 }
 
 // wizardReadThem is how the wizard's keyed run ends its result, for someone outside

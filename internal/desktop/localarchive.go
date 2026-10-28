@@ -120,7 +120,7 @@ func encryptedRunJob(out string) bool {
 // archive's new mail (the P3-8 pass, DESK-2).
 func encBackupHow(goos, out string, runNow bool) string {
 	if runNow {
-		return "To add new mail, unlock it on its Encryption card, then click Run now on the Weekly backup card."
+		return "To add new mail, unlock it on its Encryption card, then click Run now on the Scheduled backup card."
 	}
 	mail := shellJoin(AddMailArgv("<the mail folder or file it was made from>", out), goos)
 	m365 := shellJoin(AddGraphArgv(out), goos)
@@ -220,7 +220,7 @@ func addMailHelp(goos, out string) string {
 
 // archiveNowOff is the line shown in place of the Archive now button for a local-origin archive.
 func archiveNowOff(goos, out string) string {
-	return "Archive now is off for this archive. What: it fetches new mail from Microsoft 365, and this archive was made from local Thunderbird mail files. The main way to add new mail is a scheduled backup (see the backup section below), which re-reads your Thunderbird files and adds anything new. You can also do it by hand. " + addMailHelp(goos, out)
+	return "Archive now is off for this archive. What: it fetches new mail from Microsoft 365, and this archive was made from local Thunderbird mail files. The main way to add new mail is a scheduled backup (choose How often in Settings below), which re-reads your Thunderbird files and adds anything new. You can also do it by hand. " + addMailHelp(goos, out)
 }
 
 // newMailLine is the line of the Status & health view that says where new mail comes from.

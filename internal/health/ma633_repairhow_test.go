@@ -12,7 +12,7 @@ import (
 // covers: MA-633, R18, S59
 // The per-kind repair remedies (§4.6.3): repairHow renders schedule.RepairRoute
 // in each reading surface's words. A corroborated run-job repairs in the wizard
-// or the Weekly backup card; a corroborated capture on the card; an export
+// or the Scheduled backup card; a corroborated capture on the card; an export
 // schedule on the command line; a route with no single repair names both
 // explicit installs. scheduleCommand (the `-install` line) appears for the
 // export kind only — the one placed exception is the command line's run-job
@@ -42,7 +42,7 @@ func TestMA633_RepairHowPerKindPerSurface(t *testing.T) {
 		surface, want string
 		wantInstall   bool
 	}{
-		{"desktop", "Repair on this archive's Weekly backup card", false},
+		{"desktop", "Repair on this archive's Scheduled backup card", false},
 		{"gui", "Repair the scheduled backup", false},
 		{"", "with no display", true},
 	} {
@@ -72,7 +72,7 @@ func TestMA633_RepairHowPerKindPerSurface(t *testing.T) {
 	capture := []string{"desktop", "-capture", "-out", "/a"}
 	for _, surface := range []string{"", "desktop", "gui"} {
 		got := repairHow(base(ev(schedule.KindCapture), capture, surface))
-		if !strings.Contains(got, "Weekly backup card") {
+		if !strings.Contains(got, "Scheduled backup card") {
 			t.Errorf("capture %q surface: %q does not name the card", surface, got)
 		}
 		if strings.Contains(got, "-install") {
@@ -140,7 +140,7 @@ func TestMA633_RemediesRouteThroughRepairHow(t *testing.T) {
 		if strings.Contains(cr, "-capture") && strings.Contains(cr, "-install") {
 			t.Errorf("capture moved_archive emits a forbidden `schedule desktop -capture … -install`:\n%s", cr)
 		}
-		if !strings.Contains(cr, "Weekly backup card") {
+		if !strings.Contains(cr, "Scheduled backup card") {
 			t.Errorf("capture moved_archive does not route to the card:\n%s", cr)
 		}
 	}

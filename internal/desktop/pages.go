@@ -167,7 +167,7 @@ var pageTmpl = template.Must(template.New("pages").Funcs(pageFuncs).Parse(`
           <label for="otherPath">Archive folder</label>
           <input type="text" id="otherPath" spellcheck="false" placeholder="The archive's top folder, e.g. {{.ArchiveExample}}">
           <div class="listbar"><button class="btn small secondary" id="browseOther" type="button">Browse…</button><span id="otherNote" class="card-sub" style="margin:0" aria-live="polite"></span></div>
-          <p class="card-sub">Read-only: nothing is ever written in this folder, and your settings and weekly backup are left as they are. Use this to read an archive you were handed without pointing MailArchive at it.</p>
+          <p class="card-sub">Read-only: nothing is ever written in this folder, and your settings and scheduled backup are left as they are. Use this to read an archive you were handed without pointing MailArchive at it.</p>
         </div>
       </div>
       <button class="btn" id="loadFolders" type="button" disabled>Load folders</button>

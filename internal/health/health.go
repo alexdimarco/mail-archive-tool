@@ -201,6 +201,11 @@ type Input struct {
 	// repairHow must stay pure (it is called from Assess), so this is set here and
 	// not recomputed inside Assess.
 	KindEv schedule.KindEvidence
+	// LocalMailOnly: the archive's record names local mail files only (no Microsoft 365
+	// mailbox). With a capture counted on this computer, such an archive gets the Desktop's
+	// section 4 notice (design-desktop-settings-card): its card offers Remove only, so the
+	// repair remedy names that button, never a Repair that is not there (MA-867).
+	LocalMailOnly bool
 
 	// The scheduled verify's own descriptor (.mailarchive-verify-schedule.json,
 	// owner ruling FB-4), written when `schedule` installs a verify: it carries
@@ -939,32 +944,60 @@ func rebuildHow(in Input) string {
 // repairHow renders how to repair a recorded backup schedule, in the words of
 // the surface reading it (§4.6.3), beside rebuildHow. It renders the route
 // schedule.RepairRoute decides from owner-side evidence (§4.6.5(e)): a
-// corroborated run-job repairs in the wizard or this archive's Weekly backup
+// corroborated run-job repairs in the wizard or this archive's Scheduled backup
 // card; a corroborated capture on the card; an export schedule on the command
 // line; anything else names both explicit installs. So no remedy ever points at
 // a button that is not on the reader's page, nor at a `schedule … -install` the
 // kind guard (MA-631) would refuse. The five backup remedies (exe_missing,
 // exe_moved, exe_former_name, not_installed, moved_archive) tail with it.
+//
+// Where the Desktop shows its section 4 notice (design-desktop-settings-card: a capture
+// counted, and the archive or its schedule local), the card offers Remove only and the
+// route would refuse a Repair, so the remedy names Remove (MA-867): on every surface for a
+// counted capture, which names the card, and on the Desktop for both kinds counted.
 func repairHow(in Input) string {
-	switch schedule.RepairRoute(in.Desc, in.Out, in.KindEv) {
+	route := schedule.RepairRoute(in.Desc, in.Out, in.KindEv)
+	if captureCountedNotice(in) && (route == schedule.RouteCard || in.Surface == "desktop") {
+		return noticeRemedy(in)
+	}
+	switch route {
 	case schedule.RouteWizard: // a corroborated run-job
 		switch in.Surface {
 		case "desktop":
-			return "click Repair on this archive's Weekly backup card"
+			return "click Repair on this archive's Scheduled backup card"
 		case "gui":
 			return "choose Repair the scheduled backup in the health check"
 		}
 		return cliRunJobRepair(in)
 	case schedule.RouteCard: // a corroborated capture
 		if in.Surface == "desktop" {
-			return "click Repair on this archive's Weekly backup card"
+			return "click Repair on this archive's Scheduled backup card"
 		}
-		return "open MailArchive Desktop and click Repair on this archive's Weekly backup card"
+		return "open MailArchive Desktop and click Repair on this archive's Scheduled backup card"
 	case schedule.RouteCommand: // an export schedule
 		return "re-run " + scheduleCommand(jobWithOut(in.Desc.Job, in.Out), in.GOOS)
 	default: // RouteNone — no single repair
 		return bothInstalls(in)
 	}
+}
+
+// captureCountedNotice is the Desktop's section 4 case (design-desktop-settings-card), read
+// from the same owner-side evidence its route reads: a capture is counted for this archive,
+// and the archive's record names local mail files only or its schedule is a run-job.
+func captureCountedNotice(in Input) bool {
+	return in.KindEv.Has(schedule.KindCapture) &&
+		(in.LocalMailOnly || in.KindEv.Has(schedule.KindRunJob) || schedule.KindOf(in.Desc.Job) == schedule.KindRunJob)
+}
+
+// noticeRemedy is the remedy where the Desktop shows its section 4 notice: the schedule can't
+// be repaired from MailArchive while Microsoft 365 is set up on this computer, and the one
+// button its card offers, Remove, stops it.
+func noticeRemedy(in Input) string {
+	s := "this archive can't get its own scheduled backup yet on a computer where Microsoft 365 is set up, so it can't be repaired from MailArchive; to stop it, click Remove on this archive's Scheduled backup card"
+	if in.Surface != "desktop" {
+		s += " in MailArchive Desktop"
+	}
+	return s
 }
 
 // schedulePresyncConfigured reports whether the installed schedule is set to pre-sync
@@ -994,7 +1027,7 @@ func schedulePresyncConfigured(in Input) bool {
 func cliRunJobRepair(in Input) string {
 	remove := "`mailarchive schedule -name " + shellQuoteToken(scheduleNameForRepair(in), in.GOOS) + " -remove`"
 	install := "`mailarchive schedule -out " + shellQuoteToken(in.Out, in.GOOS) + " -install`"
-	s := "repair it from the wizard or this archive's Weekly backup card in MailArchive Desktop; with no display, remove the schedule with " + remove + ", then re-install it with " + install
+	s := "repair it from the wizard or this archive's Scheduled backup card in MailArchive Desktop; with no display, remove the schedule with " + remove + ", then re-install it with " + install
 	if in.KindEv.JobPath != "" {
 		s += " — the job's settings are in `" + in.KindEv.JobPath + "`"
 	}
@@ -1013,9 +1046,25 @@ func scheduleNameForRepair(in Input) string {
 
 // bothInstalls names the two explicit installs for a schedule whose kind no
 // single route repairs (§4.6.3, The route: RouteNone): the interactive install
-// (the card's or the wizard's) and the command line's export install.
+// (How often in MailArchive Desktop's Settings, or the wizard) and the command line's
+// export install. On the Desktop, Settings is the one place a schedule is set up
+// (design-desktop-settings-card ruling 1).
 func bothInstalls(in Input) string {
-	return "set the schedule up afresh — in MailArchive Desktop's Weekly backup card or the wizard, or on the command line with " + scheduleCommand([]string{"-out", in.Out}, in.GOOS)
+	return "set the schedule up afresh — choose How often in MailArchive Desktop's Settings, or use the wizard, or on the command line with " + scheduleCommand([]string{"-out", in.Out}, in.GOOS)
+}
+
+// localMailOnly reports whether an archive's recorded sources are local mail files only:
+// at least one, and none a Microsoft 365 mailbox (the Desktop's archiveKind "local").
+func localMailOnly(stores map[string]string) bool {
+	if len(stores) == 0 {
+		return false
+	}
+	for id := range stores {
+		if strings.HasPrefix(id, "mailbox:") {
+			return false
+		}
+	}
+	return true
 }
 
 // runErrorText is the last run's failure as the surface reading it should see
@@ -1597,6 +1646,7 @@ func Gather(out, nameOverride string) Input {
 		in.HasManifestFile = true
 		if m, err := state.Load(mpath); err == nil {
 			in.HasManifest = true
+			in.LocalMailOnly = localMailOnly(m.Stores)
 			in.Messages = m.Len()
 			in.Fillable, in.Terminal, in.Unknown = m.Counts()
 			in.ShownAsSource = m.FallbackCounts()

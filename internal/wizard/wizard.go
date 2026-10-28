@@ -1752,11 +1752,12 @@ func presyncOfferable(inputs []string) bool {
 // source notice (presync.SyncNotice, MA-567) so the GUI wording cannot drift from
 // the §6 paragraph. SyncNotice already carries the running-Thunderbird defer (R31,
 // "left alone"), so nothing is appended here. The macOS Automation-permission note
-// is added on macOS only.
+// is added on macOS only, from the one constant MailArchive Desktop's Settings card also
+// shows (presync.MacAutomationNote, MA-861).
 func presyncQuestionText() string {
 	q := "Sync Thunderbird before each scheduled backup?\n\n" + presync.SyncNotice
 	if runtime.GOOS == "darwin" {
-		q += "\n\nOn a Mac, the first time a scheduled backup closes Thunderbird, macOS asks once whether Mail Archive may control it. A scheduled backup runs on its own, often overnight, so you would not be there to answer — and until you do, each run leaves Thunderbird open instead of closing it. To answer while you are at the Mac, run one backup yourself first (the Run-now button on the Mail Archive dashboard) and choose Allow when macOS asks, before you rely on the schedule."
+		q += "\n\n" + presync.MacAutomationNote
 	}
 	return q
 }

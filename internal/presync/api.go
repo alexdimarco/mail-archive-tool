@@ -99,6 +99,11 @@ var warnText = map[string]string{
 // disclosure on afterward. Settled by the friction review (2026-10-24).
 const SyncNotice = "The Thunderbird sync starts Thunderbird in the background before the backup and waits for its mail to stop arriving, so the archive includes mail that had only reached the server. Because it drives your real Thunderbird, starting it does what opening Thunderbird always does: it checks all your accounts, sends anything waiting in your Outbox, runs your message filters, and may show notifications. When it then asks Thunderbird to quit, your accounts' on-exit actions run too (for example emptying Trash), so mail you deleted since the last backup may be removed before it is archived. A Thunderbird you already have open, or one you are using, is left alone — never started or closed. If you use more than one Thunderbird profile, only the one holding this mailbox is synced."
 
+// MacAutomationNote is the macOS note shown beside the sync wherever it is offered on a
+// Mac: the wizard's schedule question and MailArchive Desktop's Settings card both use
+// this one constant (design-desktop-settings-card section 7, MA-861), so they cannot drift.
+const MacAutomationNote = "On a Mac, the first time a scheduled backup closes Thunderbird, macOS asks once whether Mail Archive may control it. A scheduled backup runs on its own, often overnight, so you would not be there to answer — and until you do, each run leaves Thunderbird open instead of closing it. To answer while you are at the Mac, run one backup yourself first (the Run-now button on the Mail Archive dashboard) and choose Allow when macOS asks, before you rely on the schedule."
+
 // startLine is the narration printed to Config.Log just before the session runs,
 // so the owner of a manual run knows the (possibly minutes-long) wait is working
 // and not a hang (§8 step 1). Draft wording; the friction review / MA-567 settle

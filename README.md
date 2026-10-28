@@ -192,8 +192,8 @@ Turn it on wherever you set the schedule up:
 
 - **The setup wizard (`mailarchive wizard`):** when you answer *Keep this archive current?*,
   a follow-up asks *Sync Thunderbird before archiving?* for a Thunderbird source.
-- **MailArchive Desktop:** the **Weekly backup** card for a local Thunderbird archive offers
-  **Sync Thunderbird before each backup** beside the schedule.
+- **MailArchive Desktop:** the **Settings** card for a local Thunderbird archive offers
+  **Sync Thunderbird before each backup** beside **How often**, then **Save settings**.
 - **The command line:** add **`-thunderbird-sync`** to `mailarchive schedule …` (the profile is
   derived from the inputs, or name it with `-thunderbird-profile`).
 
@@ -217,7 +217,7 @@ will not touch.
 What it gives you, beyond reading and searching the archive:
 
 - **Your archives** — manage more than one archive on this computer: mark one
-  **current** (what every tool here reads and what the weekly backup keeps),
+  **current** (what every tool here reads and what the scheduled backup keeps),
   **Switch** between them, and **Pause (make read-only)** / **Resume** an archive
   (nothing is deleted either way). **Add another archive** sets up a new one with
   the wizard without disturbing the current. *(You can also add one any time by
@@ -235,8 +235,13 @@ What it gives you, beyond reading and searching the archive:
   scheduled backups.
 - **Recent backups** — the last several runs at a glance (when, result, messages
   exported and filled), a companion to the single "last run" line.
-- **Weekly backup** — install, repair, or remove the schedule (the same one
-  [`schedule`](#schedule--recurring-backups) writes).
+- **Scheduled backup** — the schedule's status, with **Run now**, **Repair** and
+  **Remove** (the same schedule [`schedule`](#schedule--recurring-backups) writes).
+  How often it runs (hourly for local mail files, daily or weekly), its time and the
+  Thunderbird sync are set in **Settings**, which shows only the options that apply
+  to the archive: the three Microsoft 365 options (Deleted Items, Junk Email, original
+  .eml) only for a Microsoft 365 archive, since they apply to every capture on this
+  computer.
 - **Status & health** — the same GREEN / WARN / RED posture as `status`,
   including a warning (shown as a banner on the archive) when an archive's
   **source** — its mailbox or mail folder — has stopped being reachable.

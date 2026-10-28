@@ -137,7 +137,7 @@ func TestAnEncryptedArchiveIsNeverOfferedASchedule(t *testing.T) {
 	plain := archiveAt(t, t.TempDir(), "M365", map[string]string{"mailbox:u@contoso.com": "b"})
 	SaveSettings(settings, Settings{Out: plain})
 	page := sessionPage(t, h)
-	if !strings.Contains(page, `id="schedInstall"`) || strings.Contains(page, `id="backupEncrypted"`) {
+	if !strings.Contains(page, `id="schedInterval"`) || strings.Contains(page, `id="backupEncrypted"`) {
 		t.Fatal("positive twin: a Microsoft 365 archive is offered its install")
 	}
 

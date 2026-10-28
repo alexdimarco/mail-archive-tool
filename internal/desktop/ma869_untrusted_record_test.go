@@ -125,7 +125,7 @@ func TestDrawingThePageNeverWaitsOnSourceStorage(t *testing.T) {
 	isolateHome(t)
 	out := tbProfileArchive(t)
 	g := newA3Rig(t, out, "darwin")
-	if page := g.page(); !strings.Contains(page, `id="schedInstall"`) {
+	if page := g.page(); !strings.Contains(page, `id="schedInterval"`) {
 		t.Fatal("the positive twin: the local-backup form is not shown")
 	}
 
@@ -155,7 +155,7 @@ func TestDrawingThePageNeverWaitsOnSourceStorage(t *testing.T) {
 	}()
 	select {
 	case page := <-drawn:
-		if strings.Contains(page, `id="schedInstall"`) {
+		if strings.Contains(page, `id="schedInterval"`) {
 			t.Error("the form was shown although its sources could not be checked")
 		}
 	case <-time.After(3 * time.Second):

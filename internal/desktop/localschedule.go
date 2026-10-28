@@ -222,6 +222,20 @@ func (d *dashboard) scheduleInstallLocal(w http.ResponseWriter, in scheduleReque
 	if at == "" {
 		at = "03:00"
 	}
+	// Sync alone changed (design-desktop-settings-card 3.6 step 5, C-18): the installed entry
+	// already runs this cadence, so only the job file is written and the scheduler entry is
+	// left alone — a reload of the entry could stop a run.
+	if exists && syncChanged && d.cfg.taskState(out) == schedule.Installed {
+		if desc, derr := schedule.ReadDescriptor(out); derr == nil &&
+			strings.EqualFold(strings.TrimSpace(desc.Interval), string(iv)) && strings.TrimSpace(desc.At) == at {
+			if err := writeJob(jobPath, j); err != nil {
+				writeJSON(w, map[string]any{"ok": false, "error": "Thunderbird sync was not changed: " + err.Error() + ". Nothing was changed."})
+				return
+			}
+			writeJSON(w, map[string]any{"ok": true})
+			return
+		}
+	}
 	exe := d.cfg.Exe
 	if exe == "" {
 		e, _, perr := schedule.ProgramForSchedule(false)
@@ -306,7 +320,7 @@ func (d *dashboard) notRecordedReply(out string, edit, existed bool, exe string,
 		return "The backup could not be recorded in the archive (" + reason + "), so it was not set up again; the scheduler entry that was there is kept."
 	}
 	if rerr := d.undoInstall(out, false); rerr != nil {
-		return "The backup could not be recorded in the archive (" + reason + "), and the scheduler entry it made could not be taken out again (" + rerr.Error() + "): click Remove on this card to take it out."
+		return "The backup could not be recorded in the archive (" + reason + "), and the scheduler entry it made could not be taken out again (" + rerr.Error() + "): click Remove on the Scheduled backup card to take it out."
 	}
 	return "The backup could not be recorded in the archive (" + reason + "), so nothing was scheduled."
 }
@@ -323,7 +337,7 @@ func (d *dashboard) jobWriteFailedReply(out string, edit, existed bool, iv sched
 		return "The backup's settings file could not be written (" + err.Error() + "), so the backup was not set up again; the scheduler entry that was there is kept."
 	}
 	if rerr := d.undoInstall(out, true); rerr != nil {
-		return "The backup could not be set up (" + err.Error() + "), and what was installed could not be taken out again (" + rerr.Error() + "): click Remove on this card to take it out."
+		return "The backup could not be set up (" + err.Error() + "), and what was installed could not be taken out again (" + rerr.Error() + "): click Remove on the Scheduled backup card to take it out."
 	}
 	return "The backup could not be set up (" + err.Error() + "), so nothing was scheduled."
 }

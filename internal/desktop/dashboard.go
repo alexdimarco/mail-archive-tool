@@ -36,7 +36,6 @@ import (
 	"mail-archive-tool/internal/keyring"
 	"mail-archive-tool/internal/localweb"
 	"mail-archive-tool/internal/lockfile"
-	"mail-archive-tool/internal/presync"
 	"mail-archive-tool/internal/schedule"
 	"mail-archive-tool/internal/seal"
 	"mail-archive-tool/internal/server"
@@ -520,7 +519,7 @@ func (d *dashboard) saveSettings(w http.ResponseWriter, r *http.Request) {
 				jobFile, _ = job.PathFor(schedule.DefaultNameFor(task))
 			}
 			if err := d.removeBackup(); err != nil {
-				writeJSON(w, map[string]any{"ok": false, "error": "The weekly backup could not be removed (the scheduler said: " + err.Error() + "), so nothing was saved and your settings are as they were. Remove it yourself with Remove on the Weekly backup card, or choose Save and keep the backup."})
+				writeJSON(w, map[string]any{"ok": false, "error": "The weekly backup could not be removed (the scheduler said: " + err.Error() + "), so nothing was saved and your settings are as they were. Remove it yourself with Remove on the Scheduled backup card, or choose Save and keep the backup."})
 				return
 			}
 			if jobFile != "" {
@@ -944,8 +943,6 @@ func (cfg Config) overviewFor(csrf, epoch string) string {
 		KeepRaw          bool
 		IncludeDeleted   bool
 		IncludeJunk      bool
-		Interval         string
-		WeeklyTime       string
 		Account          string
 		SessionsLine     string
 		FormerNotice     string
@@ -954,18 +951,32 @@ func (cfg Config) overviewFor(csrf, epoch string) string {
 		LocalOnly        bool   // local mail files only and no Microsoft 365 setup: Archive now and the weekly backup are off
 		ArchiveNowOff    string // why Archive now is off, and the steps that add new mail instead ("" when it applies)
 		Offer            string // the archive the GUI used last, offered when none is set
-		// §4.6.3/MA-617 + Q18(b): the Weekly backup card's state. HasSchedule when a
-		// descriptor is recorded; ScheduleKind names it in words; the Show* flags
-		// pick the controls — Install/update only for a capture or none and never a
-		// local-only archive, Repair for a corroborated run-job (keeps the kind,
-		// no capture conversion), Remove whenever there is a schedule or a capture to
-		// install; ShowBackupOff is the local-only, no-schedule message.
-		HasSchedule   bool
-		ScheduleKind  string
-		ShowInstall   bool
-		ShowRepair    bool
-		ShowRemove    bool
-		ShowBackupOff bool
+		// §4.6.3/MA-617 + Q18(b): the Scheduled backup card's state. HasSchedule when a
+		// descriptor is recorded; ScheduleKind names it in words; the Show* flags pick
+		// the controls — Repair and Run now for a corroborated run-job (keeps the kind,
+		// no capture conversion), Repair for a corroborated capture (C-2), Remove
+		// whenever there is a schedule or a capture to install; ShowInstall is the
+		// capture's "nothing set up yet" line; ShowBackupOff is the local, can't-set-up-
+		// here message. How often, the time and the sync are changed in Settings
+		// (design-desktop-settings-card ruling 1, slice A5).
+		HasSchedule       bool
+		ScheduleKind      string
+		ShowInstall       bool
+		ShowRepair        bool
+		ShowCaptureRepair bool
+		ShowRemove        bool
+		ShowBackupOff     bool
+		// Set is the Settings card for this archive's kind (3.3, slice A5).
+		Set settingsCard
+		// The Settings card's fixed lines.
+		MoveFirstLine      string
+		SyncFirstLine      string
+		AutoPausedSaveLine string
+		M365BoxesLine      string
+		ArchiveNowUsesLine string
+		// ArchiveNowConfirm is asked before Archive now on a local archive where Microsoft
+		// 365 is set up (C-7): it turns the archive mixed.
+		ArchiveNowConfirm string
 		// design-desktop-settings-card 3.2 (slice A3): BackupUnknown is an archive whose record
 		// can't be read (C-8); BackupNotice is section 4's case (a capture counted, the archive
 		// or its schedule local), with NoticeRunJob's installed cadence and sync read-only;
@@ -1008,20 +1019,15 @@ func (cfg Config) overviewFor(csrf, epoch string) string {
 		// SwitchLocks is the encrypted archive open here that a switch to another
 		// archive locks, said before the switch (P3-8, T2-12); "" when none is open.
 		SwitchLocks string
-		// Local-archive scheduling (design-thunderbird-presync-desktop): a localOnly
-		// archive the Desktop can reconstruct + schedule from its OWN record (on an
-		// adapter platform) shows a create form (ShowLocalCreate) in place of the
-		// "backup off" note, and — once a schedule exists — the SAME form prefilled, so
-		// the cadence/time/pre-sync are editable in place (ShowLocalEdit, friction MED-5 +
-		// the "editable after setup" ruling; the edit form's Install/update replaces the
-		// empty-posting Repair). The pre-sync checkbox shows for a Thunderbird-sourced
-		// archive (LocalPresyncOfferable), checked when the installed job already syncs
-		// (LocalPresyncOn); PresyncNoticeText is the VISIBLE (not hover-only) notice.
-		ShowLocalCreate       bool
-		ShowLocalEdit         bool
-		LocalPresyncOfferable bool
-		LocalPresyncOn        bool
-		PresyncNoticeText     string
+		// Local-archive scheduling (design-thunderbird-presync-desktop; since slice A5 of
+		// design-desktop-settings-card, on the Settings card): a local archive the Desktop
+		// can reconstruct + schedule from its OWN record (on an adapter platform) gets the
+		// create form (ShowLocalCreate) in place of the "backup off" note, and — once a
+		// schedule exists — the SAME form prefilled (ShowLocalEdit), so the cadence, time
+		// and pre-sync are editable in place. LocalPresyncOn drives Run now's tooltip.
+		ShowLocalCreate bool
+		ShowLocalEdit   bool
+		LocalPresyncOn  bool
 		// The Your-archives list (UX-1): the known archives and whether to show the card.
 		Archives      []ArchiveRow
 		ShowArchives  bool
@@ -1044,9 +1050,9 @@ func (cfg Config) overviewFor(csrf, epoch string) string {
 		// how many runs it keeps (stated beside it, design-desktop-settings-card 3.7).
 		RecentRuns []runRow
 		HistoryMax int
-	}{HistoryMax: state.RunHistoryMax, Export: !cfg.WorkspaceOff, Epoch: epoch, CSRF: csrf, Cards: cfg.cards(), Vault: vaultPhrase(), OutDir: cfg.effectiveOut(), ReaderURL: cfg.ReaderURL, SignedIn: signedIn, UPN: upn,
+	}{MoveFirstLine: moveFirstLine, SyncFirstLine: syncFirstLine, AutoPausedSaveLine: autoPausedSaveLine, M365BoxesLine: m365BoxesLine, ArchiveNowUsesLine: archiveNowUsesLine,
+		HistoryMax: state.RunHistoryMax, Export: !cfg.WorkspaceOff, Epoch: epoch, CSRF: csrf, Cards: cfg.cards(), Vault: vaultPhrase(), OutDir: cfg.effectiveOut(), ReaderURL: cfg.ReaderURL, SignedIn: signedIn, UPN: upn,
 		KeepRaw: s.KeepRaw, IncludeDeleted: s.IncludeDeleted, IncludeJunk: s.IncludeJunk,
-		Interval: orElse(s.Interval, "weekly"), WeeklyTime: orElse(s.WeeklyTime, "03:00"),
 		Account: cfg.account(), SessionsLine: cfg.sessionsLine(), FormerNotice: cfg.formerNotice(), ResidualOS: residualOS(cfg.goos()),
 		AlertEnabled: s.AlertEnabled, AlertOnFailure: s.AlertOnFailure, AlertOnSuccess: s.AlertOnSuccess, AlertOnPause: s.AlertOnPause,
 		AlertProvider: orElse(s.AlertProvider, "office365"), AlertHost: s.AlertHost, AlertPort: s.AlertPort,
@@ -1079,17 +1085,19 @@ func (cfg Config) overviewFor(csrf, epoch string) string {
 		data.ShowArchives = len(data.Archives) >= 2 || (len(data.Archives) == 1 && !data.Archives[0].Current)
 		data.CanAddArchive = len(data.Archives) >= 1
 	}
-	// Weekly backup card state (§4.6.3/MA-617, Q18(b); design-desktop-settings-card 3.2,
-	// slice A3): the controls follow the archive's record kind (backupKind, never the
-	// tenant) against what owner-side evidence says is installed, the same route the install
-	// takes — so the card repairs a run-job (keeps its kind) rather than converting it,
-	// never offers a Microsoft 365 install where there is no Microsoft 365, and never offers
-	// an install the route would refuse.
+	// The Scheduled backup card and the Settings card (§4.6.3/MA-617, Q18(b);
+	// design-desktop-settings-card 3.2, 3.3, section 5; slices A3, A5): both follow the
+	// archive's record kind (backupKind, never the tenant) against what owner-side evidence
+	// says is installed, the same route the install takes — so the card repairs a run-job
+	// (keeps its kind) rather than converting it, never offers a Microsoft 365 install where
+	// there is no Microsoft 365, and never offers an install the route would refuse.
+	// Settings is the one editor of how often, the time and the sync (ruling 1); the card
+	// keeps the status, Run now, Repair and Remove.
 	var rt backupRoute
 	if data.OutDir != "" {
 		rt = routeFor(data.OutDir)
 	}
-	entry, _ := cfg.backupTask() // the scheduler has an entry for it, recorded or not
+	entry, entrySt := cfg.backupTask() // the scheduler has an entry for it, recorded or not
 	if rt.hasDesc {
 		data.HasSchedule = true
 		switch {
@@ -1108,14 +1116,28 @@ func (cfg Config) overviewFor(csrf, epoch string) string {
 		}
 	}
 	localCard := rt.kind == backupLocal && !rt.captureCounted
-	// With no archive chosen yet the card is as it was: its install asks for a location first.
-	data.ShowInstall = (rt.kind == backupM365 || data.OutDir == "") && !data.ShowRepair && !rt.export && rt.broken == ""
+	// Which form Settings draws (3.2): a run-job's where a run-job is corroborated and no
+	// capture is counted (a mixed archive's included), or for a local archive with nothing
+	// installed; a capture's for a Microsoft 365 archive with nothing installed or with its
+	// capture installed and counted — and, with no archive chosen yet, as before (its Save
+	// asks for a location first). Section 4's notice, a command-line export and a broken
+	// run-job get no form.
+	runJobForm := !rt.notice && !rt.export && rt.broken == "" &&
+		((rt.runJob && !rt.captureCounted) || (localCard && !rt.hasDesc))
+	captureInstalled := (rt.hasDesc && rt.descKind == schedule.KindCapture) || (entry != "" && !samePath(entry, data.OutDir))
+	captureForm := !rt.notice && !rt.export && rt.broken == "" && !rt.runJob &&
+		(data.OutDir == "" || (rt.kind == backupM365 && (!rt.hasDesc || rt.captureCounted)))
+	// The card's "nothing set up yet" line for a capture's form.
+	data.ShowInstall = captureForm && !rt.hasDesc && entry == ""
+	// A corroborated capture keeps its Repair on the card (C-2): an empty body, its own
+	// cadence (3.6 step 4), and the BackupFor re-point.
+	data.ShowCaptureRepair = captureForm && data.OutDir != "" && rt.captureCounted && captureInstalled
 	// The local form checks that the archive's sources are there; a source on slow or
 	// stalled storage never holds the page (C-17, MA-869).
 	adapter := cfg.goos() == "darwin" || cfg.goos() == "windows"
 	type rebuildCheck struct{ ok, thunderbird bool }
 	var rebuild rebuildCheck
-	if adapter && ((localCard && !data.HasSchedule) || (data.HasSchedule && data.ShowRepair)) {
+	if adapter && runJobForm {
 		out := data.OutDir
 		rebuild, _ = withinSourceWait(func() rebuildCheck {
 			if _, ok := reconstructLocalJob(out); !ok {
@@ -1124,35 +1146,25 @@ func (cfg Config) overviewFor(csrf, epoch string) string {
 			return rebuildCheck{ok: true, thunderbird: localArchiveThunderbirdSourced(out)}
 		})
 	}
-	// A local archive the Desktop can reconstruct + schedule from its own record (on
-	// an adapter platform) shows the create/edit form in place of the "backup off"
-	// note (design-thunderbird-presync-desktop corrections 4, 8).
-	if localCard && !data.HasSchedule && adapter && rebuild.ok {
-		data.ShowLocalCreate = true
-		data.LocalPresyncOfferable = rebuild.thunderbird
-		data.LocalPresyncOn = currentJobSyncsThunderbird(data.OutDir)
-		data.PresyncNoticeText = presync.SyncNotice
-	}
-	// A run-job schedule the Desktop can reconstruct shows the create form again,
-	// prefilled from the installed schedule, so the cadence/time/pre-sync are editable in
-	// place (friction MED-5 + the "editable after setup" ruling); its Install/update button
-	// replaces the empty-posting Repair, which is suppressed when the edit form shows.
-	// LocalPresyncOn drives the Run-now warning for ANY has-schedule local archive, whether
-	// or not the edit form shows. ShowRepair marks a corroborated RUN-JOB where no capture is
-	// counted (a mixed archive's included, 3.2), the only schedule the Desktop can safely
-	// rewrite from here.
+	// A local archive the Desktop can reconstruct + schedule from its own record (on an
+	// adapter platform) gets the create form in Settings in place of the "backup off" note
+	// (design-thunderbird-presync-desktop corrections 4, 8); once a run-job is installed, the
+	// same form prefilled (ShowLocalEdit). An edit still needs the archive's record to rebuild
+	// (MA-858: lifting that waits on the owner accepting MA-581's test amendment).
+	data.ShowLocalCreate = runJobForm && !rt.hasDesc && adapter && rebuild.ok
+	data.ShowLocalEdit = runJobForm && rt.runJob && adapter && rebuild.ok
+	// LocalPresyncOn drives Run now's warning for any installed local archive.
 	if data.HasSchedule && (localCard || data.ShowRepair) && adapter {
 		data.LocalPresyncOn = currentJobSyncsThunderbird(data.OutDir)
-		if data.ShowRepair && rebuild.ok {
-			data.ShowLocalEdit = true
-			data.LocalPresyncOfferable = rebuild.thunderbird
-			data.PresyncNoticeText = presync.SyncNotice
-			data.Interval = orElse(rt.desc.Interval, data.Interval)
-			data.WeeklyTime = orElse(rt.desc.At, data.WeeklyTime)
-		}
 	}
 	data.ShowRemove = data.HasSchedule || !localCard || entry != ""
 	data.ShowBackupOff = localCard && !data.HasSchedule && !data.ShowLocalCreate
+	data.Set = settingsCardFor(settingsInputs{out: data.OutDir, rt: rt, entry: entry, entrySt: entrySt,
+		runJobForm: runJobForm, captureForm: captureForm, canEdit: adapter && rebuild.ok, thunderbird: rebuild.thunderbird,
+		goos: cfg.goos(), archiveNowOffered: data.ArchiveNowOff == ""})
+	if rt.kind == backupLocal && data.ArchiveNowOff == "" {
+		data.ArchiveNowConfirm = archiveNowConfirm // Archive now turns it mixed (C-7)
+	}
 	// Section 4 (part A): a capture is counted and the archive or its schedule is local.
 	// The notice shows in place of the schedule inputs; an installed schedule shows with
 	// Remove only, a run-job's cadence and sync read-only (rev4.1).
@@ -1161,7 +1173,7 @@ func (cfg Config) overviewFor(csrf, epoch string) string {
 		data.BackupNotice, data.BackupUnknown = rt.notice, !rt.notice
 		data.UnknownLine, data.NoticeLine = unknownKindLine, captureCountedLine
 		data.ShowInstall, data.ShowRepair, data.ShowLocalCreate, data.ShowLocalEdit, data.ShowBackupOff, data.ShowBrokenRepair = false, false, false, false, false, false
-		data.LocalPresyncOfferable, data.BrokenLine = false, ""
+		data.ShowCaptureRepair, data.BrokenLine = false, ""
 		data.ShowRemove = data.HasSchedule || entry != ""
 		if rt.notice && data.HasSchedule && (rt.runJob || rt.descKind == schedule.KindRunJob) {
 			jp := rt.jobPath
@@ -1179,6 +1191,7 @@ func (cfg Config) overviewFor(csrf, epoch string) string {
 	// it was handed with (the P3-3 plan, 3b).
 	if data.Encrypted = archiveKind(data.OutDir) == kindEncrypted; data.Encrypted {
 		data.ShowInstall, data.ShowRepair, data.ShowLocalCreate, data.ShowLocalEdit, data.ShowBackupOff, data.ShowBrokenRepair = false, false, false, false, false, false
+		data.ShowCaptureRepair, data.Set, data.ArchiveNowConfirm = false, settingsCard{}, ""
 		data.ShowRemove = data.HasSchedule
 	}
 	data.ProgramCopiesLabel = programCopiesLabel(releaseBuild())
@@ -1381,7 +1394,7 @@ pre{white-space:pre-wrap;overflow-wrap:anywhere;background:var(--bg);border:1px 
 
     {{if .ShowArchives}}<div class="card" id="sec-archives">
       <h2>Your archives</h2>
-      <p class="card-sub">The mail archives MailArchive Desktop knows about on this computer. The one marked current is what every tool here reads and what the weekly backup keeps; switch to work on a different one.</p>
+      <p class="card-sub">The mail archives MailArchive Desktop knows about on this computer. The one marked current is what every tool here reads and what the scheduled backup keeps; switch to work on a different one.</p>
       {{if .SwitchLocks}}<p class="card-sub warn" id="switchLocks">{{template "switchLocks" .}}</p>{{end}}
       <ul class="archive-list">
         {{range .Archives}}<li class="archive-row{{if not .Available}} unavailable{{end}}">
@@ -1389,7 +1402,7 @@ pre{white-space:pre-wrap;overflow-wrap:anywhere;background:var(--bg);border:1px 
           {{if .KindLabel}}<span class="archive-kind">{{.KindLabel}}</span>{{end}}
           {{if .SourceLostSince}}<span class="archive-tag">This archive's source hasn't been reachable since {{.SourceLostSince}} — reconnect the source (its mailbox or mail folder) to resume backups.</span>{{end}}
           {{if eq .Kind "encrypted"}}<button class="btn secondary" type="button" data-forget-archive data-path="{{.Path}}" title="Stop protecting this folder as an encrypted archive on this computer — for example after you removed the archive on purpose. Nothing in the folder is changed.">Forget this encrypted archive here</button>{{end}}
-          {{if .Problem}}<span class="archive-tag">{{.Problem}}</span>{{else if not .Available}}<span class="archive-tag">Not reachable right now — reconnect the drive or folder and it comes back. Nothing was removed.</span>{{else if .Sealed}}<span class="archive-tag">Paused (read-only) — Resume it to make changes.</span> <button class="btn secondary" type="button" data-resume-archive data-path="{{.Path}}" title="Make this archive writable again so backups and changes can resume.">Resume</button>{{else}}{{if .Current}}<span class="archive-tag current">Current archive</span>{{else}}<button class="btn secondary" type="button" data-switch-archive data-path="{{.Path}}" title="Make this the current archive — what every tool here reads and what the weekly backup keeps.">Switch to this archive</button>{{end}} <button class="btn secondary" type="button" data-pause-archive data-path="{{.Path}}" title="Make this archive read-only so nothing can change it. You can Resume it any time; nothing is deleted.">Pause (make read-only)</button>{{end}}
+          {{if .Problem}}<span class="archive-tag">{{.Problem}}</span>{{else if not .Available}}<span class="archive-tag">Not reachable right now — reconnect the drive or folder and it comes back. Nothing was removed.</span>{{else if .Sealed}}<span class="archive-tag">Paused (read-only) — Resume it to make changes.</span> <button class="btn secondary" type="button" data-resume-archive data-path="{{.Path}}" title="Make this archive writable again so backups and changes can resume.">Resume</button>{{else}}{{if .Current}}<span class="archive-tag current">Current archive</span>{{else}}<button class="btn secondary" type="button" data-switch-archive data-path="{{.Path}}" title="Make this the current archive — what every tool here reads and what the scheduled backup keeps.">Switch to this archive</button>{{end}} <button class="btn secondary" type="button" data-pause-archive data-path="{{.Path}}" title="Make this archive read-only so nothing can change it. You can Resume it any time; nothing is deleted.">Pause (make read-only)</button>{{end}}
         </li>{{end}}
       </ul>
     </div>{{end}}
@@ -1464,7 +1477,7 @@ pre{white-space:pre-wrap;overflow-wrap:anywhere;background:var(--bg);border:1px 
     <div class="card" id="sec-archive">
       <h2>Archive now</h2>
       {{if .ArchiveNowOff}}<p class="card-sub steps" id="archiveNowOff">{{.ArchiveNowOff}}</p>{{else}}<p class="card-sub">Fetch the latest mail into your archive. The first time, you sign in with a Microsoft device code shown here.</p>
-      <button class="btn" id="archiveBtn">Archive now</button>{{end}}
+      <button class="btn" id="archiveBtn"{{if .ArchiveNowConfirm}} data-confirm="{{.ArchiveNowConfirm}}"{{end}}>Archive now</button>{{end}}
       {{if .ReaderURL}}<a class="btn secondary" href="{{.ReaderURL}}" target="_blank" rel="noopener">Open archive</a> <a class="btn secondary" href="{{.ReaderURL}}goback" target="_blank" rel="noopener">Go back in time</a>{{end}}
       <button class="btn secondary" id="anotherBrowser" type="button">Use another browser…</button>
       <div class="note" id="linkNote" hidden></div>
@@ -1484,10 +1497,31 @@ pre{white-space:pre-wrap;overflow-wrap:anywhere;background:var(--bg);border:1px 
       <h2>Settings</h2>
       <label for="outDir">Archive location</label>
       <input id="outDir" value="{{.OutDir}}" placeholder="e.g. C:\MailArchive, a mapped drive, or a UNC path" spellcheck="false">
+      <p class="card-sub" id="settingsMoveNote" hidden>{{.MoveFirstLine}}</p>
       {{if .SwitchLocks}}<p class="card-sub warn" id="switchLocksSettings">{{template "switchLocks" .}}</p>{{end}}
-      <label class="checkline"><input type="checkbox" id="keepRaw"{{if .KeepRaw}} checked{{end}}> Keep each message's original .eml too</label>
-      <label class="checkline"><input type="checkbox" id="incDeleted"{{if .IncludeDeleted}} checked{{end}}> Include Deleted Items</label>
-      <label class="checkline"><input type="checkbox" id="incJunk"{{if .IncludeJunk}} checked{{end}}> Include Junk Email</label>
+      {{if .Set.Unknown}}<p class="card-sub" id="settingsUnknown">{{.Set.Unknown}}</p>{{end}}
+      {{if .Set.AutoPaused}}<p class="card-sub warn" id="settingsAutoPaused">{{.Set.AutoPaused}}</p>{{end}}
+      {{if .Set.Sched}}<div id="schedFields" data-sched-fields data-installed-interval="{{if .Set.Installed}}{{.Set.Interval}}{{end}}" data-installed-at="{{if .Set.Installed}}{{.Set.At}}{{end}}" data-installed-sync="{{if .Set.SyncOn}}1{{end}}" data-must-post="{{if .Set.MustPost}}1{{end}}">
+      <div class="row2">
+        <div><label for="schedInterval">How often</label>
+          <select id="schedInterval" data-kind-field>{{if .Set.SchedNone}}<option value=""{{if not .Set.Interval}} selected{{end}}>No scheduled backup</option>{{end}}{{if .Set.SchedHourly}}<option value="hourly"{{if eq .Set.Interval "hourly"}} selected{{end}}>Hourly</option>{{end}}<option value="daily"{{if eq .Set.Interval "daily"}} selected{{end}}>Daily</option><option value="weekly"{{if eq .Set.Interval "weekly"}} selected{{end}}>Weekly (Sunday)</option></select></div>
+        <div><label for="schedTime">At (local time{{if .Set.SchedHourly}}; hourly uses the minutes{{end}})</label><input id="schedTime" type="time" value="{{.Set.At}}" data-kind-field></div>
+      </div>
+      {{if .Set.Sync}}<label class="checkline"><input type="checkbox" id="schedPresync"{{if .Set.SyncOn}} checked{{end}}{{if not .Set.Interval}} disabled{{end}} data-kind-field> Sync Thunderbird before each backup</label>
+      <p class="card-sub" data-sync-hint{{if .Set.Interval}} hidden{{end}}>{{.SyncFirstLine}}</p>
+      {{if .Set.SyncReason}}<p class="card-sub warn" id="schedSyncReason">{{.Set.SyncReason}}</p>{{end}}
+      <p class="note" id="schedPresyncNote">{{.Set.SyncNotice}}</p>
+      {{if .Set.MacNote}}<p class="note" id="schedMacNote">{{.Set.MacNote}}</p>{{end}}{{end}}
+      {{if .Set.AutoPaused}}<p class="card-sub" id="settingsAutoPausedSave">{{.AutoPausedSaveLine}}</p>{{end}}
+      </div>{{end}}
+      {{if .Set.ReadOnly}}<p class="card-sub" id="settingsSchedReadOnly">{{.Set.ReadOnly}}</p>{{end}}
+      {{if .Set.Remedy}}<p class="card-sub" id="settingsSchedRemedy">{{.Set.Remedy}}</p>{{end}}
+      {{if .Set.Eml}}<p class="card-sub" id="emlReadOnly">Keep each message's original .eml too: <b>{{.Set.Eml}}</b></p>{{end}}
+      {{if .Set.M365Boxes}}<div id="m365Boxes"><p class="card-sub" id="m365BoxesLine">{{.M365BoxesLine}}</p>
+      <label class="checkline"><input type="checkbox" id="keepRaw"{{if .KeepRaw}} checked{{end}} data-kind-field> Keep each message's original .eml too</label>
+      <label class="checkline"><input type="checkbox" id="incDeleted"{{if .IncludeDeleted}} checked{{end}} data-kind-field> Include Deleted Items</label>
+      <label class="checkline"><input type="checkbox" id="incJunk"{{if .IncludeJunk}} checked{{end}} data-kind-field> Include Junk Email</label></div>{{end}}
+      {{if .Set.ArchiveNowUses}}<p class="card-sub" id="archiveNowUses">{{.ArchiveNowUsesLine}}</p>{{end}}
       <div style="margin-top:14px"><button class="btn secondary" id="saveSettings">Save settings</button></div>
       <div class="note" id="settingsNote" hidden></div>
       <div class="note warnbox" id="settingsConfirm" role="alert" hidden>
@@ -1527,7 +1561,7 @@ pre{white-space:pre-wrap;overflow-wrap:anywhere;background:var(--bg);border:1px 
 
     {{if .ShowEncryption}}<div class="card" id="sec-encryption">
       <h2>Encryption</h2>
-      {{if .EncNotSetUp}}<p class="card-sub warn" id="encNotSetUp">Finish setting up: {{.EncNotSetUp}}{{if .EncRunNow}} Unlock it, then click Run now on the Weekly backup card.{{end}}</p>{{end}}
+      {{if .EncNotSetUp}}<p class="card-sub warn" id="encNotSetUp">Finish setting up: {{.EncNotSetUp}}{{if .EncRunNow}} Unlock it, then click Run now on the Scheduled backup card.{{end}}</p>{{end}}
       {{if .EncUnlocked}}<p class="card-sub" id="encState">Unlocked: you can read this archive's messages, search it and go back in time.{{if .EncRemembered}} This computer remembers its key.{{end}}</p>
       {{if .EncPauseNote}}<p class="card-sub" id="encPauseNote">Paused: {{.EncPauseNote}}</p>{{end}}
       {{range .EncWarnings}}<p class="card-sub warn">{{.}}</p>{{end}}
@@ -1565,7 +1599,7 @@ pre{white-space:pre-wrap;overflow-wrap:anywhere;background:var(--bg);border:1px 
     </div>{{end}}
 
     <div class="card" id="sec-backup">
-      <h2>Weekly backup</h2>
+      <h2>Scheduled backup</h2>
       {{if .Encrypted}}<p class="card-sub" id="backupEncrypted">Scheduled backups of an encrypted archive aren't available yet: a backup into it needs its password, so it runs only while you are here to give it.{{if .EncRunNow}}{{if not .EncUnlocked}} Unlock it on its Encryption card, then click Run now.{{end}}{{else}} {{.EncBackupHow}}{{end}}</p>{{end}}
       {{if .ShowBackupOff}}<p class="card-sub steps" id="backupOff">A scheduled backup isn't set up here for this archive. To keep this local-files archive current on a schedule, set one up in the MailArchive wizard (mailarchive wizard) — answer "Keep this archive current?" at the end — or run the mailarchive schedule command that Status &amp; health prints for this archive.</p>{{else}}
       {{if .BackupUnknown}}<p class="card-sub" id="backupUnknown">{{.UnknownLine}}</p>{{end}}
@@ -1573,17 +1607,10 @@ pre{white-space:pre-wrap;overflow-wrap:anywhere;background:var(--bg);border:1px 
       {{if .NoticeRunJob}}<p class="card-sub" id="backupReadOnly">How often: {{.ReadOnlyCadence}}. Sync Thunderbird first: {{.ReadOnlySync}}.</p>{{end}}
       {{if .BrokenLine}}<p class="card-sub" id="backupBroken">{{.BrokenLine}}</p>{{end}}
       {{if .HasSchedule}}<p class="card-sub" id="schedKind">This archive's scheduled backup: {{.ScheduleKind}}.</p>{{end}}
-      {{if .ShowInstall}}<p class="card-sub">Run a capture automatically on a schedule. It runs even when this app is closed (as long as you stay signed in to your computer), using your saved Microsoft sign-in.</p>{{end}}
-      {{if .ShowLocalCreate}}<p class="card-sub">Keep this archive up to date automatically on a schedule: it re-reads your Thunderbird mail files and adds anything new. It runs while you are logged in.</p>{{end}}
-      {{if .ShowLocalEdit}}<p class="card-sub">Change this archive's scheduled backup below — how often, the time, and whether it syncs Thunderbird first — then choose Install / update.</p>{{end}}
-      {{if or .ShowInstall .ShowLocalCreate .ShowLocalEdit}}<div class="row2">
-        <div><label for="schedInterval">How often</label>
-          <select id="schedInterval"><option value="weekly"{{if eq .Interval "weekly"}} selected{{end}}>Weekly (Sunday)</option><option value="daily"{{if eq .Interval "daily"}} selected{{end}}>Daily</option>{{if or .ShowLocalCreate .ShowLocalEdit}}<option value="hourly"{{if eq .Interval "hourly"}} selected{{end}}>Hourly</option>{{end}}</select></div>
-        <div><label for="schedTime">At (local time{{if or .ShowLocalCreate .ShowLocalEdit}}; hourly uses the minutes{{end}})</label><input id="schedTime" type="time" value="{{.WeeklyTime}}"></div>
-      </div>
-      {{if .LocalPresyncOfferable}}<label class="checkline"><input type="checkbox" id="schedPresync"{{if .LocalPresyncOn}} checked{{end}}> Sync Thunderbird before each backup</label>
-      <p class="note" id="schedPresyncNote">{{.PresyncNoticeText}}</p>{{end}}{{end}}
-      <div style="margin-top:14px">{{if or .ShowInstall .ShowLocalCreate .ShowLocalEdit}}<button class="btn" id="schedInstall" title="Create or update the scheduled backup for this archive, using the settings above.">Install / update</button> {{end}}{{if .ShowRepair}}{{if not .ShowLocalEdit}}<button class="btn" id="schedRepair" title="Re-point the weekly backup at this archive and fix a broken or stale schedule entry. Your cadence and any Thunderbird-sync setting are kept; nothing in the archive changes.">Repair</button> {{end}}<button class="btn" id="runBackupBtn" type="button" title="{{if .LocalPresyncOn}}Run this archive's backup now, instead of waiting for its schedule. Because Thunderbird sync is on, it first opens Thunderbird, waits for its mail, then closes it (which can run Thunderbird's on-exit actions, for example emptying Trash) before archiving.{{else}}Run this archive's weekly backup right now, instead of waiting for its schedule.{{end}}">Run now</button> {{end}}{{if .ShowBrokenRepair}}<button class="btn" id="schedRepair" title="Make this archive's backup settings file again from the archive's own record. Thunderbird sync is then off.">Repair</button> {{end}}{{if .EncRunNow}}<button class="btn" id="runBackupBtn" type="button" title="Back up this encrypted archive now, while it is unlocked here."{{if not .EncUnlocked}} disabled{{end}}>Run now</button> {{end}}{{if .ShowRemove}}<button class="btn secondary" id="schedRemove" title="Delete the scheduled weekly backup. Your archive and everything in it are kept.">Remove</button>{{end}}</div>
+      {{if .ShowInstall}}<p class="card-sub" id="schedNone">{{if .OutDir}}No scheduled backup is set up for this archive yet. A scheduled backup runs a capture automatically, even when this app is closed (as long as you stay signed in to your computer), using your saved Microsoft sign-in.{{else}}Choose an archive location in Settings first; its backup options then show there.{{end}}</p>{{end}}
+      {{if .ShowLocalCreate}}<p class="card-sub" id="schedNone">No scheduled backup is set up for this archive yet. A scheduled backup keeps it up to date automatically: it re-reads your Thunderbird mail files and adds anything new. It runs while you are logged in.</p>{{end}}
+      {{if and .Set.Sched .OutDir}}<p class="card-sub" id="changeInSettings">{{if .Set.SchedCapture}}How often and time{{else}}How often, time and Thunderbird sync{{end}}: <a href="#sec-settings">Change in Settings</a></p>{{end}}
+      <div style="margin-top:14px">{{if .ShowRepair}}<button class="btn" id="schedRepair" title="Re-point the scheduled backup at this archive and fix a broken or stale schedule entry. Your cadence and any Thunderbird-sync setting are kept; nothing in the archive changes.">Repair</button> <button class="btn" id="runBackupBtn" type="button" title="{{if .LocalPresyncOn}}Run this archive's backup now, instead of waiting for its schedule. Because Thunderbird sync is on, it first opens Thunderbird, waits for its mail, then closes it (which can run Thunderbird's on-exit actions, for example emptying Trash) before archiving.{{else}}Run this archive's scheduled backup right now, instead of waiting for its schedule.{{end}}">Run now</button> {{end}}{{if .ShowCaptureRepair}}<button class="btn" id="schedRepair" title="Put this archive's scheduled capture back as it was set up: its cadence is kept, and a capture still named for the archive's earlier location is moved to this one. Nothing in the archive changes.">Repair</button> {{end}}{{if .ShowBrokenRepair}}<button class="btn" id="schedRepair" title="Make this archive's backup settings file again from the archive's own record. Thunderbird sync is then off.">Repair</button> {{end}}{{if .EncRunNow}}<button class="btn" id="runBackupBtn" type="button" title="Back up this encrypted archive now, while it is unlocked here."{{if not .EncUnlocked}} disabled{{end}}>Run now</button> {{end}}{{if .ShowRemove}}<button class="btn secondary" id="schedRemove" title="Delete this archive's scheduled backup. Your archive and everything in it are kept.">Remove</button>{{end}}</div>
       <div class="note" id="runBackupNote" hidden></div>
       <div class="note" id="schedState" hidden></div>{{end}}
     </div>
@@ -1763,13 +1790,52 @@ if(clr)clr.addEventListener('click',async()=>{
   finally{done(keep);}
 });
 
+// Settings is the one place to change how this archive is backed up (design-desktop-settings-card
+// ruling 1, 3.6). The schedule fields carry what is installed, so Save sends a schedule request
+// only when it changed: a cadence differing from the installed one, a cadence chosen with nothing
+// installed, the sync box changed, or an installed entry that is gone (auto-paused). "No scheduled
+// backup" sends nothing.
+const schedFields=document.querySelector('[data-sched-fields]');
+const settingBoxes=[['keepRaw','keepRaw'],['incDeleted','includeDeleted'],['incJunk','includeJunk']];
+function locationMoved(){const o=$('outDir');return !!o&&o.value.trim()!==drawnFor.trim();}
+function schedChanged(){
+  const iv=$('schedInterval'),tm=$('schedTime'),ps=$('schedPresync');
+  if(!schedFields||!iv||!iv.value)return false;
+  const d=schedFields.dataset;
+  if(d.mustPost==='1'||!d.installedInterval)return true;
+  if(iv.value!==d.installedInterval||(tm&&tm.value!==d.installedAt))return true;
+  return !!ps&&ps.checked!==(d.installedSync==='1');
+}
+// settingsState greys what a Save would not send: every option while a new location is typed
+// (it is another archive's, shown after the save), and the sync while no cadence is chosen.
+function settingsState(){
+  const moved=locationMoved(),m=$('settingsMoveNote');
+  if(m)m.hidden=!moved;
+  document.querySelectorAll('#sec-settings [data-kind-field]').forEach(f=>{f.disabled=moved;});
+  const iv=$('schedInterval'),ps=$('schedPresync'),hint=document.querySelector('[data-sync-hint]');
+  const none=!!iv&&!iv.value;
+  if(ps&&none)ps.disabled=true;
+  if(hint)hint.hidden=!none;
+}
+const outDirEl=$('outDir');
+if(outDirEl)outDirEl.addEventListener('input',settingsState);
+const schedIntervalEl=$('schedInterval');
+if(schedIntervalEl)schedIntervalEl.addEventListener('change',settingsState);
+settingsState();
 // Saving a new archive location while the weekly backup is installed asks first (XC22): the
 // backup reads the location when it runs, so it would archive the signed-in mailbox into the new
 // folder. The answers are the server's own three: keep the backup, remove it, or cancel.
+// A new location is saved alone (3.6 step 2); otherwise the boxes go to api/settings and, only
+// after it answers ok with no question, a changed schedule to api/schedule-install (step 3). The
+// note says what happened (step 6): never "saved" and "Nothing was changed" together.
 const save=$('saveSettings');
 async function doSave(backup){
   const n=$('settingsNote'),c=$('settingsConfirm');
-  const body={out:$('outDir').value,keepRaw:$('keepRaw').checked,includeDeleted:$('incDeleted').checked,includeJunk:$('incJunk').checked,backup:backup||'',drawnFor:drawnFor};
+  const say=t=>{if(n){n.hidden=false;n.textContent=t;}};
+  const moved=locationMoved();
+  const body={out:$('outDir').value,backup:backup||'',drawnFor:drawnFor};
+  let boxesChanged=false;
+  if(!moved)settingBoxes.forEach(([id,key])=>{const b=$(id);if(b){body[key]=b.checked;if(b.checked!==b.defaultChecked)boxesChanged=true;}});
   try{const d=await(await fetch('api/settings',{method:'POST',headers:{'Content-Type':'application/json','X-CSRF-Token':csrf},body:JSON.stringify(body)})).json();
     if(d.confirm){
       if(n)n.hidden=true;
@@ -1777,11 +1843,33 @@ async function doSave(backup){
       return false;
     }
     if(c)c.hidden=true;
-    if(n){n.hidden=false;n.textContent=d.ok?(backup==='remove'?'Settings saved, and the weekly backup removed. To run it again, click Install / update on the Weekly backup card.':'Settings saved.'):(d.error||'Could not save.');}
+    if(!d.ok){say(d.error||'Could not save.');return false;}
     // A new location is another archive: the page is drawn again for it (C-12).
-    if(d.ok&&body.out.trim()!==drawnFor.trim())setTimeout(()=>location.reload(),600);
-    return !!d.ok;
-  }catch(e){if(n){n.hidden=false;n.textContent='Error: '+e;}return false;}
+    if(moved){say(backup==='remove'?'Settings saved, and the scheduled backup removed. To set it up again, choose How often in Settings and click Save settings.':'Settings saved.');setTimeout(()=>location.reload(),600);return true;}
+    settingBoxes.forEach(([id])=>{const b=$(id);if(b)b.defaultChecked=b.checked;});
+    const parts=boxesChanged?['Settings saved.']:[];
+    if(schedChanged()){
+      const r=await schedPost();
+      if(r.ok){parts.push('Backup schedule updated.'+(r.note?' '+r.note:''));schedState();}
+      else parts.push('The backup schedule was not changed: '+(r.reason||r.error||'it could not be saved.'));
+    }
+    say(parts.length?parts.join(' '):'There was nothing to save: these are the settings already in use.');
+    return true;
+  }catch(e){say('Error: '+e);return false;}
+}
+// schedPost sends the Settings card's schedule (3.6 step 3): its cadence, its time and, when the
+// box is drawn, the sync. On success the fields remember what is now installed.
+async function schedPost(){
+  const iv=$('schedInterval'),tm=$('schedTime'),ps=$('schedPresync');
+  const body={interval:iv?iv.value:'',time:tm?tm.value:'',drawnFor:drawnFor};
+  if(ps)body.presync=ps.checked; // a sync box the page did not show is never posted as off (C-10)
+  const r=await(await fetch('api/schedule-install',{method:'POST',headers:{'Content-Type':'application/json','X-CSRF-Token':csrf},body:JSON.stringify(body)})).json();
+  if(r.ok&&schedFields){
+    const d=schedFields.dataset;
+    d.installedInterval=body.interval;d.installedAt=body.time;d.installedSync=body.presync?'1':'';d.mustPost='';
+    const none=iv?iv.querySelector('option[value=""]'):null;if(none)none.remove(); // once installed, Remove stops it (C-2)
+  }
+  return r;
 }
 // "Use this archive": the archive the GUI used last, offered on the empty state. It is the same save
 // as typing the folder and clicking Save settings (same checks), and nothing is saved until this click.
@@ -1934,6 +2022,8 @@ function markNav(){
 }
 window.addEventListener('hashchange',markNav);markNav();
 if(btn)btn.addEventListener('click',async()=>{
+  // On a local archive where Microsoft 365 is set up, Archive now turns it mixed: asked first (C-7).
+  if(btn.dataset.confirm&&!confirm(btn.dataset.confirm))return;
   const r=$('captureResult'),done=busy(btn,'Starting…',r,'Starting to archive your mail now…');
   try{const d=await(await post('api/capture')).json();
     if(!d.ok){done();if(r){r.hidden=false;r.textContent=d.error||'Could not start.';}return;}
@@ -1983,25 +2073,20 @@ async function schedState(){
     else n.textContent='Not installed.';
   }catch(e){}
 }
-// schedPost sends the schedule request; done is the pressed button's busy (MA-872), given back
-// when the reply arrives, or when the request fails.
-function schedPost(path,done){
+// cardPost sends the Scheduled backup card's Repair or Remove; done is the pressed button's busy
+// (MA-872), given back when the reply arrives, or when the request fails. The card carries no
+// schedule inputs (Settings is the one editor, design-desktop-settings-card ruling 1), so a Repair
+// is an empty body: it keeps the installed cadence and sync (C-2, C-5), whatever Settings shows.
+function cardPost(path,done){
   const n=$('schedState');
-  // Repair/Remove cards render no interval/time inputs (only the Install card does), so read
-  // them defensively — a missing input must not throw and silently kill the click.
-  const iv=$('schedInterval'),tm=$('schedTime'),ps=$('schedPresync');
-  // A sync box the page did not show is never posted as off (C-10): no presync means unchanged.
-  const body={interval:iv?iv.value:'',time:tm?tm.value:'',drawnFor:drawnFor};
-  if(ps)body.presync=ps.checked;
-  return fetch(path,{method:'POST',headers:{'Content-Type':'application/json','X-CSRF-Token':csrf},body:JSON.stringify(body)})
-    .then(r=>r.json()).then(d=>{done();if(n){n.hidden=false;n.textContent=d.ok?(d.note||'Saved.'):(d.error||'Failed.');}
+  return fetch(path,{method:'POST',headers:{'Content-Type':'application/json','X-CSRF-Token':csrf},body:JSON.stringify({drawnFor:drawnFor})})
+    .then(r=>r.json()).then(d=>{done();if(n){n.hidden=false;n.textContent=d.ok?(d.note||'Done.'):(d.error||'Failed.');}
       return schedState().then(()=>{if(n&&d.left){n.hidden=false;n.textContent='Removed. Left in place: '+d.left+' cannot be read, so removal cannot tell which schedule it records - '+d.remedy+'.';}});})
     .catch(e=>{done();if(n){n.hidden=false;n.textContent='Error: '+e;}});
 }
-const si=$('schedInstall'),sr=$('schedRemove'),srp=$('schedRepair');
-if(si)si.addEventListener('click',()=>schedPost('api/schedule-install',busy(si,'Saving…',$('schedState'),'Setting up the scheduled backup…')));
-if(srp)srp.addEventListener('click',()=>schedPost('api/schedule-install',busy(srp,'Repairing…',$('schedState'),'Repairing the scheduled backup…')));
-if(sr)sr.addEventListener('click',()=>schedPost('api/schedule-remove',busy(sr,'Removing…',$('schedState'),'Removing the scheduled backup…')));
+const sr=$('schedRemove'),srp=$('schedRepair');
+if(srp)srp.addEventListener('click',()=>cardPost('api/schedule-install',busy(srp,'Repairing…',$('schedState'),'Repairing the scheduled backup…')));
+if(sr)sr.addEventListener('click',()=>cardPost('api/schedule-remove',busy(sr,'Removing…',$('schedState'),'Removing the scheduled backup…')));
 // "Run now" runs this archive's recorded run-job backup immediately (local archives have no
 // "Archive now"), streaming progress through the shared activity state.
 const rbBtn=$('runBackupBtn');

@@ -199,9 +199,12 @@ func TestScheduleRepairLocalPreservesCadenceAndPresync(t *testing.T) {
 // cadence/time/pre-sync form as the create case, PREFILLED from the installed schedule
 // (ShowLocalEdit) — so the owner can change the cadence, the time, or the Thunderbird-sync
 // toggle in place, not only by removing and re-creating the schedule (friction MED-5 + the
-// "editable after setup" ruling). The empty-posting Repair is replaced by the form's
-// Install/update button. (The non-editable DOM shape for a card the Desktop can NOT
-// reconstruct is still pinned by TestMA691...; that card shows no inputs.)
+// "editable after setup" ruling). Amended 2026-10-28 (design-desktop-settings-card slice A5,
+// OR-3, owner-accepted; nothing weakened): the form is on the Settings card, saved with Save
+// settings (Settings is the one editor, ruling 1); the Scheduled backup card keeps its
+// empty-posting Repair beside Run now and Remove, and points at Settings. (The non-editable
+// DOM shape for a card the Desktop can NOT reconstruct is still pinned by TestMA691...; that
+// card shows no inputs.)
 func TestLocalScheduleCardEditableAfterInstall(t *testing.T) {
 	home := t.TempDir()
 	t.Setenv("HOME", home)
@@ -238,10 +241,20 @@ func TestLocalScheduleCardEditableAfterInstall(t *testing.T) {
 
 	page, _ := getPage(t, DashboardHandler(Config{Out: out, GOOS: "darwin", SettingsPath: filepath.Join(home, "s.json")}))
 
-	for _, want := range []string{`id="schedInterval"`, `id="schedTime"`, `id="schedInstall"`, `id="schedPresync"`, `id="schedRemove"`} {
-		if !strings.Contains(page, want) {
-			t.Errorf("the editable scheduled card is missing %q", want)
+	settings := page[strings.Index(page, `id="sec-settings"`):]
+	settings = settings[:strings.Index(settings, `id="saveSettings"`)]
+	for _, want := range []string{`id="schedInterval"`, `id="schedTime"`, `id="schedPresync"`} {
+		if !strings.Contains(settings, want) {
+			t.Errorf("the editable schedule in Settings is missing %q", want)
 		}
+	}
+	for _, want := range []string{`id="schedRemove"`, `id="schedRepair"`, `id="runBackupBtn"`, "Change in Settings"} {
+		if !strings.Contains(page, want) {
+			t.Errorf("the Scheduled backup card is missing %q", want)
+		}
+	}
+	if strings.Contains(page, `id="schedInstall"`) {
+		t.Error("the page still carries the removed Install / update button")
 	}
 	if !strings.Contains(page, `value="daily" selected`) {
 		t.Error("the cadence select is not prefilled to the installed Daily")
@@ -251,9 +264,6 @@ func TestLocalScheduleCardEditableAfterInstall(t *testing.T) {
 	}
 	if !strings.Contains(page, `id="schedPresync" checked`) {
 		t.Error("the pre-sync checkbox is not checked for a schedule that syncs Thunderbird")
-	}
-	if strings.Contains(page, `id="schedRepair"`) {
-		t.Error("the editable card must not show the empty-posting Repair button (Install/update replaces it)")
 	}
 }
 

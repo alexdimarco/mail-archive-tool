@@ -49,7 +49,7 @@ func TestMA616_IdentityNoteTexts(t *testing.T) {
 	if msg == "" {
 		t.Fatalf("no exe_former_name note:\n%v", r.Reasons)
 	}
-	for _, want := range []string{"former name of this program", "Why:", "Do this:", "Weekly backup card", "Nothing changes until you do."} {
+	for _, want := range []string{"former name of this program", "Why:", "Do this:", "Scheduled backup card", "Nothing changes until you do."} {
 		if !strings.Contains(msg, want) {
 			t.Errorf("exe_former_name note is missing %q:\n%s", want, msg)
 		}

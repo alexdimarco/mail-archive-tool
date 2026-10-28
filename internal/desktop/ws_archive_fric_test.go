@@ -884,7 +884,7 @@ func TestSettingsGuardWordsTheReadOnlyWayAndWhatToDoAfter(t *testing.T) {
 		t.Fatalf("a refused removal saved: %v", b)
 	}
 	assure.Refused(t, 1, msg, assure.Code(1), untouched,
-		assure.Names("could not be removed", "the scheduler said: schtasks /Delete failed: Access is denied. (0x80070005)", "nothing was saved", "Weekly backup card", "Save and keep the backup"))
+		assure.Names("could not be removed", "the scheduler said: schtasks /Delete failed: Access is denied. (0x80070005)", "nothing was saved", "Scheduled backup card", "Save and keep the backup"))
 
 	// the page: Cancel is the primary button, and what is said after a removal
 	page := e.get("/").Body.String()
@@ -893,7 +893,7 @@ func TestSettingsGuardWordsTheReadOnlyWayAndWhatToDoAfter(t *testing.T) {
 			t.Errorf("the Settings guard's buttons: the page lacks %q", want)
 		}
 	}
-	if !strings.Contains(dashboardJS, "Settings saved, and the weekly backup removed. To run it again, click Install / update on the Weekly backup card.") {
+	if !strings.Contains(dashboardJS, "Settings saved, and the scheduled backup removed. To set it up again, choose How often in Settings and click Save settings.") {
 		t.Error("dashboard.js does not say how to get the weekly backup back after it was removed *(script)*")
 	}
 }
