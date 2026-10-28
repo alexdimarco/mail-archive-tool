@@ -3,12 +3,15 @@ package desktop
 import (
 	"encoding/json"
 	"errors"
+	"fmt"
 	"log"
 	"net/http"
 	"os"
+	"runtime"
 	"strings"
 
 	"mail-archive-tool/internal/app"
+	"mail-archive-tool/internal/job"
 	"mail-archive-tool/internal/keyring"
 	"mail-archive-tool/internal/schedule"
 	"mail-archive-tool/internal/server"
@@ -41,7 +44,7 @@ func (cfg Config) backupTask() (string, schedule.State) {
 	if st == schedule.Installed {
 		return out, st
 	}
-	if bf := strings.TrimSpace(cfg.settings().BackupFor); bf != "" && !samePath(bf, out) {
+	if bf := cfg.captureBackupFor(); bf != "" && !samePath(bf, out) {
 		if s2 := cfg.taskState(bf); s2 == schedule.Installed {
 			return bf, s2
 		}
@@ -49,16 +52,92 @@ func (cfg Config) backupTask() (string, schedule.State) {
 	return "", st
 }
 
-// backupSpec builds the weekly-backup schedule Spec for the current archive.
-func (cfg Config) backupSpec() (schedule.Spec, error) { return cfg.backupSpecFor(cfg.effectiveOut()) }
+// namesRunJob reports whether the archive folder is a run-job's (design-desktop-settings-card
+// section 8): the job file named for it, job.PathFor(DefaultNameFor(folder)), reads securely
+// through job.Read and its Out is the same archive as folder. Owner-side evidence only; nothing
+// inside the archive is read. A job file that cannot be read fails the test (section 8's residual).
+func namesRunJob(folder string) bool {
+	folder = strings.TrimSpace(folder)
+	if folder == "" {
+		return false
+	}
+	p, err := job.PathFor(schedule.DefaultNameFor(folder))
+	if err != nil {
+		return false
+	}
+	j, err := job.Read(p)
+	return err == nil && schedule.SameArchivePath(j.Out, folder, runtime.GOOS)
+}
 
-// backupSpecFor builds the weekly-backup schedule Spec for the archive location out. The
+// captureBackupFor is Settings.BackupFor when it can belong to a capture, "" otherwise. BackupFor is
+// kept only for a capture (section 8): one an earlier version set for a run-job's folder would let
+// Remove, or a capture install, on another archive delete that run-job's scheduler entry, and would
+// show that run-job as this archive's backup. The readers skip it; it writes nothing.
+func (cfg Config) captureBackupFor() string {
+	bf := strings.TrimSpace(cfg.settings().BackupFor)
+	if bf == "" || namesRunJob(bf) {
+		return ""
+	}
+	return bf
+}
+
+// dropRunJobBackupFor is captureBackupFor for the two write paths (Remove and the capture install's
+// clean-up): a BackupFor that names a run-job is cleared in the settings file before they act, and
+// nothing else is written.
+func (d *dashboard) dropRunJobBackupFor() string {
+	bf := strings.TrimSpace(d.cfg.settings().BackupFor)
+	if bf != "" && namesRunJob(bf) {
+		_ = clearBackupForIf(d.cfg.SettingsPath, bf)
+		return ""
+	}
+	return bf
+}
+
+// clearBackupForIf clears Settings.BackupFor when it is still bf, and changes nothing else.
+func clearBackupForIf(settingsPath, bf string) error {
+	return UpdateSettings(settingsPath, "backupFor", func(s *Settings) {
+		if strings.TrimSpace(s.BackupFor) == bf {
+			s.BackupFor = ""
+		}
+	})
+}
+
+// ClearRunJobBackupFor is the Desktop's one-time start-up clean-up (design-desktop-settings-card
+// section 8, rev4.1): a BackupFor an earlier version recorded for a run-job's folder is cleared in the
+// settings file at settingsPath. It writes nothing else — no scheduler entry, descriptor or job file
+// is touched — and nothing at all when BackupFor is unset, belongs to a capture, or names a job file
+// that cannot be read. It reports whether it cleared one.
+func ClearRunJobBackupFor(settingsPath string) (bool, error) {
+	bf := strings.TrimSpace(LoadSettings(settingsPath).BackupFor)
+	if bf == "" || !namesRunJob(bf) {
+		return false, nil
+	}
+	if err := clearBackupForIf(settingsPath, bf); err != nil {
+		return false, err
+	}
+	return true, nil
+}
+
+// backupSpec builds the weekly-backup schedule Spec for the current archive with the cadence the
+// settings file records as the capture's last install. No install or repair builds from it (design
+// section 3.6 step 4): they use backupSpecFor with the posted, or the descriptor's, cadence.
+func (cfg Config) backupSpec() (schedule.Spec, error) {
+	s := cfg.settings()
+	iv, err := schedule.ParseInterval(s.Interval)
+	if err != nil || strings.TrimSpace(s.Interval) == "" {
+		iv = schedule.Weekly // default to weekly
+	}
+	return cfg.backupSpecFor(cfg.effectiveOut(), iv, s.WeeklyTime)
+}
+
+// backupSpecFor builds the weekly-backup schedule Spec for the archive location out, at the cadence
+// iv and the time at ("" is 03:00). The
 // scheduled task runs THIS desktop binary's headless `-capture` mode (design DC1):
 // it reads the saved config + settings + sign-in token at RUN time, so a settings
 // change never silently diverges from what the schedule runs, and the capture
 // succeeds whether or not the dashboard app is open. Reuses internal/schedule
 // unchanged (Install writes the Windows wrapper + descriptor and confirms via Query).
-func (cfg Config) backupSpecFor(out string) (schedule.Spec, error) {
+func (cfg Config) backupSpecFor(out string, iv schedule.Interval, at string) (schedule.Spec, error) {
 	if out == "" {
 		return schedule.Spec{}, errors.New("choose an archive location first")
 	}
@@ -77,15 +156,7 @@ func (cfg Config) backupSpecFor(out string) (schedule.Spec, error) {
 	if exe == "" {
 		return schedule.Spec{}, errors.New("cannot determine the program path to schedule")
 	}
-	s := cfg.settings()
-	iv, err := schedule.ParseInterval(s.Interval)
-	if err != nil {
-		iv = schedule.Weekly // default to weekly
-	}
-	if strings.TrimSpace(s.Interval) == "" {
-		iv = schedule.Weekly
-	}
-	at := strings.TrimSpace(s.WeeklyTime)
+	at = strings.TrimSpace(at)
 	if at == "" {
 		at = "03:00"
 	}
@@ -149,17 +220,22 @@ func (d *dashboard) scheduleInstall(w http.ResponseWriter, r *http.Request) {
 	}
 	var in struct{ Interval, Time string }
 	_ = json.NewDecoder(http.MaxBytesReader(w, r.Body, 4<<10)).Decode(&in)
-	if err := saveScheduleChoice(d.cfg.SettingsPath, in.Interval, in.Time); err != nil {
-		writeJSON(w, map[string]any{"ok": false, "error": err.Error()})
-		return
-	}
 	// §4.6.3/MA-617: a capture install (or repair) refuses BEFORE schedule.Install
 	// when Microsoft 365 is not set up, with the same text a scheduled capture does.
 	if err := d.cfg.m365Ready(); err != nil {
 		writeJSON(w, map[string]any{"ok": false, "error": err.Error()})
 		return
 	}
-	spec, err := d.cfg.backupSpec()
+	// The capture is built from the values it is given, never from the settings file
+	// (design-desktop-settings-card 3.6 step 4, C-13, R3C-14): an install from the posted
+	// cadence; an empty-body Repair from the installed descriptor's, so it keeps its own
+	// cadence even when the one settings file holds another archive's.
+	iv, at, err := d.captureCadence(in.Interval, in.Time)
+	if err != nil {
+		writeJSON(w, map[string]any{"ok": false, "error": err.Error()})
+		return
+	}
+	spec, err := d.cfg.backupSpecFor(out, iv, at)
 	if err != nil {
 		writeJSON(w, map[string]any{"ok": false, "error": err.Error()})
 		return
@@ -172,9 +248,17 @@ func (d *dashboard) scheduleInstall(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, map[string]any{"ok": false, "error": err.Error()})
 		return
 	}
+	// Recorded only now that it is installed, and before the clean-up below, which can
+	// return early (C-13, R3C-14): the settings file is the capture's record of what it
+	// last installed, never an input to an install.
+	if err := saveScheduleChoice(d.cfg.SettingsPath, string(spec.Interval), spec.At); err != nil {
+		log.Printf("the scheduled backup is installed, but the settings file could not record its cadence: %v", err)
+	}
 	// The task is named for the location now: the one that kept the name of an earlier location
 	// (Save and keep the backup) would run beside it and archive into the same folder (E4-AI6).
-	if bf := strings.TrimSpace(d.cfg.settings().BackupFor); bf != "" && !samePath(bf, spec.Out) {
+	// A BackupFor that names a run-job's folder is not this capture's: it is cleared, never removed
+	// (design-desktop-settings-card section 8).
+	if bf := d.dropRunJobBackupFor(); bf != "" && !samePath(bf, spec.Out) {
 		if _, err := d.removeTaskAt(bf); err != nil {
 			writeJSON(w, map[string]any{"ok": false, "error": "The weekly backup is installed, but the earlier one, named for " + bf + ", could not be removed: " + err.Error()})
 			return
@@ -191,6 +275,30 @@ func (d *dashboard) scheduleInstall(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	writeJSON(w, resp)
+}
+
+// captureCadence is the cadence a capture install or repair builds from (3.6 step 4): the posted
+// interval and time; with none posted (the card's Repair), the installed descriptor's — the one
+// recorded for the folder the capture is named for, which may be the earlier location's (BackupFor);
+// with no descriptor either, weekly at 03:00. A posted interval MailArchive does not know is refused
+// before anything is written, never turned into another cadence.
+func (d *dashboard) captureCadence(interval, at string) (schedule.Interval, string, error) {
+	if strings.TrimSpace(interval) == "" {
+		p, _ := d.cfg.backupTask()
+		if p == "" {
+			p = d.cfg.effectiveOut()
+		}
+		if dsc, err := schedule.ReadDescriptor(p); err == nil && strings.TrimSpace(dsc.Interval) != "" {
+			interval, at = dsc.Interval, dsc.At
+		} else {
+			return schedule.Weekly, "03:00", nil
+		}
+	}
+	iv, err := schedule.ParseInterval(interval)
+	if err != nil {
+		return "", "", fmt.Errorf("%q is not a backup schedule MailArchive knows (choose Daily or Weekly). Nothing was changed.", strings.TrimSpace(interval))
+	}
+	return iv, strings.TrimSpace(at), nil
 }
 
 // repairRunJob rebuilds a corroborated run-job schedule for out through the
@@ -280,7 +388,9 @@ func (d *dashboard) removeBackup() error {
 func (d *dashboard) removeTasks() (removed []string, err error) {
 	out := d.cfg.effectiveOut()
 	paths := []string{out}
-	if bf := strings.TrimSpace(d.cfg.settings().BackupFor); bf != "" && !samePath(bf, out) {
+	// A BackupFor that names a run-job's folder is not this archive's backup: it is cleared, and
+	// that run-job's entry is left alone (design-desktop-settings-card section 8).
+	if bf := d.dropRunJobBackupFor(); bf != "" && !samePath(bf, out) {
 		paths = append(paths, bf)
 	}
 	for _, p := range paths {
@@ -309,7 +419,7 @@ func (d *dashboard) removeTaskAt(p string) (bool, error) {
 		}
 		return true, d.cfg.RemoveBackupFor(p)
 	}
-	spec, err := d.cfg.backupSpecFor(p)
+	spec, err := d.cfg.backupSpecFor(p, schedule.Weekly, "") // only its name and folder matter to a removal
 	if err != nil {
 		return false, err
 	}

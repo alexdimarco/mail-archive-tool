@@ -5,6 +5,7 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 
 	"mail-archive-tool/internal/job"
@@ -108,50 +109,95 @@ func underPath(dir, p string) bool {
 	return p == dir || strings.HasPrefix(p, dir+string(os.PathSeparator))
 }
 
-// scheduleInstallLocal installs (or rewrites) a LOCAL archive's run-job backup from the
-// archive's own record plus the card's cadence and pre-sync toggle. It is the Desktop's
-// local-schedule CREATE and EDIT (an idempotent rewrite) — never a Microsoft 365
-// capture. Loopback-only + CSRF are already checked by the caller (scheduleInstall), and
-// an M365/mixed archive never reaches here (the caller gates on localOnly). The run-job
-// spec is the shared wizard.RunJobSpec (the MA-641 single install-path decision), and the
-// kind-collision guard runs inside schedule.Install (it CheckKinds before installing).
+// scheduleInstallLocal installs or edits a LOCAL archive's run-job backup — never a
+// Microsoft 365 capture. Loopback-only + CSRF are already checked by the caller
+// (scheduleInstall), and an M365/mixed archive never reaches here (the caller gates on
+// localOnly). The run-job spec is the shared wizard.RunJobSpec (the MA-641 single
+// install-path decision), and the kind-collision guard runs inside schedule.Install (it
+// CheckKinds before installing).
+//
+// An edit changes only what was changed (design-desktop-settings-card 3.5, C-4): with a
+// job file that reads securely it is a read-modify-write of that file through job.Read
+// and job.Write, changing only thunderbird_sync, and the cadence goes to the scheduler
+// entry and descriptor only. The job rebuilt from the archive's own last-run record is
+// written on a create only (an edit still needs the record to rebuild; see below). A job file that exists but cannot be read is never overwritten (C-6), and
+// a sync request that cannot be honoured is refused, never dropped (C-10): every refusal
+// comes before anything is written.
 //
 // The install runs BEFORE the job file is written (adversarial finding A3): on any
 // refusal nothing is on disk — no decoy job file for corroboratedRunJob to misreport,
 // and CheckKind sees the true owner-side evidence rather than a file we pre-wrote. The
-// cadence is persisted only once the install succeeds (finding A4).
+// settings file's interval and time are the capture's record and are not written here.
 func (d *dashboard) scheduleInstallLocal(w http.ResponseWriter, r *http.Request, out string) {
 	var in struct {
 		Interval string `json:"interval"`
 		Time     string `json:"time"`
-		Presync  bool   `json:"presync"`
+		// Presync is the sync box as posted; absent (a box the page did not show, or the
+		// card's Repair) means unchanged, never off (C-10).
+		Presync *bool `json:"presync"`
 	}
 	_ = json.NewDecoder(http.MaxBytesReader(w, r.Body, 4<<10)).Decode(&in)
+
+	name := schedule.DefaultNameFor(out)
+	jobPath, err := job.PathFor(name)
+	if err != nil {
+		writeJSON(w, map[string]any{"ok": false, "error": err.Error()})
+		return
+	}
+	// The job file this install would overwrite (C-6): read securely, or refused with
+	// nothing written when it is there and cannot be read.
+	cur, exists, reason := readJobToEdit(jobPath, out)
+	if reason != "" {
+		writeJSON(w, map[string]any{"ok": false, "error": unreadableJobText(jobPath, reason)})
+		return
+	}
 
 	// A Repair posts an empty body (the Repair button sends no interval/time/presync,
 	// because those inputs are not rendered on a scheduled local card — MA-691). That must
 	// re-point/fix the schedule WITHOUT changing its settings (friction HIGH-3): so when no
-	// interval is posted, preserve the installed cadence (from the current descriptor) and
-	// the installed pre-sync (from the current job file), rather than falling back to the
-	// Weekly/03:00/off defaults that an explicit create uses. An explicit create/edit always
-	// posts a non-empty interval, so it is unaffected.
+	// interval is posted, keep the installed cadence (from the current descriptor); the
+	// pre-sync is unchanged because none is posted.
 	if strings.TrimSpace(in.Interval) == "" {
 		if desc, derr := schedule.ReadDescriptor(out); derr == nil {
 			in.Interval, in.Time = desc.Interval, desc.At
 		}
-		in.Presync = currentJobSyncsThunderbird(out)
 	}
 
-	j, ok := reconstructLocalJob(out)
+	syncOn := exists && cur.ThunderbirdSync != nil
+	wantSync := syncOn
+	if in.Presync != nil {
+		wantSync = *in.Presync
+	}
+	// Switching the sync on is refused, not dropped, when it cannot be honoured here (C-10).
+	if wantSync && !syncOn {
+		if refusal := d.syncOnRefusal(out); refusal != "" {
+			writeJSON(w, map[string]any{"ok": false, "error": refusal})
+			return
+		}
+	}
+
+	// The archive's own record must still rebuild, on an edit too: TestScheduleInstallLocal
+	// (MA-581) pins that refusal for an archive whose record is gone while its job file is
+	// there. Design 3.3 (R3C-16, MA-857) keys an edit to the job file alone; dropping this
+	// precondition waits on the owner accepting that test's amendment. The rebuilt job is
+	// used on a create only (C-4): an edit keeps the job file as it is.
+	rebuilt, ok := reconstructLocalJob(out)
 	if !ok {
 		writeJSON(w, map[string]any{"ok": false, "error": "MailArchive Desktop can’t tell how this archive was built, so it can’t schedule a backup for it from here. Open the MailArchive wizard (mailarchive wizard) to set one up."})
 		return
 	}
-	j.Name = schedule.DefaultNameFor(out)
-	// The pre-sync is offered only on an adapter platform for a Thunderbird-sourced
-	// archive (MA-582); honour the toggle only then (default off, R30).
-	if goos := d.cfg.goos(); in.Presync && (goos == "darwin" || goos == "windows") && localArchiveThunderbirdSourced(out) {
-		j.ThunderbirdSync = &job.ThunderbirdSync{}
+	j := cur // an edit: the job file as it is
+	if !exists {
+		j = rebuilt // a create: rebuilt from the archive's own record
+		j.Name = name
+	}
+	syncChanged := wantSync != syncOn
+	if syncChanged {
+		if wantSync {
+			j.ThunderbirdSync = &job.ThunderbirdSync{}
+		} else {
+			j.ThunderbirdSync = nil
+		}
 	}
 	// Validate the cadence up front; refuse a non-enum value rather than silently
 	// coercing it (finding A4). An empty interval keeps the default.
@@ -180,14 +226,9 @@ func (d *dashboard) scheduleInstallLocal(w http.ResponseWriter, r *http.Request,
 		writeJSON(w, map[string]any{"ok": false, "error": kerr.Error()}) // a kept copy (INT-02)
 		return
 	}
-	jobPath, err := job.PathFor(j.Name)
-	if err != nil {
-		writeJSON(w, map[string]any{"ok": false, "error": err.Error()})
-		return
-	}
 	// Install FIRST (A3): CheckKind inside schedule.Install then sees the real
 	// owner-side evidence, and a refusal leaves nothing on disk.
-	spec := wizard.RunJobSpec(j.Out, j.Name, jobPath, iv, at, exe)
+	spec := wizard.RunJobSpec(out, name, jobPath, iv, at, exe)
 	install := schedule.Install
 	if d.cfg.InstallBackup != nil {
 		install = d.cfg.InstallBackup
@@ -196,13 +237,104 @@ func (d *dashboard) scheduleInstallLocal(w http.ResponseWriter, r *http.Request,
 		writeJSON(w, map[string]any{"ok": false, "error": err.Error()})
 		return
 	}
-	// Only now write the job file the installed entry runs.
-	if err := job.Write(jobPath, j); err != nil {
-		writeJSON(w, map[string]any{"ok": false, "error": "The scheduled backup was installed, but its settings file could not be written (" + err.Error() + "). Remove the schedule on this card and try again."})
-		return
+	// Only now write the job file the installed entry runs: on a create, or when the sync
+	// changed. An edit of the cadence alone leaves the job file as it is.
+	if !exists || syncChanged {
+		if err := job.Write(jobPath, j); err != nil {
+			writeJSON(w, map[string]any{"ok": false, "error": "The scheduled backup was installed, but its settings file could not be written (" + err.Error() + "). Remove the schedule on this card and try again."})
+			return
+		}
 	}
-	_ = saveScheduleChoice(d.cfg.SettingsPath, in.Interval, in.Time) // remember the cadence now that it is installed (A4)
 	writeJSON(w, map[string]any{"ok": true})
+}
+
+// readJobToEdit reads the job file at path that an install for the archive out would
+// overwrite (C-6). A missing file is no job (a create). A file that is there and reads
+// securely through job.Read, naming this archive, is the job to edit. Anything else is a
+// file that must not be overwritten: reason says why, in plain words.
+func readJobToEdit(path, out string) (j job.Job, exists bool, reason string) {
+	if _, err := os.Lstat(path); err != nil {
+		if os.IsNotExist(err) {
+			return job.Job{}, false, ""
+		}
+		return job.Job{}, false, "it can't be looked at: " + err.Error()
+	}
+	j, err := job.Read(path)
+	if err != nil {
+		return job.Job{}, false, jobUnreadableReason(path)
+	}
+	if !schedule.SameArchivePath(j.Out, out, runtime.GOOS) {
+		return job.Job{}, false, "it backs up another archive folder, " + j.Out
+	}
+	return j, true, ""
+}
+
+// jobUnreadableReason says in plain words why the job file at path, which job.Read
+// refused, can't be read.
+func jobUnreadableReason(path string) string {
+	fi, err := os.Lstat(path)
+	switch {
+	case err != nil:
+		return "it can't be looked at: " + err.Error()
+	case fi.Mode()&os.ModeSymlink != 0:
+		return "it is a link to another file, which MailArchive does not follow"
+	case !fi.Mode().IsRegular():
+		return "it is not an ordinary file"
+	case fi.Size() > 64*1024:
+		return "it is far larger than a backup settings file"
+	}
+	if data, rerr := os.ReadFile(path); rerr == nil {
+		var v struct {
+			Version int    `json:"version"`
+			Out     string `json:"out"`
+		}
+		switch {
+		case json.Unmarshal(data, &v) != nil:
+			return "it is damaged: it is not a settings file MailArchive can read"
+		case v.Version > job.Version:
+			return "a newer version of MailArchive wrote it"
+		case strings.TrimSpace(v.Out) == "":
+			return "it names no archive folder"
+		}
+	}
+	return "another account owns it or can change it"
+}
+
+// unreadableJobText is the refusal for a job file that can't be read (section 6, C-6).
+func unreadableJobText(path, reason string) string {
+	return "This archive's backup settings file " + path + " can't be read (" + reason + "). Re-create the backup in the MailArchive wizard, or update MailArchive if a newer version made it. Nothing was changed."
+}
+
+// syncOnRefusal is why the Thunderbird sync can't be switched on for the local archive at
+// out, in section 6's words, or "" when it can: it runs only on macOS and Windows, only for
+// an archive made from a Thunderbird profile, and only while that profile is on this
+// computer (C-10).
+func (d *dashboard) syncOnRefusal(out string) string {
+	if goos := d.cfg.goos(); goos != "darwin" && goos != "windows" {
+		return "Thunderbird sync works on macOS and Windows only, so nothing was changed."
+	}
+	if localArchiveThunderbirdSourced(out) {
+		return ""
+	}
+	m, err := state.Load(filepath.Join(out, manifestName))
+	if err != nil {
+		return "Thunderbird sync can't be switched on: MailArchive can't read this archive's record right now. Nothing was changed."
+	}
+	for id := range m.Stores {
+		if !strings.HasPrefix(id, "path:") {
+			continue
+		}
+		if p := strings.TrimPrefix(id, "path:"); !pathPresent(p) {
+			return "Thunderbird sync can't be switched on: the mail folder this archive was made from, " + p + ", isn't on this computer right now. Nothing was changed."
+		}
+	}
+	return "This archive wasn't made from a Thunderbird profile on this computer, so there is no Thunderbird to sync. Nothing was changed."
+}
+
+// pathPresent reports whether something is at p (a link counts; it is not followed).
+func pathPresent(p string) bool {
+	_, err := os.Lstat(p)
+	return err == nil
 }
 
 // currentJobSyncsThunderbird reports whether the archive's installed run-job already

@@ -32,6 +32,7 @@ import (
 	"mail-archive-tool/internal/graph"
 	"mail-archive-tool/internal/graphconfig"
 	"mail-archive-tool/internal/instance"
+	"mail-archive-tool/internal/job"
 	"mail-archive-tool/internal/keyring"
 	"mail-archive-tool/internal/localweb"
 	"mail-archive-tool/internal/lockfile"
@@ -457,8 +458,10 @@ func (d *dashboard) saveSettings(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	var in struct {
-		Out                                  string
-		KeepRaw, IncludeDeleted, IncludeJunk bool
+		Out string
+		// The three boxes; one the request omits is left as it is (design-desktop-settings-card
+		// 3.6 step 3, MA-858).
+		KeepRaw, IncludeDeleted, IncludeJunk *bool
 		// Backup answers the question a save that retargets the weekly backup asks first
 		// (XC22): "keep" or "remove". Empty is the first ask.
 		Backup string
@@ -489,20 +492,38 @@ func (d *dashboard) saveSettings(w http.ResponseWriter, r *http.Request) {
 	backupFor := "" // the location the weekly task is named for, when it is not the archive location
 	removedBackup := false
 	if !samePath(after, d.cfg.effectiveOut()) && d.backupInstalled() {
+		// A run-job backs up the folder fixed in its own job file, so changing the Archive location
+		// doesn't move it (design-desktop-settings-card section 8, C-3): it gets its own words, "keep"
+		// sets no BackupFor (BackupFor is kept only for a capture), and "remove" also deletes its job
+		// file, as Remove on the card does.
+		task, _ := d.cfg.backupTask()
+		runJob := task != "" && namesRunJob(task)
 		switch in.Backup {
 		case "keep":
 			// the task keeps its name, and archives into the new location: the guard, the card and
 			// Remove look for it under the name it has (E4-AI6)
-			if p, _ := d.cfg.backupTask(); p != "" && !samePath(p, after) {
-				backupFor = p
+			if task != "" && !runJob && !samePath(task, after) {
+				backupFor = task
 			}
 		case "remove":
+			jobFile := ""
+			if runJob {
+				jobFile, _ = job.PathFor(schedule.DefaultNameFor(task))
+			}
 			if err := d.removeBackup(); err != nil {
 				writeJSON(w, map[string]any{"ok": false, "error": "The weekly backup could not be removed (the scheduler said: " + err.Error() + "), so nothing was saved and your settings are as they were. Remove it yourself with Remove on the Weekly backup card, or choose Save and keep the backup."})
 				return
 			}
+			if jobFile != "" {
+				_ = os.Remove(jobFile)
+			}
 			removedBackup = true
 		default:
+			if runJob {
+				writeJSON(w, map[string]any{"ok": false, "confirm": true, "folder": after, "error": runJobMoveAsk(task),
+					"choices": []string{"keep", "remove", "cancel"}})
+				return
+			}
 			who, _ := d.signedInNow()
 			signedIn := who != ""
 			ask := fmt.Sprintf("Your weekly backup will now archive %s into %s.", who, after)
@@ -522,13 +543,22 @@ func (d *dashboard) saveSettings(w http.ResponseWriter, r *http.Request) {
 				"choices": []string{"keep", "remove", "cancel"}})
 			return
 		}
-	} else if p, _ := d.cfg.backupTask(); p != "" && !samePath(p, after) {
+	} else if p, _ := d.cfg.backupTask(); p != "" && !samePath(p, after) && !namesRunJob(p) {
 		backupFor = p // the location is not changing, and the task is still named for another one
 	}
 	// Reloaded under the settings lock: only the fields this save owns change, so a
 	// racing export start's own fields are never written back stale (XC34).
 	if err := UpdateSettings(d.cfg.SettingsPath, "settings", func(s *Settings) {
-		s.Out, s.KeepRaw, s.IncludeDeleted, s.IncludeJunk = out, in.KeepRaw, in.IncludeDeleted, in.IncludeJunk
+		s.Out = out
+		if in.KeepRaw != nil {
+			s.KeepRaw = *in.KeepRaw
+		}
+		if in.IncludeDeleted != nil {
+			s.IncludeDeleted = *in.IncludeDeleted
+		}
+		if in.IncludeJunk != nil {
+			s.IncludeJunk = *in.IncludeJunk
+		}
 		s.BackupFor = backupFor
 	}); err != nil {
 		msg := err.Error()
@@ -544,6 +574,13 @@ func (d *dashboard) saveSettings(w http.ResponseWriter, r *http.Request) {
 	_, current := keyOf(d.cfg.effectiveOut())
 	d.pending.discardExcept(current)
 	writeJSON(w, map[string]any{"ok": true})
+}
+
+// runJobMoveAsk is the question a location change asks when the installed backup is a run-job
+// of the folder old (design-desktop-settings-card section 8, C-3): its folder is fixed in its
+// own job file, so the Microsoft 365 words ("will now archive ... into") would be false.
+func runJobMoveAsk(old string) string {
+	return "This archive's scheduled backup keeps backing up " + old + ": its folder is fixed in its own settings file, so changing the Archive location doesn't move it. Save and keep the backup to leave it running there, or Save and remove the backup to stop it."
 }
 
 // clearSignin removes the saved delegated sign-in (loopback-only, CSRF-guarded), so
@@ -1879,7 +1916,9 @@ function schedPost(path,done){
   // Repair/Remove cards render no interval/time inputs (only the Install card does), so read
   // them defensively — a missing input must not throw and silently kill the click.
   const iv=$('schedInterval'),tm=$('schedTime'),ps=$('schedPresync');
-  const body={interval:iv?iv.value:'',time:tm?tm.value:'',presync:ps?ps.checked:false};
+  // A sync box the page did not show is never posted as off (C-10): no presync means unchanged.
+  const body={interval:iv?iv.value:'',time:tm?tm.value:''};
+  if(ps)body.presync=ps.checked;
   return fetch(path,{method:'POST',headers:{'Content-Type':'application/json','X-CSRF-Token':csrf},body:JSON.stringify(body)})
     .then(r=>r.json()).then(d=>{done();if(n){n.hidden=false;n.textContent=d.ok?'Saved.':(d.error||'Failed.');}
       return schedState().then(()=>{if(n&&d.left){n.hidden=false;n.textContent='Removed. Left in place: '+d.left+' cannot be read, so removal cannot tell which schedule it records - '+d.remedy+'.';}});})

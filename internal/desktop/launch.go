@@ -380,6 +380,14 @@ func serveInstance(ctx context.Context, h *instance.Holder, o *launchOpts, env *
 	sess := localweb.NewSession()
 	origin := "http://" + ln.Addr().String()
 	dcfg := o.dcfg
+	// The one write before any Save (design-desktop-settings-card section 8, rev4.1): a
+	// BackupFor an earlier version recorded for a run-job's folder is cleared at start, so
+	// Remove or a capture install on another archive can't delete that run-job's entry.
+	if cleared, err := ClearRunJobBackupFor(dcfg.SettingsPath); err != nil {
+		fmt.Fprintln(env.Stderr, "mailarchive desktop: the settings file still names another archive's backup, which could not be cleared: "+err.Error())
+	} else if cleared {
+		fmt.Fprintln(env.Stderr, "mailarchive desktop: the settings file no longer names another archive's scheduled backup as this one's; that backup keeps running as it was.")
+	}
 	// The workspace's Graph session and every preview and export run on this process's own
 	// life: cancelling ctx (Ctrl-C, a logoff) drains them, and the process waits for the
 	// running export to finalize (its manifest says cancelled, its marker CANCELLED) before it
