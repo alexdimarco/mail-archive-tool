@@ -67,14 +67,14 @@ func TestKeyWordsSayWhatIsTrue(t *testing.T) {
 	freshRecord(t)
 	s := newStore(t)
 	out, _, _ := made(t, s)
-	if ok, err := KeyRemembered(out, s); !ok || err != nil {
-		t.Fatalf("positive twin: a remembered key: %v %v", ok, err)
+	if ok, unreadable, err := KeyRemembered(out, s); !ok || unreadable != nil || err != nil {
+		t.Fatalf("positive twin: a remembered key: %v %v %v", ok, unreadable, err)
 	}
 	if _, err := ForgetKey(out, s); err != nil {
 		t.Fatal(err)
 	}
-	ok, err := KeyRemembered(out, s)
-	assure.Reached(t, !ok && err == nil, "nothing remembered after forgetting")
+	ok, unreadable, err := KeyRemembered(out, s)
+	assure.Reached(t, !ok && unreadable == nil && err == nil, "nothing remembered after forgetting")
 	for _, e := range []error{vault.ErrRecoveryCheck, vault.ErrRecoveryFormat, errors.New("that is not the recovery key shown")} {
 		w := RecoveryKeyRetry(e)
 		if strings.Contains(w, "vault") || !strings.HasSuffix(w, ".") {

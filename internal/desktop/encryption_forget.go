@@ -6,7 +6,6 @@ import (
 	"net/http"
 	"strings"
 
-	"mail-archive-tool/internal/encrecord"
 	"mail-archive-tool/internal/keyring"
 )
 
@@ -107,7 +106,9 @@ func (d *dashboard) forgetAction(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	p := *it.plan
-	if p.Strong && !encrecord.Names(strings.TrimSpace(in.Typed), p.Spelling) {
+	// The path exactly as the plan showed it is accepted, as is the record's own
+	// spelling (the P3-8 pass, DESK-1).
+	if p.Strong && !p.TypedBack(in.Typed) {
 		writeJSON(w, map[string]any{"ok": false, "error": "The path typed does not match; nothing was changed."})
 		return
 	}

@@ -247,9 +247,18 @@ func forgetOffer(why, folder string) string {
 
 // CommandPath is a folder as a person types it into a command: in double quotes,
 // and — on Windows — with its backslashes as they are, not doubled.
-func CommandPath(p string) string {
-	if runtime.GOOS == "windows" && !strings.ContainsAny(p, `"`) {
-		return `"` + p + `"`
+func CommandPath(p string) string { return commandPath(runtime.GOOS, p) }
+
+// commandPath is CommandPath for goos. On Windows a program reads its command line
+// by the C runtime's rule: backslashes right before a quote escape it, so a folder
+// ending in a backslash — a drive root E:\ or a share root — would swallow its
+// closing quote and the rest of the line. Its trailing backslashes are doubled
+// inside the quotes, which the rule reads back as one each (the same fix as
+// schedule's batchArg; the P3-8 pass, COMP-1).
+func commandPath(goos, p string) string {
+	if goos == "windows" && !strings.ContainsAny(p, `"`) {
+		trail := len(p) - len(strings.TrimRight(p, `\`))
+		return `"` + p + strings.Repeat(`\`, trail) + `"`
 	}
 	return fmt.Sprintf("%q", p)
 }

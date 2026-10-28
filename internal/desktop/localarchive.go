@@ -115,13 +115,17 @@ func encryptedRunJob(out string) bool {
 // encBackupHow is how new mail is added to the encrypted archive at out, in plain words:
 // with Run now when a backup job was set up here for it, otherwise at a terminal with the
 // exact command — an archive made at the command line is backed up there (P3-8, B26).
+// What it was made from is sealed inside it, so both forms are named: from mail files,
+// and from Microsoft 365 — a local-mail command alone cannot add a Microsoft 365
+// archive's new mail (the P3-8 pass, DESK-2).
 func encBackupHow(goos, out string, runNow bool) string {
 	if runNow {
 		return "To add new mail, unlock it on its Encryption card, then click Run now on the Weekly backup card."
 	}
-	cmd := shellJoin(AddMailArgv("<the mail folder or file it was made from>", out), goos)
-	return "It was made at the command line, so it is backed up there. To add new mail, type this in a terminal: " + cmd +
-		" — it asks for the archive's password, then adds only what is new."
+	mail := shellJoin(AddMailArgv("<the mail folder or file it was made from>", out), goos)
+	m365 := shellJoin(AddGraphArgv(out), goos)
+	return "It was made at the command line, so it is backed up there, the same way it was made. To add new mail, type this in a terminal — if it was made from mail files: " + mail +
+		"; if it was made from Microsoft 365: " + m365 + " followed by the same sign-in options it was made with (-tenant, -client-id and the rest). Either asks for the archive's password, then adds only what is new."
 }
 
 // archiveNowOffLine is the line shown in place of the Archive now button, "" when the button
@@ -155,6 +159,12 @@ func (cfg Config) newMailLineFor(out string) string {
 // flag parser, so the text cannot drift from the flags.
 func AddMailArgv(folder, out string) []string {
 	return []string{"mailarchive", "-input", folder, "-out", out}
+}
+
+// AddGraphArgv is the start of the command line that adds new Microsoft 365 mail to the
+// archive at out; the sign-in options it was made with follow it.
+func AddGraphArgv(out string) []string {
+	return []string{"mailarchive", "graph", "-out", out}
 }
 
 // AddMailAutoArgv is the same with every Thunderbird (and Evolution, and on Windows Outlook) store

@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"mail-archive-tool/internal/container"
+	"mail-archive-tool/internal/encmark"
 	"mail-archive-tool/internal/export"
 	"mail-archive-tool/internal/index"
 	"mail-archive-tool/internal/job"
@@ -323,11 +324,12 @@ func tellStandingDamage(opts Options, logger *log.Logger) {
 	if red.Finished != nil {
 		when = " (" + red.Finished.Local().Format("2006-01-02 15:04 MST") + ")"
 	}
+	out := encmark.CommandPath(opts.Out) // as typed into a command (the P3-8 pass, F2)
 	if opts.Mode == export.Full {
-		logger.Printf("note: the last check of this archive%s found messages missing or damaged; this backup wrote every message again — run `mailarchive verify -full -out %q` to confirm the damage is gone", when, opts.Out)
+		logger.Printf("note: the last check of this archive%s found messages missing or damaged; this backup wrote every message again — run `mailarchive verify -full -out %s` to confirm the damage is gone", when, out)
 		return
 	}
-	logger.Printf("warning: the last check of this archive%s found messages missing or damaged, and this backup did not repair them: it only adds new mail. If you still have the mail they came from, run a backup with -mode full from it (`mailarchive -input <your mail> -out %q -mode full`), then `mailarchive verify -full -out %q`; otherwise restore the whole archive folder from your newest backup copy", when, opts.Out, opts.Out)
+	logger.Printf("warning: the last check of this archive%s found messages missing or damaged, and this backup did not repair them: it only adds new mail. If you still have the mail they came from, run a backup with -mode full from it (`mailarchive -input <your mail> -out %s -mode full`), then `mailarchive verify -full -out %s`; otherwise restore the whole archive folder from your newest backup copy", when, out, out)
 }
 
 // encRefusal is an ErrEncryptedArchive refusal naming out, why, and its cause.

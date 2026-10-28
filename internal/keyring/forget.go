@@ -6,6 +6,7 @@ import (
 	"os"
 	"path/filepath"
 	"slices"
+	"strings"
 
 	"mail-archive-tool/internal/encmark"
 	"mail-archive-tool/internal/encrecord"
@@ -76,6 +77,19 @@ func PlanForget(out string, s vault.Store) (ForgetPlan, error) {
 		}
 	}
 	return p, nil
+}
+
+// TypedBack reports whether typed is this plan's folder typed back, as a strong
+// forget asks: the record's own spelling, or the folder exactly as it was shown —
+// p.Out, the folder the plan was made for — even where the two differ, through a
+// linked parent folder or another route to the same folder (the P3-8 pass, ORDER-2,
+// DESK-1).
+func (p ForgetPlan) TypedBack(typed string) bool {
+	typed = strings.TrimSpace(typed)
+	if typed == "" {
+		return false
+	}
+	return encrecord.Names(typed, p.Spelling) || encrecord.Spelling(typed) == encrecord.Spelling(p.Out)
 }
 
 func cloneEntry(e *encrecord.Entry) encrecord.Entry {
@@ -281,17 +295,26 @@ func keyTarget(out string) (vault.ID, error) {
 	return id, nil
 }
 
-// KeyRemembered reports whether this computer remembers the key ForgetKey would
-// forget at out, so forgetting nothing is not told as a key forgotten (P3-8
-// friction review, Tier C); an error when which archive it is cannot be told.
-func KeyRemembered(out string, s vault.Store) (bool, error) {
+// KeyRemembered reports whether this computer holds the key ForgetKey would forget
+// at out, so forgetting nothing is not told as a key forgotten (P3-8 friction
+// review, Tier C); err when which archive it is cannot be told. Only the store's
+// "not there" is nothing held: a key the store holds but refuses to read — a key
+// file other users can read, or any other refusal — is held, with unreadable saying
+// why, so it is still forgotten (the P3-8 pass, F1).
+func KeyRemembered(out string, s vault.Store) (held bool, unreadable, err error) {
 	if s == nil {
-		return false, errors.New("no secret store to look for a remembered key in")
+		return false, nil, errors.New("no secret store to look for a remembered key in")
 	}
 	id, err := keyTarget(out)
 	if err != nil {
-		return false, err
+		return false, nil, err
 	}
 	_, gerr := s.Get(vault.Account(id))
-	return gerr == nil, nil
+	switch {
+	case gerr == nil:
+		return true, nil, nil
+	case errors.Is(gerr, os.ErrNotExist):
+		return false, nil, nil
+	}
+	return true, gerr, nil
 }

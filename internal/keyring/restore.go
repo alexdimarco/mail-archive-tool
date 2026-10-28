@@ -104,16 +104,47 @@ func RestoreFromRemembered(out string, s vault.Store, newPassword string, o Rest
 		return nil, errors.New("no secret store to find a remembered key in")
 	}
 	return prepareRestore(out, newPassword, o, func(r recorded, _ *vault.Params) vault.RestoreSource {
-		claimed := r.want
-		if claimed == (vault.ID{}) {
-			if ids := vault.Claims(out).IDs; len(ids) > 0 {
-				claimed = ids[0]
-			} else if r.ok {
-				claimed, _ = parseID(r.match.ID)
-			}
-		}
-		return vault.RememberedSource{Store: storeOutsideDerivation{s}, Claimed: claimed}
+		return vault.RememberedSource{Store: storeOutsideDerivation{s}, Claimed: restoreClaim(out, r)}
 	})
+}
+
+// restoreClaim is the archive whose remembered key RestoreFromRemembered looks up
+// at out: the recorded id's, else the id the folder's damaged key files claim, else
+// the id its unproven record entry holds.
+func restoreClaim(out string, r recorded) vault.ID {
+	claimed := r.want
+	if claimed == (vault.ID{}) {
+		if ids := vault.Claims(out).IDs; len(ids) > 0 {
+			claimed = ids[0]
+		} else if r.ok {
+			claimed, _ = parseID(r.match.ID)
+		}
+	}
+	return claimed
+}
+
+// RememberedForRestore reports whether this computer remembers the key that
+// RestoreFromRemembered would rebuild out's key files from — looked up by the same
+// id it uses — so a refusal before any question comes only when the restore would
+// refuse (the P3-8 pass, ORDER-1). A record the restore would refuse is refused here
+// in the same words.
+func RememberedForRestore(out string, s vault.Store) (bool, error) {
+	if s == nil {
+		return false, nil
+	}
+	r, err := lookup(out)
+	if err != nil {
+		return false, err
+	}
+	if r.recErr != nil {
+		return false, refuseUnusableRecord(out, r.recErr)
+	}
+	id := restoreClaim(out, r)
+	if id == (vault.ID{}) {
+		return false, nil
+	}
+	_, err = s.Get(vault.Account(id))
+	return err == nil, nil
 }
 
 // storeOutsideDerivation lets go of the derivation lock while the secret store is

@@ -7,6 +7,7 @@ import (
 	"os"
 	"strings"
 
+	"mail-archive-tool/internal/encmark"
 	"mail-archive-tool/internal/encrecord"
 	"mail-archive-tool/internal/keyring"
 	"mail-archive-tool/internal/util"
@@ -323,9 +324,14 @@ func restoreKeyFile(a asker, out, from string, k *keyFlags) error {
 		if err != nil {
 			return err
 		}
-		// Said only when it is so: judged before any question (P3-8 friction review, B6).
-		if !keyring.HasRemembered(abspath(out), store) {
-			return fmt.Errorf("this computer does not remember a key for an encrypted archive at %s, so nothing was changed — put the key files back from the archive's recovery file and recovery key instead: mailarchive restore-key-file -out %q -from FILE", abspath(out), abspath(out))
+		// Said only when it is so: judged before any question (P3-8 friction review, B6),
+		// by the same archive id the restore itself would look its key up by (the P3-8
+		// pass, ORDER-1).
+		switch remembered, err := keyring.RememberedForRestore(abspath(out), store); {
+		case err != nil:
+			return err
+		case !remembered:
+			return fmt.Errorf("this computer does not remember a key for an encrypted archive at %s, so nothing was changed — put the key files back from the archive's recovery file and recovery key instead: mailarchive restore-key-file -out %s -from FILE", abspath(out), encmark.CommandPath(abspath(out)))
 		}
 		ok, err := askYes(a, "This computer remembers the archive's key, so its key files can be rebuilt without the password or recovery key. Anyone using this computer's account could do the same: encryption protects a copy of the archive that leaves this computer, not this computer. Go ahead?", false)
 		if err != nil {
@@ -419,15 +425,21 @@ func forgetKey(a asker, out string) error {
 	}
 	// Nothing remembered is said as it is, not as a key forgotten (P3-8 friction
 	// review, Tier C); there is nothing to do, so it is no failure.
-	switch remembered, err := keyring.KeyRemembered(out, store); {
+	held, unreadable, err := keyring.KeyRemembered(out, store)
+	switch {
 	case err != nil:
 		return err
-	case !remembered:
+	case !held:
 		a.say("This computer does not remember a key for %s, so there was nothing to forget; nothing was changed.", out)
 		return nil
 	}
 	if _, err := keyring.ForgetKey(out, store); err != nil {
 		return err
+	}
+	// A key the store holds but would not read is deleted all the same, and said so
+	// (the P3-8 pass, F1).
+	if unreadable != nil {
+		a.say("This computer held a key for %s that it could not read (%s); it was deleted all the same.", out, util.StripControl(unreadable.Error()))
 	}
 	a.say("This computer no longer remembers the key of the encrypted archive %s; backups you start and opening it will ask for the password.", out)
 	return nil
@@ -478,7 +490,9 @@ func forgetArchive(a asker, out string) error {
 		if err != nil {
 			return err
 		}
-		if !encrecord.Names(strings.TrimSpace(typed), p.Spelling) {
+		// The path as shown is accepted, as is the record's own spelling (the P3-8
+		// pass, ORDER-2).
+		if !p.TypedBack(typed) {
 			return errors.New("the path typed does not match; nothing was changed")
 		}
 	} else {

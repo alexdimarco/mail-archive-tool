@@ -952,9 +952,9 @@ func checkArchive(ctx context.Context, o *verifyOpts, logger *log.Logger, stopCo
 	if errors.Is(verr, app.ErrVerifyStopped) {
 		// A stopped check with the key is finished only by another (the P3-2b pass,
 		// KEY-03).
-		again := fmt.Sprintf("mailarchive verify -out %q", abspath(*o.out))
+		again := "mailarchive verify -out " + encmark.CommandPath(abspath(*o.out))
 		if o.keyed != nil {
-			again = fmt.Sprintf("mailarchive verify -full -out %q", abspath(*o.out))
+			again = "mailarchive verify -full -out " + encmark.CommandPath(abspath(*o.out))
 		}
 		fmt.Fprintf(stderr, "mailarchive: verify stopped: the archive was not fully checked and no new verdict was recorded; the last finished verdict still stands (see `mailarchive status`). Run `%s` again to finish.\n", again)
 		return &exitError{code: int(stopCode.Load())}
@@ -1029,7 +1029,7 @@ func watchVerifyInterrupt(sigs <-chan os.Signal, w io.Writer, out string, exit f
 		defer close(done)
 		select {
 		case s := <-sigs:
-			fmt.Fprintf(w, "mailarchive: verify interrupted: the archive was not fully checked and no new verdict was recorded; the last finished verdict still stands (see `mailarchive status`). Run `mailarchive verify -out %q` again to finish.\n", out)
+			fmt.Fprintf(w, "mailarchive: verify interrupted: the archive was not fully checked and no new verdict was recorded; the last finished verdict still stands (see `mailarchive status`). Run `mailarchive verify -out %s` again to finish.\n", encmark.CommandPath(out))
 			if s == syscall.SIGTERM {
 				exit(143)
 			} else {

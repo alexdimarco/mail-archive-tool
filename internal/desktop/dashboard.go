@@ -1078,7 +1078,6 @@ func (cfg Config) overviewFor(csrf, epoch string) string {
 	if data.Encrypted = archiveKind(data.OutDir) == kindEncrypted; data.Encrypted {
 		data.ShowInstall, data.ShowRepair, data.ShowLocalCreate, data.ShowLocalEdit, data.ShowBackupOff = false, false, false, false, false
 		data.ShowRemove = data.HasSchedule
-		data.EncBackupHow = encBackupHow(cfg.goos(), data.OutDir, false)
 	}
 	data.ProgramCopiesLabel = programCopiesLabel(releaseBuild())
 	data.EncRecordKept = cfg.Keys != nil && encryptedRecordKept()
@@ -1094,6 +1093,13 @@ func (cfg Config) overviewFor(csrf, epoch string) string {
 	if data.Encrypted && cfg.Keys != nil && app.UnlockableAt(data.OutDir) {
 		data.ShowEncryption = true
 		data.EncRunNow = schedule.BuildKindEvidence(data.OutDir).Has(schedule.KindRunJob)
+		// "Made at the command line" is said only here, where the archive can be
+		// unlocked and no backup job was set up for it: an archive whose key files are
+		// gone may still have one, which the Archive now line tells to use (the P3-8
+		// pass, DESK-3).
+		if !data.EncRunNow {
+			data.EncBackupHow = encBackupHow(cfg.goos(), data.OutDir, false)
+		}
 		data.EncNotSetUp = encmark.NotSetUp(data.OutDir)
 		abs, _ := keyOf(data.OutDir)
 		data.EncRemembered = hasRemembered(abs, cfg.Store)

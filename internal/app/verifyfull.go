@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"mail-archive-tool/internal/container"
+	"mail-archive-tool/internal/encmark"
 	"mail-archive-tool/internal/export"
 	"mail-archive-tool/internal/lockfile"
 	"mail-archive-tool/internal/memguard"
@@ -98,7 +99,7 @@ const (
 // — a backup with -mode full from the mail they came from writes every message again,
 // the damaged ones included — then the restore (P3-8 friction, B19).
 func adviceUnits(out string) string {
-	return fmt.Sprintf("the messages named above are missing or damaged. If you still have the mail they came from, a backup with -mode full from that mail writes them again: run `mailarchive -input <your mail> -out %q -mode full`, then `mailarchive verify -full -out %q` to check. Otherwise restore the whole archive folder from your newest backup copy", out, out)
+	return fmt.Sprintf("the messages named above are missing or damaged. If you still have the mail they came from, a backup with -mode full from that mail writes them again: run `mailarchive -input <your mail> -out %s -mode full`, then `mailarchive verify -full -out %s` to check. Otherwise restore the whole archive folder from your newest backup copy", encmark.CommandPath(out), encmark.CommandPath(out))
 }
 
 // genericAdvice says advice is outcome's fixed sentence — a check's general remedy,
@@ -401,10 +402,11 @@ func (f *fullCheck) messageLabel(ctx context.Context, src SealedCheck, rec state
 	return "the message " + strings.Join(parts, ", ")
 }
 
-// plainLabel is s as one line for the terminal: no control characters, at most max
-// runes.
+// plainLabel is s as one line for the terminal: no control characters and no
+// right-to-left overrides — it is echoed from mail (F16; the P3-8 pass,
+// LEAK-B19-BIDI) — at most max runes.
 func plainLabel(s string, max int) string {
-	s = strings.Join(strings.Fields(util.StripControl(s)), " ")
+	s = strings.Join(strings.Fields(util.StripBidi(util.StripControl(s))), " ")
 	if r := []rune(s); len(r) > max {
 		s = string(r[:max-1]) + "…"
 	}
