@@ -33,6 +33,14 @@ Windows: SmartScreen → *More info → Run anyway*. Verify downloads against `S
 `mailarchive-desktop-windows-msi-payload.zip` builds a self-contained MSI
 (`packaging/mailarchive-desktop/`).
 
+### New in 1.5.1 — one place for backup settings
+- **Settings is where you change a backup.** How often, the time, and **Sync Thunderbird before each backup** are all in the Desktop's **Settings** card. The **Scheduled backup** card shows what is set up, with **Run now**, **Repair** and **Remove**.
+- **Each archive gets its own schedule.** An archive made from Thunderbird mail gets its own backup that re-reads its mail files, even on a computer where Microsoft 365 is set up.
+- **Hourly backups** for archives made from local mail (Thunderbird and other mail files). Microsoft 365 backups stay Daily or Weekly.
+- **Every button shows it was pressed.** A button turns grey with a spinner and a "Working…" label until its job is done, and the card then says what happened ("Repaired.", "Removed.").
+- **Fewer emails when a backup keeps failing:** one alert per failing streak and one when it recovers. An archive whose mail source can't be reached is flagged after **3 days** and its backups are paused after **30 days**, counted in days, not runs.
+- **Fixed:** the Desktop could count its own settings file as a backup job, which could refuse a Microsoft 365 backup or let Remove delete that settings file. Remove now deletes only real backup-job files.
+
 ### New in 1.5 — encrypted archives
 - **Make an encrypted archive.** Everything in it — messages, attachments, the search index, the folder list and what it was made from — is encrypted on the drive and opens only with its **password** or its **recovery key**. Make one in MailArchive Desktop (**Add another archive → Make a new encrypted archive…**) or at a terminal: `mailarchive -encrypt -out NEWFOLDER -input MAIL`. You choose a password; MailArchive shows a **recovery key once** and asks you to type it back. Keep both safe: if you lose the password and the recovery key, nobody can open the archive — there is no reset.
 - **Use it like any archive.** Unlock it on the Desktop's **Encryption** card (or let this computer remember its key), then back it up with **Run now**, search it, read it and go back in time. **Lock** closes it again. Backups into an encrypted archive run while you are there to unlock it; scheduled backups for encrypted archives are not available yet.
