@@ -200,7 +200,7 @@ func TestEveryDesktopInstallGoesThroughTheUnchangedGuard(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	s := string(src)
+	s := strings.ReplaceAll(string(src), "\r\n", "\n") // a Windows checkout's line ends
 	inst := s[strings.Index(s, "func installOn("):]
 	if i, j := strings.Index(inst, "refuseCollision(s, goos)"), strings.Index(inst, "switch goos"); i < 0 || j < 0 || i > j {
 		t.Error("Install no longer runs refuseCollision before the scheduler step")

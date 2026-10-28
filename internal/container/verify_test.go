@@ -686,22 +686,18 @@ func TestAKeylessCheckSaysWhatItCannotAttest(t *testing.T) {
 	t.Run("leftovers", func(t *testing.T) {
 		out := wholeArchive(t)
 		before := keyless(t, out, 0).Leftovers
-		// The superseded part is named for a prefix no live part has: a fixed name
-		// would, now and then, overwrite a live part of the same prefix and generation.
-		raw, _ := os.ReadFile(filepath.Join(out, InventoryName))
-		top, err := ParseTop(raw)
-		if err != nil {
-			t.Fatal(err)
-		}
-		live := map[string]bool{}
-		for _, r := range top.Shards {
-			live[r.Name] = true
-		}
+		// The superseded part is named for a file not on disk: a fixed name would, now
+		// and then, overwrite a live part of the same prefix and generation, or an
+		// earlier superseded part already counted in before.
 		stale := ""
 		for i := 255; i >= 0 && stale == ""; i-- {
-			if n := ShardName(fmt.Sprintf("%02x", i), 1); !live[n] {
+			n := ShardName(fmt.Sprintf("%02x", i), 1)
+			if _, err := os.Lstat(filepath.Join(out, filepath.FromSlash(n))); os.IsNotExist(err) {
 				stale = n
 			}
+		}
+		if stale == "" {
+			t.Fatal("no free file-list part name to plant")
 		}
 		// Under units/ and chunks/ — a regular file where a shard folder belongs
 		// included, which no sweep removes — they are unnamed, and nothing is said of
