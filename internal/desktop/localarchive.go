@@ -283,9 +283,17 @@ func localArchiveThunderbirdSourced(out string) bool {
 		if !strings.HasPrefix(id, "path:") {
 			continue // a Microsoft 365 "mailbox:" id, never Thunderbird
 		}
-		if _, ok := thunderbird.FindProfileDir(strings.TrimPrefix(id, "path:")); ok {
+		p := strings.TrimPrefix(id, "path:")
+		if isRemotePath(p) {
+			continue // a network or non-local path in the record is never looked at (C-17, MA-869)
+		}
+		if _, ok := findProfileDir(p); ok {
 			return true
 		}
 	}
 	return false
 }
+
+// findProfileDir is thunderbird.FindProfileDir, which looks at the source's folders; a seam, so a
+// test can see which paths are looked at.
+var findProfileDir = thunderbird.FindProfileDir

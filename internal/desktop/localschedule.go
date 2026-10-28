@@ -2,6 +2,7 @@ package desktop
 
 import (
 	"encoding/json"
+	"errors"
 	"net/http"
 	"os"
 	"path/filepath"
@@ -87,7 +88,12 @@ func reconstructLocalJob(out string) (job.Job, bool) {
 		ids := manifestStoreIDs(out)
 		scratch := canonPath(filepath.Join(out, "_outlook-pst"))
 		for _, in := range j.Inputs {
-			fi, err := os.Lstat(in) // Lstat, NOT Stat: never follow a symlink the record names (A2)
+			// A network or non-local path is not checked at all (C-17, MA-869): no file check
+			// reaches another host, and such a backup is not rebuilt from here.
+			if isRemotePath(in) {
+				return job.Job{}, false
+			}
+			fi, err := lstatSource(in) // Lstat, NOT Stat: never follow a symlink the record names (A2)
 			if err != nil || fi.Mode()&os.ModeSymlink != 0 || (!fi.IsDir() && !fi.Mode().IsRegular()) {
 				return job.Job{}, false // vanished, a symlink, or a special file
 			}
@@ -102,6 +108,10 @@ func reconstructLocalJob(out string) (job.Job, bool) {
 	return j, true
 }
 
+// lstatSource is the one look at a mail source's storage when a local backup is rebuilt; a
+// seam, so a test can see which paths are looked at and model a stalled store.
+var lstatSource = os.Lstat
+
 // underPath reports whether p is dir itself or a path inside it (clean, separator-
 // aware, so "/a/bc" is not treated as under "/a/b").
 func underPath(dir, p string) bool {
@@ -109,10 +119,11 @@ func underPath(dir, p string) bool {
 	return p == dir || strings.HasPrefix(p, dir+string(os.PathSeparator))
 }
 
-// scheduleInstallLocal installs or edits a LOCAL archive's run-job backup — never a
-// Microsoft 365 capture. Loopback-only + CSRF are already checked by the caller
-// (scheduleInstall), and an M365/mixed archive never reaches here (the caller gates on
-// localOnly). The run-job spec is the shared wizard.RunJobSpec (the MA-641 single
+// scheduleInstallLocal installs or edits an archive's run-job backup — never a Microsoft
+// 365 capture. Loopback-only + CSRF are already checked by the caller (scheduleInstall),
+// which routes here by section 3.2's table: a local archive with no capture counted, a
+// corroborated run-job (a mixed archive's included), or a broken run-job's Repair; never
+// where a capture is counted (section 4). The run-job spec is the shared wizard.RunJobSpec (the MA-641 single
 // install-path decision), and the kind-collision guard runs inside schedule.Install (it
 // CheckKinds before installing).
 //
@@ -128,16 +139,13 @@ func underPath(dir, p string) bool {
 // refusal nothing is on disk — no decoy job file for corroboratedRunJob to misreport,
 // and CheckKind sees the true owner-side evidence rather than a file we pre-wrote. The
 // settings file's interval and time are the capture's record and are not written here.
-func (d *dashboard) scheduleInstallLocal(w http.ResponseWriter, r *http.Request, out string) {
-	var in struct {
-		Interval string `json:"interval"`
-		Time     string `json:"time"`
-		// Presync is the sync box as posted; absent (a box the page did not show, or the
-		// card's Repair) means unchanged, never off (C-10).
-		Presync *bool `json:"presync"`
-	}
-	_ = json.NewDecoder(http.MaxBytesReader(w, r.Body, 4<<10)).Decode(&in)
-
+//
+// A failure after the scheduler step is answered as it happened (section 9, R3C-13): the
+// scheduler is asked first whether an entry already existed under the name, and a rollback
+// runs only when none did, so a create running as a Repair over an old entry never removes it.
+// recreate is a broken run-job's Repair (its job file missing): its reply says the file was made
+// again and that the sync is off (section 5, C-9).
+func (d *dashboard) scheduleInstallLocal(w http.ResponseWriter, in scheduleRequest, out string, recreate bool) {
 	name := schedule.DefaultNameFor(out)
 	jobPath, err := job.PathFor(name)
 	if err != nil {
@@ -229,23 +237,109 @@ func (d *dashboard) scheduleInstallLocal(w http.ResponseWriter, r *http.Request,
 	// Install FIRST (A3): CheckKind inside schedule.Install then sees the real
 	// owner-side evidence, and a refusal leaves nothing on disk.
 	spec := wizard.RunJobSpec(out, name, jobPath, iv, at, exe)
-	install := schedule.Install
-	if d.cfg.InstallBackup != nil {
-		install = d.cfg.InstallBackup
-	}
-	if err := install(spec); err != nil {
+	existed := d.cfg.taskState(out) == schedule.Installed // asked before step 2 (R3C-13)
+	if err := d.installer()(spec); err != nil {
+		if errors.Is(err, schedule.ErrNotRecorded) {
+			writeJSON(w, map[string]any{"ok": false, "error": d.notRecordedReply(out, exists, existed, exe, err)})
+			return
+		}
 		writeJSON(w, map[string]any{"ok": false, "error": err.Error()})
 		return
 	}
 	// Only now write the job file the installed entry runs: on a create, or when the sync
 	// changed. An edit of the cadence alone leaves the job file as it is.
 	if !exists || syncChanged {
-		if err := job.Write(jobPath, j); err != nil {
-			writeJSON(w, map[string]any{"ok": false, "error": "The scheduled backup was installed, but its settings file could not be written (" + err.Error() + "). Remove the schedule on this card and try again."})
+		if err := writeJob(jobPath, j); err != nil {
+			writeJSON(w, map[string]any{"ok": false, "error": d.jobWriteFailedReply(out, exists, existed, iv, at, err)})
 			return
 		}
 	}
-	writeJSON(w, map[string]any{"ok": true})
+	resp := map[string]any{"ok": true}
+	if recreate && !exists {
+		note := recreatedNote
+		if j.ThunderbirdSync == nil && localArchiveThunderbirdSourced(out) {
+			note += syncNowOffNote
+		}
+		resp["note"] = note
+	}
+	writeJSON(w, resp)
+}
+
+// writeJob is the one writer of a job file (job.Write); a seam, so a test can make the write
+// fail after the scheduler step (section 9, step 3).
+var writeJob = job.Write
+
+// notRecordedReply undoes or restores after Install took the entry but could not record it in
+// the archive (step 2b, section 9), and says what is now true. An edit puts the previous entry
+// back from the descriptor, which still holds the old cadence; a create removes the entry it
+// made, only when none existed before.
+func (d *dashboard) notRecordedReply(out string, edit, existed bool, exe string, err error) string {
+	reason := notRecordedReason(err)
+	if edit {
+		if dsc, derr := schedule.ReadDescriptor(out); derr == nil {
+			spec, serr := wizard.RepairSpec(out, dsc, exe)
+			if serr == nil {
+				serr = d.installer()(spec)
+			}
+			// Put back, entry and record agree again: a restore that is itself not recorded
+			// leaves the old entry beside the old descriptor, which is what was there.
+			if serr == nil || errors.Is(serr, schedule.ErrNotRecorded) {
+				return "The backup schedule was not changed: it could not be recorded in the archive (" + reason + ")."
+			}
+			return "The new schedule is running, but it could not be recorded in the archive (" + reason + "), and the earlier schedule could not be put back (" + serr.Error() + "). Reload this page and click Repair, or save the schedule it shows: either puts the recorded schedule back."
+		}
+		if existed { // nothing recorded to put back from
+			return "The new schedule is running, but it could not be recorded in the archive (" + reason + ")."
+		}
+	}
+	if existed {
+		return "The backup could not be recorded in the archive (" + reason + "), so it was not set up again; the scheduler entry that was there is kept."
+	}
+	if rerr := d.undoInstall(out, false); rerr != nil {
+		return "The backup could not be recorded in the archive (" + reason + "), and the scheduler entry it made could not be taken out again (" + rerr.Error() + "): click Remove on this card to take it out."
+	}
+	return "The backup could not be recorded in the archive (" + reason + "), so nothing was scheduled."
+}
+
+// jobWriteFailedReply answers a job file that could not be written after the scheduler step
+// (step 3, section 9). The old job file is still whole (job.Write renames a finished copy over
+// it), so an edit keeps the new cadence and the old sync; a create removes what it installed,
+// only when no entry existed before. No reply advises removing a backup that is running.
+func (d *dashboard) jobWriteFailedReply(out string, edit, existed bool, iv schedule.Interval, at string, err error) string {
+	if edit {
+		return "The new schedule (" + cadenceWords(string(iv), at) + ") is in effect; Thunderbird sync was not changed: " + err.Error() + "."
+	}
+	if existed {
+		return "The backup's settings file could not be written (" + err.Error() + "), so the backup was not set up again; the scheduler entry that was there is kept."
+	}
+	if rerr := d.undoInstall(out, true); rerr != nil {
+		return "The backup could not be set up (" + err.Error() + "), and what was installed could not be taken out again (" + rerr.Error() + "): click Remove on this card to take it out."
+	}
+	return "The backup could not be set up (" + err.Error() + "), so nothing was scheduled."
+}
+
+// notRecordedReason is the descriptor write's own error inside Install's step-2b error.
+func notRecordedReason(err error) string {
+	var nr *schedule.NotRecordedError
+	if errors.As(err, &nr) && nr.Cause != nil {
+		return nr.Cause.Error()
+	}
+	return err.Error()
+}
+
+// undoInstall takes out the entry a create just installed under this archive's name: the entry
+// alone after a step-2b failure (nothing was recorded), the entry and its descriptor after a
+// job-file write failure (step 3).
+func (d *dashboard) undoInstall(out string, withDescriptor bool) error {
+	if d.cfg.RemoveBackupFor != nil {
+		return d.cfg.RemoveBackupFor(out)
+	}
+	name := schedule.DefaultNameFor(out)
+	s := schedule.Spec{Name: name, Out: out, WrapperPath: schedule.DefaultWrapperPath(name)}
+	if withDescriptor {
+		return schedule.Remove(s)
+	}
+	return schedule.RemoveLiveEntry(s)
 }
 
 // readJobToEdit reads the job file at path that an install for the archive out would
@@ -324,7 +418,7 @@ func (d *dashboard) syncOnRefusal(out string) string {
 		if !strings.HasPrefix(id, "path:") {
 			continue
 		}
-		if p := strings.TrimPrefix(id, "path:"); !pathPresent(p) {
+		if p := strings.TrimPrefix(id, "path:"); !isRemotePath(p) && !pathPresent(p) {
 			return "Thunderbird sync can't be switched on: the mail folder this archive was made from, " + p + ", isn't on this computer right now. Nothing was changed."
 		}
 	}
@@ -333,7 +427,7 @@ func (d *dashboard) syncOnRefusal(out string) string {
 
 // pathPresent reports whether something is at p (a link counts; it is not followed).
 func pathPresent(p string) bool {
-	_, err := os.Lstat(p)
+	_, err := lstatSource(p)
 	return err == nil
 }
 

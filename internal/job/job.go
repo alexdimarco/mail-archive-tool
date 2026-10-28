@@ -170,12 +170,24 @@ func Write(path string, j Job) error {
 		os.Remove(tmp.Name())
 		return err
 	}
+	// Flushed before the rename (design-desktop-settings-card section 9, C-18): a power loss
+	// after the rename then finds the new file whole, never an empty one in its place. The
+	// folder itself is not flushed, so surviving power loss stays conditional on the file system.
+	if err := syncFile(tmp); err != nil {
+		tmp.Close()
+		os.Remove(tmp.Name())
+		return err
+	}
 	if err := tmp.Close(); err != nil {
 		os.Remove(tmp.Name())
 		return err
 	}
 	return os.Rename(tmp.Name(), path)
 }
+
+// syncFile flushes a job file's temporary copy to disk before Write renames it into place; a
+// seam, so a test can see it happen before the rename.
+var syncFile = (*os.File).Sync
 
 // Read loads a job file, refusing one written by a newer program and one that
 // lacks the essentials (out, mode).

@@ -544,6 +544,29 @@ func VerifyScheduleNote(s Spec) (string, error) {
 	return VerifyLockWarning, nil
 }
 
+// ErrNotRecorded is what Install returns, wrapped in a *NotRecordedError, when the host
+// scheduler took the backup's entry (step 2a) but the archive's descriptor could not be
+// written (step 2b): the entry runs, and nothing in the archive records it
+// (design-desktop-settings-card section 9, R3C-13). A caller that must undo or restore
+// tells this case from a refusal, where nothing was installed, with errors.Is.
+var ErrNotRecorded = errors.New("the schedule is installed, but it could not be recorded in the archive")
+
+// NotRecordedError is ErrNotRecorded with its cause, the descriptor write's own error. Its
+// text is the one Install has always returned for that case.
+type NotRecordedError struct {
+	Cause error
+	msg   string
+}
+
+func (e *NotRecordedError) Error() string   { return e.msg }
+func (e *NotRecordedError) Unwrap() []error { return []error{ErrNotRecorded, e.Cause} }
+
+// NotRecorded wraps cause as Install's step-2b error, for a caller's own installer (a test's
+// stand-in for the scheduler) to report that case as Install does.
+func NotRecorded(cause error) error {
+	return &NotRecordedError{Cause: cause, msg: "the schedule is installed, but its descriptor could not be written: " + cause.Error()}
+}
+
 // Install applies the schedule to the host OS's scheduler and records the
 // archive-local descriptor of its kind. On Windows the wrapper is written (and
 // fsynced) BEFORE the task exists, so an interrupted install leaves at most an
@@ -610,7 +633,8 @@ func installOn(s Spec, goos string) error {
 				return fmt.Errorf("verify schedule %q is installed, but its descriptor could not be written: %w — `mailarchive schedule -name %s -remove -- verify -out %q` takes the entry out; fix the folder and re-run the install to record it", s.Name, derr, s.Name, s.Out)
 			}
 		} else if derr := WriteDescriptor(s.Out, DescribeSpec(s)); derr != nil {
-			return fmt.Errorf("schedule %q is installed, but its descriptor could not be written: %w — `mailarchive schedule -name %s -remove` takes the entry out; fix the folder and re-run the install to record it", s.Name, derr, s.Name)
+			// A distinct error (R3C-13): the entry runs, unrecorded; the text is as it was.
+			return &NotRecordedError{Cause: derr, msg: fmt.Sprintf("schedule %q is installed, but its descriptor could not be written: %v — `mailarchive schedule -name %s -remove` takes the entry out; fix the folder and re-run the install to record it", s.Name, derr, s.Name)}
 		}
 	}
 	return nil

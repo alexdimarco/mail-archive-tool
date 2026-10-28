@@ -14,6 +14,7 @@ import (
 	"mail-archive-tool/internal/job"
 	"mail-archive-tool/internal/keyring"
 	"mail-archive-tool/internal/schedule"
+	"mail-archive-tool/internal/seal"
 	"mail-archive-tool/internal/server"
 	"mail-archive-tool/internal/wizard"
 )
@@ -187,39 +188,102 @@ func saveScheduleChoice(path, interval, at string) error {
 	})
 }
 
-// scheduleInstall installs/updates the weekly backup (loopback-only, CSRF-guarded).
+// scheduleRequest is what the card posts to api/schedule-install: the cadence, the sync box
+// (absent when the page did not show it: unchanged, C-10), and drawnFor, the archive folder the
+// page was drawn for (C-12). An empty interval with no sync box is a Repair.
+type scheduleRequest struct {
+	Interval string  `json:"interval"`
+	Time     string  `json:"time"`
+	Presync  *bool   `json:"presync"`
+	DrawnFor *string `json:"drawnFor"`
+}
+
+func (in scheduleRequest) repair() bool {
+	return strings.TrimSpace(in.Interval) == "" && in.Presync == nil
+}
+
+// stalePage reports a post drawn for another archive than the one current now (C-12, MA-680's
+// binding idea): a tab left open from an earlier archive must not change this one. A post that
+// names no folder (a client older than this page) is not refused for it.
+func (d *dashboard) stalePage(drawnFor *string) bool {
+	return drawnFor != nil && !samePath(*drawnFor, d.cfg.effectiveOut())
+}
+
+// installer is the scheduler install every route uses: schedule.Install, whose kind guard
+// (refuseCollision, then CheckKind) runs on every install, unchanged; or a test's stand-in.
+func (d *dashboard) installer() func(schedule.Spec) error {
+	if d.cfg.InstallBackup != nil {
+		return d.cfg.InstallBackup
+	}
+	return schedule.Install
+}
+
+// scheduleInstall installs, edits or repairs this archive's scheduled backup (loopback-only,
+// CSRF-guarded), routed by section 3.2's table (design-desktop-settings-card, slice A3): the
+// archive's record kind against what owner-side evidence says is installed. Every refusal comes
+// before anything is written — scheduler entry, descriptor, job file and settings file — and
+// every install still passes the kind guard inside schedule.Install, unchanged (part B changes
+// the guard; part A does not).
 func (d *dashboard) scheduleInstall(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost || !server.GuardLocalPOST(r, d.csrf) {
 		http.Error(w, csrfRefused, http.StatusForbidden)
 		return
 	}
-	out := d.cfg.effectiveOut()
-	// An encrypted archive is never scheduled (phase3 O5): refused before any setting
-	// is written, in schedule.Install's own words (the P3-3 plan, 3b).
-	if archiveKind(out) == kindEncrypted {
-		writeJSON(w, map[string]any{"ok": false, "error": schedule.ErrEncryptedArchive.Error() + ": scheduled backups of an encrypted archive are not available yet; nothing was installed"})
-		return
-	}
-	// A LOCAL Thunderbird/mbox archive (local stores, no Microsoft 365) schedules a
-	// RUN-JOB that re-archives it — the Desktop's local-schedule card — reconstructed
-	// from the archive's OWN record and carrying the optional pre-sync, never a
-	// Microsoft 365 capture. Create and edit both come here (an idempotent rewrite);
-	// repairRunJob below stays for a non-local archive's broken run-job entry.
-	if d.cfg.localOnly() {
-		d.scheduleInstallLocal(w, r, out)
-		return
-	}
-	// §4.6.3/MA-617: the card's Install/Repair takes the spec from the CORROBORATED
-	// kind, never the request. A corroborated run-job is REPAIRED through the
-	// wizard's pure RepairSpec (from the sanitized name, -out and ProgramForSchedule,
-	// never the archive-held descriptor's Job/Exe); everything else installs or
-	// repairs the desktop's own capture backup below.
-	if ev := schedule.BuildKindEvidence(out); ev.Has(schedule.KindRunJob) && !ev.Has(schedule.KindCapture) {
-		d.repairRunJob(w, out)
-		return
-	}
-	var in struct{ Interval, Time string }
+	var in scheduleRequest
 	_ = json.NewDecoder(http.MaxBytesReader(w, r.Body, 4<<10)).Decode(&in)
+	refuse := func(msg string) { writeJSON(w, map[string]any{"ok": false, "error": msg}) }
+	if d.stalePage(in.DrawnFor) {
+		refuse(staleRefusal)
+		return
+	}
+	out := d.cfg.effectiveOut()
+	if out == "" {
+		d.scheduleInstallCapture(w, in, out) // as before: it asks for an archive location first
+		return
+	}
+	rt := routeFor(out)
+	switch rt.kind {
+	case backupEncrypted:
+		// An encrypted archive is never scheduled (phase3 O5): refused before any setting
+		// is written, in schedule.Install's own words (the P3-3 plan, 3b).
+		refuse(schedule.ErrEncryptedArchive.Error() + ": scheduled backups of an encrypted archive are not available yet; nothing was installed")
+		return
+	case backupUnknown:
+		refuse(unknownKindRefusal) // C-8: nothing is decided on a guess
+		return
+	}
+	if seal.IsSealed(out) {
+		refuse(pausedRefusal) // C-11: Save never re-creates what Pause removed
+		return
+	}
+	if d.captureRunning() {
+		refuse(runningRefusal) // C-18: a reload of the entry could stop the run
+		return
+	}
+	switch {
+	case rt.notice:
+		// Section 4 (rev4.1): where a capture is counted and the archive or its schedule is
+		// local, the route refuses in plain words from the same BuildKindEvidence the card
+		// draws from, before Install. CheckKind and refuseCollision stay untouched inside
+		// Install, as the backstop.
+		refuse(captureCountedRefus)
+	case rt.export:
+		refuse(commandLineRefusal) // C-7: a cadence it would not apply is never answered ok
+	case rt.runJob && in.repair():
+		// C-5: a corroborated run-job's Repair never rewrites its job file, whatever the
+		// kind: it keeps the sync and the start date, and works with a source missing.
+		d.repairRunJob(w, out)
+	case rt.runJob || rt.broken != "" || rt.kind == backupLocal:
+		// A run-job edit, a local create, or a broken run-job's Repair (the create path).
+		d.scheduleInstallLocal(w, in, out, rt.broken == brokenMissing)
+	default:
+		d.scheduleInstallCapture(w, in, out)
+	}
+}
+
+// scheduleInstallCapture installs or repairs the Desktop's own Microsoft 365 capture for the
+// archive at out.
+func (d *dashboard) scheduleInstallCapture(w http.ResponseWriter, in scheduleRequest, out string) {
 	// §4.6.3/MA-617: a capture install (or repair) refuses BEFORE schedule.Install
 	// when Microsoft 365 is not set up, with the same text a scheduled capture does.
 	if err := d.cfg.m365Ready(); err != nil {
@@ -240,11 +304,7 @@ func (d *dashboard) scheduleInstall(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, map[string]any{"ok": false, "error": err.Error()})
 		return
 	}
-	install := schedule.Install
-	if d.cfg.InstallBackup != nil {
-		install = d.cfg.InstallBackup
-	}
-	if err := install(spec); err != nil {
+	if err := d.installer()(spec); err != nil {
 		writeJSON(w, map[string]any{"ok": false, "error": err.Error()})
 		return
 	}
@@ -322,11 +382,7 @@ func (d *dashboard) repairRunJob(w http.ResponseWriter, out string) {
 		writeJSON(w, map[string]any{"ok": false, "error": err.Error()})
 		return
 	}
-	install := schedule.Install
-	if d.cfg.InstallBackup != nil {
-		install = d.cfg.InstallBackup
-	}
-	if err := install(spec); err != nil {
+	if err := d.installer()(spec); err != nil {
 		writeJSON(w, map[string]any{"ok": false, "error": err.Error()})
 		return
 	}
