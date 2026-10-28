@@ -325,6 +325,22 @@ func TestTheCardsRepairAndRemoveReplyStaysAfterTheStateRedraw(t *testing.T) {
 	}
 }
 
+// covers: MA-859, R37
+// The card's state line says when an hourly backup runs in the words Settings uses ("hourly uses
+// the minutes"): "hourly, at 00 minutes past each hour", never "hourly at 03:00", which reads as a
+// once-a-day 3 a.m. run (the live walk of 2026-10-28). Daily and weekly keep their time of day.
+func TestTheCardSaysAnHourlyBackupRunsAtItsMinutesPastEachHour(t *testing.T) {
+	st := jsFuncs(dashboardJS)["schedState"]
+	if st == "" {
+		t.Fatal("schedState not found in the page script")
+	}
+	for _, w := range []string{"d.interval==='hourly'?', at '+d.at.slice(-2)+' minutes past each hour'", ":' at '+d.at"} {
+		if !strings.Contains(st, w) {
+			t.Errorf("the state line lacks %q:\n%s", w, st)
+		}
+	}
+}
+
 // covers: MA-872, R37
 // Each Desktop style block (the Overview's, and the workspace and export pages') carries a pressed
 // rule for .btn (darker, one pixel down) and a busy rule (progress cursor and a spinner that stops

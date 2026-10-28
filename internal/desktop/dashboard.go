@@ -2098,7 +2098,7 @@ async function schedState(lead){
   try{const d=await(await fetch('api/schedule-state')).json();
     n.hidden=false;
     if(!d.schedulerAvailable)n.textContent=pre+'The OS scheduler is unavailable on this machine.';
-    else if(d.state==='installed')n.textContent=pre+(lead?'Now: installed':'Installed')+(d.interval?(' ('+d.interval+(d.at?' at '+d.at:'')+')'):'')+'.';
+    else if(d.state==='installed')n.textContent=pre+(lead?'Now: installed':'Installed')+(d.interval?(' ('+d.interval+(d.at?(d.interval==='hourly'?', at '+d.at.slice(-2)+' minutes past each hour':' at '+d.at):'')+')'):'')+'.';
     else n.textContent=pre+(lead?'Now: not installed.':'Not installed.');
   }catch(e){}
 }
