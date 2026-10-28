@@ -20,17 +20,21 @@ const SourceStreakVersion = 1
 
 const maxSourceStreakBytes = 4 * 1024
 
-// Source-loss thresholds, counted in CONSECUTIVE failed scheduled RUNS, never elapsed time: a
-// machine that was simply off runs nothing, so it never trips these — only runs that happened
-// and found the source unreachable count (S3-C3). FirstUnreachable is kept ONLY for the
-// banner's "since DATE" text, never as a trigger.
+// Source-loss thresholds (owner ruling 2026-10-28, design-desktop-settings-card 3.7, R3C-11):
+// measured as the time BETWEEN runs that found the source unreachable — LastUnreachable minus
+// FirstUnreachable — with at least MinFailedRuns such runs, and NEVER compared with now. So a
+// machine that was simply off runs nothing and trips nothing, the banner, status and the
+// auto-pause read the same stored record and agree, and an hourly schedule (24 runs a day)
+// does not auto-pause after a day and a bit. (Until 2026-10-28 they counted runs: 3 and 30.)
 const (
-	// SurfaceAfterRuns: show "this archive's source hasn't been reachable" after this many
-	// consecutive failed runs.
-	SurfaceAfterRuns = 3
-	// AutoPauseAfterRuns: the optional auto-pause clock (owner policy; the pause only stops
-	// the schedule and stays reversible, S3-C5 — it never seals or forgets).
-	AutoPauseAfterRuns = 30
+	// SurfaceAfter: show "this archive's source hasn't been reachable" once the unreachable runs
+	// span this long.
+	SurfaceAfter = 3 * 24 * time.Hour
+	// AutoPauseAfter: the optional auto-pause clock (owner policy; the pause only stops the
+	// schedule and stays reversible, S3-C5 — it never seals or forgets).
+	AutoPauseAfter = 30 * 24 * time.Hour
+	// MinFailedRuns: one failed run alone never trips either threshold.
+	MinFailedRuns = 2
 )
 
 // SourceStreak is the cross-run source-reachability state §5.7's "surface loudly" threshold
@@ -45,8 +49,12 @@ type SourceStreak struct {
 	Version          int       `json:"version"`
 	ConsecutiveFails int       `json:"consecutive_fails"`           // scheduled runs in a row the source was unreachable
 	FirstUnreachable time.Time `json:"first_unreachable,omitempty"` // when the current unreachable streak began ("since DATE")
-	LastSuccess      time.Time `json:"last_success,omitempty"`      // the last run that reached the source
-	LastKind         string    `json:"last_kind,omitempty"`         // the source-unreachable kind last seen (a classifier label)
+	// LastUnreachable is the latest run that found the source unreachable, written only by such
+	// a run (R3C-11). An older MailArchive skips the field (plain json.Unmarshal); a record an
+	// older one wrote has none, and trips nothing until the next unreachable run writes it.
+	LastUnreachable time.Time `json:"last_unreachable,omitempty"`
+	LastSuccess     time.Time `json:"last_success,omitempty"` // the last run that reached the source
+	LastKind        string    `json:"last_kind,omitempty"`    // the source-unreachable kind last seen (a classifier label)
 }
 
 // Observe folds one run's outcome into the streak and returns the new value (pure — the
@@ -58,6 +66,7 @@ func (s SourceStreak) Observe(reachable bool, kind string, now time.Time) Source
 	if reachable {
 		s.ConsecutiveFails = 0
 		s.FirstUnreachable = time.Time{}
+		s.LastUnreachable = time.Time{}
 		s.LastKind = ""
 		s.LastSuccess = now
 		return s
@@ -66,6 +75,7 @@ func (s SourceStreak) Observe(reachable bool, kind string, now time.Time) Source
 	if s.FirstUnreachable.IsZero() {
 		s.FirstUnreachable = now
 	}
+	s.LastUnreachable = now
 	s.LastKind = util.StripControl(kind)
 	return s
 }
@@ -73,13 +83,24 @@ func (s SourceStreak) Observe(reachable bool, kind string, now time.Time) Source
 // Unreachable reports whether the archive's source is currently in an unreachable streak.
 func (s SourceStreak) Unreachable() bool { return s.ConsecutiveFails > 0 }
 
-// SurfaceLoudly reports whether the streak has crossed the "tell the owner" threshold — a run
-// count, never elapsed time, so a machine that was off (no runs) never trips it (S3-C3).
-func (s SourceStreak) SurfaceLoudly() bool { return s.ConsecutiveFails >= SurfaceAfterRuns }
+// unreachableFor is how long the unreachable runs span: LastUnreachable minus FirstUnreachable,
+// with at least MinFailedRuns of them, else 0. It never reads the clock (R3C-11).
+func (s SourceStreak) unreachableFor() time.Duration {
+	if s.ConsecutiveFails < MinFailedRuns || s.FirstUnreachable.IsZero() || s.LastUnreachable.IsZero() {
+		return 0
+	}
+	return s.LastUnreachable.Sub(s.FirstUnreachable)
+}
 
-// AutoPauseDue reports whether the optional auto-pause clock has elapsed (S3-C5): also a run
-// count. Auto-pause only stops the live schedule and stays reversible; it never seals.
-func (s SourceStreak) AutoPauseDue() bool { return s.ConsecutiveFails >= AutoPauseAfterRuns }
+// SurfaceLoudly reports whether the streak has crossed the "tell the owner" threshold: the
+// unreachable runs span SurfaceAfter (3 days), never measured to now, so a machine that was
+// off (no runs) never trips it.
+func (s SourceStreak) SurfaceLoudly() bool { return s.unreachableFor() >= SurfaceAfter }
+
+// AutoPauseDue reports whether the optional auto-pause clock has elapsed (S3-C5): the
+// unreachable runs span AutoPauseAfter (30 days), again between runs. Auto-pause only stops
+// the live schedule and stays reversible; it never seals.
+func (s SourceStreak) AutoPauseDue() bool { return s.unreachableFor() >= AutoPauseAfter }
 
 // ReadSourceStreak reads the archive-local streak at out. An ABSENT record is the zero streak
 // (reachable, no history) with no error; a present record is read fail-closed via

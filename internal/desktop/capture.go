@@ -13,6 +13,7 @@ import (
 
 	"mail-archive-tool/internal/alert"
 	"mail-archive-tool/internal/app"
+	"mail-archive-tool/internal/backupalert"
 	"mail-archive-tool/internal/export"
 	"mail-archive-tool/internal/graph"
 	"mail-archive-tool/internal/seal"
@@ -43,8 +44,14 @@ func (cfg Config) m365Ready() error {
 // settings + sign-in token (Credential Manager on Windows / the file cache else)
 // and refuses if there is no saved sign-in (Unattended=true never prompts). Logs to
 // logw; returns the run error.
+//
+// Every failure exit but the paused refusal goes through the alert streak (reportRun): the
+// failure email goes once per failing streak, plus one recovery email (design-desktop-
+// settings-card 3.7, R3C-10). A start while another run holds the archive's lock, which
+// started under a day ago, skips quietly: no failure, alert, streak or history entry.
 func HeadlessCapture(cfg Config, logw io.Writer) error {
 	out := cfg.effectiveOut()
+	key := backupalert.KeyFor(out) // the archive folder the capture backs up into
 	// A paused archive is hard read-only: refuse before recordStartFailure or any
 	// write (S2-C2). The caller logs this to the capture log (config dir), never into
 	// the archive.
@@ -57,6 +64,7 @@ func HeadlessCapture(cfg Config, logw io.Writer) error {
 		// Recorded like every scheduled refusal: the minimal failed run and one
 		// history entry, the failure kind and never its text (A14, P2a-C16).
 		app.RecordRefusedRun(app.Options{Out: out, Unattended: true}, err)
+		cfg.reportRun(key, out, alert.ResultFailed, err, 0, nil)
 		return err
 	}
 	// §4.6.3/MA-617 + OP-2/MA-646: refuse when Microsoft 365 is not set up, via the
@@ -65,11 +73,14 @@ func HeadlessCapture(cfg Config, logw io.Writer) error {
 	// not stay silently GREEN until it is twice its period late (R18).
 	if err := cfg.m365Ready(); err != nil {
 		recordStartFailure(out, err)
+		cfg.reportRun(key, out, alert.ResultFailed, err, 0, nil)
 		return err
 	}
 	c := cfg.load()
 	if out == "" {
-		return errors.New("no archive location set — choose one in MailArchive Desktop first")
+		err := errors.New("no archive location set — choose one in MailArchive Desktop first")
+		cfg.reportRun(key, out, alert.ResultFailed, err, 0, nil)
+		return err
 	}
 	s := cfg.settings()
 	tcfg := cfg.tokenCfg(c)
@@ -95,19 +106,26 @@ func HeadlessCapture(cfg Config, logw io.Writer) error {
 		opts.Warnings = []state.RunWarning{{Code: "config_in_archive", Message: msg}}
 	}
 	_, err := app.RunGraph(context.Background(), g, opts, logger)
+	// Another run holds the archive (Archive now, a verify, a rebuild) and started under a day
+	// ago: skip quietly, naming it (R3C-12). Nothing was recorded.
+	if line, quiet := app.ScheduledLockSkip(out, err, time.Now()); quiet {
+		logger.Printf("%s", line)
+		return nil
+	}
 	// Built-in email alert for this scheduled run's result (MA-698), best-effort: a mail
-	// failure never fails the backup. On failure the reason travels in the body.
+	// failure never fails the backup. On failure the reason travels in the body; it goes once
+	// per failing streak, and the first success after one sends a recovery email (MA-870).
 	result := alert.ResultOK
 	if err != nil {
 		result = alert.ResultFailed
 	}
-	cfg.fireAlert(result, out, err, 0, logger)
+	cfg.reportRun(key, out, result, err, 0, logger)
 	// After a scheduled run, auto-pause the backup if the source has been unreachable for too
-	// many runs (§5.7, S3-C5): stop the nightly schedule only — reversible, never seals. Best
-	// effort; it never fails the run.
+	// long (§5.7, S3-C5): stop the schedule only — reversible, never seals. Best effort; it
+	// never fails the run. Its email goes whatever the streak said, and the streak ends.
 	if paused, perr := wizard.AutoPauseIfDue(out); perr == nil && paused {
 		logger.Printf("auto-paused the scheduled backup: the source has been unreachable for too long; the schedule was stopped (reversible — reconnect the source and re-enable it)")
-		cfg.fireAlert(alert.ResultPaused, out, errors.New("the mailbox or mail folder has been unreachable for too many runs, so the scheduled backup was paused. Reconnect the source and re-enable it."), 0, logger)
+		backupalert.RecordAutoPause(cfg.SettingsPath, cfg.Store, key, out, errors.New(wizard.AutoPauseWhy), logger)
 	}
 	return err
 }

@@ -26,9 +26,12 @@ func writeManifest(t *testing.T, dir string) {
 func TestMA692_SourceLossSurfacedOnArchiveCard(t *testing.T) {
 	lost := t.TempDir()
 	writeManifest(t, lost)
+	// Amended 2026-10-28 (design-desktop-settings-card 3.7, slice A4, owner-accepted): past the
+	// threshold is the unreachable runs spanning 3 days (at least two), not 3 runs.
 	if err := state.WriteSourceStreak(lost, state.SourceStreak{
-		ConsecutiveFails: state.SurfaceAfterRuns,
+		ConsecutiveFails: 2,
 		FirstUnreachable: time.Date(2026, 10, 12, 3, 0, 0, 0, time.UTC),
+		LastUnreachable:  time.Date(2026, 10, 12, 3, 0, 0, 0, time.UTC).Add(state.SurfaceAfter),
 	}); err != nil {
 		t.Fatal(err)
 	}

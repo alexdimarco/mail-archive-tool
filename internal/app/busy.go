@@ -2,6 +2,7 @@ package app
 
 import (
 	"errors"
+	"path/filepath"
 	"strings"
 	"time"
 
@@ -34,6 +35,56 @@ func busyRefusal(lockPath string, err error) error {
 	// The lock file is named (R5's refusal names it), so a person who finds it knows
 	// what it is; the holder's own line is not.
 	return &busyError{msg: "another backup or check is using this archive" + since + " — it is in use until that finishes, holding its lock file " + lockfile.Name + "; try again when it finishes", err: err}
+}
+
+// QuietSkipWindow is how long a scheduled backup that finds another holder of the archive's
+// lock skips quietly (design-desktop-settings-card 3.7, R3C-12): an hourly backup that starts
+// while the previous one, a verify or a rebuild is still going is not a failure. A holder that
+// started longer ago than this may be hung, so the start counts as a failure and is alerted
+// once per failing streak, never hidden for good.
+const QuietSkipWindow = 24 * time.Hour
+
+// ScheduledLockSkip reports whether a SCHEDULED run that ended with err — the archive's lock
+// held by another run (lockfile.ErrHeld) — skips quietly: only while that holder started less
+// than QuietSkipWindow before now (a few minutes of clock difference allowed). line says so in
+// plain words and names the real holder (lockfile.HolderVerb). Quiet means no failure, alert,
+// source streak or history entry: the lock refusal comes before any of them is written (Run and
+// RunGraph take the lock before their record). A holder whose start can't be read is not
+// proven recent, so the start counts as a failure.
+func ScheduledLockSkip(out string, err error, now time.Time) (line string, quiet bool) {
+	if err == nil || !errors.Is(err, lockfile.ErrHeld) {
+		return "", false
+	}
+	lockPath := filepath.Join(out, lockfile.Name)
+	started, ok := lockStarted(lockPath)
+	if !ok {
+		return "", false
+	}
+	if age := now.Sub(started); age < -5*time.Minute || age >= QuietSkipWindow {
+		return "", false
+	}
+	return "This scheduled backup was skipped: " + holderWords(lockfile.HolderVerb(lockPath)) + " started at " +
+		started.Local().Format("15:04 on 2006-01-02") + " and is still using this archive. The next scheduled backup runs as usual.", true
+}
+
+// holderWords names what holds the archive's lock, from the verb its holder line records, in
+// plain words. An encrypted archive's lock names no verb (A18), so it reads as another task.
+func holderWords(verb string) string {
+	switch verb {
+	case "export":
+		return "an earlier backup of this archive"
+	case "graph":
+		return "a Microsoft 365 capture into this archive"
+	case "verify":
+		return "a check of this archive (verify)"
+	case "reindex", "rebuild":
+		return "a rebuild of this archive's search index"
+	case "pause":
+		return "pausing this archive"
+	case "programcopies":
+		return "a change to the copies of MailArchive kept in this archive"
+	}
+	return "another MailArchive task"
 }
 
 // lockStarted reads when the lock's holder started, from its holder line.

@@ -36,6 +36,10 @@ const (
 	ResultOK     = "ok"
 	ResultFailed = "failed"
 	ResultPaused = "paused" // a backup auto-paused after a long source-loss streak
+	// ResultRecovered is the first successful backup after a failing streak: one email says
+	// backups are working again (design-desktop-settings-card 3.7, R3C-10). It is sent under
+	// the failure option, since it closes a streak that option told the owner about.
+	ResultRecovered = "recovered"
 )
 
 // Config is the built-in email-alert configuration (stored in desktop settings; the
@@ -82,7 +86,7 @@ func (c Config) ShouldSend(result string) bool {
 		return false
 	}
 	switch result {
-	case ResultFailed:
+	case ResultFailed, ResultRecovered:
 		return c.OnFailure
 	case ResultOK:
 		return c.OnSuccess
@@ -133,6 +137,8 @@ func (c Config) subjectAndBody(ev Event) (subject, body string) {
 		subject = "MailArchive backup FAILED: " + name
 	case ResultPaused:
 		subject = "MailArchive backup PAUSED after repeated failures: " + name
+	case ResultRecovered:
+		subject = "MailArchive backups are working again: " + name
 	default:
 		subject = "MailArchive backup ok: " + name
 	}
@@ -161,6 +167,8 @@ func resultWord(r string) string {
 		return "failed"
 	case ResultPaused:
 		return "paused"
+	case ResultRecovered:
+		return "working again"
 	default:
 		return "ok"
 	}

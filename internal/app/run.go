@@ -1104,6 +1104,11 @@ func writeRefusedRun(opts Options, cause error) {
 	_ = state.WriteLastRun(opts.Out, lr)
 	// A refused scheduled run is a failure the history should show too (MA-701), best effort.
 	_ = appendRunHistory(opts.Out, state.RunHistoryEntryFrom(lr))
+	// Every caller is a scheduled run, and a run refused because its local source is gone is the
+	// commonest source loss: it moves the source streak like a finished run would (§5.7), or a
+	// lost Thunderbird folder would never warn or auto-pause (design-desktop-settings-card 3.7,
+	// MA-871). Any other refusal is inconclusive and leaves the streak.
+	updateSourceStreak(opts.Out, cause, lr.Finished, lr.Encrypted, nil)
 }
 
 // lockVerb is the verb the archive lock records for a run of opts: none for an

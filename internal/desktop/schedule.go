@@ -10,7 +10,9 @@ import (
 	"runtime"
 	"strings"
 
+	"mail-archive-tool/internal/alert"
 	"mail-archive-tool/internal/app"
+	"mail-archive-tool/internal/backupalert"
 	"mail-archive-tool/internal/job"
 	"mail-archive-tool/internal/keyring"
 	"mail-archive-tool/internal/schedule"
@@ -304,9 +306,13 @@ func (d *dashboard) scheduleInstallCapture(w http.ResponseWriter, in scheduleReq
 		writeJSON(w, map[string]any{"ok": false, "error": err.Error()})
 		return
 	}
+	existed := d.cfg.taskState(spec.Out) == schedule.Installed
 	if err := d.installer()(spec); err != nil {
 		writeJSON(w, map[string]any{"ok": false, "error": err.Error()})
 		return
+	}
+	if !existed {
+		d.cfg.clearAlertStreak(spec.Out) // a create starts with no failing streak (R3C-10)
 	}
 	// Recorded only now that it is installed, and before the clean-up below, which can
 	// return early (C-13, R3C-14): the settings file is the capture's record of what it
@@ -358,7 +364,41 @@ func (d *dashboard) captureCadence(interval, at string) (schedule.Interval, stri
 	if err != nil {
 		return "", "", fmt.Errorf("%q is not a backup schedule MailArchive knows (choose Daily or Weekly). Nothing was changed.", strings.TrimSpace(interval))
 	}
+	if iv == schedule.Hourly {
+		return "", "", errors.New(hourlyCaptureRefusal) // OR-2: never an hourly capture
+	}
 	return iv, strings.TrimSpace(at), nil
+}
+
+// hourlyCaptureRefusal is section 6's refusal of an hourly Microsoft 365 capture (OR-2, R3C-15):
+// Hourly is for local mail backups (a run-job) only.
+const hourlyCaptureRefusal = "Hourly backups are for local mail backups; choose Daily or Weekly for a Microsoft 365 capture. Nothing was changed."
+
+// Hourly's warnings when it is saved (design-desktop-settings-card 3.7), in the reply's note.
+const (
+	hourlySuccessEmailsNote = "Success emails are on, so this sends one email every hour. Turn them off in Backup alerts if that's too many."
+	hourlyVerifyNote        = "A scheduled verify also runs on this archive; backups that start while it runs are skipped."
+)
+
+// hourlyNotes are the warnings a saved Hourly backup of out carries: success emails on (one
+// email an hour), and a scheduled verify of the archive (backups that start while it runs skip).
+func (cfg Config) hourlyNotes(out string) []string {
+	var notes []string
+	if a := backupalert.LoadConfig(cfg.SettingsPath); a.ShouldSend(alert.ResultOK) {
+		notes = append(notes, hourlySuccessEmailsNote)
+	}
+	if _, err := schedule.ReadVerifyDescriptor(out); err == nil {
+		notes = append(notes, hourlyVerifyNote)
+	}
+	return notes
+}
+
+// clearAlertStreak ends the alert streak of the schedule for the archive folder out (R3C-10): a
+// create and a Remove clear it, so a re-created schedule's first failure sends. Best effort.
+func (cfg Config) clearAlertStreak(out string) {
+	if err := backupalert.ClearStreak(cfg.SettingsPath, backupalert.KeyFor(out)); err != nil {
+		log.Printf("the backup alert record for %s could not be cleared: %v", out, err)
+	}
 }
 
 // repairRunJob rebuilds a corroborated run-job schedule for out through the
@@ -460,6 +500,7 @@ func (d *dashboard) removeTasks() (removed []string, err error) {
 		if r {
 			removed = append(removed, p)
 		}
+		d.cfg.clearAlertStreak(p) // Remove ends the schedule's failing streak (R3C-10)
 	}
 	if len(removed) > 0 {
 		_ = UpdateSettings(d.cfg.SettingsPath, "backup", func(s *Settings) { s.BackupFor = "" })

@@ -404,7 +404,8 @@ func Assess(in Input, now time.Time) Report {
 	}
 
 	// Source-loss (§5.7, S3-C6): when this archive's SOURCE (its mailbox, or a local mail
-	// folder) has been unreachable for too many scheduled runs, say so here too — not only on
+	// folder) has been unreachable for 3 days between scheduled runs (never measured to now,
+	// design-desktop-settings-card 3.7), say so here too — not only on
 	// the Desktop banner — so a headless operator reading `status` sees it. Best-effort read of
 	// the archive-local streak the scheduled run maintains (state.SourceStreak).
 	if in.Out != "" {

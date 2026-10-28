@@ -34,6 +34,10 @@ var fixedConfigNames = map[string]bool{
 	"desktop-capture.log":   true,
 }
 
+// alertStreakSuffix ends a scheduled backup's alert streak file, <key>.alert-streak, kept
+// beside the Desktop settings (backupalert.StreakSuffix; a test keeps the two in step).
+const alertStreakSuffix = ".alert-streak"
+
 // ErrOverlap refuses the WHOLE config cleanup because the config dir is, contains, or
 // sits inside a mail archive; deleting its contents could destroy mail (R36, U-C1).
 var ErrOverlap = errors.New("refusing to clean the config directory: it overlaps a mail archive")
@@ -97,6 +101,8 @@ func deletableConfigName(name string) bool {
 	case strings.HasSuffix(name, ".json"): // GUI scheduled-job files, <name>.json
 		return true
 	case strings.HasSuffix(name, ".jobfail.log"):
+		return true
+	case strings.HasSuffix(name, alertStreakSuffix): // a scheduled backup's alert streak
 		return true
 	}
 	return false

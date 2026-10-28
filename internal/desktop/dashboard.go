@@ -40,6 +40,7 @@ import (
 	"mail-archive-tool/internal/schedule"
 	"mail-archive-tool/internal/seal"
 	"mail-archive-tool/internal/server"
+	"mail-archive-tool/internal/state"
 	"mail-archive-tool/internal/uninstall"
 	"mail-archive-tool/internal/wizard"
 )
@@ -1039,9 +1040,11 @@ func (cfg Config) overviewFor(csrf, epoch string) string {
 		AlertTo          string
 		AlertUsername    string
 		AlertHasPassword bool
-		// Recent backups card (MA-701): the archive's rolling run history, newest first.
+		// Recent backups card (MA-701): the archive's rolling run history, newest first, and
+		// how many runs it keeps (stated beside it, design-desktop-settings-card 3.7).
 		RecentRuns []runRow
-	}{Export: !cfg.WorkspaceOff, Epoch: epoch, CSRF: csrf, Cards: cfg.cards(), Vault: vaultPhrase(), OutDir: cfg.effectiveOut(), ReaderURL: cfg.ReaderURL, SignedIn: signedIn, UPN: upn,
+		HistoryMax int
+	}{HistoryMax: state.RunHistoryMax, Export: !cfg.WorkspaceOff, Epoch: epoch, CSRF: csrf, Cards: cfg.cards(), Vault: vaultPhrase(), OutDir: cfg.effectiveOut(), ReaderURL: cfg.ReaderURL, SignedIn: signedIn, UPN: upn,
 		KeepRaw: s.KeepRaw, IncludeDeleted: s.IncludeDeleted, IncludeJunk: s.IncludeJunk,
 		Interval: orElse(s.Interval, "weekly"), WeeklyTime: orElse(s.WeeklyTime, "03:00"),
 		Account: cfg.account(), SessionsLine: cfg.sessionsLine(), FormerNotice: cfg.formerNotice(), ResidualOS: residualOS(cfg.goos()),
@@ -1575,8 +1578,8 @@ pre{white-space:pre-wrap;overflow-wrap:anywhere;background:var(--bg);border:1px 
       {{if .ShowLocalEdit}}<p class="card-sub">Change this archive's scheduled backup below — how often, the time, and whether it syncs Thunderbird first — then choose Install / update.</p>{{end}}
       {{if or .ShowInstall .ShowLocalCreate .ShowLocalEdit}}<div class="row2">
         <div><label for="schedInterval">How often</label>
-          <select id="schedInterval"><option value="weekly"{{if eq .Interval "weekly"}} selected{{end}}>Weekly (Sunday)</option><option value="daily"{{if eq .Interval "daily"}} selected{{end}}>Daily</option></select></div>
-        <div><label for="schedTime">At (local time)</label><input id="schedTime" type="time" value="{{.WeeklyTime}}"></div>
+          <select id="schedInterval"><option value="weekly"{{if eq .Interval "weekly"}} selected{{end}}>Weekly (Sunday)</option><option value="daily"{{if eq .Interval "daily"}} selected{{end}}>Daily</option>{{if or .ShowLocalCreate .ShowLocalEdit}}<option value="hourly"{{if eq .Interval "hourly"}} selected{{end}}>Hourly</option>{{end}}</select></div>
+        <div><label for="schedTime">At (local time{{if or .ShowLocalCreate .ShowLocalEdit}}; hourly uses the minutes{{end}})</label><input id="schedTime" type="time" value="{{.WeeklyTime}}"></div>
       </div>
       {{if .LocalPresyncOfferable}}<label class="checkline"><input type="checkbox" id="schedPresync"{{if .LocalPresyncOn}} checked{{end}}> Sync Thunderbird before each backup</label>
       <p class="note" id="schedPresyncNote">{{.PresyncNoticeText}}</p>{{end}}{{end}}
@@ -1616,7 +1619,7 @@ pre{white-space:pre-wrap;overflow-wrap:anywhere;background:var(--bg);border:1px 
 
     <div class="card" id="sec-history">
       <h2>Recent backups</h2>
-      {{if .RecentRuns}}<p class="card-sub">The last few backup runs for this archive, newest first.</p>
+      {{if .RecentRuns}}<p class="card-sub">The last backup runs for this archive, newest first. MailArchive keeps the last {{.HistoryMax}}, which is about two days of hourly backups.</p>
       <ul class="run-history">
         {{range .RecentRuns}}<li>{{.When}} — {{if .Failed}}<span class="warn">{{.Status}}</span>{{else}}<span class="good">{{.Status}}</span>{{end}}{{if .Detail}} — {{.Detail}}{{end}}</li>{{end}}
       </ul>{{else}}<p class="card-sub">No backups have run yet. When a scheduled backup or Run now finishes, its result appears here.</p>{{end}}

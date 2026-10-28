@@ -2,6 +2,7 @@ package wizard
 
 import (
 	"testing"
+	"time"
 
 	"mail-archive-tool/internal/schedule"
 	"mail-archive-tool/internal/seal"
@@ -106,10 +107,11 @@ func TestMA680_PauseBindsScheduleNameBeforeRemoving(t *testing.T) {
 
 // covers: MA-690
 // Auto-pause after a long source-loss streak (archive-manager Slice 3c, S3-C5): when the
-// source has been unreachable for state.AutoPauseAfterRuns consecutive scheduled runs,
-// AutoPauseIfDue stops the live backup schedule — ONLY the bound live entry (never the raw
-// descriptor name, MA-680), KEEPING the descriptor so it is reversible — and NEVER seals.
-// Below the threshold it does nothing.
+// source's unreachable runs span state.AutoPauseAfter (30 days, at least two runs, measured
+// between runs), AutoPauseIfDue stops the live backup schedule — ONLY the bound live entry
+// (never the raw descriptor name, MA-680), KEEPING the descriptor so it is reversible — and
+// NEVER seals. Below the threshold it does nothing. Amended 2026-10-28 (design-desktop-
+// settings-card 3.7, slice A4, R3C-9 accepted by the owner): it counted 30 runs until then.
 func TestMA690_AutoPauseRemovesScheduleWhenDue(t *testing.T) {
 	var removed []string
 	orig := removeLiveEntry
@@ -125,7 +127,8 @@ func TestMA690_AutoPauseRemovesScheduleWhenDue(t *testing.T) {
 	}
 
 	// Below the threshold: no auto-pause, nothing removed.
-	if err := state.WriteSourceStreak(out, state.SourceStreak{ConsecutiveFails: state.AutoPauseAfterRuns - 1}); err != nil {
+	t0 := time.Date(2026, 9, 1, 2, 0, 0, 0, time.UTC)
+	if err := state.WriteSourceStreak(out, state.SourceStreak{ConsecutiveFails: 700, FirstUnreachable: t0, LastUnreachable: t0.Add(state.AutoPauseAfter - time.Hour)}); err != nil {
 		t.Fatal(err)
 	}
 	if paused, err := AutoPauseIfDue(out); err != nil || paused || len(removed) != 0 {
@@ -134,7 +137,7 @@ func TestMA690_AutoPauseRemovesScheduleWhenDue(t *testing.T) {
 
 	// At the threshold: auto-pause removes this archive's bound entry, keeps the descriptor,
 	// and does NOT seal.
-	if err := state.WriteSourceStreak(out, state.SourceStreak{ConsecutiveFails: state.AutoPauseAfterRuns}); err != nil {
+	if err := state.WriteSourceStreak(out, state.SourceStreak{ConsecutiveFails: 2, FirstUnreachable: t0, LastUnreachable: t0.Add(state.AutoPauseAfter)}); err != nil {
 		t.Fatal(err)
 	}
 	paused, err := AutoPauseIfDue(out)

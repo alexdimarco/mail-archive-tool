@@ -254,13 +254,23 @@ func (d *dashboard) scheduleInstallLocal(w http.ResponseWriter, in scheduleReque
 			return
 		}
 	}
+	if !existed {
+		d.cfg.clearAlertStreak(out) // a create starts with no failing streak (R3C-10)
+	}
 	resp := map[string]any{"ok": true}
+	var notes []string
 	if recreate && !exists {
 		note := recreatedNote
 		if j.ThunderbirdSync == nil && localArchiveThunderbirdSourced(out) {
 			note += syncNowOffNote
 		}
-		resp["note"] = note
+		notes = append(notes, note)
+	}
+	if iv == schedule.Hourly {
+		notes = append(notes, d.cfg.hourlyNotes(out)...) // what 24 runs a day costs (3.7)
+	}
+	if len(notes) > 0 {
+		resp["note"] = strings.Join(notes, " ")
 	}
 	writeJSON(w, resp)
 }

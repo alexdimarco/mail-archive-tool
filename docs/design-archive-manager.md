@@ -330,6 +330,17 @@ Thunderbird/mbox folder) becomes unreachable:
 - **No auto-delete, no auto-seal.** Default: keep trying + show the banner;
   *optionally* auto-pause the schedule after ~30 days only to stop nightly
   failure noise — never seal or forget on its own (owner-approved policy).
+- **Dated note, 2026-10-28 (owner ruling; design-desktop-settings-card 3.7,
+  R3C-11, slice A4):** the two thresholds are now **3 days** (surface loudly)
+  and **30 days** (auto-pause), measured **between runs** — the latest run that
+  found the source unreachable minus the first one (`last_unreachable` minus
+  `first_unreachable` in the source streak), with at least two such runs, and
+  never compared with now. So a computer that was simply off trips nothing, the
+  banner, `status` and the auto-pause read the same record and agree, and an
+  hourly schedule does not auto-pause after a day and a bit. Until this date
+  they counted runs (3 and 30, S3-C3). The local scheduled job auto-pauses as
+  the capture does. Accepted edge: a weekly backup that fails once, then the
+  computer is off for a month, auto-pauses at its next failed run.
 - **To-confirm:** the exact fields `.mailarchive-lastrun.json` records and
   whether it already distinguishes source-unreachable from other failures, and
   the health model's current threshold — pin both before coding (lens 3/10).

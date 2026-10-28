@@ -190,18 +190,28 @@ func dialogPreflight(goos string, dialogToolFound, displaySet bool) (refusal str
 // RunHeadless runs a saved job with no dialogs. Exit 1 on any failure, with
 // the reason in the run log (or, when the job file itself is the problem, in
 // the jobfail log beside it — a sink that does not depend on the job's out).
+//
+// Every failure exit but the paused refusal goes through the alert streak (reportRun): the
+// failure email and the Desktop notice go once per failing streak, and the first success after
+// one sends a recovery email and notice (design-desktop-settings-card 3.7, R3C-10, R3C-12). A
+// start while another run holds the archive's lock, which started under a day ago, skips
+// quietly: no failure, alert, streak or history entry.
 func RunHeadless(path string) int {
 	j, err := job.Read(path)
 	if err != nil {
+		// No folder to key by: the streak is keyed by the job file's own name (rev4.1), which
+		// for a Desktop- or wizard-made job is the key the run's other exits use.
 		jobFail(path, err)
+		reportRun(backupalert.KeyForJobFile(path), jobFileName(path), path, backupalert.ResultFailed, err, 0, nil)
 		return 1
 	}
+	key := backupalert.KeyFor(j.Out)
 	// Unattended guard: an absent -out (the backup drive is not mounted) must
 	// not become a fresh archive on the local disk that then reports "ok".
 	if fi, err := os.Stat(j.Out); err != nil || !fi.IsDir() {
 		e := fmt.Errorf("archive directory %s is not present — is the backup drive mounted? refusing to create a new archive elsewhere", j.Out)
 		jobFail(path, e)
-		fireBackupAlert(j.Out, backupalert.ResultFailed, e, 0, nil)
+		reportRun(key, jobFileName(path), j.Out, backupalert.ResultFailed, e, 0, nil)
 		return 1
 	}
 	// A paused archive is hard read-only: refuse before the run-log open and any PST
@@ -219,12 +229,13 @@ func RunHeadless(path string) int {
 	if err := app.RefuseKeyless("archive into it", j.Out); err != nil {
 		app.RecordRefusedRun(app.Options{Out: j.Out, Unattended: true}, err)
 		jobFail(path, err)
-		fireBackupAlert(j.Out, backupalert.ResultFailed, err, 0, nil)
+		reportRun(key, jobFileName(path), j.Out, backupalert.ResultFailed, err, 0, nil)
 		return 1
 	}
 	logf, err := runlog.Open(filepath.Join(j.Out, "mailarchive.log"))
 	if err != nil {
 		jobFail(path, err)
+		reportRun(key, jobFileName(path), j.Out, backupalert.ResultFailed, err, 0, nil)
 		return 1
 	}
 	defer logf.Close()
@@ -246,8 +257,7 @@ func RunHeadless(path string) int {
 		if cerr != nil {
 			logger.Printf("FAILED: %v", cerr)
 			fmt.Fprintln(os.Stderr, "mailarchive run-job: "+app.ErrorTextFor(j.Out, cerr))
-			notifyFailure(j.Name, j.Out)
-			fireBackupAlert(j.Out, backupalert.ResultFailed, cerr, 0, logger)
+			reportRun(key, j.Name, j.Out, backupalert.ResultFailed, cerr, 0, logger)
 			return 1
 		}
 		inputs = nil
@@ -266,6 +276,13 @@ func RunHeadless(path string) int {
 	opts.OutlookExported = outlookExported
 	logger.Printf("Scheduled job %q: exporting to %s", j.Name, j.Out)
 	result, runErr := app.Run(ctx, opts, logger, nil)
+	// Another run holds the archive (the previous hourly backup, a verify, a rebuild) and
+	// started under a day ago: skip quietly, naming it (R3C-12). Nothing was recorded.
+	if line, quiet := app.ScheduledLockSkip(j.Out, runErr, time.Now()); quiet {
+		logger.Printf("%s", line)
+		fmt.Fprintln(os.Stderr, "mailarchive run-job: "+line)
+		return 0
+	}
 	// "Done." only for a run that finished or was cancelled: a refused or failed
 	// run logs FAILED alone, never a Done above it (F11).
 	if runErr == nil || errors.Is(runErr, context.Canceled) {
@@ -283,8 +300,14 @@ func RunHeadless(path string) int {
 			logger.Printf("FAILED: %v", runErr)
 		}
 		fmt.Fprintln(os.Stderr, "mailarchive run-job: "+app.ErrorTextFor(j.Out, runErr)) // cron mail / stderr.log
-		notifyFailure(j.Name, j.Out)
-		fireBackupAlert(j.Out, backupalert.ResultFailed, runErr, 0, logger)
+		reportRun(key, j.Name, j.Out, backupalert.ResultFailed, runErr, 0, logger)
+		// After a failed scheduled run, auto-pause the backup if its source has been unreachable
+		// for too long (§5.7, S3-C5), as the capture does (design-desktop-settings-card 3.7,
+		// MA-871): stop the schedule only — reversible, never seals. Best effort.
+		if paused, perr := AutoPauseIfDue(j.Out); perr == nil && paused {
+			logger.Printf("auto-paused the scheduled backup: the source has been unreachable for too long; the schedule was stopped (reversible — reconnect the source and re-enable it)")
+			backupalert.RecordAutoPauseDefault(key, j.Out, errors.New(AutoPauseWhy), logger)
+		}
 		return 1
 	}
 	// The Outlook-app path wrote scratch PSTs under <out>/_outlook-pst; once the
@@ -292,29 +315,60 @@ func RunHeadless(path string) int {
 	if j.Outlook && runErr == nil {
 		cleanupOutlookScratch(j.Out, true, logger)
 	}
-	// A completed (not cancelled) local backup emails its success too, if alerts want it.
+	// A completed (not cancelled) local backup ends a failing streak (a recovery email and
+	// notice) and emails its success too, if alerts want it.
 	if runErr == nil {
-		fireBackupAlert(j.Out, backupalert.ResultOK, nil, result.Stats.Exported, logger)
+		reportRun(key, j.Name, j.Out, backupalert.ResultOK, nil, result.Stats.Exported, logger)
 	}
 	return 0
 }
 
+// AutoPauseWhy is the auto-pause email's reason, the same words for the Desktop's capture and
+// the local job.
+const AutoPauseWhy = "the mailbox or mail folder has been unreachable for too long, so the scheduled backup was paused. Reconnect the source and re-enable it."
+
+// jobFileName is the schedule name a job file carries: its file name without .json.
+func jobFileName(path string) string { return strings.TrimSuffix(filepath.Base(path), ".json") }
+
+// jobFailLogCap bounds a job's .jobfail.log (design-desktop-settings-card 3.7): an hourly job
+// failing for weeks must not grow it without end. Past the cap the log is moved to
+// <name>.older.jobfail.log (replacing the older copy) and a new one is started. A var so a test
+// can shrink it.
+var jobFailLogCap int64 = 1 << 20
+
 // jobFail records a failure to even start the job, beside the job file. A run
 // that fails this early (an unreadable job, an absent -out, an unopenable log)
 // writes no archive-local last-run record — there may be no archive directory
-// at all — so besides the .jobfail.log beside the job file and the desktop
-// toast, it also leaves a single last-failure breadcrumb in the config dir that
-// the GUI's launch health view can find later (friction #20).
+// at all — so besides the .jobfail.log beside the job file it also leaves a
+// single last-failure breadcrumb in the config dir that the GUI's launch health
+// view can find later (friction #20). The desktop notice is the caller's, through
+// the alert streak (reportRun), once per failing streak.
 func jobFail(path string, err error) {
-	name := strings.TrimSuffix(filepath.Base(path), ".json")
+	name := jobFileName(path)
 	sink := filepath.Join(filepath.Dir(path), name+".jobfail.log")
+	line := fmt.Sprintf("%s %v\n", time.Now().Format(time.RFC3339), err)
+	if fi, e := os.Lstat(sink); e == nil && fi.Mode().IsRegular() && fi.Size()+int64(len(line)) > jobFailLogCap {
+		_ = os.Rename(sink, filepath.Join(filepath.Dir(path), name+".older.jobfail.log"))
+	}
 	if f, e := os.OpenFile(sink, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0o600); e == nil {
-		fmt.Fprintf(f, "%s %v\n", time.Now().Format(time.RFC3339), err)
+		fmt.Fprint(f, line)
 		f.Close()
 	}
 	recordHeadlessFailure(name, err)
 	fmt.Fprintln(os.Stderr, "mailarchive run-job: "+err.Error())
-	notifyFailure(name, "")
+}
+
+// reportRun records a scheduled local run's outcome in the alert streak (key), sends the email
+// that is due, and raises the Desktop notice only when the streak says so: one per failing
+// streak, plus one when backups work again (R3C-12).
+func reportRun(key, name, out, result string, runErr error, messages int, logger *log.Logger) {
+	o := backupalert.ReportDefault(key, out, result, runErr, messages, logger)
+	if o.Notify {
+		notifyFailure(name, out)
+	}
+	if o.Recovered {
+		notifyRecovered(name)
+	}
 }
 
 // notifyFailure raises a best-effort desktop notification that a scheduled
@@ -327,13 +381,10 @@ func notifyFailure(name, out string) {
 	_ = notify(fmt.Sprintf("Mail Archive backup failed for %s. Open the MailArchive wizard (mailarchive wizard) to see what went wrong.", name), zenity.Title(appTitle))
 }
 
-// fireBackupAlert sends the configured backup-result email for this scheduled LOCAL job,
-// via the shared backupalert layer — the same one the Desktop's Microsoft 365 capture uses
-// — so a local backup alerts from the one configuration the dashboard saves. It is the
-// email twin of the local notifyFailure toast (both fire; the toast is on this machine, the
-// email reaches whoever is configured). Best-effort: a mail problem never fails the backup.
-func fireBackupAlert(out, result string, runErr error, messages int, logger *log.Logger) {
-	backupalert.FireForRunDefault(out, result, runErr, messages, logger)
+// notifyRecovered raises the best-effort desktop notice that a scheduled backup that had been
+// failing works again: the one notice that ends a failing streak (R3C-12).
+func notifyRecovered(name string) {
+	_ = notify(fmt.Sprintf("Mail Archive backups are working again for %s.", name), zenity.Title(appTitle))
 }
 
 // dirSize sums the sizes of the regular files under root (best-effort), to
@@ -1771,6 +1822,8 @@ func offerSchedule(c wizardChoice) error {
 	if err := schedule.Install(spec); err != nil {
 		return fmt.Errorf("could not install the schedule:\n%v", err)
 	}
+	// A new schedule starts with no failing streak: its first failure sends (R3C-10).
+	_ = backupalert.ClearStreakDefault(backupalert.KeyFor(c.out))
 	rememberArchive(c.out)
 	note := ""
 	if runtime.GOOS == "windows" {

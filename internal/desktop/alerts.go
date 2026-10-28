@@ -34,6 +34,14 @@ func (cfg Config) fireAlert(result, out string, runErr error, messages int, logg
 	backupalert.FireForRun(cfg.SettingsPath, cfg.Store, out, result, runErr, messages, logger)
 }
 
+// reportRun is fireAlert through the alert streak kept beside this Desktop's settings file
+// (design-desktop-settings-card 3.7, R3C-10, MA-870): a scheduled capture's failure email goes
+// once per failing streak, and the first success after one sends a recovery email. Every
+// scheduled capture's outcome passes here, whether alerts are on or off.
+func (cfg Config) reportRun(key, out, result string, runErr error, messages int, logger *log.Logger) {
+	backupalert.Report(cfg.SettingsPath, cfg.Store, key, out, result, runErr, messages, logger)
+}
+
 // saveAlertSettings persists the backup-alert configuration (loopback+CSRF guarded).
 // The SMTP password goes to the OS secret store, never the 0600 settings file: a blank
 // password leaves the stored one unchanged (so re-saving other fields keeps it), and

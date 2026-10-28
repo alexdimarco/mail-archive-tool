@@ -113,6 +113,12 @@ func FireForRun(settingsPath string, store graphconfig.SecretStore, out, result 
 	if !cfg.ShouldSend(result) {
 		return
 	}
+	deliver(cfg, store, out, result, runErr, messages, logger)
+}
+
+// deliver builds the event for a run and sends it under cfg, which the caller has gated. It
+// reports whether the mail was handed over; a failure is logged, never returned.
+func deliver(cfg alert.Config, store graphconfig.SecretStore, out, result string, runErr error, messages int, logger *log.Logger) bool {
 	host, _ := os.Hostname()
 	ev := alert.Event{Result: result, Archive: out, Messages: messages, Host: host, When: time.Now()}
 	if runErr != nil {
@@ -134,11 +140,12 @@ func FireForRun(settingsPath string, store graphconfig.SecretStore, out, result 
 		if logger != nil {
 			logger.Printf("backup alert email could not be sent: %v", err)
 		}
-		return
+		return false
 	}
 	if logger != nil {
 		logger.Printf("backup alert email sent (%s) to %s", result, cfg.To)
 	}
+	return true
 }
 
 // FireForRunDefault fires using the default Desktop settings path and OS secret store, for

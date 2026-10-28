@@ -81,9 +81,9 @@ func ResumeArchive(out string) error {
 	return nil
 }
 
-// AutoPauseIfDue stops the archive's backup schedule when its SOURCE has been unreachable for
-// state.AutoPauseAfterRuns consecutive scheduled runs (§5.7, S3-C5), only to cut nightly
-// failure noise. It removes ONLY the live scheduler entry (the backup and, if present, the
+// AutoPauseIfDue stops the archive's backup schedule when its SOURCE's unreachable runs span
+// state.AutoPauseAfter (30 days, measured between runs; §5.7, S3-C5,
+// design-desktop-settings-card 3.7), only to cut failure noise. It removes ONLY the live scheduler entry (the backup and, if present, the
 // verify), each proven "ours" through bound.go — never the raw descriptor name (MA-680) — and
 // KEEPS the descriptor, so it is fully reversible: reinstalling the schedule (Resume, or a
 // reconnect) brings it back. It NEVER seals and NEVER forgets the archive. A scheduled run
