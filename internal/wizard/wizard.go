@@ -1285,8 +1285,10 @@ func removeSchedule(out string) error {
 	if err := schedule.Remove(spec); err != nil {
 		return err
 	}
+	// Only ever a job file (MA-874): a schedule named like one of MailArchive's own files in the
+	// job folder (desktop-settings, graph-config) never takes that file with it.
 	if jp, err := job.PathFor(name); err == nil {
-		_ = os.Remove(jp)
+		_ = schedule.RemoveJobFile(jp)
 	}
 	return zenity.Info(fmt.Sprintf("Removed the scheduled backup %q for\n%s", name, out), zenity.Title(appTitle))
 }

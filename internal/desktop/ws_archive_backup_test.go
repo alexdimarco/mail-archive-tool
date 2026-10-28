@@ -32,7 +32,7 @@ func useBackupFake(e *wsEnv, b *backupFake) {
 
 func weeklyBackupCard(e *wsEnv) string {
 	for _, c := range e.d.cfg.cards() {
-		if c.Label == "Weekly backup" {
+		if c.Label == "Scheduled backup" { // the tile's label since 2026-10-28 (X11, OR-3; owner-accepted)
 			return c.Value
 		}
 	}

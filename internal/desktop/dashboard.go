@@ -127,7 +127,7 @@ type Config struct {
 	// OS scheduler about the configured archive.
 	BackupInstalled func() bool
 	// RemoveBackup removes the weekly backup (tests); nil asks the OS scheduler, as the
-	// Weekly backup card's Remove does. Settings' "Save and remove the weekly backup" calls it.
+	// Scheduled backup card's Remove does. Settings' "Save and remove the scheduled backup" calls it.
 	RemoveBackup func() error
 	// BackupInstalledFor reports whether a weekly backup task named for the archive location out is
 	// installed, and RemoveBackupFor removes it (tests, the OS scheduler's stand-in); nil asks the OS
@@ -519,11 +519,11 @@ func (d *dashboard) saveSettings(w http.ResponseWriter, r *http.Request) {
 				jobFile, _ = job.PathFor(schedule.DefaultNameFor(task))
 			}
 			if err := d.removeBackup(); err != nil {
-				writeJSON(w, map[string]any{"ok": false, "error": "The weekly backup could not be removed (the scheduler said: " + err.Error() + "), so nothing was saved and your settings are as they were. Remove it yourself with Remove on the Scheduled backup card, or choose Save and keep the backup."})
+				writeJSON(w, map[string]any{"ok": false, "error": "The scheduled backup could not be removed (the scheduler said: " + err.Error() + "), so nothing was saved and your settings are as they were. Remove it yourself with Remove on the Scheduled backup card, or choose Save and keep the backup."})
 				return
 			}
 			if jobFile != "" {
-				_ = os.Remove(jobFile)
+				_ = schedule.RemoveJobFile(jobFile) // only ever a job file (MA-874)
 			}
 			removedBackup = true
 		default:
@@ -534,19 +534,21 @@ func (d *dashboard) saveSettings(w http.ResponseWriter, r *http.Request) {
 			}
 			who, _ := d.signedInNow()
 			signedIn := who != ""
-			ask := fmt.Sprintf("Your weekly backup will now archive %s into %s.", who, after)
+			// A capture follows the current folder (design section 8, OR-3): its words say so; a
+			// run-job's folder is its own and is asked about above, in runJobMoveAsk's words.
+			ask := fmt.Sprintf("Your scheduled backup follows the Archive location, so it will now archive %s into %s.", who, after)
 			switch {
 			case !signedIn && after == "":
-				ask = "You cleared the Archive location, so your weekly backup (it archives the Microsoft 365 account it uses; nobody is signed in right now) would have no folder to archive into."
+				ask = "You cleared the Archive location, so your scheduled backup (it follows the Archive location and archives the Microsoft 365 account it uses; nobody is signed in right now) would have no folder to archive into."
 			case !signedIn:
-				ask = fmt.Sprintf("Your weekly backup will now archive the Microsoft 365 account it uses (nobody is signed in right now) into %s.", after)
+				ask = fmt.Sprintf("Your scheduled backup follows the Archive location, so it will now archive the Microsoft 365 account it uses (nobody is signed in right now) into %s.", after)
 			case after == "":
-				ask = fmt.Sprintf("You cleared the Archive location, so your weekly backup (it archives %s) would have no folder to archive into.", who)
+				ask = fmt.Sprintf("You cleared the Archive location, so your scheduled backup (it follows the Archive location and archives %s) would have no folder to archive into.", who)
 			}
 			if out == "" && after != "" {
 				ask = strings.TrimSuffix(ask, ".") + " (the Archive location is empty, so it is the folder MailArchive was started with)."
 			}
-			ask += " If you only want to read an archive someone gave you, choose Cancel: Extraction workspace → Source → Another archive folder reads it without changing any setting or your weekly backup."
+			ask += " If you only want to read an archive someone gave you, choose Cancel: Extraction workspace → Source → Another archive folder reads it without changing any setting or your scheduled backup."
 			writeJSON(w, map[string]any{"ok": false, "confirm": true, "upn": who, "folder": after, "error": ask,
 				"choices": []string{"keep", "remove", "cancel"}})
 			return
@@ -670,18 +672,20 @@ func (cfg Config) cards() []card {
 
 	out = append(out, card{"Capture", "Idle", "good"})
 
-	sc := card{"Weekly backup", "Not installed", "warn"}
+	// The tile is named as its card is, "Scheduled backup" (X11, OR-3): it may be hourly, daily
+	// or weekly.
+	sc := card{"Scheduled backup", "Not installed", "warn"}
 	if archiveKind(cfg.effectiveOut()) == kindEncrypted {
 		// Status asks no schedule of an encrypted archive; this card says the same (X10).
-		return append(out, card{"Weekly backup", "Not available for encrypted archives yet", ""})
+		return append(out, card{"Scheduled backup", "Not available for encrypted archives yet", ""})
 	}
 	if eo := cfg.effectiveOut(); eo != "" {
 		_, st := cfg.backupTask()
 		switch st {
 		case schedule.Installed:
-			sc = card{"Weekly backup", "Installed", "good"}
+			sc = card{"Scheduled backup", "Installed", "good"}
 		case schedule.SchedulerUnavailable:
-			sc = card{"Weekly backup", "Scheduler unavailable", "warn"}
+			sc = card{"Scheduled backup", "Scheduler unavailable", "warn"}
 		}
 	}
 	return append(out, sc)
@@ -1140,19 +1144,17 @@ func (cfg Config) overviewFor(csrf, epoch string) string {
 	if adapter && runJobForm {
 		out := data.OutDir
 		rebuild, _ = withinSourceWait(func() rebuildCheck {
-			if _, ok := reconstructLocalJob(out); !ok {
-				return rebuildCheck{}
-			}
-			return rebuildCheck{ok: true, thunderbird: localArchiveThunderbirdSourced(out)}
+			_, ok := reconstructLocalJob(out)
+			return rebuildCheck{ok: ok, thunderbird: localArchiveThunderbirdSourced(out)}
 		})
 	}
 	// A local archive the Desktop can reconstruct + schedule from its own record (on an
 	// adapter platform) gets the create form in Settings in place of the "backup off" note
 	// (design-thunderbird-presync-desktop corrections 4, 8); once a run-job is installed, the
-	// same form prefilled (ShowLocalEdit). An edit still needs the archive's record to rebuild
-	// (MA-858: lifting that waits on the owner accepting MA-581's test amendment).
+	// same form prefilled (ShowLocalEdit). An edit needs only the securely readable job file
+	// (design 3.3, R3C-16; rt.runJob is that file read securely), never the archive's record.
 	data.ShowLocalCreate = runJobForm && !rt.hasDesc && adapter && rebuild.ok
-	data.ShowLocalEdit = runJobForm && rt.runJob && adapter && rebuild.ok
+	data.ShowLocalEdit = runJobForm && rt.runJob && adapter
 	// LocalPresyncOn drives Run now's warning for any installed local archive.
 	if data.HasSchedule && (localCard || data.ShowRepair) && adapter {
 		data.LocalPresyncOn = currentJobSyncsThunderbird(data.OutDir)
@@ -1160,7 +1162,7 @@ func (cfg Config) overviewFor(csrf, epoch string) string {
 	data.ShowRemove = data.HasSchedule || !localCard || entry != ""
 	data.ShowBackupOff = localCard && !data.HasSchedule && !data.ShowLocalCreate
 	data.Set = settingsCardFor(settingsInputs{out: data.OutDir, rt: rt, entry: entry, entrySt: entrySt,
-		runJobForm: runJobForm, captureForm: captureForm, canEdit: adapter && rebuild.ok, thunderbird: rebuild.thunderbird,
+		runJobForm: runJobForm, captureForm: captureForm, canEdit: adapter && (rt.runJob || rebuild.ok), thunderbird: rebuild.thunderbird,
 		goos: cfg.goos(), archiveNowOffered: data.ArchiveNowOff == ""})
 	if rt.kind == backupLocal && data.ArchiveNowOff == "" {
 		data.ArchiveNowConfirm = archiveNowConfirm // Archive now turns it mixed (C-7)
@@ -1367,7 +1369,7 @@ pre{white-space:pre-wrap;overflow-wrap:anywhere;background:var(--bg);border:1px 
       <a href="#sec-history">Recent backups</a>
       <div class="nav-title">Setup</div>
       <a href="#sec-m365">Microsoft 365 connection</a>
-      <a href="#sec-backup">Weekly backup</a>
+      <a href="#sec-backup">Scheduled backup</a>
       {{if not .Encrypted}}<a href="#sec-alerts">Backup alerts</a>{{end}}
     </nav>
     <div class="sidebar-foot">Local control panel<br>127.0.0.1</div>
@@ -1528,7 +1530,7 @@ pre{white-space:pre-wrap;overflow-wrap:anywhere;background:var(--bg);border:1px 
         <div id="settingsConfirmText"></div>
         <div class="actions" style="margin-top:10px"><button class="btn" id="settingsCancel" type="button">Cancel</button>
           <button class="btn secondary" id="settingsKeep" type="button">Save and keep the backup</button>
-          <button class="btn secondary" id="settingsRemoveBackup" type="button">Save and remove the weekly backup</button></div>
+          <button class="btn secondary" id="settingsRemoveBackup" type="button">Save and remove the scheduled backup</button></div>
       </div>
     </div>
 
@@ -1839,7 +1841,7 @@ async function doSave(backup){
   try{const d=await(await fetch('api/settings',{method:'POST',headers:{'Content-Type':'application/json','X-CSRF-Token':csrf},body:JSON.stringify(body)})).json();
     if(d.confirm){
       if(n)n.hidden=true;
-      if(c){c.hidden=false;$('settingsConfirmText').textContent=d.error+' Choose what happens to the weekly backup, or Cancel to leave your settings as they are.';}
+      if(c){c.hidden=false;$('settingsConfirmText').textContent=d.error+' Choose what happens to the scheduled backup, or Cancel to leave your settings as they are.';}
       return false;
     }
     if(c)c.hidden=true;

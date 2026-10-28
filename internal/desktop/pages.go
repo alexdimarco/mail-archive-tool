@@ -123,7 +123,7 @@ var pageTmpl = template.Must(template.New("pages").Funcs(pageFuncs).Parse(`
       <a href="./#sec-health">Status &amp; health</a>
       <a href="./#sec-activity">Activity log</a>
       <div class="nav-title">Setup</div>
-      <a href="./#sec-backup">Weekly backup</a>
+      <a href="./#sec-backup">Scheduled backup</a>
     </nav>
     <div class="sidebar-foot">Local control panel<br>127.0.0.1</div>
   </aside>{{end}}

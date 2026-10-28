@@ -310,7 +310,7 @@ func TestEveryPageRendersTheSidebarAndEveryEntryResolves(t *testing.T) {
 				t.Errorf("%s: %q links to the absolute path %q, which breaks under the per-launch prefix", p, l.text, l.href)
 			}
 		}
-		for _, want := range []string{"Extraction workspace", "Export activity", "Microsoft 365 connection", "Archive now", "Status & health", "Weekly backup"} {
+		for _, want := range []string{"Extraction workspace", "Export activity", "Microsoft 365 connection", "Archive now", "Status & health", "Scheduled backup"} {
 			if !seen[want] {
 				t.Errorf("%s: sidebar entry %q is missing", p, want)
 			}

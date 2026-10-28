@@ -78,8 +78,8 @@ type settingsInputs struct {
 	entrySt schedule.State // what the scheduler said for this archive's own name
 	// runJobForm and captureForm: which form section 3.2's table gives this archive.
 	runJobForm, captureForm bool
-	// canEdit: the run-job form can be drawn here (macOS or Windows, and the archive's own
-	// record rebuilds, which an edit still needs: see MA-858).
+	// canEdit: the run-job form can be drawn here (macOS or Windows; for an edit, a securely
+	// readable job file; for a create, the archive's own record rebuilds: 3.3, R3C-16).
 	canEdit bool
 	// thunderbird: the archive was made from a Thunderbird profile that is on this computer.
 	thunderbird       bool
@@ -135,8 +135,8 @@ func settingsCardFor(in settingsInputs) settingsCard {
 	case rt.hasDesc && rt.broken == brokenUnreadable:
 		s.ReadOnly, s.Remedy = howOften+" Sync Thunderbird first: "+installedSyncWords(rt.brokenPath, out)+".", brokenUnreadableAt
 	case rt.hasDesc && in.runJobForm:
-		// An installed run-job Settings can't edit here (Linux, or the archive's own record
-		// doesn't rebuild): its cadence and sync read-only, and the wizard's real choices.
+		// An installed run-job Settings can't edit here (Linux, or no securely readable job
+		// file): its cadence and sync read-only, and the wizard's real choices.
 		s.ReadOnly, s.Remedy = howOften+" Sync Thunderbird first: "+installedSyncWords(jp, out)+".", wizardRemedy
 	}
 	if s.Sched {

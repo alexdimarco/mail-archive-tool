@@ -131,7 +131,8 @@ func underPath(dir, p string) bool {
 // job file that reads securely it is a read-modify-write of that file through job.Read
 // and job.Write, changing only thunderbird_sync, and the cadence goes to the scheduler
 // entry and descriptor only. The job rebuilt from the archive's own last-run record is
-// written on a create only (an edit still needs the record to rebuild; see below). A job file that exists but cannot be read is never overwritten (C-6), and
+// built and written on a create only; an edit needs only the job file (R3C-16). A job file
+// that exists but cannot be read is never overwritten (C-6), and
 // a sync request that cannot be honoured is refused, never dropped (C-10): every refusal
 // comes before anything is written.
 //
@@ -184,18 +185,18 @@ func (d *dashboard) scheduleInstallLocal(w http.ResponseWriter, in scheduleReque
 		}
 	}
 
-	// The archive's own record must still rebuild, on an edit too: TestScheduleInstallLocal
-	// (MA-581) pins that refusal for an archive whose record is gone while its job file is
-	// there. Design 3.3 (R3C-16, MA-857) keys an edit to the job file alone; dropping this
-	// precondition waits on the owner accepting that test's amendment. The rebuilt job is
-	// used on a create only (C-4): an edit keeps the job file as it is.
-	rebuilt, ok := reconstructLocalJob(out)
-	if !ok {
-		writeJSON(w, map[string]any{"ok": false, "error": "MailArchive Desktop can’t tell how this archive was built, so it can’t schedule a backup for it from here. Open the MailArchive wizard (mailarchive wizard) to set one up."})
-		return
-	}
+	// An edit needs only the securely readable job file it edits (design 3.3, 3.5, R3C-16,
+	// MA-857; MA-581's precondition lifted, owner 2026-10-28): it keeps that file as it is, so
+	// the archive's own record is never read for it, and a source drive away or a record gone
+	// does not stop it. A create still rebuilds the job from the archive's own record, and is
+	// refused when that record can't be rebuilt.
 	j := cur // an edit: the job file as it is
 	if !exists {
+		rebuilt, ok := reconstructLocalJob(out)
+		if !ok {
+			writeJSON(w, map[string]any{"ok": false, "error": "MailArchive Desktop can’t tell how this archive was built, so it can’t schedule a backup for it from here. Open the MailArchive wizard (mailarchive wizard) to set one up."})
+			return
+		}
 		j = rebuilt // a create: rebuilt from the archive's own record
 		j.Name = name
 	}

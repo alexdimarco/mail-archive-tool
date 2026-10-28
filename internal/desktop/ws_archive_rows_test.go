@@ -232,9 +232,10 @@ func setIndexVersion(t *testing.T, path string, v int) {
 // covers: MA-523, R12, S41
 // The Settings-save guard (XC22, design §7.4): with a weekly backup installed, a save that changes the
 // archive location asks first, naming the signed-in account and the new folder, and writes nothing; "Save
-// and keep the backup" saves and leaves it; "Save and remove the weekly backup" removes it and saves; Cancel
+// and keep the backup" saves and leaves it; "Save and remove the scheduled backup" removes it and saves; Cancel
 // (not sending the save again) leaves the settings as they were. A save with no backup installed, or one that
-// keeps the location, asks nothing. The page offers the three choices.
+// keeps the location, asks nothing. The page offers the three choices. (Worded "scheduled backup", and the
+// capture's ask says it follows the Archive location, since 2026-10-28: OR-3, owner-accepted.)
 func TestSettingsSaveAsksBeforeRetargetingTheWeeklyBackup(t *testing.T) {
 	e := newWsEnv(t)
 	installed := false
@@ -269,7 +270,7 @@ func TestSettingsSaveAsksBeforeRetargetingTheWeeklyBackup(t *testing.T) {
 		t.Fatalf("a save that retargets the backup was not asked about: %v", b)
 	}
 	msg, _ := b["error"].(string)
-	assure.Refused(t, 1, msg, assure.Code(1), assure.Names("alice@contoso.org", newOut, "weekly backup will now archive"),
+	assure.Refused(t, 1, msg, assure.Code(1), assure.Names("alice@contoso.org", newOut, "scheduled backup follows the Archive location, so it will now archive"),
 		assure.NoSideEffect(func() bool { return readFileString(t, e.cfg.SettingsPath) == before && removed == 0 && installed }))
 	if got := b["choices"].([]any); len(got) != 3 || got[0] != "keep" || got[1] != "remove" || got[2] != "cancel" {
 		t.Errorf("the choices: %v", got)
@@ -301,7 +302,7 @@ func TestSettingsSaveAsksBeforeRetargetingTheWeeklyBackup(t *testing.T) {
 
 	// the Overview offers the three choices
 	page := e.get("/").Body.String()
-	for _, want := range []string{"Save and keep the backup", "Save and remove the weekly backup", ">Cancel<", `id="settingsConfirm"`} {
+	for _, want := range []string{"Save and keep the backup", "Save and remove the scheduled backup", ">Cancel<", `id="settingsConfirm"`} {
 		if !strings.Contains(page, want) {
 			t.Errorf("the Overview's Settings card does not offer %q", want)
 		}

@@ -821,7 +821,8 @@ func TestWorkspacePageStartsOnTheArchiveWhenMicrosoft365IsNotSetUp(t *testing.T)
 // does not claim an account that "you are signed in as", and a cleared Archive location is not "into ."; a
 // removal the scheduler refuses says what was and was not done and what to do, with the scheduler's own text
 // after it; and after Save and remove the page says how to get the backup back. The head of the ask the existing
-// assertions pin ("Your weekly backup will now archive <account> into <folder>") is unchanged.
+// assertions pin ("Your scheduled backup follows the Archive location, so it will now archive <account> into
+// <folder>"; "weekly" until 2026-10-28, OR-3, owner-accepted) is unchanged.
 func TestSettingsGuardWordsTheReadOnlyWayAndWhatToDoAfter(t *testing.T) {
 	e := newWsEnv(t)
 	installed := true
@@ -847,7 +848,7 @@ func TestSettingsGuardWordsTheReadOnlyWayAndWhatToDoAfter(t *testing.T) {
 	}
 	msg, _ := b["error"].(string)
 	assure.Refused(t, 1, msg, assure.Code(1), untouched,
-		assure.Names("Your weekly backup will now archive alice@contoso.org into "+newOut, "choose Cancel", "Extraction workspace", "Another archive folder", "without changing any setting"))
+		assure.Names("Your scheduled backup follows the Archive location, so it will now archive alice@contoso.org into "+newOut, "choose Cancel", "Extraction workspace", "Another archive folder", "without changing any setting"))
 
 	// nobody signed in: no account is claimed
 	os.Remove(e.tok)

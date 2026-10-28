@@ -129,18 +129,23 @@ func TestAMixedArchivesRunJobIsEditedWhereNoCaptureIsCounted(t *testing.T) {
 	}
 }
 
-// covers: MA-857, R37
-// Open gap, found building slice A3 on 2026-10-28, in the kind guard's evidence (part B's, owner
-// ratified, not changed here): BuildKindEvidence's scan of the job folder reads every .json file
-// there, and the Desktop's own settings file sits in that folder (job.DesktopSettingsFile) and
-// reads as a job naming the current archive. So wherever the settings file names an archive, a
-// run-job is counted for it that does not exist: section 3.2's table then sees a run-job on every
-// current archive, the guard refuses the Desktop's capture install there, and the card's Remove
-// takes that file for the run-job's job file. This encoder skips while the gap is open and fails
-// once it is closed — then remove the skip, so it guards it.
+// covers: MA-857, MA-874, R37
+// Found building slice A3 on 2026-10-28 and fixed (owner, 2026-10-28): BuildKindEvidence's scan
+// of the job folder read every .json file there, and the Desktop's own settings file sits in that
+// folder (job.DesktopSettingsFile) and read as a job naming the current archive. So wherever the
+// settings file named an archive, a run-job was counted for it that did not exist: section 3.2's
+// table saw a run-job on every current archive, the guard refused the Desktop's capture install
+// there, and the card's Remove took that file for the run-job's job file. Now only a real job file
+// counts. Positive twin first: a real job file for the archive is counted, and is the job path.
 func TestTheDesktopSettingsFileIsNeverCountedAsARunJob(t *testing.T) {
 	isolateHome(t)
 	out := emptyArchive(t)
+	real := plantRunJob(t, out)
+	if ev := schedule.BuildKindEvidence(out); !ev.Has(schedule.KindRunJob) || ev.JobPath != real {
+		t.Fatalf("the positive twin: a real job file for %s is not counted (%+v)", out, ev)
+	}
+	os.Remove(real)
+
 	p, err := job.DesktopSettingsFile()
 	if err != nil {
 		t.Fatal(err)
@@ -148,10 +153,52 @@ func TestTheDesktopSettingsFileIsNeverCountedAsARunJob(t *testing.T) {
 	if err := SaveSettings(p, Settings{Out: out}); err != nil {
 		t.Fatal(err)
 	}
-	if ev := schedule.BuildKindEvidence(out); ev.Has(schedule.KindRunJob) {
-		t.Skipf("open gap (slice A3, 2026-10-28; the guard's evidence, part B): the Desktop settings file %s is counted as a run-job of %s", ev.JobPath, out)
+	if _, err := job.Read(p); err != nil {
+		t.Fatalf("fixture: the settings file no longer parses as a job (%v), so this guards nothing", err)
 	}
-	t.Fatal("the gap is closed: the Desktop settings file is no longer counted as a run-job — remove this encoder's skip so it guards it")
+	if ev := schedule.BuildKindEvidence(out); ev.Has(schedule.KindRunJob) || ev.JobPath != "" {
+		t.Errorf("the Desktop settings file %s is counted as a run-job of %s", ev.JobPath, out)
+	}
+}
+
+// covers: MA-874, R37
+// The card's Remove never deletes the Desktop's own settings file (MA-874): with the settings
+// file at its real place in the job folder, naming this archive, and the archive's scheduler
+// entry installed, Remove takes the entry out and leaves the settings file. Positive twin first:
+// with a real job file for the archive, the same Remove deletes that job file.
+func TestRemoveNeverDeletesTheDesktopSettingsFile(t *testing.T) {
+	isolateHome(t)
+	e := newWsEnv(t)
+	sp, err := job.DesktopSettingsFile()
+	if err != nil {
+		t.Fatal(err)
+	}
+	e.cfg.SettingsPath = sp
+	fake := &backupFake{tasks: map[string]bool{e.out: true}}
+	useBackupFake(e, fake)
+	if err := SaveSettings(sp, Settings{Out: e.out}); err != nil {
+		t.Fatal(err)
+	}
+
+	jp := plantRunJob(t, e.out)
+	if _, body := e.post("/api/schedule-remove", nil); body["ok"] != true {
+		t.Fatalf("the positive twin's Remove: %v", body)
+	}
+	if _, err := os.Stat(jp); !os.IsNotExist(err) {
+		t.Fatalf("the positive twin: Remove left the run-job's job file (%v)", err)
+	}
+
+	fake.tasks[e.out] = true
+	if _, body := e.post("/api/schedule-remove", nil); body["ok"] != true {
+		t.Fatalf("Remove: %v", body)
+	}
+	if fake.tasks[e.out] {
+		t.Error("Remove did not take the scheduler entry out")
+	}
+	if _, err := os.Stat(sp); err != nil {
+		t.Fatalf("Remove deleted the Desktop's settings file: %v", err)
+	}
+	assure.Reached(t, LoadSettings(sp).Out, "the settings file's archive location after Remove")
 }
 
 // covers: MA-857, MA-860, R37

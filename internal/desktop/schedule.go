@@ -7,7 +7,6 @@ import (
 	"fmt"
 	"log"
 	"net/http"
-	"os"
 	"runtime"
 	"strings"
 
@@ -481,7 +480,8 @@ func (d *dashboard) scheduleRemove(w http.ResponseWriter, r *http.Request) {
 	// §4.6.3/MA-617: a run-job's Remove also deletes the archive's job file, so the
 	// schedule is not left a dead record pointing at a job that no longer runs. Read
 	// the corroborated job path before the entry goes (the job file is owner-side,
-	// untouched by removing the scheduler entry).
+	// untouched by removing the scheduler entry). Only a real job file is counted and removed
+	// (MA-874): never the Desktop's own settings file, which sits in the same folder.
 	runJobFile := ""
 	if ev := schedule.BuildKindEvidence(d.cfg.effectiveOut()); ev.Has(schedule.KindRunJob) {
 		runJobFile = ev.JobPath
@@ -492,7 +492,7 @@ func (d *dashboard) scheduleRemove(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if runJobFile != "" {
-		_ = os.Remove(runJobFile)
+		_ = schedule.RemoveJobFile(runJobFile)
 	}
 	resp := map[string]any{"ok": true, "removed": len(removed) > 0}
 	// A descriptor the tool cannot read is never deleted (rulings §13.6, ESC-10):
@@ -507,7 +507,7 @@ func (d *dashboard) scheduleRemove(w http.ResponseWriter, r *http.Request) {
 }
 
 // removeBackup removes the weekly backup, wherever its task is named for (the archive the settings
-// point at now, or the one it was installed for): what "Save and remove the weekly backup" does before it
+// point at now, or the one it was installed for): what "Save and remove the scheduled backup" does before it
 // saves the new location (XC22).
 func (d *dashboard) removeBackup() error {
 	if d.cfg.RemoveBackup != nil {

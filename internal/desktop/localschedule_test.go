@@ -66,8 +66,8 @@ func TestUnderPath(t *testing.T) {
 
 // covers: MA-581
 // The Desktop local-schedule install creates (and idempotently edits) a RUN-JOB for
-// a local Thunderbird archive — never a capture — carrying the pre-sync toggle, and
-// refuses (installing nothing) when the archive's record is undeterminable. Positive
+// a local Thunderbird archive — never a capture — carrying the pre-sync toggle, and a
+// create refuses (installing nothing) when the archive's record is undeterminable. Positive
 // twin first (assure discipline).
 func TestScheduleInstallLocal(t *testing.T) {
 	out := tbProfileArchive(t) // local TB archive with a reconstructable last-run record
@@ -108,7 +108,13 @@ func TestScheduleInstallLocal(t *testing.T) {
 		t.Error("presync:false must rewrite the job without the toggle")
 	}
 
-	// Refusal twin: an undeterminable record (no last-run) -> named refusal, nothing installed.
+	// Refusal twin: a CREATE with an undeterminable record (no last-run) -> named refusal,
+	// nothing installed. The job file the edit above left is deleted first, so this step is a
+	// create, as MA-581 describes: an edit needs only its job file, never the record (design
+	// 3.3, R3C-16; amended 2026-10-28, owner-accepted).
+	if err := os.Remove(installed.Args[1]); err != nil {
+		t.Fatal(err)
+	}
 	if err := os.Remove(filepath.Join(out, state.LastRunName)); err != nil {
 		t.Fatal(err)
 	}

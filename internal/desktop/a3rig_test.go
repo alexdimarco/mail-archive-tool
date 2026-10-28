@@ -50,10 +50,9 @@ func isolateHome(t *testing.T) string {
 // countCapture sets Microsoft 365 up on this computer (the default configuration, with a tenant
 // and a client id) with the Desktop's recorded BackupFor at out: today's owner-side evidence then
 // counts a capture for out (CaptureCorroborates), as the kind guard does. It is counted through
-// BackupFor, not the settings' Out, because a settings file whose Out names out is itself read as
-// a run-job of out by the evidence's job-folder scan — an open gap in the guard's evidence,
-// encoded by TestTheDesktopSettingsFileIsNeverCountedAsARunJob — and these tests are about the
-// route, not that gap.
+// BackupFor, not the settings' Out; until MA-874 a settings file whose Out named out was itself
+// read as a run-job of out by the evidence's job-folder scan, and the fixture still checks that
+// it is not (TestTheDesktopSettingsFileIsNeverCountedAsARunJob guards it).
 func countCapture(t *testing.T, out string) {
 	t.Helper()
 	cfgPath, err := graphconfig.DefaultConfigPath()

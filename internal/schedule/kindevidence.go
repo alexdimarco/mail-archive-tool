@@ -1,7 +1,9 @@
 package schedule
 
 import (
+	"errors"
 	"fmt"
+	"io/fs"
 	"os"
 	"path/filepath"
 	"runtime"
@@ -106,12 +108,14 @@ func recordedKind(out string) Kind {
 
 // corroboratedRunJob finds a run-job whose job file this program can securely
 // read and whose Out is the same archive as out: the default-named file first,
-// then any secure job file in job.Dir() whose Out matches under SameArchivePath.
-// The descriptor's Job path is never followed (§5.2). The matching file's path is
-// the corroborated job path.
+// then any real job file in job.Dir() whose Out matches under SameArchivePath.
+// Only a real job file counts (readRunJobFile, MA-874): the Desktop's own settings
+// file and MailArchive's other files in that folder are never taken for one. The
+// descriptor's Job path is never followed (§5.2). The matching file's path is the
+// corroborated job path.
 func corroboratedRunJob(out string) (string, bool) {
 	if p, err := job.PathFor(DefaultNameFor(out)); err == nil {
-		if j, err := job.Read(p); err == nil && SameArchivePath(j.Out, out, runtime.GOOS) {
+		if j, err := readRunJobFile(p); err == nil && SameArchivePath(j.Out, out, runtime.GOOS) {
 			return p, true
 		}
 	}
@@ -124,15 +128,88 @@ func corroboratedRunJob(out string) (string, bool) {
 		return "", false
 	}
 	for _, e := range entries {
-		if e.IsDir() || !strings.HasSuffix(e.Name(), ".json") {
+		if e.IsDir() || !IsJobFileName(e.Name()) {
 			continue
 		}
 		p := filepath.Join(dir, e.Name())
-		if j, err := job.Read(p); err == nil && SameArchivePath(j.Out, out, runtime.GOOS) {
+		if j, err := readRunJobFile(p); err == nil && SameArchivePath(j.Out, out, runtime.GOOS) {
 			return p, true
 		}
 	}
 	return "", false
+}
+
+// notJobFiles are the files MailArchive keeps in the job folder (job.Dir) beside the job files
+// that are not job files, however they parse: the Desktop's settings (whose "out" key reads as a
+// job's Out), the Microsoft 365 configuration, the list of known archives and the last start
+// failure; notJobFilePrefixes begin the running Desktop's and a serve's instance records, which
+// carry an "out" too (MA-874). Kept in step with their writers by
+// TestTheJobFolderOwnFilesAreNeverJobFiles.
+var notJobFiles = map[string]bool{
+	"desktop-settings.json": true,
+	"graph-config.json":     true,
+	"known-archives.json":   true,
+	"last-failure.json":     true,
+}
+
+var notJobFilePrefixes = []string{"desktop-instance", "serve-"}
+
+// IsJobFileName reports whether base is named as a scheduled backup's job file is named:
+// <schedule name>.json, where the name passes SanitizeName (DefaultNameFor's
+// "mailarchive-<hash>" is one) and does not begin with a dot, and is never one of MailArchive's
+// own other files in the job folder (notJobFiles, notJobFilePrefixes). It looks at the name
+// only (MA-874).
+func IsJobFileName(base string) bool {
+	lower := strings.ToLower(base)
+	if notJobFiles[lower] || !strings.HasSuffix(base, ".json") {
+		return false
+	}
+	for _, p := range notJobFilePrefixes {
+		if strings.HasPrefix(lower, p) {
+			return false
+		}
+	}
+	name := strings.TrimSuffix(base, ".json")
+	if strings.HasPrefix(name, ".") {
+		return false
+	}
+	_, err := SanitizeName(name)
+	return err == nil
+}
+
+// readRunJobFile reads p as a scheduled backup's job file, and only as one (MA-874): named as job
+// files are named (IsJobFileName), read securely by job.Read (out present, a version this
+// program reads), and carrying the version every job.Write has recorded since the format began.
+func readRunJobFile(p string) (job.Job, error) {
+	if !IsJobFileName(filepath.Base(p)) {
+		return job.Job{}, fmt.Errorf("%s is not a scheduled backup's job file", p)
+	}
+	j, err := job.Read(p)
+	if err != nil {
+		return job.Job{}, err
+	}
+	if j.Version < 1 {
+		return job.Job{}, fmt.Errorf("job file %s records no version: it was not written as a job file", p)
+	}
+	return j, nil
+}
+
+// RemoveJobFile deletes the scheduled backup's job file at path, and nothing else (MA-874): a
+// path outside the job folder, or one not named as job files are named (IsJobFileName: never
+// the Desktop's settings file or MailArchive's other files there), is refused with nothing
+// deleted. A missing file is not an error. Every remover of a job file goes through it.
+func RemoveJobFile(path string) error {
+	dir, err := job.Dir()
+	if err != nil {
+		return err
+	}
+	if filepath.Clean(filepath.Dir(path)) != filepath.Clean(dir) || !IsJobFileName(filepath.Base(path)) {
+		return fmt.Errorf("not removing %s: it is not a scheduled backup's job file", path)
+	}
+	if err := os.Remove(path); err != nil && !errors.Is(err, fs.ErrNotExist) {
+		return err
+	}
+	return nil
 }
 
 // cronBlockKindFor returns the kind of the managed cron block for out's schedule

@@ -102,10 +102,11 @@ func TestSyncOnIsRefusedForAnArchiveNotFromThunderbird(t *testing.T) {
 		assure.NoSideEffect(u.holds))
 }
 
-// covers: MA-860, R37
+// covers: MA-860, MA-858, R37
 // Switching the sync on while its profile is not on this computer is refused with the reason
 // (C-10), nothing changed; a sync already on and posted on again is not refused (nothing is
-// switched). Positive twin first: with the profile here it switches on.
+// switched), with the profile away too — an edit needs only its job file (MA-858). Positive
+// twin first: with the profile here it switches on.
 func TestSyncOnIsRefusedWhileTheProfileIsAway(t *testing.T) {
 	out := tbProfileArchive(t)
 	store := archivedStore(t, out)
@@ -136,9 +137,9 @@ func TestSyncOnIsRefusedWhileTheProfileIsAway(t *testing.T) {
 		t.Errorf("the refusal does not name the missing mail folder %s: %s", store, body)
 	}
 
-	// Already on: switching nothing on refuses nothing for the sync's sake. (An edit while
-	// the mail folder is away is still refused because the archive's record can't be rebuilt
-	// then — MA-581's pinned refusal; design 3.3 lifts that once the owner accepts amending it.)
+	// Already on: switching nothing on refuses nothing for the sync's sake — with the profile
+	// back, and with it away again: an edit needs only its job file, never the archive's record
+	// or its sources (design 3.3, R3C-16; MA-581's precondition lifted 2026-10-28).
 	if err := os.Rename(away, profile); err != nil {
 		t.Fatal(err)
 	}
@@ -147,6 +148,18 @@ func TestSyncOnIsRefusedWhileTheProfileIsAway(t *testing.T) {
 	}
 	if body := g.post(`{"interval":"daily","time":"02:00","presync":true}`); !strings.Contains(body, `"ok":true`) {
 		t.Errorf("an edit that keeps the sync on was refused: %s", body)
+	}
+	if err := os.Rename(profile, away); err != nil {
+		t.Fatal(err)
+	}
+	if page, _ := getPage(t, g.h); !strings.Contains(page, `id="schedInterval"`) || !strings.Contains(page, `id="schedPresync"`) {
+		t.Error("with the mail folder away, Settings no longer offers the installed run-job's edit form")
+	}
+	if body := g.post(`{"interval":"weekly","time":"04:00","presync":true}`); !strings.Contains(body, `"ok":true`) {
+		t.Errorf("an edit that keeps the sync on, with the mail folder away, was refused: %s", body)
+	}
+	if err := os.Rename(away, profile); err != nil {
+		t.Fatal(err)
 	}
 	if j, err := job.Read(g.jobPath); err != nil || j.ThunderbirdSync == nil {
 		t.Errorf("the sync did not stay on: %v", err)

@@ -29,7 +29,7 @@ func TestOverviewContent(t *testing.T) {
 	// No config → the four cards, the in-app Microsoft 365 config form, the security panel.
 	body := getOverview(t, Config{ConfigPath: filepath.Join(t.TempDir(), "none.json")})
 	for _, want := range []string{
-		"Archive engine", "Ready", "Microsoft 365", "Capture", "Idle", "Weekly backup",
+		"Archive engine", "Ready", "Microsoft 365", "Capture", "Idle", "Scheduled backup",
 		"Not configured", // the status card
 		// The Microsoft 365 connection offers an in-app config form (MA-549), not a pointer
 		// to the `mailarchive setup` command line (owner report 2026-10-13).

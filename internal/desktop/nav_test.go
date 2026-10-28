@@ -132,7 +132,7 @@ func TestSidebarNavEveryEntryWorks(t *testing.T) {
 				t.Errorf("%s: sidebar %q links to %q, but no element has id %q", tc.name, l.text, l.href, l.href[1:])
 			}
 		}
-		for _, want := range []string{"Overview", "Archive now", "Open archive", "Go back in time", "Status & health", "Activity log", "Microsoft 365 connection", "Weekly backup"} {
+		for _, want := range []string{"Overview", "Archive now", "Open archive", "Go back in time", "Status & health", "Activity log", "Microsoft 365 connection", "Scheduled backup"} {
 			if !seen[want] {
 				t.Errorf("%s: sidebar entry %q is missing", tc.name, want)
 			}

@@ -89,12 +89,24 @@ func TestMA633_RepairHowPerKindPerSurface(t *testing.T) {
 		}
 	}
 
-	// no single repair (both kinds corroborated, or an uncorroborated run-job):
-	// both explicit installs — the wizard AND a command-line `-install`.
-	for _, kindEv := range []schedule.KindEvidence{ev(schedule.KindRunJob, schedule.KindCapture), ev()} {
-		got := repairHow(base(kindEv, runjob, ""))
-		if !strings.Contains(got, "wizard") || !strings.Contains(got, "mailarchive schedule -out /a -install") {
-			t.Errorf("no-single-repair route must name both installs:\n%s", got)
+	// no single repair, an uncorroborated run-job: both explicit installs — the wizard AND a
+	// command-line `-install`.
+	if got := repairHow(base(ev(), runjob, "")); !strings.Contains(got, "wizard") || !strings.Contains(got, "mailarchive schedule -out /a -install") {
+		t.Errorf("no-single-repair route must name both installs:\n%s", got)
+	}
+	// both kinds corroborated: what the Desktop says, on the command line and mailarchive-gui
+	// too — Remove on the Scheduled backup card, or the command line's remove — never "set the
+	// schedule up afresh", an install the kind guard would refuse there (amended 2026-10-28,
+	// owner-accepted; until then this case named both installs).
+	for _, surface := range []string{"", "gui"} {
+		got := repairHow(base(ev(schedule.KindRunJob, schedule.KindCapture), runjob, surface))
+		for _, want := range []string{"click Remove on this archive's Scheduled backup card in MailArchive Desktop", "`mailarchive schedule -out /a -remove`"} {
+			if !strings.Contains(got, want) {
+				t.Errorf("both kinds counted, %q surface: %q is missing %q", surface, got, want)
+			}
+		}
+		if strings.Contains(got, "afresh") || strings.Contains(got, "-install") {
+			t.Errorf("both kinds counted, %q surface: still offers an install:\n%s", surface, got)
 		}
 	}
 }

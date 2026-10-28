@@ -953,11 +953,13 @@ func rebuildHow(in Input) string {
 //
 // Where the Desktop shows its section 4 notice (design-desktop-settings-card: a capture
 // counted, and the archive or its schedule local), the card offers Remove only and the
-// route would refuse a Repair, so the remedy names Remove (MA-867): on every surface for a
-// counted capture, which names the card, and on the Desktop for both kinds counted.
+// route would refuse a Repair, so the remedy names Remove (MA-867) on every surface: for a
+// counted capture, and for both kinds counted, where the command line and mailarchive-gui
+// said "set the schedule up afresh" until 2026-10-28 (MA-633, owner-accepted) — an install
+// the kind guard would refuse there too. Off the Desktop it adds the command line's remove.
 func repairHow(in Input) string {
 	route := schedule.RepairRoute(in.Desc, in.Out, in.KindEv)
-	if captureCountedNotice(in) && (route == schedule.RouteCard || in.Surface == "desktop") {
+	if captureCountedNotice(in) {
 		return noticeRemedy(in)
 	}
 	switch route {
@@ -991,11 +993,11 @@ func captureCountedNotice(in Input) bool {
 
 // noticeRemedy is the remedy where the Desktop shows its section 4 notice: the schedule can't
 // be repaired from MailArchive while Microsoft 365 is set up on this computer, and the one
-// button its card offers, Remove, stops it.
+// button its card offers, Remove, stops it; off the Desktop, so does the command line's remove.
 func noticeRemedy(in Input) string {
 	s := "this archive can't get its own scheduled backup yet on a computer where Microsoft 365 is set up, so it can't be repaired from MailArchive; to stop it, click Remove on this archive's Scheduled backup card"
 	if in.Surface != "desktop" {
-		s += " in MailArchive Desktop"
+		s += " in MailArchive Desktop, or run `mailarchive schedule -out " + shellQuoteToken(in.Out, in.GOOS) + " -remove`"
 	}
 	return s
 }
