@@ -14,12 +14,15 @@ import (
 	"strings"
 	"time"
 
+	"mail-archive-tool/internal/alert"
 	"mail-archive-tool/internal/app"
 	"mail-archive-tool/internal/archindex"
+	"mail-archive-tool/internal/backupalert"
 	"mail-archive-tool/internal/browser"
 	"mail-archive-tool/internal/graphconfig"
 	"mail-archive-tool/internal/instance"
 	"mail-archive-tool/internal/localweb"
+	"mail-archive-tool/internal/seal"
 )
 
 // launchEnv is what a launch needs from its surroundings: the per-account state
@@ -171,7 +174,7 @@ func launch(ctx context.Context, args []string, env *launchEnv) error {
 	readerAddr := fs.String("reader-addr", "127.0.0.1:0", "loopback address for the archive reader (must be loopback; port 0 takes any free port)")
 	out := fs.String("out", "", "archive directory to manage")
 	cfg := fs.String("config", "", "Graph config file (default: under your OS config dir)")
-	capture := fs.Bool("capture", false, "run ONE scheduled headless capture (no dashboard) and exit — what the weekly backup runs")
+	capture := fs.Bool("capture", false, "run ONE scheduled headless capture (no dashboard) and exit — what the scheduled backup runs")
 	logPath := fs.String("log", "", "capture mode: append the run log here (default: desktop-capture.log under your OS config dir)")
 	noBrowser := fs.Bool("no-browser", false, "do not open the dashboard in a browser on start (use for a background/Startup launch)")
 	copyLink := fs.Bool("copy-link", false, "show a fresh one-time link in a dialog, to copy into a browser, instead of opening one (for a default browser that cannot be opened)")
@@ -210,13 +213,19 @@ func launch(ctx context.Context, args []string, env *launchEnv) error {
 		// A log inside an encrypted archive is never opened (phase2a §4) — a schedule the
 		// Desktop installed points its log into the archive. The capture is refused and
 		// recorded like any scheduled refusal: as one without the key when the archive
-		// itself is encrypted.
+		// itself is encrypted. Like every failure exit of a scheduled capture but the paused
+		// refusal, it goes through the alert streak (R3C-10, MA-879): a capture refused here
+		// every run is told once, never silently.
 		if lerr := app.RefuseLogInside(lp); lerr != nil {
 			out := dcfg.effectiveOut()
+			if perr := seal.RefuseWrite(out); perr != nil {
+				return perr // paused: no record, no alert (S2-C2)
+			}
 			if kerr := app.RefuseKeyless("capture into it", out); kerr != nil {
 				lerr = kerr
 			}
 			app.RecordRefusedRun(app.Options{Out: out, Unattended: true}, lerr)
+			dcfg.reportRun(backupalert.KeyFor(out), out, alert.ResultFailed, lerr, 0, nil)
 			return lerr
 		}
 		var w io.Writer = env.Stderr

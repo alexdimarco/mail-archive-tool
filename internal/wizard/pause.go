@@ -87,22 +87,36 @@ func ResumeArchive(out string) error {
 // verify), each proven "ours" through bound.go — never the raw descriptor name (MA-680) — and
 // KEEPS the descriptor, so it is fully reversible: reinstalling the schedule (Resume, or a
 // reconnect) brings it back. It NEVER seals and NEVER forgets the archive. A scheduled run
-// calls it after it finishes (so the streak it reads is up to date); it reports whether it
-// paused. Below the threshold it does nothing.
-func AutoPauseIfDue(out string) (bool, error) {
+// calls it after it finishes (so the streak it reads is up to date), saying whether that run
+// itself found the source unreachable (app.FoundSourceUnreachable): only such a run pauses, so
+// a failure that says nothing about the source never pauses on an old streak a re-enable left
+// (MA-890). It reports paused only when it removed this archive's own backup entry — with no
+// bound entry to remove (no readable descriptor, or one that is not this archive's) nothing was
+// stopped, so it says so in its error and the caller sends no auto-pause email (MA-890). Below
+// the threshold it does nothing.
+func AutoPauseIfDue(out string, runFoundSourceUnreachable bool) (bool, error) {
+	if !runFoundSourceUnreachable {
+		return false, nil
+	}
 	streak, err := state.ReadSourceStreak(out)
 	if err != nil || !streak.AutoPauseDue() {
 		return false, nil
 	}
-	if name, err := schedule.RecordedBackupName(out); err == nil {
+	paused := false
+	name, nerr := schedule.RecordedBackupName(out)
+	if nerr == nil {
 		if rerr := removeLiveEntry(schedule.Spec{Name: name, Out: out, WrapperPath: schedule.DefaultWrapperPath(name)}); rerr != nil {
 			return false, rerr
+		}
+		paused = true
+	}
+	if vname, ok := schedule.RecordedVerifyName(out); ok {
+		if rerr := removeLiveEntry(schedule.Spec{Name: vname, Out: out, WrapperPath: schedule.DefaultWrapperPath(vname)}); rerr != nil {
+			return paused, rerr
 		}
 	}
-	if name, ok := schedule.RecordedVerifyName(out); ok {
-		if rerr := removeLiveEntry(schedule.Spec{Name: name, Out: out, WrapperPath: schedule.DefaultWrapperPath(name)}); rerr != nil {
-			return false, rerr
-		}
+	if !paused {
+		return false, fmt.Errorf("auto-pause is due, but this archive records no backup schedule of its own to stop (%v), so nothing was paused", nerr)
 	}
 	return true, nil
 }

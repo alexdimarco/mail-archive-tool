@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"mail-archive-tool/internal/archindex"
@@ -11,6 +12,7 @@ import (
 	"mail-archive-tool/internal/graphconfig"
 	"mail-archive-tool/internal/instance"
 	"mail-archive-tool/internal/job"
+	"mail-archive-tool/internal/util"
 )
 
 // isolateJobDir points the per-user config folder (job.Dir) at a fresh temporary folder and
@@ -29,6 +31,26 @@ func isolateJobDir(t *testing.T) string {
 		t.Fatal(err)
 	}
 	return dir
+}
+
+// tokenCacheNames are the Microsoft 365 sign-in caches' file names, taken from their writers: the
+// Desktop's (graphconfig.DefaultTokenCachePath) and the command line's, which adds the mailbox's
+// hash to the same name (cmd/mailarchive defaultTokenCachePath; package main, so its rule is
+// repeated here). Each is checked to be a name a schedule could have, so it guards something.
+func tokenCacheNames(t *testing.T) []string {
+	t.Helper()
+	p, err := graphconfig.DefaultTokenCachePath("contoso.onmicrosoft.com", "11111111-2222-3333-4444-555555555555")
+	if err != nil {
+		t.Fatal(err)
+	}
+	base := filepath.Base(p)
+	names := []string{base, strings.TrimSuffix(base, ".json") + "-" + util.ShortHash("alice@contoso.org") + ".json"}
+	for _, n := range names {
+		if _, err := SanitizeName(strings.TrimSuffix(n, ".json")); err != nil {
+			t.Fatalf("fixture: %s is not a name a schedule could have (%v), so it guards nothing", n, err)
+		}
+	}
+	return names
 }
 
 // writeAsJob writes, under the job folder, a file job.Read accepts as a job for out.
@@ -82,8 +104,9 @@ func TestTheJobFolderOwnFilesAreNeverJobFiles(t *testing.T) {
 		t.Fatal(err)
 	}
 	_, sessionFile := instance.Names("42")
-	own := []string{filepath.Base(settings), filepath.Base(graph), archindex.Name, "last-failure.json",
-		instance.FileName, sessionFile, instance.ServeFileName(out), "Desktop-Settings.json"}
+	tokens := tokenCacheNames(t)
+	own := append([]string{filepath.Base(settings), filepath.Base(graph), archindex.Name, "last-failure.json",
+		instance.FileName, sessionFile, instance.ServeFileName(out), "Desktop-Settings.json"}, tokens...)
 	for _, base := range own {
 		if IsJobFileName(base) {
 			t.Errorf("%s is named as a job file", base)
@@ -132,11 +155,15 @@ func TestRemoveJobFileRemovesOnlyJobFiles(t *testing.T) {
 	}
 
 	outside := writeAsJob(t, t.TempDir(), DefaultNameFor(out)+".json", out, true)
-	for _, p := range []string{
+	refused := []string{
 		writeAsJob(t, dir, "desktop-settings.json", out, true),
 		writeAsJob(t, dir, "graph-config.json", out, true),
 		outside,
-	} {
+	}
+	for _, base := range tokenCacheNames(t) { // the sign-in caches (MA-874, the part A pass)
+		refused = append(refused, writeAsJob(t, dir, base, out, true))
+	}
+	for _, p := range refused {
 		before, _ := os.ReadFile(p)
 		err := RemoveJobFile(p)
 		msg := ""

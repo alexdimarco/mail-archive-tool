@@ -72,24 +72,43 @@ func (s SourceStreak) Observe(reachable bool, kind string, now time.Time) Source
 		return s
 	}
 	s.ConsecutiveFails++
-	if s.FirstUnreachable.IsZero() {
+	s.LastKind = util.StripControl(kind)
+	// A time the clock can't really have read (before MinPlausibleTime: a computer started with no
+	// clock set) counts the run but moves neither stored time (MA-891).
+	if now.Before(MinPlausibleTime) {
+		return s
+	}
+	// The clock went backwards past the latest unreachable run (it was ahead, and was put right):
+	// the span starts again here, so it never runs negative and never stalls the thresholds.
+	if s.FirstUnreachable.IsZero() || (!s.LastUnreachable.IsZero() && now.Before(s.LastUnreachable)) {
 		s.FirstUnreachable = now
 	}
 	s.LastUnreachable = now
-	s.LastKind = util.StripControl(kind)
 	return s
 }
+
+// MinPlausibleTime is the earliest time a source-loss record trusts (MA-891): a run stamped
+// before it ran on a clock that was not set, and is never a first or latest unreachable time.
+var MinPlausibleTime = time.Date(2024, 1, 1, 0, 0, 0, 0, time.UTC)
 
 // Unreachable reports whether the archive's source is currently in an unreachable streak.
 func (s SourceStreak) Unreachable() bool { return s.ConsecutiveFails > 0 }
 
 // unreachableFor is how long the unreachable runs span: LastUnreachable minus FirstUnreachable,
-// with at least MinFailedRuns of them, else 0. It never reads the clock (R3C-11).
+// with at least MinFailedRuns of them, else 0. It never reads the clock (R3C-11). A stored time
+// before MinPlausibleTime, or a latest time before the first (a record written while a clock was
+// wrong), spans nothing (MA-891).
 func (s SourceStreak) unreachableFor() time.Duration {
 	if s.ConsecutiveFails < MinFailedRuns || s.FirstUnreachable.IsZero() || s.LastUnreachable.IsZero() {
 		return 0
 	}
-	return s.LastUnreachable.Sub(s.FirstUnreachable)
+	if s.FirstUnreachable.Before(MinPlausibleTime) || s.LastUnreachable.Before(MinPlausibleTime) {
+		return 0
+	}
+	if d := s.LastUnreachable.Sub(s.FirstUnreachable); d > 0 {
+		return d
+	}
+	return 0
 }
 
 // SurfaceLoudly reports whether the streak has crossed the "tell the owner" threshold: the

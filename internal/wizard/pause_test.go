@@ -131,7 +131,7 @@ func TestMA690_AutoPauseRemovesScheduleWhenDue(t *testing.T) {
 	if err := state.WriteSourceStreak(out, state.SourceStreak{ConsecutiveFails: 700, FirstUnreachable: t0, LastUnreachable: t0.Add(state.AutoPauseAfter - time.Hour)}); err != nil {
 		t.Fatal(err)
 	}
-	if paused, err := AutoPauseIfDue(out); err != nil || paused || len(removed) != 0 {
+	if paused, err := AutoPauseIfDue(out, true); err != nil || paused || len(removed) != 0 {
 		t.Fatalf("must not auto-pause below the threshold: paused=%v err=%v removed=%v", paused, err, removed)
 	}
 
@@ -140,7 +140,7 @@ func TestMA690_AutoPauseRemovesScheduleWhenDue(t *testing.T) {
 	if err := state.WriteSourceStreak(out, state.SourceStreak{ConsecutiveFails: 2, FirstUnreachable: t0, LastUnreachable: t0.Add(state.AutoPauseAfter)}); err != nil {
 		t.Fatal(err)
 	}
-	paused, err := AutoPauseIfDue(out)
+	paused, err := AutoPauseIfDue(out, true)
 	if err != nil || !paused {
 		t.Fatalf("must auto-pause at the threshold: paused=%v err=%v", paused, err)
 	}

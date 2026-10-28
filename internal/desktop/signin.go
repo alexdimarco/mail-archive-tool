@@ -106,7 +106,7 @@ func (j *signInJob) snapshot() map[string]any {
 	switch j.state {
 	case "confirm":
 		out["confirm"] = map[string]any{"upn": j.upn, "previous": j.prev, "archive": j.archive,
-			"text": fmt.Sprintf("Signed in as %s — your weekly backup will now archive %s into %s.", j.upn, j.upn, j.archive)}
+			"text": fmt.Sprintf("Signed in as %s — your scheduled backup will now archive %s into %s.", j.upn, j.upn, j.archive)}
 	case "done":
 		out["upn"], out["signedOut"] = j.upn, j.signOut
 	case "failed":

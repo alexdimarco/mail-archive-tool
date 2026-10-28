@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"log"
 	"net/http"
+	"path/filepath"
 	"runtime"
 	"strings"
 
@@ -309,6 +310,10 @@ func (d *dashboard) scheduleInstallRouted(w http.ResponseWriter, r *http.Request
 		refuse(captureCountedRefus)
 	case rt.export:
 		refuse(commandLineRefusal) // C-7: a cadence it would not apply is never answered ok
+	case rt.kind == backupLocal && rt.hasDesc && rt.descKind == schedule.KindCapture && !rt.runJob:
+		// A local archive whose installed capture is not counted (Microsoft 365 is not set up
+		// here): status and Remove only (3.2's table), never replaced by a run-job (MA-878).
+		refuse(uncountedCaptureRefusal)
 	case rt.runJob && in.repair():
 		// C-5: a corroborated run-job's Repair never rewrites its job file, whatever the
 		// kind: it keeps the sync and the start date, and works with a source missing.
@@ -364,7 +369,7 @@ func (d *dashboard) scheduleInstallCapture(w http.ResponseWriter, in scheduleReq
 	// (design-desktop-settings-card section 8).
 	if bf := d.dropRunJobBackupFor(); bf != "" && !samePath(bf, spec.Out) {
 		if _, err := d.removeTaskAt(bf); err != nil {
-			writeJSON(w, map[string]any{"ok": false, "error": "The weekly backup is installed, but the earlier one, named for " + bf + ", could not be removed: " + err.Error()})
+			writeJSON(w, map[string]any{"ok": false, "error": "The scheduled backup is installed, but the earlier one, named for " + bf + ", could not be removed: " + err.Error()})
 			return
 		}
 	}
@@ -384,17 +389,24 @@ func (d *dashboard) scheduleInstallCapture(w http.ResponseWriter, in scheduleReq
 // captureCadence is the cadence a capture install or repair builds from (3.6 step 4): the posted
 // interval and time; with none posted (the card's Repair), the installed descriptor's — the one
 // recorded for the folder the capture is named for, which may be the earlier location's (BackupFor);
-// with no descriptor either, weekly at 03:00. A posted interval MailArchive does not know is refused
-// before anything is written, never turned into another cadence.
+// with nothing installed and no descriptor either, weekly at 03:00. An installed entry whose
+// descriptor can't be read (its drive unplugged, the file gone or damaged) is refused before
+// anything is written, never reset to a default (MA-876). A posted interval MailArchive does not
+// know is refused before anything is written, never turned into another cadence.
 func (d *dashboard) captureCadence(interval, at string) (schedule.Interval, string, error) {
 	if strings.TrimSpace(interval) == "" {
 		p, _ := d.cfg.backupTask()
-		if p == "" {
+		installed := p != ""
+		if !installed {
 			p = d.cfg.effectiveOut()
 		}
-		if dsc, err := schedule.ReadDescriptor(p); err == nil && strings.TrimSpace(dsc.Interval) != "" {
+		dsc, err := schedule.ReadDescriptor(p)
+		switch {
+		case err == nil && strings.TrimSpace(dsc.Interval) != "":
 			interval, at = dsc.Interval, dsc.At
-		} else {
+		case installed:
+			return "", "", errors.New(cadenceUnreadableRefusal(p))
+		default:
 			return schedule.Weekly, "03:00", nil
 		}
 	}
@@ -406,6 +418,13 @@ func (d *dashboard) captureCadence(interval, at string) (schedule.Interval, stri
 		return "", "", errors.New(hourlyCaptureRefusal) // OR-2: never an hourly capture
 	}
 	return iv, strings.TrimSpace(at), nil
+}
+
+// cadenceUnreadableRefusal is the Repair's refusal for an installed capture whose recorded cadence,
+// kept in the archive folder p, can't be read (MA-876): the cadence is never guessed.
+func cadenceUnreadableRefusal(p string) string {
+	return "MailArchive can't read how often the installed backup runs: its record in " + p +
+		" can't be read (is its drive connected?). Reconnect the drive and click Repair again, or choose How often in Settings. Nothing was changed."
 }
 
 // hourlyCaptureRefusal is section 6's refusal of an hourly Microsoft 365 capture (OR-2, R3C-15):
@@ -467,10 +486,18 @@ func (d *dashboard) repairRunJob(w http.ResponseWriter, out string) {
 	writeJSON(w, map[string]any{"ok": true})
 }
 
-// scheduleRemove removes the weekly backup (loopback-only, CSRF-guarded).
+// scheduleRemove removes the scheduled backup (loopback-only, CSRF-guarded). A post drawn for
+// another archive than the current one is refused before anything is removed (C-12, MA-892); a
+// post that names no folder (an older page) is not.
 func (d *dashboard) scheduleRemove(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost || !server.GuardLocalPOST(r, d.csrf) {
 		http.Error(w, csrfRefused, http.StatusForbidden)
+		return
+	}
+	var in scheduleRequest
+	_ = json.NewDecoder(http.MaxBytesReader(w, r.Body, 4<<10)).Decode(&in)
+	if d.stalePage(in.DrawnFor) {
+		writeJSON(w, map[string]any{"ok": false, "error": staleRefusal})
 		return
 	}
 	if _, err := d.cfg.backupSpec(); err != nil {
@@ -492,6 +519,14 @@ func (d *dashboard) scheduleRemove(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if runJobFile != "" {
+		// The job file goes only with the entry it names (MA-875): the entry it names was removed
+		// here, or the scheduler holds none under that name. A job file named for another spelling
+		// of this folder whose entry is still installed is kept, so that entry is never left
+		// running with no job file, and the reply says how to remove it.
+		if left := d.jobEntryLeft(runJobFile, removed); left != "" {
+			writeJSON(w, map[string]any{"ok": false, "removed": len(removed) > 0, "error": left})
+			return
+		}
 		_ = schedule.RemoveJobFile(runJobFile)
 	}
 	resp := map[string]any{"ok": true, "removed": len(removed) > 0}
@@ -504,6 +539,39 @@ func (d *dashboard) scheduleRemove(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	writeJSON(w, resp)
+}
+
+// jobEntryLeft says why the run-job file at jobPath must stay after a Remove that removed the
+// entries named for the folders in removed, or "" when it may go (MA-875): its entry (the file's
+// name without .json) is one of those removed, or the scheduler holds no entry under that name.
+// A job file named for another spelling of this folder (other letter case, a link) is found by
+// the evidence's folder scan while Remove takes out only the entry named for this spelling; that
+// file is kept, so its entry never runs on with no job file, and the words say how to remove it.
+func (d *dashboard) jobEntryLeft(jobPath string, removed []string) string {
+	name := strings.TrimSuffix(filepath.Base(jobPath), ".json")
+	for _, p := range removed {
+		if strings.EqualFold(schedule.DefaultNameFor(p), name) {
+			return ""
+		}
+	}
+	if !d.cfg.entryMayBeInstalled(name, jobPath) {
+		return ""
+	}
+	return "The scheduled backup " + name + " was not removed: it was set up for this archive folder spelled another way, so Remove here does not reach it. Its settings file " + jobPath +
+		" is kept so that backup can still run. Remove it with the command line: mailarchive schedule -out " + d.cfg.effectiveOut() + " -name " + name + " -remove, then click Remove here again."
+}
+
+// entryMayBeInstalled reports whether the scheduler may hold an entry called name, the run-job
+// whose job file is jobPath: anything but a definite "not installed" counts. A test's stand-in
+// scheduler is asked about the folder the job file names, when the name is that folder's.
+func (cfg Config) entryMayBeInstalled(name, jobPath string) bool {
+	if cfg.BackupInstalledFor != nil {
+		if j, err := job.Read(jobPath); err == nil && strings.EqualFold(schedule.DefaultNameFor(j.Out), name) {
+			return cfg.BackupInstalledFor(j.Out)
+		}
+		return false
+	}
+	return schedule.Query(name) != schedule.NotInstalled
 }
 
 // removeBackup removes the weekly backup, wherever its task is named for (the archive the settings

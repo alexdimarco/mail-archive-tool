@@ -87,19 +87,19 @@ func TestACreateOverAnExistingEntryNeverRemovesIt(t *testing.T) {
 	g.recordLast()
 	os.Remove(g.jobPath) // broken: the descriptor says run-job, the job file is missing
 
+	// Each refusal through assure.Refused (the part A pass): it names what is kept, and leaves no
+	// job file (the row's "a refusal leaves no job file") and the entry that was there.
+	kept := func() bool { return fileBytes(g.jobPath) == nil && g.fake.tasks[g.out] && len(g.fake.removed) == 0 }
 	g.next = append(g.next, g.notRecorded())
 	body := g.post(`{}`)
-	if !strings.Contains(body, `"ok":false`) || !strings.Contains(body, "the scheduler entry that was there is kept") {
-		t.Errorf("a step-2b failure over an existing entry: %s", body)
-	}
+	assure.Refused(t, refusedCode(body), body,
+		assure.Names("could not be recorded in the archive (the archive folder is read-only)", "the scheduler entry that was there is kept"),
+		assure.NoSideEffect(kept))
 	failJobWrite(t)
 	body = g.post(`{}`)
-	if !strings.Contains(body, `"ok":false`) || !strings.Contains(body, "the scheduler entry that was there is kept") {
-		t.Errorf("a job-file write failure over an existing entry: %s", body)
-	}
-	if len(g.fake.removed) != 0 || !g.fake.tasks[g.out] {
-		t.Errorf("the entry that was there was removed: removed %v tasks %v", g.fake.removed, g.fake.tasks)
-	}
+	assure.Refused(t, refusedCode(body), body,
+		assure.Names("settings file could not be written (the disk is full)", "the scheduler entry that was there is kept"),
+		assure.NoSideEffect(kept))
 }
 
 // covers: MA-863, R37

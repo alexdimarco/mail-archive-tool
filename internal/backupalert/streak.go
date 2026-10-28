@@ -38,6 +38,10 @@ type streakRecord struct {
 	Version int       `json:"version"`
 	Failing bool      `json:"failing"`
 	Since   time.Time `json:"since,omitempty"` // when the failure that was told happened
+	// Noticed: this failing streak's Desktop notice was raised, though its email may not yet have
+	// been delivered (Failing false). The notice goes once per streak; the email is tried again
+	// at the next failure until it is delivered (MA-879).
+	Noticed bool `json:"noticed,omitempty"`
 }
 
 // KeyFor is the alert streak's key for a scheduled run that backs up into the archive folder
@@ -104,8 +108,8 @@ func clearStreakAt(path string) error {
 // Outcome is what Report did, for the caller's Desktop notice, which follows the streak too
 // (R3C-12): one per failing streak, plus a recovery notice.
 type Outcome struct {
-	Notify    bool // this failure starts a failing streak (or retries one whose email was not delivered)
-	Recovered bool // the first success after a failing streak
+	Notify    bool // this failure starts a failing streak: its one Desktop notice (MA-879)
+	Recovered bool // the first success after a failing streak whose notice was raised
 }
 
 // Report records one scheduled run's outcome (ResultFailed or ResultOK) in the alert streak for
@@ -114,6 +118,8 @@ type Outcome struct {
 //   - a failure sends only when the streak says "not failing"; "failing" is written only after
 //     the email was delivered, or at once when no email is due (alerts off); a send error is
 //     logged and the next failure tries again;
+//   - the Desktop notice (Outcome.Notify) goes once per failing streak, whether or not its email
+//     was delivered: an email that can't be sent is retried, its notice is not raised again;
 //   - the first success after a failing streak sends one recovery email, under the failure
 //     option, then clears the streak; a success email, if wanted, goes otherwise;
 //   - a streak file that can't be read fails loud: the failure sends, and the file is
@@ -135,25 +141,31 @@ func Report(settingsPath string, store graphconfig.SecretStore, key, out, result
 		if path != "" && readErr == nil && prev.Failing {
 			return Outcome{} // this failing streak was told already
 		}
-		o := Outcome{Notify: true}
+		o := Outcome{Notify: !(path != "" && readErr == nil && prev.Noticed)}
+		rec := streakRecord{Failing: true, Noticed: true, Since: time.Now().UTC()}
 		if cfg.ShouldSend(ResultFailed) && !deliver(cfg, store, out, ResultFailed, runErr, 0, logger) {
-			return o // not marked: the next failure tries again
+			rec.Failing = false // not delivered: the next failure tries the email again, not the notice
+			if !prev.Since.IsZero() && readErr == nil {
+				rec.Since = prev.Since
+			}
 		}
 		if path != "" {
-			if werr := writeStreak(path, streakRecord{Failing: true, Since: time.Now().UTC()}); werr != nil {
+			if werr := writeStreak(path, rec); werr != nil {
 				logf(logger, "the backup alert record %s could not be written (%v), so every failed backup sends its own alert until it can", path, werr)
 			}
 		}
 		return o
 	case ResultOK:
-		wasFailing := path != "" && readErr == nil && prev.Failing
+		wasFailing := path != "" && readErr == nil && (prev.Failing || prev.Noticed) // its notice was raised
 		if path != "" && (wasFailing || readErr != nil) {
 			if cerr := clearStreakAt(path); cerr != nil {
 				logf(logger, "the backup alert record %s could not be cleared (%v)", path, cerr)
 			}
 		}
 		if wasFailing {
-			if cfg.ShouldSend(ResultRecovered) {
+			// "Working again" answers a failure email that went; a streak whose email never went
+			// (only its notice did) gets the notice, and a success email if wanted.
+			if prev.Failing && cfg.ShouldSend(ResultRecovered) {
 				deliver(cfg, store, out, ResultRecovered, nil, messages, logger)
 			} else if cfg.ShouldSend(ResultOK) {
 				deliver(cfg, store, out, ResultOK, nil, messages, logger)

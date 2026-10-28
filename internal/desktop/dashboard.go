@@ -573,7 +573,7 @@ func (d *dashboard) saveSettings(w http.ResponseWriter, r *http.Request) {
 	}); err != nil {
 		msg := err.Error()
 		if removedBackup { // "Save and remove" removes first: say so, or Cancel is what the owner thinks happened
-			msg = "The weekly backup was removed, but the settings were not saved, so the archive location is as it was: " + msg + " Click Save settings again when the file can be read."
+			msg = "The scheduled backup was removed, but the settings were not saved, so the archive location is as it was: " + msg + " Click Save settings again when the file can be read."
 		}
 		writeJSON(w, map[string]any{"ok": false, "error": msg})
 		return
@@ -1115,6 +1115,10 @@ func (cfg Config) overviewFor(csrf, epoch string) string {
 			data.ScheduleKind = "a backup that re-reads this archive's mail files"
 			data.BrokenLine = brokenLine(rt)
 			data.ShowBrokenRepair = rt.broken == brokenMissing
+		case rt.descKind == schedule.KindCapture:
+			// A recorded capture not counted here (Microsoft 365 not set up): never called an
+			// export (MA-878).
+			data.ScheduleKind = "a scheduled Microsoft 365 capture"
 		default:
 			data.ScheduleKind = "an export backup — repair it from the command line (see Status & health)"
 		}
@@ -1506,7 +1510,7 @@ pre{white-space:pre-wrap;overflow-wrap:anywhere;background:var(--bg);border:1px 
       {{if .Set.Sched}}<div id="schedFields" data-sched-fields data-installed-interval="{{if .Set.Installed}}{{.Set.Interval}}{{end}}" data-installed-at="{{if .Set.Installed}}{{.Set.At}}{{end}}" data-installed-sync="{{if .Set.SyncOn}}1{{end}}" data-must-post="{{if .Set.MustPost}}1{{end}}">
       <div class="row2">
         <div><label for="schedInterval">How often</label>
-          <select id="schedInterval" data-kind-field>{{if .Set.SchedNone}}<option value=""{{if not .Set.Interval}} selected{{end}}>No scheduled backup</option>{{end}}{{if .Set.SchedHourly}}<option value="hourly"{{if eq .Set.Interval "hourly"}} selected{{end}}>Hourly</option>{{end}}<option value="daily"{{if eq .Set.Interval "daily"}} selected{{end}}>Daily</option><option value="weekly"{{if eq .Set.Interval "weekly"}} selected{{end}}>Weekly (Sunday)</option></select></div>
+          <select id="schedInterval" data-kind-field>{{if .Set.CadenceUnknown}}<option value="" selected>As installed (can't be read right now)</option>{{end}}{{if .Set.SchedNone}}<option value=""{{if not .Set.Interval}} selected{{end}}>No scheduled backup</option>{{end}}{{if .Set.SchedHourly}}<option value="hourly"{{if eq .Set.Interval "hourly"}} selected{{end}}>Hourly</option>{{end}}<option value="daily"{{if eq .Set.Interval "daily"}} selected{{end}}>Daily</option><option value="weekly"{{if eq .Set.Interval "weekly"}} selected{{end}}>Weekly (Sunday)</option></select></div>
         <div><label for="schedTime">At (local time{{if .Set.SchedHourly}}; hourly uses the minutes{{end}})</label><input id="schedTime" type="time" value="{{.Set.At}}" data-kind-field></div>
       </div>
       {{if .Set.Sync}}<label class="checkline"><input type="checkbox" id="schedPresync"{{if .Set.SyncOn}} checked{{end}}{{if not .Set.Interval}} disabled{{end}} data-kind-field> Sync Thunderbird before each backup</label>
@@ -1824,7 +1828,7 @@ if(outDirEl)outDirEl.addEventListener('input',settingsState);
 const schedIntervalEl=$('schedInterval');
 if(schedIntervalEl)schedIntervalEl.addEventListener('change',settingsState);
 settingsState();
-// Saving a new archive location while the weekly backup is installed asks first (XC22): the
+// Saving a new archive location while the scheduled backup is installed asks first (XC22): the
 // backup reads the location when it runs, so it would archive the signed-in mailbox into the new
 // folder. The answers are the server's own three: keep the backup, remove it, or cancel.
 // A new location is saved alone (3.6 step 2); otherwise the boxes go to api/settings and, only
@@ -1851,7 +1855,11 @@ async function doSave(backup){
     settingBoxes.forEach(([id])=>{const b=$(id);if(b)b.defaultChecked=b.checked;});
     const parts=boxesChanged?['Settings saved.']:[];
     if(schedChanged()){
+      // A first install (nothing was installed) draws the page again, so the Scheduled backup card
+      // shows its Remove, Repair and Run now in place of "No scheduled backup is set up" (MA-893).
+      const wasNone=!(schedFields&&schedFields.dataset.installedInterval);
       const r=await schedPost();
+      if(r.ok&&wasNone){parts.push('Backup schedule set up.'+(r.note?' '+r.note:''));say(parts.join(' '));setTimeout(()=>location.reload(),r.note?3000:600);return true;}
       if(r.ok){parts.push('Backup schedule updated.'+(r.note?' '+r.note:''));schedState();}
       else parts.push('The backup schedule was not changed: '+(r.reason||r.error||'it could not be saved.'));
     }

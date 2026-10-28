@@ -13,8 +13,11 @@ import (
 
 // oldCardWords are the names of the old backup card and its removed button (design-desktop-
 // settings-card section 12 A5, X11): the card is "Scheduled backup", and how often, the time and
-// the sync are changed in Settings.
-var oldCardWords = []string{"weekly backup card", "install / update", "set up on this card"}
+// the sync are changed in Settings. And "weekly backup" in any Desktop text (owner ruling
+// 2026-10-28, the part A pass): a backup may be hourly, daily or weekly, so it is the "scheduled
+// backup" — the reply after Save and remove, the sign-in confirmation, the capture install's
+// clean-up and the -capture flag said "weekly backup" until then.
+var oldCardWords = []string{"weekly backup card", "install / update", "set up on this card", "weekly backup"}
 
 // oldCardWordsIn names every string literal in the Go source src that names the old card or
 // button.
@@ -45,11 +48,14 @@ func oldCardWordsIn(name string, src []byte) ([]string, error) {
 
 // covers: MA-868, R37
 // Structural: no Desktop text, tooltip, health remedy or README line names the "Weekly backup
-// card", "Install / update" or "set up on this card" (X11). The checker reads every string in the
+// card", "Install / update" or "set up on this card" (X11), or says "weekly backup" at all (the
+// owner's ruling of 2026-10-28: it is the scheduled backup). The checker reads every string in the
 // Desktop's and the health report's source (templates, scripts, replies and remedies) and the
 // README. Positive twin first: a planted source naming the old card is caught, as is each phrase.
 func TestNoTextNamesTheOldBackupCard(t *testing.T) {
-	for _, w := range []string{"click Repair on this archive's Weekly backup card", "then click Install / update", "set up on this card or in the wizard"} {
+	for _, w := range []string{"click Repair on this archive's Weekly backup card", "then click Install / update", "set up on this card or in the wizard",
+		"The weekly backup was removed, but the settings were not saved", "Signed in as a — your weekly backup will now archive a into b.",
+		"The weekly backup is installed, but the earlier one", "what the weekly backup runs"} {
 		found, err := oldCardWordsIn("planted.go", []byte("package p\nvar s = "+strconv.Quote(w)+"\n"))
 		if err != nil || len(found) == 0 {
 			t.Fatalf("the positive twin: the checker does not catch %q (%v)", w, err)

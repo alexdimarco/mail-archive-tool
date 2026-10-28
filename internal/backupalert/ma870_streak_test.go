@@ -128,17 +128,19 @@ func TestTheStreakIsKeptWithSuccessEmailsOffAndWithAlertsOff(t *testing.T) {
 
 // covers: MA-870, R37
 // A send that fails on the first failed run does not mark the streak failing, so the second
-// failed run tries again and is delivered; the third sends nothing.
+// failed run tries again and is delivered; the third sends nothing. The Desktop notice went with
+// the first failure and is not raised again (MA-879; amended 2026-10-28, owner-accepted: until
+// then the retry raised the notice again).
 func TestASendFailureOnTheFirstFailedRunIsTriedAgain(t *testing.T) {
 	g := newStreakRig(t, alertsOnFailure)
 	g.fail = []error{errors.New("the mail server did not answer")}
 	var buf bytes.Buffer
-	Report(g.settings, nil, g.key, "/archive", ResultFailed, errors.New("x"), 0, log.New(&buf, "", 0))
-	if len(g.sent) != 0 || !strings.Contains(buf.String(), "could not be sent") {
-		t.Fatalf("the first failure's send failed: sent %q, log %q", g.results(), buf.String())
+	o := Report(g.settings, nil, g.key, "/archive", ResultFailed, errors.New("x"), 0, log.New(&buf, "", 0))
+	if !o.Notify || len(g.sent) != 0 || !strings.Contains(buf.String(), "could not be sent") {
+		t.Fatalf("the first failure's send failed: notify=%v sent %q, log %q", o.Notify, g.results(), buf.String())
 	}
-	if o := g.report(ResultFailed); !o.Notify || g.results() != "failed" {
-		t.Fatalf("the second failure must try again and be delivered: sent %q", g.results())
+	if o := g.report(ResultFailed); o.Notify || g.results() != "failed" {
+		t.Fatalf("the second failure must try the email again and be delivered, with no second notice: notify=%v sent %q", o.Notify, g.results())
 	}
 	if g.report(ResultFailed); g.results() != "failed" {
 		t.Fatalf("the third failure sent again: %q", g.results())

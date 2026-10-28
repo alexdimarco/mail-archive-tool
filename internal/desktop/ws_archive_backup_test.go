@@ -145,7 +145,11 @@ func TestSettingsKeepTheBackupNameAcrossASaveAndAnInstallRemovesTheOldTask(t *te
 		t.Errorf("a retarget after a plain Save was not asked about: %v", body)
 	}
 
-	// install: the task is named for the location now, and the one that kept the old name is removed
+	// install: the task is named for the location now, and the one that kept the old name is removed.
+	// The task named for a has its record there, as schedule.Install writes it (the stand-in writes
+	// none): an empty-body install keeps that cadence, and one whose record can't be read is refused
+	// (MA-876, the part A pass; until then this fixture had no record and the install guessed weekly).
+	writeCaptureDescriptor(t, a, schedule.Weekly, "03:00")
 	if _, out := e.post("/api/schedule-install", map[string]any{}); out["ok"] != true {
 		t.Fatalf("Install: %v", out)
 	}
@@ -214,7 +218,9 @@ func TestSaveAndRemoveTheBackupSaysSoWhenTheSaveFailsAfterIt(t *testing.T) {
 	if len(fake.removed) != 1 {
 		t.Fatalf("the backup was removed %d times: %v", len(fake.removed), fake.removed)
 	}
-	if !strings.Contains(msg, "weekly backup was removed") || !strings.Contains(msg, "settings were not saved") {
-		t.Errorf("the reply %q does not say the weekly backup was removed and the settings were not saved", msg)
+	// "scheduled", not "weekly" (owner ruling 2026-10-28, MA-868): a run-job removed here may be
+	// hourly or daily.
+	if !strings.Contains(msg, "The scheduled backup was removed") || !strings.Contains(msg, "settings were not saved") {
+		t.Errorf("the reply %q does not say the scheduled backup was removed and the settings were not saved", msg)
 	}
 }

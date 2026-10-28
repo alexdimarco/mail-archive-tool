@@ -125,8 +125,11 @@ const (
 	staleRefusal        = "This page is out of date; reload it. Nothing was changed."
 	runningRefusal      = "A backup is running now; save again when it finishes. Nothing was changed."
 	commandLineRefusal  = "This schedule was set up at the command line; change it there. Nothing was changed."
-	recreatedNote       = "This archive's backup settings file was missing, so it was made again from this archive's own record."
-	syncNowOffNote      = " Thunderbird sync is now off; switch it on in Settings."
+	// uncountedCaptureRefusal: a local archive whose recorded schedule is a Microsoft 365 capture
+	// that is not counted here (MA-878): it is never replaced by a local backup from Settings.
+	uncountedCaptureRefusal = "This archive's installed backup is a Microsoft 365 capture, and Microsoft 365 isn't set up on this computer: remove it on the Scheduled backup card before setting up a backup of its mail files. Nothing was changed."
+	recreatedNote           = "This archive's backup settings file was missing, so it was made again from this archive's own record."
+	syncNowOffNote          = " Thunderbird sync is now off; switch it on in Settings."
 )
 
 // brokenLine is the card's words for a broken run-job (section 5, C-9): a missing job file with

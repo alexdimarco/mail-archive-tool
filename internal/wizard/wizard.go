@@ -303,8 +303,14 @@ func RunHeadless(path string) int {
 		reportRun(key, j.Name, j.Out, backupalert.ResultFailed, runErr, 0, logger)
 		// After a failed scheduled run, auto-pause the backup if its source has been unreachable
 		// for too long (§5.7, S3-C5), as the capture does (design-desktop-settings-card 3.7,
-		// MA-871): stop the schedule only — reversible, never seals. Best effort.
-		if paused, perr := AutoPauseIfDue(j.Out); perr == nil && paused {
+		// MA-871): stop the schedule only — reversible, never seals. Best effort. Only a run that
+		// itself found the source unreachable pauses, and only a pause that stopped this archive's
+		// own entry is told (MA-890).
+		paused, perr := AutoPauseIfDue(j.Out, app.FoundSourceUnreachable(runErr))
+		if perr != nil {
+			logger.Printf("auto-pause: %v", perr)
+		}
+		if paused {
 			logger.Printf("auto-paused the scheduled backup: the source has been unreachable for too long; the schedule was stopped (reversible — reconnect the source and re-enable it)")
 			backupalert.RecordAutoPauseDefault(key, j.Out, errors.New(AutoPauseWhy), logger)
 		}
@@ -1286,7 +1292,8 @@ func removeSchedule(out string) error {
 		return err
 	}
 	// Only ever a job file (MA-874): a schedule named like one of MailArchive's own files in the
-	// job folder (desktop-settings, graph-config) never takes that file with it.
+	// job folder (desktop-settings, graph-config, a graph-token sign-in cache) never takes that file
+	// with it.
 	if jp, err := job.PathFor(name); err == nil {
 		_ = schedule.RemoveJobFile(jp)
 	}

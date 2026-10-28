@@ -253,6 +253,12 @@ func (d *dashboard) scheduleInstallLocal(w http.ResponseWriter, in scheduleReque
 	// owner-side evidence, and a refusal leaves nothing on disk.
 	spec := wizard.RunJobSpec(out, name, jobPath, iv, at, exe)
 	existed := d.cfg.taskState(out) == schedule.Installed // asked before step 2 (R3C-13)
+	// The archive's record as it was before step 2, which Install rewrites: a rollback that
+	// removes only what step 2 installed puts it back (MA-877).
+	var prior *schedule.Descriptor
+	if dsc, derr := schedule.ReadDescriptor(out); derr == nil {
+		prior = &dsc
+	}
 	if err := d.installer()(spec); err != nil {
 		if errors.Is(err, schedule.ErrNotRecorded) {
 			writeJSON(w, map[string]any{"ok": false, "error": d.notRecordedReply(out, exists, existed, exe, err)})
@@ -265,7 +271,7 @@ func (d *dashboard) scheduleInstallLocal(w http.ResponseWriter, in scheduleReque
 	// changed. An edit of the cadence alone leaves the job file as it is.
 	if !exists || syncChanged {
 		if err := writeJob(jobPath, j); err != nil {
-			writeJSON(w, map[string]any{"ok": false, "error": d.jobWriteFailedReply(out, exists, existed, iv, at, err)})
+			writeJSON(w, map[string]any{"ok": false, "error": d.jobWriteFailedReply(out, exists, existed, prior, iv, at, err)})
 			return
 		}
 	}
@@ -295,12 +301,13 @@ func (d *dashboard) scheduleInstallLocal(w http.ResponseWriter, in scheduleReque
 var writeJob = job.Write
 
 // notRecordedReply undoes or restores after Install took the entry but could not record it in
-// the archive (step 2b, section 9), and says what is now true. An edit puts the previous entry
-// back from the descriptor, which still holds the old cadence; a create removes the entry it
-// made, only when none existed before.
+// the archive (step 2b, section 9), and says what is now true. An edit of an entry that was
+// running puts the previous entry back from the descriptor, which still holds the old cadence;
+// a create, or an edit of an entry that was not running (auto-paused, or lost by the scheduler),
+// removes the entry it made, so nothing runs that did not run before (MA-877).
 func (d *dashboard) notRecordedReply(out string, edit, existed bool, exe string, err error) string {
 	reason := notRecordedReason(err)
-	if edit {
+	if edit && existed {
 		if dsc, derr := schedule.ReadDescriptor(out); derr == nil {
 			spec, serr := wizard.RepairSpec(out, dsc, exe)
 			if serr == nil {
@@ -313,9 +320,8 @@ func (d *dashboard) notRecordedReply(out string, edit, existed bool, exe string,
 			}
 			return "The new schedule is running, but it could not be recorded in the archive (" + reason + "), and the earlier schedule could not be put back (" + serr.Error() + "). Reload this page and click Repair, or save the schedule it shows: either puts the recorded schedule back."
 		}
-		if existed { // nothing recorded to put back from
-			return "The new schedule is running, but it could not be recorded in the archive (" + reason + ")."
-		}
+		// nothing recorded to put back from
+		return "The new schedule is running, but it could not be recorded in the archive (" + reason + ")."
 	}
 	if existed {
 		return "The backup could not be recorded in the archive (" + reason + "), so it was not set up again; the scheduler entry that was there is kept."
@@ -323,19 +329,33 @@ func (d *dashboard) notRecordedReply(out string, edit, existed bool, exe string,
 	if rerr := d.undoInstall(out, false); rerr != nil {
 		return "The backup could not be recorded in the archive (" + reason + "), and the scheduler entry it made could not be taken out again (" + rerr.Error() + "): click Remove on the Scheduled backup card to take it out."
 	}
+	if edit {
+		return "The backup could not be recorded in the archive (" + reason + "), so it was not started again: backups stay stopped, and its settings are as they were."
+	}
 	return "The backup could not be recorded in the archive (" + reason + "), so nothing was scheduled."
 }
 
 // jobWriteFailedReply answers a job file that could not be written after the scheduler step
 // (step 3, section 9). The old job file is still whole (job.Write renames a finished copy over
 // it), so an edit keeps the new cadence and the old sync; a create removes what it installed,
-// only when no entry existed before. No reply advises removing a backup that is running.
-func (d *dashboard) jobWriteFailedReply(out string, edit, existed bool, iv schedule.Interval, at string, err error) string {
+// only when no entry existed before. A create over a record that was already there (a broken
+// run-job's Repair with no entry running) removes only the entry and writes that record back
+// as it was, never deleting it (MA-877). No reply advises removing a backup that is running.
+func (d *dashboard) jobWriteFailedReply(out string, edit, existed bool, prior *schedule.Descriptor, iv schedule.Interval, at string, err error) string {
 	if edit {
 		return "The new schedule (" + cadenceWords(string(iv), at) + ") is in effect; Thunderbird sync was not changed: " + err.Error() + "."
 	}
 	if existed {
 		return "The backup's settings file could not be written (" + err.Error() + "), so the backup was not set up again; the scheduler entry that was there is kept."
+	}
+	if prior != nil {
+		if rerr := d.undoInstall(out, false); rerr != nil {
+			return "The backup could not be set up (" + err.Error() + "), and what was installed could not be taken out again (" + rerr.Error() + "): click Remove on the Scheduled backup card to take it out."
+		}
+		if werr := schedule.WriteDescriptor(out, *prior); werr != nil {
+			return "The backup could not be set up (" + err.Error() + "); nothing is running, but this archive's record of its backup could not be written back (" + werr.Error() + ")."
+		}
+		return "The backup could not be set up (" + err.Error() + "), so nothing is running; this archive's record of its backup is kept as it was."
 	}
 	if rerr := d.undoInstall(out, true); rerr != nil {
 		return "The backup could not be set up (" + err.Error() + "), and what was installed could not be taken out again (" + rerr.Error() + "): click Remove on the Scheduled backup card to take it out."

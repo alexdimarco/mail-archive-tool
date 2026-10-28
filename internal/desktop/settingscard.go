@@ -32,6 +32,10 @@ type settingsCard struct {
 	// never the settings file's copy (3.3). Installed says a schedule is recorded.
 	Interval, At string
 	Installed    bool
+	// CadenceUnknown: a capture is installed but its recorded cadence can't be read (its record
+	// on a drive that is unplugged, or gone): How often shows "As installed" selected, which a
+	// Save never posts, so an unrelated Save never changes the cadence (MA-876).
+	CadenceUnknown bool
 	// MustPost: the installed entry is gone (auto-pause took it out, or the scheduler lost
 	// it), so Save posts the schedule even with the cadence unchanged (C-11, 3.6 step 3).
 	MustPost bool
@@ -149,6 +153,7 @@ func settingsCardFor(in settingsInputs) settingsCard {
 				s.Installed, s.Interval, s.At = true, strings.ToLower(strings.TrimSpace(d.Interval)), orElse(d.At, "03:00")
 			}
 		}
+		s.CadenceUnknown = in.captureForm && in.entry != "" && !s.Installed
 		if s.Installed && in.entry == "" && in.entrySt == schedule.NotInstalled {
 			s.MustPost = true // the entry is gone: Save puts it back (3.4)
 			if st, err := state.ReadSourceStreak(out); err == nil && st.AutoPauseDue() {

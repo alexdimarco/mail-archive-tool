@@ -122,8 +122,14 @@ func HeadlessCapture(cfg Config, logw io.Writer) error {
 	cfg.reportRun(key, out, result, err, 0, logger)
 	// After a scheduled run, auto-pause the backup if the source has been unreachable for too
 	// long (§5.7, S3-C5): stop the schedule only — reversible, never seals. Best effort; it
-	// never fails the run. Its email goes whatever the streak said, and the streak ends.
-	if paused, perr := wizard.AutoPauseIfDue(out); perr == nil && paused {
+	// never fails the run. Its email goes whatever the streak said, and the streak ends. Only a
+	// run that itself found the source unreachable pauses, and only a pause that stopped this
+	// archive's own entry is told (MA-890).
+	paused, perr := wizard.AutoPauseIfDue(out, app.FoundSourceUnreachable(err))
+	if perr != nil {
+		logger.Printf("auto-pause: %v", perr)
+	}
+	if paused {
 		logger.Printf("auto-paused the scheduled backup: the source has been unreachable for too long; the schedule was stopped (reversible — reconnect the source and re-enable it)")
 		backupalert.RecordAutoPause(cfg.SettingsPath, cfg.Store, key, out, errors.New(wizard.AutoPauseWhy), logger)
 	}

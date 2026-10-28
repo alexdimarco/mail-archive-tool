@@ -143,7 +143,9 @@ func corroboratedRunJob(out string) (string, bool) {
 // that are not job files, however they parse: the Desktop's settings (whose "out" key reads as a
 // job's Out), the Microsoft 365 configuration, the list of known archives and the last start
 // failure; notJobFilePrefixes begin the running Desktop's and a serve's instance records, which
-// carry an "out" too (MA-874). Kept in step with their writers by
+// carry an "out" too, and the Microsoft 365 sign-in caches (graph-token-<tenant>-<client>[-<mailbox>]
+// .json, from graphconfig.DefaultTokenCachePath and the command line's own), which a schedule name
+// could otherwise match (MA-874). Kept in step with their writers by
 // TestTheJobFolderOwnFilesAreNeverJobFiles.
 var notJobFiles = map[string]bool{
 	"desktop-settings.json": true,
@@ -152,7 +154,7 @@ var notJobFiles = map[string]bool{
 	"last-failure.json":     true,
 }
 
-var notJobFilePrefixes = []string{"desktop-instance", "serve-"}
+var notJobFilePrefixes = []string{"desktop-instance", "serve-", "graph-token-"}
 
 // IsJobFileName reports whether base is named as a scheduled backup's job file is named:
 // <schedule name>.json, where the name passes SanitizeName (DefaultNameFor's

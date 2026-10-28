@@ -108,9 +108,15 @@ func TestAPlantedNetworkPathIsNeverLookedAt(t *testing.T) {
 		g.page()
 		u := g.snapshot()
 		body := g.post(`{"interval":"weekly","time":"03:00","presync":true}`)
-		if refusedCode(body) != 2 || !u.holds() {
-			t.Errorf("%s: an install from a planted network source was not refused with nothing written: %s", host, body)
-		}
+		// Refused as not Thunderbird (the sync request's refusal), never by the generic "can't
+		// tell how this archive was built", and naming no part of the planted path (the part A
+		// pass: assure.Refused, not a hand-rolled check).
+		t.Run(host, func(t *testing.T) {
+			assure.Refused(t, refusedCode(body), body,
+				assure.Names("wasn't made from a Thunderbird profile on this computer", "Nothing was changed."),
+				assure.Forbid("evil-host", "can’t tell how this archive was built"),
+				assure.NoSideEffect(u.holds))
+		})
 		if s := log.any(`\\evil-host`, "//evil-host"); s != "" {
 			t.Errorf("the planted network path %s was looked at", s)
 		}

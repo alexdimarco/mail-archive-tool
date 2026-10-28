@@ -65,6 +65,14 @@ func classifySourceReach(err error) (sourceReach, string) {
 	}
 }
 
+// FoundSourceUnreachable reports whether a scheduled run that ended with err found the archive's
+// source unreachable — the verdict that extends the source streak. Auto-pause acts only after
+// such a run (MA-890): a failure that says nothing about the source never pauses on an old streak.
+func FoundSourceUnreachable(err error) bool {
+	reach, _ := classifySourceReach(err)
+	return reach == sourceUnreachable
+}
+
 // Seams so a test moves the streak without touching a real archive-local file.
 var (
 	readSourceStreak  = state.ReadSourceStreak
