@@ -70,6 +70,14 @@ func TestMain(m *testing.M) {
 	if err := build.Run(); err != nil {
 		panic("building CLI for tests: " + err.Error())
 	}
+	// Every child a test starts inherits a throwaway home, not only runCLI's: a test
+	// that runs the built program with os.Environ() (run-job, as MA-612's does) once
+	// read the developer's real settings, wrote its failure record and alert streak
+	// there and sent a real backup-failed email through the alert set up there
+	// (found 2026-10-28; MA-894). Set after the build, which keeps the real Go cache.
+	for k, v := range cliEnv() {
+		os.Setenv(k, v)
+	}
 	code := m.Run()
 	os.RemoveAll(dir)
 	os.RemoveAll(recordDir)
@@ -81,12 +89,18 @@ func TestMain(m *testing.M) {
 // adversarial pass, FID-13).
 var cliHome string
 
+// cliEnv is the throwaway home's variables, for every OS's settings folder.
+func cliEnv() map[string]string {
+	return map[string]string{"HOME": cliHome, "XDG_CONFIG_HOME": filepath.Join(cliHome, ".config"),
+		"APPDATA": filepath.Join(cliHome, "AppData", "Roaming"), "LOCALAPPDATA": filepath.Join(cliHome, "AppData", "Local")}
+}
+
 func runCLI(args ...string) (int, string) {
 	cmd := exec.Command(testBin, args...)
-	cmd.Env = append(os.Environ(), "HOME="+cliHome,
-		"XDG_CONFIG_HOME="+filepath.Join(cliHome, ".config"),
-		"APPDATA="+filepath.Join(cliHome, "AppData", "Roaming"),
-		"LOCALAPPDATA="+filepath.Join(cliHome, "AppData", "Local"))
+	cmd.Env = os.Environ()
+	for k, v := range cliEnv() {
+		cmd.Env = append(cmd.Env, k+"="+v)
+	}
 	var errb strings.Builder
 	cmd.Stderr = &errb
 	err := cmd.Run()
