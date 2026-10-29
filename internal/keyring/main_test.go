@@ -24,7 +24,7 @@ func TestMain(m *testing.M) {
 	if err := os.MkdirAll(home, 0o700); err != nil {
 		panic(err)
 	}
-	for _, v := range []string{"HOME", "XDG_CONFIG_HOME", "XDG_CACHE_HOME", "AppData", "LOCALAPPDATA"} {
+	for _, v := range []string{"HOME", "USERPROFILE", "XDG_CONFIG_HOME", "XDG_CACHE_HOME", "XDG_STATE_HOME", "AppData", "LOCALAPPDATA"} {
 		os.Setenv(v, home)
 	}
 	// A small file stands in for this program, so an archive's copy of MailArchive is

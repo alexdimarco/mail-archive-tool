@@ -29,7 +29,7 @@ func TestMain(m *testing.M) {
 	// The home, settings and cache folders are throwaway for the whole package, so a
 	// test that writes a job, a log or a scratch file never reaches the developer's
 	// (the P3-3 plan, 3a). A test that needs its own sets them again with t.Setenv.
-	for _, v := range []string{"HOME", "XDG_CONFIG_HOME", "XDG_CACHE_HOME", "AppData", "LOCALAPPDATA"} {
+	for _, v := range []string{"HOME", "USERPROFILE", "XDG_CONFIG_HOME", "XDG_CACHE_HOME", "XDG_STATE_HOME", "AppData", "LOCALAPPDATA"} {
 		os.Setenv(v, dir)
 	}
 	code := m.Run()

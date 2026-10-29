@@ -3,6 +3,7 @@ package schedule
 import (
 	"os"
 	"path/filepath"
+	"runtime"
 	"testing"
 )
 
@@ -92,7 +93,14 @@ func TestMA673_SweepFindsOurEntriesByNamespace(t *testing.T) {
 // descriptor (it lives inside the archive -out, which a full uninstall must never delete,
 // R36); the full Remove, by contrast, deletes the descriptor.
 func TestMA674_RemoveLiveEntryKeepsTheArchiveDescriptor(t *testing.T) {
-	t.Setenv("HOME", t.TempDir()) // removeLaunchd targets a tmp LaunchAgents (no plist -> no-op)
+	// removeLaunchd targets a tmp LaunchAgents (no plist -> no-op) and runs `launchctl
+	// unload`: a fake one where launchd's stand-in can run, so the real launchd is never
+	// reached; Windows has no launchctl to reach.
+	if runtime.GOOS == "windows" {
+		t.Setenv("HOME", t.TempDir())
+	} else {
+		sandboxHostScheduler(t)
+	}
 	out := t.TempDir()
 	if err := WriteDescriptor(out, Descriptor{Name: DefaultName, Interval: "weekly", At: "03:00", Exe: "/x/mailarchive", Job: []string{"mailarchive", "-out", out}, Host: "h"}); err != nil {
 		t.Fatal(err)

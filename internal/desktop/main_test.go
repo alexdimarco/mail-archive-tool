@@ -40,7 +40,7 @@ func TestMain(m *testing.M) {
 	}
 	os.WriteFile(stand, []byte("#!/bin/sh\necho mailarchive test program\n"), 0o755)
 	app.UseTestProgram(stand)
-	for _, v := range []string{"HOME", "XDG_CONFIG_HOME", "XDG_CACHE_HOME", "AppData", "LOCALAPPDATA"} {
+	for _, v := range []string{"HOME", "USERPROFILE", "XDG_CONFIG_HOME", "XDG_CACHE_HOME", "XDG_STATE_HOME", "AppData", "LOCALAPPDATA"} {
 		os.Setenv(v, home)
 	}
 	restore := encrecord.SetDirForTest(filepath.Join(home, "record"))

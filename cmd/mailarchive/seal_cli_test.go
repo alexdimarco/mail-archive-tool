@@ -4,6 +4,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 
@@ -17,6 +18,9 @@ import (
 // archive makes `mailarchive -outlook -out DIR` refuse (naming the pause) and leaves no
 // _outlook-pst behind. Encodes the 2026-10-20 security-pass finding (S2-C1/C2).
 func TestMA682_ExportRefusesSealedArchiveBeforeWriting(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("on Windows, -outlook drives real Outlook should the refusal ever not come first")
+	}
 	out := t.TempDir()
 	if err := seal.Seal(out, "parked by the owner"); err != nil {
 		t.Fatalf("seal: %v", err)

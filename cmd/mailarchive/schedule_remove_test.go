@@ -40,7 +40,8 @@ func sandboxScheduler(t *testing.T) {
 		}
 	}
 	t.Setenv("HOME", home)
-	t.Setenv("PATH", bin+string(os.PathListSeparator)+"/usr/bin"+string(os.PathListSeparator)+"/bin")
+	// The package's do-nothing notifiers stay ahead of the system folders (MA-894).
+	t.Setenv("PATH", bin+string(os.PathListSeparator)+fakeNotifierDir+string(os.PathListSeparator)+"/usr/bin"+string(os.PathListSeparator)+"/bin")
 	t.Setenv("FAKE_SCHED_LOG", filepath.Join(home, "launchctl.log"))
 	t.Setenv("FAKE_CRONTAB", filepath.Join(home, "crontab"))
 	// Never fall through to the real scheduler: both names must resolve to the fakes.

@@ -16,11 +16,16 @@ var keys [2]*vault.Key
 // key it may destroy (vault.KeySecret).
 var keyDirs [2]string
 
+// TestMain makes the two keys, with the home, settings, cache and state folders
+// throwaway for the whole package (MA-894).
 func TestMain(m *testing.M) {
 	vault.UseTestCost()
 	dir, err := os.MkdirTemp("", "containertest")
 	if err != nil {
 		panic(err)
+	}
+	for _, v := range []string{"HOME", "USERPROFILE", "XDG_CONFIG_HOME", "XDG_CACHE_HOME", "XDG_STATE_HOME", "APPDATA", "LOCALAPPDATA"} {
+		os.Setenv(v, dir)
 	}
 	for i := range keys {
 		out, err := os.MkdirTemp(dir, "archive")

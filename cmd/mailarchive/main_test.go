@@ -70,13 +70,46 @@ func TestMain(m *testing.M) {
 	if err := build.Run(); err != nil {
 		panic("building CLI for tests: " + err.Error())
 	}
+	// A `go` a test starts (MA-628's builds, the release-stamp script's `go version -m`)
+	// keeps the real Go caches and the toolchain pin: read once here, before the home
+	// moves, and passed on as variables, which outrank anything under the home.
+	goEnv, err := exec.Command("go", append([]string{"env"}, goEnvVars...)...).Output()
+	if err != nil {
+		panic("reading go env: " + err.Error())
+	}
+	for i, v := range strings.Split(strings.TrimRight(string(goEnv), "\r\n"), "\n") {
+		if v = strings.TrimSpace(v); i < len(goEnvVars) && v != "" {
+			os.Setenv(goEnvVars[i], v)
+		}
+	}
 	// Every child a test starts inherits a throwaway home, not only runCLI's: a test
 	// that runs the built program with os.Environ() (run-job, as MA-612's does) once
 	// read the developer's real settings, wrote its failure record and alert streak
 	// there and sent a real backup-failed email through the alert set up there
 	// (found 2026-10-28; MA-894). Set after the build, which keeps the real Go cache.
+	// Known residual: on Windows the Credential Manager is not reached through any of
+	// these, so it cannot be redirected; no test here writes to it (reads only).
 	for k, v := range cliEnv() {
 		os.Setenv(k, v)
+	}
+	// A failed run-job raises a desktop notification (reportRun -> notifyFailure ->
+	// zenity.Notify), which starts osascript on macOS and zenity/qarma/matedialog on
+	// Linux by name. Do-nothing fakes of each sit first on PATH for the whole package,
+	// so no test pops a real banner; each records its call. A test that puts its own
+	// fakes on PATH puts them ahead of these. (Windows notifies natively: not on PATH.)
+	if runtime.GOOS != "windows" {
+		fakeNotifierDir = filepath.Join(recordDir, "fake-notifiers")
+		fakeNotifierLog = filepath.Join(recordDir, "fake-notifiers.log")
+		if err := os.MkdirAll(fakeNotifierDir, 0o700); err != nil {
+			panic(err)
+		}
+		for _, name := range []string{"osascript", "notify-send", "zenity", "qarma", "matedialog"} {
+			script := "#!/bin/sh\nprintf '%s %s\\n' \"$(basename \"$0\")\" \"$*\" >> '" + fakeNotifierLog + "'\nexit 0\n"
+			if err := os.WriteFile(filepath.Join(fakeNotifierDir, name), []byte(script), 0o755); err != nil {
+				panic(err)
+			}
+		}
+		os.Setenv("PATH", fakeNotifierDir+string(os.PathListSeparator)+os.Getenv("PATH"))
 	}
 	code := m.Run()
 	os.RemoveAll(dir)
@@ -89,10 +122,20 @@ func TestMain(m *testing.M) {
 // adversarial pass, FID-13).
 var cliHome string
 
-// cliEnv is the throwaway home's variables, for every OS's settings folder.
+// fakeNotifierDir holds the do-nothing notifier programs first on the package's PATH,
+// and fakeNotifierLog the line each writes when started ("" on Windows).
+var fakeNotifierDir, fakeNotifierLog string
+
+// goEnvVars are the Go settings a child `go` keeps from the real home.
+var goEnvVars = []string{"GOCACHE", "GOMODCACHE", "GOPATH", "GOENV", "GOTOOLCHAIN"}
+
+// cliEnv is the throwaway home's variables, for every OS's settings, cache and state
+// folders and home folder.
 func cliEnv() map[string]string {
-	return map[string]string{"HOME": cliHome, "XDG_CONFIG_HOME": filepath.Join(cliHome, ".config"),
-		"APPDATA": filepath.Join(cliHome, "AppData", "Roaming"), "LOCALAPPDATA": filepath.Join(cliHome, "AppData", "Local")}
+	return map[string]string{"HOME": cliHome, "USERPROFILE": cliHome,
+		"XDG_CONFIG_HOME": filepath.Join(cliHome, ".config"), "XDG_CACHE_HOME": filepath.Join(cliHome, ".cache"),
+		"XDG_STATE_HOME": filepath.Join(cliHome, ".local", "state"),
+		"APPDATA":        filepath.Join(cliHome, "AppData", "Roaming"), "LOCALAPPDATA": filepath.Join(cliHome, "AppData", "Local")}
 }
 
 func runCLI(args ...string) (int, string) {
