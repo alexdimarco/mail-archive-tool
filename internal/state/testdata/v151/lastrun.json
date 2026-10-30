@@ -1,0 +1,28 @@
+{
+  "version": 1,
+  "status": "ok",
+  "started": "2026-10-27T02:00:00Z",
+  "finished": "2026-10-27T02:14:00Z",
+  "pid": 4242,
+  "exe": "/Applications/MailArchive Desktop.app/Contents/MacOS/mailarchive",
+  "mode": "incremental",
+  "job": [
+    "-out",
+    "/Volumes/Backup/Mail",
+    "-mode",
+    "incremental",
+    "-auto"
+  ],
+  "exported": 12,
+  "filled": 1,
+  "fillable": 0,
+  "terminal": 0,
+  "unknown": 0,
+  "index_errors": 0,
+  "warnings": [
+    {
+      "code": "presync_no_activity",
+      "message": "The pre-sync started Thunderbird, but no new mail arrived."
+    }
+  ]
+}

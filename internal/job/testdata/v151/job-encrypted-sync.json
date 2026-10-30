@@ -1,0 +1,16 @@
+{
+  "version": 1,
+  "name": "mailarchive-sealed",
+  "inputs": [
+    "/Users/someone/Library/Thunderbird/Profiles/abcd.default-release/Mail"
+  ],
+  "out": "/Volumes/Backup/Sealed",
+  "mode": "incremental",
+  "since": "2024-01-01",
+  "copy_first": true,
+  "follow_links": [
+    "/Users/someone/Library/Thunderbird/Profiles/abcd.default-release/Mail"
+  ],
+  "thunderbird_sync": {},
+  "program_copies": "on"
+}

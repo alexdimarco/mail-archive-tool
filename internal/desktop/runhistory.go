@@ -3,6 +3,8 @@ package desktop
 import (
 	"fmt"
 
+	"mail-archive-tool/internal/encmark"
+	"mail-archive-tool/internal/presync"
 	"mail-archive-tool/internal/state"
 )
 
@@ -12,6 +14,9 @@ type runRow struct {
 	Status string // "OK" | "Failed" | "Cancelled"
 	Failed bool
 	Detail string
+	// Sync is the run's Thunderbird sync tag (design-presync-attended §4.5), in the
+	// closed map's words only; "" for no tag and on every row of an encrypted archive.
+	Sync string
 }
 
 // recentRunRows reads the archive's rolling run history and formats the most recent runs,
@@ -25,10 +30,17 @@ func recentRunRows(out string) []runRow {
 	if err != nil {
 		return nil
 	}
+	// An encrypted archive's rows carry no sync tag, judged by the archive's kind and
+	// not by an entry, so a name planted in its history shows nothing (§4.4, §4.5,
+	// C-16/T12). A folder whose kind cannot be told counts as encrypted.
+	tagged := !encmark.MustMinimise(out)
 	rows := make([]runRow, 0, 10)
 	for i := len(h) - 1; i >= 0 && len(rows) < 10; i-- {
 		e := h[i]
 		r := runRow{When: e.When.Local().Format("Jan 2, 2006 3:04 PM"), Failed: e.Status == state.RunFailed}
+		if tagged {
+			r.Sync = presync.TagPhrase(e.Presync)
+		}
 		switch e.Status {
 		case state.RunOK:
 			r.Status = "OK"

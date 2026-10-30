@@ -1677,7 +1677,7 @@ pre{white-space:pre-wrap;overflow-wrap:anywhere;background:var(--bg);border:1px 
       <h2>Recent backups</h2>
       {{if .RecentRuns}}<p class="card-sub">The last backup runs for this archive, newest first. MailArchive keeps the last {{.HistoryMax}}, which is about two days of hourly backups.</p>
       <ul class="run-history">
-        {{range .RecentRuns}}<li>{{.When}} — {{if .Failed}}<span class="warn">{{.Status}}</span>{{else}}<span class="good">{{.Status}}</span>{{end}}{{if .Detail}} — {{.Detail}}{{end}}</li>{{end}}
+        {{range .RecentRuns}}<li>{{.When}} — {{if .Failed}}<span class="warn">{{.Status}}</span>{{else}}<span class="good">{{.Status}}</span>{{end}}{{if .Detail}} — {{.Detail}}{{end}}{{if .Sync}} — {{.Sync}}{{end}}</li>{{end}}
       </ul>{{else}}<p class="card-sub">No backups have run yet. When a scheduled backup or Run now finishes, its result appears here.</p>{{end}}
     </div>
 

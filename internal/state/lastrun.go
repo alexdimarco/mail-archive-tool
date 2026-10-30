@@ -129,17 +129,34 @@ type LastRun struct {
 }
 
 // PresyncRecord is the Thunderbird pre-sync's record in one run (design §4.9.2).
-// A session in flight carries State "syncing" and ExpectedUntil; a finished one
-// carries the outcome Code. It is display and judgement only — never read to
-// drive behaviour.
+// It is display and judgement only — never read to drive behaviour.
+//
+// A plaintext run writes the session's outcome here (design-presync-attended §4.2,
+// slice AS7, C-80): its Code, Name, Result and Since only. Nothing says how the run
+// was started (no "attended", C-36), and an encrypted archive's record never holds
+// it (§4.4). State, ExpectedUntil and the two streaks are not written; they are kept
+// so a record that has them still reads. The times are left out when zero, so a
+// session that started no Thunderbird writes no since.
 type PresyncRecord struct {
-	State         string    `json:"state,omitempty"`          // "syncing" in flight; "" at the final outcome
-	Code          string    `json:"code,omitempty"`           // the outcome code (presync_*); "" for a clean ok
-	Since         time.Time `json:"since,omitempty"`          // when the session started
-	ExpectedUntil time.Time `json:"expected_until,omitempty"` // when it should be done
+	State         string    `json:"state,omitempty"`         // "syncing" in flight; "" at the final outcome
+	Code          string    `json:"code,omitempty"`          // the outcome code (presync_*); "" for a clean ok
+	Name          string    `json:"name,omitempty"`          // the outcome's name, shown only through presync.TagPhrase
+	Result        string    `json:"result,omitempty"`        // one of the PresyncResult* values
+	Since         time.Time `json:"since,omitzero"`          // when the session started Thunderbird
+	ExpectedUntil time.Time `json:"expected_until,omitzero"` // when it should be done
 	WarnStreak    int       `json:"warn_streak,omitempty"`
 	NoteStreak    int       `json:"note_streak,omitempty"`
 }
+
+// The PresyncRecord.Result values (design-presync-attended §4.2): a session whose
+// outcome counts as synced (§5.2), one that does not, a cancelled one whatever it
+// left open, and a wait the person stopped (OQ-6), which never reads as a failure.
+const (
+	PresyncResultSynced    = "synced"
+	PresyncResultNotSynced = "not_synced"
+	PresyncResultCancelled = "cancelled"
+	PresyncResultWaitEnded = "wait_ended"
+)
 
 // RunWarning is one problem a run found with its own setup that does not stop
 // it — a credential, or MailArchive Desktop's settings and sign-in, kept inside
@@ -283,6 +300,12 @@ func ReadLastRun(out string) (LastRun, LastRunState, error) {
 	r.Error, r.Exe, r.Mode = util.StripControl(r.Error), util.StripControl(r.Exe), util.StripControl(r.Mode)
 	for i := range r.Warnings {
 		r.Warnings[i].Code, r.Warnings[i].Message = util.StripControl(r.Warnings[i].Code), util.StripControl(r.Warnings[i].Message)
+	}
+	// The sync's strings too (design-presync-attended §4.2, C-37): every surface shows
+	// its name only through a closed map, and none of them is echoed raw.
+	if p := r.Presync; p != nil {
+		p.State, p.Code = util.StripControl(p.State), util.StripControl(p.Code)
+		p.Name, p.Result = util.StripControl(p.Name), util.StripControl(p.Result)
 	}
 	return r, LastRunPresent, nil
 }

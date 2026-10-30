@@ -41,6 +41,11 @@ type RunHistoryEntry struct {
 	ErrorKind string `json:"errorKind,omitempty"`
 	// Encrypted marks an encrypted archive's entry; absent on a plaintext one.
 	Encrypted bool `json:"encrypted,omitempty"`
+	// Presync is the name of the run's Thunderbird sync outcome (design-presync-attended
+	// §4.3, slice AS7): a plaintext entry only, shown only through presync.TagPhrase's
+	// closed map. Absent when the run had no sync, on an older entry, and always on an
+	// encrypted archive's (minimal never copies it, §4.4).
+	Presync string `json:"presync,omitempty"`
 }
 
 // minimal is e as an encrypted archive keeps it: when, the outcome and the kind.
@@ -62,6 +67,14 @@ func ReadRunHistory(out string) ([]RunHistoryEntry, error) {
 	var h []RunHistoryEntry
 	if err := json.Unmarshal(data, &h); err != nil {
 		return nil, err
+	}
+	// Anyone who can write the archive folder can write this file: its strings lose
+	// their control characters here, so none can forge a surface's output
+	// (design-presync-attended §4.3, C-37).
+	for i := range h {
+		e := &h[i]
+		e.Status, e.Mode, e.Error = util.StripControl(e.Status), util.StripControl(e.Mode), util.StripControl(e.Error)
+		e.ErrorKind, e.Presync = util.StripControl(e.ErrorKind), util.StripControl(e.Presync)
 	}
 	return h, nil
 }
@@ -100,6 +113,9 @@ func RunHistoryEntryFrom(lr LastRun) RunHistoryEntry {
 		return RunHistoryEntry{When: lr.Finished, Status: lr.Status, ErrorKind: lr.ErrorKind}.minimal()
 	}
 	e := RunHistoryEntry{When: lr.Finished, Status: lr.Status, Exported: lr.Exported, Filled: lr.Filled, Mode: lr.Mode, Error: lr.Error}
+	if lr.Presync != nil {
+		e.Presync = lr.Presync.Name // the sync's outcome name (design-presync-attended §4.3)
+	}
 	if !lr.Started.IsZero() && !lr.Finished.IsZero() && lr.Finished.After(lr.Started) {
 		e.DurationMs = lr.Finished.Sub(lr.Started).Milliseconds()
 	}

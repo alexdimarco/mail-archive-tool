@@ -158,6 +158,33 @@ type PresyncOutcome struct {
 	Waited    time.Duration
 }
 
+// presyncRecordFor is the session's outcome as the plaintext last-run record keeps it
+// (design-presync-attended §4.1, §4.2, C-80): its code, name, result and start only —
+// never the line, what was left open or anything that says how the run was started
+// (C-36). nil for no outcome.
+func presyncRecordFor(o *PresyncOutcome) *state.PresyncRecord {
+	if o == nil {
+		return nil
+	}
+	return &state.PresyncRecord{Code: o.Code, Name: o.Name, Result: presyncResult(*o), Since: o.Started}
+}
+
+// presyncResult is the record's result for o, from the outcome alone (§4.2, §5.2,
+// C-72): a cancelled session is "cancelled" whatever it left open, a wait the person
+// stopped is "wait_ended" (OQ-6), and otherwise Synced decides. The two names are
+// presync's OutcomeCancelled and OutcomeWaitEnded (MA-903 pins them).
+func presyncResult(o PresyncOutcome) string {
+	switch {
+	case o.Name == "cancelled":
+		return state.PresyncResultCancelled
+	case o.Name == "wait-ended":
+		return state.PresyncResultWaitEnded
+	case o.Synced:
+		return state.PresyncResultSynced
+	}
+	return state.PresyncResultNotSynced
+}
+
 // BeforeReadResult is what the pre-sync hook returns: warnings for the run to
 // record, and the session's outcome for the caller (Result.Presync).
 type BeforeReadResult struct {
@@ -638,6 +665,11 @@ func Run(ctx context.Context, opts Options, logger *log.Logger, onProgress Progr
 			presyncRelease = br.Release
 			presyncOut = br.Outcome
 		}()
+		// The outcome rides on the record value, converted to the record's own type,
+		// as the warnings do, before recordRun captures it (design-presync-attended
+		// §4.1, C-12, C-80): every return below records it. recordRun drops it for a
+		// keyed run (C-16).
+		begun.Presync = presyncRecordFor(presyncOut)
 	}
 	// C2: release the pre-sync's per-profile lock AFTER the sources are read. The defer
 	// runs at Run's return (after the read, index and pages), always — even on error or
@@ -1264,6 +1296,13 @@ var appendRunHistory = state.AppendRunHistory
 
 func recordRun(opts Options, lr state.LastRun, result *Result, err *error, logger *log.Logger) {
 	lr.Finished = time.Now().UTC()
+	// Nothing about the Thunderbird sync is written beside an encrypted archive: any
+	// outcome says the archive is made from Thunderbird on this computer, a source kind
+	// (design-presync-attended §4.4, C-16). Dropped here, by code, so no change to the
+	// encrypted writer can leak it.
+	if opts.Key != nil || lr.Encrypted {
+		lr.Presync = nil
+	}
 	if lr.Encrypted {
 		// When the step did not run (an early end, a cancel), the copies are as the last
 		// run that ran it left them, and so is the line newRunRecord carried (LEAK-3).

@@ -1,0 +1,11 @@
+[
+  {
+    "when": "2026-10-30T02:14:00Z",
+    "status": "ok",
+    "exported": 12,
+    "filled": 1,
+    "durationMs": 840000,
+    "mode": "incremental",
+    "presync": "quit-no-window"
+  }
+]

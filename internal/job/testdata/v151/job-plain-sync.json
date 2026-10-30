@@ -1,0 +1,10 @@
+{
+  "version": 1,
+  "name": "mailarchive-thunderbird",
+  "auto": true,
+  "out": "/Volumes/Backup/Mail",
+  "mode": "incremental",
+  "thunderbird_sync": {
+    "profile": "/Users/someone/Library/Thunderbird/Profiles/abcd.default-release"
+  }
+}
