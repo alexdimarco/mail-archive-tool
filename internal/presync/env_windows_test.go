@@ -34,7 +34,10 @@ type fakeWin32 struct {
 	posted     *[]uintptr
 	postErr    error
 	creation   int64       // what creationNs returns (the quit's identity re-proof, F1)
-	minimized  *[]uintptr  // hwnds minimizeWindow was asked to minimize
+	minimized  *[]uintptr  // hwnds showWindow was asked to minimize
+	shown      *[]int      // the show value of each showWindow call
+	iconicOf   map[uintptr]bool // what isIconic answers per window
+	fg         uintptr          // what foregroundWindow answers
 }
 
 func (f fakeWin32) thunderbirdProcs() []winProc       { return f.procs }
@@ -59,11 +62,16 @@ func (f fakeWin32) postClose(hwnd uintptr) error {
 	return f.postErr
 }
 func (f fakeWin32) creationNs(uint32) int64 { return f.creation }
-func (f fakeWin32) minimizeWindow(hwnd uintptr) {
+func (f fakeWin32) showWindow(hwnd uintptr, cmd int) {
 	if f.minimized != nil {
 		*f.minimized = append(*f.minimized, hwnd)
 	}
+	if f.shown != nil {
+		*f.shown = append(*f.shown, cmd)
+	}
 }
+func (f fakeWin32) isIconic(hwnd uintptr) bool { return f.iconicOf[hwnd] }
+func (f fakeWin32) foregroundWindow() uintptr   { return f.fg }
 
 // covers: MA-553, MA-554
 // The Windows realization of running-detection and the §4.4.3 identity fields:

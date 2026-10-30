@@ -1,0 +1,17 @@
+# MA-927: the pin of the Windows start, minimize and close code
+# (design-presync-attended §2.7, C-66; owner ruling OQ-7).
+#
+# The hash covers buildLaunchCmd, winStart, startHidden, minimizeMain,
+# minimizeAgain, minimizeWindow, minimizeMode, the Win32 show, iconic and
+# foreground calls, quit and postClose, each printed without comments
+# (internal/presync/windows_start_test.go, TestWindowsCodePin).
+#
+# Changing any of them turns TestWindowsCodePin red until lab MA-918 is run
+# again and its record is added under docs/lab/ IN THE SAME COMMIT, carrying the
+# new hash and naming windows; then the record line below names that file. The
+# hash is changed only together with a new lab record, never alone.
+#
+# "no lab record": no MA-918 record exists yet (slice AS4 under OQ-7), so the
+# Windows start entry of AttendedStartAllowed must stay false.
+hash: 08c9a41269b160c0a134bf17bd956d22b34a03acff6463fe966d1c503d6bf79c
+record: no lab record

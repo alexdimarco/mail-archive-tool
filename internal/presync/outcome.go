@@ -52,6 +52,10 @@ var (
 	OutcomeOtherProfileRunning = Outcome{"other-profile-running", "presync_other_profile_running", ClassNote}
 	OutcomeProfileBusy         = Outcome{"profile-busy", "presync_profile_busy", ClassNote}
 	OutcomeCannotStart         = Outcome{"cannot-start", "presync_cannot_start", ClassWarn}
+	// OutcomeStartBlocked: Windows refused the launch with "access denied" — the
+	// program that started this backup runs in a job that forbids breakaway
+	// (design-presync-attended §2.7, C-65). Never retried without breakaway.
+	OutcomeStartBlocked        = Outcome{"start-blocked", "presync_start_blocked", ClassWarn}
 	OutcomeNoDesktopSession    = Outcome{"no-desktop-session", "presync_no_desktop_session", ClassWarn}
 	OutcomeDidNotStart         = Outcome{"did-not-start", "presync_did_not_start", ClassWarn}
 	OutcomeIdentityUnavailable = Outcome{"identity-unavailable", "presync_identity_unavailable", ClassWarn}
@@ -91,7 +95,7 @@ var (
 // completeness test (landing with MA-560) asserts the set and the class of each.
 var allOutcomes = []Outcome{
 	OutcomeOK, OutcomeNoActivity, OutcomeAlreadyRunning, OutcomeOtherProfileRunning,
-	OutcomeProfileBusy, OutcomeCannotStart, OutcomeNoDesktopSession, OutcomeDidNotStart,
+	OutcomeProfileBusy, OutcomeCannotStart, OutcomeStartBlocked, OutcomeNoDesktopSession, OutcomeDidNotStart,
 	OutcomeIdentityUnavailable, OutcomeNotQuiet, OutcomeExitedEarly, OutcomeQuitNotPermitted,
 	OutcomeQuitTimeout, OutcomeQuitSkippedOthers, OutcomeQuitNoWindow, OutcomeStateUnsaved,
 	OutcomeOwnerActiveSkipped, OutcomeOwnerActive, OutcomeSuccessorFound,

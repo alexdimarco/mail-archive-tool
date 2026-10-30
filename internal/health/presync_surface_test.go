@@ -11,14 +11,15 @@ import (
 	"mail-archive-tool/internal/state"
 )
 
-// covers: MA-561, MA-900
+// covers: MA-561, MA-900, MA-928
 // The pre-sync's WARN outcome codes surface in the health view as WARN (never
 // RED), carrying their recorded what/why/remedy message and their code in
 // status -json; the note-class pre-sync codes and any unknown code stay GREEN,
 // since the record is writable by anyone who can write the archive. The two warn
 // codes of design-presync-attended AS1a — a quit that posted nothing (C-60) and a
 // state record that could not be saved (A9) — surface too, so a scheduled run that
-// used to show presync_quit_timeout still shows a warning.
+// used to show presync_quit_timeout still shows a warning; and so does AS4's
+// start-blocked (a launch Windows refused, C-65), which a scheduled run can meet.
 func TestPresyncWarningsSurfaceAsWarnNeverRed(t *testing.T) {
 	now := time.Date(2026, 10, 22, 2, 0, 0, 0, time.UTC)
 
@@ -29,6 +30,7 @@ func TestPresyncWarningsSurfaceAsWarnNeverRed(t *testing.T) {
 		{Code: "presync_stuck", Message: "Thunderbird has not synced on the last 3 runs"},
 		{Code: "presync_quit_no_window", Message: "Thunderbird was left open; quit it from the taskbar"},
 		{Code: "presync_state_unsaved", Message: "the sync could not save its own state record"},
+		{Code: "presync_start_blocked", Message: "Windows would not let the backup start Thunderbird"},
 	} {
 		in := healthyInput(now)
 		in.LastRun.Warnings = []state.RunWarning{w}

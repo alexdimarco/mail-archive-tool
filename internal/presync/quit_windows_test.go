@@ -190,7 +190,7 @@ func TestWinMinimizeMain(t *testing.T) {
 			minimized: &minimized,
 		},
 	}
-	e.minimizeMain(context.Background(), nil, pid)
+	e.minimizeMain(context.Background(), nil, pid, false)
 	if len(minimized) != 1 || minimized[0] != hwnd {
 		t.Errorf("minimizeMain minimized %v, want [%#x]", minimized, hwnd)
 	}
@@ -208,7 +208,7 @@ func TestWinMinimizeMainEndsOnStop(t *testing.T) {
 	const pid = 4242
 	var minimized []uintptr
 	e := &winEnv{clock: time.Now, w: fakeWin32{mainOf: map[uint32]uintptr{pid: 0x100}, minimized: &minimized}}
-	e.minimizeMain(context.Background(), nil, pid)
+	e.minimizeMain(context.Background(), nil, pid, false)
 	if len(minimized) != 1 {
 		t.Fatalf("twin: minimized %v, want the window minimized", minimized)
 	}
@@ -218,7 +218,7 @@ func TestWinMinimizeMainEndsOnStop(t *testing.T) {
 	stop, cancel := context.WithCancel(context.Background())
 	time.AfterFunc(50*time.Millisecond, cancel)
 	start := time.Now()
-	e.minimizeMain(context.Background(), stop, pid)
+	e.minimizeMain(context.Background(), stop, pid, false)
 	if took := time.Since(start); took > 2*time.Second {
 		t.Errorf("minimizeMain waited %v after the session context ended, want it to stop at once", took)
 	}

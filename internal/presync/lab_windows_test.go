@@ -14,7 +14,6 @@ import (
 
 var (
 	procGetWindowText = user32.NewProc("GetWindowTextW")
-	procIsIconic      = user32.NewProc("IsIconic")
 )
 
 // labWin is one top-level window of a pid, with its title, whether isMainWindow
@@ -133,7 +132,7 @@ func TestLabHiddenLaunchAndClose(t *testing.T) {
 	// Minimize the window once it appears — exactly what the session's S6 hook does
 	// (owner ruling 2026-10-23: a visible launch is acceptable; minimize it to a
 	// taskbar blip). minimizeMain waits for the window, so it doubles as the settle.
-	e.minimizeMain(context.Background(), nil, child.pid)
+	e.minimizeMain(context.Background(), nil, child.pid, false)
 	mainCount, visibleCount := labLogWindows(t, "after minimize", uint32(child.pid))
 
 	iconic := 0

@@ -127,6 +127,7 @@ func WarnText(o Outcome) (string, bool) {
 // TP4, MA-567). Each is one line of what / why / do-this; the archive ran anyway.
 var warnText = map[string]string{
 	OutcomeCannotStart.Code:         "Thunderbird could not be started, so the archive ran without a fresh sync. Do this: run `mailarchive -thunderbird-sync` by hand to check it starts; mail that arrived since the last sync may not be in this archive yet.",
+	OutcomeStartBlocked.Code:        "Thunderbird could not be started: Windows would not let the program that ran this backup start it outside its own job, so the archive ran without a fresh sync. Do this: start Mail Archive Desktop from its shortcut (not from a terminal), then run the backup again.",
 	OutcomeNoDesktopSession.Code:    "Thunderbird could not be started because there is no desktop session (the window server was unreachable). The archive ran anyway. Do this: run the sync while signed in to the Mac.",
 	OutcomeDidNotStart.Code:         "Thunderbird did not appear within 90 seconds of being started, so the archive ran without a confirmed sync. Do this: run `mailarchive -thunderbird-sync` by hand to check it starts.",
 	OutcomeIdentityUnavailable.Code: "The Thunderbird that was started could not be identified for certain, so it was not closed — nothing is ever closed on a guess. The archive ran anyway. Do this: Thunderbird may have been left open — quit it yourself when you are done.",

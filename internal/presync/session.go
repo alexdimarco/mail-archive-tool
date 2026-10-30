@@ -84,10 +84,16 @@ func (r sessionResult) result() Result {
 // windowMinimizer is the optional capability of an adapter that can only launch
 // Thunderbird VISIBLY (Windows, where SW_HIDE is ignored) and wants the shown
 // window minimized once the process is adopted. A truly-hidden adapter (macOS)
-// does not implement it, so the S6 hook is a no-op there. It reports whether the
-// window was minimized (Result.Minimized, A8, C-56).
+// does not implement it, so the S6 hook is a no-op there. Each reports whether the
+// window was minimized (Result.Minimized, A8, C-56); attended picks the show mode
+// (A14 (3), minimizeMode), a scheduled run keeps SW_MINIMIZE (§1.3).
 type windowMinimizer interface {
-	minimizeMain(ctx, stop context.Context, pid int) bool
+	// minimizeMain is the first attempt, right after adoption: it waits up to
+	// minimizeWait for the single main window, on the session context (C-64).
+	minimizeMain(ctx, stop context.Context, pid int, attended bool) bool
+	// minimizeAgain is one more try with no wait, made on each S7 poll until one
+	// attempt has succeeded, and never after (A14 (2), C-56).
+	minimizeAgain(pid int, attended bool) bool
 }
 
 // runSession runs one pre-sync session, S1..S9 (design 4.5). It never fails the
@@ -270,9 +276,13 @@ func runSession(ctx context.Context, d deps) sessionResult {
 	if err := e.startHidden(d.app, d.profile); err != nil {
 		clear() // write-ahead record removed; no launch to announce, no retry
 		setLeft(LeftNone)
-		if errors.Is(err, errNoDesktopSession) {
+		switch {
+		case errors.Is(err, errNoDesktopSession):
 			res.outcome = OutcomeNoDesktopSession
-		} else {
+		case errors.Is(err, errStartBlocked):
+			// C-65: never a second launch without breakaway.
+			res.outcome = OutcomeStartBlocked
+		default:
 			res.outcome = OutcomeCannotStart
 		}
 		return res
@@ -355,8 +365,9 @@ func runSession(ctx context.Context, d deps) sessionResult {
 	// a focus-stealing popup (owner ruling 2026-10-23). Best-effort and bounded, and
 	// its wait ends with the session context (C-64); a truly-hidden adapter (macOS)
 	// does not implement this, so it is a no-op there.
-	if m, ok := e.(windowMinimizer); ok {
-		res.minimized = m.minimizeMain(ctx, sctx, child.pid)
+	minimizer, canMinimize := e.(windowMinimizer)
+	if canMinimize {
+		res.minimized = minimizer.minimizeMain(ctx, sctx, child.pid, d.attended)
 	}
 
 	// S7 wait quiet — poll the digest; quiet needs a first change (rev-3, L-M5).
@@ -432,6 +443,12 @@ func runSession(ctx context.Context, d deps) sessionResult {
 		if n := int(now.Sub(up) / time.Minute); n > saidMin && n >= 1 {
 			saidMin = n
 			narrate(d.log, progressLine(n, maxMin))
+		}
+		// A14 (2), C-56: a minimize that has not yet succeeded is tried again on each
+		// poll, until one succeeds — never after, so a person who restores our window
+		// to work in it is not fought.
+		if canMinimize && !res.minimized {
+			res.minimized = minimizer.minimizeAgain(child.pid, d.attended)
 		}
 		e.sleep(ctx, waitCtx, d.pollEvery)
 	}

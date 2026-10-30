@@ -123,6 +123,7 @@ var outcomeHeads = map[Outcome]head{
 	OutcomeRefusedElevated: {text: refusedElevated, subject: "It"},
 	OutcomeProfileUnusable: {text: fixed("Thunderbird was not synced: its profile could not be used" + readHere), subject: "It"},
 	OutcomeCannotStart:     {text: fixed("Thunderbird was not synced: it could not be started" + readHere), subject: "It"},
+	OutcomeStartBlocked:    {text: startBlocked, subject: "It"},
 	OutcomeDidNotStart:     {text: fixed("Thunderbird was not synced: it did not appear within 90 seconds of being started."), subject: "It"},
 	OutcomeExitedEarly:     {text: fixed("Thunderbird closed before its mail settled, so the sync may be incomplete."), subject: "It"},
 	OutcomeNoDesktopSession: {text: fixed("Thunderbird was not synced: no one was logged in, so it could not be started" + readHere),
@@ -139,6 +140,15 @@ func refusedElevated(w lineWords, _ string) string {
 		return "Thunderbird was not synced: Mail Archive Desktop was started as administrator. Start Mail Archive Desktop normally, not as administrator, then click Run now again."
 	}
 	return "Thunderbird was not synced: the backup ran as administrator. Run it as your normal user."
+}
+
+// startBlocked is start-blocked's line (§2.7, C-65): on the Desktop, how to start
+// it so that it may start Thunderbird; at the command line, no button.
+func startBlocked(w lineWords, _ string) string {
+	if w.desktop {
+		return "Thunderbird was not synced: Mail Archive Desktop was started in a way that cannot start Thunderbird; start Mail Archive Desktop from its shortcut, then click Run now again."
+	}
+	return "Thunderbird was not synced: Windows would not let this program start it" + readHere
 }
 
 // OutcomeLine is the owner-facing, past-tense line for how a session ended (§4.6):

@@ -14,6 +14,14 @@ import (
 // without a build tag.
 var errNoDesktopSession = errors.New("no desktop session")
 
+// errStartBlocked is returned by startHidden when Windows refused the launch with
+// "access denied": the program that started this backup (MailArchive Desktop, from
+// a terminal that runs its children in a job forbidding breakaway) cannot start
+// Thunderbird outside its job (design-presync-attended §2.7, C-65). The machine maps
+// it to presync_start_blocked and never retries without breakaway: a job teardown
+// could then kill Thunderbird in the middle of a write.
+var errStartBlocked = errors.New("start blocked: the launch outside this program's job was refused")
+
 // errQuitNotPermitted is returned by quit when the quit request did not take —
 // macOS Automation consent denied (osascript -1743), the Apple event timing out
 // (-1712) or our own deadline firing (design §4.7.1 / MA-570). The likely cause

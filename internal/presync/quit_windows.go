@@ -4,6 +4,7 @@ package presync
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"os/exec"
 	"syscall"
@@ -33,9 +34,6 @@ const (
 	// constant fits an (unsigned) uintptr; GetWindowLongPtrW reads the low 32 bits.
 	wGwlStyle   = 0xFFFFFFF0
 	wGwlExStyle = 0xFFFFFFEC
-	// SW_MINIMIZE minimizes the window AND activates the next top-level window — so
-	// Thunderbird does not keep focus — a benign window-state change, not a close.
-	wSwMinimize = 6
 )
 
 var (
@@ -46,6 +44,8 @@ var (
 	procGetWindowLongPtr         = user32.NewProc("GetWindowLongPtrW")
 	procGetWindow                = user32.NewProc("GetWindow")
 	procShowWindow               = user32.NewProc("ShowWindow")
+	procIsIconic                 = user32.NewProc("IsIconic")
+	procGetForegroundWindow      = user32.NewProc("GetForegroundWindow")
 )
 
 // winWindowInfo is one top-level window's identity, as selectMainWindow judges it.
@@ -88,14 +88,24 @@ func buildLaunchCmd(exe, profile string) *exec.Cmd {
 	return cmd
 }
 
+// winStart starts a built launch (a var, so a test can see how often a launch is
+// asked for and what Windows answers, without starting anything).
+var winStart = func(cmd *exec.Cmd) error { return cmd.Start() }
+
 // startHidden launches Thunderbird detached, then releases our reference without
 // ever waiting on or signalling it (the real process is re-found by the
 // scan+`-profile` match, §3). The name is the cross-platform seam's: on macOS the
 // launch is truly hidden; on Windows it shows a window that minimizeMain then
-// minimizes. A launch failure is returned for S5 to map to presync_cannot_start.
+// minimizes. A launch failure is returned for S5 to map to presync_cannot_start;
+// "access denied" — the program that started this backup runs in a job that
+// forbids breakaway — is errStartBlocked, presync_start_blocked, and is never
+// retried without breakaway (design-presync-attended §2.7, C-65).
 func (e *winEnv) startHidden(exe, profile string) error {
 	cmd := buildLaunchCmd(exe, profile)
-	if err := cmd.Start(); err != nil {
+	if err := winStart(cmd); err != nil {
+		if errors.Is(err, windows.ERROR_ACCESS_DENIED) {
+			return fmt.Errorf("%w: %v", errStartBlocked, err)
+		}
 		return err
 	}
 	_ = cmd.Process.Release()
@@ -105,27 +115,55 @@ func (e *winEnv) startHidden(exe, profile string) error {
 // minimizeMain best-effort minimizes the pre-sync's Thunderbird window so a visible
 // launch is a taskbar blip, not a focus-stealing popup (owner ruling 2026-10-23).
 // The session calls it once it has adopted our process (after S6): it waits briefly
-// for the single main window to appear, then minimizes it with
-// ShowWindow(SW_MINIMIZE) — a benign window-state change, never a close or kill. If
-// no single main window appears in time it does nothing (the launch stays visible —
-// the accepted fallback). macOS launches truly hidden and does not implement this.
-// Its wait ends at once when ctx or stop (the session context) ends — a Lock,
-// Shut down or the watchdog abandoning the session (C-64). It reports whether it
-// minimized the window, so every Windows text can say "its window may still be on
-// screen" when it did not (Result.Minimized, C-56).
-func (e *winEnv) minimizeMain(ctx, stop context.Context, pid int) bool {
+// for the single main window to appear, then minimizes it (minimizeWindow) — a
+// benign window-state change, never a close or kill. If no single main window
+// appears in time it does nothing, and the session tries again on each S7 poll
+// (minimizeAgain) until one attempt succeeds (A14, C-56). macOS launches truly
+// hidden and does not implement this. Its wait ends at once when ctx or stop (the
+// session context) ends — a Lock, Shut down or the watchdog abandoning the session
+// (C-64). It reports whether it minimized the window, so every Windows text can say
+// "its window may still be on screen" when it did not (Result.Minimized, C-56).
+func (e *winEnv) minimizeMain(ctx, stop context.Context, pid int, attended bool) bool {
 	deadline := e.now().Add(minimizeWait)
 	for e.now().Before(deadline) {
 		if ctx.Err() != nil || (stop != nil && stop.Err() != nil) {
 			return false
 		}
 		if hwnd, ok := e.w.mainWindow(uint32(pid)); ok {
-			e.w.minimizeWindow(hwnd)
-			return true
+			return e.minimizeWindow(hwnd, attended)
 		}
 		e.sleep(ctx, stop, 500*time.Millisecond)
 	}
 	return false
+}
+
+// minimizeAgain is one more try with no wait (A14 (2), C-56): the session calls it
+// on each S7 poll until one attempt has succeeded, and never after, so a person who
+// restores our window to work in it is not fought.
+func (e *winEnv) minimizeAgain(pid int, attended bool) bool {
+	hwnd, ok := e.w.mainWindow(uint32(pid))
+	if !ok {
+		return false
+	}
+	return e.minimizeWindow(hwnd, attended)
+}
+
+// minimizeWindow minimizes Thunderbird's main window. A scheduled run keeps
+// SW_MINIMIZE (§1.3, accepted 2026-10-23). An attended run — the person may be
+// typing in another window — takes minimizeMode's choice (A14 (3), C-58): an
+// already minimized window gets no call (and counts as minimized), one that is not
+// the foreground window is minimized without activating anything, and one that took
+// the keyboard is minimized handing activation back.
+func (e *winEnv) minimizeWindow(hwnd uintptr, attended bool) bool {
+	mode := swMinimize
+	if attended {
+		mode = minimizeMode(e.w.isIconic(hwnd), e.w.foregroundWindow() == hwnd)
+		if mode == 0 {
+			return true
+		}
+	}
+	e.w.showWindow(hwnd, mode)
+	return true
 }
 
 // quit asks the proven child to close (design §4, S8). It holds an OpenProcess
@@ -232,7 +270,17 @@ func (realWin32) handleAlive(h uintptr) bool {
 
 func (realWin32) releaseHandle(h uintptr) { procCloseHandle.Call(h) }
 
-func (realWin32) minimizeWindow(hwnd uintptr) { procShowWindow.Call(hwnd, wSwMinimize) }
+func (realWin32) showWindow(hwnd uintptr, cmd int) { procShowWindow.Call(hwnd, uintptr(cmd)) }
+
+func (realWin32) isIconic(hwnd uintptr) bool {
+	r, _, _ := procIsIconic.Call(hwnd)
+	return r != 0
+}
+
+func (realWin32) foregroundWindow() uintptr {
+	r, _, _ := procGetForegroundWindow.Call()
+	return r
+}
 
 func (realWin32) windowPID(hwnd uintptr) uint32 {
 	var pid uint32
