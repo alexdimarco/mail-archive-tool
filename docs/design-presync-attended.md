@@ -1,6 +1,9 @@
 # Design — the attended Thunderbird sync: Run now really syncs, skips are told, encrypted archives can sync
 
-**Revision:** 4 (2026-10-30), folding the **second review round** (lens 2 scope / proportionality,
+**Revision:** 5 (2026-10-30), folding the owner's **round-2 answers OQ-5..OQ-8** (each fold marked
+`[OQ-n]`) and the **fold check of C-48..C-86** (recorded in the review doc, section "Owner answers
+round 2 and fold check, 2026-10-30"; each gap it found is fixed here and marked `[C-n, fold
+check]`). Rev 4 (2026-10-30) folded the **second review round** (lens 2 scope / proportionality,
 lens 9 dependencies and operational cost, the rescue pass, and a fold check of rev 3; recorded in
 `docs/review-presync-attended-predesign.md`, section "Second round, 2026-10-30", which reviewed rev 3
 sha256 `6a63ef6d…df26`). Its conditions are **C-48 to C-86**, each fold marked `[C-n]`. Rev 3
@@ -17,13 +20,22 @@ later slice, **AS-Q**) [C-48]; a second per-platform table, `AttendedStartAllowe
 ship the macOS fix while the Windows lab is still owed [C-49]; AS1 is split into the scheduled-run bug
 fixes (AS1a) and the attended mode (AS1b) [C-51]; a run where nothing arrived is no longer called
 "synced" [C-68]; and the encrypted Lock window now really lasts until mail reading starts [C-76].
-**Owed before AS1:** a fold check of C-48..C-86 by a second reader (a check of the folds only; no new
-lens is owed). **New owner questions** OQ-5..OQ-8 (§15.3) gate parts of AS5, the waiting note, the
-release, and AS8; none gates AS1.
+
+**Rev-5 status.** The owner answered OQ-5..OQ-8 on 2026-10-30 (§15.3): **OQ-5 yes** — a softer,
+separate warning after 3 days of scheduled syncs that started Thunderbird but fetched nothing (§5.4,
+slice AS5); **OQ-6 yes** — a "Stop waiting and back up now" button while Run now waits (§4.6, A16,
+slices AS1b and AS4); **OQ-7 ship the Mac first** — the Windows `AttendedStartAllowed` entry stays
+false until its lab passes, while the code for both platforms is built now (§2.7); **OQ-8** — a Lock
+cancels **every** encrypted Run now that has not started reading mail, sync or not (§3.2, AS8). The
+fold check of C-48..C-86 is done (the review doc's round-2 addendum): every condition is folded, and
+twelve gaps or inconsistencies it found are fixed here. **AS1a may start.** The rev-5 additions
+(OQ-5..OQ-8 and the fold-check fixes) are new design text no second reader has checked; none of them
+touches AS1a's contents, and each is read by the adversarial pass of the slice that builds it (§14).
 
 **Status of every id proposed here.** `R38`, `S64`, `S65`, the S54 and X16 amendments and the
 per-slice row plan are **accepted by the operator (2026-10-30) [OD-2]**; they land at AS0. `MA-895`
-to `MA-928` (MA-922 and MA-923 new in rev 3; MA-924 to MA-928 new in rev 4) stay **provisional**
+to `MA-929` (MA-922 and MA-923 new in rev 3; MA-924 to MA-928 new in rev 4; MA-929 new in rev 5,
+found unused on 2026-10-30: the catalog's highest MA row is MA-894) stay **provisional**
 until each lands with its slice. `MA-880..MA-889` are reserved for the settings-card part B and are not
 used. `S61..S63` are claimed by `docs/design-archive-manager.md:508-510`, so the new scenarios start
 at `S64`. `R38` was found unused on 2026-10-30 (`grep R38 docs/scenario-catalog.md`, no match;
@@ -39,8 +51,8 @@ from how macOS, Windows and Thunderbird behave, not verified by a run; each infe
 real system is also a **lab item** (L-A1..L-A10, §13). **decision** = a choice this design makes,
 with its reason; the owner or a reviewer may overturn it.
 
-**Gates before code.** The pre-code review is filed (GO_WITH_CONDITIONS, two rounds). Before AS1: a
-second reader's fold check of C-48..C-86 (§14 gate 1). What gates a **platform** switching attended
+**Gates before code.** The pre-code review is filed (GO_WITH_CONDITIONS, two rounds), and the fold
+check of C-48..C-86 is done (§14 gate 1): AS1a may start. What gates a **platform** switching attended
 Run now on is a lab record cited by its `AttendedStartAllowed` entry (§2.7) [C-49]; what gates a
 platform **closing** Thunderbird after an attended run is L-A5 there, in slice AS-Q (§2.8) [C-48].
 One release tag builds every platform (`.github/workflows/release.yml`, lines 1-9, proven), so these
@@ -125,12 +137,21 @@ Found while reading, and relevant here:
 4. **Encrypted archive:** a Lock while a Run now **waits for Thunderbird cancels that backup and
    clears the key**. **Widened 2026-10-30 [OQ-3]:** the Lock cancels it at any point **from the click
    until mail reading starts**, not only during the wait; once reading has started, the Lock reply
-   says the backup finishes with its own key and Cancel stops it (§3.2).
+   says the backup finishes with its own key and Cancel stops it (§3.2). **Widened again 2026-10-30
+   [OQ-8]:** this holds for **every** encrypted Run now, whether or not its job syncs Thunderbird.
 
 Owner answers of 2026-10-30, besides OQ-2 and OQ-3 above: **[OQ-1]** the Run now note has a "Keep
 Thunderbird open" button while it waits, and if lab L-A5 shows Thunderbird would throw away a message
 being written without asking, Run now never closes Thunderbird on that platform — it leaves it open
 and says so (§2.8). **[OQ-4]** the two widened encrypted leftovers are accepted (§3.2, §4.4).
+
+Owner answers of 2026-10-30, round 2: **[OQ-5]** yes — a softer, separate warning after 3 days in
+which scheduled syncs started Thunderbird but no mail arrived, naming a possible hidden password or
+sign-in window; not a failure and not the missed-sync warning (§5.4). **[OQ-6]** yes — a "Stop
+waiting and back up now" button while Run now waits; it ends the wait and backs up what has arrived
+(§4.6, A16). **[OQ-7]** ship the Mac first: Windows' `AttendedStartAllowed` entry stays false until
+its lab passes; the code for both platforms is built now (§2.7). **[OQ-8]** a Lock cancels every
+encrypted Run now that has not started reading mail, sync or not (§3.2).
 
 Also in scope (proposed by the trace; the owner did not object): the sync outcome carried into the
 last-run record and each run-history entry (encrypted: §4.4 finds the short code is **not** safe to
@@ -190,13 +211,22 @@ type Config struct {
     // NeverQuit: attended runs on this platform never ask Thunderbird to close, at quiet or on
     // Cancel; set from AttendedQuitAllowed(goos) (§2.8) [OQ-1]. Ignored when !Attended.
     NeverQuit bool
+    // EndWait, when it ends during S7, ends the wait for mail at once: the person pressed
+    // "Stop waiting and back up now" (A16) [OQ-6]. It cancels nothing else; the backup goes
+    // on. nil = never. Set only for attended runs; ignored when !Attended.
+    EndWait context.Context
 }
 ```
 
 `Result` also gains `Minimized bool` (Windows: whether the backstop minimize ever succeeded, A14),
-so every Windows text can say "its window may still be on screen" when it did not [C-56, C-64].
+so every Windows text can say "its window may still be on screen" when it did not [C-56, C-64], and
+`Verdict Outcome` (the S7 verdict — `ok`, `ok-noactivity`, `watch-truncated`,
+`watch-truncated-noactivity` or `not-quiet` — kept whatever the session's final outcome becomes, so a
+scheduled `owner-active` or `quit-*` ending still says whether mail arrived; zero when the session
+never reached the verdict) [OQ-5].
 
-`deps` (`session.go:14-29`) gains `attended`, `stop`, `phase`, `keepOpen`, `neverQuit`. `buildDeps`
+`deps` (`session.go:14-29`) gains `attended`, `stop`, `phase`, `keepOpen`, `neverQuit`, `endWait`
+[OQ-6]. `buildDeps`
 (`run.go:57-82`) copies them. **Attended and a named profile [C-18]:** when `Attended` and
 `ProfileNamed` are both set, `buildDeps` also requires the profile to be listed in `profiles.ini`
 (today a job-named profile skips that check, `hook.go:32`, proven); not listed → `profile-unusable`.
@@ -220,12 +250,15 @@ local foreground terminal without `-unattended`. No scheduled run, remote sessio
 descriptor or archive file can turn it on.*
 
 How it travels: `presyncjob.SetHook(opts, HookOptions{Profile, Log, Attended, Surface, GOOS, Stop,
-Phase, KeepOpen, OnStart, OnEnd})`; `SetHook` sets `NeverQuit` itself from
+Phase, KeepOpen, EndWait, OnStart, OnEnd})` (`EndWait` passed through only when `Attended` [OQ-6]); `SetHook` sets `NeverQuit` itself from
 `presync.AttendedQuitAllowed(goos)` (§2.8), so no caller can switch the close back on [OQ-1].
 **And it reads `presync.AttendedStartAllowed(goos)` [C-49]:** for an attended caller on a platform
 whose entry is false, it installs **no** hook — Run now does not sync there, exactly as no hook
 behaves today, and the tooltip and the note say so (§7) — rather than run a scheduled-mode session
-that would skip on the person's own click. `optsForJob` (`jobrun.go:114-138`) gains a `RunMode` argument and
+that would skip on the person's own click. **That case records no sync outcome [C-49, C-34, fold
+check]:** no tag, no `presync` in the record, and it is **not** `not-set-up` (which is only a hook
+that could not be prepared, `presyncjob.StateDir()` failing, §5.3); the note's line says why (§4.6).
+`optsForJob` (`jobrun.go:114-138`) gains a `RunMode` argument and
 sets two in-memory `app.Options` fields (no JSON tags): `PresyncWanted` (the job asks for the sync)
 and `PresyncAttended` [C-33, C-34]. `RunHeadless` passes the scheduled mode; the two Run nows pass the
 attended one. The command line moves onto `presyncjob.SetHook` (T20).
@@ -237,7 +270,8 @@ and desktop tests set `supported = true` and replace `runSession` with a scripte
 blocks until its context or `Stop` ends, (2) records `context.Cause(ctx)` and whether `Stop` ended,
 (3) calls `Phase`, `OnStart`, `OnEnd`, and (4) returns a chosen outcome. **Rev 4 [C-79]:** it also
 (5) records the **whole `Config`** it receives (so MA-898 sees `Attended` and `NeverQuit`), and (6)
-calls `KeepOpen()` when its scripted quiet point arrives (MA-919, slice AS-Q). Thunderbird is the
+calls `KeepOpen()` when its scripted quiet point arrives (MA-919, slice AS-Q). **Rev 5 [OQ-6]:** it
+also (7) ends its scripted wait when `EndWait` ends and returns `wait-ended` (MA-929). Thunderbird is the
 external binary, so this is the mock CLAUDE.md allows. **Quit counts are proven only in `presync`'s
 own session tests** (the existing `fakeEnv`); desktop and wizard rows prove the cause delivered and
 the side effects. **One test-only override for the two tables [C-79]:** `presync` exposes
@@ -261,6 +295,7 @@ values. The **real** tables stay false unless an entry carries a lab record (MA-
 | Cancellation check right before the write-ahead record and the launch | S5 (new) [C-10] | **new, both modes** | a cancel that came first starts nothing |
 | Write-ahead record **saved** before the start | S5, `session.go:140-142` | kept, **now required** [C-8] | P5 |
 | Ownership proven after launch | S6, `session.go:153-171` | kept | R31 |
+| The wait for mail ended early by the person ("Stop waiting and back up now") | S7 (new, A16) | **attended only** [OQ-6]; never closes Thunderbird | OQ-6 |
 | Await-up 90 s, maximum wait 20 min, quiet 3 min | S6, S7 | kept; whether the first-change gate can be tripped by a start-up touch before Thunderbird's first fetch is lab L-A9 [C-70] | R32 |
 | Windows backstop minimize after adoption | S6, S7 | kept, **retried on each S7 poll until it succeeds once** [C-56]; the show mode chosen by a pure function (A14) [C-58] | ruling 2 |
 | The shared pre-quit function (ownership re-check, C3 count, record `quitting`, one request) | S8 and every cancel quit [C-1] | kept, **one function for every quit** | R31 |
@@ -276,17 +311,19 @@ values. The **real** tables stay false unless an entry carries a lab record (MA-
 | A2 | S8 | idle under 10 min → leave open, END `owner-active` | **unless `attended`**: then straight to the shared pre-quit function (A10), or, when `NeverQuit`, to A12 [OQ-1]. |
 | A3 | S8 | request bounded by `quitTimeout` 20 s (`env_darwin.go:109, 428`), exit grace 2 min (`api.go:51`) | **unchanged in both modes [C-6].** Rev 1's 2-minute attended request is withdrawn: while a quit request waits on macOS's permission question, the person can quit our Thunderbird and open their own, and a quit addressed by bundle id could then reach theirs (**inferred**; lab L-A2 adds the delayed-delivery case). A request that times out is mapped as today (quit not answered) and leaves Thunderbird open, recorded `left-running`; its desktop remedy is an `OutcomeLine` entry (§4.6, listed there since rev 4 [C-86c]), worded without naming the program macOS asks about [C-62]: "macOS asked for permission to control Thunderbird. Choose Allow, quit Thunderbird from the Dock, then click Run now again." Revisit only if L-A2 proves a delayed request fails with error -600 once its process has gone. **Reached by attended runs only from AS-Q** (before it, attended runs never quit) [C-48]. |
 | A4 | S6, S7 | cancel → record `launching` (S6) or `left-running` (S7), END `cancelled` | By cause: **(i) `Stop` ended (a Lock, Shut down) or any cause other than `ErrCancelAndQuit` (Ctrl-C, a scheduled stop):** quit nothing; record as built; `Left` = `left-open` (S7) or `may-be-starting` (S6). **(ii) cause `ErrCancelAndQuit` (the Cancel button), attended only.** **With `NeverQuit` (every platform until AS-Q) [OQ-1, C-74]:** in S7 nothing is asked to close; ownership is re-verified and the record cleared as in A12; `Left` = `left-open-by-rule`. In S6, **the C-7 poll still runs**: keep polling for the proven child up to the 90 s await limit on a short context of its own (which `Stop` also ends), and phase `cancelling` is reported; once the child is proven, re-verify ownership and clear the record as A12 does (`Left` = `left-open-by-rule`); with no child proven, `Left` = `may-be-starting` and the `launching` record stays for S3 (C-7's line). This keeps SAF-5 fixed under never-close: without the poll, the `launching` record with no child pid would make S3's weak match (`session.go:296-302`, proven) treat the person's own later Thunderbird as the leftover. **Without `NeverQuit` (slice AS-Q only) [C-48, C-50]:** in S7, take the shared pre-quit function (A10) and wait at most 15 s for the exit; gone → S9 clears the record, `Left` = `closed`; still there → `left-running`, `Left` = `left-open`. In S6 [C-7], the same poll, then A10 as in S7. **Scheduled runs: (i) only, unchanged.** |
-| A5 | all waits | `e.sleep(d)` blocks | `sleepCtx(ctx, stop, d)` in an **untagged** file, used by both adapters [C-2/T4]; returns at once when `ctx`, `Stop` or the session context ends (T17). The fake's `sleep` returns without moving the clock when its context is already done, so a session test cannot pass by accident. |
+| A5 | all waits | `e.sleep(d)` blocks | `sleepCtx(ctx, stop, d)` in an **untagged** file, used by both adapters [C-2/T4]; returns at once when `ctx`, `Stop` or the session context ends (T17); in S7 it also returns when
+`EndWait` ends (A16) [OQ-6]. The fake's `sleep` returns without moving the clock when its context is already done, so a session test cannot pass by accident. |
 | A6 | S3 | an unreadable record → warn, continue | built (B6): `sessionResult` gains `side []Outcome`; a proceeding recovery decision appends its outcome there **only when it is warn-class** [C-45] (so `matchOther`'s proceeding `already-running`, `recovery.go:72-75`, adds nothing); `presyncjob` maps every side outcome to a run warning. |
 | A7 | S7 | progress line — not built | built for both modes: once a minute, "Thunderbird sync: still waiting for mail to arrive (N min so far, up to 20)", N measured from the start of the wait for mail. |
-| A8 | END | outcome only | `Result` gains `Side []Outcome`, `Waited` (from "up" to the quit or the verdict), `Started`, `Minimized` (A14) [C-56], and `Left` (`none`, `closed`, `left-open`, `left-open-by-choice`, `left-open-by-rule` [OQ-1], `may-be-starting`) [C-23]; `Outcome` gains `Synced() bool` (§5.2), **which reads the outcome alone, never `Left`** [C-72]. |
+| A8 | END | outcome only | `Result` gains `Side []Outcome`, `Waited` (from "up" to the quit or the verdict), `Started`, `Minimized` (A14) [C-56], `Verdict` (§2.1) [OQ-5], and `Left` (`none`, `closed`, `left-open`, `left-open-by-choice`, `left-open-by-rule` [OQ-1], `may-be-starting`) [C-23]; `Outcome` gains `Synced() bool` (§5.2), **which reads the outcome alone, never `Left`** [C-72]. |
 | A9 | S5 | the `launching` record save is best effort (T22) | **both modes [C-8]:** launch only after the record is saved to disk; a failed save ends `cannot-start` (a warning) and launches nothing. A failed save of `quitting` or `left-running` is a side warning `presync_state_unsaved`. |
-| A10 | S8, A4 | the pre-quit steps live inline in S8 | **one function, `preQuit(sctx)`, used by S8, A4(ii) and the S6 cancel path [C-1]; built in AS1a for S8 (scheduled runs), reached by attended runs only from AS-Q [C-51, C-48]:** (1) if the session is abandoned (§2.6), stop: quit nothing; (2) re-verify ownership; (3) C3 on macOS: count the **raw pids `pgrep` lists**, and count any pid whose details cannot be read as a second Thunderbird [C-1/SAF-9]; more than one → no quit, `quit-skipped-others`, `left-running`; (4) **(AS-Q, attended)** publish phase `closing` **under the Desktop's `c.mu`** (through `Phase`), **then** read `KeepOpen()`, both **before** any quit [C-73]; if it is true (C-46, OQ-1): no quit, clear the record, `Left` = `left-open-by-choice`, and the session **keeps its S7 verdict as the outcome** (`ok`, `ok-noactivity`, `watch-truncated`, `not-quiet`), or `cancelled` on a Cancel path [C-72]; (5) save `quitting`; (6) one request, `env.quit(qctx, target)`, where `qctx` derives from the session context `sctx` (§2.6) with the 20 s deadline [C-5]; (7) **a quit that posted nothing [C-60]:** on Windows, `winEnv.quit` returns the new sentinel `errQuitNotPosted` on every "cannot safely close" path (no handle, a creation-time mismatch, zero or several main-like windows, the last-instant re-check failing; today each returns nil, `quit_windows.go:129-161`, proven); `preQuit` maps it at once, with **no exit-grace wait** and no "being asked to close" text, to the new outcome **`quit-no-window`** (warn, counted synced), `left-running`, `Left` = `left-open`. This reaches scheduled runs too, which today wait out the 2-minute grace and then say Thunderbird "did not close within 2 minutes after it was asked to quit" when nothing was asked. |
+| A10 | S8, A4 | the pre-quit steps live inline in S8 | **one function, `preQuit(sctx)`, used by S8, A4(ii) and the S6 cancel path [C-1]; built in AS1a for S8 (scheduled runs), reached by attended runs only from AS-Q [C-51, C-48]:** (1) if the session is abandoned (§2.6), stop: quit nothing; (2) re-verify ownership; (3) C3 on macOS: count the **raw pids `pgrep` lists**, and count any pid whose details cannot be read as a second Thunderbird [C-1/SAF-9]; more than one → no quit, `quit-skipped-others`, `left-running`; (4) **(AS-Q, attended)** publish phase `closing` **under the Desktop's `c.mu`** (through `Phase`), **then** read `KeepOpen()`, both **before** any quit [C-73]; if it is true (C-46, OQ-1): no quit, clear the record, `Left` = `left-open-by-choice`, and the session **keeps its S7 verdict as the outcome** (`ok`, `ok-noactivity`, `watch-truncated`, `watch-truncated-noactivity` [C-68, fold check], `not-quiet`), or `cancelled` on a Cancel path [C-72]; (5) save `quitting`; (6) one request, `env.quit(qctx, target)`, where `qctx` derives from the session context `sctx` (§2.6) with the 20 s deadline [C-5]; (7) **a quit that posted nothing [C-60]:** on Windows, `winEnv.quit` returns the new sentinel `errQuitNotPosted` on every "cannot safely close" path (no handle, a creation-time mismatch, zero or several main-like windows, the last-instant re-check failing; today each returns nil, `quit_windows.go:129-161`, proven); `preQuit` maps it at once, with **no exit-grace wait** and no "being asked to close" text, to the new outcome **`quit-no-window`** (warn, counted synced), `left-running`, `Left` = `left-open`. This reaches scheduled runs too, which today wait out the 2-minute grace and then say Thunderbird "did not close within 2 minutes after it was asked to quit" when nothing was asked. |
 | A11 | S5 | no cancellation check | **both modes [C-10]:** `ctx.Err()` and `Stop` are checked right before saving `launching` and again right before `startHidden`; either done → END `cancelled`, nothing launched, no `launching` record. |
 | A12 | S8 | — | **new, attended with `NeverQuit` only [OQ-1]:** at quiet (or at the 20-minute limit), re-verify ownership, then clear the state record and END with **the S7 verdict as the outcome** (`ok`, `ok-noactivity`, `watch-truncated`, `watch-truncated-noactivity`, `not-quiet`) [C-72], `Left` = `left-open-by-rule`; no quit request is ever built. The record is cleared because the person is told Thunderbird was left open (§4.6), so the next run treats it as an open Thunderbird and leaves it alone (S4), instead of nagging about a leftover. |
 | A13 | S7 | `watch-truncated` replaces both `ok` and `ok-noactivity` when the walk was truncated (`session.go:201-205`, proven) | **[C-68]** a truncated walk with no change becomes the new outcome **`watch-truncated-noactivity`** (note), so "nothing arrived" is never hidden behind a truncated "done". `ok-noactivity` and `watch-truncated-noactivity` get their own words everywhere (§4.5, §4.6): nothing arrived in 20 minutes — either no new mail, or Thunderbird is waiting for a password or sign-in nobody can see. **Decision (AS-Q):** once a platform's attended close exists, an attended run that ends with either of these two outcomes **leaves Thunderbird open** (`Left` = `left-open-by-rule`), so the person can see a window it may be waiting on; scheduled runs keep today's quit. This is the R31-safe direction, and "may quit" in ruling 1 allows it. |
 | A14 | S6, S7 (Windows) | `minimizeMain` tries for up to 15 s once, then gives up for good, with `ShowWindow(SW_MINIMIZE)`, which also activates the next top-level window (`quit_windows.go:35-37, 106-118, 218`, proven) | **[C-56, C-58, C-64]** (1) the 15 s attempt waits on `sleepCtx(sctx)`, not a plain sleep, so a Lock or an abandonment ends it; (2) if it did not succeed, **one more try on each S7 poll** (every 10 s) until it **succeeds once**, never again after that (a person who restores our window to work in it is never fought); `Result.Minimized` records whether it ever did; (3) in **attended** runs the show mode comes from a pure function `minimizeMode(iconic, foreground bool)`: already minimized → no call; Thunderbird is **not** the foreground window → `SW_SHOWMINNOACTIVE` (7: minimize, activate nothing, so the person's typing stays where it was); Thunderbird **is** the foreground window (it took the keyboard) → `SW_MINIMIZE` (6), which hands activation back to the next window, most likely the one the person was typing in (**inferred**; MA-918 samples the foreground window before and after). Scheduled runs keep `SW_MINIMIZE` (§1.3). |
 | A15 | all phases | — | **[C-71]** the session makes **no `Phase` call** after it is marked abandoned (§2.6); the Desktop ignores any `Phase` or `KeepOpen` call whose slot id is not the running Run now's. |
+| A16 | S7 | — | **new, attended only [OQ-6]:** when `EndWait` ends during S7 (the person pressed "Stop waiting and back up now", §4.6), the wait ends at once (A5): no further poll and no quiet verdict. The session re-verifies ownership, clears the state record as A12 does, and ENDs with the new outcome **`wait-ended`** (note class), `Verdict` zero, `Left` = `left-open-by-rule`. **It never asks Thunderbird to close, on any platform, also after AS-Q (decision):** Thunderbird may be in the middle of a fetch, and leaving it open is the R31-safe direction; so no `closing` phase and no `KeepOpen()` read follow. The hook returns and the backup reads what has arrived. Thunderbird keeps running while the archive reads, as it does when the person's own Thunderbird is open (`already-running`); a message it is writing at that moment is picked up by the next backup (**inferred**: the readers treat a growing store the same way in both cases). `EndWait` ending in S5 or S6 does nothing (the route refuses outside `waiting`, §4.6); after S7 it is ignored. A Cancel or a Lock that comes first wins as before (A4). |
 
 **The quit seam [C-5].** `env.quit(target proc)` (`env.go:78`) becomes `env.quit(ctx, target)`. The
 session builds the deadline; `macEnv.quit` runs `osascript` under the context it is given, not
@@ -382,12 +419,13 @@ not wait on one platform's lab [C-49].
   only for `SW_HIDE`, through `HideWindow` (`src/syscall/exec_windows.go:293, 393-395` in the go1.26.0
   toolchain, proven), so "show minimized, do not activate" (`SW_SHOWMINNOACTIVE`) cannot be asked for
   through `exec.Cmd`.
-- **A lab spike first (L-A10) [C-57].** Before AS4 writes any Windows launch code, one short
+- **A lab spike first (L-A10) [C-57].** Before any new Windows launch code is written, one short
   Parallels run starts Thunderbird once with `SW_SHOWMINNOACTIVE` and records whether it starts
   minimized. L-W4 showed Thunderbird ignores `SW_HIDE`, so it may ignore this too.
   - **If Thunderbird ignores it:** keep `exec.Command`; the minimized-not-active start is not built,
     MA-923 is dropped, and the backstop minimize (A14) is the whole mechanism.
-  - **If it honours it:** build it **for attended runs only** (§1.3) as a direct
+  - **If it honours it:** build it (in AS4, or as its own change before the Windows flip if the
+    spike runs later [OQ-7]) **for attended runs only** (§1.3) as a direct
     `windows.CreateProcess` with a `STARTUPINFO` whose `Flags` carry `STARTF_USESHOWWINDOW` and
     `ShowWindow = SW_SHOWMINNOACTIVE`, the command line built with `windows.ComposeCommandLine` (a
     profile path with spaces), `inheritHandles` false, `CREATE_BREAKAWAY_FROM_JOB` kept, and **both
@@ -442,8 +480,19 @@ attended ships only after MA-918 passes" would also hold the macOS fix. So:
 - Each entry names the path of its lab record under `docs/lab/`, and MA-927 checks the file exists
   and names the platform (a tripwire, so the rule does not rest on memory) [C-66].
 - **OQ-2 stands:** the Windows feature is built and tested on all paths from AS4; only the switch
-  waits for the lab. **If MA-918 has not passed when AS4 is otherwise ready, whether the release
-  waits or ships with Windows' entry false is the owner's call (OQ-7, §15.3), not this design's.**
+  waits for the lab.
+- **Owner ruling 2026-10-30 [OQ-7]: ship the Mac first.** The release that carries AS4 does **not**
+  wait for MA-918. Windows' `AttendedStartAllowed` entry stays false until MA-918's first-release
+  scope has passed and its record is in `docs/lab/`; the entry is then set true in its own commit and
+  ships in the next release. Until then, on Windows: Run now with the sync on backs up without
+  starting Thunderbird and says so (the start-not-allowed tooltip, §7, and note line, §4.6), scheduled
+  backups keep today's sync, and the AS4 release note names macOS only (§7). The Windows code (A14's
+  attended `minimizeMode`, `start-blocked`, the Desktop elevated line, the Windows texts) is still
+  built and tested in AS4 through the fakes, as OQ-7 says.
+- **L-A10 does not hold AS4 [OQ-7].** If the L-A10 spike has not run when AS4 is ready, AS4 builds the
+  Windows attended path on today's launch (`exec.Command`, no new launch code). If L-A10 later shows
+  Thunderbird honours `SW_SHOWMINNOACTIVE`, the `CreateProcess` start (and MA-923) lands as its own
+  small change **before** the Windows entry is flipped, so MA-918 measures the start that ships.
 
 **The Windows lab (MA-918) [OQ-2, C-49, C-59].** A **ship-gate test**, not a feature gate.
 
@@ -477,7 +526,12 @@ attended ships only after MA-918 passes" would also hold the macOS fix. So:
   `minimizeMode`, `quit`) together with the date of the latest MA-918 record. Changing any of them
   turns the test red until a new MA-918 record is added **in the same commit**: the "re-run the lab"
   prompt. The pinned hash is changed only together with a new lab record, never alone (CLAUDE.md:
-  never edit a baseline to make a test pass).
+  never edit a baseline to make a test pass). **Before any MA-918 record exists [C-66, OQ-7, fold
+  check]** (the expected state when AS4 lands under OQ-7), the pin carries the hash with the marker
+  "no lab record" and MA-927 checks only the hash; the date-and-record half of the pin is required
+  from the commit that adds the first MA-918 record, and Windows' start entry can be true only when
+  the pin names a record whose hash matches the code. So the tripwire exists from AS4 and the flip
+  cannot skip it.
 
 **Wording names the taskbar [OQ-2, C-24, C-61].** Every Windows text says "minimized to the taskbar"
 where macOS says "out of sight", and "quit it from the taskbar or the notification area" where macOS
@@ -563,8 +617,12 @@ Thunderbird until its L-A5 has passed.
   line; reading → today's words (`jobcontrol.go:39`).
   The end line then comes from `OutcomeLine`, which reads `Left`, so it says whether Thunderbird
   closed.
+- **Stop waiting and back up now [OQ-6].** Beside Cancel while the note is in `waiting`, a second way
+  out that keeps the backup: it ends the wait (A16) and the backup reads what has arrived. Its route,
+  refusals and texts are in §4.6; it is a different context from Cancel's, so it never carries
+  `ErrCancelAndQuit` and never stops the run.
 
-### 3.2 Lock while an encrypted Run now waits (ruling 4)
+### 3.2 Lock while an encrypted Run now has not started reading mail (ruling 4, OQ-3, OQ-8)
 
 Today a Run now takes its own write lease at the click, so a Lock does not stop it
 (`schedule.go:677-684`; phase 3 §3.2, `design-encrypted-archives-phase3.md:210-224`: "a lease is an
@@ -572,14 +630,16 @@ independent key for one job"). This design **amends that rule for one window**, 
 operator 2026-10-30 [OD-2].
 
 - **The amendment, as it is to be written into phase 3 §3.2** (at AS8, the slice that builds it;
-  this rev does not edit that file): "Exception (attended Thunderbird sync): for a Run now whose job
-  carries `thunderbird_sync`, the person's Lock of that archive also cancels the Run now at any
-  point from the click until mail reading starts, and its key is cleared; once reading has started,
-  the Run now goes on with its own key, as above, and the Lock reply says so and that Cancel stops
-  it. The idle lock and a switch never cancel it."
-- **The window [C-10, OQ-3: owner said yes, 2026-10-30; rewritten in rev 4, C-75, C-76].** For a
-  job that carries `thunderbird_sync`: from the moment `runBackupKeyed` takes the lease **until mail
-  reading starts**, which is defined as the point right before the source loop (`app/run.go:788`).
+  this rev does not edit that file; **rewritten in rev 5 for every Run now [OQ-8]**): "Exception
+  (Run now before mail reading): the person's Lock of an archive also cancels a Run now of that
+  archive at any point from the click until mail reading starts, whether or not its job syncs
+  Thunderbird first, and its key is cleared; once reading has started, the Run now goes on with its
+  own key, as above, and the Lock reply says so and that Cancel stops it. The idle lock and a switch
+  never cancel it."
+- **The window [C-10, OQ-3: owner said yes, 2026-10-30; rewritten in rev 4, C-75, C-76; widened in
+  rev 5, OQ-8].** For **every** encrypted Run now: from the moment `runBackupKeyed` takes the lease
+  **until mail reading starts**, which is defined as the point right before the source loop
+  (`app/run.go:788`).
   **Corrected [C-76]:** rev 3 said the hook's return is "the last step before mail reading (the T16
   check follows with no work between)". That is false: after the hook (`app/run.go:588`) and the
   deferred record (`:600`) come the orphan sweep (`:615`), the scratch-folder sweep (`:628`), the
@@ -588,32 +648,35 @@ operator 2026-10-30 [OD-2].
   key, takes no context and can take minutes (all proven). OQ-3 says "any time before mail reading
   starts", so the window now covers all of those too. The window therefore covers the heal, the
   preflight, discovery, `openEncrypted` (which decrypts the whole manifest, `app/run.go:548`), the
-  Thunderbird wait, and everything up to the source loop. This closes the natural "click Run now,
-  then Lock, then walk away" case, in which Thunderbird would otherwise start with the key held. A11
-  also guarantees that a run cancelled before S5 starts nothing.
-- **How the window opens [C-75].** `runBackupKeyed` takes the lease before any job file is read
-  (`schedule.go:686-699`, proven), so whether the job carries the sync is not yet known at the lease.
-  Rev 4: right after the lease, `runBackupKeyed` reads the job's `thunderbird_sync` flag **once**
-  (through the same `job.Read` path and `SameArchivePath` check Run now uses); that one read decides
-  both the window and the hook (it is passed down as `RunNow.SyncWanted`). If the job file changed
-  between that read and `RunJobInProcessKeyed`'s own `job.Read` (the flag differs), the run is
-  refused before `app.Run` ("The backup's settings changed as it started; click Run now again.
-  Nothing was changed."), so the window and the hook can never disagree.
+  Thunderbird wait (for a sync job), and everything up to the source loop. This closes the natural
+  "click Run now, then Lock, then walk away" case, in which Thunderbird would otherwise start with the
+  key held, and (OQ-8) the same case for a large archive with no sync, whose heal, decrypting open and
+  catch-up can take minutes. A11 also guarantees that a run cancelled before S5 starts nothing.
+- **How the window opens [C-75, superseded in part by OQ-8].** `runBackupKeyed` takes the lease before
+  any job file is read (`schedule.go:686-699`, proven). Rev 4 opened the window only for a sync job,
+  so it added one early read of the job's `thunderbird_sync` flag and refused the run if the flag
+  changed before `RunJobInProcessKeyed`'s own `job.Read`, to keep the window and the hook in step.
+  **Rev 5:** the window opens **at the lease for every encrypted Run now**, so it no longer depends on
+  the flag; the early read, `RunNow.SyncWanted` and the "settings changed" refusal are **removed**,
+  and the hook is decided, as today, by `RunJobInProcessKeyed`'s one `job.Read`. C-75's aim (the
+  window and the hook can never disagree) is met because the window no longer reads the flag at all.
+  C-75's closing half (below) stands unchanged.
 - **How the window closes [C-75, C-76].** At whichever comes first: (1) **read start**: a new
   in-memory `app.Options.OnReadStart func()` (no JSON tag), called by `app.Run` right before the
   source loop; the Desktop's callback closes the window under `c.mu`; then `app.Run` makes its
   **second cancellation check** (`ctx.Err()`; §4.1); or (2) a `defer` in the Run now job function
   (the closure passed to `runKeyedJobOn`), under `c.mu`, which covers every return that never reaches
   read start: a run refused in `RunJobInProcessKeyed`, an `openEncrypted` failure, a cancel that skips
-  the hook (C-10), a `not-set-up` job with no hook, an index failure, and a recovered hook panic. So a
-  stale window can never let a later Lock call `stop()` on a run that has already ended and reply
-  "the backup was cancelled".
-- **Scope, read narrowly (flagged; owner question OQ-8, §15.3) [C-85].** The owner's answer was
-  recorded as "Lock cancels an encrypted Run now any time before mail reading starts"; the question
-  asked was about a Run now **with the sync**. This rev builds it for sync jobs only, the question's
-  scope. A Run now with no sync keeps phase 3's rule unchanged. If the owner meant every encrypted
-  Run now, the window opens at the lease for every job (the flag read then decides only the hook);
-  that is a wider change to phase 3. **§14 gate: the owner confirms the scope before AS8 is built.**
+  the hook (C-10), a job with no sync or a `not-set-up` job with no hook, an index failure, and a
+  recovered hook panic. So a stale window can never let a later Lock call `stop()` on a run that has
+  already ended and reply "the backup was cancelled".
+- **Scope: every encrypted Run now (owner ruling 2026-10-30, OQ-8) [C-85].** Rev 4 built the window
+  for sync jobs only and asked the owner (OQ-8). The owner answered: a Lock cancels **every**
+  encrypted Run now that has not started reading mail, sync or not. So a Run now with no sync no
+  longer keeps phase 3's "a Lock does not stop a Run now" rule before reading starts; after reading
+  starts it does, as for a sync job. The `stop` steps below are the same for both; a job with no sync
+  simply has no `Stop`-watching hook, so the run stops at the next step that reads its context, at the
+  latest the post-hook T16 check or the second check before the source loop (§4.1).
 - **Atomic open and close [C-11].** The Desktop records `syncWait{key, stop}` under `c.mu`.
   `stopSyncWait(out)` checks the window **and** calls the stops while holding `c.mu`. The window is
   closed only by the two points above, each under `c.mu`; `syncing` is reset by the hook wrapper's
@@ -694,6 +757,7 @@ type PresyncOutcome struct {
     Left     string            // none | closed | left-open | left-open-by-choice |
                                // left-open-by-rule | may-be-starting [C-86a]
     Minimized bool             // Windows: the backstop minimize succeeded (A14) [C-56]
+    Verdict  string            // the S7 verdict's name, "" if none (§2.1); feeds §5.1's NoChange [OQ-5]
     Line     string            // the owner-facing line, surface and platform words; no path
     Started  time.Time
     Waited   time.Duration
@@ -745,7 +809,8 @@ type Options struct {
 
 **Slice AS7, right after AS4, together with its first visible user, the tag (§4.5) [C-53].**
 `state.PresyncRecord` (`lastrun.go:135-142`) is written for the first time: `code`, new `name`, new
-`result` (`"synced"`, `"not_synced"`, `"cancelled"`), `since`. **No `attended` field [C-36].**
+`result` (`"synced"`, `"not_synced"`, `"cancelled"`, and `"wait_ended"` for a wait the person
+stopped [OQ-6], so it never reads as a failure), `since`. **No `attended` field [C-36].**
 `warn_streak`, `note_streak`, `state`, `expected_until`: not written (kept so older records read).
 **`ReadLastRun` strips control characters from `Presync`'s strings** as it does for Job, Error and
 Warnings (`lastrun.go:280-286`, which today skips Presync) [C-37].
@@ -794,6 +859,7 @@ tag, the Status line (§4.7) and the WARN reason (§5.4):
 | `ok`, `watch-truncated` | "Thunderbird synced first" |
 | `ok-noactivity`, `watch-truncated-noactivity` [C-68] | "Thunderbird started, but nothing arrived in 20 min" |
 | `not-quiet` | "Thunderbird synced (still fetching at 20 min)" |
+| `wait-ended` [OQ-6] | "Thunderbird sync stopped early, as you asked" |
 | `quit-*` (including the new `quit-no-window` [C-60]), `owner-active`, `identity-unavailable` | "Thunderbird synced, but was left open" |
 | `already-running` | "Thunderbird was already open" |
 | `owner-active-skipped` | "Thunderbird not synced: you were using the computer" |
@@ -818,7 +884,9 @@ MA-905 asserts every name in `allOutcomes` is in the map or deliberately has no 
 - **Phases.** `Config.Phase` reports `starting` (S5-S6), `waiting` (S7; `since` = the start of the
   wait for mail), `cancelling` (A4(ii): from AS4 only the S6 child poll under never-close [C-74]),
   and, **from slice AS-Q only**, `closing` (the pre-quit function and the exit grace) and the
-  Cancel-quit `cancelling` [C-50]. A phase is never reported when no quit will be sent [C-73]. The
+  Cancel-quit `cancelling` [C-50]. **`closing`** is never reported when no quit will be sent [C-73];
+  the never-close `cancelling` of the S6 child poll is reported, since the note must say Thunderbird
+  is still starting (rev 4's "a phase is never reported" contradicted it) [C-73, C-74, fold check]. The
   Desktop keeps, under `c.mu`, `syncPhase`, `syncSince`, and at the end `syncLine`.
   `runJobOn` resets them **together with** `lines` and `result` (`maintenance.go:34`) [C-15].
 - **Bound to the run [C-71].** The `Phase` (and, in AS-Q, `KeepOpen`) closures the Desktop hands to
@@ -839,16 +907,33 @@ MA-905 asserts every name in `allOutcomes` is in the map or deliberately has no 
     shows one line **beside Run now**, until the first attended Run now on this computer has started
     (a marker file in the pre-sync state folder, written when the session reaches S5): "New: Run now
     starts Thunderbird {out of sight / minimized to the taskbar} even while you are using the
-    computer, waits for its mail, and leaves it open for you to quit from the {Dock / taskbar} when
-    you are done." The close variant ("…and closes it when its mail settles, which runs Thunderbird's
+    computer, waits for its mail, and leaves it open for you to quit from the {Dock / taskbar or the
+    notification area} when you are done." [C-61, fold check] The close variant ("…and closes it when its mail settles, which runs Thunderbird's
     on-exit actions (for example emptying Trash).") arrives with AS-Q [C-50]. No extra click: the
     tooltip and the release note say the same.
   - waiting [C-69]: "Syncing Thunderbird… waiting for mail to arrive (N min so far, up to 20).
     Thunderbird usually starts fetching about 10 minutes after it opens, so this often takes 13 to
     20 minutes; with no new mail it takes the full 20. Thunderbird is running {out of sight /
-    minimized to the taskbar}; it is left open when its mail settles." N is whole minutes from the
+    minimized to the taskbar}; it is left open when its mail settles. To back up now with the mail
+    that has arrived, click Stop waiting and back up now." [OQ-6] N is whole minutes from the
     wait's start and never shown above 20. (The 10-minute figure is the measured first-fetch delay,
-    +628 s on the lab Mac, 2026-10-21.) **Slice AS-Q:** without `NeverQuit` the last clause reads
+    +628 s on the lab Mac, 2026-10-21.)
+  - **"Stop waiting and back up now" (owner ruling 2026-10-30, OQ-6; slice AS4, the session part in
+    AS1b).** While the note is in the `waiting` phase it shows this button beside Cancel, on every
+    platform where Run now syncs, under never-close and after AS-Q alike. It posts to
+    `api/runnow-stopwait`, registered through `d.api` (POST only, body limit, `no-store`) behind
+    `GuardLocalPOST` and CSRF, body `{run}` naming the running Run now's slot id (bound as C-71
+    binds `Phase`); under `c.mu` it ends that run's `EndWait` context. **Refused, changing nothing**
+    ("The wait has already ended." / "No backup is waiting for Thunderbird."), when no Run now is
+    running, the id is stale, or the phase is not `waiting` (`starting`: Thunderbird is not yet
+    proven ours, so Cancel is the way out; `cancelling` or `closing`: a quit or a cancel is already
+    under way). Shown only in `waiting`, not in `starting` (decision: before the child is proven,
+    ending the wait would leave a `launching` record, the case C-74's poll exists for). The button
+    uses `busy()` with "Stopping the wait…"; on success the note reads "Backing up the mail that
+    has arrived… Thunderbird was left open {out of sight / minimized to the taskbar}." A forged or
+    replayed press can only end a wait early, which leaves Thunderbird open and backs up less mail
+    than waiting would; it closes nothing. **Never on scheduled runs:** `EndWait` is nil there
+    (§2.2, MA-929). Tooltip: §7. **Slice AS-Q:** without `NeverQuit` the last clause reads
     "…; it is closed when its mail settles.", a "Keep Thunderbird open" button shows here (§2.8)
     [C-46, OQ-1], and once pressed the line reads "…; it will be left open when its mail settles."
     The clause about Thunderbird asking before discarding a message being written is added **only
@@ -862,6 +947,11 @@ MA-905 asserts every name in `allOutcomes` is in the map or deliberately has no 
     open, as you asked." [C-73]
   - end: `syncLine` then the result, or `syncLine` then "Backup failed: …", or `syncLine` then the
     cancel words of §3.1. A failed run no longer hides the sync's line.
+  - **start not allowed on this platform [C-49, fold check]** (a sync-on job where the platform's
+    `AttendedStartAllowed` entry is false, so no hook was installed and no phase is shown): `syncLine`
+    is set by the Desktop, not the session: "Thunderbird was not started: on this computer Run now
+    does not start Thunderbird yet, so the backup read the mail already here. Scheduled backups still
+    sync Thunderbird first." (Rev 4's MA-906 asserted this note but §4.6 gave no words.)
 - **Reload [C-22].** On page load, if the running job is a Run now, the page calls `pollBackup` with
   Run now disabled, so the phase note and Cancel show beside Run now again (today only the capture
   poll restarts, `dashboard.go:2083`, and labels errors "Capture failed:", `dashboard.go:2073`).
@@ -872,7 +962,11 @@ MA-905 asserts every name in `allOutcomes` is in the map or deliberately has no 
   the "it was closed" lines [C-50]. **No-change lines [C-68]:** `ok-noactivity` and
   `watch-truncated-noactivity`: "Thunderbird started, but nothing arrived in 20 minutes: either there
   was no new mail, or Thunderbird is waiting for a password or sign-in. To check, open Thunderbird
-  from the {Dock / taskbar}; it was left open." **`quit-not-permitted` (AS-Q) [C-86c, C-62]:**
+  from the {Dock / taskbar or the notification area}; it was left open." [C-61, fold check]
+  **`wait-ended` [OQ-6]:** "Thunderbird sync: you stopped the wait after N min, so the backup read
+  the mail that had arrived by then; mail still arriving will be in the next backup. Thunderbird was
+  left open {out of sight / minimized to the taskbar}; quit it from the {Dock / taskbar or the
+  notification area} when you are done." **`quit-not-permitted` (AS-Q) [C-86c, C-62]:**
   "macOS asked for permission to control Thunderbird. Choose Allow, quit Thunderbird from the Dock,
   then click Run now again." **`quit-no-window` [C-60]:** "Thunderbird synced, and was left open:
   its window could not be told apart from its other windows (for example a message being written),
@@ -963,8 +1057,9 @@ type SyncStreak struct {
     Serial      int       // goes up only when a miss follows a reset: one value per real streak [C-35]
     Missed      int       // scheduled sessions in a row that did not sync
     Busy        int       // scheduled profile-busy results in a row [C-4]; reset by any other outcome [C-86d]
-    NoChange    int       // OQ-5 (if yes): scheduled runs in a row ending ok-noactivity [C-68]
-    FirstNoChange time.Time // OQ-5: when that run of no-change sessions began
+    NoChange    int       // scheduled sessions in a row whose S7 verdict was a no-change one [C-68, OQ-5]
+    FirstNoChange time.Time // when that run of no-change sessions began [OQ-5]
+    LastNoChange  time.Time // the latest no-change session [OQ-5]
     FirstMissed time.Time
     LastMissed  time.Time
     LastSynced  time.Time
@@ -981,13 +1076,23 @@ archive) must remove this file with the other sidecars.
 | Session outcome | Counts as |
 |---|---|
 | `ok`, `watch-truncated`, `not-quiet`, `quit-not-permitted`, `quit-timeout`, `quit-skipped-others`, `quit-no-window` [C-60], `owner-active`, `identity-unavailable` | **synced** |
-| `ok-noactivity`, `watch-truncated-noactivity` [C-68] | **synced** for the missed streak (so a quiet mailbox never reads as "not synced"); **and, if the owner says yes to OQ-5**, counted in the separate `NoChange` run, which raises its own softer warning after 3 days of nothing but no-change scheduled runs (§5.4) |
+| `ok-noactivity`, `watch-truncated-noactivity` [C-68] | **synced** for the missed streak (so a quiet mailbox never reads as "not synced"); **and (owner ruling OQ-5, yes)** counted in the separate `NoChange` run, which raises its own softer warning after 3 days of no-change scheduled runs (§5.4) |
+| `wait-ended` [OQ-6] | **neither** (attended only: the person stopped the wait, so nothing is known about whether Thunderbird could sync); `Synced()` is false, so it does not reset the streak, and it is never scheduled, so it never extends it |
 | `already-running` | **synced** (decision; Q1) |
 | `profile-busy` | **neither**, except that the third in a row on scheduled runs counts as one **missed** and resets `Busy` [C-4]; any other scheduled outcome resets `Busy` to 0 [C-86d] |
 | `cancelled`, **whatever its `Left`** (a Cancel under never-close leaves Thunderbird open but synced nothing that was read) [C-72]; no session because the sync is off, the run was refused or failed before the hook, the platform's `AttendedStartAllowed` entry is false (§2.7), or the archive is paused | **neither** |
 | `state-unreadable` | never the main outcome (side only, A6), so never counted [C-45] |
 | `leftover-found` | **missed** (decision [C-20/M3]): that copy may be fetching mail, but it is hidden and stuck; counting it missed is what makes the owner hear of it, and its remedy says to quit it |
 | everything else (`owner-active-skipped`, `other-profile-running`, `exited-early`, `successor-found`, `cannot-start`, `start-blocked` [C-65], `no-desktop-session`, `did-not-start`, `profile-unusable`, `app-not-found`, `refused-elevated`, `internal-error`, and `not-set-up` [C-34]) | **missed** |
+
+**The no-change count reads `Verdict`, not the outcome [OQ-5].** A scheduled session whose
+`Verdict` is `ok-noactivity` or `watch-truncated-noactivity` extends `NoChange`, whatever its final
+outcome (a scheduled run can end `owner-active` or `quit-*` after a no-change verdict, and the
+password case must still be counted). Any session, scheduled or attended, whose `Verdict` is `ok`,
+`watch-truncated` or `not-quiet` (mail arrived) resets `NoChange`, `FirstNoChange` and `LastNoChange`,
+as a synced session from any run resets the missed streak (§5.3). An attended no-change session never
+extends it (the person was told by the note). A session with no verdict (a skip, `already-running`,
+`profile-busy`, `cancelled`, `wait-ended`, a failure) leaves it unchanged.
 
 `Outcome.Synced()` implements the synced rows **from the outcome alone; `Left` never enters it**
 [C-72]. The left-open endings keep their S7 verdict as the outcome (A10 step 4, A12), so they are
@@ -1044,15 +1149,24 @@ REMEDY by `LastName` (desktop words; the CLI names the command):
 Never RED. `presync_stuck` stays on the allow-list for older records and is never produced. MA-909
 asserts the remedy for each reason and a hostile `LastName` (shown as the generic phrase).
 
-**The no-change warning (only if the owner says yes to OQ-5) [C-68].** A separate WARN
-`presync_nothing_arrived`, under the same "configured, plaintext, never compared with now" rules,
-when `NoChange ≥ 2` and the no-change run spans ≥ 3 days: "Before this archive's scheduled backups
-since DATE, Thunderbird was started but fetched nothing (N backups in a row). That can mean no new
-mail, or that Thunderbird is waiting for a password or a sign-in that nobody can see. Do this: open
-Thunderbird; if it asks for a password or sign-in, answer it, then click Run now." Any session in
-which something arrived (`ok`, `watch-truncated`, `not-quiet`, a left-open ending with one of them)
-resets `NoChange`. If the owner says no, `NoChange` is not built and no-change runs count only as
-synced. MA-926 (AS5).
+**The no-change warning (owner ruling 2026-10-30, OQ-5: yes) [C-68].** A separate, softer warning,
+code `presync_nothing_arrived`, under the same "configured, plaintext, never compared with now"
+rules, when `NoChange ≥ 2` and `LastNoChange − FirstNoChange ≥ 3 days` (MA-891's clock rules as in
+§5.3). **How it is softer than `presync_not_synced` (decisions, for the friction review):** it is a
+WARN line in Status and the Desktop health view (never RED) whose first sentence says the backups
+are fine, it has **no alert email** (the email goes under the "a failed backup"
+option, and the owner said this is not a failure), it is worded as "check this", not "not synced",
+and **when `presync_not_synced` is also showing, it is left out** (the missed-sync warning is the
+stronger one and already says to look at Thunderbird). The words (draft, friction review): "This is
+not a failed backup: the backups still ran. Before this archive's scheduled backups since DATE,
+Thunderbird was started but no new mail arrived (N backups in a row). That can mean there was no new
+mail, or that Thunderbird is waiting behind a password or sign-in window nobody can see, because it
+was started out of sight. Do this: open Thunderbird; if it asks for a password or a sign-in, answer
+it, then click Run now." (Windows: "…started minimized…".) The CLI words name `mailarchive
+-thunderbird-sync` in place of Run now (C-38). Resets as §5.2 says. A code-only alternative exists
+(health's informational `note`, `health.go:331-336`, proven: no posture change); it is not chosen,
+because a no-posture line is easy to miss and the likeliest cause, a hidden password window, loses
+mail for as long as it lasts. MA-926 (AS5).
 
 ### 5.5 The alert email, once per streak [C-29, C-35, C-40]
 
@@ -1107,15 +1221,17 @@ A plaintext Run now, in order:
    (`jobrun.go:27-42`). **Then**, only if slice AS-L is built, the Run now log opens (§4.8) [C-14,
    C-54].
 3. `app.Run`: the archive lock; discovery; the "running" record (`app/run.go:571`).
-4. `ctx` checked; the hook (S1..S9, phases, `OnSyncEnd`), skipped if already cancelled [C-10].
+4. `ctx` checked; the hook (S1..S9, phases, `OnEnd`), skipped if already cancelled [C-10]. (Rev 4
+   called the end callback `OnSyncEnd` here and in MA-906 and `OnEnd` in §2.2; one name, `OnEnd`
+   [fold check].)
 5. `defer recordRun` registered with `begun.Presync` set (from AS7); then the T16 check → cancelled,
    nothing read [C-11, C-12].
 5b. The sweeps, the manifest load, the index open, the key repair, the sealed catch-up; then
    `OnReadStart` and the second check → cancelled, nothing read [C-76].
 6. The read; `recordRun`: last-run (with `presync`), history, source streak, sync streak.
 
-An encrypted Run now: the lease at the click, then one read of the job's sync flag (the Lock window
-opens here for a sync job [OQ-3, C-75]), the heal, then 2.–6. with the key applied before step 3. The
+An encrypted Run now: the lease at the click (the Lock window opens here, for every encrypted Run
+now [OQ-3, OQ-8]), the heal, then 2.–6. with the key applied before step 3. The
 window closes at step 5b's `OnReadStart`, before its check, or at the job function's `defer` on any
 earlier return [C-75, C-76].
 
@@ -1140,22 +1256,25 @@ Crash points and the direction they fail (the "Desktop killed" rows are new [C-8
 |---|---|---|
 | Run now tooltip, plaintext, sync on (`dashboard.go:1623`) | "…it first opens Thunderbird, waits for its mail, then closes it…" | **AS4, never-close (every platform until AS-Q) [C-50]:** macOS: "Run this archive's backup now. Because Thunderbird sync is on, it first starts Thunderbird out of sight — even while you are using the computer — and waits for its mail to arrive (usually 13 to 20 minutes), then leaves it open for you to quit from the Dock. A Thunderbird that is already open is left alone. You can cancel while it waits; that skips the backup." [C-69] Windows [OQ-2]: "…it first starts Thunderbird minimized to the taskbar (its window may appear for a moment) — even while you are using the computer — … then leaves it open for you to quit from the taskbar or the notification area…" and the rest the same [C-61]. **Platform whose `AttendedStartAllowed` entry is false [C-49]:** "Run this archive's backup now. On this computer Run now does not start Thunderbird yet, so it backs up the mail already here; scheduled backups still sync Thunderbird first." **AS-Q, close allowed [OQ-1]:** "…then closes it, which runs Thunderbird's on-exit actions (for example emptying Trash)…". Linux: no sync sentence (the sync never runs there) [C-24]. C-47's "Windows before L-A7" variant is withdrawn. |
 | Run now tooltip, encrypted, sync on (EncRunNow, `dashboard.go:1623`) [C-25] | "Back up this encrypted archive now, while it is unlocked here." | the plaintext sync text, plus: "While it waits for Thunderbird, the archive stays unlocked for this backup. Until it starts reading mail, Lock cancels it; after that, Cancel stops it." [OQ-3] |
-| Cancel tooltip, sync-window variant (`dashboard.go:1502`) [C-23] | "Stop this backup now…" | while the sync waits, **AS4 (never-close)** [OQ-1, C-69]: "Stop this backup now. Nothing is added to the archive: the whole backup is skipped, not only the wait. Thunderbird, started by this backup, is left open for you to quit from the {Dock / taskbar or the notification area}." **AS-Q (close allowed):** "Stop this backup now. Nothing is added to the archive: the whole backup is skipped. Thunderbird, started by this backup, is asked to close, which runs its on-exit actions (for example emptying Trash)." |
+| Run now tooltip, encrypted, sync off (EncRunNow) [OQ-8] — **AS8** | "Back up this encrypted archive now, while it is unlocked here." | "Back up this encrypted archive now, while it is unlocked here. Until it starts reading mail, Lock cancels it; after that, Cancel stops it." |
+| Cancel tooltip, sync-window variant (`dashboard.go:1502`) [C-23] | "Stop this backup now…" | while the sync waits, **AS4 (never-close)** [OQ-1, C-69]: "Stop this backup now. Nothing is added to the archive: the whole backup is skipped, not only the wait. Thunderbird, started by this backup, is left open for you to quit from the {Dock / taskbar or the notification area}. To back up without waiting, click Stop waiting and back up now instead." [OQ-6] **AS-Q (close allowed):** "Stop this backup now. Nothing is added to the archive: the whole backup is skipped. Thunderbird, started by this backup, is asked to close, which runs its on-exit actions (for example emptying Trash)." |
 | "Keep Thunderbird open" button tooltip (new, **AS-Q**) [OQ-1, C-50] | — | "Leave Thunderbird open when its mail settles, instead of closing it. The backup still runs." |
+| "Stop waiting and back up now" button tooltip (new, **AS4**) [OQ-6] | — | "Stop waiting for Thunderbird and back up the mail that has arrived so far. Thunderbird is left open; mail still arriving will be in the next backup." |
 | `SyncNotice` (`api.go:100`), shared by every surface [C-31] — **corrected in AS4**, the slice that makes today's sentence untrue [C-52] | "…A Thunderbird you already have open, or one you are using, is left alone…" | keep every X16 disclosure, and replace that sentence with: "A Thunderbird you already have open is left alone — never started or closed. A scheduled backup also waits until you have been away from the computer; a backup you start with Run now does not wait for that." [C-84] (widened to name the command line only when AS10 ships). Where a platform's `AttendedStartAllowed` entry is false, the last clause is left out on that platform. |
 | `SyncNotice`, encrypted card variant [C-25] — **AS8**, where the encrypted box is born [C-52] | — | the X16 disclosures with no scheduled-backup sentence (Windows: "minimized to the taskbar" [OQ-2]): "Before each Run now, Mail Archive starts Thunderbird out of sight and waits for its mail to arrive (usually 13 to 20 minutes), then leaves it open for you to quit. A Thunderbird you already have open is left alone — never started or closed." AS-Q adds the close variant ("…then closes it, which runs Thunderbird's on-exit actions (for example emptying Trash).") [OQ-1, C-50]. |
-| `MacAutomationNote` (`api.go:105`) [C-52, C-62] | "…run one backup yourself first (the Run-now button…)…" (false today, T10, and still false under never-close: a Run now never closes Thunderbird, so it never raises macOS's question) | **AS4:** drop the Run-now instruction and keep a note that is true without any lab, worded without naming the asking program and without promising anything across updates: "On a Mac, the first time a scheduled backup closes Thunderbird, macOS may ask for permission to control Thunderbird; until it is answered, each run leaves Thunderbird open. To answer, open System Settings > Privacy & Security > Automation and allow Mail Archive to control Thunderbird." (draft, friction review). **AS9, after L-A2 and after macOS's `AttendedQuitAllowed` flip (AS-Q):** if one Allow covers both: "…Click Run now once while you are here and choose Allow; the scheduled backup then needs no answer." — and the "after an update" promise only if L-A2 shows the permission survives a new build. **MA-915 asserts the note never names Run now while macOS's `AttendedQuitAllowed` entry is false.** Encrypted card variant [C-25], AS9 after the flip: "The first time Run now closes Thunderbird, macOS may ask for permission to control it; stay until it finishes and choose Allow." (before the flip the encrypted card shows no Mac note). |
+| `MacAutomationNote` (`api.go:105`) [C-52, C-62] | "…run one backup yourself first (the Run-now button…)…" (false today, T10, and still false under never-close: a Run now never closes Thunderbird, so it never raises macOS's question) | **AS4:** drop the Run-now instruction and keep a note that is true without any lab, worded without naming the asking program and without promising anything across updates: "On a Mac, the first time a scheduled backup closes Thunderbird, macOS may ask for permission to control Thunderbird; until it is answered, each run leaves Thunderbird open. To answer, open System Settings > Privacy & Security > Automation and allow the entry listed there to control Thunderbird." (draft, friction review; rev 4 said "allow Mail Archive", which names the asking program before L-A2 says which it is, against C-62 [C-62, fold check]). **AS9, after L-A2 and after macOS's `AttendedQuitAllowed` flip (AS-Q):** if one Allow covers both: "…Click Run now once while you are here and choose Allow; the scheduled backup then needs no answer." — and the "after an update" promise only if L-A2 shows the permission survives a new build. **MA-915 asserts the note never names Run now while macOS's `AttendedQuitAllowed` entry is false.** Encrypted card variant [C-25], AS9 after the flip: "The first time Run now closes Thunderbird, macOS may ask for permission to control it; stay until it finishes and choose Allow." (before the flip the encrypted card shows no Mac note). |
 | `warnText` remedies naming commands (`api.go:72-84`) | command lines | rendered per surface by code when read (§4.6) [C-38] |
 | `noteText` / `SummaryLine` (`api.go:116-144`) | present tense | kept for the live log; `OutcomeLine` for end-of-run surfaces |
 | Run now's cancel (`jobcontrol.go:102`) | "…stops at its next safe point…" | by phase (§3.1) [C-23] |
-| Release notes [C-32, OQ-2] — **AS4's line written in AS4** [C-52] | — | AS4 (never-close), naming only the platforms whose `AttendedStartAllowed` entry is true in that release: "Run now now syncs Thunderbird even while you are at the computer: it starts Thunderbird out of sight on a Mac, or minimized to the taskbar on Windows (its window may appear for a moment), waits for its mail (usually 13 to 20 minutes), and leaves it open for you to quit. Scheduled backups still wait until you are away." AS-Q, per platform flipped: "…and now closes it when its mail settles, which runs Thunderbird's on-exit actions such as emptying Trash; while it waits, Keep Thunderbird open leaves it running." |
+| Release notes [C-32, OQ-2] — **AS4's line written in AS4** [C-52] | — | AS4 (never-close), naming only the platforms whose `AttendedStartAllowed` entry is true in that release — **under OQ-7 the first such release names macOS only**: "On a Mac, Run now now syncs Thunderbird even while you are at the computer: it starts Thunderbird out of sight, waits for its mail (usually 13 to 20 minutes; Stop waiting and back up now ends the wait), and leaves it open for you to quit. Scheduled backups still wait until you are away. On Windows, Run now does not start Thunderbird yet; scheduled backups still sync it." The release that flips Windows: "On Windows, Run now now syncs Thunderbird too: it starts Thunderbird minimized to the taskbar (its window may appear for a moment)…" [OQ-7] AS-Q, per platform flipped: "…and now closes it when its mail settles, which runs Thunderbird's on-exit actions such as emptying Trash; while it waits, Keep Thunderbird open leaves it running." |
 
 MA-915's golden covers darwin, windows and linux for the tooltips, the phase notes and `OutcomeLine`
 [C-24], every surface of `SyncNotice` [C-31], a job file under a non-default name [C-18/M2], every
 Windows text naming the taskbar (and the notification area where §2.7 says) [OQ-2, C-61], and both
 values of each table [OQ-1, C-49], **slice by slice [C-52]:** AS4 pins the never-close texts, the
-plaintext `SyncNotice` correction, the AS4 Mac note and release line, and the start-not-allowed
-variants; AS8 the encrypted variants (with MA-911); AS9 the Mac note's Run-now wording; AS-Q the
+plaintext `SyncNotice` correction, the AS4 Mac note and release line, the start-not-allowed
+variants, and the Stop-waiting tooltip and texts [OQ-6]; AS8 the encrypted variants (with MA-911),
+including the sync-off encrypted tooltip's Lock sentence [OQ-8]; AS9 the Mac note's Run-now wording; AS-Q the
 close variants.
 
 ---
@@ -1235,6 +1354,9 @@ taskbar" becomes "left open; its window may still be on screen" [C-64].
   Thunderbird before the hook started — the heal, the decrypting open or discovery).
 - **Window open, after the hook and before read start [C-76]:** the same first sentence (the
   catch-up or index open ends first), then the Thunderbird sentence by `Left` as above.
+- **Window open, a Run now with no sync [OQ-8]:** the same first sentence and nothing about
+  Thunderbird: "Locked. The backup was cancelled before it read any mail, and its key is being
+  cleared once its current step ends; nothing was added."
 - **Window closed, an encrypted Run now on this archive reading [OQ-3, C-13]:** "Locked for new use.
   The backup that is running has started reading mail, so it finishes with its own key, then the key
   is cleared. Click Cancel to stop it now."
@@ -1261,8 +1383,10 @@ taskbar" becomes "left open; its window may still be on screen" [C-64].
   into its older struct and writes it back (`runhistory.go:75-91`, proven), so one v1.5.1 run drops
   every saved `presync` name and the tags disappear. Both are accepted, not handled.
 - **The pre-sync state record** (version 1) unchanged; attended adds no field.
-- **Three new outcome names [C-60, C-65, C-68]** (`quit-no-window`, `start-blocked`,
-  `watch-truncated-noactivity`) appear only in records the new code writes; v1.5.1 never reads
+- **Five new outcome names [C-34, C-60, C-65, C-68, OQ-6]** (`not-set-up`, `quit-no-window`,
+  `start-blocked`, `watch-truncated-noactivity`, `wait-ended`; rev 4 counted three and left out
+  `not-set-up` [C-34, fold check]) and the new `result` value `wait_ended` appear only in records the
+  new code writes; v1.5.1 never reads
   `presync`, and the new code's closed map (§4.5) covers them, so no surface echoes a raw name.
 - **Rollback residue**: v1.5.1's uninstall leaves `*.sync-alert` and the presync folder.
 - **Older Desktop pages** never post to the new route; a post with no `drawnFor` is refused.
@@ -1285,10 +1409,11 @@ through the one pre-quit function.
 **S64** The owner clicks Run now with Thunderbird sync on (plaintext or encrypted), at the computer, or
 cancels, or locks — R30, R31, R32, R38, R37 — Thunderbird starts out of sight unless already open (on
 Windows: minimized to the taskbar, its window possibly shown for a moment [OQ-2]), the note shows
-each phase and the outcome, the person can keep Thunderbird open, Cancel asks the Thunderbird it
-started to close (where the platform's attended close is allowed; otherwise it is left open and the
-person told [OQ-1]), Lock on an encrypted archive cancels it at any point before mail reading starts
-and clears the key [OQ-3].
+each phase and the outcome, the person can keep Thunderbird open, or stop the wait and back up what
+has arrived [OQ-6], Cancel asks the Thunderbird it started to close (where the platform's attended
+close is allowed; otherwise it is left open and the person told [OQ-1]), Lock on an encrypted archive
+cancels it at any point before mail reading starts and clears the key [OQ-3] (as it does for every
+encrypted Run now, sync or not [OQ-8]).
 
 **S65** Scheduled syncs keep being skipped, and the owner must hear of it — R32, X6, X10 — the outcome
 is recorded per run (plaintext), the Recent backups card tags it, Status warns after 3 days of
@@ -1308,23 +1433,23 @@ wait for that. For an encrypted archive, status shows the setting but keeps no l
 |---|---|---|---|---|---|
 | MA-895 | U | AS1b [C-51] | attended skips S4: owner idle 0 s, and an unreadable idle reading, with `Attended` → a launch and `idleSeconds` never called; twin without → `owner-active-skipped`, zero starts; sync off → nothing installed (R30) | R31, R38, S64 | read the idle gate in attended → the start is skipped |
 | MA-896 | U | AS1b | attended keeps every other check (already running A, B, another profile; C5; profile re-check; profile busy; leftover; await-up; max wait) with the same outcome and zero-quit count; attended with a job-named profile not in `profiles.ini` → `profile-unusable` [C-18] | R31, R32, S64 | skip `detectRunning` when attended → a launch beside an open Thunderbird |
-| MA-897 | U | AS1b | attended skips the S8 idle re-check: with `NeverQuit` it goes to A12, and with `NeverQuit` false (set directly in the session deps) it keeps the pre-quit function; the quit context is live at the call with a 20 s deadline in both modes [C-5, C-6]; twin unattended → `owner-active`. **Extended [C-43]:** under the fake clock, at most one progress line per fake minute with the right N in both modes; `OutcomeLine` for every outcome in `allOutcomes` (the three new ones included [C-60, C-65, C-68]), both surfaces, darwin and windows words, every `Left`, `Minimized` true and false [C-56]; AS1b pins the never-close lines, AS-Q adds the close lines [C-50]; `Waited` measured from "up" to the quit or verdict; `Started` set | R31, R32, S64 | drop the ownership re-check in attended → a non-ours pid is asked |
-| MA-898 | S | AS3 (negative), AS4 (plaintext positive), AS8 (keyed positive) [C-44, C-81] | AST check matched on the mode field or constant, not a literal; and a **behavioural twin through the seam [C-41/T10]**, with the fake recording the whole `Config` [C-79]: `RunHeadless` with a sync job gives `Attended` false; `RunJobInProcess` gives true (AS4) and `RunJobInProcessKeyed` gives true (AS8, never before) for `goos` darwin **and windows** [OQ-2], **only where `AttendedStartAllowed` is true; where it is false no hook is installed for Run now** [C-49]; `NeverQuit` comes only from `AttendedQuitAllowed`, never from a caller or a file [OQ-1]; a job file and a descriptor carrying `"attended": true` (and other spellings) give false; no field named `Attended` has a JSON tag | R38 | set it in `RunHeadless` → the twin fails |
+| MA-897 | U | AS1b | attended skips the S8 idle re-check: with `NeverQuit` it goes to A12, and with `NeverQuit` false (set directly in the session deps) it keeps the pre-quit function; the quit context is live at the call with a 20 s deadline in both modes [C-5, C-6]; twin unattended → `owner-active`. **Extended [C-43]:** under the fake clock, at most one progress line per fake minute with the right N in both modes; `OutcomeLine` for every outcome in `allOutcomes` (the new ones included [C-60, C-65, C-68, OQ-6]), both surfaces, darwin and windows words, every `Left`, `Minimized` true and false [C-56]; AS1b pins the never-close lines, AS-Q adds the close lines [C-50]; `Waited` measured from "up" to the quit or verdict; `Started` set | R31, R32, S64 | drop the ownership re-check in attended → a non-ours pid is asked |
+| MA-898 | S | AS3 (negative), AS4 (plaintext positive), AS8 (keyed positive) [C-44, C-81] | AST check matched on the mode field or constant, not a literal; and a **behavioural twin through the seam [C-41/T10]**, with the fake recording the whole `Config` [C-79]: `RunHeadless` with a sync job gives `Attended` false; `RunJobInProcess` gives true (AS4) and `RunJobInProcessKeyed` gives true (AS8, never before) for `goos` darwin **and windows** [OQ-2], **only where `AttendedStartAllowed` is true; where it is false no hook is installed for Run now** [C-49]; `NeverQuit` comes only from `AttendedQuitAllowed`, never from a caller or a file [OQ-1]; `EndWait` is nil for `RunHeadless` and set only for the two Run nows [OQ-6]; a job file and a descriptor carrying `"attended": true` (and other spellings) give false; no field named `Attended` has a JSON tag | R38 | set it in `RunHeadless` → the twin fails |
 | MA-899 | U | AS10 | the CLI: no `-unattended`, local foreground terminal (faked) → attended; `-unattended`, piped stderr, background job, or `SSH_CONNECTION`/`SSH_TTY` set → not [C-9]; Windows console without `-unattended` → attended, every baked argv carries `-unattended` | R38 | drop the SSH test → the remote case is attended |
 | MA-900 | U | AS1a [C-51] | the session fixes that reach scheduled runs: **cancel before S5 → zero launches, no `launching` record [C-10]**; a failed `launching` save → zero launches, `cannot-start` [C-8]; `sleepCtx` returns well before d on a real short cancel (untagged, runs on Linux) [C-2/T4]; `preQuit` at S8 **twins [C-1]:** a second Thunderbird present on macOS → zero requests, `left-running`; one pid unreadable → zero requests; any cancel cause or `Stop` → zero requests; **a quit that returns `errQuitNotPosted` → `quit-no-window` at once, no exit-grace wait, `left-running`, no "asked to close" text [C-60]** (the sentinel's mapping through `fakeEnv` on the Linux gate; `winEnv.quit` returning it on each cannot-close path in `quit_windows_test.go`) | R31, R32 | drop the raw-pid count → the unreadable-pid case sends a request |
 | MA-901 | U | AS1a | B6: an unreadable state record's warning reaches the run's warnings while the session syncs; twin with a readable record → none; a proceeding note-class recovery outcome adds no side outcome [C-45] | R32 | drop the side outcome → the warning is absent |
 | MA-902 | U | AS2 | a real `app.Run`: a cancel during the hook stops before any source read, index open or sealed catch-up; a cancel before the hook never calls it [C-10]; the last-run **file on disk** reads `cancelled`, never `running` [C-11, C-12]; the hook's `Release` still runs; **the second check [C-76]:** a cancel during the index open and during the sealed catch-up (through a pause seam) → `OnReadStart` called once, no source read, the record `cancelled`, the catch-up's work kept as the loop's own cancel path keeps it | R32, R18, S64 | move the check before `defer recordRun` → the file reads `running` |
-| MA-903 | U | AS7 [C-53] | the outcome travels through a real `app.Run` on two paths — a full success and a failure after the hook (an index refusal) — to the last-run file (`code`, `name`, `result`, `since` only: the hook block converts to `state.PresyncRecord`, and no `Attended` exists on either type [C-80]) and the history's `presync` [C-12, C-36]; `Synced()` equals §5.2 for every entry of `allOutcomes`, reading the outcome alone: a `cancelled` outcome with `Left` = `left-open-by-rule` or `left-open-by-choice` is not synced [C-72]; `state-unreadable` never the main outcome [C-45] | R32, S65 | drop `begun.Presync` → the failure path's file has no presync |
+| MA-903 | U | AS7 [C-53] | the outcome travels through a real `app.Run` on two paths — a full success and a failure after the hook (an index refusal) — to the last-run file (`code`, `name`, `result`, `since` only: the hook block converts to `state.PresyncRecord`, and no `Attended` exists on either type [C-80]) and the history's `presync` [C-12, C-36]; `Synced()` equals §5.2 for every entry of `allOutcomes`, reading the outcome alone: a `cancelled` outcome with `Left` = `left-open-by-rule` or `left-open-by-choice` is not synced [C-72]; `wait-ended` is not synced and writes `result` `wait_ended` [OQ-6]; `state-unreadable` never the main outcome [C-45] | R32, S65 | drop `begun.Presync` → the failure path's file has no presync |
 | MA-904 | U | AS7 (record parts; must land before AS8), AS5 (streak part) [C-16, C-53] | §4.4's pin: exact key sets against the A18 allow-list; `leak.CheckTree` plus outcome-name and profile-marker scans over the whole folder; after synced, skipped and Lock-cancelled Run nows; no sync-streak file, no `mailarchive.log`; `Presync` nil for keyed runs; a stray sync-streak file removed by a keyed run; positive plaintext twin writes `presync` | R37 (A6, A18), S65 | (AS5) drop the plaintext-only guard on the reset path → a sync-streak file appears |
-| MA-905 | U | AS7 | the tag: §4.5's phrases per name, including the no-change phrase, `quit-no-window` and `start-blocked` [C-60, C-65, C-68]; every `allOutcomes` name mapped or deliberately untagged; unknown names never echoed; a `presync` name **planted in an encrypted history** still shows no tag [C-16/T12]; control characters stripped | X10, S65 | show unknown names raw → the hostile case renders them |
-| MA-906 | U | AS4 | `/api/activity` carries `syncPhase` and the **server-built** `syncNote` for each phase built at AS4 (`starting`, `waiting`, the S6 `cancelling`; no `closing` before AS-Q) [C-50], the counter only in `waiting` and never above 20, the waiting note's delay sentence [C-69], then `syncLine` with the result, the failure and the cancel words [C-19]; `runJobOn` resets the sync fields with `lines` and `result`; a Lock or switch clears an encrypted job's activity [C-15]; a **panicking** hook and a hook cancelled before `OnSyncEnd` leave `syncPhase` empty [C-11]; **a late `Phase` call from an abandoned earlier session, or one carrying another slot id, does not change the next run's note [C-71]**; the start-not-allowed note on a platform whose entry is false [C-49]; a reload during the wait re-attaches the Run now poll (structural) [C-22] | X11, S64 | build the failure note without `syncLine` → the Go test fails |
+| MA-905 | U | AS7 | the tag: §4.5's phrases per name, including the no-change phrase, `quit-no-window`, `start-blocked` and `wait-ended` [C-60, C-65, C-68, OQ-6]; every `allOutcomes` name mapped or deliberately untagged; unknown names never echoed; a `presync` name **planted in an encrypted history** still shows no tag [C-16/T12]; control characters stripped | X10, S65 | show unknown names raw → the hostile case renders them |
+| MA-906 | U | AS4 | `/api/activity` carries `syncPhase` and the **server-built** `syncNote` for each phase built at AS4 (`starting`, `waiting`, the S6 `cancelling`; no `closing` before AS-Q) [C-50], the counter only in `waiting` and never above 20, the waiting note's delay sentence [C-69], then `syncLine` with the result, the failure and the cancel words [C-19]; `runJobOn` resets the sync fields with `lines` and `result`; a Lock or switch clears an encrypted job's activity [C-15]; a **panicking** hook and a hook cancelled before `OnEnd` leave `syncPhase` empty [C-11]; **a late `Phase` call from an abandoned earlier session, or one carrying another slot id, does not change the next run's note [C-71]**; the start-not-allowed note on a platform whose entry is false, with §4.6's words and no `presync` outcome recorded [C-49, fold check]; **the first-attended-sync card line shows for a sync-on job until the marker exists, the marker is written when a session reaches S5, and the line is gone after [C-83, fold check]**; the waiting note's Stop-waiting sentence, and after a press the "Backing up the mail that has arrived…" note [OQ-6]; a reload during the wait re-attaches the Run now poll (structural) [C-22] | X11, S64 | build the failure note without `syncLine` → the Go test fails |
 | MA-907 | U | AS3 (scheduled), AS-L (Run now and rotation) [C-54] | every line a scheduled run writes to `mailarchive.log` starts with a date and time; (AS-L) a plaintext Run now appends under its own header **after** the refusals; a plaintext-path Run now on an encrypted archive is refused and leaves no `mailarchive.log` and no `.1` [C-14]; an encrypted Run now writes nothing under the archive; **an injected rename failure during rotation → the log is appended without rotating, a run warning is recorded, and neither caller fails the backup** [C-54] | R18, S65 | open the log before `RefuseWrite` → the encrypted case has a log |
 | MA-908 | U | AS5 | the streak: reset by any synced session; extended only when `Unattended && !PresyncAttended && PresyncWanted` and missed; **a plaintext Run now (Unattended true) that missed does not move it [C-33]**; a hook-setup failure on a sync job extends it as `not-set-up` and never deletes it; a sync-off scheduled job deletes it; a manual run without `-thunderbird-sync` does not [C-34]; three `profile-busy` in a row count one miss, and any other scheduled outcome resets `Busy` to 0 [C-4, C-86d]; `leftover-found` counts missed; a `cancelled` run with any `Left` moves nothing [C-72]; stale needs ≥ 2 misses over ≥ 3 days, never compared with now; implausible time counts `Missed` without moving times; a clock that went back restarts `FirstMissed` and keeps `Serial` [C-35]; never written for an encrypted archive; secure, bounded, stripped read | R32, S65 | compare with now → the computer-off case warns |
 | MA-909 | U | AS5 | Status WARN `presync_not_synced` when configured and stale, naming date, count, phrase and the per-reason remedy for every reason in §5.4 [C-20], in each surface's words [C-38]; a hostile `LastName` shows the generic phrase [C-37]; never RED; nothing when not configured; the health view says the same; **`status -json`: `thunderbird_sync.last` present for a plaintext archive with a recorded sync, absent for an encrypted one (setting only), `JSONVersion` still 2** [C-55] | R32, X6, X10, S65 | always use the Run now remedy → the leftover case fails |
 | MA-910 | U | AS6 | the email: once per `Serial`; `ToldFor` written only after delivery, or at once with alerts off; a failed delivery retried; never on a failed run; deferred when the run sends the recovery email; a clock restart inside one streak sends no second email [C-35]; the words come from the closed maps (hostile streak) [C-37]; uninstall removes `*.sync-alert` and the pre-sync state folder's named files then the folder, with the suffix check, **at `presyncjob.StateDir()`'s location for darwin and for windows (`%LOCALAPPDATA%\MailArchiveDesktop\presync`), the platform passed to the target-list builder** [C-40, C-63]; `ClearStreak` removes `<key>.sync-alert` [C-40] | S65 | drop the `ToldFor` check → every stale run sends |
 | MA-911 | U | AS8 | the encrypted Settings box: shown (by `goos`) for macOS and Windows for a readable job made from Thunderbird or carrying the sync, with the encrypted `SyncNotice` variant (never-close wording until AS-Q) and no Mac note before macOS's flip, and its own Save with `busy()` [C-25, C-26, C-52]; absent on Linux, for an Outlook job, for an unreadable job (reason shown); the card and health view show the setting and the session's last result while unlocked [C-27] | X16, S64 | show it for an Outlook job → the case renders a box |
 | MA-912 | U | AS8 | `api/runnow-sync`: each §8.2 refusal, including **nil `drawnFor`, missing `presync`, and a post naming another archive's job** [C-18], leaves the job file, the archive, the scheduler and the settings unchanged (`assure.Refused`, positive twin first); success edits exactly the job Run now would run (a non-default name included), changes only `thunderbird_sync`, writes no `Profile` | R30, R37, S64 | edit the default-named file → the non-default case misses |
-| MA-913 | U | AS8 (the Lock-during-a-quit cases with whichever of AS8 and AS-Q lands second) | Lock while an encrypted sync Run now waits: cancelled and recorded cancelled; the `runLease` seam (`schedule.go:684`) shows the lease locked at once and the key **not** destroyed while the hook holds it, destroyed before `RunJobInProcessKeyed` returns [C-5/T8]; zero quit requests; the reply's note, still visible after the reply (no reload) [C-21]; **(AS-Q) Lock during the S8 request and during a Cancel quit** end the run within §3.2's bound; **Lock then Cancel** → zero quits; **Cancel then Lock** → the quit request dies, bounded [C-5]; **Lock before the hook** — during the heal, the decrypting open and discovery, each through a pause seam — → zero starts, recorded cancelled [C-10, OQ-3]; **the window opens after one read of the job's sync flag, and a flag changed before `job.Read` refuses the run before `app.Run` [C-75]; a run refused in `RunJobInProcessKeyed`, an `openEncrypted` failure and a not-set-up job each leave no open window, and a Lock afterwards claims no cancel [C-75]; a Lock during the sealed catch-up (pause seam) → cancelled at the next check, nothing read, the reply says "once its current step ends" [C-76]**; a Run now **without** the sync keeps phase 3's rule (a Lock does not stop it) unless OQ-8 widens it [OQ-3 scope, §3.2, C-85]; **Lock in the read phase** → the run goes on and the reply says so [C-13]; idle lock or switch during the wait does not stop it; the race through the pause seam between `OnReadStart` and the second check lands on one side [C-11, C-76]; a panicking hook leaves no stale window; Windows reply wording with `Minimized` false [C-64] | R37, R32, S64 | use `watchLock` → the idle-lock case cancels |
+| MA-913 | U | AS8 (the Lock-during-a-quit cases with whichever of AS8 and AS-Q lands second) | Lock while an encrypted sync Run now waits: cancelled and recorded cancelled; the `runLease` seam (`schedule.go:684`) shows the lease locked at once and the key **not** destroyed while the hook holds it, destroyed before `RunJobInProcessKeyed` returns [C-5/T8]; zero quit requests; the reply's note, still visible after the reply (no reload) [C-21]; **(AS-Q) Lock during the S8 request and during a Cancel quit** end the run within §3.2's bound; **Lock then Cancel** → zero quits; **Cancel then Lock** → the quit request dies, bounded [C-5]; **Lock before the hook** — during the heal, the decrypting open and discovery, each through a pause seam — → zero starts, recorded cancelled [C-10, OQ-3]; **the window opens at the lease for every encrypted Run now, with no read of the sync flag [OQ-8, C-75 as superseded]; a run refused in `RunJobInProcessKeyed`, an `openEncrypted` failure, a job with no sync and a not-set-up job each leave no open window once they return, and a Lock afterwards claims no cancel [C-75]; a Lock during the sealed catch-up (pause seam) → cancelled at the next check, nothing read, the reply says "once its current step ends" [C-76]**; **a Run now without the sync is cancelled by a Lock before read start too** (during the heal, the decrypting open and the sealed catch-up, each through a pause seam: zero starts, nothing read, recorded cancelled, the reply has no Thunderbird sentence), and goes on after read start as phase 3 says [OQ-8, §3.2, C-85]; **Lock in the read phase** → the run goes on and the reply says so [C-13]; idle lock or switch during the wait does not stop it; the race through the pause seam between `OnReadStart` and the second check lands on one side [C-11, C-76]; a panicking hook leaves no stale window; Windows reply wording with `Minimized` false [C-64] | R37, R32, S64 | use `watchLock` → the idle-lock case cancels; (OQ-8) open the window only for sync jobs → the no-sync Lock case is not cancelled |
 | MA-914 | U | AS4 | plaintext Run now: `cancellable` true; through the seam, Cancel delivers `context.Cause = presync.ErrCancelAndQuit`, Shut down and Lock do not and end `Stop` [C-41/T15]; Cancel while reading → cancelled, archive intact; the cancel line by phase and `Left` [C-23] | S64 | call `cancel(nil)` → the cause assertion fails |
 | MA-915 | S | AS4, AS8, AS9, AS-Q, part by part [C-52] | the texts: tooltips (plaintext and encrypted, sync on, darwin/windows/linux, non-default job name, a platform whose start entry is false [C-49]), the Cancel sync variant (says the whole backup is skipped [C-69]), `SyncNotice` (every X16 disclosure, every surface, "with Run now" [C-84]) and its encrypted variant, the Mac note (AS4 wording; **never names Run now while macOS's `AttendedQuitAllowed` entry is false**; names no asking program before L-A2 [C-52, C-62]) and its encrypted variant, desktop words name no command, `OutcomeLine` names no path, no draft-prompt clause before L-A5; every Windows text says "taskbar" (and "or the notification area" where §2.7 says), never "Dock" or "out of sight" [OQ-2, C-61]; the close-naming texts exist only as AS-Q variants [C-50]; no Desktop text promises a behaviour the code lacks (golden) | X16, X11 | restore the old tooltip → the golden fails |
 | MA-916 | U | AS7 [C-53] | migration of records: frozen v1.5.1 bytes (job, last-run, history) read by the new code; new records read by the copied v1.5.1 structs; an encrypted job with the sync keeps its other fields; a v1.5.1 history rewrite drops `presync` (residual pinned) [C-39] | S58, S65 | rename the `presync` history key → the fixture case fails |
@@ -1334,11 +1459,12 @@ wait for that. For an encrypted archive, status shows the setting but keeps no l
 | MA-920 | U | AS5 | migration of the streak: a v1.5.1-era archive with no streak file starts clean; the downgrade residual of §10 (1) pinned as stated [C-39] | S65 | read a missing streak file as stale → the "starts clean" case fails [C-82] |
 | MA-921 | U | AS1a (budget, abandoned rule, latch), AS1b (S6 child-poll Cancel path), AS-Q (Cancel-quit path) | the watchdog [C-2, C-3]: `sessionBudget()` exceeds the longest path and each Cancel path built so far, computed from the same constants; on the budget, on `Stop` and on a non-quit cause the watchdog returns, marks the session abandoned and cancels `sctx`; an abandoned session starts **no** quit request even when it reaches S8 afterwards, an in-flight request's context ends, and `minimizeMain`'s loop ends [C-64]; **after a budget timeout the profile lock is still held during the read, and is free once both the abandoned session has returned and the read's `Release` has run (the next session then gets the lock, not `profile-busy`) [C-77]** | R31, R32 | remove the abandoned check in `preQuit` → a late request is counted |
 | MA-922 | U | AS1b (session), AS4 (Desktop) [OQ-1] | the never-close rule: with `NeverQuit`, at quiet and at the 20-minute limit → zero quit requests, ownership re-verified, the record cleared, `Left=left-open-by-rule`, the outcome the S7 verdict [C-72]; Cancel in S7 → zero requests, `left-open-by-rule`, outcome `cancelled`, not synced [C-72]; **Cancel in S6 → the child poll runs to the 90 s limit; a child proven → re-verified, record cleared, `left-open-by-rule`; none → `may-be-starting`, the `launching` record kept** [C-74]; the next session sees an open Thunderbird and leaves it alone (`already-running`); the Desktop note, tooltip and outcome line use the left-open words and show no "Keep Thunderbird open" | R31, S64 | build the quit when `NeverQuit` → a request is counted |
-| MA-923 | S | AS4, **only if lab L-A10 shows Thunderbird honours `SW_SHOWMINNOACTIVE`; dropped otherwise** [C-57] | the attended-only launch builder, a pure function tested by behaviour on the Linux gate: `STARTF_USESHOWWINDOW` with `SW_SHOWMINNOACTIVE`, `CREATE_BREAKAWAY_FROM_JOB` kept, `ComposeCommandLine` quoting a profile path with spaces, no handle inheritance; a fake seam proves both returned handles are closed after each launch; MA-612's walk lists `windows.CreateProcess`, `CreateProcessAsUser` and `ShellExecute`; MA-571's breakaway check kept; the scheduled launch unchanged | S64 | drop `STARTF_USESHOWWINDOW` (or change the show value) → the builder check fails |
+| MA-923 | S | AS4, or its own change before the Windows flip if L-A10 runs later [OQ-7]; **only if lab L-A10 shows Thunderbird honours `SW_SHOWMINNOACTIVE`; dropped otherwise** [C-57] | the attended-only launch builder, a pure function tested by behaviour on the Linux gate: `STARTF_USESHOWWINDOW` with `SW_SHOWMINNOACTIVE`, `CREATE_BREAKAWAY_FROM_JOB` kept, `ComposeCommandLine` quoting a profile path with spaces, no handle inheritance; a fake seam proves both returned handles are closed after each launch; MA-612's walk lists `windows.CreateProcess`, `CreateProcessAsUser` and `ShellExecute`; MA-571's breakaway check kept; the scheduled launch unchanged | S64 | drop `STARTF_USESHOWWINDOW` (or change the show value) → the builder check fails |
 | MA-924 | U | AS-Q [C-50] | the attended Cancel quit (A4(ii) without `NeverQuit`): cause `ErrCancelAndQuit` in S7 → the pre-quit function, exactly one request, `quitting` then cleared or `left-running`, `Left` right; a second Thunderbird on macOS → zero requests; S6 Cancel → polls to the 90 s limit then one request, or none and `may-be-starting` [C-7]; any other cause or `Stop` → zero requests; an attended `ok-noactivity` or `watch-truncated-noactivity` run leaves Thunderbird open (A13) [C-68] | R31, R32, S64 | quit on every cancel cause → the Lock case sends a request |
 | MA-925 | U | AS1b (session and `OutcomeLine`), AS7 (tag) [C-68] | no-change honesty: a session with no change ends `ok-noactivity`; a truncated walk with no change ends `watch-truncated-noactivity`, never `watch-truncated`; their line and phrase say nothing arrived and name the password or sign-in possibility, and never say "synced first" | S64, S65 | fold the truncated no-change case into `watch-truncated` → the case fails |
-| MA-926 | U | AS5, **only if the owner says yes to OQ-5** [C-68] | the no-change count: scheduled `ok-noactivity` / `watch-truncated-noactivity` runs extend `NoChange`; any session where something arrived resets it; attended runs never move it; stale after ≥ 2 over ≥ 3 days, never compared with now; WARN `presync_nothing_arrived` with its remedy; never RED; plaintext only | R32, S65 | count an attended no-change run → the Run now case moves it |
-| MA-927 | S | AS1b (the tables), AS4 (the Windows hash pin) [C-49, C-66, C-79] | every entry of `AttendedStartAllowed` and `AttendedQuitAllowed` is false unless it names a lab record under `docs/lab/` that exists and names that platform; `OverrideTablesForTest` is called from no non-`_test.go` file; a hash of the Windows start, minimize and close functions matches the one pinned with the latest MA-918 record's date | R31, R38 | set an entry true with no record → the check fails |
+| MA-926 | U | AS5 (owner ruling OQ-5: yes) [C-68] | the no-change count reads `Verdict` (§5.2): a scheduled session whose verdict is `ok-noactivity` or `watch-truncated-noactivity` extends `NoChange`, **also when it ends `owner-active` or `quit-*`**; a session whose verdict says mail arrived resets it, **attended or scheduled**; an attended no-change session never extends it; a session with no verdict (`already-running`, a skip, `cancelled`, `wait-ended`) leaves it unchanged; stale after ≥ 2 over ≥ 3 days, never compared with now, MA-891's clock rules; the softer warning `presync_nothing_arrived` with §5.4's words (first sentence says the backups ran; names the password or sign-in window), never RED, **no alert email**, left out while `presync_not_synced` shows; plaintext only; `Verdict` is never written to the record | R32, S65 | count an attended no-change run → the Run now case moves it |
+| MA-927 | S | AS1b (the tables), AS4 (the Windows hash pin) [C-49, C-66, C-79] | every entry of `AttendedStartAllowed` and `AttendedQuitAllowed` is false unless it names a lab record under `docs/lab/` that exists and names that platform; `OverrideTablesForTest` is called from no non-`_test.go` file; a hash of the Windows start, minimize and close functions matches the one pinned with the latest MA-918 record's date, **or, before any MA-918 record exists, the pin marked "no lab record" with Windows' start entry false [C-66, OQ-7, fold check]** | R31, R38 | set an entry true with no record → the check fails |
+| MA-929 | U | AS1b (session), AS4 (Desktop and route) [OQ-6] | "Stop waiting and back up now": in `presync`, `EndWait` ending in S7 ends the wait at once (the fake clock does not run to quiet), zero quit requests **also with `NeverQuit` false**, ownership re-verified, the record cleared, outcome `wait-ended`, `Verdict` zero, `Left=left-open-by-rule`, `Synced()` false; `EndWait` ending in S5 or S6 changes nothing; a Cancel or `Stop` first wins; through the seam the backup then reads (the hook returned, the run is not cancelled, `Result.Presync` names `wait-ended`; the record's `result` `wait_ended` is MA-903's, AS7); the route `api/runnow-stopwait`: refused with no change when no Run now runs, the slot id is stale, or the phase is not `waiting` (`assure.Refused`, positive twin first); the button shows only in `waiting`; `busy()` while posting; `RunHeadless` gets `EndWait` nil | R31, R38, S64 | ignore `EndWait` in the S7 sleep → the wait runs to quiet |
 | MA-928 | U | AS1a (the working folder), AS4 (the rest) [C-56, C-58, C-64, C-65] | Windows start details, through the win32 fake layer and untagged pure functions on the Linux gate: `minimizeMode` (iconic → no call; not the foreground window → `SW_SHOWMINNOACTIVE`; the foreground window → `SW_MINIMIZE`); the minimize retried on each S7 poll until it succeeds once, never after; `Minimized` recorded; the launch's working folder is Thunderbird's install folder; a launch "access denied" → `start-blocked`, no second launch without breakaway; a Desktop started elevated → `refused-elevated` with the Desktop line | R31, S64 | retry after a success → the restored-window case is minimized again |
 
 ---
@@ -1351,22 +1477,23 @@ Rev 4 re-cut [C-48, C-50, C-51, C-52, C-53, C-54]. Every slice keeps its own pro
 |---|---|---|---|
 | **AS0** | catalog: R38, S64, S65, the S54 and X16 amendments only [C-42] (accepted [OD-2]) | — | nothing |
 | **AS1a** | **scheduled-run bug fixes, both modes [C-51]:** `sessionBudget()` computed; `sctx`; the abandoned rule with the once-both lock latch [C-77]; `sleepCtx` (and `minimizeMain`'s loop on it [C-64]); `quit(ctx)`; A9; A11; `preQuit` at S8 with the raw-pid C3 count; `errQuitNotPosted` → `quit-no-window` [C-60]; the Windows launch's working folder [C-65]; B6 | 900, 901, 921 (budget, abandoned, latch), 928 (working folder) | **can ship on its own as a patch** (the watchdog leak T21, the best-effort record T22, the launch after a cancel, the C3 undercount, B6, the false "asked to quit" text); the release is the owner's call |
-| **AS1b** | **attended mode in `presync` [C-51]:** `Config` fields; A1, A2, A12, A13, A15; A4(ii) under never-close with the S6 child poll [C-74]; A7; A8 with `OutcomeLine` (never-close and no-change lines [C-68]); `AttendedQuitAllowed` and `AttendedStartAllowed`, every entry false, with lab-record paths; `OverrideTablesForTest` | 895, 896, 897, 921 (S6 Cancel path), 922 (session), 925 (session and line), 927 (tables) | nothing (no caller sets attended) |
+| **AS1b** | **attended mode in `presync` [C-51]:** `Config` fields; A1, A2, A12, A13, A15; A4(ii) under never-close with the S6 child poll [C-74]; A7; A8 with `OutcomeLine` (never-close and no-change lines [C-68]) and `Verdict` [OQ-5]; A16, `EndWait` and the outcome `wait-ended` [OQ-6]; `AttendedQuitAllowed` and `AttendedStartAllowed`, every entry false, with lab-record paths; `OverrideTablesForTest` | 895, 896, 897, 921 (S6 Cancel path), 922 (session), 925 (session and line), 927 (tables), 929 (session) | nothing (no caller sets attended) |
 | **AS2** | `internal/app`, **in memory only [C-53]:** `presyncOut` and `Result.Presync`; `Options.PresyncWanted`, `PresyncAttended`, `OnReadStart`; the pre-hook check, the T16 check and the second check at read start [C-76] | 902 | nothing user-visible (a cancel before reading stops sooner) |
 | **AS3** | `presyncjob`: untagged `SetHook` (reads both tables), `runSession` seam; `optsForJob` with a logger and a mode; the CLI on the shared hook; timestamps | 898 (negative half), 907 (scheduled part) | timestamps |
-| **AS4** | **Desktop Run now, plaintext, attended where `AttendedStartAllowed` allows [C-44, C-49, OQ-2], never-close only [C-48, C-50]:** the cancellable slot and causes; phases `starting`, `waiting`, S6 `cancelling`; the server-built note, slot-bound [C-71]; reload re-attach; the first-attended-sync card line and its marker [C-83]; the tooltip, the plaintext `SyncNotice` correction, the AS4 Mac note and the release line [C-52]; Windows A14, `start-blocked` and the elevated line [C-56, C-58, C-65]; the CreateProcess start **only if L-A10 says so** [C-57]; the Windows hash pin | 898 (plaintext positive), 906, 914, 915 (AS4 part), 922 (Desktop part), 923 (only if L-A10), 927 (hash pin), 928 | **Run now syncs (plaintext)** on each platform whose `AttendedStartAllowed` entry is true: macOS once the L-A1/L-A9 record is in; Windows once MA-918's first-release scope has passed (if it has not by release time: OQ-7). Thunderbird is left open after the sync and the note says so. **No L-A5 gate** [C-48] |
+| **AS4** | **Desktop Run now, plaintext, attended where `AttendedStartAllowed` allows [C-44, C-49, OQ-2], never-close only [C-48, C-50]:** the cancellable slot and causes; phases `starting`, `waiting`, S6 `cancelling`; the server-built note, slot-bound [C-71]; reload re-attach; the "Stop waiting and back up now" button, `api/runnow-stopwait` and its texts [OQ-6]; the first-attended-sync card line and its marker [C-83]; the tooltip, the plaintext `SyncNotice` correction, the AS4 Mac note and the release line [C-52]; Windows A14, `start-blocked` and the elevated line [C-56, C-58, C-65]; the CreateProcess start **only if L-A10 has run and says so** (otherwise today's launch; §2.7) [C-57, OQ-7]; the Windows hash pin (marked "no lab record" until MA-918's first record) | 898 (plaintext positive), 906, 914, 915 (AS4 part), 922 (Desktop part), 923 (only if L-A10), 927 (hash pin), 928, 929 (Desktop and route) | **Run now syncs (plaintext) on macOS** once the L-A1/L-A9 record is in; **Windows' entry stays false in this release (owner ruling OQ-7: ship the Mac first)** and is flipped in a later commit, and release, once MA-918's first-release scope has passed. Thunderbird is left open after the sync and the note says so. **No L-A5 gate** [C-48] |
 | **AS7** | **records and the tag, moved up and merged [C-53]:** the `begun.Presync` conversion and write [C-80], the history field, strip on read, the Recent backups tag, the encrypted record pin | 903, 904 (record parts), 905, 916, 925 (tag) | the tag; the outcome on the record |
-| **AS5** | the sync streak, the Status line and WARN, remedies, `status -json` fields [C-55]; the no-change warning **only if OQ-5 is yes** | 904 (streak part), 908, 909, 920, 926 (if OQ-5) | the 3-day WARN |
+| **AS5** | the sync streak, the Status line and WARN, remedies, `status -json` fields [C-55]; the no-change count and its softer warning (owner ruling OQ-5: yes) | 904 (streak part), 908, 909, 920, 926 | the 3-day WARN, and the softer no-change warning |
 | **AS6** | the email, the checkbox label, uninstall (at `presyncjob.StateDir()` per platform [C-63]) and `ClearStreak` | 910 | the email |
-| **AS8** | encrypted, **after the owner confirms OQ-8's scope [C-85]:** keyed Run now attended (not before) [C-81]; the Settings box and its Save; `api/runnow-sync`; the Lock window from one read of the sync flag to read start [C-75, C-76]; the encrypted `SyncNotice` and tooltip variants [C-52]; the phase-3 §3.2 amendment written into `design-encrypted-archives-phase3.md` [OD-2] | 898 (keyed half), 911, 912, 913 | encrypted archives sync from Run now (residuals accepted [OQ-4]) |
+| **AS8** | encrypted (OQ-8's scope answered 2026-10-30: every encrypted Run now [C-85]): keyed Run now attended (not before) [C-81]; the Settings box and its Save; `api/runnow-sync`; the Lock window from the lease to read start for **every** encrypted Run now [C-75, C-76, OQ-8]; the encrypted `SyncNotice` and tooltip variants, the sync-off tooltip's Lock sentence included [C-52, OQ-8]; the phase-3 §3.2 amendment, in rev 5's wording, written into `design-encrypted-archives-phase3.md` [OD-2, OQ-8] | 898 (keyed half), 911, 912, 913 | encrypted archives sync from Run now (residuals accepted [OQ-4]) |
 | **AS-Q** | **attended close, per platform [C-48, C-50]**, each flip in a commit citing that platform's L-A5 record: the `AttendedQuitAllowed` entry set true; the "Keep Thunderbird open" button and `api/runnow-keepopen`; the attended Cancel quit; the `closing` phase with C-73's order; the close-naming text variants; A13's leave-open rule for no-change runs; on Windows, `WM_CLOSE` under MA-918's AS-Q scope | 919, 924, 915 (close variants), 921 (Cancel-quit path), 913 (Lock-during-quit cases, if AS8 has landed) | Run now closes Thunderbird on that platform, with Keep Thunderbird open |
 | **AS9** | the Mac note's Run-now wording, **after L-A2 and after macOS's AS-Q flip** [C-52] | 915 (Mac note part) | — |
 | **AS-L** | **optional, not owner-ruled, may be cut [C-54]:** the lasting Run now log; non-fatal rotation for both callers | 907 (Run now and rotation) | the Run now log |
 | **AS10** | the CLI at a local foreground terminal — **only after the owner's nod (Q3)** | 899 | the manual CLI sync works |
-| lab | MA-917 (dev Mac, test profile: L-A1 and L-A9 → the macOS start entry; L-A2..L-A4, L-A6, L-A8; L-A5 → AS-Q) [C-67]; MA-918 (Windows; **set-up starts now, in parallel with AS1a**; first-release scope → the Windows start entry; AS-Q scope) [C-49, C-59]; L-A10 (the spike, before AS4's Windows launch code) [C-57] | | |
+| lab | MA-917 (dev Mac, test profile: L-A1 and L-A9 → the macOS start entry; L-A2..L-A4, L-A6, L-A8; L-A5 → AS-Q) [C-67]; MA-918 (Windows; **set-up starts now, in parallel with AS1a**; first-release scope → the Windows start entry; AS-Q scope) [C-49, C-59]; L-A10 (the spike, before any new Windows launch code; it does not hold AS4 [OQ-7]) [C-57] | | |
 
-Order: AS0 → AS1a → AS1b → AS2 → AS3 → AS4 → AS7 → AS5 → AS6. AS8 after AS7 (its record pin) and
-after OQ-8. AS-Q on a platform once its L-A5 record exists (any time after AS4). AS9 after L-A2 and
+Order: AS0 → AS1a → AS1b → AS2 → AS3 → AS4 → AS7 → AS5 → AS6. AS8 after AS7 (its record pin; OQ-8
+is answered). The Windows start-entry flip, and the `CreateProcess` start before it if L-A10 calls
+for one, once MA-918's first-release scope has passed (any time after AS4) [OQ-7]. AS-Q on a platform once its L-A5 record exists (any time after AS4). AS9 after L-A2 and
 macOS's AS-Q. AS-L any time after AS3, or never. AS10 last. The labs run in parallel from AS1a.
 
 ---
@@ -1421,7 +1548,8 @@ macOS's AS-Q. AS-L any time after AS3, or never. AS10 last. The labs run in para
   same list on Windows.
 - **L-A10 (new, a short spike) [C-57]** Parallels: start Thunderbird once with `SW_SHOWMINNOACTIVE`
   (a throwaway `CreateProcess` call in a lab-only test) and record whether it starts minimized and
-  without activation. Before AS4 writes any Windows launch code; decides whether MA-923 is built.
+  without activation. Before any new Windows launch code is written; decides whether MA-923 is
+  built. It does not hold AS4: without it, AS4 keeps today's launch (§2.7) [OQ-7].
 
 ---
 
@@ -1429,29 +1557,36 @@ macOS's AS-Q. AS-L any time after AS3, or never. AS10 last. The labs run in para
 
 1. **The pre-code review is filed** (`docs/review-presync-attended-predesign.md`, GO_WITH_CONDITIONS,
    two rounds). The passes OD-1 asked for ran in the second round (lens 2, lens 9, the rescue pass,
-   and the fold check of rev 3). **Owed before AS1 (the review's round-2 verdict):** a
-   second reader checks each fold C-48..C-86 against its condition (a fold check only; no new lens is
-   owed). Lenses 1, 5 and 10 were covered in part by round 1 and in part by round 2's scope and
+   and the fold check of rev 3). **The fold check of C-48..C-86 owed before AS1 is done (2026-10-30,
+   the review's "Owner answers round 2 and fold check" section):** every condition is folded; the
+   gaps it found are fixed in rev 5. **AS1a may start.** Rev 5's own additions (OQ-5..OQ-8 and the
+   fold-check fixes) have had no second reader; each is read by the adversarial pass of the slice
+   that builds it (gate 2) — none touches AS1a. Lenses 1, 5 and 10 were covered in part by round 1 and in part by round 2's scope and
    rescue passes; the review records that the operator did not ask for more (OD-1's reach, §15.4).
 2. **Adversarial pass** after AS1a (the abandoned session, the once-both latch, the not-posted
-   sentinel), after AS4 (process control, causes, the Windows start and minimize, the CreateProcess
-   path if built, the slot binding), after AS8 (Lock from the click to read start, lease, the route,
-   the byte pin) and after AS-Q (the keep-open route, the attended quit, C-73's ordering).
+   sentinel), after AS1b (A16's `EndWait` and `wait-ended` [OQ-6]), after AS4 (process control,
+   causes, the Windows start and minimize, the CreateProcess path if built, the slot binding, the
+   `api/runnow-stopwait` route [OQ-6], the hash pin with no lab record [OQ-7]), after AS5 (the
+   no-change count from `Verdict` [OQ-5]), after AS8 (Lock from the click to read start for every
+   encrypted Run now [OQ-8], lease, the route, the byte pin) and after AS-Q (the keep-open route, the attended quit, C-73's ordering).
 3. **Friction review** of the phase notes, the waiting note's delay sentence, the Cancel and Lock
    replies, the first-attended-sync card line, the start-not-allowed variants, the no-change lines,
-   the encrypted box, the Status line, WARN remedies (and the no-change WARN if OQ-5 is yes), the
-   email and checkbox, the Windows taskbar and notification-area wording, the AS4 Mac note, and every
+   the encrypted box, the Status line, WARN remedies, the softer no-change warning and its
+   no-email choice [OQ-5], the Stop-waiting button, its tooltip and its `wait-ended` line [OQ-6],
+   the macOS-only release note and the Windows "not yet" texts [OQ-7], the no-sync encrypted Lock
+   reply and tooltip [OQ-8], the email and checkbox, the Windows taskbar and notification-area wording, the AS4 Mac note, and every
    corrected text (after AS4, AS8, AS9, AS-Q).
 4. **Labs, as per-platform switches, not per-platform releases** (one tag builds every platform)
    [C-48, C-49]: the macOS `AttendedStartAllowed` entry after the L-A1/L-A9 record (dev Mac, test
    profile, MA-917) [C-67, C-70]; the Windows `AttendedStartAllowed` entry after MA-918's
    first-release scope; L-A10 before AS4's Windows launch code; L-A5 on a platform before AS-Q flips
    that platform's `AttendedQuitAllowed` entry; MA-918 again before any release changing the Windows
-   start, minimize or close code (MA-927's hash pin) [C-66]. **No L-A5 gate on AS4** [C-48]. If
-   MA-918 has not passed when AS4 is otherwise ready, the release question goes to the owner (OQ-7).
-5. **Owner, before the slices they touch:** OQ-5 before AS5's no-change part; OQ-6 before AS4's
-   waiting note is final (AS4 can ship without the button); OQ-7 at release time if the Windows lab
-   is late; **OQ-8 before AS8 is built** [C-85].
+   start, minimize or close code (MA-927's hash pin) [C-66]. **No L-A5 gate on AS4** [C-48]. **The
+   AS4 release does not wait for MA-918 (owner ruling OQ-7):** it ships with Windows' start entry
+   false; the flip waits for MA-918's first-release record.
+5. **Owner:** OQ-5..OQ-8 answered 2026-10-30 (§15.3); no owner answer gates any slice now. Still
+   going to the owner if they happen: a Windows focus steal or a long window flash found by MA-918
+   (§15.4), and the friction review's wording.
 6. **Operator**: OD-2, OD-3, OD-4 accepted 2026-10-30; OD-1 answered by the round-2 passes (gate 1).
 
 ---
@@ -1473,12 +1608,13 @@ macOS's AS-Q. AS-L any time after AS3, or never. AS10 last. The labs run in para
   §14. **Rev 4 [C-49]:** the feature is still built for Windows from AS4; a per-platform switch lets
   one cross-platform release carry the macOS fix even if the Windows lab is late, and whether to wait
   is put to the owner (OQ-7), not decided here. The "brief flash" is corrected: the window can stay
-  longer on a slow start (§1.2) [C-56].
+  longer on a slow start (§1.2) [C-56]. **Rev 5 [OQ-7]:** the owner answered "ship the Mac first".
 - **OQ-3 (C-10): yes.** Lock cancels an encrypted Run now any time before mail reading starts (from
   the click to the read); after reading starts, the Lock reply says the backup finishes with its own
   key and Cancel stops it. Built for a Run now whose job carries the sync, the question's scope; the
   wider reading is OQ-8. Folded in §1.2, §3.2, §6, §7, §8.1, §9, §11, §12. **Rev 4 [C-76]:** "before
   mail reading starts" now really means right before the source loop, not the hook's return.
+  **Rev 5 [OQ-8]:** the owner answered the wider reading: every encrypted Run now, sync or not.
 - **OQ-4 (C-17): accepted.** The plaintext start and finish times beside an encrypted archive
   include the Thunderbird wait, and the unlocked archive's index stays in memory through the wait.
   Both stay written as accepted residuals (§3.2, §4.4).
@@ -1495,7 +1631,28 @@ macOS's AS-Q. AS-L any time after AS3, or never. AS10 last. The labs run in para
 - **OD-4: accepted.** In attended mode a profile named in a job file must also be in `profiles.ini`
   (§2.1).
 
-### 15.3 New owner questions (rev 4) — each with the design's recommendation
+### 15.3 Owner questions of rev 4, answered 2026-10-30 (round 2)
+
+**Answers, as relayed to the design writer by the workflow lead:**
+
+- **OQ-5: yes.** A softer, separate warning after 3 days in which scheduled syncs started Thunderbird
+  but no mail arrived; its words name a possible hidden password or sign-in window; it is not a
+  failure and not the missed-sync warning. Folded in §2.1 (`Verdict`), §4.1, §5.1, §5.2, §5.4, §11
+  (MA-926), §12 (AS5), §14.
+- **OQ-6: yes.** A "Stop waiting and back up now" button while Run now waits: it ends the wait and
+  backs up what has arrived. Folded in §2.1 (`EndWait`), §2.2, §2.3, §2.4 (A5, A16), §3.1, §4.2,
+  §4.5, §4.6, §5.2, §7, §10, §11 (MA-929 new; MA-897, MA-898, MA-903, MA-905, MA-906), §12 (AS1b,
+  AS4), §14. Decisions this design adds, open to the friction review and the owner: the button shows
+  only in `waiting`; a stopped wait never closes Thunderbird, even where the close is allowed (AS-Q);
+  it counts neither synced nor missed.
+- **OQ-7: ship the Mac first.** Windows' `AttendedStartAllowed` entry stays false until its lab
+  passes; the code for both platforms is built now. Folded in §2.7, §7 (release note), §11 (MA-923,
+  MA-927), §12, §13 (L-A10), §14.
+- **OQ-8: every encrypted Run now.** A Lock cancels every encrypted Run now that has not started
+  reading mail, sync or not. Folded in §1.2, §3.2 (the amendment text, the window, C-75's early read
+  removed), §6, §7, §9, §11 (S64, MA-913), §12 (AS8).
+
+The questions as they were put (rev 4), kept for the record:
 
 - **OQ-5 [C-68]. When Thunderbird starts but nothing arrives in 20 minutes, should scheduled backups
   warn after 3 days of only that?** It can mean no new mail, or that Thunderbird is stuck on a
@@ -1531,7 +1688,8 @@ macOS's AS-Q. AS-L any time after AS3, or never. AS10 last. The labs run in para
 - **A Windows focus steal.** The owner accepted a brief window flash, not Thunderbird taking the
   keyboard; if MA-918 finds a focus steal, it goes back to the owner before the Windows entry is set
   (§2.7). So does a measured flash much longer than "brief" [C-56].
-- **The phase-3 amendment's wording** follows OQ-8's answer (§3.2).
+- **The phase-3 amendment's wording** is settled by OQ-8 (§3.2, rev 5's text); it is written into the
+  phase-3 design at AS8.
 
 ### 15.5 Earlier questions (each has a default this design builds)
 
@@ -1556,7 +1714,10 @@ macOS's AS-Q. AS-L any time after AS3, or never. AS10 last. The labs run in para
   inferred (§2.7) [C-65].
 - What the Parallels VM has installed now (§2.7): MA-570's 2026-10-23 record says Thunderbird was
   driven there; not re-checked for rev 4.
-- The rev-4 folds (C-48..C-86) have not been re-read by a second reader (§14 gate 1).
+- The rev-4 folds (C-48..C-86) were fold-checked on 2026-10-30 (§14 gate 1). **Rev 5's own text**
+  (OQ-5..OQ-8 and the fold-check fixes) has had no second reader. That a stopped wait leaves a store
+  Thunderbird is still writing readable as the `already-running` case does (A16) is inferred, not
+  read in the readers' code.
 - `env_windows.go` was still not read in full; `winEnv.quit` itself (`quit_windows.go:129-161`) and
   `postClose` (`:226-232`) were read in rev 4.
 - `container.Store`'s copies of key material after `vault.Key.Destroy` — not read; §3.2's "key

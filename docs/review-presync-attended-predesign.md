@@ -491,3 +491,73 @@ Smallest checks that would settle the most: on the dev Mac, set a Primary Passwo
 and click Run now (does the note say "synced"? L-A8); run the product's digest on a two-account test
 profile from a hidden start and list what changes before the first fetch (L-A9); in the VM, start
 Thunderbird once with `SW_SHOWMINNOACTIVE` (L-A10).
+
+## Owner answers round 2 and fold check, 2026-10-30
+
+Added 2026-10-30; nothing above is changed. **Result: the fold check passes — every condition C-48
+to C-86 is folded into rev 4; twelve gaps or inconsistencies were found and are fixed in rev 5.
+AS1a may start.** The owner's answers to OQ-5..OQ-8 are folded into the design's **rev 5**.
+
+| | |
+|---|---|
+| Date | 2026-10-30 |
+| Register | a record of decisions (the owner's answers, as relayed by the workflow lead) and a finding (the fold check, by reading only) |
+| Design checked | `docs/design-presync-attended.md` **rev 4**, sha256 `d18276a9d6b1794da95ec9dfb6fb531f683841f13081a4216188aba0d5c7f271` as recorded above, committed at `88d582e` |
+| Design after folding | **rev 5**, sha256 `3befba2350dc13c8296c2a3600273f6554000280a4d5abf9611b9799faf3403a` |
+| Reader | A model-run workflow step, not a named human. It did not write rev 4's folds; it wrote rev 5. So rev 4's folds have had a second reader, and rev 5's own text has not. |
+| Commands | reads only: both docs in full; `internal/presync/outcome.go:46-85` (the outcome list; no `wait-ended`); `internal/health/health.go:317-336` (`warn`, `red`, and the informational `note`); greps of `docs/scenario-catalog.md` (highest MA row MA-894, so MA-929 is free), of `internal` and `cmd` for `OnSyncEnd`/`OnEnd` (neither exists in code yet); `shasum -a 256` of rev 5; `git rev-parse HEAD`. No test run, nothing built. |
+
+### Owner answers (round 2)
+
+| Q | Answer | Where rev 5 folds it |
+|---|---|---|
+| OQ-5 (RS-1, C-68) | **Yes.** A softer, separate warning after 3 days in which scheduled syncs started Thunderbird but no mail arrived; its words name a possible hidden password or sign-in window; not a failure, not the missed-sync warning. | Slice **AS5** (§5.1, §5.2, §5.4, MA-926). New in rev 5: `Result.Verdict` carries the S7 verdict so a scheduled no-change run that then ends `owner-active` or `quit-*` still counts (rev 4 counted by outcome, which would miss those); an attended run where mail arrived resets the count, an attended no-change run never extends it (rev 4's §5.4 and MA-926 disagreed on this). Design decisions, for the friction review: a WARN line whose first sentence says the backups ran, **no alert email**, and left out while the missed-sync warning shows. |
+| OQ-6 (RS-2, C-69) | **Yes.** A "Stop waiting and back up now" button while Run now waits; it ends the wait and backs up what has arrived. | With **AS4's Run now note** (§4.6: the button, `api/runnow-stopwait`, texts; §7 tooltip), the session part in **AS1b** (`Config.EndWait`, A16, new outcome `wait-ended`); new row **MA-929**. Design decisions: shown only in `waiting`; a stopped wait never closes Thunderbird, even after AS-Q; counted neither synced nor missed; record `result` `wait_ended`. |
+| OQ-7 (SC-2, DP-7, RS-6, C-49) | **Ship the Mac first.** Windows' `AttendedStartAllowed` entry stays off until its lab passes; the code for both platforms is built now. | §2.7, §7 (a macOS-only release note), §12 (AS4's ship line), §14 gate 4. Also: the L-A10 spike no longer holds AS4 (today's launch is kept until it runs), and the MA-927 hash pin works before any MA-918 record exists (see fold finding 4). |
+| OQ-8 (FC-15, C-85) | **Every encrypted Run now** that has not started reading mail, sync or not, is cancelled by a Lock. | §3.2 (the phase-3 amendment text rewritten for every Run now; the window opens at the lease), §9 (a no-sync Lock reply), §7 (the sync-off encrypted tooltip), §11 (S64, MA-913), AS8. C-75's early flag read and its "settings changed" refusal are **removed**: they existed only to keep a sync-only window in step with the hook, and the window no longer reads the flag. |
+
+### Fold check of C-48..C-86 (against rev 4)
+
+Every condition was checked against rev 4's text and the slice table. **Folded correctly:** C-48,
+C-50 to C-60, C-63 to C-65, C-67, C-69 to C-71, C-74, C-76 to C-82, C-84, C-86 (29). **Folded, with a
+gap fixed in rev 5 (10: C-49, C-61, C-62, C-66, C-68, C-72, C-73, C-75, C-83, C-85), plus two
+editorial fixes outside the range:**
+
+| # | Condition | Gap in rev 4 | Fix in rev 5 |
+|---|---|---|---|
+| 1 | C-49 | MA-906 asserted a "start not allowed" note, but §4.6 gave it no words. | §4.6 gives the line. |
+| 2 | C-49, C-34 | Unclear whether a Run now on a platform whose start entry is false records `not-set-up` (a "missed" outcome with a warning). | §2.2: it records no sync outcome and is not `not-set-up`; MA-906 asserts it. |
+| 3 | C-61 | Two Windows texts in §4.6 (the first-sync line, the no-change line) named only "the taskbar", not "or the notification area". | Both fixed. |
+| 4 | C-66 | The hash pin assumed an MA-918 record exists; under OQ-7, AS4 lands before one. | The pin carries "no lab record" until the first record; Windows' entry can be true only with a matching record (§2.7, MA-927). |
+| 5 | C-62 | The AS4 Mac note said "allow Mail Archive to control Thunderbird", which names the asking program before L-A2 says which it is. | Reworded to "the entry listed there". |
+| 6 | C-68, C-72 | A10 step 4's list of kept S7 verdicts left out `watch-truncated-noactivity` (A12's list had it). | Added. |
+| 7 | C-73 | §4.6 said "a phase is never reported when no quit will be sent", contradicting the never-close `cancelling` phase (C-74). | Narrowed to `closing`. |
+| 8 | C-75 | Folded correctly in rev 4; **superseded in part by OQ-8**. | The opening half (one flag read, the refusal) is removed; the closing half stands (§3.2, MA-913). |
+| 9 | C-83 | No row tested the first-attended-sync line and its marker. | MA-906 gains the case. |
+| 10 | C-85 | Folded as a gate; now answered. | §14 gate 5 and AS8 updated. |
+| 11 | C-34 (editorial) | §10 counted three new outcome names and left out `not-set-up`. | Now five, with `wait-ended`. |
+| 12 | editorial | The hook's end callback was `OnEnd` in §2.2 and `OnSyncEnd` in §6 and MA-906. | One name, `OnEnd`. |
+
+No condition was found unfolded, and no fix needed a redesign or an owner answer.
+
+### May AS1a start?
+
+**Yes.** AS1a (the scheduled-run bug fixes: the computed watchdog, `sctx`, the abandoned rule and
+latch, `sleepCtx`, `quit(ctx)`, A9, A11, `preQuit` with the raw-pid count, `quit-no-window`, the
+Windows working folder, B6; rows MA-900, MA-901, MA-921, MA-928 in part) depends on none of the
+rev-5 changes. AS1a still owes its own prove-fail records and the adversarial pass after it (§14
+gate 2).
+
+### What this step did not do
+
+- **Rev 5's own text has had no second reader:** OQ-5's `Verdict` count and softer warning, OQ-6's
+  `EndWait`, A16 and route, OQ-7's pin before any record, OQ-8's widened window, and the twelve fixes.
+  Each is read by the adversarial pass of the slice that builds it (AS1b, AS4, AS5, AS8).
+- A16's claim that the readers handle a store Thunderbird is still writing the same way as in the
+  `already-running` case is **inferred**; the readers' code was not read for it.
+- Lenses 1, 5 and 10 still have had no pass of their own (OD-1's reach, the operator's call).
+- No lab ran; no test ran; nothing was built.
+
+Smallest check for the owner: read the five new texts in rev 5 (the no-change warning in §5.4, the
+Stop-waiting button note and tooltip in §4.6 and §7, the macOS-only release note in §7, and the
+no-sync Lock reply in §9) and say whether any reads wrong.
