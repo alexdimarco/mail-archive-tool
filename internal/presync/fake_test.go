@@ -27,6 +27,7 @@ type fakeEnv struct {
 	idleOK          bool
 	idleReturnsAt   time.Time // when set, idle drops to idleReturned at/after this time
 	idleReturned    float64
+	idleCalls       int // how many times idleSeconds was read (MA-895: attended reads it never)
 	lockOK          bool
 	releaseN        int    // C2: how many times releaseLock was called
 	onRelease       func() // called after each releaseLock (lets a test wait for the latch)
@@ -162,6 +163,7 @@ func (f *fakeEnv) bootTime() int64 {
 
 func (f *fakeEnv) idleSeconds() (float64, bool) {
 	f.probe("idle")
+	f.idleCalls++
 	if !f.idleReturnsAt.IsZero() && !f.nowT.Before(f.idleReturnsAt) {
 		return f.idleReturned, f.idleOK // the owner came back
 	}

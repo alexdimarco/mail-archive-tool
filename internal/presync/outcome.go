@@ -75,8 +75,16 @@ var (
 	OutcomeRefusedElevated    = Outcome{"refused-elevated", "presync_refused_elevated", ClassWarn}
 	OutcomeStateUnreadable    = Outcome{"state-unreadable", "presync_state_unreadable", ClassWarn}
 	OutcomeWatchTruncated     = Outcome{"watch-truncated", "presync_watch_truncated", ClassNote}
-	OutcomeInternalError      = Outcome{"internal-error", "presync_internal_error", ClassWarn}
-	OutcomeCancelled          = Outcome{"cancelled", "", ClassNone}
+	// OutcomeWatchTruncatedNoActivity: the walk was truncated AND nothing arrived
+	// (design-presync-attended A13, C-68), so "nothing arrived" is never hidden
+	// behind a truncated "done".
+	OutcomeWatchTruncatedNoActivity = Outcome{"watch-truncated-noactivity", "presync_watch_truncated_noactivity", ClassNote}
+	// OutcomeWaitEnded: the person pressed "Stop waiting and back up now" while an
+	// attended run waited for mail (A16, OQ-6). Thunderbird is left open and the
+	// backup reads what has arrived; it counts neither synced nor missed.
+	OutcomeWaitEnded     = Outcome{"wait-ended", "presync_wait_ended", ClassNote}
+	OutcomeInternalError = Outcome{"internal-error", "presync_internal_error", ClassWarn}
+	OutcomeCancelled     = Outcome{"cancelled", "", ClassNone}
 )
 
 // allOutcomes is every outcome section 4.9.3 defines, in table order. The
@@ -88,5 +96,6 @@ var allOutcomes = []Outcome{
 	OutcomeQuitTimeout, OutcomeQuitSkippedOthers, OutcomeQuitNoWindow, OutcomeStateUnsaved,
 	OutcomeOwnerActiveSkipped, OutcomeOwnerActive, OutcomeSuccessorFound,
 	OutcomeLeftoverFound, OutcomeProfileUnusable, OutcomeAppNotFound, OutcomeRefusedElevated,
-	OutcomeStateUnreadable, OutcomeWatchTruncated, OutcomeInternalError, OutcomeCancelled,
+	OutcomeStateUnreadable, OutcomeWatchTruncated, OutcomeWatchTruncatedNoActivity, OutcomeWaitEnded,
+	OutcomeInternalError, OutcomeCancelled,
 }

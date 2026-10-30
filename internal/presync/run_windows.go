@@ -19,17 +19,18 @@ func Run(ctx context.Context, cfg Config) Result {
 }
 
 func runWith(ctx context.Context, cfg Config, e *winEnv, sc sessionCtl) Result {
-	plan, outcome, ok := e.resolve(cfg.Profile, cfg.ProfileNamed, cfg.Inputs)
+	// C-18: an attended run's job-named profile must also be in profiles.ini.
+	plan, outcome, ok := e.resolve(cfg.Profile, profileNamedFor(cfg), cfg.Inputs)
 	if !ok {
-		narrate(cfg.Log, SummaryLine(outcome)) // the refusal reason; nothing started
-		return Result{Outcome: outcome}
+		narrate(cfg.Log, endLine(cfg, sessionResult{outcome: outcome, left: LeftNone})) // the refusal reason; nothing started
+		return Result{Outcome: outcome, Left: LeftNone}
 	}
 	narrate(cfg.Log, startLine) // the wait can be minutes — say so before it begins
 	d := buildDeps(e, plan.exe, plan.profile, cfg)
-	d.sctx, d.abandoned = sc.ctx, sc.abandoned
+	d.sctx, d.abandoned, d.markLeft = sc.ctx, sc.abandoned, sc.markLeft
 	res := runSession(ctx, d)
 	if !sc.isAbandoned() { // the watchdog already answered for an abandoned session
-		narrate(cfg.Log, SummaryLine(res.outcome))
+		narrate(cfg.Log, endLine(cfg, res))
 	}
 	return res.result()
 }

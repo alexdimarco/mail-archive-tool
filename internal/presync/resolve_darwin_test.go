@@ -156,6 +156,53 @@ func TestMacValidateProfileMembership(t *testing.T) {
 	}
 }
 
+// covers: MA-896
+// C-18 (OD-4), end to end on macOS: a profile a job names that Thunderbird's
+// profiles.ini does not list is used by a scheduled run (naming it bypasses
+// membership, PC3) but refused for an attended run (profile-unusable), and a
+// listed named profile is used by both. resolve is driven with profileNamedFor,
+// exactly as runWith calls it.
+func TestMacAttendedNamedProfileMustBeListed(t *testing.T) {
+	home := t.TempDir()
+	app := filepath.Join(home, "Applications", "Thunderbird.app")
+	mustMkdir(t, filepath.Join(app, "Contents"))
+	appSupport := filepath.Join(home, "Library", "Thunderbird")
+	listed := filepath.Join(appSupport, "Profiles", "p.default")
+	mustMkdir(t, listed)
+	writeFile(t, filepath.Join(listed, "prefs.js"), "x")
+	writeFile(t, filepath.Join(appSupport, "profiles.ini"), "[Profile0]\nIsRelative=1\nPath=Profiles/p.default\n")
+	unlisted := filepath.Join(home, "copy", "p.default")
+	mustMkdir(t, unlisted)
+	writeFile(t, filepath.Join(unlisted, "prefs.js"), "x")
+
+	e := newMacEnv("")
+	e.geteuid = func() int { return 501 }
+	e.homeDir = func() (string, error) { return home, nil }
+	e.run = func(cmd *exec.Cmd) (string, string, error) {
+		if strings.HasPrefix(cmd.Args[len(cmd.Args)-1], app) {
+			return "org.mozilla.thunderbird\n", "", nil
+		}
+		return "org.mozilla.firefox\n", "", nil
+	}
+
+	for _, c := range []struct {
+		name     string
+		profile  string
+		attended bool
+		want     Outcome
+	}{
+		{"scheduled, a named profile not listed", unlisted, false, OutcomeOK},
+		{"attended, a named listed profile", listed, true, OutcomeOK},
+		{"attended, a named profile not listed", unlisted, true, OutcomeProfileUnusable},
+	} {
+		cfg := Config{Profile: c.profile, ProfileNamed: true, Attended: c.attended}
+		_, got, _ := e.resolve(cfg.Profile, profileNamedFor(cfg), nil)
+		if got != c.want {
+			t.Errorf("%s: resolve = %q, want %q", c.name, got.Name, c.want.Name)
+		}
+	}
+}
+
 // covers: MA-578
 // The profiles.ini parser returns each section's Path (resolved by IsRelative)
 // and each Install* Default (relative); it strips control characters, caps the

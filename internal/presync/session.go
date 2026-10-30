@@ -3,6 +3,7 @@ package presync
 import (
 	"context"
 	"errors"
+	"io"
 	"os"
 	"time"
 )
@@ -35,6 +36,18 @@ type deps struct {
 	// returned on its budget, a Stop or a cancel). An abandoned session starts no
 	// quit request (A10 step 1). nil means never.
 	abandoned func() bool
+
+	// The attended mode (design-presync-attended §2.1; buildDeps copies them from the
+	// Config, neverQuit and endWait only when attended).
+	attended  bool
+	neverQuit bool
+	endWait   context.Context
+	phase     func(phase string, since time.Time)
+	// log receives the once-a-minute progress line while the session waits (A7).
+	log io.Writer
+	// markLeft tells the watchdog what an abandonment would leave Thunderbird as
+	// right now, so its own result can say so (§2.6). nil means no watchdog.
+	markLeft func(Left)
 }
 
 // sessionResult is what one pre-sync session produced: the final outcome, the
@@ -51,20 +64,30 @@ type sessionResult struct {
 	// the caller (via Result.Release → app.Run) so the lock is held across the pre-sync
 	// AND the archive read, then released after the read (C2).
 	release func()
+
+	// A8: the S7 verdict, what Thunderbird was left as, when it was started, how
+	// long the wait for mail ran, and whether Windows' minimize succeeded.
+	verdict   Outcome
+	left      Left
+	started   time.Time
+	waited    time.Duration
+	minimized bool
 }
 
-// result is the caller's view of a session: its outcome, its side warnings, and
-// the release of the profile lock it still holds (C2).
+// result is the caller's view of a session: its outcome, its side warnings, the
+// release of the profile lock it still holds (C2), and the A8 details.
 func (r sessionResult) result() Result {
-	return Result{Outcome: r.outcome, Side: r.side, Release: r.release}
+	return Result{Outcome: r.outcome, Side: r.side, Release: r.release,
+		Verdict: r.verdict, Left: r.left, Started: r.started, Waited: r.waited, Minimized: r.minimized}
 }
 
 // windowMinimizer is the optional capability of an adapter that can only launch
 // Thunderbird VISIBLY (Windows, where SW_HIDE is ignored) and wants the shown
 // window minimized once the process is adopted. A truly-hidden adapter (macOS)
-// does not implement it, so the S6 hook is a no-op there.
+// does not implement it, so the S6 hook is a no-op there. It reports whether the
+// window was minimized (Result.Minimized, A8, C-56).
 type windowMinimizer interface {
-	minimizeMain(ctx, stop context.Context, pid int)
+	minimizeMain(ctx, stop context.Context, pid int) bool
 }
 
 // runSession runs one pre-sync session, S1..S9 (design 4.5). It never fails the
@@ -72,7 +95,7 @@ type windowMinimizer interface {
 // reads afterwards. In v1 it never quits a process that is not provably ours,
 // and never signals or kills.
 func runSession(ctx context.Context, d deps) sessionResult {
-	res := sessionResult{}
+	res := sessionResult{left: LeftNone}
 	e := d.env
 	enter := func(s string) { res.states = append(res.states, s) }
 
@@ -83,11 +106,34 @@ func runSession(ctx context.Context, d deps) sessionResult {
 	if sctx == nil {
 		sctx = context.Background()
 	}
-	// halted: the run was cancelled, the Stop ended, or the watchdog gave up on this
-	// session. A halted session launches nothing (A11) and asks nothing to quit
-	// (A10 step 1); in AS1a every cancel cause is one that quits nothing.
-	halted := func() bool {
-		return ctx.Err() != nil || sctx.Err() != nil || (d.abandoned != nil && d.abandoned())
+	abandoned := func() bool { return d.abandoned != nil && d.abandoned() }
+	// stopped: the Stop ended (a Lock, Shut down) or the watchdog gave up on this
+	// session. Nothing a stopped session does may wait on, or ask anything of,
+	// Thunderbird.
+	stopped := func() bool { return sctx.Err() != nil || abandoned() }
+	// halted: stopped, or the run itself was cancelled. A halted session launches
+	// nothing (A11) and asks nothing to quit (A10 step 1).
+	halted := func() bool { return ctx.Err() != nil || stopped() }
+	// cancelQuit: the person pressed Cancel in an attended run (A4(ii)) — the run's
+	// context ended with the Cancel button's cause and no Stop came with it. Any
+	// other cause is A4(i): quit nothing, record as built.
+	cancelQuit := func() bool {
+		return d.attended && ctx.Err() != nil && errors.Is(context.Cause(ctx), ErrCancelAndQuit) && !stopped()
+	}
+	// setLeft records what the session leaves Thunderbird as, and tells the
+	// watchdog, so a result it returns on its own says the same (§2.6).
+	setLeft := func(l Left) {
+		res.left = l
+		if d.markLeft != nil {
+			d.markLeft(l)
+		}
+	}
+	// report tells the caller the phase, never once the session is abandoned (A15,
+	// C-71): a late call must not overwrite the next run's note.
+	report := func(phase string, since time.Time) {
+		if d.phase != nil && !abandoned() {
+			d.phase(phase, since)
+		}
 	}
 	addSide := func(o Outcome) {
 		for _, s := range res.side {
@@ -168,9 +214,14 @@ func runSession(ctx context.Context, d deps) sessionResult {
 
 	// S4 detect — owner-activity gate, the running gate, the pre-launch snapshot.
 	enter("S4")
-	if s, ok := e.idleSeconds(); !ok || s < d.idleAway.Seconds() {
-		res.outcome = OutcomeOwnerActiveSkipped // the owner is at the computer
-		return res
+	// A1: an attended run is one the person started at this computer (R38), so the
+	// owner being here is the point, not a reason to skip: the idle clock is not
+	// read at all. Every other check stays (§2.3).
+	if !d.attended {
+		if s, ok := e.idleSeconds(); !ok || s < d.idleAway.Seconds() {
+			res.outcome = OutcomeOwnerActiveSkipped // the owner is at the computer
+			return res
+		}
 	}
 	if sig := detectRunning(e, d.profile); sig.running {
 		res.outcome = OutcomeAlreadyRunning // not started, not quit
@@ -214,8 +265,11 @@ func runSession(ctx context.Context, d deps) sessionResult {
 		res.outcome = OutcomeCancelled
 		return res
 	}
+	report(PhaseStarting, launchAt)
+	setLeft(LeftMayBeStarting) // from here an abandonment may leave a Thunderbird starting
 	if err := e.startHidden(d.app, d.profile); err != nil {
 		clear() // write-ahead record removed; no launch to announce, no retry
+		setLeft(LeftNone)
 		if errors.Is(err, errNoDesktopSession) {
 			res.outcome = OutcomeNoDesktopSession
 		} else {
@@ -223,13 +277,61 @@ func runSession(ctx context.Context, d deps) sessionResult {
 		}
 		return res
 	}
+	res.started = launchAt
 
 	// S6 await-up — poll for a candidate that is provably ours.
 	enter("S6")
 	lc := launchCtx{app: d.app, profile: d.profile, launchAt: launchAt, snapshot: snapshot}
 	var child proc
+	// leaveOpenByRule ends an attended session that leaves its Thunderbird open
+	// without asking it anything (A12, A16, A4(ii) under never-close): ownership is
+	// re-verified, and only a Thunderbird still provably ours has its record cleared,
+	// so the next run treats it as an open Thunderbird and leaves it alone (S4).
+	// One that can no longer be proven ours keeps its record for the next run's
+	// recovery (left-open), the R31-safe direction.
+	leaveOpenByRule := func(o Outcome) sessionResult {
+		if m, ok := findOurs(e.thunderbirdProcs(), lc); ok && m.pid == child.pid {
+			clear()
+			setLeft(LeftOpenByRule)
+		} else {
+			setLeft(LeftOpen)
+		}
+		res.outcome = o
+		return res
+	}
+	// pollForChild is the S6 child poll after a Cancel under never-close (C-74): up
+	// to the same 90 s await limit, on a short context of its own that a Stop also
+	// ends — the cancelled run's own context has ended and is not waited on. None
+	// proven by the limit, or a Stop, leaves `may-be-starting` and the `launching`
+	// record for the next run's recovery.
+	pollForChild := func() (proc, bool) {
+		pctx, cancel := context.WithTimeout(sctx, d.awaitUp+d.awaitPoll)
+		defer cancel()
+		for !stopped() && pctx.Err() == nil {
+			if m, ok := findOurs(e.thunderbirdProcs(), lc); ok {
+				return m, true
+			}
+			if e.now().Sub(launchAt) >= d.awaitUp {
+				break
+			}
+			e.sleep(pctx, sctx, d.awaitPoll)
+		}
+		return proc{}, false
+	}
 	for {
 		if halted() {
+			if cancelQuit() && d.neverQuit {
+				// A4(ii) under never-close, S6 (C-74): keep polling for the child this
+				// session started, so its record can be cleared; without the poll, the
+				// `launching` record would make the next run take the person's own
+				// Thunderbird for our leftover (SAF-5). Without NeverQuit (slice AS-Q
+				// only) the Cancel quit follows the poll; until AS-Q it is A4(i).
+				report(PhaseCancelling, e.now())
+				if c, ok := pollForChild(); ok {
+					child = c
+					return leaveOpenByRule(OutcomeCancelled)
+				}
+			}
 			res.outcome = OutcomeCancelled // the launching record stays for recovery
 			return res
 		}
@@ -246,6 +348,7 @@ func runSession(ctx context.Context, d deps) sessionResult {
 	up := e.now()
 	cur.ChildPID, cur.ChildStart, cur.ChildArgs = child.pid, child.start.Unix(), child.args
 	_ = store(stateSyncing) // best effort: a lost one leaves `launching`, which S3 still matches
+	setLeft(LeftOpen)       // ours and up: an abandonment from here leaves it running, announced
 
 	// An adapter that can only launch VISIBLY (Windows, where SW_HIDE is ignored)
 	// minimizes the window it showed, so the pre-sync is a taskbar blip rather than
@@ -253,18 +356,50 @@ func runSession(ctx context.Context, d deps) sessionResult {
 	// its wait ends with the session context (C-64); a truly-hidden adapter (macOS)
 	// does not implement this, so it is a no-op there.
 	if m, ok := e.(windowMinimizer); ok {
-		m.minimizeMain(ctx, sctx, child.pid)
+		res.minimized = m.minimizeMain(ctx, sctx, child.pid)
 	}
 
 	// S7 wait quiet — poll the digest; quiet needs a first change (rev-3, L-M5).
 	enter("S7")
+	report(PhaseWaiting, up)
+	// A16 (OQ-6): "Stop waiting and back up now" ends the wait at once. Only an
+	// attended run has it, and an EndWait that ended before the wait began changes
+	// nothing (the route refuses outside `waiting`, §4.6). The waits in S7 watch a
+	// context that EndWait also ends (A5).
+	endWait := d.endWait
+	if !d.attended || (endWait != nil && endWait.Err() != nil) {
+		endWait = nil
+	}
+	waitCtx := sctx
+	if endWait != nil {
+		cctx, cancelWait := context.WithCancel(sctx)
+		defer cancelWait()
+		stopAfter := context.AfterFunc(endWait, cancelWait)
+		defer stopAfter()
+		waitCtx = endedBy{Context: cctx, also: endWait}
+	}
 	qt := newQuietTracker(up, d.cfg)
 	watchTruncated := false
+	maxMin := int(d.cfg.maxWait / time.Minute)
+	saidMin := 0
 	for {
 		if halted() {
+			res.waited = e.now().Sub(up)
+			if cancelQuit() && d.neverQuit {
+				// A4(ii) under never-close, S7: nothing is asked to close (OQ-1); the
+				// outcome is cancelled, never synced, whatever it was left as (C-72).
+				return leaveOpenByRule(OutcomeCancelled)
+			}
 			storeOrWarn(stateLeftRunning) // our Thunderbird is up; leave it, announce it
 			res.outcome = OutcomeCancelled
 			return res
+		}
+		if endWait != nil && endWait.Err() != nil {
+			// A16: the person ended the wait. Never a close, on any platform and also
+			// after AS-Q (Thunderbird may be mid-fetch); no verdict; the backup reads
+			// what has arrived.
+			res.waited = e.now().Sub(up)
+			return leaveOpenByRule(OutcomeWaitEnded)
 		}
 		sum, trunc := e.digest(d.watch)
 		if trunc {
@@ -273,19 +408,32 @@ func runSession(ctx context.Context, d deps) sessionResult {
 		now := e.now()
 		qt.observe(sum, now)
 		if o, done := qt.verdict(now); done {
-			if watchTruncated && (o == OutcomeOK || o == OutcomeNoActivity) {
-				// the sync happened, but the watch set exceeded its cap: a note,
-				// quiet judged on the part walked (§4.4.2).
-				o = OutcomeWatchTruncated
+			if watchTruncated {
+				// The watch set exceeded its cap, so quiet was judged on the part
+				// walked (§4.4.2): a note. Nothing arriving stays said as nothing
+				// arriving (A13, C-68), never folded into the truncated "done".
+				switch o {
+				case OutcomeOK:
+					o = OutcomeWatchTruncated
+				case OutcomeNoActivity:
+					o = OutcomeWatchTruncatedNoActivity
+				}
 			}
-			res.outcome = o
+			res.outcome, res.verdict, res.waited = o, o, now.Sub(up)
 			break
 		}
 		if !e.pidAlive(child.pid) {
+			res.waited = now.Sub(up)
+			setLeft(LeftNone)
 			res.outcome = OutcomeExitedEarly // closed before quiet
 			return res
 		}
-		e.sleep(ctx, sctx, d.pollEvery)
+		// A7: once a minute, so a long wait is seen to be working (C-43).
+		if n := int(now.Sub(up) / time.Minute); n > saidMin && n >= 1 {
+			saidMin = n
+			narrate(d.log, progressLine(n, maxMin))
+		}
+		e.sleep(ctx, waitCtx, d.pollEvery)
 	}
 
 	// preQuit is the ONE pre-quit function (A10, C-1); every quit goes through it.
@@ -323,6 +471,7 @@ func runSession(ctx context.Context, d deps) sessionResult {
 		}
 		qctx, qcancel := context.WithTimeout(sctx, quitTimeout)
 		defer qcancel()
+		res.waited = e.now().Sub(up) // A8: from "up" to the quit request
 		switch err := e.quit(qctx, child); {
 		case errors.Is(err, errQuitNotPosted):
 			// Nothing was asked (no single main window, say): left open at once, with
@@ -343,15 +492,26 @@ func runSession(ctx context.Context, d deps) sessionResult {
 	// started hidden is still reachable from the Dock, so if the owner has since
 	// opened it, it is theirs now. Then the shared pre-quit function.
 	enter("S8")
-	if s, ok := e.idleSeconds(); !ok || s < d.quitIdleAway.Seconds() {
-		// The owner is back at the computer, or only briefly paused while reading (C1:
-		// a HIGHER idle bar for the quit than for the start, so a normal reading pause
-		// never quits a Thunderbird the owner may have adopted), or the reading is
-		// unreadable (counts as active): leave the Thunderbird we started, announce it,
-		// and never quit it on them.
-		storeOrWarn(stateLeftRunning)
-		res.outcome = OutcomeOwnerActive
-		return res
+	switch {
+	case d.attended && d.neverQuit:
+		// A12 (OQ-1): this platform's attended close is not allowed, so nothing is
+		// ever asked to close. Ownership re-verified, the record cleared, the S7
+		// verdict kept as the outcome (C-72), and the person told it was left open.
+		return leaveOpenByRule(res.verdict)
+	case d.attended:
+		// A2: the person is here by definition, so the S8 idle re-check is skipped
+		// and the shared pre-quit function decides (reached only from slice AS-Q).
+	default:
+		if s, ok := e.idleSeconds(); !ok || s < d.quitIdleAway.Seconds() {
+			// The owner is back at the computer, or only briefly paused while reading
+			// (C1: a HIGHER idle bar for the quit than for the start, so a normal
+			// reading pause never quits a Thunderbird the owner may have adopted), or
+			// the reading is unreadable (counts as active): leave the Thunderbird we
+			// started, announce it, and never quit it on them.
+			storeOrWarn(stateLeftRunning)
+			res.outcome = OutcomeOwnerActive
+			return res
+		}
 	}
 	if o, end := preQuit(); end {
 		res.outcome = o
@@ -375,7 +535,24 @@ func runSession(ctx context.Context, d deps) sessionResult {
 	// S9 post — clear the record (nothing announced on the happy path).
 	enter("S9")
 	clear()
+	setLeft(LeftClosed)
 	return res
+}
+
+// endedBy is a context that is also done the moment `also` is: its Done channel
+// is the embedded context's (which an after-function cancels when `also` ends),
+// and its Err reports `also` at once, without waiting for that after-function to
+// run, so no wait in S7 can begin after EndWait has ended (A5, A16).
+type endedBy struct {
+	context.Context
+	also context.Context
+}
+
+func (c endedBy) Err() error {
+	if err := c.Context.Err(); err != nil {
+		return err
+	}
+	return c.also.Err()
 }
 
 func pidSet(ps []proc) map[int]bool {

@@ -110,19 +110,22 @@ func (e *winEnv) startHidden(exe, profile string) error {
 // no single main window appears in time it does nothing (the launch stays visible —
 // the accepted fallback). macOS launches truly hidden and does not implement this.
 // Its wait ends at once when ctx or stop (the session context) ends — a Lock,
-// Shut down or the watchdog abandoning the session (C-64).
-func (e *winEnv) minimizeMain(ctx, stop context.Context, pid int) {
+// Shut down or the watchdog abandoning the session (C-64). It reports whether it
+// minimized the window, so every Windows text can say "its window may still be on
+// screen" when it did not (Result.Minimized, C-56).
+func (e *winEnv) minimizeMain(ctx, stop context.Context, pid int) bool {
 	deadline := e.now().Add(minimizeWait)
 	for e.now().Before(deadline) {
 		if ctx.Err() != nil || (stop != nil && stop.Err() != nil) {
-			return
+			return false
 		}
 		if hwnd, ok := e.w.mainWindow(uint32(pid)); ok {
 			e.w.minimizeWindow(hwnd)
-			return
+			return true
 		}
 		e.sleep(ctx, stop, 500*time.Millisecond)
 	}
+	return false
 }
 
 // quit asks the proven child to close (design §4, S8). It holds an OpenProcess

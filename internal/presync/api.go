@@ -2,6 +2,7 @@ package presync
 
 import (
 	"context"
+	"fmt"
 	"io"
 	"time"
 )
@@ -23,9 +24,39 @@ type Config struct {
 	Log          io.Writer
 	// Stop ends the session AT ONCE with no quit request: the session context is
 	// derived from it, and the watchdog returns when it ends, abandoning the session
-	// (design-presync-attended §2.6, C-3, C-5). Separate from the run's ctx. nil means
+	// (design-presync-attended §2.6, C-3, C-5). Separate from the run's ctx, whose
+	// cause ErrCancelAndQuit (the Cancel button) is handled by A4(ii). nil means
 	// never. No caller sets it before the Desktop's Lock and Shut down use it.
 	Stop context.Context
+
+	// Attended: the person started this run and is watching it, at this computer
+	// (design-presync-attended §2.2, R38). The S4 and S8 owner-activity checks are
+	// skipped; every other check stays (§2.3), and a profile the job names must also
+	// be listed in profiles.ini (C-18). Never persisted: no job file, descriptor,
+	// schedule or record carries it (C-36), so it has no JSON tag anywhere.
+	Attended bool
+	// Surface picks the words of the end line: SurfaceDesktop names buttons,
+	// SurfaceCLI names none (§4.6, C-38).
+	Surface string
+	// GOOS picks the platform words of the end line (the Dock, or the taskbar);
+	// "" means runtime.GOOS (C-24).
+	GOOS string
+	// Phase, when set, is told "starting", "waiting" and "cancelling" as the session
+	// moves (§4.6, C-19). The session makes no Phase call once the watchdog has
+	// abandoned it (A15, C-71).
+	Phase func(phase string, since time.Time)
+	// KeepOpen is the "Keep Thunderbird open" press (C-46, OQ-1). It is read only
+	// where a quit can be sent, so it has no reader before slice AS-Q (C-50).
+	KeepOpen func() bool
+	// NeverQuit: an attended run on this platform never asks Thunderbird to close,
+	// at quiet or on Cancel (§2.8, OQ-1). presyncjob sets it from
+	// AttendedQuitAllowed(goos). Ignored when !Attended.
+	NeverQuit bool
+	// EndWait, when it ends during S7, ends the wait for mail at once: the person
+	// pressed "Stop waiting and back up now" (A16, OQ-6). It cancels nothing else and
+	// never closes Thunderbird; the backup goes on. nil = never. Ignored when
+	// !Attended, and when it ended before S7 began.
+	EndWait context.Context
 }
 
 // Result is one pre-sync's outcome, for the caller to surface as a warning.
@@ -40,6 +71,22 @@ type Result struct {
 	// read, so a second scheduled run cannot pre-sync (and compact) this profile while
 	// this run reads it (adversarial finding C2). app.Run defers it.
 	Release func()
+
+	// Verdict is the S7 verdict (ok, ok-noactivity, watch-truncated,
+	// watch-truncated-noactivity or not-quiet), kept whatever the final outcome
+	// became, so a scheduled owner-active or quit-* ending still says whether mail
+	// arrived (§2.1, OQ-5). Zero when the session never reached a verdict.
+	Verdict Outcome
+	// Left is what the session left Thunderbird as (A8, C-23).
+	Left Left
+	// Started is when this session started Thunderbird; zero when it started none.
+	Started time.Time
+	// Waited runs from Thunderbird proven up to the quit request, or to the end of
+	// the wait for mail (the verdict, a stopped wait or a cancel).
+	Waited time.Duration
+	// Minimized: Windows' backstop minimize succeeded (A14, C-56); false on macOS,
+	// which starts Thunderbird truly out of sight.
+	Minimized bool
 }
 
 // Default timings (design §4.4.2, §4.5, §4.9.4 "quiet 3 min, up to 20 min"). The
@@ -153,6 +200,18 @@ var noteText = map[string]string{
 	OutcomeProfileBusy.Code:         "Thunderbird sync: another backup is syncing this Thunderbird profile, so this run skipped it. Archiving what is on disk.",
 	OutcomeOwnerActiveSkipped.Code:  "Thunderbird sync: you were using the computer, so Thunderbird was not started. Archiving what is on disk.",
 	OutcomeWatchTruncated.Code:      "Thunderbird sync: done (the mail-folder set was very large, so only part of it was watched for quiet). Archiving now.",
+	// A13 (C-68): a truncated walk with nothing arriving is said as nothing new, never as done-and-synced.
+	OutcomeWatchTruncatedNoActivity.Code: "Thunderbird sync: Thunderbird was started, but nothing new had arrived in 20 minutes (only part of its mail folders could be watched). Archiving what is on disk.",
+	OutcomeWaitEnded.Code:                "Thunderbird sync: the wait for mail was stopped, as you asked; Thunderbird was left open. Archiving the mail that has arrived.",
+}
+
+// progressLine is the once-a-minute narration while the session waits for mail
+// (A7): n whole minutes so far, of at most max.
+func progressLine(n, max int) string {
+	if n > max {
+		n = max
+	}
+	return fmt.Sprintf("Thunderbird sync: still waiting for mail to arrive (%d min so far, up to %d)", n, max)
 }
 
 // narrate writes one owner-facing line to w when both are non-empty.

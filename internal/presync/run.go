@@ -2,6 +2,7 @@ package presync
 
 import (
 	"context"
+	"errors"
 	"hash/fnv"
 	"os"
 	"path/filepath"
@@ -24,6 +25,9 @@ import (
 type sessionCtl struct {
 	ctx       context.Context
 	abandoned func() bool
+	// markLeft is where the session says what an abandonment would leave
+	// Thunderbird as; the watchdog's own result carries it (§2.6).
+	markLeft func(Left)
 }
 
 func (s sessionCtl) isAbandoned() bool { return s.abandoned != nil && s.abandoned() }
@@ -35,8 +39,11 @@ func (s sessionCtl) isAbandoned() bool { return s.abandoned != nil && s.abandone
 // still runs (R32).
 //
 // It returns (1) the session's own result when it ends; (2) at once, `cancelled`,
-// when stop or ctx ends (in AS1a every cancel cause is one that quits nothing); (3)
-// at the budget, `internal-error`. On (2) and (3) it marks the session abandoned
+// when stop ends, or ctx ends with any cause but ErrCancelAndQuit — with that cause
+// (the person's Cancel) it waits for the session's own bounded Cancel path (the S6
+// child poll under never-close, C-74) unless stop ends first; (3) at the budget,
+// `internal-error`. Its own result's Left is what the session last said an
+// abandonment would leave Thunderbird as. On (2) and (3) it marks the session abandoned
 // and cancels the session context, so the session starts no quit request, a
 // request in flight and every wait end, and the goroutine returns soon after
 // (C-3). The profile lock the abandoned session holds is then released by a
@@ -50,6 +57,9 @@ func runWatchdog(ctx, stop context.Context, budget time.Duration, fn func(sessio
 	}
 	sctx, cancelSession := context.WithCancel(parent)
 	var abandoned atomic.Bool
+	var left atomic.Value
+	left.Store(LeftNone)
+	markLeft := func(l Left) { left.Store(l) }
 	latch := &releaseLatch{}
 
 	var mu sync.Mutex
@@ -68,7 +78,7 @@ func runWatchdog(ctx, stop context.Context, budget time.Duration, fn func(sessio
 					r = Result{Outcome: OutcomeInternalError}
 				}
 			}()
-			r = fn(sessionCtl{ctx: sctx, abandoned: abandoned.Load})
+			r = fn(sessionCtl{ctx: sctx, abandoned: abandoned.Load, markLeft: markLeft})
 		}()
 		mu.Lock()
 		if gaveUp {
@@ -88,16 +98,26 @@ func runWatchdog(ctx, stop context.Context, budget time.Duration, fn func(sessio
 		ctxDone = ctx.Done()
 	}
 	var out Outcome
-	select {
-	case r := <-ch:
-		cancelSession()
-		return r
-	case <-timer.C:
-		out = OutcomeInternalError
-	case <-ctxDone:
-		out = OutcomeCancelled
-	case <-parent.Done():
-		out = OutcomeCancelled
+wait:
+	for {
+		select {
+		case r := <-ch:
+			cancelSession()
+			return r
+		case <-timer.C:
+			out = OutcomeInternalError
+			break wait
+		case <-ctxDone:
+			if errors.Is(context.Cause(ctx), ErrCancelAndQuit) {
+				ctxDone = nil // the person's Cancel: the session's Cancel path is bounded; wait for it
+				continue
+			}
+			out = OutcomeCancelled
+			break wait
+		case <-parent.Done():
+			out = OutcomeCancelled
+			break wait
+		}
 	}
 	mu.Lock()
 	if delivered { // the session ended at the same moment: its own result stands
@@ -109,7 +129,7 @@ func runWatchdog(ctx, stop context.Context, budget time.Duration, fn func(sessio
 	abandoned.Store(true)
 	mu.Unlock()
 	cancelSession()
-	return Result{Outcome: out, Release: latch.callerReleased}
+	return Result{Outcome: out, Release: latch.callerReleased, Left: left.Load().(Left)}
 }
 
 // releaseLatch frees an abandoned session's profile lock once both halves are
@@ -149,12 +169,23 @@ func (l *releaseLatch) callerReleased() {
 // buildDeps assembles the session inputs from the resolved executable and profile
 // and the config: the fixed watch roots (§4.4.2/§4.3), the state record and lock
 // under the state directory (never the archive, §4.6), the record template, and
-// the default timings. Platform-neutral — each adapter resolves exe+profile its
-// own way, then hands them here.
+// the default timings, and the attended fields (design-presync-attended §2.1):
+// NeverQuit and EndWait reach the session only for an attended run.
+// Platform-neutral — each adapter resolves exe+profile its own way, then hands
+// them here.
 func buildDeps(e env, exe, profile string, cfg Config) deps {
 	_ = os.MkdirAll(cfg.StateDir, 0o700)
 	hash := profileHash(profile)
+	var endWait context.Context
+	if cfg.Attended {
+		endWait = cfg.EndWait
+	}
 	return deps{
+		attended:  cfg.Attended,
+		neverQuit: cfg.Attended && cfg.NeverQuit,
+		endWait:   endWait,
+		phase:     cfg.Phase,
+		log:       cfg.Log,
 		env:       e,
 		cfg:       quietConfig{settle: defSettle, quiet: defQuiet, maxWait: defMaxWait},
 		app:       exe,
