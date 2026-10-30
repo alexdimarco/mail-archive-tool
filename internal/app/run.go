@@ -132,11 +132,34 @@ type Options struct {
 	// recorded; it is nil in every path but the opt-in one (design
 	// docs/design-thunderbird-presync.md §4.1).
 	BeforeRead func(ctx context.Context, files []string) BeforeReadResult
+	// PresyncWanted says the job asks for the Thunderbird sync, and PresyncAttended
+	// that the person started this run at this computer (R38). Set by the caller's
+	// options builder; never written (design-presync-attended §4.1, C-33, C-34).
+	PresyncWanted, PresyncAttended bool
+	// OnReadStart, when set, is called once right before the source loop, after the
+	// sweeps, the index open and the sealed catch-up — the moment mail reading starts
+	// (design-presync-attended §3.2, C-76). The run checks for a cancel right after it.
+	OnReadStart func()
+}
+
+// PresyncOutcome is the Thunderbird sync's outcome for the run's caller, in memory
+// only: it carries no JSON tag, and the last-run record converts it to its own
+// type (design-presync-attended §4.1, C-36, C-80).
+type PresyncOutcome struct {
+	Code, Name, Class string // Class: "none" | "note" | "warn"
+	Synced            bool   // the outcome counts as synced (§5.2), from the outcome alone
+	// Left: none | closed | left-open | left-open-by-choice | left-open-by-rule |
+	// may-be-starting.
+	Left      string
+	Minimized bool   // Windows: the backstop minimize succeeded
+	Verdict   string // the wait's verdict, "" if none
+	Line      string // the owner-facing line, in the surface's and platform's words; no path
+	Started   time.Time
+	Waited    time.Duration
 }
 
 // BeforeReadResult is what the pre-sync hook returns: warnings for the run to
-// record. The session summary stored in the last-run record is added by a later
-// slice (it is additive).
+// record, and the session's outcome for the caller (Result.Presync).
 type BeforeReadResult struct {
 	Warnings []state.RunWarning
 	// Release, when non-nil, is called by Run AFTER the sources are read (always, via
@@ -144,6 +167,8 @@ type BeforeReadResult struct {
 	// lock across the pre-sync AND the read, so a second scheduled run cannot pre-sync
 	// and compact that profile while this run reads it (adversarial finding C2).
 	Release func()
+	// Outcome is the session's outcome, handed back to the caller as Result.Presync.
+	Outcome *PresyncOutcome
 }
 
 // followsLinks says whether path is one of the inputs that opted in to following
@@ -232,6 +257,11 @@ type Result struct {
 	// encrypted is set by finish for a run that wrote an encrypted archive, which
 	// has no attachments-report.tsv for a partial run's text to point at.
 	encrypted bool
+
+	// Presync is the Thunderbird sync's outcome when the run had a pre-sync hook that
+	// ran, on every return (design-presync-attended §4.1, C-12); nil otherwise. In
+	// memory only.
+	Presync *PresyncOutcome
 }
 
 // finish fills the manifest-derived fields of a Result and regenerates the
@@ -427,6 +457,18 @@ func fileReadOnly(path string) bool {
 // nil in production.
 var exporterSetup func(*export.Exporter)
 
+// runPause, when a test sets it, is called at named steps between the run's start and
+// its source loop ("index-open", "sealed-catch-up"), so a test can cancel the run
+// during them (design-presync-attended MA-902). Nil in production.
+var runPause func(point string)
+
+// pauseAt calls runPause at point when a test set it.
+func pauseAt(point string) {
+	if runPause != nil {
+		runPause(point)
+	}
+}
+
 // ProgressFunc, if provided, is called after each processed message with the
 // running stats. Keep it cheap; it runs inline with the export loop.
 type ProgressFunc func(stats export.Stats)
@@ -572,9 +614,14 @@ func Run(ctx context.Context, opts Options, logger *log.Logger, onProgress Progr
 	// The opt-in Thunderbird pre-sync runs here, after the lock and the run's
 	// start and before any source is read; nil unless a caller opts in, and it
 	// never fails the run (design thunderbird-presync §4.1). Its warnings join
-	// this run's record before the deferred finalizer captures it.
+	// this run's record before the deferred finalizer captures it. A run already
+	// cancelled never starts it (design-presync-attended C-10): the T16 check below
+	// records it cancelled.
 	var presyncRelease func()
-	if opts.BeforeRead != nil {
+	// presyncOut is the session's outcome, kept in memory and handed back as
+	// Result.Presync on every return (design-presync-attended §4.1, C-12, C-53).
+	var presyncOut *PresyncOutcome
+	if opts.BeforeRead != nil && ctx.Err() == nil {
 		// A panic in the pre-sync session is recovered here, so it can never fail
 		// the archive (R32, design §4.9.1): the run records presync_internal_error
 		// and reads the sources anyway.
@@ -582,12 +629,14 @@ func Run(ctx context.Context, opts Options, logger *log.Logger, onProgress Progr
 			defer func() {
 				if r := recover(); r != nil {
 					begun.Warnings = append(begun.Warnings, state.RunWarning{Code: "presync_internal_error", Message: "the Thunderbird pre-sync failed unexpectedly; the archive ran anyway"})
+					presyncOut = &PresyncOutcome{Name: "internal-error", Class: "warn"}
 					logger.Printf("warning: the Thunderbird pre-sync panicked and was recovered (%v); the archive ran anyway", r)
 				}
 			}()
 			br := opts.BeforeRead(ctx, files)
 			begun.Warnings = append(begun.Warnings, br.Warnings...)
 			presyncRelease = br.Release
+			presyncOut = br.Outcome
 		}()
 	}
 	// C2: release the pre-sync's per-profile lock AFTER the sources are read. The defer
@@ -598,6 +647,16 @@ func Run(ctx context.Context, opts Options, logger *log.Logger, onProgress Progr
 		defer presyncRelease()
 	}
 	defer recordRun(opts, begun, &result, &err, logger)
+	// Registered after recordRun so it runs first: every return below, the early ones
+	// that build a fresh Result included, hands the caller the session's outcome.
+	defer func() { result.Presync = presyncOut }()
+	// T16 (design-presync-attended §4.1, C-11): a cancel during the pre-sync, or before
+	// it, stops the run here, before any sweep, index or source. It comes after the
+	// deferred recordRun and Release, so the record ends cancelled, never running, and
+	// the profile lock is released.
+	if ctx.Err() != nil {
+		return result, context.Canceled
+	}
 	runAt := begun.Started
 
 	// On -auto, warn up front when a live Exchange/IMAP .ost is about to be read
@@ -694,6 +753,7 @@ func Run(ctx context.Context, opts Options, logger *log.Logger, onProgress Progr
 		if err != nil {
 			return Result{}, withKind(state.FailIndex, indexOpenError(idxPath, opts.Out, err))
 		}
+		pauseAt("index-open")
 	}
 	if idx != nil { // nil for a sealed index with no room to work on it: marked behind
 		defer closeRunIndex(idx, si != nil, logger)
@@ -714,6 +774,7 @@ func Run(ctx context.Context, opts Options, logger *log.Logger, onProgress Progr
 		// before the walk; the run's commits seal it (phase2b §6, P2b-C16).
 		if sealed != nil && (sealed.IndexBehind() || (!sealed.HasIndex() && manifest.Len() > 0)) {
 			si.catchUp(manifest, units, sealed, logger)
+			pauseAt("sealed-catch-up")
 		}
 		warns := newIndexWarnings(logger)
 		defer warns.flush()
@@ -785,6 +846,30 @@ func Run(ctx context.Context, opts Options, logger *log.Logger, onProgress Progr
 	var firstErr error
 	var fatal *RunFatalError        // a run-level fault of the archive itself: it ends the run
 	var stopped *SourceStoppedError // the first source the local breaker ended: the run goes on without it
+	// cancelled ends a cancelled run once its last commit was attempted: what the run
+	// did is kept, its report regenerated, and it returns cancelled — unless that last
+	// save failed, when "progress was kept" would be false and it is recorded failed.
+	cancelled := func() (Result, error) {
+		result.gapsRecovered, result.gapsClosedGone = lr.recovered, lr.closedGone
+		finish(opts.Out, &result, exp, manifest, idx, indexErrors, true, logger)
+		if saveErr != nil {
+			return result, manifestSaveFailure(mpath, saveErr)
+		}
+		return result, context.Canceled
+	}
+	// Mail reading starts here (design-presync-attended §3.2, C-76): the caller is told,
+	// then a cancel during the sweeps, the index open, the key repair or the sealed
+	// catch-up stops the run before any source is opened, through the source loop's own
+	// cancel path, so the catch-up's work is kept as a cancel during the first source
+	// would keep it.
+	if opts.OnReadStart != nil {
+		opts.OnReadStart()
+	}
+	if ctx.Err() != nil {
+		saveErr = commit(nil, idx, manifest, logger)
+		stopOnLostLock(saveErr, &lockLost)
+		return cancelled()
+	}
 	for _, f := range files {
 		runErr := runFile(ctx, lr, f, opts.CopyFirst, followsLinks(opts.FollowLinks, f), func(stats export.Stats) {
 			checkpoint(stats)
@@ -805,13 +890,7 @@ func Run(ctx context.Context, opts Options, logger *log.Logger, onProgress Progr
 		stopOnLostLock(saveErr, &lockLost)
 
 		if errors.Is(runErr, context.Canceled) {
-			result.gapsRecovered, result.gapsClosedGone = lr.recovered, lr.closedGone
-			finish(opts.Out, &result, exp, manifest, idx, indexErrors, true, logger)
-			if saveErr != nil {
-				// "progress was kept" would be false: record it failed.
-				return result, manifestSaveFailure(mpath, saveErr)
-			}
-			return result, context.Canceled
+			return cancelled()
 		}
 		if errors.As(runErr, &fatal) {
 			// The archive's location or volume can no longer be written: the next source
