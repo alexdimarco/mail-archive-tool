@@ -26,12 +26,19 @@ func (d *dashboard) runJob(fn func(*log.Logger) (string, error)) error {
 // for: a new archive's first backup is not the current archive's (MAKE-02).
 func (d *dashboard) runJobOn(out string, fn func(*log.Logger) (string, error)) error {
 	c := d.cap
+	encrypted := out != "" && app.ArchiveEncrypted(out)
+	onCurrent := out != "" && samePath(out, d.cfg.effectiveOut())
 	c.mu.Lock()
 	if c.running {
 		c.mu.Unlock()
 		return fmt.Errorf("a task is already running — wait for it to finish")
 	}
 	c.running, c.device, c.lines, c.result, c.errMsg = true, nil, nil, "", ""
+	// A new job in the slot (design-presync-attended §4.6, C-15, C-71): its own id, its
+	// archive, and the sync fields reset together with the lines and the result.
+	c.slot++
+	c.jobOut, c.encrypted, c.onCurrent, c.muted = out, encrypted, onCurrent, false
+	c.resetSyncLocked()
 	c.mu.Unlock()
 	// The archive the job runs on, taken as it starts: a switch while it runs does not
 	// change how its failure is worded (the P3-3 plan, 3d).

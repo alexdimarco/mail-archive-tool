@@ -162,16 +162,105 @@ func TestScheduledRunIsNeverAttended(t *testing.T) {
 	logger := log.New(io.Discard, "", 0)
 	off := job.Job{Name: "x", Out: out, Mode: "incremental"}
 	for _, mode := range []runMode{runScheduled, runAttended} {
-		if o := optsForJob(off, nil, logger, mode); o.BeforeRead != nil || o.PresyncWanted {
+		if o := optsForJob(off, nil, logger, runHooks{}, mode); o.BeforeRead != nil || o.PresyncWanted {
 			t.Errorf("mode %v, sync off: hook installed %v, PresyncWanted %v", mode, o.BeforeRead != nil, o.PresyncWanted)
 		}
 	}
 	on := job.Job{Name: "x", Out: out, Mode: "incremental", ThunderbirdSync: &job.ThunderbirdSync{}}
-	if o := optsForJob(on, nil, logger, runScheduled); !o.PresyncWanted || o.PresyncAttended || o.BeforeRead == nil {
+	if o := optsForJob(on, nil, logger, runHooks{}, runScheduled); !o.PresyncWanted || o.PresyncAttended || o.BeforeRead == nil {
 		t.Errorf("scheduled sync job: PresyncWanted %v, PresyncAttended %v, hook %v", o.PresyncWanted, o.PresyncAttended, o.BeforeRead != nil)
 	}
-	if o := optsForJob(on, nil, logger, runAttended); !o.PresyncWanted || !o.PresyncAttended {
+	if o := optsForJob(on, nil, logger, runHooks{}, runAttended); !o.PresyncWanted || !o.PresyncAttended {
 		t.Errorf("attended sync job: PresyncWanted %v, PresyncAttended %v", o.PresyncWanted, o.PresyncAttended)
+	}
+}
+
+// covers: MA-898
+// The plaintext Run now is attended (R38; design-presync-attended §2.2, slice AS4 —
+// the positive half; C-44, C-49, C-79, OQ-1, OQ-2, OQ-6). Through the presyncjob
+// seam, a real RunJobInProcess of a job with the sync, for macOS and for Windows,
+// hands the session Attended true, the Desktop's words, the Run now's Stop and
+// EndWait, and NeverQuit from AttendedQuitAllowed alone (both values) — but only
+// where AttendedStartAllowed is true: where it is false the session is never
+// called, StartNotAllowed says so once, and the backup still runs. Positive twin
+// first: the start allowed, the session is called once. A job file carrying
+// "attended": false changes nothing; a scheduled run of the same job stays
+// unattended with no EndWait (TestScheduledRunIsNeverAttended).
+func TestRunNowIsAttended(t *testing.T) {
+	out, mbox := headlessFixture(t)
+	fake := &fakeSession{}
+	restore := presyncjob.OverrideSessionForTest(fake.run, t.TempDir())
+	defer restore()
+	jobPath := filepath.Join(t.TempDir(), "mailarchive-nightly.json")
+	if err := job.Write(jobPath, job.Job{Name: "mailarchive-nightly", Out: out, Mode: "incremental",
+		Inputs: []string{mbox}, ThunderbirdSync: &job.ThunderbirdSync{}}); err != nil {
+		t.Fatal(err)
+	}
+	logger := log.New(io.Discard, "", 0)
+	stop, stopEnd := context.WithCancel(context.Background())
+	defer stopEnd()
+	endWait, endWaitEnd := context.WithCancel(context.Background())
+	defer endWaitEnd()
+
+	n := 0
+	for _, goos := range []string{"darwin", "windows"} {
+		for _, quitAllowed := range []bool{false, true} {
+			r := presync.OverrideTablesForTest(map[string]bool{goos: quitAllowed}, map[string]bool{goos: true})
+			var notAllowed int
+			var ended []app.PresyncOutcome
+			res, err := RunJobInProcess(context.Background(), stop, jobPath, logger, RunNow{GOOS: goos, EndWait: endWait,
+				StartNotAllowed: func() { notAllowed++ }, OnEnd: func(o app.PresyncOutcome) { ended = append(ended, o) }})
+			r()
+			if err != nil || res == "" {
+				t.Fatalf("%s: the Run now failed: %v", goos, err)
+			}
+			n++
+			calls := fake.calls()
+			if len(calls) != n {
+				t.Fatalf("%s, quit allowed %v: the session was called %d times in all, want %d", goos, quitAllowed, len(calls), n)
+			}
+			c := calls[n-1]
+			if !c.Attended || c.NeverQuit != !quitAllowed || c.EndWait != endWait || c.Stop != stop ||
+				c.Surface != presync.SurfaceDesktop || c.GOOS != goos {
+				t.Errorf("%s, quit allowed %v: handed Attended %v, NeverQuit %v, EndWait %v, Stop %v, Surface %q, GOOS %q",
+					goos, quitAllowed, c.Attended, c.NeverQuit, c.EndWait == endWait, c.Stop == stop, c.Surface, c.GOOS)
+			}
+			if notAllowed != 0 || len(ended) != 1 {
+				t.Errorf("%s: start allowed, yet StartNotAllowed called %d times; OnEnd %d times", goos, notAllowed, len(ended))
+			}
+		}
+		// The start not allowed on this platform (C-49): no hook, said once, the backup runs.
+		r := presync.OverrideTablesForTest(map[string]bool{goos: true}, map[string]bool{goos: false})
+		var notAllowed int
+		res, err := RunJobInProcess(context.Background(), stop, jobPath, logger, RunNow{GOOS: goos, EndWait: endWait,
+			StartNotAllowed: func() { notAllowed++ }})
+		r()
+		if err != nil || res == "" {
+			t.Fatalf("%s, start not allowed: the backup did not run: %v", goos, err)
+		}
+		if len(fake.calls()) != n || notAllowed != 1 {
+			t.Errorf("%s, start not allowed: the session was called (%d calls, want %d), StartNotAllowed %d times, want 1",
+				goos, len(fake.calls()), n, notAllowed)
+		}
+	}
+
+	// A job file saying "attended": false is not read either way.
+	raw := map[string]any{"version": job.Version, "name": "mailarchive-nightly", "out": out, "mode": "incremental",
+		"inputs": []string{mbox}, "attended": false, "thunderbird_sync": map[string]any{"attended": false}}
+	b, err := json.Marshal(raw)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(jobPath, b, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	r := presync.OverrideTablesForTest(nil, map[string]bool{runtime.GOOS: true})
+	defer r()
+	if _, err := RunJobInProcess(context.Background(), stop, jobPath, logger, RunNow{}); err != nil {
+		t.Fatal(err)
+	}
+	if calls := fake.calls(); len(calls) != n+1 || !calls[n].Attended {
+		t.Errorf("a job file saying attended false: %d calls, attended %v; want the Run now attended", len(calls), len(calls) > n && calls[n].Attended)
 	}
 }
 
@@ -251,7 +340,9 @@ func attendedTagProblems(types []reflect.Type) []string {
 // The attended mode is set only through the run mode (R38; design-presync-attended
 // §2.2, C-41/T10 — matched on the mode constant, never a literal): every call of
 // optsForJob passes one of the two mode constants, and RunHeadless passes the
-// scheduled one; in the wizard only optsForJob sets PresyncAttended or Attended,
+// scheduled one; the plaintext Run now (RunJobInProcess) passes the attended one
+// from slice AS4, and the encrypted Run now the scheduled one until slice AS8
+// (C-44, C-81); in the wizard only optsForJob sets PresyncAttended or Attended,
 // and only from the mode; presyncjob hands the session the caller's Attended and
 // nothing else; the command line sets neither (until slice AS10); and no non-test
 // file calls the session seam's test override. Each check catches a planted
@@ -260,6 +351,8 @@ func TestAttendedSetOnlyThroughTheMode(t *testing.T) {
 	planted := map[string]struct{ kind, src string }{
 		"RunHeadless attended": {"wizard", "package wizard\nfunc RunHeadless(p string) int { optsForJob(j, nil, l, runAttended); return 0 }\n"},
 		"a literal mode":       {"wizard", "package wizard\nfunc RunHeadless(p string) int { optsForJob(j, nil, l, 1); return 0 }\n"},
+		"Run now scheduled":    {"wizard", "package wizard\nfunc RunJobInProcess() { optsForJob(j, nil, l, h, runScheduled) }\n"},
+		"keyed attended early": {"wizard", "package wizard\nfunc RunJobInProcessKeyed() { optsForJob(j, nil, l, h, runAttended) }\n"},
 		"a literal attended":   {"wizard", "package wizard\nfunc optsForJob() { opts.PresyncAttended = true }\n"},
 		"set elsewhere":        {"wizard", "package wizard\nfunc RunJobInProcess() { opts.PresyncAttended = mode == runAttended }\n"},
 		"hook literal":         {"presyncjob", "package presyncjob\nfunc SetHook() { _ = presync.Config{Attended: true} }\n"},
@@ -379,6 +472,18 @@ func modeProblems(fset *token.FileSet, kind string, files []*ast.File) []string 
 							headlessCalls++
 							if id, ok := last.(*ast.Ident); !ok || id.Name != "runScheduled" {
 								at(x, "RunHeadless does not pass runScheduled")
+							}
+						}
+						// Slice AS4 (C-44): the plaintext Run now is attended; the
+						// encrypted one stays scheduled until slice AS8 (C-81).
+						if name == "RunJobInProcess" {
+							if id, ok := last.(*ast.Ident); !ok || id.Name != "runAttended" {
+								at(x, "RunJobInProcess does not pass runAttended")
+							}
+						}
+						if name == "RunJobInProcessKeyed" {
+							if id, ok := last.(*ast.Ident); !ok || id.Name != "runScheduled" {
+								at(x, "RunJobInProcessKeyed is attended before slice AS8")
 							}
 						}
 					}

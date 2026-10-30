@@ -2,6 +2,7 @@ package wizard
 
 import (
 	"bytes"
+	"context"
 	"errors"
 	"io"
 	"log"
@@ -123,7 +124,7 @@ func TestARunJobRefusesAnEncryptedArchiveBeforeItsRunLog(t *testing.T) {
 
 	// Run now refuses before it starts anything: nothing reaches its log.
 	var runLog bytes.Buffer
-	_, err = RunJobInProcess(jobPath, log.New(&runLog, "", 0))
+	_, err = RunJobInProcess(context.Background(), nil, jobPath, log.New(&runLog, "", 0), RunNow{})
 	if !errors.Is(err, app.ErrEncryptedNeedsKey) {
 		t.Fatalf("Run now: want ErrEncryptedNeedsKey, got %v", err)
 	}

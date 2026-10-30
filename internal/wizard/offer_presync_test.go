@@ -1,6 +1,7 @@
 package wizard
 
 import (
+	"runtime"
 	"strings"
 	"testing"
 
@@ -24,12 +25,23 @@ func TestJobForSetsThunderbirdSync(t *testing.T) {
 	}
 }
 
-// covers: MA-574, MA-567
+// covers: MA-574, MA-567, MA-915
 // The schedule-step sync question is built from the single source notice
-// (presync.SyncNotice) so the GUI wording cannot drift from the §6 paragraph.
+// (presync.SyncNotice, as this platform shows it: presync.SyncNoticeFor) so the GUI
+// wording cannot drift from the §6 paragraph. With this platform's attended start
+// allowed, it also says a backup started with Run now does not wait (C-84); with it
+// off, it does not.
 func TestPresyncQuestionDrawsFromNotice(t *testing.T) {
 	q := presyncQuestionText()
-	if !strings.Contains(q, presync.SyncNotice) {
-		t.Error("the wizard sync question must contain presync.SyncNotice (MA-567 coherence)")
+	if !strings.Contains(q, presync.SyncNoticeFor(runtime.GOOS)) {
+		t.Error("the wizard sync question must contain this platform's presync.SyncNoticeFor (MA-567 coherence)")
+	}
+	for _, allowed := range []bool{true, false} {
+		r := presync.OverrideTablesForTest(nil, map[string]bool{runtime.GOOS: allowed})
+		q := presyncQuestionText()
+		r()
+		if got := strings.Contains(q, "a backup you start with Run now does not wait for that"); got != allowed {
+			t.Errorf("start allowed %v: the question says Run now does not wait: %v", allowed, got)
+		}
 	}
 }

@@ -271,7 +271,7 @@ func RunHeadless(path string) int {
 	// failed run, exactly as the CLI's -unattended does (N13, R18). optsForJob
 	// also installs the Thunderbird pre-sync when the job carries it (§4.2.5),
 	// shared with the Run-now path so a scheduled run and a manual one behave alike.
-	opts := optsForJob(j, inputs, logger, runScheduled)
+	opts := optsForJob(j, inputs, logger, runHooks{}, runScheduled)
 	opts.OutlookSkips = outlookSkips
 	opts.OutlookExported = outlookExported
 	logger.Printf("Scheduled job %q: exporting to %s", j.Name, j.Out)
@@ -1762,9 +1762,11 @@ func presyncOfferable(inputs []string) bool {
 // the §6 paragraph. SyncNotice already carries the running-Thunderbird defer (R31,
 // "left alone"), so nothing is appended here. The macOS Automation-permission note
 // is added on macOS only, from the one constant MailArchive Desktop's Settings card also
-// shows (presync.MacAutomationNote, MA-861).
+// shows (presync.MacAutomationNote, MA-861). The notice is this platform's
+// (presync.SyncNoticeFor): the Desktop's Run now runs the same job, so where Run now
+// starts Thunderbird the notice says it does not wait (design-presync-attended §7, C-84).
 func presyncQuestionText() string {
-	q := "Sync Thunderbird before each scheduled backup?\n\n" + presync.SyncNotice
+	q := "Sync Thunderbird before each scheduled backup?\n\n" + presync.SyncNoticeFor(runtime.GOOS)
 	if runtime.GOOS == "darwin" {
 		q += "\n\n" + presync.MacAutomationNote
 	}

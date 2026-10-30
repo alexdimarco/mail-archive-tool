@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"log"
+	"runtime"
 	"strings"
 	"time"
 
@@ -16,6 +17,34 @@ import (
 	"mail-archive-tool/internal/util"
 )
 
+// RunNow is what the Desktop's Run now hands its run (design-presync-attended §2.2,
+// §3.1, §4.6): the platform its words are for, and the callbacks through which the
+// note follows the Thunderbird sync. None of it is ever written to a file (R38, C-36).
+type RunNow struct {
+	// GOOS picks the platform words and the attended tables' entry; "" is runtime.GOOS.
+	GOOS string
+	// Phase is told the sync's phases ("starting", "waiting", "cancelling").
+	Phase func(phase string, since time.Time)
+	// EndWait is "Stop waiting and back up now": when it ends during the wait for
+	// mail, the wait ends and the backup reads what has arrived (A16, OQ-6).
+	EndWait context.Context
+	// OnStart runs right before the sync, OnEnd right after it with its outcome.
+	OnStart func()
+	OnEnd   func(app.PresyncOutcome)
+	// StartNotAllowed is called when the job asks for the sync but Run now does not
+	// start Thunderbird on this platform yet (AttendedStartAllowed false, C-49): no
+	// hook is installed and the backup reads the mail already here.
+	StartNotAllowed func()
+}
+
+// runHooks is what optsForJob hands the shared pre-sync hook besides the job: the
+// run's Stop (a Lock, Shut down) and the Run now's callbacks. The scheduled run
+// passes none.
+type runHooks struct {
+	stop context.Context
+	rn   RunNow
+}
+
 // RunJobInProcess runs the recorded backup job at jobPath IN-PROCESS and returns a one-line
 // result — the manual twin of RunHeadless (the scheduled entry point), for the Desktop's "Run
 // now". RunHeadless is left untouched (it carries the scheduler's own log file, exit code and
@@ -23,7 +52,14 @@ import (
 // caller's logger. It refuses an absent -out (PM4) and a sealed archive, and marks the run
 // Unattended so the out-guard and the source-loss streak apply exactly as the scheduled run's.
 // An Outlook backup runs on its schedule, not here.
-func RunJobInProcess(jobPath string, logger *log.Logger) (string, error) {
+//
+// It is attended (design-presync-attended §2.2, slice AS4, C-44, R38): the person clicked
+// Run now at this computer, so a job with the Thunderbird sync starts Thunderbird without the
+// owner-activity checks — where this platform's AttendedStartAllowed entry says so (C-49);
+// elsewhere no hook is installed and rn.StartNotAllowed says why. ctx is the run's own
+// (Cancel ends it with presync.ErrCancelAndQuit, §3.1); stop ends the sync at once with no
+// quit request (Shut down).
+func RunJobInProcess(ctx, stop context.Context, jobPath string, logger *log.Logger, rn RunNow) (string, error) {
 	j, err := job.Read(jobPath)
 	if err != nil {
 		return "", err
@@ -40,9 +76,9 @@ func RunJobInProcess(jobPath string, logger *log.Logger) (string, error) {
 	if j.Outlook {
 		return "", fmt.Errorf("this is an Outlook backup; it runs on its schedule — Run now is not available for it here yet")
 	}
-	opts := optsForJob(j, j.Inputs, logger, runScheduled)
+	opts := optsForJob(j, j.Inputs, logger, runHooks{stop: stop, rn: rn}, runAttended)
 	logger.Printf("Running the scheduled backup now for %s", j.Out)
-	result, runErr := app.Run(context.Background(), opts, logger, nil)
+	result, runErr := app.Run(ctx, opts, logger, nil)
 	if runErr != nil {
 		return "", runErr
 	}
@@ -71,7 +107,7 @@ func RunJobInProcessKeyed(ctx context.Context, jobPath string, logger *log.Logge
 	if j.Outlook {
 		return "", fmt.Errorf("this is an Outlook backup; Run now is not available for it here yet")
 	}
-	opts := optsForJob(j, j.Inputs, logger, runScheduled)
+	opts := optsForJob(j, j.Inputs, logger, runHooks{}, runScheduled)
 	opts.Unattended = false
 	switch j.ProgramCopies { // the choice the archive was made with, until a run seals it
 	case "on":
@@ -109,8 +145,8 @@ func encryptedSummary(result app.Result) string {
 type runMode int
 
 const (
-	// runScheduled: no one is watching — the scheduled run-job, and (until slices
-	// AS4 and AS8, C-44 and C-81) both Run nows, which keep today's behaviour.
+	// runScheduled: no one is watching — the scheduled run-job, and (until slice
+	// AS8, C-81) the encrypted Run now, which keeps today's behaviour.
 	runScheduled runMode = iota
 	// runAttended: the person started this run at this computer and is watching it.
 	runAttended
@@ -127,7 +163,9 @@ const (
 // It NEVER gates the archive (R32): a hook-setup failure is logged and the run
 // proceeds without the sync. Everything it and the pre-sync write goes through
 // logger one line at a time, so each line of mailarchive.log is dated (§4.8, T8).
-func optsForJob(j job.Job, inputs []string, logger *log.Logger, mode runMode) app.Options {
+// hooks carries the run's Stop and a Run now's callbacks; presyncjob hands EndWait on
+// only to an attended run (OQ-6).
+func optsForJob(j job.Job, inputs []string, logger *log.Logger, hooks runHooks, mode runMode) app.Options {
 	exportMode := export.Incremental
 	if strings.EqualFold(j.Mode, "full") {
 		exportMode = export.Full
@@ -158,6 +196,22 @@ func optsForJob(j job.Job, inputs []string, logger *log.Logger, mode runMode) ap
 			Log:      lineLogger{logger},
 			Attended: opts.PresyncAttended,
 			Surface:  surface,
+			GOOS:     hooks.rn.GOOS,
+			Stop:     hooks.stop,
+			Phase:    hooks.rn.Phase,
+			EndWait:  hooks.rn.EndWait,
+			OnStart:  hooks.rn.OnStart,
+			OnEnd:    hooks.rn.OnEnd,
+		}
+		goos := hooks.rn.GOOS
+		if goos == "" {
+			goos = runtime.GOOS
+		}
+		if opts.PresyncAttended && hooks.rn.StartNotAllowed != nil && presyncjob.Supported() &&
+			(goos == "darwin" || goos == "windows") && !presync.AttendedStartAllowed(goos) {
+			// C-49: Run now does not start Thunderbird on this platform yet; SetHook
+			// installs no hook, and the note says why (§4.6). No outcome is recorded.
+			hooks.rn.StartNotAllowed()
 		}
 		if err := presyncjob.SetHook(&opts, h); err != nil {
 			logger.Printf("warning: Thunderbird pre-sync not set up (%v); archiving without it", err)

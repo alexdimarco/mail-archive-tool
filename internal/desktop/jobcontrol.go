@@ -8,6 +8,8 @@ import (
 	"net/http"
 	"strings"
 	"sync"
+
+	"mail-archive-tool/internal/presync"
 )
 
 // A keyed backup in the job slot has a context of its own (program design R20): Cancel
@@ -16,34 +18,49 @@ import (
 // for its download, offered only while that wait is on (it can hold the archive lock up
 // to ten minutes). Shut down cancels it too, through the Desktop's own context.
 
-// keyedJob is what a keyed backup run in the job slot is given.
+// keyedJob is what a cancellable backup run in the job slot is given: its own
+// context (Cancel ends it with presync.ErrCancelAndQuit as the cause), the
+// Desktop's own context as its Stop (Shut down ends it: the Thunderbird sync stops
+// at once and asks nothing to quit, design-presync-attended §3.1), and the program
+// step's skip.
 type keyedJob struct {
 	ctx    context.Context
+	stop   context.Context
 	skip   <-chan struct{}
 	onWait func(waiting bool)
 }
 
-// runKeyedJobOn runs fn as runJobOn does, with a context and a skip of its own.
-func (d *dashboard) runKeyedJobOn(out string, fn func(j keyedJob, logger *log.Logger) (string, error)) error {
-	ctx, cancel := context.WithCancel(d.life.Context())
+// cancelledText is what a backup the person cancelled says (the PG4 pass, CMP-1).
+const cancelledText = "The backup was cancelled. The archive is safe; the next backup finishes what this one left."
+
+// runCancellableJobOn runs fn as runJobOn does, with a context and a skip of its own:
+// both Run nows, plaintext and encrypted, and an encrypted archive's first backup
+// (design-presync-attended §3.1, generalised from the keyed-only slot).
+func (d *dashboard) runCancellableJobOn(out string, fn func(j keyedJob, logger *log.Logger) (string, error)) error {
+	ctx, cancel := context.WithCancelCause(d.life.Context())
 	skip := make(chan struct{})
 	c := d.cap
 	err := d.runJobOn(out, func(logger *log.Logger) (string, error) {
-		defer cancel()
+		defer cancel(nil)
 		c.mu.Lock()
 		c.cancel, c.skip, c.skipped = cancel, skip, false
 		c.mu.Unlock()
-		result, err := fn(keyedJob{ctx: ctx, skip: skip, onWait: c.setWaiting}, logger)
+		result, err := fn(keyedJob{ctx: ctx, stop: d.life.Context(), skip: skip, onWait: c.setWaiting}, logger)
 		if errors.Is(err, context.Canceled) && ctx.Err() != nil && d.life.Context().Err() == nil {
 			// The person's Cancel, not a failure (the PG4 pass, CMP-1).
-			return "The backup was cancelled. The archive is safe; the next backup finishes what this one left.", nil
+			return cancelledText, nil
 		}
 		return result, err
 	})
 	if err != nil {
-		cancel()
+		cancel(nil)
 	}
 	return err
+}
+
+// runKeyedJobOn is runCancellableJobOn for a keyed backup.
+func (d *dashboard) runKeyedJobOn(out string, fn func(j keyedJob, logger *log.Logger) (string, error)) error {
+	return d.runCancellableJobOn(out, fn)
 }
 
 // programLinePrefix begins the one line a backup logs when it wrote or removed copies of
@@ -88,18 +105,30 @@ func (c *captureState) setWaiting(waiting bool) {
 	c.mu.Unlock()
 }
 
-// cancelJobAction ends the keyed backup running in the job slot.
+// cancelJobAction ends the backup running in the job slot. Its cause is the Cancel
+// button's, presync.ErrCancelAndQuit (design-presync-attended §3.1): during a Run
+// now's Thunderbird sync that skips the whole backup and leaves the Thunderbird it
+// started open (never-close, every platform until slice AS-Q); while it reads, it is
+// today's cancel. The line it adds is chosen by the sync's phase.
 func (d *dashboard) cancelJobAction(w http.ResponseWriter, r *http.Request) {
 	c := d.cap
 	c.mu.Lock()
 	cancel := c.cancel
+	phase := ""
+	if c.runNow && !c.syncEnded {
+		phase = c.syncPhase
+	}
 	c.mu.Unlock()
 	if cancel == nil {
 		writeJSON(w, map[string]any{"ok": false, "error": "Nothing is running that can be cancelled."})
 		return
 	}
-	cancel()
-	c.appendLine("Cancelled from MailArchive Desktop: the backup stops at its next safe point; the next backup finishes what it left.")
+	cancel(presync.ErrCancelAndQuit)
+	if phase == presync.PhaseStarting || phase == presync.PhaseWaiting {
+		c.appendLine("Cancelled from MailArchive Desktop: the whole backup is skipped; the Thunderbird it started is left open.")
+	} else {
+		c.appendLine("Cancelled from MailArchive Desktop: the backup stops at its next safe point; the next backup finishes what it left.")
+	}
 	writeJSON(w, map[string]any{"ok": true})
 }
 

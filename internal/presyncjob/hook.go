@@ -142,6 +142,16 @@ func SetHook(opts *app.Options, h HookOptions) error {
 	if h.Attended {
 		cfg.NeverQuit = !presync.AttendedQuitAllowed(goos)
 		cfg.EndWait = h.EndWait
+		// The first-attended-sync marker (§4.6, C-83): written when an attended
+		// session reaches S5, which it reports as `starting`.
+		cfg.Phase = func(phase string, since time.Time) {
+			if phase == presync.PhaseStarting {
+				markAttendedStarted(stateDir)
+			}
+			if h.Phase != nil {
+				h.Phase(phase, since)
+			}
+		}
 	}
 	opts.BeforeRead = func(ctx context.Context, files []string) app.BeforeReadResult {
 		c := cfg
@@ -149,6 +159,18 @@ func SetHook(opts *app.Options, h HookOptions) error {
 		if h.OnStart != nil {
 			h.OnStart()
 		}
+		// A session that panics still ends its caller's phase (§4.6, C-11): OnEnd is
+		// told internal-error, then the panic goes on to app.Run, which recovers it.
+		defer func() {
+			if r := recover(); r != nil {
+				if h.OnEnd != nil {
+					h.OnEnd(app.PresyncOutcome{Code: presync.OutcomeInternalError.Code, Name: presync.OutcomeInternalError.Name,
+						Class: presync.OutcomeInternalError.Class.String(), Left: string(presync.LeftNone),
+						Line: presync.OutcomeLine(presync.OutcomeInternalError, c.Surface, goos, presync.LeftNone, 0, false)})
+				}
+				panic(r)
+			}
+		}()
 		res := session(ctx, c)
 		out := outcomeFor(res, c.Surface, goos)
 		if h.OnEnd != nil {

@@ -665,8 +665,9 @@ func (d *dashboard) runBackup(w http.ResponseWriter, r *http.Request) {
 		d.runBackupKeyed(w, out, jobPath)
 		return
 	}
-	if err := d.runJob(func(logger *log.Logger) (string, error) {
-		return wizard.RunJobInProcess(jobPath, logger)
+	// Cancellable, attended (design-presync-attended §3.1, slice AS4): runnow.go.
+	if err := d.runCancellableJobOn(out, func(j keyedJob, logger *log.Logger) (string, error) {
+		return d.runNowPlain(j, jobPath, logger)
 	}); err != nil {
 		writeJSON(w, map[string]any{"ok": false, "error": err.Error()})
 		return
@@ -697,8 +698,9 @@ func (d *dashboard) runBackupKeyed(w http.ResponseWriter, out, jobPath string) {
 		writeJSON(w, map[string]any{"ok": false, "error": err.Error()})
 		return
 	}
-	if err := d.runKeyedJobOn(out, func(j keyedJob, logger *log.Logger) (string, error) {
+	if err := d.runCancellableJobOn(out, func(j keyedJob, logger *log.Logger) (string, error) {
 		defer lease.Destroy()
+		d.cap.markRunNow() // C-15, C-22: a Lock or a switch clears its activity; a reload re-attaches
 		if lease.NeedsHeal() && !lease.Forked() {
 			if herr := keyring.Heal(lease); herr != nil {
 				logger.Printf("warning: one copy of this archive's key file is damaged and could not be rewritten: %v", herr)

@@ -1,6 +1,7 @@
 package desktop
 
 import (
+	"context"
 	"io"
 	"log"
 	"net/http/httptest"
@@ -23,7 +24,7 @@ func TestMA694_RunBackupNow(t *testing.T) {
 	if err := job.Write(outlookJob, job.Job{Name: "b", Out: t.TempDir(), Mode: "incremental", Outlook: true}); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := wizard.RunJobInProcess(outlookJob, log.New(io.Discard, "", 0)); err == nil || !strings.Contains(err.Error(), "Outlook") {
+	if _, err := wizard.RunJobInProcess(context.Background(), nil, outlookJob, log.New(io.Discard, "", 0), wizard.RunNow{}); err == nil || !strings.Contains(err.Error(), "Outlook") {
 		t.Fatalf("an Outlook backup must be refused by Run now, got %v", err)
 	}
 
@@ -32,7 +33,7 @@ func TestMA694_RunBackupNow(t *testing.T) {
 	if err := job.Write(goneJob, job.Job{Name: "b", Out: filepath.Join(t.TempDir(), "gone"), Mode: "incremental"}); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := wizard.RunJobInProcess(goneJob, log.New(io.Discard, "", 0)); err == nil || !strings.Contains(err.Error(), "not present") {
+	if _, err := wizard.RunJobInProcess(context.Background(), nil, goneJob, log.New(io.Discard, "", 0), wizard.RunNow{}); err == nil || !strings.Contains(err.Error(), "not present") {
 		t.Fatalf("an absent -out must be refused, got %v", err)
 	}
 

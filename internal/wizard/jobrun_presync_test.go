@@ -17,7 +17,7 @@ import (
 // SETS the hook; no Thunderbird is launched here.)
 func TestOptsForJobInstallsPresyncHookWhenOn(t *testing.T) {
 	j := job.Job{Name: "x", Out: "/o", Mode: "incremental", ThunderbirdSync: &job.ThunderbirdSync{}}
-	opts := optsForJob(j, []string{"/in/a"}, log.New(io.Discard, "", 0), runScheduled)
+	opts := optsForJob(j, []string{"/in/a"}, log.New(io.Discard, "", 0), runHooks{}, runScheduled)
 	if opts.BeforeRead == nil {
 		t.Error("a job carrying ThunderbirdSync must install the pre-sync BeforeRead hook")
 	}

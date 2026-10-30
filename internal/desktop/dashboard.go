@@ -36,6 +36,7 @@ import (
 	"mail-archive-tool/internal/keyring"
 	"mail-archive-tool/internal/localweb"
 	"mail-archive-tool/internal/lockfile"
+	"mail-archive-tool/internal/presyncjob"
 	"mail-archive-tool/internal/schedule"
 	"mail-archive-tool/internal/seal"
 	"mail-archive-tool/internal/server"
@@ -360,6 +361,7 @@ func (d *dashboard) router() localweb.Router {
 	mux.HandleFunc("/api/encryption/program-copies", d.api(d.programCopiesAction))
 	mux.HandleFunc("/api/job/cancel", d.api(d.cancelJobAction))
 	mux.HandleFunc("/api/job/skip-program", d.api(d.skipProgramAction))
+	mux.HandleFunc("/api/runnow-stopwait", d.api(d.stopWaitAction))
 	mux.HandleFunc("/api/browser-link", d.browserLink)
 	if !d.cfg.WorkspaceOff {
 		d.registerWorkspace(mux)
@@ -1036,6 +1038,14 @@ func (cfg Config) overviewFor(csrf, epoch string) string {
 		ShowLocalCreate bool
 		ShowLocalEdit   bool
 		LocalPresyncOn  bool
+		// Run now's tooltip, and the one-time line beside it the first time Run now
+		// starts Thunderbird on this computer (design-presync-attended §4.6, §7, C-83).
+		RunNowTitle     string
+		RunNowFirstSync string
+		// The job slot's Cancel tooltip (its sync variant comes from /api/activity) and
+		// the "Stop waiting and back up now" button's (OQ-6).
+		CancelTitle   string
+		StopWaitTitle string
 		// The Your-archives list (UX-1): the known archives and whether to show the card.
 		Archives      []ArchiveRow
 		ShowArchives  bool
@@ -1066,6 +1076,8 @@ func (cfg Config) overviewFor(csrf, epoch string) string {
 		AlertProvider: orElse(s.AlertProvider, "office365"), AlertHost: s.AlertHost, AlertPort: s.AlertPort,
 		AlertSecurity: orElse(s.AlertSecurity, "starttls"), AlertFrom: s.AlertFrom, AlertTo: s.AlertTo, AlertUsername: s.AlertUsername}
 	data.KindLine = kindLine(archiveKind(data.OutDir))
+	data.CancelTitle, data.StopWaitTitle = jobCancelTitle, stopWaitTitle
+	data.RunNowTitle = runNowPlainTitle
 	data.LocalOnly = cfg.localOnly()
 	data.ArchiveNowOff = cfg.archiveNowOffLine() // every encrypted archive's too: Archive now never fills one (B25)
 	data.Offer = cfg.offer()
@@ -1163,9 +1175,14 @@ func (cfg Config) overviewFor(csrf, epoch string) string {
 	// (design 3.3, R3C-16; rt.runJob is that file read securely), never the archive's record.
 	data.ShowLocalCreate = runJobForm && !rt.hasDesc && adapter && rebuild.ok
 	data.ShowLocalEdit = runJobForm && rt.runJob && adapter
-	// LocalPresyncOn drives Run now's warning for any installed local archive.
+	// LocalPresyncOn drives Run now's warning for any installed local archive: whether
+	// the job Run now would run, whatever its name, asks for the sync (C-18/M2).
 	if data.HasSchedule && (localCard || data.ShowRepair) && adapter {
-		data.LocalPresyncOn = currentJobSyncsThunderbird(data.OutDir)
+		data.LocalPresyncOn = runNowJobSyncs(data.OutDir)
+	}
+	data.RunNowTitle = runNowTitle(cfg.goos(), data.LocalPresyncOn)
+	if data.LocalPresyncOn && runNowSyncs(cfg.goos()) && !presyncjob.AttendedSyncSeen() {
+		data.RunNowFirstSync = runNowFirstSyncLine(cfg.goos())
 	}
 	data.ShowRemove = data.HasSchedule || !localCard || entry != ""
 	data.ShowBackupOff = localCard && !data.HasSchedule && !data.ShowLocalCreate
@@ -1499,7 +1516,8 @@ pre{white-space:pre-wrap;overflow-wrap:anywhere;background:var(--bg);border:1px 
       <div id="sec-activity" class="anchor"></div>
       <pre id="activity" hidden></pre>
       <button class="btn secondary" type="button" id="jobSkipProgram" hidden title="Stop waiting for the download: this backup keeps this computer's own copy of MailArchive instead, and the download carries on for the next one.">Skip the program download</button>
-      <button class="btn secondary" type="button" id="jobCancel" hidden title="Stop this backup now. The archive is left safe; the next backup finishes what this one left.">Cancel the backup</button>
+      <button class="btn secondary" type="button" id="jobStopWait" hidden title="{{.StopWaitTitle}}">Stop waiting and back up now</button>
+      <button class="btn secondary" type="button" id="jobCancel" hidden title="{{.CancelTitle}}" data-title="{{.CancelTitle}}">Cancel the backup</button>
       <div class="note" id="captureResult" hidden></div>
     </div>
 
@@ -1620,7 +1638,8 @@ pre{white-space:pre-wrap;overflow-wrap:anywhere;background:var(--bg);border:1px 
       {{if .ShowInstall}}<p class="card-sub" id="schedNone">{{if .OutDir}}No scheduled backup is set up for this archive yet. A scheduled backup runs a capture automatically, even when this app is closed (as long as you stay signed in to your computer), using your saved Microsoft sign-in.{{else}}Choose an archive location in Settings first; its backup options then show there.{{end}}</p>{{end}}
       {{if .ShowLocalCreate}}<p class="card-sub" id="schedNone">No scheduled backup is set up for this archive yet. A scheduled backup keeps it up to date automatically: it re-reads your Thunderbird mail files and adds anything new. It runs while you are logged in.</p>{{end}}
       {{if and .Set.Sched .OutDir}}<p class="card-sub" id="changeInSettings">{{if .Set.SchedCapture}}How often and time{{else}}How often, time and Thunderbird sync{{end}}: <a href="#sec-settings">Change in Settings</a></p>{{end}}
-      <div style="margin-top:14px">{{if .ShowRepair}}<button class="btn" id="schedRepair" title="Re-point the scheduled backup at this archive and fix a broken or stale schedule entry. Your cadence and any Thunderbird-sync setting are kept; nothing in the archive changes.">Repair</button> <button class="btn" id="runBackupBtn" type="button" title="{{if .LocalPresyncOn}}Run this archive's backup now, instead of waiting for its schedule. Because Thunderbird sync is on, it first opens Thunderbird, waits for its mail, then closes it (which can run Thunderbird's on-exit actions, for example emptying Trash) before archiving.{{else}}Run this archive's scheduled backup right now, instead of waiting for its schedule.{{end}}">Run now</button> {{end}}{{if .ShowCaptureRepair}}<button class="btn" id="schedRepair" title="Put this archive's scheduled capture back as it was set up: its cadence is kept, and a capture still named for the archive's earlier location is moved to this one. Nothing in the archive changes.">Repair</button> {{end}}{{if .ShowBrokenRepair}}<button class="btn" id="schedRepair" title="Make this archive's backup settings file again from the archive's own record. Thunderbird sync is then off.">Repair</button> {{end}}{{if .EncRunNow}}<button class="btn" id="runBackupBtn" type="button" title="Back up this encrypted archive now, while it is unlocked here."{{if not .EncUnlocked}} disabled{{end}}>Run now</button> {{end}}{{if .ShowRemove}}<button class="btn secondary" id="schedRemove" title="Delete this archive's scheduled backup. Your archive and everything in it are kept.">Remove</button>{{end}}</div>
+      <div style="margin-top:14px">{{if .ShowRepair}}<button class="btn" id="schedRepair" title="Re-point the scheduled backup at this archive and fix a broken or stale schedule entry. Your cadence and any Thunderbird-sync setting are kept; nothing in the archive changes.">Repair</button> <button class="btn" id="runBackupBtn" type="button" title="{{.RunNowTitle}}">Run now</button> {{end}}{{if .ShowCaptureRepair}}<button class="btn" id="schedRepair" title="Put this archive's scheduled capture back as it was set up: its cadence is kept, and a capture still named for the archive's earlier location is moved to this one. Nothing in the archive changes.">Repair</button> {{end}}{{if .ShowBrokenRepair}}<button class="btn" id="schedRepair" title="Make this archive's backup settings file again from the archive's own record. Thunderbird sync is then off.">Repair</button> {{end}}{{if .EncRunNow}}<button class="btn" id="runBackupBtn" type="button" title="Back up this encrypted archive now, while it is unlocked here."{{if not .EncUnlocked}} disabled{{end}}>Run now</button> {{end}}{{if .ShowRemove}}<button class="btn secondary" id="schedRemove" title="Delete this archive's scheduled backup. Your archive and everything in it are kept.">Remove</button>{{end}}</div>
+      {{if .RunNowFirstSync}}<p class="card-sub" id="runNowFirstSync">{{.RunNowFirstSync}}</p>{{end}}
       <div class="note" id="runBackupNote" hidden></div>
       <div class="note" id="schedState" hidden></div>{{end}}
     </div>
@@ -2075,12 +2094,28 @@ function render(d){
 // jobButtons shows the running job's Cancel and Skip, next to at when given — the
 // note of the control that started the job — so they are where the person looks.
 function jobButtons(d,at){
-  const sk=$('jobSkipProgram'),cn=$('jobCancel');
-  if(at&&sk&&cn&&at.nextElementSibling!==sk)at.after(sk,cn);
+  const sk=$('jobSkipProgram'),sw=$('jobStopWait'),cn=$('jobCancel');
+  if(at&&sk&&cn&&at.nextElementSibling!==sk){at.after(sk,cn);if(sw)cn.before(sw);}
   if(sk)sk.hidden=!(d.running&&d.skippable);
-  if(cn)cn.hidden=!(d.running&&d.cancellable);
+  // "Stop waiting and back up now", only while a Run now waits for Thunderbird (OQ-6);
+  // Cancel's tooltip says, during the sync, that it skips the whole backup (C-23).
+  if(sw)sw.hidden=!(d.running&&d.stopWaitable);
+  if(d.run)runNowID=d.run;
+  if(cn){cn.hidden=!(d.running&&d.cancellable);cn.title=d.cancelTitle||cn.dataset.title||cn.title;}
 }
-fetch('api/activity').then(r=>r.json()).then(d=>{if(d.running)start();}).catch(()=>{});
+let runNowID='';
+// A reload while a Run now runs re-attaches its own poll, so its phase note, Cancel and
+// "Stop waiting" show beside Run now again (design-presync-attended §4.6, C-22).
+fetch('api/activity').then(r=>r.json()).then(d=>{if(!d.running)return;
+  const rb=$('runBackupBtn');if(d.runNow&&rb){rb.disabled=true;pollBackup();}else start();}).catch(()=>{});
+const swb=$('jobStopWait');
+if(swb)swb.addEventListener('click',async()=>{
+  const n=$('runBackupNote'),done=busy(swb,'Stopping the wait…',n,'Stopping the wait…');
+  try{const d=await(await fetch('api/runnow-stopwait',{method:'POST',headers:{'Content-Type':'application/json','X-CSRF-Token':csrf},body:JSON.stringify({run:runNowID})})).json();
+    if(n){n.hidden=false;n.textContent=d.ok?(d.note||''):(d.error||'Could not do that.');}
+  }catch(e){}
+  done();swb.hidden=true;
+});
 for(const [id,path] of [['jobSkipProgram','api/job/skip-program'],['jobCancel','api/job/cancel']]){
   const b=$(id);
   if(b)b.addEventListener('click',async()=>{
@@ -2133,10 +2168,14 @@ if(rbBtn)rbBtn.addEventListener('click',async()=>{
 async function pollBackup(){
   const n=$('runBackupNote'),b=$('runBackupBtn');
   try{const d=await(await fetch('api/activity')).json();
-    if(n&&d.log&&d.log.length)n.textContent=d.log[d.log.length-1];
+    // While the Thunderbird sync runs, the note built on the server takes the place of
+    // the last log line (design-presync-attended §4.6, C-19); at the end, the server's
+    // note: the sync's line, then the result, the failure or the cancel words.
+    if(n&&d.syncNote){n.hidden=false;n.textContent=d.syncNote;}
+    else if(n&&d.log&&d.log.length)n.textContent=d.log[d.log.length-1];
     jobButtons(d,n); // Cancel (and Skip) beside Run now's own note (P3-8, B7)
     if(d.running){setTimeout(pollBackup,1500);return;}
-    if(n){n.hidden=false;n.textContent=d.error?('Backup failed: '+d.error):(d.result||'Backup finished.');}
+    if(n){n.hidden=false;n.textContent=d.note||(d.error?('Backup failed: '+d.error):(d.result||'Backup finished.'));}
   }catch(e){}
   if(b)b.disabled=false;
 }

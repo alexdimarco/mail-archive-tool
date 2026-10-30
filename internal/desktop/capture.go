@@ -171,11 +171,44 @@ type captureState struct {
 	lines   []string
 	result  string
 	errMsg  string
-	// A keyed backup's own cancel and skip, nil for any other job (jobcontrol.go).
-	cancel  context.CancelFunc
+	// A Run now's or a keyed backup's own cancel (with its cause: the Cancel button's is
+	// presync.ErrCancelAndQuit, design-presync-attended §3.1) and skip, nil for any other
+	// job (jobcontrol.go).
+	cancel  context.CancelCauseFunc
 	skip    chan struct{}
 	skipped bool
 	waiting bool // the program step waits for its download: the skip is offered
+
+	// The job in the slot (design-presync-attended §4.6, C-15, C-71): slot counts the
+	// jobs, so a Run now's sync callbacks carry the id of the run they belong to and
+	// any call naming another is ignored; jobOut is the archive it runs on and
+	// encrypted says whether that archive is encrypted, so a Lock of it, or a switch
+	// away from it, clears its activity (muted: later lines are not kept). onCurrent
+	// says the job runs on the archive that was current when it started — a new
+	// encrypted archive's first backup runs beside the current one and is not cleared
+	// by a switch (MAKE-02).
+	slot      uint64
+	jobOut    string
+	encrypted bool
+	onCurrent bool
+	muted     bool
+
+	// A Run now's Thunderbird sync, for its note (runnow.go): the phase and when it
+	// began, whether the sync has ended, the end line, the outcome's name, what it left
+	// Thunderbird as and whether Windows' minimize succeeded; the start-not-allowed
+	// case (C-49); and "Stop waiting and back up now" (OQ-6): the function that ends
+	// the run's EndWait, and whether it was pressed.
+	runNow        bool
+	syncPhase     string
+	syncSince     time.Time
+	syncEnded     bool
+	syncLine      string
+	syncName      string
+	syncLeft      string
+	syncMinimized bool
+	syncNoStart   bool
+	endWait       context.CancelFunc
+	waitStopped   bool
 }
 
 func (c *captureState) Write(p []byte) (int, error) {
@@ -188,6 +221,9 @@ func (c *captureState) Write(p []byte) (int, error) {
 func (c *captureState) appendLine(s string) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
+	if c.muted { // C-15: a locked or switched-away encrypted job's lines are not kept
+		return
+	}
 	c.lines = append(c.lines, s)
 	if len(c.lines) > logRingMax { // DC3: drop the oldest, keep the tail
 		c.lines = c.lines[len(c.lines)-logRingMax:]
@@ -202,8 +238,16 @@ func (c *captureState) setDevice(d graph.DeviceAuth) {
 
 func (c *captureState) finish(result, errMsg string) {
 	c.mu.Lock()
+	if c.muted { // C-15: nothing of a locked or switched-away encrypted job is kept
+		result, errMsg = "", ""
+	}
 	c.running, c.device, c.result, c.errMsg = false, nil, result, errMsg
 	c.cancel, c.skip, c.skipped, c.waiting = nil, nil, false, false
+	// The sync's phase ends with the job, whatever became of the session (C-11).
+	if c.endWait != nil {
+		c.endWait()
+	}
+	c.syncPhase, c.endWait = "", nil
 	c.mu.Unlock()
 }
 
@@ -224,15 +268,23 @@ func (d *dashboard) capture(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, map[string]any{"ok": true})
 }
 
-// activity reports the live capture state for the UI to poll (GET; no side effect).
+// activity reports the live capture state for the UI to poll (GET; no side effect but
+// one: an encrypted job whose archive is no longer the current one has its activity
+// cleared, C-15). A Run now's note is built here, on the server (design-presync-
+// attended §4.6, C-19): runNowActivity adds its fields.
 func (d *dashboard) activity(w http.ResponseWriter, r *http.Request) {
 	c := d.cap
+	cur := d.cfg.effectiveOut()
 	c.mu.Lock()
+	if c.runNow && c.encrypted && c.onCurrent && c.jobOut != "" && !samePath(c.jobOut, cur) {
+		c.forgetLocked()
+	}
 	out := map[string]any{"running": c.running, "log": append([]string(nil), c.lines...), "result": c.result, "error": c.errMsg,
 		"cancellable": c.cancel != nil, "skippable": c.waiting && !c.skipped}
 	if c.device != nil {
 		out["device"] = map[string]any{"code": c.device.UserCode, "url": c.device.VerificationURI}
 	}
+	c.runNowActivity(out, d.cfg.goos(), time.Now())
 	c.mu.Unlock()
 	writeJSON(w, out)
 }

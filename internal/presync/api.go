@@ -157,12 +157,44 @@ var warnText = map[string]string{
 // the install message, the -h text, the GUI card and the README all draw from this
 // one constant so they can never drift, and so none of them has to bolt a missing
 // disclosure on afterward. Settled by the friction review (2026-10-24).
-const SyncNotice = "The Thunderbird sync starts Thunderbird in the background before the backup and waits for its mail to stop arriving, so the archive includes mail that had only reached the server. Because it drives your real Thunderbird, starting it does what opening Thunderbird always does: it checks all your accounts, sends anything waiting in your Outbox, runs your message filters, and may show notifications. When it then asks Thunderbird to quit, your accounts' on-exit actions run too (for example emptying Trash), so mail you deleted since the last backup may be removed before it is archived. A Thunderbird you already have open, or one you are using, is left alone — never started or closed. If you use more than one Thunderbird profile, only the one holding this mailbox is synced."
+//
+// Corrected in design-presync-attended slice AS4 (§7, C-31, C-52, C-84): "or one you
+// are using, is left alone" stopped being true once a Run now starts Thunderbird
+// while the person is at the computer, so that sentence now says only an open
+// Thunderbird is left alone, and that a scheduled backup waits until the person has
+// been away. SyncNotice is the wording true on every platform and surface; where
+// Run now starts Thunderbird (AttendedStartAllowed), SyncNoticeFor adds that a
+// backup started with Run now does not wait for that.
+const SyncNotice = syncNoticeHead + syncNoticeTail
+
+const (
+	syncNoticeHead   = "The Thunderbird sync starts Thunderbird in the background before the backup and waits for its mail to stop arriving, so the archive includes mail that had only reached the server. Because it drives your real Thunderbird, starting it does what opening Thunderbird always does: it checks all your accounts, sends anything waiting in your Outbox, runs your message filters, and may show notifications. When it then asks Thunderbird to quit, your accounts' on-exit actions run too (for example emptying Trash), so mail you deleted since the last backup may be removed before it is archived. A Thunderbird you already have open is left alone — never started or closed. A scheduled backup also waits until you have been away from the computer"
+	syncNoticeRunNow = "; a backup you start with Run now does not wait for that"
+	syncNoticeTail   = ". If you use more than one Thunderbird profile, only the one holding this mailbox is synced."
+)
+
+// SyncNoticeFor is SyncNotice as a surface on goos shows it (§7, C-84): on a
+// platform whose attended start is allowed (AttendedStartAllowed), it adds that a
+// backup started with Run now does not wait until the person is away; elsewhere
+// that clause is left out, since Run now does not start Thunderbird there.
+func SyncNoticeFor(goos string) string {
+	if AttendedStartAllowed(goos) {
+		return syncNoticeHead + syncNoticeRunNow + syncNoticeTail
+	}
+	return SyncNotice
+}
 
 // MacAutomationNote is the macOS note shown beside the sync wherever it is offered on a
 // Mac: the wizard's schedule question and MailArchive Desktop's Settings card both use
 // this one constant (design-desktop-settings-card section 7, MA-861), so they cannot drift.
-const MacAutomationNote = "On a Mac, the first time a scheduled backup closes Thunderbird, macOS asks once whether Mail Archive may control it. A scheduled backup runs on its own, often overnight, so you would not be there to answer — and until you do, each run leaves Thunderbird open instead of closing it. To answer while you are at the Mac, run one backup yourself first (the Run-now button on the Mail Archive dashboard) and choose Allow when macOS asks, before you rely on the schedule."
+//
+// Rewritten in design-presync-attended slice AS4 (§7, T10, C-52, C-62): it no longer
+// tells the person to answer macOS's question from a Run now — a Run now never closes
+// Thunderbird while macOS's attended close is not allowed (AttendedQuitAllowed), so it
+// never raises the question — and it does not name the program macOS asks about
+// before lab L-A2 says which it is. Slice AS9 brings the Run-now wording back, after
+// L-A2 and macOS's attended-close flip.
+const MacAutomationNote = "On a Mac, the first time a scheduled backup closes Thunderbird, macOS may ask for permission to control Thunderbird; until it is answered, each run leaves Thunderbird open. To answer, open System Settings > Privacy & Security > Automation and allow the entry listed there to control Thunderbird."
 
 // startLine is the narration printed to Config.Log just before the session runs,
 // so the owner of a manual run knows the (possibly minutes-long) wait is working

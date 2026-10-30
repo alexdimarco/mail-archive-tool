@@ -132,6 +132,7 @@ func (d *dashboard) lockAction(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	d.cfg.Keys.lock(out)
+	d.cap.forget(out) // C-15: a locked archive's Run now activity is cleared
 	if d.copyRunning(out) {
 		writeJSON(w, map[string]any{"ok": true, "note": copyGoesOnText})
 		return

@@ -162,7 +162,10 @@ func settingsCardFor(in settingsInputs) settingsCard {
 		}
 	}
 	if s.Sync {
-		s.SyncNotice = presync.SyncNotice // X16: visible text, never hover-only
+		// X16: visible text, never hover-only; this platform's, so it says a backup
+		// started with Run now does not wait only where Run now starts Thunderbird
+		// (design-presync-attended §7, C-84).
+		s.SyncNotice = presync.SyncNoticeFor(in.goos)
 		if in.goos == "darwin" {
 			s.MacNote = presync.MacAutomationNote
 		}
