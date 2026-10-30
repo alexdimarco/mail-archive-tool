@@ -686,12 +686,14 @@ func TestWatchdogReturnsOnStopAndCancel(t *testing.T) {
 // covers: MA-921
 // A quit request in flight when the watchdog gives up ends with the session
 // context (C-3, C-5): the request's context derives from it, so it is cancelled
-// at the budget rather than running on to its own 20 s deadline.
+// at the budget rather than running on to its own 20 s deadline. The budget is
+// 2 s, not less: on a loaded machine a shorter one could end before the fake
+// session reaches its quit, and an abandoned session rightly sends none.
 func TestWatchdogEndsAnInFlightQuit(t *testing.T) {
 	f := syncingFake()
 	f.quitBlocks = true // the request waits on its context, like osascript held by a prompt
 	sessionDone := make(chan struct{})
-	res := runWatchdog(context.Background(), nil, 200*time.Millisecond, func(sc sessionCtl) Result {
+	res := runWatchdog(context.Background(), nil, 2*time.Second, func(sc sessionCtl) Result {
 		defer close(sessionDone)
 		d := syncingDeps(f, filepath.Join(t.TempDir(), "s.json"))
 		d.sctx, d.abandoned = sc.ctx, sc.abandoned
