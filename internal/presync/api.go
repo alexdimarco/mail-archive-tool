@@ -1,6 +1,7 @@
 package presync
 
 import (
+	"context"
 	"io"
 	"time"
 )
@@ -20,11 +21,20 @@ type Config struct {
 	ProfileNamed bool
 	StateDir     string
 	Log          io.Writer
+	// Stop ends the session AT ONCE with no quit request: the session context is
+	// derived from it, and the watchdog returns when it ends, abandoning the session
+	// (design-presync-attended §2.6, C-3, C-5). Separate from the run's ctx. nil means
+	// never. No caller sets it before the Desktop's Lock and Shut down use it.
+	Stop context.Context
 }
 
 // Result is one pre-sync's outcome, for the caller to surface as a warning.
 type Result struct {
 	Outcome Outcome
+	// Side holds warn-class outcomes met on the way besides the main one (B6: an
+	// unreadable state record while the session went on to sync; A9: a record that
+	// could not be saved). The caller surfaces each as a run warning.
+	Side []Outcome
 	// Release, when non-nil, MUST be called by the caller AFTER the archive read: it
 	// releases the per-profile lock that the pre-sync holds across the pre-sync and the
 	// read, so a second scheduled run cannot pre-sync (and compact) this profile while
@@ -78,6 +88,8 @@ var warnText = map[string]string{
 	OutcomeQuitNotPermitted.Code:    "Thunderbird was left open because macOS did not allow Mail Archive to close it. Do this: in System Settings > Privacy & Security > Automation, allow Mail Archive to control Thunderbird; because the permission is asked per program, approve it from a run the scheduler starts (`launchctl kickstart gui/<uid>/<label>`), not only from Terminal. The archive ran anyway.",
 	OutcomeQuitTimeout.Code:         "Thunderbird did not close within 2 minutes after it was asked to quit, so it was left open. Why: it may be showing a dialog (an unsent message, a password prompt) or still working. Do this: open Thunderbird and quit it, or run again once it is closed. The archive ran anyway.",
 	OutcomeQuitSkippedOthers.Code:   "Thunderbird was left open because more than one Thunderbird was running and, on this system, closing it would have closed them all. Do this: quit the one the sync started when you are done. The archive ran anyway.",
+	OutcomeQuitNoWindow.Code:        "Thunderbird was left open: its window could not be told apart from its other windows (for example a message being written), so Mail Archive did not try to close it. Do this: quit Thunderbird from the taskbar or the notification area when you are done. The archive ran anyway.",
+	OutcomeStateUnsaved.Code:        "The Thunderbird sync could not save its own state record, so if Thunderbird was left open the next run may not mention it. Do this: check the disk has free space and Mail Archive's settings folder can be written to. The archive ran anyway.",
 	OutcomeOwnerActive.Code:         "Thunderbird was left open because you seemed to be using it when the sync tried to close it. The archive ran anyway.",
 	OutcomeSuccessorFound.Code:      "The Thunderbird that was started went away and a different one is now open; it was not touched. The archive ran anyway.",
 	OutcomeLeftoverFound.Code:       "A Thunderbird started by an earlier scheduled sync is still open and was not closed. Do this: switch to that Thunderbird window and quit it. The archive ran anyway.",

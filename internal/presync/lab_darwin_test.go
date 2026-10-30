@@ -3,6 +3,7 @@
 package presync
 
 import (
+	"context"
 	"errors"
 	"os"
 	"testing"
@@ -52,7 +53,7 @@ func TestLabMacLaunchAndClose(t *testing.T) {
 	lc := launchCtx{app: plan.exe, profile: plan.profile, launchAt: launchAt, snapshot: before}
 	var child proc
 	found := false
-	for deadline := launchAt.Add(30 * time.Second); e.now().Before(deadline); e.sleep(500 * time.Millisecond) {
+	for deadline := launchAt.Add(30 * time.Second); e.now().Before(deadline); e.sleep(nil, nil, 500*time.Millisecond) {
 		if m, matched := findOurs(e.thunderbirdProcs(), lc); matched {
 			child, found = m, true
 			t.Logf("matched our hidden process pid=%d", m.pid)
@@ -63,13 +64,15 @@ func TestLabMacLaunchAndClose(t *testing.T) {
 		t.Fatal("LAB FAIL: no hidden thunderbird matched by -profile within 30s")
 	}
 
-	e.sleep(5 * time.Second) // let it settle a moment before the quit
+	e.sleep(nil, nil, 5*time.Second) // let it settle a moment before the quit
 
 	if !e.pidAlive(child.pid) {
 		t.Skip("INCONCLUSIVE: the process self-exited during the settle (an empty profile can) — re-run against a profile where Thunderbird stays running to test the close")
 	}
 
-	quitErr := e.quit(child)
+	qctx, qcancel := context.WithTimeout(context.Background(), quitTimeout) // the session's bound (C-5)
+	quitErr := e.quit(qctx, child)
+	qcancel()
 	quitAt := e.now()
 	closed := false
 	for e.now().Sub(quitAt) < 30*time.Second {
@@ -77,7 +80,7 @@ func TestLabMacLaunchAndClose(t *testing.T) {
 			closed = true
 			break
 		}
-		e.sleep(500 * time.Millisecond)
+		e.sleep(nil, nil, 500*time.Millisecond)
 	}
 
 	switch {

@@ -23,7 +23,7 @@ func TestRunWithRefusesElevation(t *testing.T) {
 	e.run = func(*exec.Cmd) (string, string, error) { ran = true; return "", "", nil }
 
 	var log bytes.Buffer
-	res := runWith(context.Background(), Config{Profile: "/p", ProfileNamed: true, StateDir: stateDir, Log: &log}, e)
+	res := runWith(context.Background(), Config{Profile: "/p", ProfileNamed: true, StateDir: stateDir, Log: &log}, e, sessionCtl{})
 	if res.Outcome != OutcomeRefusedElevated {
 		t.Errorf("outcome = %q, want refused-elevated", res.Outcome.Name)
 	}

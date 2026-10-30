@@ -11,10 +11,12 @@ var newEnv = func() *macEnv { return newMacEnv("") }
 // then run the S1..S9 session, under the shared whole-session watchdog (run.go).
 // It NEVER fails and NEVER unboundedly blocks the archive (R32).
 func Run(ctx context.Context, cfg Config) Result {
-	return runWatchdog(func() Result { return runWith(ctx, cfg, newEnv()) })
+	return runWatchdog(ctx, cfg.Stop, sessionBudget(), func(sc sessionCtl) Result {
+		return runWith(ctx, cfg, newEnv(), sc)
+	})
 }
 
-func runWith(ctx context.Context, cfg Config, e *macEnv) Result {
+func runWith(ctx context.Context, cfg Config, e *macEnv, sc sessionCtl) Result {
 	plan, outcome, ok := e.resolve(cfg.Profile, cfg.ProfileNamed, cfg.Inputs)
 	if !ok {
 		narrate(cfg.Log, SummaryLine(outcome)) // the refusal reason; nothing started
@@ -22,7 +24,11 @@ func runWith(ctx context.Context, cfg Config, e *macEnv) Result {
 	}
 	e.bundle = plan.bundle
 	narrate(cfg.Log, startLine) // the wait can be minutes — say so before it begins
-	res := runSession(ctx, buildDeps(e, plan.exe, plan.profile, cfg))
-	narrate(cfg.Log, SummaryLine(res.outcome))
-	return Result{Outcome: res.outcome, Release: res.release}
+	d := buildDeps(e, plan.exe, plan.profile, cfg)
+	d.sctx, d.abandoned = sc.ctx, sc.abandoned
+	res := runSession(ctx, d)
+	if !sc.isAbandoned() { // the watchdog already answered for an abandoned session
+		narrate(cfg.Log, SummaryLine(res.outcome))
+	}
+	return res.result()
 }

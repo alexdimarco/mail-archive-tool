@@ -4,6 +4,7 @@ package presync
 
 import (
 	"context"
+	"errors"
 	"os"
 	"syscall"
 	"testing"
@@ -115,7 +116,7 @@ func TestLabHiddenLaunchAndClose(t *testing.T) {
 	lc := launchCtx{app: plan.exe, profile: plan.profile, launchAt: launchAt, snapshot: before}
 	var child proc
 	found := false
-	for deadline := launchAt.Add(30 * time.Second); e.now().Before(deadline); e.sleep(500 * time.Millisecond) {
+	for deadline := launchAt.Add(30 * time.Second); e.now().Before(deadline); e.sleep(nil, nil, 500*time.Millisecond) {
 		procs := e.thunderbirdProcs()
 		if m, matched := findOurs(procs, lc); matched {
 			child, found = m, true
@@ -132,7 +133,7 @@ func TestLabHiddenLaunchAndClose(t *testing.T) {
 	// Minimize the window once it appears — exactly what the session's S6 hook does
 	// (owner ruling 2026-10-23: a visible launch is acceptable; minimize it to a
 	// taskbar blip). minimizeMain waits for the window, so it doubles as the settle.
-	e.minimizeMain(context.Background(), child.pid)
+	e.minimizeMain(context.Background(), nil, child.pid)
 	mainCount, visibleCount := labLogWindows(t, "after minimize", uint32(child.pid))
 
 	iconic := 0
@@ -143,7 +144,7 @@ func TestLabHiddenLaunchAndClose(t *testing.T) {
 	}
 	t.Logf("L-W3: %d visible / %d minimized(iconic) window(s) for our pid — expect the main window minimized (a visible launch is acceptable; truly-hidden is a nice-to-have).", visibleCount, iconic)
 
-	e.sleep(5 * time.Second) // let it "sync" a moment before the quit
+	e.sleep(nil, nil, 5*time.Second) // let it "sync" a moment before the quit
 
 	aliveBeforeQuit := e.pidAlive(child.pid)
 	t.Logf("alive right before quit: %v", aliveBeforeQuit)
@@ -153,16 +154,18 @@ func TestLabHiddenLaunchAndClose(t *testing.T) {
 	_, mainFound := e.w.mainWindow(uint32(child.pid))
 	t.Logf("L-W4: single main window found to target at quit time: %v (isMain count=%d)", mainFound, mainCount)
 
-	if err := e.quit(child); err != nil {
-		t.Fatalf("quit returned an error (should be nil on every path): %v", err)
+	// errQuitNotPosted is the "no single main window" path (C-60): nothing posted,
+	// reported below as the !mainFound case.
+	if err := e.quit(context.Background(), child); err != nil && !errors.Is(err, errQuitNotPosted) {
+		t.Fatalf("quit returned an unexpected error: %v", err)
 	}
 	quitAt := e.now()
-	e.sleep(1 * time.Second)
+	e.sleep(nil, nil, 1*time.Second)
 	labLogWindows(t, "1s after the quit request", uint32(child.pid))
 
 	closed := !e.pidAlive(child.pid)
 	for !closed && e.now().Sub(quitAt) < 30*time.Second {
-		e.sleep(500 * time.Millisecond)
+		e.sleep(nil, nil, 500*time.Millisecond)
 		closed = !e.pidAlive(child.pid)
 	}
 	t.Logf("L-W4: %d thunderbird.exe remain; our pid exited=%v", len(e.thunderbirdProcs()), closed)

@@ -98,16 +98,9 @@ func plutilBundleIDCmd(ctx context.Context, app string) *exec.Cmd {
 	return c
 }
 
-// probeTimeout bounds every read-only helper (pgrep/ps/sysctl/ioreg), so a stuck
-// system tool can never hang the pre-sync (which itself can never gate the
-// archive). launchTimeout bounds `open`, which only asks LaunchServices to start
-// the app and returns at once; the long wait for the window to appear is the
-// state machine's S6, not this call.
-const (
-	probeTimeout  = 5 * time.Second
-	launchTimeout = 15 * time.Second
-	quitTimeout   = 20 * time.Second
-)
+// probeTimeout, launchTimeout and quitTimeout bound every helper this adapter runs;
+// they live in budget.go (untagged) so the whole-session budget is computed from
+// them on every platform.
 
 // runCmd runs a built command to completion and returns its stdout and stderr.
 // It is the exec seam: production uses realRun; a test replaces it with a fake
@@ -290,8 +283,10 @@ var _ env = (*macEnv)(nil)
 // running rather than close the owner's too (adversarial finding C3).
 func (e *macEnv) quitAffectsAllInstances() bool { return true }
 
-func (e *macEnv) now() time.Time        { return e.clock() }
-func (e *macEnv) sleep(d time.Duration) { time.Sleep(d) }
+func (e *macEnv) now() time.Time { return e.clock() }
+func (e *macEnv) sleep(ctx, stop context.Context, d time.Duration) {
+	sleepCtx(ctx, stop, d)
+}
 
 // digest folds the watch set without opening a file (design §4.4.2).
 func (e *macEnv) digest(roots []string) (uint64, bool) { return digestWatch(roots) }
@@ -369,6 +364,26 @@ func (e *macEnv) thunderbirdProcs() []proc {
 	return procs
 }
 
+// rawThunderbirdCount counts the pids pgrep lists, before any ps read, so a
+// Thunderbird whose details cannot be read still counts toward C3 (C-1/SAF-9):
+// thunderbirdProcs drops such a process, which would undercount and let the
+// bundle-wide quit close the person's Thunderbird too. pgrep exits 1 when nothing
+// matches (zero, read fine); any other failure is an unknown count (ok false), which
+// the session treats as "maybe more than one", so nothing is quit on a guess.
+func (e *macEnv) rawThunderbirdCount() (int, bool) {
+	ctx, cancel := context.WithTimeout(context.Background(), probeTimeout)
+	defer cancel()
+	out, _, err := e.run(pgrepCmd(ctx, e.uid))
+	if err != nil {
+		var ee *exec.ExitError
+		if errors.As(err, &ee) && ee.ExitCode() == 1 {
+			return 0, true
+		}
+		return 0, false
+	}
+	return len(parsePgrepPIDs(out)), true
+}
+
 func (e *macEnv) procInfo(ctx context.Context, pid int) (proc, bool) {
 	etOut, _, err := e.run(psEtimeCommCmd(ctx, pid))
 	if err != nil {
@@ -416,17 +431,16 @@ func (e *macEnv) releaseLock(string) {
 }
 
 // quit asks Thunderbird to quit through its own quit request (design §4.7.1,
-// S8): one osascript call of the constant script, bounded by quitTimeout. It
-// never signals or kills Thunderbird — osascript delivers the app's own quit
-// request. The result is classified so the machine can tell consent-denied from
-// success.
+// S8): one osascript call of the constant script, under the context the session
+// gives it — the session's own context with the quitTimeout deadline (C-5), so a
+// Lock or an abandoned session ends the helper in flight. It never signals or
+// kills Thunderbird — osascript delivers the app's own quit request. The result
+// is classified so the machine can tell consent-denied from success.
 // quit ignores the target on macOS: the osascript request addresses Thunderbird
 // by bundle id (the identity re-check at S8 having just proven the target is
 // ours). Windows uses target.pid instead (PC-W2).
-func (e *macEnv) quit(target proc) error {
+func (e *macEnv) quit(ctx context.Context, target proc) error {
 	_ = target
-	ctx, cancel := context.WithTimeout(context.Background(), quitTimeout)
-	defer cancel()
 	_, stderr, err := e.run(quitCmd(ctx))
 	return classifyQuitErr(err, stderr)
 }

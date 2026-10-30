@@ -32,7 +32,12 @@ func TestWinRunWiringOwnerActiveSkips(t *testing.T) {
 	}
 	cfg := Config{Profile: prof, ProfileNamed: true, StateDir: t.TempDir()}
 
-	res := runWith(context.Background(), cfg, e)
+	res := runWith(context.Background(), cfg, e, sessionCtl{})
+	if res.Release != nil {
+		// The session holds the profile lock until the caller releases it (C2); on
+		// Windows an open lock file cannot be removed by the temp-dir cleanup.
+		defer res.Release()
+	}
 	if res.Outcome != OutcomeOwnerActiveSkipped {
 		t.Fatalf("runWith outcome = %v, want presync_owner_active_skipped", res.Outcome)
 	}

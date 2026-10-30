@@ -1,11 +1,14 @@
 package presync
 
 import (
+	"context"
 	"hash/fnv"
 	"os"
 	"path/filepath"
 	"strconv"
 	"strings"
+	"sync"
+	"sync/atomic"
 	"time"
 )
 
@@ -15,37 +18,131 @@ import (
 // so the R32 safety watchdog is written and reviewed ONCE, never copied per
 // platform where it could drift.
 
-// sessionBudget bounds the WHOLE pre-sync, a little beyond the §4.11 worst case
-// (await-up + max-wait + quit-grace + slack). filepath.WalkDir / os.ReadDir /
-// DirEntry.Info cannot honour a context, so a watch root on an unresponsive
-// mount would otherwise block forever; the watchdog abandons such a session at
-// this bound so the archive still runs (R32). A var so a test can shrink it.
-var sessionBudget = defAwaitUp + defMaxWait + defQuitGrace + 30*time.Second
+// sessionCtl is what the watchdog hands the session it runs: the session context,
+// which it cancels when it abandons the session, and the abandoned flag
+// (design-presync-attended §2.6, C-3).
+type sessionCtl struct {
+	ctx       context.Context
+	abandoned func() bool
+}
 
-// runWatchdog runs fn (one platform's whole pre-sync) under sessionBudget. If fn
-// stalls in an un-interruptible syscall past the bound, its goroutine is
-// abandoned — it only reads and asks, so R31 holds — and a WARN is returned so
-// the archive reads anyway (R32). The abandoned goroutine ends with the process.
-func runWatchdog(fn func() Result) Result {
-	ch := make(chan Result, 1) // buffered: an abandoned goroutine can still send
+func (s sessionCtl) isAbandoned() bool { return s.abandoned != nil && s.abandoned() }
+
+// runWatchdog runs fn (one platform's whole pre-sync) under budget
+// (sessionBudget, §2.6). filepath.WalkDir / os.ReadDir / DirEntry.Info cannot
+// honour a context, so a watch root on an unresponsive mount would otherwise block
+// forever; the watchdog gives up on such a session at this bound so the archive
+// still runs (R32).
+//
+// It returns (1) the session's own result when it ends; (2) at once, `cancelled`,
+// when stop or ctx ends (in AS1a every cancel cause is one that quits nothing); (3)
+// at the budget, `internal-error`. On (2) and (3) it marks the session abandoned
+// and cancels the session context, so the session starts no quit request, a
+// request in flight and every wait end, and the goroutine returns soon after
+// (C-3). The profile lock the abandoned session holds is then released by a
+// once-both latch: only when the session has returned AND the caller has called
+// the returned Release after its read (C-77), so no other sync can compact the
+// profile while this run reads it, and the long-lived Desktop never keeps it (T21).
+func runWatchdog(ctx, stop context.Context, budget time.Duration, fn func(sessionCtl) Result) Result {
+	parent := stop
+	if parent == nil {
+		parent = context.Background()
+	}
+	sctx, cancelSession := context.WithCancel(parent)
+	var abandoned atomic.Bool
+	latch := &releaseLatch{}
+
+	var mu sync.Mutex
+	gaveUp, delivered := false, false
+	ch := make(chan Result, 1)
 	go func() {
-		// A panic in fn (resolve, launch, quit, an unsafe syscall read) is in THIS
-		// goroutine; the caller's recover (app.Run's hook guard, MA-560) cannot catch
-		// a panic in another goroutine, so without this the process would crash and
-		// the archive would NOT run — an R32 breach (adversarial finding F4). Recover
-		// to a warning instead, so the pre-sync still never gates the archive.
-		defer func() {
-			if r := recover(); r != nil {
-				ch <- Result{Outcome: OutcomeInternalError}
-			}
+		var r Result
+		func() {
+			// A panic in fn (resolve, launch, quit, an unsafe syscall read) is in THIS
+			// goroutine; the caller's recover (app.Run's hook guard, MA-560) cannot catch
+			// a panic in another goroutine, so without this the process would crash and
+			// the archive would NOT run — an R32 breach (adversarial finding F4). Recover
+			// to a warning instead, so the pre-sync still never gates the archive.
+			defer func() {
+				if p := recover(); p != nil {
+					r = Result{Outcome: OutcomeInternalError}
+				}
+			}()
+			r = fn(sessionCtl{ctx: sctx, abandoned: abandoned.Load})
 		}()
-		ch <- fn()
+		mu.Lock()
+		if gaveUp {
+			mu.Unlock()
+			latch.sessionReturned(r.Release)
+			return
+		}
+		delivered = true
+		ch <- r
+		mu.Unlock()
 	}()
+
+	timer := time.NewTimer(budget)
+	defer timer.Stop()
+	var ctxDone <-chan struct{}
+	if ctx != nil {
+		ctxDone = ctx.Done()
+	}
+	var out Outcome
 	select {
 	case r := <-ch:
+		cancelSession()
 		return r
-	case <-time.After(sessionBudget):
-		return Result{Outcome: OutcomeInternalError}
+	case <-timer.C:
+		out = OutcomeInternalError
+	case <-ctxDone:
+		out = OutcomeCancelled
+	case <-parent.Done():
+		out = OutcomeCancelled
+	}
+	mu.Lock()
+	if delivered { // the session ended at the same moment: its own result stands
+		mu.Unlock()
+		cancelSession()
+		return <-ch
+	}
+	gaveUp = true
+	abandoned.Store(true)
+	mu.Unlock()
+	cancelSession()
+	return Result{Outcome: out, Release: latch.callerReleased}
+}
+
+// releaseLatch frees an abandoned session's profile lock once both halves are
+// done: the session has returned (handing over its release) and the caller has
+// called Release after its read (C-77). Either order; at most once.
+type releaseLatch struct {
+	mu      sync.Mutex
+	session bool
+	caller  bool
+	release func()
+}
+
+func (l *releaseLatch) sessionReturned(release func()) {
+	l.mu.Lock()
+	l.session, l.release = true, release
+	fire := l.caller
+	l.mu.Unlock()
+	if fire && release != nil {
+		release()
+	}
+}
+
+func (l *releaseLatch) callerReleased() {
+	l.mu.Lock()
+	if l.caller {
+		l.mu.Unlock()
+		return
+	}
+	l.caller = true
+	fire, release := l.session, l.release
+	l.mu.Unlock()
+	if fire && release != nil {
+		release()
 	}
 }
 

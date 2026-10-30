@@ -4,6 +4,8 @@ package presync
 
 import (
 	"context"
+	"errors"
+	"path/filepath"
 	"syscall"
 	"testing"
 	"time"
@@ -53,12 +55,14 @@ func TestSelectMainWindow(t *testing.T) {
 	}
 }
 
-// covers: MA-570
+// covers: MA-570, MA-900
 // quit posts WM_CLOSE to the proven pid's main window ONLY when a handle is held,
 // a single main window is found, and the last-instant re-checks pass (the handle
 // still alive AND the window still owned by the pid). Every "cannot safely close"
-// path posts nothing and returns nil, so S8's alive-poll ends as a timeout
-// (left-running, announced) — Thunderbird is never force-closed.
+// path posts nothing and returns errQuitNotPosted (C-60), so S8 ends at once as
+// presync_quit_no_window (left-running, announced) with no exit-grace wait and no
+// "asked to close" text — Thunderbird is never force-closed. A post Windows
+// refuses also posted nothing, and says so the same way.
 func TestWinQuitOrchestration(t *testing.T) {
 	const pid = 4242
 	const hwnd = uintptr(0x100)
@@ -66,25 +70,33 @@ func TestWinQuitOrchestration(t *testing.T) {
 	child := proc{pid: pid, start: start}
 	ours := start.UnixNano() // the creation time that proves the pinned pid is ours
 
-	run := func(f fakeWin32) []uintptr {
+	run := func(f fakeWin32) ([]uintptr, error) {
 		var posted []uintptr
 		f.posted = &posted
 		e := &winEnv{w: f}
-		if err := e.quit(child); err != nil {
-			t.Fatalf("quit returned %v, want nil on every path in v1", err)
-		}
-		return posted
+		err := e.quit(context.Background(), child)
+		return posted, err
 	}
 
 	// Happy path: handle held, identity re-proved (creation matches), one main
-	// window, alive, pid still matches → posted.
-	posted := run(fakeWin32{
+	// window, alive, pid still matches → posted, nil.
+	posted, err := run(fakeWin32{
 		handleOK: true, handleLive: true, creation: ours,
 		mainOf:   map[uint32]uintptr{pid: hwnd},
 		winPIDof: map[uintptr]uint32{hwnd: pid},
 	})
-	if len(posted) != 1 || posted[0] != hwnd {
-		t.Errorf("happy path posted %v, want [%#x]", posted, hwnd)
+	if len(posted) != 1 || posted[0] != hwnd || err != nil {
+		t.Errorf("happy path posted %v (err %v), want [%#x] and nil", posted, err, hwnd)
+	}
+
+	// The post itself refused (the window destroyed in the gap): nothing posted.
+	if _, err := run(fakeWin32{
+		handleOK: true, handleLive: true, creation: ours,
+		mainOf:   map[uint32]uintptr{pid: hwnd},
+		winPIDof: map[uintptr]uint32{hwnd: pid},
+		postErr:  errors.New("invalid window handle"),
+	}); !errors.Is(err, errQuitNotPosted) {
+		t.Errorf("a refused post returned %v, want errQuitNotPosted", err)
 	}
 
 	// Every "cannot safely close" path posts nothing. Each sets creation=ours so it
@@ -103,8 +115,12 @@ func TestWinQuitOrchestration(t *testing.T) {
 			mainOf: map[uint32]uintptr{pid: hwnd}, winPIDof: map[uintptr]uint32{hwnd: 9999}},
 	}
 	for name, f := range cannot {
-		if posted := run(f); len(posted) != 0 {
-			t.Errorf("%s: posted %v, want nothing (leave it running → timeout)", name, posted)
+		posted, err := run(f)
+		if len(posted) != 0 {
+			t.Errorf("%s: posted %v, want nothing (leave it running)", name, posted)
+		}
+		if !errors.Is(err, errQuitNotPosted) {
+			t.Errorf("%s: quit returned %v, want errQuitNotPosted (C-60)", name, err)
 		}
 	}
 }
@@ -140,6 +156,24 @@ func TestBuildLaunchCmdFlags(t *testing.T) {
 	var _ *syscall.SysProcAttr = spa
 }
 
+// covers: MA-928
+// The launch's working folder is Thunderbird's own install folder (C-65), both
+// modes, so a Thunderbird left open for hours never pins the folder Mail Archive
+// was started in. On real Windows, winInstallDir (the untagged pure function the
+// Linux gate checks) also agrees with filepath.Dir for each path.
+func TestBuildLaunchCmdWorkingFolder(t *testing.T) {
+	const exe = `C:\Program Files\Mozilla Thunderbird\thunderbird.exe`
+	cmd := buildLaunchCmd(exe, `C:\p`)
+	if cmd.Dir != `C:\Program Files\Mozilla Thunderbird` {
+		t.Errorf("launch working folder = %q, want Thunderbird's install folder", cmd.Dir)
+	}
+	for _, p := range []string{exe, `C:\thunderbird.exe`, `\\server\share\Thunderbird\thunderbird.exe`, `D:\Apps\Thunderbird\thunderbird.exe`} {
+		if got, want := winInstallDir(p), filepath.Dir(p); got != want {
+			t.Errorf("winInstallDir(%q) = %q, filepath.Dir = %q", p, got, want)
+		}
+	}
+}
+
 // covers: MA-571
 // minimizeMain minimizes the visible-launch window once it appears (owner ruling
 // 2026-10-23): when a single main window is found it is minimized via
@@ -156,13 +190,41 @@ func TestWinMinimizeMain(t *testing.T) {
 			minimized: &minimized,
 		},
 	}
-	e.minimizeMain(context.Background(), pid)
+	e.minimizeMain(context.Background(), nil, pid)
 	if len(minimized) != 1 || minimized[0] != hwnd {
 		t.Errorf("minimizeMain minimized %v, want [%#x]", minimized, hwnd)
 	}
 
 	// winEnv satisfies the session's optional windowMinimizer capability.
 	var _ windowMinimizer = e
+}
+
+// covers: MA-921
+// minimizeMain's wait for the window (up to minimizeWait, 15 s) ends at once when
+// the session context ends — a Lock, Shut down or the watchdog abandoning the
+// session (C-64) — rather than polling on with a plain sleep. Positive twin: with
+// a window there and nothing ended, it minimizes.
+func TestWinMinimizeMainEndsOnStop(t *testing.T) {
+	const pid = 4242
+	var minimized []uintptr
+	e := &winEnv{clock: time.Now, w: fakeWin32{mainOf: map[uint32]uintptr{pid: 0x100}, minimized: &minimized}}
+	e.minimizeMain(context.Background(), nil, pid)
+	if len(minimized) != 1 {
+		t.Fatalf("twin: minimized %v, want the window minimized", minimized)
+	}
+
+	minimized = nil
+	e = &winEnv{clock: time.Now, w: fakeWin32{mainOf: map[uint32]uintptr{}, minimized: &minimized}} // no window ever appears
+	stop, cancel := context.WithCancel(context.Background())
+	time.AfterFunc(50*time.Millisecond, cancel)
+	start := time.Now()
+	e.minimizeMain(context.Background(), stop, pid)
+	if took := time.Since(start); took > 2*time.Second {
+		t.Errorf("minimizeMain waited %v after the session context ended, want it to stop at once", took)
+	}
+	if len(minimized) != 0 {
+		t.Errorf("minimized %v with no window, want nothing", minimized)
+	}
 }
 
 // covers: MA-557

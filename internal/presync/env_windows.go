@@ -3,6 +3,7 @@
 package presync
 
 import (
+	"context"
 	"errors"
 	"os"
 	"path/filepath"
@@ -81,12 +82,19 @@ func newWinEnv() *winEnv {
 	}
 }
 
-func (e *winEnv) now() time.Time                       { return e.clock() }
-func (e *winEnv) sleep(d time.Duration)                { time.Sleep(d) }
+func (e *winEnv) now() time.Time { return e.clock() }
+func (e *winEnv) sleep(ctx, stop context.Context, d time.Duration) {
+	sleepCtx(ctx, stop, d)
+}
 func (e *winEnv) digest(roots []string) (uint64, bool) { return digestWatch(roots) }
-func (e *winEnv) bootTime() int64                      { return e.w.bootUnix() }
-func (e *winEnv) pidAlive(pid int) bool                { return pid > 0 && e.w.alive(uint32(pid)) }
-func (e *winEnv) idleSeconds() (float64, bool)         { return e.w.idleSeconds() }
+
+// rawThunderbirdCount is the Toolhelp snapshot's thunderbird.exe count, every one
+// listed whether or not its details read. Unused on Windows today: the quit goes
+// to the proven pid's own window, so quitAffectsAllInstances is false there.
+func (e *winEnv) rawThunderbirdCount() (int, bool) { return len(e.w.thunderbirdProcs()), true }
+func (e *winEnv) bootTime() int64                  { return e.w.bootUnix() }
+func (e *winEnv) pidAlive(pid int) bool            { return pid > 0 && e.w.alive(uint32(pid)) }
+func (e *winEnv) idleSeconds() (float64, bool)     { return e.w.idleSeconds() }
 
 // quitAffectsAllInstances is false on Windows: quit posts WM_CLOSE to the proven pid's
 // own window, so it never touches another Thunderbird (C3).

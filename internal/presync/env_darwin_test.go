@@ -171,6 +171,45 @@ func TestMacThunderbirdProcs(t *testing.T) {
 	}
 }
 
+// covers: MA-900
+// The C3 count (A10 step 3, C-1/SAF-9) is the RAW pid list pgrep prints, before any
+// ps read: with two Thunderbirds listed and one whose ps reads fail, thunderbirdProcs
+// keeps only the readable one (positive twin) while rawThunderbirdCount still says
+// two, so the bundle-wide quit is never sent beside an unreadable second copy.
+// pgrep's "nothing matched" (exit 1) is a zero count read fine; any other failure
+// is an unknown count (ok false), which the session treats as more than one.
+func TestMacRawThunderbirdCount(t *testing.T) {
+	e := newMacEnv("/Applications/Thunderbird.app")
+	e.clock = func() time.Time { return time.Date(2026, 10, 30, 12, 0, 0, 0, time.UTC) }
+	e.run = func(cmd *exec.Cmd) (string, string, error) {
+		switch {
+		case cmd.Path == "/usr/bin/pgrep":
+			return "4242\n4243\n", "", nil
+		case cmd.Path == "/bin/ps" && psPidArg(cmd) == "4242" && hasArg(cmd, "etime="):
+			return "  01:00:00 /Applications/Thunderbird.app/Contents/MacOS/thunderbird\n", "", nil
+		case cmd.Path == "/bin/ps" && psPidArg(cmd) == "4242":
+			return "/Applications/Thunderbird.app/Contents/MacOS/thunderbird -profile /Users/x/P\n", "", nil
+		}
+		return "", "", fmt.Errorf("ps: cannot read this process")
+	}
+	if procs := e.thunderbirdProcs(); len(procs) != 1 || procs[0].pid != 4242 {
+		t.Fatalf("twin: thunderbirdProcs = %+v, want only the readable 4242", procs)
+	}
+	if n, ok := e.rawThunderbirdCount(); !ok || n != 2 {
+		t.Errorf("rawThunderbirdCount = (%d, %v), want (2, true): the unreadable pid must count", n, ok)
+	}
+
+	noMatch := exec.Command("/usr/bin/false").Run() // a real exit status 1, as pgrep gives for no match
+	e.run = func(*exec.Cmd) (string, string, error) { return "", "", noMatch }
+	if n, ok := e.rawThunderbirdCount(); !ok || n != 0 {
+		t.Errorf("pgrep exit 1 = (%d, %v), want (0, true)", n, ok)
+	}
+	e.run = func(*exec.Cmd) (string, string, error) { return "", "", fmt.Errorf("pgrep could not run") }
+	if _, ok := e.rawThunderbirdCount(); ok {
+		t.Error("a pgrep failure was read as a known count; it must be unknown (ok false)")
+	}
+}
+
 // covers: MA-553
 // A process whose ps etime/comm cannot be parsed is dropped from the list, never
 // admitted with guessed fields (nothing is ever quit on a guess).
@@ -379,7 +418,7 @@ func TestMacQuitClassify(t *testing.T) {
 		calls++
 		return "", "execution error: Not authorized to send Apple events (-1743)", fmt.Errorf("exit status 1")
 	}
-	if err := e.quit(proc{pid: 4242}); !errors.Is(err, errQuitNotPermitted) {
+	if err := e.quit(context.Background(), proc{pid: 4242}); !errors.Is(err, errQuitNotPermitted) {
 		t.Errorf("quit() = %v, want errQuitNotPermitted", err)
 	}
 	if calls != 1 {

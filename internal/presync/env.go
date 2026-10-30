@@ -1,6 +1,7 @@
 package presync
 
 import (
+	"context"
 	"errors"
 	"time"
 )
@@ -20,6 +21,14 @@ var errNoDesktopSession = errors.New("no desktop session")
 // and records a leftover rather than forcing it. Platform-neutral so the machine
 // classifies it without a build tag.
 var errQuitNotPermitted = errors.New("quit not permitted")
+
+// errQuitNotPosted is returned by quit when it asked nothing at all: on Windows,
+// every "cannot safely close" path (no handle held, a creation-time mismatch, zero
+// or several main-like windows, the last-instant re-check failing, a post that did
+// not take) posts no WM_CLOSE (design-presync-attended A10 step 7, C-60). The
+// machine maps it at once to presync_quit_no_window and leaves Thunderbird
+// running, with no exit-grace wait and no text saying it was asked to close.
+var errQuitNotPosted = errors.New("quit not posted")
 
 // proc is a snapshot of one Thunderbird-relevant process (design sections 4.4.1,
 // 4.4.3): its pid, resolved executable path, start time (UTC) and command line
@@ -54,9 +63,11 @@ type env interface {
 	// pid was reused by a non-Thunderbird process.
 	procExe(pid int) (exe string, ok bool)
 
-	// sleep waits for d. The real seam blocks; the fake advances its clock, so
-	// the state machine's polling loops are deterministic in tests.
-	sleep(d time.Duration)
+	// sleep waits for d, returning early when ctx or stop ends (either may be nil).
+	// The real seam is sleepCtx; the fake advances its clock (and does not move it
+	// when either context is already done), so the polling loops are deterministic
+	// in tests and no wait outlasts a cancel or an abandonment (A5).
+	sleep(ctx, stop context.Context, d time.Duration)
 	// bootTime is the machine's boot time in unix seconds (a reboot clears the
 	// record, design 4.6). procExe/thunderbirdProcs and this never read mail.
 	bootTime() int64
@@ -75,12 +86,19 @@ type env interface {
 	// (S8). It never signals or kills. The target is the proven child: macOS
 	// ignores it and quits by bundle id, but Windows needs its pid to post
 	// WM_CLOSE to that process's own window (PC-W2), so the session hands it over.
-	quit(target proc) error
+	// ctx carries the request's deadline, which the session builds from its own
+	// context, so a Lock or an abandonment ends a request in flight (C-5).
+	quit(ctx context.Context, target proc) error
 	// quitAffectsAllInstances reports whether quit closes EVERY Thunderbird of the
 	// bundle (macOS: the request goes to the app by bundle id) rather than the one
 	// proven pid (Windows: WM_CLOSE to that pid's window). When true, S8 skips the quit
 	// if more than one Thunderbird is running, so the owner's is never closed too (C3).
 	quitAffectsAllInstances() bool
+	// rawThunderbirdCount is how many Thunderbird-named processes the OS lists for
+	// this user, counting those whose details cannot be read (C-1/SAF-9): the C3
+	// count, so a process thunderbirdProcs drops is still counted as a second
+	// Thunderbird. ok is false when the list itself could not be read.
+	rawThunderbirdCount() (n int, ok bool)
 	// digest folds the watch set into one value without opening a file (S7); the
 	// real seam calls digestWatch.
 	digest(roots []string) (sum uint64, truncated bool)

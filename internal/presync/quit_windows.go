@@ -4,6 +4,7 @@ package presync
 
 import (
 	"context"
+	"fmt"
 	"os/exec"
 	"syscall"
 	"time"
@@ -74,8 +75,13 @@ var minimizeWait = 15 * time.Second
 // ruling a visible launch is acceptable (scheduled off-hours); the window is then
 // minimized right after it appears (minimizeMain) so it is a taskbar blip, not a
 // focus-stealing popup. A pure builder, so the flags are golden-tested.
+//
+// It runs Thunderbird in its own install folder (design-presync-attended C-65,
+// both modes), so a Thunderbird left open for hours never pins the folder Mail
+// Archive itself was started in (an archive, a removable drive).
 func buildLaunchCmd(exe, profile string) *exec.Cmd {
 	cmd := exec.Command(exe, "-profile", profile)
+	cmd.Dir = winInstallDir(exe)
 	cmd.SysProcAttr = &syscall.SysProcAttr{
 		CreationFlags: windows.CREATE_BREAKAWAY_FROM_JOB,
 	}
@@ -103,17 +109,19 @@ func (e *winEnv) startHidden(exe, profile string) error {
 // ShowWindow(SW_MINIMIZE) — a benign window-state change, never a close or kill. If
 // no single main window appears in time it does nothing (the launch stays visible —
 // the accepted fallback). macOS launches truly hidden and does not implement this.
-func (e *winEnv) minimizeMain(ctx context.Context, pid int) {
+// Its wait ends at once when ctx or stop (the session context) ends — a Lock,
+// Shut down or the watchdog abandoning the session (C-64).
+func (e *winEnv) minimizeMain(ctx, stop context.Context, pid int) {
 	deadline := e.now().Add(minimizeWait)
 	for e.now().Before(deadline) {
-		if ctx.Err() != nil {
+		if ctx.Err() != nil || (stop != nil && stop.Err() != nil) {
 			return
 		}
 		if hwnd, ok := e.w.mainWindow(uint32(pid)); ok {
 			e.w.minimizeWindow(hwnd)
 			return
 		}
-		e.sleep(500 * time.Millisecond)
+		e.sleep(ctx, stop, 500*time.Millisecond)
 	}
 }
 
@@ -122,15 +130,17 @@ func (e *winEnv) minimizeMain(ctx context.Context, pid int) {
 // mid-quit (PC-W3); finds the pid's single MAIN top-level window; re-checks, at
 // the last instant, that the held handle still reports alive AND the window still
 // belongs to that pid (the Windows analogue of S8's pre-quit re-verify); then
-// posts WM_CLOSE — and nothing else. Every "cannot safely close" path returns nil
-// and leaves Thunderbird running, so S8's alive-poll ends as presync_quit_timeout
-// (left-running, announced) — never a forced close. The `target` is the proven
-// child (its pid); macOS ignores the argument and quits by bundle id.
-func (e *winEnv) quit(target proc) error {
+// posts WM_CLOSE — and nothing else. Every "cannot safely close" path posts nothing
+// and returns errQuitNotPosted (C-60), so the session ends at once as
+// presync_quit_no_window (left-running, announced) — no exit-grace wait, no text
+// saying it was asked to close, never a forced close. PostMessageW returns at
+// once, so ctx bounds nothing here. The `target` is the proven child (its pid);
+// macOS ignores the argument and quits by bundle id.
+func (e *winEnv) quit(ctx context.Context, target proc) error {
 	pid := uint32(target.pid)
 	h, ok := e.w.holdHandle(pid)
 	if !ok {
-		return nil // no handle held → cannot defeat pid reuse → do not address a window
+		return errQuitNotPosted // no handle held → cannot defeat pid reuse → do not address a window
 	}
 	defer e.w.releaseHandle(h)
 
@@ -141,23 +151,27 @@ func (e *winEnv) quit(target proc) error {
 	// instance we adopted, by exact creation time (per-instance and immutable; a
 	// reused pid has a different one). 0 / unreadable ⇒ mismatch ⇒ do not quit.
 	if e.w.creationNs(pid) != target.start.UnixNano() {
-		return nil
+		return errQuitNotPosted
 	}
 
 	hwnd, ok := e.w.mainWindow(pid)
 	if !ok {
-		return nil // no single main window (a hidden modal, or ambiguity) → leave it
+		return errQuitNotPosted // no single main window (a hidden modal, or ambiguity) → leave it
 	}
 	// Last-instant re-verify immediately before the post.
 	if !e.w.handleAlive(h) || e.w.windowPID(hwnd) != pid {
-		return nil // the process died, or the HWND no longer belongs to our pid
+		return errQuitNotPosted // the process died, or the HWND no longer belongs to our pid
 	}
 	// Residual (adversarial finding F2, the Windows analogue of macOS PC1): the held
 	// handle pins the pid, not the HWND; an HWND destroyed and its value recycled to
 	// another process's window in the microseconds between this check and the post
 	// is irreducible — Win32 has no atomic "post to this pid's window". If the window
-	// is merely destroyed, PostMessageW returns 0 and nothing is posted (fail-safe).
-	return e.w.postClose(hwnd)
+	// is merely destroyed, PostMessageW returns 0 and nothing is posted (fail-safe),
+	// which is said the same way: nothing was asked.
+	if err := e.w.postClose(hwnd); err != nil {
+		return fmt.Errorf("%w: %v", errQuitNotPosted, err)
+	}
+	return nil
 }
 
 // selectMainWindow returns the one window that is the application's main window,

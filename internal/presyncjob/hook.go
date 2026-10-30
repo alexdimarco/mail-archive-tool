@@ -15,7 +15,6 @@ import (
 
 	"mail-archive-tool/internal/app"
 	"mail-archive-tool/internal/presync"
-	"mail-archive-tool/internal/state"
 )
 
 // SetHook installs the pre-sync on opts.BeforeRead: one session over the run's
@@ -39,16 +38,6 @@ func SetHook(opts *app.Options, profile string, logw io.Writer) error {
 			Log:          logw,
 		})
 		return app.BeforeReadResult{Warnings: warnings(res), Release: res.Release}
-	}
-	return nil
-}
-
-// warnings maps a pre-sync result to the run's warnings: a WARN outcome becomes
-// one RunWarning (its code and what/why/do-this text); an ok or note outcome
-// adds none.
-func warnings(res presync.Result) []state.RunWarning {
-	if msg, warn := presync.WarnText(res.Outcome); warn {
-		return []state.RunWarning{{Code: res.Outcome.Code, Message: msg}}
 	}
 	return nil
 }

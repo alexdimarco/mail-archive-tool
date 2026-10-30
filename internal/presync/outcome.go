@@ -60,17 +60,23 @@ var (
 	OutcomeQuitNotPermitted    = Outcome{"quit-not-permitted", "presync_quit_not_permitted", ClassWarn}
 	OutcomeQuitTimeout         = Outcome{"quit-timeout", "presync_quit_timeout", ClassWarn}
 	OutcomeQuitSkippedOthers   = Outcome{"quit-skipped-others", "presync_quit_skipped_others", ClassWarn}
-	OutcomeOwnerActiveSkipped  = Outcome{"owner-active-skipped", "presync_owner_active_skipped", ClassNote}
-	OutcomeOwnerActive         = Outcome{"owner-active", "presync_owner_active", ClassWarn}
-	OutcomeSuccessorFound      = Outcome{"successor-found", "presync_successor_found", ClassWarn}
-	OutcomeLeftoverFound       = Outcome{"leftover-found", "presync_leftover_found", ClassWarn}
-	OutcomeProfileUnusable     = Outcome{"profile-unusable", "presync_profile_unusable", ClassWarn}
-	OutcomeAppNotFound         = Outcome{"app-not-found", "presync_app_not_found", ClassWarn}
-	OutcomeRefusedElevated     = Outcome{"refused-elevated", "presync_refused_elevated", ClassWarn}
-	OutcomeStateUnreadable     = Outcome{"state-unreadable", "presync_state_unreadable", ClassWarn}
-	OutcomeWatchTruncated      = Outcome{"watch-truncated", "presync_watch_truncated", ClassNote}
-	OutcomeInternalError       = Outcome{"internal-error", "presync_internal_error", ClassWarn}
-	OutcomeCancelled           = Outcome{"cancelled", "", ClassNone}
+	// OutcomeQuitNoWindow: the quit posted nothing (errQuitNotPosted, C-60), so
+	// Thunderbird was left open at once, never said to have been asked to close.
+	OutcomeQuitNoWindow = Outcome{"quit-no-window", "presync_quit_no_window", ClassWarn}
+	// OutcomeStateUnsaved: a side warning (A9) — the quitting or left-running
+	// record could not be saved, so a Thunderbird left open may go unannounced.
+	OutcomeStateUnsaved       = Outcome{"state-unsaved", "presync_state_unsaved", ClassWarn}
+	OutcomeOwnerActiveSkipped = Outcome{"owner-active-skipped", "presync_owner_active_skipped", ClassNote}
+	OutcomeOwnerActive        = Outcome{"owner-active", "presync_owner_active", ClassWarn}
+	OutcomeSuccessorFound     = Outcome{"successor-found", "presync_successor_found", ClassWarn}
+	OutcomeLeftoverFound      = Outcome{"leftover-found", "presync_leftover_found", ClassWarn}
+	OutcomeProfileUnusable    = Outcome{"profile-unusable", "presync_profile_unusable", ClassWarn}
+	OutcomeAppNotFound        = Outcome{"app-not-found", "presync_app_not_found", ClassWarn}
+	OutcomeRefusedElevated    = Outcome{"refused-elevated", "presync_refused_elevated", ClassWarn}
+	OutcomeStateUnreadable    = Outcome{"state-unreadable", "presync_state_unreadable", ClassWarn}
+	OutcomeWatchTruncated     = Outcome{"watch-truncated", "presync_watch_truncated", ClassNote}
+	OutcomeInternalError      = Outcome{"internal-error", "presync_internal_error", ClassWarn}
+	OutcomeCancelled          = Outcome{"cancelled", "", ClassNone}
 )
 
 // allOutcomes is every outcome section 4.9.3 defines, in table order. The
@@ -79,7 +85,8 @@ var allOutcomes = []Outcome{
 	OutcomeOK, OutcomeNoActivity, OutcomeAlreadyRunning, OutcomeOtherProfileRunning,
 	OutcomeProfileBusy, OutcomeCannotStart, OutcomeNoDesktopSession, OutcomeDidNotStart,
 	OutcomeIdentityUnavailable, OutcomeNotQuiet, OutcomeExitedEarly, OutcomeQuitNotPermitted,
-	OutcomeQuitTimeout, OutcomeQuitSkippedOthers, OutcomeOwnerActiveSkipped, OutcomeOwnerActive, OutcomeSuccessorFound,
+	OutcomeQuitTimeout, OutcomeQuitSkippedOthers, OutcomeQuitNoWindow, OutcomeStateUnsaved,
+	OutcomeOwnerActiveSkipped, OutcomeOwnerActive, OutcomeSuccessorFound,
 	OutcomeLeftoverFound, OutcomeProfileUnusable, OutcomeAppNotFound, OutcomeRefusedElevated,
 	OutcomeStateUnreadable, OutcomeWatchTruncated, OutcomeInternalError, OutcomeCancelled,
 }
