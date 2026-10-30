@@ -3,9 +3,6 @@
 package main
 
 import (
-	"path/filepath"
-
-	"mail-archive-tool/internal/instance"
 	"mail-archive-tool/internal/presync"
 )
 
@@ -16,17 +13,4 @@ import (
 // adds only the Windows-specific word on the visible-then-minimized launch.
 func presyncInstallNote(string, bool) string {
 	return presync.SyncNotice + "\n\nOn Windows, each scheduled run briefly shows the Thunderbird window, then minimizes it to the taskbar while it syncs."
-}
-
-// presyncStateDir is the "presync" subdirectory of the per-user, NON-ROAMING state
-// directory (design §4.6, PC-W5): the pinned instance.Dir helper (MA-621) — the
-// per-user local app-data folder, not the roaming one — so a live pid in the
-// write-ahead record never travels to another machine, which jobfile.Dir (which
-// roams on Windows) would otherwise allow.
-func presyncStateDir() (string, error) {
-	dir, err := instance.Dir()
-	if err != nil {
-		return "", err
-	}
-	return filepath.Join(dir, "presync"), nil
 }

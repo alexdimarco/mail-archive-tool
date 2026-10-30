@@ -1,46 +1,26 @@
-//go:build darwin || windows
-
 package main
 
 import (
-	"context"
+	"errors"
 	"os"
 
 	"mail-archive-tool/internal/app"
 	"mail-archive-tool/internal/presync"
-	"mail-archive-tool/internal/state"
+	"mail-archive-tool/internal/presyncjob"
 )
 
-// setPresyncHook installs the Thunderbird pre-sync as app.Run's BeforeRead hook
-// (design §4.1, Q9 manual run): it resolves and runs one session on the discovered
-// sources, then maps the outcome to a warning on the run record. It never fails
-// the archive (R32) — app.Run already recovers a panic in the hook. Shared by the
-// macOS and Windows adapters; each supplies its own presyncStateDir.
+// setPresyncHook installs the Thunderbird pre-sync for -thunderbird-sync as
+// app.Run's BeforeRead hook, through the ONE shared hook the scheduled and Run-now
+// jobs use (design §4.1, Q9 manual run; design-presync-attended §2.2, T20), so
+// side warnings (B6), the profile lock's release and the outcome reach a command
+// line run exactly as they reach those. It never fails the archive (R32). The run
+// is never attended here: the command line at a local terminal is slice AS10's,
+// after the owner's nod (Q3). The owner watches a manual run, so the session
+// narrates to stderr. Where there is no adapter the flag is refused, and the
+// caller archives without the sync.
 func setPresyncHook(opts *app.Options, profile string) error {
-	stateDir, err := presyncStateDir()
-	if err != nil {
-		return err
+	if !presyncjob.Supported() {
+		return errors.New("-thunderbird-sync is only available on macOS and Windows in this version")
 	}
-	named := profile != ""
-	opts.BeforeRead = func(ctx context.Context, files []string) app.BeforeReadResult {
-		res := presync.Run(ctx, presync.Config{
-			Inputs:       files,
-			Profile:      profile,
-			ProfileNamed: named,
-			StateDir:     stateDir,
-			Log:          os.Stderr, // the owner watches a manual run; narrate it
-		})
-		return app.BeforeReadResult{Warnings: presyncWarnings(res)}
-	}
-	return nil
-}
-
-// presyncWarnings turns a pre-sync result into the run's warnings: a WARN outcome
-// becomes one RunWarning (its code + the what/why/do-this text); an ok or note
-// outcome adds none.
-func presyncWarnings(res presync.Result) []state.RunWarning {
-	if msg, warn := presync.WarnText(res.Outcome); warn {
-		return []state.RunWarning{{Code: res.Outcome.Code, Message: msg}}
-	}
-	return nil
+	return presyncjob.SetHook(opts, presyncjob.HookOptions{Profile: profile, Log: os.Stderr, Surface: presync.SurfaceCLI})
 }

@@ -21,7 +21,7 @@ func TestSetHookInstallsBeforeRead(t *testing.T) {
 	if opts.BeforeRead != nil {
 		t.Fatal("precondition: BeforeRead should start nil")
 	}
-	if err := SetHook(&opts, "", io.Discard); err != nil {
+	if err := SetHook(&opts, HookOptions{Log: io.Discard}); err != nil {
 		t.Fatalf("SetHook: %v", err)
 	}
 	if opts.BeforeRead == nil {

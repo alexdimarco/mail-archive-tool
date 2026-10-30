@@ -65,19 +65,3 @@ func TestSetPresyncHookInstalls(t *testing.T) {
 		t.Error("setPresyncHook did not install the BeforeRead hook")
 	}
 }
-
-// covers: MA-561
-// presyncWarnings turns a WARN outcome into one RunWarning carrying its code and
-// the what/why/do-this message; an ok or note outcome adds none.
-func TestPresyncWarningsMapping(t *testing.T) {
-	w := presyncWarnings(presync.Result{Outcome: presync.OutcomeQuitNotPermitted})
-	if len(w) != 1 || w[0].Code != presync.OutcomeQuitNotPermitted.Code || w[0].Message == "" {
-		t.Errorf("warn mapping = %+v, want one quit-not-permitted warning with a message", w)
-	}
-	if got := presyncWarnings(presync.Result{Outcome: presync.OutcomeOK}); got != nil {
-		t.Errorf("ok outcome produced warnings: %+v", got)
-	}
-	if got := presyncWarnings(presync.Result{Outcome: presync.OutcomeAlreadyRunning}); got != nil {
-		t.Errorf("a note outcome produced warnings: %+v", got)
-	}
-}

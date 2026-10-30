@@ -2,6 +2,7 @@ package wizard
 
 import (
 	"io"
+	"log"
 	"testing"
 
 	"mail-archive-tool/internal/export"
@@ -18,7 +19,7 @@ func TestOptsForJobMapsFieldsAndNoHookWhenOff(t *testing.T) {
 		Name: "x", Out: "/o", Mode: "full", Auto: true, CopyFirst: true,
 		KeepRaw: true, FollowLinks: []string{"/in/a"},
 	}
-	opts := optsForJob(j, []string{"/in/a", "/in/b"}, io.Discard)
+	opts := optsForJob(j, []string{"/in/a", "/in/b"}, log.New(io.Discard, "", 0), runScheduled)
 	if opts.Out != "/o" || opts.Mode != export.Full || !opts.Auto || !opts.CopyFirst ||
 		!opts.KeepRaw || !opts.Unattended || !opts.Index || !opts.Pages {
 		t.Errorf("optsForJob mapped the common fields wrong: %+v", opts)

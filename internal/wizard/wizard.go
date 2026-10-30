@@ -271,7 +271,7 @@ func RunHeadless(path string) int {
 	// failed run, exactly as the CLI's -unattended does (N13, R18). optsForJob
 	// also installs the Thunderbird pre-sync when the job carries it (§4.2.5),
 	// shared with the Run-now path so a scheduled run and a manual one behave alike.
-	opts := optsForJob(j, inputs, logger.Writer())
+	opts := optsForJob(j, inputs, logger, runScheduled)
 	opts.OutlookSkips = outlookSkips
 	opts.OutlookExported = outlookExported
 	logger.Printf("Scheduled job %q: exporting to %s", j.Name, j.Out)
