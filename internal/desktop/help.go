@@ -130,7 +130,9 @@ var helpTmpl = template.Must(template.New("help").Funcs(template.FuncMap{"upper"
           <li><b>A Microsoft 365 mailbox:</b> follow the steps under Microsoft 365 below.</li>
           <li><b>An archive you already have</b> (from another computer, a drive or a backup copy): click <b>Open an archive folder…</b> and choose its folder.</li>
         </ul>
-        <p><b>The parts of this page</b>, in the order you will need them:</p>
+      </details>
+      <details id="helpParts"><summary>The parts of this page</summary>
+        <p>In the order you will need them:</p>
         <ul>
           <li><a href="#sec-settings">Settings</a>: <b>Archive location</b> is the folder of the archive this page shows. <b>How often</b> and <b>At</b>, when Settings shows them, set when the scheduled backup runs.{{if .Sync}} For an archive made from Thunderbird, <b>Sync Thunderbird before each backup</b> is here too.{{end}} Click <b>Save settings</b> to keep a change.</li>
           <li><a href="#sec-backup">Scheduled backup</a> and <b>Run now</b>: a scheduled backup runs by itself at its time, even when this page is closed, as long as you are logged in to this computer. {{.Missed}} The Scheduled backup card shows what is set up. <b>Run now</b> starts a backup now{{if .RunNowSyncs}} (with the Thunderbird sync on, it first waits for Thunderbird's mail; see Thunderbird below){{end}}, <b>Repair</b> fixes a scheduled backup that stopped working, and <b>Remove</b> deletes the scheduled backup (the archive and its mail are kept). A Microsoft 365 archive uses <a href="#sec-archive">Archive now</a> instead of Run now.</li>

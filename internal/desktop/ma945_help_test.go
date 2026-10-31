@@ -155,7 +155,9 @@ func helpPageStates(t *testing.T) map[string]Config {
 // to it and "Getting started" is open; with an archive, nothing is open.
 func TestHowToUseMailArchiveIsOnEveryPage(t *testing.T) {
 	const pointer = "New to MailArchive? Read How to use MailArchive below: it explains each part of this page, what Thunderbird needs, and how to connect Microsoft 365."
-	wantParts := []string{"Getting started", "Thunderbird", "Microsoft 365"}
+	// The friction review's O5 (applied by the lead, 2026-10-31): "The parts of this page" is
+	// a part of its own, closed, so Getting started opens short.
+	wantParts := []string{"Getting started", "The parts of this page", "Thunderbird", "Microsoft 365"}
 	for _, goos := range []string{"darwin", "windows", "linux"} {
 		for name, cfg := range helpPageStates(t) {
 			cfg.GOOS = goos
@@ -195,8 +197,14 @@ func TestHowToUseMailArchiveIsOnEveryPage(t *testing.T) {
 			if noArchive && !strings.Contains(page, `<a href="#sec-help">How to use MailArchive</a> below`) {
 				t.Errorf("%s: the no-archive pointer is not a link to the guide", what)
 			}
-			if h.open["Getting started"] != noArchive || h.open["Thunderbird"] || h.open["Microsoft 365"] {
+			if h.open["Getting started"] != noArchive || h.open["The parts of this page"] || h.open["Thunderbird"] || h.open["Microsoft 365"] {
 				t.Errorf("%s: open parts %v, want Getting started open only with no archive", what, h.open)
+			}
+			// Getting started keeps "Your first archive"; the page's parts are no longer in it.
+			if i := strings.Index(page, `<details id="helpStart"`); i < 0 {
+				t.Errorf("%s: no Getting started part", what)
+			} else if gs := page[i : i+strings.Index(page[i:], "</details>")]; !strings.Contains(gs, "<b>Your first archive.</b>") || strings.Contains(gs, `href="#sec-settings">Settings</a>: <b>Archive location</b>`) {
+				t.Errorf("%s: Getting started does not keep Your first archive alone:\n%s", what, gs)
 			}
 		}
 	}
@@ -291,7 +299,7 @@ var helpSyncSentences = []string{
 }
 
 const (
-	helpMacRunNow = "Run now syncs Thunderbird too, even while you are using the computer. It starts Thunderbird out of sight and waits for its mail (up to 20 minutes, often about 13). Click Stop waiting and back up now to back up the mail that has arrived so far. Cancel the backup skips the whole backup instead, and nothing is added to the archive. When the backup is done, Thunderbird stays open: quit it from the Dock."
+	helpMacRunNow   = "Run now syncs Thunderbird too, even while you are using the computer. It starts Thunderbird out of sight and waits for its mail (up to 20 minutes, often about 13). Click Stop waiting and back up now to back up the mail that has arrived so far. Cancel the backup skips the whole backup instead, and nothing is added to the archive. When the backup is done, Thunderbird stays open: quit it from the Dock."
 	helpWinNoRunNow = "Run now: on Windows, Run now does not start Thunderbird yet. It backs up the mail already on this computer. To include the newest mail, open Thunderbird, let its mail arrive, then click Run now. Scheduled backups still sync Thunderbird first."
 	helpEncSync     = "An encrypted archive is backed up only when you click Run now. If it was made from Thunderbird, its Settings card offers Sync Thunderbird before each Run now, with its own Save. Until that backup starts reading mail, Lock cancels it."
 )
@@ -440,6 +448,24 @@ func TestTheMicrosoft365CardAndTheGuideAgree(t *testing.T) {
 		Out: archiveAt(t, dir, "M365", map[string]string{"mailbox:u@contoso.com": "b"})})
 	if !strings.Contains(m365, `<div id="m365Form">`) || strings.Contains(m365, "Not used by this archive") {
 		t.Fatal("the positive twin: a Microsoft 365 archive's card has no form, or says it is not used")
+	}
+	// The friction review's O3 (applied by the lead, 2026-10-31): under the App-only choice the
+	// card says the Desktop never uses it. True of the code: Archive now and the scheduled
+	// capture both run with Auth "device" (capture.go), and the sign-in is graph.NewDelegated
+	// (signin.go); App-only is read only by the mailarchive command line.
+	form := m365[strings.Index(m365, `<div id="m365Form">`):]
+	form = form[:strings.Index(form, `<div id="m365SecretRow"`)]
+	if want := `App-only (admin): a client secret, admin-consented mailboxes</label>` + "\n        " + `<p class="card-sub" style="margin-top:4px">MailArchive Desktop always signs in as you; App-only is for the command line.</p>`; !strings.Contains(form, want) {
+		t.Errorf("the connection card does not say under App-only that the Desktop always signs in as you:\n%s", form)
+	}
+	for _, src := range []string{"capture.go", "signin.go"} {
+		b, err := os.ReadFile(src)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if strings.Contains(string(b), `Auth: "app"`) || (src == "capture.go" && strings.Count(string(b), `Auth: "device"`) != 2) {
+			t.Errorf("%s no longer signs in only as you, so the App-only line is untrue", src)
+		}
 	}
 
 	local := archiveAt(t, dir, "Local", map[string]string{"path:/mail/Local Folders": "b"})

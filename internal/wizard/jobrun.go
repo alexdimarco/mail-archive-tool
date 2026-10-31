@@ -113,7 +113,9 @@ func runNowSummary(r app.Result) string {
 		lines = append(lines, messages(s.Filled)+" an earlier backup could not fully download "+guiVerb(s.Filled, "is", "are")+" now complete.")
 	}
 	if again := s.Exported - added - s.Filled; again > 0 {
-		lines = append(lines, messages(again)+" already in the archive "+guiVerb(again, "was", "were")+" saved again.")
+		// A message written again replaces its record and page (the exporter, R6/R13): no
+		// duplicate is made (friction review O4; TestSavedAgainMakesNoCopies).
+		lines = append(lines, messages(again)+" already in the archive "+guiVerb(again, "was", "were")+" saved again (no copies are made).")
 	}
 	notDone := r.Fillable + r.Unknown
 	onlyGaps := r.Fillable > 0 && r.FillableOnlyParseGap >= r.Fillable

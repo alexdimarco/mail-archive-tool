@@ -39,7 +39,7 @@ func TestRunNowSummary(t *testing.T) {
 		"thousands": {app.Result{Stats: export.Stats{Exported: 20351}, ManifestBefore: 0, ManifestSize: 20351},
 			"Backup finished: 20,351 new messages archived."},
 		"completed and saved again": {app.Result{Stats: export.Stats{Exported: 10, Filled: 3}, ManifestBefore: 100, ManifestSize: 105},
-			"Backup finished: 5 new messages archived.\n3 messages an earlier backup could not fully download are now complete.\n2 messages already in the archive were saved again."},
+			"Backup finished: 5 new messages archived.\n3 messages an earlier backup could not fully download are now complete.\n2 messages already in the archive were saved again (no copies are made)."},
 		"not downloaded": {app.Result{Stats: export.Stats{Exported: 2}, ManifestBefore: 1, ManifestSize: 3, Fillable: 4, Unknown: 1, ReportPath: "/a/attachments-report.tsv"},
 			"Backup finished: 2 new messages archived.\n5 messages in the archive are not fully downloaded yet: open them in your mail app (such as Thunderbird) so it downloads them, then click Run now again. 1 of them is from an older archive and is checked again by each backup.\nWhich ones: the file attachments-report.tsv in the archive's folder (it opens in a spreadsheet program)."},
 		"cut short only": {app.Result{Fillable: 2, FillableParseGap: 2, FillableOnlyParseGap: 2, ReportPath: "/a/r.tsv"},

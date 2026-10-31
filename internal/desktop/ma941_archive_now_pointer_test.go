@@ -53,7 +53,7 @@ func TestArchiveNowCardPointsAtRunNow(t *testing.T) {
 	m365 := emptyArchive(t)
 	addStore(t, m365, "mailbox:a@contoso.org")
 	mp := newA3Rig(t, m365, "darwin").page()
-	if !strings.Contains(mp, `id="archiveBtn"`) || strings.Contains(mp, `id="archiveNowWay"`) || strings.Contains(mp, `id="navRunNow"`) {
+	if !strings.Contains(mp, `id="archiveBtn"`) || strings.Contains(mp, `id="archiveNowWay"`) || strings.Contains(mp, `id="navRunNow"`) || !strings.Contains(mp, `id="navArchive"`) {
 		t.Fatal("the positive twin: a Microsoft 365 archive lost Archive now, or got the local pointer or the Run now link")
 	}
 
@@ -81,8 +81,8 @@ func TestArchiveNowCardPointsAtRunNow(t *testing.T) {
 	if strings.Contains(card, `id="archiveNowHand" open`) {
 		t.Error("the hand steps are opened while a Desktop way exists")
 	}
-	if strings.Contains(g.page(), `id="navRunNow"`) {
-		t.Error("the sidebar links to Run now while no Run now is on the page")
+	if p := g.page(); strings.Contains(p, `id="navRunNow"`) || !strings.Contains(p, `<a href="#sec-archive" id="navArchive">Archive now</a>`) {
+		t.Error("the sidebar links to Run now while no Run now is on the page, or no longer offers Archive now")
 	}
 
 	// A schedule made in Settings: Run now on the Scheduled backup card, and the sidebar link.
@@ -97,6 +97,11 @@ func TestArchiveNowCardPointsAtRunNow(t *testing.T) {
 	}
 	if !strings.Contains(page, `id="runBackupBtn"`) || !strings.Contains(page, `<a href="#sec-backup" id="navRunNow">Run now</a>`) {
 		t.Error("Run now, or the sidebar's link to it, is missing")
+	}
+	// The friction review's O1 (applied by the lead, 2026-10-31): with Run now shown, a local
+	// archive's sidebar no longer offers Archive now, which is off for it; its card stays.
+	if strings.Contains(page, `id="navArchive"`) || !strings.Contains(page, `<div class="card" id="sec-archive">`) {
+		t.Error("with Run now shown, the sidebar still offers Archive now, or the Archive now card is gone")
 	}
 
 	// A schedule set up at the command line: the card says where to read why.

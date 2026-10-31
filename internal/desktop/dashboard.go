@@ -980,7 +980,9 @@ func (cfg Config) overviewFor(csrf, epoch string) string {
 		ArchiveNowWay   string
 		ArchiveNowHand  string
 		RunNowNav       bool
-		Offer           string // the archive the GUI used last, offered when none is set
+		// HideArchiveNav: a local archive with Run now on the page has no sidebar Archive now.
+		HideArchiveNav bool
+		Offer          string // the archive the GUI used last, offered when none is set
 		// §4.6.3/MA-617 + Q18(b): the Scheduled backup card's state. HasSchedule when a
 		// descriptor is recorded; ScheduleKind names it in words; the Show* flags pick
 		// the controls — Repair and Run now for a corroborated run-job (keeps the kind,
@@ -1303,6 +1305,9 @@ func (cfg Config) overviewFor(csrf, epoch string) string {
 		}
 	}
 	data.RunNowNav = data.ShowRepair || data.EncRunNow
+	// The friction review's O1 (applied by the lead, 2026-10-31): a local archive with Run now
+	// on the page offers no sidebar Archive now, which is off for it; its card stays.
+	data.HideArchiveNav = data.RunNowNav && data.ArchiveNowLocal
 	data.ProgramCopiesLabel = programCopiesLabel(releaseBuild())
 	data.EncRecordKept = cfg.Keys != nil && encryptedRecordKept()
 	// A recorded archive whose key files are gone cannot be unlocked: its card offers
@@ -1474,7 +1479,7 @@ pre{white-space:pre-wrap;overflow-wrap:anywhere;background:var(--bg);border:1px 
       <a href="#sec-help" id="navHelp">How to use MailArchive</a>
       <div class="nav-title">Workspace</div>
       <a class="active" href="./">Overview</a>
-      <a href="#sec-archive" id="navArchive">Archive now</a>
+      {{if not .HideArchiveNav}}<a href="#sec-archive" id="navArchive">Archive now</a>{{end}}
       {{if .RunNowNav}}<a href="#sec-backup" id="navRunNow">Run now</a>{{end}}
       {{if .ReaderURL}}<a href="{{.ReaderURL}}" target="_blank" rel="noopener">Open archive</a>
       <a href="{{.ReaderURL}}goback" target="_blank" rel="noopener">Go back in time</a>{{else}}<span class="nav-disabled" title="The archive reader is not running">Open archive</span>
@@ -1579,6 +1584,7 @@ pre{white-space:pre-wrap;overflow-wrap:anywhere;background:var(--bg);border:1px 
         <label>Authentication</label>
         <label class="checkline"><input type="radio" name="m365auth" value="device"{{if ne .AuthRaw "app"}} checked{{end}}> Device (per-user): sign in as yourself, no secret, your own mailbox</label>
         <label class="checkline"><input type="radio" name="m365auth" value="app"{{if eq .AuthRaw "app"}} checked{{end}}> App-only (admin): a client secret, admin-consented mailboxes</label>
+        <p class="card-sub" style="margin-top:4px">MailArchive Desktop always signs in as you; App-only is for the command line.</p>
         <div id="m365SecretRow"{{if ne .AuthRaw "app"}} hidden{{end}}>
           <label for="m365Secret">Client secret</label>
           <input id="m365Secret" type="password" placeholder="{{if .SecretConfigured}}stored — leave blank to keep{{else}}paste the secret value{{end}}" autocomplete="off">
