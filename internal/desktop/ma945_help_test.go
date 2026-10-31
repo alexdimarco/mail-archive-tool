@@ -240,12 +240,16 @@ var helpSentences = []string{
 	"Shut down (at the top of the page): stops MailArchive Desktop. Your archives and scheduled backups are not affected.",
 	// Thunderbird
 	"Your mail account added to Thunderbird, and Thunderbird opened at least once, so it has downloaded your mail.",
-	"For an IMAP account this is the setting Keep messages for this account on this computer: in Thunderbird, open Account Settings (from the ≡ menu at the top right), choose your account's Synchronization & Storage page, and check that the box is ticked. POP accounts and Local Folders always keep their mail on this computer.",
-	// The wizard's IMAP offer (prepareThunderbirdGUI, thunderbird.EnableOffline).
-	"If you make the archive from an IMAP account, the MailArchive wizard may ask Prepare a full offline download first? Yes, prepare turns this setting on for you: it asks you to quit Thunderbird first, and keeps a copy of Thunderbird's settings file beside it.",
+	// Thunderbird's default, observed in the Windows lab of 2026-10-31 (Thunderbird
+	// 153.6.0esr, a Gmail IMAP account added with no settings changed: no offline_download
+	// line in prefs.js, and over 36,000 messages saved to disk in the first half hour).
+	"For an IMAP account this is the setting Keep messages for this account on this computer. Thunderbird turns it on for a new account, so usually there is nothing to change. To check it, in Thunderbird open Account Settings (from the ≡ menu at the top right), choose your account's Synchronization & Storage page, and see that the box is ticked. POP accounts and Local Folders always keep their mail on this computer.",
 	// What the mbox walk can and cannot hold (gapclass GapKindCorruptPart; an empty part is
 	// a fillable gap).
-	"A message Thunderbird has not downloaded is not in the archive yet; a later backup adds it once Thunderbird has downloaded it. A message Thunderbird saved only in part (for example without a large attachment) is archived with what is there, and a later backup fills in the rest.",
+	"Downloading takes time: Thunderbird saves your messages to this computer over time, and only while it is open. A message Thunderbird has not downloaded is not in the archive yet; a later backup adds it once Thunderbird has downloaded it. A message Thunderbird saved only in part (for example without a large attachment) is archived with what is there, and a later backup fills in the rest.",
+	// The wizard's IMAP offer (prepareThunderbirdGUI: the quit loop, thunderbird.EnableOffline,
+	// guiWaitForSync).
+	"If you make the archive from an IMAP account, the MailArchive wizard may ask Prepare a full offline download first? Yes, prepare makes sure this setting is on (it asks you to quit Thunderbird if it is open, and keeps a copy of Thunderbird's settings file beside it), then waits while you open Thunderbird and it downloads your mail.",
 	"MailArchive uses the Thunderbird profile that holds the mail folder this archive was made from. (Thunderbird keeps its profiles in",
 	"If you use more than one Thunderbird profile, only that one is backed up and synced.",
 	// Microsoft 365
@@ -313,6 +317,9 @@ var helpGone = []string{
 	"The one exception is the Thunderbird sync",
 	"Hourly: With Hourly",
 	"this archive was made from (Thunderbird",
+	// The lab of 2026-10-31 settled Thunderbird's default; the wizard's offer makes sure of it.
+	"Yes, prepare turns this setting on for you",
+	"check that the box is ticked",
 }
 
 var helpPlatforms = []helpPlatform{

@@ -1321,6 +1321,16 @@ func removeSchedule(out string) error {
 
 // ---- IMAP prep ------------------------------------------------------------
 
+// imapPrepQuestion is the wizard's question for a Thunderbird IMAP account (MA-947). It does
+// not say Thunderbird keeps a message only once it is opened: "Keep messages for this account on this
+// computer" is on by default for a new account (observed in the Windows lab of 2026-10-31).
+// What is true is that Thunderbird downloads over time, and only while it is open.
+const imapPrepQuestion = "This looks like an IMAP account.\n\n" +
+	"Thunderbird may not have downloaded every message to this computer yet: it downloads mail over time, and only while it is open. " +
+	"A message or attachment it has not downloaded yet is not in this export; a later run adds it once Thunderbird has it.\n\n" +
+	"Yes, prepare makes sure Thunderbird keeps every message on this computer, then waits while it downloads.\n\n" +
+	"Prepare a full offline download first?"
+
 // prepareThunderbirdGUI offers, for a Thunderbird IMAP account, to enable
 // offline download and guide a full sync so nothing is missed. It returns
 // whether preparation was done (in which case the export should run in Full
@@ -1331,7 +1341,7 @@ func prepareThunderbirdGUI(store string) (bool, error) {
 	}
 
 	choice := zenity.Question(
-		"This looks like an IMAP account.\n\nThunderbird stores mail locally only on demand, so the export may be missing messages or attachments that haven't been downloaded yet.\n\nPrepare a full offline download first?",
+		imapPrepQuestion,
 		zenity.Title(appTitle),
 		zenity.OKLabel("Yes, prepare"),
 		zenity.CancelLabel("No, export what's cached"),

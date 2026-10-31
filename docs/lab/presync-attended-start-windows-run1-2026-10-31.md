@@ -71,3 +71,24 @@ so it cannot take the foreground (the L-A10 `SW_SHOWMINNOACTIVE` start, or a lau
 through a process without the foreground right), or have the Desktop give up its own
 foreground right before it starts Thunderbird. Then re-run this lab, including a real
 Start-menu click.
+
+## Lab note (appended 2026-10-31): Thunderbird's default for a new IMAP account
+
+Not part of the MA-918 verdict above. The same set-up answers a question the guide's truth
+review held (T8 in `docs/review-help-page-friction.md`): does Thunderbird keep a new IMAP
+account's messages on the computer without being told to?
+
+- Thunderbird 153.6.0esr, the Gmail IMAP account the owner added by hand, with no settings
+  changed.
+- Its `prefs.js` has **no** `mail.server.serverN.offline_download` line for the account,
+  so Thunderbird's own default applies. (Read in the VM by the lead; this note's author did
+  not read the file again.)
+- Thunderbird saved over 36,000 messages to disk in the first half hour (the lead's
+  observation). The runs above agree: MailArchive reads only the files Thunderbird saved,
+  and run 1 archived 20,351 messages and run 5 36,440 from this profile.
+
+So "Keep messages for this account on this computer" is on by default for a new IMAP
+account. Downloading still takes time, and happens only while Thunderbird is open: a
+message not downloaded yet is not in the archive yet. The guide (MA-945) and the wizard's
+IMAP question (MA-947) now say this. One account, one Thunderbird version, one provider
+(Gmail); other versions or providers were not tried.

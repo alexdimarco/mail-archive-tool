@@ -1,5 +1,5 @@
 // Package thunderbird helps prepare a Thunderbird IMAP account for a complete
-// export: detecting on-demand (not-fully-downloaded) accounts, enabling offline
+// export: detecting IMAP (maybe not fully downloaded) accounts, enabling offline
 // storage in the profile prefs, and watching a store while the user syncs.
 //
 // It never contacts the mail server and never touches credentials — it only
@@ -16,8 +16,8 @@ import (
 	"time"
 )
 
-// IsImapStore reports whether dir is a Thunderbird IMAP account store (its
-// messages are downloaded on demand, so the local copy may be incomplete).
+// IsImapStore reports whether dir is a Thunderbird IMAP account store (Thunderbird
+// downloads its messages over time, so the local copy may be incomplete).
 // Local Folders (under Mail/) are excluded — they are always fully local.
 func IsImapStore(dir string) bool {
 	slash := filepath.ToSlash(dir)
@@ -46,7 +46,11 @@ type Account struct {
 	ServerKey       string // e.g. "server3"
 	Hostname        string
 	Type            string // "imap", "pop3", …
-	OfflineDownload bool   // whether "keep messages on this computer" is on
+	// OfflineDownload: prefs.js says "keep messages on this computer" is on. An account with
+	// no offline_download line uses Thunderbird's default, which is on for a new IMAP account
+	// (observed with Thunderbird 153.6.0esr in the Windows lab of 2026-10-31), yet reads false
+	// here; EnableOffline then writes the setting out, which changes nothing Thunderbird does.
+	OfflineDownload bool
 }
 
 var rePref = regexp.MustCompile(`^user_pref\("([^"]+)",\s*(.+)\);\s*$`)

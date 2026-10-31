@@ -68,7 +68,7 @@ explained in the sections below.
 | **Outlook (classic) with a `.pst`** (POP, or an archive file) | nothing | `mailarchive -input x.pst -out ./archive` | `mailarchive schedule -out ./archive -input x.pst -copy-first -install` | `-copy-first` snapshots the file, so Outlook may stay open. |
 | **Outlook (classic) with Exchange / IMAP (`.ost`)** | Account Settings → Change → *Mail to keep offline* → **All**, then Send/Receive | Windows: `mailarchive -outlook -out ./archive` (Outlook writes clean `.pst`s first) or the GUI's *Outlook account (via Outlook app)*. Elsewhere: copy the `.ost` and `-input` it. | `mailarchive schedule -out ./archive -outlook -install` — runs while you are logged in. Run `mailarchive -outlook` once by hand first to clear Outlook's one-time "allow programmatic access" prompt; a scheduled run cannot answer it. | Some live `.ost` files cannot be read directly; the Outlook-app path is the reliable one. Outlook's one-time "allow programmatic access" prompt must be answered by hand once. Scheduled runs happen while you are logged in; a night the laptop merely sleeps is caught up when it wakes, but a night it is fully powered off is skipped (`status` shows it). |
 | **New Outlook / Outlook for Mac** | register an app ([docs/graph-app-setup.md](docs/graph-app-setup.md)) | `mailarchive graph …` (`-auth app` or `-auth device`) | `mailarchive schedule -install -- graph …` | No local files exist; only the server-side path works. |
-| **Thunderbird, IMAP account** | with Thunderbird **closed**: `mailarchive -enable-offline -sync-wait -mode full -input <ImapMail/account> -out ./archive` (it flips "keep messages on this computer" and waits for the sync) | that same command is the first archive | `mailarchive schedule -out ./archive -input <ImapMail/account> -install` | Thunderbird downloads bodies on demand; until it has them a message is archived as *still missing content* and filled by a later incremental run automatically. |
+| **Thunderbird, IMAP account** | with Thunderbird **closed**: `mailarchive -enable-offline -sync-wait -mode full -input <ImapMail/account> -out ./archive` (it makes sure "keep messages on this computer" is on — the default for a new account — and waits for the sync) | that same command is the first archive | `mailarchive schedule -out ./archive -input <ImapMail/account> -install` | Thunderbird downloads mail over time, and only while it is open; until it has them a message is archived as *still missing content* and filled by a later incremental run automatically. |
 | **Thunderbird, POP / Local Folders** | nothing | `mailarchive -input <Mail/Local Folders> -out ./archive` | `mailarchive schedule -out ./archive -input … -install` | Fully local; nothing to prepare. |
 | **Evolution, local ("On This Computer")** | nothing | `mailarchive -input ~/.local/share/evolution/mail/local -out ./archive` | `mailarchive schedule -out ./archive -auto -install` | |
 | **Evolution, IMAP account** | in Evolution: Edit → Accounts → account → Receiving Options → *Synchronize remote mail locally*, then let it sync | `mailarchive -input ~/.cache/evolution/mail/<account> -out ./archive` | `mailarchive schedule -out ./archive -auto -install` | Only what Evolution has cached is present; gaps are recorded and filled on later runs. |
@@ -1473,8 +1473,10 @@ different `-at` or `-interval`, as above.
 
 ### IMAP: get everything downloaded first
 
-IMAP accounts (Thunderbird, or Outlook in Cached Exchange Mode) keep mail
-locally only **on demand**, so an export can miss not-yet-downloaded content.
+IMAP accounts (Thunderbird, or Outlook in Cached Exchange Mode) may not have
+every message on this computer yet, so an export can miss not-yet-downloaded
+content. (Thunderbird keeps messages on the computer by default for a new IMAP
+account, but downloads them over time and only while it is open.)
 For **Thunderbird**, two flags automate the one-time prep:
 
 ```sh

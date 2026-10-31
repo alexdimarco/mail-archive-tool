@@ -169,3 +169,9 @@ MA-943 amended; MA-946 new.
 | O1–O5 | Held for the owner (taste) |
 | Remove and a custom-named command-line schedule | Held, open. Read in the code, not driven: Remove reaches only the entry named for the folder (`removeTaskAt` → `DefaultNameFor`), and the page says "Removed." for any `ok:true` reply, including `removed:false`. A schedule set up with its own `-name` would stay, and MA-942's words would send its owner to a Remove that does not reach it. A fix changes what Remove removes, so it needs its own test and design |
 | Security & privacy's "one exception" | Noticed, not changed: that card names only the Thunderbird sync as the exception to read-only; the guide now also names the wizard's offline-download offer (a Thunderbird setting, not mail). Whether the card should too is the owner's wording call |
+
+### Later the same day (2026-10-31), added beside the rows above; those rows are unchanged
+
+| Finding | Outcome |
+|---|---|
+| T8 Thunderbird's default (was held) | Settled by the Windows lab (lab note in `docs/lab/presync-attended-start-windows-run1-2026-10-31.md`): Thunderbird 153.6.0esr, a Gmail IMAP account added with no settings changed, no `offline_download` line in prefs.js, over 36,000 messages saved to disk in the first half hour. The guide now says Thunderbird turns the setting on for a new account, and that downloading takes time and happens only while Thunderbird is open (MA-945 amended). The wizard's IMAP question no longer says Thunderbird keeps mail "only on demand" (MA-947). README's two IMAP lines say the same. Noted, not changed: the code reads an account with no such line as "off", so Yes, prepare writes the setting out anyway; harmless |
