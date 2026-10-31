@@ -54,8 +54,27 @@ var wantRemedy = map[string]string{
 	"no-desktop-session":    "No one was logged in at backup time, so Thunderbird could not be started. Stay logged in at the backup time.",
 	"not-set-up":            "The sync could not be prepared on this computer. Click Repair on the Scheduled backup card.",
 	"profile-busy":          "Another backup kept this Thunderbird profile busy. Shut down MailArchive Desktop, open it again, then click Run now.",
-	"cannot-start":          "Click Run now on the Scheduled backup card to sync while you watch.",
-	"internal-error":        "Click Run now on the Scheduled backup card to sync while you watch.",
+	// "sync Thunderbird now", never "sync while you watch" (the Windows texts pass,
+	// 2026-10-31, finding 7).
+	"cannot-start":   "Click Run now on the Scheduled backup card to sync Thunderbird now.",
+	"internal-error": "Click Run now on the Scheduled backup card to sync Thunderbird now.",
+}
+
+// wantRemedyWindowsStartBlocked is start-blocked's remedy in the Windows Desktop's words (the
+// Windows texts pass, 2026-10-31, finding 4): how to start MailArchive Desktop in the guide's
+// words, never "from its shortcut", which an unzipped copy does not have. start-blocked comes
+// only from Windows' launch, so the macOS words (wantRemedy) are left as they were. Like
+// them it adds no "then click Run now", so it holds where Windows' Run now does not sync (C-20).
+const wantRemedyWindowsStartBlocked = "Thunderbird could not be started from the way MailArchive was started. Click Repair on the Scheduled backup card; if you use Run now, start MailArchive Desktop from the Start menu, or, if MailArchive was unzipped, double-click mailarchivew.exe in its folder."
+
+// desktopNamesACommand reports whether a Desktop text names a command: "mailarchive" or a
+// backtick. The one program file a Windows Desktop text may name is mailarchivew.exe, to
+// double-click in an unzipped folder (presync.WinStartDesktop, the guide's words, the
+// Windows texts pass, 2026-10-31); that exact phrase is taken out first, so any other
+// mention still counts.
+func desktopNamesACommand(s string) bool {
+	s = strings.ReplaceAll(s, presync.WinStartDesktop, "")
+	return strings.Contains(s, "mailarchive") || strings.Contains(s, "`")
 }
 
 // covers: MA-909, R32, X6, X10, S65
@@ -109,7 +128,7 @@ func TestTheNotSyncedWarning(t *testing.T) {
 						t.Errorf("%s: posture %s, no presync_not_synced: %v", ctx, rep.Posture, rep.Reasons)
 						continue
 					}
-					if surface == "desktop" && (strings.Contains(got, "mailarchive") || strings.Contains(got, "`")) {
+					if surface == "desktop" && desktopNamesACommand(got) {
 						t.Errorf("%s: the Desktop's words name a command: %q", ctx, got)
 					}
 					if surface != "desktop" && (strings.Contains(got, "click") || strings.Contains(got, "Click") || strings.Contains(got, "Run now")) {
@@ -117,7 +136,7 @@ func TestTheNotSyncedWarning(t *testing.T) {
 					}
 					// Where Run now does not start Thunderbird, it is named only after the
 					// person has opened Thunderbird themselves.
-					if !runNow && (strings.Contains(got, "to sync while you") ||
+					if !runNow && (strings.Contains(got, "to sync while you") || strings.Contains(got, "sync Thunderbird now") || strings.Contains(got, "syncs Thunderbird") ||
 						strings.Count(got, "click Run now") != strings.Count(got, "open Thunderbird, let its mail arrive, then click Run now")) {
 						t.Errorf("%s: Run now does not sync here, yet the remedy says it does (C-20): %q", ctx, got)
 					}
@@ -142,6 +161,10 @@ func TestTheNotSyncedWarning(t *testing.T) {
 	if got := reasonWith(Assess(syncInput(now, "windows", "desktop", staleStreak("leftover-found")), now), "presync_not_synced"); !strings.HasSuffix(got,
 		"Do this: "+wantRemedyWindowsLeftover) {
 		t.Errorf("the Windows leftover remedy: %q", got)
+	}
+	if got := reasonWith(Assess(syncInput(now, "windows", "desktop", staleStreak("start-blocked")), now), "presync_not_synced"); !strings.HasSuffix(got,
+		"Do this: "+wantRemedyWindowsStartBlocked) {
+		t.Errorf("the Windows start-blocked remedy: %q", got)
 	}
 
 	// A hostile name: the generic phrase and remedy, never echoed.
@@ -195,8 +218,11 @@ func TestTheShippedRemedies(t *testing.T) {
 			t.Errorf("%s, a Mac: %q\n  want %q", name, got, remedy)
 		}
 		wantWin := remedy
-		if name == "leftover-found" {
+		switch name {
+		case "leftover-found":
 			wantWin = wantRemedyWindowsLeftover
+		case "start-blocked":
+			wantWin = wantRemedyWindowsStartBlocked
 		}
 		if _, got := SyncAlertWords("windows", staleStreak(name)); got != wantWin {
 			t.Errorf("%s, Windows: %q\n  want %q", name, got, wantWin)
@@ -206,7 +232,7 @@ func TestTheShippedRemedies(t *testing.T) {
 	defer r()
 	for name := range wantRemedy {
 		_, win := SyncAlertWords("windows", staleStreak(name))
-		if strings.Contains(win, "to sync while you") ||
+		if strings.Contains(win, "to sync while you") || strings.Contains(win, "sync Thunderbird now") || strings.Contains(win, "syncs Thunderbird") ||
 			strings.Count(win, "click Run now") != strings.Count(win, "open Thunderbird, let its mail arrive, then click Run now") {
 			t.Errorf("%s, Windows with its start entry off: the remedy says Run now syncs: %q", name, win)
 		}

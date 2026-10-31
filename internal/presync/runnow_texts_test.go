@@ -118,7 +118,7 @@ func TestTheQuitNoWindowWarningSaysWhereToQuitInPlainWords(t *testing.T) {
 // warning, which names the entry macOS shows, is not one of them.
 func TestTheNewRunWarningsNameTheProgramOneWay(t *testing.T) {
 	for o, want := range map[Outcome]string{
-		OutcomeStartBlocked: "if you use Run now, start MailArchive Desktop from its shortcut (not from a terminal)",
+		OutcomeStartBlocked: "if you use Run now, start MailArchive Desktop from the Start menu, or, if MailArchive was unzipped, double-click mailarchivew.exe in its folder",
 		OutcomeQuitNoWindow: "so MailArchive did not try to close it",
 		OutcomeStateUnsaved: "MailArchive's settings folder can be written to",
 		OutcomeNotSetUp:     "in MailArchive Desktop, click Repair on the Scheduled backup card",

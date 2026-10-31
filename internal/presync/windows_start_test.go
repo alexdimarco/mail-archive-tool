@@ -143,12 +143,21 @@ func TestStartBlockedOutcome(t *testing.T) {
 	if OutcomeStartBlocked.Class != ClassWarn || OutcomeStartBlocked.Synced() {
 		t.Errorf("start-blocked is %s, synced %v; want a warning, never synced", OutcomeStartBlocked.Class, OutcomeStartBlocked.Synced())
 	}
+	// The Windows texts pass (§14 gate 3, 2026-10-31, finding 4): the Windows Desktop line
+	// says how to start MailArchive Desktop in the guide's words (the Start menu, or
+	// mailarchivew.exe in an unzipped folder), pinned whole, never "from its shortcut",
+	// which an unzipped copy does not have. start-blocked comes only from Windows' launch
+	// (errStartBlocked, quit_windows.go), so a Mac never shows it; its words are left as
+	// they were.
 	line := OutcomeLine(OutcomeStartBlocked, SurfaceDesktop, "windows", LeftNone, 0, false)
-	if !strings.Contains(line, "MailArchive Desktop was started in a way that cannot start Thunderbird; start MailArchive Desktop from its shortcut, then click Run now again.") {
-		t.Errorf("the Desktop line lacks §2.7's words: %q", line)
+	if want := "Thunderbird was not synced: MailArchive Desktop was started in a way that cannot start Thunderbird; start MailArchive Desktop from the Start menu, or, if MailArchive was unzipped, double-click mailarchivew.exe in its folder, then click Run now again."; line != want {
+		t.Errorf("the Windows Desktop line:\n  %q\nwant\n  %q", line, want)
 	}
-	if cli := OutcomeLine(OutcomeStartBlocked, SurfaceCLI, "windows", LeftNone, 0, false); strings.Contains(cli, "Run now") || strings.Contains(cli, "shortcut") {
-		t.Errorf("the command line's line names a Desktop button: %q", cli)
+	if mac := OutcomeLine(OutcomeStartBlocked, SurfaceDesktop, "darwin", LeftNone, 0, false); mac != "Thunderbird was not synced: MailArchive Desktop was started in a way that cannot start Thunderbird; start MailArchive Desktop from its shortcut, then click Run now again." {
+		t.Errorf("the macOS Desktop line changed: %q", mac)
+	}
+	if cli := OutcomeLine(OutcomeStartBlocked, SurfaceCLI, "windows", LeftNone, 0, false); strings.Contains(cli, "Run now") || strings.Contains(cli, "shortcut") || strings.Contains(cli, "Start menu") || strings.Contains(cli, "mailarchivew") {
+		t.Errorf("the command line's line names a Desktop button or how to start the Desktop: %q", cli)
 	}
 	if msg, ok := WarnText(OutcomeStartBlocked); !ok || !strings.Contains(msg, "archive ran") {
 		t.Errorf("start-blocked's warning %q (%v) must say the archive ran", msg, ok)
@@ -162,8 +171,11 @@ func TestStartBlockedOutcome(t *testing.T) {
 	if !strings.Contains(msg, "click Repair on the Scheduled backup card") {
 		t.Errorf("start-blocked's warning gives a scheduled run no remedy of its own (Repair): %q", msg)
 	}
-	if !strings.Contains(msg, "if you use Run now, start MailArchive Desktop from its shortcut") {
-		t.Errorf("start-blocked's warning lost the Run now remedy: %q", msg)
+	// The Windows texts pass (2026-10-31, finding 4): the guide's words, and no "(not from
+	// a terminal)", which lab MA-918 run 2's cases A–E contradict (a start from a terminal
+	// worked). Pinned whole.
+	if want := "Thunderbird could not be started: Windows would not let the program that ran this backup start it outside its own job, so the archive ran without a fresh sync. Do this: for a scheduled backup, click Repair on the Scheduled backup card; if you use Run now, start MailArchive Desktop from the Start menu, or, if MailArchive was unzipped, double-click mailarchivew.exe in its folder, then click Run now again."; msg != want {
+		t.Errorf("start-blocked's warning:\n  %q\nwant\n  %q", msg, want)
 	}
 }
 

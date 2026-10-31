@@ -536,7 +536,11 @@ func checkOutcomeLine(t *testing.T, ctx, line string, o Outcome, surface, goos s
 	if goos == "darwin" && (strings.Contains(line, "taskbar") || strings.Contains(line, "notification area")) {
 		t.Errorf("%s: a macOS line names the taskbar: %q", ctx, line)
 	}
-	if surface == SurfaceDesktop && (strings.Contains(line, "mailarchive") || strings.Contains(line, "`")) {
+	// The one program file a Windows Desktop line may name is mailarchivew.exe, to
+	// double-click in an unzipped folder (WinStartDesktop, the guide's words, the Windows
+	// texts pass, 2026-10-31): that exact phrase is taken out first, so any other mention
+	// of "mailarchive" still counts as a command.
+	if desk := strings.ReplaceAll(line, WinStartDesktop, ""); surface == SurfaceDesktop && (strings.Contains(desk, "mailarchive") || strings.Contains(desk, "`")) {
 		t.Errorf("%s: a desktop line names a command: %q", ctx, line)
 	}
 	if surface == SurfaceCLI && (strings.Contains(line, "Run now") || strings.Contains(line, "click")) {

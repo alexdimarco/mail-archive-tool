@@ -358,7 +358,7 @@ func TestTheSyncEmailWordsComeFromTheClosedMaps(t *testing.T) {
 	if !strings.Contains(hmsg, "Most recently: Thunderbird not synced.") {
 		t.Errorf("a hostile name does not read as the generic phrase:\n%s", hmsg)
 	}
-	if !strings.Contains(hmsg, "Do this on that computer: To back up the mail now, open Thunderbird") && !strings.Contains(hmsg, "Do this on that computer: Click Run now on the Scheduled backup card to sync while you watch.") {
+	if !strings.Contains(hmsg, "Do this on that computer: To back up the mail now, open Thunderbird") && !strings.Contains(hmsg, "Do this on that computer: Click Run now on the Scheduled backup card to sync Thunderbird now.") {
 		t.Errorf("a hostile name does not get the generic remedy:\n%s", hmsg)
 	}
 }

@@ -64,6 +64,7 @@ func syncLastLine(in Input) string {
 // syncWords are the words of one surface on one platform.
 type syncWords struct {
 	desktop bool   // the Desktop names its buttons; elsewhere commands are named
+	windows bool   // Windows' words
 	runNow  bool   // the Desktop's Run now starts Thunderbird on this platform (AttendedStartAllowed)
 	hidden  string // how a started Thunderbird is kept: "out of sight", or "minimized"
 	place   string // where it is quit from
@@ -88,7 +89,7 @@ func syncWordsFor(in Input) syncWords {
 		hidden: "out of sight", place: "the Dock", started: "started out of sight"}
 	if goos == "windows" {
 		// The Windows texts pass (2026-10-31, finding 2): where to quit it in plain words.
-		w.hidden, w.place, w.started = "minimized", presync.WinQuitPlace, "started minimized"
+		w.windows, w.hidden, w.place, w.started = true, "minimized", presync.WinQuitPlace, "started minimized"
 	}
 	if !w.desktop {
 		in.GOOS = goos
@@ -158,12 +159,14 @@ func jobSyncs(args []string) bool {
 // person opens Thunderbird first, and the backup reads what it fetched.
 func (w syncWords) syncNow() string {
 	switch {
+	// "sync Thunderbird now", never "sync while you watch" (the Windows texts pass,
+	// 2026-10-31, finding 7).
 	case w.desktop && w.runNow:
-		return "Click Run now on the Scheduled backup card to sync while you watch."
+		return "Click Run now on the Scheduled backup card to sync Thunderbird now."
 	case w.desktop:
 		return "To back up the mail now, open Thunderbird, let its mail arrive, then click Run now on the Scheduled backup card."
 	case w.guiDesktop && w.runNow:
-		return "To back up the mail now, open MailArchive Desktop and click Run now on this archive's Scheduled backup card; it syncs Thunderbird while you watch."
+		return "To sync Thunderbird now and back up its mail, open MailArchive Desktop and click Run now on this archive's Scheduled backup card."
 	case w.guiDesktop:
 		return "To back up the mail now, open Thunderbird, let its mail arrive, then open MailArchive Desktop and click Run now on this archive's Scheduled backup card."
 	}
@@ -219,6 +222,13 @@ func syncRemedy(in Input, lastName string) string {
 	case presync.OutcomeRefusedElevated.Name:
 		return "The backup ran as administrator, and the sync never runs that way. " + w.repair()
 	case presync.OutcomeStartBlocked.Name:
+		// start-blocked comes only from Windows' launch: there, how to start the Desktop in
+		// the guide's words (the Windows texts pass, 2026-10-31, finding 4). No "then click
+		// Run now" is added: where Windows' Run now does not start Thunderbird, no remedy may
+		// say it syncs (C-20).
+		if w.desktop && w.windows {
+			return "Thunderbird could not be started from the way MailArchive was started. Click Repair on the Scheduled backup card; if you use Run now, " + presync.WinStartDesktop + "."
+		}
 		if w.desktop {
 			return "Thunderbird could not be started from the way MailArchive was started. Click Repair on the Scheduled backup card; if you use Run now, start MailArchive Desktop from its shortcut."
 		}

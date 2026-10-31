@@ -53,7 +53,8 @@ func TestTheSyncRemediesSpeakEachSurfacesWords(t *testing.T) {
 		s                state.SyncStreak
 		code             string
 	}{
-		{"darwin", "cannot-start", "Do this: To back up the mail now, open MailArchive Desktop and click Run now on this archive's Scheduled backup card; it syncs Thunderbird while you watch.", staleStreak("cannot-start"), "presync_not_synced"},
+		// "sync Thunderbird now", never "while you watch" (the Windows texts pass, 2026-10-31, finding 7).
+		{"darwin", "cannot-start", "Do this: To sync Thunderbird now and back up its mail, open MailArchive Desktop and click Run now on this archive's Scheduled backup card.", staleStreak("cannot-start"), "presync_not_synced"},
 		{"windows", "cannot-start", "Do this: To back up the mail now, open Thunderbird, let its mail arrive, then open MailArchive Desktop and click Run now on this archive's Scheduled backup card.", staleStreak("cannot-start"), "presync_not_synced"},
 		{"darwin", "refused-elevated", "Do this: The backup ran as administrator, and the sync never runs that way. Open MailArchive Desktop and click Repair on this archive's Scheduled backup card.", staleStreak("refused-elevated"), "presync_not_synced"},
 		{"windows", "not-set-up", "Do this: The sync could not be prepared on this computer. Open MailArchive Desktop and click Repair on this archive's Scheduled backup card.", staleStreak("not-set-up"), "presync_not_synced"},
