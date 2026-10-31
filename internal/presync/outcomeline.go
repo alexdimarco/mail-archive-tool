@@ -173,11 +173,12 @@ func refusedElevated(w lineWords, _ string) string {
 	return "Thunderbird was not synced: the backup ran as administrator. Run it as your normal user."
 }
 
-// WinStartDesktop is how to start MailArchive Desktop on Windows, in the guide's words
-// (internal/desktop/help.go's ComeBack): the Start menu, or mailarchivew.exe in an
-// unzipped folder, which has no shortcut (the Windows texts pass, 2026-10-31, finding 4).
-// It says nothing about a terminal: lab MA-918 run 2 started Thunderbird from one.
-const WinStartDesktop = "start MailArchive Desktop from the Start menu, or, if MailArchive was unzipped, double-click mailarchivew.exe in its folder"
+// WinStartDesktop is how to start MailArchive Desktop on Windows: the Start menu, or, for
+// an unzipped folder, which has no shortcut, the guide's way (internal/desktop/help.go's
+// ComeBack; the Windows texts pass, 2026-10-31, finding 4). It points at the guide rather
+// than naming the program file, so no Desktop text names a program (X6). It says nothing
+// about a terminal: lab MA-918 run 2 started Thunderbird from one.
+const WinStartDesktop = "start MailArchive Desktop from the Start menu, or, if MailArchive was unzipped, as the How to use MailArchive guide says"
 
 // startBlocked is start-blocked's line (§2.7, C-65): on the Desktop, how to start
 // it so that it may start Thunderbird; at the command line, no button. start-blocked

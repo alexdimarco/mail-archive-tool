@@ -61,21 +61,11 @@ var wantRemedy = map[string]string{
 }
 
 // wantRemedyWindowsStartBlocked is start-blocked's remedy in the Windows Desktop's words (the
-// Windows texts pass, 2026-10-31, finding 4): how to start MailArchive Desktop in the guide's
-// words, never "from its shortcut", which an unzipped copy does not have. start-blocked comes
-// only from Windows' launch, so the macOS words (wantRemedy) are left as they were. Like
+// Windows texts pass, 2026-10-31, finding 4): the Start menu, or the guide's way for an
+// unzipped copy, never "from its shortcut", which an unzipped copy does not have. start-blocked
+// comes only from Windows' launch, so the macOS words (wantRemedy) are left as they were. Like
 // them it adds no "then click Run now", so it holds where Windows' Run now does not sync (C-20).
-const wantRemedyWindowsStartBlocked = "Thunderbird could not be started from the way MailArchive was started. Click Repair on the Scheduled backup card; if you use Run now, start MailArchive Desktop from the Start menu, or, if MailArchive was unzipped, double-click mailarchivew.exe in its folder."
-
-// desktopNamesACommand reports whether a Desktop text names a command: "mailarchive" or a
-// backtick. The one program file a Windows Desktop text may name is mailarchivew.exe, to
-// double-click in an unzipped folder (presync.WinStartDesktop, the guide's words, the
-// Windows texts pass, 2026-10-31); that exact phrase is taken out first, so any other
-// mention still counts.
-func desktopNamesACommand(s string) bool {
-	s = strings.ReplaceAll(s, presync.WinStartDesktop, "")
-	return strings.Contains(s, "mailarchive") || strings.Contains(s, "`")
-}
+const wantRemedyWindowsStartBlocked = "Thunderbird could not be started from the way MailArchive was started. Click Repair on the Scheduled backup card; if you use Run now, start MailArchive Desktop from the Start menu, or, if MailArchive was unzipped, as the How to use MailArchive guide says."
 
 // covers: MA-909, R32, X6, X10, S65
 // The 3-day WARN (design-presync-attended §5.4; C-20, C-37, C-38): positive twin first,
@@ -128,7 +118,7 @@ func TestTheNotSyncedWarning(t *testing.T) {
 						t.Errorf("%s: posture %s, no presync_not_synced: %v", ctx, rep.Posture, rep.Reasons)
 						continue
 					}
-					if surface == "desktop" && desktopNamesACommand(got) {
+					if surface == "desktop" && (strings.Contains(got, "mailarchive") || strings.Contains(got, "`")) {
 						t.Errorf("%s: the Desktop's words name a command: %q", ctx, got)
 					}
 					if surface != "desktop" && (strings.Contains(got, "click") || strings.Contains(got, "Click") || strings.Contains(got, "Run now")) {

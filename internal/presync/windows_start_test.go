@@ -150,7 +150,7 @@ func TestStartBlockedOutcome(t *testing.T) {
 	// (errStartBlocked, quit_windows.go), so a Mac never shows it; its words are left as
 	// they were.
 	line := OutcomeLine(OutcomeStartBlocked, SurfaceDesktop, "windows", LeftNone, 0, false)
-	if want := "Thunderbird was not synced: MailArchive Desktop was started in a way that cannot start Thunderbird; start MailArchive Desktop from the Start menu, or, if MailArchive was unzipped, double-click mailarchivew.exe in its folder, then click Run now again."; line != want {
+	if want := "Thunderbird was not synced: MailArchive Desktop was started in a way that cannot start Thunderbird; start MailArchive Desktop from the Start menu, or, if MailArchive was unzipped, as the How to use MailArchive guide says, then click Run now again."; line != want {
 		t.Errorf("the Windows Desktop line:\n  %q\nwant\n  %q", line, want)
 	}
 	if mac := OutcomeLine(OutcomeStartBlocked, SurfaceDesktop, "darwin", LeftNone, 0, false); mac != "Thunderbird was not synced: MailArchive Desktop was started in a way that cannot start Thunderbird; start MailArchive Desktop from its shortcut, then click Run now again." {
@@ -174,7 +174,7 @@ func TestStartBlockedOutcome(t *testing.T) {
 	// The Windows texts pass (2026-10-31, finding 4): the guide's words, and no "(not from
 	// a terminal)", which lab MA-918 run 2's cases A–E contradict (a start from a terminal
 	// worked). Pinned whole.
-	if want := "Thunderbird could not be started: Windows would not let the program that ran this backup start it outside its own job, so the archive ran without a fresh sync. Do this: for a scheduled backup, click Repair on the Scheduled backup card; if you use Run now, start MailArchive Desktop from the Start menu, or, if MailArchive was unzipped, double-click mailarchivew.exe in its folder, then click Run now again."; msg != want {
+	if want := "Thunderbird could not be started: Windows would not let the program that ran this backup start it outside its own job, so the archive ran without a fresh sync. Do this: for a scheduled backup, click Repair on the Scheduled backup card; if you use Run now, start MailArchive Desktop from the Start menu, or, if MailArchive was unzipped, as the How to use MailArchive guide says, then click Run now again."; msg != want {
 		t.Errorf("start-blocked's warning:\n  %q\nwant\n  %q", msg, want)
 	}
 }
