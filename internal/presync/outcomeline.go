@@ -3,23 +3,33 @@ package presync
 import (
 	"fmt"
 	"runtime"
+	"strings"
 	"time"
 )
 
 // This file builds the end-of-run line (design-presync-attended §4.6, C-23, C-43,
 // C-68): one past-tense sentence for how the session ended, then one for what it
 // left Thunderbird as, in the words of the surface (the Desktop names buttons, the
-// command line none) and of the platform (the Dock and "out of sight" on macOS, the
-// taskbar and the notification area on Windows). SummaryLine stays the live log's
-// present-tense line (§7). Slice AS1b builds the never-close lines and the
-// no-change lines; slice AS-Q adds the attended close variants. Draft wording,
-// settled by the friction review (§14 gate 3).
+// command line none) and of the platform (the Dock and "out of sight" on macOS;
+// "minimized" and Thunderbird's icon on the taskbar or among the small icons by the
+// clock on Windows). SummaryLine stays the live log's present-tense line (§7). Slice
+// AS1b builds the never-close lines and the no-change lines; slice AS-Q adds the
+// attended close variants. Draft wording, settled by the friction review (§14 gate 3)
+// and, for Windows, the Windows texts pass (2026-10-31, finding 2): never "minimized to
+// the taskbar" (lab case E: a Thunderbird set to hide to the tray is not on the
+// taskbar), never the jargon "notification area".
+
+// WinQuitPlace is where Windows texts say to quit a Thunderbird the sync left open
+// (the Windows texts pass, 2026-10-31): its taskbar icon, or its icon among the small
+// icons by the clock (the notification area, where a Thunderbird set to hide to the tray
+// goes). It carries a comma of its own, so a clause after it is set off by one (placeThen).
+const WinQuitPlace = "its icon on the taskbar, or among the small icons by the clock"
 
 // lineWords are the surface and platform words a line is built from.
 type lineWords struct {
-	hidden   string // how Thunderbird was left: "out of sight", "minimized to the taskbar", or "" (Windows, never minimized)
+	hidden   string // how Thunderbird was left: "out of sight", "minimized", or "" (Windows, never minimized)
 	onScreen bool   // Windows, never minimized: its window may still be on screen (C-56, C-64)
-	place    string // where to quit it from: "the Dock", "the taskbar or the notification area", or ""
+	place    string // where to quit it from: "the Dock", WinQuitPlace, or ""
 	again    string // how to run the backup again
 	next     string // the next run, by name
 	desktop  bool
@@ -35,14 +45,24 @@ func wordsFor(surface, goos string, minimized bool) lineWords {
 	case "darwin":
 		w.hidden, w.place = "out of sight", "the Dock"
 	case "windows":
-		w.windows, w.place = true, "the taskbar or the notification area"
+		w.windows, w.place = true, WinQuitPlace
 		if minimized {
-			w.hidden = "minimized to the taskbar"
+			w.hidden = "minimized"
 		} else {
 			w.onScreen = true
 		}
 	}
 	return w
+}
+
+// PlaceThen is a place to quit Thunderbird from, followed by more of its sentence: a
+// place with a comma of its own (WinQuitPlace) is closed with one, so the clause after it
+// reads apart from it.
+func PlaceThen(place string) string {
+	if strings.Contains(place, ",") {
+		return place + ","
+	}
+	return place
 }
 
 // leftOpen is "left open" with how it was left.
@@ -62,6 +82,14 @@ func (w lineWords) quitIt() string {
 		return "quit it"
 	}
 	return "quit it from " + w.place
+}
+
+// quitItThen is quitIt followed by more of its sentence ("… before the next backup").
+func (w lineWords) quitItThen() string {
+	if w.place == "" {
+		return "quit it"
+	}
+	return "quit it from " + PlaceThen(w.place)
 }
 
 // head is one outcome's own sentence. subject is how the second sentence refers
@@ -114,7 +142,7 @@ var outcomeHeads = map[Outcome]head{
 	OutcomeLeftoverFound: {text: func(w lineWords, _ string) string {
 		where := "still open " + w.hidden
 		if w.windows {
-			where = "still open, minimized to the taskbar or in the notification area"
+			where = "still open, minimized (on the taskbar, or among the small icons by the clock)"
 		} else if w.hidden == "" {
 			where = "still open"
 		}
@@ -200,9 +228,9 @@ func leftTail(w lineWords, left Left, h head) string {
 	case LeftClosed:
 		return h.subject + " was closed."
 	case LeftOpen:
-		return "Thunderbird, started by this backup, was " + w.leftOpen() + ". " + capitalize(w.quitIt()) + " before " + w.next + "."
+		return "Thunderbird, started by this backup, was " + w.leftOpen() + ". " + capitalize(w.quitItThen()) + " before " + w.next + "."
 	case LeftOpenByRule:
-		return h.subject + " was " + w.leftOpen() + "; " + w.quitIt() + " when you are done."
+		return h.subject + " was " + w.leftOpen() + "; " + w.quitItThen() + " when you are done."
 	case LeftOpenByChoice:
 		return h.subject + " was left open, as you asked."
 	case LeftMayBeStarting:
@@ -217,9 +245,9 @@ func cancelTail(w lineWords, left Left) string {
 	case LeftClosed:
 		return "Thunderbird, started by this backup, was closed."
 	case LeftOpen:
-		return "Thunderbird, started by this backup, was " + w.leftOpen() + ". " + capitalize(w.quitIt()) + " before " + w.next + "."
+		return "Thunderbird, started by this backup, was " + w.leftOpen() + ". " + capitalize(w.quitItThen()) + " before " + w.next + "."
 	case LeftOpenByRule:
-		return "Thunderbird, started by this backup, was " + w.leftOpen() + "; " + w.quitIt() + " when you are done."
+		return "Thunderbird, started by this backup, was " + w.leftOpen() + "; " + w.quitItThen() + " when you are done."
 	case LeftOpenByChoice:
 		return "Thunderbird was left open, as you asked."
 	case LeftMayBeStarting:

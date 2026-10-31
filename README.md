@@ -185,7 +185,7 @@ Windows): the backup is saved with no schedule, nothing runs by itself, and **Ru
 
 A scheduled backup normally archives whatever Thunderbird has already written to disk.
 On **macOS and Windows** you can also have each scheduled backup **sync Thunderbird first**.
-Before archiving, MailArchive starts Thunderbird (out of sight on macOS; minimized to the taskbar
+Before archiving, MailArchive starts Thunderbird (out of sight on macOS; minimized
 on Windows), waits for its mail to stop arriving (up to 20 minutes), asks it to quit,
 then archives. The backup then includes mail that had only reached the server. Because this uses
 your real Thunderbird, starting it does what opening Thunderbird always does: it checks all your
@@ -201,10 +201,10 @@ saves the mail already on this computer.
 
 **Run now on a Mac and on Windows.** With the sync on, **Run now** on the Scheduled backup card
 syncs Thunderbird first, even while you are at the computer. It starts Thunderbird out of sight
-(macOS) or minimized to the taskbar (Windows) and waits for its mail (up to 20 minutes, often
-about 13). **Stop waiting and back up now** ends the wait early. When the backup is done,
-Thunderbird stays open for you to quit from the Dock (macOS) or from the taskbar or the
-notification area (Windows). **Cancel the backup** stops the whole backup while it waits; nothing
+(macOS) or minimized (Windows) and waits for its mail (up to 20 minutes, often about 13).
+**Stop waiting and back up now** ends the wait early. When the backup is done, Thunderbird stays
+open for you to quit from the Dock (macOS) or from its icon on the taskbar, or among the small
+icons by the clock (Windows). **Cancel the backup** stops the whole backup while it waits; nothing
 is added to the archive. On Windows, Thunderbird does not take the keyboard from what you are
 typing, but a window where it asks you something can: if it has a Primary Password, its
 password window appears, takes the keyboard and asks for it each time Run now starts

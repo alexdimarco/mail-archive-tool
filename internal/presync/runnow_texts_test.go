@@ -97,6 +97,18 @@ func TestWarnTextTrueForARunNow(t *testing.T) {
 	}
 }
 
+// covers: MA-900
+// The quit-no-window warning, a Windows outcome, says where to quit Thunderbird in plain
+// words (the Windows texts pass, §14 gate 3, 2026-10-31, finding 2): its icon on the
+// taskbar, or among the small icons by the clock — never "the notification area".
+// Pinned whole.
+func TestTheQuitNoWindowWarningSaysWhereToQuitInPlainWords(t *testing.T) {
+	const want = "Thunderbird was left open: its window could not be told apart from its other windows (for example a message being written), so MailArchive did not try to close it. Do this: quit Thunderbird from its icon on the taskbar, or among the small icons by the clock, when you are done. The archive ran anyway."
+	if got, ok := WarnText(OutcomeQuitNoWindow); !ok || got != want {
+		t.Errorf("the quit-no-window warning (%v):\n  %q\nwant\n  %q", ok, got, want)
+	}
+}
+
 // covers: MA-928, MA-900, MA-908
 // One program name in the run warnings this branch added (the friction review's O1,
 // applied by the lead 2026-10-31; X17): start-blocked, quit-no-window, state-unsaved and

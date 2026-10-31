@@ -124,6 +124,10 @@ func TestTheNotSyncedWarning(t *testing.T) {
 					if goos == "windows" && (strings.Contains(got, "Dock") || strings.Contains(got, "out of sight")) {
 						t.Errorf("%s: a Windows remedy names the Dock: %q", ctx, got)
 					}
+					// The Windows texts pass (2026-10-31, finding 2): no "notification area" jargon.
+					if goos == "windows" && (strings.Contains(got, "notification area") || strings.Contains(got, "minimized to the taskbar")) {
+						t.Errorf("%s: a Windows remedy says 'notification area' or 'minimized to the taskbar': %q", ctx, got)
+					}
 					if goos == "darwin" && strings.Contains(got, "taskbar") {
 						t.Errorf("%s: a macOS remedy names the taskbar: %q", ctx, got)
 					}
@@ -136,7 +140,7 @@ func TestTheNotSyncedWarning(t *testing.T) {
 		}
 	}
 	if got := reasonWith(Assess(syncInput(now, "windows", "desktop", staleStreak("leftover-found")), now), "presync_not_synced"); !strings.HasSuffix(got,
-		"A Thunderbird an earlier backup started is still open minimized. Quit it from the taskbar or the notification area, then click Run now.") {
+		"Do this: "+wantRemedyWindowsLeftover) {
 		t.Errorf("the Windows leftover remedy: %q", got)
 	}
 
@@ -164,9 +168,10 @@ func TestTheNotSyncedWarning(t *testing.T) {
 }
 
 // wantRemedyWindowsLeftover is the leftover remedy in the Windows Desktop's words where Run now
-// syncs: the taskbar or the notification area, never the Dock. Every other §5.4 remedy
-// reads the same on both platforms.
-const wantRemedyWindowsLeftover = "A Thunderbird an earlier backup started is still open minimized. Quit it from the taskbar or the notification area, then click Run now."
+// syncs: its icon on the taskbar, or among the small icons by the clock (the Windows texts
+// pass, 2026-10-31, finding 2: never "the notification area"), never the Dock. Every other
+// §5.4 remedy reads the same on both platforms.
+const wantRemedyWindowsLeftover = "A Thunderbird an earlier backup started is still open minimized. Quit it from its icon on the taskbar, or among the small icons by the clock, then click Run now."
 
 // covers: MA-909, S65
 // The remedies with the tables as shipped, no override (design-presync-attended §5.4,
@@ -174,7 +179,8 @@ const wantRemedyWindowsLeftover = "A Thunderbird an earlier backup started is st
 // since 2026-10-31 too (lab MA-918 run 2, docs/lab/presync-attended-start-windows.md), so
 // each platform's Desktop remedies — the WARN and the not-synced email, which share
 // SyncAlertWords — are the design's own "click Run now" words for every reason of §5.4's
-// table, in that platform's words (Windows: the taskbar or the notification area). With
+// table, in that platform's words (Windows: its icon on the taskbar, or among the small
+// icons by the clock). With
 // Windows' entry switched off, no Windows remedy says Run now syncs (the start-off words
 // are still proven, through the override, in TestTheNotSyncedWarning).
 func TestTheShippedRemedies(t *testing.T) {

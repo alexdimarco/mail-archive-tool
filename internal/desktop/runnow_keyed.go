@@ -151,11 +151,16 @@ func lockCancelNote(goos, phase string, ended bool, left string, minimized bool)
 	w := runNowWordsFor(goos)
 	open := func(minimizedKnown bool) string {
 		if w.windows && !minimizedKnown {
-			return " Thunderbird, which it started, was left open; its window may still be on screen — quit it from " + w.place + " before the next Run now."
+			return " Thunderbird, which it started, was left open; its window may still be on screen — quit it from " + presync.PlaceThen(w.place) + " before the next Run now."
 		}
-		return " Thunderbird, which it started " + w.hidden + ", was left open — quit it from " + w.place + " before the next Run now."
+		return " Thunderbird, which it started " + w.hidden + ", was left open — quit it from " + presync.PlaceThen(w.place) + " before the next Run now."
 	}
 	starting := " Thunderbird may still be starting; if it appears in " + w.place + ", quit it."
+	if w.windows {
+		// The Windows texts pass (2026-10-31, finding 2): "appears in its icon on the
+		// taskbar…" would not read, so the place follows the quit.
+		starting = " Thunderbird may still be starting; if it appears, quit it from " + w.place + "."
+	}
 	switch {
 	case !ended && phase == presync.PhaseWaiting:
 		return lockCancelledText + open(false)

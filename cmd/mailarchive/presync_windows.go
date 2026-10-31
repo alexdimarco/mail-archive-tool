@@ -13,5 +13,5 @@ import (
 // adds only the Windows-specific word on the minimized start (MA-923; lab L-A10 saw
 // no window on screen; a window that shows anyway is minimized by the backstop).
 func presyncInstallNote(string, bool) string {
-	return presync.SyncNotice + "\n\nOn Windows, each scheduled run starts Thunderbird minimized to the taskbar while it syncs; if its window appears anyway, it is minimized."
+	return presync.SyncNotice + "\n\n" + winScheduledStartNote
 }

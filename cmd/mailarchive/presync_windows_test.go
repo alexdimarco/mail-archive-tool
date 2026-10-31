@@ -13,10 +13,13 @@ import (
 
 // covers: MA-923
 // A scheduled sync's install and preview notes on Windows say what the start does
-// since MA-923 (lab L-A10): Thunderbird starts minimized to the taskbar, and a
-// window that appears anyway is minimized; never that its window shows first.
+// since MA-923 (lab L-A10): Thunderbird starts minimized, and a window that appears
+// anyway is minimized; never that its window shows first. "Minimized", never
+// "minimized to the taskbar" since the Windows texts pass (2026-10-31, finding 2): a
+// Thunderbird set to hide to the tray is not on the taskbar (lab case E). The sentence
+// itself is pinned on every platform by TestTheWindowsScheduledStartNote.
 func TestPresyncInstallNoteWindows(t *testing.T) {
-	want := presync.SyncNotice + "\n\nOn Windows, each scheduled run starts Thunderbird minimized to the taskbar while it syncs; if its window appears anyway, it is minimized."
+	want := presync.SyncNotice + "\n\nOn Windows, each scheduled run starts Thunderbird minimized while it syncs; if its window appears anyway, it is minimized."
 	for _, preview := range []bool{false, true} {
 		note := presyncInstallNote("mailarchive-abc", preview)
 		if note != want {

@@ -39,8 +39,11 @@ const syncMaxMinutes = 20
 const syncWaitWords = "up to 20 minutes, often about 13"
 
 // runNowWords are a Run now text's platform words (§4.6, §2.7, C-24, C-61): how
-// Thunderbird runs while left open, and where to quit it from. Windows names the
-// taskbar and the notification area, never the Dock (OQ-2).
+// Thunderbird runs while left open, and where to quit it from. Windows names
+// Thunderbird's icon on the taskbar or among the small icons by the clock, never the
+// Dock (OQ-2), and says "minimized", never "minimized to the taskbar" (the Windows texts
+// pass, 2026-10-31, finding 2: lab case E's Thunderbird hid to the tray, and "the
+// notification area" is jargon).
 type runNowWords struct {
 	hidden, place string
 	windows       bool
@@ -48,7 +51,7 @@ type runNowWords struct {
 
 func runNowWordsFor(goos string) runNowWords {
 	if goos == "windows" {
-		return runNowWords{hidden: "minimized to the taskbar", place: "the taskbar or the notification area", windows: true}
+		return runNowWords{hidden: "minimized", place: presync.WinQuitPlace, windows: true}
 	}
 	return runNowWords{hidden: "out of sight", place: "the Dock"}
 }
@@ -101,7 +104,7 @@ func runNowSyncStem(goos string) string {
 // now on this computer has started it. The close variant arrives with slice AS-Q.
 func runNowFirstSyncLine(goos string) string {
 	w := runNowWordsFor(goos)
-	return "New: Run now starts Thunderbird " + w.hidden + ", even while you are using the computer, waits up to 20 minutes for its mail, and leaves it open for you to quit from " + w.place + " when you are done."
+	return "New: Run now starts Thunderbird " + w.hidden + ", even while you are using the computer, waits up to 20 minutes for its mail, and leaves it open for you to quit from " + presync.PlaceThen(w.place) + " when you are done."
 }
 
 // jobCancelTitle is the job slot's Cancel tooltip outside a Run now's sync.
@@ -487,7 +490,9 @@ const releaseLineMac = "On a Mac, Run now syncs Thunderbird first when the archi
 // Corrected 2026-10-31 (review finding): it says the password window takes the keyboard,
 // as the record measured, and only "may" for the default-mail-app question, a start the
 // record lists as not covered.
-const releaseLineWin = "On Windows, Run now syncs Thunderbird first too, in the same way: it starts Thunderbird minimized to the taskbar, where it does not take the keyboard from what you are typing, waits for its mail, and leaves it open for you to quit from the taskbar or the notification area. A window where Thunderbird asks you something can still appear and take the keyboard: if Thunderbird has a Primary Password, its password window does so each time Run now starts Thunderbird, and if it is not your default mail app, it may ask whether to become it."
+// The Windows texts pass (2026-10-31, finding 2): "minimized", never "minimized to the
+// taskbar", and where to quit it in plain words (presync.WinQuitPlace).
+const releaseLineWin = "On Windows, Run now syncs Thunderbird first too, in the same way: it starts Thunderbird minimized, without taking the keyboard from what you are typing, waits for its mail, and leaves it open for you to quit from " + presync.WinQuitPlace + ". A window where Thunderbird asks you something can still appear and take the keyboard: if Thunderbird has a Primary Password, its password window does so each time Run now starts Thunderbird, and if it is not your default mail app, it may ask whether to become it."
 
 // winAskLine is said beside Windows' Run now start, in its tooltip and its starting note:
 // lab MA-918 run 2 saw Thunderbird's own window minimized from the first sample, but a

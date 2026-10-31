@@ -61,6 +61,9 @@ func TestTheHelpSaysWhatThisVersionDoes(t *testing.T) {
 	exportFlags(fs)
 	sync := fs.Lookup("thunderbird-sync").Usage
 	for _, want := range []string{
+		// The Windows texts pass (2026-10-31, finding 2): "minimized", never "minimized to
+		// the taskbar" (a Thunderbird set to hide to the tray is not on the taskbar).
+		"before archiving, start Thunderbird (hidden on macOS; minimized on Windows), wait until its mail stops arriving, then ask it to quit,",
 		"It starts Thunderbird only when no one has used the keyboard or mouse for 2 minutes, so it is meant for scheduled runs: typed at a terminal it skips the sync and archives the mail already on this computer.",
 		"allowed on any schedule",
 		"a sync problem never stops the archive",
@@ -68,6 +71,20 @@ func TestTheHelpSaysWhatThisVersionDoes(t *testing.T) {
 		if !strings.Contains(sync, want) {
 			t.Errorf("-thunderbird-sync's help lacks %q: %q", want, sync)
 		}
+	}
+	if strings.Contains(sync, "taskbar") || strings.Contains(sync, "notification area") {
+		t.Errorf("-thunderbird-sync's help names the taskbar or the notification area: %q", sync)
+	}
+}
+
+// covers: MA-923
+// The sentence the Windows install and preview notes add (presyncInstallNote, Windows
+// only), pinned whole on every platform so the Linux gate reads it too: "minimized", never
+// "minimized to the taskbar" (the Windows texts pass, 2026-10-31, finding 2; lab case E).
+func TestTheWindowsScheduledStartNote(t *testing.T) {
+	const want = "On Windows, each scheduled run starts Thunderbird minimized while it syncs; if its window appears anyway, it is minimized."
+	if winScheduledStartNote != want {
+		t.Errorf("the Windows scheduled-start note:\n  %q\nwant\n  %q", winScheduledStartNote, want)
 	}
 }
 

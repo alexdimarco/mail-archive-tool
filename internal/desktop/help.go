@@ -86,7 +86,8 @@ func helpDataFor(goos string, open bool) helpData {
 		d.AppPlace = ` in its usual place: a Mozilla Thunderbird folder in Program Files (or Program Files (x86)), or in AppData\Local\Programs in your user folder. The Thunderbird sync looks for it only there`
 		d.Profiles = `%APPDATA%\Thunderbird\Profiles`
 		// Started minimized and not activated (MA-923; lab L-A10 saw no window on screen).
-		d.SchedStart = "Thunderbird starts minimized to the taskbar."
+		// "Minimized", never "minimized to the taskbar" (the Windows texts pass, 2026-10-31).
+		d.SchedStart = "Thunderbird starts minimized."
 		// Lab MA-918 run 2: never took the keyboard; the Primary Password prompt does, and
 		// the owner accepted it (2026-10-31). Corrected 2026-10-31 (review finding): the
 		// guide says the password window takes the keyboard, and "may" for the

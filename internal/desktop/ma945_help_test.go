@@ -306,7 +306,7 @@ const (
 	// sample, never took the keyboard; the Primary Password prompt is shown and takes the
 	// keyboard (accepted by the owner), so the guide says so; the not-the-default-mail-app
 	// start was not run, so its question is a "may" (review finding, 2026-10-31).
-	helpWinRunNow = "Run now syncs Thunderbird too, even while you are using the computer. It starts Thunderbird minimized to the taskbar and waits for its mail (up to 20 minutes, often about 13). Thunderbird does not take the keyboard from what you are typing, but a window where it asks you something can. If it has a Primary Password, its password window appears, takes the keyboard and asks for it each time Run now starts Thunderbird. If Thunderbird is not your default mail app, it may also ask whether to become it. Click Stop waiting and back up now to back up the mail that has arrived so far. Cancel the backup skips the whole backup instead, and nothing is added to the archive. When the backup is done, Thunderbird stays open: quit it from the taskbar or the notification area."
+	helpWinRunNow = "Run now syncs Thunderbird too, even while you are using the computer. It starts Thunderbird minimized and waits for its mail (up to 20 minutes, often about 13). Thunderbird does not take the keyboard from what you are typing, but a window where it asks you something can. If it has a Primary Password, its password window appears, takes the keyboard and asks for it each time Run now starts Thunderbird. If Thunderbird is not your default mail app, it may also ask whether to become it. Click Stop waiting and back up now to back up the mail that has arrived so far. Cancel the backup skips the whole backup instead, and nothing is added to the archive. When the backup is done, Thunderbird stays open: quit it from its icon on the taskbar, or among the small icons by the clock."
 	helpEncSync   = "An encrypted archive is backed up only when you click Run now. If it was made from Thunderbird, its Settings card offers Sync Thunderbird before each Run now, with its own Save. Until that backup starts reading mail, Lock cancels it."
 )
 
@@ -355,9 +355,9 @@ var helpPlatforms = []helpPlatform{
 		"Your archives and scheduled backups are not affected. To come back, open MailArchive Desktop from the Start menu, or, if MailArchive was unzipped, double-click mailarchivew.exe in its folder.",
 		`Thunderbird installed in its usual place: a Mozilla Thunderbird folder in Program Files (or Program Files (x86)), or in AppData\Local\Programs in your user folder. The Thunderbird sync looks for it only there.`,
 		`(Thunderbird keeps its profiles in %APPDATA%\Thunderbird\Profiles.)`,
-		"Scheduled backups: Thunderbird starts minimized to the taskbar.",
+		"Scheduled backups: Thunderbird starts minimized.",
 		helpWinRunNow, helpEncSync,
-	}, helpSyncSentences...), not: []string{"shows for a moment", "may appear for a moment", "does not start Thunderbird yet", "out of sight", "the Dock", "System Settings", "MailArchive does not sync Thunderbird", "off or asleep is skipped", "Command-R"}},
+	}, helpSyncSentences...), not: []string{"notification area", "minimized to the taskbar", "shows for a moment", "may appear for a moment", "does not start Thunderbird yet", "out of sight", "the Dock", "System Settings", "MailArchive does not sync Thunderbird", "off or asleep is skipped", "Command-R"}},
 	{goos: "linux", want: []string{
 		helpLinWizard,
 		"Then come back to this page and reload it (press F5).",

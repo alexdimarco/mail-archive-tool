@@ -338,7 +338,7 @@ func TestRunNowCancelCauses(t *testing.T) {
 	w.start()
 	w.at(presync.PhaseWaiting)
 	callAction(t, w.d, w.d.cancelJobAction, nil)
-	if n := str(w.done()["note"]); n != "Cancelled. Thunderbird, started by this backup, was left open; its window may still be on screen; quit it from the taskbar or the notification area. The archive is unchanged." {
+	if n := str(w.done()["note"]); n != "Cancelled. Thunderbird, started by this backup, was left open; its window may still be on screen; quit it from its icon on the taskbar, or among the small icons by the clock. The archive is unchanged." {
 		t.Errorf("Windows, not minimized: %q", n)
 	}
 
@@ -439,7 +439,7 @@ func TestRunNowNoteBuiltOnTheServer(t *testing.T) {
 	g.s.release <- struct{}{}
 	g.done()
 	for goos, want := range map[string]string{"darwin": "Starting Thunderbird out of sight…",
-		"windows": "Starting Thunderbird minimized to the taskbar… A Thunderbird window that asks you something, such as for its Primary Password, can still appear and take the keyboard."} {
+		"windows": "Starting Thunderbird minimized… A Thunderbird window that asks you something, such as for its Primary Password, can still appear and take the keyboard."} {
 		if n := runNowSyncNote(goos, presync.PhaseStarting, time.Now(), time.Now(), false); n != want {
 			t.Errorf("%s starting note %q, want %q", goos, n, want)
 		}
@@ -556,7 +556,7 @@ func TestRunNowFirstSyncLine(t *testing.T) {
 	if page, _ = getPage(t, DashboardHandler(g.d.cfg)); strings.Contains(page, `id="runNowFirstSync"`) {
 		t.Error("the line still shows after the first attended Run now started Thunderbird")
 	}
-	if w := runNowFirstSyncLine("windows"); w != "New: Run now starts Thunderbird minimized to the taskbar, even while you are using the computer, waits up to 20 minutes for its mail, and leaves it open for you to quit from the taskbar or the notification area when you are done." {
+	if w := runNowFirstSyncLine("windows"); w != "New: Run now starts Thunderbird minimized, even while you are using the computer, waits up to 20 minutes for its mail, and leaves it open for you to quit from its icon on the taskbar, or among the small icons by the clock, when you are done." {
 		t.Errorf("the Windows first-sync line: %q", w)
 	}
 }
@@ -728,8 +728,10 @@ func TestARunNowIsShownOnlyOnItsOwnArchive(t *testing.T) {
 // C-52, C-61, C-69, C-84, OQ-2, OQ-6, OQ-7), never-close only: Run now's tooltip for
 // macOS and Windows where the start is allowed, the start-off variant where it is
 // not, no sync sentence on Linux or with the sync off; rendered on the card for a
-// job under a non-default name. Every Windows text says the taskbar (and the
-// notification area), never the Dock or "out of sight"; no text says Thunderbird is
+// job under a non-default name. Every Windows text that says where to quit Thunderbird
+// says its icon on the taskbar, or among the small icons by the clock (the Windows texts
+// pass, 2026-10-31: never "the notification area" or "minimized to the taskbar"), never
+// the Dock or "out of sight"; no text says Thunderbird is
 // closed, offers "Keep Thunderbird open", promises a prompt about a message being
 // written, or names a command. Cancel's sync variant says the whole backup is
 // skipped. The Settings card's SyncNotice says a Run now does not wait only where
@@ -792,8 +794,11 @@ func TestRunNowTexts(t *testing.T) {
 		if x.goos == "windows" && (strings.Contains(x.s, "Dock") || strings.Contains(x.s, "out of sight")) {
 			t.Errorf("a Windows text names the Dock or 'out of sight': %q", x.s)
 		}
-		if x.goos == "windows" && strings.Contains(x.s, "quit it from") && !strings.Contains(x.s, "the taskbar or the notification area") {
-			t.Errorf("a Windows text does not name the taskbar and the notification area: %q", x.s)
+		if x.goos == "windows" && strings.Contains(x.s, "quit") && !strings.Contains(x.s, "from its icon on the taskbar, or among the small icons by the clock") {
+			t.Errorf("a Windows text does not say where to quit Thunderbird in plain words: %q", x.s)
+		}
+		if x.goos == "windows" && (strings.Contains(x.s, "notification area") || strings.Contains(x.s, "minimized to the taskbar")) {
+			t.Errorf("a Windows text says 'notification area' or 'minimized to the taskbar': %q", x.s)
 		}
 		if x.goos == "darwin" && strings.Contains(x.s, "taskbar") {
 			t.Errorf("a macOS text names the taskbar: %q", x.s)
@@ -909,7 +914,9 @@ func TestRunNowReleaseLineFollowsTheTable(t *testing.T) {
 		strings.Contains(releaseLineMac, "Run now now") {
 		t.Fatalf("twin: the AS4 release line: %q", releaseLineMac)
 	}
-	const winLine = "On Windows, Run now syncs Thunderbird first too, in the same way: it starts Thunderbird minimized to the taskbar, where it does not take the keyboard from what you are typing, waits for its mail, and leaves it open for you to quit from the taskbar or the notification area. A window where Thunderbird asks you something can still appear and take the keyboard: if Thunderbird has a Primary Password, its password window does so each time Run now starts Thunderbird, and if it is not your default mail app, it may ask whether to become it."
+	// The Windows texts pass (2026-10-31, finding 2): "minimized", and where to quit it in
+	// plain words, never "the notification area".
+	const winLine = "On Windows, Run now syncs Thunderbird first too, in the same way: it starts Thunderbird minimized, without taking the keyboard from what you are typing, waits for its mail, and leaves it open for you to quit from its icon on the taskbar, or among the small icons by the clock. A window where Thunderbird asks you something can still appear and take the keyboard: if Thunderbird has a Primary Password, its password window does so each time Run now starts Thunderbird, and if it is not your default mail app, it may ask whether to become it."
 	if releaseLineWin != winLine {
 		t.Fatalf("twin: the Windows release line:\n  %q\nwant\n  %q", releaseLineWin, winLine)
 	}
@@ -937,10 +944,10 @@ func TestRunNowReleaseLineFollowsTheTable(t *testing.T) {
 	}
 	const readmeRunNow = "**Run now on a Mac and on Windows.** With the sync on, **Run now** on the Scheduled backup card\n" +
 		"syncs Thunderbird first, even while you are at the computer. It starts Thunderbird out of sight\n" +
-		"(macOS) or minimized to the taskbar (Windows) and waits for its mail (up to 20 minutes, often\n" +
-		"about 13). **Stop waiting and back up now** ends the wait early. When the backup is done,\n" +
-		"Thunderbird stays open for you to quit from the Dock (macOS) or from the taskbar or the\n" +
-		"notification area (Windows). **Cancel the backup** stops the whole backup while it waits; nothing\n" +
+		"(macOS) or minimized (Windows) and waits for its mail (up to 20 minutes, often about 13).\n" +
+		"**Stop waiting and back up now** ends the wait early. When the backup is done, Thunderbird stays\n" +
+		"open for you to quit from the Dock (macOS) or from its icon on the taskbar, or among the small\n" +
+		"icons by the clock (Windows). **Cancel the backup** stops the whole backup while it waits; nothing\n" +
 		"is added to the archive. On Windows, Thunderbird does not take the keyboard from what you are\n" +
 		"typing, but a window where it asks you something can: if it has a Primary Password, its\n" +
 		"password window appears, takes the keyboard and asks for it each time Run now starts\n" +
@@ -950,6 +957,15 @@ func TestRunNowReleaseLineFollowsTheTable(t *testing.T) {
 	}
 	if presync.AttendedStartAllowed("windows") && (strings.Contains(string(readme), "Run now does not start Thunderbird yet") || strings.Contains(string(readme), "(or, on a Mac, Run now)")) {
 		t.Error("the README still says Windows' Run now does not start Thunderbird, with its start entry on")
+	}
+	// The Windows texts pass (2026-10-31, finding 2): neither says "the notification area" or
+	// "minimized to the taskbar" anywhere any more.
+	for name, b := range map[string][]byte{"release notes": notes, "README": readme} {
+		for _, gone := range []string{"notification area", "minimized to the taskbar"} {
+			if strings.Contains(string(b), gone) {
+				t.Errorf("the %s still say %q", name, gone)
+			}
+		}
 	}
 }
 
@@ -961,7 +977,7 @@ func TestRunNowReleaseLineFollowsTheTable(t *testing.T) {
 // word, the encrypted one starts with it, the Settings notice says a Run now does not
 // wait, and the first-sync line is offered. Windows' entry is true since 2026-10-31 (lab
 // MA-918 run 2, docs/lab/presync-attended-start-windows.md), so Windows' texts are its own
-// start texts word for word, the same way: the tooltip (minimized to the taskbar, no "its
+// start texts word for word, the same way: the tooltip (minimized, no "its
 // window may appear"), the encrypted one starting with it, the sync notice saying a Run now
 // does not wait, and the first-sync line; none is the start-off variant.
 func TestRunNowShippedTexts(t *testing.T) {
@@ -999,7 +1015,7 @@ func TestRunNowShippedTexts(t *testing.T) {
 	if !strings.Contains(presync.SyncNoticeFor("windows"), "; a backup you start with Run now in MailArchive Desktop does not check that, and leaves Thunderbird open for you to quit.") {
 		t.Errorf("Windows' sync notice does not say a Run now does not wait: %q", presync.SyncNoticeFor("windows"))
 	}
-	if got, want := runNowFirstSyncLine("windows"), "New: Run now starts Thunderbird minimized to the taskbar, even while you are using the computer, waits up to 20 minutes for its mail, and leaves it open for you to quit from the taskbar or the notification area when you are done."; got != want {
+	if got, want := runNowFirstSyncLine("windows"), "New: Run now starts Thunderbird minimized, even while you are using the computer, waits up to 20 minutes for its mail, and leaves it open for you to quit from its icon on the taskbar, or among the small icons by the clock, when you are done."; got != want {
 		t.Errorf("Windows' first-sync line: %q", got)
 	}
 }
@@ -1011,7 +1027,8 @@ func TestRunNowShippedTexts(t *testing.T) {
 // session (presyncjob's seam; no real Thunderbird) is called once, attended, never-close
 // (AttendedQuitAllowed[windows] stays false), with the Desktop's words and Windows as its
 // platform — and its notes are Windows' own: the starting and waiting notes, then the
-// synced line naming the taskbar and the notification area, pinned whole; the record reads
+// synced line naming Thunderbird's icon on the taskbar or among the small icons by the
+// clock (the Windows texts pass, 2026-10-31), pinned whole; the record reads
 // ok with the sync recorded. Positive twin of TestRunNowNoteBuiltOnTheServer's start-off
 // case, where no session runs.
 func TestWindowsRunNowSyncsAsShipped(t *testing.T) {
@@ -1032,7 +1049,7 @@ func TestWindowsRunNowSyncsAsShipped(t *testing.T) {
 	g.start()
 	g.at(presync.PhaseStarting)
 	g.at(presync.PhaseWaiting)
-	if n := str(g.activity()["syncNote"]); !strings.Contains(n, "Thunderbird is running minimized to the taskbar and stays open after the wait.") {
+	if n := str(g.activity()["syncNote"]); !strings.Contains(n, "Thunderbird is running minimized and stays open after the wait.") {
 		t.Errorf("the Windows waiting note: %q", n)
 	}
 	g.s.release <- struct{}{}
@@ -1044,7 +1061,7 @@ func TestWindowsRunNowSyncsAsShipped(t *testing.T) {
 	if !cfg.Attended || !cfg.NeverQuit || cfg.GOOS != "windows" || cfg.Surface != presync.SurfaceDesktop || cfg.EndWait == nil {
 		t.Errorf("the Windows session was handed Attended %v, NeverQuit %v, GOOS %q, Surface %q, EndWait set %v", cfg.Attended, cfg.NeverQuit, cfg.GOOS, cfg.Surface, cfg.EndWait != nil)
 	}
-	const synced = "Thunderbird synced: its mail stopped arriving after 6 min. It was left open minimized to the taskbar; quit it from the taskbar or the notification area when you are done."
+	const synced = "Thunderbird synced: its mail stopped arriving after 6 min. It was left open minimized; quit it from its icon on the taskbar, or among the small icons by the clock, when you are done."
 	if n := str(m["note"]); !strings.Contains(n, "\n"+synced) || strings.Contains(n, startNotAllowedLine) || m["error"] != "" {
 		t.Errorf("the Windows Run now's end note %q (error %q), want the synced line %q", n, m["error"], synced)
 	}

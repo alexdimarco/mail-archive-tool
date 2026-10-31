@@ -831,8 +831,9 @@ func rawLastRun(t *testing.T, out string) map[string]any {
 // covers: MA-913, R37
 // The Lock reply's words (§9, C-64, OQ-2, OQ-8): nothing about Thunderbird before the
 // sync began or for a Run now with no sync; "may still be starting" while it starts;
-// "left open" once its Thunderbird was proven. On Windows the taskbar and the
-// notification area, never the Dock; and the window called minimized only when the
+// "left open" once its Thunderbird was proven. On Windows its icon on the taskbar, or among
+// the small icons by the clock (never "the notification area"), never the Dock; and the
+// window called minimized only when the
 // sync ended saying so — while it waits, or when the minimize never succeeded, "its
 // window may still be on screen".
 func TestTheLockReplyWords(t *testing.T) {
@@ -849,11 +850,13 @@ func TestTheLockReplyWords(t *testing.T) {
 		{"darwin", presync.PhaseWaiting, false, "", false, lockCancelledText + " Thunderbird, which it started out of sight, was left open — quit it from the Dock before the next Run now."},
 		{"darwin", "", true, presync.LeftOpenByRule, false, lockCancelledText + " Thunderbird, which it started out of sight, was left open — quit it from the Dock before the next Run now."},
 		{"darwin", "", true, presync.LeftNone, false, lockCancelledText},
-		{"windows", presync.PhaseStarting, false, "", false, lockCancelledText + " Thunderbird may still be starting; if it appears in the taskbar or the notification area, quit it."},
-		{"windows", presync.PhaseWaiting, false, "", false, lockCancelledText + " Thunderbird, which it started, was left open; its window may still be on screen — quit it from the taskbar or the notification area before the next Run now."},
-		{"windows", "", true, presync.LeftOpenByRule, false, lockCancelledText + " Thunderbird, which it started, was left open; its window may still be on screen — quit it from the taskbar or the notification area before the next Run now."},
-		{"windows", "", true, presync.LeftOpenByRule, true, lockCancelledText + " Thunderbird, which it started minimized to the taskbar, was left open — quit it from the taskbar or the notification area before the next Run now."},
-		{"windows", "", true, presync.LeftMayBeStarting, false, lockCancelledText + " Thunderbird may still be starting; if it appears in the taskbar or the notification area, quit it."},
+		// The Windows texts pass (2026-10-31, finding 2): "minimized", and where to quit it in
+		// plain words, never "the notification area".
+		{"windows", presync.PhaseStarting, false, "", false, lockCancelledText + " Thunderbird may still be starting; if it appears, quit it from its icon on the taskbar, or among the small icons by the clock."},
+		{"windows", presync.PhaseWaiting, false, "", false, lockCancelledText + " Thunderbird, which it started, was left open; its window may still be on screen — quit it from its icon on the taskbar, or among the small icons by the clock, before the next Run now."},
+		{"windows", "", true, presync.LeftOpenByRule, false, lockCancelledText + " Thunderbird, which it started, was left open; its window may still be on screen — quit it from its icon on the taskbar, or among the small icons by the clock, before the next Run now."},
+		{"windows", "", true, presync.LeftOpenByRule, true, lockCancelledText + " Thunderbird, which it started minimized, was left open — quit it from its icon on the taskbar, or among the small icons by the clock, before the next Run now."},
+		{"windows", "", true, presync.LeftMayBeStarting, false, lockCancelledText + " Thunderbird may still be starting; if it appears, quit it from its icon on the taskbar, or among the small icons by the clock."},
 	} {
 		got := lockCancelNote(x.goos, x.phase, x.ended, string(x.left), x.minimized)
 		if got != x.want {
@@ -919,7 +922,8 @@ func TestTheEncryptedSettingsSyncBox(t *testing.T) {
 	if !shown("windows", true) || shown("linux", true) {
 		t.Error("the box is not shown on Windows, or is shown on Linux")
 	}
-	if strings.Contains(encSyncNotice("windows"), "Dock") || !strings.Contains(encSyncNotice("windows"), "minimized to the taskbar") {
+	if w := encSyncNotice("windows"); strings.Contains(w, "Dock") || strings.Contains(w, "notification area") || !strings.HasPrefix(w, "Before each Run now, MailArchive starts Thunderbird minimized and waits") ||
+		!strings.Contains(w, "then leaves it open for you to quit from its icon on the taskbar, or among the small icons by the clock. ") {
 		t.Errorf("the Windows notice: %q", encSyncNotice("windows"))
 	}
 	if shown("darwin", false) {
@@ -1133,8 +1137,9 @@ func encSnapshot(t *testing.T, g *encRig) string {
 // sentence; where the start is not allowed, a variant naming no scheduled backup —
 // rendered on the card for the job Run now would run, also under a non-default name;
 // the encrypted SyncNotice carries every X16 disclosure that applies to a Run now that
-// never closes Thunderbird and no scheduled-backup sentence. Windows says the taskbar
-// and the notification area, never the Dock or "out of sight"; macOS never the
+// never closes Thunderbird and no scheduled-backup sentence. Windows says Thunderbird's
+// icon on the taskbar, or among the small icons by the clock (never "the notification
+// area"), never the Dock or "out of sight"; macOS never the
 // taskbar; no text says Thunderbird is closed, names on-exit actions, offers "Keep
 // Thunderbird open" or names a command.
 func TestEncryptedRunNowTexts(t *testing.T) {
@@ -1180,7 +1185,8 @@ func TestEncryptedRunNowTexts(t *testing.T) {
 	}
 	all = append(all, struct{ goos, s string }{"", encSyncLine}, struct{ goos, s string }{"", encSyncStartOffLine}, struct{ goos, s string }{"", encSyncLabel})
 	for _, x := range all {
-		if x.goos == "windows" && (strings.Contains(x.s, "Dock") || strings.Contains(x.s, "out of sight") || (strings.Contains(x.s, "quit") && !strings.Contains(x.s, "the taskbar or the notification area"))) {
+		if x.goos == "windows" && (strings.Contains(x.s, "Dock") || strings.Contains(x.s, "out of sight") || strings.Contains(x.s, "notification area") || strings.Contains(x.s, "minimized to the taskbar") ||
+			(strings.Contains(x.s, "quit") && !strings.Contains(x.s, "from its icon on the taskbar, or among the small icons by the clock"))) {
 			t.Errorf("a Windows text: %q", x.s)
 		}
 		if x.goos == "darwin" && strings.Contains(x.s, "taskbar") {

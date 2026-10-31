@@ -87,7 +87,8 @@ func syncWordsFor(in Input) syncWords {
 	w := syncWords{desktop: in.Surface == "desktop", runNow: presync.AttendedStartAllowed(goos),
 		hidden: "out of sight", place: "the Dock", started: "started out of sight"}
 	if goos == "windows" {
-		w.hidden, w.place, w.started = "minimized", "the taskbar or the notification area", "started minimized"
+		// The Windows texts pass (2026-10-31, finding 2): where to quit it in plain words.
+		w.hidden, w.place, w.started = "minimized", presync.WinQuitPlace, "started minimized"
 	}
 	if !w.desktop {
 		in.GOOS = goos

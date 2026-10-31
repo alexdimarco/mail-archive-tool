@@ -431,8 +431,9 @@ var allLefts = []Left{LeftNone, LeftExited, LeftClosed, LeftOpen, LeftOpenByChoi
 // OutcomeLine (§4.6, C-43): every outcome in allOutcomes has its own line (a new
 // outcome fails here until it has one), on both surfaces, in darwin and windows
 // words, for every Left, with Minimized true and false. The lines are past tense
-// and name no path or code; Windows words name the taskbar and the notification
-// area, never the Dock or "out of sight"; desktop words name no command, CLI words
+// and name no path or code; Windows words name Thunderbird's icon on the taskbar or among
+// the small icons by the clock (the Windows texts pass, 2026-10-31; never "the
+// notification area"), never the Dock or "out of sight"; desktop words name no command, CLI words
 // no button; a line says "closed" only when Left is closed, and every left-open Left
 // says so; Windows with Minimized false says the window may still be on screen. The
 // design's never-close examples are pinned word for word.
@@ -479,10 +480,23 @@ func TestOutcomeLineEveryOutcome(t *testing.T) {
 			"Thunderbird sync: cancelled — Thunderbird, started by this backup, was no longer running."},
 		{OutcomeCancelled, "darwin", LeftNone, false,
 			"Thunderbird sync: cancelled — Thunderbird was not started."},
+		// The Windows texts pass (§14 gate 3, 2026-10-31, finding 2): "minimized", never
+		// "minimized to the taskbar" (lab case E: a Thunderbird set to hide to the tray is not
+		// on the taskbar), and the place in plain words, never "the notification area".
 		{OutcomeOK, "windows", LeftOpenByRule, true,
-			"Thunderbird synced: its mail stopped arriving after 6 min. It was left open minimized to the taskbar; quit it from the taskbar or the notification area when you are done."},
+			"Thunderbird synced: its mail stopped arriving after 6 min. It was left open minimized; quit it from its icon on the taskbar, or among the small icons by the clock, when you are done."},
 		{OutcomeOK, "windows", LeftOpenByRule, false,
-			"Thunderbird synced: its mail stopped arriving after 6 min. It was left open; its window may still be on screen; quit it from the taskbar or the notification area when you are done."},
+			"Thunderbird synced: its mail stopped arriving after 6 min. It was left open; its window may still be on screen; quit it from its icon on the taskbar, or among the small icons by the clock, when you are done."},
+		{OutcomeCancelled, "windows", LeftOpen, true,
+			"Thunderbird sync: cancelled — Thunderbird, started by this backup, was left open minimized. Quit it from its icon on the taskbar, or among the small icons by the clock, before the next backup."},
+		{OutcomeCancelled, "windows", LeftMayBeStarting, true,
+			"Thunderbird sync: cancelled — Thunderbird may still be starting; quit it from its icon on the taskbar, or among the small icons by the clock."},
+		{OutcomeNoActivity, "windows", LeftOpenByRule, true,
+			"Thunderbird started, but nothing arrived in 20 minutes: either there was no new mail, or Thunderbird is waiting for a password or sign-in. To check, open Thunderbird from its icon on the taskbar, or among the small icons by the clock; it was left open."},
+		{OutcomeLeftoverFound, "windows", LeftNone, true,
+			"A Thunderbird an earlier backup started is still open, minimized (on the taskbar, or among the small icons by the clock), so it was not synced again. Quit it from its icon on the taskbar, or among the small icons by the clock, then click Run now again."},
+		{OutcomeLeftoverFound, "darwin", LeftNone, false,
+			"A Thunderbird an earlier backup started is still open out of sight, so it was not synced again. Quit it from the Dock, then click Run now again."},
 	} {
 		if got := OutcomeLine(g.o, SurfaceDesktop, g.goos, g.left, 6*time.Minute, g.min); got != g.want {
 			t.Errorf("OutcomeLine(%s, desktop, %s, %s, min=%v) =\n  %q\nwant\n  %q", g.o.Name, g.goos, g.left, g.min, got, g.want)
@@ -510,6 +524,14 @@ func checkOutcomeLine(t *testing.T, ctx, line string, o Outcome, surface, goos s
 	}
 	if goos == "windows" && (strings.Contains(line, "Dock") || strings.Contains(line, "out of sight")) {
 		t.Errorf("%s: a Windows line names the Dock or 'out of sight': %q", ctx, line)
+	}
+	// The Windows texts pass (2026-10-31, finding 2): no "notification area" jargon, no
+	// "minimized to the taskbar", and every place to quit from is said in plain words.
+	if goos == "windows" && (strings.Contains(line, "notification area") || strings.Contains(line, "minimized to the taskbar")) {
+		t.Errorf("%s: a Windows line says 'notification area' or 'minimized to the taskbar': %q", ctx, line)
+	}
+	if goos == "windows" && strings.Contains(line, "uit it from") && !strings.Contains(line, "uit it from its icon on the taskbar, or among the small icons by the clock") {
+		t.Errorf("%s: a Windows line does not say where to quit it in plain words: %q", ctx, line)
 	}
 	if goos == "darwin" && (strings.Contains(line, "taskbar") || strings.Contains(line, "notification area")) {
 		t.Errorf("%s: a macOS line names the taskbar: %q", ctx, line)
