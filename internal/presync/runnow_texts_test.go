@@ -8,8 +8,9 @@ import (
 // covers: MA-915, MA-567
 // The shared texts corrected in slice AS4 (design-presync-attended §7, C-31, C-52,
 // C-62, C-84). SyncNotice keeps every X16 disclosure and no longer says a
-// Thunderbird "you are using" is left alone; it says a scheduled backup waits until
-// the person has been away. SyncNoticeFor adds that a backup started with Run now
+// Thunderbird "you are using" is left alone; it says a scheduled backup skips the
+// sync while the person uses the computer (corrected 2026-10-31, MA-939: it never
+// waited, session S4 skips at once). SyncNoticeFor adds that a backup started with Run now
 // does not wait — only where the platform's attended start is allowed — and is
 // otherwise SyncNotice itself. The Mac note never names Run now while macOS's
 // attended close is not allowed, names no asking program before lab L-A2, and still
@@ -17,12 +18,12 @@ import (
 func TestRunNowSharedTexts(t *testing.T) {
 	for _, want := range []string{"Outbox", "filters", "notifications", "on-exit", "Trash", "left alone", "profile", "stop arriving",
 		"A Thunderbird you already have open is left alone — never started or closed.",
-		"A scheduled backup also waits until you have been away from the computer"} {
+		"A scheduled backup starts Thunderbird only when no one has used the keyboard or mouse for 2 minutes; if you are using the computer, that backup skips the sync and saves the mail already on this computer"} {
 		if !strings.Contains(SyncNotice, want) {
 			t.Errorf("SyncNotice lacks %q", want)
 		}
 	}
-	if strings.Contains(SyncNotice, "one you are using") || strings.Contains(SyncNotice, "Run now") {
+	if strings.Contains(SyncNotice, "one you are using") || strings.Contains(SyncNotice, "Run now") || strings.Contains(SyncNotice, "been away") {
 		t.Errorf("SyncNotice still says a Thunderbird in use is left alone, or names Run now everywhere: %q", SyncNotice)
 	}
 	if SyncNoticeFor("linux") != SyncNotice {
@@ -33,7 +34,7 @@ func TestRunNowSharedTexts(t *testing.T) {
 			r := OverrideTablesForTest(nil, map[string]bool{goos: allowed})
 			got := SyncNoticeFor(goos)
 			r()
-			says := strings.Contains(got, "a backup you start with Run now does not wait for that, and leaves Thunderbird open for you to quit.")
+			says := strings.Contains(got, "a backup you start with Run now in MailArchive Desktop does not check that, and leaves Thunderbird open for you to quit.")
 			if want := allowed; says != want {
 				t.Errorf("%s, start allowed %v: the Run now clause shown %v, want %v: %q", goos, allowed, says, want, got)
 			}

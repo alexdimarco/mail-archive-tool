@@ -665,7 +665,7 @@ func Run(ctx context.Context, opts Options, logger *log.Logger, onProgress Progr
 		func() {
 			defer func() {
 				if r := recover(); r != nil {
-					begun.Warnings = append(begun.Warnings, state.RunWarning{Code: "presync_internal_error", Message: "the Thunderbird pre-sync failed unexpectedly; the archive ran anyway"})
+					begun.Warnings = append(begun.Warnings, state.RunWarning{Code: "presync_internal_error", Message: "The Thunderbird sync failed unexpectedly; the archive ran anyway."})
 					presyncOut = &PresyncOutcome{Name: "internal-error", Class: "warn"}
 					logger.Printf("warning: the Thunderbird pre-sync panicked and was recovered (%v); the archive ran anyway", r)
 				}

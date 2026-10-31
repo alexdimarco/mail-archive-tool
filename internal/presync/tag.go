@@ -36,9 +36,9 @@ var tagPhrases = map[string]string{
 	OutcomeProfileUnusable.Name:          "Thunderbird not synced: its profile could not be used",
 	OutcomeCannotStart.Name:              phraseCannotStart,
 	OutcomeDidNotStart.Name:              phraseCannotStart,
-	OutcomeExitedEarly.Name:              phraseCannotStart,
-	OutcomeSuccessorFound.Name:           phraseCannotStart,
-	OutcomeStartBlocked.Name:             phraseCannotStart, // C-65
+	OutcomeExitedEarly.Name:              "Thunderbird not synced: it closed before its mail stopped arriving", // it did start (MA-939)
+	OutcomeSuccessorFound.Name:           "Thunderbird not synced: the copy that was started went away",        // it did start (MA-939)
+	OutcomeStartBlocked.Name:             phraseCannotStart,                                                    // C-65
 	OutcomeNoDesktopSession.Name:         "Thunderbird not synced: no one was logged in",
 	// not-set-up: the sync hook could not be prepared for a sync job (C-34, slice AS5).
 	OutcomeNotSetUp.Name:      "Thunderbird not synced: the sync could not be prepared",

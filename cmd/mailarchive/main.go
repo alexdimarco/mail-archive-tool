@@ -166,7 +166,7 @@ func runExport(args []string) error {
 	inputs := append(o.inputs, fs.Args()...)
 
 	if *o.out == "" {
-		return errors.New("-out is required (or use a subcommand: serve, search, reindex, schedule, graph, status, verify, extract, decrypt, pause, resume, uninstall, change-password, new-recovery-key, restore-key-file, forget-key, forget-archive, repair-record, encrypt)")
+		return errors.New("-out is required (or use a subcommand: desktop, wizard, run-job, setup, serve, search, reindex, schedule, graph, status, verify, extract, decrypt, pause, resume, uninstall, change-password, new-recovery-key, restore-key-file, forget-key, forget-archive, repair-record, encrypt)")
 	}
 	if err := refuseEncryptWith(*kf.encrypt, *o.unattended, *o.manifest != "", *o.list); err != nil {
 		return err
@@ -370,7 +370,7 @@ func runExport(args []string) error {
 		// optsForJob does, so R32 cannot drift between the CLI and GUI surfaces. The
 		// unsupported-platform refusal is enforced earlier, at flag-parse time (job.go).
 		if err := setPresyncHook(&opts, *o.tbProfile); err != nil {
-			fmt.Fprintf(os.Stderr, "warning: Thunderbird pre-sync not set up (%v); archiving without it\n", err)
+			fmt.Fprintf(os.Stderr, "warning: the Thunderbird sync could not be prepared (%v); archiving without it\n", err)
 		}
 	}
 
@@ -1836,16 +1836,18 @@ func defaultTokenCachePath(tenant, clientID string, mailboxes []string) (string,
 
 func graphUsage(fs *flag.FlagSet) func() {
 	return func() {
-		fmt.Fprintf(os.Stderr, `mailarchive graph - archive Microsoft 365 mailboxes server-side via Graph (app-only)
+		fmt.Fprintf(os.Stderr, `mailarchive graph - archive Microsoft 365 mailboxes via Graph
 
 Usage:
   MAILARCHIVE_GRAPH_SECRET=... mailarchive graph -out DIR -tenant TENANT \
-    -client-id APPID -mailbox user@domain [-mailbox ...] [-mode incremental|full]
-  mailarchive graph ... -client-secret-file ~/.config/mailarchive/graph.secret   (scheduled jobs)
+    -client-id APPID -mailbox user@domain [-mailbox ...] [-mode incremental|full]   (app sign-in)
+  mailarchive graph -auth device -out DIR -tenant TENANT -client-id APPID   (sign in as yourself, your own mailbox)
+  mailarchive graph ... -client-secret-file ~/.config/mailarchive/graph.secret   (scheduled app jobs; a scheduled device job sets -token-cache)
 
-Requires an Entra app with the Mail.Read (application) permission, admin-consented
-and RBAC-scoped to the mailboxes. See docs/graph-app-setup.md. Client secrets
-expire (Entra caps them at 24 months): note the date and rotate before it.
+App sign-in needs an Entra app with the Mail.Read (application) permission,
+admin-consented and scoped to the mailboxes; device sign-in needs only delegated Mail.Read for your own mailbox.
+See docs/graph-app-setup.md. Client secrets expire (Entra caps them at 24 months):
+note the date and replace the secret before it.
 
 Flags:
 `)
@@ -1876,6 +1878,10 @@ Usage:
   mailarchive forget-archive   -out DIR                  stop treating a folder as one of this computer's encrypted archives
   mailarchive repair-record                              rebuild this computer's damaged record of encrypted archives
   mailarchive decrypt  -out DIR -dest PARENT             make an UNENCRYPTED copy of an encrypted archive
+  mailarchive pause    -out DIR [-reason TEXT]           stop backups and make the archive read-only
+  mailarchive resume   -out DIR                          make a paused archive writable and restore its schedule
+  mailarchive uninstall -dry-run | -yes                  remove MailArchive's schedules, settings and sign-in (archives are kept)
+  mailarchive setup                                      set up a Microsoft 365 connection in your browser
   mailarchive desktop  [-capture]                        the dashboard & launcher (also opens on double-click)
   mailarchive wizard                                     step-by-step setup with native dialogs
   mailarchive run-job  FILE                              run a saved job headlessly (what a schedule runs)

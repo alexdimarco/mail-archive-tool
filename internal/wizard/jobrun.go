@@ -224,7 +224,7 @@ func optsForJob(j job.Job, inputs []string, logger *log.Logger, hooks runHooks, 
 			hooks.rn.StartNotAllowed()
 		}
 		if err := presyncjob.SetHook(&opts, h); err != nil {
-			logger.Printf("warning: Thunderbird pre-sync not set up (%v); archiving without it", err)
+			logger.Printf("warning: the Thunderbird sync could not be prepared (%v); archiving without it", err)
 			// Recorded as not-set-up, so a scheduled run counts it missed (§5.3, C-34).
 			presyncjob.SetNotSetUp(&opts, h)
 		}

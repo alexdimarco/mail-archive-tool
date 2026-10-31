@@ -830,13 +830,13 @@ func TestRunNowTexts(t *testing.T) {
 	if !shows(page, runNowTitle("darwin", true)) || strings.Contains(page, "it first opens Thunderbird, waits for its mail, then closes it") {
 		t.Error("the card's Run now tooltip is not the AS4 macOS text")
 	}
-	if !shows(page, "a backup you start with Run now does not wait for that, and leaves Thunderbird open for you to quit.") {
+	if !shows(page, "a backup you start with Run now in MailArchive Desktop does not check that, and leaves Thunderbird open for you to quit.") {
 		t.Error("the Settings card's notice does not say a Run now does not wait, where Run now starts Thunderbird")
 	}
 	r = presync.OverrideTablesForTest(nil, map[string]bool{"darwin": false})
 	page, _ = getPage(t, DashboardHandler(g.d.cfg))
 	r()
-	if !shows(page, runNowStartOffTitle) || shows(page, "a backup you start with Run now does not wait for that") {
+	if !shows(page, runNowStartOffTitle) || shows(page, "a backup you start with Run now in MailArchive Desktop does not check that") {
 		t.Error("with the start not allowed: the card's tooltip or notice")
 	}
 
@@ -905,7 +905,7 @@ func TestRunNowShippedTexts(t *testing.T) {
 	if got := encRunNowTitle("darwin", true); !strings.HasPrefix(got, mac+" ") || !strings.HasSuffix(got, encLockSentence) {
 		t.Errorf("a Mac's encrypted Run now tooltip, sync on: %q", got)
 	}
-	if !strings.Contains(presync.SyncNoticeFor("darwin"), "; a backup you start with Run now does not wait for that, and leaves Thunderbird open for you to quit.") {
+	if !strings.Contains(presync.SyncNoticeFor("darwin"), "; a backup you start with Run now in MailArchive Desktop does not check that, and leaves Thunderbird open for you to quit.") {
 		t.Errorf("a Mac's sync notice does not say a Run now does not wait: %q", presync.SyncNoticeFor("darwin"))
 	}
 	if !strings.HasPrefix(runNowFirstSyncLine("darwin"), "New: Run now starts Thunderbird out of sight") {

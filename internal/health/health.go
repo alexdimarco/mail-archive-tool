@@ -606,7 +606,7 @@ func assessKeyless(r *Report, in Input, now time.Time) {
 	// design §4.9.2): read from the descriptor's argv for a flat export schedule
 	// (-thunderbird-sync) or from the run-job's job file for a GUI/Desktop run-job.
 	if in.HasDescriptor && schedulePresyncConfigured(in) {
-		r.note("presync_syncs", "this archive's scheduled backup syncs Thunderbird before it runs: it starts Thunderbird, waits for its mail to stop arriving, then asks it to quit, so the backup includes mail that had only reached the server; if Thunderbird is already open it is left alone")
+		r.note("presync_syncs", "this archive's scheduled backup syncs Thunderbird before it runs: it starts Thunderbird, waits for its mail to stop arriving, then asks it to quit, so the backup includes mail that had only reached the server; if Thunderbird is already open, or someone has used the keyboard or mouse in the last 2 minutes, that backup skips the sync and saves the mail already on this computer")
 	}
 	// The last backup's sync, and the 3-day warnings (design-presync-attended §4.7, §5.4).
 	assessSync(r, in)
@@ -801,7 +801,7 @@ func assessKeyless(r *Report, in Input, now time.Time) {
 	case !in.HasDescriptor && in.Encrypted:
 		// An encrypted archive cannot be scheduled yet (Phase 4): no schedule is no fault.
 	case !in.HasDescriptor && !in.OutAbsent:
-		r.warn("no_schedule", fmt.Sprintf("no schedule is recorded for this archive — %s (or the GUI's \"Keep this archive current\"), or ignore this if a systemd timer, NAS task or other scheduler already keeps it current", scheduleRemedy(in)))
+		r.warn("no_schedule", fmt.Sprintf("no schedule is recorded for this archive — choose How often in MailArchive Desktop's Settings, or answer \"Keep this archive current automatically?\" in the wizard, or %s; ignore this if a systemd timer, NAS task or other scheduler already keeps it current", scheduleRemedy(in)))
 	default:
 		if jo := jobOutOf(in.Desc.Job); jo != "" && filepath.IsAbs(jo) && filepath.IsAbs(in.Out) && !sameArchivePath(jo, in.Out, in.GOOS) {
 			// The re-point is rendered through the route (§4.6.3): an export schedule

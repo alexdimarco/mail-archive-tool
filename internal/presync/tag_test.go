@@ -32,8 +32,8 @@ var wantTag = map[string]string{
 	"profile-unusable":           "Thunderbird not synced: its profile could not be used",
 	"cannot-start":               "Thunderbird not synced: it could not be started",
 	"did-not-start":              "Thunderbird not synced: it could not be started",
-	"exited-early":               "Thunderbird not synced: it could not be started",
-	"successor-found":            "Thunderbird not synced: it could not be started",
+	"exited-early":               "Thunderbird not synced: it closed before its mail stopped arriving", // the wording pass before 1.5.2: it did start
+	"successor-found":            "Thunderbird not synced: the copy that was started went away",        // the wording pass before 1.5.2: it did start
 	"start-blocked":              "Thunderbird not synced: it could not be started",
 	"no-desktop-session":         "Thunderbird not synced: no one was logged in",
 	"not-set-up":                 "Thunderbird not synced: the sync could not be prepared",

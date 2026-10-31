@@ -10,42 +10,28 @@ import (
 	"mail-archive-tool/internal/presync"
 )
 
-// covers: MA-550, MA-567
-// A scheduled sync's INSTALL note carries the §6 sync notice and the macOS
-// first-approval command (launchctl kickstart gui/<uid>/<label>), so the owner
-// learns how to grant the Automation permission the scheduled quit needs — a
-// grant that must come from a scheduler-started run, not Terminal (PC4). Neither
-// note prints a raw snake_case status code at the owner (friction review,
-// 2026-10-24: plain-language rule). The PREVIEW note, printed before the schedule
-// exists, frames the grant as a future step and omits the kickstart command (whose
-// launchd label does not exist yet).
+// covers: MA-550, MA-567, MA-939
+// A scheduled sync's install and preview notes carry the §6 sync notice and the macOS
+// permission note the wizard and the Desktop show (presync.MacAutomationNote): answer
+// macOS's question the first time a scheduled backup closes Thunderbird, or allow it in
+// System Settings > Privacy & Security > Automation. Corrected 2026-10-31 (the wording
+// pass before 1.5.2): the notes no longer tell the owner to start the installed job
+// from Terminal (`launchctl kickstart`) "while you are at the computer" — a scheduled
+// run skips the sync while the keyboard or mouse was used in the last 2 minutes
+// (presync session S4), so Thunderbird is never started and macOS never asks. Neither
+// note prints a raw snake_case status code at the owner (friction review, 2026-10-24).
 func TestPresyncInstallNote(t *testing.T) {
-	note := presyncInstallNote("mailarchive-abc", false)
-	if !strings.Contains(note, presync.SyncNotice) {
-		t.Error("install note is missing the §6 sync notice")
-	}
-	if !strings.Contains(note, "launchctl kickstart gui/") {
-		t.Errorf("install note is missing the first-approval command: %q", note)
-	}
-	if !strings.Contains(note, "com.dimarcotech.mailarchive.mailarchive-abc") {
-		t.Errorf("install note is missing the launchd label: %q", note)
-	}
-	if strings.Contains(note, "presync_quit_not_permitted") {
-		t.Errorf("install note prints a raw snake_case code at the owner: %q", note)
-	}
-
-	preview := presyncInstallNote("mailarchive-abc", true)
-	if !strings.Contains(preview, presync.SyncNotice) {
-		t.Error("preview note is missing the §6 sync notice")
-	}
-	if strings.Contains(preview, "launchctl kickstart") {
-		t.Errorf("preview note prints the kickstart command for a schedule not yet installed: %q", preview)
-	}
-	if strings.Contains(preview, "presync_quit_not_permitted") {
-		t.Errorf("preview note prints a raw snake_case code at the owner: %q", preview)
-	}
-	if !strings.Contains(preview, "After you install") {
-		t.Errorf("preview note should frame the grant as a future step: %q", preview)
+	want := presync.SyncNotice + "\n\n" + presync.MacAutomationNote
+	for _, preview := range []bool{false, true} {
+		note := presyncInstallNote("mailarchive-abc", preview)
+		if note != want {
+			t.Errorf("preview %v: the note is\n  %q\nwant\n  %q", preview, note, want)
+		}
+		for _, bad := range []string{"launchctl kickstart", "while you are at the computer", "presync_quit_not_permitted"} {
+			if strings.Contains(note, bad) {
+				t.Errorf("preview %v: the note says %q: %q", preview, bad, note)
+			}
+		}
 	}
 }
 

@@ -26,7 +26,7 @@ func TestPresyncWarningsSurfaceAsWarnNeverRed(t *testing.T) {
 	for _, w := range []state.RunWarning{
 		{Code: "presync_cannot_start", Message: "Thunderbird could not be started; the archive ran anyway"},
 		{Code: "presync_quit_timeout", Message: "Thunderbird did not close; quit it from the Dock"},
-		{Code: "presync_internal_error", Message: "the Thunderbird pre-sync failed unexpectedly; the archive ran anyway"},
+		{Code: "presync_internal_error", Message: "The Thunderbird sync failed unexpectedly; the archive ran anyway."},
 		{Code: "presync_stuck", Message: "Thunderbird has not synced on the last 3 runs"},
 		{Code: "presync_quit_no_window", Message: "Thunderbird was left open; quit it from the taskbar"},
 		{Code: "presync_state_unsaved", Message: "the sync could not save its own state record"},

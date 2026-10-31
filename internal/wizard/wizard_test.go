@@ -358,8 +358,10 @@ func TestNotifyFailureHeadless(t *testing.T) {
 	if len(fired) != 1 {
 		t.Fatalf("failure fired %d notifications, want exactly 1: %v", len(fired), fired)
 	}
-	if !strings.Contains(fired[0], "mailarchive-fail") || !strings.Contains(fired[0], "failed") {
-		t.Errorf("notification %q must name the backup and say it failed", fired[0])
+	// The backup is named by its archive folder, not its schedule's name (the wording pass
+	// before 1.5.2, MA-939): the hashed name means nothing to the person.
+	if want := "MailArchive: the scheduled backup of " + filepath.Join(dir, "no-such-archive") + " failed. Open MailArchive Desktop to see why."; fired[0] != want {
+		t.Errorf("notification %q must name the backup's archive and say it failed: want %q", fired[0], want)
 	}
 
 	// Positive twin: a healthy run over a real one-message mbox notifies nothing.

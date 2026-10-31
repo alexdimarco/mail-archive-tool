@@ -311,7 +311,7 @@ func RunHeadless(path string) int {
 			logger.Printf("auto-pause: %v", perr)
 		}
 		if paused {
-			logger.Printf("auto-paused the scheduled backup: the source has been unreachable for too long; the schedule was stopped (reversible — reconnect the source and re-enable it)")
+			logger.Printf("auto-paused the scheduled backup: the source has been unreachable for too long; the schedule was stopped (reconnect the source, then click Repair on the archive's Scheduled backup card in MailArchive Desktop)")
 			backupalert.RecordAutoPauseDefault(key, j.Out, errors.New(AutoPauseWhy), logger)
 		}
 		return 1
@@ -334,9 +334,12 @@ func RunHeadless(path string) int {
 	return 0
 }
 
+// scheduleSyncLine is the schedule confirmation's line for a schedule that syncs Thunderbird.
+const scheduleSyncLine = "\nThunderbird: synced before each run. A run skips the sync when Thunderbird is already open or someone is using the computer; it then saves the mail already on this computer, and a later run picks up the rest. After 3 days without a sync, MailArchive warns you."
+
 // AutoPauseWhy is the auto-pause email's reason, the same words for the Desktop's capture and
 // the local job.
-const AutoPauseWhy = "the mailbox or mail folder has been unreachable for too long, so the scheduled backup was paused. Reconnect the source and re-enable it."
+const AutoPauseWhy = "the mailbox or mail folder has been unreachable for 30 days, so its scheduled backup was stopped. Your archive is kept. Do this: reconnect the source, then in MailArchive Desktop click Repair on the archive's Scheduled backup card to start the schedule again."
 
 // jobFileName is the schedule name a job file carries: its file name without .json.
 func jobFileName(path string) string { return strings.TrimSuffix(filepath.Base(path), ".json") }
@@ -376,10 +379,10 @@ func jobFail(path string, err error) {
 func reportRun(key, name, out, result string, runErr error, messages int, logger *log.Logger) backupalert.Outcome {
 	o := backupalert.ReportDefault(key, out, result, runErr, messages, logger)
 	if o.Notify {
-		notifyFailure(name, out)
+		notifyFailure(out)
 	}
 	if o.Recovered {
-		notifyRecovered(name)
+		notifyRecovered(out)
 	}
 	return o
 }
@@ -387,17 +390,26 @@ func reportRun(key, name, out, result string, runErr error, messages int, logger
 // notifyFailure raises a best-effort desktop notification that a scheduled
 // backup failed, so a headless run that no one is watching does not fail
 // silently (P3). A machine with no notification daemon simply shows nothing;
-// success never notifies. The out argument is accepted for symmetry with the
-// callers but the message names the backup by its schedule name.
-func notifyFailure(name, out string) {
-	_ = out // reserved for a future per-archive message; the schedule name is the identifier today
-	_ = notify(fmt.Sprintf("Mail Archive backup failed for %s. Open the MailArchive wizard (mailarchive wizard) to see what went wrong.", name), zenity.Title(appTitle))
+// success never notifies. It names the archive by its folder, not the schedule's
+// hashed name, and points at MailArchive Desktop (the wording pass before 1.5.2).
+func notifyFailure(out string) {
+	_ = notify(failureNotice(out), zenity.Title(appTitle))
+}
+
+// failureNotice is notifyFailure's words.
+func failureNotice(out string) string {
+	return fmt.Sprintf("MailArchive: the scheduled backup of %s failed. Open MailArchive Desktop to see why.", out)
 }
 
 // notifyRecovered raises the best-effort desktop notice that a scheduled backup that had been
 // failing works again: the one notice that ends a failing streak (R3C-12).
-func notifyRecovered(name string) {
-	_ = notify(fmt.Sprintf("Mail Archive backups are working again for %s.", name), zenity.Title(appTitle))
+func notifyRecovered(out string) {
+	_ = notify(recoveredNotice(out), zenity.Title(appTitle))
+}
+
+// recoveredNotice is notifyRecovered's words.
+func recoveredNotice(out string) string {
+	return fmt.Sprintf("MailArchive: scheduled backups of %s are working again.", out)
 }
 
 // dirSize sums the sizes of the regular files under root (best-effort), to
@@ -1858,7 +1870,7 @@ func offerSchedule(c wizardChoice) error {
 	}
 	syncLine := ""
 	if c.tbSync {
-		syncLine = "\nThunderbird: synced before each run. If Thunderbird is already open, that run is left alone — it saves only the mail already on this computer, and the newest server-only mail is picked up on a run when Thunderbird is closed."
+		syncLine = scheduleSyncLine
 	}
 	return zenity.Info(fmt.Sprintf("Scheduled: %s at %s.\n\nArchive: %s\nLog: %s%s\n\nOpen the MailArchive wizard (mailarchive wizard) any time to check the backup's health.%s",
 		iv, at, c.out, spec.Log, syncLine, note), zenity.Title(appTitle))

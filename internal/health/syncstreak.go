@@ -66,6 +66,14 @@ type syncWords struct {
 	place   string // where it is quit from
 	started string // "started out of sight", or "started minimized"
 	byHand  string // off the Desktop: how to run this archive's backup by hand (handCommand)
+	// guiDesktop: the wizard's health view (Surface "gui", an owner surface with no
+	// command line) for a schedule the Desktop or the wizard made (a corroborated
+	// run-job), so its words send the person to MailArchive Desktop's Run now and
+	// Repair (the wording pass before 1.5.2, MA-939).
+	guiDesktop bool
+	// repairOff is the repair step off the Desktop: the route's own remedy (repairHow),
+	// so no remedy points at a button that is not shown for this schedule.
+	repairOff string
 }
 
 func syncWordsFor(in Input) syncWords {
@@ -80,6 +88,13 @@ func syncWordsFor(in Input) syncWords {
 	}
 	if !w.desktop {
 		in.GOOS = goos
+		route := schedule.RepairRoute(in.Desc, in.Out, in.KindEv)
+		w.guiDesktop = in.Surface == "gui" && route == schedule.RouteWizard && !captureCountedNotice(in)
+		if w.guiDesktop {
+			w.repairOff = "Open MailArchive Desktop and click Repair on this archive's Scheduled backup card."
+		} else {
+			w.repairOff = sentence(repairHow(in))
+		}
 		if cmd, ok := handCommand(in); ok {
 			w.byHand = "run the backup by hand with " + cmd
 		} else {
@@ -143,8 +158,20 @@ func (w syncWords) syncNow() string {
 		return "Click Run now on the Scheduled backup card to sync while you watch."
 	case w.desktop:
 		return "To back up the mail now, open Thunderbird, let its mail arrive, then click Run now on the Scheduled backup card."
+	case w.guiDesktop && w.runNow:
+		return "To back up the mail now, open MailArchive Desktop and click Run now on this archive's Scheduled backup card; it syncs Thunderbird while you watch."
+	case w.guiDesktop:
+		return "To back up the mail now, open Thunderbird, let its mail arrive, then open MailArchive Desktop and click Run now on this archive's Scheduled backup card."
 	}
 	return "To back up the mail now, open Thunderbird, let its mail arrive, then " + w.byHand + "."
+}
+
+// sentence is s as a sentence of its own: its first letter capitalized and a full stop.
+func sentence(s string) string {
+	if s == "" {
+		return s
+	}
+	return strings.ToUpper(s[:1]) + s[1:] + "."
 }
 
 // thenRunNow ends a remedy whose first step fixes the cause: ", then click Run now."
@@ -161,7 +188,7 @@ func (w syncWords) repair() string {
 	if w.desktop {
 		return "Click Repair on the Scheduled backup card."
 	}
-	return "Repair the schedule from the Scheduled backup card in MailArchive Desktop, or from the wizard."
+	return w.repairOff
 }
 
 // syncRemedy is the "Do this" for the last miss's reason (§5.4's table, C-20). A name
@@ -249,7 +276,10 @@ func notSyncedText(in Input, s state.SyncStreak) string {
 func nothingArrivedText(in Input, s state.SyncStreak) string {
 	w := syncWordsFor(in)
 	then := "then click Run now."
-	if !w.desktop {
+	switch {
+	case w.guiDesktop:
+		then = "then open MailArchive Desktop and click Run now."
+	case !w.desktop:
 		then = "then " + w.byHand + "."
 	}
 	finds := "a scheduled backup"

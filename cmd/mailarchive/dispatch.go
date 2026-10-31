@@ -199,8 +199,9 @@ func isHelpRequest(args []string) bool {
 const wizardVerbHelp = `Usage: mailarchive wizard
 
 The step-by-step setup wizard, with native OS dialogs and no console window. It
-walks you through choosing a mailbox, an output folder and (optionally) a weekly
-backup schedule. It takes no flags of its own.
+walks you through choosing your mail, an output folder and (optionally) a daily or weekly backup schedule.
+For Thunderbird mail on a Mac or Windows PC it can also offer to sync Thunderbird
+before each scheduled backup. It takes no flags of its own.
 `
 
 const runJobVerbHelp = `Usage: mailarchive run-job FILE
