@@ -1606,7 +1606,10 @@ decide what is clear and raise only what is not):*
 - **Open an archive folder** registers the folder and makes it current, with the Switch
   confirmation; a plaintext folder picked there is registered and offered Switch, as today. A
   fresh Desktop's first card offers "Open an archive folder…" and "Make a new archive"; the
-  wizard's first step gains "Open an archive folder".
+  wizard's first step gains "Open an archive folder". *Built 2026-10-31 for 1.5.2 (the owner's
+  ruling C, MA-953): the fresh card's "Make a new archive…" runs the wizard's add flow
+  (MA-696's `/api/add-archive`) and the new archive is listed under Your archives, not made
+  current; the "Add another archive…" button became "Make a new archive…".*
 - **The locked reader page** names the way ("open MailArchive Desktop: Encryption card") in
   words, with no link: the dashboard lives behind a per-session prefix, and X12 keeps session data
   off the reader. (A deviation from §7.1's "a link".)

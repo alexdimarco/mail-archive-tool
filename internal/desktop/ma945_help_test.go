@@ -233,6 +233,12 @@ var helpSentences = []string{
 	// Getting started
 	"MailArchive keeps a copy of your mail in an archive folder on this computer. Each backup adds the mail that is new, and you can read and search the archive in your browser.",
 	"Click Use this archive if the page offers it, or click Open an archive folder… and choose the archive's folder.",
+	// Make a new archive… (MA-953, the owner's ruling C of 2026-10-31): the page's own button,
+	// the wizard's add flow in process; the new archive is listed, not made current.
+	"Thunderbird, Outlook or other mail files on this computer: click Make a new archive… on this page, and the MailArchive wizard's windows open on your computer. Choose your mail, then a new folder for the archive.",
+	"When the wizard is done, this page lists the new archive under Your archives: click Switch to this archive to use it. You can also open the wizard yourself.",
+	"Your archives: shown when MailArchive Desktop knows more than one archive, or one that is not the current archive.",
+	"Add another archive: Make a new archive… opens the wizard's windows to make another archive, for example from another Thunderbird profile or an Outlook .pst file. Your current archive is not changed: the new one is listed under Your archives. Open an archive folder… opens one you already have.",
 	"An archive you already have (from another computer, a drive or a backup copy): click Open an archive folder… and choose its folder.",
 	"Repair fixes a scheduled backup that stopped working, and Remove deletes the scheduled backup (the archive and its mail are kept). A Microsoft 365 archive uses Archive now instead of Run now.",
 	"Go back in time shows your mailbox as it was on an earlier date; only a Microsoft 365 archive keeps that history, from its first backup.",
@@ -404,7 +410,9 @@ func TestHowToUseMailArchiveSaysWhatThisVersionDoes(t *testing.T) {
 		// this platform, never with a typed command a Mac or Windows app user does not have
 		// (friction review M3).
 		how := map[string]string{"darwin": helpMacWizard, "windows": helpWinWizard, "linux": helpLinWizard}[p.goos]
-		if want := "To make a new one from Thunderbird, Outlook or other mail files on this computer, use the MailArchive wizard, then open its folder here. " + how; !strings.Contains(h.outside, want) {
+		// Amended 2026-10-31 (MA-953, the owner's ruling C): the card's own Make a new
+		// archive… button comes first; the wizard's own way, in the guide's words, stays.
+		if want := "To make a new one from Thunderbird, Outlook or other mail files on this computer, click Make a new archive… above: the MailArchive wizard's windows open on your computer. When the wizard is done, this page lists the new archive under Your archives: click Switch to this archive to use it. You can also open the wizard yourself. " + how + " Then open its folder here."; !strings.Contains(h.outside, want) {
 			t.Errorf("%s: the no-archive card does not say %q:\n%s", p.goos, want, h.outside)
 		}
 		if strings.Contains(h.outside, "use the MailArchive wizard (mailarchive wizard)") {
@@ -509,7 +517,7 @@ func TestHowToUseMailArchiveNamesRealControls(t *testing.T) {
 	page := getOverview(t, Config{GOOS: "darwin", ConfigPath: filepath.Join(t.TempDir(), "none.json"), SettingsPath: filepath.Join(t.TempDir(), "s.json")})
 	h := readHelpCard(t, page)
 	assure.Reached(t, h.outside, "the page outside the guide")
-	for _, label := range []string{"Open an archive folder…", "Make a new encrypted archive…", "Use this archive", "Archive location", "How often",
+	for _, label := range []string{"Open an archive folder…", "Make a new archive…", "Make a new encrypted archive…", "Use this archive", "Archive location", "How often",
 		"Save settings", "Directory (tenant) ID", "Application (client) ID", "Device (per-user)", "App-only (admin)", "Save configuration",
 		"Archive now", "Keep each message's original .eml too", "Include Deleted Items", "Include Junk Email", "Save alert settings", "Send test email",
 		"Shut down", "Stop waiting and back up now", "Cancel the backup", "Recent backups", "Status & health", "Microsoft 365 connection", "Settings",
@@ -537,7 +545,7 @@ func TestHowToUseMailArchiveNamesRealControls(t *testing.T) {
 		{`>Unlock</button>`, dash, "dashboard.go"},
 		{`>Lock</button>`, dash, "dashboard.go"},
 		{`>Clear sign-in</button>`, dash, "dashboard.go"},
-		{`>Add another archive…</button>`, dash, "dashboard.go"},
+		{`>Make a new archive…</button>`, dash, "dashboard.go"}, // "Add another archive…" until 2026-10-31 (MA-953)
 		{`>Switch to this archive</button>`, dash, "dashboard.go"},
 		{`>Pause (make read-only)</button>`, dash, "dashboard.go"},
 		{`>Resume</button>`, dash, "dashboard.go"},

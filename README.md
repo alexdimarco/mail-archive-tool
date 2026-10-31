@@ -260,8 +260,11 @@ What it gives you, beyond reading and searching the archive:
   **current** (the one the page shows and changes; each archive can have its own
   scheduled backup, and a switch that would affect one asks first),
   **Switch** between them, and **Pause (make read-only)** / **Resume** an archive
-  (nothing is deleted either way). **Add another archive** sets up a new one with
-  the wizard without disturbing the current. *(You can also add one any time by
+  (nothing is deleted either way). **Make a new archive…** (on the **Add another
+  archive** card, and on the first card of a MailArchive Desktop with no archive yet)
+  opens the wizard's windows to make a new one without disturbing the current; the
+  new archive is then listed, and **Switch to this archive** makes it the one the
+  page shows. *(You can also add one any time by
   running `mailarchive wizard` again and choosing a new output folder — it joins
   the list.)*
 - **Run now** — run the backup straight away instead of waiting for the schedule.

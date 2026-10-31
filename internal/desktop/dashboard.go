@@ -1540,10 +1540,12 @@ pre{white-space:pre-wrap;overflow-wrap:anywhere;background:var(--bg);border:1px 
       <h2>No archive chosen yet</h2>
       <p id="helpPointer">New to MailArchive? Read <a href="#sec-help">How to use MailArchive</a> below: it explains each part of this page, what Thunderbird needs, and how to connect Microsoft 365.</p>
       <p><button class="btn" type="button" data-open-archive title="Choose an archive folder you already have — from another computer, a drive or a backup copy, encrypted or not.">Open an archive folder…</button>
+      <button class="btn secondary" type="button" data-make-archive title="Make a new archive from Thunderbird, Outlook or other mail files on this computer. The MailArchive wizard's windows open on your computer and ask what to back up and where.">Make a new archive…</button>
       <button class="btn secondary" type="button" data-create-encrypted title="Make a new archive whose messages open only with its password or recovery key. The wizard's windows ask what to back up and where; the password is typed here.">Make a new encrypted archive…</button></p>
+      <div class="note" data-make-archive-note hidden></div>
       {{if .Offer}}<p>The MailArchive wizard (mailarchive wizard) last used <span class="mono">{{.Offer}}</span>. Use this archive?</p>{{end}}
       <button class="btn" id="useOffer" type="button" data-path="{{.Offer}}"{{if not .Offer}} hidden{{end}} title="Open this archive in MailArchive Desktop — read it, check its health, and keep it backed up.">Use this archive</button>{{if .Offer}} <span class="card-sub">Nothing changes until you click it.</span>{{end}}
-      <p class="steps">{{if .Offer}}To pick a different folder, click <b>Open an archive folder…</b> above, or type its folder in <b>Settings → Archive location</b> below (the folder that holds the .mailarchive-manifest.json file) and click <b>Save settings</b>.{{else}}MailArchive Desktop has no archive yet. To use one you already have, click <b>Open an archive folder…</b> above. To make a new one from Thunderbird, Outlook or other mail files on this computer, use the MailArchive wizard, then open its folder here. {{.WizardHow}} To back up a Microsoft 365 mailbox, fill in the <b>Microsoft 365 connection</b> card below, type a new folder in <b>Settings → Archive location</b>, click <b>Save settings</b>, then click <b>Archive now</b>.{{end}}</p>
+      <p class="steps">{{if .Offer}}To pick a different folder, click <b>Open an archive folder…</b> above, or type its folder in <b>Settings → Archive location</b> below (the folder that holds the .mailarchive-manifest.json file) and click <b>Save settings</b>.{{else}}MailArchive Desktop has no archive yet. To use one you already have, click <b>Open an archive folder…</b> above. To make a new one from Thunderbird, Outlook or other mail files on this computer, click <b>Make a new archive…</b> above: the MailArchive wizard's windows open on your computer. When the wizard is done, this page lists the new archive under <b>Your archives</b>: click <b>Switch to this archive</b> to use it. You can also open the wizard yourself. {{.WizardHow}} Then open its folder here. To back up a Microsoft 365 mailbox, fill in the <b>Microsoft 365 connection</b> card below, type a new folder in <b>Settings → Archive location</b>, click <b>Save settings</b>, then click <b>Archive now</b>.{{end}}</p>
     </div>
     {{.Help}}{{end}}
 
@@ -1565,10 +1567,10 @@ pre{white-space:pre-wrap;overflow-wrap:anywhere;background:var(--bg);border:1px 
     {{if .CanAddArchive}}<div class="card" id="sec-add-archive">
       <h2>Add another archive</h2>
       <p class="card-sub">Keep another set of mail files (for example another Thunderbird profile or an Outlook .pst file) as its own archive on this computer. The wizard's windows open on your computer; the new archive joins <b>Your archives</b> without changing your current one.</p>
-      <button class="btn secondary" id="addArchiveBtn" type="button" title="Create a new, additional archive with the MailArchive wizard. The wizard's windows open on your computer; the new archive is added without changing your current one.">Add another archive…</button>
+      <button class="btn secondary" id="addArchiveBtn" type="button" data-make-archive title="Make a new, additional archive with the MailArchive wizard. The wizard's windows open on your computer; the new archive is added without changing your current one.">Make a new archive…</button>
       <button class="btn secondary" type="button" data-open-archive title="Choose an archive folder you already have — from another computer, a drive or a backup copy, encrypted or not. It becomes your current archive.">Open an archive folder…</button>
       <button class="btn secondary" type="button" data-create-encrypted title="Make a new archive whose messages open only with its password or recovery key. The wizard's windows ask what to back up and where; the password is typed here.">Make a new encrypted archive…</button>
-      <div class="note" id="addArchiveNote" hidden></div>
+      <div class="note" id="addArchiveNote" data-make-archive-note hidden></div>
     </div>{{end}}
 
     <div class="status-grid">
@@ -1931,17 +1933,18 @@ if(sd)sd.addEventListener('click',async()=>{
   }catch(e){stopped();}
 });
 
-// Add another archive: run the wizard's local add flow in process. Its windows open
-// on the computer; on success the new archive is added to the list (not switched to)
-// and the page reloads to show it.
-const aab=$('addArchiveBtn');
-if(aab)aab.addEventListener('click',async()=>{
-  const n=$('addArchiveNote'),done=busy(aab,'Waiting for the wizard…',n,'Opening the MailArchive wizard on your computer — follow its steps to add an archive, then this page refreshes.');
+// Make a new archive… (the "No archive chosen yet" card and the Add another archive
+// card, MA-953): run the wizard's local add flow in process. Its windows open on the
+// computer; on success the new archive is added to the list (not switched to) and the
+// page reloads to show it. Each button's note is the one in its own card.
+document.querySelectorAll('[data-make-archive]').forEach(b=>b.addEventListener('click',async()=>{
+  const card=b.closest('.card'),n=card?card.querySelector('[data-make-archive-note]'):null;
+  const done=busy(b,'Waiting for the wizard…',n,'Opening the MailArchive wizard on your computer — follow its steps to make the archive, then this page refreshes.');
   try{const d=await(await post('api/add-archive')).json();
     if(d.ok){done(true);if(n){n.textContent=d.message||'Archive added.';}location.reload();return;}
     done();if(n){n.hidden=false;n.textContent=d.canceled?(d.message||'No archive was added.'):(d.error||'Could not add an archive.');}
   }catch(e){done();if(n){n.hidden=false;n.textContent='Error: '+e;}}
-});
+}));
 
 // Backup alerts: a provider choice prefills the server/port/security; Save persists the
 // config (the password goes to the vault); Send test saves then sends one test email.
