@@ -11,11 +11,11 @@ import (
 )
 
 // writeCommandLineSchedule records an export schedule for out, as `mailarchive schedule
-// ... -input <folder> -out <out>` at a terminal does.
-func writeCommandLineSchedule(t *testing.T, out string) {
+// ... -input <folder> -out <out>` at a terminal does; extra are more of its arguments.
+func writeCommandLineSchedule(t *testing.T, out string, extra ...string) {
 	t.Helper()
 	exp := schedule.Spec{Name: schedule.DefaultNameFor(out), Interval: schedule.Weekly, At: "03:00", Exe: "/opt/mailarchive",
-		Args: []string{"-input", filepath.Join(out, "x"), "-out", out, "-mode", "incremental"}, Out: out}
+		Args: append([]string{"-input", filepath.Join(out, "x"), "-out", out, "-mode", "incremental"}, extra...), Out: out}
 	if err := schedule.WriteDescriptor(out, schedule.DescribeSpec(exp)); err != nil {
 		t.Fatal(err)
 	}
@@ -54,6 +54,8 @@ func TestACommandLineScheduleSaysWhyNoRunNow(t *testing.T) {
 	for _, want := range []string{
 		"Run now isn't shown for it: MailArchive Desktop can't run or change a backup set up at the command line. To get Run now, click Remove below (your archive and its mail are kept), then in Settings choose How often and click Save settings. That sets up a backup MailArchive Desktop can run, and Run now then appears here.",
 		"This schedule was set up at the command line; change it there. To get one MailArchive Desktop can run, with Run now, click Remove on the Scheduled backup card, then choose How often here and click Save settings.",
+		// Friction review L4: what Remove does not carry over, said before the click.
+		"It runs weekly on Sunday at 03:00 now. Remove does not keep that: after Remove, choose How often and the time again in Settings.",
 	} {
 		if !shows(page, want) {
 			t.Errorf("the page does not say %q", want)
@@ -90,6 +92,25 @@ func TestACommandLineScheduleSaysWhyNoRunNow(t *testing.T) {
 	g.recordLast()
 	if p := g.page(); !strings.Contains(p, `id="runBackupBtn"`) {
 		t.Error("after Remove and Save settings, Run now does not appear")
+	}
+
+	// With the Thunderbird sync on at the command line, the words say so, and after Remove
+	// Settings' sync box is not ticked: it is not carried over.
+	synced := tbProfileArchive(t)
+	gs := newA3Rig(t, synced, "darwin")
+	writeCommandLineSchedule(t, synced, "-thunderbird-sync")
+	gs.fake.tasks[synced] = true
+	if want := "It runs weekly on Sunday at 03:00 now, with the Thunderbird sync on. Remove does not keep that: after Remove, choose How often and the time again in Settings, and tick Sync Thunderbird before each backup."; !shows(gs.page(), want) {
+		t.Errorf("a command-line schedule with the sync does not say %q", want)
+	}
+	if r := postAction(gs.h, "/api/schedule-remove", gs.csrf, "127.0.0.1:8097", "http://127.0.0.1:8097"); !strings.Contains(r.Body.String(), `"ok":true`) {
+		t.Fatalf("Remove (sync): %s", r.Body.String())
+	}
+	if err := schedule.RemoveDescriptor(synced); err != nil {
+		t.Fatal(err)
+	}
+	if p := gs.page(); !strings.Contains(p, `id="schedPresync"`) || strings.Contains(p, `id="schedPresync" checked`) || strings.Contains(p, `value="weekly" selected`) {
+		t.Error("after Remove, Settings carries the command-line schedule's sync or cadence over, which the words say it does not")
 	}
 
 	// No such path here: Linux, and a Microsoft 365 archive.

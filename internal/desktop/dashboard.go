@@ -1224,7 +1224,7 @@ func (cfg Config) overviewFor(csrf, epoch string) string {
 	if rt.export && rt.hasDesc && !rt.notice {
 		data.ExportLine = exportNoRunNowLine
 		if exportToRunJob {
-			data.ExportLine = exportGetRunNowLine
+			data.ExportLine = exportGetRunNowLine + " " + exportCarryOverLine(rt.desc)
 		}
 	}
 	// LocalPresyncOn drives Run now's warning for any installed local archive: whether

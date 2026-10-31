@@ -87,6 +87,16 @@ const (
 	archiveNowConfirm   = "Archive now adds Microsoft 365 mail to this archive. It then counts as mixed and shows the Microsoft 365 options; a scheduled backup of its mail files keeps running."
 )
 
+// exportCarryOverLine follows exportGetRunNowLine (friction review L4): how the schedule set
+// up at the command line runs now, and that Remove does not keep it, so the person can choose
+// the same again in Settings (after Remove, Settings starts from no schedule, sync off).
+func exportCarryOverLine(d schedule.Descriptor) string {
+	if d.Presync != nil {
+		return "It runs " + cadenceWords(d.Interval, d.At) + " now, with the Thunderbird sync on. Remove does not keep that: after Remove, choose How often and the time again in Settings, and tick Sync Thunderbird before each backup."
+	}
+	return "It runs " + cadenceWords(d.Interval, d.At) + " now. Remove does not keep that: after Remove, choose How often and the time again in Settings."
+}
+
 // settingsInputs is what the page already worked out for the Scheduled backup card, which the
 // Settings card follows (the same route, 3.2).
 type settingsInputs struct {

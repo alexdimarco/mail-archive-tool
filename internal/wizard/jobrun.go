@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"log"
+	"path/filepath"
 	"runtime"
 	"strconv"
 	"strings"
@@ -131,7 +132,9 @@ func runNowSummary(r app.Result) string {
 		}
 	}
 	if (onlyGaps || notDone > 0) && r.ReportPath != "" {
-		lines = append(lines, "Which ones: "+r.ReportPath)
+		// The report is always in the archive's folder (app.writeReport): name the file and
+		// where it is, not a full path the page cannot open (friction review L6).
+		lines = append(lines, "Which ones: the file "+filepath.Base(r.ReportPath)+" in the archive's folder (it opens in a spreadsheet program).")
 	}
 	if r.IndexErrors > 0 {
 		lines = append(lines, messages(r.IndexErrors)+" could not be added to search: click Maintenance → Rebuild search index.")
