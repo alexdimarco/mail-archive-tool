@@ -75,15 +75,18 @@ if [[ "$VERSION" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ && "$VERSION" != v0.0.0 ]]; then
 fi
 
 # The Windows release asset: one zip of the install names the owner double-clicks.
-# Flat members mailarchive.exe, mailarchivew.exe and READ ME.txt, byte-identical to
-# the MSI payload's files; no bare -windows-amd64.exe is published (§4.10, SC11).
+# Flat members mailarchive.exe, mailarchivew.exe and READ ME.txt; the two programs are
+# byte-identical to the MSI payload's, and READ ME.txt is the home user's note
+# (README-windows.txt), not the payload's IT note (2026-10-31, the wording pass before
+# 1.5.2: this zip is also the Windows copy an encrypted archive keeps). No bare
+# -windows-amd64.exe is published (§4.10, SC11).
 # OP-5: an operator who declines the zip ships the MSI alone and skips this block.
 echo "==> Windows zip (install names)"
 WINZIP="$DIST/mailarchive-windows"
 mkdir -p "$WINZIP"
 cp "$DIST/mailarchive.exe"  "$WINZIP/mailarchive.exe"
 cp "$DIST/mailarchivew.exe" "$WINZIP/mailarchivew.exe"
-cp "$ROOT/packaging/mailarchive-desktop/README-payload.txt" "$WINZIP/READ ME.txt"
+cp "$ROOT/packaging/mailarchive-desktop/README-windows.txt" "$WINZIP/READ ME.txt"
 ( cd "$WINZIP" && zip -q -y "$DIST/mailarchive-windows-amd64.zip" mailarchive.exe mailarchivew.exe "READ ME.txt" )
 rm -rf "$WINZIP"
 

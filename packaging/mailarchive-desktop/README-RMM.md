@@ -163,15 +163,17 @@ integration below is **lab-pending** and is exactly what this round covers:
    holds for sessions that were running during it. This is the lab drill MA-377
    (pending, with a friction log).
 
-3. **Weekly scheduled headless capture** (DC1, slice S4 shipped — MA-279). The
-   dashboard installs/updates/removes the weekly backup itself (the **Weekly backup**
-   control), writing a Task Scheduler entry that runs `mailarchivew.exe desktop
-   -capture` so the backup runs with the dashboard closed. The task name is derived
-   per archive — `mailarchive-<hash>` (`schedule.DefaultNameFor`) — not a fixed
-   string. Verify end-to-end from the UI:
+3. **Scheduled headless capture** (DC1, slice S4 shipped — MA-279). The
+   dashboard installs, changes and removes the Microsoft 365 backup itself. In the
+   **Settings** card choose **How often** (Daily, or Weekly (Sunday)) and **At**, then
+   click **Save settings**. The **Scheduled backup** card then shows its status with
+   **Repair** and **Remove**. It writes a Task Scheduler entry that runs
+   `mailarchivew.exe desktop -capture`, so the backup runs with the dashboard closed.
+   The task name is derived per archive — `mailarchive-<hash>`
+   (`schedule.DefaultNameFor`) — not a fixed string. Verify end-to-end from the UI:
 
-   - Set a weekly day/time in the dashboard and save; Overview's **weekly backup**
-     card flips to *Installed*.
+   - In Settings choose Weekly (Sunday) and a time, then click Save settings. The
+     Overview's **Scheduled backup** tile changes to *Installed*.
    - `schtasks /Query /FO LIST | findstr mailarchive-` shows the task.
    - Run it (`schtasks /Run /TN mailarchive-<hash>`) and confirm it ran from the
      saved sign-in with **no prompt** — see `%APPDATA%\mailarchive\desktop-capture.log`
@@ -179,7 +181,7 @@ integration below is **lab-pending** and is exactly what this round covers:
 
    A by-hand `schtasks /Create … /TR "\"…\mailarchivew.exe\" desktop -capture"` is only
    a fallback if the dashboard reports the scheduler unavailable. Either way the task
-   runs `mailarchivew.exe desktop -capture` (the product's real weekly backup), never a
+   runs `mailarchivew.exe desktop -capture` (the product's real scheduled backup), never a
    bare command-line task.
 
 Also smoke-test the DC6 upgrade: install the old 1.1.0 MSI first, then this one — it
@@ -234,10 +236,10 @@ capture can be tried the same way: `mailarchivew.exe desktop -capture`.
   starts the server quietly (no browser), while the Desktop/Start-menu shortcuts (no
   args) open the browser.
 - **R3 — schedule install in the dashboard. RESOLVED (S4 / MA-279).** The dashboard's
-  Weekly backup control installs/updates/removes the task in-process via
+  Settings card installs, updates and removes the task in-process via
   `internal/schedule` (cross-platform schtasks/cron/launchd), running
   `mailarchivew.exe desktop -capture`. The by-hand schtasks of section D.3 is now only
   a scheduler-unavailable fallback.
 - **R4 — doc wording. RESOLVED (Part C).** `README-payload.txt` now states the
-  integrated weekly backup runs `mailarchivew.exe desktop -capture` in-process (DC1),
+  integrated scheduled Microsoft 365 backup runs `mailarchivew.exe desktop -capture` in-process (DC1),
   not a bare command-line schtasks job.

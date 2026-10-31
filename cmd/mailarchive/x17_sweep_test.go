@@ -58,6 +58,8 @@ var sweptDocs = []string{
 	"packaging/mailarchive-desktop/README-RMM.md",
 	"packaging/mailarchive-desktop/DEPLOYMENT.txt",
 	"packaging/mailarchive-desktop/README-payload.txt",
+	// The Windows zip's READ ME.txt since 2026-10-31 (the wording pass before 1.5.2).
+	"packaging/mailarchive-desktop/README-windows.txt",
 	"packaging/mailarchive-desktop/BUNDLE-CONTENTS.txt",
 	"packaging/mailarchive-desktop/SOURCE-NOTICE.txt",
 	"packaging/macos/README-macOS.txt",

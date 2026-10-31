@@ -1,5 +1,8 @@
 # Trying the Extraction workspace (a first hands-on test)
 
+> This was a one-time test note for the branch `fix/review-2026-10` (October 2026). Some program names and
+> cards in it have changed since; for current steps see `README.md`.
+
 For the owner's first real test of the new code on `fix/review-2026-10`. Nothing here is pushed or released.
 Everything below was tested against FAKE servers and fixtures only. This is the first time it meets a real
 mailbox or a real browser, so expect rough edges and write down what you see.
@@ -55,8 +58,9 @@ load folders, pick one small folder, preview, start. Compare the count with what
 
 MailArchive Desktop reads, searches, checks (**Maintenance → Check integrity**, **Rebuild search index**,
 **Status & health**) and exports an archive that `mailarchive-gui` or `mailarchive` made from Thunderbird.
-It does not read Thunderbird itself, so for such an archive **Archive now** and the **Weekly backup** are
-switched off, with a line that says why and what to do. The header says what the archive is ("made from local
+**Archive now** is for Microsoft 365, so it is off for such an archive. To keep it current, choose **How often**
+in **Settings** and click **Save settings**. The scheduled backup re-reads your Thunderbird mail files, and
+**Run now** on the **Scheduled backup** card runs it straight away. The header says what the archive is ("made from local
 mail files (for example Thunderbird), not from Microsoft 365").
 
 To open it: if you set no location and started the app without `-out`, the Overview offers the archive the

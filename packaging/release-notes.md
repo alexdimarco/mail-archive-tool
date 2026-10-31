@@ -1,7 +1,8 @@
-**mail-archive-tool** — a source-agnostic mail archiver (Outlook `.pst`/`.ost`,
-Thunderbird mbox/maildir, Evolution, Microsoft 365 via Graph) into self-contained
-HTML + per-email attachment zips, with a full-text search index, scheduling,
-status, and a native-dialog GUI. Pure Go, no cgo.
+**MailArchive** — a mail archiver for Outlook `.pst`/`.ost`, Thunderbird, Evolution
+and Microsoft 365. It saves your mail as self-contained web pages with attachment
+zips and a full-text search index, encrypted if you choose. It comes with
+**MailArchive Desktop** (a private dashboard in your browser for your archives,
+scheduled backups, alerts and status), a step-by-step wizard, and a command line.
 
 ### macOS — start here
 - **GUI (double-click app):** download **`MailArchive-macos.zip`**, unzip it, then
@@ -24,7 +25,7 @@ MailArchive is one program with verbs; there is no separate GUI download.
 |---|---|---|
 | Linux x86-64 | `mailarchive-linux-amd64` | `mailarchive wizard` or `mailarchive desktop` (the wizard needs `zenity` and a desktop session) |
 | Linux arm64 | `mailarchive-linux-arm64` | the same verbs (compiled, not lab-run) |
-| Windows x86-64 | `mailarchive-windows-amd64.zip` (or the MSI) | unzip, then double-click `mailarchivew.exe` |
+| Windows x86-64 | `mailarchive-windows-amd64.zip` | unzip, then double-click `mailarchivew.exe` |
 
 Windows: SmartScreen → *More info → Run anyway*. Verify downloads against `SHA256SUMS`.
 
@@ -34,11 +35,15 @@ Windows: SmartScreen → *More info → Run anyway*. Verify downloads against `S
 (`packaging/mailarchive-desktop/`).
 
 ### New in 1.5.2 — Run now syncs Thunderbird on a Mac
-- On a Mac, Run now syncs Thunderbird first, even while you are at the computer: it starts Thunderbird out of sight, waits for its mail (up to 20 minutes, often about 13; Stop waiting and back up now ends the wait), and leaves it open for you to quit. Scheduled backups still wait until you are away. On Windows, Run now does not start Thunderbird yet; scheduled backups still sync it.
+- On a Mac, Run now syncs Thunderbird first when the archive's Thunderbird sync is on, even while you are at the computer: it starts Thunderbird out of sight, waits for its mail (up to 20 minutes, often about 13; Stop waiting and back up now ends the wait), and leaves it open for you to quit. Scheduled backups still skip the sync while you are using the computer. On Windows, Run now does not start Thunderbird yet; scheduled backups still sync it.
 - **Encrypted archives on a Mac** can sync Thunderbird before Run now too: turn on **Sync Thunderbird before each Run now** in Settings. Until that backup starts reading mail, **Lock** cancels it.
-- **Skipped syncs are no longer silent.** If Thunderbird could not be synced before an archive's scheduled backups for 3 days, **Status** says so and what to do, and backup alerts send one email about it (when "a failed backup" is ticked).
+- **Skipped syncs are no longer silent.** If Thunderbird could not be synced before an archive's scheduled backups for 3 days, **Status** says so and what to do, and backup alerts send one email about it (when **a failed backup, or Thunderbird not synced for 3 days** is ticked on the Backup alerts card).
 - **A softer warning** shows in **Status** when Thunderbird was started before each scheduled backup for 3 days but no new mail arrived: it may be waiting for a password or sign-in. No email is sent for this one, and it clears by itself the next time a backup sees new mail arrive in Thunderbird, or a scheduled backup (or, on a Mac, Run now) finds Thunderbird already open.
 - **Hourly backups with the Thunderbird sync** still work. In an hour with no new mail, Thunderbird stays open for about 20 minutes while the backup waits for mail; Settings and `mailarchive schedule` say so when you pick Hourly with the sync on.
+- **Run now can be cancelled.** While Run now is running, **Cancel the backup** stops it. The archive is left safe, and the next backup finishes what it left.
+- **See how each sync went.** For an archive that syncs Thunderbird, **Recent backups** shows a short tag on each run (for example "Thunderbird synced first" or "Thunderbird not synced: you were using the computer"). **Status** adds a line "Thunderbird sync at the last backup", and `mailarchive status -json` adds `thunderbird_sync`.
+- **Dated log lines.** Each Thunderbird sync line in `mailarchive.log` now starts with the date and time.
+- **Clearer words.** With no archive set up, MailArchive Desktop no longer calls itself a Microsoft 365 archive, and its pages, help text, warnings and the command line's help now say what this version really does: for example, a scheduled backup skips the Thunderbird sync while you are using the computer (it does not wait), and the Security & privacy card names the Thunderbird sync as the one thing that can change your mail.
 
 ### New in 1.5.1 — one place for backup settings
 - **Settings is where you change a backup.** How often, the time, and **Sync Thunderbird before each backup** are all in the Desktop's **Settings** card. The **Scheduled backup** card shows what is set up, with **Run now**, **Repair** and **Remove**.

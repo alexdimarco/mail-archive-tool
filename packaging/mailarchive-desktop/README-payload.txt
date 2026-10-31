@@ -1,6 +1,9 @@
 MailArchive Desktop — Windows MSI payload
 =========================================
 
+(For IT. The home user's note in mailarchive-windows-amd64.zip is
+README-windows.txt.)
+
 This folder is the staging input for Steve's WiX build. packaging/build-release.sh
 assembles it (see "==> Desktop MSI payload") and zips it as the release asset
 mailarchive-desktop-windows-msi-payload.zip. Unzip it next to the .wxs and build.
@@ -12,9 +15,11 @@ Contents of the payload
   mailarchivew.exe          the no-console build (-ldflags -H=windowsgui) of the same
                             program. mailarchivew.exe desktop is the dashboard-and-
                             launcher the Start-menu / Desktop shortcut runs, and
-                            mailarchivew.exe wizard is the native-dialog wizard. The
-                            Desktop's own weekly backup runs mailarchivew.exe desktop
-                            -capture in-process (DC1), never a separate engine (P1).
+                            mailarchivew.exe wizard is the native-dialog wizard. A
+                            Microsoft 365 archive's scheduled backup runs
+                            mailarchivew.exe desktop -capture in-process (DC1), never
+                            a separate engine (P1); an archive made from local mail
+                            files runs mailarchivew.exe -job <job file>.
   mailarchive-desktop.exe   a former name: a byte-identical copy of mailarchivew.exe.
   mailarchive-gui.exe       a former name too, a copy of mailarchivew.exe, kept this
                             release so shortcuts and schedules under the old names keep

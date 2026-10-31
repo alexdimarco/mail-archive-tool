@@ -30,7 +30,7 @@ it makes — that page needs no software to read.
 
 | Your machine | Download | First run |
 |---|---|---|
-| **Windows** | `mailarchive-windows-amd64.zip` (or the MSI installer) | unzip, then double-click **`mailarchivew.exe`** (SmartScreen → *More info → Run anyway*) |
+| **Windows** | `mailarchive-windows-amd64.zip` (IT teams can build an MSI from `mailarchive-desktop-windows-msi-payload.zip`) | unzip, then double-click **`mailarchivew.exe`** (SmartScreen → *More info → Run anyway*) |
 | **macOS** | `MailArchive-macos.zip` | unzip to **`Mail Archive.app`**, drag it into Applications, then **right-click → Open → Open** once (it is unsigned) |
 | **Linux** | `mailarchive-linux-amd64` | needs `zenity` and a desktop session; run **`mailarchive wizard`** (or `mailarchive desktop`) |
 
@@ -109,6 +109,11 @@ Start menu (Windows MSI); on a Windows zip without the MSI, make a shortcut to
 `mailarchivew.exe` and add ` wizard` to its Target; `Mail Archive.app` on macOS;
 the `.desktop` entry (or `mailarchive wizard`) on Linux. It walks you through:
 
+- **What would you like to do?** — archive a mail file on this computer (the
+  default; the steps below), open MailArchive Desktop (*Microsoft 365, folder
+  export, browsing & tools*), open an archive folder you already have, or make a
+  new encrypted archive (the last three open MailArchive Desktop).
+
 0. **Backup health** — if this wizard has scheduled an archive before, its
    health comes first (last run, completeness, whether the schedule still points
    at this program), with *Continue* and *Remove the scheduled backup* — and,
@@ -140,7 +145,7 @@ the `.desktop` entry (or `mailarchive wizard`) on Linux. It walks you through:
 9. A **progress** dialog (cancellable — progress is saved), then a **summary** in
    plain words (newly downloaded, not-fully-downloaded-yet, empty-at-the-source,
    index errors) with an *Open the archive* button that opens `index.html`.
-10. **Keep this archive current?** — *daily at 02:00* or *weekly, Sunday 03:00*
+10. **Keep this archive current automatically?** — *daily at 02:00* or *weekly, Sunday 03:00*
     installs a schedule that repeats exactly this export using this very
     program (`mailarchive run-job FILE`, no dialogs, no console); the wizard
     warns first if the program runs from Downloads or a temp folder. A failed
@@ -159,8 +164,10 @@ GOOS=windows GOARCH=amd64 go build -ldflags -H=windowsgui -o mailarchivew.exe ./
 
 An archive made from Thunderbird (or any mbox / maildir folder) is topped up the same way it was made, into
 the **same archive folder**. A run is incremental by default, so only messages not yet archived are added.
-MailArchive Desktop opens such an archive to read, search, check and export it, but does not re-read
-Thunderbird: its **Archive now** is for Microsoft 365 and is switched off for it, with these steps shown.
+MailArchive Desktop reads, searches, checks and exports such an archive, and it can keep it current. In its
+**Settings** card, choose **How often** and click **Save settings**. That sets up a scheduled backup that re-reads
+your Thunderbird mail files and adds anything new. **Run now** on the **Scheduled backup** card runs it straight
+away. (**Archive now** is for Microsoft 365, so it is off for this archive.) You can also add new mail by hand:
 
 - **the MailArchive wizard (`mailarchive wizard`):** open it, choose **Thunderbird / mbox mail folder** (or **Auto-detect my mailboxes**),
   pick your Thunderbird mail folder, then at **Select the output folder** pick the same archive folder as
@@ -175,38 +182,62 @@ Thunderbird: its **Archive now** is for Microsoft 365 and is switched off for it
 ### Keeping a Thunderbird archive fresh on a schedule (the pre-sync)
 
 A scheduled backup normally archives whatever Thunderbird has already written to disk.
-On **macOS and Windows** you can also have each scheduled run **sync Thunderbird first**:
-before archiving, Mail Archive starts Thunderbird (hidden on macOS; briefly visible, then
-minimised, on Windows), waits for its mail to stop arriving, asks it to quit, then
-archives — so the backup includes mail that had only reached the server. Because it drives your
-real Thunderbird, starting it does what opening Thunderbird always does — it checks all your
-accounts, may send your Outbox, run your message filters and show notifications — and quitting it
+On **macOS and Windows** you can also have each scheduled backup **sync Thunderbird first**.
+Before archiving, MailArchive starts Thunderbird (out of sight on macOS; briefly visible, then
+minimized, on Windows), waits for its mail to stop arriving (up to 20 minutes), asks it to quit,
+then archives. The backup then includes mail that had only reached the server. Because this uses
+your real Thunderbird, starting it does what opening Thunderbird always does: it checks all your
+accounts, may send your Outbox, runs your message filters and may show notifications. Quitting it
 runs your accounts' on-exit actions (for example emptying Trash), so mail you deleted since the
-last backup may be removed before it is archived. It is **opt-in and
-off by default**, allowed on **any schedule** (including hourly), and it **never gates the
-backup**: if the sync has a problem the run records a warning and still archives what is on
-disk. If Thunderbird is already open, or you are using the computer, it is **left alone** —
-never started or closed.
+last backup may be removed before it is archived. The sync is **opt-in and off by default** and
+works on any schedule. With Hourly, Thunderbird stays open for about 20 minutes in an hour with no
+new mail. The sync **never stops the backup**: if the sync has a problem, the run records a
+warning and still archives what is on disk. A Thunderbird you already have open is **left alone**
+(never started or closed). A scheduled backup starts Thunderbird only when no one has used the
+keyboard or mouse for 2 minutes; if you are using the computer, that backup skips the sync and
+saves the mail already on this computer.
+
+**Run now on a Mac.** With the sync on, **Run now** on the Scheduled backup card syncs
+Thunderbird first, even while you are at the computer. It starts Thunderbird out of sight and
+waits for its mail (up to 20 minutes, often about 13). **Stop waiting and back up now** ends the
+wait early. When the backup is done, Thunderbird stays open for you to quit from the Dock.
+**Cancel the backup** stops the whole backup while it waits; nothing is added to the archive. On
+Windows, Run now does not start Thunderbird yet: it backs up the mail already on disk, and
+scheduled backups still sync it.
+
+**When the sync keeps missing.** If Thunderbird could not be synced before an archive's scheduled
+backups for 3 days, `status` and MailArchive Desktop's Status & health say so and what to do.
+Backup alerts also send one email (when **a failed backup, or Thunderbird not synced for 3 days**
+is ticked). A softer warning, with no email, appears when Thunderbird was started before each
+scheduled backup for 3 days but no new mail arrived. Thunderbird may be waiting for a password or
+a sign-in. That warning clears by itself the next time a backup sees new mail arrive, or a
+scheduled backup (or, on a Mac, Run now) finds Thunderbird already open.
 
 Turn it on wherever you set the schedule up:
 
-- **The setup wizard (`mailarchive wizard`):** when you answer *Keep this archive current?*,
-  a follow-up asks *Sync Thunderbird before archiving?* for a Thunderbird source.
+- **The setup wizard (`mailarchive wizard`):** when you answer *Keep this archive current
+  automatically?*, a follow-up asks *Sync Thunderbird before each scheduled backup?* for a
+  Thunderbird source.
 - **MailArchive Desktop:** the **Settings** card for a local Thunderbird archive offers
   **Sync Thunderbird before each backup** beside **How often**, then **Save settings**.
+- **An encrypted archive (MailArchive Desktop, Mac):** its **Settings** card offers **Sync
+  Thunderbird before each Run now**, with its own **Save**. An encrypted archive is backed up only
+  when you click Run now (see [Encrypted archives](#encrypted-archives)).
 - **The command line:** add **`-thunderbird-sync`** to `mailarchive schedule …` (the profile is
-  derived from the inputs, or name it with `-thunderbird-profile`).
+  derived from the inputs, or name it with `-thunderbird-profile`). It is meant for scheduled
+  runs: typed at a terminal, the sync is skipped, because you have just used the keyboard.
 
-On a Mac, the first time a scheduled backup closes Thunderbird, macOS asks once whether Mail
-Archive may control it. Because a scheduled backup runs on its own (often overnight), approve it
-while you are at the Mac: run one backup yourself first — the **Run now** button on the dashboard
-— and choose **Allow** when macOS asks, before you rely on the schedule.
+On a Mac, the first time a scheduled backup closes Thunderbird, macOS may ask for permission to
+control Thunderbird. Until it is answered, each backup leaves Thunderbird open. To answer it, open
+**System Settings → Privacy & Security → Automation** and allow the entry listed there to control
+Thunderbird. (Run now leaves Thunderbird open, so it does not bring up this question.)
 
 ## MailArchive Desktop (the dashboard)
 
 **MailArchive Desktop** (`mailarchive desktop`; on Windows double-click
-**`mailarchivew.exe`**, on macOS open **`Mail Archive.app`**) is a private control
-panel in your browser. It binds to `127.0.0.1` on this computer only and opens
+**`mailarchivew.exe`**; on macOS open **`Mail Archive.app`** and choose
+**Microsoft 365, folder export, browsing & tools (open MailArchive Desktop)**) is a
+private control panel in your browser. It binds to `127.0.0.1` on this computer only and opens
 through the same one-time private link as `serve` (see [Search &
 discovery](#search--discovery)), so other accounts and web pages cannot reach it.
 It drives the very same engine as the command line — so anything here is also
@@ -217,24 +248,31 @@ will not touch.
 What it gives you, beyond reading and searching the archive:
 
 - **Your archives** — manage more than one archive on this computer: mark one
-  **current** (what every tool here reads and what the scheduled backup keeps),
+  **current** (the one the page shows and changes; each archive can have its own
+  scheduled backup, and a switch that would affect one asks first),
   **Switch** between them, and **Pause (make read-only)** / **Resume** an archive
   (nothing is deleted either way). **Add another archive** sets up a new one with
   the wizard without disturbing the current. *(You can also add one any time by
   running `mailarchive wizard` again and choosing a new output folder — it joins
   the list.)*
-- **Run now** — run the scheduled backup immediately instead of waiting for it. (A
-  Microsoft 365 archive labels this **Archive now**; a local scheduled job labels
-  it **Run now**.)
+- **Run now** — run the backup straight away instead of waiting for the schedule.
+  (A Microsoft 365 archive uses **Archive now** on its own card; a local or
+  encrypted archive has **Run now** on its Scheduled backup card.) While Run now is
+  running, **Cancel the backup** stops it. On a Mac with the Thunderbird sync on,
+  Run now syncs Thunderbird first (see the Thunderbird sync section above).
 - **Backup alerts** — have a scheduled backup email you when it **fails** (or is
-  auto-paused, or — if you turn it on — succeeds). Built in, with no script to
+  auto-paused, or — if you turn it on — succeeds). The **a failed backup, or
+  Thunderbird not synced for 3 days** box also sends one email when Thunderbird has
+  not been synced before an archive's scheduled backups for 3 days. Built in, with no script to
   install: pick **Office 365**, **Gmail**, or a **standard SMTP** server, set the
   from/to addresses and the sign-in, and the password is kept in your OS
   credential vault (never in a file or a log). **Send test email** proves it
   before you rely on it. The same settings cover both Microsoft 365 and local
   scheduled backups.
 - **Recent backups** — the last several runs at a glance (when, result, messages
-  exported and filled), a companion to the single "last run" line.
+  exported and filled), a companion to the single "last run" line, and, for an
+  archive that syncs Thunderbird, a short tag saying how the sync went (for example
+  "Thunderbird synced first").
 - **Scheduled backup** — the schedule's status, with **Run now**, **Repair** and
   **Remove** (the same schedule [`schedule`](#schedule--recurring-backups) writes).
   How often it runs (hourly for local mail files, daily or weekly), its time and the
@@ -244,13 +282,16 @@ What it gives you, beyond reading and searching the archive:
   computer.
 - **Status & health** — the same GREEN / WARN / RED posture as `status`,
   including a warning (shown as a banner on the archive) when an archive's
-  **source** — its mailbox or mail folder — has stopped being reachable.
+  **source** — its mailbox or mail folder — has stopped being reachable, and, for an
+  archive that syncs Thunderbird, how the last sync went and a warning when it has
+  not synced for 3 days.
 - **Shut down** — stop the dashboard cleanly and free its port; your mail,
   archives and schedules are untouched. Do this before
   [upgrading](#upgrading-to-a-newer-version).
-- **Danger zone → Uninstall** — remove MailArchive's program and its schedules
-  from this computer. It shows a plan first and **keeps every archive** — your
-  mail is never deleted.
+- **Danger zone → Uninstall** — remove MailArchive's scheduled backups, settings
+  and sign-in from this computer. It shows a plan first and **keeps every
+  archive** — your mail is never deleted. You remove the program itself
+  afterwards; the last step tells you how.
 
 ## Encrypted archives
 
@@ -275,6 +316,12 @@ Later backups into it are the same command without `-encrypt`; they ask for the
 password at the terminal unless this computer remembers the key. Scheduled
 (unattended) backups into an encrypted archive are not available in this
 version.
+
+In MailArchive Desktop on a Mac, an encrypted archive made from Thunderbird can
+sync Thunderbird before each **Run now**: tick **Sync Thunderbird before each Run
+now** in Settings and click its **Save**. While that backup waits for Thunderbird,
+the archive stays unlocked for it. Until the backup starts reading mail, **Lock**
+cancels it; after that, **Cancel** stops it.
 
 | To… | Run |
 |---|---|
@@ -787,9 +834,10 @@ prose.
 **`status -json` (version 2).** Top-level keys: `version`, `posture`, `reasons`,
 `reason_codes`, `out`, `messages`, `indexed`, `indexed_known`, `fillable`,
 `terminal`, `unknown`, `fixity`, `extractable`, `last_run`, `last_verify`,
-`schedule`, `verify_schedule`, `shown_as_source`, `capture_gaps`, `unreadable`.
+`schedule`, `verify_schedule`, `shown_as_source`, `capture_gaps`, `unreadable`,
+`thunderbird_sync`.
 (`extractable`, `indexed_known`, `verify_schedule`, `shown_as_source`,
-`capture_gaps`, `unreadable` and `last_run.in_progress` are backward-compatible additions
+`capture_gaps`, `unreadable`, `thunderbird_sync` and `last_run.in_progress` are backward-compatible additions
 at version 2 — new optional keys, so a consumer that ignores unknown keys is
 unaffected and the version is not bumped.)
 
@@ -824,7 +872,19 @@ unaffected and the version is not bumped.)
   `capture_gaps_fillable` (WARN), `capture_gaps_terminal` (WARN),
   `capture_gaps_not_attempted` (a note: the last run did not walk that source or
   folder, or no run record exists to say), `unreadable_messages` (WARN) and
-  `unparsed_messages` (a note); see the next items.
+  `unparsed_messages` (a note); and the Thunderbird sync's codes:
+  `presync_syncs` and `presync_last` (notes: the sync is on; how the last
+  backup's sync went), `presync_not_synced` (WARN: Thunderbird has not been
+  synced before the scheduled backups for 3 days), `presync_nothing_arrived`
+  (WARN, softer: Thunderbird was started but no new mail arrived for 3 days; not
+  shown when `presync_not_synced` is), and the run warnings
+  `presync_cannot_start`, `presync_not_quiet`, `presync_leftover_found` and the
+  rest of the `presync_*` family (WARN, never RED); see the next items.
+- `thunderbird_sync` is `{enabled, last}`: whether the Thunderbird sync is on
+  and, for an unencrypted archive, the last backup's sync `{name, result, phrase,
+  run_started, since}` (`since` only when that sync started Thunderbird). An
+  encrypted archive has `enabled` only (its Run now sync setting). The key is
+  absent when the sync is off and no sync is recorded.
 - `capture_gaps` is what the source holds that this archive does not (the
   capture-gap ledger), or `null` with no manifest: `{fillable, terminal, info,
   stuck, not_attempted, oldest_first_run, deadline?, items}`. The four counts
@@ -1201,7 +1261,7 @@ terminal that is running `desktop`.
 
 | Your machine | Do this |
 |---|---|
-| **Windows** | Download the new `mailarchive-windows-amd64.zip` (or run the new MSI) and replace the old **`mailarchive.exe`** and **`mailarchivew.exe`** with the new pair — keep them together in the same folder. |
+| **Windows** | Download the new `mailarchive-windows-amd64.zip` (or, if your IT team installs an MSI, ask them for the new one) and replace the old **`mailarchive.exe`** and **`mailarchivew.exe`** with the new pair — keep them together in the same folder. |
 | **macOS** | Download the new `MailArchive-macos.zip`, unzip it, and drag the new **`Mail Archive.app`** into `/Applications`, replacing the old one (right-click → **Open** the first time — it is unsigned). The command-line tool upgrades the same way from `mailarchive-cli-macos.tar.gz`. |
 | **Linux** | Download the new `mailarchive-linux-amd64` and replace the old binary on your `PATH`. |
 
@@ -1213,8 +1273,10 @@ them and there is nothing more to do. If the program's path **changed**, `status
 warns *"not this binary"* (and the next scheduled run would not find it) — fix it
 once, whichever way suits you:
 
-- **In the app** — open the wizard or the dashboard; its backup-health check
-  offers **Repair the scheduled backup**, which re-installs it from the new copy.
+- **In the app** — for a schedule the wizard set up, open the wizard (its
+  backup-health check offers **Repair the scheduled backup**); for one MailArchive
+  Desktop set up, click **Repair** on its **Scheduled backup** card. Either
+  re-installs the schedule from the new copy.
 - **Command line** — re-run `mailarchive schedule … -install` from the new binary.
 
 **Rolling back** to an older release is not the supported direction: run

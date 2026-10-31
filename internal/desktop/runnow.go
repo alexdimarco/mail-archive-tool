@@ -425,5 +425,8 @@ func runNowJobSyncs(out string) bool {
 // slice AS4 with macOS's attended start switched on (§7, C-32, C-52, owner ruling
 // OQ-7: ship the Mac first). It goes into packaging/release-notes.md in the commit
 // that sets macOS's AttendedStartAllowed entry true, citing its lab record; MA-915
-// fails while the release notes and the table disagree.
-const releaseLineMac = "On a Mac, Run now syncs Thunderbird first, even while you are at the computer: it starts Thunderbird out of sight, waits for its mail (" + syncWaitWords + "; Stop waiting and back up now ends the wait), and leaves it open for you to quit. Scheduled backups still wait until you are away. On Windows, Run now does not start Thunderbird yet; scheduled backups still sync it."
+// fails while the release notes and the table disagree. Corrected 2026-10-31 (the
+// wording pass before 1.5.2, MA-938): it says Run now syncs only when the archive's
+// sync is on, and that a scheduled backup skips the sync while the computer is in
+// use (it never waits; presync session S4).
+const releaseLineMac = "On a Mac, Run now syncs Thunderbird first when the archive's Thunderbird sync is on, even while you are at the computer: it starts Thunderbird out of sight, waits for its mail (" + syncWaitWords + "; Stop waiting and back up now ends the wait), and leaves it open for you to quit. Scheduled backups still skip the sync while you are using the computer. On Windows, Run now does not start Thunderbird yet; scheduled backups still sync it."
