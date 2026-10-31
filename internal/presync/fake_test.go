@@ -58,7 +58,7 @@ type fakeEnv struct {
 	dgChanged       uint64        // the digest from changeAt on; also the mailbox's size then
 	indexTouchAt    time.Time     // when set, from this time an index (.msf) touch moves the digest, not the mail (MA-932)
 	digestTruncated bool          // when set, digest() reports the walk was truncated
-	digestHook      func()        // called at the start of each digest() (lets a test cancel mid-S7)
+	digestHook      func()        // called at the start of each S7 digest() (lets a test cancel mid-S7); not the pre-launch one
 	sleeps          int
 	sleepsNoStop    int // waits made without the session context (A5: there must be none)
 
@@ -210,7 +210,7 @@ var fakeMailbox = walkKey(0, "INBOX")
 // mail arriving at changeAt grows it), and, from indexTouchAt, an index touch
 // that moves the digest but not the mailbox.
 func (f *fakeEnv) digest(roots []string) (watchSnap, bool) {
-	if f.digestHook != nil {
+	if f.digestHook != nil && f.started {
 		f.digestHook()
 	}
 	if f.realDigest {

@@ -39,7 +39,7 @@ func TestRunWithRefusesElevation(t *testing.T) {
 	}
 }
 
-// covers: MA-555, MA-564
+// covers: MA-555, MA-564, MA-933
 // buildDeps watches only the profile's ImapMail/Mail and inputs inside the
 // profile (never one outside it), puts the state record and lock under the state
 // directory (never the archive), and uses the default timings.
@@ -47,8 +47,10 @@ func TestBuildDeps(t *testing.T) {
 	profile := t.TempDir()
 	mustMkdir(t, filepath.Join(profile, "ImapMail"))
 	mustMkdir(t, filepath.Join(profile, "Mail"))
-	inside := filepath.Join(profile, "Mail", "Local Folders")
+	inside := filepath.Join(profile, "Mail", "Local Folders") // watched through Mail (MA-933: no nested root)
 	mustMkdir(t, inside)
+	insideOwn := filepath.Join(profile, "OtherStore") // inside the profile, outside ImapMail and Mail: its own root
+	mustMkdir(t, insideOwn)
 	outside := t.TempDir() // a store not under the profile
 
 	stateDir := filepath.Join(t.TempDir(), "state")
@@ -59,14 +61,20 @@ func TestBuildDeps(t *testing.T) {
 		exe:     "/Applications/Thunderbird.app/Contents/MacOS/thunderbird",
 		profile: cp,
 	}
-	d := buildDeps(e, plan.exe, plan.profile, Config{Inputs: []string{inside, outside}, StateDir: stateDir})
+	d := buildDeps(e, plan.exe, plan.profile, Config{Inputs: []string{inside, insideOwn, outside}, StateDir: stateDir})
 
 	want := map[string]bool{
-		filepath.Join(cp, "ImapMail"): true,
-		filepath.Join(cp, "Mail"):     true,
+		filepath.Join(cp, "ImapMail"):   true,
+		filepath.Join(cp, "Mail"):       true,
+		filepath.Join(cp, "OtherStore"): true,
 	}
-	if ci, err := filepath.EvalSymlinks(inside); err == nil {
-		want[ci] = true
+	ci, _ := filepath.EvalSymlinks(inside)
+	covered := false
+	for _, w := range d.watch {
+		covered = covered || underDir(w, ci)
+	}
+	if !covered {
+		t.Errorf("the input inside the profile's Mail is not watched by any root %q", d.watch)
 	}
 	for _, w := range d.watch {
 		if !want[w] {

@@ -15,6 +15,8 @@ import (
 	"sync"
 	"sync/atomic"
 	"time"
+
+	"mail-archive-tool/internal/keepawake"
 )
 
 // A run (design §4.7 Start, §4.13, §5.1): the checks Start repeats, the export root
@@ -217,7 +219,7 @@ func (r *CopyRun) Run(parent context.Context) (res *CopyResult, err error) {
 		r.OnStart(r.runID)
 	}
 	// From here the root exists and the run record names it.
-	release := holdAwake()
+	release := keepawake.Hold()
 	defer release()
 	wctx, wcancel := context.WithCancel(context.WithoutCancel(walk))
 	w := &ceWatch{env: e, src: r.src}

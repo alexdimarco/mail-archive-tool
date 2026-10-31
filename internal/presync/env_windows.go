@@ -13,6 +13,7 @@ import (
 
 	"golang.org/x/sys/windows"
 
+	"mail-archive-tool/internal/keepawake"
 	"mail-archive-tool/internal/lockfile"
 )
 
@@ -89,6 +90,11 @@ func (e *winEnv) sleep(ctx, stop context.Context, d time.Duration) {
 	sleepCtx(ctx, stop, d)
 }
 func (e *winEnv) digest(roots []string) (watchSnap, bool) { return digestWatch(roots) }
+
+var _ awakeHolder = (*winEnv)(nil)
+
+// holdAwake keeps Windows from idle sleep for the session (awakeHolder, MA-935).
+func (e *winEnv) holdAwake() (release func()) { return keepawake.Hold() }
 
 // rawThunderbirdCount is the Toolhelp snapshot's thunderbird.exe count, every one
 // listed whether or not its details read. Unused on Windows today: the quit goes

@@ -287,8 +287,9 @@ func TestDigestWatchListsOnlyTheMessageStore(t *testing.T) {
 		"Mail/Local Folders/Trash":                            true,
 		"Mail/Local Folders/Trash.msf":                        false,
 		"Mail/Local Folders/Unsent Messages":                  true,
+		"Mail/Local Folders/Unsent Messages.msf":              false, // Thunderbird keeps an index beside every folder (MA-933)
 		"Mail/Local Folders/popstate.dat":                     false,
-		"Mail/Local Folders/feeds.json":                       false,
+		"Mail/Feeds/feeds.json":                               false, // an RSS account's own folder, not Local Folders (MA-933)
 		"Mail/maildir.example.com/INBOX.msf":                  false,
 		"Mail/maildir.example.com/INBOX/cur/1698710400.M1P2":  true,
 		"Mail/maildir.example.com/INBOX/cur/1698710401.eml":   true,
@@ -335,8 +336,10 @@ func TestDigestWatchListsOnlyTheMessageStore(t *testing.T) {
 // covers: MA-932
 // A capped walk's frontier says exactly what it saw: walk keys sort in the order
 // WalkDir visits nodes (names that sort around the path separator included), so
-// at every cap, a mailbox is in the poll's store if and only if its key is at or
-// before the frontier. And past the cap nothing is reported walked.
+// at every cap, a file is in the poll's lists (store or other) if and only if its
+// key is at or before the frontier. And past the cap nothing is reported walked.
+// (The files have no index beside them, so since MA-933 they are listed as other,
+// not mail; the frontier is a property of the walk, not of the classifier.)
 func TestWalkFrontierMatchesWhatTheWalkSaw(t *testing.T) {
 	orig := watchMaxEntries
 	defer func() { watchMaxEntries = orig }()
@@ -352,10 +355,15 @@ func TestWalkFrontierMatchesWhatTheWalkSaw(t *testing.T) {
 		}
 		writeFile(t, p, "mail")
 	}
+	listed := func(s watchSnap, key string) bool {
+		_, inStore := s.store[key]
+		_, inOther := s.other[key]
+		return inStore || inOther
+	}
 	watchMaxEntries = 1 << 20
 	full, _ := digestWatch([]string{root})
-	if len(full.store) != len(rels) {
-		t.Fatalf("uncapped walk listed %d mailboxes, want %d", len(full.store), len(rels))
+	if len(full.store)+len(full.other) != len(rels) {
+		t.Fatalf("uncapped walk listed %d files, want %d", len(full.store)+len(full.other), len(rels))
 	}
 	sawCap := false
 	for limit := 1; limit <= 40; limit++ {
@@ -365,10 +373,9 @@ func TestWalkFrontierMatchesWhatTheWalkSaw(t *testing.T) {
 			t.Fatalf("cap %d: truncated=%v but capped=%v", limit, trunc, s.capped)
 		}
 		sawCap = sawCap || s.capped
-		for key := range full.store {
-			_, in := s.store[key]
-			if in != s.walked(key) {
-				t.Errorf("cap %d: %q in the store=%v but walked=%v (frontier %q)", limit, key, in, s.walked(key), s.frontier)
+		for key := range full.other {
+			if in := listed(s, key); in != s.walked(key) {
+				t.Errorf("cap %d: %q listed=%v but walked=%v (frontier %q)", limit, key, in, s.walked(key), s.frontier)
 			}
 		}
 	}
@@ -391,7 +398,9 @@ func TestWalkHoleForAnUnreadableFolder(t *testing.T) {
 		t.Fatal(err)
 	}
 	writeFile(t, filepath.Join(locked, "Work"), "mail")
+	writeFile(t, filepath.Join(locked, "Work.msf"), "idx") // each folder's index beside it (MA-933)
 	writeFile(t, filepath.Join(root, "host", "INBOX"), "mail")
+	writeFile(t, filepath.Join(root, "host", "INBOX.msf"), "idx")
 	if s, _ := digestWatch([]string{root}); len(s.holes) != 0 || len(s.store) != 2 {
 		t.Fatalf("twin: readable tree gave holes %q and %d mailboxes, want none and 2", s.holes, len(s.store))
 	}

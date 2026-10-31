@@ -259,6 +259,9 @@ func buildDeps(e env, exe, profile string, cfg Config) deps {
 // profile's ImapMail and Mail, plus any archive input that lies inside the
 // profile. Only existing directories are returned; nothing outside the profile
 // is ever watched (§4.3: inputs not inside it are archived as named, not watched).
+// A root inside another is dropped (MA-933): the usual input
+// <profile>/ImapMail/<account> lies inside ImapMail, and walking it twice would
+// count each file twice toward the entry cap.
 func watchRoots(profile string, inputs []string) []string {
 	var roots []string
 	seen := map[string]bool{}
@@ -278,7 +281,20 @@ func watchRoots(profile string, inputs []string) []string {
 			add(c)
 		}
 	}
-	return roots
+	var outer []string
+	for _, r := range roots {
+		nested := false
+		for _, o := range roots {
+			if o != r && underDir(o, r) {
+				nested = true
+				break
+			}
+		}
+		if !nested {
+			outer = append(outer, r)
+		}
+	}
+	return outer
 }
 
 // underDir reports whether path is dir itself or lies inside it.

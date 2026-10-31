@@ -100,6 +100,17 @@ type windowMinimizer interface {
 	minimizeAgain(child proc, attended bool) bool
 }
 
+// awakeHolder is the optional capability of an adapter that can keep the computer
+// from idle sleep (Windows, SetThreadExecutionState, as the copy export does):
+// the session holds it from the launch to its end (MA-935), since on Windows the
+// clocks run on through sleep and a slept-through wait would end "nothing
+// arrived", or past the watchdog's budget, on waking. The returned func releases
+// it. macOS does not implement it: there the clocks stop in sleep, and the wait
+// carries on after waking (quietTracker judges the sleep on wall time).
+type awakeHolder interface {
+	holdAwake() (release func())
+}
+
 // minimizeRetry is the session's backstop-minimize retry rule (A14 (2), C-56): a
 // minimize that has not yet succeeded is tried again, once per S7 poll, until one
 // attempt succeeds — never after, so a person who restores our window to work in it
@@ -266,6 +277,11 @@ func runSession(ctx context.Context, d deps) (out sessionResult) {
 		res.outcome = OutcomeProfileUnusable
 		return res
 	}
+	// The wait's starting point (MA-934): the watched mail files, walked now, while
+	// no Thunderbird runs (S4 found none, and the C5 re-check below finds none after
+	// the walk), so nothing is writing them. The first wait poll is compared with
+	// it, so mail written before that poll still opens the gate.
+	preLaunch, preTruncated := e.digest(d.watch)
 	// C5: re-check for a running Thunderbird immediately before the launch — the owner
 	// may have opened one in the gap since S4 (recheckProfile does filesystem work), so
 	// never start a second instance beside theirs — and take the pre-launch snapshot as
@@ -301,6 +317,9 @@ func runSession(ctx context.Context, d deps) (out sessionResult) {
 		setLeft(LeftNone)
 		res.outcome = OutcomeCancelled
 		return res
+	}
+	if h, ok := e.(awakeHolder); ok {
+		defer h.holdAwake()() // from the launch to the session's end (MA-935)
 	}
 	if err := e.startHidden(d.app, d.profile); err != nil {
 		clear() // write-ahead record removed; no launch to announce, no retry
@@ -438,8 +457,11 @@ func runSession(ctx context.Context, d deps) (out sessionResult) {
 		defer stopAfter()
 		waitCtx = endedBy{Context: cctx, also: endWait}
 	}
-	qt := newQuietTracker(up, d.cfg)
-	watchTruncated := false
+	qcfg := d.cfg
+	qcfg.poll = d.pollEvery
+	qt := newQuietTracker(up, qcfg)
+	qt.baseline(preLaunch)
+	watchTruncated := preTruncated
 	maxMin := int(d.cfg.maxWait / time.Minute)
 	saidMin := 0
 	for {
@@ -461,12 +483,13 @@ func runSession(ctx context.Context, d deps) (out sessionResult) {
 			res.waited = e.now().Sub(up)
 			return leaveOpenByRule(OutcomeWaitEnded)
 		}
+		walkStart := e.now()
 		snap, trunc := e.digest(d.watch)
 		if trunc {
 			watchTruncated = true
 		}
 		now := e.now()
-		qt.observe(snap, now)
+		qt.observeWalk(snap, walkStart, now)
 		if o, done := qt.verdict(now); done {
 			if watchTruncated {
 				// The watch set exceeded its cap, so quiet was judged on the part
@@ -488,8 +511,9 @@ func runSession(ctx context.Context, d deps) (out sessionResult) {
 			res.outcome = OutcomeExitedEarly // closed before quiet
 			return res
 		}
-		// A7: once a minute, so a long wait is seen to be working (C-43).
-		if n := int(now.Sub(up) / time.Minute); n > saidMin && n >= 1 {
+		// A7: once a minute, so a long wait is seen to be working (C-43); minutes
+		// awake, as the maximum wait counts them (MA-935).
+		if n := int(qt.awake(now) / time.Minute); n > saidMin && n >= 1 {
 			saidMin = n
 			narrate(d.log, progressLine(n, maxMin))
 		}
