@@ -99,6 +99,46 @@ func TestTheSyncEmailGoesOncePerStreak(t *testing.T) {
 }
 
 // covers: MA-910, S65
+// The told-file names the sync record as well as the Serial (the gate-2 adversarial pass
+// after AS5 and AS6): a record removed or damaged starts again at Serial 1 while the
+// told-file stays, and its streak is a new one. Positive twin first: a stale streak of
+// one record sends, and the told-file holds its Serial and RecordID; the same streak again
+// sends nothing; a stale streak at the same Serial in a record named otherwise sends.
+func TestTheToldFileNamesTheRecordToo(t *testing.T) {
+	g := newSyncRig(t, alertsOnFailure)
+	a := staleFrom(state.SyncStreak{}, syncT0, "owner-active-skipped")
+	a.RecordID = "RecordA"
+	g.plant(a)
+	g.tell(false)
+	if g.count() != 1 {
+		t.Fatalf("positive twin: a stale streak sent %q", g.results())
+	}
+	told, err := readSyncAlert(SyncAlertPath(g.settings, g.key))
+	if err != nil || told.ToldFor != 1 || told.ToldRecord != "RecordA" {
+		t.Fatalf("the told-file: %+v (%v), want serial 1 of RecordA", told, err)
+	}
+	g.tell(false)
+	if g.count() != 1 {
+		t.Fatalf("the same streak sent again: %q", g.results())
+	}
+
+	b := staleFrom(state.SyncStreak{}, syncT0.Add(10*24*time.Hour), "app-not-found")
+	b.RecordID = "RecordB"
+	if b.Serial != a.Serial {
+		t.Fatalf("the restarted record's serial is %d, want %d", b.Serial, a.Serial)
+	}
+	g.plant(b)
+	g.tell(false)
+	if g.count() != 2 {
+		t.Fatalf("a restarted record's stale streak (same Serial) was read as told: %q", g.results())
+	}
+	g.tell(false)
+	if g.count() != 2 {
+		t.Fatalf("the restarted record's streak was told twice: %q", g.results())
+	}
+}
+
+// covers: MA-910, S65
 // With alerts off, or on without the failure option, nothing is sent and the streak is
 // marked told at once (as Report does), so turning alerts on later in the same streak
 // sends nothing for it; the next streak sends.

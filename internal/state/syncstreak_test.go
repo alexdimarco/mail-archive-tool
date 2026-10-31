@@ -2,6 +2,7 @@ package state
 
 import (
 	"bytes"
+	"encoding/json"
 	"errors"
 	"os"
 	"path/filepath"
@@ -220,6 +221,57 @@ func TestTheSyncStreakFileIsReadSecurely(t *testing.T) {
 	}
 	if _, err := os.Stat(p); !errors.Is(err, os.ErrNotExist) {
 		t.Errorf("the streak is still there after removal (%v)", err)
+	}
+}
+
+// covers: MA-910, MA-908, R32
+// The record's name (the gate-2 adversarial pass after AS5 and AS6): Named gives a record
+// without a RecordID a random one and keeps one it has; two records started apart get
+// different ones; the name is written and read back. One Named could not have chosen —
+// too long, or with anything but letters and digits — reads as none, so a planted record
+// cannot make the told-file too big to read, and the next write names the record again.
+// Positive twin first.
+func TestTheSyncRecordIsNamed(t *testing.T) {
+	out := t.TempDir()
+	t0 := time.Date(2026, 10, 20, 2, 0, 0, 0, time.UTC)
+	a := SyncStreak{}.Miss("owner-active-skipped", t0).Named()
+	if a.RecordID == "" || !plausibleRecordID(a.RecordID) {
+		t.Fatalf("positive twin: a record was named %q", a.RecordID)
+	}
+	if err := WriteSyncStreak(out, a); err != nil {
+		t.Fatal(err)
+	}
+	got, err := ReadSyncStreak(out)
+	if err != nil || got.RecordID != a.RecordID {
+		t.Fatalf("the name read back as %q (%v), want %q", got.RecordID, err, a.RecordID)
+	}
+	if again := got.Miss("owner-active-skipped", t0.Add(time.Hour)).Named(); again.RecordID != a.RecordID {
+		t.Errorf("a named record was named again: %q, was %q", again.RecordID, a.RecordID)
+	}
+	if b := (SyncStreak{}).Miss("owner-active-skipped", t0).Named(); b.RecordID == a.RecordID {
+		t.Errorf("two records started apart share the name %q", b.RecordID)
+	}
+
+	for _, bad := range []string{strings.Repeat("A", maxRecordIDLen+1), "abc\u001b[31m", "abc def", "abc/../x"} {
+		raw, err := json.Marshal(SyncStreak{Version: 1, Serial: 1, Missed: 2, RecordID: bad})
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(filepath.Join(out, SyncStreakName), raw, 0o600); err != nil {
+			t.Fatal(err)
+		}
+		h, err := ReadSyncStreak(out)
+		if err != nil || h.RecordID != "" || h.Missed != 2 {
+			t.Errorf("a name Named could not have chosen (%q) read back as %q (%v)", bad, h.RecordID, err)
+		}
+	}
+	ok := strings.Repeat("Z9", maxRecordIDLen/2)
+	raw, _ := json.Marshal(SyncStreak{Version: 1, RecordID: ok})
+	if err := os.WriteFile(filepath.Join(out, SyncStreakName), raw, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if h, err := ReadSyncStreak(out); err != nil || h.RecordID != ok {
+		t.Errorf("a name at the bound read back as %q (%v)", h.RecordID, err)
 	}
 }
 

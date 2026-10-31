@@ -33,10 +33,19 @@ const ResultSyncStale = alert.ResultSyncStale
 // by this suffix, and ClearStreak removes the key's one.
 const SyncAlertSuffix = ".sync-alert"
 
-// syncAlertRecord is the told-file's content: the Serial of the last streak told.
+// syncAlertRecord is the told-file's content: the last streak told, as the Serial and the
+// RecordID of the sync record it was in. Both, because a sync record removed (the sync
+// switched off) or damaged starts again at Serial 1 while this file stays (the gate-2
+// adversarial pass after AS5 and AS6): the new record's streak is a new streak.
 type syncAlertRecord struct {
-	Version int `json:"version"`
-	ToldFor int `json:"told_for"`
+	Version    int    `json:"version"`
+	ToldFor    int    `json:"told_for"`
+	ToldRecord string `json:"told_record,omitempty"`
+}
+
+// toldOf reports whether r names streak s as told.
+func (r syncAlertRecord) toldOf(s state.SyncStreak) bool {
+	return r.ToldFor == s.Serial && r.ToldRecord == s.RecordID
 }
 
 // SyncAlertPath is where the told-file for key is kept: beside the settings file at
@@ -79,8 +88,9 @@ func writeSyncAlert(path string, r syncAlertRecord) error {
 // ReportSyncStale sends the Thunderbird-not-synced email for the plaintext archive at out,
 // when its sync streak (read back after the run) is stale and that streak was not told:
 //
-//   - once per streak: a streak whose Serial the told-file holds was told; a clock restart
-//     inside one streak keeps its Serial, so it is never told twice (C-35);
+//   - once per streak: a streak whose Serial and sync record (RecordID) the told-file holds
+//     was told; a clock restart inside one streak keeps its Serial, so it is never told
+//     twice (C-35), and a record started again is a new streak, told in its turn;
 //   - the told-file is written only after the email was delivered, or at once when alerts
 //     are off or the failure option is not chosen, so a failed delivery is tried again at
 //     the next stale run; a told-file that can't be read fails loud: the email sends and
@@ -104,7 +114,7 @@ func ReportSyncStale(settingsPath string, store graphconfig.SecretStore, key, ou
 		told, rerr := readSyncAlert(path)
 		if rerr != nil {
 			logf(logger, "the Thunderbird sync alert record can't be read (%v); it is treated as not told and written again", rerr)
-		} else if told.ToldFor == s.Serial {
+		} else if told.toldOf(s) {
 			return // this streak was told already
 		}
 	}
@@ -117,7 +127,7 @@ func ReportSyncStale(settingsPath string, store graphconfig.SecretStore, key, ou
 		return // not delivered: the next stale run tries again
 	}
 	if path != "" {
-		if werr := writeSyncAlert(path, syncAlertRecord{ToldFor: s.Serial}); werr != nil {
+		if werr := writeSyncAlert(path, syncAlertRecord{ToldFor: s.Serial, ToldRecord: s.RecordID}); werr != nil {
 			logf(logger, "the Thunderbird sync alert record %s could not be written (%v), so every stale backup sends its own email until it can", path, werr)
 		}
 	}

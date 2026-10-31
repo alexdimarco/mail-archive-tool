@@ -1,6 +1,7 @@
 package state
 
 import (
+	"crypto/rand"
 	"encoding/json"
 	"errors"
 	"io/fs"
@@ -55,6 +56,38 @@ type SyncStreak struct {
 	LastMissed    time.Time `json:"last_missed,omitempty"`
 	LastSynced    time.Time `json:"last_synced,omitempty"`
 	LastName      string    `json:"last_name,omitempty"`
+	// RecordID names this record (the gate-2 adversarial pass after AS5 and AS6): chosen at
+	// random when a run first writes a record that has none, and kept by every later write.
+	// A record removed (the sync switched off) or damaged starts again at Serial 1 with a
+	// new RecordID, so the once-per-streak email, which keys on both, tells the new
+	// record's streak and never mistakes it for one told before. Compared, never shown.
+	RecordID string `json:"record_id,omitempty"`
+}
+
+// maxRecordIDLen bounds a RecordID read back; a longer one, or one with anything but
+// letters and digits, reads as none, and the next write names the record again.
+const maxRecordIDLen = 64
+
+// Named is the streak with a RecordID: its own when it has one, else a new random one.
+func (s SyncStreak) Named() SyncStreak {
+	if s.RecordID == "" {
+		s.RecordID = rand.Text()
+	}
+	return s
+}
+
+// plausibleRecordID reports whether id is one Named could have chosen: letters and
+// digits only, at most maxRecordIDLen of them.
+func plausibleRecordID(id string) bool {
+	if len(id) > maxRecordIDLen {
+		return false
+	}
+	for _, r := range id {
+		if !(r >= 'A' && r <= 'Z' || r >= 'a' && r <= 'z' || r >= '0' && r <= '9') {
+			return false
+		}
+	}
+	return true
 }
 
 // Synced folds a session that synced, from any run (§5.3 "Reset"): the missed streak
@@ -156,7 +189,8 @@ func (s SyncStreak) NothingArrived() bool {
 // zero streak with no error: an archive from before this record starts clean (MA-920).
 // A present record is read fail-closed through util.ReadSecureFile (owner-only, 4 KiB,
 // never a link); a malformed one reads as zero, so a damaged file never wedges a run.
-// The name it keeps is control-stripped (C-37).
+// The name it keeps is control-stripped (C-37); a RecordID Named could not have chosen
+// reads as none.
 func ReadSyncStreak(out string) (SyncStreak, error) {
 	data, err := util.ReadSecureFile(filepath.Join(out, SyncStreakName), "Thunderbird sync record", maxSyncStreakBytes)
 	if err != nil {
@@ -170,6 +204,9 @@ func ReadSyncStreak(out string) (SyncStreak, error) {
 		return SyncStreak{}, nil
 	}
 	s.LastName = util.StripControl(s.LastName)
+	if !plausibleRecordID(s.RecordID) {
+		s.RecordID = ""
+	}
 	return s, nil
 }
 

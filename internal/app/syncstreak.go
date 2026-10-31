@@ -56,7 +56,9 @@ func updateSyncStreak(opts Options, out *PresyncOutcome, encrypted bool, now tim
 	if !moved {
 		return
 	}
-	if werr := writeSyncStreak(opts.Out, next); werr != nil && logger != nil {
+	// Named: a record this run starts (none was there, or it was damaged) gets its own
+	// RecordID, so its streaks are never mistaken for an earlier record's told one.
+	if werr := writeSyncStreak(opts.Out, next.Named()); werr != nil && logger != nil {
 		logger.Printf("warning: could not record the Thunderbird sync streak in %s (%v)", filepath.Join(opts.Out, state.SyncStreakName), werr)
 	}
 }

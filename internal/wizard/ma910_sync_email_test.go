@@ -84,3 +84,61 @@ func TestTheScheduledRunSendsTheSyncEmailOncePerStreak(t *testing.T) {
 		t.Fatalf("the sync-off scheduled run kept the streak (%v)", err)
 	}
 }
+
+// covers: MA-910, MA-908, S65
+// A sync record started again is a new streak, and it is told (gate-2 adversarial pass
+// after AS5 and AS6). Switching the sync off removes the archive's sync record, but the
+// told-file beside the settings stays; when the sync is back on, the new record's first
+// streak is Serial 1 again. The told-file must name the record as well as the Serial, or
+// that new streak reads as the one already told and its email never goes. Through the real
+// scheduled entry point (RunHeadless), the session scripted through the presyncjob seam.
+// Positive twin first: the first stale streak sends its one email and the next run sends
+// none. Then a scheduled run of a job without the sync removes the record; with the sync
+// back on, a fresh record's stale streak sends its own email, once.
+func TestARestartedSyncRecordIsANewStreakAndIsTold(t *testing.T) {
+	fake := &outcomeSession{}
+	fake.set(presync.OutcomeOwnerActiveSkipped)
+	restore := presyncjob.OverrideSessionForTest(fake.run, t.TempDir())
+	defer restore()
+	r := presync.OverrideTablesForTest(nil, map[string]bool{runtime.GOOS: true})
+	defer r()
+	count := func(g *localRunRig) int { return strings.Count(g.results(), backupalert.ResultSyncStale) }
+	// Two misses four days ago and three days ago, as a fresh record holds them (Serial 1):
+	// this run's miss makes the streak stale.
+	freshStale := func() state.SyncStreak {
+		old := time.Now().Add(-4 * 24 * time.Hour)
+		return state.SyncStreak{}.Miss("owner-active-skipped", old).Miss("owner-active-skipped", old.Add(time.Hour))
+	}
+
+	g := newLocalRunRig(t)
+	if err := state.WriteSyncStreak(g.out, freshStale()); err != nil {
+		t.Fatal(err)
+	}
+	sj := g.syncJobAt(filepath.Join(g.dir, "sync.json"), g.mbox)
+	if RunHeadless(sj) != 0 || count(g) != 1 {
+		t.Fatalf("positive twin: the first stale streak sent %q", g.results())
+	}
+	if RunHeadless(sj) != 0 || count(g) != 1 {
+		t.Fatalf("the next run of the same streak sent again: %q", g.results())
+	}
+
+	// The sync switched off: the scheduled run of a job without it removes the record.
+	plain := g.jobAt(filepath.Join(g.dir, "plain.json"), g.mbox)
+	if RunHeadless(plain) != 0 {
+		t.Fatal("the sync-off run failed")
+	}
+	if _, err := os.Lstat(filepath.Join(g.out, state.SyncStreakName)); !os.IsNotExist(err) {
+		t.Fatalf("the sync-off scheduled run kept the record (%v)", err)
+	}
+
+	// Back on: a fresh record's streak, Serial 1 again, goes stale.
+	if err := state.WriteSyncStreak(g.out, freshStale()); err != nil {
+		t.Fatal(err)
+	}
+	if RunHeadless(sj) != 0 || count(g) != 2 {
+		t.Fatalf("a new record's stale streak was read as the streak already told: sent %q", g.results())
+	}
+	if RunHeadless(sj) != 0 || count(g) != 2 {
+		t.Fatalf("the new streak was told twice: %q", g.results())
+	}
+}
