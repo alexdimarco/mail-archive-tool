@@ -134,6 +134,10 @@ func TestCopyExportTwentyFiveServerErrorsAreRU2(t *testing.T) {
 		})
 	}
 	e := newCEEnv(t)
+	// This case is about the 25-in-a-row count, not the time breaker: on a loaded machine
+	// 25 answers can outlast the scaled 300 ms no-progress window, which would then end
+	// the run as R-u first. Widened as the per-message cases do; the count is unchanged.
+	e.window = 5 * time.Second
 	src := f.source(t)
 	res := runWith(t, e, planFor(t, e, src, idMsgs(ids...)), src)
 	if res.Stop == nil || res.Stop.RID != "R-u2" || res.Outcome != CopyOutcomeFailed {
