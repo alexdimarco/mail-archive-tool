@@ -72,16 +72,28 @@ const runNowStartOffTitle = "Run this archive's backup now. On this computer Run
 // lab MA-918 run 2 (docs/lab/presync-attended-start-windows.md) saw the start
 // minimized from the first sample in every case, never shown. It says winAskLine instead:
 // a window that asks something (a Primary Password) can still appear and take the keyboard.
+// Shortened 2026-10-31 (the Windows texts pass, §14 gate 3, finding 1): one short shape on
+// both platforms; the wait's details, where to quit Thunderbird and an already-open
+// Thunderbird stay in the "New:" line, the notes and the guide.
 func runNowTitle(goos string, syncOn bool) string {
 	switch {
 	case !syncOn || (goos != "darwin" && goos != "windows"):
 		return runNowPlainTitle
 	case !presync.AttendedStartAllowed(goos):
 		return runNowStartOffTitle
-	case goos == "windows":
-		return "Run this archive's backup now. Because Thunderbird sync is on, it first starts Thunderbird minimized to the taskbar — even while you are using the computer — and waits for its mail to arrive (" + syncWaitWords + "), then leaves it open for you to quit from the taskbar or the notification area. " + winAskLine + " A Thunderbird that is already open is left alone. You can cancel while it waits; that skips the backup."
 	}
-	return "Run this archive's backup now. Because Thunderbird sync is on, it first starts Thunderbird out of sight — even while you are using the computer — and waits for its mail to arrive (" + syncWaitWords + "), then leaves it open for you to quit from the Dock. A Thunderbird that is already open is left alone. You can cancel while it waits; that skips the backup."
+	return runNowSyncStem(goos) + " Cancel skips the backup."
+}
+
+// runNowSyncStem is the sync-on tooltip up to its Cancel sentence, which the encrypted
+// tooltip replaces with its own (encRunNowTitle): "minimized" on Windows (lab case E: a
+// Thunderbird set to hide to the tray is not on the taskbar), with winAskLine.
+func runNowSyncStem(goos string) string {
+	how, ask := "out of sight", ""
+	if goos == "windows" {
+		how, ask = "minimized", " "+winAskLine
+	}
+	return "Run this archive's backup now. With Thunderbird sync on, it first starts Thunderbird " + how + " (it won't take your typing), waits up to 20 minutes for its mail, then backs up and leaves Thunderbird open." + ask
 }
 
 // runNowFirstSyncLine is the one-time line beside Run now (§4.6, C-32, C-83): shown

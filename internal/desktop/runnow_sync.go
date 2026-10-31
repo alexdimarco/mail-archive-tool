@@ -33,7 +33,9 @@ const encRunNowStartOff = encRunNowBase + " On this computer Run now does not st
 // encRunNowTitle is the encrypted Run now's tooltip (§7, OQ-3, OQ-8): with the sync
 // off (or where it never runs, Linux) the Lock sentence alone joins today's words;
 // with it on, the plaintext sync text, that the archive stays unlocked for the backup
-// while it waits, and the Lock sentence.
+// while it waits, and the Lock sentence. Shortened 2026-10-31 (the Windows texts pass,
+// §14 gate 3, finding 1): the plaintext tooltip's short stem, then those two sentences in
+// place of its "Cancel skips the backup.", which the Lock sentence says more exactly.
 func encRunNowTitle(goos string, syncOn bool) string {
 	switch {
 	case !syncOn || (goos != "darwin" && goos != "windows"):
@@ -41,7 +43,7 @@ func encRunNowTitle(goos string, syncOn bool) string {
 	case !presync.AttendedStartAllowed(goos):
 		return encRunNowStartOff
 	}
-	return runNowTitle(goos, true) + " While it waits for Thunderbird, the archive stays unlocked for this backup. " + encLockSentence
+	return runNowSyncStem(goos) + " The archive stays unlocked for this backup while it waits. " + encLockSentence
 }
 
 // encSyncLabel and encSyncLine are the box's label and its line (§8.1, OQ-3).

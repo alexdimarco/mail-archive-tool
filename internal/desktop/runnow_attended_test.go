@@ -749,8 +749,13 @@ func TestRunNowTexts(t *testing.T) {
 				}
 				continue
 			}
-			for _, want := range []string{"even while you are using the computer", "(up to 20 minutes, often about 13)", "then leaves it open for you to quit from",
-				"A Thunderbird that is already open is left alone.", "You can cancel while it waits; that skips the backup."} {
+			// The Windows texts pass (§14 gate 3, 2026-10-31) shortened the tooltip to one
+			// shape; its details stay in the "New:" line, the notes and the guide. Pinned whole
+			// in TestRunNowShippedTexts; here every part of the shape, on both platforms.
+			if !strings.HasPrefix(title, "Run this archive's backup now. With Thunderbird sync on, it first starts Thunderbird ") || !strings.HasSuffix(title, " Cancel skips the backup.") {
+				t.Errorf("%s tooltip is not the short shape: %q", goos, title)
+			}
+			for _, want := range []string{" (it won't take your typing), waits up to 20 minutes for its mail, then backs up and leaves Thunderbird open."} {
 				if !strings.Contains(title, want) {
 					t.Errorf("%s tooltip lacks %q: %q", goos, want, title)
 				}
@@ -960,15 +965,19 @@ func TestRunNowReleaseLineFollowsTheTable(t *testing.T) {
 // window may appear"), the encrypted one starting with it, the sync notice saying a Run now
 // does not wait, and the first-sync line; none is the start-off variant.
 func TestRunNowShippedTexts(t *testing.T) {
-	const mac = "Run this archive's backup now. Because Thunderbird sync is on, it first starts Thunderbird out of sight — even while you are using the computer — and waits for its mail to arrive (up to 20 minutes, often about 13), then leaves it open for you to quit from the Dock. A Thunderbird that is already open is left alone. You can cancel while it waits; that skips the backup."
+	// The Windows texts pass (§14 gate 3, 2026-10-31): the tooltip is short; the details
+	// stay in the "New:" line, the notes and the guide.
+	const mac = "Run this archive's backup now. With Thunderbird sync on, it first starts Thunderbird out of sight (it won't take your typing), waits up to 20 minutes for its mail, then backs up and leaves Thunderbird open. Cancel skips the backup."
+	const encTail = " The archive stays unlocked for this backup while it waits. Until the backup starts reading mail, Lock cancels it; after that, Cancel stops it."
 	if !presync.AttendedStartAllowed("darwin") || !runNowSyncs("darwin") {
 		t.Fatal("macOS's start entry, as shipped, is not on")
 	}
 	if got := runNowTitle("darwin", true); got != mac {
 		t.Errorf("a Mac's Run now tooltip, sync on: %q", got)
 	}
-	if got := encRunNowTitle("darwin", true); !strings.HasPrefix(got, mac+" ") || !strings.HasSuffix(got, encLockSentence) {
-		t.Errorf("a Mac's encrypted Run now tooltip, sync on: %q", got)
+	const macEnc = "Run this archive's backup now. With Thunderbird sync on, it first starts Thunderbird out of sight (it won't take your typing), waits up to 20 minutes for its mail, then backs up and leaves Thunderbird open." + encTail
+	if got := encRunNowTitle("darwin", true); got != macEnc {
+		t.Errorf("a Mac's encrypted Run now tooltip, sync on:\n  %q\nwant\n  %q", got, macEnc)
 	}
 	if !strings.Contains(presync.SyncNoticeFor("darwin"), "; a backup you start with Run now in MailArchive Desktop does not check that, and leaves Thunderbird open for you to quit.") {
 		t.Errorf("a Mac's sync notice does not say a Run now does not wait: %q", presync.SyncNoticeFor("darwin"))
@@ -976,15 +985,16 @@ func TestRunNowShippedTexts(t *testing.T) {
 	if !strings.HasPrefix(runNowFirstSyncLine("darwin"), "New: Run now starts Thunderbird out of sight") {
 		t.Errorf("a Mac's first-sync line: %q", runNowFirstSyncLine("darwin"))
 	}
-	const win = "Run this archive's backup now. Because Thunderbird sync is on, it first starts Thunderbird minimized to the taskbar — even while you are using the computer — and waits for its mail to arrive (up to 20 minutes, often about 13), then leaves it open for you to quit from the taskbar or the notification area. A Thunderbird window that asks you something, such as for its Primary Password, can still appear and take the keyboard. A Thunderbird that is already open is left alone. You can cancel while it waits; that skips the backup."
+	const win = "Run this archive's backup now. With Thunderbird sync on, it first starts Thunderbird minimized (it won't take your typing), waits up to 20 minutes for its mail, then backs up and leaves Thunderbird open. A Thunderbird window that asks you something, such as for its Primary Password, can still appear and take the keyboard. Cancel skips the backup."
 	if !presync.AttendedStartAllowed("windows") || !runNowSyncs("windows") {
 		t.Fatal("Windows' start entry, as shipped, is not on")
 	}
 	if got := runNowTitle("windows", true); got != win {
 		t.Errorf("Windows' Run now tooltip, sync on:\n  %q\nwant\n  %q", got, win)
 	}
-	if got := encRunNowTitle("windows", true); !strings.HasPrefix(got, win+" ") || !strings.HasSuffix(got, encLockSentence) || got == encRunNowStartOff {
-		t.Errorf("Windows' encrypted Run now tooltip, sync on: %q", got)
+	const winEnc = "Run this archive's backup now. With Thunderbird sync on, it first starts Thunderbird minimized (it won't take your typing), waits up to 20 minutes for its mail, then backs up and leaves Thunderbird open. A Thunderbird window that asks you something, such as for its Primary Password, can still appear and take the keyboard." + encTail
+	if got := encRunNowTitle("windows", true); got != winEnc {
+		t.Errorf("Windows' encrypted Run now tooltip, sync on:\n  %q\nwant\n  %q", got, winEnc)
 	}
 	if !strings.Contains(presync.SyncNoticeFor("windows"), "; a backup you start with Run now in MailArchive Desktop does not check that, and leaves Thunderbird open for you to quit.") {
 		t.Errorf("Windows' sync notice does not say a Run now does not wait: %q", presync.SyncNoticeFor("windows"))

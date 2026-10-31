@@ -1154,10 +1154,10 @@ func TestEncryptedRunNowTexts(t *testing.T) {
 		r := presync.OverrideTablesForTest(nil, map[string]bool{goos: true})
 		on, plain := encRunNowTitle(goos, true), runNowTitle(goos, true)
 		r()
-		if !strings.HasPrefix(on, plain+" ") {
-			t.Errorf("%s: not the plaintext sync text first: %q", goos, on)
-		}
-		if !strings.HasSuffix(on, " While it waits for Thunderbird, the archive stays unlocked for this backup. "+encLockSentence) {
+		// The Windows texts pass (§14 gate 3, 2026-10-31): the plaintext tooltip's short shape
+		// up to its Cancel sentence, then the encrypted archive's own two sentences in place of
+		// "Cancel skips the backup.", which the Lock sentence says more exactly.
+		if stem := strings.TrimSuffix(plain, " Cancel skips the backup."); stem == plain || on != stem+" The archive stays unlocked for this backup while it waits. "+encLockSentence {
 			t.Errorf("%s, sync on: %q", goos, on)
 		}
 		r = presync.OverrideTablesForTest(nil, map[string]bool{goos: false})
