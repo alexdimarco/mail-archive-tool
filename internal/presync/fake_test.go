@@ -48,6 +48,7 @@ type fakeEnv struct {
 	sleepsAtQuit    int           // sleeps made before the quit request (any after it are the exit wait)
 	quitAll         bool          // C3: quit closes all Thunderbird instances (macOS-like)
 	extraProcs      []proc        // C3: additional Thunderbird procs present after launch (a second instance)
+	relaunched      []proc        // listed once the child has exited (a Thunderbird that relaunched itself); nil by default
 	unreadable      int           // C-1/SAF-9: Thunderbird pids the OS lists whose details cannot be read
 	child           proc
 	appearIn        time.Duration // child appears this long after startHidden
@@ -115,7 +116,7 @@ func (f *fakeEnv) procsNow() []proc {
 		return f.procs
 	}
 	if f.quitted && !f.nowT.Before(f.quitAt.Add(f.exitIn)) {
-		return nil // exited after the quit
+		return f.relaunched // exited after the quit (nil unless a test relaunches one)
 	}
 	if f.started && !f.nowT.Before(f.startedAt.Add(f.appearIn)) {
 		return append([]proc{f.child}, f.extraProcs...)

@@ -205,7 +205,7 @@ func TestThePresyncResultReadsTheOutcomeAlone(t *testing.T) {
 	}
 	outcomes := presync.Outcomes()
 	assure.Reached(t, len(outcomes), "the session's outcomes")
-	lefts := []string{"none", "closed", "left-open", "left-open-by-choice", "left-open-by-rule", "may-be-starting"}
+	lefts := []string{"none", "exited", "closed", "left-open", "left-open-by-choice", "left-open-by-rule", "may-be-starting"}
 	for _, o := range outcomes {
 		if o.Synced() != synced[o.Name] {
 			t.Errorf("%s.Synced() = %v, want %v (§5.2)", o.Name, o.Synced(), synced[o.Name])

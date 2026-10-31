@@ -425,7 +425,7 @@ func TestEndLineByMode(t *testing.T) {
 	}
 }
 
-var allLefts = []Left{LeftNone, LeftClosed, LeftOpen, LeftOpenByChoice, LeftOpenByRule, LeftMayBeStarting}
+var allLefts = []Left{LeftNone, LeftExited, LeftClosed, LeftOpen, LeftOpenByChoice, LeftOpenByRule, LeftMayBeStarting}
 
 // covers: MA-897, MA-925
 // OutcomeLine (§4.6, C-43): every outcome in allOutcomes has its own line (a new
@@ -473,6 +473,12 @@ func TestOutcomeLineEveryOutcome(t *testing.T) {
 			"Thunderbird sync: cancelled — Thunderbird, started by this backup, was left open out of sight. Quit it from the Dock before the next Run now."},
 		{OutcomeCancelled, "darwin", LeftMayBeStarting, false,
 			"Thunderbird sync: cancelled — Thunderbird may still be starting; quit it from the Dock."},
+		{OutcomeCancelled, "darwin", LeftExited, false,
+			"Thunderbird sync: cancelled — Thunderbird, started by this backup, was no longer running."},
+		{OutcomeCancelled, "windows", LeftExited, false,
+			"Thunderbird sync: cancelled — Thunderbird, started by this backup, was no longer running."},
+		{OutcomeCancelled, "darwin", LeftNone, false,
+			"Thunderbird sync: cancelled — Thunderbird was not started."},
 		{OutcomeOK, "windows", LeftOpenByRule, true,
 			"Thunderbird synced: its mail settled after 6 min. It was left open minimized to the taskbar; quit it from the taskbar or the notification area when you are done."},
 		{OutcomeOK, "windows", LeftOpenByRule, false,
@@ -525,6 +531,17 @@ func checkOutcomeLine(t *testing.T, ctx, line string, o Outcome, surface, goos s
 	case LeftNone:
 		if closedClaim || strings.Contains(line, "left open") {
 			t.Errorf("%s: Left=none but the line claims a close or a left-open: %q", ctx, line)
+		}
+	case LeftExited:
+		// Started by this backup, then gone on its own: never a close by us, never left
+		// open or still starting; a cancel never says it was not started (gate-2 pass 1
+		// re-check). (Outcomes that start nothing, whose own sentence says "not
+		// started", never carry exited.)
+		if closedClaim || strings.Contains(line, "left open") || strings.Contains(line, "may still be starting") {
+			t.Errorf("%s: Left=exited but the line claims a close, a left-open or a start still under way: %q", ctx, line)
+		}
+		if o == OutcomeCancelled && (strings.Contains(line, "not started") || !strings.Contains(line, "started by this backup, was no longer running")) {
+			t.Errorf("%s: a cancel that met our Thunderbird already gone does not say so: %q", ctx, line)
 		}
 	}
 	if o == OutcomeNoActivity || o == OutcomeWatchTruncatedNoActivity {
@@ -625,8 +642,57 @@ func TestNeverCloseRule(t *testing.T) {
 			if res.outcome != c.want || f.quitCalls != 0 {
 				t.Errorf("outcome %q, %d quits; want %q, 0", res.outcome.Name, f.quitCalls, c.want.Name)
 			}
-			if res.left != LeftNone || !recordGone(t, sp) {
-				t.Errorf("Left %q, record gone %v; want none and cleared: no Thunderbird is running", res.left, recordGone(t, sp))
+			// exited, not none: it WAS started, so the end line must never say it was not
+			// (gate-2 pass 1 re-check, new item 2).
+			if res.left != LeftExited || !recordGone(t, sp) {
+				t.Errorf("Left %q, record gone %v; want exited and cleared: no Thunderbird is running", res.left, recordGone(t, sp))
+			}
+			for _, goos := range []string{"darwin", "windows"} {
+				if line := OutcomeLine(res.outcome, SurfaceDesktop, goos, res.left, res.waited, res.minimized); strings.Contains(line, "not started") || strings.Contains(line, "left open") {
+					t.Errorf("%s end line %q: says not started or left open for a Thunderbird this backup started that has gone", goos, line)
+				}
+			}
+		})
+	}
+
+	// The child gone, and a different single Thunderbird provably ours at the re-check
+	// (it relaunched itself, after an update say) — at quiet and at a Cancel in S7: that
+	// one is open, so the record is kept and the line says it was left open, never
+	// nothing (gate-2 pass 1 re-check, new item 3). The twin is the subtests above.
+	// With two such Thunderbirds no single one is provable, and still one of them is
+	// open: the same.
+	for _, c := range []struct {
+		name string
+		n    int
+		set  func(f *fakeEnv, cancel func())
+		want Outcome
+	}{
+		{"at quiet", 1, func(*fakeEnv, func()) {}, OutcomeOK},
+		{"at a Cancel in S7", 1, func(f *fakeEnv, cancel func()) { f.digestHook = cancel }, OutcomeCancelled},
+		{"twice, at quiet", 2, func(*fakeEnv, func()) {}, OutcomeOK},
+	} {
+		t.Run("the child gone, relaunched as another of ours, "+c.name, func(t *testing.T) {
+			ctx, cancel := cancelQuit()
+			f := attendedFake()
+			exitBeforeTheRecheck(f)
+			for i := 0; i < c.n; i++ {
+				again := f.child
+				again.pid, again.start = 202+i, f.child.start.Add(time.Second)
+				f.relaunched = append(f.relaunched, again)
+			}
+			c.set(f, cancel)
+			sp := filepath.Join(t.TempDir(), "s.json")
+			res := runSession(ctx, attendedDeps(f, sp))
+			lc := launchCtx{app: as1aApp, profile: as1aProfile, launchAt: as1aBase, snapshot: map[int]bool{}}
+			if m, ok := findOurs(f.procsNow(), lc); ok != (c.n == 1) || (ok && m.pid != 202) || !anyOurs(f.procsNow(), lc) || f.pidAlive(f.child.pid) {
+				t.Fatalf("fixture: %d relaunched Thunderbird(s) with the child gone not as planted (single provable %v, pid %d)", c.n, ok, m.pid)
+			}
+			if res.outcome != c.want || f.quitCalls != 0 || res.left != LeftOpen || recordGone(t, sp) {
+				t.Errorf("outcome %q, %d quits, Left %q, record gone %v; want %q, 0, left-open, the record kept for the next run",
+					res.outcome.Name, f.quitCalls, res.left, recordGone(t, sp), c.want.Name)
+			}
+			if line := OutcomeLine(res.outcome, SurfaceDesktop, "darwin", res.left, res.waited, res.minimized); !strings.Contains(line, "left open") {
+				t.Errorf("end line %q does not say a Thunderbird was left open", line)
 			}
 		})
 	}
@@ -757,8 +823,11 @@ func TestNeverCloseRule(t *testing.T) {
 			}
 			rec, present, _ := loadRecord(sp)
 			if gone {
-				if res.left != LeftNone || present {
-					t.Errorf("Left %q, record kept %v; want none and cleared", res.left, present)
+				if res.left != LeftExited || present {
+					t.Errorf("Left %q, record kept %v; want exited and cleared", res.left, present)
+				}
+				if line := OutcomeLine(res.outcome, SurfaceDesktop, "darwin", res.left, 0, false); strings.Contains(line, "not started") {
+					t.Errorf("end line %q says not started for a Thunderbird this backup started", line)
 				}
 				return
 			}

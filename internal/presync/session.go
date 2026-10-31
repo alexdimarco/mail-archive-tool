@@ -328,17 +328,21 @@ func runSession(ctx context.Context, d deps) (out sessionResult) {
 	// so the next run treats it as an open Thunderbird and leaves it alone (S4).
 	// One still running but no longer provable as ours keeps its record for the next
 	// run's recovery (left-open), the R31-safe direction. One that has gone (it exited
-	// inside the last poll gap) leaves nothing open: its record is cleared and Left is
-	// none, never "left open, quit it" for a Thunderbird not running (gate-2 pass 1,
-	// as1b-2).
+	// inside the last poll gap) with no other Thunderbird provably ours leaves nothing
+	// open: its record is cleared and Left is exited — never "left open, quit it" for a
+	// Thunderbird not running (gate-2 pass 1, as1b-2), and never "not started" for one
+	// this session started (re-check, new item 2). One gone while another Thunderbird
+	// still looks like ours (it relaunched itself, say) is open: left-open, the record
+	// kept (re-check, new item 3).
 	leaveOpenByRule := func(o Outcome) sessionResult {
-		switch m, ok := findOurs(e.thunderbirdProcs(), lc); {
+		procs := e.thunderbirdProcs()
+		switch m, ok := findOurs(procs, lc); {
 		case ok && m.pid == child.pid:
 			clear()
 			setLeft(LeftOpenByRule)
-		case child.pid != 0 && !e.pidAlive(child.pid):
+		case !anyOurs(procs, lc) && child.pid != 0 && !e.pidAlive(child.pid):
 			clear()
-			setLeft(LeftNone)
+			setLeft(LeftExited)
 		default:
 			setLeft(LeftOpen)
 		}
@@ -620,6 +624,17 @@ func (c endedBy) Err() error {
 		return err
 	}
 	return c.also.Err()
+}
+
+// anyOurs reports whether any listed process meets the ownership criteria for this
+// launch — one or several, where findOurs proves only a single one.
+func anyOurs(ps []proc, lc launchCtx) bool {
+	for _, p := range ps {
+		if candidateIsOurs(p, lc) {
+			return true
+		}
+	}
+	return false
 }
 
 func pidSet(ps []proc) map[int]bool {

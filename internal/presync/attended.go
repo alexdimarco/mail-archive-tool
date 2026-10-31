@@ -24,7 +24,8 @@ var ErrCancelAndQuit = errors.New("cancelled by the person: Thunderbird may be c
 type Left string
 
 const (
-	LeftNone          Left = "none"                // nothing was started, or what was started has gone
+	LeftNone          Left = "none"                // nothing was started, or what was started has gone and the outcome's own line says so
+	LeftExited        Left = "exited"              // started by this backup, then gone on its own before the end: nothing is left open, and it WAS started (gate-2 pass 1 re-check)
 	LeftClosed        Left = "closed"              // asked to quit, and it did
 	LeftOpen          Left = "left-open"           // left running, with a record the next run announces
 	LeftOpenByChoice  Left = "left-open-by-choice" // the person pressed Keep Thunderbird open (slice AS-Q)

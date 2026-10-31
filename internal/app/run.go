@@ -148,8 +148,8 @@ type Options struct {
 type PresyncOutcome struct {
 	Code, Name, Class string // Class: "none" | "note" | "warn"
 	Synced            bool   // the outcome counts as synced (§5.2), from the outcome alone
-	// Left: none | closed | left-open | left-open-by-choice | left-open-by-rule |
-	// may-be-starting.
+	// Left: none | exited | closed | left-open | left-open-by-choice |
+	// left-open-by-rule | may-be-starting.
 	Left      string
 	Minimized bool   // Windows: the backstop minimize succeeded
 	Verdict   string // the wait's verdict, "" if none

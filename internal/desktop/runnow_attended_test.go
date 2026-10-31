@@ -756,7 +756,18 @@ func TestRunNowTexts(t *testing.T) {
 			text{goos, runNowSyncNote(goos, presync.PhaseCancelling, time.Now(), time.Now(), false)},
 			text{goos, runNowSyncNote(goos, "", time.Now(), time.Now(), true)},
 			text{goos, runNowCancelWords(goos, "cancelled", string(presync.LeftOpenByRule), true)},
-			text{goos, runNowCancelWords(goos, "cancelled", string(presync.LeftMayBeStarting), true)})
+			text{goos, runNowCancelWords(goos, "cancelled", string(presync.LeftMayBeStarting), true)},
+			text{goos, runNowCancelWords(goos, "cancelled", string(presync.LeftExited), true)})
+		// A Cancel that met the Thunderbird this backup started already gone (gate-2 pass
+		// 1 re-check, new item 2): it was started, so never "before Thunderbird was
+		// started"; nothing is left open, so no quit advice.
+		if s, want := runNowCancelWords(goos, "cancelled", string(presync.LeftExited), false),
+			"Cancelled. Thunderbird, started by this backup, was no longer running. The archive is unchanged."; s != want {
+			t.Errorf("%s: a cancel with our Thunderbird already gone: %q, want %q", goos, s, want)
+		}
+		if s := runNowCancelWords(goos, "cancelled", string(presync.LeftNone), false); s != "Cancelled before Thunderbird was started. The archive is unchanged." {
+			t.Errorf("%s: twin, a cancel before the start: %q", goos, s)
+		}
 		if !strings.Contains(cancelSyncTitle(goos, presync.PhaseWaiting), "the whole backup is skipped") ||
 			!strings.Contains(cancelSyncTitle(goos, presync.PhaseWaiting), "click Stop waiting and back up now instead") ||
 			strings.Contains(cancelSyncTitle(goos, presync.PhaseStarting), "Stop waiting") {

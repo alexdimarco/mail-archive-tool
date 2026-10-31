@@ -222,6 +222,10 @@ func cancelTail(w lineWords, left Left) string {
 		return "Thunderbird was left open, as you asked."
 	case LeftMayBeStarting:
 		return "Thunderbird may still be starting; " + w.quitIt() + "."
+	case LeftExited:
+		// Started, then gone on its own before the Cancel reached it: never "not
+		// started" (gate-2 pass 1 re-check).
+		return "Thunderbird, started by this backup, was no longer running."
 	}
 	return "Thunderbird was not started."
 }

@@ -146,6 +146,10 @@ func runNowCancelWords(goos, name, left string, minimized bool) string {
 			how = "left open; its window may still be on screen"
 		}
 		return "Cancelled. Thunderbird, started by this backup, was " + how + "; quit it from " + w.place + ". The archive is unchanged."
+	case presync.LeftExited:
+		// Started, then gone on its own before the Cancel reached it (gate-2 pass 1
+		// re-check): never "before Thunderbird was started".
+		return "Cancelled. Thunderbird, started by this backup, was no longer running. The archive is unchanged."
 	}
 	return "Cancelled before Thunderbird was started. The archive is unchanged."
 }
