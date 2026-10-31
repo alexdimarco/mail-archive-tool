@@ -132,9 +132,16 @@ func (d *dashboard) lockAction(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	d.cfg.Keys.lock(out)
+	// A Run now of this archive that has not started reading mail is cancelled and its
+	// key cleared; one reading goes on with its own key (design-presync-attended §3.2,
+	// §9, OQ-3, OQ-8). Only this, the person's Lock: never the idle lock or a switch.
+	note := d.cap.stopSyncWait(out, d.cfg.goos())
 	d.cap.forget(out) // C-15: a locked archive's Run now activity is cleared
-	if d.copyRunning(out) {
-		writeJSON(w, map[string]any{"ok": true, "note": copyGoesOnText})
+	if note == "" && d.copyRunning(out) {
+		note = copyGoesOnText
+	}
+	if note != "" {
+		writeJSON(w, map[string]any{"ok": true, "note": note})
 		return
 	}
 	writeJSON(w, map[string]any{"ok": true})

@@ -203,15 +203,6 @@ func (c *captureState) forget(out string) {
 	}
 }
 
-// markRunNow marks the job in the slot as a Run now (plaintext or encrypted): the page
-// re-attaches its poll after a reload (C-22), and a Lock or a switch clears an
-// encrypted one's activity (C-15).
-func (c *captureState) markRunNow() {
-	c.mu.Lock()
-	c.runNow = true
-	c.mu.Unlock()
-}
-
 // setPhase records a Run now's phase, only for the run whose slot id it carries and
 // only before its sync has ended (C-71): a late call from an earlier, abandoned
 // session never changes the next run's note.
@@ -281,32 +272,51 @@ func (c *captureState) runNowActivity(out map[string]any, goos string, now time.
 // StartNotAllowed callbacks carry this run's slot id (C-71); its EndWait is ended by
 // "Stop waiting and back up now" (OQ-6). A cancel is told by what the sync left.
 func (d *dashboard) runNowPlain(j keyedJob, jobPath string, logger *log.Logger) (string, error) {
-	c := d.cap
 	goos := d.cfg.goos()
-	endCtx, endWait := context.WithCancel(context.Background())
+	rn, slot, endWait := d.runNowHooks(goos)
 	defer endWait()
+	res, err := wizard.RunJobInProcess(j.ctx, j.stop, jobPath, logger, rn)
+	if words, ok := d.runNowCancelled(j, slot, goos, err); ok {
+		return words, nil
+	}
+	return res, err
+}
+
+// runNowHooks marks the job in the slot as a Run now (C-15, C-22) and returns its
+// callbacks, each bound to its slot id (C-71), with the end of its EndWait ("Stop
+// waiting and back up now", OQ-6): both Run nows, plaintext and encrypted, use them.
+func (d *dashboard) runNowHooks(goos string) (rn wizard.RunNow, slot uint64, endWait context.CancelFunc) {
+	c := d.cap
+	endCtx, endWait := context.WithCancel(context.Background())
 	c.mu.Lock()
-	slot := c.slot
+	slot = c.slot
 	c.runNow, c.endWait = true, endWait
 	c.mu.Unlock()
-	rn := wizard.RunNow{
+	rn = wizard.RunNow{
 		GOOS:            goos,
 		EndWait:         endCtx,
 		Phase:           func(p string, since time.Time) { c.setPhase(slot, p, since) },
 		OnEnd:           func(o app.PresyncOutcome) { c.endSync(slot, o) },
 		StartNotAllowed: func() { c.noStart(slot) },
 	}
-	res, err := wizard.RunJobInProcess(j.ctx, j.stop, jobPath, logger, rn)
-	if errors.Is(err, context.Canceled) && j.ctx.Err() != nil && d.life.Context().Err() == nil {
-		c.mu.Lock()
-		name, left, minimized := c.syncName, c.syncLeft, c.syncMinimized
-		if c.slot != slot {
-			name = ""
-		}
-		c.mu.Unlock()
-		return runNowCancelWords(goos, name, left, minimized), nil
+	return rn, slot, endWait
+}
+
+// runNowCancelled is a Run now the person cancelled with the Cancel button, told by
+// what its sync left (§3.1, C-23); ok is false for any other ending, a Shut down
+// included.
+func (d *dashboard) runNowCancelled(j keyedJob, slot uint64, goos string, err error) (string, bool) {
+	if !errors.Is(err, context.Canceled) || j.ctx.Err() == nil || d.life.Context().Err() != nil {
+		return "", false
 	}
-	return res, err
+	c := d.cap
+	c.mu.Lock()
+	name, left, minimized := c.syncName, c.syncLeft, c.syncMinimized
+	if c.slot != slot {
+		name = ""
+	}
+	c.mu.Unlock()
+	return runNowCancelWords(goos, name, left, minimized), true
 }
 
 // stopWaitAction is "Stop waiting and back up now" (§4.6, A16, owner ruling OQ-6):

@@ -220,6 +220,15 @@ The MA-726 allow-list grows by this one package. **Its acceptance is an operator
     lease is therefore never undone.
   - Owed race test: Lock during a lease held open by a fault hook, after which the reader never
     serves decrypted content.
+  - **Exception (Run now before mail reading)** — amendment written in at slice AS8 of
+    `design-presync-attended.md`, rev 5's wording (§3.2 there; accepted by the operator
+    2026-10-30, OD-2; widened to every Run now by the owner's ruling OQ-8, 2026-10-30): "Exception
+    (Run now before mail reading): the person's Lock of an archive also cancels a Run now of that
+    archive at any point from the click until mail reading starts, whether or not its job syncs
+    Thunderbird first, and its key is cleared; once reading has started, the Run now goes on with
+    its own key, as above, and the Lock reply says so and that Cancel stops it. The idle lock and a
+    switch never cancel it." Built in `internal/desktop/runnow_keyed.go` (the Lock window, from
+    the lease to read start); pinned by MA-913.
 - **Lock, the idle lock, an archive switch and Shut down** mark the dashboard's `Unlocked` as
   locked. The last reference to go destroys its key. Shut down cancels jobs first.
 - **The reader is not a job:** its source is ended by a lock.

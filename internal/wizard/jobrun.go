@@ -35,6 +35,9 @@ type RunNow struct {
 	// start Thunderbird on this platform yet (AttendedStartAllowed false, C-49): no
 	// hook is installed and the backup reads the mail already here.
 	StartNotAllowed func()
+	// OnReadStart is called right before the run reads its first source (app.Options'
+	// own, §3.2, C-76): the encrypted Run now's Lock window closes there.
+	OnReadStart func()
 }
 
 // runHooks is what optsForJob hands the shared pre-sync hook besides the job: the
@@ -93,7 +96,14 @@ func RunJobInProcess(ctx, stop context.Context, jobPath string, logger *log.Logg
 // refused, A14), stops when ctx is cancelled, refuses an absent out, a paused
 // archive and an Outlook job before apply is called, and says what it did in words
 // that name no file of the archive (U16).
-func RunJobInProcessKeyed(ctx context.Context, jobPath string, logger *log.Logger, apply func(*app.Options) (done func(), err error)) (string, error) {
+//
+// From slice AS8 (design-presync-attended §2.2, C-81, R38) its Thunderbird sync is
+// attended too, as RunJobInProcess's: where this platform's AttendedStartAllowed
+// entry is true a job with the sync starts Thunderbird without the owner-activity
+// checks; elsewhere no hook is installed and rn.StartNotAllowed says why. stop ends
+// the sync at once with no quit request (a Lock, Shut down), and rn.OnReadStart is
+// called right before the first source is read (the Lock window's end, §3.2).
+func RunJobInProcessKeyed(ctx, stop context.Context, jobPath string, logger *log.Logger, rn RunNow, apply func(*app.Options) (done func(), err error)) (string, error) {
 	j, err := job.Read(jobPath)
 	if err != nil {
 		return "", err
@@ -107,7 +117,7 @@ func RunJobInProcessKeyed(ctx context.Context, jobPath string, logger *log.Logge
 	if j.Outlook {
 		return "", fmt.Errorf("this is an Outlook backup; Run now is not available for it here yet")
 	}
-	opts := optsForJob(j, j.Inputs, logger, runHooks{}, runScheduled)
+	opts := optsForJob(j, j.Inputs, logger, runHooks{stop: stop, rn: rn}, runAttended)
 	opts.Unattended = false
 	switch j.ProgramCopies { // the choice the archive was made with, until a run seals it
 	case "on":
@@ -145,8 +155,7 @@ func encryptedSummary(result app.Result) string {
 type runMode int
 
 const (
-	// runScheduled: no one is watching — the scheduled run-job, and (until slice
-	// AS8, C-81) the encrypted Run now, which keeps today's behaviour.
+	// runScheduled: no one is watching — the scheduled run-job.
 	runScheduled runMode = iota
 	// runAttended: the person started this run at this computer and is watching it.
 	runAttended
@@ -185,6 +194,7 @@ func optsForJob(j job.Job, inputs []string, logger *log.Logger, hooks runHooks, 
 	}
 	opts.PresyncWanted = j.ThunderbirdSync != nil
 	opts.PresyncAttended = mode == runAttended
+	opts.OnReadStart = hooks.rn.OnReadStart
 	if j.ThunderbirdSync != nil {
 		// A scheduled run names no button (neutral words); a Run now the Desktop's.
 		surface := presync.SurfaceCLI

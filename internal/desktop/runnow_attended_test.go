@@ -51,6 +51,9 @@ type tbScript struct {
 	panics         bool
 	minimized      bool
 	cancelOnReturn func()
+	// onStop, when set, is called while the session still runs, as its Stop ends in
+	// the wait (a Lock): the encrypted Run now's key is checked there (MA-913).
+	onStop func()
 }
 
 func newTBScript() *tbScript {
@@ -60,7 +63,7 @@ func newTBScript() *tbScript {
 func (s *tbScript) run(ctx context.Context, cfg presync.Config) presync.Result {
 	s.mu.Lock()
 	s.cfgs = append(s.cfgs, cfg)
-	panics, hold, waited, minimized, onReturn := s.panics, s.holdStart, s.waitedFor, s.minimized, s.cancelOnReturn
+	panics, hold, waited, minimized, onReturn, onStop := s.panics, s.holdStart, s.waitedFor, s.minimized, s.cancelOnReturn, s.onStop
 	s.mu.Unlock()
 	if panics {
 		panic("a scripted session failure")
@@ -102,6 +105,9 @@ func (s *tbScript) run(ctx context.Context, cfg presync.Config) presync.Result {
 	phase(presync.PhaseWaiting, time.Now().Add(-waited))
 	select {
 	case <-ctx.Done():
+		if onStop != nil && stop.Err() != nil {
+			onStop()
+		}
 		record()
 		left := presync.LeftOpen
 		if stop.Err() == nil && errors.Is(context.Cause(ctx), presync.ErrCancelAndQuit) {
@@ -109,6 +115,9 @@ func (s *tbScript) run(ctx context.Context, cfg presync.Config) presync.Result {
 		}
 		return presync.Result{Outcome: presync.OutcomeCancelled, Left: left, Started: started, Waited: waited, Minimized: minimized}
 	case <-stop.Done():
+		if onStop != nil {
+			onStop()
+		}
 		record()
 		return presync.Result{Outcome: presync.OutcomeCancelled, Left: presync.LeftOpen, Started: started}
 	case <-endDone:

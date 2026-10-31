@@ -49,6 +49,13 @@ type settingsCard struct {
 	// SyncNotice and MacNote are shown, visible, beside the sync box (X16, MA-861).
 	SyncNotice string
 	MacNote    string
+	// SyncOnly: an encrypted archive's sync-only box, with its own Save posting to
+	// api/runnow-sync (design-presync-attended §8.1, C-26); SyncLast is the last Run
+	// now's sync while the archive is unlocked here (C-27); SyncUnreadable says why the
+	// box can't be shown when the Run now job can't be read.
+	SyncOnly       bool
+	SyncLast       string
+	SyncUnreadable string
 	// ReadOnly is an installed schedule shown read-only, and Remedy how to change it.
 	ReadOnly, Remedy string
 }

@@ -37,7 +37,7 @@ func TestTheKeyedRunNowRefusesBeforeTheKey(t *testing.T) {
 		return func() {}, context.Canceled
 	}
 
-	if _, err := RunJobInProcessKeyed(context.Background(), jobAt(job.Job{Name: "a", Out: out, Mode: "incremental"}), quiet, apply); applied != 1 || err == nil || !attended {
+	if _, err := RunJobInProcessKeyed(context.Background(), context.Background(), jobAt(job.Job{Name: "a", Out: out, Mode: "incremental"}), quiet, RunNow{}, apply); applied != 1 || err == nil || !attended {
 		t.Fatalf("positive twin: an archive that can run reaches apply (%d, %v)", applied, err)
 	}
 	applied = 0
@@ -51,7 +51,7 @@ func TestTheKeyedRunNowRefusesBeforeTheKey(t *testing.T) {
 		"no archive folder": {job.Job{Name: "a", Out: filepath.Join(out, "gone"), Mode: "incremental"}, func() {}, "gone"},
 	} {
 		c.setup()
-		_, err := RunJobInProcessKeyed(context.Background(), jobAt(c.j), quiet, apply)
+		_, err := RunJobInProcessKeyed(context.Background(), context.Background(), jobAt(c.j), quiet, RunNow{}, apply)
 		if err == nil || applied != 0 || !strings.Contains(err.Error(), c.names) {
 			t.Fatalf("%s: %v (apply called %d times)", name, err, applied)
 		}
@@ -77,7 +77,7 @@ func TestTheRunJobCarriesTheProgramCopiesChoice(t *testing.T) {
 		if err := job.Write(path, j); err != nil {
 			t.Fatal(err)
 		}
-		RunJobInProcessKeyed(context.Background(), path, quiet, func(o *app.Options) (func(), error) {
+		RunJobInProcessKeyed(context.Background(), context.Background(), path, quiet, RunNow{}, func(o *app.Options) (func(), error) {
 			got[j.ProgramCopies] = o.ProgramCopiesIfUnchosen
 			return func() {}, context.Canceled
 		})

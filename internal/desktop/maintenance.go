@@ -205,6 +205,20 @@ func (d *dashboard) healthAction(w http.ResponseWriter, r *http.Request) {
 	if d.cfg.localOnly() {
 		summary = append(summary, d.cfg.newMailLineFor(out))
 	}
+	// An encrypted archive whose Run now syncs Thunderbird: the setting, read from the
+	// job file in the settings folder, and while it is unlocked here the last Run now's
+	// sync, kept in memory only (design-presync-attended §4.7, C-27).
+	if goos := d.cfg.goos(); (goos == "darwin" || goos == "windows") && app.ArchiveEncrypted(out) {
+		if _, j, reason := runNowJobFor(out); reason == "" && j.ThunderbirdSync != nil {
+			last := ""
+			if d.cfg.Keys != nil {
+				if e := d.cfg.Keys.get(out); e != nil {
+					last = e.lastSyncPhrase()
+				}
+			}
+			summary = append(summary, encSyncSettingLine(last))
+		}
+	}
 	reply := map[string]any{"posture": rep.Posture, "summary": summary}
 	if actions := recordActions(out); len(actions) > 0 { // only when there is any (the P3-3 plan, 3b)
 		reply["actions"] = actions

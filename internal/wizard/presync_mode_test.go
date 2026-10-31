@@ -341,7 +341,7 @@ func attendedTagProblems(types []reflect.Type) []string {
 // §2.2, C-41/T10 — matched on the mode constant, never a literal): every call of
 // optsForJob passes one of the two mode constants, and RunHeadless passes the
 // scheduled one; the plaintext Run now (RunJobInProcess) passes the attended one
-// from slice AS4, and the encrypted Run now the scheduled one until slice AS8
+// from slice AS4, and the encrypted Run now (RunJobInProcessKeyed) from slice AS8
 // (C-44, C-81); in the wizard only optsForJob sets PresyncAttended or Attended,
 // and only from the mode; presyncjob hands the session the caller's Attended and
 // nothing else; the command line sets neither (until slice AS10); and no non-test
@@ -352,7 +352,7 @@ func TestAttendedSetOnlyThroughTheMode(t *testing.T) {
 		"RunHeadless attended": {"wizard", "package wizard\nfunc RunHeadless(p string) int { optsForJob(j, nil, l, runAttended); return 0 }\n"},
 		"a literal mode":       {"wizard", "package wizard\nfunc RunHeadless(p string) int { optsForJob(j, nil, l, 1); return 0 }\n"},
 		"Run now scheduled":    {"wizard", "package wizard\nfunc RunJobInProcess() { optsForJob(j, nil, l, h, runScheduled) }\n"},
-		"keyed attended early": {"wizard", "package wizard\nfunc RunJobInProcessKeyed() { optsForJob(j, nil, l, h, runAttended) }\n"},
+		"keyed scheduled":      {"wizard", "package wizard\nfunc RunJobInProcessKeyed() { optsForJob(j, nil, l, h, runScheduled) }\n"},
 		"a literal attended":   {"wizard", "package wizard\nfunc optsForJob() { opts.PresyncAttended = true }\n"},
 		"set elsewhere":        {"wizard", "package wizard\nfunc RunJobInProcess() { opts.PresyncAttended = mode == runAttended }\n"},
 		"hook literal":         {"presyncjob", "package presyncjob\nfunc SetHook() { _ = presync.Config{Attended: true} }\n"},
@@ -474,16 +474,16 @@ func modeProblems(fset *token.FileSet, kind string, files []*ast.File) []string 
 								at(x, "RunHeadless does not pass runScheduled")
 							}
 						}
-						// Slice AS4 (C-44): the plaintext Run now is attended; the
-						// encrypted one stays scheduled until slice AS8 (C-81).
+						// Slice AS4 (C-44): the plaintext Run now is attended; from
+						// slice AS8 (C-81) the encrypted one is too.
 						if name == "RunJobInProcess" {
 							if id, ok := last.(*ast.Ident); !ok || id.Name != "runAttended" {
 								at(x, "RunJobInProcess does not pass runAttended")
 							}
 						}
 						if name == "RunJobInProcessKeyed" {
-							if id, ok := last.(*ast.Ident); !ok || id.Name != "runScheduled" {
-								at(x, "RunJobInProcessKeyed is attended before slice AS8")
+							if id, ok := last.(*ast.Ident); !ok || id.Name != "runAttended" {
+								at(x, "RunJobInProcessKeyed does not pass runAttended")
 							}
 						}
 					}

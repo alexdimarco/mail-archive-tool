@@ -83,10 +83,18 @@ if(cy)cy.addEventListener('click',async()=>{
   }catch(e){say('Could not reach MailArchive Desktop — reload the page.');}
   finally{done();}
 });
+// A Lock whose reply carries a note (a Run now it cancelled, or one that goes on; a copy
+// that goes on) keeps the note on screen with a Done button, which reloads: the page
+// never reloads it away by itself (design-presync-attended §9, C-21).
+function noteWithDone(t){
+  say(t);const n=$('encNote');if(!n)return;
+  const b=document.createElement('button');b.type='button';b.className='btn secondary';b.id='encLockDone';b.textContent='Done';
+  b.addEventListener('click',()=>location.reload());n.appendChild(document.createElement('br'));n.appendChild(b);b.focus();
+}
 const lk=$('encLock');
 if(lk)lk.addEventListener('click',async()=>{
   const done=busy(lk,'Locking…','Locking the archive…');
-  try{const d=await send('api/encryption/lock');if(d.ok&&d.note){done(true);say(d.note);setTimeout(()=>location.reload(),6000);return;}if(d.ok){done(true);location.reload();return;}done();say(d.error||'Could not lock.');}
+  try{const d=await send('api/encryption/lock');if(d.ok&&d.note){done(true);noteWithDone(d.note);return;}if(d.ok){done(true);location.reload();return;}done();say(d.error||'Could not lock.');}
   catch(e){done();say('Could not reach MailArchive Desktop — reload the page.');}
 });
 // A key change: sent once, then again with the confirmation the page asked for.

@@ -362,6 +362,7 @@ func (d *dashboard) router() localweb.Router {
 	mux.HandleFunc("/api/job/cancel", d.api(d.cancelJobAction))
 	mux.HandleFunc("/api/job/skip-program", d.api(d.skipProgramAction))
 	mux.HandleFunc("/api/runnow-stopwait", d.api(d.stopWaitAction))
+	mux.HandleFunc("/api/runnow-sync", d.api(d.runNowSyncAction))
 	mux.HandleFunc("/api/browser-link", d.browserLink)
 	if !d.cfg.WorkspaceOff {
 		d.registerWorkspace(mux)
@@ -1042,6 +1043,11 @@ func (cfg Config) overviewFor(csrf, epoch string) string {
 		// starts Thunderbird on this computer (design-presync-attended §4.6, §7, C-83).
 		RunNowTitle     string
 		RunNowFirstSync string
+		// The encrypted Run now's tooltip, and the encrypted Settings box's words
+		// (design-presync-attended §7, §8.1, slice AS8).
+		EncRunNowTitle string
+		EncSyncLabel   string
+		EncSyncLine    string
 		// The job slot's Cancel tooltip (its sync variant comes from /api/activity) and
 		// the "Stop waiting and back up now" button's (OQ-6).
 		CancelTitle   string
@@ -1069,6 +1075,7 @@ func (cfg Config) overviewFor(csrf, epoch string) string {
 		RecentRuns []runRow
 		HistoryMax int
 	}{MoveFirstLine: moveFirstLine, SyncFirstLine: syncFirstLine, AutoPausedSaveLine: autoPausedSaveLine, M365BoxesLine: m365BoxesLine, ArchiveNowUsesLine: archiveNowUsesLine,
+		EncSyncLabel: encSyncLabel, EncSyncLine: encSyncLine,
 		HistoryMax: state.RunHistoryMax, Export: !cfg.WorkspaceOff, Epoch: epoch, CSRF: csrf, Cards: cfg.cards(), Vault: vaultPhrase(), OutDir: cfg.effectiveOut(), ReaderURL: cfg.ReaderURL, SignedIn: signedIn, UPN: upn,
 		KeepRaw: s.KeepRaw, IncludeDeleted: s.IncludeDeleted, IncludeJunk: s.IncludeJunk,
 		Account: cfg.account(), SessionsLine: cfg.sessionsLine(), FormerNotice: cfg.formerNotice(), ResidualOS: residualOS(cfg.goos()),
@@ -1232,6 +1239,7 @@ func (cfg Config) overviewFor(csrf, epoch string) string {
 	}
 	// Rendering never opens anything: a remembered key opens the archive when the
 	// reader or a job needs it (O3), not when the page is drawn.
+	var encLastSync string // the last Run now's sync, while unlocked here (C-27)
 	if data.Encrypted && cfg.Keys != nil && app.UnlockableAt(data.OutDir) {
 		data.ShowEncryption = true
 		data.EncRunNow = schedule.BuildKindEvidence(data.OutDir).Has(schedule.KindRunJob)
@@ -1265,8 +1273,16 @@ func (cfg Config) overviewFor(csrf, epoch string) string {
 			if e.u.NeedsHeal() {
 				data.EncWarnings = append(data.EncWarnings, "One copy of this archive's key file is damaged or missing; a backup into it rewrites it from the good one.")
 			}
+			encLastSync = e.lastSyncPhrase()
 			data.EncWarnings = append(data.EncWarnings, e.u.Warnings()...)
 		}
+	}
+	if data.Encrypted {
+		// The encrypted Settings card: the location, and the sync-only box with its own
+		// Save (design-presync-attended §8.1, slice AS8); Run now's tooltip says a Lock
+		// cancels it until it reads mail (§7, OQ-8).
+		data.Set = encSyncCard(data.OutDir, cfg.goos(), encLastSync)
+		data.EncRunNowTitle = encRunNowTitle(cfg.goos(), runNowJobSyncs(data.OutDir))
 	}
 	if c != nil {
 		data.Configured = strings.TrimSpace(c.Tenant) != ""
@@ -1542,6 +1558,15 @@ pre{white-space:pre-wrap;overflow-wrap:anywhere;background:var(--bg);border:1px 
       {{if .Set.MacNote}}<p class="note" id="schedMacNote">{{.Set.MacNote}}</p>{{end}}{{end}}
       {{if .Set.AutoPaused}}<p class="card-sub" id="settingsAutoPausedSave">{{.AutoPausedSaveLine}}</p>{{end}}
       </div>{{end}}
+      {{if .Set.SyncOnly}}<div id="encSyncBox">
+      <label class="checkline"><input type="checkbox" id="encSyncPresync"{{if .Set.SyncOn}} checked{{end}}> {{.EncSyncLabel}}</label>
+      <p class="card-sub" id="encSyncLine">{{.EncSyncLine}}</p>
+      {{if .Set.SyncReason}}<p class="card-sub warn" id="encSyncReason">{{.Set.SyncReason}}</p>{{end}}
+      {{if .Set.SyncLast}}<p class="card-sub" id="encSyncLast">Last Run now here: {{.Set.SyncLast}}.</p>{{end}}
+      <p class="note" id="encSyncNotice">{{.Set.SyncNotice}}</p>
+      <button class="btn secondary" id="encSyncSave" type="button">Save</button>
+      <div class="note" id="encSyncNote" hidden></div></div>{{end}}
+      {{if .Set.SyncUnreadable}}<p class="card-sub" id="encSyncUnreadable">{{.Set.SyncUnreadable}}</p>{{end}}
       {{if .Set.ReadOnly}}<p class="card-sub" id="settingsSchedReadOnly">{{.Set.ReadOnly}}</p>{{end}}
       {{if .Set.Remedy}}<p class="card-sub" id="settingsSchedRemedy">{{.Set.Remedy}}</p>{{end}}
       {{if .Set.Eml}}<p class="card-sub" id="emlReadOnly">Keep each message's original .eml too: <b>{{.Set.Eml}}</b></p>{{end}}
@@ -1638,7 +1663,7 @@ pre{white-space:pre-wrap;overflow-wrap:anywhere;background:var(--bg);border:1px 
       {{if .ShowInstall}}<p class="card-sub" id="schedNone">{{if .OutDir}}No scheduled backup is set up for this archive yet. A scheduled backup runs a capture automatically, even when this app is closed (as long as you stay signed in to your computer), using your saved Microsoft sign-in.{{else}}Choose an archive location in Settings first; its backup options then show there.{{end}}</p>{{end}}
       {{if .ShowLocalCreate}}<p class="card-sub" id="schedNone">No scheduled backup is set up for this archive yet. A scheduled backup keeps it up to date automatically: it re-reads your Thunderbird mail files and adds anything new. It runs while you are logged in.</p>{{end}}
       {{if and .Set.Sched .OutDir}}<p class="card-sub" id="changeInSettings">{{if .Set.SchedCapture}}How often and time{{else}}How often, time and Thunderbird sync{{end}}: <a href="#sec-settings">Change in Settings</a></p>{{end}}
-      <div style="margin-top:14px">{{if .ShowRepair}}<button class="btn" id="schedRepair" title="Re-point the scheduled backup at this archive and fix a broken or stale schedule entry. Your cadence and any Thunderbird-sync setting are kept; nothing in the archive changes.">Repair</button> <button class="btn" id="runBackupBtn" type="button" title="{{.RunNowTitle}}">Run now</button> {{end}}{{if .ShowCaptureRepair}}<button class="btn" id="schedRepair" title="Put this archive's scheduled capture back as it was set up: its cadence is kept, and a capture still named for the archive's earlier location is moved to this one. Nothing in the archive changes.">Repair</button> {{end}}{{if .ShowBrokenRepair}}<button class="btn" id="schedRepair" title="Make this archive's backup settings file again from the archive's own record. Thunderbird sync is then off.">Repair</button> {{end}}{{if .EncRunNow}}<button class="btn" id="runBackupBtn" type="button" title="Back up this encrypted archive now, while it is unlocked here."{{if not .EncUnlocked}} disabled{{end}}>Run now</button> {{end}}{{if .ShowRemove}}<button class="btn secondary" id="schedRemove" title="Delete this archive's scheduled backup. Your archive and everything in it are kept.">Remove</button>{{end}}</div>
+      <div style="margin-top:14px">{{if .ShowRepair}}<button class="btn" id="schedRepair" title="Re-point the scheduled backup at this archive and fix a broken or stale schedule entry. Your cadence and any Thunderbird-sync setting are kept; nothing in the archive changes.">Repair</button> <button class="btn" id="runBackupBtn" type="button" title="{{.RunNowTitle}}">Run now</button> {{end}}{{if .ShowCaptureRepair}}<button class="btn" id="schedRepair" title="Put this archive's scheduled capture back as it was set up: its cadence is kept, and a capture still named for the archive's earlier location is moved to this one. Nothing in the archive changes.">Repair</button> {{end}}{{if .ShowBrokenRepair}}<button class="btn" id="schedRepair" title="Make this archive's backup settings file again from the archive's own record. Thunderbird sync is then off.">Repair</button> {{end}}{{if .EncRunNow}}<button class="btn" id="runBackupBtn" type="button" title="{{.EncRunNowTitle}}"{{if not .EncUnlocked}} disabled{{end}}>Run now</button> {{end}}{{if .ShowRemove}}<button class="btn secondary" id="schedRemove" title="Delete this archive's scheduled backup. Your archive and everything in it are kept.">Remove</button>{{end}}</div>
       {{if .RunNowFirstSync}}<p class="card-sub" id="runNowFirstSync">{{.RunNowFirstSync}}</p>{{end}}
       <div class="note" id="runBackupNote" hidden></div>
       <div class="note" id="schedState" hidden></div>{{end}}
@@ -2108,6 +2133,17 @@ let runNowID='';
 // "Stop waiting" show beside Run now again (design-presync-attended §4.6, C-22).
 fetch('api/activity').then(r=>r.json()).then(d=>{if(!d.running)return;
   const rb=$('runBackupBtn');if(d.runNow&&rb){rb.disabled=true;pollBackup();}else start();}).catch(()=>{});
+// The encrypted Settings card's sync-only box has its own Save, posting only the box and
+// the archive the page was drawn for to api/runnow-sync (design-presync-attended §8.1,
+// C-26); Save settings never posts it.
+const esb=$('encSyncSave');
+if(esb)esb.addEventListener('click',async()=>{
+  const n=$('encSyncNote'),bx=$('encSyncPresync'),done=busy(esb,'Saving…',n,'Saving…');
+  try{const d=await(await fetch('api/runnow-sync',{method:'POST',headers:{'Content-Type':'application/json','X-CSRF-Token':csrf},body:JSON.stringify({drawnFor:drawnFor,presync:!!(bx&&bx.checked)})})).json();
+    if(n){n.hidden=false;n.textContent=d.ok?(d.note||'Saved.'):(d.error||'Could not save.');}
+  }catch(e){if(n){n.hidden=false;n.textContent='Could not reach MailArchive Desktop — reload the page.';}}
+  finally{done();}
+});
 const swb=$('jobStopWait');
 if(swb)swb.addEventListener('click',async()=>{
   const n=$('runBackupNote'),done=busy(swb,'Stopping the wait…',n,'Stopping the wait…');

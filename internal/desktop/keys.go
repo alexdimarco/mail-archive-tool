@@ -136,6 +136,11 @@ type keyEntry struct {
 	lease    *keyring.Unlocked // the reader's own lease: its lock flag is its own (§3.2)
 	building *keyring.Unlocked // the lease of a reader being made, until it is kept or dropped
 	closed   bool
+
+	// lastSync is the last encrypted Run now's Thunderbird sync phrase while this
+	// entry is open (design-presync-attended §4.7, C-27): memory only, gone with the
+	// entry at any lock. Guarded by lastSyncMu.
+	lastSync string
 }
 
 // buildWait bounds how long Shut down and uninstall wait for a reader being made to

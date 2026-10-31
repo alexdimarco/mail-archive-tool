@@ -489,6 +489,16 @@ var exporterSetup func(*export.Exporter)
 // during them (design-presync-attended MA-902). Nil in production.
 var runPause func(point string)
 
+// OverrideRunPauseForTest sets runPause for a test in another package — the
+// Desktop's Lock during an encrypted Run now's sealed catch-up (design-presync-
+// attended MA-913, C-76) — and returns what restores it. For tests only; production
+// code never sets runPause.
+func OverrideRunPauseForTest(f func(point string)) (restore func()) {
+	old := runPause
+	runPause = f
+	return func() { runPause = old }
+}
+
 // pauseAt calls runPause at point when a test set it.
 func pauseAt(point string) {
 	if runPause != nil {

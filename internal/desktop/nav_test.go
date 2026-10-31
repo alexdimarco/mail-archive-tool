@@ -155,6 +155,9 @@ func TestSidebarNavEveryEntryWorks(t *testing.T) {
 var optionalJSIDs = map[string]bool{"clearSignin": true, "editM365": true, "cancelM365": true, "schedRepair": true, "runBackupBtn": true, "addArchiveBtn": true, "addArchiveNote": true,
 	// the Backup-alerts card's "clear the stored password" checkbox shows only when a password is already stored (MA-699); the JS null-checks it
 	"alertClearPassword": true,
+	// the encrypted Settings card's sync-only box shows only for an encrypted archive whose Run now job can sync
+	// Thunderbird (design-presync-attended §8.1, MA-911); the JS null-checks the button, its note and its box
+	"encSyncSave": true, "encSyncNote": true, "encSyncPresync": true,
 	// the Danger zone's forget-every-encrypted-archive button shows only when this computer recorded one (K8, MA-807); the JS null-checks it
 	"forgetAllBtn": true,
 	// the local-schedule card's pre-sync checkbox shows only for a Thunderbird-sourced local archive on an adapter platform (MA-582/MA-583); schedPost null-checks it (ps?ps.checked)

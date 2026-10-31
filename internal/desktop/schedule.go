@@ -12,7 +12,6 @@ import (
 	"strings"
 
 	"mail-archive-tool/internal/alert"
-	"mail-archive-tool/internal/app"
 	"mail-archive-tool/internal/backupalert"
 	"mail-archive-tool/internal/job"
 	"mail-archive-tool/internal/keyring"
@@ -677,10 +676,12 @@ func (d *dashboard) runBackup(w http.ResponseWriter, r *http.Request) {
 
 // runBackupKeyed is Run now for an encrypted archive (design-encrypted-archives-
 // phase3 §3.2, §3.6, §6; the P3-3 plan, 3d): only while it is unlocked here, on a
-// write lease of its own, taken as Run now is clicked — so a Lock, an idle lock or a
-// switch after it does not stop the run — and destroyed when the run ends, or at
-// once if the run cannot start; healed first, a failed heal only a warning, a fork
-// never healed. Shut down cancels it.
+// write lease of its own, taken as Run now is clicked — so an idle lock or a switch
+// after it does not stop the run — and destroyed when the run ends, or at once if the
+// run cannot start; healed first, a failed heal only a warning, a fork never healed.
+// Shut down cancels it. The person's Lock cancels it until it starts reading mail
+// (phase 3 §3.2's exception, design-presync-attended §3.2, slice AS8, OQ-8): the
+// Lock window opens here, at the lease, for every encrypted Run now (runnow_keyed.go).
 // runLease takes Run now's write lease; a seam, so a test can see it destroyed.
 var runLease = func(e *keyEntry, o keyring.OpenOptions) (*keyring.Unlocked, error) { return e.u.LeaseForWrite(o) }
 
@@ -698,24 +699,15 @@ func (d *dashboard) runBackupKeyed(w http.ResponseWriter, out, jobPath string) {
 		writeJSON(w, map[string]any{"ok": false, "error": err.Error()})
 		return
 	}
+	win := d.cap.openWindow(out, lease)
 	if err := d.runCancellableJobOn(out, func(j keyedJob, logger *log.Logger) (string, error) {
 		defer lease.Destroy()
-		d.cap.markRunNow() // C-15, C-22: a Lock or a switch clears its activity; a reload re-attaches
-		if lease.NeedsHeal() && !lease.Forked() {
-			if herr := keyring.Heal(lease); herr != nil {
-				logger.Printf("warning: one copy of this archive's key file is damaged and could not be rewritten: %v", herr)
-			} else {
-				logger.Printf("The damaged copy of this archive's key file was rewritten from the good one.")
-			}
-		}
-		res, err := withProgramLine(logger, func(logger *log.Logger) (string, error) {
-			return wizard.RunJobInProcessKeyed(j.ctx, jobPath, logger, func(o *app.Options) (func(), error) {
-				o.ProgramSkip, o.OnProgramWait, o.ProgramDownload = j.skip, j.onWait, d.life.Context()
-				return keyring.Apply(o, lease)
-			})
-		})
-		return runNowResultHere(res), err
+		// Every return that never reaches read start closes the window (C-75), so a later
+		// Lock never claims to cancel a run that has ended.
+		defer d.cap.closeWindow(win)
+		return d.runNowKeyed(j, out, jobPath, lease, win, logger)
 	}); err != nil {
+		d.cap.closeWindow(win)
 		lease.Destroy() // the run never started: its key goes now
 		writeJSON(w, map[string]any{"ok": false, "error": err.Error()})
 		return

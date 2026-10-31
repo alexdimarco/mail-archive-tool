@@ -28,6 +28,9 @@ type keyedJob struct {
 	stop   context.Context
 	skip   <-chan struct{}
 	onWait func(waiting bool)
+	// cancel ends ctx with a cause: the encrypted Run now's Lock window uses it
+	// (errLockedDuringSync, design-presync-attended §3.2).
+	cancel context.CancelCauseFunc
 }
 
 // cancelledText is what a backup the person cancelled says (the PG4 pass, CMP-1).
@@ -45,7 +48,7 @@ func (d *dashboard) runCancellableJobOn(out string, fn func(j keyedJob, logger *
 		c.mu.Lock()
 		c.cancel, c.skip, c.skipped = cancel, skip, false
 		c.mu.Unlock()
-		result, err := fn(keyedJob{ctx: ctx, stop: d.life.Context(), skip: skip, onWait: c.setWaiting}, logger)
+		result, err := fn(keyedJob{ctx: ctx, stop: d.life.Context(), skip: skip, onWait: c.setWaiting, cancel: cancel}, logger)
 		if errors.Is(err, context.Canceled) && ctx.Err() != nil && d.life.Context().Err() == nil {
 			// The person's Cancel, not a failure (the PG4 pass, CMP-1).
 			return cancelledText, nil

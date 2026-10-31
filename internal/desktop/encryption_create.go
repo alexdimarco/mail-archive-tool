@@ -172,7 +172,9 @@ func (d *dashboard) commitCreate(w http.ResponseWriter, it *pendingItem) {
 	if rerr := d.runKeyedJobOn(out, func(j keyedJob, logger *log.Logger) (string, error) {
 		defer u.Destroy() // the first backup's key goes when it ends
 		return withProgramLine(logger, func(logger *log.Logger) (string, error) {
-			return wizard.RunJobInProcessKeyed(j.ctx, jobPath, logger, func(o *app.Options) (func(), error) {
+			// Attended, but inert: the first backup's job never carries the sync
+			// (design-presync-attended §2.2).
+			return wizard.RunJobInProcessKeyed(j.ctx, j.stop, jobPath, logger, wizard.RunNow{GOOS: d.cfg.goos()}, func(o *app.Options) (func(), error) {
 				o.ProgramSkip, o.OnProgramWait, o.ProgramDownload = j.skip, j.onWait, d.life.Context()
 				return keyring.Apply(o, u)
 			})

@@ -82,11 +82,12 @@ func (p *PendingAdd) WriteRunJob() (string, error) {
 
 // RunFirstBackup writes the run job (WriteRunJob) and runs the new archive's first
 // backup attended with the key apply hands over, as Run now does
-// (RunJobInProcessKeyed).
+// (RunJobInProcessKeyed). Its job never carries the Thunderbird sync (jobFor), so
+// no sync runs; ctx is also its Stop.
 func (p *PendingAdd) RunFirstBackup(ctx context.Context, logger *log.Logger, apply func(*app.Options) (func(), error)) (string, error) {
 	path, err := p.WriteRunJob()
 	if err != nil {
 		return "", err
 	}
-	return RunJobInProcessKeyed(ctx, path, logger, apply)
+	return RunJobInProcessKeyed(ctx, ctx, path, logger, RunNow{}, apply)
 }
