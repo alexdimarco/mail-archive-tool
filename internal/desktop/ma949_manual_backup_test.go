@@ -13,6 +13,7 @@ import (
 	"mail-archive-tool/internal/assure"
 	"mail-archive-tool/internal/job"
 	"mail-archive-tool/internal/presync"
+	"mail-archive-tool/internal/presyncjob"
 	"mail-archive-tool/internal/schedule"
 	"mail-archive-tool/internal/state"
 	"mail-archive-tool/internal/wizard"
@@ -434,10 +435,14 @@ func TestRunNowOnlyWithItsSettingsFileMissingNamesNoSchedule(t *testing.T) {
 // Where Run now does not start Thunderbird yet, a Run now only backup's end note never names
 // scheduled backups it does not have. Positive twin first: a Daily backup's Run now says
 // scheduled backups still sync Thunderbird first; Run now only says to open Thunderbird first.
+// The Thunderbird session is a scripted fake through presyncjob's seam, so the run reaches the
+// start check on every build (Linux has no pre-sync adapter of its own), and it is never called.
 func TestRunNowOnlysNoteNamesNoSchedule(t *testing.T) {
 	isolateHome(t)
 	restore := presync.OverrideTablesForTest(nil, map[string]bool{"darwin": false})
 	defer restore()
+	tb := newTBScript()
+	t.Cleanup(presyncjob.OverrideSessionForTest(tb.run, filepath.Join(t.TempDir(), "presync")))
 	for _, c := range []struct{ interval, want, not string }{
 		{"daily", startNotAllowedLine, startNotAllowedManualLine},
 		{"manual", startNotAllowedManualLine, "Scheduled backups still sync"},
@@ -453,6 +458,9 @@ func TestRunNowOnlysNoteNamesNoSchedule(t *testing.T) {
 		if !strings.Contains(a, c.want) || strings.Contains(a, c.not) {
 			t.Errorf("%s: Run now's end does not say %q, or says %q: %s", c.interval, c.want, c.not, a)
 		}
+	}
+	if n := tb.calls(); n != 0 {
+		t.Errorf("Thunderbird was started %d times where Run now does not start it", n)
 	}
 }
 
