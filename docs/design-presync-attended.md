@@ -622,6 +622,19 @@ Thunderbird go to the notification area with that option on. The help guide and 
 add what the record found about the keyboard and the Primary Password prompt. The scheduled-run
 install note keeps "if its window appears anyway, it is minimized" (the backstop for a Thunderbird
 that does not honour the start; scheduled runs were not part of run 2).
+*Correction to the amendment above, 2026-10-31, by a review of commit dcd698b (made by Claude, a
+model, for the lead; the amendment is kept as written):* dropping the hedge with nothing in its
+place said more than the record measured. The record says the Primary Password prompt "is shown
+and takes the keyboard", and lists "Thunderbird not the default mail app" as not covered, yet the
+texts said flatly that Thunderbird "does not take the keyboard" and the tooltip and starting note
+said nothing about either window. So the Windows tooltip and starting note now add "A Thunderbird
+window that asks you something, such as for its Primary Password, can still appear and take the
+keyboard." (Thunderbird's own window still stays minimized: no "its window may appear for a
+moment"); the guide, `releaseLineWin`, the release notes and the README say Thunderbird does not
+take the keyboard but a window where it asks something can — the password window does, each time
+Run now starts it — and that a Thunderbird that is not the default mail app "may" ask whether to
+become it. The default-mail-app start stays unmeasured; running it as an MA-918 add-on would let
+that "may" become what was seen. macOS texts are unchanged.
 
 ### 2.8 Closing Thunderbird after an attended run: the button and the never-close rule [OQ-1]
 
@@ -1772,6 +1785,11 @@ macOS's AS-Q. AS-L any time after AS3, or never. AS10 last. The labs run in para
    notes' Windows lines, the README's Run now paragraph, and the Windows Desktop's softer-warning
    clearing sentence — were last reviewed with Windows' start off. **Owed:** a friction pass over
    those Windows-on texts before the release that ships them.
+   *Later on 2026-10-31 (review finding, §2.7's correction):* the Windows tooltip and starting note
+   gained the asking-window sentence, and the guide, `releaseLineWin`, the release notes and the
+   README now say the password window takes the keyboard and that a Thunderbird that is not the
+   default mail app may ask to become it. These are among the texts the owed friction pass covers,
+   together with whether to run the default-mail-app start before 1.5.2.
 4. **Labs, as per-platform switches, not per-platform releases** (one tag builds every platform)
    [C-48, C-49]: the macOS `AttendedStartAllowed` entry after the L-A1/L-A9 record (dev Mac, test
    profile, MA-917) [C-67, C-70]; the Windows `AttendedStartAllowed` entry after MA-918's

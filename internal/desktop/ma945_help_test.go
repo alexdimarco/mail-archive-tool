@@ -303,8 +303,10 @@ const (
 	helpWinNoRunNow = "Run now: on Windows, Run now does not start Thunderbird yet. It backs up the mail already on this computer. To include the newest mail, open Thunderbird, let its mail arrive, then click Run now. Scheduled backups still sync Thunderbird first."
 	// helpWinRunNow is Windows' Run now sentence since its start entry was set true after lab
 	// MA-918 run 2 (docs/lab/presync-attended-start-windows.md): minimized from the first
-	// sample, never took the keyboard; the Primary Password prompt is accepted by the owner.
-	helpWinRunNow = "Run now syncs Thunderbird too, even while you are using the computer. It starts Thunderbird minimized to the taskbar and waits for its mail (up to 20 minutes, often about 13). Thunderbird does not take the keyboard from what you are typing. If it has a Primary Password, its password window still appears and asks for it each time Run now starts Thunderbird. Click Stop waiting and back up now to back up the mail that has arrived so far. Cancel the backup skips the whole backup instead, and nothing is added to the archive. When the backup is done, Thunderbird stays open: quit it from the taskbar or the notification area."
+	// sample, never took the keyboard; the Primary Password prompt is shown and takes the
+	// keyboard (accepted by the owner), so the guide says so; the not-the-default-mail-app
+	// start was not run, so its question is a "may" (review finding, 2026-10-31).
+	helpWinRunNow = "Run now syncs Thunderbird too, even while you are using the computer. It starts Thunderbird minimized to the taskbar and waits for its mail (up to 20 minutes, often about 13). Thunderbird does not take the keyboard from what you are typing, but a window where it asks you something can. If it has a Primary Password, its password window appears, takes the keyboard and asks for it each time Run now starts Thunderbird. If Thunderbird is not your default mail app, it may also ask whether to become it. Click Stop waiting and back up now to back up the mail that has arrived so far. Cancel the backup skips the whole backup instead, and nothing is added to the archive. When the backup is done, Thunderbird stays open: quit it from the taskbar or the notification area."
 	helpEncSync   = "An encrypted archive is backed up only when you click Run now. If it was made from Thunderbird, its Settings card offers Sync Thunderbird before each Run now, with its own Save. Until that backup starts reading mail, Lock cancels it."
 )
 

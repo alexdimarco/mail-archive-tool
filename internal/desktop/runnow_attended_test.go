@@ -439,7 +439,7 @@ func TestRunNowNoteBuiltOnTheServer(t *testing.T) {
 	g.s.release <- struct{}{}
 	g.done()
 	for goos, want := range map[string]string{"darwin": "Starting Thunderbird out of sight…",
-		"windows": "Starting Thunderbird minimized to the taskbar…"} {
+		"windows": "Starting Thunderbird minimized to the taskbar… A Thunderbird window that asks you something, such as for its Primary Password, can still appear and take the keyboard."} {
 		if n := runNowSyncNote(goos, presync.PhaseStarting, time.Now(), time.Now(), false); n != want {
 			t.Errorf("%s starting note %q, want %q", goos, n, want)
 		}
@@ -810,6 +810,21 @@ func TestRunNowTexts(t *testing.T) {
 	if s := runNowTitle("windows", true); strings.Contains(s, "may appear") {
 		t.Errorf("the Windows tooltip says its window may appear: %q", s)
 	}
+	// The same record says a Primary Password prompt is shown and takes the keyboard, and
+	// the not-the-default-mail-app start was not run (review finding, 2026-10-31): Windows'
+	// tooltip and starting note say a window that asks something can still appear and take
+	// the keyboard; no macOS text says it (its own record is a different lab).
+	const askLine = "A Thunderbird window that asks you something, such as for its Primary Password, can still appear and take the keyboard."
+	for _, s := range []string{runNowTitle("windows", true), runNowSyncNote("windows", presync.PhaseStarting, time.Now(), time.Now(), false)} {
+		if !strings.Contains(s, askLine) {
+			t.Errorf("a Windows Run now text does not say a Thunderbird window that asks can still take the keyboard: %q", s)
+		}
+	}
+	for _, x := range all {
+		if x.goos == "darwin" && strings.Contains(x.s, "Primary Password") {
+			t.Errorf("a macOS text names the Primary Password: %q", x.s)
+		}
+	}
 	for _, goos := range []string{"linux", "darwin", "windows"} {
 		if runNowTitle(goos, false) != runNowPlainTitle {
 			t.Errorf("%s, sync off: tooltip %q", goos, runNowTitle(goos, false))
@@ -889,7 +904,7 @@ func TestRunNowReleaseLineFollowsTheTable(t *testing.T) {
 		strings.Contains(releaseLineMac, "Run now now") {
 		t.Fatalf("twin: the AS4 release line: %q", releaseLineMac)
 	}
-	const winLine = "On Windows, Run now syncs Thunderbird first too, in the same way: it starts Thunderbird minimized to the taskbar, where it does not take the keyboard from what you are typing, waits for its mail, and leaves it open for you to quit from the taskbar or the notification area. If Thunderbird has a Primary Password, its password window still appears and asks for it each time Run now starts Thunderbird."
+	const winLine = "On Windows, Run now syncs Thunderbird first too, in the same way: it starts Thunderbird minimized to the taskbar, where it does not take the keyboard from what you are typing, waits for its mail, and leaves it open for you to quit from the taskbar or the notification area. A window where Thunderbird asks you something can still appear and take the keyboard: if Thunderbird has a Primary Password, its password window does so each time Run now starts Thunderbird, and if it is not your default mail app, it may ask whether to become it."
 	if releaseLineWin != winLine {
 		t.Fatalf("twin: the Windows release line:\n  %q\nwant\n  %q", releaseLineWin, winLine)
 	}
@@ -922,8 +937,9 @@ func TestRunNowReleaseLineFollowsTheTable(t *testing.T) {
 		"Thunderbird stays open for you to quit from the Dock (macOS) or from the taskbar or the\n" +
 		"notification area (Windows). **Cancel the backup** stops the whole backup while it waits; nothing\n" +
 		"is added to the archive. On Windows, Thunderbird does not take the keyboard from what you are\n" +
-		"typing; if it has a Primary Password, its password window still appears and asks for it each\n" +
-		"time Run now starts Thunderbird.\n"
+		"typing, but a window where it asks you something can: if it has a Primary Password, its\n" +
+		"password window appears, takes the keyboard and asks for it each time Run now starts\n" +
+		"Thunderbird, and if it is not your default mail app, it may ask whether to become it.\n"
 	if got := strings.Contains(string(readme), readmeRunNow); got != presync.AttendedStartAllowed("windows") {
 		t.Errorf("the README's Run now paragraph names Windows: %v; Windows' start entry: %v", got, presync.AttendedStartAllowed("windows"))
 	}
@@ -960,7 +976,7 @@ func TestRunNowShippedTexts(t *testing.T) {
 	if !strings.HasPrefix(runNowFirstSyncLine("darwin"), "New: Run now starts Thunderbird out of sight") {
 		t.Errorf("a Mac's first-sync line: %q", runNowFirstSyncLine("darwin"))
 	}
-	const win = "Run this archive's backup now. Because Thunderbird sync is on, it first starts Thunderbird minimized to the taskbar — even while you are using the computer — and waits for its mail to arrive (up to 20 minutes, often about 13), then leaves it open for you to quit from the taskbar or the notification area. A Thunderbird that is already open is left alone. You can cancel while it waits; that skips the backup."
+	const win = "Run this archive's backup now. Because Thunderbird sync is on, it first starts Thunderbird minimized to the taskbar — even while you are using the computer — and waits for its mail to arrive (up to 20 minutes, often about 13), then leaves it open for you to quit from the taskbar or the notification area. A Thunderbird window that asks you something, such as for its Primary Password, can still appear and take the keyboard. A Thunderbird that is already open is left alone. You can cancel while it waits; that skips the backup."
 	if !presync.AttendedStartAllowed("windows") || !runNowSyncs("windows") {
 		t.Fatal("Windows' start entry, as shipped, is not on")
 	}

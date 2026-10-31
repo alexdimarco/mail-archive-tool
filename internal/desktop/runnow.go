@@ -70,7 +70,8 @@ const runNowStartOffTitle = "Run this archive's backup now. On this computer Run
 // Thunderbird is left open for the person to quit; the close variants arrive with
 // slice AS-Q. The Windows text no longer says "its window may appear for a moment":
 // lab MA-918 run 2 (docs/lab/presync-attended-start-windows.md) saw the start
-// minimized from the first sample in every case, never shown.
+// minimized from the first sample in every case, never shown. It says winAskLine instead:
+// a window that asks something (a Primary Password) can still appear and take the keyboard.
 func runNowTitle(goos string, syncOn bool) string {
 	switch {
 	case !syncOn || (goos != "darwin" && goos != "windows"):
@@ -78,7 +79,7 @@ func runNowTitle(goos string, syncOn bool) string {
 	case !presync.AttendedStartAllowed(goos):
 		return runNowStartOffTitle
 	case goos == "windows":
-		return "Run this archive's backup now. Because Thunderbird sync is on, it first starts Thunderbird minimized to the taskbar — even while you are using the computer — and waits for its mail to arrive (" + syncWaitWords + "), then leaves it open for you to quit from the taskbar or the notification area. A Thunderbird that is already open is left alone. You can cancel while it waits; that skips the backup."
+		return "Run this archive's backup now. Because Thunderbird sync is on, it first starts Thunderbird minimized to the taskbar — even while you are using the computer — and waits for its mail to arrive (" + syncWaitWords + "), then leaves it open for you to quit from the taskbar or the notification area. " + winAskLine + " A Thunderbird that is already open is left alone. You can cancel while it waits; that skips the backup."
 	}
 	return "Run this archive's backup now. Because Thunderbird sync is on, it first starts Thunderbird out of sight — even while you are using the computer — and waits for its mail to arrive (" + syncWaitWords + "), then leaves it open for you to quit from the Dock. A Thunderbird that is already open is left alone. You can cancel while it waits; that skips the backup."
 }
@@ -122,7 +123,11 @@ func runNowSyncNote(goos, phase string, since, now time.Time, waitStopped bool) 
 	switch phase {
 	case presync.PhaseStarting:
 		// Windows: no "its window may appear for a moment" since lab MA-918 run 2 saw the
-		// start minimized from the first sample, never shown.
+		// start minimized from the first sample, never shown; a window that asks something
+		// can still appear and take the keyboard (winAskLine).
+		if goos == "windows" {
+			return "Starting Thunderbird " + w.hidden + "… " + winAskLine
+		}
 		return "Starting Thunderbird " + w.hidden + "…"
 	case presync.PhaseWaiting:
 		n := int(now.Sub(since) / time.Minute)
@@ -467,4 +472,13 @@ const releaseLineMac = "On a Mac, Run now syncs Thunderbird first when the archi
 // menu, with someone typing and after the foreground lock expired; a Primary Password
 // prompt is shown and takes the keyboard (owner ruling 2026-10-31: "accept the password
 // window"). MA-915 fails while the release notes and the Windows entry disagree.
-const releaseLineWin = "On Windows, Run now syncs Thunderbird first too, in the same way: it starts Thunderbird minimized to the taskbar, where it does not take the keyboard from what you are typing, waits for its mail, and leaves it open for you to quit from the taskbar or the notification area. If Thunderbird has a Primary Password, its password window still appears and asks for it each time Run now starts Thunderbird."
+// Corrected 2026-10-31 (review finding): it says the password window takes the keyboard,
+// as the record measured, and only "may" for the default-mail-app question, a start the
+// record lists as not covered.
+const releaseLineWin = "On Windows, Run now syncs Thunderbird first too, in the same way: it starts Thunderbird minimized to the taskbar, where it does not take the keyboard from what you are typing, waits for its mail, and leaves it open for you to quit from the taskbar or the notification area. A window where Thunderbird asks you something can still appear and take the keyboard: if Thunderbird has a Primary Password, its password window does so each time Run now starts Thunderbird, and if it is not your default mail app, it may ask whether to become it."
+
+// winAskLine is said beside Windows' Run now start, in its tooltip and its starting note:
+// lab MA-918 run 2 saw Thunderbird's own window minimized from the first sample, but a
+// Primary Password prompt is shown and takes the keyboard (L-A10 pp1), and the
+// not-the-default-mail-app start was not run (the record's "Not covered").
+const winAskLine = "A Thunderbird window that asks you something, such as for its Primary Password, can still appear and take the keyboard."

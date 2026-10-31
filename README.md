@@ -206,8 +206,9 @@ about 13). **Stop waiting and back up now** ends the wait early. When the backup
 Thunderbird stays open for you to quit from the Dock (macOS) or from the taskbar or the
 notification area (Windows). **Cancel the backup** stops the whole backup while it waits; nothing
 is added to the archive. On Windows, Thunderbird does not take the keyboard from what you are
-typing; if it has a Primary Password, its password window still appears and asks for it each
-time Run now starts Thunderbird.
+typing, but a window where it asks you something can: if it has a Primary Password, its
+password window appears, takes the keyboard and asks for it each time Run now starts
+Thunderbird, and if it is not your default mail app, it may ask whether to become it.
 
 **When the sync keeps missing.** If Thunderbird could not be synced before an archive's scheduled
 backups for 3 days, `status` and MailArchive Desktop's Status & health say so and what to do.

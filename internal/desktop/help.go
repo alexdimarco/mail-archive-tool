@@ -88,8 +88,10 @@ func helpDataFor(goos string, open bool) helpData {
 		// Started minimized and not activated (MA-923; lab L-A10 saw no window on screen).
 		d.SchedStart = "Thunderbird starts minimized to the taskbar."
 		// Lab MA-918 run 2: never took the keyboard; the Primary Password prompt does, and
-		// the owner accepted it (2026-10-31).
-		d.RunNowMore = " Thunderbird does not take the keyboard from what you are typing. If it has a Primary Password, its password window still appears and asks for it each time Run now starts Thunderbird."
+		// the owner accepted it (2026-10-31). Corrected 2026-10-31 (review finding): the
+		// guide says the password window takes the keyboard, and "may" for the
+		// default-mail-app question, a start the record lists as not covered.
+		d.RunNowMore = " Thunderbird does not take the keyboard from what you are typing, but a window where it asks you something can. If it has a Primary Password, its password window appears, takes the keyboard and asks for it each time Run now starts Thunderbird. If Thunderbird is not your default mail app, it may also ask whether to become it."
 		d.Reload, d.Missed = "press F5", helpMissedOnWake
 		// The installer's Start menu shortcut (Product.wxs); mailarchivew.exe opened with no
 		// console starts the Desktop (noarg W3).
