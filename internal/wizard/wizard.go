@@ -397,8 +397,17 @@ func reportRun(key, name, out, result string, runErr error, messages int, logger
 // success never notifies. It names the archive by its folder, not the schedule's
 // hashed name, and points at MailArchive Desktop (the wording pass before 1.5.2).
 func notifyFailure(out string) {
-	_ = notify(failureNotice(out), zenity.Title(appTitle))
+	sendNotice(noticeTitle, failureNotice(out))
 }
+
+// noticeTitle is the title of a scheduled backup's notices. It is not appTitle: nobody
+// opened the wizard when a backup runs by itself (the adversarial review of ruling B,
+// 2026-10-31; MA-952 amended).
+const noticeTitle = "MailArchive backup"
+
+// sendNotice raises one best-effort desktop notice with this title, through notify. A
+// test replaces it to read the title, which a zenity.Option does not show.
+var sendNotice = func(title, text string) { _ = notify(text, zenity.Title(title)) }
 
 // failureNotice is notifyFailure's words.
 func failureNotice(out string) string {
@@ -408,7 +417,7 @@ func failureNotice(out string) string {
 // notifyRecovered raises the best-effort desktop notice that a scheduled backup that had been
 // failing works again: the one notice that ends a failing streak (R3C-12).
 func notifyRecovered(out string) {
-	_ = notify(recoveredNotice(out), zenity.Title(appTitle))
+	sendNotice(noticeTitle, recoveredNotice(out))
 }
 
 // recoveredNotice is notifyRecovered's words.
