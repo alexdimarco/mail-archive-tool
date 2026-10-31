@@ -222,9 +222,10 @@ func TestACancelledScheduledRunEndsTheProfileBusyRun(t *testing.T) {
 // session ends owner-active or quit-* after a no-change verdict (and those still reset
 // the missed streak, as synced); an attended no-change session never moves it; a
 // session with no verdict (a skip, a cancel, a stopped wait, and already-running from a
-// Run now or a manual run) leaves it; a verdict that mail arrived resets it, from a Run
-// now as from a scheduled run; a scheduled run that found Thunderbird already open
-// resets it too (§5.2, amended 2026-10-31) and stays synced for the missed streak. The
+// manual run) leaves it; a verdict that mail arrived resets it, from a Run now as from
+// a scheduled run; a scheduled run that found Thunderbird already open resets it too
+// (§5.2, amended 2026-10-31) and stays synced for the missed streak, and so does an
+// attended Run now that found it open (owner ruling 3 of 2026-10-31). The
 // verdict is never written to the record or the history (only the outcome's name is).
 func TestTheNoChangeCountReadsTheVerdict(t *testing.T) {
 	out, in := tmpDir(t), completeMaildir(t)
@@ -254,10 +255,9 @@ func TestTheNoChangeCountReadsTheVerdict(t *testing.T) {
 	syncRun(t, out, in, kindRunNow, true, outcome("ok-noactivity", true, "ok-noactivity"))
 	noChange("an attended no-change session", 3)
 
-	// already-running from a Run now or a manual run is not a scheduled run: it leaves the
-	// count (only the scheduled case is amended, §5.2 of 2026-10-31).
-	syncRun(t, out, in, kindRunNow, true, outcome("already-running", true, ""))
-	noChange("an attended run that found Thunderbird already open", 3)
+	// already-running from a manual run is neither scheduled nor attended: it leaves the
+	// count (only the scheduled and the attended Run now cases are amended, §5.2 of
+	// 2026-10-31; the Run now case is below).
 	syncRun(t, out, in, kindManual, true, outcome("already-running", true, ""))
 	noChange("a manual run that found Thunderbird already open", 3)
 
@@ -304,6 +304,23 @@ func TestTheNoChangeCountReadsTheVerdict(t *testing.T) {
 		t.Errorf("the already-open reset kept the no-change run: %+v", s)
 	} else if s.Missed != 0 || s.LastSynced.IsZero() {
 		t.Errorf("a scheduled already-running is synced for the missed streak (Q1), as before: %+v", s)
+	}
+
+	// An attended Run now that found the person's own Thunderbird already open resets it
+	// too, as a scheduled one does (owner ruling 3 of 2026-10-31, §5.2): following the
+	// warning's advice — open Thunderbird, then click Run now — clears it. It stays
+	// synced for the missed streak (Q1).
+	for d := 0; d < 3; d++ {
+		syncRun(t, out, in, kindScheduled, true, outcome("ok-noactivity", true, "ok-noactivity"))
+	}
+	noChange("three scheduled no-change sessions", 3)
+	syncRun(t, out, in, kindScheduled, true, outcome("owner-active-skipped", false, ""))
+	syncRun(t, out, in, kindRunNow, true, outcome("already-running", true, ""))
+	noChange("an attended Run now that found Thunderbird already open", 0)
+	if s, _ := streakOnDisk(t, out); !s.FirstNoChange.IsZero() || !s.LastNoChange.IsZero() || s.NothingArrived() {
+		t.Errorf("the attended already-open reset kept the no-change run: %+v", s)
+	} else if s.Missed != 0 || s.LastSynced.IsZero() {
+		t.Errorf("an attended already-running is synced for the missed streak (Q1): %+v", s)
 	}
 
 	// The verdict is never written beside the archive but in the streak's count.
@@ -373,25 +390,25 @@ func TestTheSyncStreakIsPlaintextOnly(t *testing.T) {
 // however long ago, are not — the fold never compares with now.
 func TestTheSyncFoldUsesTheRunsTime(t *testing.T) {
 	t0 := time.Date(2025, 3, 1, 2, 0, 0, 0, time.UTC) // long ago
-	s, moved := foldSyncStreak(state.SyncStreak{}, *outcome("owner-active-skipped", false, ""), true, t0)
-	s, _ = foldSyncStreak(s, *outcome("owner-active-skipped", false, ""), true, t0.Add(time.Hour))
+	s, moved := foldSyncStreak(state.SyncStreak{}, *outcome("owner-active-skipped", false, ""), true, false, t0)
+	s, _ = foldSyncStreak(s, *outcome("owner-active-skipped", false, ""), true, false, t0.Add(time.Hour))
 	if !moved || s.Stale() || s.Missed != 2 {
 		t.Fatalf("two misses an hour apart, long ago: %+v stale %v", s, s.Stale())
 	}
-	s, _ = foldSyncStreak(s, *outcome("owner-active-skipped", false, ""), true, t0.Add(3*24*time.Hour))
+	s, _ = foldSyncStreak(s, *outcome("owner-active-skipped", false, ""), true, false, t0.Add(3*24*time.Hour))
 	if !s.Stale() || !s.LastMissed.Equal(t0.Add(3*24*time.Hour)) {
 		t.Errorf("misses 3 days apart: %+v stale %v", s, s.Stale())
 	}
-	n, _ := foldSyncStreak(state.SyncStreak{}, *outcome("ok-noactivity", true, "ok-noactivity"), true, t0)
-	n, _ = foldSyncStreak(n, *outcome("ok-noactivity", true, "ok-noactivity"), true, t0.Add(time.Hour))
+	n, _ := foldSyncStreak(state.SyncStreak{}, *outcome("ok-noactivity", true, "ok-noactivity"), true, false, t0)
+	n, _ = foldSyncStreak(n, *outcome("ok-noactivity", true, "ok-noactivity"), true, false, t0.Add(time.Hour))
 	if n.NothingArrived() {
 		t.Error("two no-change sessions an hour apart, long ago, read as 3 days")
 	}
-	n, _ = foldSyncStreak(n, *outcome("ok-noactivity", true, "ok-noactivity"), true, t0.Add(3*24*time.Hour))
+	n, _ = foldSyncStreak(n, *outcome("ok-noactivity", true, "ok-noactivity"), true, false, t0.Add(3*24*time.Hour))
 	if !n.NothingArrived() {
 		t.Errorf("no-change sessions 3 days apart: %+v", n)
 	}
-	if _, moved := foldSyncStreak(state.SyncStreak{}, *outcome("owner-active-skipped", false, ""), false, t0); moved {
+	if _, moved := foldSyncStreak(state.SyncStreak{}, *outcome("owner-active-skipped", false, ""), false, false, t0); moved {
 		t.Error("a miss that is not a scheduled sync job's moved the streak")
 	}
 }

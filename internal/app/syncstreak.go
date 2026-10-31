@@ -31,8 +31,9 @@ var (
 //     cancelled run, a stopped wait and no session at all move nothing (C-72, OQ-6).
 //   - The no-change count reads the session's Verdict (OQ-5): a scheduled no-change
 //     verdict extends it whatever the outcome became; a verdict that mail arrived resets
-//     it from any run; an attended no-change verdict never moves it; a scheduled run that
-//     found Thunderbird already open resets it (§5.2, amended 2026-10-31).
+//     it from any run; an attended no-change verdict never moves it; a scheduled run or an
+//     attended Run now that found Thunderbird already open resets it (§5.2, amended
+//     2026-10-31; the Run now part is owner ruling 3 of that date).
 func updateSyncStreak(opts Options, out *PresyncOutcome, encrypted bool, now time.Time, logger *log.Logger) {
 	if opts.Key != nil || encrypted || ArchiveEncrypted(opts.Out) {
 		_ = removeSyncStreak(opts.Out) // nothing about the sync beside an encrypted archive (§4.4)
@@ -53,7 +54,7 @@ func updateSyncStreak(opts Options, out *PresyncOutcome, encrypted bool, now tim
 	if err != nil {
 		return // an unreadable record is left as it is, never reset
 	}
-	next, moved := foldSyncStreak(prev, *out, extend, now)
+	next, moved := foldSyncStreak(prev, *out, extend, opts.PresyncAttended, now)
 	if !moved {
 		return
 	}
@@ -66,8 +67,8 @@ func updateSyncStreak(opts Options, out *PresyncOutcome, encrypted bool, now tim
 
 // foldSyncStreak is updateSyncStreak's pure part: the streak after one session, and
 // whether anything moved (§5.2's table). extend is "a scheduled run whose job asks for
-// the sync".
-func foldSyncStreak(s state.SyncStreak, o PresyncOutcome, extend bool, now time.Time) (state.SyncStreak, bool) {
+// the sync"; attended is an attended Run now (opts.PresyncAttended).
+func foldSyncStreak(s state.SyncStreak, o PresyncOutcome, extend, attended bool, now time.Time) (state.SyncStreak, bool) {
 	moved := false
 	switch o.Name {
 	case presync.OutcomeCancelled.Name, presync.OutcomeWaitEnded.Name, presync.OutcomeStateUnreadable.Name, "":
@@ -99,9 +100,11 @@ func foldSyncStreak(s state.SyncStreak, o PresyncOutcome, extend bool, now time.
 	}
 	// A scheduled run that found the person's own Thunderbird already open has no verdict,
 	// but any password or sign-in window is in front of them, which is what the softer
-	// warning asks for: the no-change run ends (§5.2, amended 2026-10-31). It stays synced
-	// for the missed streak (Q1), above.
-	if extend && o.Name == presync.OutcomeAlreadyRunning.Name {
+	// warning asks for: the no-change run ends (§5.2, amended 2026-10-31). So does an
+	// attended Run now that found it open (owner ruling 3 of 2026-10-31): the warning's
+	// advice, open Thunderbird and then click Run now, clears it. It stays synced for the
+	// missed streak (Q1), above.
+	if (extend || attended) && o.Name == presync.OutcomeAlreadyRunning.Name {
 		s, moved = s.MailArrived(), true
 	}
 	return s, moved
