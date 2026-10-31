@@ -213,7 +213,8 @@ func (e *winEnv) foregroundIsOurs(pid uint32) bool {
 // and returns errQuitNotPosted (C-60), so the session ends at once as
 // presync_quit_no_window (left-running, announced) — no exit-grace wait, no text
 // saying it was asked to close, never a forced close. PostMessageW returns at
-// once, so ctx bounds nothing here. The `target` is the proven child (its pid);
+// once, so ctx bounds no wait here; but a ctx that has ended by the last check
+// posts nothing (§2.6, as1a-4). The `target` is the proven child (its pid);
 // macOS ignores the argument and quits by bundle id.
 func (e *winEnv) quit(ctx context.Context, target proc) error {
 	pid := uint32(target.pid)
@@ -240,6 +241,12 @@ func (e *winEnv) quit(ctx context.Context, target proc) error {
 	// Last-instant re-verify immediately before the post.
 	if !e.w.handleAlive(h) || e.w.windowPID(hwnd) != pid {
 		return errQuitNotPosted // the process died, or the HWND no longer belongs to our pid
+	}
+	// No quit request is started once the quit's context has ended (§2.6, as1a-4): the
+	// watchdog gave up, or a Stop came, while the checks above ran. Checked last, so a
+	// context that ended at any point before here posts nothing.
+	if ctx.Err() != nil {
+		return errQuitNotPosted
 	}
 	// Residual (adversarial finding F2, the Windows analogue of macOS PC1): the held
 	// handle pins the pid, not the HWND; an HWND destroyed and its value recycled to

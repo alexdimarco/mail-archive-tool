@@ -42,6 +42,9 @@ type fakeWin32 struct {
 	// Thunderbird shows it again); otherwise a minimize marks the window iconic in
 	// iconicOf (when non-nil), as Windows does.
 	noTake bool
+	// onMainWindow, when set, runs inside mainWindow: a test ends the quit's context
+	// there, between the identity re-checks and the post (as1a-4).
+	onMainWindow func()
 }
 
 func (f fakeWin32) thunderbirdProcs() []winProc       { return f.procs }
@@ -56,6 +59,9 @@ func (f fakeWin32) handleAlive(uintptr) bool          { return f.handleLive }
 func (f fakeWin32) releaseHandle(uintptr)             {}
 func (f fakeWin32) windowPID(hwnd uintptr) uint32     { return f.winPIDof[hwnd] }
 func (f fakeWin32) mainWindow(pid uint32) (uintptr, bool) {
+	if f.onMainWindow != nil {
+		f.onMainWindow()
+	}
 	w := f.mainOf[pid]
 	return w, w != 0
 }

@@ -133,35 +133,48 @@ func TestWinQuitOrchestration(t *testing.T) {
 // that reaches its handle, creation-time and window checks after that must still
 // post nothing and say nothing was asked (errQuitNotPosted). Positive twin first: a
 // live context posts once. Confirmed failing on the Windows 11 lab VM 2026-10-31
-// (posted [0x100], returned nil); encoded as an open gap until the owner rules.
+// (posted [0x100], returned nil). Fixed 2026-10-31 under owner ruling 1 (the pin
+// may follow the code until the first MA-918 record): the skip is removed, so this
+// is a permanent guard. Two cases: the context already ended when quit starts, and
+// the context ending during the checks (inside the window lookup), which the
+// last-instant check right before the post catches.
 func TestWinQuitPostsNothingOnceItsContextEnded(t *testing.T) {
-	t.Skip("open (owner decision, as1a-4): the fix is a context check inside winEnv.quit, which the MA-927 code pin covers; its hash may change only together with a new MA-918 lab record (docs/lab/presync-windows-code-pin.txt, C-66), and none exists yet. Remove this skip in the commit that lands the fix.")
 	const pid = 4242
 	const hwnd = uintptr(0x100)
 	start := time.Date(2026, 10, 22, 2, 0, 0, 0, time.UTC)
 	child := proc{pid: pid, start: start}
-	run := func(ctx context.Context) ([]uintptr, error) {
+	run := func(ctx context.Context, during func()) ([]uintptr, error) {
 		var posted []uintptr
 		e := &winEnv{w: fakeWin32{
 			handleOK: true, handleLive: true, creation: start.UnixNano(),
 			mainOf: map[uint32]uintptr{pid: hwnd}, winPIDof: map[uintptr]uint32{hwnd: pid},
-			posted: &posted,
+			posted: &posted, onMainWindow: during,
 		}}
 		err := e.quit(ctx, child)
 		return posted, err
 	}
-	if posted, err := run(context.Background()); len(posted) != 1 || err != nil {
+	if posted, err := run(context.Background(), nil); len(posted) != 1 || err != nil {
 		t.Fatalf("twin: a live context posted %v (err %v), want one WM_CLOSE", posted, err)
 	}
 
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()
-	posted, err := run(ctx)
+	posted, err := run(ctx, nil)
 	if len(posted) != 0 {
 		t.Errorf("posted %v after the quit context ended, want nothing (§2.6)", posted)
 	}
 	if !errors.Is(err, errQuitNotPosted) {
 		t.Errorf("quit returned %v after its context ended, want errQuitNotPosted", err)
+	}
+
+	ctx, cancel = context.WithCancel(context.Background())
+	defer cancel()
+	posted, err = run(ctx, cancel) // the watchdog gives up while quit checks the window
+	if len(posted) != 0 {
+		t.Errorf("posted %v after the quit context ended during its checks, want nothing (§2.6)", posted)
+	}
+	if !errors.Is(err, errQuitNotPosted) {
+		t.Errorf("quit returned %v after its context ended during its checks, want errQuitNotPosted", err)
 	}
 }
 

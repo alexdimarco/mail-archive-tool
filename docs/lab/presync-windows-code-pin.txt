@@ -34,6 +34,8 @@
 # alone. TestWindowsCodePin refuses "no lab record" once that record exists.
 #
 # Re-pins under "no lab record": 2026-10-31, gate-2 pass 1, fix group "windows"
-# (cb37a15: as4win-2..6 changed the minimize; as4win-4 widened what is hashed).
-hash: a6b391eac34015ddad57ef76742acebb70f9e924897555b5a285f43ed7648ce0
+# (cb37a15: as4win-2..6 changed the minimize; as4win-4 widened what is hashed);
+# 2026-10-31, owner ruling 1, the as1a-4 fix (winEnv.quit posts nothing once its
+# context has ended; MA-921).
+hash: 92a98b8c88e92dc61e8c1cc7ff003df777419ab2c28e090e099908bde7994b52
 record: no lab record
