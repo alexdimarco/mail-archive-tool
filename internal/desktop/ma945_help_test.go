@@ -236,7 +236,10 @@ var helpSentences = []string{
 	// Make a new archive… (MA-953, the owner's ruling C of 2026-10-31): the page's own button,
 	// the wizard's add flow in process; the new archive is listed, not made current.
 	"Thunderbird, Outlook or other mail files on this computer: click Make a new archive… on this page, and the MailArchive wizard's windows open on your computer. Choose your mail, then a new folder for the archive.",
-	"When the wizard is done, this page lists the new archive under Your archives: click Switch to this archive to use it. You can also open the wizard yourself.",
+	// Amended 2026-10-31 (the 1.5.2 friction review, findings 2 and 4): after the wizard a
+	// fresh page offers the new archive at the top (the wizard notes it as last used), and
+	// the wizard's own way is for when the button does not open it.
+	"When the wizard is done, this page offers the new archive at the top: click Use this archive. If the button does not open the wizard, open it yourself.",
 	"Your archives: shown when MailArchive Desktop knows more than one archive, or one that is not the current archive.",
 	"Add another archive: Make a new archive… opens the wizard's windows to make another archive, for example from another Thunderbird profile or an Outlook .pst file. Your current archive is not changed: the new one is listed under Your archives. Open an archive folder… opens one you already have.",
 	"An archive you already have (from another computer, a drive or a backup copy): click Open an archive folder… and choose its folder.",
@@ -340,12 +343,15 @@ var helpGone = []string{
 	// The lab of 2026-10-31 settled Thunderbird's default; the wizard's offer makes sure of it.
 	"Yes, prepare turns this setting on for you",
 	"check that the box is ticked",
+	// The 1.5.2 friction review, finding 2: a fresh page offers Use this archive at the top.
+	"click Switch to this archive to use it",
+	"Then come back to this page and reload it",
 }
 
 var helpPlatforms = []helpPlatform{
 	{goos: "darwin", want: append([]string{
 		helpMacWizard,
-		"Then come back to this page and reload it (press Command-R).",
+		"When the wizard is done, reload this page (press Command-R).",
 		"Run now starts a backup now (with the Thunderbird sync on, it first waits for Thunderbird's mail; see Thunderbird below), Repair fixes",
 		"Your archives and scheduled backups are not affected. To come back, open Mail Archive.app and choose Microsoft 365, folder export, browsing & tools (open MailArchive Desktop).",
 		"Thunderbird installed in the Applications folder, or in the Applications folder inside your home folder. The Thunderbird sync looks for it only there.",
@@ -356,7 +362,7 @@ var helpPlatforms = []helpPlatform{
 	}, helpSyncSentences...), not: []string{"does not start Thunderbird yet", "taskbar", "MailArchive does not sync Thunderbird", "off or asleep is skipped", "press F5"}},
 	{goos: "windows", want: append([]string{
 		helpWinWizard,
-		"Then come back to this page and reload it (press F5).",
+		"When the wizard is done, reload this page (press F5).",
 		"Run now starts a backup now (with the Thunderbird sync on, it first waits for Thunderbird's mail; see Thunderbird below), Repair fixes",
 		"Your archives and scheduled backups are not affected. To come back, open MailArchive Desktop from the Start menu, or, if MailArchive was unzipped, double-click mailarchivew.exe in its folder.",
 		`Thunderbird installed in its usual place: a Mozilla Thunderbird folder in Program Files (or Program Files (x86)), or in AppData\Local\Programs in your user folder. The Thunderbird sync looks for it only there.`,
@@ -366,7 +372,7 @@ var helpPlatforms = []helpPlatform{
 	}, helpSyncSentences...), not: []string{"notification area", "minimized to the taskbar", "shows for a moment", "may appear for a moment", "does not start Thunderbird yet", "out of sight", "the Dock", "System Settings", "MailArchive does not sync Thunderbird", "off or asleep is skipped", "Command-R"}},
 	{goos: "linux", want: []string{
 		helpLinWizard,
-		"Then come back to this page and reload it (press F5).",
+		"When the wizard is done, reload this page (press F5).",
 		"Run now starts a backup now, Repair fixes",
 		"MailArchive only reads your mail: it never sends, moves, changes or deletes it. The one exception is the wizard's offer to turn on Thunderbird's offline download (see Thunderbird below).",
 		// Linux schedules with cron, which skips a time the computer slept through.
@@ -412,8 +418,18 @@ func TestHowToUseMailArchiveSaysWhatThisVersionDoes(t *testing.T) {
 		how := map[string]string{"darwin": helpMacWizard, "windows": helpWinWizard, "linux": helpLinWizard}[p.goos]
 		// Amended 2026-10-31 (MA-953, the owner's ruling C): the card's own Make a new
 		// archive… button comes first; the wizard's own way, in the guide's words, stays.
-		if want := "To make a new one from Thunderbird, Outlook or other mail files on this computer, click Make a new archive… above: the MailArchive wizard's windows open on your computer. When the wizard is done, this page lists the new archive under Your archives: click Switch to this archive to use it. You can also open the wizard yourself. " + how + " Then open its folder here."; !strings.Contains(h.outside, want) {
+		// Amended again 2026-10-31 (the 1.5.2 friction review, findings 2 and 4): the card names
+		// the button the person sees after the wizard, Use this archive at the top, and the
+		// wizard's own way moves to the guide right below the card, where it is pinned whole
+		// for this platform; the card carries no way to open the wizard by hand at all.
+		if want := "To make a new one from Thunderbird, Outlook or other mail files on this computer, click Make a new archive… above: the MailArchive wizard's windows open on your computer. When the wizard is done, this page offers the new archive at the top: click Use this archive. To back up a Microsoft 365 mailbox,"; !strings.Contains(h.outside, want) {
 			t.Errorf("%s: the no-archive card does not say %q:\n%s", p.goos, want, h.outside)
+		}
+		if strings.Contains(h.outside, how) {
+			t.Errorf("%s: the no-archive card still gives the wizard's own way %q; it belongs in the guide", p.goos, how)
+		}
+		if want := "If the button does not open the wizard, open it yourself. " + how + " When the wizard is done, reload this page"; !strings.Contains(h.text, want) {
+			t.Errorf("%s: the guide does not say %q", p.goos, want)
 		}
 		if strings.Contains(h.outside, "use the MailArchive wizard (mailarchive wizard)") {
 			t.Errorf("%s: the no-archive card still names the wizard by its command", p.goos)

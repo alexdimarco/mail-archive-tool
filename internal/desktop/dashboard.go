@@ -685,7 +685,11 @@ func (cfg Config) cards() []card {
 	out = append(out, conn)
 
 	// The tile is named as its card is, "Scheduled backup" (X11, OR-3): it may be hourly, daily
-	// or weekly.
+	// or weekly. With no archive chosen there is nothing to schedule yet, so it is no warning
+	// (the 1.5.2 friction review's finding 3, MA-272 amended), as the Microsoft 365 tile.
+	if cfg.effectiveOut() == "" {
+		return append(out, card{"Scheduled backup", "Not set up yet: choose an archive first", ""})
+	}
 	sc := card{"Scheduled backup", "Not installed", "warn"}
 	if archiveKind(cfg.effectiveOut()) == kindEncrypted {
 		// Status asks no schedule of an encrypted archive; this card says the same (X10).
@@ -700,7 +704,7 @@ func (cfg Config) cards() []card {
 			// "Only when I click Run now" (MA-949): the person's choice, never a missing schedule.
 			sc = card{"Scheduled backup", manualTileValue, ""}
 		case st == schedule.SchedulerUnavailable:
-			sc = card{"Scheduled backup", "Scheduler unavailable", "warn"}
+			sc = card{"Scheduled backup", "Couldn't check: the computer's scheduler didn't answer", "warn"}
 		}
 	}
 	return append(out, sc)
@@ -1113,9 +1117,6 @@ func (cfg Config) overviewFor(csrf, epoch string) string {
 		// right below the "No archive chosen yet" card, with Getting started open, while
 		// no archive is chosen; near the end of the page after that.
 		Help template.HTML
-		// WizardHow is how to open the wizard on this platform, in the guide's words, for
-		// the "No archive chosen yet" card (friction review M3).
-		WizardHow string
 	}{MoveFirstLine: moveFirstLine, SyncFirstLine: syncFirstLine, AutoPausedSaveLine: autoPausedSaveLine, M365BoxesLine: m365BoxesLine, ArchiveNowUsesLine: archiveNowUsesLine,
 		EncSyncLabel: encSyncLabel, EncSyncLine: encSyncLine,
 		HistoryMax: state.RunHistoryMax, Export: !cfg.WorkspaceOff, Epoch: epoch, CSRF: csrf, Cards: cfg.cards(), Vault: vaultPhrase(), OutDir: cfg.effectiveOut(), ReaderURL: cfg.ReaderURL, SignedIn: signedIn, UPN: upn,
@@ -1127,7 +1128,6 @@ func (cfg Config) overviewFor(csrf, epoch string) string {
 	data.KindLine = kindLine(archiveKind(data.OutDir))
 	data.IsM365 = archiveKind(data.OutDir) == kindM365
 	data.Help = helpCard(cfg.goos(), data.OutDir == "", archiveKind(data.OutDir) != kindEncrypted)
-	data.WizardHow = helpDataFor(cfg.goos(), false).WizardHow
 	data.ArchiveExample = app.ArchiveExampleFor(cfg.goos())
 	data.CancelTitle, data.StopWaitTitle = jobCancelTitle, stopWaitTitle
 	data.RunNowTitle = runNowPlainTitle
@@ -1150,13 +1150,15 @@ func (cfg Config) overviewFor(csrf, epoch string) string {
 	// owner something beyond the current archive — more than one known archive, or a
 	// lone one that is not the current archive. The informational shell (no IndexPath)
 	// reconciles nothing, so the card never appears there; a refused index fails closed
-	// to no card. CanAddArchive is set whenever at least one archive is known, so the
-	// separate "Add another archive" card (#sec-add-archive) stays reachable even when
-	// the list is hidden for a lone current archive (MA-696).
+	// to no card. CanAddArchive is set when an archive is current and at least one is
+	// known, so the separate "Add another archive" card (#sec-add-archive) stays
+	// reachable even when the list is hidden for a lone current archive (MA-696). With
+	// none current, the "No archive chosen yet" card already offers its three buttons,
+	// so the second card would only repeat them (the 1.5.2 friction review, finding 5).
 	if idx, rerr := cfg.reconcileArchives(time.Now()); rerr == nil {
 		data.Archives = cfg.archiveRows(idx)
 		data.ShowArchives = len(data.Archives) >= 2 || (len(data.Archives) == 1 && !data.Archives[0].Current)
-		data.CanAddArchive = len(data.Archives) >= 1
+		data.CanAddArchive = data.OutDir != "" && len(data.Archives) >= 1
 	}
 	// The Scheduled backup card and the Settings card (§4.6.3/MA-617, Q18(b);
 	// design-desktop-settings-card 3.2, 3.3, section 5; slices A3, A5): both follow the
@@ -1543,9 +1545,9 @@ pre{white-space:pre-wrap;overflow-wrap:anywhere;background:var(--bg);border:1px 
       <button class="btn secondary" type="button" data-make-archive title="Make a new archive from Thunderbird, Outlook or other mail files on this computer. The MailArchive wizard's windows open on your computer and ask what to back up and where.">Make a new archive…</button>
       <button class="btn secondary" type="button" data-create-encrypted title="Make a new archive whose messages open only with its password or recovery key. The wizard's windows ask what to back up and where; the password is typed here.">Make a new encrypted archive…</button></p>
       <div class="note" data-make-archive-note hidden></div>
-      {{if .Offer}}<p>The MailArchive wizard (mailarchive wizard) last used <span class="mono">{{.Offer}}</span>. Use this archive?</p>{{end}}
+      {{if .Offer}}<p>The MailArchive wizard last made or used <span class="mono">{{.Offer}}</span>. Use this archive?</p>{{end}}
       <button class="btn" id="useOffer" type="button" data-path="{{.Offer}}"{{if not .Offer}} hidden{{end}} title="Open this archive in MailArchive Desktop — read it, check its health, and keep it backed up.">Use this archive</button>{{if .Offer}} <span class="card-sub">Nothing changes until you click it.</span>{{end}}
-      <p class="steps">{{if .Offer}}To pick a different folder, click <b>Open an archive folder…</b> above, or type its folder in <b>Settings → Archive location</b> below (the folder that holds the .mailarchive-manifest.json file) and click <b>Save settings</b>.{{else}}MailArchive Desktop has no archive yet. To use one you already have, click <b>Open an archive folder…</b> above. To make a new one from Thunderbird, Outlook or other mail files on this computer, click <b>Make a new archive…</b> above: the MailArchive wizard's windows open on your computer. When the wizard is done, this page lists the new archive under <b>Your archives</b>: click <b>Switch to this archive</b> to use it. You can also open the wizard yourself. {{.WizardHow}} Then open its folder here. To back up a Microsoft 365 mailbox, fill in the <b>Microsoft 365 connection</b> card below, type a new folder in <b>Settings → Archive location</b>, click <b>Save settings</b>, then click <b>Archive now</b>.{{end}}</p>
+      <p class="steps">{{if .Offer}}To pick a different folder, click <b>Open an archive folder…</b> above, or type its folder in <b>Settings → Archive location</b> below (the folder that holds the .mailarchive-manifest.json file) and click <b>Save settings</b>.{{else}}MailArchive Desktop has no archive yet. To use one you already have, click <b>Open an archive folder…</b> above. To make a new one from Thunderbird, Outlook or other mail files on this computer, click <b>Make a new archive…</b> above: the MailArchive wizard's windows open on your computer. When the wizard is done, this page offers the new archive at the top: click <b>Use this archive</b>. To back up a Microsoft 365 mailbox, fill in the <b>Microsoft 365 connection</b> card below, type a new folder in <b>Settings → Archive location</b>, click <b>Save settings</b>, then click <b>Archive now</b>.{{end}}</p>
     </div>
     {{.Help}}{{end}}
 
@@ -1939,7 +1941,7 @@ if(sd)sd.addEventListener('click',async()=>{
 // page reloads to show it. Each button's note is the one in its own card.
 document.querySelectorAll('[data-make-archive]').forEach(b=>b.addEventListener('click',async()=>{
   const card=b.closest('.card'),n=card?card.querySelector('[data-make-archive-note]'):null;
-  const done=busy(b,'Waiting for the wizard…',n,'Opening the MailArchive wizard on your computer — follow its steps to make the archive, then this page refreshes.');
+  const done=busy(b,'Waiting for the wizard…',n,'The MailArchive wizard is opening on your computer. Its windows may be behind this browser window: if they are not in view, move or minimize this window. Follow its steps to make the archive; this page then refreshes.');
   try{const d=await(await post('api/add-archive')).json();
     if(d.ok){done(true);if(n){n.textContent=d.message||'Archive added.';}location.reload();return;}
     done();if(n){n.hidden=false;n.textContent=d.canceled?(d.message||'No archive was added.'):(d.error||'Could not add an archive.');}

@@ -131,7 +131,7 @@ function startKey(d){
 // password is typed here and the recovery key shown and typed back before anything
 // is written.
 document.querySelectorAll('[data-create-encrypted]').forEach(b=>b.addEventListener('click',async()=>{
-  const done=busy(b,'Waiting for the wizard…','Answer the questions in the windows that open on your computer…');
+  const done=busy(b,'Waiting for the wizard…','Answer the questions in the windows that open on your computer. They may be behind this browser window: if they are not in view, move or minimize this window.');
   let d;
   try{d=await send('api/encryption/create',{});}catch(e){d={ok:false,error:'Could not reach MailArchive Desktop — reload the page.'};}
   done();

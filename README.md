@@ -261,10 +261,12 @@ What it gives you, beyond reading and searching the archive:
   scheduled backup, and a switch that would affect one asks first),
   **Switch** between them, and **Pause (make read-only)** / **Resume** an archive
   (nothing is deleted either way). **Make a new archive…** (on the **Add another
-  archive** card, and on the first card of a MailArchive Desktop with no archive yet)
-  opens the wizard's windows to make a new one without disturbing the current; the
-  new archive is then listed, and **Switch to this archive** makes it the one the
-  page shows. *(You can also add one any time by
+  archive** card once an archive is in use, and on the first card of a MailArchive
+  Desktop with no archive yet) opens the wizard's windows to make a new one without
+  disturbing the current; the new archive is then listed, and **Switch to this
+  archive** makes it the one the page shows. On a Desktop with no archive yet, the
+  page offers the new archive at the top instead: click **Use this archive**.
+  *(You can also add one any time by
   running `mailarchive wizard` again and choosing a new output folder — it joins
   the list.)*
 - **Run now** — run the backup straight away instead of waiting for the schedule.
