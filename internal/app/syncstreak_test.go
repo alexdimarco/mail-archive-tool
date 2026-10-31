@@ -172,6 +172,50 @@ func TestTheSyncStreakFollowsTheRules(t *testing.T) {
 	syncRun(t, out, in, kindScheduled, false, nil)
 }
 
+// covers: MA-908, R32, S65
+// The profile-busy count is "in a row": any other scheduled outcome resets it (C-86d), a
+// cancelled scheduled session too (gate-2 adversarial pass after AS5), though a cancel
+// moves neither the missed streak nor the no-change count (C-72). Positive twin first:
+// three scheduled profile-busy in a row count one miss. Then busy, busy, a cancelled
+// scheduled run, busy is not three in a row: no miss, busy 1. A cancelled Run now is not
+// a scheduled outcome, so it leaves the count.
+func TestACancelledScheduledRunEndsTheProfileBusyRun(t *testing.T) {
+	out, in := tmpDir(t), completeMaildir(t)
+	busy := func() { t.Helper(); syncRun(t, out, in, kindScheduled, true, outcome("profile-busy", false, "")) }
+	cancelled := func(kind runKind) {
+		t.Helper()
+		ctx, cancel := context.WithCancel(context.Background())
+		defer cancel()
+		_, err := Run(ctx, scriptedSync(kind.opts(out, in, true), PresyncOutcome{Name: "cancelled", Left: "none"}, "", cancel), discard(), nil)
+		if !errors.Is(err, context.Canceled) {
+			t.Fatalf("the cancelled run: %v", err)
+		}
+	}
+	want := func(label string, missed, busyN int) {
+		t.Helper()
+		if s, _ := streakOnDisk(t, out); s.Missed != missed || s.Busy != busyN {
+			t.Fatalf("%s: missed %d busy %d, want missed %d busy %d (%+v)", label, s.Missed, s.Busy, missed, busyN, s)
+		}
+	}
+	busy()
+	busy()
+	busy()
+	want("positive twin: three profile-busy in a row", 1, 0)
+
+	busy()
+	busy()
+	want("two profile-busy", 1, 2)
+	cancelled(kindScheduled)
+	want("a cancelled scheduled run after two profile-busy", 1, 0)
+	busy()
+	want("busy, busy, cancelled, busy", 1, 1)
+
+	busy()
+	want("two profile-busy again", 1, 2)
+	cancelled(kindRunNow)
+	want("a cancelled Run now (attended, not scheduled)", 1, 2)
+}
+
 // covers: MA-926, R32, S65
 // The no-change count reads the session's Verdict (owner ruling OQ-5, §5.2; C-68):
 // positive twin first, a scheduled no-change session starts it; it extends also when the

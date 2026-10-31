@@ -68,7 +68,12 @@ func foldSyncStreak(s state.SyncStreak, o PresyncOutcome, extend bool, now time.
 	moved := false
 	switch o.Name {
 	case presync.OutcomeCancelled.Name, presync.OutcomeWaitEnded.Name, presync.OutcomeStateUnreadable.Name, "":
-		// neither (C-72, OQ-6, C-45): nothing is known about whether Thunderbird could sync
+		// neither (C-72, OQ-6, C-45): nothing is known about whether Thunderbird could sync.
+		// But a scheduled one is "any other scheduled outcome", so it ends a run of
+		// profile-busy results (C-86d): three counts one miss only when they are in a row.
+		if extend && s.Busy > 0 {
+			s.Busy, moved = 0, true
+		}
 	case presync.OutcomeProfileBusy.Name:
 		if extend {
 			s, moved = s.ProfileBusy(o.Name, now), true
