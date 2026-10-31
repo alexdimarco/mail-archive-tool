@@ -1944,7 +1944,7 @@ document.querySelectorAll('[data-make-archive]').forEach(b=>b.addEventListener('
   const done=busy(b,'Waiting for the wizard…',n,'The MailArchive wizard is opening on your computer. Its windows may be behind this browser window: if they are not in view, move or minimize this window. Follow its steps to make the archive; this page then refreshes.');
   try{const d=await(await post('api/add-archive')).json();
     if(d.ok){done(true);if(n){n.textContent=d.message||'Archive added.';}location.reload();return;}
-    done();if(n){n.hidden=false;n.textContent=d.canceled?(d.message||'No archive was added.'):(d.error||'Could not add an archive.');}
+    done();if(n){n.hidden=false;n.textContent=d.message||d.error||'Could not add an archive.';}
   }catch(e){done();if(n){n.hidden=false;n.textContent='Error: '+e;}}
 }));
 

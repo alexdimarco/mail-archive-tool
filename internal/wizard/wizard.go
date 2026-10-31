@@ -474,6 +474,7 @@ func logSummary(logger *log.Logger, r app.Result) {
 
 // wizardChoice is what the wizard learned; the schedule step repeats it.
 type wizardChoice struct {
+	finished      func() // AddArchive's hook: called once the export has finished (MA-954)
 	programCopies string // a new encrypted archive's choice, "on" or "off" (job.Job.ProgramCopies)
 	inputs        []string
 	auto          bool // "all of them" from auto-detect: re-discover at run time
@@ -495,6 +496,13 @@ type wizardChoice struct {
 	// live-path (Graph) source, which the GUI does not offer yet (T7, §3.6).
 	includeDeleted bool
 	includeJunk    bool
+}
+
+// markFinished tells the add flow's hook, if any, that the export has finished (MA-954).
+func (c wizardChoice) markFinished() {
+	if c.finished != nil {
+		c.finished()
+	}
 }
 
 // surfaceOpensDesktop reports whether the first step's pick opens MailArchive
@@ -544,15 +552,43 @@ func wizard() error {
 // imports wizard; MA-612 — never a child), so a running Desktop can create a new
 // local archive through the same native-dialog flow the double-click wizard uses.
 // It returns the new archive's output folder, or "" when the user backed out of a
-// dialog (zenity.ErrCanceled) — a cancel is "nothing added", not an error.
+// dialog (zenity.ErrCanceled) before choosing one — a cancel is "nothing added", not an
+// error. A folder whose copy did not finish comes back with ErrStoppedEarly (MA-954).
 func AddArchive() (string, error) {
 	if refusal, ok := dialogPreflight(runtime.GOOS, dialogToolOnPath(), displayIsSet()); !ok {
 		return "", errors.New(refusal)
 	}
 	var out string
-	err := localArchiveFlow(func(o string) { out = o })
-	if errors.Is(err, zenity.ErrCanceled) {
+	finished := false
+	err := localArchiveFlowHooks(func(o string) { out = o }, func() { finished = true }, nil, nil)
+	return addOutcome(out, finished, err)
+}
+
+// ErrStoppedEarly is AddArchive's answer when a folder was chosen but the copy into it
+// did not finish (Cancel on the progress window, or on the Outlook app's "Continue?"):
+// the folder may hold the mail copied so far, and running the wizard again with the
+// same mail and folder finishes it (MA-954).
+var ErrStoppedEarly = errors.New("the copy was stopped before it finished")
+
+// addOutcome is what AddArchive returns, from the folder the flow chose ("" when none),
+// whether the copy into it finished, and the flow's error (MA-954). A person who backs
+// out before choosing a folder adds nothing. Once the copy finished, closing a later
+// window (the summary or the schedule question) is not a failure. A chosen folder whose
+// copy did not finish is ErrStoppedEarly, never a plain success. Pure, so the mapping is
+// testable without a display.
+func addOutcome(out string, finished bool, err error) (string, error) {
+	cancelled := errors.Is(err, zenity.ErrCanceled)
+	switch {
+	case out == "" && cancelled:
 		return "", nil
+	case out == "":
+		return "", err
+	case finished && cancelled:
+		return out, nil
+	case finished:
+		return out, err
+	case err == nil || cancelled:
+		return out, ErrStoppedEarly
 	}
 	return out, err
 }
@@ -571,6 +607,13 @@ func localArchiveFlow(chosen func(out string)) error { return localArchiveFlowWi
 // keyed, when set, receives the answers in place of the plaintext export, which never
 // runs — the caller makes the key and runs the first backup with it.
 func localArchiveFlowWith(chosen func(out string), check func(out string) error, keyed func(wizardChoice)) error {
+	return localArchiveFlowHooks(chosen, nil, check, keyed)
+}
+
+// localArchiveFlowHooks is localArchiveFlowWith with one more hook: finished, when set,
+// is called once the export into the chosen folder has finished (MA-954), so AddArchive
+// can tell a finished copy from one stopped part way.
+func localArchiveFlowHooks(chosen func(out string), finished func(), check func(out string) error, keyed func(wizardChoice)) error {
 	// 3. Choose the source type, then pick the file/folder accordingly.
 	choices := []string{srcAuto, srcOutlook}
 	if runtime.GOOS == "windows" {
@@ -785,6 +828,7 @@ func localArchiveFlowWith(chosen func(out string), check func(out string) error,
 	if chosen != nil {
 		chosen(choice.out)
 	}
+	choice.finished = finished
 	return runExport(choice)
 }
 
@@ -1662,6 +1706,7 @@ func runExport(c wizardChoice) error {
 		return errors.New(msg)
 	}
 	rememberArchive(c.out)
+	c.markFinished()
 	// The Outlook-app path wrote scratch PSTs under <out>/_outlook-pst; the
 	// export that read them succeeded, so reclaim that space.
 	if c.outlookCOM {

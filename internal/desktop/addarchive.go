@@ -1,6 +1,7 @@
 package desktop
 
 import (
+	"errors"
 	"net/http"
 	"strings"
 	"time"
@@ -38,6 +39,21 @@ func (d *dashboard) addArchive(w http.ResponseWriter, r *http.Request) {
 	defer d.addBusy.Store(false)
 
 	out, err := addArchiveFn()
+	if errors.Is(err, wizard.ErrStoppedEarly) && strings.TrimSpace(out) != "" {
+		// The copy was stopped part way (MA-954): list the mail copied so far, but never
+		// as a finished archive, and say how to finish it. A folder the copy never
+		// reached holds no archive and is not added.
+		if validArchiveFolder(out) == "" {
+			writeJSON(w, map[string]any{"ok": false, "canceled": true, "message": "The wizard was stopped before it copied any mail. No archive was added."})
+			return
+		}
+		msg := "The wizard was stopped before it finished copying your mail. The archive keeps the mail copied so far and is listed under Your archives once you reload this page. To finish it, click Make a new archive… again and choose the same mail and the same folder."
+		if rerr := d.cfg.registerArchive(out, d.now()); rerr != nil {
+			msg = "The wizard was stopped before it finished copying your mail. The archive keeps the mail copied so far in " + out + ", but it could not be added to the list. To finish it, click Make a new archive… again and choose the same mail and the same folder."
+		}
+		writeJSON(w, map[string]any{"ok": false, "stopped": true, "path": out, "message": msg})
+		return
+	}
 	if err != nil {
 		writeJSON(w, map[string]any{"ok": false, "error": "Could not add an archive: " + err.Error()})
 		return
