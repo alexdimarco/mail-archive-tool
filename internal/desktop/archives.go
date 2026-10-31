@@ -1,14 +1,17 @@
 package desktop
 
 import (
+	"encoding/json"
 	"path/filepath"
 	"strings"
 	"time"
 
 	"mail-archive-tool/internal/archindex"
 	"mail-archive-tool/internal/encmark"
+	"mail-archive-tool/internal/schedule"
 	"mail-archive-tool/internal/seal"
 	"mail-archive-tool/internal/state"
+	"mail-archive-tool/internal/util"
 )
 
 // This file wires the folder-only archive index (internal/archindex, the
@@ -34,6 +37,10 @@ type ArchiveRow struct {
 	// local mail folder) has been unreachable past the surface threshold (§5.7, S3-C6); ""
 	// when the source is reachable or the streak has not crossed the threshold.
 	SourceLostSince string
+	// RunNowOnly is set beside SourceLostSince when the archive's record says its backup runs
+	// only when Run now is clicked (MA-949): nothing resumes by itself, so the banner says to
+	// click Run now once the source is back.
+	RunNowOnly bool
 	// Problem is, for a folder this computer recorded as an encrypted archive that no
 	// longer holds it — emptied, replanted, a link, its key files gone — that case's
 	// own words (design-encrypted-archives-phase3 §4.5): shown in place of Switch and
@@ -125,13 +132,15 @@ func (cfg Config) archiveRows(idx archindex.Index) []ArchiveRow {
 		if kind == archindex.KindEncrypted {
 			problem = recordedProblem(e.Path)
 		}
+		lostSince := sourceLostSince(e.Path)
 		rows = append(rows, ArchiveRow{
 			Path:            e.Path,
 			Current:         current != "" && cleanPath(e.Path) == current,
 			Available:       avail && problem == "",
 			Sealed:          seal.IsSealed(e.Path),
 			Kind:            kind,
-			SourceLostSince: sourceLostSince(e.Path),
+			SourceLostSince: lostSince,
+			RunNowOnly:      lostSince != "" && runNowOnlyRecorded(e.Path),
 			Problem:         problem,
 		})
 	}
@@ -153,6 +162,19 @@ func recordedProblem(path string) string {
 		return ""
 	}
 	return res.Why
+}
+
+// runNowOnlyRecorded reports whether the archive's schedule record says its backup runs only when
+// Run now is clicked (MA-949). It only picks the source-lost banner's words, so the record is read
+// as the source streak is — bounded, a regular file only, never through a link or a pipe — and
+// anything it cannot read counts as a scheduled backup.
+func runNowOnlyRecorded(out string) bool {
+	data, err := util.ReadSecureFile(filepath.Join(out, schedule.DescriptorName), "schedule record", 64<<10)
+	if err != nil {
+		return false
+	}
+	var d schedule.Descriptor
+	return json.Unmarshal(data, &d) == nil && d.IsManual()
 }
 
 // sourceLostSince returns a "since DATE" string when the archive's SOURCE has been unreachable

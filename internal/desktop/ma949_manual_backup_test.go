@@ -10,6 +10,7 @@ import (
 	"testing"
 	"time"
 
+	"mail-archive-tool/internal/archindex"
 	"mail-archive-tool/internal/assure"
 	"mail-archive-tool/internal/job"
 	"mail-archive-tool/internal/presync"
@@ -491,6 +492,78 @@ func TestRemoveRemovesTheRunNowOnlyBackup(t *testing.T) {
 	}
 	if p := g.page(); !strings.Contains(p, `<option value="" selected>No scheduled backup</option>`) || strings.Contains(p, `id="runBackupBtn"`) {
 		t.Error("after Remove, Settings does not start from No scheduled backup, or Run now is still shown")
+	}
+}
+
+// covers: MA-949, R14
+// Remove's busy words name "the backup", not "the scheduled backup", where the backup runs only
+// when Run now is clicked (the manual-only review's leftover, applied by the lead 2026-10-31).
+// Positive twin first: a Daily backup's Remove keeps "Removing the scheduled backup…" (the
+// script's own words, with no data-busy on its button).
+func TestRemovesBusyWordsNameNoScheduleForRunNowOnly(t *testing.T) {
+	isolateHome(t)
+	const removeBtn = `id="schedRemove"`
+	const busyAttr = `data-busy="Removing the backup…"`
+	if !strings.Contains(dashboardJS, `busy(sr,'Removing…',$('schedState'),sr.dataset.busy||'Removing the scheduled backup…'),'Removed.')`) {
+		t.Error("the page script does not take Remove's busy words from its button, with the scheduled words as the default")
+	}
+	g := newA3Rig(t, tbProfileArchive(t), "darwin")
+	if r := g.manualReply(`{"interval":"daily","time":"04:00"}`); r["ok"] != true {
+		t.Fatalf("daily: %v", r)
+	}
+	if p := g.page(); !strings.Contains(p, removeBtn) || strings.Contains(p, "data-busy=") {
+		t.Fatal("the positive twin: a Daily backup's Remove is not shown, or carries busy words of its own")
+	}
+	if r := g.manualReply(`{"interval":"manual","time":"04:00"}`); r["ok"] != true {
+		t.Fatalf("Run now only: %v", r)
+	}
+	if p := g.page(); !strings.Contains(p, removeBtn+` `+busyAttr) {
+		t.Errorf("a Run now only backup's Remove does not say %q while it works", "Removing the backup…")
+	}
+}
+
+// covers: MA-949, MA-692
+// The source-lost banner on Your archives says what to do for an archive backed up only when
+// Run now is clicked: nothing resumes by itself, so it says to click Run now once the source is
+// back (the manual-only review's leftover, applied by the lead 2026-10-31). Positive twin first:
+// a scheduled archive's banner keeps "to resume backups". The record is read with the bounded,
+// link-refusing read the source streak uses.
+func TestSourceLostBannerSaysRunNowForRunNowOnly(t *testing.T) {
+	lost := func(interval string) string {
+		dir := t.TempDir()
+		writeManifest(t, dir)
+		if err := state.WriteSourceStreak(dir, state.SourceStreak{
+			ConsecutiveFails: 2,
+			FirstUnreachable: time.Date(2026, 10, 12, 3, 0, 0, 0, time.UTC),
+			LastUnreachable:  time.Date(2026, 10, 12, 3, 0, 0, 0, time.UTC).Add(state.SurfaceAfter),
+		}); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(filepath.Join(dir, schedule.DescriptorName), []byte(`{"interval":"`+interval+`"}`), 0o600); err != nil {
+			t.Fatal(err)
+		}
+		return dir
+	}
+	const scheduledWords = "— reconnect the source (its mailbox or mail folder) to resume backups."
+	const runNowWords = "— reconnect the source (its mailbox or mail folder), then click Run now on its Scheduled backup card: its backup runs only when you click Run now."
+	for _, c := range []struct {
+		interval, want, not string
+	}{
+		{"daily", scheduledWords, runNowWords}, // the positive twin
+		{"manual", runNowWords, scheduledWords},
+	} {
+		dir := lost(c.interval)
+		idxPath := filepath.Join(t.TempDir(), archindex.Name)
+		if err := archindex.WriteFile(idxPath, archindex.Index{Version: archindex.Version, Entries: []archindex.Entry{{Path: dir}}}); err != nil {
+			t.Fatal(err)
+		}
+		page, _ := getPage(t, DashboardHandler(Config{SettingsPath: filepath.Join(t.TempDir(), "s.json"), IndexPath: idxPath, GOOS: "darwin"}))
+		if !strings.Contains(page, "hasn't been reachable since") {
+			t.Fatalf("%s: no source-lost banner", c.interval)
+		}
+		if !strings.Contains(page, c.want) || strings.Contains(page, c.not) {
+			t.Errorf("%s: the banner does not say %q", c.interval, c.want)
+		}
 	}
 }
 
