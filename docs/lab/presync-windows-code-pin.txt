@@ -15,7 +15,7 @@
 # Changing any of them turns TestWindowsCodePin red until the hash below is
 # changed to match.
 #
-# Before the first MA-918 record exists ("record: no lab record" below):
+# Before the first Windows lab record exists ("record: no lab record" below):
 #   OPERATOR-ACCEPTED 2026-10-31 by the owner, Alex DiMarco, in chat; the owner's
 #   reply, verbatim: "1 - yes. 2. test 3 -  tes 4 - yes 5 - yes with note" (the
 #   "1 - yes" answers this rule). The pin MAY follow code changes: the hash is
@@ -25,13 +25,21 @@
 #   (Commit cb37a15 re-pinned under this rule before it was accepted; that re-pin
 #   is covered by this acceptance.)
 #
-# Once the first MA-918 record exists (docs/lab/presync-attended-start-windows.md,
-# the Windows start entry's own record), the pin is strict again: the record line
-# below must name that file, which must name MA-918 and windows and carry the
-# pinned hash, and a date: line (YYYY-MM-DD) gives the record's date, which the
-# record must carry. Any change to the pinned code then needs a new MA-918 lab
-# record, added IN THE SAME COMMIT as the new hash; the hash is never changed
-# alone. TestWindowsCodePin refuses "no lab record" once that record exists.
+# "The first Windows lab record" is either Windows entry's own record:
+# docs/lab/presync-attended-start-windows.md (the start entry's, lab MA-918) or
+# docs/lab/presync-attended-close-windows.md (the quit entry's, lab L-A5), since
+# this pin covers the close code too. TestWindowsCodePin refuses "no lab record"
+# once EITHER file exists (2026-10-31, review finding gate-1: the first wording
+# said only the MA-918 record, narrower than the question the owner answered).
+#
+# Once the first Windows lab record exists, the pin is strict again: the record
+# line below must name docs/lab/presync-attended-start-windows.md, which must name
+# MA-918 and windows and carry the pinned hash, and a date: line (YYYY-MM-DD) gives
+# the record's date, which the record must carry. Any change to the pinned code
+# then needs a new MA-918 lab record, added IN THE SAME COMMIT as the new hash; the
+# hash is never changed alone. (A Windows close record committed before the start
+# record leaves TestWindowsCodePin red until the start record is added: the design
+# runs L-A5 inside MA-918's later AS-Q scope, so that order is not expected.)
 #
 # Re-pins under "no lab record": 2026-10-31, gate-2 pass 1, fix group "windows"
 # (cb37a15: as4win-2..6 changed the minimize; as4win-4 widened what is hashed);

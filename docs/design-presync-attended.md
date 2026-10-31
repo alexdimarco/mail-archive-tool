@@ -539,6 +539,14 @@ attended ships only after MA-918 passes" would also hold the macOS fix. So:
   must stay false; MA-927 checks both entries, and refuses "no lab record" once
   `docs/lab/presync-attended-start-windows.md` exists. The pin file and MA-927 carry the owner's
   words.
+- **Amended 2026-10-31 (review finding gate-1; the check tightened, nothing loosened).** The owner
+  was asked about "the first Windows lab record", and the pin covers the close code too, so "no lab
+  record" holds only until **either** Windows record exists: the start entry's
+  (`docs/lab/presync-attended-start-windows.md`, MA-918) or the quit entry's
+  (`docs/lab/presync-attended-close-windows.md`, L-A5). MA-927 refuses "no lab record" beside either.
+  The amendment above named only the first; that was narrower than the question answered. A close
+  record committed before the start record leaves MA-927 red until the start record is added (L-A5
+  runs inside MA-918's later AS-Q scope, so that order is not expected).
 
 **Wording names the taskbar [OQ-2, C-24, C-61].** Every Windows text says "minimized to the taskbar"
 where macOS says "out of sight", and "quit it from the taskbar or the notification area" where macOS

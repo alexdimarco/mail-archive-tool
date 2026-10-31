@@ -636,3 +636,14 @@ Not answered by these rulings, still held: **logic-3** (how an index-only sessio
 no-change count) and **effects-7** (the no-change text's "either … or" naming two causes). Ruling 3's
 reset and ruling 4's sentence narrow what they cost a person with a quiet mailbox, but neither was
 asked about directly.
+
+### Review of the answers' commits, 2026-10-31
+
+Added 2026-10-31; nothing above is changed (corrections sit here, beside the rows they correct).
+Independent reviewer agents (model-run; **not the owner**) read the commits that built the answers
+above (`05221db`, `555f0c7`, `9c42765`, `75f2322`, `c13eaaf`). A model-run workflow step checked
+each finding against the code and fixed or held it.
+
+| Id | Severity | Finding | Verdict | Commit |
+|---|---|---|---|---|
+| gate-1 | medium | the "no lab record" period ended only when the Windows **start** record (MA-918) appears, but question 1 said "the first Windows lab record"; a Windows **close** record (L-A5) arriving first left the pin free to follow code it measured | **Fixed.** MA-927 refuses "no lab record" once either Windows record exists; the pin file, MA-927 and design §2.7 now say "the first Windows lab record" and name both files. This corrects answer 1's "refuses 'no lab record' once an MA-918 record exists" above: it is now "once any Windows lab record exists" (stricter) | see the commit log |
