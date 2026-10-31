@@ -1130,6 +1130,15 @@ is "open Thunderbird; answer any password or sign-in, then click Run now"; that 
 Thunderbird open, and under the old rule following the advice never cleared the warning (held
 finding effects-3). MA-926.
 
+**Amended 2026-10-31 (review finding behaviour-2 on the amendment above; nothing changed in the
+code):** the reset above applies **only where Run now starts Thunderbird** (macOS today). On Windows
+the `AttendedStartAllowed` entry is false (owner ruling 2 of 2026-10-31: test first, lab MA-918), so a
+Windows Run now installs no sync hook, runs no session and moves nothing (`updateSyncStreak` returns
+on a nil outcome). So on Windows, effects-3 stays open — following the advice and clicking Run now
+does not clear the warning — until the Windows Run now switch is turned on after lab MA-918. Until
+then the Windows Desktop's warning says only that a scheduled backup finding Thunderbird open
+clears it (§5.4, amended).
+
 `Outcome.Synced()` implements the synced rows **from the outcome alone; `Left` never enters it**
 [C-72]. The left-open endings keep their S7 verdict as the outcome (A10 step 4, A12), so they are
 synced or not by that verdict, and a cancelled run is never synced. MA-903 checks `Synced()` for
@@ -1210,6 +1219,21 @@ short sentence before "Do this:", "This warning clears by itself at the next bac
 mail." It is on every surface that shows the warning (Status on the command line and in the gui
 view, the Desktop's health view); the warning still sends no email (§5.4 above), so no email
 changes. The release notes' 1.5.2 line says the same.
+
+**Amended 2026-10-31 (review findings behaviour-1 and behaviour-2 on the amendment above; the
+words corrected to match the code, the ruling's intent kept, owner to confirm the words):** "at the
+next backup that brings new mail" was not true. The count clears only on what §5.2 says: a session
+whose wait **saw mail arrive** (verdict `ok`, `not-quiet`, `watch-truncated`), from any run, or
+Thunderbird **found already open** by a scheduled backup or, where Run now starts Thunderbird, by a
+Run now. A nightly backup that starts Thunderbird when its mail is already on disk (the person read
+it earlier that day) archives new messages yet ends `ok-noactivity` and counts up; and on Windows a
+Run now runs no sync at all (its `AttendedStartAllowed` entry is false), so it never clears it. The
+sentence is now, where the Desktop's Run now starts Thunderbird (macOS): "This warning clears by
+itself the next time a backup sees new mail arrive in Thunderbird, or a scheduled backup or Run now
+finds Thunderbird already open."; everywhere else (the Windows Desktop, the command line): "This
+warning clears by itself the next time a backup sees new mail arrive in Thunderbird, or a scheduled
+backup finds Thunderbird already open." The release notes' 1.5.2 line says "or a scheduled backup
+(or, on a Mac, Run now) finds Thunderbird already open". MA-926.
 
 ### 5.5 The alert email, once per streak [C-29, C-35, C-40]
 

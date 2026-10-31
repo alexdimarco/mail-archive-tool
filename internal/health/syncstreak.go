@@ -241,15 +241,23 @@ func notSyncedText(in Input, s state.SyncStreak) string {
 // sentence says the backups ran, and it names a password or sign-in window that is
 // easy to miss (wording settled by the friction review, §14 gate 3: a minimized window
 // on Windows can be seen, so it never says "nobody can see"); and it says it clears by
-// itself at the next backup that brings new mail (owner ruling 4 of 2026-10-31).
+// itself (owner ruling 4 of 2026-10-31), naming what really clears it in
+// internal/app/syncstreak.go (review findings behaviour-1 and behaviour-2): a session
+// that saw mail arrive, from any run, or Thunderbird found already open by a scheduled
+// backup — or by a Run now, but only where Run now starts Thunderbird (on Windows it
+// does not yet, so no session runs and nothing moves).
 func nothingArrivedText(in Input, s state.SyncStreak) string {
 	w := syncWordsFor(in)
 	then := "then click Run now."
 	if !w.desktop {
 		then = "then " + w.byHand + "."
 	}
-	return fmt.Sprintf("This is not a failed backup: the backups still ran. Since %s, Thunderbird was started before each of this archive's scheduled backups, but no new mail arrived (%d backups in a row). That can mean there was no new mail, or that Thunderbird is waiting for a password or sign-in that nobody has answered: it was %s, so its window is easy to miss. This warning clears by itself at the next backup that brings new mail. Do this: open Thunderbird; if it asks for a password or a sign-in, answer it, %s",
-		streakDate(s.FirstNoChange), s.NoChange, w.started, then)
+	finds := "a scheduled backup"
+	if w.desktop && w.runNow {
+		finds = "a scheduled backup or Run now"
+	}
+	return fmt.Sprintf("This is not a failed backup: the backups still ran. Since %s, Thunderbird was started before each of this archive's scheduled backups, but no new mail arrived (%d backups in a row). That can mean there was no new mail, or that Thunderbird is waiting for a password or sign-in that nobody has answered: it was %s, so its window is easy to miss. This warning clears by itself the next time a backup sees new mail arrive in Thunderbird, or %s finds Thunderbird already open. Do this: open Thunderbird; if it asks for a password or a sign-in, answer it, %s",
+		streakDate(s.FirstNoChange), s.NoChange, w.started, finds, then)
 }
 
 // JSONThunderbirdSync is status -json's thunderbird_sync (§4.7, C-55): the setting, and

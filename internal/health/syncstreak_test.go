@@ -185,6 +185,14 @@ func TestTheShippedRemedies(t *testing.T) {
 	}
 }
 
+// The softer warning's "clears by itself" sentence, pinned word for word (owner ruling 4
+// of 2026-10-31, worded to match the code by review findings behaviour-1 and -2): where
+// the Desktop's Run now starts Thunderbird, and everywhere else.
+const (
+	clearsWithRunNow    = "This warning clears by itself the next time a backup sees new mail arrive in Thunderbird, or a scheduled backup or Run now finds Thunderbird already open."
+	clearsScheduledOnly = "This warning clears by itself the next time a backup sees new mail arrive in Thunderbird, or a scheduled backup finds Thunderbird already open."
+)
+
 // covers: MA-926, R32, S65
 // The softer no-change warning (owner ruling OQ-5, §5.4; C-68): positive twin first,
 // scheduled syncs that fetched nothing for 3 days show WARN presync_nothing_arrived —
@@ -192,8 +200,12 @@ func TestTheShippedRemedies(t *testing.T) {
 // sign-in window; in the Desktop's words it says click Run now, in the command line's it
 // names the command; Windows says "started minimized". It is left out while
 // presync_not_synced shows, and absent when not configured, not 3 days, or encrypted.
-// It sends no alert email: no alert sender reads it. It says it clears by itself at the
-// next backup that brings new mail, on every surface (owner ruling 4 of 2026-10-31).
+// It sends no alert email: no alert sender reads it. It says it clears by itself (owner
+// ruling 4 of 2026-10-31), naming only what really clears it (review findings
+// behaviour-1 and behaviour-2): a backup that sees new mail arrive in Thunderbird, or a
+// scheduled backup — and, only where Run now starts Thunderbird, a Run now — that finds
+// Thunderbird already open. On Windows the Desktop's Run now does not start Thunderbird
+// yet and so cannot clear it, and the Windows Desktop words never say it does.
 func TestTheNothingArrivedWarning(t *testing.T) {
 	now := time.Date(2026, 10, 30, 12, 0, 0, 0, time.UTC)
 	t0 := time.Date(2026, 10, 20, 2, 0, 0, 0, time.UTC)
@@ -202,15 +214,22 @@ func TestTheNothingArrivedWarning(t *testing.T) {
 	rep := Assess(syncInput(now, "darwin", "desktop", nc), now)
 	msg := reasonWith(rep, "presync_nothing_arrived")
 	want := "WARN: This is not a failed backup: the backups still ran. Since " + t0.Local().Format("Jan 2, 2006") +
-		", Thunderbird was started before each of this archive's scheduled backups, but no new mail arrived (3 backups in a row). That can mean there was no new mail, or that Thunderbird is waiting for a password or sign-in that nobody has answered: it was started out of sight, so its window is easy to miss. This warning clears by itself at the next backup that brings new mail. Do this: open Thunderbird; if it asks for a password or a sign-in, answer it, then click Run now."
+		", Thunderbird was started before each of this archive's scheduled backups, but no new mail arrived (3 backups in a row). That can mean there was no new mail, or that Thunderbird is waiting for a password or sign-in that nobody has answered: it was started out of sight, so its window is easy to miss. " + clearsWithRunNow + " Do this: open Thunderbird; if it asks for a password or a sign-in, answer it, then click Run now."
 	if rep.Posture != "WARN" || msg != want {
 		t.Fatalf("positive twin: posture %s, the warning\n  %q\nwant\n  %q", rep.Posture, msg, want)
 	}
 	// syncInput's schedule carries no job the command line could print, so it says so
 	// rather than print a partial command (the friction review's O2, applied 2026-10-31).
-	if got := reasonWith(Assess(syncInput(now, "windows", "", nc), now), "presync_nothing_arrived"); !strings.Contains(got, "it was started minimized, so its window is easy to miss. This warning clears by itself at the next backup that brings new mail. Do this:") ||
+	if got := reasonWith(Assess(syncInput(now, "windows", "", nc), now), "presync_nothing_arrived"); !strings.Contains(got, "it was started minimized, so its window is easy to miss. "+clearsScheduledOnly+" Do this:") ||
 		!strings.HasSuffix(got, "answer it, then "+noWholeCommand+".") || strings.Contains(got, "Run now") || strings.Contains(got, "out of sight") {
 		t.Errorf("Windows, command line: %q", got)
+	}
+	// Windows' Desktop: Run now does not start Thunderbird there (its AttendedStartAllowed
+	// entry is false), so a Run now never clears the count; the words name only a
+	// scheduled backup finding Thunderbird open (behaviour-2).
+	if got := reasonWith(Assess(syncInput(now, "windows", "desktop", nc), now), "presync_nothing_arrived"); !strings.Contains(got, "it was started minimized, so its window is easy to miss. "+clearsScheduledOnly+" Do this:") ||
+		strings.Contains(got, "or Run now finds") || strings.Contains(got, "brings new mail") {
+		t.Errorf("Windows, Desktop: %q", got)
 	}
 
 	both := nc
@@ -395,7 +414,7 @@ func TestTheCommandLineNamesTheWholeCommand(t *testing.T) {
 		t.Fatalf("positive twin: the export schedule's WARN\n  %q\nwant it to end with the whole command %s", got, wantCmd)
 	}
 	if got := reasonWith(Assess(export("darwin", "", nc, out), now), "presync_nothing_arrived"); !strings.HasSuffix(got, "answer it, then run the backup by hand with "+wantCmd+".") ||
-		!strings.Contains(got, " This warning clears by itself at the next backup that brings new mail. Do this: ") {
+		!strings.Contains(got, " "+clearsScheduledOnly+" Do this: ") {
 		t.Errorf("the softer warning: %q\n  want the whole command %s", got, wantCmd)
 	}
 	// A job recorded for another folder: the command backs up THIS archive.
