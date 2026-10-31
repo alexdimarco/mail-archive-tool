@@ -45,6 +45,24 @@ const probesOnPath = 17
 // watchdog exists to bound), and scheduling noise.
 const budgetSlack = 60 * time.Second
 
+// cancelSlack is what cancelPathBudget leaves over its counted path, for
+// scheduling noise and a normal folder walk in progress when the Cancel came.
+const cancelSlack = 10 * time.Second
+
+// cancelPathBudget bounds how long the watchdog waits, after the person's Cancel
+// (cause ErrCancelAndQuit), for the session's own bounded Cancel path
+// (design-presync-attended §2.6 (2), C-74; gate-2 pass 1, as1b-1): the S6 child poll
+// under never-close — at most the 90 s await from the launch plus one poll — and
+// the probes that can overrun it (one in progress when the Cancel came, the poll's
+// last listing, the ownership re-check's listing), plus cancelSlack. A Cancel in S7
+// is seen at the next poll, well inside it. A session not ended by then — a folder
+// walk on a stalled disk, which honours no context — is given up on, `cancelled`,
+// rather than held to the whole sessionBudget. TestSessionBudgetCoversTheS6CancelPoll
+// drives that path on the fake clock from the Cancel, so an undercount fails it.
+func cancelPathBudget() time.Duration {
+	return defAwaitUp + defAwaitPoll + 3*probeTimeout + cancelSlack
+}
+
 // sessionBudget bounds a WHOLE pre-sync (design-presync-attended §2.6, C-2): every
 // bound on the longest path plus the slack, computed from the same constants the
 // session uses, so a constant changed later re-checks itself in

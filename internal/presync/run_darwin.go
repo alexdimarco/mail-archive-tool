@@ -26,7 +26,7 @@ func runWith(ctx context.Context, cfg Config, e *macEnv, sc sessionCtl) Result {
 	e.bundle = plan.bundle
 	narrate(cfg.Log, startLine) // the wait can be minutes — say so before it begins
 	d := buildDeps(e, plan.exe, plan.profile, cfg)
-	d.sctx, d.abandoned, d.markLeft = sc.ctx, sc.abandoned, sc.markLeft
+	sc.wire(&d)
 	res := runSession(ctx, d)
 	if !sc.isAbandoned() { // the watchdog already answered for an abandoned session
 		narrate(cfg.Log, endLine(cfg, res))

@@ -51,6 +51,23 @@ func loseOwnershipAfterAdoption(f *fakeEnv) {
 	}
 }
 
+// exitBeforeTheRecheck makes the child exit on its own just before the session's
+// first process listing after the one that adopted it — the ownership re-check of
+// A12, A16 or a Cancel (S7 lists no processes).
+func exitBeforeTheRecheck(f *fakeEnv) {
+	adopted := false
+	f.probeHook = func(name string) {
+		if name != "procs" || !f.started || f.nowT.Before(f.startedAt.Add(f.appearIn)) {
+			return
+		}
+		if !adopted {
+			adopted = true
+			return
+		}
+		f.quitted, f.quitAt, f.exitIn = true, f.nowT, 0
+	}
+}
+
 // recordGone reports whether the state record file is absent.
 func recordGone(t *testing.T, path string) bool {
 	t.Helper()
@@ -576,6 +593,42 @@ func TestNeverCloseRule(t *testing.T) {
 		}
 	})
 
+	// The child exits on its own just before the ownership re-check (gate-2
+	// adversarial pass 1, as1b-2) — the person quit it from the Dock inside one poll
+	// gap — at quiet (A12), at "Stop waiting" (A16) and at a Cancel (A4(ii)): nothing
+	// is left open, so the record is cleared and Left is none; never "left open, quit
+	// it" for a Thunderbird that is not running. The twin, a child still running but
+	// no longer provably ours, keeps its record (next subtest).
+	for _, c := range []struct {
+		name string
+		set  func(f *fakeEnv, d *deps, cancel func())
+		want Outcome
+	}{
+		{"at quiet", func(*fakeEnv, *deps, func()) {}, OutcomeOK},
+		{"at a Cancel in S7", func(f *fakeEnv, _ *deps, cancel func()) { f.digestHook = cancel }, OutcomeCancelled},
+		{"at Stop waiting", func(f *fakeEnv, d *deps, _ func()) {
+			ew, endWait := context.WithCancel(context.Background())
+			d.endWait = ew
+			f.digestHook = endWait
+		}, OutcomeWaitEnded},
+	} {
+		t.Run("the child gone "+c.name, func(t *testing.T) {
+			ctx, cancel := cancelQuit()
+			f := attendedFake()
+			exitBeforeTheRecheck(f)
+			sp := filepath.Join(t.TempDir(), "s.json")
+			d := attendedDeps(f, sp)
+			c.set(f, &d, cancel)
+			res := runSession(ctx, d)
+			if res.outcome != c.want || f.quitCalls != 0 {
+				t.Errorf("outcome %q, %d quits; want %q, 0", res.outcome.Name, f.quitCalls, c.want.Name)
+			}
+			if res.left != LeftNone || !recordGone(t, sp) {
+				t.Errorf("Left %q, record gone %v; want none and cleared: no Thunderbird is running", res.left, recordGone(t, sp))
+			}
+		})
+	}
+
 	t.Run("ownership not proven at quiet keeps the record", func(t *testing.T) {
 		f := attendedFake()
 		loseOwnershipAfterAdoption(f)
@@ -660,6 +713,60 @@ func TestNeverCloseRule(t *testing.T) {
 		}
 	})
 
+	// The S6 Cancel poll proves the child, and the ownership re-check right after it
+	// fails (gate-2 adversarial pass 1, as1b-3, as1b-2): a second candidate appears —
+	// the record kept holds the proven child's identity (`syncing`, its pid and start),
+	// never a pid-less `launching` record that the next run's weak match would pin on
+	// the person's own Thunderbird (SAF-5); or the child has gone — nothing is left
+	// open, the record is cleared and Left is none.
+	for _, gone := range []bool{false, true} {
+		name := "Cancel in S6, the child proven, then not provable at the re-check"
+		if gone {
+			name = "Cancel in S6, the child proven, then gone at the re-check"
+		}
+		t.Run(name, func(t *testing.T) {
+			ctx, cancel := cancelQuit()
+			f := attendedFake()
+			f.appearIn = 10 * time.Second
+			cancelled, proven := false, false
+			f.probeHook = func(name string) {
+				if name != "procs" || !f.started {
+					return
+				}
+				switch {
+				case !cancelled:
+					cancelled = true
+					cancel() // at the first S6 pass, before the child is up
+				case f.nowT.Before(f.startedAt.Add(f.appearIn)):
+				case !proven:
+					proven = true // the poll's listing that proves it
+				case gone:
+					f.quitted, f.quitAt, f.exitIn = true, f.nowT, 0
+				default:
+					twin := f.child
+					twin.pid = 201
+					f.extraProcs = []proc{twin}
+				}
+			}
+			sp := filepath.Join(t.TempDir(), "s.json")
+			res := runSession(ctx, attendedDeps(f, sp))
+			if !proven || res.outcome != OutcomeCancelled || f.quitCalls != 0 {
+				t.Fatalf("proven %v, outcome %q, %d quits; want the child proven, cancelled, 0", proven, res.outcome.Name, f.quitCalls)
+			}
+			rec, present, _ := loadRecord(sp)
+			if gone {
+				if res.left != LeftNone || present {
+					t.Errorf("Left %q, record kept %v; want none and cleared", res.left, present)
+				}
+				return
+			}
+			if res.left != LeftOpen || !present || rec.State != stateSyncing || rec.ChildPID != f.child.pid || rec.ChildStart != f.child.start.Unix() {
+				t.Errorf("Left %q, record %v state %q pid %d start %d; want left-open and a syncing record with the child's pid %d and start %d",
+					res.left, present, rec.State, rec.ChildPID, rec.ChildStart, f.child.pid, f.child.start.Unix())
+			}
+		})
+	}
+
 	t.Run("Cancel in S6, no child by the 90 s limit", func(t *testing.T) {
 		ctx, cancel := cancelQuit()
 		f := attendedFake()
@@ -717,7 +824,7 @@ func TestNeverCloseRule(t *testing.T) {
 // polls on to the 90 s await limit — whether the child appears at the very end or
 // never — and that path, with resolve's two probes, fits the budget less its slack.
 func TestSessionBudgetCoversTheS6CancelPoll(t *testing.T) {
-	var longest time.Duration
+	var longest, fromCancel time.Duration
 	for _, probe := range []time.Duration{probeTimeout, probeTimeout - 100*time.Millisecond, probeTimeout * 9 / 10, probeTimeout / 2} {
 		for _, appear := range []time.Duration{defAwaitUp - time.Second, defAwaitUp, 24 * time.Hour} {
 			ctx, cancel := cancelQuit()
@@ -725,8 +832,12 @@ func TestSessionBudgetCoversTheS6CancelPoll(t *testing.T) {
 			f.lockOn[as1aProfile], f.lockP[as1aProfile] = true, 999
 			f.probeCost, f.launchCost, f.quitCost = probe, launchTimeout, quitTimeout
 			f.appearIn = appear
+			var cancelAt time.Time
 			f.probeHook = func(name string) {
 				if name == "procs" && f.started {
+					if cancelAt.IsZero() {
+						cancelAt = f.nowT
+					}
 					cancel()
 				}
 			}
@@ -740,11 +851,22 @@ func TestSessionBudgetCoversTheS6CancelPoll(t *testing.T) {
 			if took := f.nowT.Sub(as1aBase) + 2*probe; took > longest {
 				longest = took
 			}
+			if took := f.nowT.Sub(cancelAt); took > fromCancel {
+				fromCancel = took
+			}
 		}
 	}
-	t.Logf("longest S6 Cancel path %v, budget %v", longest, sessionBudget())
+	t.Logf("longest S6 Cancel path %v, budget %v; from the Cancel %v, cancel bound %v", longest, sessionBudget(), fromCancel, cancelPathBudget())
 	if room := sessionBudget() - budgetSlack; longest > room {
 		t.Errorf("the S6 Cancel child poll takes %v, more than the budget leaves before its slack (%v)", longest, room)
+	}
+	// as1b-1: the watchdog's wait after a Cancel (cancelPathBudget) covers the same
+	// poll, measured from the Cancel, with its own slack still left over.
+	if room := cancelPathBudget() - cancelSlack; fromCancel > room {
+		t.Errorf("the S6 Cancel child poll takes %v from the Cancel, more than cancelPathBudget leaves before its slack (%v)", fromCancel, room)
+	}
+	if cancelPathWait != cancelPathBudget() {
+		t.Errorf("cancelPathWait = %v, want cancelPathBudget() %v", cancelPathWait, cancelPathBudget())
 	}
 }
 
@@ -834,6 +956,69 @@ func TestWatchdogWaitsForTheS6CancelPoll(t *testing.T) {
 				res.Release()
 			}
 		})
+	}
+}
+
+// covers: MA-921
+// After the person's Cancel the watchdog waits for the session's own Cancel path
+// only up to that path's bound, cancelPathWait (gate-2 adversarial pass 1, as1b-1),
+// never the whole session budget: a Cancel while the S7 folder walk is blocked (a
+// stalled disk; a walk honours no context) returns `cancelled` once that bound is
+// spent, with Left from where the session was (left open), the session abandoned and
+// nothing asked to quit. Positive twin: TestWatchdogWaitsForTheS6CancelPoll, whose
+// Cancel case is waited for inside the bound, and TestSessionBudgetCoversTheS6CancelPoll,
+// which drives that poll inside cancelPathBudget().
+func TestWatchdogCancelWaitIsBounded(t *testing.T) {
+	old := cancelPathWait
+	t.Cleanup(func() { cancelPathWait = old })
+	cancelPathWait = 200 * time.Millisecond
+
+	ctx, cancel := cancelQuit()
+	f := attendedFake()
+	blocked, unblock := make(chan struct{}), make(chan struct{})
+	var once sync.Once
+	f.digestHook = func() {
+		once.Do(func() {
+			cancel()
+			close(blocked)
+			<-unblock // the walk stalls and honours no context
+		})
+	}
+	returned, sessionDone := make(chan struct{}), make(chan struct{})
+	var res Result
+	var ctl sessionCtl
+	go func() {
+		defer close(returned)
+		res = runWatchdog(ctx, nil, 5*time.Second, func(sc sessionCtl) Result {
+			defer close(sessionDone)
+			ctl = sc
+			d := attendedDeps(f, filepath.Join(t.TempDir(), "s.json"))
+			sc.wire(&d)
+			return runSession(ctx, d).result()
+		})
+	}()
+	<-blocked
+	start := time.Now()
+	select {
+	case <-returned:
+	case <-time.After(10 * time.Second):
+		close(unblock)
+		t.Fatal("the watchdog did not return")
+	}
+	took := time.Since(start)
+	close(unblock)
+	<-sessionDone
+	if took > 2*time.Second {
+		t.Errorf("the watchdog held the Cancel %v, want about cancelPathWait (200ms), not its 5s budget", took)
+	}
+	if res.Outcome != OutcomeCancelled || res.Left != LeftOpen {
+		t.Errorf("watchdog result %q, Left %q; want cancelled, left-open", res.Outcome.Name, res.Left)
+	}
+	if !ctl.isAbandoned() || f.quitCalls != 0 {
+		t.Errorf("abandoned %v, %d quit requests; want abandoned and 0", ctl.isAbandoned(), f.quitCalls)
+	}
+	if res.Release != nil {
+		res.Release()
 	}
 }
 
@@ -1061,21 +1246,24 @@ func repoRoot(t *testing.T) string {
 	}
 }
 
-// callsOverride reports whether Go source calls OverrideTablesForTest.
+// callsOverride reports whether Go source uses OverrideTablesForTest at all — a
+// call, or the function taken as a value (as1b-4) — bare or as presync's selector.
+// Only the name of its own top-level declaration is not a use.
 func callsOverride(fset *token.FileSet, name string, src any) (bool, error) {
 	file, err := parser.ParseFile(fset, name, src, parser.SkipObjectResolution)
 	if err != nil {
 		return false, err
 	}
+	decl := map[*ast.Ident]bool{}
+	for _, d := range file.Decls {
+		if fd, ok := d.(*ast.FuncDecl); ok && fd.Recv == nil {
+			decl[fd.Name] = true
+		}
+	}
 	found := false
 	ast.Inspect(file, func(n ast.Node) bool {
-		if call, ok := n.(*ast.CallExpr); ok {
-			switch fn := call.Fun.(type) {
-			case *ast.Ident:
-				found = found || fn.Name == "OverrideTablesForTest"
-			case *ast.SelectorExpr:
-				found = found || fn.Sel.Name == "OverrideTablesForTest"
-			}
+		if id, ok := n.(*ast.Ident); ok && id.Name == "OverrideTablesForTest" && !decl[id] {
+			found = true
 		}
 		return !found
 	})
@@ -1090,7 +1278,8 @@ func callsOverride(fset *token.FileSet, name string, src any) (bool, error) {
 // darwin passes; one with no record, or a record naming the other platform, fails.
 // The lookups answer from the tables (an unknown platform is false), the one
 // test-only override flips them and its restore puts them back, and no non-test Go
-// file in the repository calls OverrideTablesForTest.
+// file in the repository uses OverrideTablesForTest — calls it, or takes it as a
+// value (as1b-4; planted twins of each caught first).
 func TestAttendedTablesNeedALabRecord(t *testing.T) {
 	root := t.TempDir()
 	if err := os.MkdirAll(filepath.Join(root, "docs", "lab"), 0o755); err != nil {
@@ -1146,6 +1335,21 @@ func TestAttendedTablesNeedALabRecord(t *testing.T) {
 	fset := token.NewFileSet()
 	if hit, err := callsOverride(fset, "planted.go", "package x\nfunc f() { presync.OverrideTablesForTest(nil, nil) }\n"); err != nil || !hit {
 		t.Fatalf("twin: a planted call was not caught (hit %v, err %v)", hit, err)
+	}
+	// Any use of the function, not only a direct call (gate-2 adversarial pass 1,
+	// as1b-4): taken as a value and called later, or handed to a helper, it flips a
+	// table all the same. Its own declaration is the one place the name may appear.
+	for name, src := range map[string]string{
+		"taken as a value":        "package x\nvar setTables = presync.OverrideTablesForTest\nfunc f() { setTables(map[string]bool{\"darwin\": true}, nil) }\n",
+		"handed to a helper":      "package x\nfunc f() { helper(presync.OverrideTablesForTest) }\n",
+		"a bare value in-package": "package presync\nfunc f() { g := OverrideTablesForTest; g(nil, nil) }\n",
+	} {
+		if hit, err := callsOverride(fset, "planted.go", src); err != nil || !hit {
+			t.Errorf("planted %s: not caught (hit %v, err %v)", name, hit, err)
+		}
+	}
+	if hit, err := callsOverride(fset, "attended.go", "package presync\nfunc OverrideTablesForTest(start, quit map[string]bool) func() { return func() {} }\n"); err != nil || hit {
+		t.Errorf("its own declaration was flagged (hit %v, err %v)", hit, err)
 	}
 	var offenders []string
 	scanned := 0

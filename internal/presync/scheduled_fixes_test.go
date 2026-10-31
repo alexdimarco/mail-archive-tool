@@ -133,6 +133,51 @@ func TestPresyncCancelBeforeLaunchStartsNothing(t *testing.T) {
 			t.Errorf("the launching record was left behind after a cancel: %v", err)
 		}
 	})
+
+	// The second check is the last step before the start (gate-2 adversarial pass 1,
+	// as1a-2): the caller's `starting` phase hook (the marker write, the Desktop's
+	// lock) runs before it, so a Stop that lands while that hook runs still starts
+	// nothing — and the watchdog's own answer, given while the hook still ran, says
+	// nothing was started, which is then true.
+	t.Run("a Stop while the starting phase is reported", func(t *testing.T) {
+		stop, cancelStop := context.WithCancel(context.Background())
+		defer cancelStop()
+		f := attendedFake()
+		sp := filepath.Join(t.TempDir(), "s.json")
+		returned, sessionDone := make(chan struct{}), make(chan struct{})
+		var res Result
+		var sres sessionResult
+		go func() {
+			defer close(returned)
+			res = runWatchdog(context.Background(), stop, 30*time.Second, func(sc sessionCtl) Result {
+				defer close(sessionDone)
+				d := attendedDeps(f, sp)
+				d.sctx, d.abandoned, d.markLeft = sc.ctx, sc.abandoned, sc.markLeft
+				d.phase = func(name string, _ time.Time) {
+					if name == PhaseStarting {
+						cancelStop()
+						<-returned // a slow hook: the watchdog answers before it ends
+					}
+				}
+				sres = runSession(context.Background(), d)
+				return sres.result()
+			})
+		}()
+		select {
+		case <-sessionDone:
+		case <-time.After(10 * time.Second):
+			t.Fatal("the session did not end")
+		}
+		if f.startCalls != 0 {
+			t.Errorf("%d launch requests after a Stop during the starting phase, want 0 (A11)", f.startCalls)
+		}
+		if res.Outcome != OutcomeCancelled || res.Left != LeftNone || sres.left != LeftNone {
+			t.Errorf("watchdog %q Left %q, session Left %q; want cancelled, and none from both", res.Outcome.Name, res.Left, sres.left)
+		}
+		if !recordGone(t, sp) {
+			t.Error("the launching record was left behind after a Stop that started nothing")
+		}
+	})
 }
 
 // covers: MA-900
@@ -357,6 +402,44 @@ func TestPresyncQuitNotPostedEndsAtOnce(t *testing.T) {
 		if strings.Contains(text, "asked to") || strings.Contains(text, "being asked") {
 			t.Errorf("quit-no-window text claims Thunderbird was asked to close: %q", text)
 		}
+	}
+}
+
+// covers: MA-900
+// A quit that posted nothing because our Thunderbird had already gone (gate-2
+// adversarial pass 1, as1a-1): it exited on its own after the ownership re-check
+// and before the request — a crash, an update restart, the person closing it — so
+// Windows' quit found no handle, a reused pid or no window, and posted nothing.
+// That is not "left open": the record is cleared, Left is none, the S7 verdict
+// stands as the outcome, and there is no exit-grace wait. Positive twin first: a
+// Thunderbird still running when nothing was posted stays quit-no-window, its
+// record left-running, Left left-open.
+func TestPresyncQuitNotPostedChildGone(t *testing.T) {
+	f := syncingFake()
+	f.quitErr = errQuitNotPosted
+	sp := filepath.Join(t.TempDir(), "s.json")
+	res := runSession(context.Background(), syncingDeps(f, sp))
+	if rec, present, _ := loadRecord(sp); res.outcome != OutcomeQuitNoWindow || res.left != LeftOpen || !present || rec.State != stateLeftRunning {
+		t.Fatalf("twin: outcome %q, Left %q, record %v/%q; want quit-no-window, left-open, left-running",
+			res.outcome.Name, res.left, present, rec.State)
+	}
+
+	f = syncingFake()
+	f.quitErr = errQuitNotPosted
+	f.exitIn = 0 // gone by the time the quit returns: nothing was there to ask
+	sp = filepath.Join(t.TempDir(), "s.json")
+	res = runSession(context.Background(), syncingDeps(f, sp))
+	if res.outcome != OutcomeOK || res.verdict != OutcomeOK {
+		t.Errorf("outcome %q (verdict %q), want the S7 verdict ok to stand, not quit-no-window", res.outcome.Name, res.verdict.Name)
+	}
+	if res.left != LeftNone {
+		t.Errorf("Left = %q, want none: no Thunderbird is running to be left open", res.left)
+	}
+	if !recordGone(t, sp) {
+		t.Error("the record was kept for a Thunderbird that has gone")
+	}
+	if f.quitCalls != 1 || f.sleeps != f.sleepsAtQuit {
+		t.Errorf("%d quit calls, %d waits after it; want the one that posted nothing and no exit wait", f.quitCalls, f.sleeps-f.sleepsAtQuit)
 	}
 }
 
@@ -709,6 +792,145 @@ func TestWatchdogEndsAnInFlightQuit(t *testing.T) {
 	}
 	if f.quitCalls != 1 || !errors.Is(f.quitEndErr, context.Canceled) {
 		t.Errorf("quit calls %d, its context ended with %v; want one request cancelled by the watchdog", f.quitCalls, f.quitEndErr)
+	}
+}
+
+// covers: MA-901, MA-921
+// A session the watchdog gives up on keeps its side warnings (gate-2 adversarial
+// pass 1, as1a-6): an unreadable record's warning, met at S3 — where that record is
+// removed, so no later run could raise it again — reaches the watchdog's own result,
+// at its budget (internal-error) and at a Stop (cancelled). Positive twin first: the
+// same session left to end carries it as its own.
+func TestWatchdogAbandonedSessionKeepsItsSideWarnings(t *testing.T) {
+	corrupt := func(t *testing.T) string {
+		sp := filepath.Join(t.TempDir(), "s.json")
+		if err := os.WriteFile(sp, []byte("{not json"), 0o600); err != nil {
+			t.Fatal(err)
+		}
+		return sp
+	}
+	isUnreadable := func(side []Outcome) bool { return len(side) == 1 && side[0] == OutcomeStateUnreadable }
+
+	f := syncingFake()
+	sp := corrupt(t)
+	res := runWatchdog(context.Background(), nil, 30*time.Second, func(sc sessionCtl) Result {
+		d := syncingDeps(f, sp)
+		sc.wire(&d)
+		return runSession(context.Background(), d).result()
+	})
+	if res.Outcome != OutcomeOK || !isUnreadable(res.Side) {
+		t.Fatalf("twin: outcome %q, side %v; want ok carrying [state-unreadable]", res.Outcome.Name, res.Side)
+	}
+
+	for _, viaStop := range []bool{false, true} {
+		name, want := "at the budget", OutcomeInternalError
+		if viaStop {
+			name, want = "at a Stop", OutcomeCancelled
+		}
+		t.Run(name, func(t *testing.T) {
+			stop, cancelStop := context.WithCancel(context.Background())
+			defer cancelStop()
+			f := syncingFake()
+			sp := corrupt(t)
+			atS8, unblock := make(chan struct{}), make(chan struct{})
+			var once sync.Once
+			f.probeHook = func(name string) {
+				if name == "idle" && f.started { // S8: the session is held past S3
+					once.Do(func() { close(atS8) })
+					<-unblock
+				}
+			}
+			budget := 300 * time.Millisecond
+			if viaStop {
+				budget = 30 * time.Second
+				go func() {
+					<-atS8
+					cancelStop()
+				}()
+			}
+			sessionDone := make(chan struct{})
+			res := runWatchdog(context.Background(), stop, budget, func(sc sessionCtl) Result {
+				defer close(sessionDone)
+				d := syncingDeps(f, sp)
+				sc.wire(&d)
+				return runSession(context.Background(), d).result()
+			})
+			close(unblock)
+			<-sessionDone
+			if res.Outcome != want {
+				t.Errorf("outcome %q, want %q", res.Outcome.Name, want.Name)
+			}
+			if !isUnreadable(res.Side) {
+				t.Errorf("the watchdog's own result's side = %v, want [state-unreadable]: the warning is lost for good", res.Side)
+			}
+			if res.Release != nil {
+				res.Release()
+			}
+		})
+	}
+}
+
+// covers: MA-921
+// A panic in the session after it took the profile lock (gate-2 adversarial pass
+// 1, as1a-5) never frees the lock behind the caller's read (C2, C-77), with the
+// real lockfile: the session ends internal-error and hands its release on like any
+// other end — to the once-both latch when the watchdog had already given up on it,
+// or as the watchdog's Release when it had not — so the lock is still held after
+// the session has returned, and freed only by the caller's Release.
+func TestWatchdogSessionPanicKeepsTheLock(t *testing.T) {
+	for _, abandon := range []bool{true, false} {
+		name := "a live session"
+		if abandon {
+			name = "an abandoned session"
+		}
+		t.Run(name, func(t *testing.T) {
+			lockPath := filepath.Join(t.TempDir(), "presync-x.lock")
+			f := syncingFake()
+			unblock := make(chan struct{})
+			f.probeHook = func(name string) {
+				if name == "idle" && f.started { // S8, the lock held since S2
+					if abandon {
+						<-unblock
+					}
+					panic("a fault late in the session")
+				}
+			}
+			released := make(chan struct{}, 4)
+			f.onRelease = func() { released <- struct{}{} }
+			d := syncingDeps(&realLockEnv{fakeEnv: f}, filepath.Join(t.TempDir(), "s.json"))
+			d.lockPath = lockPath
+			budget := 30 * time.Second
+			if abandon {
+				budget = 300 * time.Millisecond
+			}
+			sessionDone := make(chan struct{})
+			res := runWatchdog(context.Background(), nil, budget, func(sc sessionCtl) Result {
+				defer close(sessionDone)
+				sc.wire(&d)
+				return runSession(context.Background(), d).result()
+			})
+			close(unblock)
+			<-sessionDone
+			time.Sleep(100 * time.Millisecond) // let the watchdog's goroutine hand the release on
+			if res.Outcome != OutcomeInternalError {
+				t.Errorf("outcome %q, want internal-error", res.Outcome.Name)
+			}
+			if res.Release == nil {
+				t.Fatal("no Release: the caller cannot hold the lock through its read")
+			}
+			if lockFree(t, lockPath) {
+				t.Error("the profile lock was freed by the session's panic while the caller's read had not ended (C2, C-77)")
+			}
+			res.Release()
+			select {
+			case <-released:
+			case <-time.After(5 * time.Second):
+				t.Fatal("the lock was never released after the caller's Release")
+			}
+			if !lockFree(t, lockPath) {
+				t.Error("the lock is still held after the caller's Release")
+			}
+		})
 	}
 }
 

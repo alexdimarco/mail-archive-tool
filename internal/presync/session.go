@@ -48,6 +48,9 @@ type deps struct {
 	// markLeft tells the watchdog what an abandonment would leave Thunderbird as
 	// right now, so its own result can say so (§2.6). nil means no watchdog.
 	markLeft func(Left)
+	// markSide tells the watchdog each side warning as the session meets it, so a
+	// result it returns on its own carries them too (as1a-6). nil means no watchdog.
+	markSide func(Outcome)
 }
 
 // sessionResult is what one pre-sync session produced: the final outcome, the
@@ -100,7 +103,7 @@ type windowMinimizer interface {
 // archive: every path ends in an Outcome the caller records, and the archive
 // reads afterwards. In v1 it never quits a process that is not provably ours,
 // and never signals or kills.
-func runSession(ctx context.Context, d deps) sessionResult {
+func runSession(ctx context.Context, d deps) (out sessionResult) {
 	res := sessionResult{left: LeftNone}
 	e := d.env
 	enter := func(s string) { res.states = append(res.states, s) }
@@ -148,6 +151,9 @@ func runSession(ctx context.Context, d deps) sessionResult {
 			}
 		}
 		res.side = append(res.side, o)
+		if d.markSide != nil {
+			d.markSide(o) // so a result the watchdog returns on its own carries it (as1a-6)
+		}
 	}
 
 	cur := d.base
@@ -183,8 +189,11 @@ func runSession(ctx context.Context, d deps) sessionResult {
 	// session — so a second scheduled run cannot pre-sync (and compact) this profile
 	// while this run reads it. runSession does NOT release the lock itself on return;
 	// it hands the release to the caller (res.release → Result.Release → app.Run, which
-	// defers it until after the read). A panic here still releases it, so the lock never
-	// leaks within the process.
+	// defers it until after the read). A panic from here on ends the session
+	// internal-error and hands the release on the same way, so the lock is never freed
+	// behind the caller's read — neither directly nor past the watchdog's once-both
+	// latch for an abandoned session (gate-2 pass 1, as1a-5; C2, C-77) — and never
+	// leaks: the caller's Release frees it.
 	released := false
 	releaseLock := func() {
 		if !released {
@@ -195,8 +204,9 @@ func runSession(ctx context.Context, d deps) sessionResult {
 	res.release = releaseLock
 	defer func() {
 		if r := recover(); r != nil {
-			releaseLock()
-			panic(r)
+			res.outcome = OutcomeInternalError
+			res.release = releaseLock
+			out = res
 		}
 	}()
 
@@ -266,13 +276,19 @@ func runSession(ctx context.Context, d deps) sessionResult {
 		res.outcome = OutcomeCannotStart
 		return res
 	}
+	// The caller's `starting` hook runs (a marker write, the Desktop's lock), and the
+	// watchdog is told a Thunderbird may be starting, BEFORE the second check, so the
+	// check is the last step before the start (gate-2 pass 1, as1a-2): a Stop during
+	// the hook starts nothing, and a watchdog that answers before the check says
+	// nothing was started, which the check then makes true.
+	report(PhaseStarting, launchAt)
+	setLeft(LeftMayBeStarting) // from here an abandonment may leave a Thunderbird starting
 	if halted() {
 		clear()
+		setLeft(LeftNone)
 		res.outcome = OutcomeCancelled
 		return res
 	}
-	report(PhaseStarting, launchAt)
-	setLeft(LeftMayBeStarting) // from here an abandonment may leave a Thunderbird starting
 	if err := e.startHidden(d.app, d.profile); err != nil {
 		clear() // write-ahead record removed; no launch to announce, no retry
 		setLeft(LeftNone)
@@ -297,13 +313,20 @@ func runSession(ctx context.Context, d deps) sessionResult {
 	// without asking it anything (A12, A16, A4(ii) under never-close): ownership is
 	// re-verified, and only a Thunderbird still provably ours has its record cleared,
 	// so the next run treats it as an open Thunderbird and leaves it alone (S4).
-	// One that can no longer be proven ours keeps its record for the next run's
-	// recovery (left-open), the R31-safe direction.
+	// One still running but no longer provable as ours keeps its record for the next
+	// run's recovery (left-open), the R31-safe direction. One that has gone (it exited
+	// inside the last poll gap) leaves nothing open: its record is cleared and Left is
+	// none, never "left open, quit it" for a Thunderbird not running (gate-2 pass 1,
+	// as1b-2).
 	leaveOpenByRule := func(o Outcome) sessionResult {
-		if m, ok := findOurs(e.thunderbirdProcs(), lc); ok && m.pid == child.pid {
+		switch m, ok := findOurs(e.thunderbirdProcs(), lc); {
+		case ok && m.pid == child.pid:
 			clear()
 			setLeft(LeftOpenByRule)
-		} else {
+		case child.pid != 0 && !e.pidAlive(child.pid):
+			clear()
+			setLeft(LeftNone)
+		default:
 			setLeft(LeftOpen)
 		}
 		res.outcome = o
@@ -338,7 +361,13 @@ func runSession(ctx context.Context, d deps) sessionResult {
 				// only) the Cancel quit follows the poll; until AS-Q it is A4(i).
 				report(PhaseCancelling, e.now())
 				if c, ok := pollForChild(); ok {
+					// The proven child's identity is saved before the re-check, as on the
+					// normal S6 path, so a re-check that fails keeps a record naming it —
+					// never a pid-less `launching` one (gate-2 pass 1, as1b-3; SAF-5).
 					child = c
+					cur.ChildPID, cur.ChildStart, cur.ChildArgs = child.pid, child.start.Unix(), child.args
+					_ = store(stateSyncing)
+					setLeft(LeftOpen)
 					return leaveOpenByRule(OutcomeCancelled)
 				}
 			}
@@ -491,6 +520,14 @@ func runSession(ctx context.Context, d deps) sessionResult {
 		res.waited = e.now().Sub(up) // A8: from "up" to the quit request
 		switch err := e.quit(qctx, child); {
 		case errors.Is(err, errQuitNotPosted):
+			if !e.pidAlive(child.pid) {
+				// Nothing was posted because our Thunderbird had already gone (it exited on
+				// its own since the ownership re-check): nothing is left open, so the record
+				// is cleared and the S7 verdict stands (gate-2 pass 1, as1a-1).
+				clear()
+				setLeft(LeftNone)
+				return res.outcome, true
+			}
 			// Nothing was asked (no single main window, say): left open at once, with
 			// no exit-grace wait and no text saying it was asked to close (C-60).
 			storeOrWarn(stateLeftRunning)

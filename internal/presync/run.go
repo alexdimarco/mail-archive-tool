@@ -28,9 +28,23 @@ type sessionCtl struct {
 	// markLeft is where the session says what an abandonment would leave
 	// Thunderbird as; the watchdog's own result carries it (§2.6).
 	markLeft func(Left)
+	// markSide is where the session hands each side warning as it meets it (B6's
+	// state-unreadable, A9's state-unsaved), so the watchdog's own result carries
+	// them too (gate-2 pass 1, as1a-6).
+	markSide func(Outcome)
 }
 
 func (s sessionCtl) isAbandoned() bool { return s.abandoned != nil && s.abandoned() }
+
+// wire hands the session its watchdog: the session context, the abandoned flag and
+// where it says what it would leave and which side warnings it met.
+func (s sessionCtl) wire(d *deps) {
+	d.sctx, d.abandoned, d.markLeft, d.markSide = s.ctx, s.abandoned, s.markLeft, s.markSide
+}
+
+// cancelPathWait bounds the watchdog's wait for the session's own Cancel path after
+// the person's Cancel (cancelPathBudget; a var so a test can shrink it).
+var cancelPathWait = cancelPathBudget()
 
 // runWatchdog runs fn (one platform's whole pre-sync) under budget
 // (sessionBudget, §2.6). filepath.WalkDir / os.ReadDir / DirEntry.Info cannot
@@ -60,6 +74,28 @@ func runWatchdog(ctx, stop context.Context, budget time.Duration, fn func(sessio
 	var left atomic.Value
 	left.Store(LeftNone)
 	markLeft := func(l Left) { left.Store(l) }
+	var sideMu sync.Mutex
+	var sides []Outcome
+	markSide := func(o Outcome) {
+		sideMu.Lock()
+		defer sideMu.Unlock()
+		for _, s := range sides {
+			if s.Code == o.Code {
+				return
+			}
+		}
+		sides = append(sides, o)
+	}
+	// sideSnapshot copies the side warnings the session has handed over so far, so a
+	// result the watchdog returns on its own still carries them (as1a-6).
+	sideSnapshot := func() []Outcome {
+		sideMu.Lock()
+		defer sideMu.Unlock()
+		if len(sides) == 0 {
+			return nil
+		}
+		return append([]Outcome(nil), sides...)
+	}
 	latch := &releaseLatch{}
 
 	var mu sync.Mutex
@@ -75,10 +111,10 @@ func runWatchdog(ctx, stop context.Context, budget time.Duration, fn func(sessio
 			// to a warning instead, so the pre-sync still never gates the archive.
 			defer func() {
 				if p := recover(); p != nil {
-					r = Result{Outcome: OutcomeInternalError}
+					r = Result{Outcome: OutcomeInternalError, Side: sideSnapshot()}
 				}
 			}()
-			r = fn(sessionCtl{ctx: sctx, abandoned: abandoned.Load, markLeft: markLeft})
+			r = fn(sessionCtl{ctx: sctx, abandoned: abandoned.Load, markLeft: markLeft, markSide: markSide})
 		}()
 		mu.Lock()
 		if gaveUp {
@@ -98,6 +134,7 @@ func runWatchdog(ctx, stop context.Context, budget time.Duration, fn func(sessio
 		ctxDone = ctx.Done()
 	}
 	var out Outcome
+	var cancelWait <-chan time.Time // armed by the person's Cancel (as1b-1)
 wait:
 	for {
 		select {
@@ -109,9 +146,18 @@ wait:
 			break wait
 		case <-ctxDone:
 			if errors.Is(context.Cause(ctx), ErrCancelAndQuit) {
-				ctxDone = nil // the person's Cancel: the session's Cancel path is bounded; wait for it
+				// The person's Cancel: wait for the session's own Cancel path, but only up
+				// to that path's bound, never the rest of the whole budget — a blocked
+				// folder walk would otherwise hold the Cancel for up to 25 min (as1b-1).
+				ctxDone = nil
+				ct := time.NewTimer(cancelPathWait)
+				defer ct.Stop()
+				cancelWait = ct.C
 				continue
 			}
+			out = OutcomeCancelled
+			break wait
+		case <-cancelWait:
 			out = OutcomeCancelled
 			break wait
 		case <-parent.Done():
@@ -129,7 +175,7 @@ wait:
 	abandoned.Store(true)
 	mu.Unlock()
 	cancelSession()
-	return Result{Outcome: out, Release: latch.callerReleased, Left: left.Load().(Left)}
+	return Result{Outcome: out, Release: latch.callerReleased, Left: left.Load().(Left), Side: sideSnapshot()}
 }
 
 // releaseLatch frees an abandoned session's profile lock once both halves are

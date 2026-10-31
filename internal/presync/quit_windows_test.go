@@ -125,6 +125,46 @@ func TestWinQuitOrchestration(t *testing.T) {
 	}
 }
 
+// covers: MA-921
+// The Windows quit starts no WM_CLOSE once its context has ended (gate-2
+// adversarial pass 1, as1a-4; design-presync-attended §2.6: "no quit request is
+// started after the watchdog returns or after a Lock"). The context is the
+// session's quit context, which the watchdog's give-up and a Stop cancel; a quit
+// that reaches its handle, creation-time and window checks after that must still
+// post nothing and say nothing was asked (errQuitNotPosted). Positive twin first: a
+// live context posts once. Confirmed failing on the Windows 11 lab VM 2026-10-31
+// (posted [0x100], returned nil); encoded as an open gap until the owner rules.
+func TestWinQuitPostsNothingOnceItsContextEnded(t *testing.T) {
+	t.Skip("open (owner decision, as1a-4): the fix is a context check inside winEnv.quit, which the MA-927 code pin covers; its hash may change only together with a new MA-918 lab record (docs/lab/presync-windows-code-pin.txt, C-66), and none exists yet. Remove this skip in the commit that lands the fix.")
+	const pid = 4242
+	const hwnd = uintptr(0x100)
+	start := time.Date(2026, 10, 22, 2, 0, 0, 0, time.UTC)
+	child := proc{pid: pid, start: start}
+	run := func(ctx context.Context) ([]uintptr, error) {
+		var posted []uintptr
+		e := &winEnv{w: fakeWin32{
+			handleOK: true, handleLive: true, creation: start.UnixNano(),
+			mainOf: map[uint32]uintptr{pid: hwnd}, winPIDof: map[uintptr]uint32{hwnd: pid},
+			posted: &posted,
+		}}
+		err := e.quit(ctx, child)
+		return posted, err
+	}
+	if posted, err := run(context.Background()); len(posted) != 1 || err != nil {
+		t.Fatalf("twin: a live context posted %v (err %v), want one WM_CLOSE", posted, err)
+	}
+
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	posted, err := run(ctx)
+	if len(posted) != 0 {
+		t.Errorf("posted %v after the quit context ended, want nothing (§2.6)", posted)
+	}
+	if !errors.Is(err, errQuitNotPosted) {
+		t.Errorf("quit returned %v after its context ended, want errQuitNotPosted", err)
+	}
+}
+
 // covers: MA-571
 // The launch (design §2, §6): OUT of the task's job object
 // (CREATE_BREAKAWAY_FROM_JOB) so a Task-Scheduler teardown cannot hard-kill

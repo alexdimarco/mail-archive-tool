@@ -113,7 +113,8 @@ func AttendedQuitAllowed(goos string) bool {
 // OverrideTablesForTest sets the given platforms' entries of the quit and start
 // tables, and returns the function that puts them back (C-79). It is exported only
 // because the Desktop and wizard tests that render both values live in other
-// packages; MA-927 fails if any non-test file calls it.
+// packages; MA-927 fails if any non-test file uses it — a call, or the function
+// taken as a value.
 func OverrideTablesForTest(quit, start map[string]bool) (restore func()) {
 	tableMu.Lock()
 	defer tableMu.Unlock()
