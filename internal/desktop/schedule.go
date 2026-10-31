@@ -542,6 +542,11 @@ func (d *dashboard) scheduleRemove(w http.ResponseWriter, r *http.Request) {
 		_ = schedule.RemoveJobFile(runJobFile)
 	}
 	resp := map[string]any{"ok": true, "removed": len(removed) > 0}
+	if len(removed) == 0 {
+		// Never "Removed." when nothing was (MA-948): say so, and how to remove a schedule set
+		// up under a name of its own.
+		resp["note"] = removeNothingNote(d.cfg.goos(), d.cfg.effectiveOut())
+	}
 	// A descriptor the tool cannot read is never deleted (rulings §13.6, ESC-10):
 	// name it with the remedy, as `schedule -remove` does.
 	for _, p := range removed {

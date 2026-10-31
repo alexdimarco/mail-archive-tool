@@ -1221,9 +1221,16 @@ func (cfg Config) overviewFor(csrf, epoch string) string {
 	data.ShowLocalCreate = runJobForm && !rt.hasDesc && adapter && rebuild.ok
 	data.ShowLocalEdit = runJobForm && rt.runJob && adapter
 	exportToRunJob := exportLocal && adapter && rebuild.ok
+	// ownName: the command-line schedule was set up under a name of its own, which Remove
+	// does not reach (MA-948); the words give the command that removes it instead.
+	ownName, ownNameBound := false, ""
 	if rt.export && rt.hasDesc && !rt.notice {
+		ownName, ownNameBound = recordedOwnName(data.OutDir)
 		data.ExportLine = exportNoRunNowLine
-		if exportToRunJob {
+		switch {
+		case ownName:
+			data.ExportLine = ownNameExportLine(cfg.goos(), data.OutDir, ownNameBound, rt.desc, exportToRunJob)
+		case exportToRunJob:
 			data.ExportLine = exportGetRunNowLine + " " + exportCarryOverLine(rt.desc)
 		}
 	}
@@ -1240,7 +1247,7 @@ func (cfg Config) overviewFor(csrf, epoch string) string {
 	data.ShowBackupOff = localCard && !data.HasSchedule && !data.ShowLocalCreate
 	data.Set = settingsCardFor(settingsInputs{out: data.OutDir, rt: rt, entry: entry, entrySt: entrySt,
 		runJobForm: runJobForm, captureForm: captureForm, canEdit: adapter && (rt.runJob || rebuild.ok), thunderbird: rebuild.thunderbird,
-		goos: cfg.goos(), archiveNowOffered: data.ArchiveNowOff == "", exportToRunJob: exportToRunJob})
+		goos: cfg.goos(), archiveNowOffered: data.ArchiveNowOff == "", exportToRunJob: exportToRunJob, exportOwnName: ownName})
 	if rt.kind == backupLocal && data.ArchiveNowOff == "" {
 		data.ArchiveNowConfirm = archiveNowConfirm // Archive now turns it mixed (C-7)
 	}
@@ -1272,6 +1279,11 @@ func (cfg Config) overviewFor(csrf, epoch string) string {
 		data.ShowInstall, data.ShowRepair, data.ShowLocalCreate, data.ShowLocalEdit, data.ShowBackupOff, data.ShowBrokenRepair = false, false, false, false, false, false
 		data.ShowCaptureRepair, data.Set, data.ArchiveNowConfirm = false, settingsCard{}, ""
 		data.ShowRemove = data.HasSchedule
+	}
+	// A schedule under a name of its own is not Remove's to take out (MA-948): Remove is
+	// shown only when an entry named for this folder is there for it.
+	if ownName && entry == "" {
+		data.ShowRemove = false
 	}
 	// A local-origin archive's Archive now card points at the way this page offers to back
 	// it up now (MA-941), read from what the Scheduled backup card and Settings show.
@@ -2259,6 +2271,9 @@ function cardPost(path,done,okWord){
   const n=$('schedState');
   return fetch(path,{method:'POST',headers:{'Content-Type':'application/json','X-CSRF-Token':csrf},body:JSON.stringify({drawnFor:drawnFor})})
     .then(r=>r.json()).then(d=>{done();const said=d.ok?(d.note||okWord):(d.error||'Failed.');if(n){n.hidden=false;n.textContent=said;}
+      // a Remove that removed nothing (MA-948): its note as it is, with no state line read for the
+      // folder's own name (it would call a schedule under another name not installed) and no reload
+      if(path==='api/schedule-remove'&&d.ok&&d.removed===false){if(n){n.hidden=false;n.textContent=said;}return;}
       return schedState(said).then(()=>{if(n&&d.left){n.hidden=false;n.textContent='Removed. Left in place: '+d.left+' cannot be read, so removal cannot tell which schedule it records - '+d.remedy+'.';}
         // a Remove changes what the card and Settings offer (no Repair or Run now; How often back
         // to none): the page is drawn again once the reply has been read

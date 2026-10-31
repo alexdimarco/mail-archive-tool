@@ -116,6 +116,9 @@ type settingsInputs struct {
 	// exportToRunJob: a command-line schedule of a local archive that, once removed, this
 	// card can replace with one the Desktop runs (MA-942).
 	exportToRunJob bool
+	// exportOwnName: that schedule was set up under a name of its own, which the card's
+	// Remove does not reach (MA-948).
+	exportOwnName bool
 }
 
 // settingsCardFor works out the Settings card for one archive (3.2, 3.3).
@@ -161,7 +164,10 @@ func settingsCardFor(in settingsInputs) settingsCard {
 		s.SchedNone = !rt.hasDesc && in.entry == ""
 	case rt.hasDesc && rt.export:
 		s.ReadOnly, s.Remedy = howOften, commandLineSetUp // C-7
-		if in.exportToRunJob {
+		switch {
+		case in.exportToRunJob && in.exportOwnName:
+			s.Remedy += commandLineOwnNameToRunJob
+		case in.exportToRunJob:
 			s.Remedy += commandLineToRunJob
 		}
 	case rt.hasDesc && rt.broken == brokenMissing:
