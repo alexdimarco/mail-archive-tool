@@ -274,8 +274,9 @@ func notSyncedText(in Input, s state.SyncStreak) string {
 // itself (owner ruling 4 of 2026-10-31), naming what really clears it in
 // internal/app/syncstreak.go (review findings behaviour-1 and behaviour-2): a session
 // that saw mail arrive, from any run, or Thunderbird found already open by a scheduled
-// backup — or by a Run now, but only where Run now starts Thunderbird (on Windows it
-// does not yet, so no session runs and nothing moves).
+// backup — or by a Run now, but only where Run now starts Thunderbird (macOS, and
+// Windows since its start entry was set true after lab MA-918 run 2 on 2026-10-31;
+// where the entry is false no session runs and nothing moves).
 func nothingArrivedText(in Input, s state.SyncStreak) string {
 	w := syncWordsFor(in)
 	then := "then click Run now."

@@ -199,13 +199,15 @@ warning and still archives what is on disk. A Thunderbird you already have open 
 keyboard or mouse for 2 minutes; if you are using the computer, that backup skips the sync and
 saves the mail already on this computer.
 
-**Run now on a Mac.** With the sync on, **Run now** on the Scheduled backup card syncs
-Thunderbird first, even while you are at the computer. It starts Thunderbird out of sight and
-waits for its mail (up to 20 minutes, often about 13). **Stop waiting and back up now** ends the
-wait early. When the backup is done, Thunderbird stays open for you to quit from the Dock.
-**Cancel the backup** stops the whole backup while it waits; nothing is added to the archive. On
-Windows, Run now does not start Thunderbird yet: it backs up the mail already on disk, and
-scheduled backups still sync it.
+**Run now on a Mac and on Windows.** With the sync on, **Run now** on the Scheduled backup card
+syncs Thunderbird first, even while you are at the computer. It starts Thunderbird out of sight
+(macOS) or minimized to the taskbar (Windows) and waits for its mail (up to 20 minutes, often
+about 13). **Stop waiting and back up now** ends the wait early. When the backup is done,
+Thunderbird stays open for you to quit from the Dock (macOS) or from the taskbar or the
+notification area (Windows). **Cancel the backup** stops the whole backup while it waits; nothing
+is added to the archive. On Windows, Thunderbird does not take the keyboard from what you are
+typing; if it has a Primary Password, its password window still appears and asks for it each
+time Run now starts Thunderbird.
 
 **When the sync keeps missing.** If Thunderbird could not be synced before an archive's scheduled
 backups for 3 days, `status` and MailArchive Desktop's Status & health say so and what to do.
@@ -213,7 +215,7 @@ Backup alerts also send one email (when **a failed backup, or Thunderbird not sy
 is ticked). A softer warning, with no email, appears when Thunderbird was started before each
 scheduled backup for 3 days but no new mail arrived. Thunderbird may be waiting for a password or
 a sign-in. That warning clears by itself the next time a backup sees new mail arrive, or a
-scheduled backup (or, on a Mac, Run now) finds Thunderbird already open.
+scheduled backup or Run now finds Thunderbird already open.
 
 Turn it on wherever you set the schedule up:
 
@@ -222,7 +224,7 @@ Turn it on wherever you set the schedule up:
   Thunderbird source.
 - **MailArchive Desktop:** the **Settings** card for a local Thunderbird archive offers
   **Sync Thunderbird before each backup** beside **How often**, then **Save settings**.
-- **An encrypted archive (MailArchive Desktop, Mac):** its **Settings** card offers **Sync
+- **An encrypted archive (MailArchive Desktop, Mac and Windows):** its **Settings** card offers **Sync
   Thunderbird before each Run now**, with its own **Save**. An encrypted archive is backed up only
   when you click Run now (see [Encrypted archives](#encrypted-archives)).
 - **The command line:** add **`-thunderbird-sync`** to `mailarchive schedule …` (the profile is
@@ -264,8 +266,8 @@ What it gives you, beyond reading and searching the archive:
 - **Run now** — run the backup straight away instead of waiting for the schedule.
   (A Microsoft 365 archive uses **Archive now** on its own card; a local or
   encrypted archive has **Run now** on its Scheduled backup card.) While Run now is
-  running, **Cancel the backup** stops it. On a Mac with the Thunderbird sync on,
-  Run now syncs Thunderbird first (see the Thunderbird sync section above).
+  running, **Cancel the backup** stops it. On a Mac or on Windows with the Thunderbird
+  sync on, Run now syncs Thunderbird first (see the Thunderbird sync section above).
 - **Backup alerts** — have a scheduled backup email you when it **fails** (or is
   auto-paused, or — if you turn it on — succeeds). The **a failed backup, or
   Thunderbird not synced for 3 days** box also sends one email when Thunderbird has
@@ -324,7 +326,7 @@ password at the terminal unless this computer remembers the key. Scheduled
 (unattended) backups into an encrypted archive are not available in this
 version.
 
-In MailArchive Desktop on a Mac, an encrypted archive made from Thunderbird can
+In MailArchive Desktop on a Mac or on Windows, an encrypted archive made from Thunderbird can
 sync Thunderbird before each **Run now**: tick **Sync Thunderbird before each Run
 now** in Settings and click its **Save**. While that backup waits for Thunderbird,
 the archive stays unlocked for it. Until the backup starts reading mail, **Lock**

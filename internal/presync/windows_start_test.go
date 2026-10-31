@@ -450,6 +450,15 @@ func TestWindowsCodePin(t *testing.T) {
 	if p := windowsPinProblems(root, cur, code, win, tableRecord, quitRecord); len(p) != 0 {
 		t.Fatalf("the real pin: %v (code hash now %s)", p, code)
 	}
+	// Since 2026-10-31 the MA-918 record exists (run 2 passed the first-release scope) and
+	// the Windows start entry is true, so the real pin is strict: it names that record and
+	// its date. The same pin and entries with the record gone are caught.
+	if cur.record != tableRecord || cur.date == "" || !win.start || win.quit {
+		t.Fatalf("the real pin is not the strict one the MA-918 record asks for: record %q, date %q, start %v, quit %v", cur.record, cur.date, win.start, win.quit)
+	}
+	if p := windowsPinProblems(t.TempDir(), cur, code, win, tableRecord, quitRecord); len(p) == 0 {
+		t.Error("planted: the real pin with its MA-918 record missing was not caught")
+	}
 	pin := cur.hash
 
 	// "no lab record" (operator-accepted 2026-10-31, owner ruling 1): the pin may follow

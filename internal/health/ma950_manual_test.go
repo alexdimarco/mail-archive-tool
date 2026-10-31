@@ -126,7 +126,9 @@ func TestRunNowOnlyIsTheOwnersChoiceInStatus(t *testing.T) {
 		t.Errorf("a Run now only archive with no run yet: %v", rep.Codes)
 	}
 
-	// Where Run now does not start Thunderbird yet, the note says what to do instead.
+	// Where Run now does not start Thunderbird (here Windows' entry switched off; with the
+	// tables as shipped it is on, TestRunNowOnlySyncNoteAsShipped), the note says what to do
+	// instead.
 	win := manualInput(t, now, "windows", "desktop", true)
 	if got, want := reasonWith(Assess(win, now), "presync_syncs"), "this archive's backup is set to sync Thunderbird first, but on this computer Run now does not start Thunderbird yet: open Thunderbird and let its mail arrive before you click Run now"; got != want {
 		t.Errorf("Windows' sync note %q, want %q", got, want)
@@ -231,5 +233,24 @@ func TestStatusReadsRunNowOnlyFromTheArchive(t *testing.T) {
 	assure.Reached(t, reasonWith(rep, "manual_backup"), "the Run now only note")
 	if !summaryHas(in, rep, manualScheduleLine) {
 		t.Errorf("status's Schedule line: %v", Summary(in, rep))
+	}
+}
+
+// covers: MA-950, MA-949
+// With the tables as shipped, no override: Run now starts Thunderbird on a Mac and, since
+// 2026-10-31 (lab MA-918 run 2, docs/lab/presync-attended-start-windows.md), on Windows, so a
+// Run now only backup with the sync gets the note that it syncs on both, pinned whole, and
+// never "does not start Thunderbird yet".
+func TestRunNowOnlySyncNoteAsShipped(t *testing.T) {
+	now := time.Date(2026, 10, 31, 12, 0, 0, 0, time.UTC)
+	const want = "this archive's backup syncs Thunderbird first each time you click Run now: it starts Thunderbird, even while you are using the computer, waits for its mail, then backs up, and leaves Thunderbird open for you to quit"
+	for _, goos := range []string{"darwin", "windows"} {
+		if !presync.AttendedStartAllowed(goos) {
+			t.Fatalf("%s: the start entry, as shipped, is not on", goos)
+		}
+		got := reasonWith(Assess(manualInput(t, now, goos, "desktop", true), now), "presync_syncs")
+		if got != want {
+			t.Errorf("%s: the sync note %q, want %q", goos, got, want)
+		}
 	}
 }

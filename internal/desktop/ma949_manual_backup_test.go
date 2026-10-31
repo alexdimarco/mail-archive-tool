@@ -221,8 +221,10 @@ func TestSwitchingToAndFromRunNowOnlyLeavesNoStaleEntry(t *testing.T) {
 // is taken out when Run now only is saved, and a Daily backup's Repair reinstalls its entry.
 // When the entry can't be taken out, the save is refused in plain words — the entry, the record
 // and the job file as they were. Repair, posted for a Run now only backup (the card shows none),
-// is refused: there is no schedule to repair. On Windows, where Run now does not start
-// Thunderbird yet, saving it with the sync says what to do instead, and Run now's tooltip too.
+// is refused: there is no schedule to repair. On Windows, with the tables as shipped (Run now
+// starts Thunderbird since lab MA-918 run 2), saving it with the sync adds no note and Run
+// now's tooltip is the Windows sync text; with Windows' start entry off, saving it with the
+// sync says what to do instead, and Run now's tooltip too.
 func TestRunNowOnlyRefusesWhatWouldLeaveAnEntryRunning(t *testing.T) {
 	isolateHome(t)
 	failRemove := false
@@ -278,12 +280,28 @@ func TestRunNowOnlyRefusesWhatWouldLeaveAnEntryRunning(t *testing.T) {
 	}
 	assure.Refused(t, rc, msg, assure.Names(wizard.ManualNoRepair), assure.NoSideEffect(u.holds))
 
-	win := newA3Rig(t, tbProfileArchive(t), "windows")
-	if r := win.manualReply(`{"interval":"manual","time":"03:00","presync":true}`); r["ok"] != true || r["note"] != manualSyncStartOffNote {
-		t.Fatalf("Windows, Run now only with the sync: %v", r)
+	// Windows, the tables as shipped: Run now starts Thunderbird there since lab MA-918 run 2,
+	// so the save says nothing more and Run now's tooltip is the Windows sync text, whole.
+	if !presync.AttendedStartAllowed("windows") {
+		t.Fatal("Windows' start entry, as shipped, is not on")
 	}
-	if p := win.page(); !shows(p, runNowManualStartOffTitle) {
-		t.Error("Windows: Run now's tooltip does not say what to do while it does not start Thunderbird")
+	win := newA3Rig(t, tbProfileArchive(t), "windows")
+	if r := win.manualReply(`{"interval":"manual","time":"03:00","presync":true}`); r["ok"] != true || r["note"] != nil {
+		t.Fatalf("Windows, Run now only with the sync, as shipped: %v", r)
+	}
+	if p := win.page(); !shows(p, runNowTitle("windows", true)) || shows(p, runNowManualStartOffTitle) || shows(p, runNowStartOffTitle) {
+		t.Error("Windows, as shipped: Run now's tooltip is not the Windows sync text")
+	}
+	// Windows with its start entry off: saving it with the sync says what to do instead, and
+	// Run now's tooltip too.
+	restoreWin := presync.OverrideTablesForTest(nil, map[string]bool{"windows": false})
+	defer restoreWin()
+	off := newA3Rig(t, tbProfileArchive(t), "windows")
+	if r := off.manualReply(`{"interval":"manual","time":"03:00","presync":true}`); r["ok"] != true || r["note"] != manualSyncStartOffNote {
+		t.Fatalf("Windows, start entry off, Run now only with the sync: %v", r)
+	}
+	if p := off.page(); !shows(p, runNowManualStartOffTitle) {
+		t.Error("Windows, start entry off: Run now's tooltip does not say what to do while it does not start Thunderbird")
 	}
 }
 

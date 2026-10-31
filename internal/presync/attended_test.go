@@ -1380,7 +1380,10 @@ func callsOverride(fset *token.FileSet, name string, src any) (bool, error) {
 // AttendedQuitAllowed; C-49, C-66, OQ-7): every entry names its lab record's path
 // under docs/lab/, and an entry is true only when that record exists and names the
 // platform. Positive twin first: a planted true entry whose record exists and names
-// darwin passes; one with no record, or a record naming the other platform, fails.
+// darwin passes; one with no record (macOS's, or Windows' start entry without its
+// MA-918 record), or a record naming the other platform, fails. As shipped since
+// 2026-10-31 both start entries are true with their own records and both quit
+// entries false.
 // The lookups answer from the tables (an unknown platform is false), the one
 // test-only override flips them and its restore puts them back, and no non-test Go
 // file in the repository uses OverrideTablesForTest — calls it, or takes it as a
@@ -1398,7 +1401,9 @@ func TestAttendedTablesNeedALabRecord(t *testing.T) {
 		t.Fatalf("twin: a true entry with its record flagged: %v", p)
 	}
 	for name, bad := range map[string]map[string]map[string]labGate{
-		"no record":          {"start": {"darwin": {allowed: true, record: "docs/lab/none.md"}}},
+		"no record": {"start": {"darwin": {allowed: true, record: "docs/lab/none.md"}}},
+		// The Windows start entry true without its MA-918 record (root has none).
+		"windows, no record": {"start": {"windows": {allowed: true, record: "docs/lab/presync-attended-start-windows.md"}}},
 		"the other platform": {"quit": {"windows": {allowed: true, record: "docs/lab/x.md"}}},
 		"not under docs/lab": {"quit": {"darwin": {record: "lab.md"}}},
 	} {
@@ -1417,6 +1422,16 @@ func TestAttendedTablesNeedALabRecord(t *testing.T) {
 	}
 	if p := labGateProblems(repoRoot(t), tables); len(p) != 0 {
 		t.Errorf("the real tables: %v", p)
+	}
+	// As shipped since 2026-10-31: both start entries true, each with its own record (the
+	// Windows one is lab MA-918 run 2's), and both quit entries false (L-A5 not run).
+	for goos, rec := range map[string]string{"darwin": "docs/lab/presync-attended-start-darwin.md", "windows": "docs/lab/presync-attended-start-windows.md"} {
+		if g := attendedStartTable[goos]; !g.allowed || g.record != rec {
+			t.Errorf("start/%s as shipped: %+v, want true naming %s", goos, g, rec)
+		}
+		if attendedQuitTable[goos].allowed {
+			t.Errorf("quit/%s is true with no L-A5 record", goos)
+		}
 	}
 
 	for _, goos := range []string{"darwin", "windows", "linux"} {

@@ -439,7 +439,7 @@ func TestRunNowNoteBuiltOnTheServer(t *testing.T) {
 	g.s.release <- struct{}{}
 	g.done()
 	for goos, want := range map[string]string{"darwin": "Starting Thunderbird out of sight…",
-		"windows": "Starting Thunderbird minimized to the taskbar… its window may appear for a moment."} {
+		"windows": "Starting Thunderbird minimized to the taskbar…"} {
 		if n := runNowSyncNote(goos, presync.PhaseStarting, time.Now(), time.Now(), false); n != want {
 			t.Errorf("%s starting note %q, want %q", goos, n, want)
 		}
@@ -799,8 +799,16 @@ func TestRunNowTexts(t *testing.T) {
 			}
 		}
 	}
-	if s := runNowSyncNote("windows", presync.PhaseStarting, time.Now(), time.Now(), false); !strings.Contains(s, "its window may appear for a moment") {
-		t.Errorf("the Windows starting note does not say the window may appear: %q", s)
+	// Lab MA-918 run 2 (docs/lab/presync-attended-start-windows.md) saw Run now's start
+	// minimized from the first sample, never shown: no Windows text says the window may
+	// appear for a moment any more.
+	for _, x := range all {
+		if x.goos == "windows" && strings.Contains(x.s, "may appear for a moment") {
+			t.Errorf("a Windows text says its window may appear for a moment: %q", x.s)
+		}
+	}
+	if s := runNowTitle("windows", true); strings.Contains(s, "may appear") {
+		t.Errorf("the Windows tooltip says its window may appear: %q", s)
 	}
 	for _, goos := range []string{"linux", "darwin", "windows"} {
 		if runNowTitle(goos, false) != runNowPlainTitle {
@@ -848,11 +856,14 @@ func TestRunNowTexts(t *testing.T) {
 
 // covers: MA-915
 // The release notes and the real start table agree (design-presync-attended §7, C-32,
-// C-52, owner ruling OQ-7: ship the Mac first): the AS4 line (written now, as
-// releaseLineMac) is in packaging/release-notes.md exactly when macOS's
-// AttendedStartAllowed entry is true, and no line says Windows' Run now syncs while
-// its entry is false. So a release can never announce a Run now sync its build does
-// not do, and the flip commit cannot forget the line.
+// C-52, owner ruling OQ-7: ship the Mac first): the AS4 line (releaseLineMac) is in
+// packaging/release-notes.md exactly when macOS's AttendedStartAllowed entry is true, and
+// Windows' line (releaseLineWin, written in the commit that set Windows' entry true after
+// lab MA-918 run 2) exactly when Windows' entry is true; no line says Windows' Run now
+// syncs while its entry is false, and none says it does not start Thunderbird yet while
+// it is true. The README's Run now paragraph follows the same Windows entry. So a release
+// can never announce a Run now sync its build does not do, and the flip commit cannot
+// forget the line.
 func TestRunNowReleaseLineFollowsTheTable(t *testing.T) {
 	dir, err := os.Getwd()
 	if err != nil {
@@ -874,19 +885,50 @@ func TestRunNowReleaseLineFollowsTheTable(t *testing.T) {
 	}
 	// The friction review (§14 gate 3) dropped the doubled "Run now now"; the checks
 	// below match the settled words, so none of them is looser than before.
-	if !strings.Contains(releaseLineMac, "On a Mac, Run now syncs Thunderbird first") || !strings.Contains(releaseLineMac, "On Windows, Run now does not start Thunderbird yet") ||
+	if !strings.Contains(releaseLineMac, "On a Mac, Run now syncs Thunderbird first") || strings.Contains(releaseLineMac, "Windows") ||
 		strings.Contains(releaseLineMac, "Run now now") {
 		t.Fatalf("twin: the AS4 release line: %q", releaseLineMac)
+	}
+	const winLine = "On Windows, Run now syncs Thunderbird first too, in the same way: it starts Thunderbird minimized to the taskbar, where it does not take the keyboard from what you are typing, waits for its mail, and leaves it open for you to quit from the taskbar or the notification area. If Thunderbird has a Primary Password, its password window still appears and asks for it each time Run now starts Thunderbird."
+	if releaseLineWin != winLine {
+		t.Fatalf("twin: the Windows release line:\n  %q\nwant\n  %q", releaseLineWin, winLine)
 	}
 	if got := strings.Contains(string(notes), releaseLineMac); got != presync.AttendedStartAllowed("darwin") {
 		t.Errorf("the release notes carry the Mac line: %v; macOS's start entry: %v", got, presync.AttendedStartAllowed("darwin"))
 	}
+	if got := strings.Contains(string(notes), "- "+releaseLineWin+"\n"); got != presync.AttendedStartAllowed("windows") {
+		t.Errorf("the release notes carry the Windows line: %v; Windows' start entry: %v", got, presync.AttendedStartAllowed("windows"))
+	}
 	if (strings.Contains(string(notes), "Run now syncs Thunderbird") || strings.Contains(string(notes), "Run now now syncs Thunderbird")) &&
-		!presync.AttendedStartAllowed("darwin") {
+		!presync.AttendedStartAllowed("darwin") && !presync.AttendedStartAllowed("windows") {
 		t.Error("the release notes say Run now syncs while no platform's start entry is true")
 	}
 	if (strings.Contains(string(notes), "On Windows, Run now syncs Thunderbird") || strings.Contains(string(notes), "On Windows, Run now now syncs Thunderbird")) != presync.AttendedStartAllowed("windows") {
 		t.Error("the release notes and the Windows start entry disagree")
+	}
+	if presync.AttendedStartAllowed("windows") && (strings.Contains(string(notes), "does not start Thunderbird yet") || strings.Contains(string(notes), "(or, on a Mac, Run now)")) {
+		t.Error("the release notes still say Windows' Run now does not start Thunderbird, with its start entry on")
+	}
+
+	// The README's Run now paragraph, pinned whole, follows Windows' entry too.
+	readme, err := os.ReadFile(filepath.Join(dir, "README.md"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	const readmeRunNow = "**Run now on a Mac and on Windows.** With the sync on, **Run now** on the Scheduled backup card\n" +
+		"syncs Thunderbird first, even while you are at the computer. It starts Thunderbird out of sight\n" +
+		"(macOS) or minimized to the taskbar (Windows) and waits for its mail (up to 20 minutes, often\n" +
+		"about 13). **Stop waiting and back up now** ends the wait early. When the backup is done,\n" +
+		"Thunderbird stays open for you to quit from the Dock (macOS) or from the taskbar or the\n" +
+		"notification area (Windows). **Cancel the backup** stops the whole backup while it waits; nothing\n" +
+		"is added to the archive. On Windows, Thunderbird does not take the keyboard from what you are\n" +
+		"typing; if it has a Primary Password, its password window still appears and asks for it each\n" +
+		"time Run now starts Thunderbird.\n"
+	if got := strings.Contains(string(readme), readmeRunNow); got != presync.AttendedStartAllowed("windows") {
+		t.Errorf("the README's Run now paragraph names Windows: %v; Windows' start entry: %v", got, presync.AttendedStartAllowed("windows"))
+	}
+	if presync.AttendedStartAllowed("windows") && (strings.Contains(string(readme), "Run now does not start Thunderbird yet") || strings.Contains(string(readme), "(or, on a Mac, Run now)")) {
+		t.Error("the README still says Windows' Run now does not start Thunderbird, with its start entry on")
 	}
 }
 
@@ -896,8 +938,11 @@ func TestRunNowReleaseLineFollowsTheTable(t *testing.T) {
 // 2026-10-31 (labs L-A1 and L-A9, docs/lab/presync-attended-start-darwin.md, and the
 // wait fix MA-932), so a Mac's plaintext Run now tooltip is the AS4 start text word for
 // word, the encrypted one starts with it, the Settings notice says a Run now does not
-// wait, and the first-sync line is offered. Windows follows its own entry: while it is
-// false (no MA-918 record), every Windows text is the start-off variant.
+// wait, and the first-sync line is offered. Windows' entry is true since 2026-10-31 (lab
+// MA-918 run 2, docs/lab/presync-attended-start-windows.md), so Windows' texts are its own
+// start texts word for word, the same way: the tooltip (minimized to the taskbar, no "its
+// window may appear"), the encrypted one starting with it, the sync notice saying a Run now
+// does not wait, and the first-sync line; none is the start-off variant.
 func TestRunNowShippedTexts(t *testing.T) {
 	const mac = "Run this archive's backup now. Because Thunderbird sync is on, it first starts Thunderbird out of sight — even while you are using the computer — and waits for its mail to arrive (up to 20 minutes, often about 13), then leaves it open for you to quit from the Dock. A Thunderbird that is already open is left alone. You can cancel while it waits; that skips the backup."
 	if !presync.AttendedStartAllowed("darwin") || !runNowSyncs("darwin") {
@@ -915,14 +960,69 @@ func TestRunNowShippedTexts(t *testing.T) {
 	if !strings.HasPrefix(runNowFirstSyncLine("darwin"), "New: Run now starts Thunderbird out of sight") {
 		t.Errorf("a Mac's first-sync line: %q", runNowFirstSyncLine("darwin"))
 	}
-	if presync.AttendedStartAllowed("windows") {
-		if runNowTitle("windows", true) == runNowStartOffTitle || !strings.Contains(runNowTitle("windows", true), "minimized to the taskbar") {
-			t.Errorf("Windows' start entry is on, but its tooltip: %q", runNowTitle("windows", true))
-		}
-		return
+	const win = "Run this archive's backup now. Because Thunderbird sync is on, it first starts Thunderbird minimized to the taskbar — even while you are using the computer — and waits for its mail to arrive (up to 20 minutes, often about 13), then leaves it open for you to quit from the taskbar or the notification area. A Thunderbird that is already open is left alone. You can cancel while it waits; that skips the backup."
+	if !presync.AttendedStartAllowed("windows") || !runNowSyncs("windows") {
+		t.Fatal("Windows' start entry, as shipped, is not on")
 	}
-	if runNowSyncs("windows") || runNowTitle("windows", true) != runNowStartOffTitle || encRunNowTitle("windows", true) != encRunNowStartOff ||
-		presync.SyncNoticeFor("windows") != presync.SyncNotice {
-		t.Errorf("Windows' start entry is off, but a text says Run now starts Thunderbird: %q / %q", runNowTitle("windows", true), encRunNowTitle("windows", true))
+	if got := runNowTitle("windows", true); got != win {
+		t.Errorf("Windows' Run now tooltip, sync on:\n  %q\nwant\n  %q", got, win)
+	}
+	if got := encRunNowTitle("windows", true); !strings.HasPrefix(got, win+" ") || !strings.HasSuffix(got, encLockSentence) || got == encRunNowStartOff {
+		t.Errorf("Windows' encrypted Run now tooltip, sync on: %q", got)
+	}
+	if !strings.Contains(presync.SyncNoticeFor("windows"), "; a backup you start with Run now in MailArchive Desktop does not check that, and leaves Thunderbird open for you to quit.") {
+		t.Errorf("Windows' sync notice does not say a Run now does not wait: %q", presync.SyncNoticeFor("windows"))
+	}
+	if got, want := runNowFirstSyncLine("windows"), "New: Run now starts Thunderbird minimized to the taskbar, even while you are using the computer, waits up to 20 minutes for its mail, and leaves it open for you to quit from the taskbar or the notification area when you are done."; got != want {
+		t.Errorf("Windows' first-sync line: %q", got)
+	}
+}
+
+// covers: MA-914, MA-915, MA-906
+// The Windows Run now path with the tables as shipped (design-presync-attended §2.7,
+// §3.1, §4.6; C-49, OQ-7): since Windows' start entry was set true after lab MA-918 run 2,
+// a Windows Desktop's Run now with the sync on installs the attended hook — the scripted
+// session (presyncjob's seam; no real Thunderbird) is called once, attended, never-close
+// (AttendedQuitAllowed[windows] stays false), with the Desktop's words and Windows as its
+// platform — and its notes are Windows' own: the starting and waiting notes, then the
+// synced line naming the taskbar and the notification area, pinned whole; the record reads
+// ok with the sync recorded. Positive twin of TestRunNowNoteBuiltOnTheServer's start-off
+// case, where no session runs.
+func TestWindowsRunNowSyncsAsShipped(t *testing.T) {
+	if !presync.AttendedStartAllowed("windows") || presync.AttendedQuitAllowed("windows") {
+		t.Fatalf("Windows as shipped: start %v (want true), quit %v (want false)", presync.AttendedStartAllowed("windows"), presync.AttendedQuitAllowed("windows"))
+	}
+	// The rig sets the entry to the shipped value, so this is the table as shipped.
+	g := newRunNowRig(t, "windows", presync.AttendedStartAllowed("windows"))
+	g.s.minimized = true
+	spec := schedule.Spec{Name: schedule.DefaultNameFor(g.out), Interval: schedule.Daily, At: "05:00",
+		Exe: `C:\Program Files\MailArchive\mailarchivew.exe`, Args: []string{"-job", g.jp}, Out: g.out}
+	if err := schedule.WriteDescriptor(g.out, schedule.DescribeSpec(spec)); err != nil {
+		t.Fatal(err)
+	}
+	if page, _ := getPage(t, DashboardHandler(g.d.cfg)); !shows(page, runNowTitle("windows", true)) || shows(page, runNowStartOffTitle) {
+		t.Error("the Windows card's Run now tooltip is not the Windows sync text")
+	}
+	g.start()
+	g.at(presync.PhaseStarting)
+	g.at(presync.PhaseWaiting)
+	if n := str(g.activity()["syncNote"]); !strings.Contains(n, "Thunderbird is running minimized to the taskbar and stays open after the wait.") {
+		t.Errorf("the Windows waiting note: %q", n)
+	}
+	g.s.release <- struct{}{}
+	m := g.done()
+	if g.s.calls() != 1 {
+		t.Fatalf("the session was called %d times, want 1: the attended hook was not installed on Windows", g.s.calls())
+	}
+	cfg, _, _ := g.s.last()
+	if !cfg.Attended || !cfg.NeverQuit || cfg.GOOS != "windows" || cfg.Surface != presync.SurfaceDesktop || cfg.EndWait == nil {
+		t.Errorf("the Windows session was handed Attended %v, NeverQuit %v, GOOS %q, Surface %q, EndWait set %v", cfg.Attended, cfg.NeverQuit, cfg.GOOS, cfg.Surface, cfg.EndWait != nil)
+	}
+	const synced = "Thunderbird synced: its mail stopped arriving after 6 min. It was left open minimized to the taskbar; quit it from the taskbar or the notification area when you are done."
+	if n := str(m["note"]); !strings.Contains(n, "\n"+synced) || strings.Contains(n, startNotAllowedLine) || m["error"] != "" {
+		t.Errorf("the Windows Run now's end note %q (error %q), want the synced line %q", n, m["error"], synced)
+	}
+	if lr, _, err := state.ReadLastRun(g.out); err != nil || lr.Status != state.RunOK || lr.Presync == nil || lr.Presync.Name != presync.OutcomeOK.Name {
+		t.Errorf("the record %+v (%v); want ok with the sync recorded", lr, err)
 	}
 }

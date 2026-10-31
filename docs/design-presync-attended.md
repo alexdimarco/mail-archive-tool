@@ -25,7 +25,9 @@ fixes (AS1a) and the attended mode (AS1b) [C-51]; a run where nothing arrived is
 separate warning after 3 days of scheduled syncs that started Thunderbird but fetched nothing (§5.4,
 slice AS5); **OQ-6 yes** — a "Stop waiting and back up now" button while Run now waits (§4.6, A16,
 slices AS1b and AS4); **OQ-7 ship the Mac first** — the Windows `AttendedStartAllowed` entry stays
-false until its lab passes, while the code for both platforms is built now (§2.7); **OQ-8** — a Lock
+false until its lab passes, while the code for both platforms is built now (§2.7; *status
+2026-10-31: MA-918 run 2 passed and the Windows entry is true, owner ruling "lets try windows - I
+want it shipped in this version since we are so close"*); **OQ-8** — a Lock
 cancels **every** encrypted Run now that has not started reading mail, sync or not (§3.2, AS8). The
 fold check of C-48..C-86 is done (the review doc's round-2 addendum): every condition is folded, and
 twelve gaps or inconsistencies it found are fixed here. **AS1a may start.** The rev-5 additions
@@ -535,6 +537,19 @@ attended ships only after MA-918 passes" would also hold the macOS fix. So:
   and sees this one. MA-927's pin covers the new builder, its quoting and the handle closing, and
   was re-pinned under "no lab record" (both Windows entries stay false). MA-918 is re-run on this
   start before the Windows entry is flipped.
+- **MA-918 run 2 passed; the Windows entry is true (2026-10-31).** Owner ruling 2026-10-31,
+  verbatim: "lets try windows - I want it shipped in this version since we are so close". Run 2
+  (record `docs/lab/presync-attended-start-windows.md`, the lead) measured this start through the
+  real Desktop on commit cc3b86c with only the Windows entry set true: six cases (from Windows
+  Terminal and from the Start menu, typing and idle past the 200 s foreground lock, Thunderbird
+  already open, Cancel, the notification-area option on). Thunderbird was minimized from the first
+  100 ms sample and never shown, and never took the keyboard; Cancel left it open; an open
+  Thunderbird was left alone. A Primary Password prompt is shown and takes the keyboard; owner
+  ruling 2026-10-31: "accept the password window". The commit that adds the record sets
+  `AttendedStartAllowed[windows]` true and makes the pin strict (it names the record and its date,
+  the hash unchanged: the record measured it). `AttendedQuitAllowed[windows]` stays false (AS-Q,
+  L-A5). Not covered, as the record says: Thunderbird not the default mail app, the Startup
+  shortcut, a real (non-emulated) PC.
 
 **The Windows lab (MA-918) [OQ-2, C-49, C-59].** A **ship-gate test**, not a feature gate.
 
@@ -600,6 +615,13 @@ the README) now say Thunderbird starts minimized to the taskbar; the install not
 window appears anyway, it is minimized" (the backstop). The 1.5.2 release notes say it. The
 attended texts keep "its window may appear for a moment": a hedge, still true, until MA-918
 measures the new start through the real Desktop.
+*Amended 2026-10-31 (MA-918 run 2):* it has measured it — minimized from the first sample, never
+shown — so the attended Windows texts (Run now's tooltip and the starting note) drop "its window
+may appear for a moment". "In the taskbar or the notification area" stays: run 2's case E saw
+Thunderbird go to the notification area with that option on. The help guide and the release notes
+add what the record found about the keyboard and the Primary Password prompt. The scheduled-run
+install note keeps "if its window appears anyway, it is minimized" (the backstop for a Thunderbird
+that does not honour the start; scheduled runs were not part of run 2).
 
 ### 2.8 Closing Thunderbird after an attended run: the button and the never-close rule [OQ-1]
 
@@ -1187,6 +1209,13 @@ does not clear the warning — until the Windows Run now switch is turned on aft
 then the Windows Desktop's warning says only that a scheduled backup finding Thunderbird open
 clears it (§5.4, amended).
 
+**Amended 2026-10-31 (the Windows start flip; MA-918 run 2 passed, record
+`docs/lab/presync-attended-start-windows.md`):** the Windows `AttendedStartAllowed` entry is now true,
+so a Windows Run now runs the session, and one that finds Thunderbird already open resets the
+no-change count as on a Mac. Effects-3 is closed on Windows too: the Windows Desktop's softer warning
+says "… or a scheduled backup or Run now finds Thunderbird already open." (MA-926, amended). The
+paragraph above stays true of a platform whose entry is false.
+
 `Outcome.Synced()` implements the synced rows **from the outcome alone; `Left` never enters it**
 [C-72]. The left-open endings keep their S7 verdict as the outcome (A10 step 4, A12), so they are
 synced or not by that verdict, and a cancelled run is never synced. MA-903 checks `Synced()` for
@@ -1608,7 +1637,9 @@ Rev 4 re-cut [C-48, C-50, C-51, C-52, C-53, C-54]. Every slice keeps its own pro
 
 Order: AS0 → AS1a → AS1b → AS2 → AS3 → AS4 → AS7 → AS5 → AS6. AS8 after AS7 (its record pin; OQ-8
 is answered). The Windows start-entry flip, and the `CreateProcess` start before it if L-A10 calls
-for one, once MA-918's first-release scope has passed (any time after AS4) [OQ-7]. AS-Q on a platform once its L-A5 record exists (any time after AS4). AS9 after L-A2 and
+for one, once MA-918's first-release scope has passed (any time after AS4) [OQ-7] — *done
+2026-10-31: MA-923's start, then MA-918 run 2 passed, then the flip in the commit adding its
+record*. AS-Q on a platform once its L-A5 record exists (any time after AS4). AS9 after L-A2 and
 macOS's AS-Q. AS-L any time after AS3, or never. AS10 last. The labs run in parallel from AS1a.
 
 ---
@@ -1735,6 +1766,12 @@ macOS's AS-Q. AS-L any time after AS3, or never. AS10 last. The labs run in para
    not-quiet and leftover run warnings), the code and that review are the words of record; this
    design's draft words are kept as written. Its "for the owner" list is open. AS9 and AS-Q owe their
    own pass.
+   *2026-10-31, the Windows start flip:* the texts it changed or added — the Windows Run now tooltip
+   and starting note without "its window may appear for a moment", the guide's Windows Run now
+   line with its keyboard and Primary Password sentences, `releaseLineWin` and the 1.5.2 release
+   notes' Windows lines, the README's Run now paragraph, and the Windows Desktop's softer-warning
+   clearing sentence — were last reviewed with Windows' start off. **Owed:** a friction pass over
+   those Windows-on texts before the release that ships them.
 4. **Labs, as per-platform switches, not per-platform releases** (one tag builds every platform)
    [C-48, C-49]: the macOS `AttendedStartAllowed` entry after the L-A1/L-A9 record (dev Mac, test
    profile, MA-917) [C-67, C-70]; the Windows `AttendedStartAllowed` entry after MA-918's
@@ -1750,6 +1787,12 @@ macOS's AS-Q. AS-L any time after AS3, or never. AS10 last. The labs run in para
    no MA-918 run exists. Flipping it means either writing a record that names MA-918 when no lab
    ran, or changing MA-927's rule; both are a gate change for the owner and operator to make, not
    for an agent.
+   *2026-10-31, later:* MA-918 ran (run 1 did not pass; run 2, on MA-923's start, passed the
+   first-release scope; record `docs/lab/presync-attended-start-windows.md`), and the owner ruled
+   "lets try windows - I want it shipped in this version since we are so close". The Windows start
+   entry is set true in the commit that adds the record, citing it; MA-927's pin is strict from that
+   commit (record and date named, hash unchanged). No gate was changed. Still owed: L-A5 before any
+   `AttendedQuitAllowed` flip, and MA-918 again before any release changing the pinned Windows code.
 5. **Owner:** OQ-5..OQ-8 answered 2026-10-30 (§15.3); no owner answer gates any slice now. Still
    going to the owner if they happen: a Windows focus steal or a long window flash found by MA-918
    (§15.4), and the friction review's wording (its "for the owner" list,

@@ -76,12 +76,14 @@ type labGate struct {
 // the owner-activity checks (§2.7, C-49). An entry is false until its lab record
 // is in docs/lab/. macOS is true since 2026-10-31: labs L-A1 and L-A9 ran on the
 // owner's profile with the owner's OK (MA-917, its record below) and the wait fix
-// that L-A9 asked for is in (MA-932). Windows stays false until MA-918's
-// first-release scope (owner ruling OQ-7: ship the Mac first). Where it is false,
-// Run now installs no sync hook at all (§2.2).
+// that L-A9 asked for is in (MA-932). Windows is true since 2026-10-31: MA-918's
+// first-release scope passed on run 2 (its record below, naming the code hash
+// MA-927 pins), with the minimized-not-active start of MA-923; owner ruling
+// 2026-10-31: "lets try windows - I want it shipped in this version since we are
+// so close". Where an entry is false, Run now installs no sync hook at all (§2.2).
 var attendedStartTable = map[string]labGate{
 	"darwin":  {allowed: true, record: "docs/lab/presync-attended-start-darwin.md"},
-	"windows": {record: "docs/lab/presync-attended-start-windows.md"},
+	"windows": {allowed: true, record: "docs/lab/presync-attended-start-windows.md"},
 }
 
 // attendedQuitTable says where an attended run may ask Thunderbird to close

@@ -128,6 +128,41 @@ func TestSetHookSeam(t *testing.T) {
 	}
 }
 
+// covers: MA-898, MA-927
+// The shared hook with the tables as shipped, no override (design-presync-attended §2.2,
+// §2.7; C-49, OQ-7): macOS's and, since lab MA-918 run 2 (2026-10-31,
+// docs/lab/presync-attended-start-windows.md), Windows' AttendedStartAllowed entries are
+// true, so an attended caller on either gets the hook, and its session is handed Attended,
+// NeverQuit (both AttendedQuitAllowed entries stay false: L-A5 has not run), the caller's
+// EndWait and its platform. Positive twin of TestSetHookSeam's "start not allowed" case,
+// where an attended caller gets no hook.
+func TestShippedTablesGiveWindowsTheAttendedHook(t *testing.T) {
+	rec := &recorder{res: presync.Result{Outcome: presync.OutcomeOK, Left: presync.LeftOpenByRule}}
+	restore := OverrideSessionForTest(rec.run, "/state/presync")
+	defer restore()
+	endWait, endWaitEnd := context.WithCancel(context.Background())
+	defer endWaitEnd()
+	for _, goos := range []string{"darwin", "windows"} {
+		if !presync.AttendedStartAllowed(goos) || presync.AttendedQuitAllowed(goos) {
+			t.Fatalf("%s as shipped: start %v (want true), quit %v (want false)", goos, presync.AttendedStartAllowed(goos), presync.AttendedQuitAllowed(goos))
+		}
+		var opts app.Options
+		if err := SetHook(&opts, HookOptions{Attended: true, GOOS: goos, Surface: presync.SurfaceDesktop, EndWait: endWait}); err != nil {
+			t.Fatalf("%s: SetHook: %v", goos, err)
+		}
+		if opts.BeforeRead == nil {
+			t.Fatalf("%s: an attended caller got no hook with the tables as shipped", goos)
+		}
+		before := rec.calls
+		opts.BeforeRead(context.Background(), nil)
+		c := rec.cfg
+		if rec.calls != before+1 || !c.Attended || !c.NeverQuit || c.EndWait != endWait || c.GOOS != goos || c.Surface != presync.SurfaceDesktop {
+			t.Errorf("%s: handed Attended %v, NeverQuit %v, EndWait set %v, GOOS %q, Surface %q (calls %d)",
+				goos, c.Attended, c.NeverQuit, c.EndWait == endWait, c.GOOS, c.Surface, rec.calls-before)
+		}
+	}
+}
+
 // covers: MA-898, MA-901, MA-580
 // The hook builds what the run hands its caller from the session's result
 // (design-presync-attended §4.1, §4.6, C-12): every warning (the main one and each

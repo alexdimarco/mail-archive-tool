@@ -68,7 +68,9 @@ const runNowStartOffTitle = "Run this archive's backup now. On this computer Run
 
 // runNowTitle is Run now's tooltip (§7, C-50, C-61, C-69): the never-close texts —
 // Thunderbird is left open for the person to quit; the close variants arrive with
-// slice AS-Q.
+// slice AS-Q. The Windows text no longer says "its window may appear for a moment":
+// lab MA-918 run 2 (docs/lab/presync-attended-start-windows.md) saw the start
+// minimized from the first sample in every case, never shown.
 func runNowTitle(goos string, syncOn bool) string {
 	switch {
 	case !syncOn || (goos != "darwin" && goos != "windows"):
@@ -76,7 +78,7 @@ func runNowTitle(goos string, syncOn bool) string {
 	case !presync.AttendedStartAllowed(goos):
 		return runNowStartOffTitle
 	case goos == "windows":
-		return "Run this archive's backup now. Because Thunderbird sync is on, it first starts Thunderbird minimized to the taskbar (its window may appear for a moment) — even while you are using the computer — and waits for its mail to arrive (" + syncWaitWords + "), then leaves it open for you to quit from the taskbar or the notification area. A Thunderbird that is already open is left alone. You can cancel while it waits; that skips the backup."
+		return "Run this archive's backup now. Because Thunderbird sync is on, it first starts Thunderbird minimized to the taskbar — even while you are using the computer — and waits for its mail to arrive (" + syncWaitWords + "), then leaves it open for you to quit from the taskbar or the notification area. A Thunderbird that is already open is left alone. You can cancel while it waits; that skips the backup."
 	}
 	return "Run this archive's backup now. Because Thunderbird sync is on, it first starts Thunderbird out of sight — even while you are using the computer — and waits for its mail to arrive (" + syncWaitWords + "), then leaves it open for you to quit from the Dock. A Thunderbird that is already open is left alone. You can cancel while it waits; that skips the backup."
 }
@@ -119,10 +121,9 @@ func runNowSyncNote(goos, phase string, since, now time.Time, waitStopped bool) 
 	}
 	switch phase {
 	case presync.PhaseStarting:
-		if w.windows {
-			return "Starting Thunderbird minimized to the taskbar… its window may appear for a moment."
-		}
-		return "Starting Thunderbird out of sight…"
+		// Windows: no "its window may appear for a moment" since lab MA-918 run 2 saw the
+		// start minimized from the first sample, never shown.
+		return "Starting Thunderbird " + w.hidden + "…"
 	case presync.PhaseWaiting:
 		n := int(now.Sub(since) / time.Minute)
 		if n < 0 {
@@ -454,5 +455,16 @@ func runNowJobSyncs(out string) bool {
 // fails while the release notes and the table disagree. Corrected 2026-10-31 (the
 // wording pass before 1.5.2, MA-938): it says Run now syncs only when the archive's
 // sync is on, and that a scheduled backup skips the sync while the computer is in
-// use (it never waits; presync session S4).
-const releaseLineMac = "On a Mac, Run now syncs Thunderbird first when the archive's Thunderbird sync is on, even while you are at the computer: it starts Thunderbird out of sight, waits for its mail (" + syncWaitWords + "; Stop waiting and back up now ends the wait), and leaves it open for you to quit. Scheduled backups still skip the sync while you are using the computer. On Windows, Run now does not start Thunderbird yet; scheduled backups still sync it."
+// use (it never waits; presync session S4). Since the Windows flip (2026-10-31, lab
+// MA-918 run 2) it no longer ends "On Windows, Run now does not start Thunderbird yet;
+// scheduled backups still sync it.": releaseLineWin follows it.
+const releaseLineMac = "On a Mac, Run now syncs Thunderbird first when the archive's Thunderbird sync is on, even while you are at the computer: it starts Thunderbird out of sight, waits for its mail (" + syncWaitWords + "; Stop waiting and back up now ends the wait), and leaves it open for you to quit. Scheduled backups still skip the sync while you are using the computer."
+
+// releaseLineWin is the release notes' line for the release that sets Windows'
+// AttendedStartAllowed entry true (§7, OQ-7), written in the commit that sets it, citing
+// lab MA-918 run 2 (docs/lab/presync-attended-start-windows.md): the start was minimized
+// from the first sample and never took the keyboard, from a terminal and from the Start
+// menu, with someone typing and after the foreground lock expired; a Primary Password
+// prompt is shown and takes the keyboard (owner ruling 2026-10-31: "accept the password
+// window"). MA-915 fails while the release notes and the Windows entry disagree.
+const releaseLineWin = "On Windows, Run now syncs Thunderbird first too, in the same way: it starts Thunderbird minimized to the taskbar, where it does not take the keyboard from what you are typing, waits for its mail, and leaves it open for you to quit from the taskbar or the notification area. If Thunderbird has a Primary Password, its password window still appears and asks for it each time Run now starts Thunderbird."

@@ -163,23 +163,45 @@ func TestTheNotSyncedWarning(t *testing.T) {
 	}
 }
 
+// wantRemedyWindowsLeftover is the leftover remedy in the Windows Desktop's words where Run now
+// syncs: the taskbar or the notification area, never the Dock. Every other §5.4 remedy
+// reads the same on both platforms.
+const wantRemedyWindowsLeftover = "A Thunderbird an earlier backup started is still open minimized. Quit it from the taskbar or the notification area, then click Run now."
+
 // covers: MA-909, S65
 // The remedies with the tables as shipped, no override (design-presync-attended §5.4,
-// §14 gate 4; C-20, OQ-7): macOS's start entry is true since 2026-10-31, so a Mac's
-// Desktop remedies — the WARN and the not-synced email, which share SyncAlertWords — are
-// the design's own "click Run now" words for every reason of §5.4's table. Windows
-// follows its own entry: while it is false, no Windows remedy says Run now syncs.
+// §14 gate 4; C-20, OQ-7): macOS's start entry is true since 2026-10-31, and Windows'
+// since 2026-10-31 too (lab MA-918 run 2, docs/lab/presync-attended-start-windows.md), so
+// each platform's Desktop remedies — the WARN and the not-synced email, which share
+// SyncAlertWords — are the design's own "click Run now" words for every reason of §5.4's
+// table, in that platform's words (Windows: the taskbar or the notification area). With
+// Windows' entry switched off, no Windows remedy says Run now syncs (the start-off words
+// are still proven, through the override, in TestTheNotSyncedWarning).
 func TestTheShippedRemedies(t *testing.T) {
 	if !presync.AttendedStartAllowed("darwin") {
 		t.Fatal("macOS's start entry, as shipped, is not on")
+	}
+	if !presync.AttendedStartAllowed("windows") {
+		t.Fatal("Windows' start entry, as shipped, is not on")
 	}
 	for name, remedy := range wantRemedy {
 		if _, got := SyncAlertWords("darwin", staleStreak(name)); got != remedy {
 			t.Errorf("%s, a Mac: %q\n  want %q", name, got, remedy)
 		}
+		wantWin := remedy
+		if name == "leftover-found" {
+			wantWin = wantRemedyWindowsLeftover
+		}
+		if _, got := SyncAlertWords("windows", staleStreak(name)); got != wantWin {
+			t.Errorf("%s, Windows: %q\n  want %q", name, got, wantWin)
+		}
+	}
+	r := presync.OverrideTablesForTest(nil, map[string]bool{"windows": false})
+	defer r()
+	for name := range wantRemedy {
 		_, win := SyncAlertWords("windows", staleStreak(name))
-		if !presync.AttendedStartAllowed("windows") && (strings.Contains(win, "to sync while you") ||
-			strings.Count(win, "click Run now") != strings.Count(win, "open Thunderbird, let its mail arrive, then click Run now")) {
+		if strings.Contains(win, "to sync while you") ||
+			strings.Count(win, "click Run now") != strings.Count(win, "open Thunderbird, let its mail arrive, then click Run now") {
 			t.Errorf("%s, Windows with its start entry off: the remedy says Run now syncs: %q", name, win)
 		}
 	}
@@ -204,8 +226,10 @@ const (
 // ruling 4 of 2026-10-31), naming only what really clears it (review findings
 // behaviour-1 and behaviour-2): a backup that sees new mail arrive in Thunderbird, or a
 // scheduled backup — and, only where Run now starts Thunderbird, a Run now — that finds
-// Thunderbird already open. On Windows the Desktop's Run now does not start Thunderbird
-// yet and so cannot clear it, and the Windows Desktop words never say it does.
+// Thunderbird already open. Since 2026-10-31 (lab MA-918 run 2) Windows' Desktop Run now
+// starts Thunderbird too, so with the tables as shipped the Windows Desktop words name Run
+// now like the Mac's; with Windows' start entry switched off its Run now cannot clear the
+// count, and those words never say it does.
 func TestTheNothingArrivedWarning(t *testing.T) {
 	now := time.Date(2026, 10, 30, 12, 0, 0, 0, time.UTC)
 	t0 := time.Date(2026, 10, 20, 2, 0, 0, 0, time.UTC)
@@ -224,12 +248,26 @@ func TestTheNothingArrivedWarning(t *testing.T) {
 		!strings.HasSuffix(got, "answer it, then "+noWholeCommand+".") || strings.Contains(got, "Run now") || strings.Contains(got, "out of sight") {
 		t.Errorf("Windows, command line: %q", got)
 	}
-	// Windows' Desktop: Run now does not start Thunderbird there (its AttendedStartAllowed
-	// entry is false), so a Run now never clears the count; the words name only a
-	// scheduled backup finding Thunderbird open (behaviour-2).
-	if got := reasonWith(Assess(syncInput(now, "windows", "desktop", nc), now), "presync_nothing_arrived"); !strings.Contains(got, "it was started minimized, so its window is easy to miss. "+clearsScheduledOnly+" Do this:") ||
-		strings.Contains(got, "or Run now finds") || strings.Contains(got, "brings new mail") {
-		t.Errorf("Windows, Desktop: %q", got)
+	// Windows' Desktop, the tables as shipped: Run now starts Thunderbird there (its
+	// AttendedStartAllowed entry is true since lab MA-918 run 2), and a Run now that finds
+	// it already open clears the count (internal/app/syncstreak.go, any platform), so the
+	// words name it, pinned whole.
+	if !presync.AttendedStartAllowed("windows") {
+		t.Fatal("Windows' start entry, as shipped, is not on")
+	}
+	wantWin := "WARN: This is not a failed backup: the backups still ran. Since " + t0.Local().Format("Jan 2, 2006") +
+		", Thunderbird was started before each of this archive's scheduled backups, but no new mail arrived (3 backups in a row). That can mean there was no new mail, or that Thunderbird is waiting for a password or sign-in that nobody has answered: it was started minimized, so its window is easy to miss. " + clearsWithRunNow + " Do this: open Thunderbird; if it asks for a password or a sign-in, answer it, then click Run now."
+	if got := reasonWith(Assess(syncInput(now, "windows", "desktop", nc), now), "presync_nothing_arrived"); got != wantWin {
+		t.Errorf("Windows, Desktop, as shipped:\n  %q\nwant\n  %q", got, wantWin)
+	}
+	// Windows' Desktop with its start entry off: a Run now never clears the count; the
+	// words name only a scheduled backup finding Thunderbird open (behaviour-2).
+	restoreWin := presync.OverrideTablesForTest(nil, map[string]bool{"windows": false})
+	winOff := reasonWith(Assess(syncInput(now, "windows", "desktop", nc), now), "presync_nothing_arrived")
+	restoreWin()
+	if !strings.Contains(winOff, "it was started minimized, so its window is easy to miss. "+clearsScheduledOnly+" Do this:") ||
+		strings.Contains(winOff, "or Run now finds") || strings.Contains(winOff, "brings new mail") {
+		t.Errorf("Windows, Desktop, start entry off: %q", winOff)
 	}
 
 	both := nc

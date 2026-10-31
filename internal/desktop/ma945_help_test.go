@@ -301,7 +301,11 @@ var helpSyncSentences = []string{
 const (
 	helpMacRunNow   = "Run now syncs Thunderbird too, even while you are using the computer. It starts Thunderbird out of sight and waits for its mail (up to 20 minutes, often about 13). Click Stop waiting and back up now to back up the mail that has arrived so far. Cancel the backup skips the whole backup instead, and nothing is added to the archive. When the backup is done, Thunderbird stays open: quit it from the Dock."
 	helpWinNoRunNow = "Run now: on Windows, Run now does not start Thunderbird yet. It backs up the mail already on this computer. To include the newest mail, open Thunderbird, let its mail arrive, then click Run now. Scheduled backups still sync Thunderbird first."
-	helpEncSync     = "An encrypted archive is backed up only when you click Run now. If it was made from Thunderbird, its Settings card offers Sync Thunderbird before each Run now, with its own Save. Until that backup starts reading mail, Lock cancels it."
+	// helpWinRunNow is Windows' Run now sentence since its start entry was set true after lab
+	// MA-918 run 2 (docs/lab/presync-attended-start-windows.md): minimized from the first
+	// sample, never took the keyboard; the Primary Password prompt is accepted by the owner.
+	helpWinRunNow = "Run now syncs Thunderbird too, even while you are using the computer. It starts Thunderbird minimized to the taskbar and waits for its mail (up to 20 minutes, often about 13). Thunderbird does not take the keyboard from what you are typing. If it has a Primary Password, its password window still appears and asks for it each time Run now starts Thunderbird. Click Stop waiting and back up now to back up the mail that has arrived so far. Cancel the backup skips the whole backup instead, and nothing is added to the archive. When the backup is done, Thunderbird stays open: quit it from the taskbar or the notification area."
+	helpEncSync   = "An encrypted archive is backed up only when you click Run now. If it was made from Thunderbird, its Settings card offers Sync Thunderbird before each Run now, with its own Save. Until that backup starts reading mail, Lock cancels it."
 )
 
 // helpMacWizard and helpWinWizard are how the guide, and the "No archive chosen yet" card
@@ -345,13 +349,13 @@ var helpPlatforms = []helpPlatform{
 	{goos: "windows", want: append([]string{
 		helpWinWizard,
 		"Then come back to this page and reload it (press F5).",
-		"Run now starts a backup now, Repair fixes",
+		"Run now starts a backup now (with the Thunderbird sync on, it first waits for Thunderbird's mail; see Thunderbird below), Repair fixes",
 		"Your archives and scheduled backups are not affected. To come back, open MailArchive Desktop from the Start menu, or, if MailArchive was unzipped, double-click mailarchivew.exe in its folder.",
 		`Thunderbird installed in its usual place: a Mozilla Thunderbird folder in Program Files (or Program Files (x86)), or in AppData\Local\Programs in your user folder. The Thunderbird sync looks for it only there.`,
 		`(Thunderbird keeps its profiles in %APPDATA%\Thunderbird\Profiles.)`,
 		"Scheduled backups: Thunderbird starts minimized to the taskbar.",
-		helpWinNoRunNow,
-	}, helpSyncSentences...), not: []string{"shows for a moment", "Stop waiting and back up now to back up","the Dock", "System Settings", "Sync Thunderbird before each Run now", "MailArchive does not sync Thunderbird", "off or asleep is skipped", "Command-R", "it first waits for Thunderbird's mail"}},
+		helpWinRunNow, helpEncSync,
+	}, helpSyncSentences...), not: []string{"shows for a moment", "may appear for a moment", "does not start Thunderbird yet", "out of sight", "the Dock", "System Settings", "MailArchive does not sync Thunderbird", "off or asleep is skipped", "Command-R"}},
 	{goos: "linux", want: []string{
 		helpLinWizard,
 		"Then come back to this page and reload it (press F5).",
@@ -368,8 +372,9 @@ var helpPlatforms = []helpPlatform{
 // covers: MA-945, X11, X16, R12, S41
 // The guide's words, pinned whole, per platform, each true of this version's code: the
 // sync's sentences only where the sync runs (macOS and Windows), Run now's words from
-// the same table Run now itself reads (presync.AttendedStartAllowed) — on a Mac it
-// starts Thunderbird, on Windows it does not yet — and Linux told plainly that there is
+// the same table Run now itself reads (presync.AttendedStartAllowed) — on a Mac and, since
+// lab MA-918 run 2 (2026-10-31), on Windows it starts Thunderbird; switched off, each says
+// it does not start Thunderbird yet — and Linux told plainly that there is
 // no sync. The Microsoft 365 steps name the permissions the code asks for (delegated
 // Mail.Read and offline_access, internal/graph/delegated.go) and the sign-in the
 // Desktop's Archive now and scheduled backups always use (device, capture.go).
@@ -405,27 +410,23 @@ func TestHowToUseMailArchiveSaysWhatThisVersionDoes(t *testing.T) {
 		}
 	}
 
-	// Run now's words follow the table Run now reads: switched the other way, the Mac
-	// says it does not start Thunderbird yet and Windows says it does, in its own words.
-	restore := presync.OverrideTablesForTest(nil, map[string]bool{"darwin": false, "windows": true})
+	// Run now's words follow the table Run now reads: switched off, the Mac and Windows each
+	// say Run now does not start Thunderbird yet, in their own words, and promise no sync.
+	restore := presync.OverrideTablesForTest(nil, map[string]bool{"darwin": false, "windows": false})
 	defer restore()
 	mac := readHelpCard(t, getOverview(t, Config{GOOS: "darwin", ConfigPath: filepath.Join(t.TempDir(), "none.json"), SettingsPath: filepath.Join(t.TempDir(), "s.json")}))
 	if want := "Run now: on a Mac, Run now does not start Thunderbird yet."; !strings.Contains(mac.text, want) || strings.Contains(mac.text, helpMacRunNow) || strings.Contains(mac.text, helpEncSync) {
 		t.Errorf("the Mac guide with Run now's start off does not say %q, or still promises the sync:\n%s", want, mac.text)
 	}
 	win := readHelpCard(t, getOverview(t, Config{GOOS: "windows", ConfigPath: filepath.Join(t.TempDir(), "none.json"), SettingsPath: filepath.Join(t.TempDir(), "s.json")}))
-	for _, want := range []string{"It starts Thunderbird minimized to the taskbar and waits for its mail (up to 20 minutes, often about 13).", "When the backup is done, Thunderbird stays open: quit it from the taskbar or the notification area."} {
-		if !strings.Contains(win.text, want) {
-			t.Errorf("the Windows guide with Run now's start on lacks %q", want)
-		}
-	}
-	if strings.Contains(win.text, "does not start Thunderbird yet") {
-		t.Error("the Windows guide with Run now's start on still says Run now does not start Thunderbird")
+	if !strings.Contains(win.text, helpWinNoRunNow) || strings.Contains(win.text, helpWinRunNow) || strings.Contains(win.text, helpEncSync) ||
+		strings.Contains(win.text, "Primary Password") {
+		t.Errorf("the Windows guide with Run now's start off does not say %q, or still promises the sync:\n%s", helpWinNoRunNow, win.text)
 	}
 	// Run now's wait in Getting started follows the same table.
 	const wait = "it first waits for Thunderbird's mail"
-	if strings.Contains(mac.text, wait) || !strings.Contains(win.text, wait) {
-		t.Errorf("Getting started's Run now wait does not follow the start table (Mac off: %v, Windows on: %v)", strings.Contains(mac.text, wait), strings.Contains(win.text, wait))
+	if strings.Contains(mac.text, wait) || strings.Contains(win.text, wait) {
+		t.Errorf("Getting started's Run now wait does not follow the start table (Mac off: %v, Windows off: %v)", strings.Contains(mac.text, wait), strings.Contains(win.text, wait))
 	}
 }
 

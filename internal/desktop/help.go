@@ -34,6 +34,9 @@ type helpData struct {
 	RunNowSyncs bool
 	// Hidden and Place: how a Thunderbird Run now started is left, and where it is quit from.
 	Hidden, Place string
+	// RunNowMore is what Run now's start does to the keyboard here, where a lab measured it
+	// ("" elsewhere): Windows, lab MA-918 run 2 (docs/lab/presync-attended-start-windows.md).
+	RunNowMore string
 	// Wait is how long Run now's wait for mail takes (syncWaitWords).
 	Wait string
 	// WizardHow is how to open the MailArchive wizard here.
@@ -84,6 +87,9 @@ func helpDataFor(goos string, open bool) helpData {
 		d.Profiles = `%APPDATA%\Thunderbird\Profiles`
 		// Started minimized and not activated (MA-923; lab L-A10 saw no window on screen).
 		d.SchedStart = "Thunderbird starts minimized to the taskbar."
+		// Lab MA-918 run 2: never took the keyboard; the Primary Password prompt does, and
+		// the owner accepted it (2026-10-31).
+		d.RunNowMore = " Thunderbird does not take the keyboard from what you are typing. If it has a Primary Password, its password window still appears and asks for it each time Run now starts Thunderbird."
 		d.Reload, d.Missed = "press F5", helpMissedOnWake
 		// The installer's Start menu shortcut (Product.wxs); mailarchivew.exe opened with no
 		// console starts the Desktop (noarg W3).
@@ -158,7 +164,7 @@ var helpTmpl = template.Must(template.New("help").Funcs(template.FuncMap{"upper"
         {{if .Sync}}<p><b>Sync Thunderbird before each backup.</b> Thunderbird saves new mail only while it is running. With this setting on, each backup first starts Thunderbird and waits for its mail, so the archive also gets mail that had only reached the mail server. It is off until you turn it on: choose <b>Yes — sync Thunderbird first</b> when the MailArchive wizard asks <b>Sync Thunderbird before each scheduled backup?</b>, or, in <a href="#sec-settings">Settings</a>, choose <b>How often</b>, tick <b>Sync Thunderbird before each backup</b>, then click <b>Save settings</b>.</p>
         <ul>
           <li><b>Scheduled backups:</b> {{.SchedStart}} The backup waits for its mail to stop arriving (up to 20 minutes), asks Thunderbird to quit, then backs up. A scheduled backup starts Thunderbird only when no one has used the keyboard or mouse for 2 minutes. If you are using the computer, that backup skips the sync and saves the mail already on this computer.</li>
-          {{if .RunNowSyncs}}<li><b>Run now</b> syncs Thunderbird too, even while you are using the computer. It starts Thunderbird {{.Hidden}} and waits for its mail ({{.Wait}}). Click <b>Stop waiting and back up now</b> to back up the mail that has arrived so far. <b>Cancel the backup</b> skips the whole backup instead, and nothing is added to the archive. When the backup is done, Thunderbird stays open: quit it from {{.Place}}.</li>
+          {{if .RunNowSyncs}}<li><b>Run now</b> syncs Thunderbird too, even while you are using the computer. It starts Thunderbird {{.Hidden}} and waits for its mail ({{.Wait}}).{{.RunNowMore}} Click <b>Stop waiting and back up now</b> to back up the mail that has arrived so far. <b>Cancel the backup</b> skips the whole backup instead, and nothing is added to the archive. When the backup is done, Thunderbird stays open: quit it from {{.Place}}.</li>
           {{else}}<li><b>Run now</b>: {{.On}}, Run now does not start Thunderbird yet. It backs up the mail already on this computer. To include the newest mail, open Thunderbird, let its mail arrive, then click Run now. Scheduled backups still sync Thunderbird first.</li>
           {{end}}<li><b>A Thunderbird you already have open is left alone:</b> MailArchive never starts or closes it, and the backup reads the mail it has saved.</li>
           <li><b>What starting Thunderbird does:</b> the sync opens your real Thunderbird, so it does what opening Thunderbird always does. It checks all your accounts, sends anything waiting in your Outbox, runs your message filters, and may show notifications. When a scheduled backup asks it to quit, your accounts' on-exit actions run too (for example emptying Trash), so mail you deleted since the last backup may be removed before it is archived.</li>

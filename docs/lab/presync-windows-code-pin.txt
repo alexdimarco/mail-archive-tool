@@ -51,5 +51,13 @@
 # context has ended; MA-921); 2026-10-31, MA-923 (the start became a CreateProcess
 # call asking for SW_SHOWMINNOACTIVE, after lab L-A10; no Windows lab record exists,
 # both Windows entries stay false).
+#
+# Strict since 2026-10-31: lab MA-918 run 2 passed the first-release scope on the
+# code this hash covers (unchanged; the record names it), so the record line names
+# that record, the date line gives its date, and the Windows AttendedStartAllowed
+# entry is true in the same commit. AttendedQuitAllowed[windows] stays false (L-A5
+# not run). From here on, any change to the pinned code needs a new MA-918 record
+# with the new hash in the same commit.
 hash: 10d7ba8f901d205ea85ac79fbead84463cb2948fd1b7ddf235764813f4501d4a
-record: no lab record
+record: docs/lab/presync-attended-start-windows.md
+date: 2026-10-31
