@@ -1572,14 +1572,22 @@ macOS's AS-Q. AS-L any time after AS3, or never. AS10 last. The labs run in para
     full 20 minutes unless "Stop waiting" is pressed, and a scheduled one counts toward the OQ-5
     no-change streak. An adversarial self-pass ran on the change (a mailbox name with a dot, Maildir, a
     compaction or rename, a capped or unreadable walk) and its findings are fixed in the same commit.
-    **Still owed:** the pre-sync design's quiet-rule review that this bullet asks for; the self-pass
-    does not replace it, and macOS's `AttendedStartAllowed` entry stays false until it is held or the
-    owner rules otherwise.
+    **The quiet-rule review this bullet asks for was held on 2026-10-31** (it was owed until then; the
+    self-pass did not replace it), by **independent reviewer agents, not by the owner**, who has not
+    read it. It is filed in `docs/review-presync-attended-predesign.md`, "Quiet-rule review of the wait
+    fix, 2026-10-31": eighteen findings, eleven fixed in whole or in part in commit `b23b486` (MA-933,
+    MA-934, MA-935), one dropped (no defect), and the rest held for the owner. Known gaps it leaves:
+    a compaction and new mail in one poll gap cancel out; any account's mail opens the gate for the
+    whole profile (Local Folders' Sent from an Outbox send included); a sleep inside a walk is not
+    seen; a sleep the person forces on Windows can still trip the session watchdog; and one owner
+    question on the now-common "nothing arrived" ending (the OQ-5 count, its warning's words, hourly
+    schedules).
   - *2026-10-31, macOS's start entry set true.* Set under the owner's words of 2026-10-30, read as
     the "owner rules otherwise" above: "flip the Mac or Windows switch that turns the feature on for
-    real… the risk is low" and "go ahead with the wait fix". The quiet-rule review is **still not
-    held**; it stays owed before a release, with the friction review (§14 gate 3). If the owner meant
-    the review to come first, reverting the flip commit alone puts the entry back.
+    real… the risk is low" and "go ahead with the wait fix". The quiet-rule review was not held when
+    the entry was set; it was held after, on 2026-10-31, by independent reviewer agents, not by the
+    owner (see the bullet above). If the owner meant the review to come first, reverting the flip
+    commit alone puts the entry back.
 - **L-A10 (new, a short spike) [C-57]** Parallels: start Thunderbird once with `SW_SHOWMINNOACTIVE`
   (a throwaway `CreateProcess` call in a lab-only test) and record whether it starts minimized and
   without activation. Before any new Windows launch code is written; decides whether MA-923 is

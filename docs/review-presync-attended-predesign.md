@@ -561,3 +561,58 @@ gate 2).
 Smallest check for the owner: read the five new texts in rev 5 (the no-change warning in §5.4, the
 Stop-waiting button note and tooltip in §4.6 and §7, the macOS-only release note in §7, and the
 no-sync Lock reply in §9) and say whether any reads wrong.
+
+## Quiet-rule review of the wait fix, 2026-10-31
+
+Added 2026-10-31; nothing above is changed. This is the pre-sync design's quiet-rule review that
+design §13 L-A9 asked for before the first-change gate changed (MA-932, commit `4f090e8`).
+
+| | |
+|---|---|
+| Date | 2026-10-31 |
+| Register | a report of findings (by reviewer agents) and their verdicts and fixes (by the workflow step that wrote this section) |
+| Change reviewed | commit `4f090e8`, "the wait's first-change gate counts only mail data" (MA-932) |
+| Reviewers | **Independent reviewer agents** (model-run; three lenses: Thunderbird's file layouts, the gate's logic, its effects on the person). **Not the owner**: the owner has not read this review. |
+| Verdicts and fixes | A model-run workflow step. Each finding was checked against the code before it was accepted; the Thunderbird and Go runtime source the reviewers cite (comm-esr115/esr128/esr140 compaction code, Go 1.26's monotonic clock per platform) was **not re-read** by this step; the fixes do not depend on it being exact, since each only narrows what counts as mail or widens what counts as a sleep. |
+| Fix commit | `b23b486` (MA-933, MA-934, MA-935; MA-932 amended) |
+| Runs | `internal/presync` whole with `-race`, `presyncjob`, `health`, `assureblock`, `internal/app` whole; both vets; on the Windows 11 lab VM, the new classifier, gate and sleep tests, and the real keep-awake request read back through `powercfg /requests`. |
+
+| Id | Severity | Finding | Verdict | Commit |
+|---|---|---|---|---|
+| layout-1 | high | Thunderbird 128 compacts INBOX into "INBOX-1" (no extension, no index), which the classifier called mail, so a compaction could open the gate and end the wait "synced" before the fetch | **Fixed.** An mbox is mail only beside its `.msf`; a file with no extension no longer counts on its own (MA-933) | `b23b486` |
+| layout-2 | medium | Thunderbird 115 local-folder compaction writes `nstmp` beside `nstmp.msf`; the index rule ran before the `nstmp` exclusion | **Fixed.** The compaction-temp check runs first (MA-933) | `b23b486` |
+| layout-3 | low | any file in a maildir `cur`/`new`, a Finder `.DS_Store` included, counted as mail | **Fixed.** Dot files, `Thumbs.db` and `desktop.ini` there are not mail; `.eml` is not required (older stores) (MA-933) | `b23b486` |
+| layout-4 | info | the owner's real profile: every file classified correctly | **Dropped**: context, no defect. Under the layout-1 fix all six of its mboxes still count (each has its `.msf`) | — |
+| logic-1 | high | the starting snapshot is the first wait poll, taken after Thunderbird is up (on Windows up to ~17 s later), so early mail hides in it and only index touches follow: "nothing arrived" after 20 minutes | **Fixed** (same defect as effects-1). The session walks the watch set in S5, before the launch, and the first poll is compared with it (MA-934) | `b23b486` |
+| logic-2 | medium | nested watch roots (the usual `ImapMail/<account>` input inside `ImapMail`) plus the entry cap can make a seen mailbox look new | **Fixed.** A root inside another is dropped, and a file the walk reaches twice keeps its first key (MA-933) | `b23b486` |
+| logic-3 | medium | an index-only session now ends `ok-noactivity` and adds to the OQ-5 no-change count, so a healthy quiet mailbox reads like one stuck on a password | **Held, not fixed: owner ruling owed** (how index-only sessions count toward OQ-5 is a product decision on an owner ruling). See the owner question below | — |
+| logic-4 | low | the suspend gap is measured on the monotonic clock (stops in sleep on macOS); on Windows maxWait includes sleep; a slow walk looks like a sleep | **Fixed.** Gap on wall time, from one walk's end to the next walk's start; maxWait counts time awake (MA-935) | `b23b486` |
+| logic-5 | low | a compaction and new mail in the same 10 s gap cancel out | **Held, recorded as a known gap** in design §13 L-A9; the reviewer's "changed, unclear" outcome is a new outcome, an owner question | — |
+| logic-6 | low | a compaction temp named `nstmp-1` would count as mail | **Fixed.** `nstmp` and `nstmp-N`, any case, are never mail (MA-933). Thunderbird's own use of a unique `nstmp` name was not checked here | `b23b486` |
+| logic-7 | low | the gate is profile-wide: one account's prompt fetch opens it while another's mail waits for the ~10-minute check | **Held, recorded as a known gap** (predates MA-932); a per-account gate is a design question for the owner. The RSS case is fixed (effects-5) | — |
+| effects-1 | high | the same as logic-1 | **Fixed** with logic-1 (MA-934) | `b23b486` |
+| effects-2 | high | Windows: a computer that sleeps during the now-common 20-minute wait ends "nothing arrived" (counted) or internal-error | **Fixed in part.** The session keeps Windows from idle sleep from the launch to its end (the copy export's request, now `internal/keepawake`, which now returns only once the request is in place); maxWait counts time awake. **Not covered:** a sleep the person forces (lid closed) can still trip the session watchdog on waking (MA-935) | `b23b486` |
+| effects-3 | medium | the softer "nothing arrived" warning now fires on every quiet mailbox, and following its advice (open Thunderbird, Run now) cannot clear it | **Held, not fixed: owner ruling owed.** Confirmed in `internal/app/syncstreak.go`: an attended no-change run never moves the count, and the already-running reset applies to scheduled runs only. Both the reset and the warning's words sit on owner ruling OQ-5 | — |
+| effects-4 | medium | macOS: the suspend-gap rule never fires (monotonic clock) | **Fixed** with logic-4 (MA-935) | `b23b486` |
+| effects-5 | medium | RSS feed folders (and Outbox sends into Sent) count as mail, opening the gate and hiding the password case | **Fixed in part.** Everything under a folder holding `feeds.json` (or `feeds.rdf`) is not mail (MA-933). Local Folders' Sent/Unsent and the per-account limit are recorded as known gaps | `b23b486` |
+| effects-6 | medium | hourly schedules with the sync now keep Thunderbird open up to 20 minutes of every quiet hour, with no note | **Held, not fixed: owner ruling owed** (whether hourly with the sync stays, and any note; MA-859's test asserts no note today) | — |
+| effects-7 | low | the no-change text names two causes, but the gate now has others | **Held, fixed in part.** The main extra cause (mail before the first poll) is removed by MA-934; a folder with no index, or one the walk cannot read, remain. The wording ("either … or") is left for the owner with logic-3 and effects-3 | — |
+
+### What the fixes do not cover
+
+- A sleep inside a walk is not seen (a walk is normally well under a second).
+- A sleep the person forces on Windows can still trip the session watchdog (internal-error).
+- A compaction and new mail in one poll gap cancel out (logic-5).
+- Any account's mail opens the gate for the whole profile (logic-7); Local Folders' Sent growing
+  from an Outbox send counts as mail.
+- A mailbox whose `.msf` lies just past a capped walk's stopping point is "not mail" for that poll,
+  so growth in that one poll is not counted (the cap is 200,000 entries).
+
+### Owner question (one, combining logic-3, effects-3, effects-6 and effects-7)
+
+The 20-minute "nothing arrived" ending is now the usual result of a quiet night, not a rare one. Should
+(a) an attended Run now that finds the person's Thunderbird open reset the no-change count, as a
+scheduled one does; (b) the warning say it clears by itself at the next backup that brings mail; and
+(c) hourly schedules with the sync stay, given each quiet hour now keeps Thunderbird open up to 20
+minutes? This step recommends yes, yes, and keep hourly with a note — but each changes an owner ruling
+(OQ-5, the hourly ruling), so none was made here.
