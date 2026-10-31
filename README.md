@@ -247,6 +247,10 @@ will not touch.
 
 What it gives you, beyond reading and searching the archive:
 
+- **How to use MailArchive** — the sidebar's first item, on every page: a short
+  guide to each part of the page, what Thunderbird needs, and how to connect a
+  Microsoft 365 mailbox, step by step. With no archive set up yet, the Overview
+  points to it.
 - **Your archives** — manage more than one archive on this computer: mark one
   **current** (the one the page shows and changes; each archive can have its own
   scheduled backup, and a switch that would affect one asks first),

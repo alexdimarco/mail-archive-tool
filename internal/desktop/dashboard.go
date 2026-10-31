@@ -1096,6 +1096,10 @@ func (cfg Config) overviewFor(csrf, epoch string) string {
 		// how many runs it keeps (stated beside it, design-desktop-settings-card 3.7).
 		RecentRuns []runRow
 		HistoryMax int
+		// Help is the "How to use MailArchive" card (MA-945), drawn for this platform:
+		// right below the "No archive chosen yet" card, with Getting started open, while
+		// no archive is chosen; near the end of the page after that.
+		Help template.HTML
 	}{MoveFirstLine: moveFirstLine, SyncFirstLine: syncFirstLine, AutoPausedSaveLine: autoPausedSaveLine, M365BoxesLine: m365BoxesLine, ArchiveNowUsesLine: archiveNowUsesLine,
 		EncSyncLabel: encSyncLabel, EncSyncLine: encSyncLine,
 		HistoryMax: state.RunHistoryMax, Export: !cfg.WorkspaceOff, Epoch: epoch, CSRF: csrf, Cards: cfg.cards(), Vault: vaultPhrase(), OutDir: cfg.effectiveOut(), ReaderURL: cfg.ReaderURL, SignedIn: signedIn, UPN: upn,
@@ -1106,6 +1110,7 @@ func (cfg Config) overviewFor(csrf, epoch string) string {
 		AlertSecurity: orElse(s.AlertSecurity, "starttls"), AlertFrom: s.AlertFrom, AlertTo: s.AlertTo, AlertUsername: s.AlertUsername}
 	data.KindLine = kindLine(archiveKind(data.OutDir))
 	data.IsM365 = archiveKind(data.OutDir) == kindM365
+	data.Help = helpCard(cfg.goos(), data.OutDir == "")
 	data.ArchiveExample = app.ArchiveExampleFor(cfg.goos())
 	data.CancelTitle, data.StopWaitTitle = jobCancelTitle, stopWaitTitle
 	data.RunNowTitle = runNowPlainTitle
@@ -1438,6 +1443,8 @@ pre{white-space:pre-wrap;overflow-wrap:anywhere;background:var(--bg);border:1px 
 .archive-tag{font-size:.84rem;opacity:.75}
 .archive-tag.current{opacity:1;color:var(--accent);font-weight:700}
 .archive-kind{font-size:.78rem;opacity:.75;border:1px solid var(--line);border-radius:6px;padding:1px 7px}
+.help details{border-top:1px solid var(--line);padding:10px 0 4px}.help summary{font-weight:750;cursor:pointer}
+.help p,.help li{line-height:1.5}.help li{margin:6px 0}.help ul,.help ol{padding-left:22px}
 @media(max-width:900px){.app-shell{grid-template-columns:1fr}.status-grid{grid-template-columns:1fr 1fr}.sidebar-foot{display:none}}
 </style></head>
 <body>
@@ -1445,6 +1452,8 @@ pre{white-space:pre-wrap;overflow-wrap:anywhere;background:var(--bg);border:1px 
   <aside class="sidebar">
     <div class="brand">MailArchive<span>Desktop</span></div>
     <nav class="nav">
+      <div class="nav-title">Help</div>
+      <a href="#sec-help" id="navHelp">How to use MailArchive</a>
       <div class="nav-title">Workspace</div>
       <a class="active" href="./">Overview</a>
       <a href="#sec-archive" id="navArchive">Archive now</a>
@@ -1481,12 +1490,14 @@ pre{white-space:pre-wrap;overflow-wrap:anywhere;background:var(--bg);border:1px 
     {{if .KindLine}}<p class="lede" id="archiveKind" style="margin-top:-14px">{{.KindLine}}</p>{{end}}
     {{if not .OutDir}}<div class="card" id="noArchive">
       <h2>No archive chosen yet</h2>
+      <p id="helpPointer">New to MailArchive? Read <a href="#sec-help">How to use MailArchive</a> below: it explains each part of this page, what Thunderbird needs, and how to connect Microsoft 365.</p>
       <p><button class="btn" type="button" data-open-archive title="Choose an archive folder you already have — from another computer, a drive or a backup copy, encrypted or not.">Open an archive folder…</button>
       <button class="btn secondary" type="button" data-create-encrypted title="Make a new archive whose messages open only with its password or recovery key. The wizard's windows ask what to back up and where; the password is typed here.">Make a new encrypted archive…</button></p>
       {{if .Offer}}<p>The MailArchive wizard (mailarchive wizard) last used <span class="mono">{{.Offer}}</span>. Use this archive?</p>{{end}}
       <button class="btn" id="useOffer" type="button" data-path="{{.Offer}}"{{if not .Offer}} hidden{{end}} title="Open this archive in MailArchive Desktop — read it, check its health, and keep it backed up.">Use this archive</button>{{if .Offer}} <span class="card-sub">Nothing changes until you click it.</span>{{end}}
       <p class="steps">{{if .Offer}}To pick a different folder, click <b>Open an archive folder…</b> above, or type its folder in <b>Settings → Archive location</b> below (the folder that holds the .mailarchive-manifest.json file) and click <b>Save settings</b>.{{else}}MailArchive Desktop has no archive yet. To use one you already have, click <b>Open an archive folder…</b> above. To make a new one from Thunderbird, Outlook or other mail files on this computer, use the MailArchive wizard (mailarchive wizard), then open its folder here. To back up a Microsoft 365 mailbox, fill in the <b>Microsoft 365 connection</b> card below, type a new folder in <b>Settings → Archive location</b>, click <b>Save settings</b>, then click <b>Archive now</b>.{{end}}</p>
-    </div>{{end}}
+    </div>
+    {{.Help}}{{end}}
 
     {{if .ShowArchives}}<div class="card" id="sec-archives">
       <h2>Your archives</h2>
@@ -1777,6 +1788,8 @@ pre{white-space:pre-wrap;overflow-wrap:anywhere;background:var(--bg);border:1px 
       <button class="btn secondary" id="verifyBtn">Check integrity</button>
       <button class="btn secondary" id="rebuildBtn">Rebuild search index</button>
     </div>
+
+    {{if .OutDir}}{{.Help}}{{end}}
 
     <div class="card sec">
       <h2>Security &amp; privacy</h2>
