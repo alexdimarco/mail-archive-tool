@@ -158,6 +158,28 @@ func TestTheNotSyncedWarning(t *testing.T) {
 	}
 }
 
+// covers: MA-909, S65
+// The remedies with the tables as shipped, no override (design-presync-attended §5.4,
+// §14 gate 4; C-20, OQ-7): macOS's start entry is true since 2026-10-31, so a Mac's
+// Desktop remedies — the WARN and the not-synced email, which share SyncAlertWords — are
+// the design's own "click Run now" words for every reason of §5.4's table. Windows
+// follows its own entry: while it is false, no Windows remedy says Run now syncs.
+func TestTheShippedRemedies(t *testing.T) {
+	if !presync.AttendedStartAllowed("darwin") {
+		t.Fatal("macOS's start entry, as shipped, is not on")
+	}
+	for name, remedy := range wantRemedy {
+		if _, got := SyncAlertWords("darwin", staleStreak(name)); got != remedy {
+			t.Errorf("%s, a Mac: %q\n  want %q", name, got, remedy)
+		}
+		_, win := SyncAlertWords("windows", staleStreak(name))
+		if !presync.AttendedStartAllowed("windows") && (strings.Contains(win, "to sync while you") ||
+			strings.Count(win, "click Run now") != strings.Count(win, "open Thunderbird, let its mail arrive, then click Run now")) {
+			t.Errorf("%s, Windows with its start entry off: the remedy says Run now syncs: %q", name, win)
+		}
+	}
+}
+
 // covers: MA-926, R32, S65
 // The softer no-change warning (owner ruling OQ-5, §5.4; C-68): positive twin first,
 // scheduled syncs that fetched nothing for 3 days show WARN presync_nothing_arrived —

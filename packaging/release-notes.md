@@ -33,6 +33,9 @@ Windows: SmartScreen → *More info → Run anyway*. Verify downloads against `S
 `mailarchive-desktop-windows-msi-payload.zip` builds a self-contained MSI
 (`packaging/mailarchive-desktop/`).
 
+### New in 1.5.2 — Run now syncs Thunderbird on a Mac
+- On a Mac, Run now now syncs Thunderbird even while you are at the computer: it starts Thunderbird out of sight, waits for its mail (usually 13 to 20 minutes; Stop waiting and back up now ends the wait), and leaves it open for you to quit. Scheduled backups still wait until you are away. On Windows, Run now does not start Thunderbird yet; scheduled backups still sync it.
+
 ### New in 1.5.1 — one place for backup settings
 - **Settings is where you change a backup.** How often, the time, and **Sync Thunderbird before each backup** are all in the Desktop's **Settings** card. The **Scheduled backup** card shows what is set up, with **Run now**, **Repair** and **Remove**.
 - **Each archive gets its own schedule.** An archive made from Thunderbird mail gets its own backup that re-reads its mail files, even on a computer where Microsoft 365 is set up.

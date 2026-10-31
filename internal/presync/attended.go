@@ -73,12 +73,14 @@ type labGate struct {
 }
 
 // attendedStartTable says where an attended Run now may start Thunderbird without
-// the owner-activity checks (§2.7, C-49). Every entry is false until its lab record
-// is in docs/lab/: macOS after labs L-A1 and L-A9 on a test profile (MA-917),
-// Windows after MA-918's first-release scope (owner ruling OQ-7: ship the Mac
-// first). Where it is false, Run now installs no sync hook at all (§2.2).
+// the owner-activity checks (§2.7, C-49). An entry is false until its lab record
+// is in docs/lab/. macOS is true since 2026-10-31: labs L-A1 and L-A9 ran on the
+// owner's profile with the owner's OK (MA-917, its record below) and the wait fix
+// that L-A9 asked for is in (MA-932). Windows stays false until MA-918's
+// first-release scope (owner ruling OQ-7: ship the Mac first). Where it is false,
+// Run now installs no sync hook at all (§2.2).
 var attendedStartTable = map[string]labGate{
-	"darwin":  {record: "docs/lab/presync-attended-start-darwin.md"},
+	"darwin":  {allowed: true, record: "docs/lab/presync-attended-start-darwin.md"},
 	"windows": {record: "docs/lab/presync-attended-start-windows.md"},
 }
 

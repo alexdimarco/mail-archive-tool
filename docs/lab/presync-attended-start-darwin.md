@@ -53,3 +53,12 @@ which is a superset of the product's `digestWatch`:
 3. **What Run now waits for:** expect about 13 minutes on a profile like run 2's (the periodic fetch
    plus 3 minutes of quiet), and up to 20 minutes when no mail comes. "Stop waiting and back up now"
    ends the wait sooner.
+
+## What this record set (added 2026-10-31)
+
+Platform: darwin (macOS). This record, with the wait fix of finding 2 (commit 4f090e8, MA-932: the
+first-change gate counts only mail data), sets the darwin entry of `AttendedStartAllowed` true
+(`internal/presync/attended.go`). It does not set the macOS `AttendedQuitAllowed` entry: that needs
+L-A5, not run. Still open from this record: the profile was the owner's, not a test profile [C-67];
+a key pressed in the very second of the start was not checked; the pre-sync design's quiet-rule
+review of the wait fix is not held.

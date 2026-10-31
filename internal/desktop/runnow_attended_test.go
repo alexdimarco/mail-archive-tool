@@ -877,3 +877,40 @@ func TestRunNowReleaseLineFollowsTheTable(t *testing.T) {
 		t.Error("the release notes and the Windows start entry disagree")
 	}
 }
+
+// covers: MA-915
+// What a person sees with the tables as shipped, no override (design-presync-attended
+// §7, §12 AS4, §14 gate 4; C-49, C-84, OQ-7): macOS's start entry is true since
+// 2026-10-31 (labs L-A1 and L-A9, docs/lab/presync-attended-start-darwin.md, and the
+// wait fix MA-932), so a Mac's plaintext Run now tooltip is the AS4 start text word for
+// word, the encrypted one starts with it, the Settings notice says a Run now does not
+// wait, and the first-sync line is offered. Windows follows its own entry: while it is
+// false (no MA-918 record), every Windows text is the start-off variant.
+func TestRunNowShippedTexts(t *testing.T) {
+	const mac = "Run this archive's backup now. Because Thunderbird sync is on, it first starts Thunderbird out of sight — even while you are using the computer — and waits for its mail to arrive (usually 13 to 20 minutes), then leaves it open for you to quit from the Dock. A Thunderbird that is already open is left alone. You can cancel while it waits; that skips the backup."
+	if !presync.AttendedStartAllowed("darwin") || !runNowSyncs("darwin") {
+		t.Fatal("macOS's start entry, as shipped, is not on")
+	}
+	if got := runNowTitle("darwin", true); got != mac {
+		t.Errorf("a Mac's Run now tooltip, sync on: %q", got)
+	}
+	if got := encRunNowTitle("darwin", true); !strings.HasPrefix(got, mac+" ") || !strings.HasSuffix(got, encLockSentence) {
+		t.Errorf("a Mac's encrypted Run now tooltip, sync on: %q", got)
+	}
+	if !strings.Contains(presync.SyncNoticeFor("darwin"), "; a backup you start with Run now does not wait for that.") {
+		t.Errorf("a Mac's sync notice does not say a Run now does not wait: %q", presync.SyncNoticeFor("darwin"))
+	}
+	if !strings.HasPrefix(runNowFirstSyncLine("darwin"), "New: Run now starts Thunderbird out of sight") {
+		t.Errorf("a Mac's first-sync line: %q", runNowFirstSyncLine("darwin"))
+	}
+	if presync.AttendedStartAllowed("windows") {
+		if runNowTitle("windows", true) == runNowStartOffTitle || !strings.Contains(runNowTitle("windows", true), "minimized to the taskbar") {
+			t.Errorf("Windows' start entry is on, but its tooltip: %q", runNowTitle("windows", true))
+		}
+		return
+	}
+	if runNowSyncs("windows") || runNowTitle("windows", true) != runNowStartOffTitle || encRunNowTitle("windows", true) != encRunNowStartOff ||
+		presync.SyncNoticeFor("windows") != presync.SyncNotice {
+		t.Errorf("Windows' start entry is off, but a text says Run now starts Thunderbird: %q / %q", runNowTitle("windows", true), encRunNowTitle("windows", true))
+	}
+}

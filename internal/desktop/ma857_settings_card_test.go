@@ -409,10 +409,12 @@ func TestEveryScheduleRefusalCarriesAReasonToQuote(t *testing.T) {
 }
 
 // covers: MA-861, R37, X16
-// Wherever the sync box renders, presync.SyncNotice is visible text beside it (never only a
-// tooltip), and on macOS the Automation note from the one constant the wizard also uses
-// (presync.MacAutomationNote); on Windows the Mac note is not shown. Positive twin first: the
-// macOS create form.
+// Wherever the sync box renders, the sync notice as that platform shows it
+// (presync.SyncNoticeFor: on a platform whose Run now starts Thunderbird it adds that a
+// Run now does not wait, C-84) is visible text beside it (never only a tooltip), and on
+// macOS the Automation note from the one constant the wizard also uses
+// (presync.MacAutomationNote); on Windows the Mac note is not shown. Positive twin first:
+// the macOS create form.
 func TestTheSyncBoxCarriesTheNoticeAndTheMacNote(t *testing.T) {
 	isolateHome(t)
 	out := tbProfileArchive(t)
@@ -423,12 +425,12 @@ func TestTheSyncBoxCarriesTheNoticeAndTheMacNote(t *testing.T) {
 	}
 	mac := newA3Rig(t, out, "darwin")
 	page := mac.page()
-	if !visible(page, presync.SyncNotice) || !visible(page, presync.MacAutomationNote) {
+	if !visible(page, presync.SyncNoticeFor("darwin")) || !visible(page, presync.MacAutomationNote) {
 		t.Fatal("the positive twin: the macOS create form lacks the notice or the Mac note")
 	}
 	win := newA3Rig(t, out, "windows")
 	wp := win.page()
-	if !visible(wp, presync.SyncNotice) {
+	if !visible(wp, presync.SyncNoticeFor("windows")) {
 		t.Error("the Windows create form lacks the sync notice")
 	}
 	if strings.Contains(wp, presync.MacAutomationNote) {
@@ -439,7 +441,7 @@ func TestTheSyncBoxCarriesTheNoticeAndTheMacNote(t *testing.T) {
 		t.Fatalf("create: %s", body)
 	}
 	mac.recordLast()
-	if p := mac.page(); !visible(p, presync.SyncNotice) || !visible(p, presync.MacAutomationNote) {
+	if p := mac.page(); !visible(p, presync.SyncNoticeFor("darwin")) || !visible(p, presync.MacAutomationNote) {
 		t.Error("the edit form lacks the notice or the Mac note")
 	}
 }
