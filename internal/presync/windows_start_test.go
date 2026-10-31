@@ -281,6 +281,10 @@ func windowsCodeHash(t *testing.T, files ...string) (string, []string) {
 // MA-918 record (§2.7: the pin carries "the date of the latest MA-918 record").
 type windowsPin struct{ hash, record, date string }
 
+// windowsEntries are the Windows entries of the two attended tables (§2.7
+// AttendedStartAllowed, §2.8 AttendedQuitAllowed).
+type windowsEntries struct{ start, quit bool }
+
 // readWindowsPin reads the pin file's hash, record and date lines.
 func readWindowsPin(path string) (windowsPin, error) {
 	var p windowsPin
@@ -305,21 +309,32 @@ func readWindowsPin(path string) (windowsPin, error) {
 	return p, nil
 }
 
-// windowsPinProblems judges a pin against the code's hash and the Windows start
-// entry (§2.7, C-66, OQ-7): the hash must match; with "no lab record" the Windows
-// start entry must be false; otherwise the record must be the Windows start
+// windowsPinProblems judges a pin against the code's hash and the Windows entries
+// (§2.7, C-66, OQ-7): the hash must match; with "no lab record" (allowed only until
+// the first MA-918 record exists, owner ruling 1 of 2026-10-31) the Windows start
+// and quit entries must both be false and the Windows start entry's own record must
+// not exist; otherwise the record must be the Windows start
 // entry's own record (tableRecord) — never the pin file itself — a file under
 // docs/lab/ that exists and names MA-918, windows, the pinned hash and the pin's
 // date (a YYYY-MM-DD date line in the pin), so the entry can be true only when the
 // measured code is the code that ships (gate-2 pass 1, as4win-1).
-func windowsPinProblems(root string, pin windowsPin, codeHash string, startAllowed bool, tableRecord string) []string {
+func windowsPinProblems(root string, pin windowsPin, codeHash string, win windowsEntries, tableRecord string) []string {
 	var probs []string
 	if pin.hash != codeHash {
 		probs = append(probs, "the Windows start, minimize or close code changed since its pin: re-run lab MA-918 and add its record with the new hash in the same commit")
 	}
 	if pin.record == "no lab record" {
-		if startAllowed {
+		// Operator-accepted 2026-10-31 (owner ruling 1): until the first MA-918 record
+		// exists the pin may follow the code, but only with both Windows entries false;
+		// once that record exists the pin must name it, and is strict again.
+		if win.start {
 			probs = append(probs, "the Windows start entry is true but the pin names no lab record")
+		}
+		if win.quit {
+			probs = append(probs, "the Windows quit entry is true but the pin names no lab record")
+		}
+		if _, err := os.Lstat(filepath.Join(root, filepath.FromSlash(tableRecord))); err == nil {
+			probs = append(probs, "an MA-918 record exists ("+tableRecord+"), so the pin must name it: \"no lab record\" holds only until the first one")
 		}
 		return probs
 	}
@@ -389,9 +404,12 @@ func pinMoves(t *testing.T, files []string, base, old, repl string) bool {
 // covers: MA-927
 // The Windows re-run trigger (§2.7, C-66, OQ-7): a hash of the Windows start,
 // minimize and close functions matches the one pinned in docs/lab, and before any
-// MA-918 record exists the pin is marked "no lab record" with the Windows start
-// entry false. Positive twin first: the real pin passes. Then a changed function, a
-// true entry with no record, and a record that does not carry the hash each fail.
+// MA-918 record exists the pin is marked "no lab record" with the Windows start and
+// quit entries false; operator-accepted 2026-10-31 (owner ruling 1), the pin may be
+// re-pinned to follow the code only in that state, and a "no lab record" pin beside
+// an existing MA-918 record is caught. Positive twin first: the real pin passes.
+// Then a changed function, a true entry with no record, and a record that does not
+// carry the hash each fail.
 func TestWindowsCodePin(t *testing.T) {
 	root := repoRoot(t)
 	var files []string
@@ -419,10 +437,42 @@ func TestWindowsCodePin(t *testing.T) {
 		t.Fatalf("%s: %v (code hash now %s)", windowsPinFile, err, code)
 	}
 	tableRecord := attendedStartTable["windows"].record
-	if p := windowsPinProblems(root, cur, code, attendedStartTable["windows"].allowed, tableRecord); len(p) != 0 {
+	win := windowsEntries{start: attendedStartTable["windows"].allowed, quit: attendedQuitTable["windows"].allowed}
+	if p := windowsPinProblems(root, cur, code, win, tableRecord); len(p) != 0 {
 		t.Fatalf("the real pin: %v (code hash now %s)", p, code)
 	}
 	pin := cur.hash
+
+	// "no lab record" (operator-accepted 2026-10-31, owner ruling 1): the pin may follow
+	// the code only while BOTH Windows entries are false and no MA-918 record exists.
+	// Positive twin first: both false, no record, passes.
+	noRec := windowsPin{hash: pin, record: "no lab record"}
+	if p := windowsPinProblems(t.TempDir(), noRec, code, windowsEntries{}, tableRecord); len(p) != 0 {
+		t.Fatalf("twin: no lab record with both Windows entries false was refused: %v", p)
+	}
+	for _, c := range []struct {
+		what   string
+		win    windowsEntries
+		record bool // plant the MA-918 record at tableRecord
+	}{
+		{"the Windows start entry true with no lab record", windowsEntries{start: true}, false},
+		{"the Windows quit entry true with no lab record", windowsEntries{quit: true}, false},
+		{"no lab record while the MA-918 record exists", windowsEntries{}, true},
+	} {
+		dir := t.TempDir()
+		if c.record {
+			p := filepath.Join(dir, filepath.FromSlash(tableRecord))
+			if err := os.MkdirAll(filepath.Dir(p), 0o755); err != nil {
+				t.Fatal(err)
+			}
+			if err := os.WriteFile(p, []byte("Lab record — MA-918, windows, code hash "+pin), 0o600); err != nil {
+				t.Fatal(err)
+			}
+		}
+		if p := windowsPinProblems(dir, noRec, code, c.win, tableRecord); len(p) == 0 {
+			t.Errorf("planted: %s was not caught", c.what)
+		}
+	}
 
 	// A changed function moves the hash; a comment does not.
 	if !pinMoves(t, files, "quit_windows.go", "return errQuitNotPosted // no single main window", "return nil // no single main window") {
@@ -470,7 +520,7 @@ func TestWindowsCodePin(t *testing.T) {
 	}
 	named := windowsPin{hash: pin, record: tableRecord, date: date}
 	plant(tableRecord, good)
-	if p := windowsPinProblems(dir, named, code, true, tableRecord); len(p) != 0 {
+	if p := windowsPinProblems(dir, named, code, windowsEntries{start: true}, tableRecord); len(p) != 0 {
 		t.Fatalf("twin: the table's own record naming MA-918, windows, the hash and the date was refused: %v", p)
 	}
 	for _, c := range []struct {
@@ -479,7 +529,6 @@ func TestWindowsCodePin(t *testing.T) {
 		body        string // the record's text, planted at pin.record
 		tableRecord string
 	}{
-		{"the Windows start entry true with no lab record", windowsPin{hash: pin, record: "no lab record"}, "", tableRecord},
 		{"a record that does not exist", windowsPin{hash: pin, record: "docs/lab/none-such.md", date: date}, "", "docs/lab/none-such.md"},
 		{"a record outside docs/lab/", windowsPin{hash: pin, record: "docs/r.md", date: date}, good, "docs/r.md"},
 		{"a record without the pinned hash", named, "Lab record — MA-918, windows, " + date + ", code hash 0000", tableRecord},
@@ -495,7 +544,7 @@ func TestWindowsCodePin(t *testing.T) {
 		if c.body != "" {
 			plant(c.pin.record, c.body)
 		}
-		if p := windowsPinProblems(dir, c.pin, code, true, c.tableRecord); len(p) == 0 {
+		if p := windowsPinProblems(dir, c.pin, code, windowsEntries{start: true}, c.tableRecord); len(p) == 0 {
 			t.Errorf("planted: %s was not caught", c.what)
 		}
 	}

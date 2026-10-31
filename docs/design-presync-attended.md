@@ -532,6 +532,13 @@ attended ships only after MA-918 passes" would also hold the macOS fix. So:
   from the commit that adds the first MA-918 record, and Windows' start entry can be true only when
   the pin names a record whose hash matches the code. So the tripwire exists from AS4 and the flip
   cannot skip it.
+- **Amended 2026-10-31: operator-accepted (owner ruling 1, verbatim "1 - yes").** "The pinned hash
+  is changed only together with a new lab record, never alone" holds once the first MA-918 record
+  exists. Before that, the pin may follow code changes (re-pinned, still "no lab record"), and while
+  it says "no lab record" every Windows entry of `AttendedStartAllowed` and `AttendedQuitAllowed`
+  must stay false; MA-927 checks both entries, and refuses "no lab record" once
+  `docs/lab/presync-attended-start-windows.md` exists. The pin file and MA-927 carry the owner's
+  words.
 
 **Wording names the taskbar [OQ-2, C-24, C-61].** Every Windows text says "minimized to the taskbar"
 where macOS says "out of sight", and "quit it from the taskbar or the notification area" where macOS

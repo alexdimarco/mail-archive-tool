@@ -616,3 +616,15 @@ scheduled one does; (b) the warning say it clears by itself at the next backup t
 (c) hourly schedules with the sync stay, given each quiet hour now keeps Thunderbird open up to 20
 minutes? This step recommends yes, yes, and keep hourly with a note — but each changes an owner ruling
 (OQ-5, the hourly ruling), so none was made here.
+
+### Owner answers, 2026-10-31
+
+Added 2026-10-31; nothing above is changed. The owner (Alex DiMarco) answered five questions in chat
+on 2026-10-31, relayed to the builder by the workflow; the reply, verbatim: "1 - yes. 2. test 3 -
+tes 4 - yes 5 - yes with note". Questions 3, 4 and 5 are (a), (b) and (c) above; questions 1 and 2
+are the two Windows questions (the code pin, and the Windows Run now switch).
+
+| Question | Answer (owner's words) | What was done |
+|---|---|---|
+| 1. May the Windows code pin (MA-927) follow code changes, re-pinned and marked "no lab record", until the first Windows lab record exists, with every Windows `AttendedStartAllowed` and `AttendedQuitAllowed` entry false meanwhile? | "1 - yes" | **Answered: yes, operator-accepted gate change.** Recorded in the pin file and MA-927 with the date and the owner's words; MA-927 now also checks the Windows quit entry, and refuses "no lab record" once an MA-918 record exists. |
+| 2. Flip the Windows Run now switch now, or test first (lab MA-918)? | "2. test" | **Answered: test first.** The Windows `AttendedStartAllowed` entry stays false; lab MA-918 comes before any flip. Nothing built this round. |

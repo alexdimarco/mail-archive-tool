@@ -12,19 +12,28 @@
 # foregroundIsOurs), the launch's working folder (winInstallDir) and the session's
 # retry rule (minimizeRetry). The full list is windowsPinned in that test.
 #
-# Changing any of them turns TestWindowsCodePin red until lab MA-918 is run
-# again and its record is added under docs/lab/ IN THE SAME COMMIT, carrying the
-# new hash, the record's date and naming MA-918 and windows; then the record line
-# below names that file, which must be the Windows start entry's own record
-# (docs/lab/presync-attended-start-windows.md), and a date: line (YYYY-MM-DD)
-# gives the record's date. Once a record is named, the hash is changed only
-# together with a new lab record, never alone.
+# Changing any of them turns TestWindowsCodePin red until the hash below is
+# changed to match.
 #
-# "no lab record": no MA-918 record exists yet (slice AS4 under OQ-7), so the
-# Windows start entry of AttendedStartAllowed must stay false, and MA-927 checks
-# only the hash (§2.7). With no measurement to invalidate, the hash then follows
-# the code: re-pinned 2026-10-31 for gate-2 pass 1, fix group "windows"
-# (as4win-2..6 changed the minimize; as4win-4 widened what is hashed). The first
-# MA-918 run must measure the code at that run's hash.
+# Before the first MA-918 record exists ("record: no lab record" below):
+#   OPERATOR-ACCEPTED 2026-10-31 by the owner, Alex DiMarco, in chat; the owner's
+#   reply, verbatim: "1 - yes. 2. test 3 -  tes 4 - yes 5 - yes with note" (the
+#   "1 - yes" answers this rule). The pin MAY follow code changes: the hash is
+#   re-pinned with the code and the record stays "no lab record". While it says
+#   "no lab record", every Windows entry of AttendedStartAllowed and of
+#   AttendedQuitAllowed MUST stay false; TestWindowsCodePin checks both.
+#   (Commit cb37a15 re-pinned under this rule before it was accepted; that re-pin
+#   is covered by this acceptance.)
+#
+# Once the first MA-918 record exists (docs/lab/presync-attended-start-windows.md,
+# the Windows start entry's own record), the pin is strict again: the record line
+# below must name that file, which must name MA-918 and windows and carry the
+# pinned hash, and a date: line (YYYY-MM-DD) gives the record's date, which the
+# record must carry. Any change to the pinned code then needs a new MA-918 lab
+# record, added IN THE SAME COMMIT as the new hash; the hash is never changed
+# alone. TestWindowsCodePin refuses "no lab record" once that record exists.
+#
+# Re-pins under "no lab record": 2026-10-31, gate-2 pass 1, fix group "windows"
+# (cb37a15: as4win-2..6 changed the minimize; as4win-4 widened what is hashed).
 hash: a6b391eac34015ddad57ef76742acebb70f9e924897555b5a285f43ed7648ce0
 record: no lab record
