@@ -1671,8 +1671,9 @@ pre{white-space:pre-wrap;overflow-wrap:anywhere;background:var(--bg);border:1px 
       {{if .Set.Sync}}<label class="checkline"><input type="checkbox" id="schedPresync"{{if .Set.SyncOn}} checked{{end}}{{if not .Set.Interval}} disabled{{end}} data-kind-field> Sync Thunderbird before each backup</label>
       <p class="card-sub" data-sync-hint{{if .Set.Interval}} hidden{{end}}>{{.SyncFirstLine}}</p>
       {{if .Set.SyncReason}}<p class="card-sub warn" id="schedSyncReason">{{.Set.SyncReason}}</p>{{end}}
-      <p class="note" id="schedPresyncNote">{{.Set.SyncNotice}}</p>
-      {{if .Set.MacNote}}<p class="note" id="schedMacNote">{{.Set.MacNote}}</p>{{end}}{{end}}
+      <p class="note" id="schedPresyncNote" data-sched-notice{{if and .Set.ManualSyncNotice (eq .Set.Interval "manual")}} hidden{{end}}>{{.Set.SyncNotice}}</p>
+      {{if .Set.ManualSyncNotice}}<p class="note" id="schedPresyncManualNote" data-manual-notice{{if ne .Set.Interval "manual"}} hidden{{end}}>{{.Set.ManualSyncNotice}}</p>{{end}}
+      {{if .Set.MacNote}}<p class="note" id="schedMacNote" data-sched-notice{{if and .Set.ManualSyncNotice (eq .Set.Interval "manual")}} hidden{{end}}>{{.Set.MacNote}}</p>{{end}}{{end}}
       {{if .Set.AutoPaused}}<p class="card-sub" id="settingsAutoPausedSave">{{.AutoPausedSaveLine}}</p>{{end}}
       </div>{{end}}
       {{if .Set.SyncOnly}}<div id="encSyncBox">
@@ -1997,6 +1998,8 @@ function settingsState(){
   const manual=!!iv&&iv.value==='manual',mh=document.querySelector('[data-manual-hint]'),tm=$('schedTime');
   if(mh)mh.hidden=!manual;
   if(tm&&!moved)tm.disabled=manual;
+  // Its Run now sync notice shows in place of the scheduled backup's notice and Mac note.
+  const mn=document.querySelector('[data-manual-notice]');if(mn){mn.hidden=!manual;document.querySelectorAll('[data-sched-notice]').forEach(e=>{e.hidden=manual;});}
 }
 const outDirEl=$('outDir');
 if(outDirEl)outDirEl.addEventListener('input',settingsState);

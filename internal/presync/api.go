@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"io"
+	"strings"
 	"time"
 )
 
@@ -194,12 +195,26 @@ const (
 // platform whose attended start is allowed (AttendedStartAllowed), it adds that a
 // backup started with Run now does not wait until the person is away; elsewhere
 // that clause is left out, since Run now does not start Thunderbird there.
+//
+// On Windows it also says a Primary Password window takes the keyboard each time the sync
+// starts Thunderbird (WinPasswordSentence; the Windows texts pass, 2026-10-31, finding 5),
+// whether or not Run now starts it there, since a scheduled start shows that window too.
 func SyncNoticeFor(goos string) string {
+	s := syncNoticeHead
 	if AttendedStartAllowed(goos) {
-		return syncNoticeHead + syncNoticeRunNow + syncNoticeTail
+		s += syncNoticeRunNow
 	}
-	return SyncNotice
+	if goos == "windows" {
+		s += ". " + strings.TrimSuffix(WinPasswordSentence, ".")
+	}
+	return s + syncNoticeTail
 }
+
+// WinPasswordSentence is said in Windows' Settings notices (SyncNoticeFor, and the Run now
+// notice of an encrypted archive or of a backup run only on Run now): lab L-A10 pp1 saw a
+// Primary Password prompt shown, taking the keyboard, at each start, which the owner
+// accepted (2026-10-31).
+const WinPasswordSentence = "If Thunderbird has a Primary Password, its password window appears and takes the keyboard each time the sync starts Thunderbird."
 
 // MacAutomationNote is the macOS note shown beside the sync wherever it is offered on a
 // Mac: the wizard's schedule question and MailArchive Desktop's Settings card both use

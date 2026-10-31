@@ -60,12 +60,31 @@ const (
 // starting it does, that an open Thunderbird is left alone, the one-profile limit —
 // and no scheduled-backup sentence, since an encrypted archive has none. The close
 // variant ("…then closes it, which runs Thunderbird's on-exit actions…") arrives with
-// slice AS-Q.
+// slice AS-Q. Since the Windows texts pass (2026-10-31) it is also the Settings card's
+// notice for a backup run only on Run now (manualSyncNotice, finding 3), and on Windows it
+// says a Primary Password window takes the keyboard (presync.WinPasswordSentence, finding 5).
 func encSyncNotice(goos string) string {
 	w := runNowWordsFor(goos)
-	return "Before each Run now, MailArchive starts Thunderbird " + w.hidden + " and waits for its mail to arrive (" + syncWaitWords + "), so the archive includes mail that had only reached the server, then leaves it open for you to quit from " + w.place + ". " +
+	s := "Before each Run now, MailArchive starts Thunderbird " + w.hidden + " and waits for its mail to arrive (" + syncWaitWords + "), so the archive includes mail that had only reached the server, then leaves it open for you to quit from " + w.place + ". " +
 		"Because it drives your real Thunderbird, starting it does what opening Thunderbird always does: it checks all your accounts, sends anything waiting in your Outbox, runs your message filters, and may show notifications. " +
-		"A Thunderbird you already have open is left alone — never started or closed. If you use more than one Thunderbird profile, only the one holding this mailbox is synced."
+		"A Thunderbird you already have open is left alone — never started or closed. "
+	if w.windows {
+		s += presync.WinPasswordSentence + " "
+	}
+	return s + "If you use more than one Thunderbird profile, only the one holding this mailbox is synced."
+}
+
+// manualSyncNotice is the Settings card's sync notice when How often is "Only when I click
+// Run now" (MA-949; the Windows texts pass, 2026-10-31, finding 3): presync.SyncNoticeFor
+// speaks of asking Thunderbird to quit and of a scheduled backup's 2-minute idle rule, which
+// a backup run only on Run now never meets, so it is the Run now notice the encrypted card
+// shows. Where this platform's Run now does not start Thunderbird, it says so instead of
+// promising a sync (encSyncStartOffLine).
+func manualSyncNotice(goos string) string {
+	if !presync.AttendedStartAllowed(goos) {
+		return encSyncStartOffLine
+	}
+	return encSyncNotice(goos)
 }
 
 // encSyncSettingLine is the health view's line for an encrypted archive whose Run now

@@ -54,6 +54,9 @@ type settingsCard struct {
 	// SyncNotice and MacNote are shown, visible, beside the sync box (X16, MA-861).
 	SyncNotice string
 	MacNote    string
+	// ManualSyncNotice is shown in their place while How often is "Only when I click Run now"
+	// (MA-949; the Windows texts pass, 2026-10-31, finding 3); "" where that is not offered.
+	ManualSyncNotice string
 	// SyncOnly: an encrypted archive's sync-only box, with its own Save posting to
 	// api/runnow-sync (design-presync-attended §8.1, C-26); SyncLast is the last Run
 	// now's sync while the archive is unlocked here (C-27); SyncUnreadable says why the
@@ -211,6 +214,10 @@ func settingsCardFor(in settingsInputs) settingsCard {
 		s.SyncNotice = presync.SyncNoticeFor(in.goos)
 		if in.goos == "darwin" {
 			s.MacNote = presync.MacAutomationNote
+		}
+		if s.SchedManual {
+			// Both are drawn; the page shows the one for How often's choice (settingsState).
+			s.ManualSyncNotice = manualSyncNotice(in.goos)
 		}
 	}
 	return s

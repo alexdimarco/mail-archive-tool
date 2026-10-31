@@ -1172,6 +1172,12 @@ func TestEncryptedRunNowTexts(t *testing.T) {
 			t.Errorf("%s, start not allowed: %q", goos, startOff)
 		}
 		notice := encSyncNotice(goos)
+		// Pinned whole (the Windows texts pass, 2026-10-31): the same notice the Settings card
+		// shows for a backup run only on Run now; Windows' says a Primary Password window
+		// takes the keyboard (finding 5).
+		if want := map[string]string{"darwin": runNowOnlyNoticeMac, "windows": runNowOnlyNoticeWin}[goos]; notice != want {
+			t.Errorf("%s: the encrypted SyncNotice:\n  %q\nwant\n  %q", goos, notice, want)
+		}
 		for _, want := range []string{"checks all your accounts", "sends anything waiting in your Outbox", "runs your message filters", "may show notifications",
 			"A Thunderbird you already have open is left alone — never started or closed.", "only the one holding this mailbox is synced", "(up to 20 minutes, often about 13)", "leaves it open for you to quit"} {
 			if !strings.Contains(notice, want) {

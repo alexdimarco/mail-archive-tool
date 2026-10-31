@@ -38,8 +38,25 @@ func TestRunNowSharedTexts(t *testing.T) {
 			if want := allowed; says != want {
 				t.Errorf("%s, start allowed %v: the Run now clause shown %v, want %v: %q", goos, allowed, says, want, got)
 			}
-			if !says && got != SyncNotice {
+			// The Windows texts pass (§14 gate 3, 2026-10-31, finding 5): on Windows the notice
+			// says a Primary Password window takes the keyboard each time the sync starts
+			// Thunderbird (lab L-A10 pp1), with the start allowed or not, since a scheduled
+			// start shows it too; a Mac's never says it. Pinned whole.
+			want := syncNoticeHead
+			if allowed {
+				want += syncNoticeRunNow
+			}
+			if goos == "windows" {
+				want += ". If Thunderbird has a Primary Password, its password window appears and takes the keyboard each time the sync starts Thunderbird"
+			}
+			if want += syncNoticeTail; got != want {
+				t.Errorf("%s, start allowed %v:\n  %q\nwant\n  %q", goos, allowed, got, want)
+			}
+			if goos == "darwin" && !allowed && got != SyncNotice {
 				t.Errorf("%s, start allowed %v: not SyncNotice itself: %q", goos, allowed, got)
+			}
+			if (goos == "windows") != strings.Contains(got, "Primary Password") {
+				t.Errorf("%s: the Primary Password sentence shown %v: %q", goos, strings.Contains(got, "Primary Password"), got)
 			}
 			for _, want := range []string{"on-exit", "Trash", "left alone", "profile", "Outbox"} {
 				if !strings.Contains(got, want) {
