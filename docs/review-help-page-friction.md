@@ -140,3 +140,32 @@ attachments-report.tsv in the archive folder (it opens in a spreadsheet program)
 - Whether the Settings save reloads the page so Run now appears without a manual reload (cell 4).
 - The Windows Start menu layout (the wizard shortcut sits in a "MailArchive Desktop" folder under All
   apps) was read from `Product.wxs`, not seen.
+
+## Disposition (added 2026-10-31, after the review; the review above is unchanged)
+
+Applied test-first in the commits that follow this review, together with a truth review of the
+guide against the code (its findings are named T-n here). Catalog: MA-945, MA-938, MA-942 and
+MA-943 amended; MA-946 new.
+
+| Finding | Outcome |
+|---|---|
+| M1 / T2 asleep is skipped | Applied. Guide: Mac and Windows "switched off is skipped; if it was asleep, the backup runs when it wakes up"; Linux (cron) keeps "off or asleep". The wizard's question and the Mac end note say the same (MA-946). The Mac half rests on launchd.plist(5) as read on this Mac; C2 would observe it |
+| M2 / T6 Microsoft 365 card | Applied: the card gives the guide's steps; the test drives Save settings with a new folder and sees the form |
+| M3 no-archive card command | Applied: the card uses the guide's per-platform wizard words |
+| L1 / T4 reload, wizard sync question | Applied |
+| L2 unzipped Windows | Applied (address bar, cmd, Enter) |
+| L3 Run now "straight away" | Applied: "starts a backup now", with the wait named only where Run now starts Thunderbird |
+| L4 command-line schedule not carried over | Applied: the Scheduled backup card says how it runs now and that Remove does not keep it (and the sync, when on) |
+| L5 encrypted archive made at the command line | Applied |
+| L6 report path | Applied: "the file attachments-report.tsv in the archive's folder (it opens in a spreadsheet program)" |
+| L7 full stop, Hourly twice, sync "off until", alerts link | Applied. The "Library is hidden in Finder" rewording was a "consider" and is not taken |
+| T1 alerts boxes and test email | Applied, in Getting started and the Thunderbird 3-day line |
+| T3 Shut down, come back | Applied per platform |
+| T5 sync turned on in the wizard | Applied (same as L7's third point) |
+| T7 not-downloaded messages | Applied |
+| T8 Thunderbird's default | The unchecked claim "Thunderbird ticks it for a new account" is removed; the wizard's offline-download offer is named and counted as an exception to read-only. Held: whether Thunderbird ticks it by default (a lab check; the wizard's own IMAP dialog says the opposite) |
+| T9 recovery key | Applied |
+| H1 / T10 / C1 Mac wizard after the Desktop is open | Held for the owner: C1 decides it, and H1 adds a button, which needs the owner's yes |
+| O1–O5 | Held for the owner (taste) |
+| Remove and a custom-named command-line schedule | Held, open. Read in the code, not driven: Remove reaches only the entry named for the folder (`removeTaskAt` → `DefaultNameFor`), and the page says "Removed." for any `ok:true` reply, including `removed:false`. A schedule set up with its own `-name` would stay, and MA-942's words would send its owner to a Remove that does not reach it. A fix changes what Remove removes, so it needs its own test and design |
+| Security & privacy's "one exception" | Noticed, not changed: that card names only the Thunderbird sync as the exception to read-only; the guide now also names the wizard's offline-download offer (a Thunderbird setting, not mail). Whether the card should too is the owner's wording call |
