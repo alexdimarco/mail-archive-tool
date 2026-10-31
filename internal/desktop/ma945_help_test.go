@@ -179,6 +179,15 @@ func TestHowToUseMailArchiveIsOnEveryPage(t *testing.T) {
 					t.Errorf("%s: the card links to %q, which is not a card on this page", what, href)
 				}
 			}
+			// Backup alerts is a link wherever its card is drawn (every archive but an
+			// encrypted one), like every other part the guide lists (friction review L7).
+			linksAlerts := false
+			for _, href := range h.hrefs {
+				linksAlerts = linksAlerts || href == "#sec-alerts"
+			}
+			if want := name != "an encrypted archive"; linksAlerts != want {
+				t.Errorf("%s: the guide links to Backup alerts = %v, want %v", what, linksAlerts, want)
+			}
 			noArchive := cfg.Out == ""
 			if got := strings.Contains(h.outside, pointer); got != noArchive {
 				t.Errorf("%s: the Overview's pointer to the guide shown = %v, want %v", what, got, noArchive)
@@ -215,22 +224,29 @@ func TestHowToUseMailArchiveIsOnEveryPage(t *testing.T) {
 var helpSentences = []string{
 	// Getting started
 	"MailArchive keeps a copy of your mail in an archive folder on this computer. Each backup adds the mail that is new, and you can read and search the archive in your browser.",
-	"MailArchive only reads your mail: it never sends, moves, changes or deletes it. The one exception is the Thunderbird sync, if you turn it on (see Thunderbird below).",
-	"Then come back here and click Use this archive if this page offers it, or click Open an archive folder… and choose the archive's folder.",
+	"Click Use this archive if the page offers it, or click Open an archive folder… and choose the archive's folder.",
 	"An archive you already have (from another computer, a drive or a backup copy): click Open an archive folder… and choose its folder.",
-	"Run now backs up straight away, Repair fixes a scheduled backup that stopped working, and Remove deletes the scheduled backup (the archive and its mail are kept). A Microsoft 365 archive uses Archive now instead of Run now.",
+	"Repair fixes a scheduled backup that stopped working, and Remove deletes the scheduled backup (the archive and its mail are kept). A Microsoft 365 archive uses Archive now instead of Run now.",
 	"Go back in time shows your mailbox as it was on an earlier date; only a Microsoft 365 archive keeps that history, from its first backup.",
 	"Status & health: whether this archive is healthy. When something needs attention, it says what is wrong and what to do.",
-	"Fill in your mail server, click Save alert settings, then Send test email to check that it arrives. An encrypted archive has no Backup alerts card.",
+	// Backup alerts (truth review 2026-10-31): every alert box starts unticked, and the
+	// test email is sent even with alerts off (backupalert.SendTest sets Enabled).
+	"Tick Send backup alerts by email, then tick what you want to hear about (start with a failed backup, or Thunderbird not synced for 3 days). Fill in your mail server, click Save alert settings, then Send test email to check that it arrives. The test email is sent even when alerts are switched off, so check the ticks too. An encrypted archive has no Backup alerts card.",
 	"Pause (make read-only) stops all changes to an archive, and Resume allows them again. Nothing is deleted either way.",
-	"MailArchive then shows a recovery key once: save it somewhere safe, such as a password manager. If you lose both the password and the recovery key, nobody can open the archive, not even you.",
-	"Scheduled backups of an encrypted archive aren't available yet: back it up with Run now while it is unlocked.",
-	"Shut down (at the top of the page): stops MailArchive Desktop. Your archives and scheduled backups are not affected; open MailArchive again to come back.",
+	// The recovery key is typed back (encSavedBtn, encTypeBack), and "Remember the key on
+	// this computer" is ticked by default (encCreateRemember).
+	"MailArchive then shows a recovery key: save it somewhere safe, such as a password manager, click I have saved the recovery key, and type it back to show it was saved. If you lose both the password and the recovery key, only a computer that remembers the archive's key can still open it; otherwise nobody can, not even you.",
+	"Scheduled backups of an encrypted archive aren't available yet: back it up with Run now while it is unlocked. An encrypted archive made at the command line has no Run now: it is backed up at the command line, and its Archive now card says how.",
+	"Shut down (at the top of the page): stops MailArchive Desktop. Your archives and scheduled backups are not affected.",
 	// Thunderbird
 	"Your mail account added to Thunderbird, and Thunderbird opened at least once, so it has downloaded your mail.",
-	"For an IMAP account this is the setting Keep messages for this account on this computer: in Thunderbird, open Account Settings (from the ≡ menu at the top right), choose your account's Synchronization & Storage page, and check that the box is ticked. Thunderbird ticks it for a new account. POP accounts and Local Folders always keep their mail on this computer.",
-	"A message Thunderbird has not downloaded yet is archived as still missing its content, and a later backup fills it in once Thunderbird has downloaded it.",
-	"MailArchive uses the Thunderbird profile that holds the mail folder this archive was made from",
+	"For an IMAP account this is the setting Keep messages for this account on this computer: in Thunderbird, open Account Settings (from the ≡ menu at the top right), choose your account's Synchronization & Storage page, and check that the box is ticked. POP accounts and Local Folders always keep their mail on this computer.",
+	// The wizard's IMAP offer (prepareThunderbirdGUI, thunderbird.EnableOffline).
+	"If you make the archive from an IMAP account, the MailArchive wizard may ask Prepare a full offline download first? Yes, prepare turns this setting on for you: it asks you to quit Thunderbird first, and keeps a copy of Thunderbird's settings file beside it.",
+	// What the mbox walk can and cannot hold (gapclass GapKindCorruptPart; an empty part is
+	// a fillable gap).
+	"A message Thunderbird has not downloaded is not in the archive yet; a later backup adds it once Thunderbird has downloaded it. A message Thunderbird saved only in part (for example without a large attachment) is archived with what is there, and a later backup fills in the rest.",
+	"MailArchive uses the Thunderbird profile that holds the mail folder this archive was made from. (Thunderbird keeps its profiles in",
 	"If you use more than one Thunderbird profile, only that one is backed up and synced.",
 	// Microsoft 365
 	"MailArchive Desktop backs up your own Microsoft 365 mailbox. You sign in as yourself with a code from Microsoft, and MailArchive only reads your mail: it asks Microsoft for read access (the Mail.Read permission) and nothing more. Shared mailboxes and other people's mailboxes aren't available in this version.",
@@ -255,12 +271,18 @@ type helpPlatform struct {
 
 // The sync's shared sentences, said only where the sync runs (macOS and Windows).
 var helpSyncSentences = []string{
-	"Sync Thunderbird before each backup. Thunderbird saves new mail only while it is running. With this setting on, each backup first starts Thunderbird and waits for its mail, so the archive also gets mail that had only reached the mail server. It is off until you turn it on: in Settings, choose How often, tick Sync Thunderbird before each backup, then click Save settings.",
+	"MailArchive only reads your mail: it never sends, moves, changes or deletes it. The exceptions are the Thunderbird sync, if you turn it on, and the wizard's offer to turn on Thunderbird's offline download (see Thunderbird below).",
+	// The wizard asks about the sync after a Yes to the schedule question (offerSchedule).
+	"For Thunderbird mail the wizard then asks Sync Thunderbird before each scheduled backup? (see Thunderbird below). You can also set How often and the sync later in Settings on this page.",
+	"Sync Thunderbird before each backup. Thunderbird saves new mail only while it is running. With this setting on, each backup first starts Thunderbird and waits for its mail, so the archive also gets mail that had only reached the mail server. It is off until you turn it on: choose Yes — sync Thunderbird first when the MailArchive wizard asks Sync Thunderbird before each scheduled backup?, or, in Settings, choose How often, tick Sync Thunderbird before each backup, then click Save settings.",
+	// A missed time is caught up on wake (Windows: StartWhenAvailable; macOS: launchd's
+	// StartCalendarInterval, launchd.plist(5)); only a switched-off computer skips it.
+	"A time when the computer is switched off is skipped. If it was asleep, the backup runs when it wakes up.",
 	"The backup waits for its mail to stop arriving (up to 20 minutes), asks Thunderbird to quit, then backs up. A scheduled backup starts Thunderbird only when no one has used the keyboard or mouse for 2 minutes. If you are using the computer, that backup skips the sync and saves the mail already on this computer.",
 	"A Thunderbird you already have open is left alone: MailArchive never starts or closes it, and the backup reads the mail it has saved.",
 	"It checks all your accounts, sends anything waiting in your Outbox, runs your message filters, and may show notifications. When a scheduled backup asks it to quit, your accounts' on-exit actions run too (for example emptying Trash), so mail you deleted since the last backup may be removed before it is archived.",
 	"With Hourly and the Thunderbird sync, Thunderbird stays open for about 20 minutes in an hour with no new mail, while the backup waits for mail.",
-	"When the sync keeps missing: if Thunderbird could not be synced before this archive's scheduled backups for 3 days, Status & health says so and what to do, and Backup alerts sends one email (when a failed backup, or Thunderbird not synced for 3 days is ticked).",
+	"When the sync keeps missing: if Thunderbird could not be synced before this archive's scheduled backups for 3 days, Status & health says so and what to do, and Backup alerts sends one email, when Send backup alerts by email and a failed backup, or Thunderbird not synced for 3 days are both ticked.",
 	"A softer warning, with no email, shows when Thunderbird was started before each scheduled backup for 3 days but no new mail arrived. Thunderbird may be waiting for a password or a sign-in: open Thunderbird and answer it. That warning clears by itself the next time a backup sees new mail arrive.",
 }
 
@@ -270,27 +292,62 @@ const (
 	helpEncSync     = "An encrypted archive is backed up only when you click Run now. If it was made from Thunderbird, its Settings card offers Sync Thunderbird before each Run now, with its own Save. Until that backup starts reading mail, Lock cancels it."
 )
 
+// helpMacWizard and helpWinWizard are how the guide, and the "No archive chosen yet" card
+// (friction review M3), say to open the wizard.
+const (
+	helpMacWizard = "On a Mac, open Mail Archive.app and choose Archive a mail file on this computer (Outlook, Thunderbird, mbox)."
+	helpWinWizard = "On Windows, open MailArchive wizard from the Start menu. If MailArchive was unzipped rather than installed, there is no Start menu entry: open the MailArchive folder, click in the address bar at the top of the window, type cmd and press Enter, then type mailarchivew.exe wizard and press Enter."
+	helpLinWizard = "On Linux, run mailarchive wizard."
+)
+
+// Words no platform's guide may say any more (truth review and friction review of
+// 2026-10-31): each was untrue of this version, or unchecked.
+var helpGone = []string{
+	"Thunderbird ticks it for a new account",
+	"archived as still missing its content",
+	"open MailArchive again to come back",
+	"shows a recovery key once",
+	"nobody can open the archive, not even you",
+	"Run now backs up straight away",
+	"Then come back here and click Use this archive",
+	"The one exception is the Thunderbird sync",
+	"Hourly: With Hourly",
+	"this archive was made from (Thunderbird",
+}
+
 var helpPlatforms = []helpPlatform{
 	{goos: "darwin", want: append([]string{
-		"On a Mac, open Mail Archive.app and choose Archive a mail file on this computer (Outlook, Thunderbird, mbox).",
+		helpMacWizard,
+		"Then come back to this page and reload it (press Command-R).",
+		"Run now starts a backup now (with the Thunderbird sync on, it first waits for Thunderbird's mail; see Thunderbird below), Repair fixes",
+		"Your archives and scheduled backups are not affected. To come back, open Mail Archive.app and choose Microsoft 365, folder export, browsing & tools (open MailArchive Desktop).",
 		"Thunderbird installed in the Applications folder, or in the Applications folder inside your home folder. The Thunderbird sync looks for it only there.",
 		"(Thunderbird keeps its profiles in ~/Library/Thunderbird/Profiles.)",
 		"Scheduled backups: Thunderbird starts out of sight.",
 		helpMacRunNow, helpEncSync,
 		"On a Mac, the first time a scheduled backup closes Thunderbird, macOS may ask for permission to control Thunderbird; until it is answered, each run leaves Thunderbird open. To answer, open System Settings > Privacy & Security > Automation and allow the entry listed there to control Thunderbird.",
-	}, helpSyncSentences...), not: []string{"does not start Thunderbird yet", "taskbar", "MailArchive does not sync Thunderbird"}},
+	}, helpSyncSentences...), not: []string{"does not start Thunderbird yet", "taskbar", "MailArchive does not sync Thunderbird", "off or asleep is skipped", "press F5"}},
 	{goos: "windows", want: append([]string{
-		"On Windows, open MailArchive wizard from the Start menu. If MailArchive was unzipped rather than installed, there is no Start menu entry: open a Command Prompt in the MailArchive folder and type mailarchivew.exe wizard.",
+		helpWinWizard,
+		"Then come back to this page and reload it (press F5).",
+		"Run now starts a backup now, Repair fixes",
+		"Your archives and scheduled backups are not affected. To come back, open MailArchive Desktop from the Start menu, or, if MailArchive was unzipped, double-click mailarchivew.exe in its folder.",
 		`Thunderbird installed in its usual place: a Mozilla Thunderbird folder in Program Files (or Program Files (x86)), or in AppData\Local\Programs in your user folder. The Thunderbird sync looks for it only there.`,
 		`(Thunderbird keeps its profiles in %APPDATA%\Thunderbird\Profiles.)`,
 		"Scheduled backups: Thunderbird's window shows for a moment, then it is minimized to the taskbar.",
 		helpWinNoRunNow,
-	}, helpSyncSentences...), not: []string{"Stop waiting and back up now to back up", "the Dock", "System Settings", "Sync Thunderbird before each Run now", "MailArchive does not sync Thunderbird"}},
+	}, helpSyncSentences...), not: []string{"Stop waiting and back up now to back up", "the Dock", "System Settings", "Sync Thunderbird before each Run now", "MailArchive does not sync Thunderbird", "off or asleep is skipped", "Command-R", "it first waits for Thunderbird's mail"}},
 	{goos: "linux", want: []string{
-		"On Linux, run mailarchive wizard.",
+		helpLinWizard,
+		"Then come back to this page and reload it (press F5).",
+		"Run now starts a backup now, Repair fixes",
+		"MailArchive only reads your mail: it never sends, moves, changes or deletes it. The one exception is the wizard's offer to turn on Thunderbird's offline download (see Thunderbird below).",
+		// Linux schedules with cron, which skips a time the computer slept through.
+		"A time when the computer is off or asleep is skipped.",
+		"Your archives and scheduled backups are not affected. To come back, run mailarchive desktop.",
 		"(Thunderbird keeps its profiles in ~/.thunderbird.)",
 		"On Linux, MailArchive does not sync Thunderbird. It backs up the mail Thunderbird has already saved, so open Thunderbird and let its mail arrive before a backup. MailArchive Desktop can't set up a scheduled backup of Thunderbird mail here; the MailArchive wizard can: when it asks Keep this archive current automatically?, choose one of the Yes answers.",
-	}, not: []string{"Sync Thunderbird before each backup", "Stop waiting and back up now", "the Dock", "taskbar", "The Thunderbird sync looks for it"}},
+	}, not: []string{"Sync Thunderbird before each backup", "Stop waiting and back up now", "the Dock", "taskbar", "The Thunderbird sync looks for it", "If it was asleep", "the Thunderbird sync, if you turn it on", "Sync Thunderbird before each scheduled backup?"}},
 }
 
 // covers: MA-945, X11, X16, R12, S41
@@ -316,10 +373,20 @@ func TestHowToUseMailArchiveSaysWhatThisVersionDoes(t *testing.T) {
 				t.Errorf("%s: the guide says %q, which is not true here", p.goos, s)
 			}
 		}
-		for _, bad := range []string{"this PC", "Mail.ReadWrite", "Mail.Send", "posture", "mailarchive setup"} {
+		for _, bad := range append([]string{"this PC", "Mail.ReadWrite", "Mail.Send", "posture", "mailarchive setup"}, helpGone...) {
 			if strings.Contains(h.text, bad) {
 				t.Errorf("%s: the guide says %q", p.goos, bad)
 			}
+		}
+		// The "No archive chosen yet" card opens the wizard in the guide's own words for
+		// this platform, never with a typed command a Mac or Windows app user does not have
+		// (friction review M3).
+		how := map[string]string{"darwin": helpMacWizard, "windows": helpWinWizard, "linux": helpLinWizard}[p.goos]
+		if want := "To make a new one from Thunderbird, Outlook or other mail files on this computer, use the MailArchive wizard, then open its folder here. " + how; !strings.Contains(h.outside, want) {
+			t.Errorf("%s: the no-archive card does not say %q:\n%s", p.goos, want, h.outside)
+		}
+		if strings.Contains(h.outside, "use the MailArchive wizard (mailarchive wizard)") {
+			t.Errorf("%s: the no-archive card still names the wizard by its command", p.goos)
 		}
 	}
 
@@ -340,6 +407,59 @@ func TestHowToUseMailArchiveSaysWhatThisVersionDoes(t *testing.T) {
 	if strings.Contains(win.text, "does not start Thunderbird yet") {
 		t.Error("the Windows guide with Run now's start on still says Run now does not start Thunderbird")
 	}
+	// Run now's wait in Getting started follows the same table.
+	const wait = "it first waits for Thunderbird's mail"
+	if strings.Contains(mac.text, wait) || !strings.Contains(win.text, wait) {
+		t.Errorf("Getting started's Run now wait does not follow the start table (Mac off: %v, Windows on: %v)", strings.Contains(mac.text, wait), strings.Contains(win.text, wait))
+	}
+}
+
+// m365LocalOnlyLine is the Microsoft 365 connection card's line on an archive made from mail
+// files (as HTML), pinned whole: the guide's own steps, never a terminal command.
+const m365LocalOnlyLine = `Not used by this archive: it was made from mail files on this computer. To back up a Microsoft 365 mailbox, keep it in an archive of its own: in <b>Settings → Archive location</b>, type a new folder and click <b>Save settings</b>; this card then asks for the Microsoft 365 details.`
+
+// covers: MA-945, MA-938, X11
+// The Microsoft 365 connection card and the guide give one way to add a Microsoft 365
+// mailbox to a computer whose current archive was made from mail files (friction review
+// M2: the card said to run mailarchive setup in a terminal, the guide said to use Settings).
+// The way is driven: on a local archive the card shows the line and no form; Save settings
+// with a new folder in Archive location is answered ok, and the card then shows the
+// Microsoft 365 form and no longer the line. Positive twin first: a Microsoft 365 archive's
+// card shows the form.
+func TestTheMicrosoft365CardAndTheGuideAgree(t *testing.T) {
+	dir := t.TempDir()
+	none := filepath.Join(dir, "none.json")
+	m365 := getOverview(t, Config{GOOS: "darwin", ConfigPath: none, SettingsPath: filepath.Join(t.TempDir(), "s.json"),
+		Out: archiveAt(t, dir, "M365", map[string]string{"mailbox:u@contoso.com": "b"})})
+	if !strings.Contains(m365, `<div id="m365Form">`) || strings.Contains(m365, "Not used by this archive") {
+		t.Fatal("the positive twin: a Microsoft 365 archive's card has no form, or says it is not used")
+	}
+
+	local := archiveAt(t, dir, "Local", map[string]string{"path:/mail/Local Folders": "b"})
+	h := DashboardHandler(Config{GOOS: "darwin", ConfigPath: none, SettingsPath: filepath.Join(t.TempDir(), "s.json"), Out: local})
+	page, csrf := getPage(t, h)
+	if !strings.Contains(page, `<div class="v">`+m365LocalOnlyLine+`</div>`) || strings.Contains(page, `id="m365Form"`) {
+		t.Fatalf("a local archive's Microsoft 365 card does not give the guide's steps:\n%s", page)
+	}
+	for _, bad := range []string{"run <span class=\"mono\">mailarchive setup</span>", "in a terminal.</div>"} {
+		if strings.Contains(page, bad) {
+			t.Errorf("the card still says %q", bad)
+		}
+	}
+	guide := readHelpCard(t, page).text
+	if want := "If the card says Microsoft 365 is not used by this archive, the current archive was made from mail files. Keep the mailbox in an archive of its own: in Settings → Archive location, type a new folder and click Save settings"; !strings.Contains(guide, want) {
+		t.Errorf("the guide no longer says %q", want)
+	}
+
+	// The step itself: a new folder in Archive location, Save settings.
+	fresh := filepath.Join(t.TempDir(), "Mailbox archive")
+	if body := postJSON(h, "/api/settings", csrf, `{"Out":`+jsonQuote(fresh)+`}`).Body.String(); !strings.Contains(body, `"ok":true`) {
+		t.Fatalf("Save settings with a new folder: %s", body)
+	}
+	after, _ := getPage(t, h)
+	if !strings.Contains(after, `<div id="m365Form">`) || strings.Contains(after, "Not used by this archive") {
+		t.Error("after Save settings with a new folder, the card does not ask for the Microsoft 365 details")
+	}
 }
 
 // covers: MA-945, X11
@@ -356,7 +476,8 @@ func TestHowToUseMailArchiveNamesRealControls(t *testing.T) {
 	for _, label := range []string{"Open an archive folder…", "Make a new encrypted archive…", "Use this archive", "Archive location", "How often",
 		"Save settings", "Directory (tenant) ID", "Application (client) ID", "Device (per-user)", "App-only (admin)", "Save configuration",
 		"Archive now", "Keep each message's original .eml too", "Include Deleted Items", "Include Junk Email", "Save alert settings", "Send test email",
-		"Shut down", "Stop waiting and back up now", "Cancel the backup", "Recent backups", "Status & health", "Microsoft 365 connection", "Settings"} {
+		"Shut down", "Stop waiting and back up now", "Cancel the backup", "Recent backups", "Status & health", "Microsoft 365 connection", "Settings",
+		"Send backup alerts by email", "a failed backup, or Thunderbird not synced for 3 days", "I have saved the recovery key"} {
 		if !strings.Contains(h.text, label) {
 			t.Errorf("fixture: the guide does not name %q", label)
 		}
@@ -372,6 +493,7 @@ func TestHowToUseMailArchiveNamesRealControls(t *testing.T) {
 		return string(b)
 	}
 	dash, wiz := read("dashboard.go"), read(filepath.Join("..", "wizard", "wizard.go"))
+	wxs := read(filepath.Join("..", "..", "packaging", "mailarchive-desktop", "Product.wxs"))
 	for _, c := range []struct{ label, src, where string }{
 		{`>Run now</button>`, dash, "dashboard.go"},
 		{`>Repair</button>`, dash, "dashboard.go"},
@@ -389,6 +511,15 @@ func TestHowToUseMailArchiveNamesRealControls(t *testing.T) {
 		{`"Archive a mail file on this computer (Outlook, Thunderbird, mbox)"`, wiz, "wizard.go"},
 		{`"Keep this archive current automatically?`, wiz, "wizard.go"},
 		{`"Yes — every day at 2:00 AM"`, wiz, "wizard.go"},
+		{`"Sync Thunderbird before each scheduled backup?`, wiz, "wizard.go"},
+		{`"Yes — sync Thunderbird first"`, wiz, "wizard.go"},
+		{`Prepare a full offline download first?"`, wiz, "wizard.go"},
+		{`zenity.OKLabel("Yes, prepare")`, wiz, "wizard.go"},
+		{`"Microsoft 365, folder export, browsing & tools (open MailArchive Desktop)"`, wiz, "wizard.go"},
+		{`id="encTypeBack"`, dash, "dashboard.go"},
+		{`id="encCreateRemember" checked`, dash, "dashboard.go"},
+		{`Name="MailArchive Desktop"`, wxs, "Product.wxs"},
+		{`Name="MailArchive wizard"`, wxs, "Product.wxs"},
 	} {
 		if !strings.Contains(c.src, c.label) {
 			t.Errorf("the guide names %s, which %s does not draw", c.label, c.where)

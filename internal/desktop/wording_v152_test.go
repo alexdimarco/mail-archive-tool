@@ -76,7 +76,9 @@ func TestDesktopWordsMatchWhatItDoes(t *testing.T) {
 	lh := DashboardHandler(Config{SettingsPath: filepath.Join(t.TempDir(), "s.json"), Out: out, GOOS: "darwin"})
 	lp, _ := getPage(t, lh)
 	for _, want := range []string{
-		`<div class="v">Not used by this archive: it was made from mail files on this computer. You only need Microsoft 365 to back up a Microsoft 365 mailbox. To set it up, run <span class="mono">mailarchive setup</span> in a terminal.</div>`,
+		// Amended 2026-10-31 (MA-945's friction review M2): the card gives the guide's steps,
+		// not a terminal command (TestTheMicrosoft365CardAndTheGuideAgree drives them).
+		`<div class="v">` + m365LocalOnlyLine + `</div>`,
 		"No scheduled backup is set up for this archive yet. A scheduled backup keeps it up to date automatically: it re-reads the mail files this archive was made from and adds anything new.",
 	} {
 		if !strings.Contains(lp, want) {

@@ -1100,6 +1100,9 @@ func (cfg Config) overviewFor(csrf, epoch string) string {
 		// right below the "No archive chosen yet" card, with Getting started open, while
 		// no archive is chosen; near the end of the page after that.
 		Help template.HTML
+		// WizardHow is how to open the wizard on this platform, in the guide's words, for
+		// the "No archive chosen yet" card (friction review M3).
+		WizardHow string
 	}{MoveFirstLine: moveFirstLine, SyncFirstLine: syncFirstLine, AutoPausedSaveLine: autoPausedSaveLine, M365BoxesLine: m365BoxesLine, ArchiveNowUsesLine: archiveNowUsesLine,
 		EncSyncLabel: encSyncLabel, EncSyncLine: encSyncLine,
 		HistoryMax: state.RunHistoryMax, Export: !cfg.WorkspaceOff, Epoch: epoch, CSRF: csrf, Cards: cfg.cards(), Vault: vaultPhrase(), OutDir: cfg.effectiveOut(), ReaderURL: cfg.ReaderURL, SignedIn: signedIn, UPN: upn,
@@ -1110,7 +1113,8 @@ func (cfg Config) overviewFor(csrf, epoch string) string {
 		AlertSecurity: orElse(s.AlertSecurity, "starttls"), AlertFrom: s.AlertFrom, AlertTo: s.AlertTo, AlertUsername: s.AlertUsername}
 	data.KindLine = kindLine(archiveKind(data.OutDir))
 	data.IsM365 = archiveKind(data.OutDir) == kindM365
-	data.Help = helpCard(cfg.goos(), data.OutDir == "")
+	data.Help = helpCard(cfg.goos(), data.OutDir == "", archiveKind(data.OutDir) != kindEncrypted)
+	data.WizardHow = helpDataFor(cfg.goos(), false).WizardHow
 	data.ArchiveExample = app.ArchiveExampleFor(cfg.goos())
 	data.CancelTitle, data.StopWaitTitle = jobCancelTitle, stopWaitTitle
 	data.RunNowTitle = runNowPlainTitle
@@ -1495,7 +1499,7 @@ pre{white-space:pre-wrap;overflow-wrap:anywhere;background:var(--bg);border:1px 
       <button class="btn secondary" type="button" data-create-encrypted title="Make a new archive whose messages open only with its password or recovery key. The wizard's windows ask what to back up and where; the password is typed here.">Make a new encrypted archive…</button></p>
       {{if .Offer}}<p>The MailArchive wizard (mailarchive wizard) last used <span class="mono">{{.Offer}}</span>. Use this archive?</p>{{end}}
       <button class="btn" id="useOffer" type="button" data-path="{{.Offer}}"{{if not .Offer}} hidden{{end}} title="Open this archive in MailArchive Desktop — read it, check its health, and keep it backed up.">Use this archive</button>{{if .Offer}} <span class="card-sub">Nothing changes until you click it.</span>{{end}}
-      <p class="steps">{{if .Offer}}To pick a different folder, click <b>Open an archive folder…</b> above, or type its folder in <b>Settings → Archive location</b> below (the folder that holds the .mailarchive-manifest.json file) and click <b>Save settings</b>.{{else}}MailArchive Desktop has no archive yet. To use one you already have, click <b>Open an archive folder…</b> above. To make a new one from Thunderbird, Outlook or other mail files on this computer, use the MailArchive wizard (mailarchive wizard), then open its folder here. To back up a Microsoft 365 mailbox, fill in the <b>Microsoft 365 connection</b> card below, type a new folder in <b>Settings → Archive location</b>, click <b>Save settings</b>, then click <b>Archive now</b>.{{end}}</p>
+      <p class="steps">{{if .Offer}}To pick a different folder, click <b>Open an archive folder…</b> above, or type its folder in <b>Settings → Archive location</b> below (the folder that holds the .mailarchive-manifest.json file) and click <b>Save settings</b>.{{else}}MailArchive Desktop has no archive yet. To use one you already have, click <b>Open an archive folder…</b> above. To make a new one from Thunderbird, Outlook or other mail files on this computer, use the MailArchive wizard, then open its folder here. {{.WizardHow}} To back up a Microsoft 365 mailbox, fill in the <b>Microsoft 365 connection</b> card below, type a new folder in <b>Settings → Archive location</b>, click <b>Save settings</b>, then click <b>Archive now</b>.{{end}}</p>
     </div>
     {{.Help}}{{end}}
 
@@ -1546,7 +1550,7 @@ pre{white-space:pre-wrap;overflow-wrap:anywhere;background:var(--bg);border:1px 
       {{if not .LocalOnly}}<div style="margin-top:14px"><button class="btn secondary" id="editM365" type="button">Edit configuration</button></div>{{end}}
       {{else}}
       {{if .LocalOnly}}
-      <div class="row"><div class="k">Status</div><div class="v">Not used by this archive: it was made from mail files on this computer. You only need Microsoft 365 to back up a Microsoft 365 mailbox. To set it up, run <span class="mono">mailarchive setup</span> in a terminal.</div></div>
+      <div class="row"><div class="k">Status</div><div class="v">Not used by this archive: it was made from mail files on this computer. To back up a Microsoft 365 mailbox, keep it in an archive of its own: in <b>Settings → Archive location</b>, type a new folder and click <b>Save settings</b>; this card then asks for the Microsoft 365 details.</div></div>
       {{else}}
       <p class="card-sub">Connect your Microsoft 365 account — enter the values from your Entra app registration below, then <b>Save configuration</b>. Your data stays on this computer; any secret is kept in {{.Vault}} and never uploaded, and you never need the command line.</p>
       {{end}}

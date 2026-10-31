@@ -1792,12 +1792,34 @@ func presyncQuestionText() string {
 	return q
 }
 
+// scheduleQuestionFor is the schedule step's question on goos (MA-946). A Mac's LaunchAgent
+// (StartCalendarInterval) and a Windows task (StartWhenAvailable) run a time the computer
+// slept through when it wakes; Linux's cron skips it.
+func scheduleQuestionFor(goos string) string {
+	missed := "A time when the computer is switched off is skipped. If it was asleep, the backup runs when it wakes up."
+	if goos != "darwin" && goos != "windows" {
+		missed = "A time when the computer is off or asleep is skipped."
+	}
+	return "Keep this archive current automatically?\n\nA scheduled run repeats exactly this export (incremental: only new mail and any content that was still missing). It runs only while you are signed in. " + missed
+}
+
+// scheduleRunsNoteFor is the end note's line on when the schedule runs, on goos (MA-946);
+// "" where there is none. Windows's console-window line is added by the caller.
+func scheduleRunsNoteFor(goos string) string {
+	switch goos {
+	case "windows":
+		return "\n\nThe job runs only while you are logged in; a night the PC is off is skipped and shown as such."
+	case "darwin":
+		return "\n\nThe backup runs only while you are signed in to this Mac. A night it is switched off is skipped; if it was asleep, the backup runs when it wakes up."
+	}
+	return ""
+}
+
 func offerSchedule(c wizardChoice) error {
 	const no = "No — just this once"
 	const daily = "Yes — every day at 2:00 AM"
 	const weekly = "Yes — every week, Sunday at 3:00 AM"
-	pick, err := zenity.List(
-		"Keep this archive current automatically?\n\nA scheduled run repeats exactly this export (incremental: only new mail and any content that was still missing). It runs only while you are signed in; a time the computer is off or asleep is skipped.",
+	pick, err := zenity.List(scheduleQuestionFor(runtime.GOOS),
 		[]string{no, daily, weekly}, zenity.Title(appTitle), zenity.DefaultItems(no))
 	if err != nil {
 		if errors.Is(err, zenity.ErrCanceled) {
@@ -1856,14 +1878,9 @@ func offerSchedule(c wizardChoice) error {
 	// A new schedule starts with no failing streak: its first failure sends (R3C-10).
 	_ = backupalert.ClearStreakDefault(backupalert.KeyFor(c.out))
 	rememberArchive(c.out)
-	note := ""
-	if runtime.GOOS == "windows" {
-		note = "\n\nThe job runs only while you are logged in; a night the PC is off is skipped and shown as such."
-		if spec.Wrapper {
-			note += " A console window will appear briefly while it runs."
-		}
-	} else if runtime.GOOS == "darwin" {
-		note = "\n\nThe backup runs only while you are signed in to this Mac; a night it is off or asleep is skipped."
+	note := scheduleRunsNoteFor(runtime.GOOS)
+	if runtime.GOOS == "windows" && spec.Wrapper {
+		note += " A console window will appear briefly while it runs."
 	}
 	if pn := schedule.ProgramNote(exe, progReason); pn != "" {
 		note += "\n\n" + pn
