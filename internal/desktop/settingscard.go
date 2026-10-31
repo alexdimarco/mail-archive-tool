@@ -73,11 +73,18 @@ const (
 	autoPausedSaveLine = "Saving starts the scheduled backup again. If the source is still unreachable at the next backup, it stops again."
 	// wizardRemedy is the remedy for a schedule Settings shows read-only, naming what the wizard
 	// really offers (R3C-16, wizard.go offerSchedule).
-	wizardRemedy       = "To change it, run the MailArchive wizard (mailarchive wizard), which offers daily at 2:00 AM or weekly on Sunday at 3:00 AM, or use the command line's mailarchive schedule with -at."
-	commandLineSetUp   = "This schedule was set up at the command line; change it there."
-	brokenMissingFix   = "Click Repair on the Scheduled backup card to make its settings file again; its options then show here."
-	brokenUnreadableAt = "See the Scheduled backup card for what to do."
-	archiveNowConfirm  = "Archive now adds Microsoft 365 mail to this archive. It then counts as mixed and shows the Microsoft 365 options; a scheduled backup of its mail files keeps running."
+	wizardRemedy     = "To change it, run the MailArchive wizard (mailarchive wizard), which offers daily at 2:00 AM or weekly on Sunday at 3:00 AM, or use the command line's mailarchive schedule with -at."
+	commandLineSetUp = "This schedule was set up at the command line; change it there."
+	// commandLineToRunJob follows commandLineSetUp where removing the schedule lets this
+	// card make one the Desktop can run (MA-942): Save settings alone is refused (C-7).
+	commandLineToRunJob = " To get one MailArchive Desktop can run, with Run now, click Remove on the Scheduled backup card, then choose How often here and click Save settings."
+	// The Scheduled backup card's line for a schedule set up at the command line (MA-942):
+	// why Run now isn't shown, and how to get it where this page can.
+	exportGetRunNowLine = "Run now isn't shown for it: MailArchive Desktop can't run or change a backup set up at the command line. To get Run now, click Remove below (your archive and its mail are kept), then in Settings choose How often and click Save settings. That sets up a backup MailArchive Desktop can run, and Run now then appears here."
+	exportNoRunNowLine  = "It was set up at the command line, so change or repair it there; MailArchive Desktop can only remove it (Remove below)."
+	brokenMissingFix    = "Click Repair on the Scheduled backup card to make its settings file again; its options then show here."
+	brokenUnreadableAt  = "See the Scheduled backup card for what to do."
+	archiveNowConfirm   = "Archive now adds Microsoft 365 mail to this archive. It then counts as mixed and shows the Microsoft 365 options; a scheduled backup of its mail files keeps running."
 )
 
 // settingsInputs is what the page already worked out for the Scheduled backup card, which the
@@ -96,6 +103,9 @@ type settingsInputs struct {
 	thunderbird       bool
 	goos              string
 	archiveNowOffered bool
+	// exportToRunJob: a command-line schedule of a local archive that, once removed, this
+	// card can replace with one the Desktop runs (MA-942).
+	exportToRunJob bool
 }
 
 // settingsCardFor works out the Settings card for one archive (3.2, 3.3).
@@ -141,6 +151,9 @@ func settingsCardFor(in settingsInputs) settingsCard {
 		s.SchedNone = !rt.hasDesc && in.entry == ""
 	case rt.hasDesc && rt.export:
 		s.ReadOnly, s.Remedy = howOften, commandLineSetUp // C-7
+		if in.exportToRunJob {
+			s.Remedy += commandLineToRunJob
+		}
 	case rt.hasDesc && rt.broken == brokenMissing:
 		s.ReadOnly, s.Remedy = howOften+" Sync Thunderbird first: "+installedSyncWords(rt.brokenPath, out)+".", brokenMissingFix
 	case rt.hasDesc && rt.broken == brokenUnreadable:

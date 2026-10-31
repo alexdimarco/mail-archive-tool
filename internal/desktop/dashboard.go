@@ -989,8 +989,11 @@ func (cfg Config) overviewFor(csrf, epoch string) string {
 		// capture's "nothing set up yet" line; ShowBackupOff is the local, can't-set-up-
 		// here message. How often, the time and the sync are changed in Settings
 		// (design-desktop-settings-card ruling 1, slice A5).
-		HasSchedule       bool
-		ScheduleKind      string
+		HasSchedule  bool
+		ScheduleKind string
+		// ExportLine: a schedule set up at the command line — why Run now isn't shown, and
+		// how to get it where this page can (MA-942).
+		ExportLine        string
 		ShowInstall       bool
 		ShowRepair        bool
 		ShowCaptureRepair bool
@@ -1164,7 +1167,9 @@ func (cfg Config) overviewFor(csrf, epoch string) string {
 			// export (MA-878).
 			data.ScheduleKind = "a scheduled Microsoft 365 capture"
 		default:
-			data.ScheduleKind = "an export backup — repair it from the command line (see Status & health)"
+			// A schedule made with `mailarchive schedule` at a terminal: the Desktop can't run
+			// or change it (C-7), so ExportLine says why there is no Run now (MA-942).
+			data.ScheduleKind = "a backup set up at the command line"
 		}
 	}
 	localCard := rt.kind == backupLocal && !rt.captureCounted
@@ -1189,7 +1194,10 @@ func (cfg Config) overviewFor(csrf, epoch string) string {
 	adapter := cfg.goos() == "darwin" || cfg.goos() == "windows"
 	type rebuildCheck struct{ ok, thunderbird bool }
 	var rebuild rebuildCheck
-	if adapter && runJobForm {
+	// A command-line schedule of a local archive is checked the same way: where the create
+	// form would be drawn once it is removed, the card says so (MA-942).
+	exportLocal := rt.export && rt.hasDesc && !rt.notice && localCard
+	if adapter && (runJobForm || exportLocal) {
 		out := data.OutDir
 		rebuild, _ = withinSourceWait(func() rebuildCheck {
 			_, ok := reconstructLocalJob(out)
@@ -1203,6 +1211,13 @@ func (cfg Config) overviewFor(csrf, epoch string) string {
 	// (design 3.3, R3C-16; rt.runJob is that file read securely), never the archive's record.
 	data.ShowLocalCreate = runJobForm && !rt.hasDesc && adapter && rebuild.ok
 	data.ShowLocalEdit = runJobForm && rt.runJob && adapter
+	exportToRunJob := exportLocal && adapter && rebuild.ok
+	if rt.export && rt.hasDesc && !rt.notice {
+		data.ExportLine = exportNoRunNowLine
+		if exportToRunJob {
+			data.ExportLine = exportGetRunNowLine
+		}
+	}
 	// LocalPresyncOn drives Run now's warning for any installed local archive: whether
 	// the job Run now would run, whatever its name, asks for the sync (C-18/M2).
 	if data.HasSchedule && (localCard || data.ShowRepair) && adapter {
@@ -1216,7 +1231,7 @@ func (cfg Config) overviewFor(csrf, epoch string) string {
 	data.ShowBackupOff = localCard && !data.HasSchedule && !data.ShowLocalCreate
 	data.Set = settingsCardFor(settingsInputs{out: data.OutDir, rt: rt, entry: entry, entrySt: entrySt,
 		runJobForm: runJobForm, captureForm: captureForm, canEdit: adapter && (rt.runJob || rebuild.ok), thunderbird: rebuild.thunderbird,
-		goos: cfg.goos(), archiveNowOffered: data.ArchiveNowOff == ""})
+		goos: cfg.goos(), archiveNowOffered: data.ArchiveNowOff == "", exportToRunJob: exportToRunJob})
 	if rt.kind == backupLocal && data.ArchiveNowOff == "" {
 		data.ArchiveNowConfirm = archiveNowConfirm // Archive now turns it mixed (C-7)
 	}
@@ -1701,6 +1716,7 @@ pre{white-space:pre-wrap;overflow-wrap:anywhere;background:var(--bg);border:1px 
       {{if .NoticeRunJob}}<p class="card-sub" id="backupReadOnly">How often: {{.ReadOnlyCadence}}. Sync Thunderbird first: {{.ReadOnlySync}}.</p>{{end}}
       {{if .BrokenLine}}<p class="card-sub" id="backupBroken">{{.BrokenLine}}</p>{{end}}
       {{if .HasSchedule}}<p class="card-sub" id="schedKind">This archive's scheduled backup: {{.ScheduleKind}}.</p>{{end}}
+      {{if .ExportLine}}<p class="card-sub" id="schedExport">{{.ExportLine}}</p>{{end}}
       {{if .ShowInstall}}<p class="card-sub" id="schedNone">{{if .OutDir}}No scheduled backup is set up for this archive yet. A scheduled backup runs a capture automatically, even when this app is closed (as long as you stay signed in to your computer), using your saved Microsoft sign-in.{{else}}Choose an archive location in Settings first; its backup options then show there.{{end}}</p>{{end}}
       {{if .ShowLocalCreate}}<p class="card-sub" id="schedNone">No scheduled backup is set up for this archive yet. A scheduled backup keeps it up to date automatically: it re-reads the mail files this archive was made from and adds anything new. It runs while you are logged in.</p>{{end}}
       {{if and .Set.Sched .OutDir}}<p class="card-sub" id="changeInSettings">{{if .Set.SchedCapture}}How often and time{{else}}How often, time and Thunderbird sync{{end}}: <a href="#sec-settings">Change in Settings</a></p>{{end}}
