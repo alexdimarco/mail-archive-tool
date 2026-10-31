@@ -527,7 +527,11 @@ func TestRemovesBusyWordsNameNoScheduleForRunNowOnly(t *testing.T) {
 // Run now is clicked: nothing resumes by itself, so it says to click Run now once the source is
 // back (the manual-only review's leftover, applied by the lead 2026-10-31). Positive twin first:
 // a scheduled archive's banner keeps "to resume backups". The record is read with the bounded,
-// link-refusing read the source streak uses.
+// link-refusing read the source streak uses. The Scheduled backup card shows only the current
+// archive ("The one marked current is the one this page shows and changes"), so a lost archive
+// that is not the current one is told to click Switch to this archive first: a Run now on the
+// card it can see would back up the current archive instead (review finding, 2026-10-31).
+// Each case is drawn as the current archive and as another one beside it.
 func TestSourceLostBannerSaysRunNowForRunNowOnly(t *testing.T) {
 	lost := func(interval string) string {
 		dir := t.TempDir()
@@ -546,23 +550,49 @@ func TestSourceLostBannerSaysRunNowForRunNowOnly(t *testing.T) {
 	}
 	const scheduledWords = "— reconnect the source (its mailbox or mail folder) to resume backups."
 	const runNowWords = "— reconnect the source (its mailbox or mail folder), then click Run now on its Scheduled backup card: its backup runs only when you click Run now."
+	const switchWords = "— reconnect the source (its mailbox or mail folder), then click Switch to this archive and click Run now on its Scheduled backup card: its backup runs only when you click Run now."
 	for _, c := range []struct {
-		interval, want, not string
+		interval string
+		current  bool
+		want     string
+		not      []string
 	}{
-		{"daily", scheduledWords, runNowWords}, // the positive twin
-		{"manual", runNowWords, scheduledWords},
+		{"daily", true, scheduledWords, []string{runNowWords, switchWords}}, // the positive twins
+		{"daily", false, scheduledWords, []string{runNowWords, switchWords}},
+		{"manual", true, runNowWords, []string{scheduledWords, switchWords}},
+		{"manual", false, switchWords, []string{scheduledWords, runNowWords}},
 	} {
 		dir := lost(c.interval)
+		other := t.TempDir() // a second archive, so Your archives is drawn either way
+		writeManifest(t, other)
 		idxPath := filepath.Join(t.TempDir(), archindex.Name)
-		if err := archindex.WriteFile(idxPath, archindex.Index{Version: archindex.Version, Entries: []archindex.Entry{{Path: dir}}}); err != nil {
+		if err := archindex.WriteFile(idxPath, archindex.Index{Version: archindex.Version, Entries: []archindex.Entry{{Path: dir}, {Path: other}}}); err != nil {
 			t.Fatal(err)
 		}
-		page, _ := getPage(t, DashboardHandler(Config{SettingsPath: filepath.Join(t.TempDir(), "s.json"), IndexPath: idxPath, GOOS: "darwin"}))
-		if !strings.Contains(page, "hasn't been reachable since") {
-			t.Fatalf("%s: no source-lost banner", c.interval)
+		settings := filepath.Join(t.TempDir(), "s.json")
+		current := other
+		if c.current {
+			current = dir
 		}
-		if !strings.Contains(page, c.want) || strings.Contains(page, c.not) {
-			t.Errorf("%s: the banner does not say %q", c.interval, c.want)
+		if err := SaveSettings(settings, Settings{Out: current}); err != nil {
+			t.Fatal(err)
+		}
+		cfg := Config{SettingsPath: settings, IndexPath: idxPath, GOOS: "darwin"}
+		rows := cfg.archiveRows(archindex.Index{Version: archindex.Version, Entries: []archindex.Entry{{Path: dir}}})
+		if len(rows) != 1 || rows[0].Current != c.current || rows[0].SourceLostSince == "" {
+			t.Fatalf("%s, current %v: the lost archive's row %+v", c.interval, c.current, rows)
+		}
+		page, _ := getPage(t, DashboardHandler(cfg))
+		if !strings.Contains(page, "hasn't been reachable since") {
+			t.Fatalf("%s, current %v: no source-lost banner", c.interval, c.current)
+		}
+		if !strings.Contains(page, c.want) {
+			t.Errorf("%s, current %v: the banner does not say %q", c.interval, c.current, c.want)
+		}
+		for _, n := range c.not {
+			if strings.Contains(page, n) {
+				t.Errorf("%s, current %v: the banner says %q", c.interval, c.current, n)
+			}
 		}
 	}
 }
