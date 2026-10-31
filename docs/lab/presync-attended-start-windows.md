@@ -98,3 +98,23 @@ front, no console window in any sample. The observer samples the foreground wind
 100 ms, so a window that flashed without taking the front would not be seen; launched from
 the Start menu and at sign-in, not re-run. Kit: `flash-check.ps1`, `flash-run.ps1`
 (`~/repositories/.winlab/ma918`).
+
+*Added 2026-10-31 (MA-918 add-on, by Claude, a model, for the lead), beside the "Not covered"
+list above, which stays as written: two of its cases run.* Same set-up, the run-3 build
+(release branch at `e9367f8`; the start code unchanged since, pin `10d7ba8f…`).
+
+- **G, Thunderbird not the default mail app** (the owner set Outlook as the default mail app;
+  `prefs.js` holds no `mail.shell.checkDefaultClient`, so Thunderbird's own check is on). Desktop
+  started by `Start-Process`, the typer in Notepad. Thunderbird minimized from the first sample;
+  no other Thunderbird window (no "make Thunderbird the default" question) in about 100 s; the
+  keyboard stayed in Notepad (398 letters) except for the driver's own Run now press; ok, 2
+  exported. (A first try typed nothing: Notepad was closed by the sign-out; re-run.) Whether
+  Thunderbird judged itself not the default was not read; only that no question appeared.
+- **H, the Desktop started by its Startup shortcut at sign-in** (a test shortcut like the
+  installer's, `desktop -no-browser`; the owner signed out and in). The Desktop started at
+  18:11:13 with parent `explorer`; a Start-menu-style start reconnected to it (same process).
+  Run now from that process: Thunderbird minimized from the first sample, never in front (the
+  foreground was Edge, where the driver's press put it, the typer not regaining it); ok, 2
+  exported.
+
+Still not covered: a real (non-emulated) Windows PC.
