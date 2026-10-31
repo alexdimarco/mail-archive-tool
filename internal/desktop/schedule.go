@@ -766,7 +766,11 @@ func runNowResultHere(res string) string {
 func (d *dashboard) scheduleState(w http.ResponseWriter, r *http.Request) {
 	out := d.cfg.effectiveOut()
 	resp := map[string]any{"state": "not installed", "schedulerAvailable": true}
-	if out != "" {
+	if out == "" {
+		// No archive chosen: nothing to schedule yet, so the card says nothing about a schedule
+		// (MA-272, as the tile says "Not set up yet"; the 1.5.2 Windows smoke check).
+		resp["noArchive"] = true
+	} else {
 		path, st := d.cfg.backupTask()
 		resp["state"] = st.String()
 		resp["schedulerAvailable"] = st != schedule.SchedulerUnavailable

@@ -2314,6 +2314,7 @@ async function schedState(lead){
   const n=$('schedState');if(!n)return;
   const pre=lead?lead+' ':'';
   try{const d=await(await fetch('api/schedule-state')).json();
+    if(d.noArchive){n.hidden=true;return;} // no archive chosen: no schedule to name (MA-272)
     n.hidden=false;
     if(!d.schedulerAvailable)n.textContent=pre+'The OS scheduler is unavailable on this machine.';
     else if(d.manual)n.textContent=pre+(lead?'Now: ':'')+d.manualLine; // MA-949: a choice, not "Not installed"
