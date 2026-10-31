@@ -959,6 +959,9 @@ func (cfg Config) overviewFor(csrf, epoch string) string {
 		FormerNotice     string
 		ResidualOS       string // "macOS" or "Linux": where another account can read a just-opened link's argv
 		KindLine         string // what the archive was made from, in plain words ("" when unknown)
+		// IsM365: the current archive was made from a Microsoft 365 mailbox only, so the
+		// top line may call it one (MA-937); no archive, a local or mixed one is not.
+		IsM365 bool
 		LocalOnly        bool   // local mail files only and no Microsoft 365 setup: Archive now and the weekly backup are off
 		ArchiveNowOff    string // why Archive now is off, and the steps that add new mail instead ("" when it applies)
 		Offer            string // the archive the GUI used last, offered when none is set
@@ -1083,6 +1086,7 @@ func (cfg Config) overviewFor(csrf, epoch string) string {
 		AlertProvider: orElse(s.AlertProvider, "office365"), AlertHost: s.AlertHost, AlertPort: s.AlertPort,
 		AlertSecurity: orElse(s.AlertSecurity, "starttls"), AlertFrom: s.AlertFrom, AlertTo: s.AlertTo, AlertUsername: s.AlertUsername}
 	data.KindLine = kindLine(archiveKind(data.OutDir))
+	data.IsM365 = archiveKind(data.OutDir) == kindM365
 	data.CancelTitle, data.StopWaitTitle = jobCancelTitle, stopWaitTitle
 	data.RunNowTitle = runNowPlainTitle
 	data.LocalOnly = cfg.localOnly()
@@ -1424,7 +1428,7 @@ pre{white-space:pre-wrap;overflow-wrap:anywhere;background:var(--bg);border:1px 
     <div class="note" id="shutdownNote" hidden></div>
     {{if .FormerNotice}}<div class="note warnbox" id="formerNotice" role="alert">{{.FormerNotice}}</div>{{end}}
     <h1>Overview</h1>
-    <p class="lede">{{if .Encrypted}}Your encrypted mail archive, running locally on this PC.{{else if .LocalOnly}}Your mail archive, running locally on this PC.{{else}}Your personal Microsoft 365 archive, running locally on this PC.{{end}}</p>
+    <p class="lede">{{if not .OutDir}}MailArchive keeps a copy of your mail on this computer. Open or make an archive below to begin.{{else if .Encrypted}}Your encrypted mail archive, kept on this computer.{{else if .IsM365}}Your Microsoft 365 mail archive, kept on this computer.{{else}}Your mail archive, kept on this computer.{{end}}</p>
     {{if .KindLine}}<p class="lede" id="archiveKind" style="margin-top:-14px">{{.KindLine}}</p>{{end}}
     {{if not .OutDir}}<div class="card" id="noArchive">
       <h2>No archive chosen yet</h2>

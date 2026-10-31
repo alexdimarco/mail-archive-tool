@@ -109,7 +109,7 @@ func TestLocalOriginArchiveInDesktop(t *testing.T) {
 	// the backupOff note — the Desktop can schedule a local archive (TP-D). That card shape is
 	// pinned by TestLocalScheduleCardUI (create form) and TestMA691... (a SCHEDULED local card
 	// has no interval inputs); here we only pin the local-origin read-only messaging below.
-	for _, bad := range []string{`id="archiveBtn"`, "Your personal Microsoft 365 archive", "Not configured</div>"} {
+	for _, bad := range []string{`id="archiveBtn"`, "Your Microsoft 365 mail archive", "Not configured</div>"} {
 		if strings.Contains(page, bad) {
 			t.Errorf("the page for a local-origin archive still shows %q", bad)
 		}

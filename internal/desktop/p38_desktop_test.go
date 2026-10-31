@@ -89,7 +89,7 @@ func TestAnEncryptedLocalArchiveIsNotShownAsMicrosoft365(t *testing.T) {
 	h, _, settings := dashboardFixture(t)
 	m365 := archiveAt(t, t.TempDir(), "M365", map[string]string{"mailbox:u@contoso.com": "b"})
 	SaveSettings(settings, Settings{Out: m365})
-	if page := sessionPage(t, h); !strings.Contains(page, "Your personal Microsoft 365 archive") || !strings.Contains(page, `id="archiveBtn"`) {
+	if page := sessionPage(t, h); !strings.Contains(page, "Your Microsoft 365 mail archive") || !strings.Contains(page, `id="archiveBtn"`) {
 		t.Fatal("positive twin: a Microsoft 365 archive keeps its heading and Archive now")
 	}
 
@@ -99,7 +99,7 @@ func TestAnEncryptedLocalArchiveIsNotShownAsMicrosoft365(t *testing.T) {
 		t.Fatal("an encrypted archive with no Microsoft 365 set up here is local-only")
 	}
 	page := sessionPage(t, e.h)
-	for _, bad := range []string{"Your personal Microsoft 365 archive", `id="archiveBtn"`, `id="m365Form"`} {
+	for _, bad := range []string{"Your Microsoft 365 mail archive", `id="archiveBtn"`, `id="m365Form"`} {
 		if strings.Contains(page, bad) {
 			t.Fatalf("an encrypted local archive's page shows %s", bad)
 		}
