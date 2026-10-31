@@ -36,7 +36,7 @@ I security-inherent, II design choice, III buildable away (wording, a missing hi
 | 11 | Owner reads the Status WARN for 3 days of missed syncs | yes | Same "the last time" reading as cell 10. Remedies are per reason and name the right button. | III | F10 |
 | 12 | Owner reads the softer "nothing arrived" warning | yes | Word order ("Before this archive's scheduled backups since DATE, Thunderbird was started…") is hard to parse. "a window nobody can see" overclaims on Windows, where a minimized window shows in the taskbar. | III | F11 |
 | 13 | Owner, Mac, reads the Settings card's sync notice | **partly** | The notice says that when the sync "asks Thunderbird to quit" on-exit actions run. Read on a Mac, where Run now never closes Thunderbird, it can be taken to mean Run now closes it. | III | F4 |
-| 14 | Owner, Windows PC, Run now with the sync on (start not allowed yet) | yes | Tooltip, note and encrypted reason all say Run now does not start Thunderbird yet, and scheduled backups still do. No promise is made. | — | none |
+| 14 | Owner, Windows PC, Run now with the sync on (start not allowed yet) | yes | Tooltip, note and encrypted reason all say Run now does not start Thunderbird yet, and scheduled backups still do. No promise is made. | — | none. *Note 2026-10-31: Windows' start is now on (its `AttendedStartAllowed` entry was set true after lab MA-918 run 2), so this cell describes the build before that flip; the Windows texts with the start on were walked in "Windows texts pass (§14 gate 3), 2026-10-31" below.* |
 | 15 | New person reads the release notes before upgrading | **partly** | "Run now now syncs" reads as a typo. The notes said nothing about the 3-day warning, its email, the softer warning or encrypted archives syncing. | III | F13 |
 | 16 | Operator reads `mailarchive status` WARN at a terminal | yes | Remedies name `mailarchive -thunderbird-sync` without the archive folder, which is not a complete command on its own. | III | for the owner (O2); applied by the lead 2026-10-31, owner may revert |
 
@@ -170,3 +170,38 @@ The design keeps its draft words; §14 gate 3 points here for the words of recor
   with no Thunderbird installed there.
 - Slices AS9 (the Mac note's Run-now wording) and AS-Q (closing Thunderbird) are not built; their
   texts were not reviewed.
+
+## Windows texts pass (§14 gate 3), 2026-10-31
+
+A friction pass over the Windows Run now texts, with Windows' start on (its `AttendedStartAllowed`
+entry set true after lab MA-918 run 2), on branch `presync-attended` at `8aff705`. The lead ruled
+to apply every finding except the wait figure (finding 6). Each fix changes words only, except
+finding 3, which also switches which notice the Settings card shows. Each was test-first: the pins
+were updated to the new words (whole-string where they were partial, never looser), run red against
+the old words, then green; the mutations are listed in each commit. The pinned Windows start code
+(`TestWindowsCodePin`) was not touched.
+
+| # | Finding | Severity | What was done | Commit |
+|---|---|---|---|---|
+| 1 | Run now's tooltip too long | medium | Applied. One short shape on both platforms. Windows: "Run this archive's backup now. With Thunderbird sync on, it first starts Thunderbird minimized (it won't take your typing), waits up to 20 minutes for its mail, then backs up and leaves Thunderbird open. A Thunderbird window that asks you something, such as for its Primary Password, can still appear and take the keyboard. Cancel skips the backup." macOS the same with "out of sight" and no window sentence. The encrypted tooltip keeps "The archive stays unlocked for this backup while it waits." and the Lock sentence in place of "Cancel skips the backup." The details stay in the "New:" line, the notes, the Settings notice and the guide. | `04fd73b` |
+| 2 | "notification area" jargon; "minimized to the taskbar" wrong when Thunderbird hides to the tray (lab case E) | medium | Applied everywhere a person reads it: "minimized"; where to quit it, "its icon on the taskbar, or among the small icons by the clock" (one constant, `presync.WinQuitPlace`, with a comma after it before a following clause); the leftover line "still open, minimized (on the taskbar, or among the small icons by the clock)". The end lines, the quit-no-window warning, the Status remedies, the notes, the "New:" line, the cancel words, the Lock replies, the encrypted notice, the guide, the release line, the README, the `-thunderbird-sync` help and the Windows install note (its sentence moved to an untagged constant so the Linux gate pins it). | `53243e9` |
+| 3 | Settings notice wrong for "Only when I click Run now" | medium | Applied. That choice shows the encrypted card's Run now notice in place of `SyncNoticeFor` (which speaks of asking Thunderbird to quit and of a scheduled backup's 2-minute idle rule), on a Mac and on Windows, and hides the Mac Automation note, which is about a scheduled backup closing Thunderbird. Where Run now does not start Thunderbird it says so instead. Both notices are drawn; the page switches them as How often changes. | `6431a52` |
+| 4 | Start-blocked advice a dead end for unzipped installs, contradicted by the lab | low-medium | Applied on Windows: the guide's words, "start MailArchive Desktop from the Start menu, or, if MailArchive was unzipped, double-click mailarchivew.exe in its folder", and "(not from a terminal)" dropped. The Mac text was checked first: start-blocked comes only from Windows' launch, so a Mac never shows it, and its words are left as they were. The Status remedy, as before, adds no "then click Run now", so it holds where Windows' Run now does not sync (C-20). | `29506b3` |
+| 5 | Settings notice silent on the Primary Password | low | Applied: Windows' notices (`SyncNoticeFor`, the encrypted notice, the Run-now-only notice) say "If Thunderbird has a Primary Password, its password window appears and takes the keyboard each time the sync starts Thunderbird." | `6431a52` |
+| 6 | "often about 13" not measured on Windows | low | **Kept, not measured on Windows.** The figure rests on Thunderbird's own 10-minute check, which runs on every platform; the Mac lab measured it. | none |
+| 7 | "sync while you watch" | low | Applied: "Click Run now on the Scheduled backup card to sync Thunderbird now."; the wizard's health view "To sync Thunderbird now and back up its mail, open MailArchive Desktop and click Run now on this archive's Scheduled backup card." | `29506b3` |
+| 8 | Release notes bury the headline | low | Applied: the two Run now lines lead "New in 1.5.2", Mac then Windows, under "**Run now syncs Thunderbird first, on a Mac and on Windows.**"; MA-915's pins now hold each as a whole nested line and the block in order. | `cdcb89d` |
+
+One test check was narrowed, by exactly one phrase, and is recorded here: the checks that a Desktop
+text names no command fail any "mailarchive"; the guide's phrase names the file mailarchivew.exe to
+double-click, so that exact phrase (`presync.WinStartDesktop`) is taken out before those checks, and
+any other mention still fails them (shown by a mutation in `29506b3`).
+
+Stale records from before the Windows flip got dated notes beside them: cell 14 above, and catalog
+row MA-906's "may appear for a moment". Catalog rows amended with the new words: MA-861, MA-897,
+MA-900, MA-906, MA-909, MA-911, MA-913, MA-914, MA-915, MA-922, MA-923, MA-928, MA-939, MA-945,
+MA-949.
+
+Not checked in this pass: no live Windows drill (the words were read from the code and the tests);
+the Windows-only `TestPresyncInstallNoteWindows` was compiled (`GOOS=windows go vet`) but not run
+here; its sentence is pinned on every platform by `TestTheWindowsScheduledStartNote`.
