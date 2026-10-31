@@ -172,8 +172,11 @@ const SyncNotice = syncNoticeHead + syncNoticeTail
 // sync on — the Desktop's Settings reply and `mailarchive schedule` (owner ruling 5 of
 // 2026-10-31: hourly with the sync stays, with a note; held finding effects-6, MA-936).
 // The wait for mail ends after 20 minutes with nothing new (defMaxWait), so on a quiet
-// hour Thunderbird is open for that long. The wizard offers no Hourly, so it has none.
-const HourlySyncNote = "With Hourly and the Thunderbird sync, Thunderbird stays open for up to 20 minutes in an hour with no new mail, while the backup waits for mail."
+// hour Thunderbird is open for about that long: "about", not "up to" (review finding
+// behaviour-3), since the 20 minutes count only the wait while the computer is awake,
+// and Thunderbird is also open for its start (up to defAwaitUp) and its quit (up to
+// defQuitGrace). The wizard offers no Hourly, so it has none.
+const HourlySyncNote = "With Hourly and the Thunderbird sync, Thunderbird stays open for about 20 minutes in an hour with no new mail, while the backup waits for mail."
 
 const (
 	syncNoticeHead   = "The Thunderbird sync starts Thunderbird in the background before the backup and waits for its mail to stop arriving, so the archive includes mail that had only reached the server. Because it drives your real Thunderbird, starting it does what opening Thunderbird always does: it checks all your accounts, sends anything waiting in your Outbox, runs your message filters, and may show notifications. When it then asks Thunderbird to quit, your accounts' on-exit actions run too (for example emptying Trash), so mail you deleted since the last backup may be removed before it is archived. A Thunderbird you already have open is left alone — never started or closed. A scheduled backup also waits until you have been away from the computer"

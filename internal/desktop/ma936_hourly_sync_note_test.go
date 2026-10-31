@@ -9,9 +9,10 @@ import (
 // Hourly with the Thunderbird sync stays, with a note (owner ruling 5 of 2026-10-31, held
 // finding effects-6): where a person picks Hourly with the sync on — a create, a cadence
 // edit, or the sync switched on for a schedule already hourly — the Settings reply's note
-// says that on an hour with no new mail Thunderbird stays open up to 20 minutes while the
-// backup waits for mail. Positive twin first: Hourly without the sync carries no note.
-// Daily or weekly with the sync carries none.
+// says that on an hour with no new mail Thunderbird stays open about 20 minutes while the
+// backup waits for mail ("about", not "up to": review finding behaviour-3). Positive twin
+// first: Hourly without the sync carries no note. Daily or weekly with the sync carries
+// none.
 func TestAnHourlyScheduleWithTheSyncSaysThunderbirdMayStayOpen(t *testing.T) {
 	isolateHome(t)
 	out := tbProfileArchive(t)
@@ -26,7 +27,7 @@ func TestAnHourlyScheduleWithTheSyncSaysThunderbirdMayStayOpen(t *testing.T) {
 		note, _ := reply["note"].(string)
 		return note
 	}
-	const want = "With Hourly and the Thunderbird sync, Thunderbird stays open for up to 20 minutes in an hour with no new mail, while the backup waits for mail."
+	const want = "With Hourly and the Thunderbird sync, Thunderbird stays open for about 20 minutes in an hour with no new mail, while the backup waits for mail."
 
 	if note := save("hourly, no sync", `{"interval":"hourly","time":"00:15","presync":false}`); note != "" {
 		t.Fatalf("positive twin: hourly without the sync carries the note %q", note)

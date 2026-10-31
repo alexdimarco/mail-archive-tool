@@ -11,13 +11,14 @@ import (
 // covers: MA-936
 // Hourly with the Thunderbird sync stays, with a note (owner ruling 5 of 2026-10-31, held
 // finding effects-6): `mailarchive schedule -interval hourly` of a job with
-// -thunderbird-sync prints that on an hour with no new mail Thunderbird stays open up to 20
-// minutes while the backup waits for mail. Positive twin first: the same job daily prints no
+// -thunderbird-sync prints that on an hour with no new mail Thunderbird stays open about 20
+// minutes while the backup waits for mail ("about", not "up to": review finding
+// behaviour-3). Positive twin first: the same job daily prints no
 // such note; hourly without the sync prints none. Run through the real built program, on
 // the preview path (nothing is installed). Build-tagged to the platforms where
 // -thunderbird-sync is accepted (macOS, Windows). The -h text says it too.
 func TestAnHourlyScheduleWithTheSyncPrintsTheNote(t *testing.T) {
-	const note = "With Hourly and the Thunderbird sync, Thunderbird stays open for up to 20 minutes in an hour with no new mail, while the backup waits for mail."
+	const note = "With Hourly and the Thunderbird sync, Thunderbird stays open for about 20 minutes in an hour with no new mail, while the backup waits for mail."
 	out, store := t.TempDir(), t.TempDir()
 	preview := func(label string, args ...string) string {
 		t.Helper()
