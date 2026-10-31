@@ -37,16 +37,33 @@ type syncWindow struct {
 
 // openWindow opens the Lock window of an encrypted Run now on out as its lease is
 // taken (§3.2, OQ-8): before any job file is read, so it never depends on the sync
-// flag (C-75 as superseded). A job already in the slot keeps its own window; this one
-// is then not registered, and the Run now is refused by the slot anyway.
+// flag (C-75 as superseded). It is pending until the Run now takes the job slot
+// (claimWindow); a Lock meanwhile stops it, so a run that then takes the slot is
+// cancelled at once. Every pending window is kept, so two clicks at once never leave
+// the one that takes the slot without a window (gate-2 pass, AS8).
 func (c *captureState) openWindow(out string, lease *keyring.Unlocked) *syncWindow {
 	w := &syncWindow{out: out, lease: lease}
 	c.mu.Lock()
-	if c.lockWin == nil && !c.running {
-		c.lockWin = w
-	}
+	c.pendingWins = append(c.pendingWins, w)
 	c.mu.Unlock()
 	return w
+}
+
+// claimWindow makes w the window of the run in the job slot, as that run takes the
+// slot; c.mu is held (runJobOnClaiming), so no Lock falls between the two.
+func (c *captureState) claimWindow(w *syncWindow) {
+	c.dropPendingLocked(w)
+	c.lockWin = w
+}
+
+// dropPendingLocked removes w from the pending windows; c.mu is held.
+func (c *captureState) dropPendingLocked(w *syncWindow) {
+	for i, p := range c.pendingWins {
+		if p == w {
+			c.pendingWins = append(c.pendingWins[:i], c.pendingWins[i+1:]...)
+			return
+		}
+	}
 }
 
 // bindWindow hands the window the run's cancel and Stop once its job function has
@@ -67,6 +84,7 @@ func (c *captureState) bindWindow(w *syncWindow, cancel context.CancelCauseFunc,
 // Run now job function's defer, which covers every return that never reaches it.
 func (c *captureState) closeWindow(w *syncWindow) {
 	c.mu.Lock()
+	c.dropPendingLocked(w)
 	if c.lockWin == w {
 		c.lockWin = nil
 	}
@@ -78,10 +96,20 @@ func (c *captureState) closeWindow(w *syncWindow) {
 // errLockedDuringSync — nothing is asked to quit — locks its lease, so no new use of
 // the key starts and the key goes when the run lets go of it, and returns the reply's
 // note; with the window closed and an encrypted Run now of out reading, the note says
-// it finishes with its own key. "" when no Run now of out runs.
+// it finishes with its own key. "" when no Run now of out runs. A click on out that
+// has its lease but not the slot yet is stopped too: its lease is locked, so if it
+// takes the slot it is cancelled before it uses the key, and if it does not it is
+// refused anyway (gate-2 pass, AS8).
 func (c *captureState) stopSyncWait(out, goos string) string {
 	c.mu.Lock()
 	defer c.mu.Unlock()
+	pending := false
+	for _, w := range c.pendingWins {
+		if samePath(w.out, out) {
+			w.stopped, pending = true, true
+			w.lease.Lock()
+		}
+	}
 	if w := c.lockWin; w != nil && samePath(w.out, out) {
 		w.stopped = true
 		if w.stopRun != nil {
@@ -99,6 +127,9 @@ func (c *captureState) stopSyncWait(out, goos string) string {
 	}
 	if c.running && c.runNow && c.encrypted && samePath(c.jobOut, out) {
 		return lockReadingText
+	}
+	if pending {
+		return lockCancelledText
 	}
 	return ""
 }
@@ -138,10 +169,12 @@ func lockCancelNote(goos, phase string, ended bool, left string, minimized bool)
 	return lockCancelledText
 }
 
-// runNowPause is a test's seam at named steps of an encrypted Run now ("heal", before
-// the heal; "apply", once the key is handed to the run, before its discovery and
-// decrypting open; "read-start", after the window closed and before app.Run's second
-// check), so a test can Lock there (MA-913). A no-op in production.
+// runNowPause is a test's seam at named steps of an encrypted Run now ("window", once
+// its lease is taken and its window opened, before it takes the job slot; "heal",
+// before the heal; "apply", once the key is handed to the run, before its discovery
+// and decrypting open; "read-start", after the window closed and before app.Run's
+// second check), so a test can Lock, or click Run now again, there (MA-913). A no-op
+// in production.
 var runNowPause = func(point string) {}
 
 // runApply hands the lease's key to the run (keyring.Apply); a seam, so a test can see

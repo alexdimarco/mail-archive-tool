@@ -700,7 +700,10 @@ func (d *dashboard) runBackupKeyed(w http.ResponseWriter, out, jobPath string) {
 		return
 	}
 	win := d.cap.openWindow(out, lease)
-	if err := d.runCancellableJobOn(out, func(j keyedJob, logger *log.Logger) (string, error) {
+	runNowPause("window")
+	// The window becomes the slot's as this Run now takes the slot, under the slot's
+	// lock: whichever of two clicks at once takes it, a Lock reaches it (gate-2, AS8).
+	if err := d.runCancellableJobOnClaiming(out, func() { d.cap.claimWindow(win) }, func(j keyedJob, logger *log.Logger) (string, error) {
 		defer lease.Destroy()
 		// Every return that never reaches read start closes the window (C-75), so a later
 		// Lock never claims to cancel a run that has ended.

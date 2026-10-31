@@ -40,10 +40,17 @@ const cancelledText = "The backup was cancelled. The archive is safe; the next b
 // both Run nows, plaintext and encrypted, and an encrypted archive's first backup
 // (design-presync-attended §3.1, generalised from the keyed-only slot).
 func (d *dashboard) runCancellableJobOn(out string, fn func(j keyedJob, logger *log.Logger) (string, error)) error {
+	return d.runCancellableJobOnClaiming(out, nil, fn)
+}
+
+// runCancellableJobOnClaiming is runCancellableJobOn with claimed called under the
+// slot's lock as the job takes the slot (runJobOnClaiming): the encrypted Run now's
+// Lock window.
+func (d *dashboard) runCancellableJobOnClaiming(out string, claimed func(), fn func(j keyedJob, logger *log.Logger) (string, error)) error {
 	ctx, cancel := context.WithCancelCause(d.life.Context())
 	skip := make(chan struct{})
 	c := d.cap
-	err := d.runJobOn(out, func(logger *log.Logger) (string, error) {
+	err := d.runJobOnClaiming(out, claimed, func(logger *log.Logger) (string, error) {
 		defer cancel(nil)
 		c.mu.Lock()
 		c.cancel, c.skip, c.skipped = cancel, skip, false

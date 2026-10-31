@@ -18,6 +18,7 @@ import (
 
 	"mail-archive-tool/internal/app"
 	"mail-archive-tool/internal/assure"
+	"mail-archive-tool/internal/assure/leak"
 	"mail-archive-tool/internal/container"
 	"mail-archive-tool/internal/encrecord"
 	"mail-archive-tool/internal/graphconfig"
@@ -232,11 +233,12 @@ func (g *encRig) status() string {
 	return lr.Status
 }
 
-// windowOpen reports whether a Lock window is open.
+// windowOpen reports whether a Lock window is open: the slot's, or a click's still
+// waiting for the slot.
 func (g *encRig) windowOpen() bool {
 	g.d.cap.mu.Lock()
 	defer g.d.cap.mu.Unlock()
-	return g.d.cap.lockWin != nil
+	return g.d.cap.lockWin != nil || len(g.d.cap.pendingWins) > 0
 }
 
 // lastLease and lastKey are the newest Run now's lease and the key its run was handed.
@@ -557,6 +559,223 @@ func TestNoStaleLockWindow(t *testing.T) {
 	p := newEncRig(t, encRigOpts{goos: "darwin", startAllowed: true, sync: true})
 	p.s.panics = true
 	check("a panicking session", p, false)
+}
+
+// covers: MA-913, R37, S64
+// Two Run now clicks at once (a double click, or two pages) on one encrypted archive
+// (gate-2 adversarial pass after AS8): each takes a lease and opens a window; the one
+// that takes the job slot is the run a Lock must reach, whichever click came first.
+// Here the second click takes the slot while the first sits between its window and
+// the slot; the first is refused, its lease destroyed and its window gone; a Lock
+// while the run that won waits cancels it — its Stop ended with the Lock's cause, the
+// reply says it was cancelled and Thunderbird left open, its key destroyed once it
+// returns, recorded cancelled, nothing read. A Lock between a click's window and the
+// slot (no run has begun) cancels it as well: no session starts and the record is
+// left as it was. Positive twin first: one click's window is open while it waits.
+func TestALockReachesTheRunNowThatTookTheSlot(t *testing.T) {
+	g := newEncRig(t, encRigOpts{goos: "darwin", startAllowed: true, sync: true})
+	g.start()
+	g.at(presync.PhaseWaiting)
+	if !g.windowOpen() {
+		t.Fatal("twin: no Lock window while an encrypted Run now waits")
+	}
+	g.s.release <- struct{}{}
+	g.done()
+
+	g = newEncRig(t, encRigOpts{goos: "darwin", startAllowed: true, sync: true})
+	var second map[string]any
+	clicked := false
+	pauseRunNowAt(t, "window", func() {
+		if !clicked {
+			clicked = true
+			second = callAction(t, g.d, g.d.runBackup, nil) // the other click takes the slot first
+		}
+	})
+	first := callAction(t, g.d, g.d.runBackup, nil)
+	if second["ok"] != true || first["ok"] == true || !strings.Contains(str(first["error"]), "already running") {
+		t.Fatalf("fixture: the second click did not take the slot first: first %v, second %v", first, second)
+	}
+	g.mu.Lock()
+	leases := append([]*keyring.Unlocked(nil), g.leases...)
+	g.mu.Unlock()
+	if len(leases) != 2 {
+		t.Fatalf("fixture: %d leases, want 2", len(leases))
+	}
+	if _, err := leases[0].Lease(); !errors.Is(err, keyring.ErrLocked) {
+		t.Errorf("the refused click's lease outlived it: %v", err)
+	}
+	g.at(presync.PhaseWaiting)
+	if !g.windowOpen() {
+		t.Error("no Lock window for the Run now that took the slot")
+	}
+	reply := g.lock()
+	want := lockCancelledText + " Thunderbird, which it started out of sight, was left open — quit it from the Dock before the next Run now."
+	if str(reply["note"]) != want {
+		t.Errorf("the Lock reply %q, want %q", reply["note"], want)
+	}
+	g.done()
+	_, cause, stopped := g.s.last()
+	if !stopped || !errors.Is(cause, errLockedDuringSync) {
+		t.Errorf("a Lock delivered cause %v, Stop ended %v; want errLockedDuringSync and the Stop ended", cause, stopped)
+	}
+	if k := g.lastKey(); k == nil || keyUsable(k) {
+		t.Error("the run's key outlived the run after a Lock")
+	}
+	if _, err := leases[1].Lease(); !errors.Is(err, keyring.ErrLocked) {
+		t.Errorf("the Lock-cancelled run's lease outlived it: %v", err)
+	}
+	if g.status() != state.RunCancelled || g.windowOpen() {
+		t.Errorf("after a Lock: record %s, window open %v; want cancelled, closed", g.status(), g.windowOpen())
+	}
+	if !g.nothingWasRead() {
+		t.Error("the Lock-cancelled run read mail")
+	}
+
+	// A Lock between a click's window and the job slot.
+	g = newEncRig(t, encRigOpts{goos: "darwin", startAllowed: true, sync: true})
+	before := g.status()
+	var early map[string]any
+	pauseRunNowAt(t, "window", func() { early = g.lock() })
+	g.start()
+	g.done()
+	runNowPause = func(string) {}
+	if str(early["note"]) != lockCancelledText {
+		t.Errorf("a Lock before the slot: the reply %q, want %q", early["note"], lockCancelledText)
+	}
+	if g.s.calls() != 0 || g.status() != before || g.windowOpen() {
+		t.Errorf("a Lock before the slot: %d sessions, record %s (want %s), window open %v", g.s.calls(), g.status(), before, g.windowOpen())
+	}
+	if _, err := g.lastLease().Lease(); !errors.Is(err, keyring.ErrLocked) {
+		t.Errorf("a Lock before the slot: the lease outlived the run: %v", err)
+	}
+	if !g.nothingWasRead() {
+		t.Error("a Lock before the slot: the run read mail")
+	}
+}
+
+// covers: MA-904, R37, S65
+// Nothing about the sync is written beside an encrypted archive, end to end through
+// the Desktop's own encrypted Run now (design-presync-attended §4.4, C-16; the part
+// MA-904's row leaves to slice AS8; gate-2 pass after AS8). Positive twin first: a
+// plaintext Run now that synced writes presync to its record. Then, on an encrypted
+// archive whose Thunderbird profile and mail folder carry markers in their names, a
+// synced Run now and one cancelled by a Lock while it waits: after each, the last-run
+// file's keys and every history entry's keys stay within the A18 allow-list, a scan of
+// the whole archive folder finds no outcome code or long name, no "presync",
+// "Thunderbird", "synced" or "wait_ended" and neither marker, and there is no
+// sync-streak file and no mailarchive.log.
+func TestAnEncryptedRunNowLeavesNothingOfTheSyncBesideIt(t *testing.T) {
+	pg := newRunNowRig(t, "darwin", true)
+	pg.start()
+	pg.at(presync.PhaseWaiting)
+	pg.s.release <- struct{}{}
+	pg.done()
+	if p, ok := rawLastRun(t, pg.out)["presync"].(map[string]any); !ok || p["name"] != "ok" {
+		t.Fatalf("twin: the plaintext Run now's record has no presync named ok: %v", rawLastRun(t, pg.out))
+	}
+
+	g := newEncRig(t, encRigOpts{goos: "darwin", startAllowed: true, sync: true})
+	profMarker, folderMarker := "zqprofmarkerkvx", "zqfoldmarkerkvx"
+	profile := filepath.Join(t.TempDir(), profMarker+".default")
+	store := filepath.Join(profile, "Mail", folderMarker)
+	if err := os.MkdirAll(store, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	os.WriteFile(filepath.Join(profile, "prefs.js"), []byte("// prefs\n"), 0o644)
+	os.WriteFile(filepath.Join(store, "Inbox"), []byte(laterMbox), 0o644)
+	j, err := job.Read(g.jp)
+	if err != nil {
+		t.Fatal(err)
+	}
+	j.Inputs = []string{store}
+	if err := job.Write(g.jp, j); err != nil {
+		t.Fatal(err)
+	}
+
+	needles := []string{"presync", "thunderbird", "Thunderbird", "synced", "wait_ended", profMarker, folderMarker}
+	for _, o := range presync.Outcomes() {
+		if o.Code != "" {
+			needles = append(needles, o.Code)
+		}
+		// Short or status-word names ("ok", "cancelled") are the record's own status
+		// words: the key-set check covers them.
+		if len(o.Name) >= 6 && o.Name != presync.OutcomeCancelled.Name {
+			needles = append(needles, o.Name)
+		}
+	}
+	allowRecord := map[string]bool{"version": true, "status": true, "started": true, "finished": true, "error_kind": true, "program": true, "encrypted": true}
+	allowEntry := map[string]bool{"when": true, "status": true, "errorKind": true, "encrypted": true}
+	check := func(label string) {
+		t.Helper()
+		lr := rawLastRun(t, g.out)
+		assure.Reached(t, len(lr), label+": last-run keys")
+		for k := range lr {
+			if !allowRecord[k] {
+				t.Errorf("%s: the encrypted last-run carries %q, outside the A18 allow-list", label, k)
+			}
+		}
+		b, err := os.ReadFile(filepath.Join(g.out, state.RunHistoryName))
+		if err != nil {
+			t.Fatal(err)
+		}
+		var h []map[string]any
+		if err := json.Unmarshal(b, &h); err != nil {
+			t.Fatalf("%s: the history is not JSON: %v", label, err)
+		}
+		assure.Reached(t, len(h), label+": history entries")
+		for i, e := range h {
+			for k := range e {
+				if !allowEntry[k] {
+					t.Errorf("%s: history entry %d carries %q, outside the A18 allow-list", label, i, k)
+				}
+			}
+		}
+		for _, n := range needles {
+			hits, err := leak.ScanTree(g.out, leak.Markers{leak.SourcePath: n})
+			if err != nil {
+				t.Fatal(err)
+			}
+			for _, hit := range hits {
+				t.Errorf("%s: the encrypted archive names %q: %s", label, n, hit)
+			}
+		}
+		for _, f := range []string{"mailarchive.log", state.SyncStreakName} {
+			if _, err := os.Stat(filepath.Join(g.out, f)); !os.IsNotExist(err) {
+				t.Errorf("%s: the encrypted archive holds %s (%v)", label, f, err)
+			}
+		}
+	}
+
+	g.start()
+	g.at(presync.PhaseWaiting)
+	g.s.release <- struct{}{}
+	if m := g.done(); g.status() != state.RunOK || !strings.Contains(str(m["note"]), "Thunderbird synced") {
+		t.Fatalf("fixture: the encrypted Run now did not sync and back up: %v, record %s", m, g.status())
+	}
+	check("synced")
+
+	g.start()
+	g.at(presync.PhaseWaiting)
+	g.lock()
+	g.done()
+	if g.status() != state.RunCancelled {
+		t.Fatalf("fixture: the Lock did not cancel the Run now: record %s", g.status())
+	}
+	check("Lock-cancelled")
+}
+
+// rawLastRun is the last-run file on disk as a key map.
+func rawLastRun(t *testing.T, out string) map[string]any {
+	t.Helper()
+	b, err := os.ReadFile(filepath.Join(out, state.LastRunName))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var m map[string]any
+	if err := json.Unmarshal(b, &m); err != nil {
+		t.Fatalf("the last-run file is not JSON: %v\n%s", err, b)
+	}
+	return m
 }
 
 // covers: MA-913, R37

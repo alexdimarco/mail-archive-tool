@@ -25,6 +25,13 @@ func (d *dashboard) runJob(fn func(*log.Logger) (string, error)) error {
 // runJobOn is runJob for a job on the archive at out, which its failure is worded
 // for: a new archive's first backup is not the current archive's (MAKE-02).
 func (d *dashboard) runJobOn(out string, fn func(*log.Logger) (string, error)) error {
+	return d.runJobOnClaiming(out, nil, fn)
+}
+
+// runJobOnClaiming is runJobOn with claimed, when set, called under the slot's lock as
+// the job takes the slot: an encrypted Run now's Lock window becomes the slot's there,
+// so no Lock falls between the two (design-presync-attended §3.2; gate-2 pass, AS8).
+func (d *dashboard) runJobOnClaiming(out string, claimed func(), fn func(*log.Logger) (string, error)) error {
 	c := d.cap
 	encrypted := out != "" && app.ArchiveEncrypted(out)
 	onCurrent := out != "" && samePath(out, d.cfg.effectiveOut())
@@ -39,6 +46,9 @@ func (d *dashboard) runJobOn(out string, fn func(*log.Logger) (string, error)) e
 	c.slot++
 	c.jobOut, c.encrypted, c.onCurrent, c.muted = out, encrypted, onCurrent, false
 	c.resetSyncLocked()
+	if claimed != nil {
+		claimed()
+	}
 	c.mu.Unlock()
 	// The archive the job runs on, taken as it starts: a switch while it runs does not
 	// change how its failure is worded (the P3-3 plan, 3d).

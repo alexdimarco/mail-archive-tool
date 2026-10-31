@@ -210,9 +210,12 @@ type captureState struct {
 	endWait       context.CancelFunc
 	waitStopped   bool
 
-	// lockWin is the encrypted Run now's Lock window while it is open
-	// (design-presync-attended §3.2, runnow_keyed.go): from its lease to read start.
-	lockWin *syncWindow
+	// lockWin is the Lock window of the encrypted Run now in the job slot while it is
+	// open (design-presync-attended §3.2, runnow_keyed.go): from the slot to read start.
+	// pendingWins are the windows of Run now clicks that hold a lease but have not taken
+	// the slot yet: the one that takes it becomes lockWin as it does (gate-2 pass, AS8).
+	lockWin     *syncWindow
+	pendingWins []*syncWindow
 }
 
 func (c *captureState) Write(p []byte) (int, error) {
