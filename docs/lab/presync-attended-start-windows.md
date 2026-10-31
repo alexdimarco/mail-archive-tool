@@ -86,3 +86,15 @@ archive), started with no console-window flag. Every program the Desktop and the
 run start now goes through `nowindow.Hide` (CREATE_NO_WINDOW); proven on the lab VM as
 SYSTEM through the start flags and a windowless stand-in parent. Not yet re-seen in the
 signed-in session with an observer: that the flashes are gone is to be confirmed there.
+
+*Added 2026-10-31 (MA-951 re-check, by Claude, a model, for the lead), beside the note above,
+which stays as written:* re-seen in the owner's signed-in session (`prlctl exec
+--current-user`), the observer running, each Desktop started by `Start-Process … desktop`,
+kept 25 s, then shut down from its page. Before the fix (the run-2 build): Windows Terminal
+was in front twice, at +3.8 s ("Terminal") and +7.9 s (titled
+`C:\WINDOWS\system32\schtasks.exe`), which confirms the source. After (a build of the release branch at
+`e9367f8`, which carries the fix, `908214e`): only Edge was in
+front, no console window in any sample. The observer samples the foreground window every
+100 ms, so a window that flashed without taking the front would not be seen; launched from
+the Start menu and at sign-in, not re-run. Kit: `flash-check.ps1`, `flash-run.ps1`
+(`~/repositories/.winlab/ma918`).
