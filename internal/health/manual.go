@@ -2,7 +2,6 @@ package health
 
 import (
 	"runtime"
-	"strings"
 
 	"mail-archive-tool/internal/presync"
 )
@@ -26,15 +25,9 @@ func manualBackupNote(in Input) string {
 	default:
 		s += " in MailArchive Desktop"
 	}
-	s += ": that is its How often setting (Only when I click Run now), so nothing runs by itself and no scheduled backup is expected"
-	if in.Surface == "" && in.KindEv.JobPath != "" {
-		// The command line's own way to run the very same backup (handCommand's form).
-		q := quoteTokens([]string{"run-job", in.KindEv.JobPath}, in.GOOS)
-		if q[1] != unsafeTokenPlaceholder {
-			s += "; to run it from a terminal: `mailarchive " + strings.Join(q, " ") + "`"
-		}
-	}
-	return s
+	// No `mailarchive run-job JOBFILE` here: run-job is the scheduled path (it sends the scheduled
+	// backup's alerts and counts the 3-day sync streak), so it is not the same backup as Run now.
+	return s + ": that is its How often setting (Only when I click Run now), so nothing runs by itself and no scheduled backup is expected"
 }
 
 // manualJobMissing is the warning for a descriptor that records such a backup while its job
@@ -46,6 +39,20 @@ func manualJobMissing(surface string) string {
 		return s + "the Scheduled backup card says how to set it up again"
 	}
 	return s + "open MailArchive Desktop on this computer: its Scheduled backup card says how to set it up again"
+}
+
+// manualEntryRunning is the warning for a descriptor that records such a backup while the
+// scheduler still holds an entry for the archive (its removal skipped when the scheduler could
+// not answer, or the entry put back by hand): the entry runs the backup by itself. Saving How
+// often again takes the entry out, or refuses in plain words when it can't.
+func manualEntryRunning(surface string) string {
+	s := "a scheduler entry still runs this archive's backup by itself, although its How often is Only when I click Run now — "
+	if surface != "desktop" {
+		s += "open MailArchive Desktop on this computer and, in Settings, "
+	} else {
+		s += "in Settings, "
+	}
+	return s + "choose Only when I click Run now and click Save settings again to take the entry out"
 }
 
 // manualSyncNote is the presync_syncs note for such a backup with the Thunderbird sync on: it

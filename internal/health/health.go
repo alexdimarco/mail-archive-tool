@@ -809,7 +809,10 @@ func assessKeyless(r *Report, in Input, now time.Time) {
 		// schedule's checks below apply. Its job file is owner-side evidence (KindEv), never
 		// the archive's record alone: a record saying so with no job file here is said, as
 		// Run now has nothing to run.
-		if in.KindEv.Has(schedule.KindRunJob) {
+		// A scheduler entry still there runs the backup by itself, whatever the record says.
+		if in.SchedState == schedule.Installed {
+			r.warn("manual_entry_running", manualEntryRunning(in.Surface))
+		} else if in.KindEv.Has(schedule.KindRunJob) {
 			r.note("manual_backup", manualBackupNote(in))
 		} else {
 			r.warn("manual_job_missing", manualJobMissing(in.Surface))

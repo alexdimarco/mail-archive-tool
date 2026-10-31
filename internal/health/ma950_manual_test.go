@@ -44,7 +44,8 @@ var scheduleFaults = []string{"not_installed", "stale", "never_ran", "exe_missin
 // archive with a daily schedule whose entry is gone, last run 10 days ago, a program moved and a
 // 3-day sync streak is WARN for each. Recorded as Run now only (its job file corroborated), it is
 // GREEN: no "not installed", stale, never ran, program, other host or 3-day sync warning, only a
-// note naming the choice in each surface's words (the command line's gives the very job to run);
+// note naming the choice in each surface's words (the command line's points to Run now in
+// MailArchive Desktop, never to `run-job`, which runs as the schedule does);
 // status's Schedule line says it runs only on Run now. Its sync note promises the sync only where
 // Run now starts Thunderbird. A record saying so with no job file on this computer warns that Run
 // now has nothing to run.
@@ -94,9 +95,11 @@ func TestRunNowOnlyIsTheOwnersChoiceInStatus(t *testing.T) {
 		}
 		switch surface {
 		case "":
-			// The job file's path quoted for the surface's shell (quoteTokens, INS2-2).
-			if want := "; to run it from a terminal: `mailarchive run-job " + quoteTokens([]string{in.KindEv.JobPath}, "darwin")[0] + "`"; !strings.HasSuffix(note, want) {
-				t.Errorf("the command line's note does not end %q: %q", want, note)
+			// Run now in MailArchive Desktop, and never `run-job`: that is the scheduled path,
+			// which sends the scheduled backup's alerts and counts the 3-day sync streak.
+			if !strings.Contains(note, "only when you click Run now in MailArchive Desktop") ||
+				strings.Contains(note, "run-job") || strings.Contains(note, "`") || strings.Contains(note, in.KindEv.JobPath) {
+				t.Errorf("the command line's note: %q", note)
 			}
 		case "desktop":
 			if !strings.Contains(note, "click Run now on the Scheduled backup card") || strings.Contains(note, "`") {
@@ -135,6 +138,37 @@ func TestRunNowOnlyIsTheOwnersChoiceInStatus(t *testing.T) {
 	got := reasonWith(Assess(lost, now), "manual_job_missing")
 	if !strings.Contains(got, "this archive is set to back up only when you click Run now, but its backup settings file is not on this computer, so Run now has nothing to run — open MailArchive Desktop on this computer") || hasCode(Assess(lost, now), "manual_backup") {
 		t.Errorf("a record with no job file: %q", got)
+	}
+}
+
+// covers: MA-950, MA-949, R18
+// A record saying "Only when I click Run now" while a scheduler entry for the archive is still
+// there (its removal skipped, or the entry put back by hand) is not the person's choice: the
+// entry runs the backup by itself. Positive twin first: with no entry, and with a scheduler that
+// can't answer, it is the GREEN note. With the entry installed it warns, in each surface's words,
+// how to take the entry out, and the note saying nothing runs by itself is not shown.
+func TestRunNowOnlyWithAnEntryStillThereWarns(t *testing.T) {
+	now := time.Date(2026, 10, 31, 12, 0, 0, 0, time.UTC)
+	for _, st := range []schedule.State{schedule.NotInstalled, schedule.SchedulerUnavailable} {
+		in := manualInput(t, now, "darwin", "desktop", false)
+		in.SchedState = st
+		rep := Assess(in, now)
+		if hasCode(rep, "manual_entry_running") || !hasCode(rep, "manual_backup") || rep.Posture != "GREEN" {
+			t.Fatalf("the positive twin (%v): %s %v", st, rep.Posture, rep.Codes)
+		}
+	}
+	for surface, remedy := range map[string]string{
+		"desktop": "in Settings, choose Only when I click Run now and click Save settings again to take the entry out",
+		"":        "open MailArchive Desktop on this computer and, in Settings, choose Only when I click Run now and click Save settings again to take the entry out",
+	} {
+		in := manualInput(t, now, "darwin", surface, false)
+		in.SchedState = schedule.Installed
+		rep := Assess(in, now)
+		got := assure.Reached(t, reasonWith(rep, "manual_entry_running"), "the entry-still-there warning")
+		want := "WARN: a scheduler entry still runs this archive's backup by itself, although its How often is Only when I click Run now — " + remedy
+		if got != want || rep.Posture != "WARN" || hasCode(rep, "manual_backup") {
+			t.Errorf("surface %q: %s %v, warning %q, want %q", surface, rep.Posture, rep.Codes, got, want)
+		}
 	}
 }
 

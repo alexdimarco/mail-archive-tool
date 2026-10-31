@@ -28,6 +28,9 @@ const (
 	manualKindLine = "This archive's backup runs only when you click Run now: nothing runs by itself. It re-reads this archive's mail files and adds anything new."
 	// manualStateLine is the card's state line for it, in place of "Not installed." (api/schedule-state).
 	manualStateLine = "Runs only when you click Run now."
+	// manualTileValue is the Overview's Scheduled backup tile for it, in the neutral colour, in
+	// place of "Not installed" in the warning colour: it is the person's choice, not a fault.
+	manualTileValue = "Only when you click Run now"
 	// manualAlertsLine is the Backup alerts card's line for it: alerts are about scheduled backups.
 	manualAlertsLine = "This archive backs up only when you click Run now, so no alert is sent about it: Run now shows how each backup went, and Recent backups keeps the list."
 	// manualSyncStartOffNote is said when the sync is saved with it where Run now does not start
@@ -53,15 +56,19 @@ type manualSave struct {
 //
 //  1. the job file, on a create or when the sync changed (job.Write renames a finished copy over
 //     the old one, so a failure changes nothing);
-//  2. the scheduler entry, when one is running for this archive, is taken out (its record is
-//     kept until step 3); a failure here leaves the schedule running as it was, and says so;
+//  2. the scheduler entry, unless the scheduler says definitely that none is there, is taken out
+//     (its record is kept until step 3); a failure here leaves the schedule running as it was,
+//     and says so;
 //  3. the archive's descriptor, recording the choice.
 //
 // A switch to it also ends the archive's alert streak and its Thunderbird sync streaks: they
 // count scheduled runs, and none will come to end them.
 func (d *dashboard) saveManual(w http.ResponseWriter, m manualSave) {
 	reply := func(msg string) { writeJSON(w, map[string]any{"ok": false, "error": msg}) }
-	wasLive := d.cfg.taskState(m.out) == schedule.Installed
+	// Anything but a definite "not installed" may be a running entry, so a scheduler that can't
+	// answer is asked to take it out too: removing an entry that is not there succeeds, and one
+	// it can't reach refuses the save below (MA-875's rule for the job file, applied here).
+	wasLive := d.cfg.taskState(m.out) != schedule.NotInstalled
 	if !m.exists || m.syncChanged {
 		if err := writeJob(m.jobPath, m.j); err != nil {
 			reply("The backup could not be saved: its settings file could not be written (" + err.Error() + "). Nothing was changed.")

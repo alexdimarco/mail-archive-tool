@@ -135,14 +135,26 @@ const (
 // brokenLine is the card's words for a broken run-job (section 5, C-9): a missing job file with
 // the Repair that makes it again, or an unreadable one with section 6's message and its remedy
 // (no Repair: C-6 would refuse it), ahead of any other label.
+// A backup run only on Run now (MA-949) is named as the person's choice, never as a scheduled
+// backup.
 func brokenLine(r backupRoute) string {
+	what := "This archive's scheduled backup"
+	if r.manualBroken() {
+		what = "This archive's backup (" + manualOptionLabel + ")"
+	}
 	switch r.broken {
 	case brokenMissing:
-		return "This archive's scheduled backup can't run: its settings file " + r.brokenPath + " is missing. Repair makes it again from this archive's own record."
+		return what + " can't run: its settings file " + r.brokenPath + " is missing. Repair makes it again from this archive's own record."
 	case brokenUnreadable:
-		return "This archive's scheduled backup can't run. This archive's backup settings file " + r.brokenPath + " can't be read (" + r.brokenReason + "). Re-create the backup in the MailArchive wizard, or update MailArchive if a newer version made it."
+		return what + " can't run. This archive's backup settings file " + r.brokenPath + " can't be read (" + r.brokenReason + "). Re-create the backup in the MailArchive wizard, or update MailArchive if a newer version made it."
 	}
 	return ""
+}
+
+// manualBroken reports a broken run-job whose record says "Only when I click Run now" (MA-949).
+// It changes only the card's words: what the Repair does follows the record either way.
+func (r backupRoute) manualBroken() bool {
+	return r.broken != "" && r.hasDesc && r.desc.IsManual()
 }
 
 // cadenceWords says a schedule's cadence in plain words: "daily at 04:00", "weekly on Sunday

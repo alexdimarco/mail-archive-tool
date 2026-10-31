@@ -29,6 +29,11 @@ func (cfg Config) taskState(out string) schedule.State {
 		return schedule.NotInstalled
 	}
 	if cfg.BackupInstalledFor != nil {
+		// The stand-in can't answer, as the OS scheduler sometimes can't (Windows' schtasks
+		// failing without its usual answer): said as the OS scheduler's Query says it.
+		if cfg.EntryState != nil && cfg.EntryState(schedule.DefaultNameFor(out)) == schedule.SchedulerUnavailable {
+			return schedule.SchedulerUnavailable
+		}
 		if cfg.BackupInstalledFor(out) {
 			return schedule.Installed
 		}

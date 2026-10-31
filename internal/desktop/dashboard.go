@@ -693,10 +693,13 @@ func (cfg Config) cards() []card {
 	}
 	if eo := cfg.effectiveOut(); eo != "" {
 		_, st := cfg.backupTask()
-		switch st {
-		case schedule.Installed:
+		switch {
+		case st == schedule.Installed:
 			sc = card{"Scheduled backup", "Installed", "good"}
-		case schedule.SchedulerUnavailable:
+		case manualAt(eo):
+			// "Only when I click Run now" (MA-949): the person's choice, never a missing schedule.
+			sc = card{"Scheduled backup", manualTileValue, ""}
+		case st == schedule.SchedulerUnavailable:
 			sc = card{"Scheduled backup", "Scheduler unavailable", "warn"}
 		}
 	}
@@ -1030,6 +1033,7 @@ func (cfg Config) overviewFor(csrf, epoch string) string {
 		ReadOnlySync     string
 		BrokenLine       string
 		ShowBrokenRepair bool
+		ManualBroken     bool // a broken run-job recorded as Run now only (MA-949): no kind line
 		UnknownLine      string
 		NoticeLine       string
 		// Encrypted: the current archive is encrypted, so it is never scheduled (O5).
@@ -1184,6 +1188,8 @@ func (cfg Config) overviewFor(csrf, epoch string) string {
 			data.ScheduleKind = "a backup that re-reads this archive's mail files"
 			data.BrokenLine = brokenLine(rt)
 			data.ShowBrokenRepair = rt.broken == brokenMissing
+			// Run now only (MA-949): no "scheduled backup:" kind line for a backup with no schedule.
+			data.ManualBroken = rt.manualBroken()
 		case rt.descKind == schedule.KindCapture:
 			// A recorded capture not counted here (Microsoft 365 not set up): never called an
 			// export (MA-878).
@@ -1770,7 +1776,7 @@ pre{white-space:pre-wrap;overflow-wrap:anywhere;background:var(--bg);border:1px 
       {{if .BackupNotice}}<p class="card-sub" id="backupNotice">{{.NoticeLine}}</p>{{end}}
       {{if .NoticeRunJob}}<p class="card-sub" id="backupReadOnly">How often: {{.ReadOnlyCadence}}. Sync Thunderbird first: {{.ReadOnlySync}}.</p>{{end}}
       {{if .BrokenLine}}<p class="card-sub" id="backupBroken">{{.BrokenLine}}</p>{{end}}
-      {{if .ManualBackup}}<p class="card-sub" id="schedManual">{{.ManualKindLine}}</p>{{else if .HasSchedule}}<p class="card-sub" id="schedKind">This archive's scheduled backup: {{.ScheduleKind}}.</p>{{end}}
+      {{if .ManualBackup}}<p class="card-sub" id="schedManual">{{.ManualKindLine}}</p>{{else if and .HasSchedule (not .ManualBroken)}}<p class="card-sub" id="schedKind">This archive's scheduled backup: {{.ScheduleKind}}.</p>{{end}}
       {{if .ExportLine}}<p class="card-sub" id="schedExport">{{.ExportLine}}</p>{{end}}
       {{if .ShowInstall}}<p class="card-sub" id="schedNone">{{if .OutDir}}No scheduled backup is set up for this archive yet. A scheduled backup runs a capture automatically, even when this app is closed (as long as you stay signed in to your computer), using your saved Microsoft sign-in.{{else}}Choose an archive location in Settings first; its backup options then show there.{{end}}</p>{{end}}
       {{if .ShowLocalCreate}}<p class="card-sub" id="schedNone">No scheduled backup is set up for this archive yet. A scheduled backup keeps it up to date automatically: it re-reads the mail files this archive was made from and adds anything new. It runs while you are logged in.</p>{{end}}

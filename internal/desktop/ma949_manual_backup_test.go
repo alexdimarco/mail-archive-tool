@@ -73,7 +73,9 @@ func TestRunNowOnlyIsOfferedWhereSettingsEditsARunJob(t *testing.T) {
 // covers: MA-949, MA-950, R14, R18
 // Saving "Only when I click Run now" saves the backup — the job file Run now runs, and the
 // archive's record of the choice — with no scheduler entry. Positive twin first: Daily on
-// another archive installs its entry. The page then shows the choice selected, the Scheduled
+// another archive installs its entry. The page then shows the choice selected, the Overview's
+// Scheduled backup tile names the choice in the neutral colour (before the save it said Not
+// installed in the warning colour), the Scheduled
 // backup card says Run now only in place of a schedule's kind, with Run now and Remove and no
 // Repair, its state line names the choice (never "Not installed"), Backup alerts says no alert
 // is sent for it, nothing asks Save to put an entry back, and Status & health is GREEN with the
@@ -89,6 +91,13 @@ func TestRunNowOnlySavesTheBackupWithNoSchedulerEntry(t *testing.T) {
 	g := newA3Rig(t, tbProfileArchive(t), "darwin")
 	if err := state.WriteSyncStreak(g.out, state.SyncStreak{Missed: 4, FirstMissed: time.Now().Add(-96 * time.Hour)}); err != nil {
 		t.Fatal(err)
+	}
+	// The Overview's Scheduled backup tile, before any backup is saved: not installed, in the
+	// warning colour (the twin of the tile below, which must not read the choice that way).
+	const notInstalledTile = `<div class="label">Scheduled backup</div><div class="value warn">Not installed</div>`
+	manualTile := `<div class="label">Scheduled backup</div><div class="value ">` + manualTileValue + `</div>`
+	if p := g.page(); !strings.Contains(p, notInstalledTile) {
+		t.Fatal("the twin: with no backup saved, the Overview's Scheduled backup tile does not say Not installed")
 	}
 	if r := g.manualReply(`{"interval":"manual","time":"03:00","drawnFor":` + quoteJSON(g.out) + `}`); r["ok"] != true || r["note"] != nil {
 		t.Fatalf("save Only when I click Run now: %v", r)
@@ -121,7 +130,10 @@ func TestRunNowOnlySavesTheBackupWithNoSchedulerEntry(t *testing.T) {
 			t.Errorf("the page does not say %q", text)
 		}
 	}
-	for _, not := range []string{`id="schedRepair"`, `id="schedKind"`, `id="settingsAutoPaused"`, `<option value="">No scheduled backup</option>`} {
+	if !strings.Contains(page, manualTile) {
+		t.Errorf("the Overview's Scheduled backup tile does not say %q in the neutral colour", manualTileValue)
+	}
+	for _, not := range []string{`id="schedRepair"`, `id="schedKind"`, `id="settingsAutoPaused"`, `<option value="">No scheduled backup</option>`, notInstalledTile} {
 		if strings.Contains(page, not) {
 			t.Errorf("the page shows %s for a Run now only backup", not)
 		}
@@ -272,6 +284,131 @@ func TestRunNowOnlyRefusesWhatWouldLeaveAnEntryRunning(t *testing.T) {
 	}
 	if p := win.page(); !shows(p, runNowManualStartOffTitle) {
 		t.Error("Windows: Run now's tooltip does not say what to do while it does not start Thunderbird")
+	}
+}
+
+// covers: MA-949, R14, R12
+// When the scheduler can't say whether the archive's entry is there (Windows' schtasks failing
+// without its usual answer), saving "Only when I click Run now" still tries to take the entry
+// out: only a definite "not installed" lets the save skip it. Positive twin first: an archive
+// with no entry saves it without asking the scheduler to remove anything. With a Daily entry and
+// a scheduler that can't answer, a removal that fails refuses the save in plain words — the
+// entry, the record and the job file as they were — and the Overview's tile and Status & health
+// still read the entry as there; a removal that works saves it.
+func TestRunNowOnlyTakesTheEntryOutWhenTheSchedulerCantSay(t *testing.T) {
+	isolateHome(t)
+	failRemove := false
+	mod := func(c *Config) {
+		fake := c.RemoveBackupFor
+		c.RemoveBackupFor = func(out string) error {
+			if failRemove {
+				return errors.New("the Task Scheduler service is not available")
+			}
+			return fake(out)
+		}
+	}
+	twin := newA3Rig(t, tbProfileArchive(t), "windows", mod)
+	if r := twin.manualReply(`{"interval":"manual","time":"03:00"}`); r["ok"] != true || len(twin.fake.removed) != 0 {
+		t.Fatalf("the positive twin: no entry, nothing to take out: %v, removed %v", r, twin.fake.removed)
+	}
+
+	g := newA3Rig(t, tbProfileArchive(t), "windows", mod)
+	if r := g.manualReply(`{"interval":"daily","time":"04:00"}`); r["ok"] != true || !g.fake.tasks[g.out] {
+		t.Fatalf("daily: %v", r)
+	}
+	g.recordLast()
+	g.fake.unknown = true // the entry is there; the scheduler can't say so
+	failRemove = true
+	u := g.snapshot()
+	r := g.manualReply(`{"interval":"manual","time":"04:00"}`)
+	msg, _ := r["error"].(string)
+	rc := 0
+	if r["ok"] == false {
+		rc = 2
+	}
+	assure.Refused(t, rc, msg, assure.Names("The backup schedule was not changed: its scheduler entry could not be taken out (the Task Scheduler service is not available), so it still runs as before."),
+		assure.NoSideEffect(u.holds))
+	if descriptorOf(t, g.out).IsManual() {
+		t.Error("the record says Run now only while the entry may still run")
+	}
+
+	failRemove = false
+	if r := g.manualReply(`{"interval":"manual","time":"04:00"}`); r["ok"] != true || g.fake.tasks[g.out] || !slices.Contains(g.fake.removed, g.out) {
+		t.Fatalf("a removal that works: %v, tasks %v, removed %v", r, g.fake.tasks, g.fake.removed)
+	}
+	if !descriptorOf(t, g.out).IsManual() {
+		t.Error("the record does not say Run now only after the entry was taken out")
+	}
+}
+
+// covers: MA-949, R14
+// A Run now only record with its scheduler entry still there (put back by hand, say) is not
+// shown as the person's choice on the Overview: its tile says the entry is installed (Status &
+// health's warning for it is proven in internal/health). Positive twin first: with no entry,
+// the tile names the choice.
+func TestRunNowOnlyWithItsEntryStillThereIsShown(t *testing.T) {
+	isolateHome(t)
+	g := newA3Rig(t, tbProfileArchive(t), "darwin")
+	if r := g.manualReply(`{"interval":"manual","time":"03:00"}`); r["ok"] != true {
+		t.Fatalf("Run now only: %v", r)
+	}
+	if p := g.page(); !strings.Contains(p, `<div class="value ">`+manualTileValue+`</div>`) {
+		t.Fatal("the positive twin: the tile does not name the choice")
+	}
+	g.fake.tasks[g.out] = true // an entry put back by hand
+	if p := g.page(); !strings.Contains(p, `<div class="label">Scheduled backup</div><div class="value good">Installed</div>`) {
+		t.Error("with its entry there, the tile does not say Installed")
+	}
+}
+
+// covers: MA-949, R14
+// A Run now only backup whose settings file is gone (deleted, or the archive opened on another
+// computer) is told as the backup it is, never as a scheduled backup: the card names the choice
+// and offers Repair, with no "scheduled backup:" kind line, and Repair makes the job file again
+// from the archive's own record, keeps the choice and makes no scheduler entry. A damaged
+// settings file is told the same way. Positive twin first: a Daily backup's missing file is told
+// as its scheduled backup, with its kind line.
+func TestRunNowOnlyWithItsSettingsFileMissingNamesNoSchedule(t *testing.T) {
+	isolateHome(t)
+	twin := newA3Rig(t, tbProfileArchive(t), "darwin")
+	if r := twin.manualReply(`{"interval":"daily","time":"04:00"}`); r["ok"] != true {
+		t.Fatalf("daily: %v", r)
+	}
+	twin.recordLast()
+	os.Remove(twin.jobPath)
+	if p := twin.page(); !shows(p, "This archive's scheduled backup can't run: its settings file "+twin.jobPath+" is missing.") || !strings.Contains(p, `id="schedKind"`) {
+		t.Fatal("the positive twin: a Daily backup's missing settings file is not told as its scheduled backup")
+	}
+
+	g := newA3Rig(t, tbProfileArchive(t), "darwin")
+	if r := g.manualReply(`{"interval":"manual","time":"03:00"}`); r["ok"] != true {
+		t.Fatalf("Run now only: %v", r)
+	}
+	os.Remove(g.jobPath)
+	page := g.page()
+	if !shows(page, "This archive's backup (Only when I click Run now) can't run: its settings file "+g.jobPath+" is missing. Repair makes it again from this archive's own record.") {
+		t.Error("the missing settings file is not told as the Run now only backup it is")
+	}
+	if !strings.Contains(page, `id="schedRepair"`) || strings.Contains(page, `id="schedKind"`) || shows(page, "This archive's scheduled backup") {
+		t.Error("the card offers no Repair, or calls the Run now only backup a scheduled backup")
+	}
+	body := g.post(`{}`)
+	if !strings.Contains(body, `"ok":true`) || !strings.Contains(body, recreatedNote) {
+		t.Fatalf("the Repair: %s", body)
+	}
+	if _, err := job.Read(g.jobPath); err != nil {
+		t.Errorf("the Repair did not make the job file again: %v", err)
+	}
+	if !descriptorOf(t, g.out).IsManual() || len(g.installs) != 0 || len(g.fake.tasks) != 0 {
+		t.Errorf("the Repair did not keep Run now only, or made an entry: installs %v, tasks %v", g.installs, g.fake.tasks)
+	}
+
+	if err := os.WriteFile(g.jobPath, []byte("{damaged"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if p := g.page(); !shows(p, "This archive's backup (Only when I click Run now) can't run. This archive's backup settings file "+g.jobPath+" can't be read") ||
+		strings.Contains(p, `id="schedKind"`) || shows(p, "This archive's scheduled backup") {
+		t.Error("a damaged settings file is told as a scheduled backup")
 	}
 }
 
