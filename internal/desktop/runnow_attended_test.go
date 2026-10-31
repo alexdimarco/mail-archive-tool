@@ -920,11 +920,24 @@ func TestRunNowReleaseLineFollowsTheTable(t *testing.T) {
 	if releaseLineWin != winLine {
 		t.Fatalf("twin: the Windows release line:\n  %q\nwant\n  %q", releaseLineWin, winLine)
 	}
-	if got := strings.Contains(string(notes), releaseLineMac); got != presync.AttendedStartAllowed("darwin") {
+	// The Windows texts pass (2026-10-31, finding 8): the two Run now lines lead "New in
+	// 1.5.2", Mac then Windows, each a whole line under one bold lead, so the headline is
+	// not buried. Each whole line still follows its platform's start entry.
+	if got := strings.Contains(string(notes), "\n  - "+releaseLineMac+"\n"); got != presync.AttendedStartAllowed("darwin") {
 		t.Errorf("the release notes carry the Mac line: %v; macOS's start entry: %v", got, presync.AttendedStartAllowed("darwin"))
 	}
-	if got := strings.Contains(string(notes), "- "+releaseLineWin+"\n"); got != presync.AttendedStartAllowed("windows") {
+	if got := strings.Contains(string(notes), "\n  - "+releaseLineWin+"\n"); got != presync.AttendedStartAllowed("windows") {
 		t.Errorf("the release notes carry the Windows line: %v; Windows' start entry: %v", got, presync.AttendedStartAllowed("windows"))
+	}
+	if presync.AttendedStartAllowed("darwin") && presync.AttendedStartAllowed("windows") {
+		lead := "### New in 1.5.2 — Run now syncs Thunderbird on a Mac and on Windows\n" +
+			"- **Run now syncs Thunderbird first, on a Mac and on Windows.**\n" +
+			"  - " + releaseLineMac + "\n" +
+			"  - " + releaseLineWin + "\n" +
+			"- **How to use MailArchive.**"
+		if !strings.Contains(string(notes), lead) {
+			t.Error("the release notes' New in 1.5.2 does not lead with the two Run now lines, Mac then Windows, under their bold lead")
+		}
 	}
 	if (strings.Contains(string(notes), "Run now syncs Thunderbird") || strings.Contains(string(notes), "Run now now syncs Thunderbird")) &&
 		!presync.AttendedStartAllowed("darwin") && !presync.AttendedStartAllowed("windows") {
