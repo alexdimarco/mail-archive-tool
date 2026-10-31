@@ -192,6 +192,10 @@ type captureState struct {
 	encrypted bool
 	onCurrent bool
 	muted     bool
+	// slotOut is the archive the job in the slot runs on, kept for the whole job (a
+	// Lock's or a switch's clearing empties jobOut, never this): /api/activity shows a
+	// Run now beside Run now only on its own archive's page (gate-2 pass 1, as4web-2).
+	slotOut string
 
 	// A Run now's Thunderbird sync, for its note (runnow.go): the phase and when it
 	// began, whether the sync has ended, the end line, the outcome's name, what it left
@@ -291,7 +295,7 @@ func (d *dashboard) activity(w http.ResponseWriter, r *http.Request) {
 	if c.device != nil {
 		out["device"] = map[string]any{"code": c.device.UserCode, "url": c.device.VerificationURI}
 	}
-	c.runNowActivity(out, d.cfg.goos(), time.Now())
+	c.runNowActivity(out, d.cfg.goos(), time.Now(), cur)
 	c.mu.Unlock()
 	writeJSON(w, out)
 }

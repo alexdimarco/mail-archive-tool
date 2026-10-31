@@ -449,8 +449,9 @@ func TestRunNowNoteBuiltOnTheServer(t *testing.T) {
 		t.Errorf("a panicking session: %v", m)
 	}
 
-	// The reload re-attaches the Run now poll (structural: no JavaScript engine here).
-	if !strings.Contains(dashboardJS, "if(d.runNow&&rb){rb.disabled=true;pollBackup();}else start();") {
+	// The reload re-attaches the Run now poll (structural: no JavaScript engine here), on
+	// the page of the archive it runs on (TestARunNowIsShownOnlyOnItsOwnArchive).
+	if !strings.Contains(dashboardJS, "if(d.runNow&&d.runNowHere&&rb){rb.disabled=true;pollBackup();}else start();") {
 		t.Error("a reload while a Run now runs does not re-attach its poll")
 	}
 	if !strings.Contains(dashboardJS, "if(n&&d.syncNote){n.hidden=false;n.textContent=d.syncNote;}") ||
@@ -649,6 +650,68 @@ func TestStopWaitRoute(t *testing.T) {
 	}
 	if !strings.Contains(page, `id="jobStopWait" hidden title="`+stopWaitTitle+`"`) {
 		t.Error("the Stop waiting button is not hidden by default with its tooltip")
+	}
+}
+
+// covers: MA-906
+// A Run now is shown only on the page of the archive it runs on (gate-2 adversarial
+// pass 1 over AS4, as4web-2): /api/activity says whether the Run now runs on the
+// current archive, and only then carries its slot id, phase note, Cancel, Stop waiting
+// and end note. Positive twin first: on its own archive's page a waiting Run now has
+// all of them. After a switch to another archive, that page gets none — no note, no
+// log, no Cancel, no Stop waiting — only a note that a Run now of another archive is
+// running, then that it has ended, never "Backup finished."; switched back, its own
+// archive's page has its end note again. The reload re-attaches the Run now's poll
+// only on its own archive's page, and the page shows the other-archive note.
+func TestARunNowIsShownOnlyOnItsOwnArchive(t *testing.T) {
+	g := newRunNowRig(t, "darwin", true)
+	g.start()
+	g.at(presync.PhaseWaiting)
+	m := g.activity()
+	if str(m["run"]) == "" || str(m["syncNote"]) == "" || m["stopWaitable"] != true || m["cancellable"] != true || m["otherNote"] != nil {
+		t.Fatalf("twin: a waiting Run now on its own archive's page: %v", m)
+	}
+	if m["runNowHere"] != true {
+		t.Errorf("twin: the Run now's own archive's page is not told it runs here: %v", m["runNowHere"])
+	}
+
+	other := t.TempDir()
+	SaveSettings(g.d.cfg.SettingsPath, Settings{Out: other}) // "Switch to this archive" on another one
+	m = g.activity()
+	if m["running"] != true || m["runNow"] != true {
+		t.Fatalf("after the switch: %v", m)
+	}
+	for _, k := range []string{"run", "syncNote", "cancelTitle", "note", "syncLine"} {
+		if _, ok := m[k]; ok {
+			t.Errorf("another archive's page gets the Run now's %q: %v", k, m[k])
+		}
+	}
+	if m["runNowHere"] != false || m["stopWaitable"] == true || m["cancellable"] != false || len(logLines(m["log"])) != 0 ||
+		str(m["otherNote"]) != runNowElsewhereRunning {
+		t.Errorf("another archive's page: runNowHere %v, stopWaitable %v, cancellable %v, log %v, otherNote %q",
+			m["runNowHere"], m["stopWaitable"], m["cancellable"], m["log"], m["otherNote"])
+	}
+
+	g.s.release <- struct{}{}
+	m = g.done()
+	if _, ok := m["note"]; ok || str(m["result"]) != "" || str(m["error"]) != "" || str(m["otherNote"]) != runNowElsewhereEnded {
+		t.Errorf("the ended Run now on another archive's page: note %q, result %q, error %q, otherNote %q",
+			m["note"], m["result"], m["error"], m["otherNote"])
+	}
+	if strings.Contains(str(m["otherNote"]), "Backup finished.") {
+		t.Errorf("another archive's page says the backup finished: %q", m["otherNote"])
+	}
+
+	SaveSettings(g.d.cfg.SettingsPath, Settings{Out: g.out}) // switched back
+	if m = g.activity(); m["runNowHere"] != true || !strings.HasPrefix(str(m["note"]), "Thunderbird synced: its mail settled after 6 min.") {
+		t.Errorf("back on its own archive, the end note: %v", m)
+	}
+
+	if !strings.Contains(dashboardJS, "if(d.runNow&&d.runNowHere&&rb){rb.disabled=true;pollBackup();}else start();") {
+		t.Error("the reload re-attaches the Run now's poll on another archive's page")
+	}
+	if !strings.Contains(dashboardJS, "n.textContent=d.note||d.otherNote||") || !strings.Contains(dashboardJS, "if(d.otherNote&&res){res.hidden=false;res.textContent=d.otherNote;}") {
+		t.Error("the page does not show the other-archive note")
 	}
 }
 

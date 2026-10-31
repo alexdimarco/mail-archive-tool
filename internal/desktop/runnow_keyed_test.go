@@ -498,6 +498,56 @@ func TestALockAfterReadStartLetsTheRunFinish(t *testing.T) {
 	}
 }
 
+// covers: MA-906, MA-913
+// A Run now whose activity a Lock or a switch away cleared (C-15) never ends saying
+// "Backup finished." (gate-2 adversarial pass 1 over AS4, as4web-1): its result was
+// cleared, so its end note says only that it ended and why its result is not shown.
+// Positive twin first: an encrypted Run now cancelled after read start, with no Lock,
+// ends with the cancel words. Then a Lock after read start ("Locked for new use…"),
+// followed by Cancel: the record reads cancelled and the end note is the cleared-result
+// note, with no result and no error. And a switch away while it waits, then Cancel:
+// back on its archive, the same note.
+func TestAClearedRunNowNeverEndsAsFinished(t *testing.T) {
+	g := newEncRig(t, encRigOpts{goos: "darwin", startAllowed: true, sync: true})
+	pauseRunNowAt(t, "read-start", func() { callAction(t, g.d, g.d.cancelJobAction, nil) })
+	g.s.release <- struct{}{}
+	g.start()
+	m := g.done()
+	if n := str(m["note"]); !strings.HasPrefix(n, "Thunderbird synced: its mail settled after 6 min.") || !strings.HasSuffix(n, " "+cancelledText) || g.status() != state.RunCancelled {
+		t.Fatalf("twin: a Run now cancelled after read start: note %q, record %s", m["note"], g.status())
+	}
+
+	var reply map[string]any
+	g = newEncRig(t, encRigOpts{goos: "darwin", startAllowed: true, sync: true})
+	pauseRunNowAt(t, "read-start", func() {
+		reply = g.lock()
+		callAction(t, g.d, g.d.cancelJobAction, nil)
+	})
+	g.s.release <- struct{}{}
+	g.start()
+	m = g.done()
+	if str(reply["note"]) != lockReadingText || g.status() != state.RunCancelled {
+		t.Fatalf("the Lock after read start, then Cancel: reply %q, record %s", reply["note"], g.status())
+	}
+	if str(m["note"]) != runNowMutedEndNote || str(m["result"]) != "" || str(m["error"]) != "" || strings.Contains(str(m["note"]), "Backup finished.") {
+		t.Errorf("a Locked Run now that was cancelled ends with note %q (result %q, error %q), want %q",
+			m["note"], m["result"], m["error"], runNowMutedEndNote)
+	}
+
+	g = newEncRig(t, encRigOpts{goos: "darwin", startAllowed: true, sync: true})
+	pauseRunNowAt(t, "read-start", nil)
+	g.start()
+	g.at(presync.PhaseWaiting)
+	SaveSettings(g.d.cfg.SettingsPath, Settings{Out: t.TempDir()}) // a switch away
+	g.activity()
+	callAction(t, g.d, g.d.cancelJobAction, nil)
+	g.done()
+	SaveSettings(g.d.cfg.SettingsPath, Settings{Out: g.out}) // and back
+	if m = g.activity(); str(m["note"]) != runNowMutedEndNote || str(m["result"]) != "" {
+		t.Errorf("a switched-away Run now that was cancelled ends with note %q (result %q), want %q", m["note"], m["result"], runNowMutedEndNote)
+	}
+}
+
 // covers: MA-913, R37
 // The window can never go stale (C-75, C-76): a Run now refused in
 // RunJobInProcessKeyed (an Outlook job), one that fails opening the archive, one with

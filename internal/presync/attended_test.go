@@ -16,6 +16,8 @@ import (
 	"sync"
 	"testing"
 	"time"
+
+	"mail-archive-tool/internal/assure"
 )
 
 // The attended mode in the session (design-presync-attended slice AS1b, §2.1-§2.4
@@ -1129,6 +1131,31 @@ func TestStopWaitingEndsTheWait(t *testing.T) {
 			if res := runSession(context.Background(), d); res.outcome != OutcomeOK || res.verdict != OutcomeOK {
 				t.Errorf("EndWait ended in %s: outcome %q, want the session to run on to ok", at, res.outcome.Name)
 			}
+		}
+	})
+
+	// The Desktop's route accepts a press once the session has reported `waiting`
+	// (gate-2 adversarial pass 1, as4web-3): a press landing right as `waiting` is
+	// announced, before the session's first poll, is seen — the wait ends at once,
+	// never the full 20 minutes behind a note that says it is backing up.
+	t.Run("EndWait ending as waiting is announced ends the wait", func(t *testing.T) {
+		f := attendedFake()
+		sp := filepath.Join(t.TempDir(), "s.json")
+		ew, end := context.WithCancel(context.Background())
+		var pl phaseLog
+		d := attendedDeps(f, sp)
+		d.endWait = ew
+		d.phase = func(p string, since time.Time) {
+			pl.fn(p, since)
+			if p == PhaseWaiting {
+				end()
+			}
+		}
+		res := runSession(context.Background(), d)
+		assure.Reached(t, pl.got(), "the phases reported")
+		if res.outcome != OutcomeWaitEnded || f.quitCalls != 0 || res.left != LeftOpenByRule || !recordGone(t, sp) || res.waited != 0 {
+			t.Errorf("outcome %q, %d quits, Left %q, record gone %v, waited %v; want wait-ended at once, 0, left-open-by-rule, cleared, 0",
+				res.outcome.Name, f.quitCalls, res.left, recordGone(t, sp), res.waited)
 		}
 	})
 

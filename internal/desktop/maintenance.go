@@ -44,7 +44,7 @@ func (d *dashboard) runJobOnClaiming(out string, claimed func(), fn func(*log.Lo
 	// A new job in the slot (design-presync-attended §4.6, C-15, C-71): its own id, its
 	// archive, and the sync fields reset together with the lines and the result.
 	c.slot++
-	c.jobOut, c.encrypted, c.onCurrent, c.muted = out, encrypted, onCurrent, false
+	c.jobOut, c.encrypted, c.onCurrent, c.muted, c.slotOut = out, encrypted, onCurrent, false, out
 	c.resetSyncLocked()
 	if claimed != nil {
 		claimed()

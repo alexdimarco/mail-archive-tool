@@ -4,7 +4,6 @@ import (
 	"encoding/json"
 	"errors"
 	"io/fs"
-	"os"
 	"path/filepath"
 	"time"
 
@@ -25,6 +24,11 @@ const archiveTempPattern = ".mailarchive-*.tmp"
 // RunHistoryMax is how many recent runs the history keeps; older entries are dropped, so
 // the file stays small and bounded.
 const RunHistoryMax = 50
+
+// maxRunHistorySize bounds the history a reader takes in: RunHistoryMax entries of a
+// few hundred bytes each, under the same bound as one last-run record (whose error an
+// entry carries), so no history a run writes nears it.
+const maxRunHistorySize = maxLastRunSize
 
 // RunHistoryEntry is one completed run's compact outcome, enough for a history line
 // without re-reading the whole archive.
@@ -57,7 +61,11 @@ func (e RunHistoryEntry) minimal() RunHistoryEntry {
 // history yet. A present-but-unparseable file returns an error (the caller decides
 // whether to surface or ignore it).
 func ReadRunHistory(out string) ([]RunHistoryEntry, error) {
-	data, err := os.ReadFile(filepath.Join(out, RunHistoryName))
+	// Read as a planted file may be, as the last-run record is: never through a link,
+	// never waiting on a pipe, never whole past its bound — a run appends to it while
+	// it holds the archive lock, and the Desktop reads it on every page (gate-2
+	// adversarial pass 1, as7-1).
+	data, err := util.ReadRegularFile(filepath.Join(out, RunHistoryName), maxRunHistorySize)
 	if err != nil {
 		if errors.Is(err, fs.ErrNotExist) {
 			return nil, nil

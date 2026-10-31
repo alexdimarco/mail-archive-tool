@@ -167,6 +167,21 @@ func runNowEndNote(syncLine, syncName, result, errMsg string) string {
 	return syncLine + " " + end
 }
 
+// runNowMutedEndNote is the end note of a Run now whose activity a Lock or a switch
+// away cleared (C-15): its result and failure were cleared with the rest, so the note
+// says only that it ended and why nothing more is shown — never "Backup finished.",
+// which a cancelled or failed run would wrongly claim (gate-2 adversarial pass 1 over
+// AS4, as4web-1). Draft wording, settled by the friction review (§14 gate 3).
+const runNowMutedEndNote = "The backup has ended. Its result is not shown here: the archive was locked, or you switched away from it, while the backup ran, so what it showed was cleared. Recent backups shows how it ended."
+
+// runNowElsewhereRunning and runNowElsewhereEnded are what another archive's page says
+// of a Run now (gate-2 adversarial pass 1 over AS4, as4web-2): its note, Cancel and
+// "Stop waiting" belong to its own archive's page, never beside this archive's Run now.
+const (
+	runNowElsewhereRunning = "A Run now of another archive is running. Switch back to that archive to see its progress, stop its wait or cancel it."
+	runNowElsewhereEnded   = "A Run now of another archive has ended. Switch back to that archive to see how it ended in Recent backups."
+)
+
 // resetSyncLocked clears a Run now's sync fields; c.mu is held.
 func (c *captureState) resetSyncLocked() {
 	if c.endWait != nil {
@@ -241,11 +256,28 @@ func (c *captureState) noStart(slot uint64) {
 // "Stop waiting" names), the phase and the server-built note while the sync runs,
 // Cancel's sync tooltip, whether "Stop waiting" is offered (only while it waits,
 // OQ-6), and, once it ends, the sync's line and the whole end note; c.mu is held.
-func (c *captureState) runNowActivity(out map[string]any, goos string, now time.Time) {
+// cur is the current archive: on another archive's page (a switch while it runs) the
+// Run now's note, log, result, Cancel and "Stop waiting" are left out, so nothing of
+// it shows beside that archive's Run now, and a note says another archive's Run now
+// runs or has ended (gate-2 adversarial pass 1 over AS4, as4web-2). A Run now whose
+// activity was cleared (muted, C-15) ends with runNowMutedEndNote, never "Backup
+// finished." (as4web-1).
+func (c *captureState) runNowActivity(out map[string]any, goos string, now time.Time, cur string) {
 	if !c.runNow {
 		return
 	}
 	out["runNow"] = true
+	here := c.slotOut != "" && cur != "" && samePath(c.slotOut, cur)
+	out["runNowHere"] = here
+	if !here {
+		out["log"], out["result"], out["error"] = []string{}, "", ""
+		out["cancellable"], out["skippable"] = false, false
+		out["otherNote"] = runNowElsewhereEnded
+		if c.running {
+			out["otherNote"] = runNowElsewhereRunning
+		}
+		return
+	}
 	out["run"] = strconv.FormatUint(c.slot, 10)
 	phase := ""
 	if !c.syncEnded {
@@ -260,6 +292,10 @@ func (c *captureState) runNowActivity(out map[string]any, goos string, now time.
 			out["cancelTitle"] = cancelSyncTitle(goos, phase)
 		}
 		out["stopWaitable"] = phase == presync.PhaseWaiting && !c.waitStopped && c.endWait != nil
+		return
+	}
+	if c.muted { // its result and failure were cleared: no end note can say how it ended
+		out["note"] = runNowMutedEndNote
 		return
 	}
 	out["syncLine"] = c.syncLine

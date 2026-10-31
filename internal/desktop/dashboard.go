@@ -2114,7 +2114,10 @@ function render(d){
   else dev.hidden=true;
   if(d.log&&d.log.length){act.hidden=false;act.textContent=d.log.join('\n');act.scrollTop=act.scrollHeight;}
   jobButtons(d,null);
-  if(!d.running&&res){res.hidden=false;res.textContent=d.error?('Capture failed: '+d.error):(d.result||'Done.');}
+  // A Run now of another archive (a switch while it ran) is only named here, never told
+  // as this archive's (gate-2 pass 1, as4web-2).
+  if(d.otherNote&&res){res.hidden=false;res.textContent=d.otherNote;}
+  else if(!d.running&&res){res.hidden=false;res.textContent=d.error?('Capture failed: '+d.error):(d.result||'Done.');}
 }
 // jobButtons shows the running job's Cancel and Skip, next to at when given — the
 // note of the control that started the job — so they are where the person looks.
@@ -2130,9 +2133,10 @@ function jobButtons(d,at){
 }
 let runNowID='';
 // A reload while a Run now runs re-attaches its own poll, so its phase note, Cancel and
-// "Stop waiting" show beside Run now again (design-presync-attended §4.6, C-22).
+// "Stop waiting" show beside Run now again (design-presync-attended §4.6, C-22) — only
+// on the page of the archive it runs on (gate-2 pass 1, as4web-2).
 fetch('api/activity').then(r=>r.json()).then(d=>{if(!d.running)return;
-  const rb=$('runBackupBtn');if(d.runNow&&rb){rb.disabled=true;pollBackup();}else start();}).catch(()=>{});
+  const rb=$('runBackupBtn');if(d.runNow&&d.runNowHere&&rb){rb.disabled=true;pollBackup();}else start();}).catch(()=>{});
 // The encrypted Settings card's sync-only box has its own Save, posting only the box and
 // the archive the page was drawn for to api/runnow-sync (design-presync-attended §8.1,
 // C-26); Save settings never posts it.
@@ -2208,10 +2212,11 @@ async function pollBackup(){
     // the last log line (design-presync-attended §4.6, C-19); at the end, the server's
     // note: the sync's line, then the result, the failure or the cancel words.
     if(n&&d.syncNote){n.hidden=false;n.textContent=d.syncNote;}
+    else if(n&&d.otherNote){n.hidden=false;n.textContent=d.otherNote;}
     else if(n&&d.log&&d.log.length)n.textContent=d.log[d.log.length-1];
     jobButtons(d,n); // Cancel (and Skip) beside Run now's own note (P3-8, B7)
     if(d.running){setTimeout(pollBackup,1500);return;}
-    if(n){n.hidden=false;n.textContent=d.note||(d.error?('Backup failed: '+d.error):(d.result||'Backup finished.'));}
+    if(n){n.hidden=false;n.textContent=d.note||d.otherNote||(d.error?('Backup failed: '+d.error):(d.result||'Backup finished.'));}
   }catch(e){}
   if(b)b.disabled=false;
 }

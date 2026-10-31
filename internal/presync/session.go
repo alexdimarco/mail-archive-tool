@@ -414,15 +414,17 @@ func runSession(ctx context.Context, d deps) (out sessionResult) {
 
 	// S7 wait quiet — poll the digest; quiet needs a first change (rev-3, L-M5).
 	enter("S7")
-	report(PhaseWaiting, up)
 	// A16 (OQ-6): "Stop waiting and back up now" ends the wait at once. Only an
 	// attended run has it, and an EndWait that ended before the wait began changes
 	// nothing (the route refuses outside `waiting`, §4.6). The waits in S7 watch a
-	// context that EndWait also ends (A5).
+	// context that EndWait also ends (A5). It is taken BEFORE `waiting` is reported,
+	// so every press the route accepts — which it does from the report on — is seen
+	// (gate-2 adversarial pass 1, as4web-3).
 	endWait := d.endWait
 	if !d.attended || (endWait != nil && endWait.Err() != nil) {
 		endWait = nil
 	}
+	report(PhaseWaiting, up)
 	waitCtx := sctx
 	if endWait != nil {
 		cctx, cancelWait := context.WithCancel(sctx)
