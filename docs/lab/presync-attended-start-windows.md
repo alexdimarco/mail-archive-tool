@@ -39,6 +39,19 @@ keystrokes; pressing a button brings Edge to the front); run F was the owner's o
 | E | same | the typer typing | minimized, then **into the notification area** (option on; main window handle 0) | stayed in Notepad until the driver pressed Stop waiting | ok; a second Run now saw it as `already-running` |
 | F | **the owner, from the Start menu** (parent: explorer.exe) | the owner typing | minimized from the first sample (owner: "No thunderbird window (but I can see the icon in the bottom task bar)") | owner: "typing continued without interruption"; observer: never Thunderbird | running at the time of writing |
 
+*Note on case F, added 2026-10-31 after the record was written (by Claude, a model, for the
+lead; the row above is kept as written):* case F finished. Its run record on the lab VM
+(`C:\Users\alex.dimarco\MA918-archive\.mailarchive-lastrun.json`, also the last entry of
+`.mailarchive-runhistory.json` beside it): started 17:58:45Z (13:58:45 on the VM's clock),
+finished 18:19:17Z, status `ok`, sync outcome `ok-noactivity` (Thunderbird was started and the
+wait ran its full 20 minutes with no new mail arriving, so Stop waiting was not pressed), 2
+messages exported and 2 filled. The observer log (`C:\Users\alex.dimarco\ma918\r2f-startmenu-observer.log`)
+shows Thunderbird minimized from its first sample (13:58:45.981, VM clock) and never in front
+through the end of the run and after it (the last line read, 15:25:14, still minimized, with
+Notepad in front). Timings are emulated. So F is a completed run, and its outcome is the full
+20-minute wait, which cases A–E did not reach (they ended with Stop waiting, Cancel, or an open
+Thunderbird).
+
 Slow start, Primary Password (L-A10 trial pp1, the same start): the "Password Required"
 prompt is shown and takes the keyboard; **owner ruling 2026-10-31: "accept the password
 window"**.
