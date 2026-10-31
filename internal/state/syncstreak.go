@@ -142,8 +142,10 @@ func (s SyncStreak) NoChangeSeen(now time.Time) SyncStreak {
 }
 
 // MailArrived folds a session, from any run, whose wait for mail saw mail arrive, or a
-// scheduled session that found the person's own Thunderbird already open: the no-change
-// run ends (§5.2, the second case amended 2026-10-31).
+// scheduled session that found the person's own Thunderbird already open, or an attended
+// Run now that found it open (owner ruling 3 of 2026-10-31; only where Run now starts
+// Thunderbird, since elsewhere a Run now runs no session): the no-change run ends (§5.2,
+// the second and third cases amended 2026-10-31).
 func (s SyncStreak) MailArrived() SyncStreak {
 	s.Version = SyncStreakVersion
 	s.NoChange = 0
