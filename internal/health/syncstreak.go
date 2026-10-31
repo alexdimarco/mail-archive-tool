@@ -168,6 +168,14 @@ func syncPhrase(name string) string {
 	return presync.TagPhrase("unknown") // the generic phrase
 }
 
+// SyncAlertWords are the phrase and remedy the Thunderbird-not-synced email gives for a
+// streak (§5.5): the same closed maps as the presync_not_synced WARN, in the Desktop's
+// words, since the email goes from a schedule the Desktop or the wizard made. A name
+// outside the maps reads as the generic phrase and remedy (C-37).
+func SyncAlertWords(goos string, s state.SyncStreak) (phrase, remedy string) {
+	return syncPhrase(s.LastName), syncRemedy(Input{GOOS: goos, Surface: "desktop"}, s.LastName)
+}
+
 // notSyncedText is the presync_not_synced WARN (§5.4).
 func notSyncedText(in Input, s state.SyncStreak) string {
 	return fmt.Sprintf("Thunderbird has not been synced before this archive's scheduled backups since %s (%d backups in a row; the last time: %s). The backups still ran, but mail that had only reached the mail server may be missing. Do this: %s",

@@ -18,6 +18,8 @@ func TestMain(m *testing.M) {
 		panic(err)
 	}
 	scratchRoot = func() (string, error) { return filepath.Join(dir, "scratch"), nil }
+	// The Thunderbird sync's state folder too: never the real one (MA-910).
+	presyncStateDir = func() (string, error) { return filepath.Join(dir, "presync-state", "presync"), nil }
 	// Before the home moves, so the real program cache is the one guarded.
 	cacheDone := progcache.UseTestRoot(filepath.Join(dir, "program-cache"))
 	home := filepath.Join(dir, "home")

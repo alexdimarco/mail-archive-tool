@@ -38,6 +38,11 @@ var fixedConfigNames = map[string]bool{
 // beside the Desktop settings (backupalert.StreakSuffix; a test keeps the two in step).
 const alertStreakSuffix = ".alert-streak"
 
+// syncAlertSuffix ends a scheduled backup's Thunderbird-not-synced told-file,
+// <key>.sync-alert, beside the alert streak (backupalert.SyncAlertSuffix; MA-910's test
+// keeps the two in step by behaviour).
+const syncAlertSuffix = ".sync-alert"
+
 // ErrOverlap refuses the WHOLE config cleanup because the config dir is, contains, or
 // sits inside a mail archive; deleting its contents could destroy mail (R36, U-C1).
 var ErrOverlap = errors.New("refusing to clean the config directory: it overlaps a mail archive")
@@ -103,6 +108,8 @@ func deletableConfigName(name string) bool {
 	case strings.HasSuffix(name, ".jobfail.log"):
 		return true
 	case strings.HasSuffix(name, alertStreakSuffix): // a scheduled backup's alert streak
+		return true
+	case strings.HasSuffix(name, syncAlertSuffix): // its Thunderbird-not-synced told-file
 		return true
 	}
 	return false

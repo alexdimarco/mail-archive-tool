@@ -110,6 +110,9 @@ func clearStreakAt(path string) error {
 type Outcome struct {
 	Notify    bool // this failure starts a failing streak: its one Desktop notice (MA-879)
 	Recovered bool // the first success after a failing streak whose notice was raised
+	// RecoveryEmailed: this run sent the recovery email, so the Thunderbird-not-synced
+	// email waits for the next run (design-presync-attended §5.5: one email per run).
+	RecoveryEmailed bool
 }
 
 // Report records one scheduled run's outcome (ResultFailed or ResultOK) in the alert streak for
@@ -165,12 +168,14 @@ func Report(settingsPath string, store graphconfig.SecretStore, key, out, result
 		if wasFailing {
 			// "Working again" answers a failure email that went; a streak whose email never went
 			// (only its notice did) gets the notice, and a success email if wanted.
+			emailed := false
 			if prev.Failing && cfg.ShouldSend(ResultRecovered) {
 				deliver(cfg, store, out, ResultRecovered, nil, messages, logger)
+				emailed = true // sent, delivered or not: this run has had its email
 			} else if cfg.ShouldSend(ResultOK) {
 				deliver(cfg, store, out, ResultOK, nil, messages, logger)
 			}
-			return Outcome{Recovered: true}
+			return Outcome{Recovered: true, RecoveryEmailed: emailed}
 		}
 		if cfg.ShouldSend(ResultOK) {
 			deliver(cfg, store, out, ResultOK, nil, messages, logger)
@@ -202,9 +207,15 @@ func RecordAutoPauseDefault(key, out string, why error, logger *log.Logger) {
 }
 
 // ClearStreak removes the streak for key beside the settings file at settingsPath: a schedule's
-// create and Remove clear it, so a re-created schedule's first failure sends.
+// create and Remove clear it, so a re-created schedule's first failure sends. It removes the
+// key's Thunderbird-not-synced told-file too (design-presync-attended §5.5, C-40), so a
+// re-created schedule's stale sync streak is told again.
 func ClearStreak(settingsPath, key string) error {
-	return clearStreakAt(StreakPath(settingsPath, key))
+	err := clearStreakAt(StreakPath(settingsPath, key))
+	if serr := clearStreakAt(SyncAlertPath(settingsPath, key)); err == nil {
+		err = serr
+	}
+	return err
 }
 
 // ClearStreakDefault is ClearStreak beside the default Desktop settings path.

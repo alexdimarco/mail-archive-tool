@@ -40,7 +40,21 @@ const (
 	// backups are working again (design-desktop-settings-card 3.7, R3C-10). It is sent under
 	// the failure option, since it closes a streak that option told the owner about.
 	ResultRecovered = "recovered"
+	// ResultSyncStale is the Thunderbird-not-synced email (design-presync-attended §5.5):
+	// a plaintext archive's scheduled backups ran for 3 days without syncing Thunderbird
+	// first. Sent once per streak, under the failure option.
+	ResultSyncStale = "sync-stale"
 )
+
+// SyncStale is what the Thunderbird-not-synced email says beyond the archive and the
+// computer: when the streak began, how many backups in a row, and the phrase and remedy,
+// both taken from the closed maps by the caller (C-37), never from a record's own text.
+type SyncStale struct {
+	Since  time.Time
+	Missed int
+	Phrase string
+	Remedy string
+}
 
 // Config is the built-in email-alert configuration (stored in desktop settings; the
 // password lives in the OS secret store, not here).
@@ -66,6 +80,7 @@ type Event struct {
 	Messages int
 	Host     string // the machine the backup ran on
 	When     time.Time
+	Sync     *SyncStale // ResultSyncStale only
 }
 
 // Preset fills the host, port and security for a known provider; the SMTP provider
@@ -86,7 +101,7 @@ func (c Config) ShouldSend(result string) bool {
 		return false
 	}
 	switch result {
-	case ResultFailed, ResultRecovered:
+	case ResultFailed, ResultRecovered, ResultSyncStale:
 		return c.OnFailure
 	case ResultOK:
 		return c.OnSuccess
@@ -132,6 +147,9 @@ func (c Config) Validate() error {
 // pins the wording and a crafted archive path / error cannot change the message shape.
 func (c Config) subjectAndBody(ev Event) (subject, body string) {
 	name := header(ev.Archive) // an archive path never contains CR/LF; strip any so neither the subject header nor the body line is malformed
+	if ev.Result == ResultSyncStale {
+		return syncStaleSubjectAndBody(name, ev)
+	}
 	switch ev.Result {
 	case ResultFailed:
 		subject = "MailArchive backup FAILED: " + name
@@ -157,6 +175,33 @@ func (c Config) subjectAndBody(ev Event) (subject, body string) {
 	if ev.Error != "" {
 		fmt.Fprintf(&b, "\r\nReason:\r\n%s\r\n", ev.Error)
 	}
+	b.WriteString("\r\nThis message was sent by MailArchive's built-in backup alerts.\r\n")
+	return subject, b.String()
+}
+
+// syncStaleSubjectAndBody is the Thunderbird-not-synced email (design-presync-attended
+// §5.5, C-29; the design's draft words, for the friction review). The phrase and remedy
+// come from the caller's closed maps; every field is stripped of line breaks all the same.
+func syncStaleSubjectAndBody(name string, ev Event) (subject, body string) {
+	var s SyncStale
+	if ev.Sync != nil {
+		s = *ev.Sync
+	}
+	host := header(ev.Host)
+	if strings.TrimSpace(host) == "" {
+		host = "this computer"
+	}
+	since := "recently"
+	if !s.Since.IsZero() {
+		since = s.Since.Local().Format("Jan 2, 2006")
+	}
+	subject = "Mail Archive: Thunderbird not synced for 3 days — " + name
+	var b strings.Builder
+	fmt.Fprintf(&b, "The scheduled backups of %s on %s still ran, but Thunderbird has not been synced before them since %s (%d backups in a row). ", name, host, since, s.Missed)
+	b.WriteString("Mail that had only reached the mail server, not this computer, may be missing from the archive.\r\n\r\n")
+	fmt.Fprintf(&b, "The last time: %s.\r\n\r\n", header(s.Phrase))
+	fmt.Fprintf(&b, "Do this: %s\r\n\r\n", header(s.Remedy))
+	b.WriteString("You will get this email once, until Thunderbird syncs again.\r\n")
 	b.WriteString("\r\nThis message was sent by MailArchive's built-in backup alerts.\r\n")
 	return subject, b.String()
 }

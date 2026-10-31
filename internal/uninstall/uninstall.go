@@ -18,7 +18,9 @@ import (
 type Report struct {
 	Schedules     []string // scheduler entry names removed
 	ClearedSignIn bool     // a device sign-in / client secret was present and cleared
-	ConfigFiles   []string // config-dir files removed (absolute paths)
+	// ConfigFiles are the settings files removed (absolute paths): the config dir's, then
+	// the Thunderbird sync's state files and their folder (presyncjob.StateDir).
+	ConfigFiles []string
 	// Scratch is what of MailArchive's working folder (job.ScratchDir) is removed: an
 	// encrypted archive's leftover working copies and their folders. Empty — and so not
 	// shown — when there is none.
@@ -64,6 +66,14 @@ func Uninstall(configDir string, knownArchives []string, exe string, dryRun bool
 			return nil, err // ErrOverlap, ErrScratchUnexpected or a read error — nothing is touched
 		}
 	}
+	// The Thunderbird sync's state folder (presyncjob.StateDir, per platform): its named
+	// files, then the folder (design-presync-attended §5.5, C-40, C-63).
+	var presyncState []string
+	if dir, derr := presyncStateDir(); derr == nil && dir != "" {
+		if presyncState, err = PresyncStateTargets(dir, knownArchives); err != nil {
+			return nil, err // ErrOverlap or a read error — nothing is touched
+		}
+	}
 	var cache []string
 	if root, rerr := programCacheRoot(); rerr == nil {
 		if cache, err = progcache.UninstallTargets(root); err != nil {
@@ -80,7 +90,7 @@ func Uninstall(configDir string, knownArchives []string, exe string, dryRun bool
 		KeptArchives:  append([]string(nil), knownArchives...),
 		BinaryNote:    binaryNote(exe),
 		ClearedSignIn: tenant != "" || clientID != "",
-		ConfigFiles:   append([]string(nil), cfgTargets...),
+		ConfigFiles:   append(append([]string(nil), cfgTargets...), presyncState...),
 		Scratch:       scratch,
 		programCache:  cache,
 	}
@@ -120,6 +130,13 @@ func Uninstall(configDir string, knownArchives []string, exe string, dryRun bool
 	for _, p := range cache {
 		if derr := os.Remove(p); derr != nil && !errors.Is(derr, fs.ErrNotExist) {
 			return rep, fmt.Errorf("could not remove %s from MailArchive's program cache (stopping; the settings were not removed): %w", p, derr)
+		}
+	}
+	// 3c) The Thunderbird sync's state: its named files, then the folder, each with
+	// os.Remove (the folder only when empty; PresyncStateTargets names it only then).
+	for _, p := range presyncState {
+		if derr := os.Remove(p); derr != nil && !errors.Is(derr, fs.ErrNotExist) {
+			return rep, fmt.Errorf("could not remove %s from the Thunderbird sync's folder (stopping; the settings were not removed): %w", p, derr)
 		}
 	}
 	// 4) The config files (the enumeration sources, deleted last).

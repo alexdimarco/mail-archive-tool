@@ -322,9 +322,14 @@ func RunHeadless(path string) int {
 		cleanupOutlookScratch(j.Out, true, logger)
 	}
 	// A completed (not cancelled) local backup ends a failing streak (a recovery email and
-	// notice) and emails its success too, if alerts want it.
+	// notice) and emails its success too, if alerts want it. Then, for a job that syncs
+	// Thunderbird, the one email per stale sync streak (design-presync-attended §5.5), which
+	// waits for the next run when this one sent the recovery email: one email per run.
 	if runErr == nil {
-		reportRun(key, j.Name, j.Out, backupalert.ResultOK, nil, result.Stats.Exported, logger)
+		o := reportRun(key, j.Name, j.Out, backupalert.ResultOK, nil, result.Stats.Exported, logger)
+		if j.ThunderbirdSync != nil {
+			backupalert.ReportSyncStaleDefault(key, j.Out, o.RecoveryEmailed, logger)
+		}
 	}
 	return 0
 }
@@ -366,8 +371,9 @@ func jobFail(path string, err error) {
 
 // reportRun records a scheduled local run's outcome in the alert streak (key), sends the email
 // that is due, and raises the Desktop notice only when the streak says so: one per failing
-// streak, plus one when backups work again (R3C-12).
-func reportRun(key, name, out, result string, runErr error, messages int, logger *log.Logger) {
+// streak, plus one when backups work again (R3C-12). It returns what the streak did, so the
+// caller can tell whether this run sent the recovery email.
+func reportRun(key, name, out, result string, runErr error, messages int, logger *log.Logger) backupalert.Outcome {
 	o := backupalert.ReportDefault(key, out, result, runErr, messages, logger)
 	if o.Notify {
 		notifyFailure(name, out)
@@ -375,6 +381,7 @@ func reportRun(key, name, out, result string, runErr error, messages int, logger
 	if o.Recovered {
 		notifyRecovered(name)
 	}
+	return o
 }
 
 // notifyFailure raises a best-effort desktop notification that a scheduled

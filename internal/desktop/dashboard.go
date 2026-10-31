@@ -1649,7 +1649,7 @@ pre{white-space:pre-wrap;overflow-wrap:anywhere;background:var(--bg);border:1px 
       <p class="card-sub">Email someone when a scheduled backup fails, so a broken backup never goes unnoticed. MailArchive sends the mail itself over SMTP — there is no script to install.</p>
       <div><label><input type="checkbox" id="alertEnabled"{{if .AlertEnabled}} checked{{end}}> <b>Send backup alerts by email</b></label></div>
       <div class="row"><div class="k">Send alerts on</div><div class="v">
-        <div><label><input type="checkbox" id="alertOnFailure"{{if .AlertOnFailure}} checked{{end}}> a failed backup (recommended)</label></div>
+        <div><label><input type="checkbox" id="alertOnFailure"{{if .AlertOnFailure}} checked{{end}}> a failed backup, or Thunderbird not synced for 3 days (recommended)</label></div>
         <div><label><input type="checkbox" id="alertOnPause"{{if .AlertOnPause}} checked{{end}}> the backup is auto-paused (source unreachable too long)</label></div>
         <div><label><input type="checkbox" id="alertOnSuccess"{{if .AlertOnSuccess}} checked{{end}}> every successful backup</label></div>
       </div></div>
