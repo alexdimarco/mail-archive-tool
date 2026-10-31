@@ -279,7 +279,7 @@ None is high. Five are medium (T2-1, T2-3, T2-4, T2-5, T2-6). Each can be reduce
 | T2-15 | `-password-file` lifts the terminal need on read verbs but not on write verbs. This is deliberate under O5 (keyed writes are attended), but it is not said. | low | Say it in each write verb's help line. |
 | T2-16 | Windows: `RestrictToOwner` sets the access list but not the owner. The unencrypted copy's folder inherits its parent's access list instead of the Unix 0700 (not measured with a shared parent). | low | Set the owner too, and restrict the copy folder on Windows. |
 | T2-17 | `GET /api/activity` carries source and destination paths (the X13 standing condition). | low | No change now. |
-| T2-18 | The texts say "MailArchive Desktop" about 20 times, and the create dialogs are titled "Mail Archive Export" (X17). | low | Operator ruling. |
+| T2-18 | The texts say "MailArchive Desktop" about 20 times, and the create dialogs are titled "Mail Archive Export" (X17). | low | Operator ruling. *Ruled and applied 2026-10-31 (the owner's ruling B for 1.5.2, MA-952): the wizard's windows are titled "MailArchive wizard", and the program's words say "MailArchive"; the Mac bundle "Mail Archive.app" keeps its name.* |
 
 Already low-friction (noted, no action): the `-recovery-key-out` clash is checked before any
 prompt; `repair-record`'s output is clear; the cold path with the password takes about 5 steps.

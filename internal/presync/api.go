@@ -144,7 +144,7 @@ var warnText = map[string]string{
 	OutcomeLeftoverFound.Code:       "A Thunderbird an earlier backup started is still open, so this backup did not start another. Do this: quit that Thunderbird; it may be hidden or minimized, so quit it from its icon where your open programs are shown. The archive ran anyway.",
 	OutcomeProfileUnusable.Code:     "No single, safe Thunderbird profile could be determined, so no sync ran. Do this: name the profile with `-thunderbird-profile PATH`. The archive ran anyway.",
 	OutcomeAppNotFound.Code:         "Thunderbird was not found in its usual install location, so no sync ran. A Thunderbird installed in a non-standard place cannot be synced in this version. The archive ran anyway.",
-	OutcomeRefusedElevated.Code:     "The Thunderbird sync was skipped because Mail Archive is running as root or an administrator — it would create profile files you could not then open. Do this: run it as your normal user. The archive ran anyway.",
+	OutcomeRefusedElevated.Code:     "The Thunderbird sync was skipped because MailArchive is running as root or an administrator — it would create profile files you could not then open. Do this: run it as your normal user. The archive ran anyway.",
 	OutcomeStateUnreadable.Code:     "The Thunderbird sync could not read its notes from the last run, so it started fresh. The archive ran anyway.",
 	OutcomeInternalError.Code:       "The Thunderbird sync failed unexpectedly; the archive ran anyway.",
 	OutcomeNotSetUp.Code:            "The Thunderbird sync could not be prepared on this computer (its own settings folder could not be found), so the archive ran without it. Do this: repair the backup's schedule — in MailArchive Desktop, click Repair on the Scheduled backup card.",

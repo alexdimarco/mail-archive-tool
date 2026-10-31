@@ -49,7 +49,10 @@ import (
 	"mail-archive-tool/internal/util"
 )
 
-const appTitle = "Mail Archive Export"
+// appTitle is the title of every wizard window: the name its Start menu entry has
+// (Product.wxs), "MailArchive wizard". It was "Mail Archive Export" until 2026-10-31
+// (the owner's ruling B for 1.5.2, MA-952; friction review T2-18).
+const appTitle = "MailArchive wizard"
 
 // Source-type labels the wizard's first list offers. Package-level so the pure
 // decision functions (keepRawApplies, preferOutlookApp) and their tests can name

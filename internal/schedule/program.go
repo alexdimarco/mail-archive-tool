@@ -31,13 +31,13 @@ const (
 // /AppTranslocation/ directory): a schedule recorded from it stops working the
 // moment the app quits, so every caller refuses (D1, §4.6.1). It carries no path,
 // and its message is the X2 refusal every caller shows.
-var ErrTranslocated = errors.New("Mail Archive is running from a temporary copy macOS made of a downloaded app; a schedule recorded from it stops working when the app quits. Do this: drag Mail Archive.app to your Applications folder, open it from there, and install the schedule (or choose Repair) again.")
+var ErrTranslocated = errors.New("MailArchive is running from a temporary copy macOS made of a downloaded app; a schedule recorded from it stops working when the app quits. Do this: drag Mail Archive.app to your Applications folder, open it from there, and install the schedule (or choose Repair) again.")
 
 // ErrKeptCopy is returned by ProgramForSchedule when the running program is a copy
 // of MailArchive kept in an encrypted archive (design-encrypted-archives-phase3-program
 // §6, C15): the next backup may replace or remove it, so a schedule recorded from it
 // would stop working. It carries no path.
-var ErrKeptCopy = errors.New("Mail Archive is running from a copy kept inside an encrypted archive; a backup may replace or remove that copy, so a schedule cannot run it. Do this: copy the program out of the archive folder (or download it again from the official release page), open it from there, and install the schedule (or choose Repair) again.")
+var ErrKeptCopy = errors.New("MailArchive is running from a copy kept inside an encrypted archive; a backup may replace or remove that copy, so a schedule cannot run it. Do this: copy the program out of the archive folder (or download it again from the official release page), open it from there, and install the schedule (or choose Repair) again.")
 
 // RefuseKeptCopy refuses a program inside an encrypted archive — in its program
 // folder or anywhere in it — or named as a self-copy (mailarchive-self-…), on any

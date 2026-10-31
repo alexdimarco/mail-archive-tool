@@ -11,7 +11,7 @@ import (
 // run would execute their code as the owner — the Q20 threat (§5.3, owner ruling
 // 13.44: refuse, do NOT accept as a residual). It carries no path; its message is
 // the relocation/reinstallation remedy every scheduling caller shows.
-var ErrUnsafeLocation = errors.New("Mail Archive is installed in a folder another account on this computer can change, so a scheduled run could be made to run someone else's program as you. Do this: move Mail Archive into a folder only you or an administrator can write — on Windows, Program Files or your own user folder; on macOS or Linux, your Applications or home folder, not a world-writable or shared one — then install the schedule (or choose Repair) again.")
+var ErrUnsafeLocation = errors.New("MailArchive is installed in a folder another account on this computer can change, so a scheduled run could be made to run someone else's program as you. Do this: move MailArchive into a folder only you or an administrator can write — on Windows, Program Files or your own user folder; on macOS or Linux, your Applications or home folder, not a world-writable or shared one — then install the schedule (or choose Repair) again.")
 
 // locationWritableByOthers reports whether the program directory dir can be
 // written by an account other than the owner (Q20's permissions policy). A

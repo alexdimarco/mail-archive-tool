@@ -56,6 +56,7 @@ Windows: SmartScreen → *More info → Run anyway*. Verify downloads against `S
 - **Dated log lines.** Each Thunderbird sync line in `mailarchive.log` now starts with the date and time.
 - **Clearer words.** With no archive set up, MailArchive Desktop no longer calls itself a Microsoft 365 archive, and its pages, help text, warnings and the command line's help now say what this version really does: for example, a scheduled backup skips the Thunderbird sync while you are using the computer (it does not wait), and the Security & privacy card names the Thunderbird sync as the one thing that can change your mail.
 - **Two status tiles instead of four.** The Overview no longer shows the "Archive engine: Ready" and "Capture: Idle" tiles: they never changed, so they told you nothing. It shows **Microsoft 365** and **Scheduled backup**.
+- **One name everywhere.** The wizard's windows are now titled **MailArchive wizard** (they said "Mail Archive Export"), and every message calls the program MailArchive. On a Mac the app itself keeps its name, **Mail Archive.app**, so nothing you have set up changes.
 
 ### New in 1.5.1 — one place for backup settings
 - **Settings is where you change a backup.** How often, the time, and **Sync Thunderbird before each backup** are all in the Desktop's **Settings** card. The **Scheduled backup** card shows what is set up, with **Run now**, **Repair** and **Remove**.
