@@ -1229,7 +1229,7 @@ func (cfg Config) overviewFor(csrf, epoch string) string {
 		data.ExportLine = exportNoRunNowLine
 		switch {
 		case ownName:
-			data.ExportLine = ownNameExportLine(cfg.goos(), data.OutDir, ownNameBound, rt.desc, exportToRunJob)
+			data.ExportLine = ownNameExportLine(cfg.goos(), cfg.Exe, data.OutDir, ownNameBound, rt.desc, exportToRunJob)
 		case exportToRunJob:
 			data.ExportLine = exportGetRunNowLine + " " + exportCarryOverLine(rt.desc)
 		}
@@ -1281,8 +1281,10 @@ func (cfg Config) overviewFor(csrf, epoch string) string {
 		data.ShowRemove = data.HasSchedule
 	}
 	// A schedule under a name of its own is not Remove's to take out (MA-948): Remove is
-	// shown only when an entry named for this folder is there for it.
-	if ownName && entry == "" {
+	// shown only when an entry named for this folder is there for it. The entry found may be
+	// the Microsoft 365 backup Settings remembers for another folder (BackupFor): Remove would
+	// take out that one, not this archive's, so it does not count.
+	if ownName && (entry == "" || !samePath(entry, data.OutDir)) {
 		data.ShowRemove = false
 	}
 	// A local-origin archive's Archive now card points at the way this page offers to back

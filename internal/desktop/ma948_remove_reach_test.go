@@ -69,6 +69,7 @@ func postRemove(t *testing.T, g *a3Rig) (removeReply, string) {
 //     use); otherwise generic words, never a name from a record that is not this archive's;
 //   - the Scheduled backup card and Settings no longer send such an owner to Remove: they
 //     say to remove it in a terminal, with the same command, and Remove is not shown.
+//
 // Remove itself is unchanged: it never acts on the record's name. Positive twin first: a
 // command-line schedule under the folder's name is removed, with no note, as before.
 func TestRemoveSaysWhatItRemoved(t *testing.T) {
@@ -96,7 +97,9 @@ func TestRemoveSaysWhatItRemoved(t *testing.T) {
 	own := tbProfileArchive(t)
 	o := newA3Rig(t, own, "darwin")
 	writeOwnNamedSchedule(t, own, "nightly-tb", own)
-	cmd := "mailarchive schedule -out " + shellQuote(own, "darwin") + " -name nightly-tb -remove"
+	// The command names the console program beside the running Desktop (the rig's Exe), not a
+	// bare "mailarchive", which no installer puts on the PATH (review finding, 2026-10-31).
+	cmd := "/opt/mailarchive schedule -out " + shellQuote(own, "darwin") + " -name nightly-tb -remove"
 	page := o.page()
 	for _, want := range []string{
 		"Run now isn't shown for it: MailArchive Desktop can't run, change or remove a backup set up at the command line under its own name (nightly-tb). To get Run now, remove it in a terminal (your archive and its mail are kept), reload this page (press Command-R), then in Settings choose How often and click Save settings. That sets up a backup MailArchive Desktop can run, and Run now then appears here.",
@@ -146,7 +149,7 @@ func TestRemoveSaysWhatItRemoved(t *testing.T) {
 	l := newA3Rig(t, lin, "linux")
 	writeOwnNamedSchedule(t, lin, "nightly-tb", lin)
 	lp := l.page()
-	if want := "It was set up at the command line under its own name (nightly-tb), so change, repair or remove it there; MailArchive Desktop can't remove it. The command that removes it: mailarchive schedule -out " + shellQuote(lin, "linux") + " -name nightly-tb -remove"; !shows(lp, want) {
+	if want := "It was set up at the command line under its own name (nightly-tb), so change, repair or remove it there; MailArchive Desktop can't remove it. The command that removes it: /opt/mailarchive schedule -out " + shellQuote(lin, "linux") + " -name nightly-tb -remove"; !shows(lp, want) {
 		t.Errorf("linux: the own-named schedule's card does not say %q", want)
 	}
 	if strings.Contains(lp, "Remove below") || strings.Contains(lp, `id="schedRemove"`) {
@@ -178,13 +181,111 @@ func TestRemoveSaysWhatItRemoved(t *testing.T) {
 		t.Errorf("Remove with nothing set up answered %s, want %q", body, want)
 	}
 
-	// The command is quoted for the computer's shell.
-	for _, c := range []struct{ goos, out, want string }{
-		{"windows", `C:\Mail Archive`, `mailarchive schedule -out "C:\Mail Archive" -name nightly-tb -remove`},
-		{"darwin", "/Users/a/Mail Archive", `mailarchive schedule -out '/Users/a/Mail Archive' -name nightly-tb -remove`},
+	// The command is quoted for the computer's shell, and runs the console program installed
+	// beside the running Desktop: on Windows mailarchive.exe in the install folder (the
+	// Desktop runs as mailarchivew.exe, or mailarchive-desktop.exe under its former name),
+	// on a Mac the program inside the app (the Desktop may run under mailarchive-gui, the
+	// former name, a link to it). A bare name is used only when the program's path is unknown.
+	win := `C:\Program Files\MailArchive Desktop\`
+	app := "/Applications/Mail Archive.app/Contents/MacOS/"
+	for _, c := range []struct{ goos, exe, out, want string }{
+		{"windows", win + "mailarchivew.exe", `C:\Mail Archive`, `"C:\Program Files\MailArchive Desktop\mailarchive.exe" schedule -out "C:\Mail Archive" -name nightly-tb -remove`},
+		{"windows", win + "mailarchive-desktop.exe", `C:\Mail Archive`, `"C:\Program Files\MailArchive Desktop\mailarchive.exe" schedule -out "C:\Mail Archive" -name nightly-tb -remove`},
+		{"windows", win + "MailArchiveW.EXE", `C:\Mail Archive`, `"C:\Program Files\MailArchive Desktop\mailarchive.exe" schedule -out "C:\Mail Archive" -name nightly-tb -remove`},
+		{"windows", `C:\Tools\mailarchive.exe`, `D:\Mail`, `"C:\Tools\mailarchive.exe" schedule -out "D:\Mail" -name nightly-tb -remove`},
+		{"darwin", app + "mailarchive", "/Users/a/Mail Archive", `'/Applications/Mail Archive.app/Contents/MacOS/mailarchive' schedule -out '/Users/a/Mail Archive' -name nightly-tb -remove`},
+		{"darwin", app + "mailarchive-gui", "/Users/a/Mail Archive", `'/Applications/Mail Archive.app/Contents/MacOS/mailarchive' schedule -out '/Users/a/Mail Archive' -name nightly-tb -remove`},
+		{"linux", "/usr/local/bin/mailarchive", "/srv/mail", `/usr/local/bin/mailarchive schedule -out /srv/mail -name nightly-tb -remove`},
+		{"darwin", "", "/Users/a/Mail Archive", `mailarchive schedule -out '/Users/a/Mail Archive' -name nightly-tb -remove`},
 	} {
-		if got := removeByNameCommand(c.goos, c.out, "nightly-tb"); got != c.want {
-			t.Errorf("%s: the command is %q, want %q", c.goos, got, c.want)
+		if got := removeByNameCommand(c.goos, c.exe, c.out, "nightly-tb"); got != c.want {
+			t.Errorf("%s, %s: the command is %q, want %q", c.goos, c.exe, got, c.want)
 		}
+	}
+	// A quoted program path is a command in Command Prompt but not in PowerShell, so on
+	// Windows the words say where to type it.
+	wl := ownNameExportLine("windows", win+"mailarchivew.exe", `C:\Mail Archive`, "nightly-tb", schedule.Descriptor{}, false)
+	if want := `The command that removes it, typed in Command Prompt: "C:\Program Files\MailArchive Desktop\mailarchive.exe" schedule -out "C:\Mail Archive" -name nightly-tb -remove`; !strings.HasSuffix(wl, want) {
+		t.Errorf("windows: the card's line is %q, want it to end %q", wl, want)
+	}
+}
+
+// covers: MA-948, R37
+// Remove is not shown for a schedule under its own name when the entry the page found is the
+// Microsoft 365 backup Settings remembers for another folder (Settings.BackupFor, kept by
+// "Save and keep the backup"): Remove would take out that entry, not this archive's own-named
+// one, and the page would then say "Removed." (review finding, 2026-10-31). Positive twin
+// first: with an entry named for this folder installed beside it, Remove reaches that entry
+// and is shown.
+func TestRemoveHiddenWhenOnlyAnotherFoldersEntryIsThere(t *testing.T) {
+	isolateHome(t)
+	if runtime.GOOS == "windows" {
+		t.Setenv("LOCALAPPDATA", t.TempDir())
+	}
+	own := tbProfileArchive(t)
+	g := newA3Rig(t, own, "darwin")
+	writeOwnNamedSchedule(t, own, "nightly-tb", own)
+	away := own + "-moved-away"
+	if err := SaveSettings(g.settings, Settings{Out: own, BackupFor: away}); err != nil {
+		t.Fatal(err)
+	}
+	g.fake.tasks[away] = true
+
+	// The positive twin: an entry named for this folder is there, so Remove has one to reach.
+	g.fake.tasks[own] = true
+	if !strings.Contains(g.page(), `id="schedRemove"`) {
+		t.Fatal("the positive twin: an entry named for this folder is installed, yet Remove is not shown")
+	}
+
+	// Only the other folder's entry: Remove is not shown, and the card still gives the command.
+	delete(g.fake.tasks, own)
+	if e, _ := g.cfg.backupTask(); e != away {
+		t.Fatalf("fixture: the page's entry is %q, want the remembered folder %q", e, away)
+	}
+	p := g.page()
+	if strings.Contains(p, `id="schedRemove"`) {
+		t.Error("Remove is shown for an own-named schedule although the only entry it would take out is another folder's")
+	}
+	if !shows(p, "The command that removes it: /opt/mailarchive schedule -out "+shellQuote(own, "darwin")+" -name nightly-tb -remove") {
+		t.Error("the own-named schedule's card no longer gives the command that removes it")
+	}
+}
+
+// covers: MA-948, R37
+// Remove's note when the archive's schedule record exists but cannot be read (a hand edit,
+// bad JSON): never "found no scheduled backup" — the record is there and its backup may still
+// run — but the record's path and the command line's remedy for it (ESC-10,
+// schedule.UnreadableDescriptorRemedy), as `mailarchive schedule -remove` says (review
+// finding, 2026-10-31). Nothing is removed or changed. Positive twin first: with no record at
+// all, the note still says nothing was found.
+func TestRemoveNamesAnUnreadableRecord(t *testing.T) {
+	isolateHome(t)
+	none := tbProfileArchive(t)
+	n := newA3Rig(t, none, "darwin")
+	r, body := postRemove(t, n)
+	if want := "Nothing was removed: MailArchive found no scheduled backup for this archive folder."; r.Removed == nil || *r.Removed || said(body) != want {
+		t.Fatalf("the positive twin, no record: Remove answered %s, want %q", body, want)
+	}
+
+	bad := tbProfileArchive(t)
+	b := newA3Rig(t, bad, "darwin")
+	desc := filepath.Join(bad, schedule.DescriptorName)
+	if err := os.WriteFile(desc, []byte("{not json"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if schedule.UnreadableDescriptor(bad) != desc {
+		t.Fatal("fixture: the record reads")
+	}
+	before, setBefore := fileBytes(desc), fileBytes(b.settings)
+	r, body = postRemove(t, b)
+	want := "Nothing was removed. This archive's schedule record, " + desc + ", can't be read, so MailArchive can't tell which scheduled backup it records, and that backup may still be running. To fix the record: " + schedule.UnreadableDescriptorRemedy + "."
+	if !r.OK || r.Removed == nil || *r.Removed || said(body) != want {
+		t.Errorf("Remove with an unreadable record answered %s\nwant removed:false and the note %q", body, want)
+	}
+	if strings.Contains(body, "found no scheduled backup") {
+		t.Error("Remove says it found no scheduled backup although the archive's record is there")
+	}
+	if !bytes.Equal(before, fileBytes(desc)) || !bytes.Equal(setBefore, fileBytes(b.settings)) || len(b.fake.removed) != 0 {
+		t.Error("Remove changed something although it removed nothing")
 	}
 }

@@ -545,7 +545,7 @@ func (d *dashboard) scheduleRemove(w http.ResponseWriter, r *http.Request) {
 	if len(removed) == 0 {
 		// Never "Removed." when nothing was (MA-948): say so, and how to remove a schedule set
 		// up under a name of its own.
-		resp["note"] = removeNothingNote(d.cfg.goos(), d.cfg.effectiveOut())
+		resp["note"] = removeNothingNote(d.cfg.goos(), d.cfg.Exe, d.cfg.effectiveOut())
 	}
 	// A descriptor the tool cannot read is never deleted (rulings §13.6, ESC-10):
 	// name it with the remedy, as `schedule -remove` does.

@@ -48,21 +48,65 @@ func sameEntryName(a, b string) bool {
 }
 
 // removeByNameCommand is the command that removes the schedule called name for the archive
-// at out, quoted for goos's shell: the command line's removal by -name (runSchedule).
-func removeByNameCommand(goos, out, name string) string {
-	return shellJoin([]string{"mailarchive", "schedule", "-out", out, "-name", name, "-remove"}, goos)
+// at out, quoted for goos's shell: the command line's removal by -name (runSchedule). It runs
+// the console program beside the running Desktop, exe (consoleProgram), since no installer
+// puts mailarchive on the PATH.
+func removeByNameCommand(goos, exe, out, name string) string {
+	return shellJoin([]string{consoleProgram(goos, exe), "schedule", "-out", out, "-name", name, "-remove"}, goos)
+}
+
+// consoleProgram is the program to type at a terminal, from exe, the running Desktop's own
+// path (Config.Exe, never a path from the archive's record, which is untrusted): exe itself,
+// except under a name that is not the console program — mailarchivew.exe (Windows' windowed
+// build), or a former name (schedule.FormerName: mailarchive-desktop, mailarchive-gui), which
+// routes every command to the Desktop or the wizard (dispatch.go) — where it is the mailarchive program in
+// the same folder: mailarchive.exe in the Windows install folder, the program inside the Mac
+// app. With exe unknown it is the bare name.
+func consoleProgram(goos, exe string) string {
+	sep := "/"
+	if goos == "windows" {
+		sep = `\/`
+	}
+	i := strings.LastIndexAny(exe, sep)
+	if strings.TrimSpace(exe) == "" || i == len(exe)-1 {
+		return "mailarchive"
+	}
+	base := exe[i+1:]
+	if schedule.FormerName(base, goos) || strings.TrimSuffix(strings.ToLower(base), ".exe") == "mailarchivew" {
+		name := "mailarchive"
+		if goos == "windows" {
+			name += ".exe"
+		}
+		return exe[:i+1] + name
+	}
+	return exe
+}
+
+// inTerminal is where to type a command on goos: a quoted program path is a command in
+// Command Prompt but not in PowerShell, so on Windows it names Command Prompt.
+func inTerminal(goos string) string {
+	if goos == "windows" {
+		return "in Command Prompt"
+	}
+	return "in a terminal"
 }
 
 // removeByHandGeneric is how to remove a schedule set up under a name this page cannot show.
 const removeByHandGeneric = "Remove it at the command line where it was set up: mailarchive schedule -name followed by its name, then -remove."
 
-// removeNothingNote is Remove's reply when it removed nothing.
-func removeNothingNote(goos, out string) string {
+// removeNothingNote is Remove's reply when it removed nothing. A record that is there but
+// cannot be read is named with the command line's remedy (ESC-10), never as "no scheduled
+// backup": nothing in it says which schedule it was, and that schedule may still run.
+func removeNothingNote(goos, exe, out string) string {
+	if p := schedule.UnreadableDescriptor(out); p != "" {
+		return "Nothing was removed. This archive's schedule record, " + p + ", can't be read, so MailArchive can't tell which scheduled backup it records, and that backup may still be running. To fix the record: " +
+			schedule.UnreadableDescriptorRemedy + "."
+	}
 	switch own, name := recordedOwnName(out); {
 	case own && name != "":
 		return "Nothing was removed. This archive's scheduled backup was set up at the command line under its own name, " + name +
-			", and Remove here reaches only a backup named for this archive folder. To remove it (your archive and its mail are kept), type this in a terminal: " +
-			removeByNameCommand(goos, out, name)
+			", and Remove here reaches only a backup named for this archive folder. To remove it (your archive and its mail are kept), type this " + inTerminal(goos) + ": " +
+			removeByNameCommand(goos, exe, out, name)
 	case own:
 		return "Nothing was removed. This archive's scheduled backup was set up under a name of its own, and Remove here reaches only a backup named for this archive folder. " + removeByHandGeneric
 	default:
@@ -73,10 +117,13 @@ func removeNothingNote(goos, out string) string {
 // ownNameExportLine is the Scheduled backup card's line for a schedule set up at the command
 // line under its own name (MA-942's line, MA-948): toRunJob says this page can then give the
 // archive a backup of its own (with Run now).
-func ownNameExportLine(goos, out, name string, d schedule.Descriptor, toRunJob bool) string {
+func ownNameExportLine(goos, exe, out, name string, d schedule.Descriptor, toRunJob bool) string {
 	called, how := "a name of its own", removeByHandGeneric
 	if name != "" {
-		called, how = "its own name ("+name+")", "The command that removes it: "+removeByNameCommand(goos, out, name)
+		called, how = "its own name ("+name+")", "The command that removes it: "+removeByNameCommand(goos, exe, out, name)
+		if goos == "windows" {
+			how = "The command that removes it, typed " + inTerminal(goos) + ": " + removeByNameCommand(goos, exe, out, name)
+		}
 	}
 	if !toRunJob {
 		return "It was set up at the command line under " + called + ", so change, repair or remove it there; MailArchive Desktop can't remove it. " + how
