@@ -250,7 +250,7 @@ func TestWinMinimizeOnlyOurProcess(t *testing.T) {
 // covers: MA-928
 // A Desktop started "as administrator" ends refused-elevated with the Desktop's own
 // line (C-65): nothing is started, and the narration tells the person to start
-// Mail Archive Desktop normally, then click Run now again.
+// MailArchive Desktop normally, then click Run now again.
 func TestWinElevatedDesktopRefusal(t *testing.T) {
 	var log bytes.Buffer
 	e := &winEnv{w: fakeWin32{isElev: true}, clock: time.Now,
@@ -263,7 +263,7 @@ func TestWinElevatedDesktopRefusal(t *testing.T) {
 	if res.Outcome != OutcomeRefusedElevated {
 		t.Fatalf("outcome %s, want refused-elevated", res.Outcome.Name)
 	}
-	if !strings.Contains(log.String(), "Start Mail Archive Desktop normally, not as administrator, then click Run now again.") {
+	if !strings.Contains(log.String(), "Start MailArchive Desktop normally, not as administrator, then click Run now again.") {
 		t.Errorf("the narration lacks the Desktop's elevated line: %q", log.String())
 	}
 }

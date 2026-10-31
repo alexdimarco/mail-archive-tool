@@ -269,7 +269,7 @@ func TestRunNowCancelCauses(t *testing.T) {
 	}
 	g.s.release <- struct{}{}
 	m = g.done()
-	if m["error"] != "" || !strings.Contains(str(m["note"]), "Thunderbird synced: its mail settled after 6 min.") || g.lastRunStatus() != state.RunOK {
+	if m["error"] != "" || !strings.Contains(str(m["note"]), "Thunderbird synced: its mail stopped arriving after 6 min.") || g.lastRunStatus() != state.RunOK {
 		t.Fatalf("twin: the released Run now: %v, record %s", m, g.lastRunStatus())
 	}
 
@@ -319,7 +319,7 @@ func TestRunNowCancelCauses(t *testing.T) {
 	g.s.release <- struct{}{}
 	m = g.done()
 	g.s.cancelOnReturn = nil
-	if n := str(m["note"]); !strings.HasPrefix(n, "Thunderbird synced: its mail settled after 6 min.") || !strings.HasSuffix(n, cancelledText) {
+	if n := str(m["note"]); !strings.HasPrefix(n, "Thunderbird synced: its mail stopped arriving after 6 min.") || !strings.HasSuffix(n, cancelledText) {
 		t.Errorf("a cancel while reading: %q, want the sync's line then today's words", n)
 	}
 	rep, err := app.Verify(g.out, app.VerifyOptions{}, log.New(io.Discard, "", 0), nil)
@@ -392,7 +392,7 @@ func TestRunNowNoteBuiltOnTheServer(t *testing.T) {
 	g.s.release <- struct{}{}
 	m = g.done()
 	end := str(m["note"])
-	if !strings.HasPrefix(end, "Thunderbird synced: its mail settled after 6 min. It was left open out of sight; quit it from the Dock when you are done. ") ||
+	if !strings.HasPrefix(end, "Thunderbird synced: its mail stopped arriving after 6 min. It was left open out of sight; quit it from the Dock when you are done. ") ||
 		!strings.Contains(end, "Export complete.") || m["syncPhase"] != "" {
 		t.Errorf("the end note: %q (phase %v)", end, m["syncPhase"])
 	}
@@ -707,7 +707,7 @@ func TestARunNowIsShownOnlyOnItsOwnArchive(t *testing.T) {
 	}
 
 	SaveSettings(g.d.cfg.SettingsPath, Settings{Out: g.out}) // switched back
-	if m = g.activity(); m["runNowHere"] != true || !strings.HasPrefix(str(m["note"]), "Thunderbird synced: its mail settled after 6 min.") {
+	if m = g.activity(); m["runNowHere"] != true || !strings.HasPrefix(str(m["note"]), "Thunderbird synced: its mail stopped arriving after 6 min.") {
 		t.Errorf("back on its own archive, the end note: %v", m)
 	}
 

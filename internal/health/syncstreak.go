@@ -3,6 +3,7 @@ package health
 import (
 	"fmt"
 	"runtime"
+	"strings"
 	"time"
 
 	"mail-archive-tool/internal/job"
@@ -64,6 +65,7 @@ type syncWords struct {
 	hidden  string // how a started Thunderbird is kept: "out of sight", or "minimized"
 	place   string // where it is quit from
 	started string // "started out of sight", or "started minimized"
+	byHand  string // off the Desktop: how to run this archive's backup by hand (handCommand)
 }
 
 func syncWordsFor(in Input) syncWords {
@@ -76,7 +78,60 @@ func syncWordsFor(in Input) syncWords {
 	if goos == "windows" {
 		w.hidden, w.place, w.started = "minimized", "the taskbar or the notification area", "started minimized"
 	}
+	if !w.desktop {
+		in.GOOS = goos
+		if cmd, ok := handCommand(in); ok {
+			w.byHand = "run the backup by hand with " + cmd
+		} else {
+			w.byHand = "run this archive's backup by hand, adding `-thunderbird-sync` to the command you back it up with; status cannot print that whole command for this archive"
+		}
+	}
 	return w
+}
+
+// handCommand is the whole command that backs up this archive by hand with its
+// Thunderbird sync, in the command line's words (the friction review's O2, applied by the
+// lead 2026-10-31): `mailarchive -thunderbird-sync` alone is not a command, since a backup
+// needs its archive folder and its mail. For a Desktop- or wizard-made schedule — a run-job
+// corroborated on this computer (KindEv, owner-side, never the archive's descriptor) whose
+// job file carries the sync — it is `mailarchive run-job JOBFILE`, the very job the schedule
+// runs, its archive, mail and sync included. For a command-line schedule (the export route,
+// as repairHow's) whose job carries -thunderbird-sync, it is that job with this archive's
+// folder as its -out. Every token is shell-quoted for goos (INS2-2). ok is false when
+// neither is known, or a Windows token no quoting makes inert would leave a placeholder:
+// the caller then says it cannot print a whole command, and prints no partial one.
+func handCommand(in Input) (string, bool) {
+	var toks []string
+	switch {
+	case in.KindEv.JobPath != "":
+		j, err := job.Read(in.KindEv.JobPath)
+		if err != nil || j.ThunderbirdSync == nil {
+			return "", false
+		}
+		toks = []string{"run-job", in.KindEv.JobPath}
+	case schedule.RepairRoute(in.Desc, in.Out, in.KindEv) == schedule.RouteCommand && jobSyncs(in.Desc.Job):
+		toks = jobWithOut(in.Desc.Job, in.Out)
+	default:
+		return "", false
+	}
+	q := quoteTokens(toks, in.GOOS)
+	for _, t := range q {
+		if t == unsafeTokenPlaceholder {
+			return "", false
+		}
+	}
+	return "`mailarchive " + strings.Join(q, " ") + "`", true
+}
+
+// jobSyncs reports whether a recorded export job carries -thunderbird-sync, spelled as
+// the schedule's descriptor recognises it.
+func jobSyncs(args []string) bool {
+	for _, a := range args {
+		if a == "-thunderbird-sync" || a == "--thunderbird-sync" {
+			return true
+		}
+	}
+	return false
 }
 
 // syncNow is the sentence that backs up the mail now, in the surface's words. "Click
@@ -89,7 +144,7 @@ func (w syncWords) syncNow() string {
 	case w.desktop:
 		return "To back up the mail now, open Thunderbird, let its mail arrive, then click Run now on the Scheduled backup card."
 	}
-	return "To back up the mail now, open Thunderbird, let its mail arrive, then run the backup by hand with `mailarchive -thunderbird-sync`."
+	return "To back up the mail now, open Thunderbird, let its mail arrive, then " + w.byHand + "."
 }
 
 // thenRunNow ends a remedy whose first step fixes the cause: ", then click Run now."
@@ -134,9 +189,9 @@ func syncRemedy(in Input, lastName string) string {
 		return "The backup ran as administrator, and the sync never runs that way. " + w.repair()
 	case presync.OutcomeStartBlocked.Name:
 		if w.desktop {
-			return "Thunderbird could not be started from the way Mail Archive was started. Click Repair on the Scheduled backup card; if you use Run now, start Mail Archive Desktop from its shortcut."
+			return "Thunderbird could not be started from the way MailArchive was started. Click Repair on the Scheduled backup card; if you use Run now, start MailArchive Desktop from its shortcut."
 		}
-		return "Thunderbird could not be started from the way Mail Archive was started. " + w.repair()
+		return "Thunderbird could not be started from the way MailArchive was started. " + w.repair()
 	case presync.OutcomeProfileUnusable.Name:
 		return "This Thunderbird profile could not be used. Open Thunderbird once" + w.thenRunNow()
 	case presync.OutcomeNoDesktopSession.Name:
@@ -145,7 +200,7 @@ func syncRemedy(in Input, lastName string) string {
 		return "The sync could not be prepared on this computer. " + w.repair()
 	case presync.OutcomeProfileBusy.Name:
 		if w.desktop {
-			return "Another backup kept this Thunderbird profile busy. Shut down Mail Archive, open it again" + w.thenRunNow()
+			return "Another backup kept this Thunderbird profile busy. Shut down MailArchive Desktop, open it again" + w.thenRunNow()
 		}
 		return "Another backup kept this Thunderbird profile busy. Make sure no other backup of this archive is still running" + w.thenRunNow()
 	}
@@ -190,7 +245,7 @@ func nothingArrivedText(in Input, s state.SyncStreak) string {
 	w := syncWordsFor(in)
 	then := "then click Run now."
 	if !w.desktop {
-		then = "then run the backup by hand with `mailarchive -thunderbird-sync`."
+		then = "then " + w.byHand + "."
 	}
 	return fmt.Sprintf("This is not a failed backup: the backups still ran. Since %s, Thunderbird was started before each of this archive's scheduled backups, but no new mail arrived (%d backups in a row). That can mean there was no new mail, or that Thunderbird is waiting for a password or sign-in that nobody has answered: it was %s, so its window is easy to miss. Do this: open Thunderbird; if it asks for a password or a sign-in, answer it, %s",
 		streakDate(s.FirstNoChange), s.NoChange, w.started, then)

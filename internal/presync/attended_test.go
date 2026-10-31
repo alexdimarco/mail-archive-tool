@@ -464,7 +464,7 @@ func TestOutcomeLineEveryOutcome(t *testing.T) {
 		want string
 	}{
 		{OutcomeOK, "darwin", LeftOpenByRule, false,
-			"Thunderbird synced: its mail settled after 6 min. It was left open out of sight; quit it from the Dock when you are done."},
+			"Thunderbird synced: its mail stopped arriving after 6 min. It was left open out of sight; quit it from the Dock when you are done."},
 		{OutcomeNoActivity, "darwin", LeftOpenByRule, false,
 			"Thunderbird started, but nothing arrived in 20 minutes: either there was no new mail, or Thunderbird is waiting for a password or sign-in. To check, open Thunderbird from the Dock; it was left open."},
 		{OutcomeWaitEnded, "darwin", LeftOpenByRule, false,
@@ -480,9 +480,9 @@ func TestOutcomeLineEveryOutcome(t *testing.T) {
 		{OutcomeCancelled, "darwin", LeftNone, false,
 			"Thunderbird sync: cancelled — Thunderbird was not started."},
 		{OutcomeOK, "windows", LeftOpenByRule, true,
-			"Thunderbird synced: its mail settled after 6 min. It was left open minimized to the taskbar; quit it from the taskbar or the notification area when you are done."},
+			"Thunderbird synced: its mail stopped arriving after 6 min. It was left open minimized to the taskbar; quit it from the taskbar or the notification area when you are done."},
 		{OutcomeOK, "windows", LeftOpenByRule, false,
-			"Thunderbird synced: its mail settled after 6 min. It was left open; its window may still be on screen; quit it from the taskbar or the notification area when you are done."},
+			"Thunderbird synced: its mail stopped arriving after 6 min. It was left open; its window may still be on screen; quit it from the taskbar or the notification area when you are done."},
 	} {
 		if got := OutcomeLine(g.o, SurfaceDesktop, g.goos, g.left, 6*time.Minute, g.min); got != g.want {
 			t.Errorf("OutcomeLine(%s, desktop, %s, %s, min=%v) =\n  %q\nwant\n  %q", g.o.Name, g.goos, g.left, g.min, got, g.want)
@@ -498,6 +498,15 @@ func checkOutcomeLine(t *testing.T, ctx, line string, o Outcome, surface, goos s
 	}
 	if strings.Contains(line, "presync_") || strings.Contains(line, "/") || strings.Contains(line, `\`) {
 		t.Errorf("%s: the line names a code or a path: %q", ctx, line)
+	}
+	// The friction review's taste items, applied by the lead 2026-10-31 (O1, O5): one
+	// program name (X17), and a synced line says its mail "stopped arriving", not the
+	// technical "settled".
+	if strings.Contains(line, "Mail Archive") {
+		t.Errorf("%s: the line names the program \"Mail Archive\", not \"MailArchive\": %q", ctx, line)
+	}
+	if strings.Contains(line, "settled after") {
+		t.Errorf("%s: the line says its mail \"settled after\", not \"stopped arriving after\": %q", ctx, line)
 	}
 	if goos == "windows" && (strings.Contains(line, "Dock") || strings.Contains(line, "out of sight")) {
 		t.Errorf("%s: a Windows line names the Dock or 'out of sight': %q", ctx, line)

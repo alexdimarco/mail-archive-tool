@@ -144,7 +144,7 @@ func TestStartBlockedOutcome(t *testing.T) {
 		t.Errorf("start-blocked is %s, synced %v; want a warning, never synced", OutcomeStartBlocked.Class, OutcomeStartBlocked.Synced())
 	}
 	line := OutcomeLine(OutcomeStartBlocked, SurfaceDesktop, "windows", LeftNone, 0, false)
-	if !strings.Contains(line, "Mail Archive Desktop was started in a way that cannot start Thunderbird; start Mail Archive Desktop from its shortcut, then click Run now again.") {
+	if !strings.Contains(line, "MailArchive Desktop was started in a way that cannot start Thunderbird; start MailArchive Desktop from its shortcut, then click Run now again.") {
 		t.Errorf("the Desktop line lacks §2.7's words: %q", line)
 	}
 	if cli := OutcomeLine(OutcomeStartBlocked, SurfaceCLI, "windows", LeftNone, 0, false); strings.Contains(cli, "Run now") || strings.Contains(cli, "shortcut") {
@@ -162,18 +162,18 @@ func TestStartBlockedOutcome(t *testing.T) {
 	if !strings.Contains(msg, "click Repair on the Scheduled backup card") {
 		t.Errorf("start-blocked's warning gives a scheduled run no remedy of its own (Repair): %q", msg)
 	}
-	if !strings.Contains(msg, "if you use Run now, start Mail Archive Desktop from its shortcut") {
+	if !strings.Contains(msg, "if you use Run now, start MailArchive Desktop from its shortcut") {
 		t.Errorf("start-blocked's warning lost the Run now remedy: %q", msg)
 	}
 }
 
 // covers: MA-928
 // A Desktop started "as administrator" gets refused-elevated with the Desktop's own
-// line (C-65): start Mail Archive Desktop normally, then click Run now again — not
+// line (C-65): start MailArchive Desktop normally, then click Run now again — not
 // the scheduled task's Repair remedy, and the command line's words name no button.
 func TestElevatedDesktopLine(t *testing.T) {
 	d := OutcomeLine(OutcomeRefusedElevated, SurfaceDesktop, "windows", LeftNone, 0, false)
-	if !strings.Contains(d, "Start Mail Archive Desktop normally, not as administrator, then click Run now again.") {
+	if !strings.Contains(d, "Thunderbird was not synced: MailArchive Desktop was started as administrator. Start MailArchive Desktop normally, not as administrator, then click Run now again.") {
 		t.Errorf("the Desktop's elevated line: %q", d)
 	}
 	if c := OutcomeLine(OutcomeRefusedElevated, SurfaceCLI, "windows", LeftNone, 0, false); strings.Contains(c, "Run now") || strings.Contains(c, "Desktop") {

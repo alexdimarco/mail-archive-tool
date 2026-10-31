@@ -27,7 +27,7 @@ var wantTag = map[string]string{
 	"other-profile-running":      "Thunderbird not synced: open with another profile",
 	"profile-busy":               "Thunderbird not synced: another backup was syncing it",
 	"leftover-found":             "Thunderbird not synced: an earlier copy is still open",
-	"app-not-found":              "Thunderbird not synced: Thunderbird was not found",
+	"app-not-found":              "Thunderbird not synced: it was not found", // the friction review's O6, applied 2026-10-31
 	"refused-elevated":           "Thunderbird not synced: the backup ran as administrator",
 	"profile-unusable":           "Thunderbird not synced: its profile could not be used",
 	"cannot-start":               "Thunderbird not synced: it could not be started",

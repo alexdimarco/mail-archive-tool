@@ -31,7 +31,7 @@ var tagPhrases = map[string]string{
 	OutcomeOtherProfileRunning.Name:      "Thunderbird not synced: open with another profile",
 	OutcomeProfileBusy.Name:              "Thunderbird not synced: another backup was syncing it",
 	OutcomeLeftoverFound.Name:            "Thunderbird not synced: an earlier copy is still open",
-	OutcomeAppNotFound.Name:              "Thunderbird not synced: Thunderbird was not found",
+	OutcomeAppNotFound.Name:              "Thunderbird not synced: it was not found", // friction review O6, 2026-10-31
 	OutcomeRefusedElevated.Name:          "Thunderbird not synced: the backup ran as administrator",
 	OutcomeProfileUnusable.Name:          "Thunderbird not synced: its profile could not be used",
 	OutcomeCannotStart.Name:              phraseCannotStart,

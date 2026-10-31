@@ -195,7 +195,7 @@ func syncStaleSubjectAndBody(name string, ev Event) (subject, body string) {
 	if !s.Since.IsZero() {
 		since = s.Since.Local().Format("Jan 2, 2006")
 	}
-	subject = "Mail Archive: Thunderbird not synced for 3 days — " + name
+	subject = "MailArchive: Thunderbird not synced for 3 days — " + name
 	var b strings.Builder
 	fmt.Fprintf(&b, "The scheduled backups of %s on %s still ran, but Thunderbird has not been synced before them since %s (%d backups in a row). ", name, host, since, s.Missed)
 	b.WriteString("Mail that had only reached the mail server, not this computer, may be missing from the archive.\r\n\r\n")

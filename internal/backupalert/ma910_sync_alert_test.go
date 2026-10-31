@@ -320,7 +320,7 @@ func TestTheSyncEmailWordsComeFromTheClosedMaps(t *testing.T) {
 	msg := string((alert.Config{From: "b@example.org", To: "t@example.org"}).Message(ev))
 	date := syncT0.Local().Format("Jan 2, 2006")
 	for _, want := range []string{
-		"Subject: Mail Archive: Thunderbird not synced for 3 days — " + g.out + "\r\n",
+		"Subject: MailArchive: Thunderbird not synced for 3 days — " + g.out + "\r\n",
 		"The scheduled backups of " + g.out + " on ",
 		" still ran, but Thunderbird has not been synced before them since " + date + " (2 backups in a row).",
 		"Mail that had only reached the mail server, not this computer, may be missing from the archive.",
@@ -335,6 +335,11 @@ func TestTheSyncEmailWordsComeFromTheClosedMaps(t *testing.T) {
 	}
 	if strings.Contains(msg, "not-set-up") {
 		t.Errorf("the sync email echoes the outcome's name:\n%s", msg)
+	}
+	// One program name, as the other alert emails and the UX contract (X17) have it: never
+	// "Mail Archive" (the friction review's O1, applied 2026-10-31).
+	if strings.Contains(msg, "Mail Archive") {
+		t.Errorf("the sync email names the program \"Mail Archive\", not \"MailArchive\":\n%s", msg)
 	}
 
 	hostile := newSyncRig(t, alertsOnFailure)

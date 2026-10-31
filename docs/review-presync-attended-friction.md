@@ -38,7 +38,7 @@ I security-inherent, II design choice, III buildable away (wording, a missing hi
 | 13 | Owner, Mac, reads the Settings card's sync notice | **partly** | The notice says that when the sync "asks Thunderbird to quit" on-exit actions run. Read on a Mac, where Run now never closes Thunderbird, it can be taken to mean Run now closes it. | III | F4 |
 | 14 | Owner, Windows PC, Run now with the sync on (start not allowed yet) | yes | Tooltip, note and encrypted reason all say Run now does not start Thunderbird yet, and scheduled backups still do. No promise is made. | — | none |
 | 15 | New person reads the release notes before upgrading | **partly** | "Run now now syncs" reads as a typo. The notes said nothing about the 3-day warning, its email, the softer warning or encrypted archives syncing. | III | F13 |
-| 16 | Operator reads `mailarchive status` WARN at a terminal | yes | Remedies name `mailarchive -thunderbird-sync` without the archive folder, which is not a complete command on its own. | III | for the owner (O2) |
+| 16 | Operator reads `mailarchive status` WARN at a terminal | yes | Remedies name `mailarchive -thunderbird-sync` without the archive folder, which is not a complete command on its own. | III | for the owner (O2); applied by the lead 2026-10-31, owner may revert |
 
 No Type I or Type II friction was found in the words. The ~13-minute wait itself is Thunderbird's own
 periodic mail check; the owner chose accuracy over speed (2026-10-21), and Stop waiting is the way
@@ -118,20 +118,47 @@ The design keeps its draft words; §14 gate 3 points here for the words of recor
   everywhere a person reads, which is the accepted name in the UX contract (X17). Not applied here: it
   changes Windows-only tests that need the lab VM, and the Mac app is named "Mail Archive" in the Dock,
   so it is partly a naming choice.
+  **Applied by the lead, 2026-10-31, owner may revert.** Every text this branch added that a person
+  reads now says "MailArchive Desktop" where the Desktop is meant and "MailArchive" where the program
+  is: the email subject ("MailArchive: Thunderbird not synced for 3 days — ARCHIVE", as the other
+  alert emails' "MailArchive backup …"), the Desktop's administrator and start-blocked lines, the
+  start-blocked, profile-busy ("Shut down MailArchive Desktop, open it again…") Status remedies, and the
+  run warnings start-blocked, quit-no-window, state-unsaved and not-set-up. Not renamed: the macOS app
+  bundle, the older texts from before this branch (among them the macOS Automation warning, which names
+  the entry macOS lists, and the wizard's own notices), and the design's draft words. Tests now fail any
+  of these texts that says "Mail Archive"; the Windows-only test was updated by hand and run on the
+  Windows 11 lab VM.
 - **O2. The command-line remedy is not a whole command.** Status at a terminal says "run the backup by
   hand with `mailarchive -thunderbird-sync`", without the archive folder. Recommendation: print the
   full command with this archive's folder, once someone checks which exact form runs the job (not
   checked in this review).
+  **Applied by the lead, 2026-10-31, owner may revert.** Checked by reading `cmd/mailarchive` (the
+  export flags, `parseJob`, the run-job verb) and by a dry parse in a test, never by running a backup.
+  A backup needs its archive folder and its mail, so the whole command depends on how the schedule was
+  made: for a Desktop- or wizard-made schedule it is `mailarchive run-job JOBFILE` — the very job the
+  schedule runs, which holds the archive folder, its mail and the sync (the job file is the one this
+  computer keeps for the archive, never one the archive itself names); for a command-line schedule it is
+  the recorded job with this archive's folder as its `-out`, which already carries `-thunderbird-sync`.
+  Both are shell-quoted. When neither is known (or a Windows path would need editing by hand), the
+  advice says so: "run this archive's backup by hand, adding `-thunderbird-sync` to the command you back
+  it up with; status cannot print that whole command for this archive". The partial
+  `mailarchive -thunderbird-sync` is no longer printed by these two warnings. Left as they were: the
+  four older run warnings (from the first pre-sync release) that also name `mailarchive
+  -thunderbird-sync`; they are written once for every archive and cannot name its folder.
 - **O3. The alert checkbox mentions Thunderbird on every archive.** "a failed backup, or Thunderbird
   not synced for 3 days (recommended)" also shows for a Microsoft 365 archive. Recommendation: keep it;
-  it is true and short.
+  it is true and short. **Kept as it is, by the lead, 2026-10-31, owner may revert.**
 - **O4. The waiting note has four sentences.** Recommendation: keep them; each answers a question a
   person has during a 13-minute wait (how long, why, where Thunderbird is, how to stop early).
+  **Kept as it is, by the lead, 2026-10-31, owner may revert.**
 - **O5. "its mail settled after 6 min".** "Settled" is a slightly technical word in the end line.
   Recommendation: "its mail stopped arriving after 6 min". Not applied: many pinned lines, and it is
-  wording taste.
+  wording taste. **Applied by the lead, 2026-10-31, owner may revert:** "Thunderbird synced: its mail
+  stopped arriving after N min." (also the partly-watched variant). The exited-early line's "before its
+  mail settled" is not this end line and was left as it is.
 - **O6. "Thunderbird not synced: Thunderbird was not found".** The tag repeats the name.
-  Recommendation: "…: it was not found". Tiny.
+  Recommendation: "…: it was not found". Tiny. **Applied by the lead, 2026-10-31, owner may revert:**
+  "Thunderbird not synced: it was not found".
 - **O7. Read the three new release-note bullets** before the release; they are in your voice.
 
 ## Not checked

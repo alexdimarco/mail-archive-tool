@@ -8,6 +8,7 @@ import (
 	"testing"
 	"time"
 
+	"mail-archive-tool/internal/job"
 	"mail-archive-tool/internal/presync"
 	"mail-archive-tool/internal/schedule"
 	"mail-archive-tool/internal/state"
@@ -48,11 +49,11 @@ var wantRemedy = map[string]string{
 	"other-profile-running": "Thunderbird was open with another profile at backup time. Quit it before the backup time, or leave this profile's Thunderbird open.",
 	"app-not-found":         "Thunderbird was not found in its usual place. Install it there, then click Run now.",
 	"refused-elevated":      "The backup ran as administrator, and the sync never runs that way. Click Repair on the Scheduled backup card.",
-	"start-blocked":         "Thunderbird could not be started from the way Mail Archive was started. Click Repair on the Scheduled backup card; if you use Run now, start Mail Archive Desktop from its shortcut.",
+	"start-blocked":         "Thunderbird could not be started from the way MailArchive was started. Click Repair on the Scheduled backup card; if you use Run now, start MailArchive Desktop from its shortcut.",
 	"profile-unusable":      "This Thunderbird profile could not be used. Open Thunderbird once, then click Run now.",
 	"no-desktop-session":    "No one was logged in at backup time, so Thunderbird could not be started. Stay logged in at the backup time.",
 	"not-set-up":            "The sync could not be prepared on this computer. Click Repair on the Scheduled backup card.",
-	"profile-busy":          "Another backup kept this Thunderbird profile busy. Shut down Mail Archive, open it again, then click Run now.",
+	"profile-busy":          "Another backup kept this Thunderbird profile busy. Shut down MailArchive Desktop, open it again, then click Run now.",
 	"cannot-start":          "Click Run now on the Scheduled backup card to sync while you watch.",
 	"internal-error":        "Click Run now on the Scheduled backup card to sync while you watch.",
 }
@@ -125,6 +126,10 @@ func TestTheNotSyncedWarning(t *testing.T) {
 					}
 					if goos == "darwin" && strings.Contains(got, "taskbar") {
 						t.Errorf("%s: a macOS remedy names the taskbar: %q", ctx, got)
+					}
+					// One program name (X17; the friction review's O1, applied 2026-10-31).
+					if strings.Contains(got, "Mail Archive") {
+						t.Errorf("%s: a remedy names the program \"Mail Archive\", not \"MailArchive\": %q", ctx, got)
 					}
 				}
 			}
@@ -200,8 +205,10 @@ func TestTheNothingArrivedWarning(t *testing.T) {
 	if rep.Posture != "WARN" || msg != want {
 		t.Fatalf("positive twin: posture %s, the warning\n  %q\nwant\n  %q", rep.Posture, msg, want)
 	}
+	// syncInput's schedule carries no job the command line could print, so it says so
+	// rather than print a partial command (the friction review's O2, applied 2026-10-31).
 	if got := reasonWith(Assess(syncInput(now, "windows", "", nc), now), "presync_nothing_arrived"); !strings.Contains(got, "it was started minimized, so its window is easy to miss.") ||
-		!strings.HasSuffix(got, "answer it, then run the backup by hand with `mailarchive -thunderbird-sync`.") || strings.Contains(got, "Run now") || strings.Contains(got, "out of sight") {
+		!strings.HasSuffix(got, "answer it, then "+noWholeCommand+".") || strings.Contains(got, "Run now") || strings.Contains(got, "out of sight") {
 		t.Errorf("Windows, command line: %q", got)
 	}
 
@@ -349,6 +356,112 @@ func TestTheNotSetUpWarningSurfaces(t *testing.T) {
 	}
 	if doc := JSON(in, rep); !contains(doc.ReasonCodes, "presync_not_set_up") {
 		t.Errorf("status -json reason_codes %v lack presync_not_set_up", doc.ReasonCodes)
+	}
+}
+
+// noWholeCommand is the command line's words when it cannot print a whole command
+// (the friction review's O2, applied 2026-10-31), written out.
+const noWholeCommand = "run this archive's backup by hand, adding `-thunderbird-sync` to the command you back it up with; status cannot print that whole command for this archive"
+
+// covers: MA-909, MA-926, S65
+// The command line's "back up the mail now" names a whole command (the friction review's
+// O2, applied by the lead 2026-10-31): never the bare `mailarchive -thunderbird-sync`,
+// which is not a command on its own. Positive twin first: an export schedule whose job
+// carries -thunderbird-sync gets that job with THIS archive's folder as its -out (a job
+// recorded for another folder is re-pointed), each token shell-quoted for the OS, in both
+// the 3-day WARN and the softer one; a Desktop- or wizard-made schedule (a run-job
+// corroborated on this computer, whose job file carries the sync) gets `mailarchive
+// run-job JOBFILE`, the very job the schedule runs. Where neither is known — no job that
+// carries the sync, a run-job file without the sync, or a Windows token no quoting makes
+// inert — it says it cannot print a whole command, and prints no partial one. The Desktop
+// still names no command.
+func TestTheCommandLineNamesTheWholeCommand(t *testing.T) {
+	now := time.Date(2026, 10, 30, 12, 0, 0, 0, time.UTC)
+	t0 := time.Date(2026, 10, 20, 2, 0, 0, 0, time.UTC)
+	nc := state.SyncStreak{}.NoChangeSeen(t0).NoChangeSeen(t0.Add(24 * time.Hour)).NoChangeSeen(t0.Add(3 * 24 * time.Hour))
+	const out = "/Volumes/Backup/Mail"
+	const tb = "/Users/a/Library/Thunderbird/Profiles/x.default/Mail/Local Folders"
+	export := func(goos, surface string, s state.SyncStreak, jobOut string) Input {
+		in := syncInput(now, goos, surface, s)
+		in.Out = out
+		in.Desc.Job = []string{"-out", jobOut, "-mode", "incremental", "-unattended", "-input", tb, "-thunderbird-sync"}
+		return in
+	}
+	const wantCmd = "`mailarchive -out /Volumes/Backup/Mail -mode incremental -unattended -input '" + tb + "' -thunderbird-sync`"
+
+	got := reasonWith(Assess(export("darwin", "", staleStreak("cannot-start"), out), now), "presync_not_synced")
+	if !strings.HasSuffix(got, "Do this: To back up the mail now, open Thunderbird, let its mail arrive, then run the backup by hand with "+wantCmd+".") {
+		t.Fatalf("positive twin: the export schedule's WARN\n  %q\nwant it to end with the whole command %s", got, wantCmd)
+	}
+	if got := reasonWith(Assess(export("darwin", "", nc, out), now), "presync_nothing_arrived"); !strings.HasSuffix(got, "answer it, then run the backup by hand with "+wantCmd+".") {
+		t.Errorf("the softer warning: %q\n  want the whole command %s", got, wantCmd)
+	}
+	// A job recorded for another folder: the command backs up THIS archive.
+	if got := reasonWith(Assess(export("darwin", "gui", staleStreak("cannot-start"), "/Volumes/Old"), now), "presync_not_synced"); !strings.Contains(got, wantCmd) || strings.Contains(got, "/Volumes/Old -mode") {
+		t.Errorf("a job recorded for another folder: %q\n  want %s", got, wantCmd)
+	}
+	// Windows quoting.
+	win := export("windows", "", staleStreak("cannot-start"), `D:\Mail Archive`)
+	win.Out = `D:\Mail Archive`
+	win.Desc.Job[6] = `C:\Users\Alex\AppData\Roaming\Thunderbird\Profiles\x.default\Mail\Local Folders`
+	if got := reasonWith(Assess(win, now), "presync_not_synced"); !strings.HasSuffix(got,
+		"then run the backup by hand with `mailarchive -out \"D:\\Mail Archive\" -mode incremental -unattended -input \"C:\\Users\\Alex\\AppData\\Roaming\\Thunderbird\\Profiles\\x.default\\Mail\\Local Folders\" -thunderbird-sync`.") {
+		t.Errorf("Windows: %q", got)
+	}
+	// Every reason whose remedy runs the backup by hand names the whole command.
+	for name := range wantRemedy {
+		got := reasonWith(Assess(export("darwin", "", staleStreak(name), out), now), "presync_not_synced")
+		if strings.Contains(got, "by hand") && !strings.Contains(got, "by hand with "+wantCmd) {
+			t.Errorf("%s: %q\n  runs the backup by hand without the whole command", name, got)
+		}
+	}
+
+	// A run-job schedule, corroborated on this computer, whose job file carries the sync.
+	jp := filepath.Join(t.TempDir(), "mailarchive-1234abcd.json")
+	if err := job.Write(jp, job.Job{Name: "mailarchive-1234abcd", Inputs: []string{tb}, Out: out, Mode: "incremental", ThunderbirdSync: &job.ThunderbirdSync{}}); err != nil {
+		t.Fatal(err)
+	}
+	runJob := func(surface string, s state.SyncStreak) Input {
+		in := syncInput(now, "darwin", surface, s)
+		in.Out = out
+		in.Desc.Presync = nil // the run-job's own job file says it syncs
+		in.Desc.Job = []string{"run-job", jp}
+		in.KindEv = schedule.KindEvidence{Corroborated: map[schedule.Kind]bool{schedule.KindRunJob: true}, JobPath: jp}
+		return in
+	}
+	wantRun := "`mailarchive run-job " + shellQuoteToken(jp, "darwin") + "`"
+	if got := reasonWith(Assess(runJob("", staleStreak("cannot-start")), now), "presync_not_synced"); !strings.HasSuffix(got, "then run the backup by hand with "+wantRun+".") {
+		t.Errorf("the run-job schedule: %q\n  want %s", got, wantRun)
+	}
+	if got := reasonWith(Assess(runJob("", nc), now), "presync_nothing_arrived"); !strings.HasSuffix(got, "answer it, then run the backup by hand with "+wantRun+".") {
+		t.Errorf("the run-job schedule, softer warning: %q", got)
+	}
+	if got := reasonWith(Assess(runJob("desktop", staleStreak("cannot-start")), now), "presync_not_synced"); strings.Contains(got, "mailarchive") || strings.Contains(got, "`") {
+		t.Errorf("the Desktop names a command: %q", got)
+	}
+
+	// Neither known: says so, prints no partial command.
+	noSync := runJob("", staleStreak("cannot-start"))
+	noSync.Desc.Presync = &schedule.PresyncDesc{Kind: "thunderbird"} // configured, but its job file lacks the sync
+	jp2 := filepath.Join(t.TempDir(), "mailarchive-5678abcd.json")
+	if err := job.Write(jp2, job.Job{Name: "mailarchive-5678abcd", Inputs: []string{tb}, Out: out, Mode: "incremental"}); err != nil {
+		t.Fatal(err)
+	}
+	noSync.KindEv.JobPath = jp2
+	unsafe := export("windows", "", staleStreak("cannot-start"), `C:\%TEMP%\mail`)
+	unsafe.Out = `C:\%TEMP%\mail`
+	for label, in := range map[string]Input{
+		"no job carries the sync":           syncInput(now, "darwin", "", staleStreak("cannot-start")),
+		"a run-job file without the sync":   noSync,
+		"a Windows token quoting can't fix": unsafe,
+	} {
+		got := reasonWith(Assess(in, now), "presync_not_synced")
+		if !strings.HasSuffix(got, "let its mail arrive, then "+noWholeCommand+".") {
+			t.Errorf("%s: %q\n  want it to say it cannot print a whole command", label, got)
+		}
+		if strings.Contains(got, "`mailarchive") || strings.Contains(got, unsafeTokenPlaceholder) {
+			t.Errorf("%s: a partial command is printed: %q", label, got)
+		}
 	}
 }
 

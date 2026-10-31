@@ -95,3 +95,27 @@ func TestWarnTextTrueForARunNow(t *testing.T) {
 		}
 	}
 }
+
+// covers: MA-928, MA-900, MA-908
+// One program name in the run warnings this branch added (the friction review's O1,
+// applied by the lead 2026-10-31; X17): start-blocked, quit-no-window, state-unsaved and
+// not-set-up name the program "MailArchive", and the Desktop "MailArchive Desktop", as the
+// rest of the Desktop and the other alert emails do — never "Mail Archive". Positive twin
+// first: each is a warning that names the program at all. The older macOS Automation
+// warning, which names the entry macOS shows, is not one of them.
+func TestTheNewRunWarningsNameTheProgramOneWay(t *testing.T) {
+	for o, want := range map[Outcome]string{
+		OutcomeStartBlocked: "if you use Run now, start MailArchive Desktop from its shortcut (not from a terminal)",
+		OutcomeQuitNoWindow: "so MailArchive did not try to close it",
+		OutcomeStateUnsaved: "MailArchive's settings folder can be written to",
+		OutcomeNotSetUp:     "in MailArchive Desktop, click Repair on the Scheduled backup card",
+	} {
+		msg, ok := WarnText(o)
+		if !ok || !strings.Contains(msg, want) {
+			t.Errorf("%s: the warning %q (%v) lacks %q", o.Name, msg, ok, want)
+		}
+		if strings.Contains(msg, "Mail Archive") {
+			t.Errorf("%s: the warning names the program \"Mail Archive\": %q", o.Name, msg)
+		}
+	}
+}
