@@ -31,7 +31,8 @@ var (
 //     cancelled run, a stopped wait and no session at all move nothing (C-72, OQ-6).
 //   - The no-change count reads the session's Verdict (OQ-5): a scheduled no-change
 //     verdict extends it whatever the outcome became; a verdict that mail arrived resets
-//     it from any run; an attended no-change verdict never moves it.
+//     it from any run; an attended no-change verdict never moves it; a scheduled run that
+//     found Thunderbird already open resets it (§5.2, amended 2026-10-31).
 func updateSyncStreak(opts Options, out *PresyncOutcome, encrypted bool, now time.Time, logger *log.Logger) {
 	if opts.Key != nil || encrypted || ArchiveEncrypted(opts.Out) {
 		_ = removeSyncStreak(opts.Out) // nothing about the sync beside an encrypted archive (§4.4)
@@ -94,6 +95,13 @@ func foldSyncStreak(s state.SyncStreak, o PresyncOutcome, extend bool, now time.
 			s, moved = s.NoChangeSeen(now), true
 		}
 	case presync.OutcomeOK.Name, presync.OutcomeWatchTruncated.Name, presync.OutcomeNotQuiet.Name:
+		s, moved = s.MailArrived(), true
+	}
+	// A scheduled run that found the person's own Thunderbird already open has no verdict,
+	// but any password or sign-in window is in front of them, which is what the softer
+	// warning asks for: the no-change run ends (§5.2, amended 2026-10-31). It stays synced
+	// for the missed streak (Q1), above.
+	if extend && o.Name == presync.OutcomeAlreadyRunning.Name {
 		s, moved = s.MailArrived(), true
 	}
 	return s, moved

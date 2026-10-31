@@ -221,8 +221,10 @@ func TestACancelledScheduledRunEndsTheProfileBusyRun(t *testing.T) {
 // positive twin first, a scheduled no-change session starts it; it extends also when the
 // session ends owner-active or quit-* after a no-change verdict (and those still reset
 // the missed streak, as synced); an attended no-change session never moves it; a
-// session with no verdict (already-running, a skip, a cancel, a stopped wait) leaves it;
-// a verdict that mail arrived resets it, from a Run now as from a scheduled run. The
+// session with no verdict (a skip, a cancel, a stopped wait, and already-running from a
+// Run now or a manual run) leaves it; a verdict that mail arrived resets it, from a Run
+// now as from a scheduled run; a scheduled run that found Thunderbird already open
+// resets it too (§5.2, amended 2026-10-31) and stays synced for the missed streak. The
 // verdict is never written to the record or the history (only the outcome's name is).
 func TestTheNoChangeCountReadsTheVerdict(t *testing.T) {
 	out, in := tmpDir(t), completeMaildir(t)
@@ -252,8 +254,15 @@ func TestTheNoChangeCountReadsTheVerdict(t *testing.T) {
 	syncRun(t, out, in, kindRunNow, true, outcome("ok-noactivity", true, "ok-noactivity"))
 	noChange("an attended no-change session", 3)
 
+	// already-running from a Run now or a manual run is not a scheduled run: it leaves the
+	// count (only the scheduled case is amended, §5.2 of 2026-10-31).
+	syncRun(t, out, in, kindRunNow, true, outcome("already-running", true, ""))
+	noChange("an attended run that found Thunderbird already open", 3)
+	syncRun(t, out, in, kindManual, true, outcome("already-running", true, ""))
+	noChange("a manual run that found Thunderbird already open", 3)
+
 	for _, o := range []*PresyncOutcome{
-		outcome("already-running", true, ""), outcome("owner-active-skipped", false, ""),
+		outcome("owner-active-skipped", false, ""),
 		outcome("profile-busy", false, ""), {Name: "wait-ended", Left: "left-open-by-rule"},
 	} {
 		syncRun(t, out, in, kindScheduled, true, o)
@@ -279,6 +288,23 @@ func TestTheNoChangeCountReadsTheVerdict(t *testing.T) {
 	syncRun(t, out, in, kindScheduled, true, outcome("ok-noactivity", true, "ok-noactivity"))
 	syncRun(t, out, in, kindScheduled, true, outcome("quit-no-window", true, "watch-truncated"))
 	noChange("a scheduled truncated walk in which mail arrived", 0)
+
+	// A scheduled run that found the person's own Thunderbird already open (§5.2, amended
+	// 2026-10-31, gate-2 pass over AS5/AS6): any password or sign-in window is in front of
+	// them, so the softer warning has done its work — the no-change run ends, and the
+	// warning clears. The missed streak treats it as today (synced, Q1).
+	for d := 0; d < 4; d++ {
+		syncRun(t, out, in, kindScheduled, true, outcome("ok-noactivity", true, "ok-noactivity"))
+	}
+	noChange("four scheduled no-change sessions", 4)
+	syncRun(t, out, in, kindScheduled, true, outcome("owner-active-skipped", false, ""))
+	syncRun(t, out, in, kindScheduled, true, outcome("already-running", true, ""))
+	noChange("a scheduled run that found Thunderbird already open", 0)
+	if s, _ := streakOnDisk(t, out); !s.FirstNoChange.IsZero() || !s.LastNoChange.IsZero() || s.NothingArrived() {
+		t.Errorf("the already-open reset kept the no-change run: %+v", s)
+	} else if s.Missed != 0 || s.LastSynced.IsZero() {
+		t.Errorf("a scheduled already-running is synced for the missed streak (Q1), as before: %+v", s)
+	}
 
 	// The verdict is never written beside the archive but in the streak's count.
 	if p, ok := rawRecord(t, out)["presync"].(map[string]any); !ok {
