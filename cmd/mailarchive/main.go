@@ -1978,7 +1978,12 @@ func prepareStore(ctx context.Context, store string, enableOffline, syncWait boo
 			if err != nil {
 				return err
 			}
-			if changed {
+			switch {
+			case changed && acct.OnByDefault:
+				// No line of its own: Thunderbird's default had it on (MA-947), so writing it out
+				// changed nothing Thunderbird does.
+				logger.Printf("Offline download was already on for %s: Thunderbird keeps a new account's messages on this computer by default. The setting was written into prefs.js to make sure (prefs backed up to %s).", acct.Hostname, filepath.Base(backup))
+			case changed:
 				logger.Printf("Enabled offline download for %s (prefs backed up to %s).", acct.Hostname, filepath.Base(backup))
 			}
 		}

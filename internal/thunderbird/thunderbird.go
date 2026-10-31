@@ -43,14 +43,18 @@ func FindProfileDir(storePath string) (string, bool) {
 
 // Account describes one mail account from prefs.js.
 type Account struct {
-	ServerKey       string // e.g. "server3"
-	Hostname        string
-	Type            string // "imap", "pop3", …
+	ServerKey string // e.g. "server3"
+	Hostname  string
+	Type      string // "imap", "pop3", …
 	// OfflineDownload: prefs.js says "keep messages on this computer" is on. An account with
 	// no offline_download line uses Thunderbird's default, which is on for a new IMAP account
 	// (observed with Thunderbird 153.6.0esr in the Windows lab of 2026-10-31), yet reads false
 	// here; EnableOffline then writes the setting out, which changes nothing Thunderbird does.
 	OfflineDownload bool
+	// OnByDefault: the account has no offline_download line of its own and prefs.js does not
+	// turn the default off for every account (mail.server.default.offline_download), so
+	// Thunderbird's default applies and it keeps the messages on this computer already.
+	OnByDefault bool
 }
 
 var rePref = regexp.MustCompile(`^user_pref\("([^"]+)",\s*(.+)\);\s*$`)
@@ -98,11 +102,13 @@ func FindAccountForStore(profileDir, storeDir string) (*Account, error) {
 		if host == want ||
 			(dir != "" && filepath.Base(dir) == want) ||
 			(rel != "" && strings.HasSuffix(rel, want)) {
+			own, set := prefs["mail.server."+key+".offline_download"]
 			return &Account{
 				ServerKey:       key,
 				Hostname:        host,
 				Type:            p("type"),
-				OfflineDownload: prefs["mail.server."+key+".offline_download"] == "true",
+				OfflineDownload: own == "true",
+				OnByDefault:     !set && prefs["mail.server.default.offline_download"] != "false",
 			}, nil
 		}
 	}
