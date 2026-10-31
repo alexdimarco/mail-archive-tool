@@ -133,6 +133,7 @@ var outcomeHeads = map[Outcome]head{
 	OutcomeStateUnreadable: {text: fixed("The Thunderbird sync's own state record could not be read, so it was reset."),
 		subject: "Thunderbird"},
 	OutcomeInternalError: {text: fixed("Thunderbird was not synced: the sync failed unexpectedly; the backup ran anyway."), subject: "It"},
+	OutcomeNotSetUp:      {text: fixed("Thunderbird was not synced: the sync could not be prepared on this computer" + readHere), subject: "It"},
 }
 
 func refusedElevated(w lineWords, _ string) string {

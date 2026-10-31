@@ -18,9 +18,19 @@ import (
 // after the owner's nod (Q3). The owner watches a manual run, so the session
 // narrates to stderr. Where there is no adapter the flag is refused, and the
 // caller archives without the sync.
+//
+// The run asks for the sync (opts.PresyncWanted), so a scheduled `-unattended` run
+// moves the archive's sync streak (design-presync-attended §5.3, slice AS5); a hook that
+// could not be prepared is recorded as not-set-up (C-34), never as "sync off".
 func setPresyncHook(opts *app.Options, profile string) error {
 	if !presyncjob.Supported() {
 		return errors.New("-thunderbird-sync is only available on macOS and Windows in this version")
 	}
-	return presyncjob.SetHook(opts, presyncjob.HookOptions{Profile: profile, Log: os.Stderr, Surface: presync.SurfaceCLI})
+	opts.PresyncWanted = true
+	h := presyncjob.HookOptions{Profile: profile, Log: os.Stderr, Surface: presync.SurfaceCLI}
+	err := presyncjob.SetHook(opts, h)
+	if err != nil {
+		presyncjob.SetNotSetUp(opts, h)
+	}
+	return err
 }

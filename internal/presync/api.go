@@ -146,6 +146,7 @@ var warnText = map[string]string{
 	OutcomeRefusedElevated.Code:     "The Thunderbird sync was skipped because Mail Archive is running as root or an administrator — it would create profile files you could not then open. Do this: run it as your normal user. The archive ran anyway.",
 	OutcomeStateUnreadable.Code:     "The pre-sync's own state record could not be read, so its recovery information was reset. The archive ran anyway.",
 	OutcomeInternalError.Code:       "The Thunderbird pre-sync failed unexpectedly and was recovered; the archive ran anyway.",
+	OutcomeNotSetUp.Code:            "The Thunderbird sync could not be prepared on this computer (its own settings folder could not be found), so the archive ran without it. Do this: repair the backup's schedule — in Mail Archive Desktop, click Repair on the Scheduled backup card.",
 }
 
 // SyncNotice is the single source of the §6 owner-facing paragraph (MA-567) and

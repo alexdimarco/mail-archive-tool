@@ -1363,6 +1363,9 @@ func recordRun(opts Options, lr state.LastRun, result *Result, err *error, logge
 	if opts.Unattended {
 		updateSourceStreak(opts.Out, *err, lr.Finished, lr.Encrypted, logger)
 	}
+	// And how long its scheduled backups have gone without a Thunderbird sync
+	// (design-presync-attended §5, slice AS5): plaintext only, best effort.
+	updateSyncStreak(opts, result.Presync, lr.Encrypted, lr.Finished, logger)
 }
 
 // recordCounts puts a run's parse-fidelity counts in its last-run record, the numbers

@@ -283,6 +283,15 @@ type Input struct {
 	// message a source has not delivered is not theirs (friction F3).
 	FillableParseGap     int
 	FillableOnlyParseGap int
+
+	// SyncStreak is a plaintext archive's Thunderbird sync streak (design-presync-
+	// attended §5.1, slice AS5), read by Gather; the zero value when there is none, and
+	// never read for an encrypted archive, which keeps nothing about the sync (§4.4).
+	SyncStreak state.SyncStreak
+	// RunNowSync: an encrypted archive's Run now job carries the Thunderbird sync —
+	// its setting, read from the job file in the settings folder, not the archive (§4.7,
+	// C-27). Status -json shows it; no last result is kept for an encrypted archive.
+	RunNowSync bool
 }
 
 // Extractable is the extractability facet of an archive: WithEML of Total
@@ -599,6 +608,8 @@ func assessKeyless(r *Report, in Input, now time.Time) {
 	if in.HasDescriptor && schedulePresyncConfigured(in) {
 		r.note("presync_syncs", "this archive's scheduled backup syncs Thunderbird before it runs: it starts Thunderbird, waits for its mail to stop arriving, then asks it to quit, so the backup includes mail that had only reached the server; if Thunderbird is already open it is left alone")
 	}
+	// The last backup's sync, and the 3-day warnings (design-presync-attended §4.7, §5.4).
+	assessSync(r, in)
 	switch in.LastRunState {
 	case state.LastRunUnreadable:
 		r.warn("lastrun_unreadable", fmt.Sprintf("the last-run record %s is unreadable (corrupt or truncated); the next run rewrites it", filepath.Join(in.Out, state.LastRunName)))
@@ -648,7 +659,7 @@ func assessKeyless(r *Report, in Input, now time.Time) {
 				"presync_quit_no_window", "presync_state_unsaved", "presync_start_blocked",
 				"presync_successor_found", "presync_leftover_found", "presync_profile_unusable",
 				"presync_app_not_found", "presync_refused_elevated", "presync_state_unreadable",
-				"presync_internal_error", "presync_stuck", "presync_not_recorded":
+				"presync_internal_error", "presync_stuck", "presync_not_recorded", "presync_not_set_up":
 				// The Thunderbird pre-sync's WARN outcomes (design §4.9.3): surfaced as
 				// WARN, never RED — RED stays for run-level failure and corruption. The
 				// recorded Message carries the what/why/remedy. The note-class presync
@@ -1700,6 +1711,12 @@ func Gather(out, nameOverride string) Input {
 	}
 	if !in.Encrypted {
 		in.History, in.HistoryReadErr = state.HistoryStatus(filepath.Join(out, state.HistoryName))
+		// The Thunderbird sync streak the scheduled runs keep (design-presync-attended
+		// §5.1): plaintext only. An unreadable record is the zero streak — no warning
+		// from it until the next run rewrites it.
+		in.SyncStreak, _ = state.ReadSyncStreak(out)
+	} else {
+		in.RunNowSync = runNowSyncConfigured(out)
 	}
 
 	if fi, err := os.Stat(out); err == nil && fi.IsDir() {
@@ -2287,6 +2304,11 @@ type JSONReport struct {
 	// a fallback from a lost part without reading the report; omitted when there is none. An
 	// additive key at version 2 (friction F11).
 	ParseGaps map[string]int `json:"parse_gaps,omitempty"`
+
+	// ThunderbirdSync is the Thunderbird sync's setting and, for a plaintext archive, the
+	// last backup's sync result (design-presync-attended §4.7, slice AS5, C-55): an
+	// additive key at version 2, omitted when the sync is off and nothing is recorded.
+	ThunderbirdSync *JSONThunderbirdSync `json:"thunderbird_sync,omitempty"`
 }
 
 // JSONShownAsSource is the shown-as-source facet: the total and a count per
@@ -2548,5 +2570,6 @@ func JSON(in Input, rep Report) JSONReport {
 			Host:     in.VerifyDesc.Host,
 		}
 	}
+	doc.ThunderbirdSync = jsonThunderbirdSync(in)
 	return doc
 }

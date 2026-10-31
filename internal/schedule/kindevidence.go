@@ -106,6 +106,12 @@ func recordedKind(out string) Kind {
 	return KindUnknown
 }
 
+// RunJobPathFor is the job file this computer keeps for the archive at out — the
+// one its Run now and its scheduled run-job run — found as corroboratedRunJob finds
+// it, from the settings folder only, never from the archive (design-presync-attended
+// §4.7: an encrypted archive's sync setting is read from it).
+func RunJobPathFor(out string) (string, bool) { return corroboratedRunJob(out) }
+
 // corroboratedRunJob finds a run-job whose job file this program can securely
 // read and whose Out is the same archive as out: the default-named file first,
 // then any real job file in job.Dir() whose Out matches under SameArchivePath.

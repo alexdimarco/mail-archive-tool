@@ -14,6 +14,7 @@ package presyncjob
 
 import (
 	"context"
+	"errors"
 	"io"
 	"runtime"
 	"sync"
@@ -77,7 +78,8 @@ func Supported() bool {
 // real pre-sync and stateDir as its state folder, and returns the function that
 // puts them back (C-41, C-79). It is exported only because the wizard, Desktop and
 // command-line tests live in other packages; MA-898 fails if any non-test file
-// calls it.
+// calls it. An empty stateDir is a state folder that cannot be found, so SetHook
+// fails as it does when StateDir does (the not-set-up case, §5.3, C-34).
 func OverrideSessionForTest(session func(context.Context, presync.Config) presync.Result, stateDir string) (restore func()) {
 	seamMu.Lock()
 	oldSupported, oldSession := supported, runSession
@@ -85,7 +87,12 @@ func OverrideSessionForTest(session func(context.Context, presync.Config) presyn
 	seamMu.Unlock()
 	stateDirMu.Lock()
 	oldDir := stateDirFn
-	stateDirFn = func() (string, error) { return stateDir, nil }
+	stateDirFn = func() (string, error) {
+		if stateDir == "" {
+			return "", errors.New("the pre-sync's state folder could not be found")
+		}
+		return stateDir, nil
+	}
 	stateDirMu.Unlock()
 	return func() {
 		seamMu.Lock()
@@ -179,6 +186,34 @@ func SetHook(opts *app.Options, h HookOptions) error {
 		return app.BeforeReadResult{Warnings: warnings(res), Release: res.Release, Outcome: &out}
 	}
 	return nil
+}
+
+// SetNotSetUp is what a caller installs when the job asks for the sync but SetHook
+// could not prepare it (the state folder could not be found): a hook that runs no
+// session and hands the run the outcome not-set-up, with its warning, so the run is
+// recorded as a sync that did not happen — a scheduled run counts it missed — and
+// never looks like "sync off" (design-presync-attended §5.3, C-34). It never fails
+// the archive (R32). Where the platform has no adapter it installs nothing, as
+// SetHook does.
+func SetNotSetUp(opts *app.Options, h HookOptions) {
+	if !Supported() {
+		return
+	}
+	goos := h.GOOS
+	if goos == "" {
+		goos = runtime.GOOS
+	}
+	opts.BeforeRead = func(context.Context, []string) app.BeforeReadResult {
+		if h.OnStart != nil {
+			h.OnStart()
+		}
+		res := presync.Result{Outcome: presync.OutcomeNotSetUp, Left: presync.LeftNone}
+		out := outcomeFor(res, h.Surface, goos)
+		if h.OnEnd != nil {
+			h.OnEnd(out)
+		}
+		return app.BeforeReadResult{Warnings: warnings(res), Outcome: &out}
+	}
 }
 
 // outcomeFor is the session's outcome as the run hands it to its caller, in

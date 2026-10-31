@@ -40,9 +40,8 @@ var tagPhrases = map[string]string{
 	OutcomeSuccessorFound.Name:           phraseCannotStart,
 	OutcomeStartBlocked.Name:             phraseCannotStart, // C-65
 	OutcomeNoDesktopSession.Name:         "Thunderbird not synced: no one was logged in",
-	// not-set-up: the sync hook could not be prepared for a sync job (C-34; the
-	// outcome itself is recorded from slice AS5).
-	"not-set-up":              "Thunderbird not synced: the sync could not be prepared",
+	// not-set-up: the sync hook could not be prepared for a sync job (C-34, slice AS5).
+	OutcomeNotSetUp.Name:      "Thunderbird not synced: the sync could not be prepared",
 	OutcomeInternalError.Name: phraseNotSynced,
 }
 

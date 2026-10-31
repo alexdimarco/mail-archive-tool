@@ -86,7 +86,12 @@ var (
 	// OutcomeWaitEnded: the person pressed "Stop waiting and back up now" while an
 	// attended run waited for mail (A16, OQ-6). Thunderbird is left open and the
 	// backup reads what has arrived; it counts neither synced nor missed.
-	OutcomeWaitEnded     = Outcome{"wait-ended", "presync_wait_ended", ClassNote}
+	OutcomeWaitEnded = Outcome{"wait-ended", "presync_wait_ended", ClassNote}
+	// OutcomeNotSetUp: the job asks for the sync, but its hook could not be prepared
+	// (the pre-sync's state folder could not be found), so no session ran
+	// (design-presync-attended §5.3, C-34). Never a session's own outcome: presyncjob
+	// records it, so a scheduled run counts it missed instead of looking like "sync off".
+	OutcomeNotSetUp      = Outcome{"not-set-up", "presync_not_set_up", ClassWarn}
 	OutcomeInternalError = Outcome{"internal-error", "presync_internal_error", ClassWarn}
 	OutcomeCancelled     = Outcome{"cancelled", "", ClassNone}
 )
@@ -101,5 +106,5 @@ var allOutcomes = []Outcome{
 	OutcomeOwnerActiveSkipped, OutcomeOwnerActive, OutcomeSuccessorFound,
 	OutcomeLeftoverFound, OutcomeProfileUnusable, OutcomeAppNotFound, OutcomeRefusedElevated,
 	OutcomeStateUnreadable, OutcomeWatchTruncated, OutcomeWatchTruncatedNoActivity, OutcomeWaitEnded,
-	OutcomeInternalError, OutcomeCancelled,
+	OutcomeNotSetUp, OutcomeInternalError, OutcomeCancelled,
 }

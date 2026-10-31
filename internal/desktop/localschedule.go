@@ -233,6 +233,7 @@ func (d *dashboard) scheduleInstallLocal(w http.ResponseWriter, in scheduleReque
 				writeJSON(w, map[string]any{"ok": false, "error": "Thunderbird sync was not changed: " + err.Error() + ". Nothing was changed."})
 				return
 			}
+			syncSwitched(out, wantSync)
 			writeJSON(w, map[string]any{"ok": true})
 			return
 		}
@@ -274,6 +275,9 @@ func (d *dashboard) scheduleInstallLocal(w http.ResponseWriter, in scheduleReque
 			writeJSON(w, map[string]any{"ok": false, "error": d.jobWriteFailedReply(out, exists, existed, prior, iv, at, err)})
 			return
 		}
+		if syncChanged {
+			syncSwitched(out, wantSync)
+		}
 	}
 	if !existed {
 		d.cfg.clearAlertStreak(out) // a create starts with no failing streak (R3C-10)
@@ -299,6 +303,17 @@ func (d *dashboard) scheduleInstallLocal(w http.ResponseWriter, in scheduleReque
 // writeJob is the one writer of a job file (job.Write); a seam, so a test can make the write
 // fail after the scheduler step (section 9, step 3).
 var writeJob = job.Write
+
+// syncSwitched is told, once the job file is written, that this archive's Thunderbird
+// sync was switched on or off: switched off, the archive's sync streak is removed, so
+// a later "not synced" warning never counts misses from before
+// (design-presync-attended §5.3, C-34). Best effort; the next scheduled run, whose job
+// now has no sync, removes it too.
+func syncSwitched(out string, on bool) {
+	if !on {
+		_ = state.RemoveSyncStreak(out)
+	}
+}
 
 // notRecordedReply undoes or restores after Install took the entry but could not record it in
 // the archive (step 2b, section 9), and says what is now true. An edit of an entry that was
