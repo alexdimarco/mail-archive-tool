@@ -234,7 +234,11 @@ func (d *dashboard) scheduleInstallLocal(w http.ResponseWriter, in scheduleReque
 				return
 			}
 			syncSwitched(out, wantSync)
-			writeJSON(w, map[string]any{"ok": true})
+			resp := map[string]any{"ok": true}
+			if wantSync && iv == schedule.Hourly {
+				resp["note"] = hourlySyncNote // the sync switched on for an hourly schedule (MA-936)
+			}
+			writeJSON(w, resp)
 			return
 		}
 	}
@@ -292,6 +296,9 @@ func (d *dashboard) scheduleInstallLocal(w http.ResponseWriter, in scheduleReque
 		notes = append(notes, note)
 	}
 	if iv == schedule.Hourly {
+		if j.ThunderbirdSync != nil {
+			notes = append(notes, hourlySyncNote) // a quiet hour keeps Thunderbird open (MA-936)
+		}
 		notes = append(notes, d.cfg.hourlyNotes(out)...) // what 24 runs a day costs (3.7)
 	}
 	if len(notes) > 0 {

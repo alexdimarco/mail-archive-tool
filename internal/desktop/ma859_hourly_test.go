@@ -87,8 +87,9 @@ func TestAnHourlyCaptureIsRefused(t *testing.T) {
 
 // covers: MA-859, R37
 // An hourly run-job with Thunderbird sync installs (Q11 reversed: the pre-sync is no longer
-// refused on an hourly schedule) and reloads as Hourly. With nothing to warn about the reply
-// carries no note (the positive twin); with success emails on it warns of an email every hour,
+// refused on an hourly schedule) and reloads as Hourly. With nothing else to warn about the
+// reply carries only the sync note (owner ruling 5 of 2026-10-31, MA-936; before it, no
+// note); with success emails on it warns of an email every hour,
 // and with a scheduled verify on the archive it warns that backups starting while it runs are
 // skipped. The Recent backups card says how many runs it keeps, about two days of hourly ones.
 func TestAnHourlyRunJobWithSyncInstallsReloadsAndWarns(t *testing.T) {
@@ -99,8 +100,10 @@ func TestAnHourlyRunJobWithSyncInstallsReloadsAndWarns(t *testing.T) {
 	if err := json.Unmarshal([]byte(g.post(`{"interval":"hourly","time":"00:15","presync":true}`)), &reply); err != nil || reply["ok"] != true {
 		t.Fatalf("hourly with sync: %v %v", reply, err)
 	}
-	if reply["note"] != nil {
-		t.Errorf("nothing to warn about, yet the note %q", reply["note"])
+	// Hourly with the sync carries only the sync note (owner ruling 5 of 2026-10-31, MA-936);
+	// no success emails and no verify, so nothing else.
+	if reply["note"] != hourlySyncNote {
+		t.Errorf("hourly with the sync and nothing else to warn about: the note %q, want only %q", reply["note"], hourlySyncNote)
 	}
 	last := g.installs[len(g.installs)-1]
 	if last.Interval != schedule.Hourly || last.At != "00:15" || last.Args[0] != "-job" {

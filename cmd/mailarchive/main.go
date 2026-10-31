@@ -43,6 +43,7 @@ import (
 	"mail-archive-tool/internal/index"
 	"mail-archive-tool/internal/keyring"
 	"mail-archive-tool/internal/outlookcom"
+	"mail-archive-tool/internal/presync"
 	"mail-archive-tool/internal/runlog"
 	"mail-archive-tool/internal/schedule"
 	"mail-archive-tool/internal/seal"
@@ -1388,6 +1389,9 @@ func runSchedule(args []string) error {
 		fmt.Printf("Log: %s · descriptor: %s · check with: mailarchive status -out %q\n", logPath, desc, j.out)
 		if j.presync {
 			fmt.Println(presyncInstallNote(n, false))
+			if iv == schedule.Hourly {
+				fmt.Println(presync.HourlySyncNote) // owner ruling 5 of 2026-10-31 (MA-936)
+			}
 		}
 		if superseded != "" {
 			fmt.Printf("Note: this archive's verify was installed as %q, and that entry is still installed: it keeps running beside %q. If it is still this archive's verify, remove it with `mailarchive schedule -name %s -remove -- verify -out %q`.\n", superseded, n, superseded, j.out)
@@ -1410,6 +1414,9 @@ func runSchedule(args []string) error {
 	fmt.Print(text)
 	if j.presync {
 		fmt.Println(presyncInstallNote(n, true))
+		if iv == schedule.Hourly {
+			fmt.Println(presync.HourlySyncNote) // owner ruling 5 of 2026-10-31 (MA-936)
+		}
 	}
 	if note := graphDeletedJunkNote(j); note != "" {
 		fmt.Println(note)
@@ -1502,8 +1509,10 @@ is validated now, and what cannot run unattended is refused now. By default the
 exact scheduler entry is printed and NOT applied. The job writes its log to
 <out>/<name>.log; one schedule per archive by default.
 
+-interval hourly with -thunderbird-sync: %s
+
 Flags:
-`)
+`, presync.HourlySyncNote)
 		fs.PrintDefaults()
 	}
 }

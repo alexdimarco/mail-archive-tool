@@ -1605,7 +1605,10 @@ macOS's AS-Q. AS-L any time after AS3, or never. AS10 last. The labs run in para
     whole profile (Local Folders' Sent from an Outbox send included); a sleep inside a walk is not
     seen; a sleep the person forces on Windows can still trip the session watchdog; and one owner
     question on the now-common "nothing arrived" ending (the OQ-5 count, its warning's words, hourly
-    schedules).
+    schedules). *Answered by the owner 2026-10-31 (reply, verbatim, "1 - yes. 2. test 3 -  tes 4 - yes
+    5 - yes with note"):* (a) an attended Run now's `already-running` resets the count (§5.2); (b) the
+    warning says it clears by itself (§5.4); (c) hourly with the sync stays, with a note where Hourly
+    is picked with the sync on (MA-936).
   - *2026-10-31, macOS's start entry set true.* Set under the owner's words of 2026-10-30, read as
     the "owner rules otherwise" above: "flip the Mac or Windows switch that turns the feature on for
     real… the risk is low" and "go ahead with the wait fix". The quiet-rule review was not held when
