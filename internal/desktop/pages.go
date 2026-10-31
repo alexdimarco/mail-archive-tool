@@ -93,6 +93,9 @@ type pageData struct {
 	DestExample string
 	// ArchiveExample is an example full path of an archive's top folder, in the same shape.
 	ArchiveExample string
+	// Encrypted: the current archive is encrypted, so the sidebar leaves out Backup
+	// alerts, as the Overview's does (the card is not drawn for one).
+	Encrypted bool
 }
 
 var pageFuncs = template.FuncMap{}
@@ -117,13 +120,15 @@ var pageTmpl = template.Must(template.New("pages").Funcs(pageFuncs).Parse(`
       <span class="nav-disabled" title="The archive reader is not running">Go back in time</span>{{end}}
       <div class="nav-title">Export</div>
       <a href="workspace"{{if eq .Active "workspace"}} class="active"{{end}}>Extraction workspace</a>
-      <a href="./#sec-m365">Microsoft 365 connection</a>
       <a href="exports"{{if eq .Active "exports"}} class="active"{{end}}>Export activity</a>
       <div class="nav-title">Diagnostics</div>
       <a href="./#sec-health">Status &amp; health</a>
       <a href="./#sec-activity">Activity log</a>
+      <a href="./#sec-history">Recent backups</a>
       <div class="nav-title">Setup</div>
+      <a href="./#sec-m365">Microsoft 365 connection</a>
       <a href="./#sec-backup">Scheduled backup</a>
+      {{if not .Encrypted}}<a href="./#sec-alerts">Backup alerts</a>{{end}}
     </nav>
     <div class="sidebar-foot">Local control panel<br>127.0.0.1</div>
   </aside>{{end}}
@@ -272,7 +277,7 @@ type pageHead struct {
 }
 
 func (d *dashboard) renderPage(w http.ResponseWriter, name, title string) {
-	data := pageHead{pageData: pageData{CSRF: d.csrf, Epoch: d.boot, Account: d.cfg.account(), ReaderURL: d.cfg.ReaderURL, Active: name, DestExample: app.DestExampleFor(d.cfg.goos()), ArchiveExample: app.ArchiveExampleFor(d.cfg.goos())}, Title: title, CSS: template.CSS(pageCSS)}
+	data := pageHead{pageData: pageData{CSRF: d.csrf, Epoch: d.boot, Account: d.cfg.account(), ReaderURL: d.cfg.ReaderURL, Active: name, DestExample: app.DestExampleFor(d.cfg.goos()), ArchiveExample: app.ArchiveExampleFor(d.cfg.goos()), Encrypted: archiveKind(d.cfg.effectiveOut()) == kindEncrypted}, Title: title, CSS: template.CSS(pageCSS)}
 	var b strings.Builder
 	if err := pageTmpl.ExecuteTemplate(&b, name, data); err != nil {
 		http.Error(w, "page template error", http.StatusInternalServerError)

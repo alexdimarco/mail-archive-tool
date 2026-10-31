@@ -79,7 +79,9 @@ if(cy)cy.addEventListener('click',async()=>{
   done=busy(cy,'Starting…','Starting the copy…');
   try{
     const s=await send('api/encryption/copy/start',{token:d.token,confirm:true,confirmAgain:again});
-    say(s.ok?'The copy is being made — it shows in Activity as it goes. Locking the archive does not stop it; Shut down does.':(s.error||'Could not start the copy.'));
+    say(s.ok?'The copy is being made; its progress shows in the activity log on the Archive now card. Locking the archive does not stop it; Shut down does.':(s.error||'Could not start the copy.'));
+    // The activity log follows the copy as it goes: the dashboard's own poll (start()).
+    if(s.ok&&typeof start==='function')start();
   }catch(e){say('Could not reach MailArchive Desktop — reload the page.');}
   finally{done();}
 });

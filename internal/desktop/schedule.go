@@ -443,7 +443,7 @@ const hourlyCaptureRefusal = "Hourly backups are for local mail backups; choose 
 // Hourly's warnings when it is saved (design-desktop-settings-card 3.7), in the reply's note.
 const (
 	hourlySuccessEmailsNote = "Success emails are on, so this sends one email every hour. Turn them off in Backup alerts if that's too many."
-	hourlyVerifyNote        = "A scheduled verify also runs on this archive; backups that start while it runs are skipped."
+	hourlyVerifyNote        = "A scheduled integrity check also runs on this archive; hourly backups that start while it runs are skipped."
 	// hourlySyncNote is said where Hourly is picked with the Thunderbird sync on (owner
 	// ruling 5 of 2026-10-31, held finding effects-6, MA-936): it is presync.HourlySyncNote.
 	hourlySyncNote = presync.HourlySyncNote

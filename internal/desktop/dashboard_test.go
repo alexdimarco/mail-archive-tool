@@ -30,11 +30,11 @@ func TestOverviewContent(t *testing.T) {
 	body := getOverview(t, Config{ConfigPath: filepath.Join(t.TempDir(), "none.json")})
 	for _, want := range []string{
 		"Archive engine", "Ready", "Microsoft 365", "Capture", "Idle", "Scheduled backup",
-		"Not configured", // the status card
+		"Not set up (only needed for Microsoft 365 mail)", // the status card, with no archive chosen (MA-938)
 		// The Microsoft 365 connection offers an in-app config form (MA-549), not a pointer
 		// to the `mailarchive setup` command line (owner report 2026-10-13).
 		`id="m365Tenant"`, `id="m365ClientId"`, "Directory (tenant) ID", "Save configuration",
-		"Security &amp; privacy", "Read-only to your mailbox", "No third-party servers",
+		"Security &amp; privacy", "Read-only to your mail, with one exception you choose.", "No MailArchive servers.",
 		vaultPhrase(),
 	} {
 		if !strings.Contains(body, want) {

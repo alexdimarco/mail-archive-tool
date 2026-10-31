@@ -134,7 +134,7 @@ func HeadlessCapture(cfg Config, logw io.Writer) error {
 		logger.Printf("auto-pause: %v", perr)
 	}
 	if paused {
-		logger.Printf("auto-paused the scheduled backup: the source has been unreachable for too long; the schedule was stopped (reversible — reconnect the source and re-enable it)")
+		logger.Printf("auto-paused the scheduled backup: the source has been unreachable for too long; the schedule was stopped (reconnect the source, then click Repair on the archive's Scheduled backup card)")
 		backupalert.RecordAutoPause(cfg.SettingsPath, cfg.Store, key, out, errors.New(wizard.AutoPauseWhy), logger)
 	}
 	return err
@@ -306,7 +306,7 @@ func (d *dashboard) startCapture() error {
 	}
 	cfg := d.cfg.load()
 	if cfg == nil || strings.TrimSpace(cfg.Tenant) == "" || strings.TrimSpace(cfg.ClientID) == "" {
-		return fmt.Errorf("not configured — open Microsoft 365 setup to add your tenant and application ID first")
+		return errors.New("Microsoft 365 isn't set up yet. Fill in the Microsoft 365 connection card on this page and click Save configuration, then click Archive now again.")
 	}
 	out, ok := d.requireOut()
 	if !ok {

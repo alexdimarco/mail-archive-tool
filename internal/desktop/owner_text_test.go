@@ -20,7 +20,7 @@ import (
 // search.db the Status & health card names its own "Maintenance → Rebuild search
 // index" button — no `mailarchive reindex` command, no SQLite text — and a
 // capture or maintenance job that fails on the same index reports it in the same
-// words ("Capture failed: ..."), while a failure that is not an index refusal
+// words ("It didn't finish: ..."), while a failure that is not an index refusal
 // keeps its own text. Positive twin: a healthy archive's card has no such line.
 func TestDesktopNamesItsOwnRebuildButton(t *testing.T) {
 	out := t.TempDir()

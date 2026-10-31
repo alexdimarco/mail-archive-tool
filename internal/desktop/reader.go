@@ -66,7 +66,7 @@ func (rm *readerMux) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		ix, err := index.OpenReadonly(filepath.Join(out, "search.db"))
 		if err != nil {
 			rm.mu.Unlock()
-			http.Error(w, "No archive yet — run a capture first, then reopen the archive.", http.StatusServiceUnavailable)
+			http.Error(w, "This archive's search index is missing or can't be read, so there is nothing to show yet. If the archive is new, run its first backup in MailArchive Desktop (Archive now or Run now). If it already holds mail, click Maintenance → Rebuild search index there, then open the archive again.", http.StatusServiceUnavailable)
 			return
 		}
 		rm.ix, rm.h = ix, server.New(out, ix)

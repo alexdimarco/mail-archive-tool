@@ -665,6 +665,11 @@ func (cfg Config) cards() []card {
 	out := []card{{"Archive engine", "Ready", "good"}}
 
 	conn := card{"Microsoft 365", "Not configured", "warn"}
+	if cfg.effectiveOut() == "" {
+		// No archive chosen yet: Microsoft 365 is one source among several, so its
+		// absence is not a warning (MA-938).
+		conn = card{"Microsoft 365", "Not set up (only needed for Microsoft 365 mail)", ""}
+	}
 	if c := cfg.load(); c != nil && strings.TrimSpace(c.Tenant) != "" {
 		if _, ok := cfg.signInState(); ok {
 			conn = card{"Microsoft 365", "Signed in", "good"}
@@ -962,9 +967,12 @@ func (cfg Config) overviewFor(csrf, epoch string) string {
 		// IsM365: the current archive was made from a Microsoft 365 mailbox only, so the
 		// top line may call it one (MA-937); no archive, a local or mixed one is not.
 		IsM365 bool
-		LocalOnly        bool   // local mail files only and no Microsoft 365 setup: Archive now and the weekly backup are off
-		ArchiveNowOff    string // why Archive now is off, and the steps that add new mail instead ("" when it applies)
-		Offer            string // the archive the GUI used last, offered when none is set
+		// ArchiveExample is an example archive folder in this computer's own shape, for
+		// the Archive location's placeholder (MA-938).
+		ArchiveExample string
+		LocalOnly      bool   // local mail files only and no Microsoft 365 setup: Archive now and the weekly backup are off
+		ArchiveNowOff  string // why Archive now is off, and the steps that add new mail instead ("" when it applies)
+		Offer          string // the archive the GUI used last, offered when none is set
 		// §4.6.3/MA-617 + Q18(b): the Scheduled backup card's state. HasSchedule when a
 		// descriptor is recorded; ScheduleKind names it in words; the Show* flags pick
 		// the controls — Repair and Run now for a corroborated run-job (keeps the kind,
@@ -1087,6 +1095,7 @@ func (cfg Config) overviewFor(csrf, epoch string) string {
 		AlertSecurity: orElse(s.AlertSecurity, "starttls"), AlertFrom: s.AlertFrom, AlertTo: s.AlertTo, AlertUsername: s.AlertUsername}
 	data.KindLine = kindLine(archiveKind(data.OutDir))
 	data.IsM365 = archiveKind(data.OutDir) == kindM365
+	data.ArchiveExample = app.ArchiveExampleFor(cfg.goos())
 	data.CancelTitle, data.StopWaitTitle = jobCancelTitle, stopWaitTitle
 	data.RunNowTitle = runNowPlainTitle
 	data.LocalOnly = cfg.localOnly()
@@ -1436,12 +1445,12 @@ pre{white-space:pre-wrap;overflow-wrap:anywhere;background:var(--bg);border:1px 
       <button class="btn secondary" type="button" data-create-encrypted title="Make a new archive whose messages open only with its password or recovery key. The wizard's windows ask what to back up and where; the password is typed here.">Make a new encrypted archive…</button></p>
       {{if .Offer}}<p>The MailArchive wizard (mailarchive wizard) last used <span class="mono">{{.Offer}}</span>. Use this archive?</p>{{end}}
       <button class="btn" id="useOffer" type="button" data-path="{{.Offer}}"{{if not .Offer}} hidden{{end}} title="Open this archive in MailArchive Desktop — read it, check its health, and keep it backed up.">Use this archive</button>{{if .Offer}} <span class="card-sub">Nothing changes until you click it.</span>{{end}}
-      <p class="steps">{{if .Offer}}To pick a different folder, type{{else}}MailArchive Desktop has no archive to read yet. To open one you already have (for example one made from Thunderbird), type{{end}} its folder in <b>Settings → Archive location</b> below (the folder that holds the .mailarchive-manifest.json file) and click <b>Save settings</b>.</p>
+      <p class="steps">{{if .Offer}}To pick a different folder, click <b>Open an archive folder…</b> above, or type its folder in <b>Settings → Archive location</b> below (the folder that holds the .mailarchive-manifest.json file) and click <b>Save settings</b>.{{else}}MailArchive Desktop has no archive yet. To use one you already have, click <b>Open an archive folder…</b> above. To make a new one from Thunderbird, Outlook or other mail files on this computer, use the MailArchive wizard (mailarchive wizard), then open its folder here. To back up a Microsoft 365 mailbox, fill in the <b>Microsoft 365 connection</b> card below, type a new folder in <b>Settings → Archive location</b>, click <b>Save settings</b>, then click <b>Archive now</b>.{{end}}</p>
     </div>{{end}}
 
     {{if .ShowArchives}}<div class="card" id="sec-archives">
       <h2>Your archives</h2>
-      <p class="card-sub">The mail archives MailArchive Desktop knows about on this computer. The one marked current is what every tool here reads and what the scheduled backup keeps; switch to work on a different one.</p>
+      <p class="card-sub">The mail archives MailArchive Desktop knows about on this computer. The one marked current is the one this page shows and changes. Each archive can have its own scheduled backup; if switching would affect one, you are asked first.</p>
       {{if .SwitchLocks}}<p class="card-sub warn" id="switchLocks">{{template "switchLocks" .}}</p>{{end}}
       <ul class="archive-list">
         {{range .Archives}}<li class="archive-row{{if not .Available}} unavailable{{end}}">
@@ -1449,14 +1458,14 @@ pre{white-space:pre-wrap;overflow-wrap:anywhere;background:var(--bg);border:1px 
           {{if .KindLabel}}<span class="archive-kind">{{.KindLabel}}</span>{{end}}
           {{if .SourceLostSince}}<span class="archive-tag">This archive's source hasn't been reachable since {{.SourceLostSince}} — reconnect the source (its mailbox or mail folder) to resume backups.</span>{{end}}
           {{if eq .Kind "encrypted"}}<button class="btn secondary" type="button" data-forget-archive data-path="{{.Path}}" title="Stop protecting this folder as an encrypted archive on this computer — for example after you removed the archive on purpose. Nothing in the folder is changed.">Forget this encrypted archive here</button>{{end}}
-          {{if .Problem}}<span class="archive-tag">{{.Problem}}</span>{{else if not .Available}}<span class="archive-tag">Not reachable right now — reconnect the drive or folder and it comes back. Nothing was removed.</span>{{else if .Sealed}}<span class="archive-tag">Paused (read-only) — Resume it to make changes.</span> <button class="btn secondary" type="button" data-resume-archive data-path="{{.Path}}" title="Make this archive writable again so backups and changes can resume.">Resume</button>{{else}}{{if .Current}}<span class="archive-tag current">Current archive</span>{{else}}<button class="btn secondary" type="button" data-switch-archive data-path="{{.Path}}" title="Make this the current archive — what every tool here reads and what the scheduled backup keeps.">Switch to this archive</button>{{end}} <button class="btn secondary" type="button" data-pause-archive data-path="{{.Path}}" title="Make this archive read-only so nothing can change it. You can Resume it any time; nothing is deleted.">Pause (make read-only)</button>{{end}}
+          {{if .Problem}}<span class="archive-tag">{{.Problem}}</span>{{else if not .Available}}<span class="archive-tag">Not reachable right now — reconnect the drive or folder and it comes back. Nothing was removed.</span>{{else if .Sealed}}<span class="archive-tag">Paused (read-only) — Resume it to make changes.</span> <button class="btn secondary" type="button" data-resume-archive data-path="{{.Path}}" title="Make this archive writable again so backups and changes can resume.">Resume</button>{{else}}{{if .Current}}<span class="archive-tag current">Current archive</span>{{else}}<button class="btn secondary" type="button" data-switch-archive data-path="{{.Path}}" title="Make this the current archive: the one this page shows and changes.">Switch to this archive</button>{{end}} <button class="btn secondary" type="button" data-pause-archive data-path="{{.Path}}" title="Make this archive read-only so nothing can change it. You can Resume it any time; nothing is deleted.">Pause (make read-only)</button>{{end}}
         </li>{{end}}
       </ul>
     </div>{{end}}
 
     {{if .CanAddArchive}}<div class="card" id="sec-add-archive">
       <h2>Add another archive</h2>
-      <p class="card-sub">Keep a second mailbox or mail source as its own archive on this computer. The wizard's windows open here; the new archive joins <b>Your archives</b> without changing your current one.</p>
+      <p class="card-sub">Keep another set of mail files (for example another Thunderbird profile or an Outlook .pst file) as its own archive on this computer. The wizard's windows open on your computer; the new archive joins <b>Your archives</b> without changing your current one.</p>
       <button class="btn secondary" id="addArchiveBtn" type="button" title="Create a new, additional archive with the MailArchive wizard. The wizard's windows open on your computer; the new archive is added without changing your current one.">Add another archive…</button>
       <button class="btn secondary" type="button" data-open-archive title="Choose an archive folder you already have — from another computer, a drive or a backup copy, encrypted or not. It becomes your current archive.">Open an archive folder…</button>
       <button class="btn secondary" type="button" data-create-encrypted title="Make a new archive whose messages open only with its password or recovery key. The wizard's windows ask what to back up and where; the password is typed here.">Make a new encrypted archive…</button>
@@ -1486,9 +1495,9 @@ pre{white-space:pre-wrap;overflow-wrap:anywhere;background:var(--bg);border:1px 
       {{if not .LocalOnly}}<div style="margin-top:14px"><button class="btn secondary" id="editM365" type="button">Edit configuration</button></div>{{end}}
       {{else}}
       {{if .LocalOnly}}
-      <div class="row"><div class="k">Status</div><div class="v warn">Not configured — run <span class="mono">mailarchive setup</span> to add your tenant and application ID.</div></div>
+      <div class="row"><div class="k">Status</div><div class="v">Not used by this archive: it was made from mail files on this computer. You only need Microsoft 365 to back up a Microsoft 365 mailbox. To set it up, run <span class="mono">mailarchive setup</span> in a terminal.</div></div>
       {{else}}
-      <p class="card-sub">Connect your Microsoft 365 account — enter the values from your Entra app registration below, then <b>Save configuration</b>. Your data stays on this PC; any secret is kept in {{.Vault}} and never uploaded, and you never need the command line.</p>
+      <p class="card-sub">Connect your Microsoft 365 account — enter the values from your Entra app registration below, then <b>Save configuration</b>. Your data stays on this computer; any secret is kept in {{.Vault}} and never uploaded, and you never need the command line.</p>
       {{end}}
       {{end}}
       {{if not .LocalOnly}}
@@ -1516,14 +1525,14 @@ pre{white-space:pre-wrap;overflow-wrap:anywhere;background:var(--bg);border:1px 
 
     {{if .Export}}<div class="card" id="sec-export">
       <h2>Export</h2>
-      <p class="card-sub">Copy selected folders and messages from your Microsoft 365 mailbox to a folder, with a manifest and checksums the recipient can check. Each export is a new folder; nothing is ever changed in your mailbox or your archive.</p>
+      <p class="card-sub">Copy selected folders and messages from your Microsoft 365 mailbox, or from a MailArchive archive, to a folder, with a manifest and checksums the recipient can check. Each export is a new folder; nothing is ever changed in your mailbox or your archive.</p>
       <a class="btn" href="workspace">Open the Extraction workspace</a>
       <a class="btn secondary" href="exports" id="sec-export-activity">Export activity</a>
     </div>{{end}}
 
     <div class="card" id="sec-archive">
       <h2>Archive now</h2>
-      {{if .ArchiveNowOff}}<p class="card-sub steps" id="archiveNowOff">{{.ArchiveNowOff}}</p>{{else}}<p class="card-sub">Fetch the latest mail into your archive. The first time, you sign in with a Microsoft device code shown here.</p>
+      {{if .ArchiveNowOff}}<p class="card-sub steps" id="archiveNowOff">{{.ArchiveNowOff}}</p>{{else}}<p class="card-sub">{{if .OutDir}}Fetch the latest mail into your archive. The first time, you sign in with a Microsoft device code shown here.{{else}}Archive now copies new mail from a Microsoft 365 mailbox into your archive. To use it, fill in the Microsoft 365 connection card, type a folder for the archive in Settings → Archive location and click Save settings, then come back here. For Thunderbird, Outlook or other mail files, you don't need this button.{{end}}</p>
       <button class="btn" id="archiveBtn"{{if .ArchiveNowConfirm}} data-confirm="{{.ArchiveNowConfirm}}"{{end}}>Archive now</button>{{end}}
       {{if .ReaderURL}}<a class="btn secondary" href="{{.ReaderURL}}" target="_blank" rel="noopener">Open archive</a> <a class="btn secondary" href="{{.ReaderURL}}goback" target="_blank" rel="noopener">Go back in time</a>{{end}}
       <button class="btn secondary" id="anotherBrowser" type="button">Use another browser…</button>
@@ -1544,7 +1553,7 @@ pre{white-space:pre-wrap;overflow-wrap:anywhere;background:var(--bg);border:1px 
     <div class="card" id="sec-settings">
       <h2>Settings</h2>
       <label for="outDir">Archive location</label>
-      <input id="outDir" value="{{.OutDir}}" placeholder="e.g. C:\MailArchive, a mapped drive, or a UNC path" spellcheck="false">
+      <input id="outDir" value="{{.OutDir}}" placeholder="The archive's folder, e.g. {{.ArchiveExample}}" spellcheck="false">
       <p class="card-sub" id="settingsMoveNote" hidden>{{.MoveFirstLine}}</p>
       {{if .SwitchLocks}}<p class="card-sub warn" id="switchLocksSettings">{{template "switchLocks" .}}</p>{{end}}
       {{if .Set.Unknown}}<p class="card-sub" id="settingsUnknown">{{.Set.Unknown}}</p>{{end}}
@@ -1642,7 +1651,7 @@ pre{white-space:pre-wrap;overflow-wrap:anywhere;background:var(--bg);border:1px 
         <label for="encRestoreKey">Recovery key</label> <input type="text" id="encRestoreKey" autocomplete="off" spellcheck="false" autocapitalize="off">
         <label for="encRestorePw">New password</label> <input type="password" id="encRestorePw" autocomplete="new-password" spellcheck="false">
         <label for="encRestorePw2">Type it again</label> <input type="password" id="encRestorePw2" autocomplete="new-password" spellcheck="false">
-        <button class="btn" type="button" id="encRestoreFileBtn" title="Choose the recovery file saved with this archive's recovery key.">Choose the recovery file and put back the key file</button>
+        <button class="btn" type="button" id="encRestoreFileBtn" title="Choose the recovery file saved with this archive's recovery key.">` + app.RestoreKeyWords + `</button>
         {{if .EncRemembered}}<button class="btn secondary" type="button" id="encRestoreRememberedBtn" title="No recovery key needed: the key this computer remembers rebuilds the key file.">Put it back from the key this computer remembers</button>{{end}}
       </div>
       {{else}}<p class="card-sub" id="encState">Locked: its messages, search and go-back open only with its password or recovery key.{{if .EncRemembered}} This computer remembers its key, so reading it opens it by itself unless you locked it here.{{end}}</p>
@@ -1658,16 +1667,16 @@ pre{white-space:pre-wrap;overflow-wrap:anywhere;background:var(--bg);border:1px 
     <div class="card" id="sec-backup">
       <h2>Scheduled backup</h2>
       {{if .Encrypted}}<p class="card-sub" id="backupEncrypted">Scheduled backups of an encrypted archive aren't available yet: a backup into it needs its password, so it runs only while you are here to give it.{{if .EncRunNow}}{{if not .EncUnlocked}} Unlock it on its Encryption card, then click Run now.{{end}}{{else}} {{.EncBackupHow}}{{end}}</p>{{end}}
-      {{if .ShowBackupOff}}<p class="card-sub steps" id="backupOff">A scheduled backup isn't set up here for this archive. To keep this local-files archive current on a schedule, set one up in the MailArchive wizard (mailarchive wizard) — answer "Keep this archive current?" at the end — or run the mailarchive schedule command that Status &amp; health prints for this archive.</p>{{else}}
+      {{if .ShowBackupOff}}<p class="card-sub steps" id="backupOff">A scheduled backup isn't set up here for this archive. To keep this local-files archive current on a schedule, set one up in the MailArchive wizard (mailarchive wizard) — at the end, answer "Keep this archive current automatically?" with Yes — or run the mailarchive schedule command that Status &amp; health prints for this archive.</p>{{else}}
       {{if .BackupUnknown}}<p class="card-sub" id="backupUnknown">{{.UnknownLine}}</p>{{end}}
       {{if .BackupNotice}}<p class="card-sub" id="backupNotice">{{.NoticeLine}}</p>{{end}}
       {{if .NoticeRunJob}}<p class="card-sub" id="backupReadOnly">How often: {{.ReadOnlyCadence}}. Sync Thunderbird first: {{.ReadOnlySync}}.</p>{{end}}
       {{if .BrokenLine}}<p class="card-sub" id="backupBroken">{{.BrokenLine}}</p>{{end}}
       {{if .HasSchedule}}<p class="card-sub" id="schedKind">This archive's scheduled backup: {{.ScheduleKind}}.</p>{{end}}
       {{if .ShowInstall}}<p class="card-sub" id="schedNone">{{if .OutDir}}No scheduled backup is set up for this archive yet. A scheduled backup runs a capture automatically, even when this app is closed (as long as you stay signed in to your computer), using your saved Microsoft sign-in.{{else}}Choose an archive location in Settings first; its backup options then show there.{{end}}</p>{{end}}
-      {{if .ShowLocalCreate}}<p class="card-sub" id="schedNone">No scheduled backup is set up for this archive yet. A scheduled backup keeps it up to date automatically: it re-reads your Thunderbird mail files and adds anything new. It runs while you are logged in.</p>{{end}}
+      {{if .ShowLocalCreate}}<p class="card-sub" id="schedNone">No scheduled backup is set up for this archive yet. A scheduled backup keeps it up to date automatically: it re-reads the mail files this archive was made from and adds anything new. It runs while you are logged in.</p>{{end}}
       {{if and .Set.Sched .OutDir}}<p class="card-sub" id="changeInSettings">{{if .Set.SchedCapture}}How often and time{{else}}How often, time and Thunderbird sync{{end}}: <a href="#sec-settings">Change in Settings</a></p>{{end}}
-      <div style="margin-top:14px">{{if .ShowRepair}}<button class="btn" id="schedRepair" title="Re-point the scheduled backup at this archive and fix a broken or stale schedule entry. Your cadence and any Thunderbird-sync setting are kept; nothing in the archive changes.">Repair</button> <button class="btn" id="runBackupBtn" type="button" title="{{.RunNowTitle}}">Run now</button> {{end}}{{if .ShowCaptureRepair}}<button class="btn" id="schedRepair" title="Put this archive's scheduled capture back as it was set up: its cadence is kept, and a capture still named for the archive's earlier location is moved to this one. Nothing in the archive changes.">Repair</button> {{end}}{{if .ShowBrokenRepair}}<button class="btn" id="schedRepair" title="Make this archive's backup settings file again from the archive's own record. Thunderbird sync is then off.">Repair</button> {{end}}{{if .EncRunNow}}<button class="btn" id="runBackupBtn" type="button" title="{{.EncRunNowTitle}}"{{if not .EncUnlocked}} disabled{{end}}>Run now</button> {{end}}{{if .ShowRemove}}<button class="btn secondary" id="schedRemove" title="Delete this archive's scheduled backup. Your archive and everything in it are kept.">Remove</button>{{end}}</div>
+      <div style="margin-top:14px">{{if .ShowRepair}}<button class="btn" id="schedRepair" title="Fix this archive's scheduled backup if it stopped working or points at the wrong place. How often it runs and its Thunderbird sync setting are kept; nothing in the archive changes.">Repair</button> <button class="btn" id="runBackupBtn" type="button" title="{{.RunNowTitle}}">Run now</button> {{end}}{{if .ShowCaptureRepair}}<button class="btn" id="schedRepair" title="Put this archive's scheduled capture back as it was set up: its cadence is kept, and a capture still named for the archive's earlier location is moved to this one. Nothing in the archive changes.">Repair</button> {{end}}{{if .ShowBrokenRepair}}<button class="btn" id="schedRepair" title="Make this archive's backup settings file again from the archive's own record. Thunderbird sync is then off.">Repair</button> {{end}}{{if .EncRunNow}}<button class="btn" id="runBackupBtn" type="button" title="{{.EncRunNowTitle}}"{{if not .EncUnlocked}} disabled{{end}}>Run now</button> {{end}}{{if .ShowRemove}}<button class="btn secondary" id="schedRemove" title="Delete this archive's scheduled backup. Your archive and everything in it are kept.">Remove</button>{{end}}</div>
       {{if .RunNowFirstSync}}<p class="card-sub" id="runNowFirstSync">{{.RunNowFirstSync}}</p>{{end}}
       <div class="note" id="runBackupNote" hidden></div>
       <div class="note" id="schedState" hidden></div>{{end}}
@@ -1675,7 +1684,7 @@ pre{white-space:pre-wrap;overflow-wrap:anywhere;background:var(--bg);border:1px 
 
     {{if not .Encrypted}}<div class="card" id="sec-alerts">
       <h2>Backup alerts</h2>
-      <p class="card-sub">Email someone when a scheduled backup fails, so a broken backup never goes unnoticed. MailArchive sends the mail itself over SMTP — there is no script to install.</p>
+      <p class="card-sub">Email someone about your scheduled backups. Tick what you want below: a failed backup (one email per run of failures, then one more when backups work again), Thunderbird not synced for 3 days, an auto-paused backup, or every success. MailArchive sends the email itself through the mail server you fill in below; there is nothing else to install.</p>
       <div><label><input type="checkbox" id="alertEnabled"{{if .AlertEnabled}} checked{{end}}> <b>Send backup alerts by email</b></label></div>
       <div class="row"><div class="k">Send alerts on</div><div class="v">
         <div><label><input type="checkbox" id="alertOnFailure"{{if .AlertOnFailure}} checked{{end}}> a failed backup, or Thunderbird not synced for 3 days (recommended)</label></div>
@@ -1707,7 +1716,7 @@ pre{white-space:pre-wrap;overflow-wrap:anywhere;background:var(--bg);border:1px 
       {{if .RecentRuns}}<p class="card-sub">The last backup runs for this archive, newest first. MailArchive keeps the last {{.HistoryMax}}, which is about two days of hourly backups.</p>
       <ul class="run-history">
         {{range .RecentRuns}}<li>{{.When}} — {{if .Failed}}<span class="warn">{{.Status}}</span>{{else}}<span class="good">{{.Status}}</span>{{end}}{{if .Detail}} — {{.Detail}}{{end}}{{if .Sync}} — {{.Sync}}{{end}}</li>{{end}}
-      </ul>{{else}}<p class="card-sub">No backups have run yet. When a scheduled backup or Run now finishes, its result appears here.</p>{{end}}
+      </ul>{{else}}<p class="card-sub">No backups have run yet. When a backup finishes (scheduled, Run now or Archive now), its result appears here.</p>{{end}}
     </div>
 
     <div class="card" id="sec-health">
@@ -1720,7 +1729,7 @@ pre{white-space:pre-wrap;overflow-wrap:anywhere;background:var(--bg);border:1px 
 
     <div class="card">
       <h2>Maintenance</h2>
-      <p class="card-sub">Occasional housekeeping. These share the archive with captures, so only one runs at a time — watch the Archive-now activity for progress.</p>
+      <p class="card-sub">Occasional housekeeping. These share the archive with backups, so only one runs at a time. Progress shows in the activity log on the Archive now card.</p>
       <button class="btn secondary" id="verifyBtn">Check integrity</button>
       <button class="btn secondary" id="rebuildBtn">Rebuild search index</button>
     </div>
@@ -1728,13 +1737,13 @@ pre{white-space:pre-wrap;overflow-wrap:anywhere;background:var(--bg);border:1px 
     <div class="card sec">
       <h2>Security &amp; privacy</h2>
       <ul>
-        <li><b>Runs entirely on this PC.</b> The control panel and your archive are local; nothing here is served to the network.</li>
+        <li><b>Runs on this computer.</b> The control panel and your archive are local; nothing here is served to the network.</li>
         <li><b>Only you can open it.</b> This page and your archive open only through a private link MailArchive makes each time it starts, so other accounts on this computer and web pages cannot open the dashboard or the archive. A program running as you can: it already has your files.</li>
         <li><b>Sign-in codes.</b> MailArchive shows a Microsoft sign-in code only in a window it opened from its shortcut — do not trust a code on a page you reached by typing or bookmarking an address.</li>
         {{if .ResidualOS}}<li><b>One residual on {{.ResidualOS}}.</b> Another account on this computer that can list running programs can read a link's address in the instant a browser is opened with it, and race to use it first (a link works once, and the opener's lives about a minute). If a page says a link was "already used" and you did not use it, quit MailArchive and start it again — that ends every session.</li>{{end}}
-        <li><b>Read-only to your mailbox.</b> The tool makes only Microsoft read requests (Mail.Read). It can never send, move, change, or delete anything in your mailbox.</li>
+        <li><b>Read-only to your mail, with one exception you choose.</b> MailArchive only reads your mail files and, for Microsoft 365, makes only read requests (Mail.Read): it never sends, moves, changes or deletes your mail. The exception is the Thunderbird sync, if you turn it on. It opens and closes your real Thunderbird, which then does what it always does: it checks your accounts, sends anything in your Outbox, runs your filters, and on closing may empty Trash. The Settings card explains it.</li>
         <li><b>Your sign-in stays on this machine.</b> Your Microsoft sign-in (and any app secret) is stored in {{.Vault}} — never uploaded anywhere.</li>
-        <li><b>No third-party servers.</b> Your mail travels only between Microsoft and this PC — nothing goes to us or any other third party.</li>
+        <li><b>No MailArchive servers.</b> MailArchive reads your mail from Microsoft 365 or from mail files on this computer, and sends nothing to us. It connects elsewhere only for two things: backup alert emails, if you turn them on, go through the mail server you choose; and an encrypted archive that keeps copies of MailArchive (ticked by default when you make one) downloads them from MailArchive's GitHub releases page.</li>
         <li><b>Your own mailbox only.</b> Signing in as yourself archives only your mailbox, with no tenant-wide permission.</li>
         <li><b>Safe to open offline.</b> Every saved message page runs no scripts and loads nothing from the network, so opening old mail can never execute anything.</li>
         <li><b>Reversible.</b> You can revoke access any time, and uninstalling keeps your archive — your saved mail is never deleted.</li>
@@ -1744,7 +1753,7 @@ pre{white-space:pre-wrap;overflow-wrap:anywhere;background:var(--bg);border:1px 
     <div class="card sec" id="sec-uninstall">
       <h2>Uninstall MailArchive</h2>
       <p class="card-sub">Remove MailArchive's scheduled backups, settings and Microsoft sign-in from this computer. <b>Your archives are kept</b> — your saved mail is never deleted. Removing the program itself is a last step your system shows you.</p>
-      <button class="btn secondary" id="uninstallBtn" type="button" title="Remove MailArchive's program, schedules, settings and sign-in from this computer. Your saved mail archives are never deleted.">Uninstall MailArchive…</button>
+      <button class="btn secondary" id="uninstallBtn" type="button" title="Remove MailArchive's scheduled backups, settings and sign-in from this computer. Your saved mail archives are never deleted. You remove the program itself afterwards; the last step tells you how.">Uninstall MailArchive…</button>
       <div class="device-box" id="uninstallPanel" hidden>
         <pre class="mono" id="uninstallPlan"></pre>
         <div style="margin-top:10px"><button class="btn" id="uninstallGo" type="button">Remove</button> <button class="btn secondary" id="uninstallCancel" type="button">Cancel</button></div>
@@ -2121,7 +2130,7 @@ function render(d){
   // A Run now of another archive (a switch while it ran) is only named here, never told
   // as this archive's (gate-2 pass 1, as4web-2).
   if(d.otherNote&&res){res.hidden=false;res.textContent=d.otherNote;}
-  else if(!d.running&&res){res.hidden=false;res.textContent=d.error?('Capture failed: '+d.error):(d.result||'Done.');}
+  else if(!d.running&&res){res.hidden=false;res.textContent=d.error?("It didn't finish: "+d.error):(d.result||'Done.');}
 }
 // jobButtons shows the running job's Cancel and Skip, next to at when given — the
 // note of the control that started the job — so they are where the person looks.

@@ -15,7 +15,7 @@ import (
 )
 
 // covers: MA-386, R12, S33
-// The refusals the owner meets on MailArchive Desktop ("Capture failed: ...")
+// The refusals the owner meets on MailArchive Desktop ("It didn't finish: ...")
 // and mailarchive-gui's job log are put in the owner's words (g7 friction F3):
 // IndexOpenError.ForOwner names the folder, the cause in plain terms and the
 // remedy the owner can act on (the app's own rebuild action when the index is

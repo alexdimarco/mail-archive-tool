@@ -29,7 +29,7 @@ func TestReaderEmbed(t *testing.T) {
 	if rec.Code != http.StatusServiceUnavailable {
 		t.Fatalf("no archive yet should be 503, got %d", rec.Code)
 	}
-	if !strings.Contains(rec.Body.String(), "run a capture first") {
+	if !strings.Contains(rec.Body.String(), "This archive's search index is missing or can't be read, so there is nothing to show yet. If the archive is new, run its first backup in MailArchive Desktop (Archive now or Run now). If it already holds mail, click Maintenance → Rebuild search index there, then open the archive again.") {
 		t.Errorf("503 body should guide the user: %s", rec.Body.String())
 	}
 

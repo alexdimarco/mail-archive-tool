@@ -96,7 +96,7 @@ func jobErrorText(out string, err error) string {
 }
 
 // noArchiveText is the refusal of a maintenance action with no archive location: what, and the steps.
-const noArchiveText = "There is no archive chosen yet, so there is nothing to check. Type the archive's folder in Settings → Archive location (the folder that holds the .mailarchive-manifest.json file) and click Save settings, then try again."
+const noArchiveText = "No archive is chosen yet, so there is nothing to work on. Click Open an archive folder… at the top of the page, or type the archive's folder in Settings → Archive location and click Save settings, then try again."
 
 func (d *dashboard) requireOut() (string, bool) {
 	out := d.cfg.effectiveOut()

@@ -170,12 +170,16 @@ func graphKeys(configDir string) (tenant, clientID string, err error) {
 
 // binaryNote tells the owner how to remove the program itself; uninstall never deletes a
 // running executable (U-C6).
-func binaryNote(exe string) string {
-	switch runtime.GOOS {
+func binaryNote(exe string) string { return binaryNoteFor(runtime.GOOS, exe) }
+
+// binaryNoteFor is binaryNote for goos. On macOS it names the bundle as it is built
+// and installed, "Mail Archive.app" (packaging/macos/build-app.sh).
+func binaryNoteFor(goos, exe string) string {
+	switch goos {
 	case "windows":
 		return "To remove the program itself, open Settings → Apps → Installed apps (or Add/Remove Programs) and uninstall MailArchive."
 	case "darwin":
-		return "To remove the program itself, drag MailArchive.app to the Trash."
+		return "To remove the program itself, drag Mail Archive.app (in your Applications folder, or wherever you put it) to the Trash."
 	default:
 		note := "To remove the program itself, delete the mailarchive binary"
 		if exe != "" {
