@@ -177,7 +177,7 @@ func TestWinQuitPostsNothingOnceItsContextEnded(t *testing.T) {
 	}
 }
 
-// covers: MA-571
+// covers: MA-571, MA-923
 // The launch (design §2, §6): OUT of the task's job object
 // (CREATE_BREAKAWAY_FROM_JOB) so a Task-Scheduler teardown cannot hard-kill
 // Thunderbird mid-write (PC-W6). It never asks for SW_HIDE (HideWindow's state) or

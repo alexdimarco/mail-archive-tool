@@ -4,7 +4,9 @@ import "testing"
 
 // The Windows start's pure builder (design-presync-attended §2.7, MA-923; lab L-A10
 // 2026-10-31), checked on every platform. The CreateProcess call itself, its handles
-// and Windows' own reading of the command line are tested in start_windows_test.go.
+// and Windows' own reading of the command line are tested in winlaunch_windows_test.go;
+// the "access denied" mapping is tested in start_windows_test.go, beside the
+// backstop minimize's tests.
 
 const (
 	tbExe     = `C:\Program Files\Mozilla Thunderbird\thunderbird.exe`
