@@ -38,6 +38,10 @@ type fakeWin32 struct {
 	shown      *[]int      // the show value of each showWindow call
 	iconicOf   map[uintptr]bool // what isIconic answers per window
 	fg         uintptr          // what foregroundWindow answers
+	// noTake: a showWindow minimize does not take (the window stays shown, as when
+	// Thunderbird shows it again); otherwise a minimize marks the window iconic in
+	// iconicOf (when non-nil), as Windows does.
+	noTake bool
 }
 
 func (f fakeWin32) thunderbirdProcs() []winProc       { return f.procs }
@@ -68,6 +72,9 @@ func (f fakeWin32) showWindow(hwnd uintptr, cmd int) {
 	}
 	if f.shown != nil {
 		*f.shown = append(*f.shown, cmd)
+	}
+	if f.iconicOf != nil && !f.noTake && (cmd == swMinimize || cmd == swShowMinNoActive) {
+		f.iconicOf[hwnd] = true
 	}
 }
 func (f fakeWin32) isIconic(hwnd uintptr) bool { return f.iconicOf[hwnd] }

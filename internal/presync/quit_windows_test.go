@@ -223,14 +223,17 @@ func TestWinMinimizeMain(t *testing.T) {
 	const pid = 4242
 	const hwnd = uintptr(0x100)
 	var minimized []uintptr
+	start := time.Date(2026, 10, 22, 2, 0, 0, 0, time.UTC)
 	e := &winEnv{
 		clock: time.Now,
 		w: fakeWin32{
+			handleOK:  true,
+			creation:  start.UnixNano(),
 			mainOf:    map[uint32]uintptr{pid: hwnd},
 			minimized: &minimized,
 		},
 	}
-	e.minimizeMain(context.Background(), nil, pid, false)
+	e.minimizeMain(context.Background(), nil, proc{pid: pid, start: start}, false)
 	if len(minimized) != 1 || minimized[0] != hwnd {
 		t.Errorf("minimizeMain minimized %v, want [%#x]", minimized, hwnd)
 	}
@@ -247,18 +250,19 @@ func TestWinMinimizeMain(t *testing.T) {
 func TestWinMinimizeMainEndsOnStop(t *testing.T) {
 	const pid = 4242
 	var minimized []uintptr
-	e := &winEnv{clock: time.Now, w: fakeWin32{mainOf: map[uint32]uintptr{pid: 0x100}, minimized: &minimized}}
-	e.minimizeMain(context.Background(), nil, pid, false)
+	child := proc{pid: pid, start: time.Date(2026, 10, 22, 2, 0, 0, 0, time.UTC)}
+	e := &winEnv{clock: time.Now, w: fakeWin32{handleOK: true, creation: child.start.UnixNano(), mainOf: map[uint32]uintptr{pid: 0x100}, minimized: &minimized}}
+	e.minimizeMain(context.Background(), nil, child, false)
 	if len(minimized) != 1 {
 		t.Fatalf("twin: minimized %v, want the window minimized", minimized)
 	}
 
 	minimized = nil
-	e = &winEnv{clock: time.Now, w: fakeWin32{mainOf: map[uint32]uintptr{}, minimized: &minimized}} // no window ever appears
+	e = &winEnv{clock: time.Now, w: fakeWin32{handleOK: true, creation: child.start.UnixNano(), mainOf: map[uint32]uintptr{}, minimized: &minimized}} // no window ever appears
 	stop, cancel := context.WithCancel(context.Background())
 	time.AfterFunc(50*time.Millisecond, cancel)
 	start := time.Now()
-	e.minimizeMain(context.Background(), stop, pid, false)
+	e.minimizeMain(context.Background(), stop, child, false)
 	if took := time.Since(start); took > 2*time.Second {
 		t.Errorf("minimizeMain waited %v after the session context ended, want it to stop at once", took)
 	}

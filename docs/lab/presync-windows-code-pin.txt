@@ -4,14 +4,27 @@
 # The hash covers buildLaunchCmd, winStart, startHidden, minimizeMain,
 # minimizeAgain, minimizeWindow, minimizeMode, the Win32 show, iconic and
 # foreground calls, quit and postClose, each printed without comments
-# (internal/presync/windows_start_test.go, TestWindowsCodePin).
+# (internal/presync/windows_start_test.go, TestWindowsCodePin). Since 2026-10-31
+# (gate-2 pass 1, as4win-4) it also covers the code those depend on: which window
+# is picked to minimize and close (selectMainWindow, isMainWindow, the window
+# listing and its style constants), the handle and identity re-checks, the 15 s
+# wait, the minimize's identity and keyboard checks (minimizeOurs,
+# foregroundIsOurs), the launch's working folder (winInstallDir) and the session's
+# retry rule (minimizeRetry). The full list is windowsPinned in that test.
 #
 # Changing any of them turns TestWindowsCodePin red until lab MA-918 is run
 # again and its record is added under docs/lab/ IN THE SAME COMMIT, carrying the
-# new hash and naming windows; then the record line below names that file. The
-# hash is changed only together with a new lab record, never alone.
+# new hash, the record's date and naming MA-918 and windows; then the record line
+# below names that file, which must be the Windows start entry's own record
+# (docs/lab/presync-attended-start-windows.md), and a date: line (YYYY-MM-DD)
+# gives the record's date. Once a record is named, the hash is changed only
+# together with a new lab record, never alone.
 #
 # "no lab record": no MA-918 record exists yet (slice AS4 under OQ-7), so the
-# Windows start entry of AttendedStartAllowed must stay false.
-hash: 08c9a41269b160c0a134bf17bd956d22b34a03acff6463fe966d1c503d6bf79c
+# Windows start entry of AttendedStartAllowed must stay false, and MA-927 checks
+# only the hash (§2.7). With no measurement to invalidate, the hash then follows
+# the code: re-pinned 2026-10-31 for gate-2 pass 1, fix group "windows"
+# (as4win-2..6 changed the minimize; as4win-4 widened what is hashed). The first
+# MA-918 run must measure the code at that run's hash.
+hash: a6b391eac34015ddad57ef76742acebb70f9e924897555b5a285f43ed7648ce0
 record: no lab record

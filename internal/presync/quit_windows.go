@@ -121,16 +121,18 @@ func (e *winEnv) startHidden(exe, profile string) error {
 // (minimizeAgain) until one attempt succeeds (A14, C-56). macOS launches truly
 // hidden and does not implement this. Its wait ends at once when ctx or stop (the
 // session context) ends — a Lock, Shut down or the watchdog abandoning the session
-// (C-64). It reports whether it minimized the window, so every Windows text can say
-// "its window may still be on screen" when it did not (Result.Minimized, C-56).
-func (e *winEnv) minimizeMain(ctx, stop context.Context, pid int, attended bool) bool {
+// (C-64). It reports whether the window is minimized, so every Windows text can
+// say "its window may still be on screen" when it is not (Result.Minimized, C-56).
+// The first attempt follows the run's mode: a scheduled run, just past its idle
+// check, keeps SW_MINIMIZE (§1.3).
+func (e *winEnv) minimizeMain(ctx, stop context.Context, child proc, attended bool) bool {
 	deadline := e.now().Add(minimizeWait)
 	for e.now().Before(deadline) {
 		if ctx.Err() != nil || (stop != nil && stop.Err() != nil) {
 			return false
 		}
-		if hwnd, ok := e.w.mainWindow(uint32(pid)); ok {
-			return e.minimizeWindow(hwnd, attended)
+		if found, minimized := e.minimizeOurs(child, attended); found {
+			return minimized
 		}
 		e.sleep(ctx, stop, 500*time.Millisecond)
 	}
@@ -139,31 +141,67 @@ func (e *winEnv) minimizeMain(ctx, stop context.Context, pid int, attended bool)
 
 // minimizeAgain is one more try with no wait (A14 (2), C-56): the session calls it
 // on each S7 poll until one attempt has succeeded, and never after, so a person who
-// restores our window to work in it is not fought.
-func (e *winEnv) minimizeAgain(pid int, attended bool) bool {
-	hwnd, ok := e.w.mainWindow(uint32(pid))
-	if !ok {
-		return false
-	}
-	return e.minimizeWindow(hwnd, attended)
+// restores our window to work in it is not fought. A retry may come many minutes
+// after a scheduled run's idle check, when the person may be typing again, so every
+// retry takes minimizeMode's choice whatever the run's mode and never moves the
+// keyboard away from another program (gate-2 pass 1, as4win-5).
+func (e *winEnv) minimizeAgain(child proc, _ bool) bool {
+	_, minimized := e.minimizeOurs(child, true)
+	return minimized
 }
 
-// minimizeWindow minimizes Thunderbird's main window. A scheduled run keeps
-// SW_MINIMIZE (§1.3, accepted 2026-10-23). An attended run — the person may be
-// typing in another window — takes minimizeMode's choice (A14 (3), C-58): an
-// already minimized window gets no call (and counts as minimized), one that is not
-// the foreground window is minimized without activating anything, and one that took
-// the keyboard is minimized handing activation back.
-func (e *winEnv) minimizeWindow(hwnd uintptr, attended bool) bool {
+// minimizeOurs makes one minimize attempt on the proven child's main window. Like
+// the quit (F1, PC-W3) it holds a handle to the pid across the attempt, so Windows
+// cannot give the number to another program meanwhile, and re-proves through it,
+// by exact creation time, that the process is the child the session adopted: a pid
+// reused after our Thunderbird exited is never addressed (gate-2 pass 1, as4win-6).
+// found reports whether the child's single main window was found; minimized,
+// whether that window is minimized now.
+func (e *winEnv) minimizeOurs(child proc, keepFocus bool) (found, minimized bool) {
+	pid := uint32(child.pid)
+	h, ok := e.w.holdHandle(pid)
+	if !ok {
+		return false, false
+	}
+	defer e.w.releaseHandle(h)
+	if e.w.creationNs(pid) != child.start.UnixNano() {
+		return false, false
+	}
+	hwnd, ok := e.w.mainWindow(pid)
+	if !ok {
+		return false, false
+	}
+	return true, e.minimizeWindow(hwnd, pid, keepFocus)
+}
+
+// minimizeWindow minimizes Thunderbird's main window and reports whether it is
+// minimized afterwards: a ShowWindow that did not take (Thunderbird showed its
+// window again) is not success, so the session tries again (gate-2 pass 1,
+// as4win-2). Without keepFocus (a scheduled run's first attempt) it uses
+// SW_MINIMIZE (§1.3, accepted 2026-10-23). With keepFocus — an attended run, or any
+// retry — it takes minimizeMode's choice (A14 (3), C-58): an already minimized
+// window gets no call (and counts as minimized), one that does not have the
+// keyboard is minimized without activating anything, and one that took the keyboard
+// is minimized handing activation back.
+func (e *winEnv) minimizeWindow(hwnd uintptr, pid uint32, keepFocus bool) bool {
 	mode := swMinimize
-	if attended {
-		mode = minimizeMode(e.w.isIconic(hwnd), e.w.foregroundWindow() == hwnd)
+	if keepFocus {
+		mode = minimizeMode(e.w.isIconic(hwnd), e.foregroundIsOurs(pid))
 		if mode == 0 {
 			return true
 		}
 	}
 	e.w.showWindow(hwnd, mode)
-	return true
+	return e.w.isIconic(hwnd)
+}
+
+// foregroundIsOurs reports whether the window the keyboard goes to belongs to our
+// Thunderbird's process — its main window or any dialog it shows, such as the
+// not-the-default-mail-app prompt — not only whether it is the main window itself
+// (gate-2 pass 1, as4win-3).
+func (e *winEnv) foregroundIsOurs(pid uint32) bool {
+	fg := e.w.foregroundWindow()
+	return fg != 0 && e.w.windowPID(fg) == pid
 }
 
 // quit asks the proven child to close (design §4, S8). It holds an OpenProcess

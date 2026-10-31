@@ -92,11 +92,24 @@ func (r sessionResult) result() Result {
 // (A14 (3), minimizeMode), a scheduled run keeps SW_MINIMIZE (§1.3).
 type windowMinimizer interface {
 	// minimizeMain is the first attempt, right after adoption: it waits up to
-	// minimizeWait for the single main window, on the session context (C-64).
-	minimizeMain(ctx, stop context.Context, pid int, attended bool) bool
+	// minimizeWait for the single main window, on the session context (C-64). It
+	// addresses only the proven child (its pid and exact start, as4win-6).
+	minimizeMain(ctx, stop context.Context, child proc, attended bool) bool
 	// minimizeAgain is one more try with no wait, made on each S7 poll until one
-	// attempt has succeeded, and never after (A14 (2), C-56).
-	minimizeAgain(pid int, attended bool) bool
+	// attempt has succeeded, and never after (A14 (2), C-56; minimizeRetry).
+	minimizeAgain(child proc, attended bool) bool
+}
+
+// minimizeRetry is the session's backstop-minimize retry rule (A14 (2), C-56): a
+// minimize that has not yet succeeded is tried again, once per S7 poll, until one
+// attempt succeeds — never after, so a person who restores our window to work in it
+// is not fought. m is nil on an adapter that starts Thunderbird truly out of sight
+// (macOS). MA-927's hash pins it with the Windows code it drives (as4win-4).
+func minimizeRetry(m windowMinimizer, child proc, attended, minimized bool) bool {
+	if m == nil || minimized {
+		return minimized
+	}
+	return m.minimizeAgain(child, attended)
 }
 
 // runSession runs one pre-sync session, S1..S9 (design 4.5). It never fails the
@@ -396,7 +409,7 @@ func runSession(ctx context.Context, d deps) (out sessionResult) {
 	// does not implement this, so it is a no-op there.
 	minimizer, canMinimize := e.(windowMinimizer)
 	if canMinimize {
-		res.minimized = minimizer.minimizeMain(ctx, sctx, child.pid, d.attended)
+		res.minimized = minimizer.minimizeMain(ctx, sctx, child, d.attended)
 	}
 
 	// S7 wait quiet — poll the digest; quiet needs a first change (rev-3, L-M5).
@@ -476,9 +489,7 @@ func runSession(ctx context.Context, d deps) (out sessionResult) {
 		// A14 (2), C-56: a minimize that has not yet succeeded is tried again on each
 		// poll, until one succeeds — never after, so a person who restores our window
 		// to work in it is not fought.
-		if canMinimize && !res.minimized {
-			res.minimized = minimizer.minimizeAgain(child.pid, d.attended)
-		}
+		res.minimized = minimizeRetry(minimizer, child, d.attended, res.minimized)
 		e.sleep(ctx, waitCtx, d.pollEvery)
 	}
 
