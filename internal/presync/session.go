@@ -416,7 +416,8 @@ func runSession(ctx context.Context, d deps) (out sessionResult) {
 		res.minimized = minimizer.minimizeMain(ctx, sctx, child, d.attended)
 	}
 
-	// S7 wait quiet — poll the digest; quiet needs a first change (rev-3, L-M5).
+	// S7 wait quiet — poll the digest; quiet needs a first change (rev-3, L-M5),
+	// and that first change must be mail data, not an index touch (MA-932).
 	enter("S7")
 	// A16 (OQ-6): "Stop waiting and back up now" ends the wait at once. Only an
 	// attended run has it, and an EndWait that ended before the wait began changes
@@ -460,12 +461,12 @@ func runSession(ctx context.Context, d deps) (out sessionResult) {
 			res.waited = e.now().Sub(up)
 			return leaveOpenByRule(OutcomeWaitEnded)
 		}
-		sum, trunc := e.digest(d.watch)
+		snap, trunc := e.digest(d.watch)
 		if trunc {
 			watchTruncated = true
 		}
 		now := e.now()
-		qt.observe(sum, now)
+		qt.observe(snap, now)
 		if o, done := qt.verdict(now); done {
 			if watchTruncated {
 				// The watch set exceeded its cap, so quiet was judged on the part

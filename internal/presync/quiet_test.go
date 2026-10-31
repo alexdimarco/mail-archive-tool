@@ -22,13 +22,13 @@ func TestPresyncQuietDetector(t *testing.T) {
 		q := newQuietTracker(base, cfg)
 		for s := 0; s < 1200; s += 10 {
 			now := base.Add(time.Duration(s) * time.Second)
-			q.observe(0x1111, now) // the same digest every poll: nothing changed
+			q.observe(mailSnap(0x1111, 100), now) // the same digest every poll: nothing changed
 			if o, done := q.verdict(now); done {
 				t.Fatalf("at +%ds the session ended %q, but with no change it must wait to maxWait (a settle+quiet quit here is the L-M5 bug)", s, o.Name)
 			}
 		}
 		now := base.Add(1200 * time.Second)
-		q.observe(0x1111, now)
+		q.observe(mailSnap(0x1111, 100), now)
 		if o, done := q.verdict(now); !done || o != OutcomeNoActivity {
 			t.Fatalf("at maxWait with no change: got (%q, done=%v), want ok-noactivity", o.Name, done)
 		}
@@ -36,8 +36,8 @@ func TestPresyncQuietDetector(t *testing.T) {
 
 	t.Run("a change then quiet ends ok", func(t *testing.T) {
 		q := newQuietTracker(base, cfg)
-		q.observe(0x1111, base.Add(10*time.Second))  // baseline
-		q.observe(0x2222, base.Add(600*time.Second)) // the download lands at +10 min
+		q.observe(mailSnap(0x1111, 100), base.Add(10*time.Second))  // baseline
+		q.observe(mailSnap(0x2222, 900), base.Add(600*time.Second)) // the download lands at +10 min
 		if o, done := q.verdict(base.Add(700 * time.Second)); done {
 			t.Fatalf("only +100s after the change the session ended %q; quiet is %v", o.Name, cfg.quiet)
 		}
@@ -49,9 +49,9 @@ func TestPresyncQuietDetector(t *testing.T) {
 
 	t.Run("still changing at maxWait is not-quiet", func(t *testing.T) {
 		q := newQuietTracker(base, cfg)
-		q.observe(0x1111, base)
-		for s := 10; s <= 1200; s += 10 { // a fresh digest every poll: never settles
-			q.observe(uint64(s), base.Add(time.Duration(s)*time.Second))
+		q.observe(mailSnap(0x1111, 100), base)
+		for s := 10; s <= 1200; s += 10 { // a fresh digest every poll, the mailbox growing: never settles
+			q.observe(mailSnap(uint64(s), int64(100+s)), base.Add(time.Duration(s)*time.Second))
 		}
 		now := base.Add(1200 * time.Second)
 		if o, done := q.verdict(now); !done || o != OutcomeNotQuiet {
@@ -61,9 +61,9 @@ func TestPresyncQuietDetector(t *testing.T) {
 
 	t.Run("a suspend gap resets the quiet clock", func(t *testing.T) {
 		q := newQuietTracker(base, cfg)
-		q.observe(0x1111, base)
-		q.observe(0x2222, base.Add(30*time.Second))  // a change at +30s
-		q.observe(0x2222, base.Add(400*time.Second)) // same digest, but a 370s gap => suspend reset
+		q.observe(mailSnap(0x1111, 100), base)
+		q.observe(mailSnap(0x2222, 200), base.Add(30*time.Second))  // mail at +30s
+		q.observe(mailSnap(0x2222, 200), base.Add(400*time.Second)) // same digest, but a 370s gap => suspend reset
 		if o, done := q.verdict(base.Add(400*time.Second + cfg.quiet - time.Second)); done {
 			t.Fatalf("after a suspend reset the session ended %q before quiet elapsed again", o.Name)
 		}
@@ -88,11 +88,11 @@ func TestPresyncQuietDetector(t *testing.T) {
 		if err := os.Chtimes(inbox, info.ModTime(), info.ModTime()); err != nil {
 			t.Fatalf("chtimes: %v", err)
 		}
-		if d2, _ := digestWatch([]string{dir}); d2 != d1 {
+		if d2, _ := digestWatch([]string{dir}); d2.sum != d1.sum {
 			t.Errorf("digest moved on a same-size same-mtime content edit: the walk read content")
 		}
 		writeFile(t, inbox, "aaaaaa") // growth
-		if d3, _ := digestWatch([]string{dir}); d3 == d1 {
+		if d3, _ := digestWatch([]string{dir}); d3.sum == d1.sum {
 			t.Errorf("digest unchanged after the mailbox grew")
 		}
 		real := filepath.Join(dir, "real")
@@ -104,10 +104,15 @@ func TestPresyncQuietDetector(t *testing.T) {
 		if err := os.Symlink(real, filepath.Join(dir, "link")); err != nil {
 			t.Skipf("symlink unsupported here: %v", err)
 		}
-		if after, _ := digestWatch([]string{dir}); after != before {
+		if after, _ := digestWatch([]string{dir}); after.sum != before.sum || len(after.store) != len(before.store) {
 			t.Errorf("digest moved after adding a symlinked directory: the walk followed it")
 		}
 	})
+}
+
+// mailSnap is a poll of a watch set holding one mailbox of the given size.
+func mailSnap(sum uint64, inboxSize int64) watchSnap {
+	return watchSnap{sum: sum, store: map[string]int64{walkKey(0, "INBOX"): inboxSize}}
 }
 
 func writeFile(t *testing.T, path, content string) {

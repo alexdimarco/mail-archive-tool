@@ -88,7 +88,7 @@ func (e *winEnv) now() time.Time { return e.clock() }
 func (e *winEnv) sleep(ctx, stop context.Context, d time.Duration) {
 	sleepCtx(ctx, stop, d)
 }
-func (e *winEnv) digest(roots []string) (uint64, bool) { return digestWatch(roots) }
+func (e *winEnv) digest(roots []string) (watchSnap, bool) { return digestWatch(roots) }
 
 // rawThunderbirdCount is the Toolhelp snapshot's thunderbird.exe count, every one
 // listed whether or not its details read. Unused on Windows today: the quit goes

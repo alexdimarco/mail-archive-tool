@@ -1546,6 +1546,24 @@ macOS's AS-Q. AS-L any time after AS3, or never. AS10 last. The labs run in para
   first-change gate counts only message-store growth (an mbox growing, or a new file in a maildir),
   a change that goes back through the pre-sync design's quiet-rule review first. MA-918 logs the
   same list on Windows.
+  - *2026-10-31, the gate changed (MA-932).* The macOS record (`docs/lab/presync-attended-start-darwin.md`,
+    with `docs/lab/presync-quiet-darwin-2026-10-30.md`) found early touches: an `.msf` index about 2 s
+    before the mail data in both runs, and a first fetch that came at +6 s in one run and at about
+    +9.5 minutes in the other. Under the owner's go-ahead ("go ahead with the wait fix", 2026-10-30),
+    the first-change gate now counts only message-store data: an mbox that grows, or a mail file never
+    seen this session that holds data (a new mbox, or a new message in a maildir `cur`/`new`). An index
+    touch, a filter or log file, a compaction (Thunderbird's `nstmp`, a shrink) and a rename that keeps
+    the size do not open it; once it is open, any watched change still resets the quiet clock. This
+    changes the pre-sync quiet rule's first-change gate — the revision-3 rule of
+    `docs/design-thunderbird-presync.md` §4.4.2 (lab L-M5), which counted any change. A session that
+    sees only index touches now waits to the 20-minute maximum and ends `ok-noactivity` ("nothing
+    arrived") instead of ending "synced" at about 4 minutes, so a Run now with no new mail takes the
+    full 20 minutes unless "Stop waiting" is pressed, and a scheduled one counts toward the OQ-5
+    no-change streak. An adversarial self-pass ran on the change (a mailbox name with a dot, Maildir, a
+    compaction or rename, a capped or unreadable walk) and its findings are fixed in the same commit.
+    **Still owed:** the pre-sync design's quiet-rule review that this bullet asks for; the self-pass
+    does not replace it, and macOS's `AttendedStartAllowed` entry stays false until it is held or the
+    owner rules otherwise.
 - **L-A10 (new, a short spike) [C-57]** Parallels: start Thunderbird once with `SW_SHOWMINNOACTIVE`
   (a throwaway `CreateProcess` call in a lab-only test) and record whether it starts minimized and
   without activation. Before any new Windows launch code is written; decides whether MA-923 is

@@ -53,11 +53,12 @@ type fakeEnv struct {
 	child           proc
 	appearIn        time.Duration // child appears this long after startHidden
 	exitIn          time.Duration // child exits this long after quit
-	changeAt        time.Time     // the watch digest changes at/after this time
-	dgBase          uint64
-	dgChanged       uint64
-	digestTruncated bool   // when set, digest() reports the walk was truncated
-	digestHook      func() // called at the start of each digest() (lets a test cancel mid-S7)
+	changeAt        time.Time     // the watch digest changes at/after this time: mail arrives
+	dgBase          uint64        // the digest before changeAt; also the mailbox's size then
+	dgChanged       uint64        // the digest from changeAt on; also the mailbox's size then
+	indexTouchAt    time.Time     // when set, from this time an index (.msf) touch moves the digest, not the mail (MA-932)
+	digestTruncated bool          // when set, digest() reports the walk was truncated
+	digestHook      func()        // called at the start of each digest() (lets a test cancel mid-S7)
 	sleeps          int
 	sleepsNoStop    int // waits made without the session context (A5: there must be none)
 
@@ -201,7 +202,14 @@ func (f *fakeEnv) quit(ctx context.Context, target proc) error {
 
 func (f *fakeEnv) quitAffectsAllInstances() bool { return f.quitAll }
 
-func (f *fakeEnv) digest(roots []string) (uint64, bool) {
+// fakeMailbox is the walk key of the one message-store file the scripted digest
+// reports.
+var fakeMailbox = walkKey(0, "INBOX")
+
+// digest scripts the watch set: one mailbox whose size follows the digest (so
+// mail arriving at changeAt grows it), and, from indexTouchAt, an index touch
+// that moves the digest but not the mailbox.
+func (f *fakeEnv) digest(roots []string) (watchSnap, bool) {
 	if f.digestHook != nil {
 		f.digestHook()
 	}
@@ -209,12 +217,17 @@ func (f *fakeEnv) digest(roots []string) (uint64, bool) {
 		return digestWatch(roots)
 	}
 	if !f.sm {
-		return 0, false
+		return watchSnap{}, false
 	}
+	v := f.dgBase
 	if !f.nowT.Before(f.changeAt) {
-		return f.dgChanged, f.digestTruncated
+		v = f.dgChanged
 	}
-	return f.dgBase, f.digestTruncated
+	s := watchSnap{sum: v, store: map[string]int64{fakeMailbox: int64(v)}, capped: f.digestTruncated, frontier: fakeMailbox}
+	if !f.indexTouchAt.IsZero() && !f.nowT.Before(f.indexTouchAt) {
+		s.sum ^= 1 << 62
+	}
+	return s, f.digestTruncated
 }
 
 func (f *fakeEnv) acquireLock(path string) (bool, error) { return f.lockOK, nil }

@@ -107,9 +107,9 @@ type env interface {
 	// count, so a process thunderbirdProcs drops is still counted as a second
 	// Thunderbird. ok is false when the list itself could not be read.
 	rawThunderbirdCount() (n int, ok bool)
-	// digest folds the watch set into one value without opening a file (S7); the
-	// real seam calls digestWatch.
-	digest(roots []string) (sum uint64, truncated bool)
+	// digest folds the watch set into one value, and lists its message-store
+	// files, without opening a file (S7); the real seam calls digestWatch.
+	digest(roots []string) (snap watchSnap, truncated bool)
 	// acquireLock takes the per-profile session lock (S2); released at END.
 	acquireLock(path string) (ok bool, err error)
 	releaseLock(path string)

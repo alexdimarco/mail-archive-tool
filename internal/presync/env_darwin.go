@@ -289,7 +289,7 @@ func (e *macEnv) sleep(ctx, stop context.Context, d time.Duration) {
 }
 
 // digest folds the watch set without opening a file (design §4.4.2).
-func (e *macEnv) digest(roots []string) (uint64, bool) { return digestWatch(roots) }
+func (e *macEnv) digest(roots []string) (watchSnap, bool) { return digestWatch(roots) }
 
 // bootTime reads the machine's boot time in unix seconds (a reboot clears the
 // record, design §4.6). 0 on any failure — recovery then treats the record as
