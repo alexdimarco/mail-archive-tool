@@ -1196,6 +1196,13 @@ it, then click Run now." (Windows: "…started minimized…".) The CLI words nam
 because a no-posture line is easy to miss and the likeliest cause, a hidden password window, loses
 mail for as long as it lasts. MA-926 (AS5).
 
+**Amended 2026-10-31 (owner ruling 4, answering question (b) of the quiet-rule review; the owner's
+reply, verbatim, "1 - yes. 2. test 3 -  tes 4 - yes 5 - yes with note"):** the warning says, in one
+short sentence before "Do this:", "This warning clears by itself at the next backup that brings new
+mail." It is on every surface that shows the warning (Status on the command line and in the gui
+view, the Desktop's health view); the warning still sends no email (§5.4 above), so no email
+changes. The release notes' 1.5.2 line says the same.
+
 ### 5.5 The alert email, once per streak [C-29, C-35, C-40]
 
 - **Who sends:** the scheduled run-job (`RunHeadless`), after `app.Run`, for a run that did not fail,

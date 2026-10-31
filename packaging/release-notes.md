@@ -37,7 +37,7 @@ Windows: SmartScreen → *More info → Run anyway*. Verify downloads against `S
 - On a Mac, Run now syncs Thunderbird first, even while you are at the computer: it starts Thunderbird out of sight, waits for its mail (up to 20 minutes, often about 13; Stop waiting and back up now ends the wait), and leaves it open for you to quit. Scheduled backups still wait until you are away. On Windows, Run now does not start Thunderbird yet; scheduled backups still sync it.
 - **Encrypted archives on a Mac** can sync Thunderbird before Run now too: turn on **Sync Thunderbird before each Run now** in Settings. Until that backup starts reading mail, **Lock** cancels it.
 - **Skipped syncs are no longer silent.** If Thunderbird could not be synced before an archive's scheduled backups for 3 days, **Status** says so and what to do, and backup alerts send one email about it (when "a failed backup" is ticked).
-- **A softer warning** shows in **Status** when Thunderbird was started before each scheduled backup for 3 days but no new mail arrived: it may be waiting for a password or sign-in. No email is sent for this one.
+- **A softer warning** shows in **Status** when Thunderbird was started before each scheduled backup for 3 days but no new mail arrived: it may be waiting for a password or sign-in. No email is sent for this one, and it clears by itself at the next backup that brings new mail.
 
 ### New in 1.5.1 — one place for backup settings
 - **Settings is where you change a backup.** How often, the time, and **Sync Thunderbird before each backup** are all in the Desktop's **Settings** card. The **Scheduled backup** card shows what is set up, with **Run now**, **Repair** and **Remove**.

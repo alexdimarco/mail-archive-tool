@@ -240,14 +240,15 @@ func notSyncedText(in Input, s state.SyncStreak) string {
 // nothingArrivedText is the softer presync_nothing_arrived WARN (§5.4, OQ-5): its first
 // sentence says the backups ran, and it names a password or sign-in window that is
 // easy to miss (wording settled by the friction review, §14 gate 3: a minimized window
-// on Windows can be seen, so it never says "nobody can see").
+// on Windows can be seen, so it never says "nobody can see"); and it says it clears by
+// itself at the next backup that brings new mail (owner ruling 4 of 2026-10-31).
 func nothingArrivedText(in Input, s state.SyncStreak) string {
 	w := syncWordsFor(in)
 	then := "then click Run now."
 	if !w.desktop {
 		then = "then " + w.byHand + "."
 	}
-	return fmt.Sprintf("This is not a failed backup: the backups still ran. Since %s, Thunderbird was started before each of this archive's scheduled backups, but no new mail arrived (%d backups in a row). That can mean there was no new mail, or that Thunderbird is waiting for a password or sign-in that nobody has answered: it was %s, so its window is easy to miss. Do this: open Thunderbird; if it asks for a password or a sign-in, answer it, %s",
+	return fmt.Sprintf("This is not a failed backup: the backups still ran. Since %s, Thunderbird was started before each of this archive's scheduled backups, but no new mail arrived (%d backups in a row). That can mean there was no new mail, or that Thunderbird is waiting for a password or sign-in that nobody has answered: it was %s, so its window is easy to miss. This warning clears by itself at the next backup that brings new mail. Do this: open Thunderbird; if it asks for a password or a sign-in, answer it, %s",
 		streakDate(s.FirstNoChange), s.NoChange, w.started, then)
 }
 
