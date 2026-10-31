@@ -22,14 +22,28 @@ func getOverview(t *testing.T, cfg Config) string {
 }
 
 // covers: MA-272, R17, R12, S41
-// The Overview page renders the four status cards from real state, the Microsoft
+// The Overview page renders its status cards from real state, the Microsoft
 // 365 connection (or the not-configured prompt), and an OS-aware Security & privacy
-// panel whose credential-vault line matches this OS.
+// panel whose credential-vault line matches this OS. Since 2026-10-31 (the owner's
+// ruling A for 1.5.2) the "Archive engine: Ready" and "Capture: Idle" tiles are gone:
+// each could only ever show that one value, so they told a person nothing.
 func TestOverviewContent(t *testing.T) {
-	// No config → the four cards, the in-app Microsoft 365 config form, the security panel.
+	// No config → the two cards, the in-app Microsoft 365 config form, the security panel.
 	body := getOverview(t, Config{ConfigPath: filepath.Join(t.TempDir(), "none.json")})
+	var labels []string
+	for _, c := range (Config{ConfigPath: filepath.Join(t.TempDir(), "none.json")}).cards() {
+		labels = append(labels, c.Label)
+	}
+	if got := strings.Join(labels, " | "); got != "Microsoft 365 | Scheduled backup" {
+		t.Errorf("the Overview's status tiles are %q, want only the two that can change: Microsoft 365 and Scheduled backup", got)
+	}
+	for _, gone := range []string{`<div class="label">Archive engine</div>`, `<div class="label">Capture</div>`, ">Idle</div>"} {
+		if strings.Contains(body, gone) {
+			t.Errorf("the Overview still draws a tile that can only ever show one value: %q", gone)
+		}
+	}
 	for _, want := range []string{
-		"Archive engine", "Ready", "Microsoft 365", "Capture", "Idle", "Scheduled backup",
+		`<div class="label">Microsoft 365</div>`, `<div class="label">Scheduled backup</div>`,
 		"Not set up (only needed for Microsoft 365 mail)", // the status card, with no archive chosen (MA-938)
 		// The Microsoft 365 connection offers an in-app config form (MA-549), not a pointer
 		// to the `mailarchive setup` command line (owner report 2026-10-13).

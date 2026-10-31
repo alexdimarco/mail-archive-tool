@@ -658,11 +658,13 @@ func dashboardHeaders(next http.Handler) http.Handler {
 
 type card struct{ Label, Value, Class string } // Class: good | warn | ""
 
-// cards computes the four Overview status cards from real state. The detailed
-// GREEN/WARN/RED "Status & health" view (mirroring the `status` verb) arrives in a
-// later slice; these four are the dashboard's operational snapshot.
+// cards computes the Overview status cards from real state: the Microsoft 365
+// connection and the scheduled backup. The "Archive engine: Ready" and "Capture: Idle"
+// tiles were removed on 2026-10-31 (the owner's ruling A for 1.5.2, MA-272 amended):
+// each could only ever show that one value. A running backup is shown by the activity
+// log on the Archive now card, with its Cancel the backup button.
 func (cfg Config) cards() []card {
-	out := []card{{"Archive engine", "Ready", "good"}}
+	var out []card
 
 	conn := card{"Microsoft 365", "Not configured", "warn"}
 	if cfg.effectiveOut() == "" {
@@ -681,8 +683,6 @@ func (cfg Config) cards() []card {
 		conn = card{"Microsoft 365", "Not used by this archive", ""}
 	}
 	out = append(out, conn)
-
-	out = append(out, card{"Capture", "Idle", "good"})
 
 	// The tile is named as its card is, "Scheduled backup" (X11, OR-3): it may be hourly, daily
 	// or weekly.
@@ -1450,7 +1450,7 @@ body{margin:0;font:15px system-ui,-apple-system,Segoe UI,Roboto,sans-serif;backg
 .warnbox{border-color:var(--warn);color:var(--text)}
 .content{padding:30px 34px 52px;min-width:0}.inner{max-width:1040px;margin:0 auto}
 h1{font-size:1.8rem;letter-spacing:-.02em;margin:0 0 4px}.lede{color:var(--muted);margin:0 0 22px}
-.status-grid{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:12px;margin-bottom:20px}
+.status-grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:12px;margin-bottom:20px}
 .status-card{background:var(--panel);border:1px solid var(--line);border-radius:12px;padding:15px}
 .status-card .label{color:var(--muted);font-size:.8rem}.status-card .value{font-size:1.08rem;font-weight:800;margin-top:6px;overflow-wrap:anywhere}
 .good{color:var(--good)}.warn{color:var(--warn)}

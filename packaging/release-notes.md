@@ -55,6 +55,7 @@ Windows: SmartScreen → *More info → Run anyway*. Verify downloads against `S
 - **See how each sync went.** For an archive that syncs Thunderbird, **Recent backups** shows a short tag on each run (for example "Thunderbird synced first" or "Thunderbird not synced: you were using the computer"). **Status** adds a line "Thunderbird sync at the last backup", and `mailarchive status -json` adds `thunderbird_sync`.
 - **Dated log lines.** Each Thunderbird sync line in `mailarchive.log` now starts with the date and time.
 - **Clearer words.** With no archive set up, MailArchive Desktop no longer calls itself a Microsoft 365 archive, and its pages, help text, warnings and the command line's help now say what this version really does: for example, a scheduled backup skips the Thunderbird sync while you are using the computer (it does not wait), and the Security & privacy card names the Thunderbird sync as the one thing that can change your mail.
+- **Two status tiles instead of four.** The Overview no longer shows the "Archive engine: Ready" and "Capture: Idle" tiles: they never changed, so they told you nothing. It shows **Microsoft 365** and **Scheduled backup**.
 
 ### New in 1.5.1 — one place for backup settings
 - **Settings is where you change a backup.** How often, the time, and **Sync Thunderbird before each backup** are all in the Desktop's **Settings** card. The **Scheduled backup** card shows what is set up, with **Run now**, **Repair** and **Remove**.
