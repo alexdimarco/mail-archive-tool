@@ -993,6 +993,13 @@ func (cfg Config) overviewFor(csrf, epoch string) string {
 		// (design-desktop-settings-card ruling 1, slice A5).
 		HasSchedule  bool
 		ScheduleKind string
+		// ManualBackup: the backup runs only when the person clicks Run now (MA-949). The card
+		// says so in ManualKindLine, in place of the schedule's kind, and offers Run now and
+		// Remove, never Repair (there is no scheduler entry to repair); Backup alerts says
+		// ManualAlertsLine.
+		ManualBackup     bool
+		ManualKindLine   string
+		ManualAlertsLine string
 		// ExportLine: a schedule set up at the command line — why Run now isn't shown, and
 		// how to get it where this page can (MA-942).
 		ExportLine        string
@@ -1165,6 +1172,10 @@ func (cfg Config) overviewFor(csrf, epoch string) string {
 		switch {
 		case rt.runJob && !rt.captureCounted:
 			data.ShowRepair, data.ScheduleKind = true, "a backup that re-reads this archive's mail files (keeps this archive current)"
+			data.ManualBackup = rt.desc.IsManual() && entry == "" // MA-949: Run now only, no entry
+			if data.ManualBackup {
+				data.ManualKindLine, data.ManualAlertsLine = manualKindLine, manualAlertsLine
+			}
 		case rt.captureCounted:
 			data.ScheduleKind = "a scheduled Microsoft 365 capture"
 		case rt.broken != "":
@@ -1242,6 +1253,14 @@ func (cfg Config) overviewFor(csrf, epoch string) string {
 		data.LocalPresyncOn = runNowJobSyncs(data.OutDir)
 	}
 	data.RunNowTitle = runNowTitle(cfg.goos(), data.LocalPresyncOn)
+	if data.ManualBackup { // no schedule to name (MA-949)
+		switch data.RunNowTitle {
+		case runNowPlainTitle:
+			data.RunNowTitle = runNowManualTitle
+		case runNowStartOffTitle:
+			data.RunNowTitle = runNowManualStartOffTitle
+		}
+	}
 	if data.LocalPresyncOn && runNowSyncs(cfg.goos()) && !presyncjob.AttendedSyncSeen() {
 		data.RunNowFirstSync = runNowFirstSyncLine(cfg.goos())
 	}
@@ -1608,7 +1627,7 @@ pre{white-space:pre-wrap;overflow-wrap:anywhere;background:var(--bg);border:1px 
     <div class="card" id="sec-archive">
       <h2>Archive now</h2>
       {{if .ArchiveNowLocal}}<p class="card-sub" id="archiveNowOff">` + archiveNowOffLead + `</p>
-      <p class="card-sub" id="archiveNowWay">{{if eq .ArchiveNowWay "runnow"}}To back it up now, click <b>Run now</b> on the <a href="#sec-backup">Scheduled backup</a> card.{{else if eq .ArchiveNowWay "create"}}To back it up now, first give it a scheduled backup: in <a href="#sec-settings">Settings</a>, choose <b>How often</b> and click <b>Save settings</b>. <b>Run now</b> then appears on the Scheduled backup card.{{else if eq .ArchiveNowWay "export"}}Its scheduled backup was set up at the command line, so Run now isn't offered for it: the <a href="#sec-backup">Scheduled backup</a> card says how to get Run now.{{else}}To add new mail now, use one of the ways below.{{end}}</p>
+      <p class="card-sub" id="archiveNowWay">{{if eq .ArchiveNowWay "runnow"}}To back it up now, click <b>Run now</b> on the <a href="#sec-backup">Scheduled backup</a> card.{{else if eq .ArchiveNowWay "create"}}To back it up now, first set up its backup: in <a href="#sec-settings">Settings</a>, choose <b>How often</b> (<b>Only when I click Run now</b>, if it should never run by itself) and click <b>Save settings</b>. <b>Run now</b> then appears on the Scheduled backup card.{{else if eq .ArchiveNowWay "export"}}Its scheduled backup was set up at the command line, so Run now isn't offered for it: the <a href="#sec-backup">Scheduled backup</a> card says how to get Run now.{{else}}To add new mail now, use one of the ways below.{{end}}</p>
       <details class="steps" id="archiveNowHand"{{if eq .ArchiveNowWay "hand"}} open{{end}}><summary>Other ways to add new mail: the wizard or a terminal</summary><p class="card-sub steps">{{.ArchiveNowHand}}</p></details>
       {{else if .ArchiveNowOff}}<p class="card-sub steps" id="archiveNowOff">{{.ArchiveNowOff}}</p>{{else}}<p class="card-sub">{{if .OutDir}}Fetch the latest mail into your archive. The first time, you sign in with a Microsoft device code shown here.{{else}}Archive now copies new mail from a Microsoft 365 mailbox into your archive. To use it, fill in the Microsoft 365 connection card, type a folder for the archive in Settings → Archive location and click Save settings, then come back here. For Thunderbird, Outlook or other mail files, you don't need this button.{{end}}</p>
       <button class="btn" id="archiveBtn"{{if .ArchiveNowConfirm}} data-confirm="{{.ArchiveNowConfirm}}"{{end}}>Archive now</button>{{end}}
@@ -1639,9 +1658,10 @@ pre{white-space:pre-wrap;overflow-wrap:anywhere;background:var(--bg);border:1px 
       {{if .Set.Sched}}<div id="schedFields" data-sched-fields data-installed-interval="{{if .Set.Installed}}{{.Set.Interval}}{{end}}" data-installed-at="{{if .Set.Installed}}{{.Set.At}}{{end}}" data-installed-sync="{{if .Set.SyncOn}}1{{end}}" data-must-post="{{if .Set.MustPost}}1{{end}}" data-was-installed="{{if or .Set.Installed .Set.CadenceUnknown}}1{{end}}">
       <div class="row2">
         <div><label for="schedInterval">How often</label>
-          <select id="schedInterval" data-kind-field>{{if .Set.CadenceUnknown}}<option value="" selected>As installed (can't be read right now)</option>{{end}}{{if .Set.SchedNone}}<option value=""{{if not .Set.Interval}} selected{{end}}>No scheduled backup</option>{{end}}{{if .Set.SchedHourly}}<option value="hourly"{{if eq .Set.Interval "hourly"}} selected{{end}}>Hourly</option>{{end}}<option value="daily"{{if eq .Set.Interval "daily"}} selected{{end}}>Daily</option><option value="weekly"{{if eq .Set.Interval "weekly"}} selected{{end}}>Weekly (Sunday)</option></select></div>
+          <select id="schedInterval" data-kind-field>{{if .Set.CadenceUnknown}}<option value="" selected>As installed (can't be read right now)</option>{{end}}{{if .Set.SchedNone}}<option value=""{{if not .Set.Interval}} selected{{end}}>No scheduled backup</option>{{end}}{{if .Set.SchedManual}}<option value="manual"{{if eq .Set.Interval "manual"}} selected{{end}}>{{.Set.ManualLabel}}</option>{{end}}{{if .Set.SchedHourly}}<option value="hourly"{{if eq .Set.Interval "hourly"}} selected{{end}}>Hourly</option>{{end}}<option value="daily"{{if eq .Set.Interval "daily"}} selected{{end}}>Daily</option><option value="weekly"{{if eq .Set.Interval "weekly"}} selected{{end}}>Weekly (Sunday)</option></select></div>
         <div><label for="schedTime">At (local time{{if .Set.SchedHourly}}; hourly uses the minutes{{end}})</label><input id="schedTime" type="time" value="{{.Set.At}}" data-kind-field></div>
       </div>
+      {{if .Set.SchedManual}}<p class="card-sub" id="schedManualHint" data-manual-hint{{if ne .Set.Interval "manual"}} hidden{{end}}>{{.Set.ManualHint}}</p>{{end}}
       {{if .Set.Sync}}<label class="checkline"><input type="checkbox" id="schedPresync"{{if .Set.SyncOn}} checked{{end}}{{if not .Set.Interval}} disabled{{end}} data-kind-field> Sync Thunderbird before each backup</label>
       <p class="card-sub" data-sync-hint{{if .Set.Interval}} hidden{{end}}>{{.SyncFirstLine}}</p>
       {{if .Set.SyncReason}}<p class="card-sub warn" id="schedSyncReason">{{.Set.SyncReason}}</p>{{end}}
@@ -1750,12 +1770,12 @@ pre{white-space:pre-wrap;overflow-wrap:anywhere;background:var(--bg);border:1px 
       {{if .BackupNotice}}<p class="card-sub" id="backupNotice">{{.NoticeLine}}</p>{{end}}
       {{if .NoticeRunJob}}<p class="card-sub" id="backupReadOnly">How often: {{.ReadOnlyCadence}}. Sync Thunderbird first: {{.ReadOnlySync}}.</p>{{end}}
       {{if .BrokenLine}}<p class="card-sub" id="backupBroken">{{.BrokenLine}}</p>{{end}}
-      {{if .HasSchedule}}<p class="card-sub" id="schedKind">This archive's scheduled backup: {{.ScheduleKind}}.</p>{{end}}
+      {{if .ManualBackup}}<p class="card-sub" id="schedManual">{{.ManualKindLine}}</p>{{else if .HasSchedule}}<p class="card-sub" id="schedKind">This archive's scheduled backup: {{.ScheduleKind}}.</p>{{end}}
       {{if .ExportLine}}<p class="card-sub" id="schedExport">{{.ExportLine}}</p>{{end}}
       {{if .ShowInstall}}<p class="card-sub" id="schedNone">{{if .OutDir}}No scheduled backup is set up for this archive yet. A scheduled backup runs a capture automatically, even when this app is closed (as long as you stay signed in to your computer), using your saved Microsoft sign-in.{{else}}Choose an archive location in Settings first; its backup options then show there.{{end}}</p>{{end}}
       {{if .ShowLocalCreate}}<p class="card-sub" id="schedNone">No scheduled backup is set up for this archive yet. A scheduled backup keeps it up to date automatically: it re-reads the mail files this archive was made from and adds anything new. It runs while you are logged in.</p>{{end}}
       {{if and .Set.Sched .OutDir}}<p class="card-sub" id="changeInSettings">{{if .Set.SchedCapture}}How often and time{{else}}How often, time and Thunderbird sync{{end}}: <a href="#sec-settings">Change in Settings</a></p>{{end}}
-      <div style="margin-top:14px">{{if .ShowRepair}}<button class="btn" id="schedRepair" title="Fix this archive's scheduled backup if it stopped working or points at the wrong place. How often it runs and its Thunderbird sync setting are kept; nothing in the archive changes.">Repair</button> <button class="btn" id="runBackupBtn" type="button" title="{{.RunNowTitle}}">Run now</button> {{end}}{{if .ShowCaptureRepair}}<button class="btn" id="schedRepair" title="Put this archive's scheduled capture back as it was set up: its cadence is kept, and a capture still named for the archive's earlier location is moved to this one. Nothing in the archive changes.">Repair</button> {{end}}{{if .ShowBrokenRepair}}<button class="btn" id="schedRepair" title="Make this archive's backup settings file again from the archive's own record. Thunderbird sync is then off.">Repair</button> {{end}}{{if .EncRunNow}}<button class="btn" id="runBackupBtn" type="button" title="{{.EncRunNowTitle}}"{{if not .EncUnlocked}} disabled{{end}}>Run now</button> {{end}}{{if .ShowRemove}}<button class="btn secondary" id="schedRemove" title="Delete this archive's scheduled backup. Your archive and everything in it are kept.">Remove</button>{{end}}</div>
+      <div style="margin-top:14px">{{if .ShowRepair}}{{if not .ManualBackup}}<button class="btn" id="schedRepair" title="Fix this archive's scheduled backup if it stopped working or points at the wrong place. How often it runs and its Thunderbird sync setting are kept; nothing in the archive changes.">Repair</button> {{end}}<button class="btn" id="runBackupBtn" type="button" title="{{.RunNowTitle}}">Run now</button> {{end}}{{if .ShowCaptureRepair}}<button class="btn" id="schedRepair" title="Put this archive's scheduled capture back as it was set up: its cadence is kept, and a capture still named for the archive's earlier location is moved to this one. Nothing in the archive changes.">Repair</button> {{end}}{{if .ShowBrokenRepair}}<button class="btn" id="schedRepair" title="Make this archive's backup settings file again from the archive's own record. Thunderbird sync is then off.">Repair</button> {{end}}{{if .EncRunNow}}<button class="btn" id="runBackupBtn" type="button" title="{{.EncRunNowTitle}}"{{if not .EncUnlocked}} disabled{{end}}>Run now</button> {{end}}{{if .ShowRemove}}<button class="btn secondary" id="schedRemove" title="{{if .ManualBackup}}Delete this archive's backup settings: Run now then has nothing to run until you choose How often again in Settings. Your archive and everything in it are kept.{{else}}Delete this archive's scheduled backup. Your archive and everything in it are kept.{{end}}">Remove</button>{{end}}</div>
       {{if .RunNowFirstSync}}<p class="card-sub" id="runNowFirstSync">{{.RunNowFirstSync}}</p>{{end}}
       <div class="note steps" id="runBackupNote" hidden></div>
       <div class="note" id="schedState" hidden></div>{{end}}
@@ -1764,6 +1784,7 @@ pre{white-space:pre-wrap;overflow-wrap:anywhere;background:var(--bg);border:1px 
     {{if not .Encrypted}}<div class="card" id="sec-alerts">
       <h2>Backup alerts</h2>
       <p class="card-sub">Email someone about your scheduled backups. Tick what you want below: a failed backup (one email per run of failures, then one more when backups work again), Thunderbird not synced for 3 days, an auto-paused backup, or every success. MailArchive sends the email itself through the mail server you fill in below; there is nothing else to install.</p>
+      {{if .ManualAlertsLine}}<p class="card-sub" id="alertsManual">{{.ManualAlertsLine}}</p>{{end}}
       <div><label><input type="checkbox" id="alertEnabled"{{if .AlertEnabled}} checked{{end}}> <b>Send backup alerts by email</b></label></div>
       <div class="row"><div class="k">Send alerts on</div><div class="v">
         <div><label><input type="checkbox" id="alertOnFailure"{{if .AlertOnFailure}} checked{{end}}> a failed backup, or Thunderbird not synced for 3 days (recommended)</label></div>
@@ -1951,7 +1972,9 @@ function schedChanged(){
   if(!schedFields||!iv||!iv.value)return false;
   const d=schedFields.dataset;
   if(d.mustPost==='1'||!d.installedInterval)return true;
-  if(iv.value!==d.installedInterval||(tm&&tm.value!==d.installedAt))return true;
+  if(iv.value!==d.installedInterval)return true;
+  // "Only when I click Run now" uses no time (MA-949): a time change alone is not a change.
+  if(iv.value!=='manual'&&tm&&tm.value!==d.installedAt)return true;
   return !!ps&&ps.checked!==(d.installedSync==='1');
 }
 // settingsState greys what a Save would not send: every option while a new location is typed
@@ -1964,6 +1987,10 @@ function settingsState(){
   const none=!!iv&&!iv.value;
   if(ps&&none)ps.disabled=true;
   if(hint)hint.hidden=!none;
+  // "Only when I click Run now" (MA-949): its line shows, and the time, which it does not use, is greyed.
+  const manual=!!iv&&iv.value==='manual',mh=document.querySelector('[data-manual-hint]'),tm=$('schedTime');
+  if(mh)mh.hidden=!manual;
+  if(tm&&!moved)tm.disabled=manual;
 }
 const outDirEl=$('outDir');
 if(outDirEl)outDirEl.addEventListener('input',settingsState);
@@ -2008,13 +2035,21 @@ async function doSave(backup){
       // record) is carried across the reload, so it stays in sight; where the browser keeps nothing
       // for the tab, the page is not drawn again and the note stays, with how to see the buttons.
       const wasNone=!(schedFields&&(schedFields.dataset.installedInterval||schedFields.dataset.wasInstalled==='1'));
+      // "Only when I click Run now" is not a schedule (MA-949): its words, and a switch to or from it
+      // draws the page again too, since the card then shows or hides Repair.
+      const ivEl=$('schedInterval'),manual=!!ivEl&&ivEl.value==='manual';
+      const wasManual=!!schedFields&&schedFields.dataset.installedInterval==='manual';
       const r=await schedPost();
-      if(r.ok&&wasNone){parts.push('Backup schedule set up.'+(r.note?' '+r.note:''));
+      if(r.ok&&wasNone){parts.push((manual?'Backup set up: it runs only when you click Run now.':'Backup schedule set up.')+(r.note?' '+r.note:''));
         let kept=!r.note;
         if(r.note){try{sessionStorage.setItem(keptNoteKey,parts.join(' '));kept=true;}catch(e){}}
         if(kept){say(parts.join(' '));setTimeout(()=>location.reload(),600);return true;}
         parts.push('Reload the page to see Remove, Repair and Run now on the Scheduled backup card.');say(parts.join(' '));schedState();return true;}
-      if(r.ok){parts.push('Backup schedule updated.'+(r.note?' '+r.note:''));schedState();}
+      if(r.ok){parts.push((manual?'Backup updated: it runs only when you click Run now.':'Backup schedule updated.')+(r.note?' '+r.note:''));
+        // A switch to or from Run now only draws the card again (it shows or hides Repair); with a
+        // note to keep in sight, it says to reload instead.
+        if(manual!==wasManual){if(!r.note){say(parts.join(' '));setTimeout(()=>location.reload(),600);return true;}parts.push('Reload the page to see the Scheduled backup card as it is now.');}
+        schedState();}
       else parts.push('The backup schedule was not changed: '+(r.reason||r.error||'it could not be saved.'));
     }
     say(parts.length?parts.join(' '):'There was nothing to save: these are the settings already in use.');
@@ -2267,6 +2302,7 @@ async function schedState(lead){
   try{const d=await(await fetch('api/schedule-state')).json();
     n.hidden=false;
     if(!d.schedulerAvailable)n.textContent=pre+'The OS scheduler is unavailable on this machine.';
+    else if(d.manual)n.textContent=pre+(lead?'Now: ':'')+d.manualLine; // MA-949: a choice, not "Not installed"
     else if(d.state==='installed')n.textContent=pre+(lead?'Now: installed':'Installed')+(d.interval?(' ('+d.interval+(d.at?(d.interval==='hourly'?', at '+d.at.slice(-2)+' minutes past each hour':' at '+d.at):'')+')'):'')+'.';
     else n.textContent=pre+(lead?'Now: not installed.':'Not installed.');
   }catch(e){}

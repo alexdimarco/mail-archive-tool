@@ -34,6 +34,13 @@ const (
 	Weekly Interval = "weekly"
 )
 
+// Manual is the How often of a backup that runs only when the person clicks Run now in
+// MailArchive Desktop (owner ruling 2026-10-31, 1.5.2; MA-949): its job file and descriptor
+// are kept, and no scheduler entry exists. It is recorded in a descriptor only
+// (DescribeManual) and is never a scheduler cadence: ParseInterval refuses it, so Validate,
+// and so Install and the command line's schedule, never make an entry for it.
+const Manual Interval = "manual"
+
 // ParseInterval validates and normalizes an interval string (empty → daily).
 func ParseInterval(s string) (Interval, error) {
 	switch Interval(strings.ToLower(strings.TrimSpace(s))) {

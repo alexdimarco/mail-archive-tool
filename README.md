@@ -167,7 +167,9 @@ the **same archive folder**. A run is incremental by default, so only messages n
 MailArchive Desktop reads, searches, checks and exports such an archive, and it can keep it current. In its
 **Settings** card, choose **How often** and click **Save settings**. That sets up a scheduled backup that re-reads
 your Thunderbird mail files and adds anything new. **Run now** on the **Scheduled backup** card runs it straight
-away. (**Archive now** is for Microsoft 365, so it is off for this archive.) You can also add new mail by hand:
+away. To back it up only when you choose, pick **Only when I click Run now** in **How often** (macOS and
+Windows): the backup is saved with no schedule, nothing runs by itself, and **Run now** runs it.
+(**Archive now** is for Microsoft 365, so it is off for this archive.) You can also add new mail by hand:
 
 - **the MailArchive wizard (`mailarchive wizard`):** open it, choose **Thunderbird / mbox mail folder** (or **Auto-detect my mailboxes**),
   pick your Thunderbird mail folder, then at **Select the output folder** pick the same archive folder as
@@ -279,7 +281,8 @@ What it gives you, beyond reading and searching the archive:
   "Thunderbird synced first").
 - **Scheduled backup** — the schedule's status, with **Run now**, **Repair** and
   **Remove** (the same schedule [`schedule`](#schedule--recurring-backups) writes).
-  How often it runs (hourly for local mail files, daily or weekly), its time and the
+  How often it runs (hourly for local mail files, daily or weekly, or only when you
+  click **Run now** for local mail files on macOS and Windows), its time and the
   Thunderbird sync are set in **Settings**, which shows only the options that apply
   to the archive: the three Microsoft 365 options (Deleted Items, Junk Email, original
   .eml) only for a Microsoft 365 archive, since they apply to every capture on this

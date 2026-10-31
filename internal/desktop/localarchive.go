@@ -225,7 +225,7 @@ const archiveNowOffLead = "Archive now is off for this archive. It is for Micros
 // archiveNowOff is a direct Archive now request's refusal on a local-origin archive: the
 // card's first line, where to click instead, and the hand steps (MA-546, MA-941).
 func archiveNowOff(goos, out string) string {
-	return archiveNowOffLead + " To back it up now, click Run now on the Scheduled backup card; if it has no scheduled backup yet, choose How often in Settings and click Save settings first, and Run now then appears there. You can also add new mail by hand. " + addMailHelp(goos, out)
+	return archiveNowOffLead + " To back it up now, click Run now on the Scheduled backup card; if it has no backup set up yet, choose How often in Settings (Only when I click Run now, if it should never run by itself) and click Save settings first, and Run now then appears there. You can also add new mail by hand. " + addMailHelp(goos, out)
 }
 
 // What the Archive now card of a local-origin archive points at instead (MA-941): the

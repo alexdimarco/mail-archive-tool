@@ -151,6 +151,8 @@ func brokenLine(r backupRoute) string {
 func cadenceWords(interval, at string) string {
 	at = strings.TrimSpace(at)
 	switch strings.ToLower(strings.TrimSpace(interval)) {
+	case string(schedule.Manual):
+		return "only when you click Run now" // MA-949: no time is used
 	case "hourly":
 		mm := at
 		if i := strings.LastIndex(at, ":"); i >= 0 {

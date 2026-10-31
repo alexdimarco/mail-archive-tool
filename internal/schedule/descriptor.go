@@ -74,6 +74,19 @@ func DescribeSpec(s Spec) Descriptor {
 	return d
 }
 
+// DescribeManual is the descriptor of a backup that runs only when the person clicks Run now
+// (Manual, MA-949): the run-job spec s as DescribeSpec records it, with Manual for its cadence.
+// Its writer installs nothing; it records the choice beside the job file the Run now runs.
+func DescribeManual(s Spec) Descriptor {
+	d := DescribeSpec(s)
+	d.Interval = string(Manual)
+	return d
+}
+
+// IsManual reports a descriptor that records a backup run only when the person clicks Run now
+// (Manual): no scheduler entry is expected for it.
+func (d Descriptor) IsManual() bool { return d.Interval == string(Manual) }
+
 // presyncFromArgs reads a schedule's Thunderbird pre-sync setting from the baked
 // job argv (design §4.2.3): -thunderbird-sync enables it and -thunderbird-profile
 // names the profile. It is for status display and judgement only — the run never
@@ -287,6 +300,8 @@ func readDescriptorFile(out, name, what, remedy string) (Descriptor, error) {
 	}
 	if iv, err := ParseInterval(util.StripControl(d.Interval)); err == nil {
 		d.Interval = string(iv)
+	} else if strings.EqualFold(strings.TrimSpace(util.StripControl(d.Interval)), string(Manual)) {
+		d.Interval = string(Manual) // the person's choice, never read as a daily schedule (MA-949)
 	} else {
 		d.Interval = string(Daily)
 	}

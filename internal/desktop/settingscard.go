@@ -28,6 +28,11 @@ type settingsCard struct {
 	// installed); SchedHourly offers Hourly (the form edits a run-job, OR-2); SchedCapture is a
 	// Microsoft 365 capture's form.
 	Sched, SchedNone, SchedHourly, SchedCapture bool
+	// SchedManual offers "Only when I click Run now" (MA-949): wherever the form edits a
+	// run-job, as Hourly is; never on a capture's form. ManualHint is shown under it.
+	SchedManual bool
+	ManualLabel string
+	ManualHint  string
 	// Interval and At are the installed schedule's; with nothing installed, none and 03:00 —
 	// never the settings file's copy (3.3). Installed says a schedule is recorded.
 	Interval, At string
@@ -154,6 +159,7 @@ func settingsCardFor(in settingsInputs) settingsCard {
 	switch {
 	case in.runJobForm && in.canEdit:
 		s.Sched, s.SchedHourly, s.SchedNone = true, true, !rt.hasDesc
+		s.SchedManual, s.ManualLabel, s.ManualHint = true, manualOptionLabel, manualHint
 		installedSync := rt.runJob && currentJobSyncsThunderbird(out)
 		s.Sync, s.SyncOn = in.thunderbird || installedSync, installedSync
 		if installedSync && !in.thunderbird {
@@ -190,7 +196,8 @@ func settingsCardFor(in settingsInputs) settingsCard {
 			}
 		}
 		s.CadenceUnknown = in.captureForm && in.entry != "" && !s.Installed
-		if s.Installed && in.entry == "" && in.entrySt == schedule.NotInstalled {
+		// A backup run only on Run now has no entry to be gone: nothing to put back (MA-949).
+		if s.Installed && in.entry == "" && in.entrySt == schedule.NotInstalled && !(rt.hasDesc && rt.desc.IsManual()) {
 			s.MustPost = true // the entry is gone: Save puts it back (3.4)
 			if st, err := state.ReadSourceStreak(out); err == nil && st.AutoPauseDue() {
 				s.AutoPaused = "Backups stopped: this archive's source has been unreachable since " + sinceWords(st) + "."

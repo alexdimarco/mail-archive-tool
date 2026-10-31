@@ -314,9 +314,10 @@ func TestTheCardsRepairAndRemoveReplyStaysAfterTheStateRedraw(t *testing.T) {
 	if !strings.Contains(cp, "else if(d.ok&&path==='api/schedule-remove')setTimeout(()=>location.reload(),2500)") {
 		t.Errorf("a Remove that went through leaves the card and Settings as they were:\n%s", cp)
 	}
-	// every branch of the state line starts with the reply
-	if n := strings.Count(st, "n.textContent=pre+"); n != 3 {
-		t.Errorf("schedState puts the reply in front of %d of its 3 state lines:\n%s", n, st)
+	// every branch of the state line starts with the reply (four since MA-949 added "Runs only
+	// when you click Run now.")
+	if n := strings.Count(st, "n.textContent=pre+"); n != 4 || strings.Count(st, "n.textContent=") != 4 {
+		t.Errorf("schedState puts the reply in front of %d of its 4 state lines:\n%s", n, st)
 	}
 	for _, w := range []string{"'Repairing the scheduled backup…'),'Repaired.')", "'Removing the scheduled backup…'),'Removed.')"} {
 		if !strings.Contains(dashboardJS, w) {

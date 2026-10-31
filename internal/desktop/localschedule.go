@@ -208,6 +208,12 @@ func (d *dashboard) scheduleInstallLocal(w http.ResponseWriter, in scheduleReque
 			j.ThunderbirdSync = nil
 		}
 	}
+	// "Only when I click Run now" (MA-949): the same job file, no scheduler entry.
+	if strings.EqualFold(strings.TrimSpace(in.Interval), string(schedule.Manual)) {
+		d.saveManual(w, manualSave{out: out, name: name, jobPath: jobPath, j: j, exists: exists,
+			syncChanged: syncChanged, wantSync: wantSync, recreate: recreate, at: strings.TrimSpace(in.Time)})
+		return
+	}
 	// Validate the cadence up front; refuse a non-enum value rather than silently
 	// coercing it (finding A4). An empty interval keeps the default.
 	iv := schedule.Weekly
@@ -352,6 +358,10 @@ func (d *dashboard) notRecordedReply(out string, edit, existed bool, exe string,
 		return "The backup could not be recorded in the archive (" + reason + "), and the scheduler entry it made could not be taken out again (" + rerr.Error() + "): click Remove on the Scheduled backup card to take it out."
 	}
 	if edit {
+		if dsc, derr := schedule.ReadDescriptor(out); derr == nil && dsc.IsManual() {
+			// From "Only when I click Run now" to a schedule (MA-949): nothing ran by itself before.
+			return "The backup could not be recorded in the archive (" + reason + "), so nothing was scheduled: this archive still backs up only when you click Run now."
+		}
 		return "The backup could not be recorded in the archive (" + reason + "), so it was not started again: backups stay stopped, and its settings are as they were."
 	}
 	return "The backup could not be recorded in the archive (" + reason + "), so nothing was scheduled."

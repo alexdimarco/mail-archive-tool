@@ -66,7 +66,9 @@ func TestArchiveNowCardPointsAtRunNow(t *testing.T) {
 	seen := beforeDetails(card)
 	for _, want := range []string{
 		"Archive now is off for this archive. It is for Microsoft 365 archives, and this one was made from mail files on this computer.",
-		`To back it up now, first give it a scheduled backup: in <a href="#sec-settings">Settings</a>, choose <b>How often</b> and click <b>Save settings</b>. <b>Run now</b> then appears on the Scheduled backup card.`,
+		// Amended for MA-949: How often's "Only when I click Run now" is named, so a backup now
+		// needs no schedule.
+		`To back it up now, first set up its backup: in <a href="#sec-settings">Settings</a>, choose <b>How often</b> (<b>Only when I click Run now</b>, if it should never run by itself) and click <b>Save settings</b>. <b>Run now</b> then appears on the Scheduled backup card.`,
 	} {
 		if !strings.Contains(seen, want) {
 			t.Errorf("with no schedule, the card does not say %q:\n%s", want, seen)

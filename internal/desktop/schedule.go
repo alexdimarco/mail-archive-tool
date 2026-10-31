@@ -481,6 +481,11 @@ func (d *dashboard) repairRunJob(w http.ResponseWriter, out string) {
 		writeJSON(w, map[string]any{"ok": false, "error": err.Error()})
 		return
 	}
+	if dsc.IsManual() {
+		// Run now only (MA-949): nothing to repair, said first, whatever the program's place.
+		writeJSON(w, map[string]any{"ok": false, "error": wizard.ManualNoRepair})
+		return
+	}
 	exe, _, err := schedule.ProgramForSchedule(dsc.Wrapper != "")
 	if err != nil {
 		writeJSON(w, map[string]any{"ok": false, "error": err.Error()})
@@ -636,6 +641,11 @@ func (d *dashboard) removeTasks() (removed []string, err error) {
 
 // removeTaskAt removes the weekly backup task named for the archive location p, if there is one.
 func (d *dashboard) removeTaskAt(p string) (bool, error) {
+	if manualAt(p) && d.cfg.taskState(p) != schedule.Installed {
+		// "Only when I click Run now" (MA-949): no scheduler entry to take out, only the
+		// archive's record of the choice; the caller removes the job file.
+		return true, schedule.RemoveDescriptor(p)
+	}
 	if d.cfg.RemoveBackupFor != nil {
 		if d.cfg.taskState(p) != schedule.Installed {
 			return false, nil
@@ -675,7 +685,7 @@ func (d *dashboard) runBackup(w http.ResponseWriter, r *http.Request) {
 	}
 	// Cancellable, attended (design-presync-attended §3.1, slice AS4): runnow.go.
 	if err := d.runCancellableJobOn(out, func(j keyedJob, logger *log.Logger) (string, error) {
-		return d.runNowPlain(j, jobPath, logger)
+		return d.runNowPlain(j, out, jobPath, logger)
 	}); err != nil {
 		writeJSON(w, map[string]any{"ok": false, "error": err.Error()})
 		return
@@ -761,6 +771,10 @@ func (d *dashboard) scheduleState(w http.ResponseWriter, r *http.Request) {
 		if d, err := schedule.ReadDescriptor(path); err == nil {
 			resp["interval"] = d.Interval
 			resp["at"] = d.At
+			// The person's choice, never "Not installed" (MA-949).
+			if d.IsManual() && st == schedule.NotInstalled {
+				resp["manual"], resp["manualLine"] = true, manualStateLine
+			}
 		}
 	}
 	writeJSON(w, resp)

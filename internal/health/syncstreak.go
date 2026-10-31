@@ -32,7 +32,10 @@ func assessSync(r *Report, in Input) {
 	}
 	// Only where the sync is really configured: a streak left from a schedule since
 	// switched off says nothing (§5.4).
-	if !in.HasDescriptor || !schedulePresyncConfigured(in) {
+	// Nor for a backup run only when the person clicks Run now (MA-949): the streaks count
+	// scheduled sessions only (§5.1), and it has none, so a 3-day warning would be about a
+	// schedule the person chose not to have.
+	if !in.HasDescriptor || !schedulePresyncConfigured(in) || manualBackup(in) {
 		return
 	}
 	s := in.SyncStreak

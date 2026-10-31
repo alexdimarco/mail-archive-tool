@@ -1108,7 +1108,7 @@ func rebuildSearchIndex(out string) (string, error) {
 // be in a state a repair fixes — not present in the scheduler, its program moved
 // or gone, or a re-point worth recording (ExeRepoint, §4.6.3).
 func repairable(in health.Input) bool {
-	if !in.HasDescriptor {
+	if !in.HasDescriptor || in.Desc.IsManual() { // Run now only: no entry to repair (MA-949)
 		return false
 	}
 	if in.ThisHost != "" && in.Desc.Host != "" && in.ThisHost != in.Desc.Host {
@@ -1184,11 +1184,20 @@ func repairSpec(out string, d schedule.Descriptor, exe string) (schedule.Spec, e
 // rebuilds a corroborated run-job through the SAME pure path the wizard uses
 // (§4.6.3, MA-617) — one home, so a repair cannot diverge by surface.
 func RepairSpec(out string, d schedule.Descriptor, exe string) (schedule.Spec, error) {
+	// A backup run only when the person clicks Run now has no scheduler entry to put back:
+	// a repair would turn it into a schedule they did not choose (MA-949).
+	if d.IsManual() {
+		return schedule.Spec{}, errors.New(ManualNoRepair)
+	}
 	if err := schedule.NameBound(out, d); err != nil {
 		return schedule.Spec{}, fmt.Errorf("not repairing: %v", err)
 	}
 	return repairSpec(out, d, exe)
 }
+
+// ManualNoRepair is why a backup run only when the person clicks Run now is never repaired
+// into a schedule (MA-949): it has no scheduler entry to put back.
+const ManualNoRepair = "This archive backs up only when you click Run now, so it has no scheduled backup to repair. To back it up on a schedule, choose How often in MailArchive Desktop's Settings. Nothing was changed."
 
 // repairSchedule re-installs a recorded schedule from the current executable.
 func repairSchedule(out string, d schedule.Descriptor) error {

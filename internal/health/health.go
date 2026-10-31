@@ -605,7 +605,10 @@ func assessKeyless(r *Report, in Input, now time.Time) {
 	// A schedule set to pre-sync Thunderbird before it runs says so (the CLI surface,
 	// design §4.9.2): read from the descriptor's argv for a flat export schedule
 	// (-thunderbird-sync) or from the run-job's job file for a GUI/Desktop run-job.
-	if in.HasDescriptor && schedulePresyncConfigured(in) {
+	switch {
+	case in.HasDescriptor && schedulePresyncConfigured(in) && manualBackup(in):
+		r.note("presync_syncs", manualSyncNote(in.GOOS))
+	case in.HasDescriptor && schedulePresyncConfigured(in):
 		r.note("presync_syncs", "this archive's scheduled backup syncs Thunderbird before it runs: it starts Thunderbird, waits for its mail to stop arriving, then asks it to quit, so the backup includes mail that had only reached the server; if Thunderbird is already open, or someone has used the keyboard or mouse in the last 2 minutes, that backup skips the sync and saves the mail already on this computer")
 	}
 	// The last backup's sync, and the 3-day warnings (design-presync-attended §4.7, §5.4).
@@ -614,7 +617,7 @@ func assessKeyless(r *Report, in Input, now time.Time) {
 	case state.LastRunUnreadable:
 		r.warn("lastrun_unreadable", fmt.Sprintf("the last-run record %s is unreadable (corrupt or truncated); the next run rewrites it", filepath.Join(in.Out, state.LastRunName)))
 	case state.LastRunAbsent:
-		if in.HasDescriptor {
+		if in.HasDescriptor && !manualBackup(in) { // Run now only: nothing runs until it is clicked
 			r.warn("never_ran", "a schedule is installed but no run has ever been recorded here — wait for the first run, or run the job by hand to check it works")
 		}
 	case state.LastRunPresent:
@@ -640,7 +643,8 @@ func assessKeyless(r *Report, in Input, now time.Time) {
 		case state.RunCancelled:
 			r.warn("run_cancelled", fmt.Sprintf("the last backup (%s) was cancelled; what it saved is kept, and the next backup finishes what it left", lr.Started.Local().Format(localStamp)))
 		}
-		if in.HasDescriptor && lr.Status != state.RunRunning && now.Sub(lr.Started) > 2*period {
+		// A backup run only when the person clicks Run now has no period to fall behind (MA-949).
+		if in.HasDescriptor && !manualBackup(in) && lr.Status != state.RunRunning && now.Sub(lr.Started) > 2*period {
 			r.warn("stale", fmt.Sprintf("the last run was %s ago, more than twice the %s schedule period — %s", HumanAge(now.Sub(lr.Started)), in.Desc.Interval, stalenessQuestion(in.GOOS, in.Desc.At)))
 		}
 		// Problems the last run found with its own setup and kept running past
@@ -800,6 +804,16 @@ func assessKeyless(r *Report, in Input, now time.Time) {
 		r.warn("descriptor_unreadable", in.DescErr.Error())
 	case !in.HasDescriptor && in.Encrypted:
 		// An encrypted archive cannot be scheduled yet (Phase 4): no schedule is no fault.
+	case manualBackup(in):
+		// The person's choice (MA-949): no scheduler entry is expected, so none of the
+		// schedule's checks below apply. Its job file is owner-side evidence (KindEv), never
+		// the archive's record alone: a record saying so with no job file here is said, as
+		// Run now has nothing to run.
+		if in.KindEv.Has(schedule.KindRunJob) {
+			r.note("manual_backup", manualBackupNote(in))
+		} else {
+			r.warn("manual_job_missing", manualJobMissing(in.Surface))
+		}
 	case !in.HasDescriptor && !in.OutAbsent:
 		r.warn("no_schedule", fmt.Sprintf("no schedule is recorded for this archive — choose How often in MailArchive Desktop's Settings, or answer \"Keep this archive current automatically?\" in the wizard, or %s; ignore this if a systemd timer, NAS task or other scheduler already keeps it current", scheduleRemedy(in)))
 	default:
@@ -2144,6 +2158,8 @@ func Summary(in Input, rep Report) []string {
 		lines = append(lines, "            (verify times are UTC)")
 	}
 	switch {
+	case manualBackup(in):
+		lines = append(lines, manualScheduleLine) // no entry, so no state, program or kind (MA-950)
 	case in.HasDescriptor:
 		lines = append(lines, fmt.Sprintf("Schedule:   %q %s · %s at %s · runs %s · installed %s (UTC) on %s",
 			in.Desc.Name, in.SchedState, in.Desc.Interval, in.Desc.At, in.Desc.Exe, in.Desc.InstalledAt.UTC().Format("2006-01-02"), in.Desc.Host))

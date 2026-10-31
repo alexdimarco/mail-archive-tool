@@ -262,14 +262,28 @@ func (c *captureState) endSync(slot uint64, o app.PresyncOutcome) {
 }
 
 // noStart records that this platform's Run now does not start Thunderbird (C-49).
-func (c *captureState) noStart(slot uint64) {
+func (c *captureState) noStart(slot uint64) { c.noStartSaying(slot, startNotAllowedLine) }
+
+// noStartSaying is noStart with the note's line given: a backup run only on Run now has no
+// scheduled backups to name (startNotAllowedManualLine, MA-949).
+func (c *captureState) noStartSaying(slot uint64, line string) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	if c.slot != slot || !c.runNow || c.muted {
 		return
 	}
-	c.syncNoStart, c.syncEnded, c.syncLine = true, true, startNotAllowedLine
+	c.syncNoStart, c.syncEnded, c.syncLine = true, true, line
 }
+
+// startNotAllowedManualLine is startNotAllowedLine for a backup run only on Run now (MA-949).
+const startNotAllowedManualLine = "Thunderbird was not started: on this computer Run now does not start Thunderbird yet, so the backup read the mail already here. To include the newest mail, open Thunderbird, let its mail arrive, then click Run now."
+
+// runNowManualTitle and runNowManualStartOffTitle are Run now's tooltips for a backup run only
+// on Run now (MA-949), in place of the plain and start-off ones, which name its schedule.
+const (
+	runNowManualTitle         = "Run this archive's backup now. It runs only when you click Run now: nothing runs by itself."
+	runNowManualStartOffTitle = "Run this archive's backup now. On this computer Run now does not start Thunderbird yet, so it backs up the mail already here: open Thunderbird and let its mail arrive first."
+)
 
 // runNowActivity adds a Run now's fields to /api/activity (§4.6): whether the job is a
 // Run now (the page re-attaches its poll after a reload, C-22), its slot id (which
@@ -327,10 +341,14 @@ func (c *captureState) runNowActivity(out map[string]any, goos string, now time.
 // with the Desktop's own context as the sync's Stop (Shut down). Its Phase, OnEnd and
 // StartNotAllowed callbacks carry this run's slot id (C-71); its EndWait is ended by
 // "Stop waiting and back up now" (OQ-6). A cancel is told by what the sync left.
-func (d *dashboard) runNowPlain(j keyedJob, jobPath string, logger *log.Logger) (string, error) {
+func (d *dashboard) runNowPlain(j keyedJob, out, jobPath string, logger *log.Logger) (string, error) {
 	goos := d.cfg.goos()
 	rn, slot, endWait := d.runNowHooks(goos)
 	defer endWait()
+	if manualAt(out) {
+		// Run now only (MA-949): there are no scheduled backups to sync it instead.
+		rn.StartNotAllowed = func() { d.cap.noStartSaying(slot, startNotAllowedManualLine) }
+	}
 	res, err := wizard.RunJobInProcess(j.ctx, j.stop, jobPath, logger, rn)
 	if words, ok := d.runNowCancelled(j, slot, goos, err); ok {
 		return words, nil
