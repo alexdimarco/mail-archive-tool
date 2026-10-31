@@ -50,7 +50,7 @@ func TestAttentionSidecarReassures(t *testing.T) {
 		t.Fatalf("failed run did not write %s: %v", AttentionName, err)
 	}
 	s := string(body)
-	for _, want := range []string{"unaffected", "index.html", "most recent backup run", "self-contained executable", "mailarchive status"} {
+	for _, want := range []string{"unaffected", "index.html", "most recent backup run", "download it from its official page:\n  https://github.com/alexdimarco/mail-archive-tool/releases", "open MailArchive Desktop and look at Status & health", "mailarchive status"} {
 		if !strings.Contains(s, want) {
 			t.Errorf("%s lacks reassurance %q:\n%s", AttentionName, want, s)
 		}

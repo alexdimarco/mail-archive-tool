@@ -15,15 +15,16 @@ import (
 
 // archiveReadme is written to <out>/README.txt on every run and by reindex:
 // the archive must explain itself to someone with no tool and no manual (R7).
-const archiveReadme = `This folder is an email archive written by mailarchive.
+const archiveReadme = `This folder is an email archive made by MailArchive.
 
 You need no software to read it: open index.html in any web browser, pick a
 folder, pick a message. Every message is one self-contained .html page; if it
 had attachments they are in the file of the same name ending in
 -attachments.zip, next to it. A message may also have a .eml file beside it:
-that is the original, unmodified message (only when the archive was made with
--raw). Message pages are inert by design: nothing in them runs or loads from
-the network.
+that is the original, unchanged message. It is there only when the archive
+keeps originals (the MailArchive Desktop setting "Keep each message's original
+.eml too", or -raw at a terminal). Message pages are inert by design: nothing in
+them runs or loads from the network.
 
 Layout
   <store name>/<folder>/<subfolder>/…      mirrors the mailbox's folder tree
@@ -35,22 +36,25 @@ Layout
 Times: file names and the folder tables use UTC. Inside a message page, Sent /
 Received / Date show the time with its original UTC offset.
 
-Searching: search.db is a standard SQLite database (tables: docs, docs_fts —
-an FTS5 full-text index over subject, people, folder, attachment names and
-body). Any SQLite tool can query it. With the mailarchive program:
-  mailarchive serve -out <this folder>   (a local search web page)
+Searching: in MailArchive Desktop, choose "Open an archive folder…" and pick this
+folder (or click Open archive if it is already your archive) for a search page
+over every message and attachment name. At a terminal:
+  mailarchive serve -out <this folder>   (the same search page)
   mailarchive search -out <this folder> words...
-Without it: use your system's file search over the .html files, or ripgrep.
+search.db is a standard SQLite database (tables: docs, docs_fts — an FTS5
+full-text index over subject, people, folder, attachment names and body). Any
+SQLite tool can query it. Without MailArchive: use your system's file search
+over the .html files, or ripgrep.
 
-Going back in time: for an archive of a live mailbox (Microsoft 365 via Graph),
-"mailarchive serve" also offers a point-in-time view: pick a past date and see
-the folders and messages as they stood then, including mail later deleted from
-an ordinary folder. It reads the timeline in .mailarchive-history.jsonl. By
-default a live capture skips the Deleted Items and Junk Email folders, so a
-message that lived ONLY there is not in this archive unless the operator chose
-to include them. This date view is offered only by "serve"; the pages here on
-disk always show each message in the folder it was FIRST archived in, and never
-change.
+Going back in time: for an archive of a Microsoft 365 mailbox, MailArchive can
+show the folders and messages as they stood on a past date, including mail later
+deleted from an ordinary folder. In MailArchive Desktop click "Go back in time";
+at a terminal run "mailarchive serve -out <this folder>" and follow its "Go back
+in time" link. It reads the timeline in .mailarchive-history.jsonl. By default a
+Microsoft 365 backup skips the Deleted Items and Junk Email folders, so a message
+that lived ONLY there is not in this archive unless those folders were included.
+The pages here on disk always show each message in the folder it was FIRST
+archived in, and never change.
 
 Removing a message for good (redaction): delete its files here — the .html
 page, its matching -attachments.zip, and its .eml if one is present (only a
@@ -67,11 +71,11 @@ Transport headers: each message page has a collapsed panel labelled
 reference, not as proof of origin: a sending or relaying server can forge them.
 
 Verifying the files: every archived file's SHA-256 checksum is recorded in
-.mailarchive-manifest.json. If you have the mailarchive program, run
+.mailarchive-manifest.json. With MailArchive, run
   mailarchive verify -out <this folder>
 to re-check every file against its recorded checksum. Exit 0 means every
 recorded file is intact and none is missing a checksum; a file archived by an
-older mailarchive carries none yet and shows as "unrecorded" until it is
+older MailArchive carries none yet and shows as "unrecorded" until it is
 re-exported or baselined with "mailarchive verify -record". This detects a
 changed, truncated or missing file; it is not a signature, so it proves the
 files have not changed, not who wrote them.
@@ -80,7 +84,8 @@ Items that could not be captured: if the tool could not read or download
 something its source holds, it says so instead of hiding it. A page whose title
 is "(unreadable message)", or whose top says "This item could only be partly
 read from the source", holds what the tool could read of that message (the
-original bytes are in the .eml beside it when the archive was made with -raw).
+original bytes are in the .eml beside it when the archive keeps originals: the
+MailArchive Desktop setting "Keep each message's original .eml too", or -raw).
 A message or folder the tool could not read at all has no page: it is a row in
 attachments-report.tsv, which names its source, folder, date and subject. Each
 row has a class:
@@ -90,7 +95,7 @@ row has a class:
 If no one runs the tool against the source anymore, every fillable or terminal
 row is missing from this archive. The end of each row's detail says why it
 happened and what to do about it (or that there is nothing to do), and
-whether the original still exists. With the mailarchive program, run "mailarchive status -out ." in this folder for the
+whether the original still exists. With MailArchive, run "mailarchive status -out ." in this folder for the
 same in plain words.
 
 The one exception to that last sentence: a row for a part the tool kept as
@@ -134,6 +139,17 @@ Housekeeping files (safe to leave alone):
   ARCHIVE-INTEGRITY-ATTENTION.txt present only when a verify found modified or
                                missing files; explains how to restore; removed
                                once a verify attests
+  .mailarchive-runhistory.json the recent backup runs (shown as Recent backups
+                               in MailArchive Desktop)
+  .mailarchive-sourcestreak.json since when the mail source could not be
+                               reached, if it could not
+  .mailarchive-syncstreak.json how many scheduled backups in a row went without
+                               a Thunderbird sync, or with no new mail arriving
+                               (only for a Thunderbird archive that syncs; used
+                               for the 3-day warnings)
+  .mailarchive-paused.json     present only while the archive is paused: nothing
+                               writes to it until it is resumed in MailArchive
+                               Desktop; do not delete it by hand
   .mailarchive.lock            lock file; may remain after a run — its presence
                                does not mean a run is active (the real lock is an
                                OS flock released when the run ends)
@@ -147,7 +163,7 @@ Housekeeping files (safe to leave alone):
 // table — the plaintext README would tell a reader of the folder what its units hide
 // (phase2a §4, MA-737). Its wording owes the friction review (P3-8).
 func EncryptedNote() string {
-	return fmt.Sprintf(encryptedNoteText, OpenArchiveWords, CopyWords, releasesPage, noteVersion())
+	return fmt.Sprintf(encryptedNoteText, OpenArchiveWords, CopyWords, releasesPage, noteVersion(), RestoreKeyWords)
 }
 
 // The Desktop's words the note quotes, kept here so the note and the buttons agree
@@ -155,6 +171,9 @@ func EncryptedNote() string {
 const (
 	OpenArchiveWords = "Open an archive folder…"
 	CopyWords        = "Make an unencrypted copy…"
+	// RestoreKeyWords is the Encryption card's button that puts lost key files back
+	// (the wording pass before 1.5.2, MA-940: the note named a button that does not exist).
+	RestoreKeyWords = "Choose the recovery file and put back the key file"
 	releasesPage     = "https://github.com/alexdimarco/mail-archive-tool/releases"
 )
 
@@ -181,8 +200,9 @@ copy of this archive in a new folder: on its Encryption card choose
   mailarchive decrypt -out <this folder> -dest <a folder of yours>
 
 If the archive's key files are ever lost or damaged, MailArchive can put them back
-with the archive's recovery file and recovery key ("Put back the key file" on its
-Encryption card, or mailarchive restore-key-file at a terminal).
+with the archive's recovery file and recovery key: open the archive in MailArchive
+Desktop, and its Encryption card offers "%[5]s". At a terminal:
+  mailarchive restore-key-file -out <this folder> -from <the recovery file>
 
 MailArchive is free from its official page:
   %[3]s

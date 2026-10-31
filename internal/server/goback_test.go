@@ -333,7 +333,7 @@ func TestGobackAnnouncesAvailability(t *testing.T) {
 	b.add("store\x00mid:b", "Msg", "store/Inbox/b.html", "Inbox", "Inbox", true, gbD1, gbD1)
 	b.save() // no history log written
 	tsB := b.serve()
-	if _, body := gbGet(t, tsB.URL+"/goback?at=2025-07-01"); !strings.Contains(body, `class="avail avail-unavailable"`) || !strings.Contains(body, "Go-back is unavailable") {
+	if _, body := gbGet(t, tsB.URL+"/goback?at=2025-07-01"); !strings.Contains(body, `class="avail avail-unavailable"`) || !strings.Contains(body, "Go back in time is not available for this archive yet. Only a Microsoft 365 archive keeps the timeline it needs, starting from its first backup. An archive of mail files on this computer (Outlook, Thunderbird, Evolution) never has one, even when it is backed up on a schedule. Showing the mail as it is now.") {
 		t.Errorf("a missing log must announce go-back unavailable, not silently show current-only:\n%s", body)
 	}
 
@@ -352,7 +352,7 @@ func TestGobackAnnouncesAvailability(t *testing.T) {
 	f.WriteString(`{"k":"store` + "\x00" + `mid:c","fol`) // torn, unterminated line
 	f.Close()
 	tsC := c.serve()
-	if _, body := gbGet(t, tsC.URL+"/goback"); !strings.Contains(body, `class="avail avail-partial"`) || !strings.Contains(body, "Go-back is partial") {
+	if _, body := gbGet(t, tsC.URL+"/goback"); !strings.Contains(body, `class="avail avail-partial"`) || !strings.Contains(body, "Go back in time is partial: part of the timeline is damaged, so past dates may be missing messages. The next Microsoft 365 backup repairs a damaged last line.") {
 		t.Errorf("a torn log must announce go-back partial:\n%s", body)
 	}
 }

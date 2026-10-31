@@ -237,12 +237,12 @@ func updateAttentionSidecar(out string, r LastRun) {
 			"web browser to read them. This notice is about the most recent backup run\n"+
 			"only: it means new mail may not have been added, not that the archive is\n"+
 			"damaged.\n\n"+
-			"What to do: run\n"+
+			"What to do: open MailArchive Desktop and look at Status & health, or run\n"+
 			"  mailarchive status -out %q\n"+
-			"for the full posture and the remedy. To resume backups you need the\n"+
-			"mailarchive program (a single self-contained executable) — get it from\n"+
-			"wherever you originally obtained it. This file is removed automatically\n"+
-			"after the next run that succeeds.\n",
+			"It says what went wrong and how to fix it. If this computer no longer has\n"+
+			"MailArchive, download it from its official page:\n"+
+			"  https://github.com/alexdimarco/mail-archive-tool/releases\n"+
+			"This file is removed automatically after the next backup that succeeds.\n",
 			out, r.Finished.UTC().Format(time.RFC3339), reason, out)
 		_ = writeSidecarAtomic(path, []byte(body))
 	case RunOK:

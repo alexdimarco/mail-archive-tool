@@ -46,7 +46,7 @@ const folderTmpl = `<!DOCTYPE html>
   <div class="muted">{{.Total}} message(s){{if gt .Pages 1}} · page {{.Page}} of {{.Pages}}{{if .PrevHref}} · <a href="{{.PrevHref}}">‹ newer</a>{{end}}{{if .NextHref}} · <a href="{{.NextHref}}">older ›</a>{{end}}{{if .Pager}} · {{template "numpager" .}}{{end}}{{end}} · <a href="{{.RootRelPrefix}}index.html">↑ all folders</a></div>
   <div style="margin-top:8px">
     <input type="search" id="q" placeholder="{{if gt .Pages 1}}Filter this page…{{else}}Filter these messages… (type to narrow){{end}}">
-    {{if gt .Pages 1}}<div class="muted" style="margin-top:4px">Filter matches this page only ({{len .Rows}} of {{.Total}}) and only the columns shown. To search the whole archive, run <code>mailarchive serve</code> for full-text search, or <code>rg -i "your text" .</code> to search message bodies.</div>{{end}}
+    {{if gt .Pages 1}}<div class="muted" style="margin-top:4px">Filter matches this page only ({{len .Rows}} of {{.Total}}) and only the columns shown. To search the whole archive, open it in MailArchive Desktop ("Open an archive folder…"), or run <code>mailarchive serve -out</code> with the archive's top folder, or <code>rg -i "your text"</code> in that folder to search message bodies.</div>{{end}}
   </div>
 </div>
 <div class="wrap">
@@ -88,16 +88,14 @@ li .c{color:#888;font-variant-numeric:tabular-nums}
   <b>An encrypted archive:</b> it opens only through MailArchive, which is showing it to you now. Browse the folders
   below; every message opens with its attachments. Dates in tables are UTC. Use <a href="../">search</a> for ranked
   search across every message and attachment name.<br>
-  <b>Check the files are intact:</b> run <code>mailarchive verify</code> on this archive's folder.
+  <b>Check the files are intact:</b> in MailArchive Desktop, choose Maintenance → Check integrity, or at a terminal run <code>mailarchive verify -out</code> with this archive's folder.
 </div>{{else}}{{if .Gaps}}<div class="note gaps">` + GapBanner + `<br>
-  <a href="attachments-report.tsv">Open the report</a> ({{.Gaps}} item(s); each row says why it is missing and what to do about it).
-  With the mailarchive program, run <code>mailarchive status -out .</code> in this folder for the same in plain words.</div>
+  <a href="attachments-report.tsv">Open the report</a> ({{.Gaps}} item(s); each row says why it is missing and what to do about it). It is the file attachments-report.tsv in this archive's folder and opens in a spreadsheet; the MailArchive search page cannot show it. Status &amp; health in MailArchive Desktop, or <code>mailarchive status -out .</code> in this folder, says the same in plain words.</div>
 {{end}}<div class="note">
   <b>No software needed:</b> browse the folders below; every message is a self-contained page with its attachments
   in a sibling zip. Dates in tables and file names are UTC. See <a href="README.txt">README.txt</a> for the layout.<br>
-  <b>Full-text search:</b> run <code>mailarchive serve -out .</code> in this folder and open the printed
-  <code>http://localhost:…</code> URL for ranked search across every message and attachment name.
-  Or from a terminal: <code>rg -i "your text" .</code> (ripgrep), or add this folder to Windows Search.<br>
+  <b>Full-text search:</b> open this archive in MailArchive Desktop ("Open an archive folder…"), or run <code>mailarchive serve -out .</code> in this folder and open the link it prints.
+  Either gives ranked search across every message and attachment name. Or from a terminal: <code>rg -i "your text" .</code> (ripgrep), or add this folder to Windows Search.<br>
   <b>Check the files are intact:</b> run <code>mailarchive verify -out .</code> in this folder — exit 0 means every recorded file still matches its checksum and none is unrecorded (an archive from an older version shows files as "unrecorded" until re-exported).
 </div>{{end}}
 <h1 style="font-size:15px;margin:16px 0 6px">Folders</h1>

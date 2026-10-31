@@ -86,16 +86,16 @@ func (g *gobackServer) serveGoback(w http.ResponseWriter, r *http.Request) {
 	switch {
 	case data.Timeline == TimelineUnavailable && data.Encrypted:
 		page.Availability = "unavailable"
-		page.AvailNote = "Go-back is unavailable: this archive has no history timeline yet. Showing the current mailbox only. A live capture (graph) writes the timeline; a one-shot local import has none."
+		page.AvailNote = "Go back in time is not available for this archive yet. Only a Microsoft 365 archive keeps the timeline it needs, starting from its first backup. An archive of mail files on this computer (Outlook, Thunderbird, Evolution) never has one, even when it is backed up on a schedule. Showing the mail as it is now."
 	case data.Timeline == TimelineUnavailable:
 		page.Availability = "unavailable"
-		page.AvailNote = "Go-back is unavailable: this archive has no history timeline (.mailarchive-history.jsonl). Showing the current mailbox only. A live capture (graph) writes the timeline; a one-shot local import has none."
+		page.AvailNote = "Go back in time is not available for this archive yet. Only a Microsoft 365 archive keeps the timeline it needs, starting from its first backup. An archive of mail files on this computer (Outlook, Thunderbird, Evolution) never has one, even when it is backed up on a schedule. Showing the mail as it is now."
 	case data.Timeline == TimelinePartial && data.Encrypted:
 		page.Availability = "partial"
-		page.AvailNote = "Go-back is partial: part of the history timeline is damaged or was lost. Past dates may be incomplete."
+		page.AvailNote = "Go back in time is partial: part of the timeline is damaged or was lost, so past dates may be missing messages."
 	case data.Timeline == TimelinePartial:
 		page.Availability = "partial"
-		page.AvailNote = "Go-back is partial: the history timeline is damaged (a torn tail or an unreadable line). Past dates may be incomplete. The next scheduled run repairs a torn tail; `reindex` compacts the log."
+		page.AvailNote = "Go back in time is partial: part of the timeline is damaged, so past dates may be missing messages. The next Microsoft 365 backup repairs a damaged last line."
 	default:
 		page.Availability = "available"
 		page.AvailNote = "Go-back is available."
@@ -337,7 +337,7 @@ h1{font-size:16px;margin:18px 0 6px}
 <main class="main">
 <div class="avail avail-{{.Availability}}">{{.AvailNote}}</div>
 {{if .BadDate}}<div class="note">That date could not be read — use the YYYY-MM-DD form, or pick one from the date track below.</div>{{end}}
-{{if .ManifestErr}}<div class="note">The archive {{if .Encrypted}}record{{else}}manifest{{end}} could not be read, so the message set is unknown here. Run <code>mailarchive status</code> for the posture.</div>{{end}}
+{{if .ManifestErr}}<div class="note">The archive's {{if .Encrypted}}record{{else}}list of messages{{end}} could not be read, so MailArchive cannot tell which messages to show. See Status &amp; health in MailArchive Desktop, or run <code>mailarchive status -out</code> with this archive's folder.</div>{{end}}
 {{if .DateTrack}}<nav class="track" aria-label="observed run dates"><span class="track-label">Jump to:</span><a class="chip{{if .Current}} sel{{end}}" href="goback">now</a>{{range .DateTrack}}<a class="chip{{if eq $.AtDate .}} sel{{end}}" href="goback?at={{.}}">{{.}}</a>{{end}}</nav>{{end}}
 <h1>{{if .Current}}The mailbox now{{else}}As of {{.AtDate}}{{end}} · {{.Total}} message{{if ne .Total 1}}s{{end}}</h1>
 {{if not .Folders}}<div class="empty">No messages{{if not .Current}} were archived as of {{.AtDate}}{{end}}.</div>{{end}}

@@ -174,7 +174,7 @@ func TestTheReaderServesAnEncryptedArchiveWritingNothing(t *testing.T) {
 	if code, _, body := get(t, ts, "/api/search?q="); code != 200 || !strings.Contains(body, `"results"`) {
 		t.Fatalf("search: %d %s", code, body)
 	}
-	if code, _, body := get(t, ts, "/goback"); code != 200 || !strings.Contains(body, "Go-back") {
+	if code, _, body := get(t, ts, "/goback"); code != 200 || !strings.Contains(body, "Go back in time") {
 		t.Fatalf("go-back: %d", code)
 	}
 	assure.Reached(t, reflect.DeepEqual(treeOf(t, out), before), "nothing written in the archive folder")
@@ -317,7 +317,7 @@ func TestGoBackOnAnEncryptedArchive(t *testing.T) {
 	v, _ := r.ensure()
 	_, _, body := get(t, ts, "/goback")
 	if len(v.store.Chunks(vault.ContainerHistory)) == 0 {
-		if g.Timeline != server.TimelineUnavailable || !strings.Contains(body, "no history timeline yet") || strings.Contains(body, ".jsonl") {
+		if g.Timeline != server.TimelineUnavailable || !strings.Contains(body, "Go back in time is not available for this archive yet.") || strings.Contains(body, ".jsonl") {
 			t.Fatalf("no history: timeline %v\n%s", g.Timeline, body)
 		}
 	} else if g.Timeline == server.TimelineUnavailable {

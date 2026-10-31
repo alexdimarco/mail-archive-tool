@@ -335,7 +335,7 @@ func TestGoBackReadsTheSealedHistory(t *testing.T) {
 		harm()
 		loadAgain(r)
 		code, _, body := get(t, ts, "/goback")
-		if code != 200 || !strings.Contains(body, "Go-back is partial") {
+		if code != 200 || !strings.Contains(body, "Go back in time is partial: part of the timeline is damaged or was lost, so past dates may be missing messages.") {
 			t.Fatalf("a history chunk %s: %d\n%s", name, code, body)
 		}
 		os.WriteFile(chunk, raw, 0o600)

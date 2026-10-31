@@ -102,11 +102,11 @@ var readerLoads atomic.Uint64
 var errBusy = fmt.Errorf("%w: a backup is running on this archive; try again in a moment", server.ErrUnavailable)
 
 // errNoIndex is an encrypted archive with no search index yet.
-var errNoIndex = fmt.Errorf("%w: search is unavailable — this encrypted archive has no search index yet; `mailarchive reindex -rebuild` builds one", server.ErrUnavailable)
+var errNoIndex = fmt.Errorf("%w: search is unavailable — this encrypted archive has no search index yet. %s to build one", server.ErrUnavailable, rebuildRemedy)
 
 // indexUnusable is search unavailable for a reason, naming the remedy (§7.4).
 func indexUnusable(why string, err error) error {
-	return fmt.Errorf("%w: search is unavailable — %s; `mailarchive reindex -rebuild` rebuilds it (%v)", server.ErrUnavailable, why, err)
+	return fmt.Errorf("%w: search is unavailable — %s. %s to rebuild it (%v)", server.ErrUnavailable, why, rebuildRemedy, err)
 }
 
 // ReaderSource is the reader of the encrypted archive u opened (§3.1, §7.2). It
@@ -194,7 +194,7 @@ func (r *Reader) IndexNotice() string {
 	if err != nil || !v.behind {
 		return ""
 	}
-	return "search may be missing messages: the search index is behind the archive (`mailarchive reindex -rebuild` catches it up)"
+	return indexBehindNotice
 }
 
 // lockedErr maps a lock seen while reading to server.ErrLocked.
@@ -344,7 +344,7 @@ func (r *Reader) loadOnce(peek container.Peeked) (*readView, error) {
 func indexWhy(err error) error {
 	if errors.Is(err, fs.ErrNotExist) {
 		// The cause is not quoted: the index layer words every unreadable chunk as damage.
-		return fmt.Errorf("%w: search is unavailable — part of the search index is missing; `mailarchive reindex -rebuild` rebuilds it", server.ErrUnavailable)
+		return fmt.Errorf("%w: search is unavailable — part of the search index is missing. %s to rebuild it", server.ErrUnavailable, rebuildRemedy)
 	}
 	return indexUnusable("the search index is damaged", err)
 }
@@ -645,3 +645,12 @@ func (r *Reader) readUnit(unit string, kind vault.UnitKind, s state.SealedUnit) 
 	plain, err := (&export.Units{Root: r.out, Key: k}).Open(unit, kind, s, sealed)
 	return plain, lockedErr(err)
 }
+
+// indexBehindNotice is the search page's note on an index behind the archive.
+const indexBehindNotice = "search may be missing messages: the search index is behind the archive. To catch it up, choose Maintenance → Rebuild search index in MailArchive Desktop, or run mailarchive reindex -rebuild -out \"<this archive's folder>\""
+
+// rebuildRemedy is how the search index of an encrypted archive is rebuilt: MailArchive
+// Desktop's Maintenance → Rebuild search index (it works on an unlocked encrypted archive),
+// or a reindex command that runs (it needs -out). No backticks: the page shows text as it is
+// (the wording pass before 1.5.2, MA-940).
+const rebuildRemedy = `Choose Maintenance → Rebuild search index in MailArchive Desktop (or run mailarchive reindex -rebuild -out "<this archive's folder>")`
