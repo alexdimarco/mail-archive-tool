@@ -218,10 +218,24 @@ func addMailHelp(goos, out string) string {
 		"    (an incremental run is the default; a message already archived is not copied again)."
 }
 
-// archiveNowOff is the line shown in place of the Archive now button for a local-origin archive.
+// archiveNowOffLead is the Archive now card's first line on a local-origin archive (MA-941):
+// what Archive now is for, in one sentence. The card then says where to click instead.
+const archiveNowOffLead = "Archive now is off for this archive. It is for Microsoft 365 archives, and this one was made from mail files on this computer."
+
+// archiveNowOff is a direct Archive now request's refusal on a local-origin archive: the
+// card's first line, where to click instead, and the hand steps (MA-546, MA-941).
 func archiveNowOff(goos, out string) string {
-	return "Archive now is off for this archive. What: it fetches new mail from Microsoft 365, and this archive was made from local Thunderbird mail files. The main way to add new mail is a scheduled backup (choose How often in Settings below), which re-reads your Thunderbird files and adds anything new. You can also do it by hand. " + addMailHelp(goos, out)
+	return archiveNowOffLead + " To back it up now, click Run now on the Scheduled backup card; if it has no scheduled backup yet, choose How often in Settings and click Save settings first, and Run now then appears there. You can also add new mail by hand. " + addMailHelp(goos, out)
 }
+
+// What the Archive now card of a local-origin archive points at instead (MA-941): the
+// way this page offers to back it up now.
+const (
+	nowWayRunNow = "runnow" // Run now is on the Scheduled backup card
+	nowWayCreate = "create" // no schedule yet: How often in Settings, then Save settings
+	nowWayExport = "export" // a command-line schedule: the Scheduled backup card says why and how
+	nowWayHand   = "hand"   // no way on this page: the wizard or a terminal
+)
 
 // newMailLine is the line of the Status & health view that says where new mail comes from.
 func newMailLine(goos, out string) string {

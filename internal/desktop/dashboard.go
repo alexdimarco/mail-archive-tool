@@ -972,7 +972,15 @@ func (cfg Config) overviewFor(csrf, epoch string) string {
 		ArchiveExample string
 		LocalOnly      bool   // local mail files only and no Microsoft 365 setup: Archive now and the weekly backup are off
 		ArchiveNowOff  string // why Archive now is off, and the steps that add new mail instead ("" when it applies)
-		Offer          string // the archive the GUI used last, offered when none is set
+		// A local-origin archive's Archive now card (MA-941): one line, then where to
+		// click (ArchiveNowWay, one of the nowWay* values), with the wizard and terminal
+		// steps (ArchiveNowHand) under a disclosure. RunNowNav: Run now is on the page,
+		// so the sidebar links to it.
+		ArchiveNowLocal bool
+		ArchiveNowWay   string
+		ArchiveNowHand  string
+		RunNowNav       bool
+		Offer           string // the archive the GUI used last, offered when none is set
 		// §4.6.3/MA-617 + Q18(b): the Scheduled backup card's state. HasSchedule when a
 		// descriptor is recorded; ScheduleKind names it in words; the Show* flags pick
 		// the controls — Repair and Run now for a corroborated run-job (keeps the kind,
@@ -1241,6 +1249,22 @@ func (cfg Config) overviewFor(csrf, epoch string) string {
 		data.ShowCaptureRepair, data.Set, data.ArchiveNowConfirm = false, settingsCard{}, ""
 		data.ShowRemove = data.HasSchedule
 	}
+	// A local-origin archive's Archive now card points at the way this page offers to back
+	// it up now (MA-941), read from what the Scheduled backup card and Settings show.
+	if data.ArchiveNowOff != "" && !data.Encrypted {
+		data.ArchiveNowLocal, data.ArchiveNowHand = true, addMailHelp(cfg.goos(), data.OutDir)
+		switch {
+		case data.ShowRepair:
+			data.ArchiveNowWay = nowWayRunNow
+		case data.ShowLocalCreate:
+			data.ArchiveNowWay = nowWayCreate
+		case data.HasSchedule && rt.export && !data.BackupNotice:
+			data.ArchiveNowWay = nowWayExport
+		default:
+			data.ArchiveNowWay = nowWayHand
+		}
+	}
+	data.RunNowNav = data.ShowRepair || data.EncRunNow
 	data.ProgramCopiesLabel = programCopiesLabel(releaseBuild())
 	data.EncRecordKept = cfg.Keys != nil && encryptedRecordKept()
 	// A recorded archive whose key files are gone cannot be unlocked: its card offers
@@ -1409,6 +1433,7 @@ pre{white-space:pre-wrap;overflow-wrap:anywhere;background:var(--bg);border:1px 
       <div class="nav-title">Workspace</div>
       <a class="active" href="./">Overview</a>
       <a href="#sec-archive" id="navArchive">Archive now</a>
+      {{if .RunNowNav}}<a href="#sec-backup" id="navRunNow">Run now</a>{{end}}
       {{if .ReaderURL}}<a href="{{.ReaderURL}}" target="_blank" rel="noopener">Open archive</a>
       <a href="{{.ReaderURL}}goback" target="_blank" rel="noopener">Go back in time</a>{{else}}<span class="nav-disabled" title="The archive reader is not running">Open archive</span>
       <span class="nav-disabled" title="The archive reader is not running">Go back in time</span>{{end}}
@@ -1532,7 +1557,10 @@ pre{white-space:pre-wrap;overflow-wrap:anywhere;background:var(--bg);border:1px 
 
     <div class="card" id="sec-archive">
       <h2>Archive now</h2>
-      {{if .ArchiveNowOff}}<p class="card-sub steps" id="archiveNowOff">{{.ArchiveNowOff}}</p>{{else}}<p class="card-sub">{{if .OutDir}}Fetch the latest mail into your archive. The first time, you sign in with a Microsoft device code shown here.{{else}}Archive now copies new mail from a Microsoft 365 mailbox into your archive. To use it, fill in the Microsoft 365 connection card, type a folder for the archive in Settings → Archive location and click Save settings, then come back here. For Thunderbird, Outlook or other mail files, you don't need this button.{{end}}</p>
+      {{if .ArchiveNowLocal}}<p class="card-sub" id="archiveNowOff">` + archiveNowOffLead + `</p>
+      <p class="card-sub" id="archiveNowWay">{{if eq .ArchiveNowWay "runnow"}}To back it up now, click <b>Run now</b> on the <a href="#sec-backup">Scheduled backup</a> card.{{else if eq .ArchiveNowWay "create"}}To back it up now, first give it a scheduled backup: in <a href="#sec-settings">Settings</a>, choose <b>How often</b> and click <b>Save settings</b>. <b>Run now</b> then appears on the Scheduled backup card.{{else if eq .ArchiveNowWay "export"}}Its scheduled backup was set up at the command line, so Run now isn't offered for it: the <a href="#sec-backup">Scheduled backup</a> card says how to get Run now.{{else}}To add new mail now, use one of the ways below.{{end}}</p>
+      <details class="steps" id="archiveNowHand"{{if eq .ArchiveNowWay "hand"}} open{{end}}><summary>Other ways to add new mail: the wizard or a terminal</summary><p class="card-sub steps">{{.ArchiveNowHand}}</p></details>
+      {{else if .ArchiveNowOff}}<p class="card-sub steps" id="archiveNowOff">{{.ArchiveNowOff}}</p>{{else}}<p class="card-sub">{{if .OutDir}}Fetch the latest mail into your archive. The first time, you sign in with a Microsoft device code shown here.{{else}}Archive now copies new mail from a Microsoft 365 mailbox into your archive. To use it, fill in the Microsoft 365 connection card, type a folder for the archive in Settings → Archive location and click Save settings, then come back here. For Thunderbird, Outlook or other mail files, you don't need this button.{{end}}</p>
       <button class="btn" id="archiveBtn"{{if .ArchiveNowConfirm}} data-confirm="{{.ArchiveNowConfirm}}"{{end}}>Archive now</button>{{end}}
       {{if .ReaderURL}}<a class="btn secondary" href="{{.ReaderURL}}" target="_blank" rel="noopener">Open archive</a> <a class="btn secondary" href="{{.ReaderURL}}goback" target="_blank" rel="noopener">Go back in time</a>{{end}}
       <button class="btn secondary" id="anotherBrowser" type="button">Use another browser…</button>
