@@ -360,7 +360,7 @@ func runExport(args []string) error {
 	}
 
 	// Optional Thunderbird pre-sync (macOS and Windows): start Thunderbird (hidden on
-	// macOS; briefly visible then minimized on Windows), wait for its mail files to go
+	// macOS; minimized to the taskbar on Windows), wait for its mail files to go
 	// quiet, ask it to quit, THEN read. It runs as app.Run's BeforeRead hook (after the
 	// lock + running record, before any source is read) and never gates the archive.
 	// On a platform without an adapter it refuses here (setPresyncHook).

@@ -188,7 +188,7 @@ const windowsPinFile = "docs/lab/presync-windows-code-pin.txt"
 
 // windowsPinSources are the files the pinned declarations live in, relative to
 // internal/presync.
-var windowsPinSources = []string{"quit_windows.go", "minimize.go", "winpath.go", "env_windows.go", "session.go"}
+var windowsPinSources = []string{"quit_windows.go", "minimize.go", "winpath.go", "env_windows.go", "session.go", "winlaunch.go"}
 
 // windowsPinned are the declarations the pin covers, by name ("Recv.Name" for a
 // method, the type without its pointer star): the start, the minimize and the
@@ -196,8 +196,10 @@ var windowsPinSources = []string{"quit_windows.go", "minimize.go", "winpath.go",
 // picked to minimize and close, the handle and identity re-checks, the wait, the
 // working folder and the session's retry rule.
 var windowsPinned = []string{
-	// The start.
-	"buildLaunchCmd", "winStart", "winEnv.startHidden", "winInstallDir",
+	// The start: the builder, its quoting and Win32 values (MA-923), the
+	// CreateProcess call and the closing of its handles.
+	"buildLaunchCmd", "winCommandLine", "winEscapeArg", "wCreateBreakawayFromJob", "wStartfUseShowWindow",
+	"winStart", "winCreateProcess", "realCreateProcess", "winCloseHandle", "winEnv.startHidden", "winInstallDir",
 	// The minimize.
 	"winEnv.minimizeMain", "winEnv.minimizeAgain", "winEnv.minimizeOurs", "winEnv.minimizeWindow",
 	"winEnv.foregroundIsOurs", "minimizeMode", "minimizeWait", "minimizeRetry", "swMinimize", "swShowMinNoActive",
@@ -488,8 +490,21 @@ func TestWindowsCodePin(t *testing.T) {
 	if !pinMoves(t, files, "quit_windows.go", "return errQuitNotPosted // no single main window", "return nil // no single main window") {
 		t.Error("a changed quit did not move the hash")
 	}
-	if pinMoves(t, files, "quit_windows.go", "func buildLaunchCmd(", "// a new comment\nfunc buildLaunchCmd(") {
+	if pinMoves(t, files, "winlaunch.go", "func buildLaunchCmd(", "// a new comment\nfunc buildLaunchCmd(") {
 		t.Error("a comment moved the hash")
+	}
+	// The start itself (MA-923): its show state, its flags, its quoting and the
+	// closing of its handles are each pinned.
+	for _, c := range []struct{ file, old, repl, what string }{
+		{"winlaunch.go", "show:    swShowMinNoActive,", "show:    1,", "the start's show state"},
+		{"winlaunch.go", "siFlags: wStartfUseShowWindow,", "siFlags: 0,", "the start's STARTF_USESHOWWINDOW"},
+		{"winlaunch.go", "flags:   wCreateBreakawayFromJob,", "flags:   0,", "the start's breakaway flag"},
+		{"winlaunch.go", "b.WriteString(strings.Repeat(`\\`, slashes+1))", "b.WriteString(`\\`)", "the quoting of a quote after backslashes"},
+		{"quit_windows.go", "_ = winCloseHandle(pi.Thread)\n", "", "the closing of the thread handle"},
+	} {
+		if !pinMoves(t, files, c.file, c.old, c.repl) {
+			t.Errorf("planted: %s did not move the hash", c.what)
+		}
 	}
 	// The code the pinned functions depend on is pinned too (gate-2 pass 1,
 	// as4win-4): which window is minimized and closed, the handle and identity

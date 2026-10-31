@@ -6,7 +6,6 @@ import (
 	"context"
 	"errors"
 	"path/filepath"
-	"syscall"
 	"testing"
 	"time"
 
@@ -181,32 +180,35 @@ func TestWinQuitPostsNothingOnceItsContextEnded(t *testing.T) {
 // covers: MA-571
 // The launch (design §2, §6): OUT of the task's job object
 // (CREATE_BREAKAWAY_FROM_JOB) so a Task-Scheduler teardown cannot hard-kill
-// Thunderbird mid-write (PC-W6). It does NOT set HideWindow / CREATE_NO_WINDOW:
-// the L-W4 lab showed Thunderbird ignores SW_HIDE, so those were dropped as
-// ineffective (the window is minimized after it appears instead). A pure builder,
-// so the flags are pinned without a launch.
+// Thunderbird mid-write (PC-W6). It never asks for SW_HIDE (HideWindow's state) or
+// CREATE_NO_WINDOW: the L-W4 lab showed Thunderbird ignores SW_HIDE. It asks for
+// SW_SHOWMINNOACTIVE, which lab L-A10 showed Thunderbird honours (MA-923). The
+// program and its arguments are exactly `<exe> -profile <profile>`, read back
+// with Windows' own rules. A pure builder, so the flags are pinned without a launch.
 func TestBuildLaunchCmdFlags(t *testing.T) {
 	const exe = `C:\Program Files\Mozilla Thunderbird\thunderbird.exe`
 	const prof = `C:\Users\First Last\AppData\Roaming\Thunderbird\Profiles\abc.default`
-	cmd := buildLaunchCmd(exe, prof)
+	l := buildLaunchCmd(exe, prof)
 
-	if len(cmd.Args) != 3 || cmd.Args[1] != "-profile" || cmd.Args[2] != prof {
-		t.Errorf("args = %v, want [%q -profile %q]", cmd.Args, exe, prof)
+	args, err := windows.DecomposeCommandLine(l.cmdLine)
+	if err != nil || len(args) != 3 || args[0] != exe || args[1] != "-profile" || args[2] != prof {
+		t.Errorf("args = %q (%v), want [%q -profile %q]", args, err, exe, prof)
 	}
-	spa := cmd.SysProcAttr
-	if spa == nil {
-		t.Fatal("SysProcAttr is nil")
+	if l.app != exe {
+		t.Errorf("program = %q, want the resolved %q (never searched for)", l.app, exe)
 	}
-	if spa.CreationFlags&windows.CREATE_BREAKAWAY_FROM_JOB == 0 {
+	if l.flags&windows.CREATE_BREAKAWAY_FROM_JOB == 0 {
 		t.Error("launch lacks CREATE_BREAKAWAY_FROM_JOB — a task teardown could hard-kill Thunderbird (PC-W6)")
 	}
-	if spa.HideWindow {
-		t.Error("launch sets HideWindow — dropped as ineffective (Thunderbird ignores SW_HIDE)")
+	if l.siFlags&windows.STARTF_USESHOWWINDOW != 0 && l.show == windows.SW_HIDE {
+		t.Error("launch asks for SW_HIDE — Thunderbird ignores it (L-W4)")
 	}
-	if spa.CreationFlags&windows.CREATE_NO_WINDOW != 0 {
+	if l.flags&windows.CREATE_NO_WINDOW != 0 {
 		t.Error("launch sets CREATE_NO_WINDOW — dropped as ineffective")
 	}
-	var _ *syscall.SysProcAttr = spa
+	if l.siFlags != windows.STARTF_USESHOWWINDOW || l.show != windows.SW_SHOWMINNOACTIVE {
+		t.Errorf("show: flags %#x state %d, want STARTF_USESHOWWINDOW with SW_SHOWMINNOACTIVE (L-A10, MA-923)", l.siFlags, l.show)
+	}
 }
 
 // covers: MA-928
@@ -216,9 +218,9 @@ func TestBuildLaunchCmdFlags(t *testing.T) {
 // Linux gate checks) also agrees with filepath.Dir for each path.
 func TestBuildLaunchCmdWorkingFolder(t *testing.T) {
 	const exe = `C:\Program Files\Mozilla Thunderbird\thunderbird.exe`
-	cmd := buildLaunchCmd(exe, `C:\p`)
-	if cmd.Dir != `C:\Program Files\Mozilla Thunderbird` {
-		t.Errorf("launch working folder = %q, want Thunderbird's install folder", cmd.Dir)
+	l := buildLaunchCmd(exe, `C:\p`)
+	if l.dir != `C:\Program Files\Mozilla Thunderbird` {
+		t.Errorf("launch working folder = %q, want Thunderbird's install folder", l.dir)
 	}
 	for _, p := range []string{exe, `C:\thunderbird.exe`, `\\server\share\Thunderbird\thunderbird.exe`, `D:\Apps\Thunderbird\thunderbird.exe`} {
 		if got, want := winInstallDir(p), filepath.Dir(p); got != want {

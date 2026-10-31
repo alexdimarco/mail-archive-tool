@@ -53,7 +53,7 @@ type win32 interface {
 	holdHandle(pid uint32) (uintptr, bool) // OpenProcess(SYNCHRONIZE), held across the quit
 	handleAlive(h uintptr) bool            // WaitForSingleObject(h,0)==WAIT_TIMEOUT
 	releaseHandle(h uintptr)               // CloseHandle
-	showWindow(hwnd uintptr, cmd int)      // ShowWindow(cmd), cmd a minimize — a visible launch → taskbar blip
+	showWindow(hwnd uintptr, cmd int)      // ShowWindow(cmd), cmd a minimize — the backstop for a window that shows
 	isIconic(hwnd uintptr) bool            // IsIconic: already minimized
 	foregroundWindow() uintptr             // GetForegroundWindow: the window the keyboard goes to
 	mainWindow(pid uint32) (uintptr, bool) // the pid's single MAIN top-level window

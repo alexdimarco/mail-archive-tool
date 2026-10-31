@@ -6,7 +6,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"os/exec"
+	"os"
 	"syscall"
 	"time"
 	"unsafe"
@@ -15,7 +15,8 @@ import (
 )
 
 // This file is the R31 crux on Windows (design §4, §6, PC-W2/PC-W3/PC-W6/PC-W7):
-// how the pre-sync starts Thunderbird hidden and later asks it to quit. The quit
+// how the pre-sync starts Thunderbird minimized (the start itself is built in
+// winlaunch.go, MA-923) and later asks it to quit. The quit
 // posts WM_CLOSE — the window's OWN close request, the message the title-bar X
 // sends — to the proven child's single main window, and never a forceful process
 // terminate, a forced window message, or a signal (the MA-557 hygiene walk forbids
@@ -62,58 +63,81 @@ type winWindowInfo struct {
 // appear before giving up (a var so a test can shrink it).
 var minimizeWait = 15 * time.Second
 
-// buildLaunchCmd builds the Thunderbird launch (design §2, §6). It launches OUT of
-// the Task-Scheduler task's job object (CREATE_BREAKAWAY_FROM_JOB) so a job-object
-// teardown on task End/logoff/shutdown cannot hard-kill Thunderbird mid-write — an
-// R31 breach our own code never causes but Windows would (PC-W6). Breakaway
-// forfeits the direct child handle, which is consistent with the scan+`-profile`
-// identity (§3).
-//
-// It does NOT try to launch hidden: the L-W4 lab (2026-10-23) showed Thunderbird
-// ignores SW_HIDE and shows its window regardless, so the ineffective HideWindow /
-// CREATE_NO_WINDOW flags are dropped as misleading. Per the owner's 2026-10-23
-// ruling a visible launch is acceptable (scheduled off-hours); the window is then
-// minimized right after it appears (minimizeMain) so it is a taskbar blip, not a
-// focus-stealing popup. A pure builder, so the flags are golden-tested.
-//
-// It runs Thunderbird in its own install folder (design-presync-attended C-65,
-// both modes), so a Thunderbird left open for hours never pins the folder Mail
-// Archive itself was started in (an archive, a removable drive).
-func buildLaunchCmd(exe, profile string) *exec.Cmd {
-	cmd := exec.Command(exe, "-profile", profile)
-	cmd.Dir = winInstallDir(exe)
-	cmd.SysProcAttr = &syscall.SysProcAttr{
-		CreationFlags: windows.CREATE_BREAKAWAY_FROM_JOB,
-	}
-	return cmd
+// winCreateProcess and winCloseHandle are the two Win32 calls of a start (vars, so
+// a test sees what Windows is asked for and that both returned handles are closed,
+// without starting anything; MA-923).
+var (
+	winCreateProcess = realCreateProcess
+	winCloseHandle   = windows.CloseHandle
+)
+
+// realCreateProcess is CreateProcessW, as a named function so MA-612's walk of
+// every process-start site sees it.
+func realCreateProcess(app, cmdLine *uint16, inherit bool, flags uint32, dir *uint16, si *windows.StartupInfo, pi *windows.ProcessInformation) error {
+	return windows.CreateProcess(app, cmdLine, nil, nil, inherit, flags, nil, dir, si, pi)
 }
 
-// winStart starts a built launch (a var, so a test can see how often a launch is
-// asked for and what Windows answers, without starting anything).
-var winStart = func(cmd *exec.Cmd) error { return cmd.Start() }
+// winStart starts a built launch (buildLaunchCmd, winlaunch.go) with
+// CreateProcessW: the program by its full path, the command line as built, the
+// install folder, the STARTUPINFO show state, no handle inherited and this
+// program's environment. It then closes both handles Windows returns (process and
+// thread), so the long-lived Desktop does not keep two handles per Run now, and it
+// never waits on or signals Thunderbird (the session re-finds it by the
+// scan+`-profile` identity, §3). A failure keeps Windows' own error, wrapped with
+// the program's path, so "access denied" is still recognised (errStartBlocked).
+func winStart(l winLaunch) error {
+	app, err := windows.UTF16PtrFromString(l.app)
+	if err != nil {
+		return err
+	}
+	// CreateProcessW may write into its command line, so it gets its own buffer.
+	line, err := windows.UTF16FromString(l.cmdLine)
+	if err != nil {
+		return err
+	}
+	var dir *uint16
+	if l.dir != "" {
+		if dir, err = windows.UTF16PtrFromString(l.dir); err != nil {
+			return err
+		}
+	}
+	si := windows.StartupInfo{Flags: l.siFlags, ShowWindow: l.show}
+	si.Cb = uint32(unsafe.Sizeof(si))
+	var pi windows.ProcessInformation
+	if err := winCreateProcess(app, &line[0], l.inherit, l.flags, dir, &si, &pi); err != nil {
+		return &os.PathError{Op: "start", Path: l.app, Err: err}
+	}
+	_ = winCloseHandle(pi.Thread)
+	_ = winCloseHandle(pi.Process)
+	return nil
+}
 
-// startHidden launches Thunderbird detached, then releases our reference without
-// ever waiting on or signalling it (the real process is re-found by the
-// scan+`-profile` match, §3). The name is the cross-platform seam's: on macOS the
-// launch is truly hidden; on Windows it shows a window that minimizeMain then
-// minimizes. A launch failure is returned for S5 to map to presync_cannot_start;
-// "access denied" — the program that started this backup runs in a job that
-// forbids breakaway — is errStartBlocked, presync_start_blocked, and is never
-// retried without breakaway (design-presync-attended §2.7, C-65).
+// startHidden starts Thunderbird minimized and not activated (buildLaunchCmd,
+// MA-923; lab L-A10 showed Thunderbird honours SW_SHOWMINNOACTIVE, where it had
+// ignored SW_HIDE in L-W4), detached, without ever waiting on or signalling it (the
+// real process is re-found by the scan+`-profile` match, §3). The name is the
+// cross-platform seam's: on macOS the launch is truly hidden; on Windows the window
+// starts minimized in the taskbar, and minimizeMain stays as the backstop for a
+// window that shows anyway. Scheduled and attended runs start it the same way. A
+// launch failure is returned for S5 to map to presync_cannot_start; "access denied"
+// — the program that started this backup runs in a job that forbids breakaway — is
+// errStartBlocked, presync_start_blocked, and is never retried without breakaway
+// (design-presync-attended §2.7, C-65).
 func (e *winEnv) startHidden(exe, profile string) error {
-	cmd := buildLaunchCmd(exe, profile)
-	if err := winStart(cmd); err != nil {
+	if err := winStart(buildLaunchCmd(exe, profile)); err != nil {
 		if errors.Is(err, windows.ERROR_ACCESS_DENIED) {
 			return fmt.Errorf("%w: %v", errStartBlocked, err)
 		}
 		return err
 	}
-	_ = cmd.Process.Release()
 	return nil
 }
 
-// minimizeMain best-effort minimizes the pre-sync's Thunderbird window so a visible
-// launch is a taskbar blip, not a focus-stealing popup (owner ruling 2026-10-23).
+// minimizeMain best-effort minimizes the pre-sync's Thunderbird window, the
+// backstop for a start whose window shows anyway: the start asks for minimized and
+// not activated (MA-923), and the earlier start showed it (owner ruling 2026-10-23
+// accepted that as a taskbar blip). A window that is already minimized counts as
+// minimized: an attended run, and every retry, makes no call for it (minimizeMode).
 // The session calls it once it has adopted our process (after S6): it waits briefly
 // for the single main window to appear, then minimizes it (minimizeWindow) — a
 // benign window-state change, never a close or kill. If no single main window

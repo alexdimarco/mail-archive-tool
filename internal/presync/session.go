@@ -84,9 +84,10 @@ func (r sessionResult) result() Result {
 		Verdict: r.verdict, Left: r.left, Started: r.started, Waited: r.waited, Minimized: r.minimized}
 }
 
-// windowMinimizer is the optional capability of an adapter that can only launch
-// Thunderbird VISIBLY (Windows, where SW_HIDE is ignored) and wants the shown
-// window minimized once the process is adopted. A truly-hidden adapter (macOS)
+// windowMinimizer is the optional capability of an adapter whose start can leave a
+// window on screen (Windows: Thunderbird ignores SW_HIDE; it starts minimized with
+// SW_SHOWMINNOACTIVE, lab L-A10, and this is the backstop for a window that shows
+// anyway) and wants it minimized once the process is adopted. A truly-hidden adapter (macOS)
 // does not implement it, so the S6 hook is a no-op there. Each reports whether the
 // window was minimized (Result.Minimized, A8, C-56); attended picks the show mode
 // (A14 (3), minimizeMode), a scheduled run keeps SW_MINIMIZE (§1.3).
@@ -425,9 +426,10 @@ func runSession(ctx context.Context, d deps) (out sessionResult) {
 	_ = store(stateSyncing) // best effort: a lost one leaves `launching`, which S3 still matches
 	setLeft(LeftOpen)       // ours and up: an abandonment from here leaves it running, announced
 
-	// An adapter that can only launch VISIBLY (Windows, where SW_HIDE is ignored)
-	// minimizes the window it showed, so the pre-sync is a taskbar blip rather than
-	// a focus-stealing popup (owner ruling 2026-10-23). Best-effort and bounded, and
+	// An adapter whose start can leave a window on screen (Windows: it starts
+	// Thunderbird minimized, lab L-A10, and this is the backstop) minimizes a window
+	// that shows anyway, so the pre-sync stays in the taskbar rather than a
+	// focus-stealing popup (owner ruling 2026-10-23). Best-effort and bounded, and
 	// its wait ends with the session context (C-64); a truly-hidden adapter (macOS)
 	// does not implement this, so it is a no-op there.
 	minimizer, canMinimize := e.(windowMinimizer)

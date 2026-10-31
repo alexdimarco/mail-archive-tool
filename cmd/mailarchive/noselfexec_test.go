@@ -100,7 +100,18 @@ func classifyProgram(prog ast.Expr, assigns map[string]ast.Expr) string {
 		}
 		return ""
 	case *ast.CallExpr:
+		// A Win32 start takes its program as UTF-16 (MA-923): judge the string it
+		// was converted from.
+		if utf16Conversions[calleeName(p)] && len(p.Args) == 1 {
+			return classifyProgram(p.Args[0], assigns)
+		}
 		return classifyCall(calleeName(p))
+	case *ast.BinaryExpr:
+		// A command line built by joining strings starts with its program.
+		if p.Op == token.ADD {
+			return classifyProgram(p.X, assigns)
+		}
+		return ""
 	case *ast.IndexExpr:
 		if isOSArgs(p.X) {
 			return "program is os.Args — a self reference"
@@ -109,6 +120,20 @@ func classifyProgram(prog ast.Expr, assigns map[string]ast.Expr) string {
 	case *ast.Ident:
 		if rhs, ok := assigns[p.Name]; ok {
 			if call, ok := rhs.(*ast.CallExpr); ok {
+				if utf16Conversions[calleeName(call)] && len(call.Args) == 1 {
+					// One more hop through the UTF-16 conversion (MA-923), without
+					// this variable, so a chain of assignments always ends.
+					rest := make(map[string]ast.Expr, len(assigns))
+					for k, v := range assigns {
+						if k != p.Name {
+							rest[k] = v
+						}
+					}
+					if r := classifyProgram(call.Args[0], rest); r != "" {
+						return r + " (via " + p.Name + ")"
+					}
+					return ""
+				}
 				if r := classifyCall(calleeName(call)); r != "" {
 					return r + " (via " + p.Name + ")"
 				}
@@ -160,16 +185,53 @@ func programExpr(call *ast.CallExpr) ast.Expr {
 		if len(call.Args) >= 1 {
 			return call.Args[0]
 		}
+	// The Win32 starts (design-presync-attended §2.7, MA-923): CreateProcess's
+	// program is its application name, or, when that is nil, the start of its
+	// command line; CreateProcessAsUser takes a token first; ShellExecute's
+	// program is its third argument.
+	case "windows.CreateProcess", "syscall.CreateProcess":
+		if len(call.Args) >= 2 {
+			if isNil(call.Args[0]) {
+				return call.Args[1]
+			}
+			return call.Args[0]
+		}
+	case "windows.CreateProcessAsUser", "syscall.CreateProcessAsUser":
+		if len(call.Args) >= 3 {
+			if isNil(call.Args[1]) {
+				return call.Args[2]
+			}
+			return call.Args[1]
+		}
+	case "windows.ShellExecute":
+		if len(call.Args) >= 3 {
+			return call.Args[2]
+		}
 	}
 	return nil
 }
 
+// utf16Conversions are the calls that turn a program's path into the UTF-16 form a
+// Win32 start takes; the walk judges the string they were given.
+var utf16Conversions = map[string]bool{
+	"windows.UTF16PtrFromString": true, "syscall.UTF16PtrFromString": true,
+	"windows.UTF16FromString": true, "syscall.UTF16FromString": true,
+	"windows.StringToUTF16Ptr": true, "syscall.StringToUTF16Ptr": true,
+}
+
+func isNil(e ast.Expr) bool {
+	id, ok := e.(*ast.Ident)
+	return ok && id.Name == "nil"
+}
+
 // walkSelfExec scans every non-test .go file under cmd/ and internal/ for
-// process-start sites and classifies each one. It returns the findings and the
-// number of sites examined.
-func walkSelfExec(t *testing.T, root string) (findings []string, sites int) {
+// process-start sites and classifies each one. It returns the findings, the
+// number of sites examined, and that number per file (slash-separated, relative
+// to root).
+func walkSelfExec(t *testing.T, root string) (findings []string, sites int, siteIn map[string]int) {
 	t.Helper()
 	fset := token.NewFileSet()
+	siteIn = map[string]int{}
 	for _, base := range []string{"cmd", "internal"} {
 		_ = filepath.WalkDir(filepath.Join(root, base), func(path string, d os.DirEntry, err error) error {
 			if err != nil || d.IsDir() || !strings.HasSuffix(path, ".go") || strings.HasSuffix(path, "_test.go") {
@@ -190,6 +252,7 @@ func walkSelfExec(t *testing.T, root string) (findings []string, sites int) {
 					if call, ok := n.(*ast.CallExpr); ok {
 						if prog := programExpr(call); prog != nil {
 							sites++
+							siteIn[filepath.ToSlash(rel)]++
 							if r := classifyProgram(prog, assigns); r != "" {
 								findings = append(findings, posf(fset, call.Pos(), rel, r))
 							}
@@ -203,6 +266,7 @@ func walkSelfExec(t *testing.T, root string) (findings []string, sites int) {
 							}
 							if k, ok := kv.Key.(*ast.Ident); ok && k.Name == "Path" {
 								sites++
+								siteIn[filepath.ToSlash(rel)]++
 								if r := classifyProgram(kv.Value, assigns); r != "" {
 									findings = append(findings, posf(fset, kv.Pos(), rel, r))
 								}
@@ -215,7 +279,7 @@ func walkSelfExec(t *testing.T, root string) (findings []string, sites int) {
 			return nil
 		})
 	}
-	return findings, sites
+	return findings, sites, siteIn
 }
 
 func selName(e ast.Expr) string {
@@ -236,13 +300,21 @@ func posf(fset *token.FileSet, pos token.Pos, rel, reason string) string {
 // OS tool (a literal from the closed set, or an allowlisted argv-builder's
 // result), never os.Executable(), os.Args, a sibling filepath.Join or
 // schedule.ProgramForSchedule — so the one program never starts a copy of
-// itself. Positive twin: the healthy tree passes with a non-zero site count.
-// Fail-closed twin: each planted self/sibling start is flagged.
+// itself. The Win32 starts (CreateProcess, CreateProcessAsUser, ShellExecute) are
+// sites too, judged by the string their UTF-16 program was made from (MA-923).
+// Positive twin: the healthy tree passes with a non-zero site count, including
+// the Windows Thunderbird start. Fail-closed twin: each planted self/sibling start
+// is flagged.
 func TestMA612_NoSelfReExec(t *testing.T) {
 	root := moduleRoot(t)
-	findings, sites := walkSelfExec(t, root)
+	findings, sites, siteIn := walkSelfExec(t, root)
 	if sites == 0 {
 		t.Fatal("the walk found no process-start sites — it is not scanning the tree")
+	}
+	// The Thunderbird pre-sync's Windows start is a CreateProcess call (MA-923); the
+	// walk must see it, not pass over it.
+	if siteIn["internal/presync/quit_windows.go"] == 0 {
+		t.Error("the walk does not see the Windows Thunderbird start (CreateProcess in internal/presync/quit_windows.go)")
 	}
 	for _, f := range findings {
 		t.Errorf("self-exec risk: %s", f)
@@ -263,6 +335,15 @@ func f(dir string) { _ = exec.Command(filepath.Join(dir, "mailarchive"), "deskto
 func f() { exe, _ := os.Executable(); _ = exec.Cmd{Path: exe} }`,
 		"os.Args[0]": `package p
 func f() { _ = exec.Command(os.Args[0], "desktop") }`,
+		// The Win32 starts (MA-923): each is a process-start site too.
+		"windows.CreateProcess(os.Executable())": `package p
+func f() { exe, _ := os.Executable(); app, _ := windows.UTF16PtrFromString(exe); _ = windows.CreateProcess(app, nil, nil, nil, false, 0, nil, nil, nil, nil) }`,
+		"windows.CreateProcess with the program in its command line": `package p
+func f() { line, _ := windows.UTF16PtrFromString(os.Args[0] + " desktop"); _ = windows.CreateProcess(nil, line, nil, nil, false, 0, nil, nil, nil, nil) }`,
+		"windows.CreateProcessAsUser(os.Executable())": `package p
+func f(tok windows.Token) { exe, _ := os.Executable(); _ = windows.CreateProcessAsUser(tok, windows.StringToUTF16Ptr(exe), nil, nil, nil, false, 0, nil, nil, nil, nil) }`,
+		"windows.ShellExecute(os.Args[0])": `package p
+func f() { file, _ := windows.UTF16PtrFromString(os.Args[0]); _ = windows.ShellExecute(0, nil, file, nil, nil, 1) }`,
 	}
 	for name, src := range twins {
 		if !flaggedSource(t, src) {

@@ -173,6 +173,15 @@ for unencrypted archives; the tooltip and Mac note corrected; B6.
   launch and today's `SW_MINIMIZE` backstop, which the owner accepted on 2026-10-23. Two Windows
   launch changes do reach scheduled runs, stated here: the launch's working folder becomes
   Thunderbird's own install folder [C-65], and a quit that posts nothing ends at once (A10) [C-60].
+  - *Amended 2026-10-31 (L-A10 ran; MA-923 built; the lead's call, recorded here for the owner and
+    the AS4 adversarial pass to check):* the minimized-not-active start is used for **scheduled runs
+    too**, not attended runs only. Why: L-A10 saw today's start take the foreground in 2 of 2 trials
+    after more than 200 s with no input, which is how a scheduled run starts (only after 2 minutes
+    idle, often after hours), and the new start in none (§2.7); one start for both modes also means
+    one launch path, one MA-927 pin and one MA-918 measurement. The scheduled run keeps its
+    `SW_MINIMIZE` backstop (`minimizeWindow` without keepFocus), which now meets a window that is
+    already minimized. This reverses the "scheduled start unchanged" half of the bullet above; the
+    working-folder and quit halves stand.
 
 ---
 
@@ -493,6 +502,39 @@ attended ships only after MA-918 passes" would also hold the macOS fix. So:
   Windows attended path on today's launch (`exec.Command`, no new launch code). If L-A10 later shows
   Thunderbird honours `SW_SHOWMINNOACTIVE`, the `CreateProcess` start (and MA-923) lands as its own
   small change **before** the Windows entry is flipped, so MA-918 measures the start that ships.
+- **L-A10 ran (2026-10-31, the lead; record `docs/lab/presync-windows-start-spike-L-A10-2026-10-31.md`,
+  added by the lead).** Windows 11 on ARM (amd64 programs emulated, so timings are emulated),
+  Thunderbird 153.6.0esr, profile `default-esr`, `ForegroundLockTimeout` 200000 ms. A separate
+  launcher started from Windows Terminal started Thunderbird two ways, with a separate observer
+  sampling every 100 ms. **While someone typed in Notepad** (6 trials, alternating): today's start
+  (exec with `CREATE_BREAKAWAY_FROM_JOB`, as `buildLaunchCmd` was) showed the full 1100×642 window,
+  which stayed shown; `CreateProcess` with `STARTF_USESHOWWINDOW` + `SW_SHOWMINNOACTIVE` and the same
+  breakaway flag came up **minimized from the first sample** and was never on screen. Neither took
+  the keyboard. **With nobody typing for over 200 s** (4 trials): today's start **took the foreground**
+  2 of 2 times; the new start never did (2 of 2), minimized from the first sample. This explains
+  the keyboard steals in MA-918 run 1 (`docs/lab/presync-attended-start-windows-run1-2026-10-31.md`,
+  runs 5 and 5b): past `ForegroundLockTimeout`, Windows lets a newly shown window take the
+  foreground. **So Thunderbird honours `SW_SHOWMINNOACTIVE`, and MA-923 is built** (below).
+- **MA-923 as built (2026-10-31).** `buildLaunchCmd` (`winlaunch.go`, untagged, golden-tested on the
+  Linux gate) now describes a `CreateProcessW` call: the resolved `thunderbird.exe` as the
+  application name, `STARTF_USESHOWWINDOW` with `SW_SHOWMINNOACTIVE`, `CREATE_BREAKAWAY_FROM_JOB` and
+  no other flag, no handle inherited, this program's environment, Thunderbird's install folder
+  [C-65]. `winStart` (`quit_windows.go`) makes the call and closes both returned handles; it never
+  waits on or signals Thunderbird. "Access denied" is still `errStartBlocked`, never retried without
+  breakaway. Two choices differ from the bullet "If it honours it" above, each stated:
+  (1) **both modes**, not attended only (§1.3, amended); (2) the command line is quoted **as Go's
+  exec quotes it** (`syscall.EscapeArg` per argument, `winEscapeArg`, checked equal to Go's on
+  Windows), not with `windows.ComposeCommandLine`, so the command line is byte for byte the one
+  today's start produced and the scan+`-profile` identity and the record's `ChildArgs` read the same
+  (`ComposeCommandLine` treats the program name differently: it drops a quote instead of escaping
+  it). The profile is always one argument, whatever spaces, quotes or trailing backslash its path
+  holds; a real start of a stand-in program on the lab VM reads it back whole by Windows' own split.
+  The backstop minimize stays (A14): an attended run and every retry make no call on a window that
+  is already minimized (`minimizeMode`); a scheduled run's first attempt keeps `SW_MINIMIZE`. MA-612's
+  walk now counts `windows.CreateProcess`, `CreateProcessAsUser` and `ShellExecute` as start sites
+  and sees this one. MA-927's pin covers the new builder, its quoting and the handle closing, and
+  was re-pinned under "no lab record" (both Windows entries stay false). MA-918 is re-run on this
+  start before the Windows entry is flipped.
 
 **The Windows lab (MA-918) [OQ-2, C-49, C-59].** A **ship-gate test**, not a feature gate.
 
@@ -552,6 +594,12 @@ attended ships only after MA-918 passes" would also hold the macOS fix. So:
 where macOS says "out of sight", and "quit it from the taskbar or the notification area" where macOS
 says "from the Dock" (until MA-918 settles the tray, §above); where a Windows start is described, it
 adds "its window may appear for a moment" (§4.6, §7, §9).
+*Amended 2026-10-31 (MA-923):* the texts that said a scheduled run's window **shows** first (the
+scheduled-run install note, the help guide's Scheduled backups line, the `-thunderbird-sync` help,
+the README) now say Thunderbird starts minimized to the taskbar; the install note adds "if its
+window appears anyway, it is minimized" (the backstop). The 1.5.2 release notes say it. The
+attended texts keep "its window may appear for a moment": a hedge, still true, until MA-918
+measures the new start through the real Desktop.
 
 ### 2.8 Closing Thunderbird after an attended run: the button and the never-close rule [OQ-1]
 
@@ -1526,7 +1574,7 @@ wait for that. For an encrypted archive, status shows the setting but keeps no l
 | MA-920 | U | AS5 | migration of the streak: a v1.5.1-era archive with no streak file starts clean; the downgrade residual of §10 (1) pinned as stated [C-39] | S65 | read a missing streak file as stale → the "starts clean" case fails [C-82] |
 | MA-921 | U | AS1a (budget, abandoned rule, latch), AS1b (S6 child-poll Cancel path), AS-Q (Cancel-quit path) | the watchdog [C-2, C-3]: `sessionBudget()` exceeds the longest path and each Cancel path built so far, computed from the same constants; on the budget, on `Stop` and on a non-quit cause the watchdog returns, marks the session abandoned and cancels `sctx`; an abandoned session starts **no** quit request even when it reaches S8 afterwards, an in-flight request's context ends, and `minimizeMain`'s loop ends [C-64]; **after a budget timeout the profile lock is still held during the read, and is free once both the abandoned session has returned and the read's `Release` has run (the next session then gets the lock, not `profile-busy`) [C-77]** | R31, R32 | remove the abandoned check in `preQuit` → a late request is counted |
 | MA-922 | U | AS1b (session), AS4 (Desktop) [OQ-1] | the never-close rule: with `NeverQuit`, at quiet and at the 20-minute limit → zero quit requests, ownership re-verified, the record cleared, `Left=left-open-by-rule`, the outcome the S7 verdict [C-72]; Cancel in S7 → zero requests, `left-open-by-rule`, outcome `cancelled`, not synced [C-72]; **Cancel in S6 → the child poll runs to the 90 s limit; a child proven → re-verified, record cleared, `left-open-by-rule`; none → `may-be-starting`, the `launching` record kept** [C-74]; the next session sees an open Thunderbird and leaves it alone (`already-running`); the Desktop note, tooltip and outcome line use the left-open words and show no "Keep Thunderbird open" | R31, S64 | build the quit when `NeverQuit` → a request is counted |
-| MA-923 | S | AS4, or its own change before the Windows flip if L-A10 runs later [OQ-7]; **only if lab L-A10 shows Thunderbird honours `SW_SHOWMINNOACTIVE`; dropped otherwise** [C-57] | the attended-only launch builder, a pure function tested by behaviour on the Linux gate: `STARTF_USESHOWWINDOW` with `SW_SHOWMINNOACTIVE`, `CREATE_BREAKAWAY_FROM_JOB` kept, `ComposeCommandLine` quoting a profile path with spaces, no handle inheritance; a fake seam proves both returned handles are closed after each launch; MA-612's walk lists `windows.CreateProcess`, `CreateProcessAsUser` and `ShellExecute`; MA-571's breakaway check kept; the scheduled launch unchanged | S64 | drop `STARTF_USESHOWWINDOW` (or change the show value) → the builder check fails |
+| MA-923 | S | AS4, or its own change before the Windows flip if L-A10 runs later [OQ-7]; **only if lab L-A10 shows Thunderbird honours `SW_SHOWMINNOACTIVE`; dropped otherwise** [C-57] | the attended-only launch builder, a pure function tested by behaviour on the Linux gate: `STARTF_USESHOWWINDOW` with `SW_SHOWMINNOACTIVE`, `CREATE_BREAKAWAY_FROM_JOB` kept, `ComposeCommandLine` quoting a profile path with spaces, no handle inheritance; a fake seam proves both returned handles are closed after each launch; MA-612's walk lists `windows.CreateProcess`, `CreateProcessAsUser` and `ShellExecute`; MA-571's breakaway check kept; the scheduled launch unchanged. *Amended 2026-10-31 (L-A10 ran and says so; built, §2.7): both modes, not attended only (§1.3 amended); quoting as Go's exec (`syscall.EscapeArg`), not `ComposeCommandLine`; catalog row MA-923* | S64 | drop `STARTF_USESHOWWINDOW` (or change the show value) → the builder check fails |
 | MA-924 | U | AS-Q [C-50] | the attended Cancel quit (A4(ii) without `NeverQuit`): cause `ErrCancelAndQuit` in S7 → the pre-quit function, exactly one request, `quitting` then cleared or `left-running`, `Left` right; a second Thunderbird on macOS → zero requests; S6 Cancel → polls to the 90 s limit then one request, or none and `may-be-starting` [C-7]; any other cause or `Stop` → zero requests; an attended `ok-noactivity` or `watch-truncated-noactivity` run leaves Thunderbird open (A13) [C-68] | R31, R32, S64 | quit on every cancel cause → the Lock case sends a request |
 | MA-925 | U | AS1b (session and `OutcomeLine`), AS7 (tag) [C-68] | no-change honesty: a session with no change ends `ok-noactivity`; a truncated walk with no change ends `watch-truncated-noactivity`, never `watch-truncated`; their line and phrase say nothing arrived and name the password or sign-in possibility, and never say "synced first" | S64, S65 | fold the truncated no-change case into `watch-truncated` → the case fails |
 | MA-926 | U | AS5 (owner ruling OQ-5: yes) [C-68] | the no-change count reads `Verdict` (§5.2): a scheduled session whose verdict is `ok-noactivity` or `watch-truncated-noactivity` extends `NoChange`, **also when it ends `owner-active` or `quit-*`**; a session whose verdict says mail arrived resets it, **attended or scheduled**; an attended no-change session never extends it; a session with no verdict (`already-running` from a manual run, a skip, `cancelled`, `wait-ended`) leaves it unchanged; a **scheduled** `already-running` resets it and stays synced for the missed streak (§5.2, amended 2026-10-31), and so does an **attended Run now**'s `already-running` (owner ruling 3, 2026-10-31); stale after ≥ 2 over ≥ 3 days, never compared with now, MA-891's clock rules; the softer warning `presync_nothing_arrived` with §5.4's words (first sentence says the backups ran; names the password or sign-in window), never RED, **no alert email**, left out while `presync_not_synced` shows; plaintext only; `Verdict` is never written to the record | R32, S65 | count an attended no-change run → the Run now case moves it |
@@ -1651,6 +1699,8 @@ macOS's AS-Q. AS-L any time after AS3, or never. AS10 last. The labs run in para
   (a throwaway `CreateProcess` call in a lab-only test) and record whether it starts minimized and
   without activation. Before any new Windows launch code is written; decides whether MA-923 is
   built. It does not hold AS4: without it, AS4 keeps today's launch (§2.7) [OQ-7].
+  - *Ran 2026-10-31 (the lead):* Thunderbird honours it — minimized from the first 100 ms sample
+    and never took the keyboard, typing or idle; MA-923 is built (§2.7).
 
 ---
 
@@ -1826,6 +1876,9 @@ The questions as they were put (rev 4), kept for the record:
   start-up file touches before the first fetch (L-A9), Windows focus and how long the window shows
   (L-A7): not checked.
 - Whether Thunderbird honours `SW_SHOWMINNOACTIVE` (L-A10): not checked.
+  - *Checked 2026-10-31 (L-A10, §2.7):* it does, on an emulated Windows 11 ARM VM with Thunderbird
+    153.6.0esr. Not checked with that start: the slow starts (a Primary Password, not the default
+    mail app), the notification-area option, or the real Desktop's Run now; MA-918 covers them.
 - Thunderbird's Windows "minimize to the notification area" option is from memory, not checked
   (§2.7) [C-61]; which Windows terminal hosts run their children in a job that forbids breakaway is
   inferred (§2.7) [C-65].

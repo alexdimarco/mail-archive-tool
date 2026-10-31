@@ -183,8 +183,8 @@ away. (**Archive now** is for Microsoft 365, so it is off for this archive.) You
 
 A scheduled backup normally archives whatever Thunderbird has already written to disk.
 On **macOS and Windows** you can also have each scheduled backup **sync Thunderbird first**.
-Before archiving, MailArchive starts Thunderbird (out of sight on macOS; briefly visible, then
-minimized, on Windows), waits for its mail to stop arriving (up to 20 minutes), asks it to quit,
+Before archiving, MailArchive starts Thunderbird (out of sight on macOS; minimized to the taskbar
+on Windows), waits for its mail to stop arriving (up to 20 minutes), asks it to quit,
 then archives. The backup then includes mail that had only reached the server. Because this uses
 your real Thunderbird, starting it does what opening Thunderbird always does: it checks all your
 accounts, may send your Outbox, runs your message filters and may show notifications. Quitting it

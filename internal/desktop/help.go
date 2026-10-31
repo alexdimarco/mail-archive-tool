@@ -82,7 +82,8 @@ func helpDataFor(goos string, open bool) helpData {
 		d.WizardHow = "On Windows, open MailArchive wizard from the Start menu. If MailArchive was unzipped rather than installed, there is no Start menu entry: open the MailArchive folder, click in the address bar at the top of the window, type cmd and press Enter, then type mailarchivew.exe wizard and press Enter."
 		d.AppPlace = ` in its usual place: a Mozilla Thunderbird folder in Program Files (or Program Files (x86)), or in AppData\Local\Programs in your user folder. The Thunderbird sync looks for it only there`
 		d.Profiles = `%APPDATA%\Thunderbird\Profiles`
-		d.SchedStart = "Thunderbird's window shows for a moment, then it is minimized to the taskbar."
+		// Started minimized and not activated (MA-923; lab L-A10 saw no window on screen).
+		d.SchedStart = "Thunderbird starts minimized to the taskbar."
 		d.Reload, d.Missed = "press F5", helpMissedOnWake
 		// The installer's Start menu shortcut (Product.wxs); mailarchivew.exe opened with no
 		// console starts the Desktop (noarg W3).

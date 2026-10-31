@@ -2,8 +2,10 @@ package presync
 
 // The Windows backstop minimize's show mode (design-presync-attended §2.7, A14,
 // C-58), as an untagged pure function so the Linux test gate checks it. Windows
-// starts Thunderbird visibly (it ignores SW_HIDE, lab L-W4), then minimizes the
-// window it showed. A scheduled run keeps SW_MINIMIZE (§1.3); an attended run —
+// starts Thunderbird minimized and not activated (SW_SHOWMINNOACTIVE, which
+// Thunderbird honours, lab L-A10; it ignored SW_HIDE, lab L-W4), and this backstop
+// minimizes a window that shows anyway. A scheduled run's first attempt keeps
+// SW_MINIMIZE (§1.3); an attended run —
 // the person may be typing in another window — picks the mode that moves their
 // keyboard focus least.
 

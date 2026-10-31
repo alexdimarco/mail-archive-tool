@@ -7,8 +7,28 @@ import (
 	"strings"
 	"testing"
 
+	"mail-archive-tool/internal/presync"
 	"mail-archive-tool/internal/presyncjob"
 )
+
+// covers: MA-923
+// A scheduled sync's install and preview notes on Windows say what the start does
+// since MA-923 (lab L-A10): Thunderbird starts minimized to the taskbar, and a
+// window that appears anyway is minimized; never that its window shows first.
+func TestPresyncInstallNoteWindows(t *testing.T) {
+	want := presync.SyncNotice + "\n\nOn Windows, each scheduled run starts Thunderbird minimized to the taskbar while it syncs; if its window appears anyway, it is minimized."
+	for _, preview := range []bool{false, true} {
+		note := presyncInstallNote("mailarchive-abc", preview)
+		if note != want {
+			t.Errorf("preview %v: the note is\n  %q\nwant\n  %q", preview, note, want)
+		}
+		for _, bad := range []string{"briefly", "shows the Thunderbird window"} {
+			if strings.Contains(note, bad) {
+				t.Errorf("preview %v: the note says %q: %q", preview, bad, note)
+			}
+		}
+	}
+}
 
 // covers: MA-559
 // The Windows pre-sync wiring's state directory is per-user and NON-ROAMING

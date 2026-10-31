@@ -349,9 +349,9 @@ var helpPlatforms = []helpPlatform{
 		"Your archives and scheduled backups are not affected. To come back, open MailArchive Desktop from the Start menu, or, if MailArchive was unzipped, double-click mailarchivew.exe in its folder.",
 		`Thunderbird installed in its usual place: a Mozilla Thunderbird folder in Program Files (or Program Files (x86)), or in AppData\Local\Programs in your user folder. The Thunderbird sync looks for it only there.`,
 		`(Thunderbird keeps its profiles in %APPDATA%\Thunderbird\Profiles.)`,
-		"Scheduled backups: Thunderbird's window shows for a moment, then it is minimized to the taskbar.",
+		"Scheduled backups: Thunderbird starts minimized to the taskbar.",
 		helpWinNoRunNow,
-	}, helpSyncSentences...), not: []string{"Stop waiting and back up now to back up", "the Dock", "System Settings", "Sync Thunderbird before each Run now", "MailArchive does not sync Thunderbird", "off or asleep is skipped", "Command-R", "it first waits for Thunderbird's mail"}},
+	}, helpSyncSentences...), not: []string{"shows for a moment", "Stop waiting and back up now to back up","the Dock", "System Settings", "Sync Thunderbird before each Run now", "MailArchive does not sync Thunderbird", "off or asleep is skipped", "Command-R", "it first waits for Thunderbird's mail"}},
 	{goos: "linux", want: []string{
 		helpLinWizard,
 		"Then come back to this page and reload it (press F5).",

@@ -10,7 +10,11 @@
 # listing and its style constants), the handle and identity re-checks, the 15 s
 # wait, the minimize's identity and keyboard checks (minimizeOurs,
 # foregroundIsOurs), the launch's working folder (winInstallDir) and the session's
-# retry rule (minimizeRetry). The full list is windowsPinned in that test.
+# retry rule (minimizeRetry). Since 2026-10-31 (MA-923) it also covers the
+# minimized-not-active start: the builder (buildLaunchCmd, now in winlaunch.go),
+# its quoting (winCommandLine, winEscapeArg) and Win32 values, the CreateProcess
+# call (winStart, winCreateProcess, realCreateProcess) and the closing of its
+# handles (winCloseHandle). The full list is windowsPinned in that test.
 #
 # Changing any of them turns TestWindowsCodePin red until the hash below is
 # changed to match.
@@ -44,6 +48,8 @@
 # Re-pins under "no lab record": 2026-10-31, gate-2 pass 1, fix group "windows"
 # (cb37a15: as4win-2..6 changed the minimize; as4win-4 widened what is hashed);
 # 2026-10-31, owner ruling 1, the as1a-4 fix (winEnv.quit posts nothing once its
-# context has ended; MA-921).
-hash: 92a98b8c88e92dc61e8c1cc7ff003df777419ab2c28e090e099908bde7994b52
+# context has ended; MA-921); 2026-10-31, MA-923 (the start became a CreateProcess
+# call asking for SW_SHOWMINNOACTIVE, after lab L-A10; no Windows lab record exists,
+# both Windows entries stay false).
+hash: 10d7ba8f901d205ea85ac79fbead84463cb2948fd1b7ddf235764813f4501d4a
 record: no lab record

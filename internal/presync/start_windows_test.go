@@ -6,8 +6,6 @@ import (
 	"bytes"
 	"context"
 	"errors"
-	"os"
-	"os/exec"
 	"strings"
 	"testing"
 	"time"
@@ -19,35 +17,35 @@ import (
 // C-58, C-65) through the win32 fake layer. The untagged parts (minimizeMode, the
 // session's retry, start-blocked's mapping) are in windows_start_test.go.
 
-// covers: MA-928
+// covers: MA-928, MA-923
 // A launch Windows refuses with "access denied" is errStartBlocked (C-65), after
-// exactly one launch request — never a second launch without breakaway. Positive
-// twin first: a launch that fails another way is a plain error, not start-blocked.
+// exactly one CreateProcess request, which carried the breakaway flag — never a
+// second launch without breakaway — and with nothing to close. Positive twin first:
+// a launch that fails another way is a plain error, not start-blocked.
 func TestWinStartBlocked(t *testing.T) {
-	calls := 0
-	old := winStart
-	t.Cleanup(func() { winStart = old })
 	e := &winEnv{w: fakeWin32{}, clock: time.Now}
 
-	winStart = func(*exec.Cmd) error {
-		calls++
-		return &os.PathError{Op: "fork/exec", Path: "thunderbird.exe", Err: windows.ERROR_FILE_NOT_FOUND}
+	calls, closed := fakeCreateProcess(t, windows.ERROR_FILE_NOT_FOUND)
+	if err := e.startHidden(tbExe, `C:\p`); err == nil || errors.Is(err, errStartBlocked) || !errors.Is(err, windows.ERROR_FILE_NOT_FOUND) {
+		t.Fatalf("twin: a missing program gave %v, want a plain launch error keeping Windows' own", err)
 	}
-	if err := e.startHidden(`C:\Program Files\Mozilla Thunderbird\thunderbird.exe`, `C:\p`); err == nil || errors.Is(err, errStartBlocked) {
-		t.Fatalf("twin: a missing program gave %v, want a plain launch error", err)
+	if len(*calls) != 1 || len(*closed) != 0 {
+		t.Fatalf("twin: %d requests, %d closes; want 1 and none", len(*calls), len(*closed))
 	}
 
-	calls = 0
-	winStart = func(*exec.Cmd) error {
-		calls++
-		return &os.PathError{Op: "fork/exec", Path: "thunderbird.exe", Err: windows.ERROR_ACCESS_DENIED}
-	}
-	err := e.startHidden(`C:\Program Files\Mozilla Thunderbird\thunderbird.exe`, `C:\p`)
+	calls, closed = fakeCreateProcess(t, windows.ERROR_ACCESS_DENIED)
+	err := e.startHidden(tbExe, `C:\p`)
 	if !errors.Is(err, errStartBlocked) {
 		t.Errorf("access denied gave %v, want errStartBlocked", err)
 	}
-	if calls != 1 {
-		t.Errorf("%d launch requests, want exactly 1 (no retry without breakaway)", calls)
+	if len(*calls) != 1 {
+		t.Fatalf("%d launch requests, want exactly 1 (no retry without breakaway)", len(*calls))
+	}
+	if (*calls)[0].flags&windows.CREATE_BREAKAWAY_FROM_JOB == 0 {
+		t.Errorf("the one request lacked CREATE_BREAKAWAY_FROM_JOB: flags %#x", (*calls)[0].flags)
+	}
+	if len(*closed) != 0 {
+		t.Errorf("a refused start closed handles %v; Windows returned none", *closed)
 	}
 }
 
