@@ -65,3 +65,11 @@ foreground right no longer matters, L-A10); a real (non-emulated) Windows PC. AS
 Seen in passing, not part of this scope: when MailArchive Desktop starts on Windows, a few
 Windows Terminal windows flash for about 0.1 s each (cases 4–7 of run 1 and case F); to be
 looked into separately.
+
+*Added 2026-10-31 (MA-951), beside the note above, which stays as written:* read in the code,
+the likeliest source is `schtasks.exe /Query`, a console program the Desktop runs for each
+archive's scheduled backup as it starts (the health check asks up to three times per
+archive), started with no console-window flag. Every program the Desktop and the scheduled
+run start now goes through `nowindow.Hide` (CREATE_NO_WINDOW); proven on the lab VM as
+SYSTEM through the start flags and a windowless stand-in parent. Not yet re-seen in the
+signed-in session with an observer: that the flashes are gone is to be confirmed there.

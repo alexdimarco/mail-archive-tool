@@ -19,6 +19,8 @@ import (
 	"strconv"
 	"strings"
 	"time"
+
+	"mail-archive-tool/internal/nowindow"
 )
 
 // DefaultName is the scheduler entry name used when the operator does not choose
@@ -1022,11 +1024,11 @@ func removeCron(s Spec) error {
 // crontabInstall pipes new content to `crontab -`.
 var (
 	crontabList = func() (string, error) {
-		out, err := exec.Command("crontab", "-l").CombinedOutput()
+		out, err := nowindow.Hide(exec.Command("crontab", "-l")).CombinedOutput()
 		return string(out), err
 	}
 	crontabInstall = func(content string) error {
-		cmd := exec.Command("crontab", "-")
+		cmd := nowindow.Hide(exec.Command("crontab", "-"))
 		cmd.Stdin = strings.NewReader(content)
 		if out, err := cmd.CombinedOutput(); err != nil {
 			return fmt.Errorf("crontab -: %w: %s", err, strings.TrimSpace(string(out)))
@@ -1038,9 +1040,10 @@ var (
 // schtasksRun runs schtasks.exe with args and returns its combined output and
 // run error. Like crontabList and crontabInstall it is a package variable, so a
 // test can stand a fake Task Scheduler in, on any OS, without touching the
-// runner's real one.
+// runner's real one. schtasks.exe is a console program, and the Desktop asks it
+// about each archive's backup as it starts, so it runs with no window (MA-951).
 var schtasksRun = func(args ...string) ([]byte, error) {
-	return exec.Command("schtasks", args...).CombinedOutput()
+	return nowindow.Hide(exec.Command("schtasks", args...)).CombinedOutput()
 }
 
 // readCrontab is the crontab for a read-only look (the name guard): an
@@ -1083,8 +1086,8 @@ func installLaunchd(s Spec) error {
 	if err := os.WriteFile(p, []byte(plist), 0o644); err != nil {
 		return err
 	}
-	_ = exec.Command("launchctl", "unload", p).Run() // ignore: may not be loaded
-	if out, err := exec.Command("launchctl", "load", p).CombinedOutput(); err != nil {
+	_ = nowindow.Hide(exec.Command("launchctl", "unload", p)).Run() // ignore: may not be loaded
+	if out, err := nowindow.Hide(exec.Command("launchctl", "load", p)).CombinedOutput(); err != nil {
 		return fmt.Errorf("launchctl load: %w: %s", err, strings.TrimSpace(string(out)))
 	}
 	return nil
@@ -1092,7 +1095,7 @@ func installLaunchd(s Spec) error {
 
 func removeLaunchd(s Spec) error {
 	p := launchdPlistPath(s.Name)
-	_ = exec.Command("launchctl", "unload", p).Run()
+	_ = nowindow.Hide(exec.Command("launchctl", "unload", p)).Run()
 	if err := os.Remove(p); err != nil && !errors.Is(err, fs.ErrNotExist) {
 		return err
 	}

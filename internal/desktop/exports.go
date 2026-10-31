@@ -14,6 +14,7 @@ import (
 	"time"
 
 	"mail-archive-tool/internal/app"
+	"mail-archive-tool/internal/nowindow"
 	"mail-archive-tool/internal/util"
 )
 
@@ -737,7 +738,9 @@ func revealArgv(goos, root string) (string, []string) {
 }
 
 // reveal starts the command detached; a test replaces it with a recorder.
-func defaultReveal(name string, args []string) error { return exec.Command(name, args...).Start() }
+func defaultReveal(name string, args []string) error {
+	return nowindow.Hide(exec.Command(name, args...)).Start()
+}
 
 // retryAction builds a new preview from a run's RUN RECORD, never the destination's
 // manifest (XC2): "failed" is its retryable failures, "rest" the remaining messages. It

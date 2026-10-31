@@ -38,6 +38,7 @@ import (
 	"mail-archive-tool/internal/export"
 	"mail-archive-tool/internal/health"
 	"mail-archive-tool/internal/job"
+	"mail-archive-tool/internal/nowindow"
 	"mail-archive-tool/internal/outlookcom"
 	"mail-archive-tool/internal/presync"
 	"mail-archive-tool/internal/runlog"
@@ -1764,7 +1765,7 @@ func openPathArgv(goos, p string) (string, []string) {
 // folder, so a failure is silent.
 func openPath(p string) {
 	name, args := openPathArgv(runtime.GOOS, p)
-	cmd := exec.Command(name, args...)
+	cmd := nowindow.Hide(exec.Command(name, args...))
 	if err := cmd.Start(); err == nil && cmd.Process != nil {
 		_ = cmd.Process.Release()
 	}

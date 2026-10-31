@@ -8,6 +8,8 @@ import (
 	"strings"
 
 	"github.com/ncruces/zenity"
+
+	"mail-archive-tool/internal/nowindow"
 )
 
 // dialogTitle is the title of every dialog the desktop shows.
@@ -42,18 +44,19 @@ func showLink(link string) {
 }
 
 // copyToClipboard puts text on the clipboard through the OS's own tool, best
-// effort: the link stays selectable in the dialog when none is there.
+// effort: the link stays selectable in the dialog when none is there. clip.exe
+// is a console program, so it runs with no window (MA-951).
 func copyToClipboard(text string) {
 	var cmd *exec.Cmd
 	switch runtime.GOOS {
 	case "windows":
-		cmd = exec.Command("clip")
+		cmd = nowindow.Hide(exec.Command("clip"))
 	case "darwin":
-		cmd = exec.Command("pbcopy")
+		cmd = nowindow.Hide(exec.Command("pbcopy"))
 	default:
 		for _, c := range [][]string{{"wl-copy"}, {"xclip", "-selection", "clipboard"}, {"xsel", "--clipboard", "--input"}} {
 			if _, err := exec.LookPath(c[0]); err == nil {
-				cmd = exec.Command(c[0], c[1:]...)
+				cmd = nowindow.Hide(exec.Command(c[0], c[1:]...))
 				break
 			}
 		}

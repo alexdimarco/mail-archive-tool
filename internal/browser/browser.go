@@ -12,6 +12,8 @@ import (
 	"runtime"
 	"strings"
 	"time"
+
+	"mail-archive-tool/internal/nowindow"
 )
 
 // Argv is the detached command that opens url in the OS default browser: the OS
@@ -80,11 +82,13 @@ var Open = func(url string) error {
 		// the stdin copy alive until the script has been read.
 		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 		defer cancel()
-		cmd := exec.CommandContext(ctx, c.Name, c.Args...)
+		cmd := nowindow.Hide(exec.CommandContext(ctx, c.Name, c.Args...))
 		cmd.Stdin = strings.NewReader(c.Stdin)
 		return cmd.Run()
 	}
-	cmd := exec.Command(c.Name, c.Args...)
+	// rundll32 on Windows has windows of its own, so Hide's flag leaves it, and the
+	// browser it opens, as they were (MA-951).
+	cmd := nowindow.Hide(exec.Command(c.Name, c.Args...))
 	if err := cmd.Start(); err != nil {
 		return err
 	}
