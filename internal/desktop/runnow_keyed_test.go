@@ -317,7 +317,7 @@ func TestALockCancelsAnEncryptedRunNowWhileItWaits(t *testing.T) {
 	}
 	g.s.release <- struct{}{}
 	m := g.done()
-	if g.status() != state.RunOK || !strings.HasPrefix(str(m["note"]), "Thunderbird synced: its mail stopped arriving after 6 min.") || g.windowOpen() {
+	if g.status() != state.RunOK || !strings.HasPrefix(str(m["note"]), "Backup complete: ") || !strings.Contains(str(m["note"]), "\nThunderbird synced: its mail stopped arriving after 6 min.") || g.windowOpen() {
 		t.Fatalf("twin: the released encrypted Run now: %v, record %s, window open %v", m, g.status(), g.windowOpen())
 	}
 	cfg, _, _ := g.s.last()
@@ -513,7 +513,7 @@ func TestAClearedRunNowNeverEndsAsFinished(t *testing.T) {
 	g.s.release <- struct{}{}
 	g.start()
 	m := g.done()
-	if n := str(m["note"]); !strings.HasPrefix(n, "Thunderbird synced: its mail stopped arriving after 6 min.") || !strings.HasSuffix(n, " "+cancelledText) || g.status() != state.RunCancelled {
+	if n := str(m["note"]); !strings.HasPrefix(n, cancelledText+"\nThunderbird synced: its mail stopped arriving after 6 min.") || g.status() != state.RunCancelled {
 		t.Fatalf("twin: a Run now cancelled after read start: note %q, record %s", m["note"], g.status())
 	}
 

@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"log"
 	"runtime"
+	"strconv"
 	"strings"
 	"time"
 
@@ -48,8 +49,8 @@ type runHooks struct {
 	rn   RunNow
 }
 
-// RunJobInProcess runs the recorded backup job at jobPath IN-PROCESS and returns a one-line
-// result — the manual twin of RunHeadless (the scheduled entry point), for the Desktop's "Run
+// RunJobInProcess runs the recorded backup job at jobPath IN-PROCESS and returns its
+// result (runNowSummary) — the manual twin of RunHeadless (the scheduled entry point), for the Desktop's "Run
 // now". RunHeadless is left untouched (it carries the scheduler's own log file, exit code and
 // Outlook PST recreate); this shares the same app.Run core for a local backup, logging to the
 // caller's logger. It refuses an absent -out (PM4) and a sealed archive, and marks the run
@@ -85,7 +86,84 @@ func RunJobInProcess(ctx, stop context.Context, jobPath string, logger *log.Logg
 	if runErr != nil {
 		return "", runErr
 	}
-	return exportSummary(j.Out, j.KeepRaw, result), nil
+	return runNowSummary(result), nil
+}
+
+// runNowSummary is what the Desktop's Run now says when its backup finished (MA-943): one
+// plain line first — how many new messages it archived, the archive's growth as Archive
+// now and the command line count it (F13) — then only what explains that count when it is
+// not zero, and what a person must act on, one line each. The Desktop puts the Thunderbird
+// sync's line after the first line. The wizard's own dialog keeps exportSummary.
+func runNowSummary(r app.Result) string {
+	s := r.Stats
+	added := r.ManifestSize - r.ManifestBefore
+	var lines []string
+	switch {
+	case added < 0 || added > s.Exported:
+		// The record shrank or grew by more than this run wrote: say what was written.
+		lines = append(lines, "Backup finished: "+messages(s.Exported)+" added or updated in the archive.")
+		added = s.Exported
+	case added == 0:
+		lines = append(lines, "Backup finished: no new messages.")
+	default:
+		lines = append(lines, "Backup finished: "+messagesNew(added)+" archived.")
+	}
+	if s.Filled > 0 {
+		lines = append(lines, messages(s.Filled)+" an earlier backup could not fully download "+guiVerb(s.Filled, "is", "are")+" now complete.")
+	}
+	if again := s.Exported - added - s.Filled; again > 0 {
+		lines = append(lines, messages(again)+" already in the archive "+guiVerb(again, "was", "were")+" saved again.")
+	}
+	notDone := r.Fillable + r.Unknown
+	onlyGaps := r.Fillable > 0 && r.FillableOnlyParseGap >= r.Fillable
+	switch {
+	case onlyGaps:
+		lines = append(lines, messages(r.Fillable)+" "+guiVerb(r.Fillable, "is", "are")+" cut short in the mail files, or "+guiVerb(r.Fillable, "has", "have")+
+			" parts that could not be told apart, so "+guiVerb(r.Fillable, "it", "they")+" could not be read in full. To add them, replace that mail file with a complete export from your mail app, then click Run now again. A message that was already damaged when it was sent stays listed.")
+	case notDone > 0:
+		line := messages(notDone) + " in the archive " + guiVerb(notDone, "is", "are") + " not fully downloaded yet: open them in your mail app (such as Thunderbird) so it downloads them, then click Run now again."
+		if r.Unknown > 0 {
+			line += fmt.Sprintf(" %d of them %s from an older archive and %s checked again by each backup.", r.Unknown, guiVerb(r.Unknown, "is", "are"), guiVerb(r.Unknown, "is", "are"))
+		}
+		lines = append(lines, line)
+		if r.FillableParseGap > 0 {
+			lines = append(lines, fmt.Sprintf("%d of them %s cut short in the mail file: replace that file with a complete export from your mail app.", r.FillableParseGap, guiVerb(r.FillableParseGap, "is", "are")))
+		}
+	}
+	if (onlyGaps || notDone > 0) && r.ReportPath != "" {
+		lines = append(lines, "Which ones: "+r.ReportPath)
+	}
+	if r.IndexErrors > 0 {
+		lines = append(lines, messages(r.IndexErrors)+" could not be added to search: click Maintenance → Rebuild search index.")
+	}
+	if r.IndexBehind {
+		lines = append(lines, "The search index is missing some messages: click Maintenance → Rebuild search index, or the next backup brings it up to date.")
+	}
+	return strings.Join(lines, "\n")
+}
+
+// messages is a count of messages in words: "1 message", "20,351 messages".
+func messages(n int) string {
+	return thousands(n) + " " + guiVerb(n, "message", "messages")
+}
+
+// messagesNew is a count of new messages in words: "1 new message", "135 new messages".
+func messagesNew(n int) string {
+	return thousands(n) + " new " + guiVerb(n, "message", "messages")
+}
+
+// thousands writes n with a comma between each group of three digits.
+func thousands(n int) string {
+	s := strconv.Itoa(n)
+	neg := strings.HasPrefix(s, "-")
+	s = strings.TrimPrefix(s, "-")
+	for i := len(s) - 3; i > 0; i -= 3 {
+		s = s[:i] + "," + s[i:]
+	}
+	if neg {
+		s = "-" + s
+	}
+	return s
 }
 
 // RunJobInProcessKeyed is RunJobInProcess for an encrypted archive: the Desktop's

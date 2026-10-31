@@ -8,6 +8,7 @@ import (
 	"log"
 	"net/http"
 	"strconv"
+	"strings"
 	"time"
 
 	"mail-archive-tool/internal/app"
@@ -162,9 +163,11 @@ func runNowCancelWords(goos, name, left string, minimized bool) string {
 	return "Cancelled before Thunderbird was started. The archive is unchanged."
 }
 
-// runNowEndNote is the note once a Run now has ended (§4.6, C-19): the sync's line,
-// then the result, the failure or the cancel words — a failed run no longer hides
-// the sync's line. A sync that was itself cancelled is told by the cancel words alone.
+// runNowEndNote is the note once a Run now has ended (§4.6, C-19; MA-943): the
+// backup's own line first — the result's first line, "Backup failed: …" or the cancel
+// words — then the sync's line, then the rest of the result, one per line (the note
+// keeps its line breaks). A failed run no longer hides the sync's line. A sync that was
+// itself cancelled is told by the cancel words alone.
 func runNowEndNote(syncLine, syncName, result, errMsg string) string {
 	end := result
 	switch {
@@ -176,7 +179,12 @@ func runNowEndNote(syncLine, syncName, result, errMsg string) string {
 	if syncLine == "" || syncName == presync.OutcomeCancelled.Name {
 		return end
 	}
-	return syncLine + " " + end
+	lead, rest, more := strings.Cut(end, "\n")
+	note := lead + "\n" + syncLine
+	if more {
+		note += "\n" + rest
+	}
+	return note
 }
 
 // runNowMutedEndNote is the end note of a Run now whose activity a Lock or a switch

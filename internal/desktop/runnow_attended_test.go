@@ -40,16 +40,19 @@ import (
 // or a release (the mail settled: ok, left open by rule). It records each call's
 // whole Config, the context's cause and whether the Stop had ended.
 type tbScript struct {
-	mu             sync.Mutex
-	cfgs           []presync.Config
-	causes         []error
-	stopEnded      []bool
-	at             chan string
-	release        chan struct{}
-	holdStart      bool
-	waitedFor      time.Duration
-	panics         bool
-	minimized      bool
+	mu        sync.Mutex
+	cfgs      []presync.Config
+	causes    []error
+	stopEnded []bool
+	at        chan string
+	release   chan struct{}
+	holdStart bool
+	waitedFor time.Duration
+	panics    bool
+	minimized bool
+	// alreadyOpen: Thunderbird is already open, so the session starts nothing and ends
+	// already-running (MA-944).
+	alreadyOpen    bool
 	cancelOnReturn func()
 	// onStop, when set, is called while the session still runs, as its Stop ends in
 	// the wait (a Lock): the encrypted Run now's key is checked there (MA-913).
@@ -63,8 +66,11 @@ func newTBScript() *tbScript {
 func (s *tbScript) run(ctx context.Context, cfg presync.Config) presync.Result {
 	s.mu.Lock()
 	s.cfgs = append(s.cfgs, cfg)
-	panics, hold, waited, minimized, onReturn, onStop := s.panics, s.holdStart, s.waitedFor, s.minimized, s.cancelOnReturn, s.onStop
+	panics, hold, waited, minimized, onReturn, onStop, open := s.panics, s.holdStart, s.waitedFor, s.minimized, s.cancelOnReturn, s.onStop, s.alreadyOpen
 	s.mu.Unlock()
+	if open {
+		return presync.Result{Outcome: presync.OutcomeAlreadyRunning}
+	}
 	if panics {
 		panic("a scripted session failure")
 	}
@@ -319,8 +325,8 @@ func TestRunNowCancelCauses(t *testing.T) {
 	g.s.release <- struct{}{}
 	m = g.done()
 	g.s.cancelOnReturn = nil
-	if n := str(m["note"]); !strings.HasPrefix(n, "Thunderbird synced: its mail stopped arriving after 6 min.") || !strings.HasSuffix(n, cancelledText) {
-		t.Errorf("a cancel while reading: %q, want the sync's line then today's words", n)
+	if n := str(m["note"]); n != cancelledText+"\nThunderbird synced: its mail stopped arriving after 6 min. It was left open out of sight; quit it from the Dock when you are done." {
+		t.Errorf("a cancel while reading: %q, want today's words, then the sync's line (MA-943)", n)
 	}
 	rep, err := app.Verify(g.out, app.VerifyOptions{}, log.New(io.Discard, "", 0), nil)
 	if err != nil || rep.Modified != 0 || rep.Missing != 0 || g.lastRunStatus() != state.RunCancelled {
@@ -392,12 +398,11 @@ func TestRunNowNoteBuiltOnTheServer(t *testing.T) {
 	g.s.release <- struct{}{}
 	m = g.done()
 	end := str(m["note"])
-	if !strings.HasPrefix(end, "Thunderbird synced: its mail stopped arriving after 6 min. It was left open out of sight; quit it from the Dock when you are done. ") ||
-		!strings.Contains(end, "Export complete.") || m["syncPhase"] != "" {
+	if end != "Backup finished: no new messages.\nThunderbird synced: its mail stopped arriving after 6 min. It was left open out of sight; quit it from the Dock when you are done." || m["syncPhase"] != "" { // the backup's line, then the sync's (MA-943)
 		t.Errorf("the end note: %q (phase %v)", end, m["syncPhase"])
 	}
 	// A failed run no longer hides the sync's line (C-19).
-	if f := runNowEndNote("Thunderbird synced: x.", "ok", "", "the disk is full"); f != "Thunderbird synced: x. Backup failed: the disk is full" {
+	if f := runNowEndNote("Thunderbird synced: x.", "ok", "", "the disk is full"); f != "Backup failed: the disk is full\nThunderbird synced: x." {
 		t.Errorf("the failure note: %q", f)
 	}
 	for _, s := range []string{note, end, str(m["cancelTitle"])} {
@@ -445,7 +450,7 @@ func TestRunNowNoteBuiltOnTheServer(t *testing.T) {
 	g.start()
 	m = g.done()
 	g.s.panics = false
-	if m["syncPhase"] != "" || !strings.HasPrefix(str(m["note"]), "Thunderbird was not synced: the sync failed unexpectedly") || m["error"] != "" {
+	if m["syncPhase"] != "" || !strings.HasPrefix(str(m["note"]), "Backup finished: no new messages.\nThunderbird was not synced: the sync failed unexpectedly") || m["error"] != "" {
 		t.Errorf("a panicking session: %v", m)
 	}
 
@@ -464,7 +469,7 @@ func TestRunNowNoteBuiltOnTheServer(t *testing.T) {
 	off := newRunNowRig(t, "darwin", false)
 	off.start()
 	m = off.done()
-	if off.s.calls() != 0 || !strings.HasPrefix(str(m["note"]), startNotAllowedLine+" ") || m["error"] != "" {
+	if off.s.calls() != 0 || !strings.HasPrefix(str(m["note"]), "Backup finished: no new messages.\n"+startNotAllowedLine) || m["error"] != "" {
 		t.Errorf("start not allowed: session calls %d, note %q", off.s.calls(), m["note"])
 	}
 	if lr, _, err := state.ReadLastRun(off.out); err != nil || lr.Presync != nil || lr.Status != state.RunOK {
@@ -581,8 +586,7 @@ func TestStopWaitRoute(t *testing.T) {
 	}
 	again := callAction(t, g.d, g.d.stopWaitAction, map[string]any{"run": run})
 	m = g.done()
-	if !strings.HasPrefix(str(m["note"]), "Thunderbird sync: you stopped the wait after 4 min, so the backup read the mail that had arrived by then") ||
-		!strings.Contains(str(m["note"]), "Export complete.") || g.lastRunStatus() != state.RunOK || m["error"] != "" {
+	if !strings.HasPrefix(str(m["note"]), "Backup finished: no new messages.\nThunderbird sync: you stopped the wait after 4 min, so the backup read the mail that had arrived by then") || g.lastRunStatus() != state.RunOK || m["error"] != "" {
 		t.Errorf("after the press the backup did not read and finish: %v, record %s", m, g.lastRunStatus())
 	}
 	cfg, _, _ := g.s.last()
@@ -707,7 +711,7 @@ func TestARunNowIsShownOnlyOnItsOwnArchive(t *testing.T) {
 	}
 
 	SaveSettings(g.d.cfg.SettingsPath, Settings{Out: g.out}) // switched back
-	if m = g.activity(); m["runNowHere"] != true || !strings.HasPrefix(str(m["note"]), "Thunderbird synced: its mail stopped arriving after 6 min.") {
+	if m = g.activity(); m["runNowHere"] != true || !strings.HasPrefix(str(m["note"]), "Backup finished: no new messages.\nThunderbird synced: its mail stopped arriving after 6 min.") {
 		t.Errorf("back on its own archive, the end note: %v", m)
 	}
 
