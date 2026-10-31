@@ -199,8 +199,11 @@ func syncStaleSubjectAndBody(name string, ev Event) (subject, body string) {
 	var b strings.Builder
 	fmt.Fprintf(&b, "The scheduled backups of %s on %s still ran, but Thunderbird has not been synced before them since %s (%d backups in a row). ", name, host, since, s.Missed)
 	b.WriteString("Mail that had only reached the mail server, not this computer, may be missing from the archive.\r\n\r\n")
-	fmt.Fprintf(&b, "The last time: %s.\r\n\r\n", header(s.Phrase))
-	fmt.Fprintf(&b, "Do this: %s\r\n\r\n", header(s.Remedy))
+	fmt.Fprintf(&b, "Most recently: %s.\r\n\r\n", header(s.Phrase))
+	// The reader may be on a phone, away from the computer (friction review, §14 gate 3):
+	// say where the remedy is done, and where the buttons it names are.
+	fmt.Fprintf(&b, "Do this on that computer: %s\r\n", header(s.Remedy))
+	b.WriteString("The buttons and cards named above are in MailArchive Desktop.\r\n\r\n")
 	b.WriteString("You will get this email once, until Thunderbird syncs again.\r\n")
 	b.WriteString("\r\nThis message was sent by MailArchive's built-in backup alerts.\r\n")
 	return subject, b.String()

@@ -871,6 +871,11 @@ func TestTheLockReplyWords(t *testing.T) {
 	if !strings.Contains(lockReadingText, "finishes with its own key, then the key is cleared") || !strings.Contains(lockReadingText, "Click Cancel to stop it now") {
 		t.Errorf("the reading reply: %q", lockReadingText)
 	}
+	// Friction review (§14 gate 3): the reply says what the Lock did in plain words —
+	// nothing new can open the archive — never the unclear "Locked for new use".
+	if !strings.HasPrefix(lockReadingText, "Locked: nothing new can open the archive.") || strings.Contains(lockReadingText, "for new use") {
+		t.Errorf("the reading reply's first sentence: %q", lockReadingText)
+	}
 }
 
 // covers: MA-911, X16, S64
@@ -901,7 +906,7 @@ func TestTheEncryptedSettingsSyncBox(t *testing.T) {
 		!strings.Contains(dashboardJS, `fetch('api/runnow-sync',{method:'POST'`) {
 		t.Error("the box's own Save does not post to api/runnow-sync through busy()")
 	}
-	for _, want := range []string{"while you are here", "the archive stays unlocked for that backup", "Until it starts reading mail, Lock cancels it; after that, Cancel stops it."} {
+	for _, want := range []string{"while you are here", "the archive stays unlocked for that backup", "Until the backup starts reading mail, Lock cancels it; after that, Cancel stops it."} {
 		if !strings.Contains(encSyncLine, want) {
 			t.Errorf("the box's line lacks %q", want)
 		}
@@ -1133,7 +1138,7 @@ func encSnapshot(t *testing.T, g *encRig) string {
 // taskbar; no text says Thunderbird is closed, names on-exit actions, offers "Keep
 // Thunderbird open" or names a command.
 func TestEncryptedRunNowTexts(t *testing.T) {
-	syncOff := "Back up this encrypted archive now, while it is unlocked here. Until it starts reading mail, Lock cancels it; after that, Cancel stops it."
+	syncOff := "Back up this encrypted archive now, while it is unlocked here. Until the backup starts reading mail, Lock cancels it; after that, Cancel stops it."
 	var all []struct{ goos, s string }
 	for _, goos := range []string{"darwin", "windows", "linux"} {
 		if encRunNowTitle(goos, false) != syncOff {
@@ -1163,7 +1168,7 @@ func TestEncryptedRunNowTexts(t *testing.T) {
 		}
 		notice := encSyncNotice(goos)
 		for _, want := range []string{"checks all your accounts", "sends anything waiting in your Outbox", "runs your message filters", "may show notifications",
-			"A Thunderbird you already have open is left alone — never started or closed.", "only the one holding this mailbox is synced", "usually 13 to 20 minutes", "leaves it open for you to quit"} {
+			"A Thunderbird you already have open is left alone — never started or closed.", "only the one holding this mailbox is synced", "(up to 20 minutes, often about 13)", "leaves it open for you to quit"} {
 			if !strings.Contains(notice, want) {
 				t.Errorf("%s: the encrypted SyncNotice lacks %q", goos, want)
 			}

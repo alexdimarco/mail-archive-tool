@@ -1610,6 +1610,14 @@ macOS's AS-Q. AS-L any time after AS3, or never. AS10 last. The labs run in para
    the macOS-only release note and the Windows "not yet" texts [OQ-7], the no-sync encrypted Lock
    reply and tooltip [OQ-8], the email and checkbox, the Windows taskbar and notification-area wording, the AS4 Mac note, and every
    corrected text (after AS4, AS8, AS9, AS-Q).
+   *2026-10-31:* the review over AS4 and AS8 (macOS start on, Windows start off) is filed as
+   `docs/review-presync-attended-friction.md`. Where its applied fixes change a draft word quoted in
+   §4.6, §5.4, §5.5 or §7 (the wait length, the waiting note, the first-sync line, the release line,
+   `SyncNotice`'s Run now clause, the Lock-after-reading reply, the encrypted Lock sentence, the
+   Stop-waiting refusal while starting, the WARN and email "most recently", the softer warning, the
+   not-quiet and leftover run warnings), the code and that review are the words of record; this
+   design's draft words are kept as written. Its "for the owner" list is open. AS9 and AS-Q owe their
+   own pass.
 4. **Labs, as per-platform switches, not per-platform releases** (one tag builds every platform)
    [C-48, C-49]: the macOS `AttendedStartAllowed` entry after the L-A1/L-A9 record (dev Mac, test
    profile, MA-917) [C-67, C-70]; the Windows `AttendedStartAllowed` entry after MA-918's
@@ -1627,7 +1635,8 @@ macOS's AS-Q. AS-L any time after AS3, or never. AS10 last. The labs run in para
    for an agent.
 5. **Owner:** OQ-5..OQ-8 answered 2026-10-30 (§15.3); no owner answer gates any slice now. Still
    going to the owner if they happen: a Windows focus steal or a long window flash found by MA-918
-   (§15.4), and the friction review's wording.
+   (§15.4), and the friction review's wording (its "for the owner" list,
+   `docs/review-presync-attended-friction.md`).
 6. **Operator**: OD-2, OD-3, OD-4 accepted 2026-10-30; OD-1 answered by the round-2 passes (gate 1).
 
 ---

@@ -470,7 +470,7 @@ func TestOutcomeLineEveryOutcome(t *testing.T) {
 		{OutcomeWaitEnded, "darwin", LeftOpenByRule, false,
 			"Thunderbird sync: you stopped the wait after 6 min, so the backup read the mail that had arrived by then; mail still arriving will be in the next backup. Thunderbird was left open out of sight; quit it from the Dock when you are done."},
 		{OutcomeCancelled, "darwin", LeftOpen, false,
-			"Thunderbird sync: cancelled — Thunderbird, started by this backup, was left open out of sight. Quit it from the Dock before the next Run now."},
+			"Thunderbird sync: cancelled — Thunderbird, started by this backup, was left open out of sight. Quit it from the Dock before the next backup."},
 		{OutcomeCancelled, "darwin", LeftMayBeStarting, false,
 			"Thunderbird sync: cancelled — Thunderbird may still be starting; quit it from the Dock."},
 		{OutcomeCancelled, "darwin", LeftExited, false,

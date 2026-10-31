@@ -20,7 +20,7 @@ import (
 
 // encLockSentence is what every encrypted Run now text says about a Lock (§3.2, OQ-3,
 // OQ-8): it cancels the backup until it starts reading mail.
-const encLockSentence = "Until it starts reading mail, Lock cancels it; after that, Cancel stops it."
+const encLockSentence = "Until the backup starts reading mail, Lock cancels it; after that, Cancel stops it."
 
 // encRunNowBase is the encrypted Run now's tooltip before slice AS8.
 const encRunNowBase = "Back up this encrypted archive now, while it is unlocked here."
@@ -61,7 +61,7 @@ const (
 // slice AS-Q.
 func encSyncNotice(goos string) string {
 	w := runNowWordsFor(goos)
-	return "Before each Run now, MailArchive starts Thunderbird " + w.hidden + " and waits for its mail to arrive (usually 13 to 20 minutes), so the archive includes mail that had only reached the server, then leaves it open for you to quit from " + w.place + ". " +
+	return "Before each Run now, MailArchive starts Thunderbird " + w.hidden + " and waits for its mail to arrive (" + syncWaitWords + "), so the archive includes mail that had only reached the server, then leaves it open for you to quit from " + w.place + ". " +
 		"Because it drives your real Thunderbird, starting it does what opening Thunderbird always does: it checks all your accounts, sends anything waiting in your Outbox, runs your message filters, and may show notifications. " +
 		"A Thunderbird you already have open is left alone — never started or closed. If you use more than one Thunderbird profile, only the one holding this mailbox is synced."
 }

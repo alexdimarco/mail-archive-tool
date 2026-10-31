@@ -380,8 +380,8 @@ func TestRunNowNoteBuiltOnTheServer(t *testing.T) {
 	m := g.activity()
 	note := str(m["syncNote"])
 	if m["syncPhase"] != presync.PhaseWaiting || !strings.Contains(note, "(20 min so far, up to 20)") ||
-		!strings.Contains(note, "this often takes 13 to 20 minutes; with no new mail it takes the full 20") ||
-		!strings.Contains(note, "Thunderbird is running out of sight; it is left open when its mail settles.") ||
+		!strings.Contains(note, "Thunderbird may fetch at once, or wait about 10 minutes for its regular mail check, so this often takes about 13 minutes; with no new mail it takes the full 20.") ||
+		!strings.Contains(note, "Thunderbird is running out of sight and stays open after the wait.") ||
 		!strings.Contains(note, "click Stop waiting and back up now") {
 		t.Errorf("the waiting note (25 min in): phase %v, %q", m["syncPhase"], note)
 	}
@@ -530,7 +530,7 @@ func TestRunNowFirstSyncLine(t *testing.T) {
 	if err := schedule.WriteDescriptor(g.out, schedule.DescribeSpec(spec)); err != nil {
 		t.Fatal(err)
 	}
-	line := "New: Run now starts Thunderbird out of sight even while you are using the computer, waits for its mail, and leaves it open for you to quit from the Dock when you are done."
+	line := "New: Run now starts Thunderbird out of sight, even while you are using the computer, waits up to 20 minutes for its mail, and leaves it open for you to quit from the Dock when you are done."
 	page, _ := getPage(t, DashboardHandler(g.d.cfg))
 	if !shows(page, line) {
 		t.Fatal("twin: the first-attended-sync line is not beside Run now")
@@ -551,7 +551,7 @@ func TestRunNowFirstSyncLine(t *testing.T) {
 	if page, _ = getPage(t, DashboardHandler(g.d.cfg)); strings.Contains(page, `id="runNowFirstSync"`) {
 		t.Error("the line still shows after the first attended Run now started Thunderbird")
 	}
-	if w := runNowFirstSyncLine("windows"); w != "New: Run now starts Thunderbird minimized to the taskbar even while you are using the computer, waits for its mail, and leaves it open for you to quit from the taskbar or the notification area when you are done." {
+	if w := runNowFirstSyncLine("windows"); w != "New: Run now starts Thunderbird minimized to the taskbar, even while you are using the computer, waits up to 20 minutes for its mail, and leaves it open for you to quit from the taskbar or the notification area when you are done." {
 		t.Errorf("the Windows first-sync line: %q", w)
 	}
 }
@@ -619,7 +619,11 @@ func TestStopWaitRoute(t *testing.T) {
 	}
 	early := callAction(t, g.d, g.d.stopWaitAction, map[string]any{"run": str(g.activity()["run"])})
 	cfg, _, _ = g.s.last()
-	assure.Refused(t, http.StatusOK, str(early["error"]), assure.Code(http.StatusOK), assure.Names("No backup is waiting for Thunderbird"),
+	// Said as it is: Thunderbird is still starting, and Cancel is the way out until it
+	// waits for mail — never "No backup is waiting for Thunderbird" while one is
+	// (friction review, §14 gate 3).
+	assure.Refused(t, http.StatusOK, str(early["error"]), assure.Code(http.StatusOK),
+		assure.Names("Thunderbird is still starting", "once it is waiting for mail", "Nothing was changed"),
 		assure.NoSideEffect(func() bool { return early["ok"] != true && cfg.EndWait.Err() == nil }))
 	callAction(t, g.d, g.d.cancelJobAction, nil)
 	g.at(presync.PhaseCancelling)
@@ -741,7 +745,7 @@ func TestRunNowTexts(t *testing.T) {
 				}
 				continue
 			}
-			for _, want := range []string{"even while you are using the computer", "usually 13 to 20 minutes", "then leaves it open for you to quit from",
+			for _, want := range []string{"even while you are using the computer", "(up to 20 minutes, often about 13)", "then leaves it open for you to quit from",
 				"A Thunderbird that is already open is left alone.", "You can cancel while it waits; that skips the backup."} {
 				if !strings.Contains(title, want) {
 					t.Errorf("%s tooltip lacks %q: %q", goos, want, title)
@@ -826,13 +830,13 @@ func TestRunNowTexts(t *testing.T) {
 	if !shows(page, runNowTitle("darwin", true)) || strings.Contains(page, "it first opens Thunderbird, waits for its mail, then closes it") {
 		t.Error("the card's Run now tooltip is not the AS4 macOS text")
 	}
-	if !shows(page, "a backup you start with Run now does not wait for that.") {
+	if !shows(page, "a backup you start with Run now does not wait for that, and leaves Thunderbird open for you to quit.") {
 		t.Error("the Settings card's notice does not say a Run now does not wait, where Run now starts Thunderbird")
 	}
 	r = presync.OverrideTablesForTest(nil, map[string]bool{"darwin": false})
 	page, _ = getPage(t, DashboardHandler(g.d.cfg))
 	r()
-	if !shows(page, runNowStartOffTitle) || shows(page, "a backup you start with Run now does not wait for that.") {
+	if !shows(page, runNowStartOffTitle) || shows(page, "a backup you start with Run now does not wait for that") {
 		t.Error("with the start not allowed: the card's tooltip or notice")
 	}
 
@@ -864,16 +868,20 @@ func TestRunNowReleaseLineFollowsTheTable(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !strings.Contains(releaseLineMac, "On a Mac, Run now now syncs Thunderbird") || !strings.Contains(releaseLineMac, "On Windows, Run now does not start Thunderbird yet") {
+	// The friction review (§14 gate 3) dropped the doubled "Run now now"; the checks
+	// below match the settled words, so none of them is looser than before.
+	if !strings.Contains(releaseLineMac, "On a Mac, Run now syncs Thunderbird first") || !strings.Contains(releaseLineMac, "On Windows, Run now does not start Thunderbird yet") ||
+		strings.Contains(releaseLineMac, "Run now now") {
 		t.Fatalf("twin: the AS4 release line: %q", releaseLineMac)
 	}
 	if got := strings.Contains(string(notes), releaseLineMac); got != presync.AttendedStartAllowed("darwin") {
 		t.Errorf("the release notes carry the Mac line: %v; macOS's start entry: %v", got, presync.AttendedStartAllowed("darwin"))
 	}
-	if strings.Contains(string(notes), "Run now now syncs Thunderbird") && !presync.AttendedStartAllowed("darwin") {
+	if (strings.Contains(string(notes), "Run now syncs Thunderbird") || strings.Contains(string(notes), "Run now now syncs Thunderbird")) &&
+		!presync.AttendedStartAllowed("darwin") {
 		t.Error("the release notes say Run now syncs while no platform's start entry is true")
 	}
-	if strings.Contains(string(notes), "On Windows, Run now now syncs Thunderbird") != presync.AttendedStartAllowed("windows") {
+	if (strings.Contains(string(notes), "On Windows, Run now syncs Thunderbird") || strings.Contains(string(notes), "On Windows, Run now now syncs Thunderbird")) != presync.AttendedStartAllowed("windows") {
 		t.Error("the release notes and the Windows start entry disagree")
 	}
 }
@@ -887,7 +895,7 @@ func TestRunNowReleaseLineFollowsTheTable(t *testing.T) {
 // wait, and the first-sync line is offered. Windows follows its own entry: while it is
 // false (no MA-918 record), every Windows text is the start-off variant.
 func TestRunNowShippedTexts(t *testing.T) {
-	const mac = "Run this archive's backup now. Because Thunderbird sync is on, it first starts Thunderbird out of sight — even while you are using the computer — and waits for its mail to arrive (usually 13 to 20 minutes), then leaves it open for you to quit from the Dock. A Thunderbird that is already open is left alone. You can cancel while it waits; that skips the backup."
+	const mac = "Run this archive's backup now. Because Thunderbird sync is on, it first starts Thunderbird out of sight — even while you are using the computer — and waits for its mail to arrive (up to 20 minutes, often about 13), then leaves it open for you to quit from the Dock. A Thunderbird that is already open is left alone. You can cancel while it waits; that skips the backup."
 	if !presync.AttendedStartAllowed("darwin") || !runNowSyncs("darwin") {
 		t.Fatal("macOS's start entry, as shipped, is not on")
 	}
@@ -897,7 +905,7 @@ func TestRunNowShippedTexts(t *testing.T) {
 	if got := encRunNowTitle("darwin", true); !strings.HasPrefix(got, mac+" ") || !strings.HasSuffix(got, encLockSentence) {
 		t.Errorf("a Mac's encrypted Run now tooltip, sync on: %q", got)
 	}
-	if !strings.Contains(presync.SyncNoticeFor("darwin"), "; a backup you start with Run now does not wait for that.") {
+	if !strings.Contains(presync.SyncNoticeFor("darwin"), "; a backup you start with Run now does not wait for that, and leaves Thunderbird open for you to quit.") {
 		t.Errorf("a Mac's sync notice does not say a Run now does not wait: %q", presync.SyncNoticeFor("darwin"))
 	}
 	if !strings.HasPrefix(runNowFirstSyncLine("darwin"), "New: Run now starts Thunderbird out of sight") {

@@ -29,7 +29,7 @@ type lineWords struct {
 func wordsFor(surface, goos string, minimized bool) lineWords {
 	w := lineWords{again: "run the backup again", next: "the next backup"}
 	if surface == SurfaceDesktop {
-		w.desktop, w.again, w.next = true, "click Run now again", "the next Run now"
+		w.desktop, w.again = true, "click Run now again"
 	}
 	switch goos {
 	case "darwin":

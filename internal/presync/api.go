@@ -131,7 +131,7 @@ var warnText = map[string]string{
 	OutcomeNoDesktopSession.Code:    "Thunderbird could not be started because there is no desktop session (the window server was unreachable). The archive ran anyway. Do this: run the sync while signed in to the Mac.",
 	OutcomeDidNotStart.Code:         "Thunderbird did not appear within 90 seconds of being started, so the archive ran without a confirmed sync. Do this: run `mailarchive -thunderbird-sync` by hand to check it starts.",
 	OutcomeIdentityUnavailable.Code: "The Thunderbird that was started could not be identified for certain, so it was not closed — nothing is ever closed on a guess. The archive ran anyway. Do this: Thunderbird may have been left open — quit it yourself when you are done.",
-	OutcomeNotQuiet.Code:            "Thunderbird's mail files were still changing at the maximum wait (20 minutes); it was asked to quit and the archive ran. Some mail may still have been arriving. Do this: the next scheduled run will pick it up, or run `mailarchive -thunderbird-sync` by hand if you need it archived now.",
+	OutcomeNotQuiet.Code:            "Thunderbird's mail files were still changing at the maximum wait (20 minutes), so the archive ran with the mail that had arrived by then. Some mail may still have been arriving. Do this: the next backup will pick it up, or run `mailarchive -thunderbird-sync` by hand if you need it archived now.",
 	OutcomeExitedEarly.Code:         "Thunderbird closed before its mail files went quiet, so the sync may be incomplete. The archive ran anyway. Do this: the next scheduled run will pick up this mail, or run `mailarchive -thunderbird-sync` by hand if you need it archived now.",
 	OutcomeQuitNotPermitted.Code:    "Thunderbird was left open because macOS did not allow Mail Archive to close it. Do this: in System Settings > Privacy & Security > Automation, allow Mail Archive to control Thunderbird; because the permission is asked per program, approve it from a run the scheduler starts (`launchctl kickstart gui/<uid>/<label>`), not only from Terminal. The archive ran anyway.",
 	OutcomeQuitTimeout.Code:         "Thunderbird did not close within 2 minutes after it was asked to quit, so it was left open. Why: it may be showing a dialog (an unsent message, a password prompt) or still working. Do this: open Thunderbird and quit it, or run again once it is closed. The archive ran anyway.",
@@ -140,7 +140,7 @@ var warnText = map[string]string{
 	OutcomeStateUnsaved.Code:        "The Thunderbird sync could not save its own state record, so if Thunderbird was left open the next run may not mention it. Do this: check the disk has free space and Mail Archive's settings folder can be written to. The archive ran anyway.",
 	OutcomeOwnerActive.Code:         "Thunderbird was left open because you seemed to be using it when the sync tried to close it. The archive ran anyway.",
 	OutcomeSuccessorFound.Code:      "The Thunderbird that was started went away and a different one is now open; it was not touched. The archive ran anyway.",
-	OutcomeLeftoverFound.Code:       "A Thunderbird started by an earlier scheduled sync is still open and was not closed. Do this: switch to that Thunderbird window and quit it. The archive ran anyway.",
+	OutcomeLeftoverFound.Code:       "A Thunderbird an earlier backup started is still open, so this backup did not start another. Do this: quit that Thunderbird; it may be hidden or minimized, so quit it from its icon where your open programs are shown. The archive ran anyway.",
 	OutcomeProfileUnusable.Code:     "No single, safe Thunderbird profile could be determined, so no sync ran. Do this: name the profile with `-thunderbird-profile PATH`. The archive ran anyway.",
 	OutcomeAppNotFound.Code:         "Thunderbird was not found in its usual install location, so no sync ran. A Thunderbird installed in a non-standard place cannot be synced in this version. The archive ran anyway.",
 	OutcomeRefusedElevated.Code:     "The Thunderbird sync was skipped because Mail Archive is running as root or an administrator — it would create profile files you could not then open. Do this: run it as your normal user. The archive ran anyway.",
@@ -170,7 +170,7 @@ const SyncNotice = syncNoticeHead + syncNoticeTail
 
 const (
 	syncNoticeHead   = "The Thunderbird sync starts Thunderbird in the background before the backup and waits for its mail to stop arriving, so the archive includes mail that had only reached the server. Because it drives your real Thunderbird, starting it does what opening Thunderbird always does: it checks all your accounts, sends anything waiting in your Outbox, runs your message filters, and may show notifications. When it then asks Thunderbird to quit, your accounts' on-exit actions run too (for example emptying Trash), so mail you deleted since the last backup may be removed before it is archived. A Thunderbird you already have open is left alone — never started or closed. A scheduled backup also waits until you have been away from the computer"
-	syncNoticeRunNow = "; a backup you start with Run now does not wait for that"
+	syncNoticeRunNow = "; a backup you start with Run now does not wait for that, and leaves Thunderbird open for you to quit"
 	syncNoticeTail   = ". If you use more than one Thunderbird profile, only the one holding this mailbox is synced."
 )
 

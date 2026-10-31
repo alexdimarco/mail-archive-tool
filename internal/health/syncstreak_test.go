@@ -82,7 +82,7 @@ func TestTheNotSyncedWarning(t *testing.T) {
 	}
 	want := "WARN: Thunderbird has not been synced before this archive's scheduled backups since " +
 		time.Date(2026, 10, 20, 2, 0, 0, 0, time.UTC).Local().Format("Jan 2, 2006") +
-		" (4 backups in a row; the last time: Thunderbird not synced: an earlier copy is still open). The backups still ran, but mail that had only reached the mail server may be missing. Do this: " +
+		" (4 backups in a row; most recently: Thunderbird not synced: an earlier copy is still open). The backups still ran, but mail that had only reached the mail server may be missing. Do this: " +
 		wantRemedy["leftover-found"]
 	if msg != want {
 		t.Errorf("the WARN reads\n  %q\nwant\n  %q", msg, want)
@@ -93,7 +93,7 @@ func TestTheNotSyncedWarning(t *testing.T) {
 		if !strings.HasSuffix(got, "Do this: "+remedy) {
 			t.Errorf("%s, desktop, Run now syncs: %q\n  want the remedy %q", name, got, remedy)
 		}
-		if !strings.Contains(got, "the last time: "+presync.TagPhrase(name)+")") {
+		if !strings.Contains(got, "most recently: "+presync.TagPhrase(name)+")") {
 			t.Errorf("%s: the reason is not the closed map's phrase: %q", name, got)
 		}
 		for _, surface := range []string{"desktop", "", "gui"} {
@@ -138,7 +138,7 @@ func TestTheNotSyncedWarning(t *testing.T) {
 	// A hostile name: the generic phrase and remedy, never echoed.
 	for _, hostile := range []string{"evil-name", "<b>x</b>", "cancelled", "presync_leftover_found"} {
 		got := reasonWith(Assess(syncInput(now, "darwin", "desktop", staleStreak(hostile)), now), "presync_not_synced")
-		if !strings.Contains(got, "the last time: Thunderbird not synced)") || !strings.HasSuffix(got, "Do this: "+wantRemedy["cannot-start"]) || strings.Contains(got, hostile) {
+		if !strings.Contains(got, "most recently: Thunderbird not synced)") || !strings.HasSuffix(got, "Do this: "+wantRemedy["cannot-start"]) || strings.Contains(got, hostile) {
 			t.Errorf("hostile %q: %q", hostile, got)
 		}
 	}
@@ -195,12 +195,12 @@ func TestTheNothingArrivedWarning(t *testing.T) {
 
 	rep := Assess(syncInput(now, "darwin", "desktop", nc), now)
 	msg := reasonWith(rep, "presync_nothing_arrived")
-	want := "WARN: This is not a failed backup: the backups still ran. Before this archive's scheduled backups since " + t0.Local().Format("Jan 2, 2006") +
-		", Thunderbird was started but no new mail arrived (3 backups in a row). That can mean there was no new mail, or that Thunderbird is waiting behind a password or sign-in window nobody can see, because it was started out of sight. Do this: open Thunderbird; if it asks for a password or a sign-in, answer it, then click Run now."
+	want := "WARN: This is not a failed backup: the backups still ran. Since " + t0.Local().Format("Jan 2, 2006") +
+		", Thunderbird was started before each of this archive's scheduled backups, but no new mail arrived (3 backups in a row). That can mean there was no new mail, or that Thunderbird is waiting for a password or sign-in that nobody has answered: it was started out of sight, so its window is easy to miss. Do this: open Thunderbird; if it asks for a password or a sign-in, answer it, then click Run now."
 	if rep.Posture != "WARN" || msg != want {
 		t.Fatalf("positive twin: posture %s, the warning\n  %q\nwant\n  %q", rep.Posture, msg, want)
 	}
-	if got := reasonWith(Assess(syncInput(now, "windows", "", nc), now), "presync_nothing_arrived"); !strings.Contains(got, "because it was started minimized.") ||
+	if got := reasonWith(Assess(syncInput(now, "windows", "", nc), now), "presync_nothing_arrived"); !strings.Contains(got, "it was started minimized, so its window is easy to miss.") ||
 		!strings.HasSuffix(got, "answer it, then run the backup by hand with `mailarchive -thunderbird-sync`.") || strings.Contains(got, "Run now") || strings.Contains(got, "out of sight") {
 		t.Errorf("Windows, command line: %q", got)
 	}

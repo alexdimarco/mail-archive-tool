@@ -40,7 +40,7 @@ func TestPresyncQuestionDrawsFromNotice(t *testing.T) {
 		r := presync.OverrideTablesForTest(nil, map[string]bool{runtime.GOOS: allowed})
 		q := presyncQuestionText()
 		r()
-		if got := strings.Contains(q, "a backup you start with Run now does not wait for that"); got != allowed {
+		if got := strings.Contains(q, "a backup you start with Run now does not wait for that, and leaves Thunderbird open for you to quit"); got != allowed {
 			t.Errorf("start allowed %v: the question says Run now does not wait: %v", allowed, got)
 		}
 	}

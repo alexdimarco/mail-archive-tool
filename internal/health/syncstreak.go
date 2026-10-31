@@ -178,19 +178,21 @@ func SyncAlertWords(goos string, s state.SyncStreak) (phrase, remedy string) {
 
 // notSyncedText is the presync_not_synced WARN (§5.4).
 func notSyncedText(in Input, s state.SyncStreak) string {
-	return fmt.Sprintf("Thunderbird has not been synced before this archive's scheduled backups since %s (%d backups in a row; the last time: %s). The backups still ran, but mail that had only reached the mail server may be missing. Do this: %s",
+	return fmt.Sprintf("Thunderbird has not been synced before this archive's scheduled backups since %s (%d backups in a row; most recently: %s). The backups still ran, but mail that had only reached the mail server may be missing. Do this: %s",
 		streakDate(s.FirstMissed), s.Missed, syncPhrase(s.LastName), syncRemedy(in, s.LastName))
 }
 
 // nothingArrivedText is the softer presync_nothing_arrived WARN (§5.4, OQ-5): its first
-// sentence says the backups ran, and it names a hidden password or sign-in window.
+// sentence says the backups ran, and it names a password or sign-in window that is
+// easy to miss (wording settled by the friction review, §14 gate 3: a minimized window
+// on Windows can be seen, so it never says "nobody can see").
 func nothingArrivedText(in Input, s state.SyncStreak) string {
 	w := syncWordsFor(in)
 	then := "then click Run now."
 	if !w.desktop {
 		then = "then run the backup by hand with `mailarchive -thunderbird-sync`."
 	}
-	return fmt.Sprintf("This is not a failed backup: the backups still ran. Before this archive's scheduled backups since %s, Thunderbird was started but no new mail arrived (%d backups in a row). That can mean there was no new mail, or that Thunderbird is waiting behind a password or sign-in window nobody can see, because it was %s. Do this: open Thunderbird; if it asks for a password or a sign-in, answer it, %s",
+	return fmt.Sprintf("This is not a failed backup: the backups still ran. Since %s, Thunderbird was started before each of this archive's scheduled backups, but no new mail arrived (%d backups in a row). That can mean there was no new mail, or that Thunderbird is waiting for a password or sign-in that nobody has answered: it was %s, so its window is easy to miss. Do this: open Thunderbird; if it asks for a password or a sign-in, answer it, %s",
 		streakDate(s.FirstNoChange), s.NoChange, w.started, then)
 }
 

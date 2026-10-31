@@ -138,7 +138,7 @@ func (c *captureState) stopSyncWait(out, goos string) string {
 // the run's current step ends, never "already gone".
 const (
 	lockCancelledText = "Locked. The backup was cancelled before it read any mail, and its key is being cleared once its current step ends; nothing was added."
-	lockReadingText   = "Locked for new use. The backup that is running has started reading mail, so it finishes with its own key, then the key is cleared. Click Cancel to stop it now."
+	lockReadingText   = "Locked: nothing new can open the archive. The backup that is running had already started reading mail, so it finishes with its own key, then the key is cleared. Click Cancel to stop it now."
 )
 
 // lockCancelNote is the reply to a Lock inside the window, by what the sync had done

@@ -324,8 +324,9 @@ func TestTheSyncEmailWordsComeFromTheClosedMaps(t *testing.T) {
 		"The scheduled backups of " + g.out + " on ",
 		" still ran, but Thunderbird has not been synced before them since " + date + " (2 backups in a row).",
 		"Mail that had only reached the mail server, not this computer, may be missing from the archive.",
-		"The last time: Thunderbird not synced: the sync could not be prepared.",
-		"Do this: The sync could not be prepared on this computer. Click Repair on the Scheduled backup card.",
+		"Most recently: Thunderbird not synced: the sync could not be prepared.",
+		"Do this on that computer: The sync could not be prepared on this computer. Click Repair on the Scheduled backup card.",
+		"The buttons and cards named above are in MailArchive Desktop.",
 		"You will get this email once, until Thunderbird syncs again.",
 	} {
 		if !strings.Contains(msg, want) {
@@ -349,10 +350,10 @@ func TestTheSyncEmailWordsComeFromTheClosedMaps(t *testing.T) {
 			t.Errorf("the hostile name reached the email (%q):\n%s", bad, hmsg)
 		}
 	}
-	if !strings.Contains(hmsg, "The last time: Thunderbird not synced.") {
+	if !strings.Contains(hmsg, "Most recently: Thunderbird not synced.") {
 		t.Errorf("a hostile name does not read as the generic phrase:\n%s", hmsg)
 	}
-	if !strings.Contains(hmsg, "Do this: To back up the mail now, open Thunderbird") && !strings.Contains(hmsg, "Do this: Click Run now on the Scheduled backup card to sync while you watch.") {
+	if !strings.Contains(hmsg, "Do this on that computer: To back up the mail now, open Thunderbird") && !strings.Contains(hmsg, "Do this on that computer: Click Run now on the Scheduled backup card to sync while you watch.") {
 		t.Errorf("a hostile name does not get the generic remedy:\n%s", hmsg)
 	}
 }

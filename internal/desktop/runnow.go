@@ -29,6 +29,14 @@ import (
 // for mail (presync's defMaxWait, 20 minutes).
 const syncMaxMinutes = 20
 
+// syncWaitWords is how long a Run now's wait for mail takes, as the tooltips, the
+// encrypted notice and the release line say it (friction review, §14 gate 3). The lab
+// record docs/lab/presync-attended-start-darwin.md measured a first fetch at +6 s on
+// one run and at about +9.5 min (the periodic check) on another, so "usually 13 to
+// 20" claimed a lower bound the lab does not show: up to 20 (no new mail), often about
+// 13 (the periodic fetch plus 3 minutes of quiet).
+const syncWaitWords = "up to 20 minutes, often about 13"
+
 // runNowWords are a Run now text's platform words (§4.6, §2.7, C-24, C-61): how
 // Thunderbird runs while left open, and where to quit it from. Windows names the
 // taskbar and the notification area, never the Dock (OQ-2).
@@ -67,9 +75,9 @@ func runNowTitle(goos string, syncOn bool) string {
 	case !presync.AttendedStartAllowed(goos):
 		return runNowStartOffTitle
 	case goos == "windows":
-		return "Run this archive's backup now. Because Thunderbird sync is on, it first starts Thunderbird minimized to the taskbar (its window may appear for a moment) — even while you are using the computer — and waits for its mail to arrive (usually 13 to 20 minutes), then leaves it open for you to quit from the taskbar or the notification area. A Thunderbird that is already open is left alone. You can cancel while it waits; that skips the backup."
+		return "Run this archive's backup now. Because Thunderbird sync is on, it first starts Thunderbird minimized to the taskbar (its window may appear for a moment) — even while you are using the computer — and waits for its mail to arrive (" + syncWaitWords + "), then leaves it open for you to quit from the taskbar or the notification area. A Thunderbird that is already open is left alone. You can cancel while it waits; that skips the backup."
 	}
-	return "Run this archive's backup now. Because Thunderbird sync is on, it first starts Thunderbird out of sight — even while you are using the computer — and waits for its mail to arrive (usually 13 to 20 minutes), then leaves it open for you to quit from the Dock. A Thunderbird that is already open is left alone. You can cancel while it waits; that skips the backup."
+	return "Run this archive's backup now. Because Thunderbird sync is on, it first starts Thunderbird out of sight — even while you are using the computer — and waits for its mail to arrive (" + syncWaitWords + "), then leaves it open for you to quit from the Dock. A Thunderbird that is already open is left alone. You can cancel while it waits; that skips the backup."
 }
 
 // runNowFirstSyncLine is the one-time line beside Run now (§4.6, C-32, C-83): shown
@@ -77,7 +85,7 @@ func runNowTitle(goos string, syncOn bool) string {
 // now on this computer has started it. The close variant arrives with slice AS-Q.
 func runNowFirstSyncLine(goos string) string {
 	w := runNowWordsFor(goos)
-	return "New: Run now starts Thunderbird " + w.hidden + " even while you are using the computer, waits for its mail, and leaves it open for you to quit from " + w.place + " when you are done."
+	return "New: Run now starts Thunderbird " + w.hidden + ", even while you are using the computer, waits up to 20 minutes for its mail, and leaves it open for you to quit from " + w.place + " when you are done."
 }
 
 // jobCancelTitle is the job slot's Cancel tooltip outside a Run now's sync.
@@ -122,7 +130,7 @@ func runNowSyncNote(goos, phase string, since, now time.Time, waitStopped bool) 
 		if n > syncMaxMinutes {
 			n = syncMaxMinutes
 		}
-		return fmt.Sprintf("Syncing Thunderbird… waiting for mail to arrive (%d min so far, up to %d). Thunderbird usually starts fetching about 10 minutes after it opens, so this often takes 13 to 20 minutes; with no new mail it takes the full 20. Thunderbird is running %s; it is left open when its mail settles. To back up now with the mail that has arrived, click Stop waiting and back up now.", n, syncMaxMinutes, w.hidden)
+		return fmt.Sprintf("Syncing Thunderbird… waiting for mail to arrive (%d min so far, up to %d). Thunderbird may fetch at once, or wait about 10 minutes for its regular mail check, so this often takes about 13 minutes; with no new mail it takes the full 20. Thunderbird is running %s and stays open after the wait. To back up now with the mail that has arrived, click Stop waiting and back up now.", n, syncMaxMinutes, w.hidden)
 	case presync.PhaseCancelling:
 		return "Cancelling… Thunderbird is still starting; it will be left open."
 	}
@@ -386,6 +394,8 @@ func (d *dashboard) stopWaitAction(w http.ResponseWriter, r *http.Request) {
 		refuse = "No backup is waiting for Thunderbird. Nothing was changed."
 	case c.waitStopped || c.syncEnded || phase == presync.PhaseCancelling:
 		refuse = "The wait has already ended. Nothing was changed."
+	case phase == presync.PhaseStarting:
+		refuse = "Thunderbird is still starting: Stop waiting works once it is waiting for mail, and until then Cancel is the way to stop. Nothing was changed."
 	case phase != presync.PhaseWaiting:
 		refuse = "No backup is waiting for Thunderbird. Nothing was changed."
 	}
@@ -416,4 +426,4 @@ func runNowJobSyncs(out string) bool {
 // OQ-7: ship the Mac first). It goes into packaging/release-notes.md in the commit
 // that sets macOS's AttendedStartAllowed entry true, citing its lab record; MA-915
 // fails while the release notes and the table disagree.
-const releaseLineMac = "On a Mac, Run now now syncs Thunderbird even while you are at the computer: it starts Thunderbird out of sight, waits for its mail (usually 13 to 20 minutes; Stop waiting and back up now ends the wait), and leaves it open for you to quit. Scheduled backups still wait until you are away. On Windows, Run now does not start Thunderbird yet; scheduled backups still sync it."
+const releaseLineMac = "On a Mac, Run now syncs Thunderbird first, even while you are at the computer: it starts Thunderbird out of sight, waits for its mail (" + syncWaitWords + "; Stop waiting and back up now ends the wait), and leaves it open for you to quit. Scheduled backups still wait until you are away. On Windows, Run now does not start Thunderbird yet; scheduled backups still sync it."
