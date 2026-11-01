@@ -164,3 +164,17 @@ func toText(m map[string]any) string {
 	b, _ := json.Marshal(m)
 	return string(b)
 }
+
+// linesText is a reply's "lines" as the page shows them, one per line. A path is
+// searched for here, not in toText: JSON doubles a Windows path's backslashes.
+func linesText(v any) string {
+	var out []string
+	if ls, ok := v.([]any); ok {
+		for _, l := range ls {
+			if s, ok := l.(string); ok {
+				out = append(out, s)
+			}
+		}
+	}
+	return strings.Join(out, "\n")
+}

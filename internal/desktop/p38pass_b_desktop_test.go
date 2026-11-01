@@ -40,8 +40,11 @@ func TestTheForgetPlanAcceptsThePathAsShown(t *testing.T) {
 	}
 	e := newKeysEnv(t, shown)
 	_, m := e.post(t, "api/encryption/forget/plan", map[string]any{"path": shown})
-	plan := toText(map[string]any{"lines": m["lines"]})
-	if m["strong"] != true || !strings.Contains(plan, "at "+shown+".") || m["spelling"] == encrecord.Spelling(shown) {
+	plan := linesText(m["lines"])
+	if m["strong"] != true {
+		t.Fatalf("a folder replaced by a link must get the strong plan: %s", toText(m))
+	}
+	if !strings.Contains(plan, "at "+shown+".") || m["spelling"] == encrecord.Spelling(shown) {
 		t.Fatalf("want a strong plan showing %s, whose recorded spelling differs from it: %v\n%s", shown, m["spelling"], plan)
 	}
 	_, wrong := e.post(t, "api/encryption/forget", map[string]any{"token": m["token"], "typed": filepath.Join(base, "elsewhere")})

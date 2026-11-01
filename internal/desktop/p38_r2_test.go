@@ -91,15 +91,18 @@ func TestTheForgetPlanShowsThePathAsTheRowNamesIt(t *testing.T) {
 	os.WriteFile(filepath.Join(planted, "something-else.txt"), []byte("x"), 0o600)
 	e := newKeysEnv(t, planted)
 	_, m := e.post(t, "api/encryption/forget/plan", map[string]any{"path": planted})
-	plan := toText(map[string]any{"lines": m["lines"]})
+	plan := linesText(m["lines"])
+	if m["strong"] != true {
+		t.Fatalf("a folder holding other files must get the strong plan: %s", toText(m))
+	}
 	// The record folds the case on a Mac and on Windows; the row's name has it.
-	if m["strong"] != true || !strings.Contains(plan, "at "+planted+".") || strings.Contains(plan, "planted-mixedcase") {
+	if !strings.Contains(plan, "at "+planted+".") || strings.Contains(plan, "planted-mixedcase") {
 		t.Fatalf("the plan shows %s as its row names it, not case-folded:\n%s", planted, plan)
 	}
 	_, done := e.post(t, "api/encryption/forget", map[string]any{"token": m["token"], "typed": planted})
 	rec, _ := encrecord.Load()
 	_, stillThere := rec.Lookup(planted)
-	assure.Reached(t, done["ok"] == true && !stillThere && strings.Contains(toText(done), planted),
+	assure.Reached(t, done["ok"] == true && !stillThere && strings.Contains(linesText(done["lines"]), planted),
 		"the path typed back exactly as shown forgets it: "+toText(done))
 }
 
