@@ -346,6 +346,19 @@ an invariant is the thing that is wrong.
   add their tests (C-42): MA-895, MA-927 and MA-929 (slice AS1b); MA-898, its
   negative half — no scheduled run, job file, descriptor or command line is
   attended (slice AS3; the Run now halves land with AS4 and AS8).
+- **R36 — An archive is deleted only by the person's explicit decision.** Listed
+  here on 2026-11-01; until then it was cited by MA rows but written only in
+  `docs/design-archive-manager.md` §5.8 as "uninstall deletes NO archive and
+  nothing inside one", which stands unchanged: uninstall, a schedule's Remove,
+  Forget, Pause, a switch and every other action that is not a deletion keep the
+  archive and everything in it. *Owner's ruling, 2026-11-01:* "the never delete
+  rule should be adjusted to never delete without your explicit decision to do
+  so". So the program may delete an archive, but only as its own action, for one
+  named archive, which the person starts and confirms at that moment. Nothing it
+  is handed (a job file, a descriptor, a schedule, a folder's contents) and no
+  unattended run can start it. No such action exists yet: it is a data-loss
+  design and owes the 10-lens pre-code design review and an adversarial pass
+  before any code.
 
 ## 3. Scenarios
 

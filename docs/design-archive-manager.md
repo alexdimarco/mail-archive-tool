@@ -365,6 +365,11 @@ the Security & privacy card). Scope to remove:
 one — not the manifest, the mail, the search index, or the pause sentinel — even when an
 archive sits under or beside the config dir (the P10 overlap case); it removes only the
 enumerated program/config/schedule paths, never an `-out` / known-archive folder.
+*Note beside R36, 2026-11-01 (the owner's ruling, recorded by the lead):* "the never
+delete rule should be adjusted to never delete without your explicit decision to do
+so". Uninstall's guarantee above is unchanged. R36 as a whole now reads, in
+`docs/scenario-catalog.md` §2: an archive is deleted only by the person's explicit
+decision, for one named archive, confirmed at that moment.
 **Owes its own pre-code adversarial pass** before any code (data-loss on R36, the
 credential deletion, the cross-platform scheduler removal), like Slice 2. Open questions
 for the pass: remove the binary itself or hand off to the OS uninstaller; enumerate
