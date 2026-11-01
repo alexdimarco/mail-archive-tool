@@ -115,6 +115,20 @@ func (r *Result) line(format string, args ...any) {
 // lockedLine is added to every stop from step 1 (b) on (§5.3 step 1 [R3:C13]).
 const lockedLine = "This archive was locked on this page; unlock it again to read it."
 
+// The plan's fixed sentences, shared by the Desktop's panel and the command line's plan
+// (§3.1, §6, §9; slice 4).
+const (
+	// PlanLogLine is §3.1's deletions.log line.
+	PlanLogLine = "A line is added to this computer's deletion log (deletions.log), which keeps the date, the folder and what was removed."
+	// PlanKeyLine is §6's line for an encrypted archive [C8].
+	PlanKeyLine = "This computer will forget this archive's key. Any other copy of this archive will need its password or recovery key to open."
+)
+
+// SyncedLine is §9's warning for a folder synced with svc [C14].
+func SyncedLine(svc string) string {
+	return fmt.Sprintf("This folder is synced with %s. Deleting it here also deletes it there, and %s may keep it in its own recycle bin: empty that too.", svc, svc)
+}
+
 // msgChanged is §3.1's re-check refusal.
 const msgChanged = "This archive changed since you clicked Delete. Click Delete again."
 

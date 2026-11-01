@@ -111,6 +111,11 @@ type ExecDeps struct {
 	Keys       KeyRegistry
 	ScratchDir func(spelling, archiveID string) (string, error)
 	Keyring    Keyring
+	// NoPage says the caller has no page that could hold the archive open (the command line,
+	// slice 4, which refuses while a MailArchive Desktop runs): step 1 (b) is skipped, so Keys is
+	// not needed, and no line or "Steps done" says the archive was locked on a page. Step 1 (c)
+	// still refuses a reader another program holds.
+	NoPage bool
 	// SettingsDir is the folder the Desktop keeps its settings, its list of archives
 	// (known-archives.json) and the alert files in: filepath.Dir of its -config file;
 	// "" is MailArchive's settings folder (job.Dir()). Step 3 removes the alert files

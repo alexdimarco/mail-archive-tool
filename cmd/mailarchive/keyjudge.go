@@ -125,8 +125,19 @@ func keyVerbTerminal(verb string, k *keyFlags) error {
 		why = "it needs no password, but it changes what this computer remembers, so you run it yourself"
 	case "forget-archive":
 		why = "you confirm there which folder this computer stops protecting"
+	case "delete-archive":
+		why = "it shows the plan there, and you type the folder's name to confirm"
+	case "unlist-archive":
+		why = "you answer its question there"
 	default:
 		why = "it asks you questions there"
 	}
-	return fmt.Errorf("mailarchive %s needs you at a terminal: %s. Run it in a terminal window (or use the Encryption card in MailArchive Desktop)", verb, why)
+	// The closing text is per verb (design-archive-delete §3.3 [R3:C17]): the delete verbs'
+	// Desktop actions are on the Your archives card, never the Encryption card.
+	closing := "Run it in a terminal window (or use the Encryption card in MailArchive Desktop)"
+	switch verb {
+	case "delete-archive", "unlist-archive":
+		closing = "Run it in a terminal window (or use Delete… / Remove from list on the Your archives card in MailArchive Desktop)"
+	}
+	return fmt.Errorf("mailarchive %s needs you at a terminal: %s. %s", verb, why, closing)
 }

@@ -90,6 +90,10 @@ func main() {
 		err = runResume(args[1:])
 	case len(args) > 0 && args[0] == "uninstall":
 		err = runUninstall(args[1:])
+	case len(args) > 0 && args[0] == "delete-archive":
+		err = runDeleteArchive(args[1:])
+	case len(args) > 0 && args[0] == "unlist-archive":
+		err = runUnlistArchive(args[1:])
 	case len(args) > 0 && args[0] == "change-password":
 		err = runChangePassword(args[1:])
 	case len(args) > 0 && args[0] == "new-recovery-key":
@@ -166,7 +170,7 @@ func runExport(args []string) error {
 	inputs := append(o.inputs, fs.Args()...)
 
 	if *o.out == "" {
-		return errors.New("-out is required (or use a subcommand: desktop, wizard, run-job, setup, serve, search, reindex, schedule, graph, status, verify, extract, decrypt, pause, resume, uninstall, change-password, new-recovery-key, restore-key-file, forget-key, forget-archive, repair-record, encrypt)")
+		return errors.New("-out is required (or use a subcommand: desktop, wizard, run-job, setup, serve, search, reindex, schedule, graph, status, verify, extract, decrypt, pause, resume, uninstall, delete-archive, unlist-archive, change-password, new-recovery-key, restore-key-file, forget-key, forget-archive, repair-record, encrypt)")
 	}
 	if err := refuseEncryptWith(*kf.encrypt, *o.unattended, *o.manifest != "", *o.list); err != nil {
 		return err
@@ -1982,6 +1986,8 @@ Usage:
   mailarchive pause    -out DIR [-reason TEXT]           stop backups and make the archive read-only
   mailarchive resume   -out DIR                          make a paused archive writable and restore its schedule
   mailarchive uninstall -dry-run | -yes                  remove MailArchive's schedules, settings and sign-in (archives are kept)
+  mailarchive delete-archive -out DIR                    permanently delete an archive, at a terminal (-plan-out FILE: only save the plan)
+  mailarchive unlist-archive -out DIR                    remove an archive from Your archives; the folder is kept
   mailarchive setup                                      set up a Microsoft 365 connection in your browser
   mailarchive desktop  [-capture]                        the dashboard & launcher (also opens on double-click)
   mailarchive wizard                                     step-by-step setup with native dialogs

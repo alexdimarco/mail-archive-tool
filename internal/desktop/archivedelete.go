@@ -13,6 +13,7 @@ import (
 	"sort"
 	"strings"
 	"sync"
+	"time"
 	"unicode"
 
 	"mail-archive-tool/internal/app"
@@ -20,12 +21,12 @@ import (
 	"mail-archive-tool/internal/archindex"
 	"mail-archive-tool/internal/encmark"
 	"mail-archive-tool/internal/encrecord"
-	"mail-archive-tool/internal/graphconfig"
 	"mail-archive-tool/internal/job"
 	"mail-archive-tool/internal/keyring"
 	"mail-archive-tool/internal/lockfile"
 	"mail-archive-tool/internal/schedule"
 	"mail-archive-tool/internal/util"
+	"mail-archive-tool/internal/vault"
 )
 
 // Delete an archive and Remove from list, the Desktop's server side
@@ -50,8 +51,8 @@ const (
 
 // The plan's fixed lines (§3.1, §2, §6, §9).
 const (
-	deleteLogLine   = "A line is added to this computer's deletion log (deletions.log), which keeps the date, the folder and what was removed."
-	deleteKeyLine   = "This computer will forget this archive's key. Any other copy of this archive will need its password or recovery key to open."
+	deleteLogLine   = archdelete.PlanLogLine
+	deleteKeyLine   = archdelete.PlanKeyLine
 	deleteThreeLine = "Remove from list forgets the row (and, after asking, stops its schedules) and keeps the folder. Delete erases the archive's files. Forget (encrypted archives) only stops this computer protecting the folder."
 	deleteSaveLine  = "Save this record now: MailArchive keeps no copy after you close this result."
 )
@@ -361,7 +362,7 @@ func planView(p *archdelete.DeletePlan) map[string]any {
 		m["pausedLine"] = "This archive is paused."
 	}
 	if p.Synced != "" {
-		m["syncedLine"] = fmt.Sprintf("This folder is synced with %s. Deleting it here also deletes it there, and %s may keep it in its own recycle bin: empty that too.", p.Synced, p.Synced)
+		m["syncedLine"] = archdelete.SyncedLine(p.Synced)
 	}
 	if n := len(p.Unrecorded); n > 0 {
 		m["unrecordedBox"] = fmt.Sprintf("Also delete these %d files (for retention)", n)
@@ -584,22 +585,38 @@ func (d *dashboard) runDelete(plan *archdelete.DeletePlan, row, typed string, un
 
 // execDeps are Execute's seams on this computer, for the row's delete.
 func (d *dashboard) execDeps(row string) archdelete.ExecDeps {
-	cfg := d.cfg
+	return d.cfg.deleteExecDeps(row, d.busyOn, d.cfg.Store, d.now, d.computer())
+}
+
+// deleteExecDeps are Execute's seams on this computer for a delete planned from row — the
+// Desktop's and the command line's (CommandLineDelete): busy is §7's busy row under the
+// delete's own lock, store the secret store remembered keys are forgotten from (nil keeps
+// them), now the clock and computer this computer's name for the record.
+func (cfg Config) deleteExecDeps(row string, busy func(string) bool, store vault.Store, now func() time.Time, computer string) archdelete.ExecDeps {
 	x := archdelete.ExecDeps{
-		Deps:       cfg.deleteDeps(d.busyOn, nil),
+		Deps:       cfg.deleteDeps(busy, nil),
 		Row:        row,
 		Scheduler:  cfg.deleteScheduler(),
 		Pointers:   &desktopPointers{settings: cfg.SettingsPath},
 		ScratchDir: app.ArchiveScratchFor,
-		Keyring:    desktopKeyring{store: cfg.Store},
-		Now:        d.now,
-		Computer:   d.computer(),
+		Keyring:    desktopKeyring{store: store},
+		Now:        now,
+		Computer:   computer,
 		Account:    cfg.account(),
 		Version:    cfg.Version,
 	}
 	if cfg.Keys != nil {
 		x.Keys = cfg.Keys
 	}
+	x.SettingsDir, x.ForgetRow = cfg.deleteListSeams()
+	return x
+}
+
+// deleteUnlistDeps are Remove from list's seams on this computer, stopping only the names its
+// question showed (named) — the Desktop's and the command line's.
+func (cfg Config) deleteUnlistDeps(named []string) archdelete.UnlistDeps {
+	x := archdelete.UnlistDeps{Deps: cfg.deleteDeps(nil, nil), Scheduler: cfg.deleteScheduler(),
+		Pointers: &desktopPointers{settings: cfg.SettingsPath}, Named: named}
 	x.SettingsDir, x.ForgetRow = cfg.deleteListSeams()
 	return x
 }
@@ -707,7 +724,7 @@ func (p *desktopPointers) Save(np archdelete.Pointers) error {
 // step 8 forgets them (archdelete.Keyring): keyring.PlanForget at the recorded spelling, its
 // ID carried into KeyPlan.ID (step 8 forgets only the record the plan found, §14), and Forget
 // of the whole record — with its remembered key — only from its last copy.
-type desktopKeyring struct{ store graphconfig.SecretStore }
+type desktopKeyring struct{ store vault.Store }
 
 func (k desktopKeyring) PlanForget(spelling string) (archdelete.KeyPlan, error) {
 	p, err := keyring.PlanForget(spelling, k.store)
@@ -864,9 +881,7 @@ func (d *dashboard) unlistAction(w http.ResponseWriter, r *http.Request) {
 		refuseDelete(w, deletingRefusal)
 		return
 	}
-	x := archdelete.UnlistDeps{Deps: d.cfg.deleteDeps(nil, nil), Scheduler: d.cfg.deleteScheduler(),
-		Pointers: &desktopPointers{settings: d.cfg.SettingsPath}, Named: in.Named}
-	x.SettingsDir, x.ForgetRow = d.cfg.deleteListSeams()
+	x := d.cfg.deleteUnlistDeps(in.Named)
 	if !in.Confirm {
 		q, err := archdelete.PlanUnlist(row, x)
 		if err != nil {

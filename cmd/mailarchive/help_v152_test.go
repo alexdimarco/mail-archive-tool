@@ -35,7 +35,7 @@ func TestTheHelpSaysWhatThisVersionDoes(t *testing.T) {
 	}
 
 	err := runExport(nil)
-	if err == nil || err.Error() != "-out is required (or use a subcommand: desktop, wizard, run-job, setup, serve, search, reindex, schedule, graph, status, verify, extract, decrypt, pause, resume, uninstall, change-password, new-recovery-key, restore-key-file, forget-key, forget-archive, repair-record, encrypt)" {
+	if err == nil || err.Error() != "-out is required (or use a subcommand: desktop, wizard, run-job, setup, serve, search, reindex, schedule, graph, status, verify, extract, decrypt, pause, resume, uninstall, delete-archive, unlist-archive, change-password, new-recovery-key, restore-key-file, forget-key, forget-archive, repair-record, encrypt)" {
 		t.Errorf("no -out: %v", err)
 	}
 

@@ -110,7 +110,7 @@ func (e *run) setUp() *Refusal {
 		return missing("the scheduler")
 	case e.x.Pointers == nil:
 		return missing("its settings")
-	case e.plan.Kind == Encrypted && (e.x.Keys == nil || e.x.Keyring == nil || e.x.ScratchDir == nil):
+	case e.plan.Kind == Encrypted && ((e.x.Keys == nil && !e.x.NoPage) || e.x.Keyring == nil || e.x.ScratchDir == nil):
 		return missing("this computer's keys and working folder")
 	}
 	e.log = e.x.Log
@@ -194,7 +194,7 @@ func (e *run) steps() {
 		return
 	}
 	if p.Kind == Encrypted {
-		if !e.lockOnPage() || !e.scratchCheck() {
+		if (!e.x.NoPage && !e.lockOnPage()) || !e.scratchCheck() {
 			return
 		}
 	}
