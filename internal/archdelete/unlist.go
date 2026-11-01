@@ -1,6 +1,7 @@
 package archdelete
 
 import (
+	"errors"
 	"fmt"
 	"strings"
 
@@ -25,7 +26,16 @@ type UnlistDeps struct {
 	Deps      Deps
 	Scheduler Scheduler
 	Pointers  PointerStore
-	// ForgetRow removes the row; nil is archindex.Forget on the real list.
+	// Named are the entries the question the person answered Yes to named
+	// (UnlistPlan.Named): Unlist stops no entry the question did not name; one found
+	// at Yes that it did not name refuses, nothing changed (§5.2 "the question names
+	// them", conformance 10).
+	Named []string
+	// SettingsDir is ExecDeps.SettingsDir: where the Desktop keeps its settings, its
+	// list of archives and the alert files ("" is job.Dir()).
+	SettingsDir string
+	// ForgetRow removes the row; nil removes every entry naming the folder from the
+	// list in SettingsDir.
 	ForgetRow func(row string) error
 }
 
@@ -117,6 +127,17 @@ func Unlist(row string, x UnlistDeps) *UnlistResult {
 		res.Lines = []string{res.Refusal.Message}
 		return res
 	}
+	asked := map[string]bool{}
+	for _, n := range x.Named {
+		asked[n] = true
+	}
+	for _, n := range q.Named {
+		if !asked[n] {
+			res.Refusal = &Refusal{Case: CaseChanged, Message: fmt.Sprintf("This archive's scheduled backups changed since you were asked: %s was not named. Nothing was changed. Click Remove from list again.", n)}
+			res.Lines = []string{res.Refusal.Message}
+			return res
+		}
+	}
 	goos := x.Deps.goos()
 	var names, spellings []string
 	backupFor := false
@@ -136,7 +157,7 @@ func Unlist(row string, x UnlistDeps) *UnlistResult {
 		spellings = append(spellings, e.Out)
 	}
 	spellings = append([]string{q.Folder, row}, spellings...)
-	if f, err := removeNameFiles(names, spellings); err != nil {
+	if f, err := removeNameFiles(names, spellings, x.SettingsDir); err != nil {
 		res.Lines = []string{fmt.Sprintf("Could not remove %s in MailArchive's settings folder (%s). The row is kept.", f, cleanErr(err))}
 		return res.withStopped()
 	}
@@ -157,7 +178,9 @@ func Unlist(row string, x UnlistDeps) *UnlistResult {
 		if isThis(ptr.Out) {
 			np.Out = ""
 		}
-		if backupFor {
+		// BackupFor naming the folder itself is cleared too, so nothing re-adds the row
+		// (§5.2; conformance 3).
+		if backupFor || isThis(ptr.BackupFor) {
 			np.BackupFor = ""
 		}
 		if np != ptr {
@@ -170,10 +193,13 @@ func Unlist(row string, x UnlistDeps) *UnlistResult {
 	}
 	forget := x.ForgetRow
 	if forget == nil {
-		forget = forgetRowDefault
+		forget = func(row string) error { return forgetRowIn(x.SettingsDir, row, goos) }
 	}
 	if err := forget(row); err != nil {
 		res.Lines = []string{msgRowFailed}
+		if errors.Is(err, ErrRowNotListed) {
+			res.Lines = []string{msgRowNotListed}
+		}
 		return res.withStopped()
 	}
 	res.Removed = true

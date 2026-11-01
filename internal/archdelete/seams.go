@@ -111,7 +111,13 @@ type ExecDeps struct {
 	Keys       KeyRegistry
 	ScratchDir func(spelling, archiveID string) (string, error)
 	Keyring    Keyring
-	// ForgetRow removes the row (step 9); nil is archindex.Forget on the real list.
+	// SettingsDir is the folder the Desktop keeps its settings, its list of archives
+	// (known-archives.json) and the alert files in: filepath.Dir of its -config file;
+	// "" is MailArchive's settings folder (job.Dir()). Step 3 removes the alert files
+	// there as well as in job.Dir() (del-s1b-A3-04).
+	SettingsDir string
+	// ForgetRow removes the row (step 9); nil removes every entry naming the folder
+	// from the list in SettingsDir. ErrRowNotListed means none named it.
 	ForgetRow func(row string) error
 	// BeforeStep, when set, is asked right before steps 4, 8 and 9: the command
 	// line's re-check that no MailArchive Desktop is running (§3.3 [R3:C17]). An

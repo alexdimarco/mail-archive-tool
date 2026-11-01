@@ -19,6 +19,16 @@ func unlistRig(t *testing.T, dir string) (*rig, UnlistDeps) {
 	return r, UnlistDeps{Deps: r.x.Deps, Scheduler: r.sched, Pointers: r.ptr, ForgetRow: r.x.ForgetRow}
 }
 
+// yes is Remove from list answered Yes to the question PlanUnlist asks now (its named
+// entries passed on, as the Desktop and the command line pass the question shown).
+func yes(t *testing.T, row string, x UnlistDeps) *UnlistResult {
+	t.Helper()
+	if q, err := PlanUnlist(row, x); err == nil {
+		x.Named = q.Named
+	}
+	return Unlist(row, x)
+}
+
 // covers: MA-969, R36
 func TestRemoveFromListForgetsTheRowKeepsTheFolderAndStopsOnlyAfterYes(t *testing.T) {
 	dir := smallArchive(t, t.TempDir())
@@ -35,7 +45,7 @@ func TestRemoveFromListForgetsTheRowKeepsTheFolderAndStopsOnlyAfterYes(t *testin
 	if len(r.sched.removed) != 0 {
 		t.Fatal("the question stops nothing")
 	}
-	res := Unlist(dir, x)
+	res := yes(t, dir, x)
 	if !res.Removed || len(r.rows) != 1 || r.rows[0] != dir || !contains(r.sched.removed, def) {
 		t.Fatalf("%v rows %q stopped %q", res.Lines, r.rows, r.sched.removed)
 	}
@@ -64,7 +74,7 @@ func TestRemoveFromListWithTheDriveUnpluggedUsesThisComputersRecords(t *testing.
 	if err := os.RemoveAll(dir); err != nil { // the drive unplugged
 		t.Fatal(err)
 	}
-	res := Unlist(dir, x)
+	res := yes(t, dir, x)
 	if !res.Removed || !contains(r.sched.removed, custom) || len(r.rows) != 1 {
 		t.Fatalf("%v stopped %q", res.Lines, r.sched.removed)
 	}
@@ -78,13 +88,13 @@ func TestRemoveFromListWithTheDriveUnpluggedUsesThisComputersRecords(t *testing.
 	x.Deps.Settings.Current = cur
 	r.ptr.p.Out = cur
 	before := tree(t, cur)
-	res = Unlist(cur, x)
+	res = yes(t, cur, x)
 	assure.Refused(t, res.ExitCode(), strings.Join(res.Lines, "\n"), assure.Code(1), assure.Names("This is the archive in use."),
 		assure.NoSideEffect(func() bool { return sameTree(before, tree(t, cur)) && len(r.rows) == 0 && r.ptr.p.Out == cur }))
 	if err := os.RemoveAll(cur); err != nil {
 		t.Fatal(err)
 	}
-	res = Unlist(cur, x)
+	res = yes(t, cur, x)
 	if !res.Removed || r.ptr.p.Out != "" {
 		t.Fatalf("%v out %q", res.Lines, r.ptr.p.Out)
 	}
@@ -103,7 +113,7 @@ func TestRemoveFromListOfTheCurrentUnreachableArchiveStopsItsBackupForCapture(t 
 	if err != nil || !strings.Contains(q.Question, captured) {
 		t.Fatalf("the capture registered under BackupFor is named: %q %v", q.Question, err)
 	}
-	res := Unlist(cur, x)
+	res := yes(t, cur, x)
 	if !res.Removed || !contains(r.sched.removed, captured) || r.ptr.p.BackupFor != "" || r.ptr.p.Out != "" {
 		t.Fatalf("%v stopped %q pointers %+v", res.Lines, r.sched.removed, r.ptr.p)
 	}
@@ -116,7 +126,7 @@ func TestRemoveFromListOfAPausedArchiveOnANonEnglishSchedulerAndAPartialStop(t *
 	x.Deps.GOOS = "windows"
 	def := schedule.DefaultNameFor(dir)
 	r.sched.state[def] = schedule.NotInstalled // paused: no task, no side-files, words not understood
-	if res := Unlist(dir, x); !res.Removed || len(r.sched.removed) != 0 || len(r.rows) != 1 {
+	if res := yes(t, dir, x); !res.Removed || len(r.sched.removed) != 0 || len(r.rows) != 1 {
 		t.Fatalf("%v", res.Lines)
 	}
 
@@ -126,7 +136,7 @@ func TestRemoveFromListOfAPausedArchiveOnANonEnglishSchedulerAndAPartialStop(t *
 	def = schedule.DefaultNameFor(d2)
 	r.sched.state[def+"-verify"] = schedule.Installed
 	r.sched.fail[def+"-verify"] = errors.New("Access is denied")
-	res := Unlist(d2, x)
+	res := yes(t, d2, x)
 	want := "Could not stop the scheduled backup " + def + "-verify: Access is denied. Already stopped: " + def +
 		" (set them up again in Settings, or click Remove from list again). The row is kept."
 	if res.Removed || len(r.rows) != 0 || len(res.Lines) == 0 || res.Lines[0] != want || r.ptr.saves != 0 {
@@ -136,7 +146,7 @@ func TestRemoveFromListOfAPausedArchiveOnANonEnglishSchedulerAndAPartialStop(t *
 	d3 := smallArchive(t, t.TempDir())
 	r, x = unlistRig(t, d3)
 	r.sched.fail[schedule.DefaultNameFor(d3)] = errors.New("Access is denied")
-	if res := Unlist(d3, x); res.Removed || strings.Contains(strings.Join(res.Lines, " "), "Already stopped") {
+	if res := yes(t, d3, x); res.Removed || strings.Contains(strings.Join(res.Lines, " "), "Already stopped") {
 		t.Fatalf("%q", res.Lines)
 	}
 }

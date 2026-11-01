@@ -14,7 +14,6 @@ import (
 
 	"golang.org/x/text/unicode/norm"
 
-	"mail-archive-tool/internal/archindex"
 	"mail-archive-tool/internal/lockfile"
 	"mail-archive-tool/internal/schedule"
 	"mail-archive-tool/internal/util"
@@ -91,8 +90,10 @@ type run struct {
 	done    []string
 	notes   []string
 	// emptyLeft: a kept folder that is empty or holds only litter could not be
-	// removed.
+	// removed. leftIn are the names step 7 found still in the folder beside the lock
+	// file and litter.
 	emptyLeft bool
+	leftIn    []string
 	detail    string
 }
 
@@ -402,7 +403,7 @@ func (e *run) configSide() bool {
 		}
 	}
 	e.step = 3
-	if f, err := removeNameFiles(p.Schedules.Names(), e.spellings()); err != nil {
+	if f, err := removeNameFiles(p.Schedules.Names(), e.spellings(), e.x.SettingsDir); err != nil {
 		e.stop(fmt.Sprintf("Could not remove %s in MailArchive's settings folder (%s). Click Delete again.", f, cleanErr(err)))
 		return false
 	}
@@ -724,6 +725,7 @@ func (e *run) tidyFolder() (gone, lockLeft, emptyLeft bool) {
 	}
 	var litter []string
 	others := 0
+	e.leftIn = nil
 	for _, en := range ents {
 		n := en.Name()
 		switch {
@@ -732,6 +734,7 @@ func (e *run) tidyFolder() (gone, lockLeft, emptyLeft bool) {
 			litter = append(litter, n)
 		default:
 			others++
+			e.leftIn = append(e.leftIn, n)
 		}
 	}
 	if others > 0 || lockLeft {
@@ -905,24 +908,19 @@ func (e *run) keyAndRow() bool {
 	}
 	forget := e.x.ForgetRow
 	if forget == nil {
-		forget = forgetRowDefault
+		forget = func(row string) error { return forgetRowIn(e.x.SettingsDir, row, e.x.Deps.goos()) }
 	}
 	if err := forget(e.row); err != nil {
-		e.notes = append(e.notes, msgRowFailed)
+		if errors.Is(err, ErrRowNotListed) {
+			e.notes = append(e.notes, msgRowNotListed)
+		} else {
+			e.notes = append(e.notes, msgRowFailed)
+		}
 		return true
 	}
 	e.res.RowRemoved = true
 	e.done = append(e.done, "removed from Your archives")
 	return true
-}
-
-// forgetRowDefault is archindex.Forget on this computer's list of archives.
-func forgetRowDefault(row string) error {
-	idx, err := archindex.Read()
-	if err != nil {
-		return err
-	}
-	return archindex.Write(archindex.Forget(idx, row))
 }
 
 // keyring is step 8; it reports whether step 8 is done or does not apply (so step 9
@@ -1036,6 +1034,10 @@ func (e *run) finish() {
 			head += "The folder is gone."
 		case len(res.Kept) > 0:
 			head += fmt.Sprintf("The folder is kept: it holds %s that are not the archive's.", plural(len(res.Kept), "file", "files"))
+		case len(e.leftIn) > 0:
+			// What kept it, named (conformance 4): a folder of the archive's that stayed
+			// busy past its retries, or something put there during the delete.
+			head += fmt.Sprintf("The folder is kept: it still holds %s that could not be removed: %s.", plural(len(e.leftIn), "item", "items"), namesUpTo(e.leftIn))
 		default:
 			head += "The folder is kept."
 		}
@@ -1065,6 +1067,14 @@ func (e *run) finish() {
 		res.Lines = append(res.Lines, "Removed from Your archives")
 	}
 	res.line("What Delete does not reach: %s", DoesNotReach)
+}
+
+// namesUpTo joins up to ten names, then "and N more".
+func namesUpTo(names []string) string {
+	if len(names) > recordListMax {
+		return strings.Join(names[:recordListMax], ", ") + fmt.Sprintf(", and %d more", len(names)-recordListMax)
+	}
+	return strings.Join(names, ", ")
 }
 
 // leftLine words a list of leftovers, up to ten names.
@@ -1121,6 +1131,8 @@ func (e *run) cleanup() {
 		e.marked = false
 		safely(func() { e.x.Keys.EndDelete(e.plan.Folder) })
 	}
+	// The steps done, as "Steps done" words them (conformance 5).
+	e.res.Steps = append([]string(nil), e.done...)
 	safely(e.step10)
 }
 

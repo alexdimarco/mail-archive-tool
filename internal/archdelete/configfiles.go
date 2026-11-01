@@ -8,6 +8,7 @@ import (
 	"path/filepath"
 	"strings"
 
+	"mail-archive-tool/internal/archindex"
 	"mail-archive-tool/internal/job"
 	"mail-archive-tool/internal/schedule"
 	"mail-archive-tool/internal/util"
@@ -34,13 +35,19 @@ func alertKey(out string) string {
 // removeNameFiles is §5.3 step 3 [C6] (and §5.2's): for each discovered entry
 // name, its job file (schedule.RemoveJobFile), <name>.jobfail.log and
 // <name>.older.jobfail.log; the alert streak and sync-alert files of each spelling
-// of the folder (backupalert.KeyFor); last-failure.json only when the name it
-// records is one of them. A file already gone counts as removed. On a failure it
-// returns the file it could not remove.
-func removeNameFiles(names, spellings []string) (string, error) {
+// of the folder (backupalert.KeyFor), in MailArchive's settings folder and in the
+// Desktop's settings folder settingsDir when it is another (a Desktop started with
+// -config keeps them beside that file, backupalert.StreakPath; del-s1b-A3-04);
+// last-failure.json only when the name it records is one of them. A file already
+// gone counts as removed. On a failure it returns the file it could not remove.
+func removeNameFiles(names, spellings []string, settingsDir string) (string, error) {
 	dir, err := job.Dir()
 	if err != nil {
 		return "MailArchive's settings folder", err
+	}
+	alertDirs := []string{dir}
+	if settingsDir != "" && filepath.Clean(settingsDir) != filepath.Clean(dir) {
+		alertDirs = append(alertDirs, settingsDir)
 	}
 	isName := map[string]bool{}
 	for _, n := range names {
@@ -65,9 +72,11 @@ func removeNameFiles(names, spellings []string) (string, error) {
 			continue
 		}
 		seen[k] = true
-		for _, suffix := range []string{alertStreakSuffix, syncAlertSuffix} {
-			if err := removeIfThere(filepath.Join(dir, k+suffix)); err != nil {
-				return filepath.Join(dir, k+suffix), err
+		for _, d := range alertDirs {
+			for _, suffix := range []string{alertStreakSuffix, syncAlertSuffix} {
+				if err := removeIfThere(filepath.Join(d, k+suffix)); err != nil {
+					return filepath.Join(d, k+suffix), err
+				}
 			}
 		}
 	}
@@ -83,6 +92,45 @@ func removeNameFiles(names, spellings []string) (string, error) {
 		}
 	}
 	return "", nil
+}
+
+// ErrRowNotListed is a ForgetRow that found no row for the folder in Your archives:
+// nothing was removed, and the result must not say it was (del-s1b-A3-06).
+var ErrRowNotListed = errors.New("this folder is not listed in Your archives")
+
+// forgetRowIn removes the folder's row from the list of archives in settingsDir ("":
+// MailArchive's settings folder): every entry naming the same folder — the same
+// spelling, the same folder by identity when both can be read, or else the same
+// spelling where goos's file system ignores case — so a row spelled otherwise than
+// the caller's is still removed (archindex.Forget alone compares exact text). When no
+// entry names it, nothing is written and ErrRowNotListed says so.
+func forgetRowIn(settingsDir, row, goos string) error {
+	dir := settingsDir
+	if dir == "" {
+		d, err := job.Dir()
+		if err != nil {
+			return err
+		}
+		dir = d
+	}
+	path := filepath.Join(dir, archindex.Name)
+	idx, err := archindex.ReadFile(path)
+	if err != nil {
+		return err
+	}
+	n := len(idx.Entries)
+	idx = archindex.Forget(idx, row)
+	kept := idx.Entries[:0]
+	for _, en := range idx.Entries {
+		if !sameFolder(en.Path, row, goos) {
+			kept = append(kept, en)
+		}
+	}
+	idx.Entries = kept
+	if len(idx.Entries) == n {
+		return ErrRowNotListed
+	}
+	return archindex.WriteFile(path, idx)
 }
 
 // removeIfThere removes path; one already gone is no error.

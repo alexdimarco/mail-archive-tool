@@ -87,7 +87,9 @@ type Result struct {
 	// Record is the deletion record's exact bytes (§8.1), built once before step 10;
 	// nil when the delete was refused before its started line.
 	Record []byte
-	// Steps are the steps that changed something, in the words "Steps done" uses.
+	// Steps are the steps done, in order, in the words "Steps done" uses ("archive
+	// locked", "scheduled backup NAME stopped", "N files removed", …); empty when the
+	// delete was refused before its started line.
 	Steps []string
 }
 
@@ -127,6 +129,10 @@ const msgKeySkipped = "Files deleted; this computer still remembers its key: use
 
 // msgRowFailed is step 9's failure line.
 const msgRowFailed = "Could not remove the row from Your archives."
+
+// msgRowNotListed is step 9's line when Your archives lists no row for the folder
+// (del-s1b-A3-06; builder's words, §5.3 step 9 gives none).
+const msgRowNotListed = "No row for this folder was found in Your archives, so none was removed."
 
 // msgDigestFailed is step 10's failure line.
 const msgDigestFailed = "This record's digest could not be added to deletions.log."
