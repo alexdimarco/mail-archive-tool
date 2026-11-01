@@ -16,6 +16,7 @@ import (
 	"mail-archive-tool/internal/backupalert"
 	"mail-archive-tool/internal/export"
 	"mail-archive-tool/internal/graph"
+	"mail-archive-tool/internal/schedule"
 	"mail-archive-tool/internal/seal"
 	"mail-archive-tool/internal/server"
 	"mail-archive-tool/internal/state"
@@ -71,6 +72,16 @@ func HeadlessCapture(cfg Config, logw io.Writer) error {
 		cfg.reportRun(key, out, alert.ResultFailed, err, 0, nil)
 		return err
 	}
+	// The emptied-folder guard (design-archive-delete §7, MA-956): a folder of the person's
+	// files that an archive was deleted from is refused before the start-failure record below
+	// writes into it; the engine checks again before and under its lock.
+	own := cfg.captureOwnFiles()
+	if out != "" {
+		if err := app.RefuseEmptiedFolder(out, "", own...); err != nil {
+			cfg.reportRun(key, out, alert.ResultFailed, err, 0, nil)
+			return err
+		}
+	}
 	// §4.6.3/MA-617 + OP-2/MA-646: refuse when Microsoft 365 is not set up, via the
 	// shared m365Ready check (the dashboard's capture install/repair uses it too),
 	// AND record a FAILED last-run so a scheduled capture that refuses at start does
@@ -99,7 +110,7 @@ func HeadlessCapture(cfg Config, logw io.Writer) error {
 	// Unattended marks this as the SCHEDULED backup: it activates the PM4 out-exists guard
 	// (never recreate the archive on the boot disk when the backup drive is gone) and the
 	// source-loss streak (§5.7). The interactive dashboard capture leaves it unset.
-	opts := app.Options{Out: out, Mode: export.Incremental, Index: true, Pages: true, KeepRaw: s.KeepRaw, Unattended: true}
+	opts := app.Options{Out: out, Mode: export.Incremental, Index: true, Pages: true, KeepRaw: s.KeepRaw, Unattended: true, OwnFiles: own}
 	// An archive location that holds the desktop's settings and sign-in copies
 	// them with the archive (design-local-confidentiality P10). The scheduled
 	// capture does not refuse — that would silently stop an installed backup —
@@ -138,6 +149,18 @@ func HeadlessCapture(cfg Config, logw io.Writer) error {
 		backupalert.RecordAutoPause(cfg.SettingsPath, cfg.Store, key, out, errors.New(wizard.AutoPauseWhy), logger)
 	}
 	return err
+}
+
+// captureOwnFiles are the files and folders of MailArchive's own a scheduled capture may
+// find in its archive folder: its log and the scheduler's stderr file beside it, and the
+// Desktop's settings folders when one is kept there (CC16). The emptied-folder guard does not
+// count them as the person's (design-archive-delete §7, MA-956).
+func (cfg Config) captureOwnFiles() []string {
+	own := cfg.settingsDirs()
+	if cfg.CaptureLog != "" {
+		own = append(own, cfg.CaptureLog, schedule.StderrLogPath(cfg.CaptureLog))
+	}
+	return own
 }
 
 // recordStartFailure writes a FAILED last-run when a scheduled capture refuses

@@ -135,21 +135,34 @@ func RunGraph(ctx context.Context, g GraphOptions, opts Options, logger *log.Log
 		return Result{}, errors.New("no mailboxes specified (-mailbox is required)")
 	}
 	// PM4: a SCHEDULED M365 capture whose archive -out is gone (an unmounted backup drive) must
-	// refuse, never recreate the archive on the local disk and back up into a decoy.
+	// refuse, never recreate the archive on the local disk and back up into a decoy. Nor does it
+	// make a new archive among the person's files in a folder an archive was deleted from (the
+	// emptied-folder guard, design-archive-delete §7, MA-956).
 	if opts.Unattended {
-		if err := RequireExistingOut(opts.Out); err != nil {
+		if err := refuseUnattendedOut(opts); err != nil {
 			return Result{}, err
 		}
 	}
-	if err := os.MkdirAll(opts.Out, 0o755); err != nil {
-		return Result{}, withKind(state.FailArchiveUnwritable, fmt.Errorf("create output dir: %w", err))
+	// An unattended capture never creates -out: it was checked above, and one gone since is
+	// refused at the lock below, never recreated (design-archive-delete §7).
+	if !opts.Unattended {
+		if err := makeArchiveDir(opts.Out, 0o755); err != nil {
+			return Result{}, withKind(state.FailArchiveUnwritable, fmt.Errorf("create output dir: %w", err))
+		}
 	}
 	lockPath := filepath.Join(opts.Out, lockfile.Name)
-	lock, err := lockfile.AcquireAs(lockPath, lockVerb(opts, "graph"))
+	lock, err := acquireArchiveLock(lockPath, lockVerb(opts, "graph"))
 	if err != nil {
-		return Result{}, withKind(state.FailArchiveUnwritable, busyRefusal(lockPath, err)) // a held lock is named by ErrHeld first
+		return Result{}, lockRefusal(opts, lockPath, err)
 	}
 	defer lock.Release()
+	// Again under the lock (design-archive-delete §7, NF-3): a delete that finished
+	// between this capture's checks and its lock left no archive to write into.
+	if opts.Unattended {
+		if err := refuseUnattendedOut(opts); err != nil {
+			return Result{}, err
+		}
+	}
 	if opts.Key == nil {
 		if err := RefuseKeyless("capture into it", opts.Out, manifestDir(opts.Manifest)); err != nil {
 			return Result{}, err

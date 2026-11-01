@@ -228,10 +228,16 @@ func launch(ctx context.Context, args []string, env *launchEnv) error {
 			dcfg.reportRun(backupalert.KeyFor(out), out, alert.ResultFailed, lerr, 0, nil)
 			return lerr
 		}
+		// The schedule keeps the log in the archive folder. A folder of the person's files that
+		// an archive was deleted from gets no log either: HeadlessCapture then refuses it and
+		// tells the alert streak (the emptied-folder guard, design-archive-delete §7, MA-956).
+		dcfg.CaptureLog = lp
 		var w io.Writer = env.Stderr
-		if f, ferr := os.OpenFile(lp, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0o600); ferr == nil {
-			defer f.Close()
-			w = io.MultiWriter(env.Stderr, f)
+		if app.RefuseEmptiedFolder(dcfg.effectiveOut(), "", dcfg.captureOwnFiles()...) == nil {
+			if f, ferr := os.OpenFile(lp, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0o600); ferr == nil {
+				defer f.Close()
+				w = io.MultiWriter(env.Stderr, f)
+			}
 		}
 		return HeadlessCapture(dcfg, w)
 	}

@@ -74,6 +74,12 @@ type Options struct {
 	// on an archive that already exists is then recorded as a failed run, so
 	// `status` reports it (N13, R18); see RecordRefusedRun.
 	Unattended bool
+	// OwnFiles are the files and folders of MailArchive's own that this run's caller
+	// keeps in Out — a scheduled run's -log and the scheduler's stderr file beside it,
+	// `-outlook`'s _outlook-pst folder, the Desktop's settings folder (CC16). The
+	// emptied-folder guard does not count them as the person's files
+	// (RefuseEmptiedFolder, design-archive-delete §7).
+	OwnFiles []string
 
 	// FollowLinks names the inputs whose directory links are followed (owner ruling
 	// OR6: the per-input opt-in; the CLI's -follow-links, the wizard's "Follow folder
@@ -560,6 +566,13 @@ func Run(ctx context.Context, opts Options, logger *log.Logger, onProgress Progr
 	// failure must not first leave a half-built archive and a failed run behind.
 	// A scheduled run's refusal is still a run (N13): recorded failed when the
 	// archive already exists, so it never leaves the previous success standing.
+	// Not into a folder of the person's files that an archive was deleted from: the
+	// emptied-folder guard comes first (design-archive-delete §7, MA-956).
+	if opts.Unattended {
+		if err := RefuseEmptiedFolder(opts.Out, opts.Manifest, opts.OwnFiles...); err != nil {
+			return Result{}, err
+		}
+	}
 	files, err := DiscoverInputs(opts.Inputs, opts.Auto)
 	if err == nil && len(files) == 0 {
 		err = withKind(state.FailNoSources, errors.New("no input mail sources found (a .pst/.ost file, an mbox file, or a mail directory; or enable auto-discovery)"))
@@ -574,9 +587,11 @@ func Run(ctx context.Context, opts Options, logger *log.Logger, onProgress Progr
 	}
 
 	// PM4: a SCHEDULED run whose archive -out is gone (an unmounted backup drive) must refuse,
-	// never recreate the archive on the local disk and silently back up into a decoy.
+	// never recreate the archive on the local disk and silently back up into a decoy. Nor does
+	// it make a new archive among the person's files in a folder an archive was deleted from
+	// (the emptied-folder guard, design-archive-delete §7, MA-956).
 	if opts.Unattended {
-		if err := RequireExistingOut(opts.Out); err != nil {
+		if err := refuseUnattendedOut(opts); err != nil {
 			return Result{}, err
 		}
 	}
@@ -593,17 +608,28 @@ func Run(ctx context.Context, opts Options, logger *log.Logger, onProgress Progr
 		}
 		return Result{}, err
 	}
-	if err := os.MkdirAll(opts.Out, 0o755); err != nil {
-		return Result{}, withKind(state.FailArchiveUnwritable, fmt.Errorf("create output dir: %w", err))
+	// An unattended run never creates -out: it was checked above, and one gone since is
+	// refused at the lock below, never recreated (design-archive-delete §7).
+	if !opts.Unattended {
+		if err := makeArchiveDir(opts.Out, 0o755); err != nil {
+			return Result{}, withKind(state.FailArchiveUnwritable, fmt.Errorf("create output dir: %w", err))
+		}
 	}
 	// One run per archive at a time (R5): a scheduled run overlapping a manual
 	// one would otherwise interleave manifest/index/file writes.
 	lockPath := filepath.Join(opts.Out, lockfile.Name)
-	lock, err := lockfile.AcquireAs(lockPath, lockVerb(opts, "export"))
+	lock, err := acquireArchiveLock(lockPath, lockVerb(opts, "export"))
 	if err != nil {
-		return Result{}, withKind(state.FailArchiveUnwritable, busyRefusal(lockPath, err)) // a held lock is named by ErrHeld first
+		return Result{}, lockRefusal(opts, lockPath, err)
 	}
 	defer lock.Release()
+	// Again under the lock (design-archive-delete §7, NF-3): a delete that finished
+	// between this run's checks and its lock left no archive to write into.
+	if opts.Unattended {
+		if err := refuseUnattendedOut(opts); err != nil {
+			return Result{}, err
+		}
+	}
 	// Again under the lock: an encryption that finished while this run waited
 	// (a conversion's swap) is not a plaintext archive either (P2a-C9).
 	if opts.Key == nil {

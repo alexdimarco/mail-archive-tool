@@ -236,7 +236,21 @@ func RunHeadless(path string) int {
 		reportRun(key, jobFileName(path), j.Out, backupalert.ResultFailed, err, 0, nil)
 		return 1
 	}
-	logf, err := runlog.Open(filepath.Join(j.Out, "mailarchive.log"))
+	// The emptied-folder guard (design-archive-delete §7, MA-956): a folder of the person's
+	// files that an archive was deleted from is refused before this run's log, or the Outlook
+	// PST export, writes into it. Those, and the scheduler's stderr file beside the log, are
+	// the run's own, so the engine's checks do not count them as the person's.
+	runLog := filepath.Join(j.Out, "mailarchive.log")
+	runLogs := []string{runLog, schedule.StderrLogPath(runLog)}
+	if j.Outlook {
+		runLogs = append(runLogs, filepath.Join(j.Out, "_outlook-pst"))
+	}
+	if err := app.RefuseEmptiedFolder(j.Out, "", runLogs...); err != nil {
+		jobFail(path, err)
+		reportRun(key, jobFileName(path), j.Out, backupalert.ResultFailed, err, 0, nil)
+		return 1
+	}
+	logf, err := runlog.Open(runLog)
 	if err != nil {
 		jobFail(path, err)
 		reportRun(key, jobFileName(path), j.Out, backupalert.ResultFailed, err, 0, nil)
@@ -278,6 +292,7 @@ func RunHeadless(path string) int {
 	opts := optsForJob(j, inputs, logger, runHooks{}, runScheduled)
 	opts.OutlookSkips = outlookSkips
 	opts.OutlookExported = outlookExported
+	opts.OwnFiles = runLogs
 	logger.Printf("Scheduled job %q: exporting to %s", j.Name, j.Out)
 	result, runErr := app.Run(ctx, opts, logger, nil)
 	// Another run holds the archive (the previous hourly backup, a verify, a rebuild) and

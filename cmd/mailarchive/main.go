@@ -213,6 +213,14 @@ func runExport(args []string) error {
 			return keylessRefusal(kerr, *o.out)
 		}
 	}
+	// The emptied-folder guard (design-archive-delete §7, MA-956): a scheduled run refuses a
+	// folder of the person's files that an archive was deleted from before discovery's
+	// refusal, the run log or -outlook's PST export writes into it.
+	if *o.unattended && !*o.list {
+		if err := app.RefuseEmptiedFolder(*o.out, *o.manifest, cliOwnFiles(*o.log, *o.outlook, *o.out)...); err != nil {
+			return err
+		}
+	}
 	if err := refuseStrayKeyFlags(fs, kf, keyed, creating); err != nil {
 		return err
 	}
@@ -434,7 +442,24 @@ func exportOptions(o *exportOpts, inputs []string, mode export.Mode, since time.
 		Pages:       *o.pages,
 		KeepRaw:     *o.keepRaw,
 		Unattended:  *o.unattended,
+		OwnFiles:    cliOwnFiles(*o.log, *o.outlook, *o.out),
 	}
+}
+
+// cliOwnFiles are the files and folders of MailArchive's own a scheduled command-line run
+// keeps in its archive folder: its -log, the scheduler's stderr file beside it, and with
+// -outlook the PST export's _outlook-pst (more, such as a credential file, are added by
+// the caller). The emptied-folder guard does not count them as the person's files
+// (design-archive-delete §7, MA-956).
+func cliOwnFiles(log string, outlook bool, out string, more ...string) []string {
+	var own []string
+	if log != "" {
+		own = append(own, log, schedule.StderrLogPath(log))
+	}
+	if outlook {
+		own = append(own, filepath.Join(out, "_outlook-pst"))
+	}
+	return append(own, more...)
 }
 
 // reclaimPSTDir removes the temporary per-account PST directory that -outlook's
@@ -1700,6 +1725,18 @@ func runGraph(args []string) (err error) {
 		defer unlocked.Destroy()
 	}
 
+	// The emptied-folder guard (design-archive-delete §7, MA-956): a scheduled capture refuses
+	// a folder of the person's files that an archive was deleted from before its -log is
+	// opened into it and before any sign-in. A credential kept in the folder is warned about
+	// above (CC16) and is MailArchive's own here, not the person's.
+	var own []string
+	if *o.unattended {
+		own = cliOwnFiles(*o.log, false, *o.out, gopts.TokenCachePath, *o.secretFile)
+		if err := app.RefuseEmptiedFolder(*o.out, "", own...); err != nil {
+			return err
+		}
+	}
+
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
 	logger, closeLog, err := newRunLogger(*o.log)
@@ -1712,7 +1749,10 @@ func runGraph(args []string) (err error) {
 	for _, w := range setupWarnings {
 		logger.Printf("warning: %s", w.Message)
 	}
-	opts := app.Options{Out: *o.out, Mode: mode, Since: since, Index: *o.index, Pages: *o.pages, KeepRaw: *o.keepRaw, Warnings: setupWarnings}
+	// A scheduled capture is unattended in the engine too (MA-689's out-guard, the emptied-
+	// folder guard before and under the lock, the source streak), as the Desktop's is.
+	opts := app.Options{Out: *o.out, Mode: mode, Since: since, Index: *o.index, Pages: *o.pages, KeepRaw: *o.keepRaw, Warnings: setupWarnings,
+		Unattended: *o.unattended, OwnFiles: own}
 	if unlocked != nil {
 		done, aerr := keyring.Apply(&opts, unlocked)
 		if aerr != nil {
