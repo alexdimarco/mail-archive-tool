@@ -15,7 +15,7 @@ func firstInstallBranch(t *testing.T) string {
 		t.Fatal("the page script has no doSave before schedPost")
 	}
 	save := dashboardJS[i:j]
-	if !strings.Contains(save, "if(moved){") || !strings.Contains(save[strings.Index(save, "if(moved){"):], "location.reload()") {
+	if !strings.Contains(save, "if(moved){") || !strings.Contains(save[strings.Index(save, "if(moved){"):], "reloadPage()") {
 		t.Fatal("the positive twin: a location save no longer reloads")
 	}
 	k := strings.Index(save, "if(schedChanged()){")
@@ -39,7 +39,7 @@ func TestAFirstInstallFromSettingsRedrawsTheCard(t *testing.T) {
 		t.Fatalf("a first install does not note that nothing was installed before posting, and act on it after:\n%s", branch)
 	}
 	first := branch[r:strings.Index(branch, "if(r.ok){")]
-	if !strings.Contains(first, "location.reload()") {
+	if !strings.Contains(first, "reloadPage()") {
 		t.Errorf("a first install does not draw the page again:\n%s", first)
 	}
 	if !strings.Contains(branch, "schedState();") {
@@ -63,11 +63,11 @@ func TestAFirstInstallKeepsItsNoteAcrossTheRedraw(t *testing.T) {
 		t.Fatalf("the positive twin: a first install with no note no longer reloads at once:\n%s", first)
 	}
 	set := strings.Index(first, "try{sessionStorage.setItem(keptNoteKey,parts.join(' '));kept=true;}catch(e){}")
-	reload := strings.Index(first, "if(kept){say(parts.join(' '));setTimeout(()=>location.reload(),600);return true;}")
+	reload := strings.Index(first, "if(kept){say(parts.join(' '));setTimeout(()=>reloadPage(),600);return true;}")
 	if set < 0 || reload < 0 || set > reload {
 		t.Fatalf("a first install's note is not kept before the reload:\n%s", first)
 	}
-	if strings.Count(first, "location.reload()") != 1 {
+	if strings.Count(first, "reloadPage()") != 1 {
 		t.Errorf("a first install reloads somewhere the note is not kept:\n%s", first)
 	}
 	if !strings.Contains(first[reload:], "Reload the page to see Remove, Repair and Run now") || !strings.Contains(first[reload:], "schedState();") {

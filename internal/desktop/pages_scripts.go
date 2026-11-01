@@ -51,6 +51,9 @@ let timer=null;
 // started: this page started the sign-in or saw it running. Only then does a 'done' reload the
 // page; a page that merely loaded never reloads for a sign-in that finished earlier (F28).
 let started=false;
+// On the Overview a reload goes through its reloadPage, held while a delete's result is on the
+// page (MA-984); the workspace and Export activity have none.
+const reload=()=>typeof reloadPage==='function'?reloadPage():location.reload();
 function render(d){
   if(d.state==='running'||d.state==='confirm')started=true;
   const box=$('signInBox');box.hidden=false;
@@ -64,7 +67,7 @@ function render(d){
   if(d.state==='confirm'&&d.confirm){c.hidden=false;$('signInConfirmText').textContent=d.confirm.text;}else c.hidden=true;
   if(d.state==='done'&&started){stop();btn.disabled=false;
     show('banner',d.signedOut?'You chose Sign out: the new sign-in was not saved.':'Signed in as '+d.upn+'.');
-    setTimeout(()=>location.reload(),900);}
+    setTimeout(reload,900);}
   if(d.state==='failed'&&started){stop();btn.disabled=false;show('banner',d.error||'The sign-in did not finish.');}
 }
 // poll asks how the sign-in is going; done, when given, is the pressed Keep or Sign out

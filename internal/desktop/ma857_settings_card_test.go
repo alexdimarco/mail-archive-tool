@@ -223,7 +223,7 @@ func TestSaveSendsTheLocationAloneAndTheScheduleOnlyWhenChanged(t *testing.T) {
 			"if(d.mustPost==='1'||!d.installedInterval)return true;",                                        // nothing installed, or the entry gone
 			"document.querySelectorAll('#sec-settings [data-kind-field]').forEach(f=>{f.disabled=moved;});", // greyed while moved
 			"if(!moved)settingBoxes.forEach(",                                                               // a move sends the location alone
-			"setTimeout(()=>location.reload(),600);return true;}",                                           // and reloads
+			"setTimeout(()=>reloadPage(),600);return true;}",                                                // and reloads
 			"if(schedChanged()){", // the schedule only when changed
 			"'The backup schedule was not changed: '+(r.reason||r.error", // the combined reply quotes the reason
 		} {

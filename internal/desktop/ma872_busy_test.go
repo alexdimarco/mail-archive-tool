@@ -311,7 +311,7 @@ func TestTheCardsRepairAndRemoveReplyStaysAfterTheStateRedraw(t *testing.T) {
 	}
 	// a Remove that went through draws the page again, after the reply was in sight, so the card
 	// stops offering Repair and Run now and Settings stops showing the removed cadence
-	if !strings.Contains(cp, "else if(d.ok&&path==='api/schedule-remove')setTimeout(()=>location.reload(),2500)") {
+	if !strings.Contains(cp, "else if(d.ok&&path==='api/schedule-remove')setTimeout(()=>reloadPage(),2500)") {
 		t.Errorf("a Remove that went through leaves the card and Settings as they were:\n%s", cp)
 	}
 	// every branch of the state line starts with the reply (four since MA-949 added "Runs only

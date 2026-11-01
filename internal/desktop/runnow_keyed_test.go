@@ -358,8 +358,9 @@ func TestALockCancelsAnEncryptedRunNowWhileItWaits(t *testing.T) {
 		t.Error("the Lock-cancelled run read mail")
 	}
 	// The note stays on screen with a Done button; the page never reloads it away.
-	if strings.Contains(encryptionJS, "setTimeout(()=>location.reload(),6000)") || !strings.Contains(encryptionJS, "if(d.ok&&d.note){done(true);noteWithDone(d.note);return;}") ||
-		!strings.Contains(encryptionJS, "b.addEventListener('click',()=>location.reload())") {
+	if strings.Contains(encryptionJS, "setTimeout(()=>reloadPage(),6000)") || strings.Contains(encryptionJS, "setTimeout(()=>location.reload(),6000)") ||
+		!strings.Contains(encryptionJS, "if(d.ok&&d.note){done(true);noteWithDone(d.note);return;}") ||
+		!strings.Contains(encryptionJS, "b.addEventListener('click',()=>reloadPage())") {
 		t.Error("the Lock reply's note does not stay on screen with a Done button")
 	}
 }

@@ -162,7 +162,11 @@ var optionalJSIDs = map[string]bool{"clearSignin": true, "editM365": true, "canc
 	// the Danger zone's forget-every-encrypted-archive button shows only when this computer recorded one (K8, MA-807); the JS null-checks it
 	"forgetAllBtn": true,
 	// the local-schedule card's pre-sync checkbox shows only for a Thunderbird-sourced local archive on an adapter platform (MA-582/MA-583); schedPost null-checks it (ps?ps.checked)
-	"schedPresync": true}
+	"schedPresync": true,
+	// the Your archives card shows only when the list tells something beyond the current archive
+	// (ShowArchives); a delete's result whose row is gone sits at its top, else above it in
+	// #heldDeletes, and delShowHeld null-checks it (design-archive-delete §3.1, MA-984)
+	"sec-archives": true}
 
 // jsBoundIDs lists every $('id') lookup in dashboard.js.
 func jsBoundIDs() []string {

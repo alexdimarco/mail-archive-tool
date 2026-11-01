@@ -1151,6 +1151,11 @@ func (cfg Config) overviewWith(csrf, epoch string, held []heldView) string {
 		// HeldDeletes is the JSON of the delete results the server holds (MA-972), for the
 		// page: each result and its deletion record's bytes, until dismissed.
 		HeldDeletes string
+		// CurrentUnfinished: the archive in use is a delete not finished (design-archive-delete
+		// §5.4: a stop at step 2, before step 4 cleared it), so the page offers neither Run now
+		// nor Archive now for it, saying "Delete not finished: click Delete again" in their place
+		// (§3.1 "Where the result sits", MA-982).
+		CurrentUnfinished bool
 		// Backup alerts card (MA-699): the saved email-alert config, prefilled. The password
 		// is never sent to the page — only whether one is stored.
 		AlertEnabled     bool
@@ -1214,6 +1219,9 @@ func (cfg Config) overviewWith(csrf, epoch string, held []heldView) string {
 	// so the second card would only repeat them (the 1.5.2 friction review, finding 5).
 	if idx, rerr := cfg.reconcileArchives(time.Now()); rerr == nil {
 		data.Archives = cfg.archiveRows(idx)
+		for _, r := range data.Archives {
+			data.CurrentUnfinished = data.CurrentUnfinished || (r.Current && r.Unfinished)
+		}
 		data.ShowArchives = len(data.Archives) >= 2 || (len(data.Archives) == 1 && !data.Archives[0].Current)
 		data.CanAddArchive = data.OutDir != "" && len(data.Archives) >= 1
 	}
@@ -1392,6 +1400,9 @@ func (cfg Config) overviewWith(csrf, epoch string, held []heldView) string {
 	// The friction review's O1 (applied by the lead, 2026-10-31): a local archive with Run now
 	// on the page offers no sidebar Archive now, which is off for it; its card stays.
 	data.HideArchiveNav = data.RunNowNav && data.ArchiveNowLocal
+	if data.CurrentUnfinished { // neither is offered for a delete not finished (MA-982)
+		data.RunNowNav, data.HideArchiveNav = false, true
+	}
 	data.ProgramCopiesLabel = programCopiesLabel(releaseBuild())
 	data.EncRecordKept = cfg.Keys != nil && encryptedRecordKept()
 	// A recorded archive whose key files are gone cannot be unlocked: its card offers
@@ -1546,8 +1557,16 @@ pre{white-space:pre-wrap;overflow-wrap:anywhere;background:var(--bg);border:1px 
 .archive-list{list-style:none;padding:0;margin:10px 0 0}
 .archive-row{display:flex;align-items:center;gap:10px;flex-wrap:wrap;padding:8px 0;border-top:1px solid var(--line)}
 .archive-row .archive-path{flex:1;min-width:0;overflow-wrap:anywhere}
-.archive-row.unavailable{opacity:.6}
+.archive-row.unavailable>.archive-path,.archive-row.unavailable>.archive-kind,.archive-row.unavailable>.row-state{opacity:.6}
 .archive-row>.note{flex-basis:100%}
+.btn.danger{background:var(--panel);color:var(--danger);border:1px solid var(--danger)}
+.btn.danger-fill{background:var(--danger);color:var(--panel)}
+.delete-panel{border-color:var(--danger)}
+.delete-panel p,.held-result p,.unlist-ask p{margin:6px 0}
+.delete-panel ul{margin:4px 0 8px;padding-left:20px}
+.delete-panel input[type=text]{max-width:28rem}
+.del-actions{display:flex;flex-wrap:wrap;align-items:center;gap:8px;margin-top:10px}
+.name-hint{color:var(--warn);font-size:.85rem}
 .archive-tag{font-size:.84rem;opacity:.75}
 .archive-tag.current{opacity:1;color:var(--accent);font-weight:700}
 .archive-kind{font-size:.78rem;opacity:.75;border:1px solid var(--line);border-radius:6px;padding:1px 7px}
@@ -1620,7 +1639,8 @@ pre{white-space:pre-wrap;overflow-wrap:anywhere;background:var(--bg);border:1px 
           {{if .KindLabel}}<span class="archive-kind">{{.KindLabel}}</span>{{end}}
           {{if .SourceLostSince}}<span class="archive-tag">This archive's source hasn't been reachable since {{.SourceLostSince}} — reconnect the source (its mailbox or mail folder){{if .RunNowOnly}}, then click {{if not .Current}}Switch to this archive and click {{end}}Run now on its Scheduled backup card: its backup runs only when you click Run now.{{else}} to resume backups.{{end}}</span>{{end}}
           {{if eq .Kind "encrypted"}}<button class="btn secondary" type="button" data-forget-archive data-path="{{.Path}}" title="Stop protecting this folder as an encrypted archive on this computer — for example after you removed the archive on purpose. Nothing in the folder is changed.">Forget this encrypted archive here</button>{{end}}
-          {{if .Deleting}}<span class="archive-tag">Being deleted — its result shows on this page when the delete ends.</span>{{else if .Unfinished}}<span class="archive-tag">Delete not finished: click Delete again</span>{{else if .Problem}}<span class="archive-tag">{{.Problem}}</span>{{else if not .Available}}<span class="archive-tag">Not reachable right now — reconnect the drive or folder and it comes back. Nothing was removed.</span>{{else if .Sealed}}<span class="archive-tag">Paused (read-only) — Resume it to make changes.</span> <button class="btn secondary" type="button" data-resume-archive data-path="{{.Path}}" title="Make this archive writable again so backups and changes can resume.">Resume</button>{{else}}{{if .Current}}<span class="archive-tag current">Current archive</span>{{else}}<button class="btn secondary" type="button" data-switch-archive data-path="{{.Path}}" title="Make this the current archive: the one this page shows and changes.">Switch to this archive</button>{{end}} <button class="btn secondary" type="button" data-pause-archive data-path="{{.Path}}" title="Make this archive read-only so nothing can change it. You can Resume it any time; nothing is deleted.">Pause (make read-only)</button>{{end}}
+          <span class="row-state">{{if .Deleting}}<span class="archive-tag">Being deleted — its result shows on this page when the delete ends.</span>{{else if .Unfinished}}<span class="archive-tag">Delete not finished: click Delete again</span>{{else if .Problem}}<span class="archive-tag">{{.Problem}}</span>{{else if not .Available}}<span class="archive-tag">Not reachable right now — reconnect the drive or folder and it comes back. Nothing was removed.</span>{{else if .Sealed}}<span class="archive-tag">Paused (read-only) — Resume it to make changes.</span> <button class="btn secondary" type="button" data-resume-archive data-path="{{.Path}}" title="Make this archive writable again so backups and changes can resume.">Resume</button>{{else}}{{if .Current}}<span class="archive-tag current">Current archive</span>{{else}}<button class="btn secondary" type="button" data-switch-archive data-path="{{.Path}}" title="Make this the current archive: the one this page shows and changes.">Switch to this archive</button>{{end}} <button class="btn secondary" type="button" data-pause-archive data-path="{{.Path}}" title="Make this archive read-only so nothing can change it. You can Resume it any time; nothing is deleted.">Pause (make read-only)</button>{{end}}</span>
+          {{if not .Deleting}}<button class="btn secondary" type="button" data-unlist-archive data-path="{{.Path}}" title="Take this archive off this list. The folder and its files are kept; you are asked first, and told which scheduled backups would stop.">Remove from list</button> <button class="btn danger" type="button" data-delete-archive data-path="{{.Path}}" title="{{if .DeleteOK}}Permanently delete this archive's files. You see what would be removed first, and type the folder's name to confirm.{{else}}{{.DeleteWhy}}{{end}}"{{if not .DeleteOK}} disabled{{end}}>Delete…</button>{{end}}
         </li>{{end}}
       </ul>
     </div>{{end}}
@@ -1695,11 +1715,12 @@ pre{white-space:pre-wrap;overflow-wrap:anywhere;background:var(--bg);border:1px 
 
     <div class="card" id="sec-archive">
       <h2>Archive now</h2>
+      {{if .CurrentUnfinished}}<p class="card-sub"><span class="archive-tag" id="archiveNowUnfinished">Delete not finished: click Delete again</span></p>{{end}}
       {{if .ArchiveNowLocal}}<p class="card-sub" id="archiveNowOff">` + archiveNowOffLead + `</p>
       <p class="card-sub" id="archiveNowWay">{{if eq .ArchiveNowWay "runnow"}}To back it up now, click <b>Run now</b> on the <a href="#sec-backup">Scheduled backup</a> card.{{else if eq .ArchiveNowWay "create"}}To back it up now, first set up its backup: in <a href="#sec-settings">Settings</a>, choose <b>How often</b> (<b>Only when I click Run now</b>, if it should never run by itself) and click <b>Save settings</b>. <b>Run now</b> then appears on the Scheduled backup card.{{else if eq .ArchiveNowWay "export"}}Its scheduled backup was set up at the command line, so Run now isn't offered for it: the <a href="#sec-backup">Scheduled backup</a> card says how to get Run now.{{else}}To add new mail now, use one of the ways below.{{end}}</p>
       <details class="steps" id="archiveNowHand"{{if eq .ArchiveNowWay "hand"}} open{{end}}><summary>Other ways to add new mail: the wizard or a terminal</summary><p class="card-sub steps">{{.ArchiveNowHand}}</p></details>
       {{else if .ArchiveNowOff}}<p class="card-sub steps" id="archiveNowOff">{{.ArchiveNowOff}}</p>{{else}}<p class="card-sub">{{if .OutDir}}Fetch the latest mail into your archive. The first time, you sign in with a Microsoft device code shown here.{{else}}Archive now copies new mail from a Microsoft 365 mailbox into your archive. To use it, fill in the Microsoft 365 connection card, type a folder for the archive in Settings → Archive location and click Save settings, then come back here. For Thunderbird, Outlook or other mail files, you don't need this button.{{end}}</p>
-      <button class="btn" id="archiveBtn"{{if .ArchiveNowConfirm}} data-confirm="{{.ArchiveNowConfirm}}"{{end}}>Archive now</button>{{end}}
+      {{if not .CurrentUnfinished}}<button class="btn" id="archiveBtn"{{if .ArchiveNowConfirm}} data-confirm="{{.ArchiveNowConfirm}}"{{end}}>Archive now</button>{{end}}{{end}}
       {{if .ReaderURL}}<a class="btn secondary" href="{{.ReaderURL}}" target="_blank" rel="noopener">Open archive</a> <a class="btn secondary" href="{{.ReaderURL}}goback" target="_blank" rel="noopener">Go back in time</a>{{end}}
       <button class="btn secondary" id="anotherBrowser" type="button">Use another browser…</button>
       <div class="note" id="linkNote" hidden></div>
@@ -1845,7 +1866,7 @@ pre{white-space:pre-wrap;overflow-wrap:anywhere;background:var(--bg);border:1px 
       {{if .ShowInstall}}<p class="card-sub" id="schedNone">{{if .OutDir}}No scheduled backup is set up for this archive yet. A scheduled backup runs a capture automatically, even when this app is closed (as long as you stay signed in to your computer), using your saved Microsoft sign-in.{{else}}Choose an archive location in Settings first; its backup options then show there.{{end}}</p>{{end}}
       {{if .ShowLocalCreate}}<p class="card-sub" id="schedNone">No scheduled backup is set up for this archive yet. A scheduled backup keeps it up to date automatically: it re-reads the mail files this archive was made from and adds anything new. It runs while you are logged in.</p>{{end}}
       {{if and .Set.Sched .OutDir}}<p class="card-sub" id="changeInSettings">{{if .Set.SchedCapture}}How often and time{{else}}How often, time and Thunderbird sync{{end}}: <a href="#sec-settings">Change in Settings</a></p>{{end}}
-      <div style="margin-top:14px">{{if .ShowRepair}}{{if not .ManualBackup}}<button class="btn" id="schedRepair" title="Fix this archive's scheduled backup if it stopped working or points at the wrong place. How often it runs and its Thunderbird sync setting are kept; nothing in the archive changes.">Repair</button> {{end}}<button class="btn" id="runBackupBtn" type="button" title="{{.RunNowTitle}}">Run now</button> {{end}}{{if .ShowCaptureRepair}}<button class="btn" id="schedRepair" title="Put this archive's scheduled capture back as it was set up: its cadence is kept, and a capture still named for the archive's earlier location is moved to this one. Nothing in the archive changes.">Repair</button> {{end}}{{if .ShowBrokenRepair}}<button class="btn" id="schedRepair" title="Make this archive's backup settings file again from the archive's own record. Thunderbird sync is then off.">Repair</button> {{end}}{{if .EncRunNow}}<button class="btn" id="runBackupBtn" type="button" title="{{.EncRunNowTitle}}"{{if not .EncUnlocked}} disabled{{end}}>Run now</button> {{end}}{{if .ShowRemove}}<button class="btn secondary" id="schedRemove"{{if .ManualBackup}} data-busy="Removing the backup…"{{end}} title="{{if .ManualBackup}}Delete this archive's backup settings: Run now then has nothing to run until you choose How often again in Settings. Your archive and everything in it are kept.{{else}}Delete this archive's scheduled backup. Your archive and everything in it are kept.{{end}}">Remove</button>{{end}}</div>
+      <div style="margin-top:14px">{{if .ShowRepair}}{{if not .ManualBackup}}<button class="btn" id="schedRepair" title="Fix this archive's scheduled backup if it stopped working or points at the wrong place. How often it runs and its Thunderbird sync setting are kept; nothing in the archive changes.">Repair</button> {{end}}{{if .CurrentUnfinished}}<span class="archive-tag" id="runNowUnfinished">Delete not finished: click Delete again</span>{{else}}<button class="btn" id="runBackupBtn" type="button" title="{{.RunNowTitle}}">Run now</button>{{end}} {{end}}{{if .ShowCaptureRepair}}<button class="btn" id="schedRepair" title="Put this archive's scheduled capture back as it was set up: its cadence is kept, and a capture still named for the archive's earlier location is moved to this one. Nothing in the archive changes.">Repair</button> {{end}}{{if .ShowBrokenRepair}}<button class="btn" id="schedRepair" title="Make this archive's backup settings file again from the archive's own record. Thunderbird sync is then off.">Repair</button> {{end}}{{if .EncRunNow}}{{if .CurrentUnfinished}}<span class="archive-tag" id="runNowUnfinished">Delete not finished: click Delete again</span>{{else}}<button class="btn" id="runBackupBtn" type="button" title="{{.EncRunNowTitle}}"{{if not .EncUnlocked}} disabled{{end}}>Run now</button>{{end}} {{end}}{{if .ShowRemove}}<button class="btn secondary" id="schedRemove"{{if .ManualBackup}} data-busy="Removing the backup…"{{end}} title="{{if .ManualBackup}}Delete this archive's backup settings: Run now then has nothing to run until you choose How often again in Settings. Your archive and everything in it are kept.{{else}}Delete this archive's scheduled backup. Your archive and everything in it are kept.{{end}}">Remove</button>{{end}}</div>
       {{if .RunNowFirstSync}}<p class="card-sub" id="runNowFirstSync">{{.RunNowFirstSync}}</p>{{end}}
       <div class="note steps" id="runBackupNote" hidden></div>
       <div class="note" id="schedState" hidden></div>{{end}}
@@ -1942,10 +1963,11 @@ pre{white-space:pre-wrap;overflow-wrap:anywhere;background:var(--bg);border:1px 
 </body></html>
 {{- define "switchLocks"}}Switching to another archive locks {{.SwitchLocks}}.{{if .EncRemembered}} This computer remembers its key, so it opens again by itself when you switch back.{{else}} When you switch back, unlock it again on its Encryption card.{{end}}{{end}}`))
 
-// dashboardJS wires the action buttons (clear sign-in, settings, archive-now with
-// device-code + activity polling). Served at /dashboard.js so it runs under
-// script-src 'self'.
-const dashboardJS = `const csrf=document.querySelector('meta[name=csrf]').content;
+// dashboardBaseJS wires the action buttons (clear sign-in, settings, archive-now with
+// device-code + activity polling). With the delete and Remove from list script after it
+// (archiveDeleteJS, deletescript.go) it is dashboardJS, served at /dashboard.js so it runs
+// under script-src 'self'.
+const dashboardBaseJS = `const csrf=document.querySelector('meta[name=csrf]').content;
 // The archive folder this page was drawn for: every Save and schedule request names it, so a tab
 // left open from another archive changes nothing (C-12).
 const drawnFor=(document.querySelector('meta[name=drawn-for]')||{}).content||'';
@@ -2002,7 +2024,7 @@ document.querySelectorAll('[data-make-archive]').forEach(b=>b.addEventListener('
   const card=b.closest('.card'),n=card?card.querySelector('[data-make-archive-note]'):null;
   const done=busy(b,'Waiting for the wizard…',n,'The MailArchive wizard is opening on your computer. Its windows may be behind this browser window: if they are not in view, move or minimize this window. Follow its steps to make the archive; this page then refreshes.');
   try{const d=await(await post('api/add-archive')).json();
-    if(d.ok){done(true);if(n){n.textContent=d.message||'Archive added.';}location.reload();return;}
+    if(d.ok){done(true);if(n){n.textContent=d.message||'Archive added.';}reloadPage();return;}
     done();if(n){n.hidden=false;n.textContent=d.message||d.error||'Could not add an archive.';}
   }catch(e){done();if(n){n.hidden=false;n.textContent='Error: '+e;}}
 }));
@@ -2025,7 +2047,7 @@ if(clr)clr.addEventListener('click',async()=>{
   let keep=false;
   try{const d=await(await post('api/clear-signin')).json();
     if(n){n.hidden=false;n.textContent=d.ok?'Signed out. The next capture will sign in again.':(d.error||'Could not clear the sign-in.');}
-    if(d.ok){keep=true;setTimeout(()=>location.reload(),900);}
+    if(d.ok){keep=true;setTimeout(()=>reloadPage(),900);}
   }catch(e){if(n){n.hidden=false;n.textContent='Error: '+e;}}
   finally{done(keep);}
 });
@@ -2097,7 +2119,7 @@ async function doSave(backup){
     if(c)c.hidden=true;
     if(!d.ok){say(d.error||'Could not save.');return false;}
     // A new location is another archive: the page is drawn again for it (C-12).
-    if(moved){say(backup==='remove'?'Settings saved, and the scheduled backup removed. To set it up again, choose How often in Settings and click Save settings.':'Settings saved.');setTimeout(()=>location.reload(),600);return true;}
+    if(moved){say(backup==='remove'?'Settings saved, and the scheduled backup removed. To set it up again, choose How often in Settings and click Save settings.':'Settings saved.');setTimeout(()=>reloadPage(),600);return true;}
     settingBoxes.forEach(([id])=>{const b=$(id);if(b)b.defaultChecked=b.checked;});
     const parts=boxesChanged?['Settings saved.']:[];
     if(schedChanged()){
@@ -2116,12 +2138,12 @@ async function doSave(backup){
       if(r.ok&&wasNone){parts.push((manual?'Backup set up: it runs only when you click Run now.':'Backup schedule set up.')+(r.note?' '+r.note:''));
         let kept=!r.note;
         if(r.note){try{sessionStorage.setItem(keptNoteKey,parts.join(' '));kept=true;}catch(e){}}
-        if(kept){say(parts.join(' '));setTimeout(()=>location.reload(),600);return true;}
+        if(kept){say(parts.join(' '));setTimeout(()=>reloadPage(),600);return true;}
         parts.push('Reload the page to see Remove, Repair and Run now on the Scheduled backup card.');say(parts.join(' '));schedState();return true;}
       if(r.ok){parts.push((manual?'Backup updated: it runs only when you click Run now.':'Backup schedule updated.')+(r.note?' '+r.note:''));
         // A switch to or from Run now only draws the card again (it shows or hides Repair); with a
         // note to keep in sight, it says to reload instead.
-        if(manual!==wasManual){if(!r.note){say(parts.join(' '));setTimeout(()=>location.reload(),600);return true;}parts.push('Reload the page to see the Scheduled backup card as it is now.');}
+        if(manual!==wasManual){if(!r.note){say(parts.join(' '));setTimeout(()=>reloadPage(),600);return true;}parts.push('Reload the page to see the Scheduled backup card as it is now.');}
         schedState();}
       else parts.push('The backup schedule was not changed: '+(r.reason||r.error||'it could not be saved.'));
     }
@@ -2160,7 +2182,7 @@ if(useOffer)useOffer.addEventListener('click',async()=>{
   const done=busy(useOffer,'Opening…',$('settingsNote'),'Opening this archive…');
   $('outDir').value=useOffer.dataset.path;
   const ok=await doSave('');done(ok);
-  if(ok)setTimeout(()=>location.reload(),500);
+  if(ok)setTimeout(()=>reloadPage(),500);
 });
 // "Switch to this archive": the per-row button on the Your-archives list. Same save
 // as typing the folder and clicking Save settings (same checks, same weekly-backup
@@ -2170,7 +2192,7 @@ document.querySelectorAll('[data-switch-archive]').forEach(b=>b.addEventListener
   const done=busy(b,'Switching…',$('settingsNote'),'Switching to this archive…');
   $('outDir').value=b.dataset.path;
   const ok=await doSave('');done(ok);
-  if(ok)setTimeout(()=>location.reload(),500);
+  if(ok)setTimeout(()=>reloadPage(),500);
 }));
 // Open an archive folder…: the system's folder picker, then a switch to the folder
 // chosen through the same settings save (an encrypted one then unlocks on its card).
@@ -2182,7 +2204,7 @@ document.querySelectorAll('[data-open-archive]').forEach(b=>b.addEventListener('
     if(d.canceled){if(n)n.hidden=true;return;}
     if(!d.ok){if(n){n.hidden=false;n.textContent=d.error||'Could not open that folder.';}return;}
     $('outDir').value=d.path;
-    if(await doSave('')){keep=true;setTimeout(()=>location.reload(),500);}
+    if(await doSave('')){keep=true;setTimeout(()=>reloadPage(),500);}
   }catch(e){if(n){n.hidden=false;n.textContent='Error: '+e;}}
   finally{done(keep);}
 }));
@@ -2193,8 +2215,8 @@ const archAction=(sel,path,label,text)=>document.querySelectorAll(sel).forEach(b
   const n=$('settingsNote'),done=busy(b,label,n,text);
   let keep=false;
   try{const r=await(await fetch(path,{method:'POST',headers:{'Content-Type':'application/json','X-CSRF-Token':csrf},body:JSON.stringify({path:b.dataset.path})})).json();
-    if(r.ok&&r.note&&n){keep=true;n.hidden=false;n.textContent=r.note;setTimeout(()=>location.reload(),3000);return;}
-    if(r.ok){keep=true;location.reload();return;}
+    if(r.ok&&r.note&&n){keep=true;n.hidden=false;n.textContent=r.note;setTimeout(()=>reloadPage(),3000);return;}
+    if(r.ok){keep=true;reloadPage();return;}
     if(n){n.hidden=false;n.textContent=r.error||'Could not do that.';}
   }catch(e){if(n){n.hidden=false;n.textContent='Error: '+e;}}
   finally{done(keep);}
@@ -2211,7 +2233,7 @@ if(fab)fab.addEventListener('click',async()=>{
   let keep=false;
   try{const d=await(await fetch('api/encryption/forget-all',{method:'POST',headers:{'Content-Type':'application/json','X-CSRF-Token':csrf},body:JSON.stringify({typed:typed})})).json();
     say(d.ok?(d.lines||[]).join('\n'):(d.error||'Could not forget them.'));
-    if(d.ok){keep=true;setTimeout(()=>location.reload(),4000);}
+    if(d.ok){keep=true;setTimeout(()=>reloadPage(),4000);}
   }catch(e){say('Error: '+e);}
   finally{done(keep);}
 });
@@ -2236,7 +2258,7 @@ document.querySelectorAll('[data-forget-archive]').forEach(b=>b.addEventListener
       if(whole&&p.remembered)keys=confirm('Also forget its remembered key?');}
     done=busy(b,'Forgetting…',n,'Forgetting this folder on this computer…');
     const d=await send('api/encryption/forget',{token:p.token,typed:typed,whole:whole,keys:keys});
-    if(d.ok){done(true);location.reload();return;}
+    if(d.ok){done(true);reloadPage();return;}
     done();say(d.error||'Could not forget it.');
   }catch(e){done();say('Error: '+e);}
 }));
@@ -2410,7 +2432,7 @@ function cardPost(path,done,okWord){
       return schedState(said).then(()=>{if(n&&d.left){n.hidden=false;n.textContent='Removed. Left in place: '+d.left+' cannot be read, so removal cannot tell which schedule it records - '+d.remedy+'.';}
         // a Remove changes what the card and Settings offer (no Repair or Run now; How often back
         // to none): the page is drawn again once the reply has been read
-        else if(d.ok&&path==='api/schedule-remove')setTimeout(()=>location.reload(),2500);});})
+        else if(d.ok&&path==='api/schedule-remove')setTimeout(()=>reloadPage(),2500);});})
     .catch(e=>{done();if(n){n.hidden=false;n.textContent='Error: '+e;}});
 }
 const sr=$('schedRemove'),srp=$('schedRepair');
@@ -2497,7 +2519,7 @@ if(saveM365)saveM365.addEventListener('click',async()=>{
   const done=busy(saveM365,'Saving…',n,'Saving the Microsoft 365 configuration…');
   try{const d=await(await fetch('api/m365/configure',{method:'POST',headers:{'Content-Type':'application/json','X-CSRF-Token':csrf},body:JSON.stringify(body)})).json();
     if(d.ok){done(true);if(n){n.hidden=false;n.textContent='Saved. '+(d.auth==='device'?'Click Archive now (or Sign in) to connect with a Microsoft device code.':(d.configured?'Secret stored.':'No secret stored.'));}
-      if($('m365Secret'))$('m365Secret').value='';setTimeout(()=>location.reload(),900);}
+      if($('m365Secret'))$('m365Secret').value='';setTimeout(()=>reloadPage(),900);}
     else{done();if(n){n.hidden=false;n.textContent=d.error||'Could not save.';}}
   }catch(e){done();if(n){n.hidden=false;n.textContent='Error: '+e;}}
 });

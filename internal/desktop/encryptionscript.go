@@ -4,7 +4,8 @@ package desktop
 // password or recovery key is typed in MailArchive Desktop (§7.1). The secret goes in
 // one guarded POST's body and the field is cleared after it; nothing it answers is
 // put in the page but as text (X15). It is its own file so the inert-script scan
-// covers it (MA-407).
+// covers it (MA-407). It runs only on the Overview, after dashboard.js, whose reloadPage it
+// reloads through: a reload is held while a delete's result is on the page (MA-984).
 const encryptionJS = `(function(){
 const csrf=document.querySelector('meta[name=csrf]').content;
 const $=id=>document.getElementById(id);
@@ -45,7 +46,7 @@ if(form)form.addEventListener('submit',async ev=>{
   }catch(e){d={ok:false,error:'Could not reach MailArchive Desktop — reload the page.'};}
   body.secret='';
   done(!!(d&&d.ok));
-  if(d&&d.ok){say('Unlocked.');setTimeout(()=>location.reload(),600);}
+  if(d&&d.ok){say('Unlocked.');setTimeout(()=>reloadPage(),600);}
   else say((d&&d.error)||'Could not unlock.');
 });
 const ur=$('encUnlockRemembered');
@@ -55,7 +56,7 @@ if(ur)ur.addEventListener('click',async()=>{
   try{d=await send('api/encryption/unlock',{remembered:true});}
   catch(e){d={ok:false,error:'Could not reach MailArchive Desktop — reload the page.'};}
   done(!!(d&&d.ok));
-  if(d&&d.ok){say('Unlocked.');setTimeout(()=>location.reload(),600);}
+  if(d&&d.ok){say('Unlocked.');setTimeout(()=>reloadPage(),600);}
   else say((d&&d.error)||'Could not unlock.');
 });
 // Make an unencrypted copy: the plan first, confirmed once — twice for a folder that
@@ -91,12 +92,12 @@ if(cy)cy.addEventListener('click',async()=>{
 function noteWithDone(t){
   say(t);const n=$('encNote');if(!n)return;
   const b=document.createElement('button');b.type='button';b.className='btn secondary';b.id='encLockDone';b.textContent='Done';
-  b.addEventListener('click',()=>location.reload());n.appendChild(document.createElement('br'));n.appendChild(b);b.focus();
+  b.addEventListener('click',()=>reloadPage());n.appendChild(document.createElement('br'));n.appendChild(b);b.focus();
 }
 const lk=$('encLock');
 if(lk)lk.addEventListener('click',async()=>{
   const done=busy(lk,'Locking…','Locking the archive…');
-  try{const d=await send('api/encryption/lock');if(d.ok&&d.note){done(true);noteWithDone(d.note);return;}if(d.ok){done(true);location.reload();return;}done();say(d.error||'Could not lock.');}
+  try{const d=await send('api/encryption/lock');if(d.ok&&d.note){done(true);noteWithDone(d.note);return;}if(d.ok){done(true);reloadPage();return;}done();say(d.error||'Could not lock.');}
   catch(e){done();say('Could not reach MailArchive Desktop — reload the page.');}
 });
 // A key change: sent once, then again with the confirmation the page asked for.
@@ -207,7 +208,7 @@ if(uk)uk.addEventListener('click',async()=>{
   try{const d=await send('api/encryption/new-recovery-key/confirm',{token:token,typed:t?t.value:''});
     if(d.ok){if(t)t.value='';newKey='';token='';showKey(false);const box=$('encNewKeyBox');if(box)box.hidden=true;}
     say(lines(d,'The new recovery key is in effect.'));
-    if(d.ok&&(restoring||creating))setTimeout(()=>location.reload(),8000);}
+    if(d.ok&&(restoring||creating))setTimeout(()=>reloadPage(),8000);}
   catch(e){say('Could not reach MailArchive Desktop — reload the page.');}
   finally{done();}
 });
@@ -225,7 +226,7 @@ for(const [id,on] of [['encRememberKey',true],['encForgetKey',false]]){
   const b=$(id);
   if(b)b.addEventListener('click',async()=>{
     const done=on?busy(b,'Remembering…','Remembering the key on this computer…'):busy(b,'Forgetting…','Forgetting the key on this computer…');
-    try{const d=await change('api/encryption/remember',{on:on});if(d.ok){done(true);location.reload();return;}done();say(d.error||'Could not do that.');}
+    try{const d=await change('api/encryption/remember',{on:on});if(d.ok){done(true);reloadPage();return;}done();say(d.error||'Could not do that.');}
     catch(e){done();say('Could not reach MailArchive Desktop — reload the page.');}
   });
 }
