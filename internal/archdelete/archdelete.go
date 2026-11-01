@@ -83,8 +83,20 @@ type Item struct {
 // Identity is a folder's file identity: its volume and its file id (on Unix the
 // device and inode).
 type Identity struct {
-	Volume uint64
-	FileID uint64
+	Volume uint64 `json:"volume"`
+	FileID uint64 `json:"file_id"`
+}
+
+// folderIdentity is the identity of the folder at path now; ok is false when it
+// cannot be read (the folder gone, unreachable or not a folder).
+func folderIdentity(path string) (Identity, bool) {
+	root, err := os.OpenRoot(path)
+	if err != nil {
+		return Identity{}, false
+	}
+	defer root.Close()
+	id, err := rootIdentity(root)
+	return id, err == nil
 }
 
 // String is the identity as the plan and the record word it, identically (§8.1).
@@ -188,6 +200,10 @@ type DeletePlan struct {
 	// record's ID and Spelling nor "not recorded", so step 8 is skipped.
 	Rerun         Rerun
 	RecordUnknown bool
+	// KeyForgottenBefore: the delete this re-run finishes already made this computer
+	// forget the archive's record (its `key forgotten` line, del-s1b-A2-01), so step 8
+	// is done and is not asked again.
+	KeyForgottenBefore bool
 }
 
 // Rerun is how a plan finishes an unfinished delete (§5.4).
@@ -341,10 +357,20 @@ func Plan(folder string, deps Deps) (*DeletePlan, error) {
 		return nil, err
 	}
 	u, lerr := UnfinishedDelete(deps.Log, folder, deps.goos())
-	if lerr != nil || u == nil {
+	if lerr != nil {
+		// Said, not dropped (del-s1b-A3-10): a log that cannot be read would otherwise
+		// turn a §5.4 re-run into the plain refusal with no hint why.
+		return nil, &Refusal{Case: r.Case, Message: r.Message + " " + logUnreadable(lerr)}
+	}
+	if u == nil {
 		return nil, err
 	}
 	return planUnfinished(folder, deps, u, r)
+}
+
+// logUnreadable is the sentence added to a refusal when deletions.log cannot be read.
+func logUnreadable(err error) string {
+	return fmt.Sprintf("MailArchive's deletion log could not be read (%s), so a delete of this folder that did not finish cannot be finished here.", cleanErr(err))
 }
 
 // planArchive is Plan for a folder that holds an archive.

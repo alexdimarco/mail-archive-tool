@@ -76,6 +76,8 @@ type run struct {
 	res        *Result
 	unrecorded bool
 	log, row   string
+	// id is this delete's run id, on each of its deletions.log lines.
+	id string
 
 	logged bool
 	lock   *lockfile.Lock
@@ -141,8 +143,14 @@ func (e *run) logStarted() error {
 	if e.unrecorded {
 		choice = "yes"
 	}
-	l := logLine{At: e.stamp(), Event: evStarted, Folder: p.Folder, Row: e.row, Kind: p.Kind.String(),
-		Files: intp(p.Files), Bytes: int64p(p.Bytes), Unrecorded: intp(len(p.Unrecorded)), DeleteUnrecorded: choice}
+	e.id = newRunID()
+	l := logLine{At: e.stamp(), Event: evStarted, Run: e.id, Folder: p.Folder, Row: e.row, Kind: p.Kind.String(),
+		Files: intp(p.Files), Bytes: int64p(p.Bytes), Unrecorded: intp(len(p.Unrecorded)), DeleteUnrecorded: choice,
+		KeyForgotten: p.KeyForgottenBefore}
+	if p.Identity != (Identity{}) {
+		id := p.Identity
+		l.Identity = &id
+	}
 	if p.Kind == Encrypted {
 		switch {
 		case p.Record.Recorded:
@@ -208,8 +216,11 @@ func (e *run) steps() {
 	gone, lockLeft, emptyLeft := e.tidyFolder()
 	e.res.FolderGone, e.res.LockFileLeft, e.emptyLeft = gone, lockLeft, emptyLeft
 	e.logFolder(gone)
-	if p.Rerun == RerunNoAnchor && !gone {
-		e.stopNoAnchor()
+	if p.Rerun == RerunNoAnchor {
+		// §5.4: never complete, and never steps 8 and 9 here. With the folder gone its
+		// `folder removed` line makes Delete again the folder-gone re-run, which
+		// finishes the keyring and the row (del-s1b-A1-02, conformance 9).
+		e.stopNoAnchor(gone, lockLeft)
 		return
 	}
 	if !e.keyAndRow() {
@@ -770,7 +781,7 @@ func (e *run) logFolder(gone bool) {
 	if gone {
 		ev = evFolderRemoved
 	}
-	if err := appendLog(e.log, logLine{At: e.stamp(), Event: ev, Folder: e.plan.Folder}); err != nil {
+	if err := appendLog(e.log, logLine{At: e.stamp(), Event: ev, Run: e.id, Folder: e.plan.Folder, Row: e.row}); err != nil {
 		e.notes = append(e.notes, fmt.Sprintf("This step could not be added to deletions.log (%s).", cleanErr(err)))
 	}
 }
@@ -794,15 +805,36 @@ func (e *run) stopAt6() {
 	res.line("What Delete does not reach: %s", DoesNotReach)
 }
 
-// stopNoAnchor is §5.4's partial for a folder that holds no manifest or vault: it
-// is never complete while the folder holds files the delete can no longer
-// identify.
-func (e *run) stopNoAnchor() {
-	n := countFiles(e.plan.Folder)
+// stopNoAnchor is §5.4's partial for a folder that holds no manifest or vault: never
+// complete. Its words say what is left and how to go on (del-s1b-A2-08): the folder
+// gone (Delete again finishes), files or folders the delete can no longer identify
+// (§5.4's words), or only the lock file or the empty folder that could not be
+// removed (Delete again retries; deleting the folder by hand would leave the log
+// without its `folder removed` line).
+func (e *run) stopNoAnchor(gone, lockLeft bool) {
 	e.outcome = outPartial
 	e.res.Status, e.res.Unfinished = StatusPartial, true
-	e.detail = fmt.Sprintf("the folder still holds %s the delete can no longer identify", plural(n, "file", "files"))
-	e.res.Lines = []string{"Not fully deleted: " + e.detail + ". Delete them by hand, or use Remove from list."}
+	files, folders := countLeft(e.plan.Folder)
+	var line string
+	switch {
+	case gone:
+		e.detail = "the folder is gone"
+		line = "Not fully deleted: the files the delete could still name were removed, and the folder is gone. Click Delete again to finish."
+	case files > 0 || folders > 0:
+		what := plural(files, "file", "files")
+		if files == 0 {
+			what = plural(folders, "folder", "folders")
+		}
+		e.detail = fmt.Sprintf("the folder still holds %s the delete can no longer identify", what)
+		line = "Not fully deleted: " + e.detail + ". Delete them by hand, or use Remove from list."
+	case lockLeft:
+		e.detail = "the lock file could not be removed"
+		line = "Not fully deleted: one MailArchive lock file (.mailarchive.lock) could not be removed. Click Delete again; if it stays, delete that file by hand (not the folder), then click Delete again."
+	default:
+		e.detail = "the empty folder could not be removed"
+		line = "Not fully deleted: the empty folder could not be removed. Click Delete again."
+	}
+	e.res.Lines = []string{line}
 	if e.marked {
 		e.res.Lines = append(e.res.Lines, lockedLine)
 	}
@@ -811,18 +843,21 @@ func (e *run) stopNoAnchor() {
 	}
 }
 
-// countFiles counts the files under folder, links not followed, litter and the
-// lock file left out.
-func countFiles(folder string) int {
-	n := 0
+// countLeft counts the files and the folders under folder, links not followed,
+// litter and the root lock file left out.
+func countLeft(folder string) (files, folders int) {
 	filepath.WalkDir(folder, func(p string, d fs.DirEntry, err error) error {
-		if err != nil || d.IsDir() || util.IsLitter(d.Name()) || (filepath.Dir(p) == folder && d.Name() == lockName) {
-			return nil
+		switch {
+		case err != nil || p == folder:
+		case d.IsDir():
+			folders++
+		case util.IsLitter(d.Name()) || (filepath.Dir(p) == folder && d.Name() == lockName):
+		default:
+			files++
 		}
-		n++
 		return nil
 	})
-	return n
+	return files, folders
 }
 
 // proceed asks BeforeStep before step: an error stops the delete there.
@@ -886,6 +921,14 @@ func (e *run) keyring() bool {
 	if p.Kind != Encrypted {
 		return true
 	}
+	if p.KeyForgottenBefore {
+		// The delete this re-run finishes forgot the record already (its `key
+		// forgotten` line): step 8 is done, and asking the keyring again would find
+		// nothing and wrongly say it still remembers the key (del-s1b-A2-01).
+		e.res.KeyForgotten = "forgotten by the delete this one finished"
+		e.notes = append(e.notes, "This computer had already forgotten the archive's record in the delete this one finished")
+		return true
+	}
 	if p.RecordUnknown {
 		return e.skipKey()
 	}
@@ -896,10 +939,20 @@ func (e *run) keyring() bool {
 		return e.skipKey()
 	}
 	kp, err := e.x.Keyring.PlanForget(p.Record.Spelling)
-	if err != nil || !kp.Gone {
+	// The record found must be the archive's own: the ID the plan (or the original
+	// started line) recorded, never another archive recorded since at that spelling
+	// (del-s1b-A1-05).
+	if err != nil || !kp.Gone || kp.ID != p.Record.ID {
 		return e.skipKey()
 	}
 	ferr := e.x.Keyring.Forget(kp, kp.Last)
+	if ferr == nil {
+		// Durable at once, so a re-run of a delete stopped after this point knows step 8
+		// is done (del-s1b-A2-01).
+		if err := appendLog(e.log, logLine{At: e.stamp(), Event: evKeyForgotten, Run: e.id, Folder: p.Folder, Row: e.row, RecordID: p.Record.ID}); err != nil {
+			e.notes = append(e.notes, fmt.Sprintf("This step could not be added to deletions.log (%s).", cleanErr(err)))
+		}
+	}
 	if !e.res.FolderGone {
 		// Forget took the archive's lock, re-creating .mailarchive.lock [R4:NF-NF1-LOCK]:
 		// removed again by its exact name, and the folder retried.
@@ -1121,7 +1174,7 @@ func (e *run) step10() {
 		NotRemoved: left, KeptFiles: res.Kept, LitterRemoved: res.LitterRemoved,
 	})
 	res.Record = rec
-	l := logLine{At: e.stamp(), Event: evFinished, Folder: p.Folder, Outcome: e.outcome, Unfinished: res.Unfinished,
+	l := logLine{At: e.stamp(), Event: evFinished, Run: e.id, Folder: p.Folder, Row: e.row, Outcome: e.outcome, Unfinished: res.Unfinished,
 		Left: intp(len(left)), Kept: intp(len(res.Kept)), Detail: e.detail, RecordSHA256: recordSHA(rec)}
 	if err := appendLog(e.log, l); err != nil {
 		res.Lines = append(res.Lines, msgDigestFailed)

@@ -65,6 +65,10 @@ type KeyRegistry interface {
 // KeyPlan is the keyring's plan to forget an encrypted archive's record at one
 // spelling (keyring.PlanForget).
 type KeyPlan struct {
+	// ID is the archive id of the record PlanForget found at the spelling
+	// (keyring.ForgetPlan.ID): step 8 forgets it only when it is the ID the plan, or
+	// the original started line, recorded (del-s1b-A1-05).
+	ID string
 	// Gone: the folder is gone, or encmark.At classifies it Gone.
 	Gone bool
 	// Last: this spelling is the archive's last recorded copy; Others are the rest.

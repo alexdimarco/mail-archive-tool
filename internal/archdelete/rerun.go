@@ -23,7 +23,11 @@ import (
 //   - there, holding no manifest or vault, without that line: what §4 can still
 //     name is removed (RerunNoAnchor);
 //   - there again after its `folder removed` line: a new folder, not this delete's;
-//     orig stands.
+//     orig stands;
+//   - there, but not the folder the delete started on (another identity than its
+//     started line records, or none recorded — a folder always has one): not this
+//     delete's either; orig stands (planNoAnchor; del-s1b-A1-01: another drive under
+//     the same letter, an empty mount point, a folder made again at the path).
 func planUnfinished(folder string, deps Deps, u *Unfinished, orig *Refusal) (*DeletePlan, error) {
 	abs := cleanAbs(folder)
 	_, lerr := os.Lstat(abs)
@@ -36,7 +40,7 @@ func planUnfinished(folder string, deps Deps, u *Unfinished, orig *Refusal) (*De
 	case u.FolderRemoved || orig.Case != CaseNotArchive:
 		return nil, orig
 	}
-	return planNoAnchor(abs, deps, u)
+	return planNoAnchor(abs, deps, u, orig)
 }
 
 func dirReachable(dir string) bool {
@@ -51,6 +55,7 @@ func recordFrom(p *DeletePlan, u *Unfinished) {
 	if p.Kind != Encrypted {
 		return
 	}
+	p.KeyForgottenBefore = u.KeyForgotten
 	switch {
 	case u.Record.Recorded:
 		p.Record = u.Record
@@ -69,7 +74,9 @@ func planFolderGone(abs string, deps Deps, u *Unfinished) (*DeletePlan, error) {
 	if err := checkBackupFor(abs, deps); err != nil {
 		return nil, err
 	}
-	p := &DeletePlan{Folder: abs, Name: filepath.Base(abs), Kind: u.Kind, Rerun: RerunFolderGone}
+	// Identity is the folder's as the original started line recorded it: the deletion
+	// record names the folder deleted, and this re-run's own started line carries it.
+	p := &DeletePlan{Folder: abs, Name: filepath.Base(abs), Identity: u.Identity, Kind: u.Kind, Rerun: RerunFolderGone}
 	recordFrom(p, u)
 	if deps.Records != nil {
 		d, err := deps.Records.Discover(abs)
@@ -86,9 +93,9 @@ func planFolderGone(abs string, deps Deps, u *Unfinished) (*DeletePlan, error) {
 // vault: at its root, the names §4 can still name — the fixed root names, the
 // state files and run leftovers, the root index page (a plain archive's), the
 // reserved names (an encrypted one's) — and its litter; everything else is kept,
-// and the delete is never complete while the folder holds files it can no longer
-// identify.
-func planNoAnchor(abs string, deps Deps, u *Unfinished) (*DeletePlan, error) {
+// and the delete is never complete (§5.4). The folder must be the one the delete
+// started on (u.Identity); another one gets orig.
+func planNoAnchor(abs string, deps Deps, u *Unfinished, orig *Refusal) (*DeletePlan, error) {
 	fi, err := os.Lstat(abs)
 	if err != nil {
 		return nil, refuse(CaseUnreachable, msgUnreachable)
@@ -116,6 +123,9 @@ func planNoAnchor(abs string, deps Deps, u *Unfinished) (*DeletePlan, error) {
 	id, err := rootIdentity(root)
 	if err != nil {
 		return nil, refuse(CaseUnreachable, msgUnreachable)
+	}
+	if id != u.Identity {
+		return nil, orig
 	}
 	p := &DeletePlan{Folder: abs, Name: onDiskName(abs, fi), Identity: id, Kind: u.Kind, Rerun: RerunNoAnchor}
 	recordFrom(p, u)

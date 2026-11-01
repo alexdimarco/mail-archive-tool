@@ -75,7 +75,7 @@ func TestAnEncryptedArchiveGoneForgetsItsRecordAndKeyThenItsRow(t *testing.T) {
 	dir = encryptedClean(t)
 	r = newRig(t, dir)
 	r.x.Deps.Record = recordedAt(dir)
-	r.kr.plan = KeyPlan{Gone: true, Last: false, Others: []string{`E:\Backups\Vault`}}
+	r.kr.plan = KeyPlan{ID: testArchiveID, Gone: true, Last: false, Others: []string{`E:\Backups\Vault`}}
 	res = r.run(t, false)
 	if res.Status != StatusComplete || len(r.kr.forgot) != 1 || r.kr.forgot[0] || !hasLine(res, `E:\Backups\Vault`) || len(r.rows) != 1 {
 		t.Fatalf("%s (forgot %v)", res.Message(), r.kr.forgot)
@@ -102,7 +102,7 @@ func TestAFolderKeptOnlyForTheLockFileIsRemovedByStep8sRetry(t *testing.T) {
 	if hasLine(res, msgLockFileLeft) || hasLine(res, msgEmptyFolderLeft) {
 		t.Fatalf("step 7's lock-file line is dropped once step 8 removed the folder:\n%s", res.Message())
 	}
-	if ev := strings.Join(events(logLines(t, r.x.Log)), ","); ev != "started,folder kept,folder removed,finished complete" {
+	if ev := strings.Join(events(logLines(t, r.x.Log)), ","); ev != "started,folder kept,key forgotten,folder removed,finished complete" {
 		t.Fatalf("log %s", ev)
 	}
 

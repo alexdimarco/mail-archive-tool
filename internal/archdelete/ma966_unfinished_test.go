@@ -27,6 +27,16 @@ func crashAfterFolderRemoved(t *testing.T, log, folder string, started map[strin
 	appendRawLog(t, log, map[string]any{"at": "2026-11-01T10:00:01Z", "event": "folder removed", "folder": folder})
 }
 
+// idOf is dir's identity as a started line records it.
+func idOf(t *testing.T, dir string) map[string]any {
+	t.Helper()
+	id, ok := folderIdentity(dir)
+	if !ok {
+		t.Fatalf("no identity for %s", dir)
+	}
+	return map[string]any{"volume": id.Volume, "file_id": id.FileID}
+}
+
 // covers: MA-966, R36
 func TestAPlainDeleteThatCrashedAfterFolderRemovedFinishesOnDeleteAgain(t *testing.T) {
 	dir := smallArchive(t, t.TempDir())
@@ -121,7 +131,7 @@ func TestACrashInStep6ThenTheDriveUnpluggedIsRefusedAndTheKeyringUntouched(t *te
 func TestAFolderWithNoManifestAndMailLeftIsNeverComplete(t *testing.T) {
 	dir := smallArchive(t, t.TempDir())
 	r := newRig(t, dir)
-	appendRawLog(t, r.x.Log, map[string]any{"at": "2026-11-01T10:00:00Z", "event": "started", "folder": dir, "row": dir, "kind": "plain"})
+	appendRawLog(t, r.x.Log, map[string]any{"at": "2026-11-01T10:00:00Z", "event": "started", "folder": dir, "row": dir, "kind": "plain", "identity": idOf(t, dir)})
 	// The crash left mail and an index beside a removed manifest.
 	if err := os.Remove(filepath.Join(dir, manifestName)); err != nil {
 		t.Fatal(err)
@@ -200,25 +210,48 @@ func TestAStopBeforeStep8LeavesTheRowUnfinishedAndDeleteAgainFinishes(t *testing
 }
 
 // covers: MA-966, R36
-func TestANoManifestFolderLeftEmptyByItsReRunIsFinished(t *testing.T) {
-	// For the operator (§5.4 "never complete"): a folder that held only names §4 can
-	// still name is removed by the re-run, and with the folder gone nothing is left
-	// that the delete cannot identify, so the re-run finishes as the folder-gone
-	// re-run does (keyring, row) rather than asking for Delete again.
-	dir := smallArchive(t, t.TempDir())
+func TestANoManifestFolderLeftEmptyByItsReRunIsNeverCompleteAndDeleteAgainFinishes(t *testing.T) {
+	// §5.4 "never complete" (conformance 9, del-s1b-A1-02): a no-manifest re-run that
+	// removes the folder stops not fully deleted, without steps 8 and 9 — no keyring
+	// call, the row kept — and its `folder removed` line makes Delete again the
+	// folder-gone re-run, which finishes the keyring and the row.
+	dir := encryptedClean(t)
 	r := newRig(t, dir)
-	appendRawLog(t, r.x.Log, map[string]any{"at": "2026-11-01T10:00:00Z", "event": "started", "folder": dir, "row": dir, "kind": "plain"})
-	if err := os.RemoveAll(filepath.Join(dir, "Mailbox")); err != nil {
+	appendRawLog(t, r.x.Log, map[string]any{"at": "2026-11-01T10:00:00Z", "event": "started", "folder": dir, "row": dir,
+		"kind": "encrypted", "record_id": testArchiveID, "record_spelling": dir, "identity": idOf(t, dir)})
+	// The crash left only names §4 can still name: the vault and the sealed data gone.
+	ents, err := os.ReadDir(dir)
+	if err != nil {
 		t.Fatal(err)
 	}
-	if err := os.Remove(filepath.Join(dir, manifestName)); err != nil {
-		t.Fatal(err)
+	for _, en := range ents {
+		if err := os.RemoveAll(filepath.Join(dir, en.Name())); err != nil {
+			t.Fatal(err)
+		}
 	}
-	writeFile(t, filepath.Join(dir, "search.db"), "index")
+	writeFile(t, filepath.Join(dir, ".mailarchive-lastrun.json"), "{}")
 	p := r.plan(t)
+	if p.Rerun != RerunNoAnchor {
+		t.Fatalf("rerun %v", p.Rerun)
+	}
 	res := Execute(p, p.Name, false, r.x)
-	if p.Rerun != RerunNoAnchor || res.Status != StatusComplete || exists(dir) || len(r.rows) != 1 {
-		t.Fatalf("rerun %v: %s", p.Rerun, res.Message())
+	if res.Status != StatusPartial || !res.Unfinished || exists(dir) || len(r.rows) != 0 || len(r.kr.asked) != 0 ||
+		res.Lines[0] != "Not fully deleted: the files the delete could still name were removed, and the folder is gone. Click Delete again to finish." {
+		t.Fatalf("the no-manifest re-run is never complete and never asks the keyring: %s (asked %q rows %q)", res.Message(), r.kr.asked, r.rows)
+	}
+	if ev := events(logLines(t, r.x.Log)); strings.Join(ev[1:], ",") != "started,folder removed,finished partial" {
+		t.Fatalf("log %q", ev)
+	}
+	p = r.plan(t)
+	if p.Rerun != RerunFolderGone {
+		t.Fatalf("Delete again is the folder-gone re-run: %v", p.Rerun)
+	}
+	res = Execute(p, p.Name, false, r.x)
+	if res.Status != StatusComplete || res.KeyForgotten != "forgotten" || len(r.rows) != 1 || len(r.kr.asked) != 1 {
+		t.Fatalf("Delete again: %s", res.Message())
+	}
+	if u, _ := UnfinishedDelete(r.x.Log, dir, ""); u != nil {
+		t.Fatalf("finished: %+v", u)
 	}
 }
 
