@@ -1,6 +1,9 @@
 # Design: delete an archive, and remove one from the list
 
-Status: PROPOSED, revision 4 (2026-11-01).
+Status: PROPOSED, revision 5 (2026-11-01). Revision 4 (e01fe01) was verified
+("Fold verification of revision 4", new findings scoped to revision-4 text): 14
+items, each folded here with its fix text, marked [R4:<item>]. Deeper issues in
+unchanged text go to each build slice's adversarial pass (§13).
 - Revision 1 (3250479) was reviewed pre-code: `docs/review-archive-delete-predesign.md`,
   GO_WITH_CONDITIONS, conditions C1–C20.
 - Revision 2 (7bba813) folded them and the owner's rulings [O1], [O2]; its fold
@@ -71,8 +74,8 @@ protecting the folder."
    in `known-archives.json`: matched by file identity (`util.ResolveExisting` +
    `os.SameFile`) when the folder can be read; when it cannot (unplugged, or gone
    after an unfinished delete) matched only by the row's own recorded spelling,
-   exactly, and then only Remove from list, or Delete's remaining steps when
-   `deletions.log` has a `started` line with no `finished` line for that row (§5.4),
+   exactly, and then only Remove from list, or Delete's remaining steps when that
+   row has an unfinished delete (§5.4) [R4:NF-R4-CLI-STOP-DEADEND],
    are allowed. Read-only, it runs §7's refusals, the schedule discovery (§5.1), the
    file list (§4), the scratch listing [C7, R3:NF-C7-SCRATCH-NAME] — the archive's
    scratch folders are `app.archiveScratch(out, id)` (`app/scratch.go:33-39`, a hash
@@ -118,19 +121,25 @@ browser `confirm()`/`prompt()` [C19]:
   disabled until it matches) and **Cancel**;
 - opening a delete panel closes any other one.
 - **After a Delete** [C19]: the page does not reload (timed reloads are held) until
-  the person dismisses the result. The result and the deletion record's exact bytes (§8.1) are
-  held server-side until the person dismisses the result or shuts MailArchive down;
-  they arrive in the delete response and are shown again on every dashboard load;
-  **Save deletion record** saves those bytes (a Blob download), any number of times;
-  **Dismiss** is one POST through `d.api` (`/api/archive/delete/dismiss`, in §11's
-  route test); no one-use token is used [R3:NEW-FINDING-record-held-vs-sent]. Every
+  the person dismisses the result. Each delete's result and the deletion record's
+  exact bytes (§8.1) are held server-side, separately, keyed by a server-made id
+  (not a token) for that delete, until the person dismisses that result or shuts
+  MailArchive down; they arrive in the delete response, and every dashboard load
+  shows each held result where "Where the result sits" places it, each with its own
+  **Save deletion record** (a Blob download of those bytes, any number of times)
+  and **Dismiss** (one POST through `d.api`, `/api/archive/delete/dismiss {id}`, in
+  §11's route test); no one-use token is used [R3:NEW-FINDING-record-held-vs-sent,
+  R4:NF-R4-HELD-RESULTS-MANY]. A new Delete… on a row whose held record was not
+  saved first asks "Close without saving the deletion record?" Every
   reload the page starts itself is held while a result is held
   [R3:NF-R3-RESULT-RELOAD].
 - **Where the result sits** [R3:NF-R3-ROW-KEPT]: when step 9 removed the row, the
   result moves to the top of the Your archives card and the row's buttons go at
   once. When the row stays (step 8 skipped, or the delete stopped or was not fully
-  done), the result stays beside the row, the row keeps its buttons (Delete… makes a
-  new plan; Forget works), and the page still does not reload until the result is
+  done), the result stays beside the row, the row keeps Delete… (a new plan) and
+  Forget, and at once shows §5.4's "Delete not finished: click Delete again" in
+  place of Switch, Run now and Archive now whenever §5.4 would mark it
+  [R4:NF-R4-ROW-KEPT-BUTTONS]; the page still does not reload until the result is
   dismissed.
 
 ### 3.2 Remove from this list
@@ -194,12 +203,15 @@ The manifest is read through `os.Root` + `util.OpenRegularFileIn` +
 1 MiB) [C10]. Removed:
 - **Records** [C11]: a record's `Path` (and each `AlsoFiles` entry) counts only if
   it passes `util.ValidRecordedPath`, its first segment is a token in the
-  manifest's `Stores` (for a manifest loaded at a version below 3, which has no
-  Stores map, `state/manifest.go:313-317`, the store tokens are the first segments
-  of the records' Paths that pass `util.ValidRecordedPath` and `state.SafeToken`, as
-  Load's v2→v3 re-scope derives them, `manifest.go:799-801`; §4.1's run leftovers
-  and §4.3's "store tree" use the same token set) [R3:NEW-prev3-stores], and it
-  ends in `.html`; then exactly its stem's `.html`,
+  store token set: at every manifest version, the store tokens are the manifest's
+  `Stores` values together with the first segments of the records' Paths that pass
+  `util.ValidRecordedPath` and `state.SafeToken` — `Stores` holds only the stores a
+  run has assigned since version 3 (`app/run.go:1596`, `app/graph.go:744`), a
+  pre-v3 manifest has none (`state/manifest.go:313-317`), and Load drops or
+  collapses some (`state/manifest.go:877-890`); a recorded Path is as untrusted as a
+  Stores token, and C11's stem-only rule bounds both. §4.1's run leftovers and
+  §4.3's "store tree" use the same token set [R3:NEW-prev3-stores,
+  R4:NEW-R4-stores-gate]. And it ends in `.html`; then exactly its stem's `.html`,
   `-attachments.zip` and `.eml` are removed (as `reindex` derives them), never a
   bare `Path`. The whole delete is refused if a store tree holds another archive's
   marker (`.mailarchive-manifest.json`, an encrypted marker).
@@ -315,8 +327,9 @@ does for Delete [NF-REMOVE-CURRENT-BACKUPFOR]. If any are found the question nam
 them; Yes first checks each with §5.3 step 2's absent-entry rule (an absent one
 counts as stopped) and stops the rest with `schedule.RemoveLiveEntry` (never
 touches the folder); if `RemoveLiveEntry` fails, nothing else is changed and the
-result says "Could not stop the scheduled backup NAME: SCHEDULER ERROR. The row is
-kept." [R3:NEW-FINDING-A]. Otherwise it
+result says "Could not stop the scheduled backup NAME: SCHEDULER ERROR. Already
+stopped: NAMES (set them up again in Settings, or click Remove from list again).
+The row is kept." [R3:NEW-FINDING-A, R4:NF-R4-UNLIST-PARTIAL-STOP]. Otherwise it
 removes that name's job file and per-name config files (§5.3 step 3's list), and
 clears `BackupFor` when its entry was removed. Then `last-archive.txt` is cleared
 when it names the folder, `Out` is cleared when the folder is current (allowed only
@@ -331,20 +344,21 @@ result line:
 
 | Step | Success | On failure |
 |---|---|---|
-| 0. Log `started`: append and fsync a `started` line to `deletions.log` (date, folder, plan counts, §4.3's choice; for an encrypted archive the plan's record ID and Spelling, or "not recorded" [R3:NF-NF2-RERUN]) | written | stop: "Could not write MailArchive's deletion log, so nothing was deleted." |
-| 1. In this order [R3 conflict (1)]: (a) take the archive lock (`lockfile`, the lock a backup takes) and re-check the plan (§3.1) except the scratch listing; (b) encrypted: lock this archive in the page whether or not it is open (`d.cfg.Keys.lock(out)`, as Forget does at `encryption_forget.go:119`), and set a per-archive "being deleted" mark that the key registry checks in `open` the way `hushed` is, so every open of this archive — the person's own Unlock (typed or remembered) included — is refused with "This archive is being deleted." until the deferred cleanup releases the mark [R3:NF-R3-UNLOCK-MIDDELETE]; then wait for this page's reader of it to close and its scratch copy to go (a waiting close, as `lockAll` uses); (c) re-list the scratch folders (every spelling), where any held reader lock now refuses [R3:NF-C7-OWN-READER]. `Keys.hush` is not used: it locks every archive [C13]. | lock held, plan unchanged | (a) fails: §7's or §3.1's wording; nothing changed. From (b) on, every stop adds: "This archive was locked on this page; unlock it again to read it." [R3:C13] |
+| 0. Log `started`: append and fsync a `started` line to `deletions.log` (date, folder, plan counts, §4.3's choice; the archive's kind, plain or encrypted; for an encrypted archive the plan's record ID and Spelling, or "not recorded" [R3:NF-NF2-RERUN, R4:NF-R4-RERUN-PLAIN]) | written | stop: "Could not write MailArchive's deletion log, so nothing was deleted." |
+| 1. In this order [R3 conflict (1)]: (a) take the archive lock (`lockfile`, the lock a backup takes) and re-check the plan (§3.1) except the scratch listing; (b) encrypted: lock this archive in the page whether or not it is open, with one new registry call that, all under `k.mu`, does what `Keys.lock` does (remove the entry, set `held`, bump `gen`) and sets a per-archive "being deleted" mark that `open` checks the way `hushed` is — so an open begun before it loses on `gen`, and every open after it, the person's own Unlock (typed or remembered) included, is refused with "This archive is being deleted." until the deferred cleanup clears the mark [R3:NF-R3-UNLOCK-MIDDELETE, R4:NF-R3-UNLOCK-MIDDELETE] — and closes with `e.close(true)`, as `lockAll` does (`Keys.lock` closes without waiting, `keys.go:404`, `:172`, leaving nothing to wait on); only when that returns does (c) run [R4:NF-R4-LOCK-NO-WAIT]; (c) re-list the scratch folders (every spelling), where any held reader lock now refuses [R3:NF-C7-OWN-READER]. `Keys.hush` is not used: it locks every archive [C13]. | lock held, plan unchanged | (a) fails: §7's or §3.1's wording; nothing changed. From (b) on, every stop adds: "This archive was locked on this page; unlock it again to read it." [R3:C13] |
 | 2. Schedules: an entry counts as already absent only when the query says not installed and, on Windows, either schtasks says the task is missing (`schtasksSaysMissing`) or neither of its side-files (`<name>.xml`, `<name>.cmd` beside `DefaultWrapperPath`) exists — Pause and `RemoveLiveEntry` remove both (`wizard/pause.go`, `schedule.go:1225-1234`); an absent entry still has its side-files removed (`removeSchtasksSideFiles`). Any other entry goes to `RemoveLiveEntry` [R3:NEW-FINDING-1]; for the current archive, §5.1 (c)'s two. | every entry removed or absent | stop: "Could not stop the scheduled backup NAME: SCHEDULER ERROR. Already stopped: NAMES (set them up again in Settings, or click Delete again). Nothing else was changed." plus step 1's locked line when it applies; this `finished partial` marks the row "Delete not finished" (§5.4) [R3:NF-C18-NOTHING-CHANGED] |
 | 3. Per-name config files, for each discovered name: `<name>.json` (`schedule.RemoveJobFile`), `<name>.jobfail.log`, `<name>.older.jobfail.log`; `<key>.alert-streak` and `<key>.sync-alert` for `backupalert.KeyFor` of each discovered entry's `-out` spelling [C6]; `last-failure.json` only when its `Name` is one of them | every listed file gone or absent | stop: "Could not remove FILE in MailArchive's settings folder." |
 | 4. Settings and pointers: `Out` cleared if this is the current archive (the page then shows "No archive chosen yet", or the folder given with `-out` at launch when there is one [C16]); `BackupFor` cleared if it names the folder, and always when this is the current archive [C4]; `last-archive.txt` cleared if it names the folder | the settings write succeeds | stop: "Could not save MailArchive's settings, so this archive is still chosen. Click Delete again." |
 | 5. Scratch (encrypted) [C7]: re-list the archive's scratch folders (every spelling, §3.1) under the lock with the single-archive `ScratchTargets` rule (only those folders, never the scratch root or another archive's) and remove them | removed or absent | stop, `finished partial`: "MailArchive's working folder for this archive is in use or holds files it did not put there: FOLDER. Steps done: schedules stopped, their settings files removed, settings updated, archive locked. Close MailArchive serve, search or other windows, then click Delete again." (never "nothing changed") |
 | 6. The folder's contents (§4), the manifest or vault last, `.mailarchive.lock` kept (it is held) | no recorded name remains (§8 (a)) | continue to 7's release, then stop with §8 (a)'s result |
 | 7. Release the lock (the file stays, `lockfile.go:111-114`); remove `.mailarchive.lock` by its exact name, retrying briefly (Windows cannot delete a held file); remove the folder if empty but for litter; append a durable `folder removed` or `folder kept` line to `deletions.log` [C2] | the lock released | — (an empty folder left is reported, not a failure; a lock file left: "Deleted. One MailArchive lock file (.mailarchive.lock) could not be removed: delete it by hand." and the delete is complete [R3:NF-C1-RESULT]) |
-| 8. Keyring (encrypted) [C8, NF-1, NF-2]: only when the folder is gone, or `encmark.At` classifies it Gone (only an unheld `.mailarchive.lock` and litter remain). A fresh `PlanForget` on the Spelling the plan recorded (not the row's path; on a §5.4 re-run, the ID and Spelling from the original `started` line, never a new lookup) [R3:NF-NF2-RERUN], case Gone. When the folder still exists, `keyring.Forget` takes its archive lock (`forget.go:137, 173-189`), which re-creates `.mailarchive.lock`; after Forget returns, step 8 removes that file again by its exact name and retries removing the folder, as step 7 does; a lock held by a run at that moment skips step 8 with its skipped line [R3:NF-NF1-LOCK]. `Whole` and `Keys` only when `plan.Last`; otherwise forget only this path, keep the key, and the result names the other recorded copies. "Never recorded" means the plan found no record, not a step-8 lookup failure: then no record is touched. | forgotten, or not applicable | skipped: "Files deleted; this computer still remembers its key: use Forget this encrypted archive here." |
+| 8. Keyring (encrypted) [C8, NF-1, NF-2]: only when the folder is gone, or `encmark.At` classifies it Gone (only an unheld `.mailarchive.lock` and litter remain). A fresh `PlanForget` on the Spelling the plan recorded (not the row's path; on a §5.4 re-run, the ID and Spelling from the original `started` line, never a new lookup) [R3:NF-NF2-RERUN], case Gone. When the folder still exists, `keyring.Forget` takes its archive lock (`forget.go:137, 173-189`), which re-creates `.mailarchive.lock`; after Forget returns, step 8 removes that file again by its exact name and retries removing the folder, as step 7 does; a re-created `.mailarchive.lock` that cannot be removed gets step 7's result line ("Deleted. One MailArchive lock file (.mailarchive.lock) could not be removed: delete it by hand.") and the delete is still complete [R4:NF-NF1-LOCK]; when that retry removes the folder, step 8 appends a durable `folder removed` line to `deletions.log` (after step 7's `folder kept`; §5.4 reads the last one) and the result's folder line becomes "The folder is gone", with step 7's lock-file or empty-folder line dropped [R4:NF-R4-STEP8-FOLDER-LOG]; a lock held by a run at that moment skips step 8 with its skipped line [R3:NF-NF1-LOCK]. `Whole` and `Keys` only when `plan.Last`; otherwise forget only this path, keep the key, and the result names the other recorded copies. "Never recorded" means the plan found no record, not a step-8 lookup failure: then no record is touched. | forgotten, or not applicable | skipped: "Files deleted; this computer still remembers its key: use Forget this encrypted archive here." |
 | 9. The row: `archindex.Forget` — only when step 8 is done or does not apply (so a skipped step 8 keeps the row and its Forget button) [C18] | removed | "Could not remove the row from Your archives." |
 | 10. The deletion record (§8.1) is built first; then log `finished complete` / `finished partial` / `finished refused` with what was left and the record's digest | written | the result says "This record's digest could not be added to deletions.log." |
 
-Releasing the archive lock (step 7's first part) and step 10 always run, in a
-deferred cleanup, also after a refusal or a recovered panic. The delete handler
+Releasing the archive lock (step 7's first part), clearing the "being deleted"
+mark, and step 10 always run, in a deferred cleanup, also after a refusal or a
+recovered panic [R4:NF-R3-UNLOCK-MIDDELETE]. The delete handler
 recovers its own panics and reports the steps done, never "nothing was changed"
 after step 0 (`d.api`'s recover, `workspace.go:131-132`, would say so) [C18].
 
@@ -367,12 +381,18 @@ and Archive now. A re-run:
 - treats the folder as gone only when the log has its `folder removed` line and
   the folder's parent is reachable; then it skips steps 1 and 5–7, says so, and
   runs the rest (config side, keyring, row) and step 10. Step 8 uses the ID and
-  Spelling from the original `started` line, not a new lookup; when that line has
-  none, step 8 is skipped with its skipped line and the row is kept
-  [R3:NF-NF2-RERUN];
+  Spelling from the original `started` line, not a new lookup. For a plain archive,
+  or an encrypted one whose line says "not recorded", step 8 does not apply (no
+  record is touched; step 9 removes the row); only an encrypted archive's line with
+  neither an ID and Spelling nor "not recorded" skips step 8 with its skipped line
+  and keeps the row [R3:NF-NF2-RERUN, R4:NF-R4-RERUN-PLAIN];
 - a `finished partial` written after step 2 began (step 2's stop, or a command-line
-  stop when a Desktop appears) also marks the row "Delete not finished: click Delete
-  again" [R3:NF-C18-NOTHING-CHANGED, R3:C17];
+  stop when a Desktop appears; not a §4.3 ticked-file failure, whose row step 9
+  removed [R4:NEW-R4-ticked-delete-again]) also marks the row "Delete not finished:
+  click Delete again", and for §3.1's unreachable-row rule and §7's not-reachable
+  row such a delete counts as unfinished: a re-run with a `folder removed` line and
+  a reachable parent continues as the folder-gone re-run [R3:NF-C18-NOTHING-CHANGED,
+  R3:C17, R4:NF-R4-CLI-STOP-DEADEND];
 - when the folder is not reachable and there is no `folder removed` line, refuses:
   "Reconnect the drive or folder first" (a drive unplugged after a crash in step 6
   must not make the keyring step forget a vault still on that drive);
@@ -404,7 +424,7 @@ Each names the cause and a remedy that can be done from the row; nothing changes
 | a backup, Run now, verify, pre-sync session, Desktop capture (`d.cap.running`) or workspace job on this archive is running [C12] | "A backup of this archive is running. Try again when it ends." | allowed |
 | MailArchive serve, search or another MailArchive window has this encrypted archive open (reader lock) [C7] | "Close MailArchive serve, search or other MailArchive windows for this archive first." | allowed |
 | a scratch folder of this archive (any spelling, §3.1) holds something MailArchive did not put there [C7] | "MailArchive's working folder for this archive holds files it did not put there: FOLDER. Remove them, then click Delete again." | allowed |
-| the folder is not reachable | "Reconnect the drive or folder first: nothing can be checked." — unless §5.4's `folder removed` line exists for an unfinished delete and the folder's parent is reachable; then the re-run continues [C2] | allowed; when it is the current archive, `Out` is cleared [C3] |
+| the folder is not reachable | "Reconnect the drive or folder first: nothing can be checked." — unless §5.4's `folder removed` line exists for an unfinished delete (§5.4) and the folder's parent is reachable; then the re-run continues [C2, R4:NF-R4-CLI-STOP-DEADEND] | allowed; when it is the current archive, `Out` is cleared [C3] |
 | the folder is no longer an archive (by §4's test), no unfinished delete | "This folder no longer holds an archive. Use Remove from list." | allowed; `Out` cleared when current [C3] |
 | paused (read-only) | allowed: the seal goes with the folder; the plan says "This archive is paused." [C13] | allowed |
 | current archive | allowed (§5.3 step 4) | refused while reachable and an archive: "This is the archive in use. Switch to another archive, or add one (Add another archive), then remove this one from the list." [C3] |
@@ -433,7 +453,9 @@ Three kinds of leftover:
 - (a) A name the archive recorded or owns (or a §4.3 file the person ticked) that
   could not be removed. It keeps the manifest/vault for a recorded name (so Delete
   can be run again) and the result is "Not fully deleted. N files could not be
-  removed:" with up to 10 names and a remedy by error type: a sharing violation,
+  removed:" with up to 10 names and a remedy by error type (when only §4.3 files
+  the person ticked are left, the remedy is §4.3's "delete them by hand", never
+  "click Delete again" [R4:NEW-R4-ticked-delete-again]): a sharing violation,
   "Close Outlook or any program using them, then click Delete again"; access
   denied, "Windows security or antivirus blocked it: allow MailArchive or delete
   these by hand"; a device gone, "Reconnect the drive, then click Delete again". A
@@ -506,8 +528,10 @@ MailArchive keeps no copy after you close this result." [O2-07, R3:O2-07]
     plan; the schedules stopped and those "not removed: check it yourself"; whether
     this computer's record and key were forgotten; §4.3's choice and count;
   - each leftover kind with its count; a leftover is named only by its store's number
-    in the plan (store 1, store 2, … in the order the plan lists the stores, from
-    §4.1's token set) and the date-and-hash parts of its stem (for example
+    (store 1, store 2, … numbered in the byte order of the store tokens, §4.1's
+    token set, so the saved plan, the record and the screen agree; the on-screen
+    plan and result show each store's number beside its full name
+    [R4:NF-R4-STORE-NUMBER-ORDER]) and the date-and-hash parts of its stem (for example
     `store 1/…/2024-03-01_0900_…_ab12cd34.html`); a store token, which can be a
     mailbox address, is never written, nor a folder name below it or a subject slug
     — the full names are shown only on screen [O2-01, R3:O2-01];
@@ -570,7 +594,10 @@ twin first.
   and the result is "Deleted… The folder is kept" (never "Not fully deleted");
   `.DS_Store` / `desktop.ini` in a store subfolder, ends "Deleted" [C5].
 - Q1 fixtures: an archive written at manifest versions 1, 2, 3, 4, 5 and 6 (the
-  version-1 and version-2 fixtures have no Stores map [R3:NEW-prev3-stores]), and
+  version-1 and version-2 fixtures have no Stores map [R3:NEW-prev3-stores]; a
+  version-6 manifest whose Stores map lacks a store that still has records — a
+  version-2 archive of two stores, upgraded by a run of one — has that store's mail
+  removed [R4:NEW-R4-stores-gate]), and
   one left by a crashed run (temps, snapshot, orphan zip, `search.db.rebuild`):
   every file the archive wrote is removed or listed [C9].
 - §4.3: unrecorded copies (including a person's own `x-attachments.zip`) kept by
@@ -583,13 +610,17 @@ twin first.
 - Encrypted: folder gone, record and key forgotten (`plan.Last`); another recorded
   copy keeps the key [C8]; a folder kept only for an unheld lock file or litter
   still forgets the record, and no `.mailarchive.lock` is left in the kept folder
-  [NF-1, R3:NF-NF1-LOCK]; the record found by the plan's Spelling after the folder
+  [NF-1, R3:NF-NF1-LOCK]; a folder kept at step 7 only for a held lock file and
+  removed by step 8's retry → `folder removed` is logged and the result says the
+  folder is gone [R4:NF-R4-STEP8-FOLDER-LOG]; the record found by the plan's Spelling after the folder
   is gone [NF-2]; a crashed run's scratch under another spelling of the folder is
   removed [C7, R3:NF-C7-SCRATCH-NAME]; Delete of a large encrypted archive open in
   this page (index in scratch) is not refused and completes [R3:NF-C7-OWN-READER];
   an Unlock of the archive (typed or remembered) sent between step 1 and step 10 is
   refused, and no scratch folder of it exists after the delete
-  [C13, R3:NF-R3-UNLOCK-MIDDELETE].
+  [C13, R3:NF-R3-UNLOCK-MIDDELETE]; an Unlock started at the moment of step 1 (b)
+  either loses or is refused, and no reader of the archive is made after step 5; a
+  refusal after step 1 (b) leaves the archive unlockable again [R4:NF-R3-UNLOCK-MIDDELETE].
 - Order: the manifest/vault removed last (a fault before it leaves a recognised
   archive, re-run finishes); schedules first (a recording fake scheduler);
   `started` before the first removal; each step's stop wording (§5.3's table); the
@@ -600,7 +631,11 @@ twin first.
   step 6 then the drive unplugged → re-run refused, keyring untouched; a folder with
   no manifest and mail files left → `finished partial`, never complete [C2]; a step-2
   stop after one entry was removed names it as "Already stopped" and marks the row
-  "Delete not finished" [R3:NF-C18-NOTHING-CHANGED].
+  "Delete not finished" [R3:NF-C18-NOTHING-CHANGED]; a crash after `folder removed`
+  for a plain archive → the re-run removes the row and never mentions a key
+  [R4:NF-R4-RERUN-PLAIN]; a command-line delete stopped before step 8 by a Desktop,
+  after the folder was removed → Delete again from the Desktop finishes (keyring,
+  row) [R4:NF-R4-CLI-STOP-DEADEND].
 - The lock: deleted under the lock, then the lock file and folder gone (Windows
   lab) [C1].
 - Discovery: a custom `-name`, two `-name` installs (Windows, Linux; macOS: the
@@ -636,7 +671,8 @@ twin first.
 - Remove from list: the row gone and not re-added; folder byte-identical; schedules
   named and stopped only after Yes; unplugged drive; current + unreachable clears
   Out [C3]; a paused archive on a scheduler whose "missing" message is not English
-  is removed from the list [R3:NEW-FINDING-A].
+  is removed from the list [R3:NEW-FINDING-A]; a second entry that fails after the
+  first was stopped names the first as "Already stopped" [R4:NF-R4-UNLIST-PARTIAL-STOP].
 - Emptied-folder guard: an unattended run refuses a non-empty folder with no
   archive; a first run into an empty folder and into one holding only the
   descriptor still works; a run passes the pre-lock check, a delete completes, the
@@ -665,7 +701,10 @@ twin first.
   reload from another action until dismissed; Save works more than once
   [R3:NF-R3-RESULT-RELOAD, R3:NEW-FINDING-record-held-vs-sent]; after a partial
   delete, Delete… and Forget work from the row without dismissing the result
-  [R3:NF-R3-ROW-KEPT]; the unsaved-record question [C19, O2-07].
+  [R3:NF-R3-ROW-KEPT], and Switch, Run now and Archive now are not offered on the
+  row before dismissal [R4:NF-R4-ROW-KEPT-BUTTONS]; two deletes before either result
+  is dismissed: both records stay savable, and each is dismissed on its own
+  [R4:NF-R4-HELD-RESULTS-MANY]; the unsaved-record question [C19, O2-07].
 - Plan and deletion record [O2]: the saved plan deletes nothing; the record's fields
   for a complete, a partial, a refused-after-start and a plan; a complete delete's
   record shows the first run, the last backup, the message count and the date
@@ -674,11 +713,16 @@ twin first.
   and folder names contain the planted subject — neither the saved plan nor the
   record contains it [O2-01]; a Microsoft 365 archive whose store token is the
   mailbox address: the address appears in neither [R3:O2-01]; an archive folder
-  whose name (Linux/macOS) contains a newline followed by "Status: complete", and a
-  schedule name or manifest value that reaches the record with the same text,
-  leave exactly one Status line, saying "not fully deleted" — prove-fail: remove
-  `util.StripControl` from the record writer [O2-06,
-  R3:NEW-FINDING-o206-test-cannot-fail]; a record for a locked encrypted archive
+  whose name (Linux/macOS) contains a newline followed by "Status: complete", plus a
+  carriage return, an ESC (0x1b) and U+0085, and a schedule name or manifest value
+  that reaches the record with the same text, leave exactly one Status line, saying
+  "not fully deleted", and the record holds no character below 0x20 except its line
+  ends, no 0x7f and none in 0x80–0x9f — two prove-fails: removing
+  `util.StripControl` (the control-character assertion goes red) and removing the
+  newline replacement (the one-Status-line assertion goes red) [O2-06,
+  R3:NEW-FINDING-o206-test-cannot-fail, R4:NF-R4-STRIPCONTROL-PROVEFAIL]; an
+  archive with two stores gives the same store numbers in the saved plan and the
+  record [R4:NF-R4-STORE-NUMBER-ORDER]; a record for a locked encrypted archive
   shows the three sealed values as not known and no other value [O2-05]; a saved
   record re-hashed without its last line equals the `finished` line's digest
   [O2-03]; a saved plan and the record of the same unchanged archive carry identical
@@ -699,7 +743,7 @@ waiting close, not `hush` [C13, R3:NF-R3-UNLOCK-MIDDELETE]; Q4 →
    scheduler, settings and keyring; `deletions.log`; the record text (§8.1).
 2. **Emptied-folder guard** (engine, §7): the re-check under the run's lock and no
    `MkdirAll` for unattended runs.
-3. **Desktop**: the three routes, the row buttons, the panel, the result, Save this
+3. **Desktop**: the four routes (plan, delete, dismiss, unlist) [R4:NF-R4-THREE-ROUTES], the row buttons, the panel, the result, Save this
    plan / Save deletion record, "Delete not finished" rows.
 4. **Command line**: `delete-archive`, `unlist-archive`, `-plan-out`, `-record-out`,
    X1.
