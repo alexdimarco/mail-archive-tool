@@ -758,3 +758,61 @@ R3:NF-R3-UNLOCK-MIDDELETE, R5:NF-R5-Q3-KEYSLOCK]; Q4 →
    X1.
 5. **Uninstall and the guide**: `deletions.log` in `ConfigTargets`, the uninstall
    plan's line, the guide's two sections.
+
+## 14. Build notes (1 November 2026, from slices 2, 1a and 1b)
+
+Rulings the builders' adversarial passes asked for, made in the main session under the
+owner's standing instruction to make technical calls and surface only product rulings.
+The text above is unchanged; where it and this section differ, this section is what was
+built. Each is in its catalog row.
+
+**Slice 2, the emptied-folder guard (MA-956).**
+- *MailArchive's own files are not the person's.* Read literally, "anything beyond
+  litter" refused a first run after a refused start (MA-646's `.mailarchive-lastrun.json`)
+  and a settings folder kept in the archive folder (CC16 warns, not refuses). Built: the
+  run records a refused run leaves (`.mailarchive-lastrun.json`,
+  `BACKUP-NEEDS-ATTENTION.txt`, `.mailarchive-runhistory.json`,
+  `.mailarchive-sourcestreak.json`), the lock file, and the caller's own files directly in
+  the folder (`OwnFiles`: its log and the scheduler's stderr file, `_outlook-pst`, the
+  Desktop's settings folder, the credential file), matched by file identity, count as
+  MailArchive's. Delete removes all of them before the manifest, so a part-way delete
+  still leaves its manifest.
+- *A run that saw the archive is held to it.* A run that found an archive at any of its
+  checks (or its caller's entry check, `Options.ArchiveAtEntry`) is refused under its lock
+  when the folder holds none, whatever is left. On Windows a delete cannot remove a file
+  the run holds open (its log, its PSTs), so own files excuse only a run that never saw
+  an archive. This is stricter than §7 above.
+- *"Is there an archive here" opens, it does not parse.* The manifest or descriptor must
+  be a regular, non-empty file opened inside the folder without a link; an encrypted
+  archive is whatever `encmark.Here` says (MA-770's gate: never `vault.EncryptedMarker`
+  outside encmark and vault, here or in §4). A manifest that opens but does not parse
+  passes the guard and fails as `manifest_unreadable` under the run's lock, before any
+  write.
+- *"Save and keep" into a folder that already holds files* (finding A3-02): left to the
+  guard for now (the first scheduled backup there is refused with the guard's words).
+  Slice 3 refuses it at Save, in the same words, so the person is not told later.
+
+**Slice 1a, the plan (MA-957..MA-963).**
+- Three refusals added to §7: the manifest cannot be read (`CaseUnreadable`), is from a
+  newer MailArchive (`CaseNewerFormat`), or this computer's record of encrypted archives
+  cannot be read (`CaseRecord`). None calls the folder "no longer an archive", so Remove
+  from list cannot clear an archive in use because of a read error.
+- `desktop.ini` and the macOS folder-icon file at the archive folder's root are kept, not
+  litter (they may be the person's folder settings); in store subfolders they stay litter.
+- The fixed names gain the rotated run logs (`.log.1`).
+- A descriptor whose recorded folder is another spelling or another folder is named,
+  not stopped: a schedule copied from an unplugged archive is "check it yourself".
+
+**Slice 1b, the steps (MA-964..MA-970).**
+- The `started` line (§5.3 step 0) also records the folder's identity and the delete's
+  run id; every later line carries the run id; a `key forgotten` line follows step 8. A
+  different folder at the same path is never taken for an unfinished delete, and
+  overlapping deletes keep their own state.
+- A re-run on a folder with no manifest never finishes "complete" and never runs steps 8
+  and 9; "Delete again" finishes them (§5.4 as written).
+- On macOS and Linux, step 7 re-takes the archive lock for the instant it removes the
+  lock file, so a lock a backup took after step 7's release is never removed.
+- Slices 3 and 4 must pass `UnlistDeps.Named` (the names Remove from list's question
+  showed), `SettingsDir` (a Desktop started with `-config`) and, in the keyring adapter,
+  `keyring.ForgetPlan.ID` into `KeyPlan.ID` (without it step 8 always skips: safe, but
+  the key is never forgotten).
