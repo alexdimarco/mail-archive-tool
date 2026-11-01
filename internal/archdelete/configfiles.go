@@ -113,7 +113,13 @@ func forgetRowIn(settingsDir, row, goos string) error {
 		}
 		dir = d
 	}
-	path := filepath.Join(dir, archindex.Name)
+	return ForgetRowAt(filepath.Join(dir, archindex.Name), row, goos)
+}
+
+// ForgetRowAt is forgetRowIn for the list of archives at path (a Desktop's known-archives.json
+// wherever it keeps it, MA-973): every entry naming the folder row is removed, and
+// ErrRowNotListed when none does, nothing written.
+func ForgetRowAt(path, row, goos string) error {
 	idx, err := archindex.ReadFile(path)
 	if err != nil {
 		return err

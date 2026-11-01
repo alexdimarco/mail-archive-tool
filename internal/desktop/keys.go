@@ -54,7 +54,10 @@ type archiveKeys struct {
 	busy     map[string]bool   // an open under way: deriving its key, or a remembered key looked up
 	held     map[string]bool   // locked by the person: no silent re-open this process (O3)
 	gen      map[string]uint64 // bumped for an archive each time it is locked: an open begun before loses
-	hushed   int               // opens refused meanwhile: every remembered key is being forgotten
+	// deleting counts the deletes under way of an archive (design-archive-delete §5.3 step 1
+	// (b), MA-974): every open of it is refused meanwhile, the person's own Unlock included.
+	deleting map[string]int
+	hushed   int // opens refused meanwhile: every remembered key is being forgotten
 	forgets  uint64            // bumped by every forget-all: a key change prepared across one is not kept
 	closed   bool              // Shut down: nothing more is unlocked, for good
 	// uninstalling counts confirmed uninstalls under way: nothing is unlocked
@@ -184,7 +187,7 @@ func (e *keyEntry) close(wait bool) {
 
 func newArchiveKeys(store graphconfig.SecretStore, note string) *archiveKeys {
 	k := &archiveKeys{store: store, now: time.Now, note: note,
-		entries: map[string]*keyEntry{}, busy: map[string]bool{}, held: map[string]bool{}, gen: map[string]uint64{}}
+		entries: map[string]*keyEntry{}, busy: map[string]bool{}, held: map[string]bool{}, gen: map[string]uint64{}, deleting: map[string]int{}}
 	k.lastUsed = k.now()
 	return k
 }
@@ -258,6 +261,9 @@ func (k *archiveKeys) open(out string, silent bool, may func(abs string) bool, o
 	case k.shut():
 		k.mu.Unlock()
 		return nil, errKeysClosed
+	case k.deleting[key] > 0:
+		k.mu.Unlock()
+		return nil, errBeingDeleted
 	case k.hushed > 0 && !silent:
 		k.mu.Unlock()
 		return nil, errKeysHushed
@@ -404,6 +410,52 @@ func (k *archiveKeys) lock(out string) {
 		e.close(false)
 	}
 	k.locked(key)
+}
+
+// errBeingDeleted refuses every open of an archive a delete has locked (MA-974).
+var errBeingDeleted = errors.New("This archive is being deleted.")
+
+// LockForDelete is the delete's step 1 (b) (design-archive-delete §5.3, §12 Q3;
+// archdelete.KeyRegistry): all under the registry's lock it does what lock does — the
+// archive's entry removed, held set, its generation bumped, so an open begun before it loses —
+// and sets the archive's "being deleted" mark, which every open checks, the person's own
+// Unlock (typed or remembered) included, until EndDelete; then it closes the archive's reader
+// and waits for it (close(true), as lockAll does: lock's close does not wait, R4:NF-R4-LOCK-
+// NO-WAIT). It never hushes: that would lock every archive (C13).
+func (k *archiveKeys) LockForDelete(folder string) error {
+	if k == nil {
+		return errors.New("MailArchive Desktop keeps no encrypted archives open here")
+	}
+	_, key := keyOf(folder)
+	k.mu.Lock()
+	e := k.entries[key]
+	delete(k.entries, key)
+	k.held[key] = true
+	k.gen[key]++
+	k.deleting[key]++
+	k.mu.Unlock()
+	if e != nil {
+		e.close(true)
+	}
+	k.locked(key)
+	return nil
+}
+
+// EndDelete clears the "being deleted" mark LockForDelete set; the archive stays locked
+// (held) until the person unlocks it again.
+func (k *archiveKeys) EndDelete(folder string) {
+	if k == nil {
+		return
+	}
+	_, key := keyOf(folder)
+	k.mu.Lock()
+	if k.deleting[key] > 0 {
+		k.deleting[key]--
+	}
+	if k.deleting[key] == 0 {
+		delete(k.deleting, key)
+	}
+	k.mu.Unlock()
 }
 
 // lockExcept locks every open archive but the one at out: the current archive

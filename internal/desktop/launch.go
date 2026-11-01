@@ -460,6 +460,10 @@ func serveInstance(ctx context.Context, h *instance.Holder, o *launchOpts, env *
 	dcfg.Former = former
 	dcfg.Ended = ended
 	dcfg.NewLink = func() string { return sess.Link(origin, localweb.LinkTTL) }
+	// The reader is made first so a Delete can close its index of the archive it deletes
+	// (design-archive-delete §9 "Open files", MA-974); it is given the finished config below.
+	rmx := &readerMux{}
+	dcfg.ReaderHold = rmx.holdFor
 
 	keyHex, key := instance.NewKey()
 	handoffH := &instance.Handoff{
@@ -471,7 +475,8 @@ func serveInstance(ctx context.Context, h *instance.Holder, o *launchOpts, env *
 	}
 	// DisableGeneralOptionsHandler: net/http would answer OPTIONS * before the Host guard (AC8).
 	dash := &http.Server{Handler: dashboardHandler(dcfg, ln.Addr(), sess, handoffH), ReadHeaderTimeout: 10 * time.Second, IdleTimeout: 2 * time.Minute, DisableGeneralOptionsHandler: true}
-	rm := ReaderHandler(dcfg)
+	rmx.cfg = dcfg
+	var rm http.Handler = rmx
 	reader := &http.Server{Handler: readerHandler(rm, readerLn.Addr(), sess), ReadHeaderTimeout: 10 * time.Second, IdleTimeout: 2 * time.Minute, DisableGeneralOptionsHandler: true}
 
 	exe, _ := os.Executable()

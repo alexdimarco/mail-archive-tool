@@ -36,7 +36,11 @@ type pendingItem struct {
 	programOff bool
 	// copyPlan is an unencrypted copy planned and awaiting its confirmation (§10, X14).
 	copyPlan *app.DecryptPlan
-	lease    *keyring.Unlocked
+	// deletePlan is a delete planned from a row of Your archives and awaiting its typed name
+	// (design-archive-delete §3.1, MA-972): its key is deletePlanKey's, never an archive's own,
+	// so it neither replaces nor is replaced by a key change of that archive.
+	deletePlan *heldPlan
+	lease      *keyring.Unlocked
 	// file is the recovery file saved for it, "" while none: written only while the
 	// item is in the store, under its lock, so a discard always sees it.
 	file  string
@@ -48,12 +52,14 @@ type pendingItem struct {
 func isKeyChange(it *pendingItem) bool  { return it.rec != nil || it.res != nil || it.make != nil }
 func isForgetPlan(it *pendingItem) bool { return it.plan != nil }
 func isCopyPlan(it *pendingItem) bool   { return it.copyPlan != nil }
+func isDeletePlan(it *pendingItem) bool { return it.deletePlan != nil }
 
 // ofCurrentArchive is an item prepared on the current archive's own card — a new
 // recovery key, a key file to put back, a copy planned — which a switch away
-// discards.
+// discards; and a delete planned from any row, which a switch ends too: the plan read
+// which archive was current (its schedules, §5.1 (c), and step 4), so it is planned again.
 func ofCurrentArchive(it *pendingItem) bool {
-	return it.rec != nil || it.res != nil || it.copyPlan != nil
+	return it.rec != nil || it.res != nil || it.copyPlan != nil || it.deletePlan != nil
 }
 
 // recoveryKey is the new recovery key it shows.
@@ -100,6 +106,8 @@ func (it *pendingItem) discard() {
 	if it.file != "" {
 		_ = keyring.VoidFile(it.file)
 	}
+	// A delete plan (deletePlan) holds no secret and changed nothing: dropping the item from
+	// the store, which every path to here has done, is its whole discard.
 }
 
 // pendingSecrets holds the prepared key changes.

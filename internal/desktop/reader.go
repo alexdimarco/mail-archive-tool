@@ -23,6 +23,44 @@ type readerMux struct {
 	curOut string
 	h      http.Handler
 	ix     *index.Index
+	// held counts the deletes under way of an archive (by keyOf), during which the reader
+	// does not open it (holdFor, MA-974).
+	held map[string]int
+}
+
+// readerDeletingNote is what the reader says of an archive a Delete is removing.
+const readerDeletingNote = "This archive is being deleted."
+
+// holdFor closes the reader's index of the archive at out, if it has it open — Windows
+// cannot delete a file the reader holds (design-archive-delete §9 "Open files") — and keeps
+// the reader from opening that archive until release is called: a Delete's step 1 needs the
+// page's own reader closed first (MA-974).
+func (rm *readerMux) holdFor(out string) (release func()) {
+	_, key := keyOf(out)
+	rm.mu.Lock()
+	if rm.held == nil {
+		rm.held = map[string]int{}
+	}
+	rm.held[key]++
+	if rm.curOut != "" {
+		if _, cur := keyOf(rm.curOut); cur == key {
+			if rm.ix != nil {
+				rm.ix.Close()
+			}
+			rm.ix, rm.h, rm.curOut = nil, nil, ""
+		}
+	}
+	rm.mu.Unlock()
+	var once sync.Once
+	return func() {
+		once.Do(func() {
+			rm.mu.Lock()
+			if rm.held[key]--; rm.held[key] <= 0 {
+				delete(rm.held, key)
+			}
+			rm.mu.Unlock()
+		})
+	}
 }
 
 // ReaderHandler returns the archive-reader handler for cfg's current archive.
@@ -34,6 +72,11 @@ func (rm *readerMux) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	if out == "" {
 		rm.mu.Unlock()
 		http.Error(w, "No archive location set yet — open MailArchive Desktop and choose one.", http.StatusServiceUnavailable)
+		return
+	}
+	if _, key := keyOf(out); rm.held[key] > 0 {
+		rm.mu.Unlock()
+		http.Error(w, readerDeletingNote, http.StatusServiceUnavailable)
 		return
 	}
 	// An encrypted archive is read through the Desktop's own open of it, never by

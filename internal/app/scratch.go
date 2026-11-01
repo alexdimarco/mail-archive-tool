@@ -39,6 +39,19 @@ func archiveScratch(out string, id vault.ID) (string, error) {
 	return filepath.Join(root, hex.EncodeToString(sum[:16])), nil
 }
 
+// ArchiveScratchFor is archiveScratch for an archive id in its hex form (vault.ID.String, as
+// this computer's record keeps it): a delete removes the scratch folder of each spelling of
+// the archive's folder (design-archive-delete §3.1, §5.3 step 5; MA-973).
+func ArchiveScratchFor(out, archiveID string) (string, error) {
+	var id vault.ID
+	b, err := hex.DecodeString(archiveID)
+	if err != nil || len(b) != len(id) {
+		return "", fmt.Errorf("%q is not an archive id", archiveID)
+	}
+	copy(id[:], b)
+	return archiveScratch(out, id)
+}
+
 // snapshotDir is where a run's -copy-first snapshots go: the archive itself for a
 // plaintext run (MA-100, the drive the operator chose and sized), the archive's
 // scratch folder for an encrypted one. A run without -copy-first takes none.

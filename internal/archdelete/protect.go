@@ -19,6 +19,9 @@ type Protected struct {
 	// folder and this computer's record of encrypted archives: Delete refuses a
 	// folder that is, contains or is inside one.
 	Config, Scratch, Record string
+	// Settings are further settings folders refused as Config is: the Desktop's own when it
+	// was started with -config (filepath.Dir of that file), which is not job.Dir() (MA-973).
+	Settings []string
 	// Archives are the known archives (the rows of Your archives): Delete refuses a
 	// folder that contains or is inside another one; the row that is this folder is
 	// not another.
@@ -58,7 +61,7 @@ func RecordLookup(folder string) (RecordRef, error) {
 // checkProtected refuses a protected folder (§7): "MailArchive will not delete this
 // folder: it is (or is inside, or holds) NAME. Delete the archive's files by hand."
 func checkProtected(abs string, p Protected) error {
-	for _, d := range []string{p.Config, p.Scratch, p.Record} {
+	for _, d := range append([]string{p.Config, p.Scratch, p.Record}, p.Settings...) {
 		if d == "" {
 			continue
 		}

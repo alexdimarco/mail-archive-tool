@@ -18,14 +18,13 @@ import (
 	"os/user"
 	"path/filepath"
 	"runtime"
-	"sort"
 	"strings"
 	"sync"
 	"sync/atomic"
 	"time"
 
 	"mail-archive-tool/internal/app"
-	"mail-archive-tool/internal/archindex"
+	"mail-archive-tool/internal/archdelete"
 	"mail-archive-tool/internal/backupalert"
 	"mail-archive-tool/internal/encmark"
 	"mail-archive-tool/internal/encrecord"
@@ -153,6 +152,18 @@ type Config struct {
 	// Spec to the OS scheduler (schedule.Install).
 	InstallBackup func(spec schedule.Spec) error
 
+	// DeleteScheduler is this computer's scheduler as Delete and Remove from list reach it
+	// (design-archive-delete §5.3 step 2, MA-973; tests); nil is archdelete.HostScheduler.
+	// DeleteInstalled lists the entries this tool installed, for their discovery (§5.1; tests);
+	// nil is schedule.OurInstalled.
+	DeleteScheduler archdelete.Scheduler
+	DeleteInstalled func() []schedule.InstalledEntry
+	// ReaderHold closes this process's reader of the plain archive at out and keeps it from
+	// opening that archive again until the returned func is called: a Delete, whose files
+	// Windows cannot remove while the reader holds them (§9 "Open files", MA-974). Nil when
+	// this process serves no reader.
+	ReaderHold func(out string) (release func())
+
 	// Test overrides of the Graph client's bounds (zero = its defaults, fixed by design).
 	RequestTimeout    time.Duration
 	MIMETimeout       time.Duration
@@ -230,6 +241,7 @@ type dashboard struct {
 	csrf    string
 	cap     *captureState
 	pending *pendingSecrets // the Encryption card's prepared key changes (3e)
+	deletes *heldDeletes    // each delete's result and deletion record, held until dismissed (MA-972)
 	copying atomic.Value    // the archive (a key from keyOf) an unencrypted copy is being made of, or ""
 
 	boot  string // this process's epoch: a page that carries another one was made before a restart (R-y)
@@ -276,6 +288,9 @@ func newDashboard(cfg Config) *dashboard {
 	d.pending = newPendingSecrets()
 	cfg.Keys.whenLocked(d.pending.discardFor)
 	d.life.OnDrain(func(context.Context) error { d.pending.close(); return nil })
+	// Held delete results go at Shut down: MailArchive keeps no copy after it (§8.1, O2-07).
+	d.deletes = newHeldDeletes()
+	d.life.OnDrain(func(context.Context) error { d.deletes.clear(); return nil })
 	d.life.OnDrain(d.drain)
 	return d
 }
@@ -314,7 +329,7 @@ func (d *dashboard) router() localweb.Router {
 			return
 		}
 		w.Header().Set("Content-Type", "text/html; charset=utf-8")
-		w.Write([]byte(d.cfg.overviewFor(d.csrf, d.boot)))
+		w.Write([]byte(d.cfg.overviewWith(d.csrf, d.boot, d.deletes.views())))
 	})
 	mux.HandleFunc("/dashboard.js", func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "text/javascript; charset=utf-8")
@@ -371,6 +386,12 @@ func (d *dashboard) router() localweb.Router {
 	mux.HandleFunc("/api/job/skip-program", d.api(d.skipProgramAction))
 	mux.HandleFunc("/api/runnow-stopwait", d.api(d.stopWaitAction))
 	mux.HandleFunc("/api/runnow-sync", d.api(d.runNowSyncAction))
+	// Delete an archive and Remove from list (design-archive-delete §3, slice 3): the four
+	// routes, each a guarded POST through d.api [C20, R4:NF-R4-THREE-ROUTES].
+	mux.HandleFunc("/api/archive/delete/plan", d.api(d.deletePlanAction))
+	mux.HandleFunc("/api/archive/delete", d.api(d.deleteAction))
+	mux.HandleFunc("/api/archive/delete/dismiss", d.api(d.deleteDismissAction))
+	mux.HandleFunc("/api/archive/unlist", d.api(d.unlistAction))
 	mux.HandleFunc("/api/browser-link", d.browserLink)
 	if !d.cfg.WorkspaceOff {
 		d.registerWorkspace(mux)
@@ -527,6 +548,16 @@ func (d *dashboard) saveSettings(w http.ResponseWriter, r *http.Request) {
 			// Remove look for it under the name it has (E4-AI6)
 			if task != "" && !runJob && !samePath(task, after) {
 				backupFor = task
+			}
+			// The capture follows the location: into a folder that already holds files and no
+			// archive its first scheduled run would be refused by the emptied-folder guard, so
+			// Save says so now, in the guard's words (design-archive-delete §14, slice 2's A3-02;
+			// MA-976). A run-job does not follow the location and is not asked.
+			if !runJob && after != "" {
+				if err := app.RefuseEmptiedFolder(after, "", d.cfg.ownSettingsFolders()...); err != nil {
+					writeJSON(w, map[string]any{"ok": false, "error": "Nothing was saved, and your scheduled backup is as it was. " + err.Error()})
+					return
+				}
 			}
 		case "remove":
 			jobFile := ""
@@ -902,37 +933,10 @@ func (d *dashboard) uninstallAction(w http.ResponseWriter, r *http.Request) {
 // uninstall can name what it KEEPS (R36) and refuse a config dir that overlaps one. It only
 // READS the index (never reconciles/writes during an uninstall); an absent or unreadable
 // index yields none, and ConfigTargets still self-guards on the config dir.
-func (d *dashboard) knownArchivePaths() []string {
-	var paths []string
-	seen := map[string]bool{}
-	if strings.TrimSpace(d.cfg.IndexPath) != "" {
-		if idx, err := archindex.ReadFile(d.cfg.IndexPath); err == nil {
-			for _, e := range idx.Entries {
-				if p := strings.TrimSpace(e.Path); p != "" {
-					paths = append(paths, p)
-					seen[encrecord.Spelling(p)] = true
-				}
-			}
-		}
-	}
-	// The encrypted archives this computer recorded are kept too, and guarded the
-	// same way, though one made at the command line is in no Desktop index (the
-	// P3-3 plan, 3b).
-	if rec, err := encrecord.Load(); err == nil {
-		var recorded []string
-		for _, e := range rec.Archives {
-			for _, p := range e.Paths {
-				if !seen[p.Spelling] {
-					seen[p.Spelling] = true
-					recorded = append(recorded, p.Spelling)
-				}
-			}
-		}
-		sort.Strings(recorded)
-		paths = append(paths, recorded...)
-	}
-	return paths
-}
+// The encrypted archives this computer recorded are kept too, and guarded the same way,
+// though one made at the command line is in no Desktop index (the P3-3 plan, 3b): the list is
+// Config.knownArchives, which a delete's protected folders read too (MA-973).
+func (d *dashboard) knownArchivePaths() []string { return d.cfg.knownArchives() }
 
 // encryptedRecordKept reports that this computer's record of encrypted archives
 // holds any archive: an uninstall keeps it and the keys remembered with it (K8, A20),
@@ -946,7 +950,11 @@ func (cfg Config) overview(csrf string) string { return cfg.overviewFor(csrf, ""
 
 // overviewFor is the Overview page for a process whose epoch is epoch (the workspace's
 // scripts send it back, so a page made before a restart is told so, R-y).
-func (cfg Config) overviewFor(csrf, epoch string) string {
+func (cfg Config) overviewFor(csrf, epoch string) string { return cfg.overviewWith(csrf, epoch, nil) }
+
+// overviewWith is overviewFor carrying the delete results the server holds (held), which
+// every load of the page shows until each is dismissed (design-archive-delete §3.1, MA-972).
+func (cfg Config) overviewWith(csrf, epoch string, held []heldView) string {
 	c := cfg.load()
 	upn, signedIn := cfg.signInState()
 	s := cfg.settings()
@@ -1098,6 +1106,9 @@ func (cfg Config) overviewFor(csrf, epoch string) string {
 		Archives      []ArchiveRow
 		ShowArchives  bool
 		CanAddArchive bool
+		// HeldDeletes is the JSON of the delete results the server holds (MA-972), for the
+		// page: each result and its deletion record's bytes, until dismissed.
+		HeldDeletes string
 		// Backup alerts card (MA-699): the saved email-alert config, prefilled. The password
 		// is never sent to the page — only whether one is stored.
 		AlertEnabled     bool
@@ -1148,6 +1159,7 @@ func (cfg Config) overviewFor(csrf, epoch string) string {
 		}
 	}
 	data.RecentRuns = recentRunRows(data.OutDir)
+	data.HeldDeletes = heldJSON(held)
 	// The Your-archives list (UX-1): reconcile the known-archives index (the Desktop
 	// is its maintainer, SD-6) and derive the rows live. Shown only when it tells the
 	// owner something beyond the current archive — more than one known archive, or a
@@ -1540,6 +1552,7 @@ pre{white-space:pre-wrap;overflow-wrap:anywhere;background:var(--bg);border:1px 
     <div class="note" id="shutdownNote" hidden></div>
     {{if .FormerNotice}}<div class="note warnbox" id="formerNotice" role="alert">{{.FormerNotice}}</div>{{end}}
     <h1>Overview</h1>
+    <div id="heldDeletes" data-held-deletes="{{.HeldDeletes}}" hidden></div>
     <p class="lede">{{if not .OutDir}}MailArchive keeps a copy of your mail on this computer. Open or make an archive below to begin.{{else if .Encrypted}}Your encrypted mail archive, kept on this computer.{{else if .IsM365}}Your Microsoft 365 mail archive, kept on this computer.{{else}}Your mail archive, kept on this computer.{{end}}</p>
     {{if .KindLine}}<p class="lede" id="archiveKind" style="margin-top:-14px">{{.KindLine}}</p>{{end}}
     {{if not .OutDir}}<div class="card" id="noArchive">
@@ -1560,12 +1573,12 @@ pre{white-space:pre-wrap;overflow-wrap:anywhere;background:var(--bg);border:1px 
       <p class="card-sub">The mail archives MailArchive Desktop knows about on this computer. The one marked current is the one this page shows and changes. Each archive can have its own scheduled backup; if switching would affect one, you are asked first.</p>
       {{if .SwitchLocks}}<p class="card-sub warn" id="switchLocks">{{template "switchLocks" .}}</p>{{end}}
       <ul class="archive-list">
-        {{range .Archives}}<li class="archive-row{{if not .Available}} unavailable{{end}}">
+        {{range .Archives}}<li class="archive-row{{if not .Available}} unavailable{{end}}" data-path="{{.Path}}" data-delete-ok="{{.DeleteOK}}" data-delete-why="{{.DeleteWhy}}"{{if .Unfinished}} data-delete-unfinished{{end}}>
           <span class="mono archive-path">{{.Path}}</span>
           {{if .KindLabel}}<span class="archive-kind">{{.KindLabel}}</span>{{end}}
           {{if .SourceLostSince}}<span class="archive-tag">This archive's source hasn't been reachable since {{.SourceLostSince}} — reconnect the source (its mailbox or mail folder){{if .RunNowOnly}}, then click {{if not .Current}}Switch to this archive and click {{end}}Run now on its Scheduled backup card: its backup runs only when you click Run now.{{else}} to resume backups.{{end}}</span>{{end}}
           {{if eq .Kind "encrypted"}}<button class="btn secondary" type="button" data-forget-archive data-path="{{.Path}}" title="Stop protecting this folder as an encrypted archive on this computer — for example after you removed the archive on purpose. Nothing in the folder is changed.">Forget this encrypted archive here</button>{{end}}
-          {{if .Problem}}<span class="archive-tag">{{.Problem}}</span>{{else if not .Available}}<span class="archive-tag">Not reachable right now — reconnect the drive or folder and it comes back. Nothing was removed.</span>{{else if .Sealed}}<span class="archive-tag">Paused (read-only) — Resume it to make changes.</span> <button class="btn secondary" type="button" data-resume-archive data-path="{{.Path}}" title="Make this archive writable again so backups and changes can resume.">Resume</button>{{else}}{{if .Current}}<span class="archive-tag current">Current archive</span>{{else}}<button class="btn secondary" type="button" data-switch-archive data-path="{{.Path}}" title="Make this the current archive: the one this page shows and changes.">Switch to this archive</button>{{end}} <button class="btn secondary" type="button" data-pause-archive data-path="{{.Path}}" title="Make this archive read-only so nothing can change it. You can Resume it any time; nothing is deleted.">Pause (make read-only)</button>{{end}}
+          {{if .Unfinished}}<span class="archive-tag">Delete not finished: click Delete again</span>{{else if .Problem}}<span class="archive-tag">{{.Problem}}</span>{{else if not .Available}}<span class="archive-tag">Not reachable right now — reconnect the drive or folder and it comes back. Nothing was removed.</span>{{else if .Sealed}}<span class="archive-tag">Paused (read-only) — Resume it to make changes.</span> <button class="btn secondary" type="button" data-resume-archive data-path="{{.Path}}" title="Make this archive writable again so backups and changes can resume.">Resume</button>{{else}}{{if .Current}}<span class="archive-tag current">Current archive</span>{{else}}<button class="btn secondary" type="button" data-switch-archive data-path="{{.Path}}" title="Make this the current archive: the one this page shows and changes.">Switch to this archive</button>{{end}} <button class="btn secondary" type="button" data-pause-archive data-path="{{.Path}}" title="Make this archive read-only so nothing can change it. You can Resume it any time; nothing is deleted.">Pause (make read-only)</button>{{end}}
         </li>{{end}}
       </ul>
     </div>{{end}}

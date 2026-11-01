@@ -46,6 +46,14 @@ type ArchiveRow struct {
 	// own words (design-encrypted-archives-phase3 §4.5): shown in place of Switch and
 	// Pause, never as a normal archive (the P3-3 plan, 3b).
 	Problem string
+	// DeleteOK says the row offers Delete…, and DeleteWhy, when it does not, why, in §7's
+	// words (design-archive-delete §10: from §4's archive test and §7, never from the row's
+	// greyed state; MA-975). Unfinished marks a delete of the folder that did not finish
+	// (§5.4): the row shows "Delete not finished: click Delete again" in place of Switch and
+	// Pause, and Delete is offered.
+	DeleteOK   bool
+	DeleteWhy  string
+	Unfinished bool
 }
 
 // KindLabel is the short, plain-words form of Kind for the archive list ("" when
@@ -122,6 +130,7 @@ func (cfg Config) reconcileArchives(now time.Time) (archindex.Index, error) {
 func (cfg Config) archiveRows(idx archindex.Index) []ArchiveRow {
 	current := cleanPath(cfg.effectiveOut())
 	rows := make([]ArchiveRow, 0, len(idx.Entries))
+	deps := cfg.deleteDeps(nil, nil)
 	for _, e := range idx.Entries {
 		avail := archindex.Available(e)
 		kind := ""
@@ -133,7 +142,11 @@ func (cfg Config) archiveRows(idx archindex.Index) []ArchiveRow {
 			problem = recordedProblem(e.Path)
 		}
 		lostSince := sourceLostSince(e.Path)
+		del := deleteRowFacts(e.Path, deps, avail && kind != "" && problem == "")
 		rows = append(rows, ArchiveRow{
+			DeleteOK:        del.ok,
+			DeleteWhy:       del.why,
+			Unfinished:      del.unfinished,
 			Path:            e.Path,
 			Current:         current != "" && cleanPath(e.Path) == current,
 			Available:       avail && problem == "",
