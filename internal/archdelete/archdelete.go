@@ -24,6 +24,7 @@ import (
 	"strings"
 	"time"
 
+	"mail-archive-tool/internal/schedule"
 	"mail-archive-tool/internal/util"
 )
 
@@ -130,8 +131,9 @@ type RecordRef struct {
 // DeletePlan is what Plan found: the facts §3.1 records and the file list of §4.
 // Delete acts only on what is named here.
 type DeletePlan struct {
-	// Folder is the archive folder, absolute and cleaned; Name its last element (what
-	// the person types to confirm, §3.1).
+	// Folder is the archive folder, absolute and cleaned; Name the folder's own name
+	// as its parent lists it (what the person types to confirm, §3.1), whatever
+	// spelling Folder was given in.
 	Folder string
 	Name   string
 	// Identity is the folder's identity at the plan; Delete's os.Root must be the
@@ -165,6 +167,11 @@ type DeletePlan struct {
 	Schedules Discovery
 	// Record is this computer's record of an encrypted archive.
 	Record RecordRef
+	// ArchiveID is an encrypted archive's id as its vault file (or, without one, its
+	// manifest envelope) says it, read without the key, whether or not this computer
+	// recorded it (§8.1 "the archive id for an encrypted one", conformance 3); "" when
+	// neither says.
+	ArchiveID string
 	// Captured are the record's values read at the plan.
 	Captured Captured
 	// Paused: the folder holds the pause seal; the plan says "This archive is
@@ -195,6 +202,14 @@ const (
 	CaseBackupFor      Case = "backupfor"
 	CaseLaunchOut      Case = "launch-out"
 	CaseCurrentArchive Case = "current-archive"
+	// The three below have no row in §7 (for the operator): a name inside a
+	// reachable archive folder that cannot be read (no permission, a sharing
+	// violation, an I/O error, a manifest over the cap) [del-s1a-A1-03, A2-06, D2];
+	// a manifest a newer MailArchive wrote [del-s1a-A2-03, A3-05]; and this
+	// computer's record of encrypted archives that cannot be read (conformance 4).
+	CaseUnreadable  Case = "unreadable"
+	CaseNewerFormat Case = "newer-format"
+	CaseRecord      Case = "record-unreadable"
 )
 
 // Refusal is a §7 refusal: the cause, and a remedy that can be done from the row.
@@ -301,16 +316,27 @@ func Plan(folder string, deps Deps) (*DeletePlan, error) {
 	if deps.Busy != nil && deps.Busy(abs) {
 		return nil, refuse(CaseBusy, msgBusy)
 	}
+	beforeOpenRoot(abs)
 	root, err := os.OpenRoot(abs)
 	if err != nil {
 		return nil, refuse(CaseUnreachable, msgUnreachable)
 	}
 	defer root.Close()
+	// The folder the root opened must be the one checked above (del-s1a-A1-07):
+	// os.OpenRoot follows a link, so a folder swapped for a link to another one
+	// between the check and the open would otherwise be listed, and its identity
+	// become the plan's — which Delete's identity re-check, opening the same path,
+	// would then match.
+	if same, serr := rootIsFile(root, fi); serr != nil {
+		return nil, refuse(CaseUnreachable, msgUnreachable)
+	} else if !same {
+		return nil, linkRefusal(abs)
+	}
 	id, err := rootIdentity(root)
 	if err != nil {
 		return nil, refuse(CaseUnreachable, msgUnreachable)
 	}
-	p := &DeletePlan{Folder: abs, Name: filepath.Base(abs), Identity: id}
+	p := &DeletePlan{Folder: abs, Name: onDiskName(abs, fi), Identity: id}
 	if svc, ok := util.UnderCloudSync(abs); ok {
 		p.Synced = svc
 	}
@@ -329,6 +355,7 @@ func Plan(folder string, deps Deps) (*DeletePlan, error) {
 		}
 		p.Schedules = disc
 	}
+	addCaptureBackupFor(p, abs, deps)
 	l := lister{root: root, folder: abs, goos: deps.goos(), plan: p}
 	switch kind {
 	case Plain:
@@ -341,6 +368,81 @@ func Plan(folder string, deps Deps) (*DeletePlan, error) {
 	}
 	l.finish()
 	return p, nil
+}
+
+// beforeOpenRoot runs between Plan's link check of the folder and its os.OpenRoot:
+// a test seam (a swap of the folder in that window), nothing in a real run.
+var beforeOpenRoot = func(string) {}
+
+// rootIsFile reports whether root is open on the very folder fi (an Lstat of its
+// path, not a link) describes.
+func rootIsFile(root *os.Root, fi os.FileInfo) (bool, error) {
+	f, err := root.Open(".")
+	if err != nil {
+		return false, err
+	}
+	defer f.Close()
+	rfi, err := f.Stat()
+	if err != nil {
+		return false, err
+	}
+	return os.SameFile(fi, rfi), nil
+}
+
+// onDiskName is the folder's own name as its parent lists it — what the person
+// types to confirm (§3.1, [C19]) — not the caller's spelling of it: another case
+// (Windows, macOS), a decomposed form (an HFS+ drive) or a Windows 8.3 short name
+// names the same folder but is not its name (del-s1a-A3-03). fi is an Lstat of abs;
+// when the parent cannot be listed the last element of abs is the name.
+func onDiskName(abs string, fi os.FileInfo) string {
+	base := filepath.Base(abs)
+	parent := filepath.Dir(abs)
+	ents, err := os.ReadDir(parent)
+	if err != nil {
+		return base
+	}
+	same := func(name string) bool {
+		efi, err := os.Lstat(filepath.Join(parent, name))
+		return err == nil && os.SameFile(fi, efi)
+	}
+	for _, e := range ents {
+		if e.Name() == base && same(base) {
+			return base
+		}
+	}
+	// Another case or normal form first, then any folder (an 8.3 alias).
+	for _, e := range ents {
+		if util.FoldKey(e.Name()) == util.FoldKey(base) && same(e.Name()) {
+			return e.Name()
+		}
+	}
+	for _, e := range ents {
+		if e.IsDir() && same(e.Name()) {
+			return e.Name()
+		}
+	}
+	return base
+}
+
+// addCaptureBackupFor is §5.1 (c): when this folder is the current archive and
+// captureBackupFor() names another folder X, the current archive's Microsoft 365
+// capture is registered under X's name, and Delete stops it too — removing both
+// entries is what stops a capture falling back to its own -out [C4]
+// (del-s1a-A3-04). X is another folder, so it is not one of this archive's
+// spellings (no scratch folder or settings key of X is this archive's).
+func addCaptureBackupFor(p *DeletePlan, abs string, deps Deps) {
+	s := deps.Settings
+	goos := deps.goos()
+	if s.CaptureBackupFor == "" || s.Current == "" || !sameFolder(s.Current, abs, goos) || sameFolder(s.CaptureBackupFor, abs, goos) {
+		return
+	}
+	name := schedule.DefaultNameFor(s.CaptureBackupFor)
+	for _, e := range p.Schedules.Entries {
+		if e.Name == name {
+			return
+		}
+	}
+	p.Schedules.Entries = append(p.Schedules.Entries, Entry{Name: name, From: "capture registered under BackupFor", RegisteredFor: s.CaptureBackupFor})
 }
 
 // checkBackupFor is §5.1 (a): the current archive's capture is registered under
@@ -369,8 +471,9 @@ func currentName(current string) string {
 
 // UnlistRefusal is Remove from list's refusals that facts decide (§7's Remove
 // column): the capture registered under this folder's name (§5.1 (b)), the archive
-// in use while reachable and an archive (by §4's archive test), and a Desktop
-// started with -out naming it. nil means Remove from list may go on.
+// in use unless it is unreachable or no longer an archive (§5.2, by §4's archive
+// test), and a Desktop started with -out naming it. nil means Remove from list may
+// go on.
 func UnlistRefusal(folder string, deps Deps) error {
 	abs, err := filepath.Abs(folder)
 	if err != nil {
@@ -385,7 +488,11 @@ func UnlistRefusal(folder string, deps Deps) error {
 	if s.CaptureBackupFor != "" && sameFolder(s.CaptureBackupFor, abs, goos) && !current {
 		return refuse(CaseBackupFor, "%s In Settings, remove the scheduled backup and set it up again (it is then registered under %s), then remove this one from the list.", backupForReason(s.Current), currentName(s.Current))
 	}
-	if current && IsArchive(abs) {
+	// §5.2: Out is cleared, so the archive in use is unlisted, only when it is
+	// unreachable or no longer an archive. A folder whose archive test cannot decide
+	// — a manifest it cannot read, one a newer MailArchive wrote, a mixed folder, a
+	// manifest that is a link — is not "no longer an archive" (del-s1a-A1-03, A2-03).
+	if current && !unreachableOrNoArchive(abs) {
 		return refuse(CaseCurrentArchive, "This is the archive in use. Switch to another archive, or add one (Add another archive), then remove this one from the list.")
 	}
 	return nil
@@ -393,15 +500,30 @@ func UnlistRefusal(folder string, deps Deps) error {
 
 // IsArchive is §4's archive test [NEW-isarchive-cap]: the folder holds a manifest
 // §4.1's reader parses (no 1 MiB cap), or an encrypted archive's marker — never
-// archindex.IsArchive or the row's Available flag.
+// archindex.IsArchive or the row's Available flag. False also when the test cannot
+// decide (see unreachableOrNoArchive for Remove from list's question).
 func IsArchive(folder string) bool {
+	k, err := archiveTest(folder)
+	return err == nil && k != 0
+}
+
+// archiveTest is classify on folder: its kind, or the refusal that applies.
+func archiveTest(folder string) (Kind, error) {
 	root, err := os.OpenRoot(folder)
 	if err != nil {
-		return false
+		return 0, refuse(CaseUnreachable, msgUnreachable)
 	}
 	defer root.Close()
-	k, err := classify(root, folder)
-	return err == nil && k != 0
+	return classify(root, folder)
+}
+
+// unreachableOrNoArchive reports a folder that cannot be reached or that the
+// archive test finds no archive in — the only two states in which §5.2 lets Remove
+// from list clear Out.
+func unreachableOrNoArchive(folder string) bool {
+	_, err := archiveTest(folder)
+	r := AsRefusal(err)
+	return r != nil && (r.Case == CaseUnreachable || r.Case == CaseNotArchive)
 }
 
 func linkRefusal(link string) error {

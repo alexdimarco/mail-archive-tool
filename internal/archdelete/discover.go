@@ -30,6 +30,10 @@ type Entry struct {
 	Out string
 	// JobFile is the job file that records it, for an entry found from one.
 	JobFile string
+	// RegisteredFor is the other folder whose name the entry is registered under:
+	// the current archive's capture registered under captureBackupFor() (§5.1 (c)).
+	// That folder is not one of this archive's spellings.
+	RegisteredFor string
 }
 
 // Note is a descriptor the plan lists without acting on it: one whose name
@@ -63,21 +67,56 @@ func (d Discovery) Names() []string {
 	return out
 }
 
+// notRemoved are the schedules the plan lists but Delete does not stop, as the
+// saved plan names them (§8.1 "not removed: check it yourself"): those a descriptor
+// records that MailArchive cannot confirm are this archive's, another computer's
+// (with that computer's name), and the macOS custom names.
+func (d Discovery) notRemoved() []string {
+	var out []string
+	for _, n := range d.Unconfirmed {
+		out = append(out, n.Name)
+	}
+	for _, n := range d.OtherHost {
+		out = append(out, fmt.Sprintf("%s (on computer %s: remove it there)", n.Name, n.Host))
+	}
+	return append(out, d.CheckYourself...)
+}
+
 // logNames are the names whose <name>.log and <name>.stderr.log a run of this
-// folder writes into it: this computer's entries and another computer's (§4.1).
+// folder writes into it: this computer's entries, another computer's (§4.1), and
+// those a descriptor in the folder records that MailArchive cannot confirm — the
+// descriptor is MailArchive's file and is removed with the folder, and so are the
+// logs of the name it records (del-s1a-A3-06).
 func (d Discovery) logNames() []string {
 	out := d.Names()
 	for _, n := range d.OtherHost {
 		out = append(out, n.Name)
 	}
+	for _, n := range d.Unconfirmed {
+		out = append(out, n.Name)
+	}
 	return out
 }
 
-// FileDiscovery is the part of §5.1 that only reads files: the derived names, the
-// folder's descriptors (read before anything is removed) and every job file in
-// job.Dir() whose Out is the same folder under schedule.SameArchivePath — every
-// match, not the first. Asking the scheduler itself (OurInstalled, with a time
-// limit) is the caller's: the Desktop's and the command line's.
+// FileDiscovery is the part of §5.1 that does not ask the scheduler for its
+// entries: the derived names, the folder's descriptors (read before anything is
+// removed) and every job file in job.Dir() whose Out is the same folder under
+// schedule.SameArchivePath — every match, not the first. It reads files; and, as
+// schedule.RecordedBackupName does for a custom-named entry, on Linux it reads the
+// crontab (crontab -l, read-only) and on Windows the entry's side-files, to confirm
+// a descriptor's name (conformance note). Asking the scheduler for its entries
+// (OurInstalled, with a time limit) is the caller's: the Desktop's and the command
+// line's.
+//
+// A descriptor counts as this archive's only when the -out it records is this
+// folder (schedule.SameArchivePath: by identity, or by spelling when that cannot be
+// read). schedule's own binding also accepts a recorded -out that no longer exists
+// as "this archive, moved from there"; an unplugged drive looks the same, and a
+// copy of an archive whose drive is unplugged carries that archive's descriptor, so
+// for a delete such a descriptor is listed, never acted on (del-s1a-A1-02). A
+// descriptor that records this folder under another spelling (another case, an
+// 8.3 name, a mapped drive) with the name derived from that spelling is this
+// archive's (del-s1a-A3-03).
 type FileDiscovery struct {
 	// GOOS selects SameArchivePath's rule; "" is runtime.GOOS.
 	GOOS string
@@ -129,13 +168,13 @@ func (fd FileDiscovery) Discover(folder string) (Discovery, error) {
 				Text: fmt.Sprintf("Computer %s also backs up into this folder; remove its schedule there", rd.Host)})
 			continue
 		}
-		name, ok := desc.bound()
-		if !ok || name != rd.Name {
-			d.Unconfirmed = append(d.Unconfirmed, Note{File: path, Name: rd.Name,
-				Text: fmt.Sprintf("%s names the schedule %s, which MailArchive cannot confirm is this archive's: not removed, check it yourself", path, rd.Name)})
+		out := jobOutOf(rd.Job)
+		if confirmed(folder, out, rd.Name, goos, desc.bound) {
+			addEntry(Entry{Name: rd.Name, From: desc.what, Out: out})
 			continue
 		}
-		addEntry(Entry{Name: name, From: desc.what, Out: jobOutOf(rd.Job)})
+		d.Unconfirmed = append(d.Unconfirmed, Note{File: path, Name: rd.Name,
+			Text: fmt.Sprintf("%s names the schedule %s, which MailArchive cannot confirm is this archive's: not removed, check it yourself", path, rd.Name)})
 	}
 
 	if dir, err := job.Dir(); err == nil {
@@ -162,6 +201,25 @@ func (fd FileDiscovery) Discover(folder string) (Discovery, error) {
 		}
 	}
 	return d, nil
+}
+
+// confirmed reports whether a same-computer descriptor recording the schedule name
+// with the -out out is this archive's: out must be this folder (never a folder
+// that is gone: it may be another archive's unplugged drive), and the name either
+// derived from out or from folder (the same folder, spelled two ways), or bound
+// to it by schedule's own rules (bound: a custom name, with its Windows side-file
+// and Linux cron checks).
+func confirmed(folder, out, name, goos string, bound func() (string, bool)) bool {
+	if out == "" || !schedule.SameArchivePath(out, folder, goos) {
+		return false
+	}
+	for _, s := range []string{out, folder} {
+		if def := schedule.DefaultNameFor(s); name == def || name == def+"-verify" {
+			return true
+		}
+	}
+	b, ok := bound()
+	return ok && b == name
 }
 
 func outsOf(es []Entry) []string {

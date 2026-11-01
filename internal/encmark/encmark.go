@@ -111,6 +111,22 @@ func isLitter(name string) bool { return util.IsLitter(name) }
 // isReserved reports a name an encrypted archive itself writes at its root.
 func isReserved(name string) bool { return reserved[name] || tempRe.MatchString(name) }
 
+// ReservedNames are the names an encrypted archive itself writes at its root, sorted:
+// the one list a reader of such a root (the delete's plan, internal/archdelete)
+// takes its names from, so the two cannot drift apart.
+func ReservedNames() []string {
+	out := make([]string, 0, len(reserved))
+	for n := range reserved {
+		out = append(out, n)
+	}
+	slices.Sort(out)
+	return out
+}
+
+// IsReservedTemp reports a root temp file an encrypted archive's own writes leave
+// (`.mailarchive-<kind>-<n>.tmp`), a reserved name by its shape.
+func IsReservedTemp(name string) bool { return tempRe.MatchString(name) }
+
 // load is encrecord.Load, a var so a test can make the record unusable.
 var load = encrecord.Load
 

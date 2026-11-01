@@ -80,7 +80,7 @@ func TestAnEncryptedPlanListsItsLayoutsAndTheVaultLast(t *testing.T) {
 	}
 }
 
-// covers: MA-961, R36
+// covers: MA-961, MA-963, R36
 func TestAnEncryptedPlanRecordsTheRecordAndSaysWhatIsSealed(t *testing.T) {
 	dir := encryptedArchive(t)
 	deps := testDeps()

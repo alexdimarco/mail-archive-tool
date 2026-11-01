@@ -6,6 +6,8 @@ import (
 	"encoding/json"
 	"io"
 	"os"
+	"path"
+	"strings"
 	"time"
 
 	"mail-archive-tool/internal/state"
@@ -23,14 +25,10 @@ const runHistoryCap = 4 << 20
 func capturePlain(root *os.Root, m *state.Manifest) Captured {
 	c := Captured{Known: true, Messages: m.Len()}
 	for _, r := range m.All() {
-		if r.Date == "" {
+		t, ok := recordDate(r)
+		if !ok {
 			continue
 		}
-		t, err := time.Parse(time.RFC3339, r.Date)
-		if err != nil {
-			continue
-		}
-		t = t.UTC()
 		if c.MailFrom.IsZero() || t.Before(c.MailFrom) {
 			c.MailFrom = t
 		}
@@ -41,6 +39,26 @@ func capturePlain(root *os.Root, m *state.Manifest) Captured {
 	c.FirstRun = firstRun(root)
 	c.LastBackup = lastBackup(root)
 	return c
+}
+
+// recordDate is a record's mail date: its Date when the manifest carries one —
+// only a record with issues does (state.Record), and Resolve clears it — else the
+// date its stem was named with (export.StemName: the message's date in UTC, to the
+// minute), which every record of the exporter's has (conformance gap 1). A stem
+// named without a date ("0000-00-00_0000") has none.
+func recordDate(r state.Record) (time.Time, bool) {
+	if r.Date != "" {
+		if t, err := time.Parse(time.RFC3339, r.Date); err == nil {
+			return t.UTC(), true
+		}
+	}
+	stem := strings.TrimSuffix(path.Base(r.Path), ".html")
+	if m := stemShapeRe.FindStringSubmatch(stem); m != nil {
+		if t, err := time.Parse("2006-01-02_1504", m[1]); err == nil {
+			return t.UTC(), true
+		}
+	}
+	return time.Time{}, false
 }
 
 // firstRun is the time of the first run header in .mailarchive-history.jsonl

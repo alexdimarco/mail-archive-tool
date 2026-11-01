@@ -7,6 +7,7 @@ import (
 	"strings"
 	"time"
 
+	"mail-archive-tool/internal/container"
 	"mail-archive-tool/internal/util"
 	"mail-archive-tool/internal/vault"
 )
@@ -80,8 +81,17 @@ func RecordText(in RecordInput) []byte {
 	line("Folder", p.Folder)
 	line("Folder identity", p.Identity.String())
 	line("Kind", p.Kind.String())
-	if p.Kind == Encrypted && p.Record.Recorded {
-		line("Archive id", p.Record.ID)
+	if p.Kind == Encrypted {
+		// §8.1 "the archive id for an encrypted one", recorded here or not
+		// (conformance gap 3): this computer's record's ID, else the archive's own.
+		switch {
+		case p.Record.Recorded:
+			line("Archive id", p.Record.ID)
+		case p.ArchiveID != "":
+			line("Archive id", p.ArchiveID)
+		default:
+			line("Archive id", "not known")
+		}
 	}
 	const asRecorded = " (as recorded in the archive)"
 	const sealed = "not known: encrypted, key not open"
@@ -113,12 +123,18 @@ func RecordText(in RecordInput) []byte {
 	} else {
 		line("Files removed", fmt.Sprintf("%d (%s)", in.FilesRemoved, size(in.BytesRemoved)))
 	}
-	line(anchorKey(p), p.Anchor.SHA256)
+	anchor := p.Anchor.SHA256
+	if anchor == "" {
+		anchor = "not known"
+	}
+	line(anchorKey(p), anchor)
 	if planned {
 		for _, n := range p.Schedules.Names() {
 			line("Schedule to stop", n)
 		}
-		for _, n := range p.Schedules.CheckYourself {
+		// §8.1 "those not removed: check it yourself": the names discovery could not
+		// confirm, another computer's, and the macOS custom names (conformance gap 2).
+		for _, n := range p.Schedules.notRemoved() {
 			line("Schedule not removed (check it yourself)", n)
 		}
 	} else {
@@ -176,12 +192,23 @@ func listRedacted(line func(k, v string), key string, rels []string, stores []st
 }
 
 // anchorKey words the digest line identically in the saved plan and the record
-// [R3:O2-08].
+// [R3:O2-08], naming the file the digest is of: an encrypted archive with no vault
+// file has another file as its anchor (del-s1a-A2-07).
 func anchorKey(p *DeletePlan) string {
-	if p.Kind == Encrypted {
-		return "Vault file SHA-256"
+	if p.Kind != Encrypted {
+		return "Manifest SHA-256"
 	}
-	return "Manifest SHA-256"
+	switch p.Anchor.Name {
+	case "", vault.FileName, vault.BackupName:
+		return "Vault file SHA-256"
+	case container.PointerName:
+		return "Manifest pointer SHA-256"
+	case container.MirrorName:
+		return "Manifest pointer copy SHA-256"
+	case container.EnvelopeName:
+		return "Manifest envelope SHA-256"
+	}
+	return "Inventory SHA-256"
 }
 
 // cleanValue is §8.1's rule for every value: each line break (CR, LF, CRLF)

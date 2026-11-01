@@ -1,6 +1,7 @@
 package archdelete
 
 import (
+	"encoding/json"
 	"io/fs"
 	"os"
 	"path"
@@ -9,6 +10,7 @@ import (
 	"strings"
 
 	"mail-archive-tool/internal/container"
+	"mail-archive-tool/internal/encmark"
 	"mail-archive-tool/internal/seal"
 	"mail-archive-tool/internal/state"
 	"mail-archive-tool/internal/util"
@@ -31,8 +33,25 @@ type lister struct {
 	unrecDirs map[string]string
 	// litter holds, per folder, the litter files found there by a walk.
 	litter map[string][]string
-	// checked caches checkPath's verdict on a folder: true exists, false missing.
+	// checked caches checkPath's verdict on a folder, keyed by the folder's exact
+	// spelling — never folded, so on a case-sensitive volume of a case-insensitive
+	// OS (a case-sensitive APFS drive, a Windows folder with per-folder case
+	// sensitivity) "store/sub" is checked for links on its own even after
+	// "store/Sub" was found to be a real folder (del-s1a-A1-06): true a real folder,
+	// false missing or not a folder.
 	checked map[string]bool
+}
+
+// ioRefusal is the refusal for an error, other than "not there", reading rel in
+// the archive folder: unreachable when the folder itself is gone now (a drive
+// unplugged during the plan), else that name's own cause (no permission, a sharing
+// violation), never "reconnect" for a folder that is plainly there
+// (del-s1a-A2-06).
+func (l *lister) ioRefusal(rel string, err error) error {
+	if _, ferr := os.Lstat(l.folder); ferr != nil {
+		return refuse(CaseUnreachable, msgUnreachable)
+	}
+	return unreadableRefusal(filepath.Join(l.folder, filepath.FromSlash(rel)), err)
 }
 
 // lstat is Lstat of rel inside the root.
@@ -68,38 +87,42 @@ func (l *lister) fileLike(fi fs.FileInfo) bool {
 // file already gone counts as removed).
 func (l *lister) checkPath(rel string) (fi fs.FileInfo, ok bool, err error) {
 	parts := strings.Split(rel, "/")
+	for _, part := range parts {
+		if rootCannotName(part) {
+			return nil, false, nil // a device name: never a file the exporter wrote
+		}
+	}
 	for i := 1; i < len(parts); i++ {
 		dir := strings.Join(parts[:i], "/")
-		key := fold(l.goos, dir)
-		if exists, seen := l.checked[key]; seen {
-			if !exists {
+		if isDir, seen := l.checked[dir]; seen {
+			if !isDir {
 				return nil, false, nil
 			}
 			continue
 		}
 		dfi, derr := l.lstat(dir)
 		if derr != nil {
-			l.checked[key] = false
+			l.checked[dir] = false
 			if isNotExist(derr) {
 				return nil, false, nil
 			}
-			return nil, false, refuse(CaseUnreachable, msgUnreachable)
+			return nil, false, l.ioRefusal(dir, derr)
 		}
 		if link, lerr := l.linkLike(dir, dfi); lerr != nil || link {
 			return nil, false, linkRefusal(filepath.Join(l.folder, filepath.FromSlash(dir)))
 		}
 		if !dfi.IsDir() {
-			l.checked[key] = false
+			l.checked[dir] = false
 			return nil, false, nil
 		}
-		l.checked[key] = true
+		l.checked[dir] = true
 	}
 	fi, err = l.lstat(rel)
 	if err != nil {
 		if isNotExist(err) {
 			return nil, false, nil
 		}
-		return nil, false, refuse(CaseUnreachable, msgUnreachable)
+		return nil, false, l.ioRefusal(rel, err)
 	}
 	if link, lerr := l.linkLike(rel, fi); lerr != nil || link {
 		return nil, false, linkRefusal(filepath.Join(l.folder, filepath.FromSlash(rel)))
@@ -137,7 +160,7 @@ func (l *lister) readDir(rel string) ([]fs.DirEntry, error) {
 	}
 	ents, err := util.ReadDirIn(l.root, filepath.FromSlash(rel))
 	if err != nil && !isNotExist(err) {
-		return nil, refuse(CaseUnreachable, msgUnreachable)
+		return nil, l.ioRefusal(rel, err)
 	}
 	return ents, nil
 }
@@ -155,7 +178,7 @@ func (l *lister) plain() error {
 	l.init()
 	m, facts, err := readManifest(l.root)
 	if err != nil {
-		return refuse(CaseNotArchive, msgNotArchive)
+		return manifestRefusal(l.folder, err)
 	}
 	p := l.plan
 	p.Anchor = facts
@@ -198,15 +221,22 @@ func (l *lister) plain() error {
 			}
 		}
 	}
+	// Only a folder checkPath found to be a real folder (no link on its way) is one a
+	// record passes through: an element of a planted record that is a regular file
+	// ("taxes.pdf/2024-…html", "Mailbox/notes.txt/…") is the person's file, never a
+	// folder Delete may remove (del-s1a-A2-01: os.Remove deletes a file too).
 	for k, v := range recordDirs {
-		l.passed[k] = v
+		if l.checked[v] {
+			l.passed[k] = v
+		} else {
+			delete(recordDirs, k)
+		}
 	}
 
 	// Index pages: only in folders a record passes through, never by walking a tree.
 	dirs := sortedValues(recordDirs)
 	for _, d := range dirs {
-		// Only a folder checkPath found to be a real folder (no link on its way).
-		if d == "" || !l.checked[fold(l.goos, d)] {
+		if d == "" {
 			continue
 		}
 		ents, err := l.readDir(d)
@@ -235,8 +265,39 @@ func (l *lister) plain() error {
 		fixed[fold(l.goos, n)] = true
 	}
 	for _, n := range p.Schedules.logNames() {
+		// Each log runlog.Open writes (<name>.log) has its rotated generation (.1);
+		// the scheduler's stderr log is not rotated (del-s1a-A2-04).
 		fixed[fold(l.goos, n+".log")] = true
+		fixed[fold(l.goos, n+".log"+rotatedSuffix)] = true
 		fixed[fold(l.goos, n+".stderr.log")] = true
+	}
+	folderOwn := map[string]bool{}
+	for _, n := range folderOwnNames {
+		folderOwn[fold(l.goos, n)] = true
+	}
+	// The store folders by identity as well as by name: a listing can spell a store
+	// folder otherwise than its token (an HFS+ drive's decomposed form, a Windows 8.3
+	// alias, a case-insensitive volume on Linux), and the store loop reaches it by
+	// the token, so it must not also be judged here as the person's (del-s1a-A1-10).
+	var storeInfos []fs.FileInfo
+	for _, t := range p.Stores {
+		if rootCannotName(t) {
+			continue
+		}
+		if sfi, err := l.lstat(t); err == nil {
+			storeInfos = append(storeInfos, sfi)
+		}
+	}
+	isStoreFolder := func(f string, fi fs.FileInfo) bool {
+		if _, ok := tokenByFold[f]; ok {
+			return true
+		}
+		for _, sfi := range storeInfos {
+			if os.SameFile(fi, sfi) {
+				return true
+			}
+		}
+		return false
 	}
 	ents, err := l.readDir("")
 	if err != nil {
@@ -245,28 +306,42 @@ func (l *lister) plain() error {
 	for _, e := range ents {
 		name := e.Name()
 		f := fold(l.goos, name)
-		if f == fold(l.goos, manifestName) || f == fold(l.goos, lockName) {
+		if f == fold(l.goos, manifestName) {
+			continue
+		}
+		if rootCannotName(name) {
+			p.Kept = append(p.Kept, name) // a device name: the person's (del-s1a-A1-01)
 			continue
 		}
 		fi, err := l.lstat(name)
 		if err != nil {
-			return refuse(CaseUnreachable, msgUnreachable)
+			return l.ioRefusal(name, err)
 		}
 		link, lerr := l.linkLike(name, fi)
 		if lerr != nil {
-			return refuse(CaseUnreachable, msgUnreachable)
+			return l.ioRefusal(name, lerr)
+		}
+		if f == fold(l.goos, lockName) {
+			// Step 7 removes this name after unlocking, and step 1 takes the lock on
+			// it: a link there refuses here, not at step 1 (del-s1a-A1-11).
+			if link {
+				return linkRefusal(filepath.Join(l.folder, name))
+			}
+			continue
 		}
 		// A store folder (or a link in its place) is the store loop's; a file that
 		// only shares a token's name is judged as any root file is.
-		if _, isStore := tokenByFold[f]; isStore && (link || fi.IsDir()) {
+		if (link || fi.IsDir()) && isStoreFolder(f, fi) {
 			continue
 		}
-		removable := fixed[f] || f == "index.html" || strings.HasPrefix(f, stateFilePrefix) || f == fold(l.goos, outlookPSTDir)
+		removable := fixed[f] || f == "index.html" || strings.HasPrefix(f, stateFilePrefix)
 		switch {
-		case link && removable:
+		case link && (removable || f == fold(l.goos, outlookPSTDir)):
 			return linkRefusal(filepath.Join(l.folder, name))
 		case link:
 			p.Kept = append(p.Kept, name)
+		case folderOwn[f]:
+			p.Kept = append(p.Kept, name) // the folder's own, not litter (del-s1a-A1-04)
 		case util.IsLitter(name) && !fi.IsDir():
 			l.litter[""] = append(l.litter[""], name)
 		case f == fold(l.goos, outlookPSTDir) && fi.IsDir():
@@ -289,12 +364,15 @@ func (l *lister) plain() error {
 	// The store trees: run leftovers at any depth, §4.3's unrecorded copies, litter,
 	// and another archive's marker (which refuses the whole delete).
 	for _, t := range p.Stores {
+		if rootCannotName(t) {
+			continue
+		}
 		fi, err := l.lstat(t)
 		if err != nil {
 			if isNotExist(err) {
 				continue
 			}
-			return refuse(CaseUnreachable, msgUnreachable)
+			return l.ioRefusal(t, err)
 		}
 		if link, lerr := l.linkLike(t, fi); lerr != nil || link {
 			return linkRefusal(filepath.Join(l.folder, t))
@@ -318,15 +396,19 @@ func (l *lister) outlookPST(dir string) error {
 	}
 	for _, e := range ents {
 		rel := join(dir, e.Name())
+		if rootCannotName(e.Name()) {
+			l.plan.Kept = append(l.plan.Kept, rel)
+			continue
+		}
 		fi, err := l.lstat(rel)
 		if err != nil {
-			return refuse(CaseUnreachable, msgUnreachable)
+			return l.ioRefusal(rel, err)
 		}
 		link, lerr := l.linkLike(rel, fi)
 		isPST := strings.EqualFold(path.Ext(e.Name()), ".pst")
 		switch {
 		case lerr != nil:
-			return refuse(CaseUnreachable, msgUnreachable)
+			return l.ioRefusal(rel, lerr)
 		case link && isPST:
 			return linkRefusal(filepath.Join(l.folder, filepath.FromSlash(rel)))
 		case !link && isPST && l.fileLike(fi):
@@ -340,10 +422,21 @@ func (l *lister) outlookPST(dir string) error {
 	return nil
 }
 
-// walkStore walks one store tree. A link whose name Delete would remove refuses
+// walkStore walks one store tree. A link whose name Delete would remove (a listed
+// name, a run leftover) or that stands where another archive's marker would refuses
 // the delete; any other link is not followed and is kept, as links among files
-// Delete does not touch are ignored.
+// Delete does not touch are ignored (§4) — a link only shaped like mail or an index
+// page is never removed, not even with §4.3's box ticked, so it does not block the
+// delete (del-s1a-A1-09). A folder that holds an encrypted archive by encmark.Here
+// (the vault's markers: its key files, sealed-record files, or its units/, chunks/,
+// inventory/ layouts; or this computer's record of that very folder) is another
+// archive: mixed (del-s1a-A1-08).
 func (l *lister) walkStore(dir string) error {
+	if enc, _, err := encmark.Here(filepath.Join(l.folder, filepath.FromSlash(dir))); enc {
+		return refuse(CaseMixed, msgMixed)
+	} else if err != nil {
+		return l.ioRefusal(dir, err)
+	}
 	ents, err := l.readDir(dir)
 	if err != nil {
 		return err
@@ -351,19 +444,23 @@ func (l *lister) walkStore(dir string) error {
 	for _, e := range ents {
 		name := e.Name()
 		rel := join(dir, name)
+		if rootCannotName(name) {
+			l.plan.Kept = append(l.plan.Kept, rel) // a device name: the person's (del-s1a-A1-01)
+			continue
+		}
 		fi, err := l.lstat(rel)
 		if err != nil {
 			if isNotExist(err) {
 				continue
 			}
-			return refuse(CaseUnreachable, msgUnreachable)
+			return l.ioRefusal(rel, err)
 		}
 		link, lerr := l.linkLike(rel, fi)
 		if lerr != nil {
-			return refuse(CaseUnreachable, msgUnreachable)
+			return l.ioRefusal(rel, lerr)
 		}
 		if link {
-			if isLeftover(name) || mailShaped(name) || indexPageRe.MatchString(name) || isMarker(l.goos, name) || l.removed[fold(l.goos, rel)] {
+			if isLeftover(name) || isMarker(l.goos, name) || l.removed[fold(l.goos, rel)] {
 				return linkRefusal(filepath.Join(l.folder, filepath.FromSlash(rel)))
 			}
 			l.plan.Kept = append(l.plan.Kept, rel)
@@ -422,13 +519,16 @@ func (l *lister) encrypted(deps Deps) error {
 	var vaultItems []Item
 	for _, e := range ents {
 		name := e.Name()
+		if rootCannotName(name) {
+			return refuse(CaseMixed, msgMixed) // a name an encrypted archive never holds (del-s1a-A1-01)
+		}
 		fi, err := l.lstat(name)
 		if err != nil {
-			return refuse(CaseUnreachable, msgUnreachable)
+			return l.ioRefusal(name, err)
 		}
 		link, lerr := l.linkLike(name, fi)
 		if lerr != nil {
-			return refuse(CaseUnreachable, msgUnreachable)
+			return l.ioRefusal(name, lerr)
 		}
 		isDirName := name == container.InventoryDir || name == container.ProgramDir || name == unitsDirs[0] || name == unitsDirs[1]
 		switch {
@@ -436,14 +536,16 @@ func (l *lister) encrypted(deps Deps) error {
 			l.litter[""] = append(l.litter[""], name)
 		case util.IsLitter(name) && !link:
 			p.Kept = append(p.Kept, name) // a litter folder is kept, never cleared (§4.4)
+		case name == lockName && link:
+			return linkRefusal(filepath.Join(l.folder, name)) // step 7 removes it (del-s1a-A1-11)
 		case name == lockName:
-		case link && (isDirName || encRootFiles[name] || name == vault.FileName || name == vault.BackupName || encRootTmp.MatchString(name)):
+		case link && (isDirName || encRootFiles[name] || name == vault.FileName || name == vault.BackupName || encRootTmp(name)):
 			return linkRefusal(filepath.Join(l.folder, name))
 		case link:
 			return refuse(CaseMixed, msgMixed)
 		case (name == vault.FileName || name == vault.BackupName) && l.fileLike(fi):
 			vaultItems = append(vaultItems, Item{Rel: name, Size: fi.Size(), Kind: Anchor})
-		case (encRootFiles[name] || encRootTmp.MatchString(name)) && l.fileLike(fi):
+		case (encRootFiles[name] || encRootTmp(name)) && l.fileLike(fi):
 			l.add(name, fi, State)
 		case fi.IsDir() && (name == unitsDirs[0] || name == unitsDirs[1]):
 			if err := l.walkSharded(name); err != nil {
@@ -469,12 +571,25 @@ func (l *lister) encrypted(deps Deps) error {
 		l.removed[fold(l.goos, it.Rel)] = true
 	}
 	l.anchors = vaultItems
-	for _, n := range []string{vault.FileName, vault.BackupName, container.PointerName, container.EnvelopeName} {
-		if facts, err := hashFileIn(l.root, n); err == nil {
-			p.Anchor = facts
-			break
+	if len(l.anchors) == 0 {
+		// No vault file: the archive is still recognised by its sealed record
+		// (vault.EncryptedMarker), so the first of its files present is the anchor,
+		// removed last, and the record names it as what it is (del-s1a-A2-07).
+		for _, n := range encAnchorFallback {
+			if i := l.removedIndex(n); i >= 0 {
+				l.anchors = []Item{l.plan.Remove[i]}
+				l.anchors[0].Kind = Anchor
+				l.plan.Remove = append(l.plan.Remove[:i], l.plan.Remove[i+1:]...)
+				break
+			}
 		}
 	}
+	if len(l.anchors) > 0 {
+		if facts, err := hashFileIn(l.root, l.anchors[len(l.anchors)-1].Rel); err == nil {
+			p.Anchor = facts
+		}
+	}
+	p.ArchiveID = archiveIDOf(l.root)
 	p.Captured = Captured{LastBackup: lastBackup(l.root)}
 	if deps.Sealed != nil {
 		if c, ok := deps.Sealed(l.folder); ok {
@@ -486,12 +601,54 @@ func (l *lister) encrypted(deps Deps) error {
 	if deps.Record != nil {
 		ref, err := deps.Record(l.folder)
 		if err != nil {
-			return refuse(CaseUnreachable, "This computer's record of encrypted archives cannot be read, so MailArchive cannot tell whether it must forget this archive's key: %s", util.StripControl(err.Error()))
+			// Not in §7 (conformance 4, for the operator): without the record the plan
+			// cannot say whether step 8 must forget this archive's key.
+			return refuse(CaseRecord, "This computer's record of encrypted archives cannot be read, so MailArchive cannot tell whether it must forget this archive's key: %s", util.StripControl(err.Error()))
 		}
 		p.Record = ref
 	}
 	return nil
 }
+
+// encAnchorFallback are an encrypted archive's files, in the order one is taken as
+// the anchor when no vault file is there.
+var encAnchorFallback = []string{container.PointerName, container.MirrorName, container.EnvelopeName, container.InventoryName}
+
+// removedIndex is the index in the plan's Remove of the root name n, or -1.
+func (l *lister) removedIndex(n string) int {
+	for i, it := range l.plan.Remove {
+		if it.Rel == n {
+			return i
+		}
+	}
+	return -1
+}
+
+// archiveIDOf is the archive id an encrypted archive's vault file (either copy)
+// records, read without the key (vault.Parse), or else its manifest envelope's; ""
+// when neither says.
+func archiveIDOf(root *os.Root) string {
+	for _, n := range []string{vault.FileName, vault.BackupName} {
+		if data, err := readSmallIn(root, n, vaultCap); err == nil {
+			if v, err := vault.Parse(data); err == nil {
+				return v.ArchiveID.String()
+			}
+		}
+	}
+	if data, err := readSmallIn(root, container.EnvelopeName, vaultCap); err == nil {
+		var env vault.ManifestEnvelope
+		if json.Unmarshal(data, &env) == nil && validArchiveID(env.ArchiveID) {
+			return env.ArchiveID
+		}
+	}
+	return ""
+}
+
+// vaultCap bounds the read of a vault file or envelope for its id.
+const vaultCap = 1 << 20
+
+// validArchiveID is an archive id's shape: 32 lower-case hex digits.
+func validArchiveID(s string) bool { return len(s) == 32 && unitRe.MatchString(s) }
 
 // walkSharded lists units/ or chunks/: <hh>/<32 hex starting with hh> files and the
 // sweepable temps in a shard; anything else is kept.
@@ -502,14 +659,18 @@ func (l *lister) walkSharded(dir string) error {
 	}
 	for _, e := range ents {
 		rel := join(dir, e.Name())
+		if rootCannotName(e.Name()) {
+			l.plan.Kept = append(l.plan.Kept, rel)
+			continue
+		}
 		fi, err := l.lstat(rel)
 		if err != nil {
-			return refuse(CaseUnreachable, msgUnreachable)
+			return l.ioRefusal(rel, err)
 		}
 		link, lerr := l.linkLike(rel, fi)
 		switch {
 		case lerr != nil:
-			return refuse(CaseUnreachable, msgUnreachable)
+			return l.ioRefusal(rel, lerr)
 		case link && shardRe.MatchString(e.Name()):
 			return linkRefusal(filepath.Join(l.folder, filepath.FromSlash(rel)))
 		case !link && fi.IsDir() && shardRe.MatchString(e.Name()):
@@ -536,14 +697,18 @@ func (l *lister) walkFlat(dir string, ok func(string) bool) error {
 	}
 	for _, e := range ents {
 		rel := join(dir, e.Name())
+		if rootCannotName(e.Name()) {
+			l.plan.Kept = append(l.plan.Kept, rel)
+			continue
+		}
 		fi, err := l.lstat(rel)
 		if err != nil {
-			return refuse(CaseUnreachable, msgUnreachable)
+			return l.ioRefusal(rel, err)
 		}
 		link, lerr := l.linkLike(rel, fi)
 		switch {
 		case lerr != nil:
-			return refuse(CaseUnreachable, msgUnreachable)
+			return l.ioRefusal(rel, lerr)
 		case link && ok(e.Name()):
 			return linkRefusal(filepath.Join(l.folder, filepath.FromSlash(rel)))
 		case !link && ok(e.Name()) && l.fileLike(fi):
@@ -578,6 +743,16 @@ func (l *lister) finish() {
 		}
 	}
 	sort.Slice(p.Remove, func(i, j int) bool { return p.Remove[i].Rel < p.Remove[j].Rel })
+	// The root state files that keep an archive as it was (its history, schedule
+	// records and pause seal) go after every other name, then the anchor
+	// (del-s1a-A2-05).
+	lateRank := map[string]int{}
+	for i, n := range lateStateFiles {
+		lateRank[fold(l.goos, n)] = i + 1
+	}
+	sort.SliceStable(p.Remove, func(i, j int) bool {
+		return lateRank[fold(l.goos, p.Remove[i].Rel)] < lateRank[fold(l.goos, p.Remove[j].Rel)]
+	})
 	p.Remove = append(p.Remove, l.anchors...)
 	sort.Strings(p.Litter)
 	sort.Strings(p.UnrecordedLitter)

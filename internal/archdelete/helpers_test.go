@@ -8,6 +8,7 @@ import (
 	"io/fs"
 	"os"
 	"path/filepath"
+	"runtime"
 	"sort"
 	"strings"
 	"testing"
@@ -66,6 +67,31 @@ func writeFile(t *testing.T, path, content string) {
 	}
 }
 
+// anyName is path in the form that names a file, never a device, on Windows (the
+// \\?\ form, so "nul" or "COM1" is a file); path as it is elsewhere.
+func anyName(path string) string {
+	if runtime.GOOS == "windows" {
+		return `\\?\` + path
+	}
+	return path
+}
+
+// writeAnyName writes a file whose name Windows reserves for a device.
+func writeAnyName(t *testing.T, path, content string) {
+	t.Helper()
+	if err := os.WriteFile(anyName(path), []byte(content), 0o644); err != nil {
+		t.Fatal(err)
+	}
+}
+
+// mkdirAnyName makes a folder whose name Windows reserves for a device.
+func mkdirAnyName(t *testing.T, path string) {
+	t.Helper()
+	if err := os.Mkdir(anyName(path), 0o755); err != nil {
+		t.Fatal(err)
+	}
+}
+
 // tree is every file and folder under dir with its content's digest ("dir" for a
 // folder, "link→target" for a link): two equal trees are byte-identical.
 func tree(t *testing.T, dir string) map[string]string {
@@ -76,9 +102,13 @@ func tree(t *testing.T, dir string) map[string]string {
 			return err
 		}
 		rel, _ := filepath.Rel(dir, p)
+		// A Windows junction is neither a folder nor a symbolic link to Go (1.23 on:
+		// ModeIrregular), so it is told apart by os.Readlink, which reads one, and
+		// never read as a file (conformance gap 5); a cloud placeholder, which
+		// Readlink does not read, is hashed as the file it is.
+		target, rerr := os.Readlink(p)
 		switch {
-		case d.Type()&fs.ModeSymlink != 0:
-			target, _ := os.Readlink(p)
+		case d.Type()&fs.ModeSymlink != 0 || (d.Type()&fs.ModeIrregular != 0 && rerr == nil):
 			out[rel] = "link→" + target
 		case d.IsDir():
 			out[rel] = "dir"
@@ -90,6 +120,29 @@ func tree(t *testing.T, dir string) map[string]string {
 			s := sha256.Sum256(b)
 			out[rel] = hex.EncodeToString(s[:])
 		}
+		return nil
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	return out
+}
+
+// statTree is tree without reading any file: each entry's mode, size and
+// modification time, for a folder holding a file this account cannot read.
+func statTree(t *testing.T, dir string) map[string]string {
+	t.Helper()
+	out := map[string]string{}
+	err := filepath.WalkDir(dir, func(p string, d fs.DirEntry, err error) error {
+		if err != nil {
+			return err
+		}
+		fi, err := os.Lstat(p)
+		if err != nil {
+			return err
+		}
+		rel, _ := filepath.Rel(dir, p)
+		out[rel] = fmt.Sprintf("%v %d %d", fi.Mode(), fi.Size(), fi.ModTime().UnixNano())
 		return nil
 	})
 	if err != nil {
@@ -141,6 +194,16 @@ func sorted(s []string) []string {
 func contains(s []string, v string) bool {
 	for _, x := range s {
 		if x == v {
+			return true
+		}
+	}
+	return false
+}
+
+// containsLine reports whether text holds line as one whole line.
+func containsLine(text, line string) bool {
+	for _, l := range strings.Split(text, "\n") {
+		if l == line {
 			return true
 		}
 	}
