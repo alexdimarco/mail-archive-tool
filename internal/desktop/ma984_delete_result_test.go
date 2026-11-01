@@ -22,7 +22,7 @@ func TestEveryReloadThePageStartsIsHeldWhileAResultIsHeld(t *testing.T) {
 		t.Fatalf("the positive twin: a Switch no longer reloads the page: %s", sw)
 	}
 	rp := jsFunc(t, "reloadPage")
-	held, rl := strings.Index(rp, "if(document.querySelector('[data-held-id]')){"), strings.Index(rp, "location.reload()")
+	held, rl := strings.Index(rp, "if(delInFlight>0||document.querySelector('[data-held-id]')){"), strings.Index(rp, "location.reload()")
 	if held < 0 || rl < 0 || held > rl || !strings.Contains(rp[held:rl], "return;") {
 		t.Errorf("reloadPage reloads while a result is held: %s", rp)
 	}
@@ -34,7 +34,7 @@ func TestEveryReloadThePageStartsIsHeldWhileAResultIsHeld(t *testing.T) {
 		t.Errorf("dashboard.js reloads in %d places, want 2 (reloadPage and the last dismissal)", n)
 	}
 	dis := jsFunc(t, "delDismiss")
-	if !strings.Contains(dis, "if(reload&&!document.querySelector('[data-held-id]'))location.reload();") {
+	if !strings.Contains(dis, "if((reload||delWait)&&delInFlight===0&&!document.querySelector('[data-held-id]')){location.reload();return 'reload';}") {
 		t.Errorf("the last dismissal does not reload the page, or reloads while a result is held: %s", dis)
 	}
 	if strings.Contains(encryptionJS, "location.reload(") || strings.Count(encryptionJS, "reloadPage()") != 6 {
@@ -69,8 +69,8 @@ func TestADeletesResultIsShownSavableAndDismissable(t *testing.T) {
 
 	show := jsFunc(t, "delShowHeld")
 	read := readKeys(show, "v")
-	if len(read) < 8 {
-		t.Fatalf("the result reads only %v", read)
+	if strings.Join(read, ",") != "folder,id,lines,recordBase64,recordName,row,rowRemoved" {
+		t.Fatalf("the result reads %v", read)
 	}
 	for _, k := range read {
 		if _, ok := reply[k]; !ok {
@@ -84,19 +84,32 @@ func TestADeletesResultIsShownSavableAndDismissable(t *testing.T) {
 		"v.lines", "'Save deletion record'", "'Dismiss'", "Close without saving the deletion record?", "'Close without saving'", "'Keep it'",
 		"h.dataset.heldId=v.id", "h.dataset.row=v.row",
 		// where it sits
-		"if(v.rowRemoved||!li){", "$('sec-archives')", "$('heldDeletes')", "li.append(h)",
-		"if(v.unfinished&&li&&!v.rowRemoved)delMarkUnfinished(li);",
-		"if(v.row===drawnFor||v.folder===drawnFor)delPageArchive(v.unfinished);",
+		"const li=v.rowRemoved?null:delRowOf(v.row);", "if(li)li.append(h);", "$('sec-archives')", "$('heldDeletes')",
 	} {
 		if !strings.Contains(show, want) {
 			t.Errorf("the result lacks %q", want)
 		}
 	}
 	noBrowserDialogs(t, "delShowHeld", show)
-	// The row removed: its buttons go at once.
-	if !strings.Contains(show, "if(v.rowRemoved&&li)delRowGone(li") {
-		t.Errorf("a removed row keeps its buttons: %s", show)
+	// Drawing a result changes no row and no card: at a page load the server drew them as they are
+	// now (MA-986, del-s3b-A1-04); a delete's reply changes them, as the server says.
+	for _, bad := range []string{"delRowGone(", "delMarkUnfinished(", "delPageArchive(", "drawnFor"} {
+		if strings.Contains(show, bad) {
+			t.Errorf("drawing a result calls %s: %s", bad, show)
+		}
 	}
+	after := jsFunc(t, "delAfterDelete")
+	for _, want := range []string{"(d.rows||[]).forEach(p=>{const li=delRowOf(p);", "if(d.rowRemoved)delRowGone(li,", "else if(d.unfinished)delMarkUnfinished(li);", "if(d.page)delPageArchive(d.page);"} {
+		if !strings.Contains(after, want) {
+			t.Errorf("a delete's reply does not change the rows and the page as the server says: %q missing from %s", want, after)
+		}
+	}
+	for _, k := range readKeys(after, "d") {
+		if _, ok := reply[k]; !ok {
+			t.Errorf("a delete's reply is read for d.%s, which it does not carry", k)
+		}
+	}
+	noBrowserDialogs(t, "delAfterDelete", after)
 	gone := jsFunc(t, "delRowGone")
 	// Its own buttons and state only: the page's note and question moved into the row (noteBeside)
 	// keep theirs.
@@ -129,7 +142,7 @@ func TestADeletesResultIsShownSavableAndDismissable(t *testing.T) {
 	}
 	ask := jsFunc(t, "delAsk")
 	noBrowserDialogs(t, "delAsk", ask)
-	if !strings.Contains(ask, "busy(yes,") || !strings.Contains(ask, "delDismiss(h,!then)") || !strings.Contains(ask, "if(then)then();") {
+	if !strings.Contains(ask, "busy(yes,") || !strings.Contains(ask, "delDismiss(h,!then)") || !strings.Contains(ask, "if(then&&r!=='reload')then();") {
 		t.Errorf("the in-page question does not close the result, then go on: %s", ask)
 	}
 
@@ -148,7 +161,7 @@ func TestADeletesResultIsShownSavableAndDismissable(t *testing.T) {
 		t.Error("the page does not draw the held results when it loads")
 	}
 	panel := jsFunc(t, "delPanel")
-	if !strings.Contains(panel, "if(d.id){done(true);delClose();delShowHeld(d);return;}") {
+	if !strings.Contains(panel, "if(d.id){done(true);delClose();delShowHeld(d);delAfterDelete(d);return;}") {
 		t.Error("a delete's reply that names a held result is not shown at once")
 	}
 }
@@ -187,7 +200,7 @@ func TestAResultMarksTheRowAndThePageAtOnce(t *testing.T) {
 			t.Errorf("delPageArchive leaves %s on the page", id)
 		}
 	}
-	if !strings.Contains(pa, "unfinished?delUnfinishedText:") {
+	if !strings.Contains(pa, "const text=delPageText[kind]||delUnfinishedText;") || !strings.Contains(dashboardJS, "const delPageText={unfinished:delUnfinishedText,") {
 		t.Errorf("delPageArchive does not say the delete is not finished: %s", pa)
 	}
 	noBrowserDialogs(t, "delMarkUnfinished", mark)

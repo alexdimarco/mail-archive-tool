@@ -304,6 +304,10 @@ func (d *dashboard) capture(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, csrfRefused, http.StatusForbidden)
 		return
 	}
+	if msg := d.pageRunRefusal(w, r); msg != "" { // MA-987
+		writeJSON(w, map[string]any{"ok": false, "error": msg})
+		return
+	}
 	if err := d.startCapture(); err != nil {
 		writeJSON(w, map[string]any{"ok": false, "error": err.Error()})
 		return
@@ -329,6 +333,9 @@ func (d *dashboard) activity(w http.ResponseWriter, r *http.Request) {
 	}
 	c.runNowActivity(out, d.cfg.goos(), time.Now(), cur)
 	c.mu.Unlock()
+	// A delete under way (MA-979): a page drawn while it ran asks here until it ends, then is
+	// drawn again with its result (del-s3b-A2-03).
+	out["deleting"] = d.running != nil && d.running.any() != nil
 	writeJSON(w, out)
 }
 

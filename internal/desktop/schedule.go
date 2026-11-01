@@ -677,6 +677,10 @@ func (d *dashboard) runBackup(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, csrfRefused, http.StatusForbidden)
 		return
 	}
+	if msg := d.pageRunRefusal(w, r); msg != "" { // MA-987
+		writeJSON(w, map[string]any{"ok": false, "error": msg})
+		return
+	}
 	out := d.cfg.effectiveOut()
 	ev := schedule.BuildKindEvidence(out)
 	if !ev.Has(schedule.KindRunJob) || ev.JobPath == "" {

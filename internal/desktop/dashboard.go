@@ -1148,6 +1148,10 @@ func (cfg Config) overviewWith(csrf, epoch string, held []heldView) string {
 		Archives      []ArchiveRow
 		ShowArchives  bool
 		CanAddArchive bool
+		// ShowThisArchive draws the lone current archive's row, with Remove from list and Delete…,
+		// on a card of its own (MA-986): Your archives stays hidden for it (MA-666), and without
+		// this the most common setup had no Delete anywhere (del-s3b-A2-01, A3-01, A3-02).
+		ShowThisArchive bool
 		// HeldDeletes is the JSON of the delete results the server holds (MA-972), for the
 		// page: each result and its deletion record's bytes, until dismissed.
 		HeldDeletes string
@@ -1223,6 +1227,7 @@ func (cfg Config) overviewWith(csrf, epoch string, held []heldView) string {
 			data.CurrentUnfinished = data.CurrentUnfinished || (r.Current && r.Unfinished)
 		}
 		data.ShowArchives = len(data.Archives) >= 2 || (len(data.Archives) == 1 && !data.Archives[0].Current)
+		data.ShowThisArchive = len(data.Archives) == 1 && data.Archives[0].Current
 		data.CanAddArchive = data.OutDir != "" && len(data.Archives) >= 1
 	}
 	// The Scheduled backup card and the Settings card (§4.6.3/MA-617, Q18(b);
@@ -1559,6 +1564,8 @@ pre{white-space:pre-wrap;overflow-wrap:anywhere;background:var(--bg);border:1px 
 .archive-row .archive-path{flex:1;min-width:0;overflow-wrap:anywhere}
 .archive-row.unavailable>.archive-path,.archive-row.unavailable>.archive-kind,.archive-row.unavailable>.row-state{opacity:.6}
 .archive-row>.note{flex-basis:100%}
+.archive-row>.note{min-width:0}
+.delete-panel,.held-result,.unlist-ask{overflow-wrap:anywhere}
 .btn.danger{background:var(--panel);color:var(--danger);border:1px solid var(--danger)}
 .btn.danger-fill{background:var(--danger);color:var(--panel)}
 .delete-panel{border-color:var(--danger)}
@@ -1634,14 +1641,14 @@ pre{white-space:pre-wrap;overflow-wrap:anywhere;background:var(--bg);border:1px 
       <p class="card-sub">The mail archives MailArchive Desktop knows about on this computer. The one marked current is the one this page shows and changes. Each archive can have its own scheduled backup; if switching would affect one, you are asked first.</p>
       {{if .SwitchLocks}}<p class="card-sub warn" id="switchLocks">{{template "switchLocks" .}}</p>{{end}}
       <ul class="archive-list">
-        {{range .Archives}}<li class="archive-row{{if not .Available}} unavailable{{end}}" data-path="{{.Path}}" data-delete-ok="{{.DeleteOK}}" data-delete-why="{{.DeleteWhy}}"{{if .Unfinished}} data-delete-unfinished{{end}}{{if .Deleting}} data-delete-running{{end}}>
-          <span class="mono archive-path">{{.Path}}</span>
-          {{if .KindLabel}}<span class="archive-kind">{{.KindLabel}}</span>{{end}}
-          {{if .SourceLostSince}}<span class="archive-tag">This archive's source hasn't been reachable since {{.SourceLostSince}} — reconnect the source (its mailbox or mail folder){{if .RunNowOnly}}, then click {{if not .Current}}Switch to this archive and click {{end}}Run now on its Scheduled backup card: its backup runs only when you click Run now.{{else}} to resume backups.{{end}}</span>{{end}}
-          {{if eq .Kind "encrypted"}}<button class="btn secondary" type="button" data-forget-archive data-path="{{.Path}}" title="Stop protecting this folder as an encrypted archive on this computer — for example after you removed the archive on purpose. Nothing in the folder is changed.">Forget this encrypted archive here</button>{{end}}
-          <span class="row-state">{{if .Deleting}}<span class="archive-tag">Being deleted — its result shows on this page when the delete ends.</span>{{else if .Unfinished}}<span class="archive-tag">Delete not finished: click Delete again</span>{{else if .Problem}}<span class="archive-tag">{{.Problem}}</span>{{else if not .Available}}<span class="archive-tag">Not reachable right now — reconnect the drive or folder and it comes back. Nothing was removed.</span>{{else if .Sealed}}<span class="archive-tag">Paused (read-only) — Resume it to make changes.</span> <button class="btn secondary" type="button" data-resume-archive data-path="{{.Path}}" title="Make this archive writable again so backups and changes can resume.">Resume</button>{{else}}{{if .Current}}<span class="archive-tag current">Current archive</span>{{else}}<button class="btn secondary" type="button" data-switch-archive data-path="{{.Path}}" title="Make this the current archive: the one this page shows and changes.">Switch to this archive</button>{{end}} <button class="btn secondary" type="button" data-pause-archive data-path="{{.Path}}" title="Make this archive read-only so nothing can change it. You can Resume it any time; nothing is deleted.">Pause (make read-only)</button>{{end}}</span>
-          {{if not .Deleting}}<button class="btn secondary" type="button" data-unlist-archive data-path="{{.Path}}" title="Take this archive off this list. The folder and its files are kept; you are asked first, and told which scheduled backups would stop.">Remove from list</button> <button class="btn danger" type="button" data-delete-archive data-path="{{.Path}}" title="{{if .DeleteOK}}Permanently delete this archive's files. You see what would be removed first, and type the folder's name to confirm.{{else}}{{.DeleteWhy}}{{end}}"{{if not .DeleteOK}} disabled{{end}}>Delete…</button>{{end}}
-        </li>{{end}}
+        {{range .Archives}}{{template "archiveRow" .}}{{end}}
+      </ul>
+    </div>{{end}}
+    {{if .ShowThisArchive}}<div class="card" id="sec-this-archive">
+      <h2>This archive</h2>
+      <p class="card-sub">The archive this page shows. <b>Delete…</b> erases its files, after showing what it would remove; <b>Remove from list</b> takes it off MailArchive's list and keeps its files.</p>
+      <ul class="archive-list">
+        {{range .Archives}}{{template "archiveRow" .}}{{end}}
       </ul>
     </div>{{end}}
 
@@ -1717,8 +1724,8 @@ pre{white-space:pre-wrap;overflow-wrap:anywhere;background:var(--bg);border:1px 
       <h2>Archive now</h2>
       {{if .CurrentUnfinished}}<p class="card-sub"><span class="archive-tag" id="archiveNowUnfinished">Delete not finished: click Delete again</span></p>{{end}}
       {{if .ArchiveNowLocal}}<p class="card-sub" id="archiveNowOff">` + archiveNowOffLead + `</p>
-      <p class="card-sub" id="archiveNowWay">{{if eq .ArchiveNowWay "runnow"}}To back it up now, click <b>Run now</b> on the <a href="#sec-backup">Scheduled backup</a> card.{{else if eq .ArchiveNowWay "create"}}To back it up now, first set up its backup: in <a href="#sec-settings">Settings</a>, choose <b>How often</b> (<b>Only when I click Run now</b>, if it should never run by itself) and click <b>Save settings</b>. <b>Run now</b> then appears on the Scheduled backup card.{{else if eq .ArchiveNowWay "export"}}Its scheduled backup was set up at the command line, so Run now isn't offered for it: the <a href="#sec-backup">Scheduled backup</a> card says how to get Run now.{{else}}To add new mail now, use one of the ways below.{{end}}</p>
-      <details class="steps" id="archiveNowHand"{{if eq .ArchiveNowWay "hand"}} open{{end}}><summary>Other ways to add new mail: the wizard or a terminal</summary><p class="card-sub steps">{{.ArchiveNowHand}}</p></details>
+      {{if not .CurrentUnfinished}}<p class="card-sub" id="archiveNowWay">{{if eq .ArchiveNowWay "runnow"}}To back it up now, click <b>Run now</b> on the <a href="#sec-backup">Scheduled backup</a> card.{{else if eq .ArchiveNowWay "create"}}To back it up now, first set up its backup: in <a href="#sec-settings">Settings</a>, choose <b>How often</b> (<b>Only when I click Run now</b>, if it should never run by itself) and click <b>Save settings</b>. <b>Run now</b> then appears on the Scheduled backup card.{{else if eq .ArchiveNowWay "export"}}Its scheduled backup was set up at the command line, so Run now isn't offered for it: the <a href="#sec-backup">Scheduled backup</a> card says how to get Run now.{{else}}To add new mail now, use one of the ways below.{{end}}</p>
+      <details class="steps" id="archiveNowHand"{{if eq .ArchiveNowWay "hand"}} open{{end}}><summary>Other ways to add new mail: the wizard or a terminal</summary><p class="card-sub steps">{{.ArchiveNowHand}}</p></details>{{end}}
       {{else if .ArchiveNowOff}}<p class="card-sub steps" id="archiveNowOff">{{.ArchiveNowOff}}</p>{{else}}<p class="card-sub">{{if .OutDir}}Fetch the latest mail into your archive. The first time, you sign in with a Microsoft device code shown here.{{else}}Archive now copies new mail from a Microsoft 365 mailbox into your archive. To use it, fill in the Microsoft 365 connection card, type a folder for the archive in Settings → Archive location and click Save settings, then come back here. For Thunderbird, Outlook or other mail files, you don't need this button.{{end}}</p>
       {{if not .CurrentUnfinished}}<button class="btn" id="archiveBtn"{{if .ArchiveNowConfirm}} data-confirm="{{.ArchiveNowConfirm}}"{{end}}>Archive now</button>{{end}}{{end}}
       {{if .ReaderURL}}<a class="btn secondary" href="{{.ReaderURL}}" target="_blank" rel="noopener">Open archive</a> <a class="btn secondary" href="{{.ReaderURL}}goback" target="_blank" rel="noopener">Go back in time</a>{{end}}
@@ -1961,6 +1968,14 @@ pre{white-space:pre-wrap;overflow-wrap:anywhere;background:var(--bg);border:1px 
 <script src="encryption.js"></script>
 {{if .Export}}<script src="signin.js"></script>{{end}}
 </body></html>
+{{- define "archiveRow"}}<li class="archive-row{{if not .Available}} unavailable{{end}}" data-path="{{.Path}}" data-delete-ok="{{.DeleteOK}}" data-delete-why="{{.DeleteWhy}}"{{if .Unfinished}} data-delete-unfinished{{end}}{{if .Deleting}} data-delete-running{{end}}>
+          <span class="mono archive-path">{{.Path}}</span>
+          {{if .KindLabel}}<span class="archive-kind">{{.KindLabel}}</span>{{end}}
+          {{if .SourceLostSince}}<span class="archive-tag">This archive's source hasn't been reachable since {{.SourceLostSince}} — reconnect the source (its mailbox or mail folder){{if .RunNowOnly}}, then click {{if not .Current}}Switch to this archive and click {{end}}Run now on its Scheduled backup card: its backup runs only when you click Run now.{{else}} to resume backups.{{end}}</span>{{end}}
+          {{if eq .Kind "encrypted"}}<button class="btn secondary" type="button" data-forget-archive data-path="{{.Path}}" title="Stop protecting this folder as an encrypted archive on this computer — for example after you removed the archive on purpose. Nothing in the folder is changed.">Forget this encrypted archive here</button>{{end}}
+          <span class="row-state">{{if .Deleting}}<span class="archive-tag">Being deleted — its result shows on this page when the delete ends.</span>{{else if .Unfinished}}<span class="archive-tag">Delete not finished: click Delete again</span>{{else if .Problem}}<span class="archive-tag">{{.Problem}}</span>{{else if not .Available}}<span class="archive-tag">Not reachable right now — reconnect the drive or folder and it comes back. Nothing was removed.</span>{{else if .Sealed}}<span class="archive-tag">Paused (read-only) — Resume it to make changes.</span> <button class="btn secondary" type="button" data-resume-archive data-path="{{.Path}}" title="Make this archive writable again so backups and changes can resume.">Resume</button>{{else}}{{if .Current}}<span class="archive-tag current">Current archive</span>{{else}}<button class="btn secondary" type="button" data-switch-archive data-path="{{.Path}}" title="Make this the current archive: the one this page shows and changes.">Switch to this archive</button>{{end}} <button class="btn secondary" type="button" data-pause-archive data-path="{{.Path}}" title="Make this archive read-only so nothing can change it. You can Resume it any time; nothing is deleted.">Pause (make read-only)</button>{{end}}</span>
+          {{if not .Deleting}}<button class="btn secondary" type="button" data-unlist-archive data-path="{{.Path}}" title="Take this archive off this list. The folder and its files are kept; you are asked first, and told which scheduled backups would stop.">Remove from list</button> <button class="btn danger" type="button" data-delete-archive data-path="{{.Path}}" title="{{if .DeleteOK}}Permanently delete this archive's files. You see what would be removed first, and type the folder's name to confirm.{{else}}{{.DeleteWhy}}{{end}}"{{if not .DeleteOK}} disabled{{end}}>Delete…</button>{{end}}
+        </li>{{end}}
 {{- define "switchLocks"}}Switching to another archive locks {{.SwitchLocks}}.{{if .EncRemembered}} This computer remembers its key, so it opens again by itself when you switch back.{{else}} When you switch back, unlock it again on its Encryption card.{{end}}{{end}}`))
 
 // dashboardBaseJS wires the action buttons (clear sign-in, settings, archive-now with
@@ -1973,6 +1988,9 @@ const dashboardBaseJS = `const csrf=document.querySelector('meta[name=csrf]').co
 const drawnFor=(document.querySelector('meta[name=drawn-for]')||{}).content||'';
 const $=id=>document.getElementById(id);
 const post=path=>fetch(path,{method:'POST',headers:{'X-CSRF-Token':csrf}});
+// postDrawn posts the archive this page was drawn for: Archive now and Run now act on the current
+// archive, so a page left drawn for another one is refused, not run on it (MA-987).
+const postDrawn=path=>fetch(path,{method:'POST',headers:{'Content-Type':'application/json','X-CSRF-Token':csrf},body:JSON.stringify({drawnFor:drawnFor})});
 
 // busy shows that a pressed button is working (MA-872): the button is disabled and marked
 // aria-busy, its label becomes the working label (an empty one keeps the label), and the note
@@ -2334,7 +2352,7 @@ if(btn)btn.addEventListener('click',async()=>{
   // On a local archive where Microsoft 365 is set up, Archive now turns it mixed: asked first (C-7).
   if(btn.dataset.confirm&&!confirm(btn.dataset.confirm))return;
   const r=$('captureResult'),done=busy(btn,'Starting…',r,'Starting to archive your mail now…');
-  try{const d=await(await post('api/capture')).json();
+  try{const d=await(await postDrawn('api/capture')).json();
     if(!d.ok){done();if(r){r.hidden=false;r.textContent=d.error||'Could not start.';}return;}
     done(true);if(r)r.hidden=true; // the activity log takes over; the button comes back when the run ends
     start();
@@ -2445,7 +2463,7 @@ if(sr)sr.addEventListener('click',()=>cardPost('api/schedule-remove',busy(sr,'Re
 const rbBtn=$('runBackupBtn');
 if(rbBtn)rbBtn.addEventListener('click',async()=>{
   const n=$('runBackupNote'),done=busy(rbBtn,'Running…',n,'Running the backup now…');
-  try{const d=await(await post('api/run-backup')).json();
+  try{const d=await(await postDrawn('api/run-backup')).json();
     if(!d.ok){done();if(n){n.hidden=false;n.textContent=d.error||'Could not start the backup.';}return;}
     done(true); // stays disabled while its progress shows in the note; pollBackup gives it back at the end
     pollBackup();

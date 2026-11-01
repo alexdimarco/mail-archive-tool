@@ -170,7 +170,7 @@ func TestThePanelDeletesOnlyOnceTheNameMatches(t *testing.T) {
 		"go.disabled=true", "const ok=delNameMatches(input.value,p.name);go.disabled=!ok;hint.hidden=ok;",
 		"input.addEventListener('input',match)",
 		"box.type='checkbox'", "delSaveFile(p.planName,p.planText)",
-		"delPost('api/archive/delete',{token:p.token,typed:input.value,unrecorded:!!(box&&box.checked)})",
+		"delPost('api/archive/delete',{token:p.token,typed:input.value,unrecorded:!!(box&&box.checked),drawnFor:drawnFor})",
 	} {
 		if !strings.Contains(panel, want) {
 			t.Errorf("the panel lacks %q", want)
@@ -187,8 +187,8 @@ func TestThePanelDeletesOnlyOnceTheNameMatches(t *testing.T) {
 	}
 	// A refusal with no held result: said in the panel, the button disabled again until the name matches.
 	go_ := panel[strings.Index(panel, "go.addEventListener('click',"):]
-	if !strings.Contains(go_, "busy(go,") || !strings.Contains(go_, "if(d.id){") || !strings.Contains(go_, "done();match();") ||
-		!strings.Contains(go_, "msg.textContent=d.error") {
+	if !strings.Contains(go_, "busy(go,") || !strings.Contains(go_, "if(d.id){") || !strings.Contains(go_, "done(!!d.planUsed);if(!d.planUsed)match();") ||
+		!strings.Contains(go_, "done();match();") || !strings.Contains(go_, "msg.textContent=d.error") {
 		t.Errorf("Delete permanently does not keep a refusal in the panel with the name check redone: %s", go_)
 	}
 	f := jsFunc(t, "delSaveFile")

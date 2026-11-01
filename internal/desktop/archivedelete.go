@@ -413,13 +413,14 @@ func (d *dashboard) deleteAction(w http.ResponseWriter, r *http.Request) {
 		Token      string `json:"token"`
 		Typed      string `json:"typed"`
 		Unrecorded bool   `json:"unrecorded"`
+		DrawnFor   string `json:"drawnFor"`
 	}
 	if !readDeleteBody(w, r, &in) {
 		return
 	}
 	it := d.pending.get(in.Token, isDeletePlan)
 	if it == nil {
-		refuseDelete(w, deleteNotWaiting)
+		refusePlanUsed(w, deleteNotWaiting)
 		return
 	}
 	// A name that does not match changes nothing and keeps the plan: the person types again.
@@ -441,10 +442,15 @@ func (d *dashboard) deleteAction(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if it = d.pending.take(in.Token, isDeletePlan); it == nil {
-		refuseDelete(w, deleteNotWaiting)
+		refusePlanUsed(w, deleteNotWaiting)
 		return
 	}
 	plan, row := it.deletePlan.plan, it.deletePlan.row
+	// Read before the delete, while the folder is there to be compared by identity: the rows of
+	// Your archives that are this folder, and whether it is the archive the page was drawn for.
+	rows := d.cfg.rowsOfFolder(row, plan.Folder)
+	pageArchive := strings.TrimSpace(in.DrawnFor) != "" &&
+		(sameArchiveFolder(in.DrawnFor, plan.Folder) || sameArchiveFolder(in.DrawnFor, row))
 	res := d.runDelete(plan, row, in.Typed, in.Unrecorded)
 	v := heldView{Row: row, Folder: plan.Folder, Name: plan.Name, Status: res.Status, Lines: append([]string(nil), res.Lines...),
 		RowRemoved: res.RowRemoved, Unfinished: res.Unfinished}
@@ -456,11 +462,113 @@ func (d *dashboard) deleteAction(w http.ResponseWriter, r *http.Request) {
 	}
 	out := map[string]any{"ok": res.Refusal == nil, "id": v.ID, "row": row, "folder": v.Folder, "name": v.Name, "status": v.Status,
 		"lines": v.Lines, "rowRemoved": v.RowRemoved, "unfinished": v.Unfinished,
-		"record": v.Record, "recordBase64": v.RecordBase64, "recordName": v.RecordName}
+		"record": v.Record, "recordBase64": v.RecordBase64, "recordName": v.RecordName,
+		"rows": rows, "page": pageAfterDelete(pageArchive, res)}
 	if res.Refusal != nil {
 		out["error"] = res.Message()
 	}
+	// Refused before its started line, the plan's one-use token is spent: Delete permanently can
+	// only be told the delete is no longer waiting (del-s3b conformance gap 3).
+	if res.Record == nil {
+		out["planUsed"] = true
+		msg, _ := out["error"].(string)
+		out["error"] = planUsedText(msg)
+	}
 	writeJSON(w, out)
+}
+
+// runUnfinishedText refuses Archive now and Run now of a current archive whose delete did not
+// finish (§5.4's words first; the rest the builder's).
+const runUnfinishedText = "Delete not finished: click Delete again. This archive's delete did not finish, so it is not backed up; nothing was changed."
+
+// pageRunRefusal is why Archive now or Run now, posted from the page, does not start (MA-987), ""
+// when it may: a page drawn for another archive than the current one (C-12's binding; while a
+// delete's result is held the page is not drawn again after a switch, so its cards may name the
+// archive it was drawn for, del-s3b-A1-03, A3-03); a current archive being deleted; and one whose
+// delete did not finish (§5.4, §3.1: neither is offered for it, and the emptied-folder guard lets
+// a run into a folder a delete left part way, since its manifest goes last — del-s3b conformance
+// gap 2). A post that names no folder (a client older than this page) is not refused as stale.
+func (d *dashboard) pageRunRefusal(w http.ResponseWriter, r *http.Request) string {
+	var in struct {
+		DrawnFor *string `json:"drawnFor"`
+	}
+	_ = json.NewDecoder(http.MaxBytesReader(w, r.Body, 4<<10)).Decode(&in)
+	if d.stalePage(in.DrawnFor) {
+		return staleRefusal
+	}
+	out := d.cfg.effectiveOut()
+	if out == "" {
+		return ""
+	}
+	if d.running.of(out) != nil {
+		return deletingRefusal
+	}
+	if logPath, err := archdelete.DefaultLogPath(); err == nil {
+		if u, err := archdelete.UnfinishedDelete(logPath, out, runtime.GOOS); err == nil && u != nil {
+			return runUnfinishedText
+		}
+	}
+	return ""
+}
+
+// planAgainText ends a refusal that spent the plan's token (builder's words).
+const planAgainText = "Click Delete… again to try again."
+
+// planUsedText is a refusal that spent the plan's token, saying how to go on.
+func planUsedText(msg string) string {
+	if msg == "" {
+		return planAgainText
+	}
+	if strings.Contains(msg, "Delete… again") {
+		return msg
+	}
+	return msg + " " + planAgainText
+}
+
+// refusePlanUsed is a refusal after which the plan's token no longer waits (planUsed: the page
+// leaves Delete permanently disabled, del-s3b conformance gap 3).
+func refusePlanUsed(w http.ResponseWriter, msg string) {
+	writeJSON(w, map[string]any{"ok": false, "error": planUsedText(msg), "planUsed": true})
+}
+
+// The page's own archive after a delete of it (§3.1 "Where the result sits", MA-986): "unfinished"
+// (§5.4: Archive now and Run now give way to "Delete not finished: click Delete again"), "deleted"
+// or "partial" (the delete got past step 4, which cleared it as the archive in use), or "" — not
+// the page's archive, or a delete refused after its start, which removed nothing (del-s3b-A2-02).
+func pageAfterDelete(pageArchive bool, res *archdelete.Result) string {
+	switch {
+	case !pageArchive:
+		return ""
+	case res.Unfinished:
+		return "unfinished"
+	case res.Status == archdelete.StatusComplete:
+		return "deleted"
+	case res.Status == archdelete.StatusPartial:
+		return "partial"
+	}
+	return ""
+}
+
+// rowsOfFolder are the rows of Your archives that are the folder a delete planned from row is
+// about (del-s3b-A1-02): row itself, and every other spelling of the same folder — by file
+// identity while it can be read, else as this computer's file system compares names — which is
+// what step 9 (archdelete.ForgetRowAt) removes and what deletions.log marks not finished, so the
+// page marks every one of them, not only the spelling clicked.
+func (cfg Config) rowsOfFolder(row, folder string) []string {
+	rows := []string{row}
+	if strings.TrimSpace(cfg.IndexPath) == "" {
+		return rows
+	}
+	idx, err := archindex.ReadFile(cfg.IndexPath)
+	if err != nil {
+		return rows
+	}
+	for _, e := range idx.Entries {
+		if e.Path != row && (sameArchiveFolder(e.Path, row) || sameArchiveFolder(e.Path, folder)) {
+			rows = append(rows, e.Path)
+		}
+	}
+	return rows
 }
 
 // runDelete is Execute with the page's own reader of the archive closed and held off it for the
@@ -724,7 +832,10 @@ func (d *dashboard) deleteDismissAction(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 	if !d.deletes.dismiss(in.ID) {
-		refuseDelete(w, notHeldText)
+		// notHeld: dismissed already (in another tab), or held no more since a restart; the page
+		// takes the result away as dismissed, so it does not hold the page's reloads for ever
+		// (del-s3b-A2-05).
+		writeJSON(w, map[string]any{"ok": false, "error": notHeldText, "notHeld": true})
 		return
 	}
 	writeJSON(w, map[string]any{"ok": true})

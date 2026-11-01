@@ -77,8 +77,15 @@ func TestAFirstInstallKeepsItsNoteAcrossTheRedraw(t *testing.T) {
 	if !strings.Contains(dashboardJS, load) {
 		t.Error("the page does not show a kept note when it is drawn, or does not forget it")
 	}
-	if n := strings.Count(dashboardJS, "sessionStorage."); n != 3 {
-		t.Errorf("the page script calls storage %d times, want the 3 guarded ones", n)
+	// The two others are a deletion record's saved mark (MA-986), each guarded too.
+	for _, guarded := range []string{"try{if(sessionStorage.getItem(delSavedKey(v.id))==='1')h.dataset.saved='1';}catch(e){}",
+		"try{sessionStorage.setItem(delSavedKey(v.id),'1');}catch(e){}"} {
+		if !strings.Contains(dashboardJS, guarded) {
+			t.Errorf("the page script's deletion-record mark is not guarded: %q missing", guarded)
+		}
+	}
+	if n := strings.Count(dashboardJS, "sessionStorage."); n != 5 {
+		t.Errorf("the page script calls storage %d times, want the 5 guarded ones", n)
 	}
 }
 
