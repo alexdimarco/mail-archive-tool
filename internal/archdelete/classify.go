@@ -45,6 +45,15 @@ var manifestCap int64 = 1 << 30
 // "reconnect" (del-s1a-A1-03, A2-03, A3-05, conformance D2; §7 has no row for these,
 // for the operator).
 func classify(root *os.Root, abs string) (Kind, error) {
+	return classifyWith(root, abs, func(root *os.Root, _ string, _ os.FileInfo) error {
+		_, _, err := readManifest(root)
+		return err
+	})
+}
+
+// classifyWith is classify with the manifest's parse asked of parse (fi: the manifest's Lstat),
+// which a row keeps between page loads (rowArchiveTest).
+func classifyWith(root *os.Root, abs string, parse func(root *os.Root, abs string, fi os.FileInfo) error) (Kind, error) {
 	enc, _, merr := encmark.Here(abs)
 	if enc {
 		if vault.ManifestIsPlaintext(filepath.Join(abs, manifestName)) {
@@ -68,7 +77,7 @@ func classify(root *os.Root, abs string) (Kind, error) {
 	if link, lerr := util.IsLinkLike(filepath.Join(abs, manifestName)); fi.Mode()&fs.ModeSymlink != 0 || lerr != nil || link {
 		return 0, linkRefusal(filepath.Join(abs, manifestName))
 	}
-	if _, _, err := readManifest(root); err != nil {
+	if err := parse(root, abs, fi); err != nil {
 		return 0, manifestRefusal(abs, err)
 	}
 	return Plain, nil

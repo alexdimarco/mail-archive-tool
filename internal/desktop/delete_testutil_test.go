@@ -29,6 +29,8 @@ type delSched struct {
 	installed map[string]bool
 	removed   []string
 	failOn    map[string]error
+	// onRemove, when set, runs at each removal before it is made: a test stands inside a delete.
+	onRemove func(name string)
 }
 
 func newDelSched() *delSched {
@@ -43,10 +45,13 @@ func (f *delSched) Query(n string) schedule.State {
 	}
 	return schedule.NotInstalled
 }
-func (f *delSched) SaysMissing(string) bool       { return true }
-func (f *delSched) SideFilesExist(string) bool    { return false }
-func (f *delSched) RemoveSideFiles(string) error  { return nil }
+func (f *delSched) SaysMissing(string) bool      { return true }
+func (f *delSched) SideFilesExist(string) bool   { return false }
+func (f *delSched) RemoveSideFiles(string) error { return nil }
 func (f *delSched) RemoveLiveEntry(n string) error {
+	if f.onRemove != nil {
+		f.onRemove(n)
+	}
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	if err := f.failOn[n]; err != nil {

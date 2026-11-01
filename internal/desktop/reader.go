@@ -2,6 +2,7 @@ package desktop
 
 import (
 	"net/http"
+	"os"
 	"path/filepath"
 	"strings"
 	"sync"
@@ -23,9 +24,15 @@ type readerMux struct {
 	curOut string
 	h      http.Handler
 	ix     *index.Index
-	// held counts the deletes under way of an archive (by keyOf), during which the reader
-	// does not open it (holdFor, MA-974).
-	held map[string]int
+	// held are the deletes under way of an archive (by keyOf, and by the folder's identity when
+	// it could be read), during which the reader does not open it (holdFor, MA-974).
+	held map[string]*readerHold
+}
+
+// readerHold is one archive's deletes under way: how many, and the folder's identity.
+type readerHold struct {
+	n  int
+	fi os.FileInfo
 }
 
 // readerDeletingNote is what the reader says of an archive a Delete is removing.
@@ -34,33 +41,80 @@ const readerDeletingNote = "This archive is being deleted."
 // holdFor closes the reader's index of the archive at out, if it has it open — Windows
 // cannot delete a file the reader holds (design-archive-delete §9 "Open files") — and keeps
 // the reader from opening that archive until release is called: a Delete's step 1 needs the
-// page's own reader closed first (MA-974).
+// page's own reader closed first (MA-974). The archive is the same by its spelling or, when the
+// folder can be read, by its file identity: the row deleted may spell the folder otherwise than
+// the archive location the reader opened (a mapped drive and its network path, an 8.3 name, a
+// junction above it), and a hold that missed would leave search.db open (del-s3a-A1-02, MA-978).
 func (rm *readerMux) holdFor(out string) (release func()) {
 	_, key := keyOf(out)
+	fi, _ := os.Stat(out)
 	rm.mu.Lock()
 	if rm.held == nil {
-		rm.held = map[string]int{}
+		rm.held = map[string]*readerHold{}
 	}
-	rm.held[key]++
-	if rm.curOut != "" {
-		if _, cur := keyOf(rm.curOut); cur == key {
-			if rm.ix != nil {
-				rm.ix.Close()
-			}
-			rm.ix, rm.h, rm.curOut = nil, nil, ""
-		}
+	h := rm.held[key]
+	if h == nil {
+		h = &readerHold{fi: fi}
+		rm.held[key] = h
+	}
+	h.n++
+	if rm.curOut != "" && rm.sameAs(rm.curOut, key, fi) {
+		rm.closeIndex()
 	}
 	rm.mu.Unlock()
 	var once sync.Once
 	return func() {
 		once.Do(func() {
 			rm.mu.Lock()
-			if rm.held[key]--; rm.held[key] <= 0 {
+			if h.n--; h.n <= 0 && rm.held[key] == h {
 				delete(rm.held, key)
 			}
 			rm.mu.Unlock()
 		})
 	}
+}
+
+// sameAs reports whether the folder p is the one key (keyOf) and fi (its identity, nil when it
+// could not be read) name. Called with rm.mu held.
+func (rm *readerMux) sameAs(p, key string, fi os.FileInfo) bool {
+	if _, k := keyOf(p); k == key {
+		return true
+	}
+	if fi == nil {
+		return false
+	}
+	pfi, err := os.Stat(p)
+	return err == nil && os.SameFile(pfi, fi)
+}
+
+// heldNow reports whether a delete under way holds the archive at out. Called with rm.mu held.
+func (rm *readerMux) heldNow(out string) bool {
+	if len(rm.held) == 0 {
+		return false
+	}
+	_, key := keyOf(out)
+	if rm.held[key] != nil {
+		return true
+	}
+	ofi, err := os.Stat(out)
+	if err != nil {
+		return false
+	}
+	for _, h := range rm.held {
+		if h.fi != nil && os.SameFile(h.fi, ofi) {
+			return true
+		}
+	}
+	return false
+}
+
+// closeIndex closes the open index, if any, and forgets which archive it was. Called with rm.mu
+// held.
+func (rm *readerMux) closeIndex() {
+	if rm.ix != nil {
+		rm.ix.Close()
+	}
+	rm.ix, rm.h, rm.curOut = nil, nil, ""
 }
 
 // ReaderHandler returns the archive-reader handler for cfg's current archive.
@@ -70,11 +124,15 @@ func (rm *readerMux) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	out := rm.cfg.effectiveOut()
 	rm.mu.Lock()
 	if out == "" {
+		// No archive is set (cleared by Settings, or by a Delete of the current one): the index
+		// of the archive that was is closed, so this process does not hold its search.db, which
+		// Windows would then refuse to delete (del-s3a-A1-02).
+		rm.closeIndex()
 		rm.mu.Unlock()
 		http.Error(w, "No archive location set yet — open MailArchive Desktop and choose one.", http.StatusServiceUnavailable)
 		return
 	}
-	if _, key := keyOf(out); rm.held[key] > 0 {
+	if rm.heldNow(out) {
 		rm.mu.Unlock()
 		http.Error(w, readerDeletingNote, http.StatusServiceUnavailable)
 		return

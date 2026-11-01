@@ -11,6 +11,7 @@ import (
 	"os"
 	"path/filepath"
 	"runtime"
+	"sync"
 	"time"
 
 	"mail-archive-tool/internal/job"
@@ -230,15 +231,71 @@ type Unfinished struct {
 // started line records, or any folder after its `folder removed` line — a new
 // folder, as planUnfinished says (del-s1b-A1-01, A1-06, A2-04, A3-03).
 func UnfinishedDelete(logPath, folder, goos string) (*Unfinished, error) {
-	if goos == "" {
-		goos = runtime.GOOS
-	}
-	lines, err := readLog(logPath)
+	l, err := ReadDeleteLog(logPath)
 	if err != nil {
 		return nil, err
 	}
+	return l.Unfinished(folder, goos), nil
+}
+
+// DeleteLog is deletions.log read once, for a caller that asks it of many folders: a page of
+// Your archives (del-s3a-A3-04, A4-05). Asking UnfinishedDelete for each row read the log again
+// for each and took the file identity of every folder a started line names, for each row — a
+// network folder deleted long ago and offline since (\\nas\share\Mail, a mapped drive letter
+// gone) was then asked of the network rows × lines times on every load, each ask able to wait
+// for the network's time-out on Windows. Read once, a log in which every delete finished is
+// answered without asking the file system anything; otherwise each path is asked once for the
+// DeleteLog's life (a page load: a snapshot).
+type DeleteLog struct {
+	lines []logLine
+	// pending: some delete in the log may not have finished — a started line whose own run has
+	// no finished line that ends it (a crash, a power cut, a partial written after step 2
+	// began), or a started line with no run id (none is written so).
+	pending bool
+	stat    *statMemo
+}
+
+// ReadDeleteLog reads the log at path once; an absent log has no lines.
+func ReadDeleteLog(path string) (*DeleteLog, error) {
+	lines, err := readLog(path)
+	if err != nil {
+		return nil, err
+	}
+	return newDeleteLog(lines, newStatMemo()), nil
+}
+
+func newDeleteLog(lines []logLine, stat *statMemo) *DeleteLog {
+	l := &DeleteLog{lines: lines, stat: stat}
+	// A run whose own finished line ends it (any outcome but a partial that leaves the row
+	// unfinished) is out of UnfinishedDelete's open list by the end of the log, whatever
+	// folder it names: refused removes it, any other ends every open delete of its folder.
+	ended := map[string]bool{}
+	for _, ln := range lines {
+		if ln.Event == evFinished && ln.Run != "" && !(ln.Outcome == outPartial && ln.Unfinished) {
+			ended[ln.Run] = true
+		}
+	}
+	for _, ln := range lines {
+		if ln.Event == evStarted && (ln.Run == "" || !ended[ln.Run]) {
+			l.pending = true
+			break
+		}
+	}
+	return l
+}
+
+// Unfinished is UnfinishedDelete of folder against this read of the log.
+func (dl *DeleteLog) Unfinished(folder, goos string) *Unfinished {
+	if dl == nil || !dl.pending {
+		return nil
+	}
+	if goos == "" {
+		goos = runtime.GOOS
+	}
+	lines := dl.lines
+	stat := dl.stat.stat
 	names := func(l logLine) bool {
-		return sameFolder(l.Folder, folder, goos) || (l.Row != "" && sameFolder(l.Row, folder, goos))
+		return sameFolderStat(stat, l.Folder, folder, goos) || (l.Row != "" && sameFolderStat(stat, l.Row, folder, goos))
 	}
 	var open []*Unfinished
 	byRun := map[string]*Unfinished{}
@@ -317,15 +374,52 @@ func UnfinishedDelete(logPath, folder, goos string) (*Unfinished, error) {
 			}
 		}
 	}
+	if len(open) == 0 {
+		return nil
+	}
 	now, there := folderIdentity(folder)
 	for i := len(open) - 1; i >= 0; i-- {
 		u := open[i]
 		if there && (u.FolderRemoved || (u.Identity != Identity{} && u.Identity != now)) {
 			continue
 		}
-		return u, nil
+		return u
 	}
-	return nil, nil
+	return nil
+}
+
+// statMemo is os.Stat taken once per path for its life: a page of rows asks the same folders
+// (a row's, a logged one's, a protected one's ancestors) many times (del-s3a-A3-04, A4-05).
+type statMemo struct {
+	mu sync.Mutex
+	m  map[string]statResult
+}
+
+type statResult struct {
+	fi  os.FileInfo
+	err error
+}
+
+func newStatMemo() *statMemo { return &statMemo{m: map[string]statResult{}} }
+
+// statSeam is the file system's stat as the memo asks it: a test counts the asks.
+var statSeam = os.Stat
+
+func (s *statMemo) stat(p string) (os.FileInfo, error) {
+	if s == nil {
+		return statSeam(p)
+	}
+	s.mu.Lock()
+	r, ok := s.m[p]
+	s.mu.Unlock()
+	if ok {
+		return r.fi, r.err
+	}
+	fi, err := statSeam(p)
+	s.mu.Lock()
+	s.m[p] = statResult{fi, err}
+	s.mu.Unlock()
+	return fi, err
 }
 
 // rerunFolderGoneWord marks a folder-gone re-run's started line.

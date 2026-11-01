@@ -6,6 +6,7 @@ import (
 	"strings"
 	"time"
 
+	"mail-archive-tool/internal/archdelete"
 	"mail-archive-tool/internal/archindex"
 	"mail-archive-tool/internal/encmark"
 	"mail-archive-tool/internal/schedule"
@@ -54,6 +55,9 @@ type ArchiveRow struct {
 	DeleteOK   bool
 	DeleteWhy  string
 	Unfinished bool
+	// Deleting marks a delete of the folder under way in this process (MA-979): the row says
+	// "Being deleted" in place of Switch and Pause and offers neither Delete nor Remove from list.
+	Deleting bool
 }
 
 // KindLabel is the short, plain-words form of Kind for the archive list ("" when
@@ -130,7 +134,9 @@ func (cfg Config) reconcileArchives(now time.Time) (archindex.Index, error) {
 func (cfg Config) archiveRows(idx archindex.Index) []ArchiveRow {
 	current := cleanPath(cfg.effectiveOut())
 	rows := make([]ArchiveRow, 0, len(idx.Entries))
-	deps := cfg.deleteDeps(nil, nil)
+	// The row's busy check is the plan's: the Desktop's own runs and another program's holding
+	// the archive lock (del-s3a conformance gap 1).
+	rc := archdelete.NewRowsCheck(cfg.deleteDeps(cfg.rowBusy, nil))
 	for _, e := range idx.Entries {
 		avail := archindex.Available(e)
 		kind := ""
@@ -142,11 +148,12 @@ func (cfg Config) archiveRows(idx archindex.Index) []ArchiveRow {
 			problem = recordedProblem(e.Path)
 		}
 		lostSince := sourceLostSince(e.Path)
-		del := deleteRowFacts(e.Path, deps, avail && kind != "" && problem == "")
+		del := cfg.deleteRowFacts(e.Path, rc, avail && kind != "" && problem == "")
 		rows = append(rows, ArchiveRow{
 			DeleteOK:        del.ok,
 			DeleteWhy:       del.why,
 			Unfinished:      del.unfinished,
+			Deleting:        del.deleting,
 			Path:            e.Path,
 			Current:         current != "" && cleanPath(e.Path) == current,
 			Available:       avail && problem == "",

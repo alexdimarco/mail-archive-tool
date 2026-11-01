@@ -164,6 +164,11 @@ type Config struct {
 	// this process serves no reader.
 	ReaderHold func(out string) (release func())
 
+	// rowBusy and rowDeleting are the dashboard's own record of what runs, as the rows of Your
+	// archives read it: a backup or an export of the folder (§7's busy row, C12) and a delete of
+	// it under way (MA-979). Set by newDashboard; nil (a Config with no dashboard) reports none.
+	rowBusy, rowDeleting func(folder string) bool
+
 	// Test overrides of the Graph client's bounds (zero = its defaults, fixed by design).
 	RequestTimeout    time.Duration
 	MIMETimeout       time.Duration
@@ -240,9 +245,10 @@ type dashboard struct {
 	cfg     Config
 	csrf    string
 	cap     *captureState
-	pending *pendingSecrets // the Encryption card's prepared key changes (3e)
-	deletes *heldDeletes    // each delete's result and deletion record, held until dismissed (MA-972)
-	copying atomic.Value    // the archive (a key from keyOf) an unencrypted copy is being made of, or ""
+	pending *pendingSecrets  // the Encryption card's prepared key changes (3e)
+	deletes *heldDeletes     // each delete's result and deletion record, held until dismissed (MA-972)
+	running *deletesUnderWay // the deletes running now (MA-979)
+	copying atomic.Value     // the archive (a key from keyOf) an unencrypted copy is being made of, or ""
 
 	boot  string // this process's epoch: a page that carries another one was made before a restart (R-y)
 	life  *Lifecycle
@@ -288,9 +294,15 @@ func newDashboard(cfg Config) *dashboard {
 	d.pending = newPendingSecrets()
 	cfg.Keys.whenLocked(d.pending.discardFor)
 	d.life.OnDrain(func(context.Context) error { d.pending.close(); return nil })
-	// Held delete results go at Shut down: MailArchive keeps no copy after it (§8.1, O2-07).
+	// A delete under way is waited for at Shut down, within the drain's budget, before its held
+	// result could be cleared (MA-979); held delete results go then: MailArchive keeps no copy
+	// after it (§8.1, O2-07).
+	d.running = newDeletesUnderWay()
+	d.life.OnDrain(func(ctx context.Context) error { return d.running.wait(ctx) })
 	d.deletes = newHeldDeletes()
 	d.life.OnDrain(func(context.Context) error { d.deletes.clear(); return nil })
+	d.cfg.rowBusy = d.planBusy
+	d.cfg.rowDeleting = func(folder string) bool { return d.running.of(folder) != nil }
 	d.life.OnDrain(d.drain)
 	return d
 }
@@ -476,6 +488,13 @@ func (d *dashboard) shutdown(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, map[string]any{"ok": false, "error": "This window cannot stop MailArchive Desktop itself. Quit it where you started it (close its Terminal, or press Ctrl-C there)."})
 		return
 	}
+	// A delete under way is not cut off by Shut down, which would also be told the archives are
+	// untouched (MA-979): Shut down waits for its result. (Ctrl-C or a logoff waits for it
+	// within the drain's budget.)
+	if it := d.running.any(); it != nil {
+		writeJSON(w, map[string]any{"ok": false, "error": fmt.Sprintf(deletingShutdown, it.row)})
+		return
+	}
 	writeJSON(w, map[string]any{"ok": true, "message": "MailArchive Desktop is stopping. You can close this tab; your archives and schedules are untouched."})
 	if f, ok := w.(http.Flusher); ok {
 		f.Flush()
@@ -515,6 +534,7 @@ func (d *dashboard) saveSettings(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	out := strings.TrimSpace(in.Out)
+	wasCurrent := d.cfg.effectiveOut()
 	// The archive is copied, synced and browsed; MailArchive's own settings and
 	// sign-in must not travel with it (design-local-confidentiality P10).
 	if out != "" {
@@ -631,7 +651,29 @@ func (d *dashboard) saveSettings(w http.ResponseWriter, r *http.Request) {
 	d.cfg.Keys.lockExcept(d.cfg.effectiveOut())
 	_, current := keyOf(d.cfg.effectiveOut())
 	d.pending.discardExcept(current)
+	// A delete planned from any row ends only at a switch: its plan read which archive was
+	// current; a save that leaves the location as it is ends none (del-s3a-A3-06).
+	if !samePath(wasCurrent, d.cfg.effectiveOut()) {
+		d.pending.discardWhere(isDeletePlan)
+	}
 	writeJSON(w, map[string]any{"ok": true})
+}
+
+// afterCurrentMoved applies a switch's rules when the current archive is no longer before (what
+// it was before an action that may clear it): every encrypted archive but the new current one
+// locks (K4), every key change prepared on another archive's card ends (KEY-05), and every
+// delete planned ends (its plan read which archive was current, §5.1 (c), step 4). Remove from
+// list clears the current archive when it is unreachable or no longer an archive (§5.2), which is
+// such a switch (del-s3a-A4-04). Nothing happens when the current archive did not move.
+func (d *dashboard) afterCurrentMoved(before string) {
+	now := d.cfg.effectiveOut()
+	if samePath(before, now) {
+		return
+	}
+	d.cfg.Keys.lockExcept(now)
+	_, current := keyOf(now)
+	d.pending.discardExcept(current)
+	d.pending.discardWhere(isDeletePlan)
 }
 
 // clearSignin removes the saved delegated sign-in (loopback-only, CSRF-guarded), so
@@ -1573,12 +1615,12 @@ pre{white-space:pre-wrap;overflow-wrap:anywhere;background:var(--bg);border:1px 
       <p class="card-sub">The mail archives MailArchive Desktop knows about on this computer. The one marked current is the one this page shows and changes. Each archive can have its own scheduled backup; if switching would affect one, you are asked first.</p>
       {{if .SwitchLocks}}<p class="card-sub warn" id="switchLocks">{{template "switchLocks" .}}</p>{{end}}
       <ul class="archive-list">
-        {{range .Archives}}<li class="archive-row{{if not .Available}} unavailable{{end}}" data-path="{{.Path}}" data-delete-ok="{{.DeleteOK}}" data-delete-why="{{.DeleteWhy}}"{{if .Unfinished}} data-delete-unfinished{{end}}>
+        {{range .Archives}}<li class="archive-row{{if not .Available}} unavailable{{end}}" data-path="{{.Path}}" data-delete-ok="{{.DeleteOK}}" data-delete-why="{{.DeleteWhy}}"{{if .Unfinished}} data-delete-unfinished{{end}}{{if .Deleting}} data-delete-running{{end}}>
           <span class="mono archive-path">{{.Path}}</span>
           {{if .KindLabel}}<span class="archive-kind">{{.KindLabel}}</span>{{end}}
           {{if .SourceLostSince}}<span class="archive-tag">This archive's source hasn't been reachable since {{.SourceLostSince}} — reconnect the source (its mailbox or mail folder){{if .RunNowOnly}}, then click {{if not .Current}}Switch to this archive and click {{end}}Run now on its Scheduled backup card: its backup runs only when you click Run now.{{else}} to resume backups.{{end}}</span>{{end}}
           {{if eq .Kind "encrypted"}}<button class="btn secondary" type="button" data-forget-archive data-path="{{.Path}}" title="Stop protecting this folder as an encrypted archive on this computer — for example after you removed the archive on purpose. Nothing in the folder is changed.">Forget this encrypted archive here</button>{{end}}
-          {{if .Unfinished}}<span class="archive-tag">Delete not finished: click Delete again</span>{{else if .Problem}}<span class="archive-tag">{{.Problem}}</span>{{else if not .Available}}<span class="archive-tag">Not reachable right now — reconnect the drive or folder and it comes back. Nothing was removed.</span>{{else if .Sealed}}<span class="archive-tag">Paused (read-only) — Resume it to make changes.</span> <button class="btn secondary" type="button" data-resume-archive data-path="{{.Path}}" title="Make this archive writable again so backups and changes can resume.">Resume</button>{{else}}{{if .Current}}<span class="archive-tag current">Current archive</span>{{else}}<button class="btn secondary" type="button" data-switch-archive data-path="{{.Path}}" title="Make this the current archive: the one this page shows and changes.">Switch to this archive</button>{{end}} <button class="btn secondary" type="button" data-pause-archive data-path="{{.Path}}" title="Make this archive read-only so nothing can change it. You can Resume it any time; nothing is deleted.">Pause (make read-only)</button>{{end}}
+          {{if .Deleting}}<span class="archive-tag">Being deleted — its result shows on this page when the delete ends.</span>{{else if .Unfinished}}<span class="archive-tag">Delete not finished: click Delete again</span>{{else if .Problem}}<span class="archive-tag">{{.Problem}}</span>{{else if not .Available}}<span class="archive-tag">Not reachable right now — reconnect the drive or folder and it comes back. Nothing was removed.</span>{{else if .Sealed}}<span class="archive-tag">Paused (read-only) — Resume it to make changes.</span> <button class="btn secondary" type="button" data-resume-archive data-path="{{.Path}}" title="Make this archive writable again so backups and changes can resume.">Resume</button>{{else}}{{if .Current}}<span class="archive-tag current">Current archive</span>{{else}}<button class="btn secondary" type="button" data-switch-archive data-path="{{.Path}}" title="Make this the current archive: the one this page shows and changes.">Switch to this archive</button>{{end}} <button class="btn secondary" type="button" data-pause-archive data-path="{{.Path}}" title="Make this archive read-only so nothing can change it. You can Resume it any time; nothing is deleted.">Pause (make read-only)</button>{{end}}
         </li>{{end}}
       </ul>
     </div>{{end}}

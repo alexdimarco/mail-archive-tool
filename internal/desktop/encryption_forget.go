@@ -121,6 +121,11 @@ func (d *dashboard) forgetAction(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, map[string]any{"ok": false, "error": err.Error()})
 		return
 	}
+	// A delete planned of this folder read this computer's record as it was: it is planned
+	// again (del-s3a-A2-01; the delete's own re-check refuses it too, archdelete's samePlan).
+	d.pending.discardWhere(func(it *pendingItem) bool {
+		return isDeletePlan(it) && (sameArchiveFolder(it.deletePlan.plan.Folder, p.Out) || sameArchiveFolder(it.deletePlan.row, p.Out))
+	})
 	done := fmt.Sprintf("This computer no longer protects %s as an encrypted archive.", p.Out)
 	if o.Whole {
 		done = "This computer forgot the encrypted archive."

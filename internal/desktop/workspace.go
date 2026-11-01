@@ -718,7 +718,8 @@ func (d *dashboard) countAction(w http.ResponseWriter, r *http.Request) {
 type wsPreviewJob struct {
 	id     string
 	cancel context.CancelFunc
-	arch   bool // the job reads an archive: a Microsoft 365 sign-in change does not concern it (E4-AI5)
+	arch   bool   // the job reads an archive: a Microsoft 365 sign-in change does not concern it (E4-AI5)
+	path   string // the archive folder it reads (arch): a Delete of it is refused meanwhile (§7 busy row, C12; MA-979)
 
 	mu       sync.Mutex
 	state    string // running | done | failed
@@ -808,12 +809,25 @@ func (ws *workspace) startJob(fn func(ctx context.Context, job *wsPreviewJob) (*
 	d := ws.d
 	ctx, cancel := context.WithCancel(d.life.Context())
 	job := &wsPreviewJob{id: randomID(16), cancel: cancel, arch: bind.arch, state: "running", retry: retry}
+	if bind.arch {
+		job.path = bind.path
+	}
 	ws.mu.Lock()
+	// An archive being deleted is not previewed (MA-979): checked under the lock that makes this
+	// the job, which a delete's busy check reads, so one of the two always sees the other.
+	deleting := bind.arch && d.running.of(bind.path) != nil
 	old := ws.job
 	ws.job, ws.prev = job, nil
+	if deleting {
+		job.state, job.ref = "failed", &refusal{ID: "deleting", Text: deletingPreview, Status: statusRefused}
+	}
 	ws.mu.Unlock()
 	if old != nil {
 		old.cancel()
+	}
+	if deleting {
+		cancel()
+		return job
 	}
 	go func() {
 		defer cancel()

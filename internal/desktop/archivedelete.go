@@ -50,8 +50,8 @@ const (
 
 // The plan's fixed lines (§3.1, §2, §6, §9).
 const (
-	deleteLogLine = "A line is added to this computer's deletion log (deletions.log), which keeps the date, the folder and what was removed."
-	deleteKeyLine = "This computer will forget this archive's key. Any other copy of this archive will need its password or recovery key to open."
+	deleteLogLine   = "A line is added to this computer's deletion log (deletions.log), which keeps the date, the folder and what was removed."
+	deleteKeyLine   = "This computer will forget this archive's key. Any other copy of this archive will need its password or recovery key to open."
 	deleteThreeLine = "Remove from list forgets the row (and, after asking, stops its schedules) and keeps the folder. Delete erases the archive's files. Forget (encrypted archives) only stops this computer protecting the folder."
 	deleteSaveLine  = "Save this record now: MailArchive keeps no copy after you close this result."
 )
@@ -97,10 +97,13 @@ func refusalText(err error) string {
 	return util.StripControl(err.Error())
 }
 
-// matchRow is §3.1's row rule [C20]: the row of Your archives that path is — by file identity
-// when the folder can be read (a link to it, another case or an 8.3 name is that row), else
-// only by the row's own recorded spelling, exactly (an unplugged drive, a folder gone after an
-// unfinished delete). It returns the row's own spelling.
+// matchRow is §3.1's row rule [C20]: the row of Your archives that path is — the row spelled
+// exactly as path first, so of two rows naming one folder (a mapped drive and its network path,
+// an 8.3 name, a junction above it: archindex keeps both) the one the person clicked is the one
+// planned, locked and removed (del-s3a-A1-01); else by file identity when the folder can be
+// read (a link to it, another case or an 8.3 name is that row); else nothing (an unplugged
+// drive, a folder gone after an unfinished delete, is matched only by its own spelling). It
+// returns the row's own spelling.
 func (cfg Config) matchRow(path string) (string, bool) {
 	path = strings.TrimSpace(path)
 	if path == "" || strings.TrimSpace(cfg.IndexPath) == "" {
@@ -110,17 +113,16 @@ func (cfg Config) matchRow(path string) (string, bool) {
 	if err != nil {
 		return "", false
 	}
+	for _, e := range idx.Entries {
+		if e.Path == path {
+			return e.Path, true
+		}
+	}
 	if fi, err := os.Stat(path); err == nil {
 		for _, e := range idx.Entries {
 			if fe, err := os.Stat(e.Path); err == nil && os.SameFile(fi, fe) {
 				return e.Path, true
 			}
-		}
-		return "", false
-	}
-	for _, e := range idx.Entries {
-		if e.Path == path {
-			return e.Path, true
 		}
 	}
 	return "", false
@@ -218,15 +220,23 @@ func sameArchiveFolder(a, b string) bool {
 }
 
 // busyOn is §7's busy row from the Desktop's own record of what runs [C12]: a job in the slot
-// (a backup, Run now and its pre-sync, a capture, a verify, a rebuild) on the folder, or an
-// export reading it. It never counts the archive lock, which the delete itself holds when it
-// asks again (archdelete.ExecDeps.Deps).
+// (a backup, Run now and its pre-sync, a capture, a verify, a rebuild) on the folder, an
+// export reading it, or a workspace preview reading it (del-s3a-A2-04). It never counts the
+// archive lock, which the delete itself holds when it asks again (archdelete.ExecDeps.Deps).
+// An export or a preview started after a delete began is refused by that delete's record
+// (deletesUnderWay), checked under the same locks these are read under.
 func (d *dashboard) busyOn(folder string) bool {
 	c := d.cap
 	c.mu.Lock()
 	running, slot := c.running, c.slotOut
 	c.mu.Unlock()
 	if running && (slot == "" || sameArchiveFolder(slot, folder)) {
+		return true
+	}
+	d.ws.mu.Lock()
+	job := d.ws.job
+	d.ws.mu.Unlock()
+	if job != nil && job.arch && job.running() && sameArchiveFolder(job.path, folder) {
 		return true
 	}
 	d.ex.mu.Lock()
@@ -243,20 +253,23 @@ func (d *dashboard) planBusy(folder string) bool {
 
 // deleteFacts are what a row says about Delete (MA-975).
 type deleteFacts struct {
-	ok, unfinished bool
-	why            string
+	ok, unfinished, deleting bool
+	why                      string
 }
 
-// deleteRowFacts is a row's Delete state: offered, or why not, in §7's words; and whether a
-// delete of the folder did not finish (§5.4), whose row offers Delete again.
-func deleteRowFacts(path string, deps archdelete.Deps, knownArchive bool) deleteFacts {
-	var f deleteFacts
-	if deps.Log != "" {
-		if u, err := archdelete.UnfinishedDelete(deps.Log, path, ""); err == nil && u != nil {
-			f.unfinished = true
-		}
+// deleteRowFacts is a row's Delete state: offered, or why not, in §7's words; whether a delete
+// of the folder did not finish (§5.4), whose row offers Delete again; and whether one is under
+// way in this process (MA-979), whose row offers nothing and says so — its started line has no
+// finished line yet, which is not "not finished". rc is the page's RowsCheck: deletions.log read
+// once, each path asked once (del-s3a-A3-04).
+func (cfg Config) deleteRowFacts(path string, rc *archdelete.RowsCheck, knownArchive bool) deleteFacts {
+	if cfg.rowDeleting != nil && cfg.rowDeleting(path) {
+		return deleteFacts{deleting: true, why: deletingRowWhy}
 	}
-	if err := archdelete.RowRefusal(path, deps, knownArchive); err != nil {
+	var f deleteFacts
+	u, err := rc.State(path, knownArchive)
+	f.unfinished = u != nil
+	if err != nil {
 		f.why = refusalText(err)
 		return f
 	}
@@ -278,6 +291,12 @@ func (d *dashboard) deletePlanAction(w http.ResponseWriter, r *http.Request) {
 	row, ok := d.cfg.matchRow(in.Path)
 	if !ok {
 		refuseDelete(w, notARowText)
+		return
+	}
+	// A delete of it under way holds its archive lock, which the busy row would word as a
+	// backup (del-s3a-A3-01): said as what it is.
+	if d.running.of(row) != nil {
+		refuseDelete(w, deletingRefusal)
 		return
 	}
 	plan, err := archdelete.Plan(row, d.cfg.deleteDeps(d.planBusy, nil))
@@ -408,17 +427,25 @@ func (d *dashboard) deleteAction(w http.ResponseWriter, r *http.Request) {
 		refuseDelete(w, fmt.Sprintf("The name you typed does not match this folder's name, %s, so nothing was deleted. Type it exactly as shown.", name))
 		return
 	}
+	// Recorded as under way before its first step (MA-979), so an export, a preview, a second
+	// Delete or Remove from list of the folder, and Shut down, are refused until it ends; a
+	// second delete of the same folder is refused with its token kept.
+	end, ok := d.running.tryBegin(it.deletePlan.plan.Folder, it.deletePlan.row)
+	if !ok {
+		refuseDelete(w, deletingRefusal)
+		return
+	}
+	defer end()
+	if d.life.Context().Err() != nil {
+		refuseDelete(w, shuttingDownText)
+		return
+	}
 	if it = d.pending.take(in.Token, isDeletePlan); it == nil {
 		refuseDelete(w, deleteNotWaiting)
 		return
 	}
 	plan, row := it.deletePlan.plan, it.deletePlan.row
-	release := func() {}
-	if d.cfg.ReaderHold != nil {
-		release = d.cfg.ReaderHold(plan.Folder)
-	}
-	res := archdelete.Execute(plan, in.Typed, in.Unrecorded, d.execDeps(row))
-	release()
+	res := d.runDelete(plan, row, in.Typed, in.Unrecorded)
 	v := heldView{Row: row, Folder: plan.Folder, Name: plan.Name, Status: res.Status, Lines: append([]string(nil), res.Lines...),
 		RowRemoved: res.RowRemoved, Unfinished: res.Unfinished}
 	if res.Record != nil {
@@ -436,6 +463,17 @@ func (d *dashboard) deleteAction(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, out)
 }
 
+// runDelete is Execute with the page's own reader of the archive closed and held off it for the
+// delete, released however Execute ends — a panic before Execute's own cleanup is set up
+// included, or the reader would refuse that archive until a restart (del-s3a gap 2, MA-978).
+func (d *dashboard) runDelete(plan *archdelete.DeletePlan, row, typed string, unrecorded bool) *archdelete.Result {
+	if d.cfg.ReaderHold != nil {
+		release := d.cfg.ReaderHold(plan.Folder)
+		defer release()
+	}
+	return archdelete.Execute(plan, typed, unrecorded, d.execDeps(row))
+}
+
 // execDeps are Execute's seams on this computer, for the row's delete.
 func (d *dashboard) execDeps(row string) archdelete.ExecDeps {
 	cfg := d.cfg
@@ -443,7 +481,7 @@ func (d *dashboard) execDeps(row string) archdelete.ExecDeps {
 		Deps:       cfg.deleteDeps(d.busyOn, nil),
 		Row:        row,
 		Scheduler:  cfg.deleteScheduler(),
-		Pointers:   desktopPointers{settings: cfg.SettingsPath},
+		Pointers:   &desktopPointers{settings: cfg.SettingsPath},
 		ScratchDir: app.ArchiveScratchFor,
 		Keyring:    desktopKeyring{store: cfg.Store},
 		Now:        d.now,
@@ -475,9 +513,22 @@ func (cfg Config) deleteListSeams() (string, func(string) error) {
 // desktopPointers are the Desktop's settings and the wizard's note as a delete clears them
 // (archdelete.PointerStore, §5.3 step 4, §5.2): Out and BackupFor in the settings file, only
 // those two fields written, under the settings lock; last-archive.txt beside the job files.
-type desktopPointers struct{ settings string }
+// Save writes a field only while it still holds what Load read (loaded): a switch in another
+// tab between the two is kept (del-s3a-A2-06). One value per delete or Remove from list.
+type desktopPointers struct {
+	settings string
+	loaded   *archdelete.Pointers
+}
 
-func (p desktopPointers) Load() (archdelete.Pointers, error) {
+func (p *desktopPointers) Load() (archdelete.Pointers, error) {
+	ptr, err := p.read()
+	if err == nil {
+		p.loaded = &ptr
+	}
+	return ptr, err
+}
+
+func (p *desktopPointers) read() (archdelete.Pointers, error) {
 	var s Settings
 	data, err := os.ReadFile(p.settings)
 	switch {
@@ -496,16 +547,23 @@ func (p desktopPointers) Load() (archdelete.Pointers, error) {
 	return ptr, nil
 }
 
-// Save writes what changed. last-archive.txt goes first and is put back when the settings
-// cannot be saved, so a failed Save leaves both as they were.
-func (p desktopPointers) Save(np archdelete.Pointers) error {
-	old, err := p.Load()
+// Save writes what changed since Load, each field only while it still holds what Load read.
+// last-archive.txt goes first and is put back when the settings cannot be saved, so a failed
+// Save leaves both as they were.
+func (p *desktopPointers) Save(np archdelete.Pointers) error {
+	if p.loaded == nil {
+		if _, err := p.Load(); err != nil {
+			return err
+		}
+	}
+	old := *p.loaded
+	now, err := p.read()
 	if err != nil {
 		return err
 	}
 	lf, lerr := job.LastArchiveFile()
 	var oldLast []byte
-	lastChanged := lerr == nil && np.LastArchive != old.LastArchive
+	lastChanged := lerr == nil && np.LastArchive != old.LastArchive && now.LastArchive == old.LastArchive
 	if lastChanged {
 		oldLast, _ = os.ReadFile(lf)
 		if np.LastArchive == "" {
@@ -691,8 +749,12 @@ func (d *dashboard) unlistAction(w http.ResponseWriter, r *http.Request) {
 		refuseDelete(w, notARowText)
 		return
 	}
+	if d.running.of(row) != nil {
+		refuseDelete(w, deletingRefusal)
+		return
+	}
 	x := archdelete.UnlistDeps{Deps: d.cfg.deleteDeps(nil, nil), Scheduler: d.cfg.deleteScheduler(),
-		Pointers: desktopPointers{settings: d.cfg.SettingsPath}, Named: in.Named}
+		Pointers: &desktopPointers{settings: d.cfg.SettingsPath}, Named: in.Named}
 	x.SettingsDir, x.ForgetRow = d.cfg.deleteListSeams()
 	if !in.Confirm {
 		q, err := archdelete.PlanUnlist(row, x)
@@ -703,7 +765,11 @@ func (d *dashboard) unlistAction(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, map[string]any{"ok": true, "ask": true, "row": row, "question": q.Question, "named": nonNil(q.Named)})
 		return
 	}
+	before := d.cfg.effectiveOut()
 	res := archdelete.Unlist(row, x)
+	// Remove from list clears the current archive when it is unreachable or no longer an
+	// archive (§5.2): that is a switch, under the switch's rules (del-s3a-A4-04).
+	d.afterCurrentMoved(before)
 	out := map[string]any{"ok": res.Removed, "row": row, "lines": nonNil(res.Lines), "stopped": nonNil(res.Stopped)}
 	if !res.Removed {
 		out["error"] = strings.Join(res.Lines, " ")

@@ -295,7 +295,7 @@ func (d *dashboard) cancelRecoveryAction(w http.ResponseWriter, r *http.Request)
 	if !ok {
 		return
 	}
-	d.pending.discard(in.Token)
+	d.pending.discard(in.Token, isKeyCancel) // a key change or a create: a delete plan's token is neither (del-s3a-A4-02)
 	writeJSON(w, map[string]any{"ok": true})
 }
 

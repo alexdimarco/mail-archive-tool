@@ -3,6 +3,7 @@ package desktop
 import (
 	"errors"
 	"net/http"
+	"os"
 	"path/filepath"
 	"sync"
 	"time"
@@ -57,9 +58,13 @@ type archiveKeys struct {
 	// deleting counts the deletes under way of an archive (design-archive-delete §5.3 step 1
 	// (b), MA-974): every open of it is refused meanwhile, the person's own Unlock included.
 	deleting map[string]int
-	hushed   int // opens refused meanwhile: every remembered key is being forgotten
-	forgets  uint64            // bumped by every forget-all: a key change prepared across one is not kept
-	closed   bool              // Shut down: nothing more is unlocked, for good
+	// deletingAs are those deletes' folders by file identity, and the other keys each marked
+	// (an entry open under another spelling of the same folder), so an open under any spelling
+	// is refused and EndDelete clears what LockForDelete set (del-s3a gap 3, MA-978).
+	deletingAs []deleteMark
+	hushed     int    // opens refused meanwhile: every remembered key is being forgotten
+	forgets    uint64 // bumped by every forget-all: a key change prepared across one is not kept
+	closed     bool   // Shut down: nothing more is unlocked, for good
 	// uninstalling counts confirmed uninstalls under way: nothing is unlocked
 	// meanwhile; one that is refused gives the Desktop back (reopen), never Shut
 	// down's refusal (the P3-3 follow-up pass, LIFE-04).
@@ -256,12 +261,13 @@ var errNotRemembered = errors.New("no remembered key opens this archive now")
 // clears their Lock.
 func (k *archiveKeys) open(out string, silent bool, may func(abs string) bool, opener func(abs string) (*keyring.Unlocked, error)) (*keyEntry, error) {
 	abs, key := keyOf(out)
+	fi := statOrNil(abs) // the folder's identity, for a delete of it under another spelling
 	k.mu.Lock()
 	switch {
 	case k.shut():
 		k.mu.Unlock()
 		return nil, errKeysClosed
-	case k.deleting[key] > 0:
+	case k.deleting[key] > 0 || k.deletingSame(fi):
 		k.mu.Unlock()
 		return nil, errBeingDeleted
 	case k.hushed > 0 && !silent:
@@ -297,10 +303,15 @@ func (k *archiveKeys) open(out string, silent bool, may func(abs string) bool, o
 		return nil, err
 	}
 	// A Lock and a hush both bump the generation of an open under way, so this
-	// also refuses a silent open the person's Lock or a forget-all landed on.
+	// also refuses a silent open the person's Lock or a forget-all landed on; a delete of the
+	// same folder under another spelling begun meanwhile does too.
 	if k.shut() || k.gen[key] != gen {
 		u.Destroy()
 		return nil, keyring.ErrLocked
+	}
+	if k.deletingSame(fi) {
+		u.Destroy()
+		return nil, errBeingDeleted
 	}
 	e := &keyEntry{u: u, path: abs, id: u.ArchiveID().String()}
 	k.entries[key] = e
@@ -427,33 +438,100 @@ func (k *archiveKeys) LockForDelete(folder string) error {
 		return errors.New("MailArchive Desktop keeps no encrypted archives open here")
 	}
 	_, key := keyOf(folder)
+	fi := statOrNil(folder)
+	// The archive may be open here under another spelling of the folder than the row's (the
+	// current archive set to a mapped drive, the row its network path): found by file identity,
+	// asked of the file system outside the registry's lock (del-s3a gap 3, MA-978).
 	k.mu.Lock()
-	e := k.entries[key]
-	delete(k.entries, key)
-	k.held[key] = true
-	k.gen[key]++
-	k.deleting[key]++
+	open := map[string]string{}
+	for ek, e := range k.entries {
+		if ek != key {
+			open[ek] = e.path
+		}
+	}
 	k.mu.Unlock()
-	if e != nil {
+	keys := []string{key}
+	if fi != nil {
+		for ek, p := range open {
+			if pfi := statOrNil(p); pfi != nil && os.SameFile(pfi, fi) {
+				keys = append(keys, ek)
+			}
+		}
+	}
+	k.mu.Lock()
+	var closing []*keyEntry
+	for _, kk := range keys {
+		if e := k.entries[kk]; e != nil {
+			closing = append(closing, e)
+		}
+		delete(k.entries, kk)
+		k.held[kk] = true
+		k.gen[kk]++
+		k.deleting[kk]++
+	}
+	k.deletingAs = append(k.deletingAs, deleteMark{key: key, fi: fi, keys: keys})
+	k.mu.Unlock()
+	for _, e := range closing {
 		e.close(true)
 	}
-	k.locked(key)
+	for _, kk := range keys {
+		k.locked(kk)
+	}
 	return nil
 }
 
-// EndDelete clears the "being deleted" mark LockForDelete set; the archive stays locked
-// (held) until the person unlocks it again.
+// deleteMark is one LockForDelete: its folder's key and identity, and every key it marked.
+type deleteMark struct {
+	key  string
+	fi   os.FileInfo
+	keys []string
+}
+
+// statOrNil is the folder's os.Stat, nil when it cannot be read.
+func statOrNil(p string) os.FileInfo {
+	fi, err := os.Stat(p)
+	if err != nil {
+		return nil
+	}
+	return fi
+}
+
+// deletingSame reports whether a delete under way is of the folder fi is. Called with k.mu held.
+func (k *archiveKeys) deletingSame(fi os.FileInfo) bool {
+	if fi == nil {
+		return false
+	}
+	for _, m := range k.deletingAs {
+		if m.fi != nil && os.SameFile(m.fi, fi) {
+			return true
+		}
+	}
+	return false
+}
+
+// EndDelete clears the "being deleted" mark LockForDelete set, under every key it set it; the
+// archive stays locked (held) until the person unlocks it again.
 func (k *archiveKeys) EndDelete(folder string) {
 	if k == nil {
 		return
 	}
 	_, key := keyOf(folder)
 	k.mu.Lock()
-	if k.deleting[key] > 0 {
-		k.deleting[key]--
+	keys := []string{key}
+	for i := len(k.deletingAs) - 1; i >= 0; i-- {
+		if k.deletingAs[i].key == key {
+			keys = k.deletingAs[i].keys
+			k.deletingAs = append(k.deletingAs[:i:i], k.deletingAs[i+1:]...)
+			break
+		}
 	}
-	if k.deleting[key] == 0 {
-		delete(k.deleting, key)
+	for _, kk := range keys {
+		if k.deleting[kk] > 0 {
+			k.deleting[kk]--
+		}
+		if k.deleting[kk] == 0 {
+			delete(k.deleting, kk)
+		}
 	}
 	k.mu.Unlock()
 }

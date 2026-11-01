@@ -298,9 +298,12 @@ func (e *run) lockAndRecheck() bool {
 }
 
 // samePlan is §3.1's re-check: the same folder, the manifest or vault unchanged,
-// the same names, unrecorded copies and schedules.
+// the same names, unrecorded copies and schedules, and this computer's record of an
+// encrypted archive as the plan found it — a record forgotten (or recorded) since would
+// otherwise reach step 8 with the plan's, and the result say this computer still
+// remembers a key it forgot (del-s3a-A2-01).
 func samePlan(a, b *DeletePlan) bool {
-	return a.Identity == b.Identity && a.Kind == b.Kind && a.Rerun == b.Rerun &&
+	return a.Identity == b.Identity && a.Kind == b.Kind && a.Rerun == b.Rerun && a.Record == b.Record &&
 		a.Anchor.Name == b.Anchor.Name && a.Anchor.Size == b.Anchor.Size && a.Anchor.SHA256 == b.Anchor.SHA256 &&
 		a.Anchor.ModTime.Equal(b.Anchor.ModTime) &&
 		sameList(itemRels(a.Remove), itemRels(b.Remove)) && sameList(itemRels(a.Unrecorded), itemRels(b.Unrecorded)) &&

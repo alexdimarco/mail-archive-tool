@@ -53,13 +53,20 @@ func isKeyChange(it *pendingItem) bool  { return it.rec != nil || it.res != nil 
 func isForgetPlan(it *pendingItem) bool { return it.plan != nil }
 func isCopyPlan(it *pendingItem) bool   { return it.copyPlan != nil }
 func isDeletePlan(it *pendingItem) bool { return it.deletePlan != nil }
+func anyKind(*pendingItem) bool         { return true } // its ten minutes are up, whatever it is
+
+// isKeyCancel is what the new recovery key's Cancel ends: a key change, or a new encrypted
+// archive whose questions were answered and whose key is being made (the create flow shares that
+// Cancel); never a forget, a copy or a delete planned (del-s3a-A4-02).
+func isKeyCancel(it *pendingItem) bool { return isKeyChange(it) || it.add != nil }
 
 // ofCurrentArchive is an item prepared on the current archive's own card — a new
 // recovery key, a key file to put back, a copy planned — which a switch away
-// discards; and a delete planned from any row, which a switch ends too: the plan read
-// which archive was current (its schedules, §5.1 (c), and step 4), so it is planned again.
+// discards. A delete planned from any row is not one: its key is never an archive's, so
+// discardExcept would end it at every save; a switch ends it by its own kind
+// (afterCurrentMoved, saveSettings; del-s3a-A3-06).
 func ofCurrentArchive(it *pendingItem) bool {
-	return it.rec != nil || it.res != nil || it.copyPlan != nil || it.deletePlan != nil
+	return it.rec != nil || it.res != nil || it.copyPlan != nil
 }
 
 // recoveryKey is the new recovery key it shows.
@@ -141,7 +148,7 @@ func (p *pendingSecrets) put(it *pendingItem) string {
 			delete(p.items, t)
 		}
 	}
-	it.timer = time.AfterFunc(p.life, func() { p.discard(token) })
+	it.timer = time.AfterFunc(p.life, func() { p.discard(token, anyKind) })
 	p.items[token] = it
 	p.mu.Unlock()
 	// Replaced items end off the caller's locks: voiding a recovery file is disk
@@ -191,9 +198,10 @@ func (p *pendingSecrets) withItem(token string, it *pendingItem, fn func()) bool
 	return true
 }
 
-// discard ends the item under token, if it is still pending.
-func (p *pendingSecrets) discard(token string) {
-	if it := p.take(token, func(*pendingItem) bool { return true }); it != nil {
+// discard ends the item of the kind is under token, if it is still pending: an item of another
+// kind is left where it is (del-s3a-A4-02).
+func (p *pendingSecrets) discard(token string, is func(*pendingItem) bool) {
+	if it := p.take(token, is); it != nil {
 		it.discard()
 	}
 }

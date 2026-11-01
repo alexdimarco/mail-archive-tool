@@ -4,6 +4,7 @@ import (
 	"os"
 	"path/filepath"
 	"runtime"
+	"strings"
 
 	"mail-archive-tool/internal/encrecord"
 	"mail-archive-tool/internal/job"
@@ -60,12 +61,15 @@ func RecordLookup(folder string) (RecordRef, error) {
 
 // checkProtected refuses a protected folder (§7): "MailArchive will not delete this
 // folder: it is (or is inside, or holds) NAME. Delete the archive's files by hand."
-func checkProtected(abs string, p Protected) error {
+func checkProtected(abs string, p Protected) error { return checkProtectedStat(os.Stat, abs, p) }
+
+// checkProtectedStat is checkProtected through stat (a page's memo of it, RowsCheck).
+func checkProtectedStat(stat statFunc, abs string, p Protected) error {
 	for _, d := range append([]string{p.Config, p.Scratch, p.Record}, p.Settings...) {
 		if d == "" {
 			continue
 		}
-		if is, inside, contains := relation(abs, d); is || inside || contains {
+		if is, inside, contains := relationStat(stat, abs, d); is || inside || contains {
 			return protectedRefusal(d)
 		}
 	}
@@ -73,7 +77,17 @@ func checkProtected(abs string, p Protected) error {
 		if a == "" {
 			continue
 		}
-		if is, inside, contains := relation(abs, a); !is && (inside || contains) {
+		var is, inside, contains bool
+		if _, err := stat(a); err == nil {
+			is, inside, contains = relationStat(stat, abs, a)
+		} else {
+			// A known archive named only in this computer's record of encrypted archives is in
+			// its folded spelling (encrecord.Spelling: Unicode's full case folding, so Weiß is
+			// weiss), which NTFS, folding letter by letter, does not open: compared by that
+			// spelling instead, so it still refuses (del-s3a-A1-03).
+			is, inside, contains = relationBySpelling(stat, abs, a)
+		}
+		if !is && (inside || contains) {
 			return protectedRefusal(a)
 		}
 	}
@@ -81,7 +95,7 @@ func checkProtected(abs string, p Protected) error {
 		if d == "" {
 			continue
 		}
-		if is, _, contains := relation(abs, d); is || contains {
+		if is, _, contains := relationStat(stat, abs, d); is || contains {
 			return protectedRefusal(d)
 		}
 	}
@@ -91,35 +105,83 @@ func checkProtected(abs string, p Protected) error {
 	return nil
 }
 
+// relationBySpelling is relation for a known archive whose path does not open, by this
+// computer's comparison form of paths (encrecord.Spelling) — the form its record keeps: a is
+// it when their spellings are equal; a is inside it when a's spelling, as given or with its
+// links resolved, is under it; a holds it when a folder that is there now, found name by name
+// down from a, has its spelling. A spelling no folder has now is no relation.
+func relationBySpelling(stat statFunc, a, spelling string) (is, inside, contains bool) {
+	if _, err := stat(a); err != nil {
+		return false, false, false
+	}
+	sep := string(filepath.Separator)
+	under := func(s, top string) bool { return strings.HasPrefix(s, strings.TrimSuffix(top, sep)+sep) }
+	abs := cleanAbs(a)
+	for _, form := range []string{abs, util.ResolveExisting(abs)} {
+		fa := encrecord.Spelling(form)
+		switch {
+		case fa == spelling:
+			return true, false, false
+		case under(fa, spelling):
+			return false, true, false
+		}
+	}
+	fa := encrecord.Spelling(abs)
+	if !under(spelling, fa) {
+		return false, false, false
+	}
+	cur := abs
+	for _, name := range strings.Split(strings.TrimPrefix(spelling, strings.TrimSuffix(fa, sep)+sep), sep) {
+		ents, err := os.ReadDir(cur)
+		if err != nil {
+			return false, false, false
+		}
+		next := ""
+		for _, e := range ents {
+			if p := filepath.Join(cur, e.Name()); filepath.Base(encrecord.Spelling(p)) == name {
+				if fi, err := stat(p); err == nil && fi.IsDir() {
+					next = p
+					break
+				}
+			}
+		}
+		if next == "" {
+			return false, false, false
+		}
+		cur = next
+	}
+	return false, false, true
+}
+
 func protectedRefusal(name string) error {
 	return refuse(CaseProtected, "MailArchive will not delete this folder: it is (or is inside, or holds) %s. Delete the archive's files by hand.", name)
 }
 
-// relation says whether folder a is b, is inside b, or contains b, by file
-// identity: b's identity is looked for on a's ancestor chain and a's on b's, each
-// chain taken both as spelled and with its links resolved. A b that cannot be read
-// is no relation.
-func relation(a, b string) (is, inside, contains bool) {
-	fa, err := os.Stat(a)
+// relationStat says whether folder a is b, is inside b, or contains b, by file
+// identity (each path asked through stat): b's identity is looked for on a's ancestor
+// chain and a's on b's, each chain taken both as spelled and with its links resolved.
+// A b that cannot be read is no relation.
+func relationStat(stat statFunc, a, b string) (is, inside, contains bool) {
+	fa, err := stat(a)
 	if err != nil {
 		return false, false, false
 	}
-	fb, err := os.Stat(b)
+	fb, err := stat(b)
 	if err != nil {
 		return false, false, false
 	}
 	if os.SameFile(fa, fb) {
 		return true, false, false
 	}
-	return false, onChain(a, fb), onChain(b, fa)
+	return false, onChain(stat, a, fb), onChain(stat, b, fa)
 }
 
 // onChain reports whether target is a strict ancestor of p, spelled or resolved.
-func onChain(p string, target os.FileInfo) bool {
+func onChain(stat statFunc, p string, target os.FileInfo) bool {
 	abs := cleanAbs(p)
 	for _, start := range []string{abs, util.ResolveExisting(abs)} {
 		for d := filepath.Dir(start); ; d = filepath.Dir(d) {
-			if fi, err := os.Stat(d); err == nil && os.SameFile(fi, target) {
+			if fi, err := stat(d); err == nil && os.SameFile(fi, target) {
 				return true
 			}
 			if filepath.Dir(d) == d {

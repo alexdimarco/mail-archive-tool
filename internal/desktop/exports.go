@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"io"
 	"net/http"
 	"os"
 	"os/exec"
@@ -253,6 +254,17 @@ func (d *dashboard) startAction(w http.ResponseWriter, r *http.Request) {
 		ex.mu.Unlock()
 		p := old.run.Progress()
 		d.refuse(w, refusalM(old.started, p.Done, p.Selected))
+		return
+	}
+	// An archive being deleted is not exported (MA-979, del-s3a-A4-03): checked under the lock
+	// that makes this the running export, which a delete's busy check reads, so of an export and
+	// a delete of one folder the later one always sees the earlier.
+	if slot.archiveDir != "" && d.running.of(slot.archiveDir) != nil {
+		ex.mu.Unlock()
+		if c, ok := src.(io.Closer); ok {
+			c.Close()
+		}
+		d.refuse(w, refusedWith("deleting", deletingExport))
 		return
 	}
 	ex.slot = slot

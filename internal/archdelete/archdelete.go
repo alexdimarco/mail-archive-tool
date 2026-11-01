@@ -617,12 +617,18 @@ func linkRefusal(link string) error {
 
 // sameFolder is "the same folder" as §3.1 matches it: by file identity when both
 // can be read, else by spelling (case folded where the file system ignores case).
-func sameFolder(a, b, goos string) bool {
+func sameFolder(a, b, goos string) bool { return sameFolderStat(os.Stat, a, b, goos) }
+
+// statFunc is os.Stat, or a page's memo of it (statMemo).
+type statFunc func(string) (os.FileInfo, error)
+
+// sameFolderStat is sameFolder through stat.
+func sameFolderStat(stat statFunc, a, b, goos string) bool {
 	if a == "" || b == "" {
 		return false
 	}
-	fa, ea := os.Stat(a)
-	fb, eb := os.Stat(b)
+	fa, ea := stat(a)
+	fb, eb := stat(b)
 	if ea == nil && eb == nil {
 		return os.SameFile(fa, fb)
 	}
