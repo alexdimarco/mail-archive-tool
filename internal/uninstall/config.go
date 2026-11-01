@@ -32,6 +32,9 @@ var fixedConfigNames = map[string]bool{
 	"last-archive.txt":      true,
 	"known-archives.json":   true,
 	"desktop-capture.log":   true,
+	// The delete's journal (archdelete.LogName; docs/design-archive-delete.md §5.4):
+	// uninstall removes it with the other settings files.
+	"deletions.log": true,
 }
 
 // alertStreakSuffix ends a scheduled backup's alert streak file, <key>.alert-streak, kept

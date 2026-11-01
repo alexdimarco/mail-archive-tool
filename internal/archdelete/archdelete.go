@@ -182,7 +182,28 @@ type DeletePlan struct {
 	// Files and Bytes count Remove and Litter.
 	Files int
 	Bytes int64
+	// Rerun says the plan finishes an unfinished delete (§5.4): the folder gone after
+	// its `folder removed` line, or a folder that no longer holds its manifest or
+	// vault. RecordUnknown: an encrypted archive's started line gave neither its
+	// record's ID and Spelling nor "not recorded", so step 8 is skipped.
+	Rerun         Rerun
+	RecordUnknown bool
 }
+
+// Rerun is how a plan finishes an unfinished delete (§5.4).
+type Rerun int
+
+const (
+	// RerunNone is an ordinary delete.
+	RerunNone Rerun = iota
+	// RerunFolderGone: the log has the folder's `folder removed` line and its parent
+	// is reachable; steps 1 and 5 to 7 are skipped.
+	RerunFolderGone
+	// RerunNoAnchor: the folder is there but holds no manifest or vault; what §4 can
+	// still name is removed, and the delete is never complete while the folder holds
+	// files it can no longer identify.
+	RerunNoAnchor
+)
 
 // StoreNumber is token's store number (1-based) in the byte order of the store
 // token set, or 0 when token is not a store token.
@@ -210,6 +231,17 @@ const (
 	CaseUnreadable  Case = "unreadable"
 	CaseNewerFormat Case = "newer-format"
 	CaseRecord      Case = "record-unreadable"
+	// The delete's own refusals (slice 1b): a typed name that is not the folder's
+	// (§3.1 [C19]), a deletion log that cannot be written (step 0), an archive that
+	// changed since its plan (§3.1), a reader of the archive open (§7 [C7]), a
+	// scratch folder holding what MailArchive did not put there (§7 [C7]), and a seam
+	// its caller did not give.
+	CaseName     Case = "name-mismatch"
+	CaseLog      Case = "log-unwritable"
+	CaseChanged  Case = "changed"
+	CaseReader   Case = "reader-open"
+	CaseScratch  Case = "scratch-unexpected"
+	CaseInternal Case = "internal"
 )
 
 // Refusal is a §7 refusal: the cause, and a remedy that can be done from the row.
@@ -278,6 +310,14 @@ type Deps struct {
 	Protected Protected
 	// GOOS selects the platform's name rules (case folding); "" is runtime.GOOS.
 	GOOS string
+	// Log is deletions.log's path: when set, a folder that is not reachable or no
+	// longer an archive is planned by §5.4's rules for an unfinished delete. "" plans
+	// as slice 1a did.
+	Log string
+	// Records lists a folder's entries from this computer's records only (§5.2):
+	// what a re-run with the folder gone (§5.4) and Remove from list act on. Nil
+	// finds none.
+	Records Discoverer
 }
 
 func (d Deps) goos() string {
@@ -288,8 +328,27 @@ func (d Deps) goos() string {
 }
 
 // Plan builds the plan of §3.1 for folder, or the §7 refusal that applies. It
-// reads only: nothing in the folder or anywhere else is changed.
+// reads only: nothing in the folder or anywhere else is changed. With deps.Log
+// set, a folder that is not reachable or no longer an archive is planned by §5.4's
+// rules when deletions.log has an unfinished delete of it (planUnfinished).
 func Plan(folder string, deps Deps) (*DeletePlan, error) {
+	p, err := planArchive(folder, deps)
+	if err == nil || deps.Log == "" {
+		return p, err
+	}
+	r := AsRefusal(err)
+	if r == nil || (r.Case != CaseUnreachable && r.Case != CaseNotArchive) {
+		return nil, err
+	}
+	u, lerr := UnfinishedDelete(deps.Log, folder, deps.goos())
+	if lerr != nil || u == nil {
+		return nil, err
+	}
+	return planUnfinished(folder, deps, u, r)
+}
+
+// planArchive is Plan for a folder that holds an archive.
+func planArchive(folder string, deps Deps) (*DeletePlan, error) {
 	abs, err := filepath.Abs(folder)
 	if err != nil {
 		abs = filepath.Clean(folder)

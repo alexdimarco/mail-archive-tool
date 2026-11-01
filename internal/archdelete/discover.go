@@ -120,6 +120,12 @@ func (d Discovery) logNames() []string {
 type FileDiscovery struct {
 	// GOOS selects SameArchivePath's rule; "" is runtime.GOOS.
 	GOOS string
+	// Lenient is §5.2's discovery from this computer's records only: the folder's
+	// descriptors are read when they can be ("recorded names when the folder is
+	// reachable"), and one that cannot — an unplugged drive, a folder gone, an
+	// unreadable descriptor — is passed over, never a refusal (§7: Remove from list
+	// acts only on its own discovery).
+	Lenient bool
 }
 
 // descriptorCap bounds a descriptor read: a few hundred bytes of owner JSON.
@@ -157,6 +163,9 @@ func (fd FileDiscovery) Discover(folder string) (Discovery, error) {
 	} {
 		rd, present, err := readDescriptorIn(folder, desc.file)
 		if err != nil {
+			if fd.Lenient {
+				continue
+			}
 			return Discovery{}, err
 		}
 		if !present {
