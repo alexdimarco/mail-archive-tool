@@ -122,6 +122,15 @@ func RunGraph(ctx context.Context, g GraphOptions, opts Options, logger *log.Log
 			return Result{}, err
 		}
 	}
+	// The emptied-folder guard before the sign-in, which can be long (design-archive-delete
+	// §7, MA-956): a folder of the person's files is refused without one, and an archive
+	// seen here is remembered for the check under the lock.
+	guard := newOutGuard(opts)
+	if opts.Unattended {
+		if err := guard.before(false); err != nil {
+			return Result{}, err
+		}
+	}
 	// Build the Graph client and resolve the mailbox set BEFORE taking the archive
 	// lock: a device sign-in is interactive and must not hold the lock, and device
 	// mode derives its single mailbox (the signer, read from /me) rather than being
@@ -139,7 +148,7 @@ func RunGraph(ctx context.Context, g GraphOptions, opts Options, logger *log.Log
 	// make a new archive among the person's files in a folder an archive was deleted from (the
 	// emptied-folder guard, design-archive-delete §7, MA-956).
 	if opts.Unattended {
-		if err := refuseUnattendedOut(opts); err != nil {
+		if err := guard.before(true); err != nil {
 			return Result{}, err
 		}
 	}
@@ -157,9 +166,10 @@ func RunGraph(ctx context.Context, g GraphOptions, opts Options, logger *log.Log
 	}
 	defer lock.Release()
 	// Again under the lock (design-archive-delete §7, NF-3): a delete that finished
-	// between this capture's checks and its lock left no archive to write into.
+	// between this capture's checks and its lock left no archive to write into; a capture
+	// that saw one, at its checks or its caller's, is refused whatever the delete left.
 	if opts.Unattended {
-		if err := refuseUnattendedOut(opts); err != nil {
+		if err := guard.underLock(); err != nil {
 			return Result{}, err
 		}
 	}

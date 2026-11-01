@@ -6,6 +6,8 @@ import (
 	"flag"
 	"fmt"
 	"io"
+	"io/fs"
+	"log"
 	"net"
 	"net/http"
 	"os"
@@ -23,6 +25,7 @@ import (
 	"mail-archive-tool/internal/instance"
 	"mail-archive-tool/internal/localweb"
 	"mail-archive-tool/internal/seal"
+	"mail-archive-tool/internal/state"
 )
 
 // launchEnv is what a launch needs from its surroundings: the per-account state
@@ -228,18 +231,7 @@ func launch(ctx context.Context, args []string, env *launchEnv) error {
 			dcfg.reportRun(backupalert.KeyFor(out), out, alert.ResultFailed, lerr, 0, nil)
 			return lerr
 		}
-		// The schedule keeps the log in the archive folder. A folder of the person's files that
-		// an archive was deleted from gets no log either: HeadlessCapture then refuses it and
-		// tells the alert streak (the emptied-folder guard, design-archive-delete §7, MA-956).
-		dcfg.CaptureLog = lp
-		var w io.Writer = env.Stderr
-		if app.RefuseEmptiedFolder(dcfg.effectiveOut(), "", dcfg.captureOwnFiles()...) == nil {
-			if f, ferr := os.OpenFile(lp, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0o600); ferr == nil {
-				defer f.Close()
-				w = io.MultiWriter(env.Stderr, f)
-			}
-		}
-		return HeadlessCapture(dcfg, w)
+		return scheduledCapture(dcfg, lp, filepath.Join(filepath.Dir(cfgPath), "desktop-capture.log"), env.Stderr)
 	}
 
 	// Both surfaces are control/reader surfaces served only on this machine; never
@@ -344,6 +336,54 @@ func handoff(ctx context.Context, dir string, o *launchOpts, env *launchEnv, dea
 	}
 	return true, nil
 }
+
+// scheduledCapture runs one scheduled capture (HeadlessCapture) logging to lp, the log its
+// schedule names — which a schedule the Desktop installed keeps in the archive folder — with
+// the emptied-folder guard (design-archive-delete §7, MA-956) kept out of a refused folder:
+//   - a folder the guard refuses gets no log: when lp is in it, the capture logs to
+//     settingsLog (desktop-capture.log beside the Desktop's settings) instead, so the refusal
+//     leaves a trace there as run-job's leaves one beside its job file; a log elsewhere (after
+//     "Save and keep" moved the archive) is opened as given and gets the refusal (del-s2-A3-01);
+//   - a capture refused later because its folder holds no archive (under its lock, or the folder
+//     gone) closes a log it opened in that folder, removes it when the capture made it, and
+//     logs the refusal to settingsLog (del-s2-A2-03);
+//   - whether the folder held an archive before the log was opened goes to the engine
+//     (CaptureArchiveAtEntry), so a delete between the two is refused under the lock even
+//     when it leaves only that log (slice 2's re-verification, item 1).
+func scheduledCapture(dcfg Config, lp, settingsLog string, stderr io.Writer) error {
+	dcfg.CaptureLog = lp
+	out := dcfg.effectiveOut()
+	dcfg.CaptureArchiveAtEntry = out != "" && app.ArchiveHere(out, "")
+	logPath := lp
+	if out != "" && app.PathIn(lp, out) && app.RefuseEmptiedFolder(out, "", dcfg.captureOwnFiles()...) != nil {
+		logPath = settingsLog
+	}
+	_, serr := os.Lstat(logPath)
+	made := errors.Is(serr, fs.ErrNotExist)
+	var w io.Writer = stderr
+	var f *os.File
+	if of, ferr := os.OpenFile(logPath, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0o600); ferr == nil {
+		f = of
+		defer f.Close()
+		w = io.MultiWriter(stderr, f)
+	}
+	err := startCapture(dcfg, w)
+	if f != nil && out != "" && app.FailureKind(err) == state.FailArchiveAbsent && app.PathIn(logPath, out) {
+		_ = f.Close()
+		if made {
+			_ = os.Remove(logPath)
+		}
+		if sf, ferr := os.OpenFile(settingsLog, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0o600); ferr == nil {
+			log.New(sf, "", log.LstdFlags).Printf("FAILED: %v", err)
+			_ = sf.Close()
+		}
+	}
+	return err
+}
+
+// startCapture is scheduledCapture's HeadlessCapture; a var so a test can delete the archive
+// between the log's opening and the capture's start.
+var startCapture = HeadlessCapture
 
 func samePathLaunch(a, b string) bool {
 	a, b = filepath.Clean(a), filepath.Clean(b)

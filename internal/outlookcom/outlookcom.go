@@ -14,6 +14,9 @@ package outlookcom
 
 import (
 	"errors"
+	"fmt"
+	"io/fs"
+	"os"
 	"path/filepath"
 	"time"
 
@@ -39,6 +42,9 @@ type Options struct {
 	// SyncWait bounds how long to wait for that Send/Receive (there is no reliable
 	// COM completion signal, so the wait is time-bounded). Zero uses a default.
 	SyncWait time.Duration
+	// ParentMustExist makes the export create only its own folder, never the folders above
+	// it: a scheduled run's archive folder that is gone is not recreated (makePSTDir).
+	ParentMustExist bool
 }
 
 // Store is one account exported to a .pst.
@@ -62,6 +68,38 @@ type Skip struct {
 	// AlreadyPST says the account is already a .pst file on disk: nothing is lost,
 	// it only is not copied, and its Path can be archived directly.
 	AlreadyPST bool
+}
+
+// makePSTDir makes the export's folder. With parentMustExist (a scheduled run) it makes only
+// outDir itself, so an archive folder above it that is gone is an error, never recreated
+// with a mailbox-sized copy of the mail in it (MA-689's decoy; design-archive-delete §7,
+// del-s2-A2-02); otherwise the whole path, as a run at a terminal always has.
+func makePSTDir(outDir string, parentMustExist bool) error {
+	if !parentMustExist {
+		return os.MkdirAll(outDir, 0o755)
+	}
+	if err := os.Mkdir(outDir, 0o755); err != nil && !errors.Is(err, fs.ErrExist) {
+		return fmt.Errorf("make the Outlook export's folder %s: %w (its archive folder %s is not there — is the backup drive mounted?)", outDir, err, filepath.Dir(outDir))
+	}
+	fi, err := os.Stat(outDir)
+	if err != nil {
+		return err
+	}
+	if !fi.IsDir() {
+		return fmt.Errorf("the Outlook export's folder %s is not a folder", outDir)
+	}
+	return nil
+}
+
+// RemoveExported removes the PST files a run's export wrote (exported, under dir), and dir
+// itself when that leaves it empty; anything else in dir is kept. Best effort: a run
+// refused because its folder holds no archive (the emptied-folder guard, or the folder gone)
+// leaves no copy of the mailbox there (design-archive-delete §7, del-s2-A1-02).
+func RemoveExported(dir string, exported []string) {
+	for _, p := range exported {
+		_ = os.Remove(p)
+	}
+	_ = os.Remove(dir) // only an empty folder goes
 }
 
 // PSTPath is the .pst the export writes for the account named account under outDir.

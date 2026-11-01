@@ -118,7 +118,7 @@ func ma956RefusedEmptied(t *testing.T, err error, out string, keptOnly func() bo
 		rc = 1
 	}
 	assure.Refused(t, rc, errString(err), assure.Code(1),
-		assure.Names(out, "holds no MailArchive archive", ma956Manifest, schedule.DescriptorName, "remove its scheduled backup", "run its first backup yourself"),
+		assure.Names(out, "holds no MailArchive archive", ma956Manifest, schedule.DescriptorName, "remove its scheduled backup", "make its first backup yourself"),
 		assure.NoSideEffect(keptOnly))
 	if k := FailureKind(err); k != state.FailArchiveAbsent {
 		t.Errorf("an emptied folder is refused as the archive not being present (%s), got kind %q", state.FailArchiveAbsent, k)
@@ -321,7 +321,8 @@ func TestMA956_RunRechecksUnderItsLock(t *testing.T) {
 	}
 	ma956SeamLock(t, func() { ma956Delete(t, out) })
 	err := ma956Run(t, in, out, true)
-	ma956RefusedEmptied(t, err, out, func() bool {
+	// The run saw the archive at its checks: refused as an archive gone since (outGuard).
+	ma956RefusedGoneArchive(t, err, out, func() bool {
 		left := ma956List(t, out)
 		return !slices.Contains(left, ma956Manifest) && ma956PersonsFileKept(out) &&
 			(slices.Equal(left, []string{"notes.txt"}) || slices.Equal(left, []string{lockfile.Name, "notes.txt"}))
@@ -390,7 +391,7 @@ func TestMA956_UnattendedCaptureRefusesEmptiedFolder(t *testing.T) {
 		t.Fatalf("a first scheduled capture beside the descriptor must work: %v", err)
 	}
 	ma956SeamLock(t, func() { ma956Delete(t, kept) })
-	ma956RefusedEmptied(t, capture(kept), kept, func() bool {
+	ma956RefusedGoneArchive(t, capture(kept), kept, func() bool {
 		left := ma956List(t, kept)
 		return !slices.Contains(left, ma956Manifest) && ma956PersonsFileKept(kept)
 	})
@@ -453,12 +454,18 @@ func TestMA956_WindowsNamesIgnoreCase(t *testing.T) {
 	out := t.TempDir()
 	ma956Write(t, filepath.Join(out, "DESKTOP.INI"), "x")
 	ma956Write(t, filepath.Join(out, "MailArchive.LOG"), "")
+	// The folder as the schedule names it (out) and the run's log in another spelling of the
+	// folder and the file (upper): the folder is matched by identity, not as text
+	// (del-s2-A2-05).
 	upper := strings.ToUpper(out)
+	if upper == out {
+		t.Fatalf("the test needs a folder whose upper-case spelling differs: %s", out)
+	}
 	log := filepath.Join(upper, "mailarchive.log")
-	if err := RefuseEmptiedFolder(upper, "", log); err != nil {
+	if err := RefuseEmptiedFolder(out, "", log); err != nil {
 		t.Fatalf("litter and the run's log in another case must pass: %v", err)
 	}
 	ma956Write(t, filepath.Join(out, "notes.txt"), "mine")
 	before := ma956List(t, out)
-	ma956RefusedEmptied(t, RefuseEmptiedFolder(upper, "", log), upper, func() bool { return slices.Equal(before, ma956List(t, out)) })
+	ma956RefusedEmptied(t, RefuseEmptiedFolder(out, "", log), out, func() bool { return slices.Equal(before, ma956List(t, out)) })
 }

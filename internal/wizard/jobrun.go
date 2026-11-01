@@ -274,6 +274,9 @@ func optsForJob(j job.Job, inputs []string, logger *log.Logger, hooks runHooks, 
 		Inputs: inputs, Auto: j.Auto, Out: j.Out, Mode: exportMode, Since: since,
 		CopyFirst: j.CopyFirst, Index: true, Pages: true, KeepRaw: j.KeepRaw,
 		Unattended: true, FollowLinks: j.FollowLinks,
+		// The run-job's own files in the folder are MailArchive's for the emptied-folder guard,
+		// for the scheduled run and Run now alike (del-s2-A1-05).
+		OwnFiles: jobOwnFiles(j),
 	}
 	opts.PresyncWanted = j.ThunderbirdSync != nil
 	opts.PresyncAttended = mode == runAttended

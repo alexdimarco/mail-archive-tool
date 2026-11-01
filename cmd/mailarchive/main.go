@@ -215,8 +215,13 @@ func runExport(args []string) error {
 	}
 	// The emptied-folder guard (design-archive-delete §7, MA-956): a scheduled run refuses a
 	// folder of the person's files that an archive was deleted from before discovery's
-	// refusal, the run log or -outlook's PST export writes into it.
+	// refusal, the run log or -outlook's PST export writes into it. Whether it found an archive
+	// goes to the engine (ArchiveAtEntry), which then requires one under its lock: the PST
+	// export holds no lock for minutes, and a delete in them cannot remove what this run
+	// holds open on Windows (del-s2-A1-01).
+	archiveAtEntry := false
 	if *o.unattended && !*o.list {
+		archiveAtEntry = app.ArchiveHere(*o.out, *o.manifest)
 		if err := app.RefuseEmptiedFolder(*o.out, *o.manifest, cliOwnFiles(*o.log, *o.outlook, *o.out)...); err != nil {
 			return err
 		}
@@ -290,12 +295,17 @@ func runExport(args []string) error {
 		defer unlocked.Destroy()
 	}
 
+	logMade := runLogMissing(*o.log)
 	logger, closeLog, err := newRunLogger(*o.log)
 	if err != nil {
 		return err
 	}
 	defer closeLog()
-	defer func() { logFailure(logger, err) }() // a failed unattended run leaves its reason in its own log too
+	defer func() { // a failed unattended run leaves its reason in its own log too
+		if !dropRunLogOnRefusal(*o.log, *o.out, logMade, closeLog, err) {
+			logFailure(logger, err)
+		}
+	}()
 
 	outlook, outlookSyncWait, auto := o.outlook, o.outlookSyncWait, o.auto
 	doIndex, keepRaw := o.index, o.keepRaw
@@ -313,7 +323,7 @@ func runExport(args []string) error {
 		// Refuse up front on a platform that can't run Outlook automation, before
 		// printing the completeness note or any "exporting…" progress — a guaranteed
 		// refusal must not first look like it started work.
-		if runtime.GOOS != "windows" {
+		if !outlookAppAvailable() {
 			return fmt.Errorf("%w", outlookcom.ErrUnsupported)
 		}
 		logger.Printf("%s", outlookcom.CompletenessNote)
@@ -338,8 +348,10 @@ func runExport(args []string) error {
 			defer pstStop()
 		}
 		logger.Printf("Outlook: exporting each account to a PST under %s ...", pstDir)
-		stores, skips, cerr := outlookcom.CreatePSTs(pstDir,
-			outlookcom.Options{Sync: *outlookSyncWait > 0, SyncWait: *outlookSyncWait}, logger)
+		// A scheduled run's export never makes the archive folder itself: one gone since the
+		// checks above stays gone (MA-689's decoy; del-s2-A2-02).
+		stores, skips, cerr := cliCreatePSTs(pstDir,
+			outlookcom.Options{Sync: *outlookSyncWait > 0, SyncWait: *outlookSyncWait, ParentMustExist: *o.unattended && unlocked == nil}, logger)
 		if cerr != nil {
 			return cerr
 		}
@@ -357,6 +369,7 @@ func runExport(args []string) error {
 	opts := exportOptions(o, inputs, mode, since)
 	opts.OutlookSkips = outlookSkips // what Outlook's export left out is recorded as a gap, never only logged (FC28)
 	opts.OutlookExported = outlookExported
+	opts.ArchiveAtEntry = archiveAtEntry
 	if unlocked != nil {
 		done, aerr := keyring.Apply(&opts, unlocked)
 		if aerr != nil {
@@ -398,7 +411,7 @@ func runExport(args []string) error {
 		logger.Printf("Date filter: items on or after %s", since.Format(time.RFC3339))
 	}
 
-	result, runErr := app.Run(ctx, opts, logger, nil)
+	result, runErr := exportEngine(ctx, opts, logger, nil)
 	// The "Done. …" summary (and its -raw/verification lines) belongs to a run
 	// that reached completion — a clean finish, a saved interrupt, or a partial
 	// run (its walk finished; the "Not captured" block says what it could not
@@ -416,6 +429,11 @@ func runExport(args []string) error {
 		if n, ok := reclaimPSTDir(pstDir, runErr); ok {
 			logger.Printf("Reclaimed %s by removing the temporary Outlook PST copy (%s).", thunderbird.HumanBytes(n), pstDir)
 		}
+		// A scheduled run refused because its folder holds no archive (the emptied-folder
+		// guard, or the folder gone) leaves no copy of the mailbox there (del-s2-A1-02).
+		if *o.unattended && app.FailureKind(runErr) == state.FailArchiveAbsent {
+			outlookcom.RemoveExported(pstDir, outlookExported)
+		}
 	}
 
 	if errors.Is(runErr, context.Canceled) {
@@ -425,6 +443,19 @@ func runExport(args []string) error {
 	err = runErr
 	return err
 }
+
+// exportEngine is the engine run the export verb calls (app.Run); a var so a test can finish a
+// delete at the moment a scheduled run reaches it, after its pre-lock work
+// (design-archive-delete §7, MA-956).
+var exportEngine = app.Run
+
+// cliCreatePSTs is -outlook's export (outlookcom.CreatePSTs) and outlookAppAvailable whether
+// this platform can run it; vars so a test can stand in for Outlook, which this repo's tests
+// cannot drive.
+var (
+	cliCreatePSTs       = outlookcom.CreatePSTs
+	outlookAppAvailable = func() bool { return runtime.GOOS == "windows" }
+)
 
 // exportOptions builds the app.Options an export run (or its recorded refusal)
 // uses from the parsed flags and the final input list.
@@ -1739,12 +1770,17 @@ func runGraph(args []string) (err error) {
 
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
+	logMade := runLogMissing(*o.log)
 	logger, closeLog, err := newRunLogger(*o.log)
 	if err != nil {
 		return err
 	}
 	defer closeLog()
-	defer func() { logFailure(logger, err) }()
+	defer func() {
+		if !dropRunLogOnRefusal(*o.log, *o.out, logMade, closeLog, err) {
+			logFailure(logger, err)
+		}
+	}()
 
 	for _, w := range setupWarnings {
 		logger.Printf("warning: %s", w.Message)
@@ -1790,6 +1826,31 @@ func runGraph(args []string) (err error) {
 // "FAILED:" line.
 func printsSummary(runErr error) bool {
 	return runErr == nil || errors.Is(runErr, context.Canceled) || errors.Is(runErr, app.ErrPartial)
+}
+
+// runLogMissing reports whether the -log at path is not there yet, so a run knows it made it.
+func runLogMissing(path string) bool {
+	if path == "" {
+		return false
+	}
+	_, err := os.Lstat(path)
+	return errors.Is(err, fs.ErrNotExist)
+}
+
+// dropRunLogOnRefusal handles the -log of a scheduled run refused because its archive folder
+// holds no archive — the emptied-folder guard, or the folder gone (archive_absent): a -log in
+// that folder, a folder of the person's files an archive was deleted from, gets no FAILED line
+// and is closed and removed when this run made it (design-archive-delete §7, del-s2-A2-03).
+// The refusal still goes to stderr, as main prints it. It reports whether it handled the log.
+func dropRunLogOnRefusal(logPath, out string, made bool, closeLog func(), err error) bool {
+	if logPath == "" || app.FailureKind(err) != state.FailArchiveAbsent || !app.PathIn(logPath, out) {
+		return false
+	}
+	closeLog()
+	if made {
+		_ = os.Remove(logPath)
+	}
+	return true
 }
 
 // logFailure writes the run log's "FAILED:" line for a run that returned err. A

@@ -75,9 +75,12 @@ func HeadlessCapture(cfg Config, logw io.Writer) error {
 	// The emptied-folder guard (design-archive-delete §7, MA-956): a folder of the person's
 	// files that an archive was deleted from is refused before the start-failure record below
 	// writes into it; the engine checks again before and under its lock.
+	// The refusal is logged to logw, which is never in the refused folder (scheduledCapture),
+	// so it leaves a trace without email alerts (del-s2-A3-01).
 	own := cfg.captureOwnFiles()
 	if out != "" {
 		if err := app.RefuseEmptiedFolder(out, "", own...); err != nil {
+			log.New(logw, "", log.LstdFlags).Printf("FAILED: %v", err)
 			cfg.reportRun(key, out, alert.ResultFailed, err, 0, nil)
 			return err
 		}
@@ -110,7 +113,8 @@ func HeadlessCapture(cfg Config, logw io.Writer) error {
 	// Unattended marks this as the SCHEDULED backup: it activates the PM4 out-exists guard
 	// (never recreate the archive on the boot disk when the backup drive is gone) and the
 	// source-loss streak (§5.7). The interactive dashboard capture leaves it unset.
-	opts := app.Options{Out: out, Mode: export.Incremental, Index: true, Pages: true, KeepRaw: s.KeepRaw, Unattended: true, OwnFiles: own}
+	opts := app.Options{Out: out, Mode: export.Incremental, Index: true, Pages: true, KeepRaw: s.KeepRaw, Unattended: true, OwnFiles: own,
+		ArchiveAtEntry: cfg.CaptureArchiveAtEntry}
 	// An archive location that holds the desktop's settings and sign-in copies
 	// them with the archive (design-local-confidentiality P10). The scheduled
 	// capture does not refuse — that would silently stop an installed backup —
@@ -126,6 +130,11 @@ func HeadlessCapture(cfg Config, logw io.Writer) error {
 	if line, quiet := app.ScheduledLockSkip(out, err, time.Now()); quiet {
 		logger.Printf("%s", line)
 		return nil
+	}
+	// Refused because the folder holds no archive (the emptied-folder guard under the lock, or
+	// the folder gone): said in the capture log too (del-s2-A3-01).
+	if app.FailureKind(err) == state.FailArchiveAbsent {
+		logger.Printf("FAILED: %v", err)
 	}
 	// Built-in email alert for this scheduled run's result (MA-698), best-effort: a mail
 	// failure never fails the backup. On failure the reason travels in the body; it goes once

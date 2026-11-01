@@ -80,6 +80,13 @@ type Options struct {
 	// emptied-folder guard does not count them as the person's files
 	// (RefuseEmptiedFolder, design-archive-delete §7).
 	OwnFiles []string
+	// ArchiveAtEntry says the caller's own first check of Out — made before the work it
+	// does outside the archive lock (its run log, the Outlook PST export, a sign-in) —
+	// found an archive there (ArchiveHere). An unattended run that found one, there or at
+	// its own checks, refuses under its lock an Out that holds none any more, whatever is
+	// left in it: a run that checked before a delete and got the lock after it is refused
+	// (design-archive-delete §7, MA-956). OwnFiles excuse only a run that found none.
+	ArchiveAtEntry bool
 
 	// FollowLinks names the inputs whose directory links are followed (owner ruling
 	// OR6: the per-input opt-in; the CLI's -follow-links, the wizard's "Follow folder
@@ -568,8 +575,9 @@ func Run(ctx context.Context, opts Options, logger *log.Logger, onProgress Progr
 	// archive already exists, so it never leaves the previous success standing.
 	// Not into a folder of the person's files that an archive was deleted from: the
 	// emptied-folder guard comes first (design-archive-delete §7, MA-956).
+	guard := newOutGuard(opts)
 	if opts.Unattended {
-		if err := RefuseEmptiedFolder(opts.Out, opts.Manifest, opts.OwnFiles...); err != nil {
+		if err := guard.before(false); err != nil {
 			return Result{}, err
 		}
 	}
@@ -591,7 +599,7 @@ func Run(ctx context.Context, opts Options, logger *log.Logger, onProgress Progr
 	// it make a new archive among the person's files in a folder an archive was deleted from
 	// (the emptied-folder guard, design-archive-delete §7, MA-956).
 	if opts.Unattended {
-		if err := refuseUnattendedOut(opts); err != nil {
+		if err := guard.before(true); err != nil {
 			return Result{}, err
 		}
 	}
@@ -624,9 +632,10 @@ func Run(ctx context.Context, opts Options, logger *log.Logger, onProgress Progr
 	}
 	defer lock.Release()
 	// Again under the lock (design-archive-delete §7, NF-3): a delete that finished
-	// between this run's checks and its lock left no archive to write into.
+	// between this run's checks and its lock left no archive to write into; a run that saw
+	// one, at its checks or its caller's, is refused whatever the delete left (outGuard).
 	if opts.Unattended {
-		if err := refuseUnattendedOut(opts); err != nil {
+		if err := guard.underLock(); err != nil {
 			return Result{}, err
 		}
 	}

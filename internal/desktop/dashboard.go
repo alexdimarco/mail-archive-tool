@@ -53,7 +53,11 @@ type Config struct {
 	// its schedule keeps in the archive folder: the emptied-folder guard does not count
 	// it as the person's file (design-archive-delete §7, MA-956).
 	CaptureLog string
-	Store      graphconfig.SecretStore
+	// CaptureArchiveAtEntry says scheduledCapture's own check, made before it opened
+	// CaptureLog, found an archive in the folder; the engine then requires one under its lock
+	// (app.Options.ArchiveAtEntry, MA-956).
+	CaptureArchiveAtEntry bool
+	Store                 graphconfig.SecretStore
 	// TokenStore/TokenCachePath locate the device sign-in token (vault on Windows,
 	// a file elsewhere) so the dashboard can show whether you are signed in and
 	// clear it. Both may be zero in the informational shell.

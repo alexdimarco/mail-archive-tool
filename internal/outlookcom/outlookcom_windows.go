@@ -75,7 +75,7 @@ func CreatePSTs(outDir string, opts Options, logger *log.Logger) ([]Store, []Ski
 	if logger == nil {
 		logger = log.New(io.Discard, "", 0)
 	}
-	if err := os.MkdirAll(outDir, 0o755); err != nil {
+	if err := makePSTDir(outDir, opts.ParentMustExist); err != nil {
 		return nil, nil, err
 	}
 

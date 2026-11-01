@@ -45,6 +45,7 @@ import (
 	"mail-archive-tool/internal/schedule"
 	"mail-archive-tool/internal/seal"
 	"mail-archive-tool/internal/source"
+	"mail-archive-tool/internal/state"
 	"mail-archive-tool/internal/thunderbird"
 	"mail-archive-tool/internal/util"
 )
@@ -239,17 +240,19 @@ func RunHeadless(path string) int {
 	// The emptied-folder guard (design-archive-delete §7, MA-956): a folder of the person's
 	// files that an archive was deleted from is refused before this run's log, or the Outlook
 	// PST export, writes into it. Those, and the scheduler's stderr file beside the log, are
-	// the run's own, so the engine's checks do not count them as the person's.
+	// the run's own, so the engine's checks do not count them as the person's — unless this
+	// check found an archive here, which the engine then requires under its lock
+	// (ArchiveAtEntry): the minutes of PST export below hold no lock, and a delete in them
+	// cannot remove what this run holds open on Windows.
 	runLog := filepath.Join(j.Out, "mailarchive.log")
-	runLogs := []string{runLog, schedule.StderrLogPath(runLog)}
-	if j.Outlook {
-		runLogs = append(runLogs, filepath.Join(j.Out, "_outlook-pst"))
-	}
-	if err := app.RefuseEmptiedFolder(j.Out, "", runLogs...); err != nil {
+	atEntry := app.ArchiveHere(j.Out, "")
+	if err := app.RefuseEmptiedFolder(j.Out, "", jobOwnFiles(j)...); err != nil {
 		jobFail(path, err)
 		reportRun(key, jobFileName(path), j.Out, backupalert.ResultFailed, err, 0, nil)
 		return 1
 	}
+	_, lerr := os.Lstat(runLog)
+	logMade := errors.Is(lerr, fs.ErrNotExist) // this run makes the log: it takes it back on a refusal below
 	logf, err := runlog.Open(runLog)
 	if err != nil {
 		jobFail(path, err)
@@ -270,8 +273,10 @@ func RunHeadless(path string) int {
 		if d, err := time.ParseDuration(j.OutlookSyncWait); err == nil {
 			wait = d
 		}
-		stores, skips, cerr := outlookcom.CreatePSTs(filepath.Join(j.Out, "_outlook-pst"),
-			outlookcom.Options{Sync: wait > 0, SyncWait: wait}, logger)
+		// ParentMustExist: the export never makes the archive folder itself (a folder gone since
+		// the checks above stays gone, MA-689; del-s2-A2-02).
+		stores, skips, cerr := headlessCreatePSTs(filepath.Join(j.Out, "_outlook-pst"),
+			outlookcom.Options{Sync: wait > 0, SyncWait: wait, ParentMustExist: true}, logger)
 		if cerr != nil {
 			logger.Printf("FAILED: %v", cerr)
 			fmt.Fprintln(os.Stderr, "mailarchive run-job: "+app.ErrorTextFor(j.Out, cerr))
@@ -292,15 +297,26 @@ func RunHeadless(path string) int {
 	opts := optsForJob(j, inputs, logger, runHooks{}, runScheduled)
 	opts.OutlookSkips = outlookSkips
 	opts.OutlookExported = outlookExported
-	opts.OwnFiles = runLogs
+	opts.ArchiveAtEntry = atEntry
 	logger.Printf("Scheduled job %q: exporting to %s", j.Name, j.Out)
-	result, runErr := app.Run(ctx, opts, logger, nil)
+	result, runErr := headlessEngine(ctx, opts, logger, nil)
 	// Another run holds the archive (the previous hourly backup, a verify, a rebuild) and
 	// started under a day ago: skip quietly, naming it (R3C-12). Nothing was recorded.
 	if line, quiet := app.ScheduledLockSkip(j.Out, runErr, time.Now()); quiet {
 		logger.Printf("%s", line)
 		fmt.Fprintln(os.Stderr, "mailarchive run-job: "+line)
 		return 0
+	}
+	// Refused because the folder holds no archive — the emptied-folder guard, or the folder
+	// gone (archive_absent): what this run wrote there before its lock goes too, the PSTs (a
+	// plaintext copy of the mailbox), the PST folder when that empties it, and the run log
+	// when this run made it; the refusal is told beside the job file, never in the folder
+	// (design-archive-delete §7; del-s2-A1-02, A2-03).
+	if app.FailureKind(runErr) == state.FailArchiveAbsent {
+		takeBackRunWrites(j.Out, outlookExported, logf, runLog, logMade)
+		jobFail(path, runErr)
+		reportRun(key, j.Name, j.Out, backupalert.ResultFailed, runErr, 0, nil)
+		return 1
 	}
 	// "Done." only for a run that finished or was cancelled: a refused or failed
 	// run logs FAILED alone, never a Done above it (F11).
@@ -352,6 +368,43 @@ func RunHeadless(path string) int {
 	}
 	return 0
 }
+
+// jobOwnFiles are the files and folders of MailArchive's own a local backup job keeps in its
+// archive folder — run-job's mailarchive.log, the scheduler's stderr file beside it, and
+// for an Outlook job the PST export's _outlook-pst — which the emptied-folder guard does
+// not count as the person's (design-archive-delete §7, MA-956). The scheduled run and Run
+// now pass the same ones (optsForJob), so the two judge one folder alike (del-s2-A1-05).
+func jobOwnFiles(j job.Job) []string {
+	runLog := filepath.Join(j.Out, "mailarchive.log")
+	own := []string{runLog, schedule.StderrLogPath(runLog)}
+	if j.Outlook {
+		own = append(own, filepath.Join(j.Out, "_outlook-pst"))
+	}
+	return own
+}
+
+// takeBackRunWrites removes what a scheduled run-job wrote into out before its lock, once
+// the run was refused because out holds no archive: the PSTs its export wrote and the PST
+// folder when that leaves it empty, and the run log (closed first, as Windows needs) when
+// this run made it. Best effort.
+func takeBackRunWrites(out string, exported []string, logf *os.File, runLog string, logMade bool) {
+	if len(exported) > 0 {
+		outlookcom.RemoveExported(filepath.Join(out, "_outlook-pst"), exported)
+	}
+	_ = logf.Close()
+	if logMade {
+		_ = os.Remove(runLog)
+	}
+}
+
+// headlessEngine is the engine run RunHeadless calls (app.Run); a var so a test can finish a
+// delete at the moment the scheduled run reaches it, after its own pre-lock work
+// (design-archive-delete §7, MA-956).
+var headlessEngine = app.Run
+
+// headlessCreatePSTs is RunHeadless's Outlook app export (outlookcom.CreatePSTs); a var so a
+// test can stand in for Outlook, which this repo's tests cannot drive.
+var headlessCreatePSTs = outlookcom.CreatePSTs
 
 // scheduleSyncLine is the schedule confirmation's line for a schedule that syncs Thunderbird.
 const scheduleSyncLine = "\nThunderbird: synced before each run. A run skips the sync when Thunderbird is already open or someone is using the computer; it then saves the mail already on this computer, and a later run picks up the rest. After 3 days without a sync, MailArchive warns you."
