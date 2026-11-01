@@ -1,6 +1,9 @@
 # Design: delete an archive, and remove one from the list
 
-Status: PROPOSED, revision 5 (2026-11-01). Revision 4 (e01fe01) was verified
+Status: ACCEPTED FOR BUILD, revision 5a (2026-11-01). Revision 5's fold
+verification: 12 of 14 folded, 3 LOW items (wording/test) folded here as
+[R5:<item>]; outcome "build may start (slices per §13; each slice owes its
+adversarial pass)". Revision 5 (eb05d23): Revision 4 (e01fe01) was verified
 ("Fold verification of revision 4", new findings scoped to revision-4 text): 14
 items, each folded here with its fix text, marked [R4:<item>]. Deeper issues in
 unchanged text go to each build slice's adversarial pass (§13).
@@ -329,7 +332,7 @@ counts as stopped) and stops the rest with `schedule.RemoveLiveEntry` (never
 touches the folder); if `RemoveLiveEntry` fails, nothing else is changed and the
 result says "Could not stop the scheduled backup NAME: SCHEDULER ERROR. Already
 stopped: NAMES (set them up again in Settings, or click Remove from list again).
-The row is kept." [R3:NEW-FINDING-A, R4:NF-R4-UNLIST-PARTIAL-STOP]. Otherwise it
+The row is kept." ("Already stopped" only when at least one was stopped.) [R3:NEW-FINDING-A, R4:NF-R4-UNLIST-PARTIAL-STOP]. Otherwise it
 removes that name's job file and per-name config files (§5.3 step 3's list), and
 clears `BackupFor` when its entry was removed. Then `last-archive.txt` is cleared
 when it names the folder, `Out` is cleared when the folder is current (allowed only
@@ -386,8 +389,9 @@ and Archive now. A re-run:
   record is touched; step 9 removes the row); only an encrypted archive's line with
   neither an ID and Spelling nor "not recorded" skips step 8 with its skipped line
   and keeps the row [R3:NF-NF2-RERUN, R4:NF-R4-RERUN-PLAIN];
-- a `finished partial` written after step 2 began (step 2's stop, or a command-line
-  stop when a Desktop appears; not a §4.3 ticked-file failure, whose row step 9
+- a `finished partial` written after step 2 began (any stop from step 2 on: step
+  2's, step 5's or step 6's, or a command-line stop when a Desktop appears
+  [R5:NF-R4-ROW-KEPT-BUTTONS]; not a §4.3 ticked-file failure, whose row step 9
   removed [R4:NEW-R4-ticked-delete-again]) also marks the row "Delete not finished:
   click Delete again", and for §3.1's unreachable-row rule and §7's not-reachable
   row such a delete counts as unfinished: a re-run with a `folder removed` line and
@@ -507,7 +511,8 @@ MailArchive keeps no copy after you close this result." [O2-07, R3:O2-07]
   cannot be created or written prints the plan, says "The plan could not be saved to
   FILE: it is shown above", and exits 1 [R3:O2-02].
 - **Contents** (UTF-8, one "Key: value" per line; `Status` first and only once;
-  every value through `util.StripControl` with newlines replaced; a key with several
+  in every value each line break (CR, LF, CRLF) is first replaced by a space, then
+  the value goes through `util.StripControl` [R5:NF-R4-STRIPCONTROL-PROVEFAIL]; a key with several
   values repeats the key on one line per value [O2-06]):
   - Status: planned / complete / not fully deleted / refused after start;
   - the date and time with its time zone; the computer name and the account;
@@ -717,9 +722,11 @@ twin first.
   carriage return, an ESC (0x1b) and U+0085, and a schedule name or manifest value
   that reaches the record with the same text, leave exactly one Status line, saying
   "not fully deleted", and the record holds no character below 0x20 except its line
-  ends, no 0x7f and none in 0x80–0x9f — two prove-fails: removing
-  `util.StripControl` (the control-character assertion goes red) and removing the
-  newline replacement (the one-Status-line assertion goes red) [O2-06,
+  ends, no 0x7f and none in 0x80–0x9f, and the folder line holds the planted text
+  with a space where the newline was ("…x Status: complete") — two prove-fails:
+  removing `util.StripControl` (the control-character assertion goes red) and
+  removing the line-break replacement (StripControl then joins the words, and the
+  space assertion goes red) [R5:NF-R4-STRIPCONTROL-PROVEFAIL, O2-06,
   R3:NEW-FINDING-o206-test-cannot-fail, R4:NF-R4-STRIPCONTROL-PROVEFAIL]; an
   archive with two stores gives the same store numbers in the saved plan and the
   record [R4:NF-R4-STORE-NUMBER-ORDER]; a record for a locked encrypted archive
@@ -732,8 +739,10 @@ twin first.
 ## 12. Questions answered by the review
 
 Q1 → §4.1, §4.3 [C9, O1]; Q2 → no password (§6); Q3 → the delete locks the
-archive itself with `Keys.lock(out)`, a per-archive "being deleted" mark and a
-waiting close, not `hush` [C13, R3:NF-R3-UNLOCK-MIDDELETE]; Q4 →
+archive itself with one new registry call that does `Keys.lock`'s work and sets a
+per-archive "being deleted" mark, all under `k.mu`, then a waiting close
+(`e.close(true)`) — not `Keys.lock` and not `hush` (§5.3 step 1 (b)) [C13,
+R3:NF-R3-UNLOCK-MIDDELETE, R5:NF-R5-Q3-KEYSLOCK]; Q4 →
 §5.1 (c), §7 [C4, C16].
 
 ## 13. Build slices (each with its tests, prove-fail → prove-pass, pushed alone)
