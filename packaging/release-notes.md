@@ -34,6 +34,10 @@ Windows: SmartScreen → *More info → Run anyway*. Verify downloads against `S
 `mailarchive-desktop-windows-msi-payload.zip` builds a self-contained MSI
 (`packaging/mailarchive-desktop/`).
 
+### New in 1.5.3 — switching archives says what happened where you clicked
+- **Switch to this archive no longer stops to ask about a backup it doesn't affect.** An archive made from mail files (for example Thunderbird) has a scheduled backup that always backs up its own folder, so switching to another archive leaves it running as it is, with no question. A Microsoft 365 backup, which follows the current archive, still asks first.
+- **Messages appear beside the button you pressed.** Switch to this archive, Forget this encrypted archive here, Pause, Resume, Open an archive folder… and Use this archive now show their messages and questions right there, not in the Settings card further down the page, where they were easy to miss and the button seemed to do nothing.
+
 ### New in 1.5.2 — Run now syncs Thunderbird on a Mac and on Windows
 - **Run now syncs Thunderbird first, on a Mac and on Windows.**
   - On a Mac, Run now syncs Thunderbird first when the archive's Thunderbird sync is on, even while you are at the computer: it starts Thunderbird out of sight, waits for its mail (up to 20 minutes, often about 13; Stop waiting and back up now ends the wait), and leaves it open for you to quit. Scheduled backups still skip the sync while you are using the computer.

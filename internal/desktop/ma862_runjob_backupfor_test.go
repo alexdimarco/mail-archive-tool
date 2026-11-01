@@ -40,8 +40,8 @@ func seamCaptureInstall(e *wsEnv, fake *backupFake) *[]schedule.Spec {
 }
 
 // covers: MA-862, R37
-// A location change with a run-job installed names the old folder and says its folder is fixed
-// (section 8, C-3); "Save and keep" sets no BackupFor, so the new archive's card, tile and
+// A location change with a run-job installed is kept (it named the old folder and asked until
+// 1.5.3, MA-955); keeping it sets no BackupFor, so the new archive's card, tile and
 // schedule state show no backup, and its Remove and its capture install leave the run-job's
 // entry and job file alone. Positive twin first: a capture keeps MA-523's behaviour (its words,
 // and keep records BackupFor).
@@ -70,13 +70,10 @@ func TestARunJobLocationChangeNamesTheOldFolderAndKeepSetsNoBackupFor(t *testing
 	if err := SaveSettings(e.cfg.SettingsPath, Settings{Out: a}); err != nil {
 		t.Fatal(err)
 	}
-	_, ask = e.post("/api/settings", map[string]any{"out": b})
-	msg, _ := ask["error"].(string)
-	if ask["confirm"] != true || !strings.Contains(msg, "keeps backing up "+a) || !strings.Contains(msg, "fixed in its own settings file") || strings.Contains(msg, "will now archive") {
-		t.Fatalf("a run-job's location question: %v", ask)
-	}
-	if _, body := e.post("/api/settings", map[string]any{"out": b, "backup": "keep"}); body["ok"] != true {
-		t.Fatalf("Save and keep: %v", body)
+	// Amended 2026-10-31 (MA-955, the owner's ruling for 1.5.3): a run-job's location change no
+	// longer asks; it saves as "Save and keep" did, and everything below holds as before.
+	if _, body := e.post("/api/settings", map[string]any{"out": b}); body["ok"] != true || body["confirm"] == true {
+		t.Fatalf("a run-job's location change must save, kept, with no question: %v", body)
 	}
 	if s := LoadSettings(e.cfg.SettingsPath); s.Out != b || s.BackupFor != "" {
 		t.Fatalf("after keep: out %q, BackupFor %q; want %s and no BackupFor", s.Out, s.BackupFor, b)

@@ -508,9 +508,9 @@ func (d *dashboard) saveSettings(w http.ResponseWriter, r *http.Request) {
 	removedBackup := false
 	if !samePath(after, d.cfg.effectiveOut()) && d.backupInstalled() {
 		// A run-job backs up the folder fixed in its own job file, so changing the Archive location
-		// doesn't move it (design-desktop-settings-card section 8, C-3): it gets its own words, "keep"
-		// sets no BackupFor (BackupFor is kept only for a capture), and "remove" also deletes its job
-		// file, as Remove on the card does.
+		// doesn't move it (design-desktop-settings-card section 8, C-3): since 1.5.3 it asks nothing
+		// and is kept (MA-955), "keep" sets no BackupFor (BackupFor is kept only for a capture), and
+		// "remove" also deletes its job file, as Remove on the card does.
 		task, _ := d.cfg.backupTask()
 		runJob := task != "" && namesRunJob(task)
 		switch in.Backup {
@@ -535,9 +535,11 @@ func (d *dashboard) saveSettings(w http.ResponseWriter, r *http.Request) {
 			removedBackup = true
 		default:
 			if runJob {
-				writeJSON(w, map[string]any{"ok": false, "confirm": true, "folder": after, "error": runJobMoveAsk(task),
-					"choices": []string{"keep", "remove", "cancel"}})
-				return
+				// A run-job backs up the folder fixed in its own job file, so changing the location
+				// never affects it: it is kept, as "keep" does, with nothing to ask (MA-955, the
+				// owner's ruling for 1.5.3; the question appeared out of sight and a switch looked
+				// failed). "remove" above is still honoured.
+				break
 			}
 			who, _ := d.signedInNow()
 			signedIn := who != ""
@@ -591,13 +593,6 @@ func (d *dashboard) saveSettings(w http.ResponseWriter, r *http.Request) {
 	_, current := keyOf(d.cfg.effectiveOut())
 	d.pending.discardExcept(current)
 	writeJSON(w, map[string]any{"ok": true})
-}
-
-// runJobMoveAsk is the question a location change asks when the installed backup is a run-job
-// of the folder old (design-desktop-settings-card section 8, C-3): its folder is fixed in its
-// own job file, so the Microsoft 365 words ("will now archive ... into") would be false.
-func runJobMoveAsk(old string) string {
-	return "This archive's scheduled backup keeps backing up " + old + ": its folder is fixed in its own settings file, so changing the Archive location doesn't move it. Save and keep the backup to leave it running there, or Save and remove the backup to stop it."
 }
 
 // clearSignin removes the saved delegated sign-in (loopback-only, CSRF-guarded), so
@@ -1490,6 +1485,7 @@ pre{white-space:pre-wrap;overflow-wrap:anywhere;background:var(--bg);border:1px 
 .archive-row{display:flex;align-items:center;gap:10px;flex-wrap:wrap;padding:8px 0;border-top:1px solid var(--line)}
 .archive-row .archive-path{flex:1;min-width:0;overflow-wrap:anywhere}
 .archive-row.unavailable{opacity:.6}
+.archive-row>.note{flex-basis:100%}
 .archive-tag{font-size:.84rem;opacity:.75}
 .archive-tag.current{opacity:1;color:var(--accent);font-weight:700}
 .archive-kind{font-size:.78rem;opacity:.75;border:1px solid var(--line);border-radius:6px;padding:1px 7px}
@@ -2084,10 +2080,20 @@ async function schedPost(){
   }
   return r;
 }
+// noteBeside moves the Settings note and its question into el, the row or card of the button
+// pressed (MA-955): a switch says what happened, or asks, where the person is looking, not in the
+// Settings card further down. Save settings moves them back.
+function noteBeside(el){
+  if(!el)return;
+  const n=$('settingsNote'),c=$('settingsConfirm');
+  if(n)el.append(n);
+  if(c)el.append(c);
+}
 // "Use this archive": the archive the GUI used last, offered on the empty state. It is the same save
 // as typing the folder and clicking Save settings (same checks), and nothing is saved until this click.
 const useOffer=$('useOffer');
 if(useOffer)useOffer.addEventListener('click',async()=>{
+  noteBeside(useOffer.closest('.card'));
   const done=busy(useOffer,'Opening…',$('settingsNote'),'Opening this archive…');
   $('outDir').value=useOffer.dataset.path;
   const ok=await doSave('');done(ok);
@@ -2097,6 +2103,7 @@ if(useOffer)useOffer.addEventListener('click',async()=>{
 // as typing the folder and clicking Save settings (same checks, same weekly-backup
 // question), so switching can never skip them; nothing changes until the click.
 document.querySelectorAll('[data-switch-archive]').forEach(b=>b.addEventListener('click',async()=>{
+  noteBeside(b.closest('li'));
   const done=busy(b,'Switching…',$('settingsNote'),'Switching to this archive…');
   $('outDir').value=b.dataset.path;
   const ok=await doSave('');done(ok);
@@ -2105,6 +2112,7 @@ document.querySelectorAll('[data-switch-archive]').forEach(b=>b.addEventListener
 // Open an archive folder…: the system's folder picker, then a switch to the folder
 // chosen through the same settings save (an encrypted one then unlocks on its card).
 document.querySelectorAll('[data-open-archive]').forEach(b=>b.addEventListener('click',async()=>{
+  noteBeside(b.closest('li,.card'));
   const n=$('settingsNote'),done=busy(b,'Choosing…',n,'A folder picker has opened — it may be behind this window.');
   let keep=false;
   try{const d=await(await fetch('api/open-archive',{method:'POST',headers:{'Content-Type':'application/json','X-CSRF-Token':csrf},body:'{}'})).json();
@@ -2115,8 +2123,10 @@ document.querySelectorAll('[data-open-archive]').forEach(b=>b.addEventListener('
   }catch(e){if(n){n.hidden=false;n.textContent='Error: '+e;}}
   finally{done(keep);}
 }));
-// Pause (make read-only) / Resume, per archive row. Errors surface in the Settings note.
+// Pause (make read-only) / Resume, per archive row. Errors surface in the Settings note, moved
+// beside the row (MA-955).
 const archAction=(sel,path,label,text)=>document.querySelectorAll(sel).forEach(b=>b.addEventListener('click',async()=>{
+  noteBeside(b.closest('li')); // said beside the row (MA-955)
   const n=$('settingsNote'),done=busy(b,label,n,text);
   let keep=false;
   try{const r=await(await fetch(path,{method:'POST',headers:{'Content-Type':'application/json','X-CSRF-Token':csrf},body:JSON.stringify({path:b.dataset.path})})).json();
@@ -2146,6 +2156,7 @@ if(fab)fab.addEventListener('click',async()=>{
 // folder that may have been tampered with only with its path typed back. The button is
 // busy while each request runs, and given back while the questions are asked.
 document.querySelectorAll('[data-forget-archive]').forEach(b=>b.addEventListener('click',async()=>{
+  noteBeside(b.closest('li')); // said beside the row (MA-955)
   const n=$('settingsNote'),say=t=>{if(n){n.hidden=false;n.textContent=t;}};
   const send=(p,body)=>fetch(p,{method:'POST',headers:{'Content-Type':'application/json','X-CSRF-Token':csrf},body:JSON.stringify(body)}).then(r=>r.json());
   let done=busy(b,'Checking…',n,'Reading what this computer recorded for this folder…');
@@ -2210,7 +2221,7 @@ if(unGo)unGo.addEventListener('click',async()=>{
   finally{done();}
 });
 if(unCancel)unCancel.addEventListener('click',()=>{const p=$('uninstallPanel'),n=$('uninstallNote');if(p)p.hidden=true;if(n){n.hidden=false;n.textContent='Nothing was removed.';}});
-if(save)save.addEventListener('click',async()=>{const done=busy(save,'Saving…',$('settingsNote'),'Saving your settings…');await doSave('');done();});
+if(save)save.addEventListener('click',async()=>{noteBeside(save.closest('.card'));const done=busy(save,'Saving…',$('settingsNote'),'Saving your settings…');await doSave('');done();});
 const keepB=$('settingsKeep'),removeB=$('settingsRemoveBackup'),cancelB=$('settingsCancel');
 if(keepB)keepB.addEventListener('click',async()=>{const done=busy(keepB,'Saving…',$('settingsNote'),'Saving your settings and keeping the backup…');await doSave('keep');done();});
 if(removeB)removeB.addEventListener('click',async()=>{const done=busy(removeB,'Saving…',$('settingsNote'),'Saving your settings and removing the scheduled backup…');await doSave('remove');done();});
