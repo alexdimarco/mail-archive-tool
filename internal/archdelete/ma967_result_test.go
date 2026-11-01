@@ -83,7 +83,7 @@ func TestEachLeftoverGetsTheRemedyOfItsErrorType(t *testing.T) {
 		remedy string
 	}{
 		{"in use", inUseErr, "Close Outlook or any program using them, then click Delete again."},
-		{"denied", deniedErr, "Windows security or antivirus blocked it: allow MailArchive or delete these by hand."},
+		{"denied", deniedErr, deniedRemedy},
 		{"device gone", goneErr, "Reconnect the drive, then click Delete again."},
 	} {
 		t.Run(tc.name, func(t *testing.T) {

@@ -19,7 +19,8 @@ const (
 	// CauseInUse is a sharing violation: a program holds the file open.
 	CauseInUse
 	// CauseDenied is access denied: Windows security, an antivirus, a read-only file
-	// that may not be changed.
+	// that may not be changed; on macOS and Linux a permission refused (deniedRemedy
+	// is each platform's words).
 	CauseDenied
 	// CauseDeviceGone is a drive that went away.
 	CauseDeviceGone
@@ -31,7 +32,7 @@ func (c Cause) remedy() string {
 	case CauseInUse:
 		return "Close Outlook or any program using them, then click Delete again."
 	case CauseDenied:
-		return "Windows security or antivirus blocked it: allow MailArchive or delete these by hand."
+		return deniedRemedy
 	case CauseDeviceGone:
 		return "Reconnect the drive, then click Delete again."
 	}

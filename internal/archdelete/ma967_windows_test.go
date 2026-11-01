@@ -8,6 +8,8 @@ import (
 	"strings"
 	"syscall"
 	"testing"
+
+	"golang.org/x/sys/windows"
 )
 
 // readOnly reports whether Windows marks the file read-only.
@@ -115,4 +117,78 @@ func TestWindowsReadOnlyFilesFollowTheReadOnlyRule(t *testing.T) {
 		t.Fatalf("a hard-linked read-only file is not chmod-ed: %s", res.Message())
 	}
 	os.Chmod(outside, 0o644)
+}
+
+// covers: MA-967, R36
+func TestWindowsReadOnlyLitterAtTheArchivesTopFolderIsKept(t *testing.T) {
+	// Conformance 2: step 7 removes the top folder's litter before removing the
+	// folder; a read-only litter file there is kept read-only too, never handed to
+	// Go's removal (which would clear its mark).
+	dir := smallArchive(t, t.TempDir())
+	writableOnCleanup(t, dir)
+	ini := filepath.Join(dir, "Thumbs.db")
+	writeFile(t, ini, "litter")
+	// Positive twin first: litter that is not read-only goes, and the folder with it.
+	r := newRig(t, dir)
+	if res := r.run(t, false); res.Status != StatusComplete || exists(dir) {
+		t.Fatalf("%s", res.Message())
+	}
+	dir = smallArchive(t, t.TempDir())
+	writableOnCleanup(t, dir)
+	ini = filepath.Join(dir, "Thumbs.db")
+	writeFile(t, ini, "litter")
+	if err := os.Chmod(ini, 0o444); err != nil {
+		t.Fatal(err)
+	}
+	r = newRig(t, dir)
+	res := r.run(t, false)
+	if res.Status != StatusComplete || !exists(ini) || !readOnly(t, ini) || exists(filepath.Join(dir, filepath.FromSlash(stemA+".html"))) {
+		t.Fatalf("read-only top-folder litter is kept read-only: %s", res.Message())
+	}
+}
+
+// covers: MA-967, R36
+func TestWindowsAFileWhoseAttributesCannotBeReadIsKept(t *testing.T) {
+	// del-s1b-A1-04, A2-07: the read-only check fails closed. A file whose attributes
+	// cannot be read is left as access denied with its remedy, never handed to Go's
+	// removal unchecked (which deletes read-only files and may clear their mark).
+	dir := plainBesidePersonsFiles(t)
+	r := newRig(t, dir)
+	old := openAttrFn
+	t.Cleanup(func() { openAttrFn = old })
+	openAttrFn = func(root *os.Root, rel string, access uint32) (windows.Handle, error) {
+		if filepath.ToSlash(rel) == "search.db" {
+			return 0, syscall.ERROR_ACCESS_DENIED
+		}
+		return old(root, rel, access)
+	}
+	res := r.run(t, false)
+	if res.Status != StatusPartial || !exists(filepath.Join(dir, "search.db")) || !strings.HasSuffix(res.Lines[0], deniedRemedy) {
+		t.Fatalf("%s", res.Message())
+	}
+}
+
+// covers: MA-967, R36
+func TestWindowsTheReadOnlyRuleHoldsPastTwoHundredSixtyCharacters(t *testing.T) {
+	// del-s1b-A1-04, A2-07 (design §9 "Long paths … tested with a deep tree in the
+	// lab"): deep in a store tree, read-only litter is kept read-only and a read-only
+	// recorded file is deleted; the check opens each file through the archive
+	// folder's handle, as the removal does.
+	dir, deep := longArchive(t)
+	writableOnCleanup(t, dir)
+	if len(deep) <= 260 {
+		t.Fatalf("fixture: %d characters", len(deep))
+	}
+	page := filepath.Join(deep, "2024-03-01_0900_x_ab12cd34.html")
+	ini := filepath.Join(deep, "desktop.ini")
+	for _, p := range []string{page, ini} {
+		if err := os.Chmod(p, 0o444); err != nil {
+			t.Fatal(err)
+		}
+	}
+	r := newRig(t, dir)
+	res := r.run(t, false)
+	if res.Status != StatusComplete || exists(page) || !exists(ini) || !readOnly(t, ini) {
+		t.Fatalf("%s", res.Message())
+	}
 }

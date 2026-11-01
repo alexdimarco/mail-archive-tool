@@ -20,7 +20,10 @@ func TestTheLockFileGoesAfterUnlockingAndThenTheFolder(t *testing.T) {
 	var seen []string
 	faultOn(t, &seen, func(rel string) error {
 		switch {
-		case rel == lockName && lockfile.Held(filepath.Join(dir, lockName)):
+		// On macOS and Linux the delete holds the released lock again for the instant
+		// of removing its file (removeLockFile), which it could not take had the
+		// delete not released it; Windows removes it unheld.
+		case rel == lockName && runtime.GOOS == "windows" && lockfile.Held(filepath.Join(dir, lockName)):
 			t.Error("the lock file is removed only after the lock is released")
 		case rel != lockName && !lockfile.Held(filepath.Join(dir, lockName)):
 			t.Errorf("%s was removed without the archive lock", rel)

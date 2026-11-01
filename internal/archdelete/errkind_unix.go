@@ -4,6 +4,7 @@ package archdelete
 
 import (
 	"errors"
+	"os"
 	"syscall"
 )
 
@@ -35,7 +36,14 @@ func isAccessDenied(error) bool { return false }
 
 // readOnlyBlocked is Windows' alone: here a file's mode is never changed to remove
 // it, so nothing is blocked.
-func readOnlyBlocked(string, bool) error { return nil }
+func readOnlyBlocked(*os.Root, string, bool) error { return nil }
 
 // clearReadOnly is Windows' alone (§9: macOS and Linux never get a chmod).
-func clearReadOnly(string) error { return errors.New("read-only files are changed only on Windows") }
+func clearReadOnly(*os.Root, string) error {
+	return errors.New("read-only files are changed only on Windows")
+}
+
+// deniedRemedy is §8 (a)'s remedy for a permission refused on macOS and Linux: a
+// file locked in the Finder, a folder that may not be changed, a read-only drive —
+// never Windows' words (del-s1b-A3-08).
+const deniedRemedy = "The system did not allow it (a locked file, a folder you may not change, or a read-only drive): unlock it and click Delete again, or delete these by hand."

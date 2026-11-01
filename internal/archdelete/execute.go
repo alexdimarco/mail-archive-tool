@@ -208,6 +208,7 @@ func (e *run) steps() {
 		return
 	}
 	e.release()
+	afterRelease(p.Folder)
 	if !ok {
 		e.stopAt6()
 		return
@@ -615,7 +616,7 @@ func (e *run) removeOne(rel string, mayClear bool) error {
 		return err
 	}
 	native := filepath.FromSlash(rel)
-	if err := readOnlyBlocked(filepath.Join(e.plan.Folder, native), mayClear); err != nil {
+	if err := readOnlyBlocked(e.root, native, mayClear); err != nil {
 		return err
 	}
 	err = removeFileFn(e.root, native)
@@ -623,7 +624,7 @@ func (e *run) removeOne(rel string, mayClear bool) error {
 		return nil
 	}
 	if mayClear && runtime.GOOS == "windows" && isAccessDenied(err) {
-		if clearReadOnly(filepath.Join(e.plan.Folder, native)) == nil {
+		if clearReadOnly(e.root, native) == nil {
 			err = removeFileFn(e.root, native)
 			if err == nil || errors.Is(err, fs.ErrNotExist) {
 				return nil
@@ -708,7 +709,7 @@ func (e *run) tidyFolder() (gone, lockLeft, emptyLeft bool) {
 		root.Close()
 		return false, false, false
 	}
-	lockLeft = !removeLockIn(root)
+	lockLeft = !removeLockIn(root, p.Folder)
 	ents, err := util.ReadDirIn(root, ".")
 	if err != nil {
 		root.Close()
@@ -738,7 +739,9 @@ func (e *run) tidyFolder() (gone, lockLeft, emptyLeft bool) {
 		return false, lockLeft, false
 	}
 	for _, n := range litter {
-		if removeFileFn(root, n) == nil {
+		// Litter the delete may not change: a read-only one is kept, never handed to
+		// Go's removal, which would clear its mark (§9, conformance 2).
+		if readOnlyBlocked(root, n, false) == nil && removeFileFn(root, n) == nil {
 			e.res.LitterRemoved++
 		}
 	}
@@ -757,8 +760,8 @@ func (e *run) tidyFolder() (gone, lockLeft, emptyLeft bool) {
 }
 
 // removeLockIn removes .mailarchive.lock by its exact name, a regular file only,
-// retrying briefly; true when it is gone.
-func removeLockIn(root *os.Root) bool {
+// never one a run holds (removeLockFile), retrying briefly; true when it is gone.
+func removeLockIn(root *os.Root, folder string) bool {
 	for i := 0; i < 10; i++ {
 		fi, err := root.Lstat(lockName)
 		if errors.Is(err, fs.ErrNotExist) {
@@ -767,13 +770,21 @@ func removeLockIn(root *os.Root) bool {
 		if err != nil || !fi.Mode().IsRegular() {
 			return false
 		}
-		if err := removeFileFn(root, lockName); err == nil || errors.Is(err, fs.ErrNotExist) {
+		err = removeLockFile(root, folder)
+		if err == nil || errors.Is(err, fs.ErrNotExist) {
 			return true
+		}
+		if errors.Is(err, lockfile.ErrHeld) {
+			return false // a run holds it: it is the run's, for as long as it runs
 		}
 		time.Sleep(retryPause)
 	}
 	return false
 }
+
+// afterRelease runs right after step 7 releases the archive lock: a test seam (a run
+// taking the lock in that window), nothing in a real run.
+var afterRelease = func(string) {}
 
 // logFolder appends step 7's (or step 8's) durable folder line.
 func (e *run) logFolder(gone bool) {
