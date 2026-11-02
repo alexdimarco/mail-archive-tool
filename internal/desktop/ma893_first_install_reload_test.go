@@ -86,8 +86,12 @@ func TestAFirstInstallKeepsItsNoteAcrossTheRedraw(t *testing.T) {
 	}
 	// And Remove from list's words kept for its reload (MA-1020, amended 2026-11-02): its set, its
 	// read and its removal, each inside a try, named here so each new call is checked as guarded.
-	for _, guarded := range []string{"try{sessionStorage.setItem(delUnlistedKey,said);}catch(e){}",
-		"try{const said=sessionStorage.getItem(delUnlistedKey);\n  if(said){sessionStorage.removeItem(delUnlistedKey);"} {
+	// Amended 2026-11-02 (MA-1042, the 1.5.3 re-walk's N12, N14): the note is kept with its folder,
+	// and the page drawn after a Dismiss is asked to start at its top — three more calls, each named.
+	for _, guarded := range []string{"try{sessionStorage.setItem(delUnlistedKey,JSON.stringify({path:b.dataset.path,said:said}));}catch(e){}",
+		"try{const kept=sessionStorage.getItem(delUnlistedKey);\n  if(kept){sessionStorage.removeItem(delUnlistedKey);",
+		"{try{sessionStorage.setItem(delTopKey,'1');}catch(e){}}",
+		"try{if(sessionStorage.getItem(delTopKey)){sessionStorage.removeItem(delTopKey);"} {
 		if !strings.Contains(dashboardJS, guarded) {
 			t.Errorf("the page script's kept Remove from list note is not guarded: %q missing", guarded)
 		}
@@ -95,8 +99,8 @@ func TestAFirstInstallKeepsItsNoteAcrossTheRedraw(t *testing.T) {
 	if !strings.Contains(dashboardJS, "else{const top=$('heldDeletes');if(top)top.before(note);}}\n}catch(e){}") {
 		t.Error("the kept Remove from list note's read is not closed by its catch")
 	}
-	if n := strings.Count(dashboardJS, "sessionStorage."); n != 8 {
-		t.Errorf("the page script calls storage %d times, want the 8 guarded ones", n)
+	if n := strings.Count(dashboardJS, "sessionStorage."); n != 11 {
+		t.Errorf("the page script calls storage %d times, want the 11 guarded ones", n)
 	}
 }
 

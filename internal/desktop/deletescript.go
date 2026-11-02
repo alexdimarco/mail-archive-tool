@@ -58,7 +58,8 @@ function delRowOf(path){let r=null;document.querySelectorAll('.archive-row').for
 // text, when given, is said on the row; Remove from list gives none, since the note beside the
 // row already says it (the 1.5.3 re-walk's N14: "Removed from Your archives." twice).
 function delRowGone(li,text){
-  Array.from(li.children).forEach(x=>{if(x.tagName==='BUTTON'||x.classList.contains('row-state')||x.hasAttribute('data-unlist-why'))x.remove();});
+  Array.from(li.children).forEach(x=>{if(x.tagName==='BUTTON'||x.classList.contains('row-state'))x.remove();});
+  li.querySelectorAll('[data-unlist-why]').forEach(x=>x.remove()); // its reason goes with its button
   if(text)li.append(delEl('span',text,'archive-tag'));
   li.classList.add('unavailable');
 }
@@ -115,9 +116,8 @@ async function delDismiss(h,reload){
   try{const d=await delPost('api/archive/delete/dismiss',{id:h.dataset.heldId});
     if(!d.ok&&!d.notHeld){if(msg){msg.hidden=false;msg.textContent=d.error||'Could not close this result.';}return false;}
     h.remove();
-    if((reload||delWait)&&delInFlight===0&&!document.querySelector('[data-held-id]')){
-      if($('archiveGone')||$('noArchive')){try{sessionStorage.setItem(delTopKey,'1');}catch(e){}}
-      location.reload();return 'reload';}
+    if((reload||delWait)&&delInFlight===0&&!document.querySelector('[data-held-id]')&&($('archiveGone')||$('noArchive'))){try{sessionStorage.setItem(delTopKey,'1');}catch(e){}}
+    if((reload||delWait)&&delInFlight===0&&!document.querySelector('[data-held-id]')){location.reload();return 'reload';}
     return true;
   }catch(e){if(msg){msg.hidden=false;msg.textContent='Error: '+e;}return false;}
 }
@@ -174,6 +174,7 @@ function delShowHeld(v){
 // archive (d.page), Archive now and Run now give way — not for a delete refused after its start,
 // which removed nothing (del-s3b-A1-02, A2-02).
 function delAfterDelete(d){
+  delUnlistedGone(); // this result takes the place of Remove from list's earlier words (N14)
   (d.rows||[]).forEach(p=>{const li=delRowOf(p);if(!li)return;
     if(d.rowRemoved)delRowGone(li,'Removed from Your archives.');
     else if(d.unfinished)delMarkUnfinished(li);});
@@ -243,7 +244,7 @@ function delPanel(p){
     try{const d=await delPost('api/archive/delete',{token:p.token,typed:input.value,unrecorded:!!(box&&box.checked),drawnFor:drawnFor});
       // Its own panel goes, never another row's opened meanwhile (del-s3b leftover 1).
       // The result is brought into view (B14): on a narrow layout it sat at the top of the card, out of sight.
-      if(d.id){done(true);w.remove();delUnlistedGone();const hv=delShowHeld(d);delAfterDelete(d);if(hv.scrollIntoView)hv.scrollIntoView({block:'nearest'});return;}
+      if(d.id){done(true);w.remove();const hv=delShowHeld(d);delAfterDelete(d);if(hv.scrollIntoView)hv.scrollIntoView({block:'nearest'});return;}
       // A refusal that spent the plan (planUsed): Delete permanently could only fail now, so it
       // stays disabled and the reply says to click Delete… again (del-s3b conformance gap 3).
       done(!!d.planUsed);if(!d.planUsed)match();msg.hidden=false;msg.textContent=d.error||'Could not delete this archive.';

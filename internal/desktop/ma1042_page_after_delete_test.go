@@ -81,7 +81,7 @@ func TestADisabledRemoveFromListSaysWhyOnItsRow(t *testing.T) {
 // covers: MA-1042, R36, S41
 // The page script after a delete or Remove from list (the 1.5.3 re-walk's N12, N14, N20), run
 // under Node: Remove from list's words after its reload are headed by the archive's folder, are not
-// said a second time on the row, and give way to the next result (unlistNote, 3 checks);
+// said a second time on the row, and give way to the next result, a removed row's reason going with it (unlistNote, 4 checks);
 // dismissing the result of a delete of the page's own archive draws the page again from its top,
 // and another archive's does not (dismissToTop); Save deletion record says what it asked of the
 // browser (saveRecordLine). Each scenario checks its positive twin first.
@@ -89,7 +89,7 @@ func TestThePageAfterADeleteOrRemoveFromList(t *testing.T) {
 	for _, s := range []struct {
 		name   string
 		checks int
-	}{{"unlistNote", 3}, {"dismissToTop", 1}, {"saveRecordLine", 1}} {
+	}{{"unlistNote", 4}, {"dismissToTop", 1}, {"saveRecordLine", 1}} {
 		if passed := runPageScenario(t, s.name); len(passed) != s.checks {
 			t.Errorf("the %s scenario passed %d of its %d checks: %v", s.name, len(passed), s.checks, passed)
 		}

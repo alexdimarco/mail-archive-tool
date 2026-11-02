@@ -556,9 +556,11 @@ const scenarios = {
     const next = doc.querySelectorAll('.archive-row')[0];
     replies['api/archive/delete/plan'] = plan('D:\\Mail\\Next', 'Next', 'TOK');
     replies['api/archive/delete'] = result({ id: 'HN', row: 'D:\\Mail\\Next', folder: 'D:\\Mail\\Next', rowRemoved: true, rows: ['D:\\Mail\\Next'] });
+    next.append(el('span', { class: 'card-sub row-why', 'data-unlist-why': '' }, 'Remove from list is not offered for it now. Why.'));
     next.querySelector('[data-delete-archive]').click(); await wait(40);
     await typeAndDelete(next, 'Next'); await wait(40);
     check(!doc.querySelector('[data-unlisted-note]') && !!doc.querySelector('[data-held-id="HN"]'), 'the next result takes its place');
+    check(!next.querySelector('[data-unlist-why]'), "a removed row's Remove from list reason goes with its button");
   },
   // Dismissing the result of a delete of the page's own archive draws the page again from its top
   // (MA-1042, N12). Positive twin first: dismissing another archive's result does not.
