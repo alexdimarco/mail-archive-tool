@@ -212,7 +212,7 @@ func (cfg Config) ownSettingsFolders() []string {
 // busy reports a run on the folder; sealed an encrypted archive's sealed values (nil: "not
 // known").
 func (cfg Config) deleteDeps(busy func(string) bool, sealed func(string) (archdelete.Captured, bool)) archdelete.Deps {
-	logPath, _ := archdelete.DefaultLogPath()
+	logPath := cfg.deletionsLogPath()
 	return archdelete.Deps{
 		Discover: archdelete.HostDiscovery{Installed: cfg.DeleteInstalled},
 		Records:  archdelete.FileDiscovery{Lenient: true},
@@ -227,6 +227,22 @@ func (cfg Config) deleteDeps(busy func(string) bool, sealed func(string) (archde
 		Protected: cfg.deleteProtected(),
 		Log:       logPath,
 	}
+}
+
+// deletionsLogPath is deletions.log in this Desktop's settings folder, beside its config file:
+// the folder its uninstall plans and removes (filepath.Dir(ConfigPath), dashboard.go's
+// uninstallAction), so the plan names the log and uninstall removes it for a Desktop started
+// with -config too (design-archive-delete §5.4 "in the config folder", §8.1; del-s5-A1-04).
+// Without -config that folder is job.Dir(), which archdelete.DefaultLogPath is, and the command
+// line's delete-archive (NewCommandLineDelete: the default config path) writes the same file.
+// With no ConfigPath, archdelete.DefaultLogPath ("" when it cannot be had: the delete then
+// refuses before its start, as Execute does with no log).
+func (cfg Config) deletionsLogPath() string {
+	if p := strings.TrimSpace(cfg.ConfigPath); p != "" {
+		return filepath.Join(filepath.Dir(p), archdelete.LogName)
+	}
+	p, _ := archdelete.DefaultLogPath()
+	return p
 }
 
 // deleteScheduler is the computer's scheduler as a delete reaches it.
@@ -526,7 +542,7 @@ func (d *dashboard) pageRunRefusal(w http.ResponseWriter, r *http.Request) strin
 	if d.running.of(out) != nil {
 		return deletingRefusal
 	}
-	if logPath, err := archdelete.DefaultLogPath(); err == nil {
+	if logPath := d.cfg.deletionsLogPath(); logPath != "" {
 		if u, err := archdelete.UnfinishedDelete(logPath, out, runtime.GOOS); err == nil && u != nil {
 			return runUnfinishedText
 		}
@@ -617,6 +633,7 @@ func (d *dashboard) execDeps(row string) archdelete.ExecDeps {
 func (cfg Config) deleteExecDeps(row string, busy func(string) bool, store vault.Store, now func() time.Time, computer string) archdelete.ExecDeps {
 	x := archdelete.ExecDeps{
 		Deps:       cfg.deleteDeps(busy, nil),
+		Log:        cfg.deletionsLogPath(), // the file the plan and the rows read (del-s5-A1-04)
 		Row:        row,
 		Scheduler:  cfg.deleteScheduler(),
 		Pointers:   &desktopPointers{settings: cfg.SettingsPath},

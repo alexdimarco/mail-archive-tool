@@ -13,7 +13,6 @@ import (
 	"testing"
 	"time"
 
-	"mail-archive-tool/internal/archdelete"
 	"mail-archive-tool/internal/archindex"
 	"mail-archive-tool/internal/schedule"
 )
@@ -216,11 +215,13 @@ func recordBytes(t *testing.T, m map[string]any) []byte {
 	return b
 }
 
-func deletionsLog(t *testing.T) string {
+// deletionsLog is the deletion log a Desktop of cfg writes: in its settings folder, beside its
+// config file (Config.deletionsLogPath, del-s5-A1-04).
+func deletionsLog(t *testing.T, cfg Config) string {
 	t.Helper()
-	p, err := archdelete.DefaultLogPath()
-	if err != nil {
-		t.Fatal(err)
+	p := cfg.deletionsLogPath()
+	if p == "" {
+		t.Fatal("no deletion log path")
 	}
 	b, _ := os.ReadFile(p)
 	return string(b)

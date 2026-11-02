@@ -265,16 +265,16 @@ func TestTheReaderIsReleasedWhenTheDeleteStopsUnexpectedly(t *testing.T) {
 	if e.d.running.of(dir) != nil {
 		t.Error("the delete is still recorded as under way")
 	}
-	if strings.Contains(deletionsLogFor(t, dir), `"started"`) {
+	if strings.Contains(deletionsLogFor(t, e.cfg, dir), `"started"`) {
 		t.Error("a started line was written for a delete that stopped before step 0")
 	}
 }
 
-// deletionsLogFor is the deletion log's lines that name folder.
-func deletionsLogFor(t *testing.T, folder string) string {
+// deletionsLogFor is the deletion log's lines that name folder, in cfg's settings folder.
+func deletionsLogFor(t *testing.T, cfg Config, folder string) string {
 	t.Helper()
 	var out []string
-	for _, l := range strings.Split(deletionsLog(t), "\n") {
+	for _, l := range strings.Split(deletionsLog(t, cfg), "\n") {
 		if strings.Contains(l, folder) {
 			out = append(out, l)
 		}

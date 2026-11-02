@@ -175,10 +175,7 @@ func TestARepliesSayWhatThePageCanStillDo(t *testing.T) {
 		t.Fatalf("the positive twin: a name that does not match spends the plan: %v", m)
 	}
 	// deletions.log cannot be written: refused before the start, the token spent.
-	logPath, err := archdelete.DefaultLogPath()
-	if err != nil {
-		t.Fatal(err)
-	}
+	logPath := e.cfg.deletionsLogPath()
 	if _, err := os.Stat(logPath); errors.Is(err, os.ErrNotExist) {
 		if err := os.WriteFile(logPath, nil, 0o600); err != nil {
 			t.Fatal(err)

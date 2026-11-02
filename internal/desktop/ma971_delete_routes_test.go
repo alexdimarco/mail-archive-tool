@@ -62,7 +62,7 @@ func TestTheDeleteRoutesAreGuardedPosts(t *testing.T) {
 
 	before := treeState(t, dir)
 	settings, _ := os.ReadFile(e.cfg.SettingsPath)
-	logBefore := deletionsLog(t)
+	logBefore := deletionsLog(t, e.cfg)
 	body, _ := json.Marshal(map[string]any{"path": dir, "token": token, "typed": filepath.Base(dir), "id": "x", "confirm": true})
 	for _, route := range deleteRoutes {
 		rec := do(http.MethodGet, route, nil, "")
@@ -98,7 +98,7 @@ func TestTheDeleteRoutesAreGuardedPosts(t *testing.T) {
 		assure.NoSideEffect(func() bool {
 			s, _ := os.ReadFile(e.cfg.SettingsPath)
 			return reflect.DeepEqual(treeState(t, dir), before) && e.listed(dir) && string(s) == string(settings) &&
-				deletionsLog(t) == logBefore && len(e.d.deletes.views()) == 0
+				deletionsLog(t, e.cfg) == logBefore && len(e.d.deletes.views()) == 0
 		}))
 	// The token the refused delete carried is still the page's: nothing took it.
 	if e.d.pending.get(token, isDeletePlan) == nil {

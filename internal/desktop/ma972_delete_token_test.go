@@ -128,7 +128,7 @@ func TestADeletesResultIsHeldUntilDismissedOrShutDown(t *testing.T) {
 		i := bytes.LastIndex(bytes.TrimRight(rec, "\n"), []byte("\n"))
 		sum := sha256.Sum256(rec[:i+1])
 		digest := hex.EncodeToString(sum[:])
-		if !strings.HasSuffix(strings.TrimSpace(string(rec)), "Record-SHA256: "+digest) || !strings.Contains(deletionsLog(t), `"record_sha256":"`+digest+`"`) {
+		if !strings.HasSuffix(strings.TrimSpace(string(rec)), "Record-SHA256: "+digest) || !strings.Contains(deletionsLog(t, e.cfg), `"record_sha256":"`+digest+`"`) {
 			t.Errorf("the held record's digest %s is not its last line's and deletions.log's", digest)
 		}
 		name, _ := r["recordName"].(string)
