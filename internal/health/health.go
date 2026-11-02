@@ -112,6 +112,10 @@ type Input struct {
 	// finish (design-archive-delete §5.4), set by the caller — status, the Desktop's Status &
 	// health — since health reads no deletion log (the 1.5.3 friction review's B2).
 	DeleteUnfinished bool
+	// DeleteRow is the row of Your archives that unfinished delete names, the spelling
+	// `delete-archive -out` finds it by ("" is Out): the finishing command names it (the 1.5.3
+	// friction fixes' adversarial pass, finding 10).
+	DeleteRow string
 
 	// HasIndex is true when search.db opened; HasIndexFile when it exists on
 	// disk at all. A present index that cannot be opened (corrupt) carries the
@@ -413,7 +417,7 @@ func Assess(in Input, now time.Time) Report {
 	// A delete of this archive that did not finish (§5.4; the 1.5.3 friction review's B2):
 	// the folder may be partly deleted, and the remedy is to finish it.
 	if in.DeleteUnfinished {
-		r.red("delete_unfinished", DeleteUnfinishedLine(in.Out, in.Surface))
+		r.red("delete_unfinished", DeleteUnfinishedLine(in.deleteRow(), in.Surface))
 	}
 
 	// OP-3 (R18): the archive location itself is gone (an unplugged removable/
@@ -1610,9 +1614,17 @@ func NoArchive(in Input) error {
 	if in.DeleteUnfinished {
 		// Its delete removed the archive's own files and did not finish (B2): say that, not
 		// "run an export into it".
-		return fmt.Errorf("no archive at %s: %s", in.Out, DeleteUnfinishedLine(in.Out, in.Surface))
+		return fmt.Errorf("no archive at %s: %s", in.Out, DeleteUnfinishedLine(in.deleteRow(), in.Surface))
 	}
 	return fmt.Errorf("no archive at %s: no manifest, schedule descriptor or last-run record (run an export into it first, or check the path)", in.Out)
+}
+
+// deleteRow is the folder the finishing command names: the unfinished delete's row, else Out.
+func (in Input) deleteRow() string {
+	if strings.TrimSpace(in.DeleteRow) != "" {
+		return in.DeleteRow
+	}
+	return in.Out
 }
 
 // DeleteUnfinishedLine is the posture line for an archive whose delete did not finish (B2), in

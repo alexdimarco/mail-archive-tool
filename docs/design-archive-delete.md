@@ -1200,3 +1200,6 @@ words are the builder's, for the operator.
   unlist-archive and add-archive refuse: "There are no MailArchive Desktop settings beside FILE:
   its folder DIR does not exist, so nothing was changed. Give -config the config file MailArchive
   Desktop was started with."
+- *Status names the row (MA-1027; finding 10).* `status`'s "run mailarchive delete-archive -out
+  DIR again" names the row the unfinished delete was begun from; the Desktop's Status & health
+  says nothing of a delete it is running now. No new words.

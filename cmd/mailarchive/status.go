@@ -43,6 +43,7 @@ func runStatus(args []string) error {
 	if logPath, err := archdelete.DefaultLogPath(); err == nil {
 		if u, err := archdelete.UnfinishedDelete(logPath, in.Out, runtime.GOOS); err == nil && u != nil {
 			in.DeleteUnfinished = true
+			in.DeleteRow = u.Row // the spelling delete-archive -out finds the row by
 		}
 	}
 	// A manifest FILE that exists but does not load (newer format, corrupt) is

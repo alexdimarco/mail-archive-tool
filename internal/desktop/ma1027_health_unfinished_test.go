@@ -50,3 +50,47 @@ func TestStatusAndHealthSaysADeleteDidNotFinish(t *testing.T) {
 		t.Fatalf("a delete not finished: %s\n%s", posture, summary)
 	}
 }
+
+// covers: MA-1027, R36, R18
+// A delete this Desktop is running now is not said to have not finished (the 1.5.3 friction fixes'
+// adversarial pass, finding 10): its started line has no finished line yet, but its result shows
+// on the page when it ends. Positive twin first: the same log line with no delete running is said.
+func TestStatusAndHealthSaysNothingOfADeleteUnderWay(t *testing.T) {
+	e := newDeleteEnv(t)
+	dir := e.plainArchive("Being Deleted")
+	if err := SaveSettings(e.cfg.SettingsPath, Settings{Out: dir}); err != nil {
+		t.Fatal(err)
+	}
+	summary := func() string {
+		t.Helper()
+		var m map[string]any
+		if err := json.Unmarshal(e.get("/api/health").Body.Bytes(), &m); err != nil {
+			t.Fatal(err)
+		}
+		lines, _ := m["summary"].([]any)
+		var s []string
+		for _, l := range lines {
+			s = append(s, l.(string))
+		}
+		return strings.Join(s, "\n")
+	}
+	line, _ := json.Marshal(map[string]any{"at": time.Now().UTC().Format(time.RFC3339Nano), "event": "started", "run": "run0000000000002", "folder": dir, "row": dir, "kind": "plain"})
+	f, err := os.OpenFile(e.cfg.deletionsLogPath(), os.O_WRONLY|os.O_APPEND|os.O_CREATE, 0o600)
+	if err != nil {
+		t.Fatal(err)
+	}
+	f.Write(append(line, '\n'))
+	f.Close()
+	// Positive twin: nothing running, the line is a delete that did not finish.
+	if got := summary(); !strings.Contains(got, "did not finish") {
+		t.Fatalf("the positive twin:\n%s", got)
+	}
+	end, ok := e.d.running.tryBegin(dir, dir) // a delete of it under way
+	if !ok {
+		t.Fatal("could not mark the delete under way")
+	}
+	defer end()
+	if got := summary(); strings.Contains(got, "did not finish") {
+		t.Fatalf("a delete under way is said not to have finished:\n%s", got)
+	}
+}
