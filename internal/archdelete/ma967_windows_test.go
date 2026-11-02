@@ -163,7 +163,8 @@ func TestWindowsAFileWhoseAttributesCannotBeReadIsKept(t *testing.T) {
 		return old(root, rel, access)
 	}
 	res := r.run(t, false)
-	if res.Status != StatusPartial || !exists(filepath.Join(dir, "search.db")) || !strings.HasSuffix(res.Lines[0], deniedRemedy) {
+	// One file left, so the remedy says "it" (MA-1028, B7).
+	if res.Status != StatusPartial || !exists(filepath.Join(dir, "search.db")) || !strings.HasSuffix(res.Lines[0], deniedOneAtRoot()) {
 		t.Fatalf("%s", res.Message())
 	}
 }
