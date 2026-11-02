@@ -1093,3 +1093,17 @@ changed words are the builder's, for the operator, unless a quote says otherwise
 - *`-config` on the three verbs (MA-1024; B19, the command line's part).* "the config file of a
   MailArchive Desktop started with -config, to reach its list of archives (default: the usual
   one)"; the commands the verbs print carry `-config FILE`.
+- *Scheduled backups in the plan (MA-1025; B1, B15).* §3.1's "the schedules that will be
+  stopped" is now only what step 2 would stop: the plan asks the scheduler, read-only, by step
+  2's absent rule. Words: "Scheduled backups it stops: the backup that runs daily at 02:00." (or
+  "the integrity check that runs …", "the Microsoft 365 backup of your current archive,
+  registered under FOLDER", "the backup NAME" when nothing records when it runs), "Scheduled
+  backups it stops: none." (not for an encrypted archive), "Its Run now backup is removed too
+  (it has no scheduled times)."; result "Stopped the scheduled backup that runs daily at
+  02:00." and "Removed its Run now backup."; saved plan "Schedule to stop: NAME (runs daily at
+  02:00)" / "Schedule to stop: none" / "Run now backup to remove: NAME"; record "Schedule
+  stopped: …", "Schedule already absent: …", "Schedule stopped: none", "Run now backup removed:
+  …". A run-job descriptor (`-job FILE`) is confirmed through its job file when that file is a
+  job file in MailArchive's settings folder. Remove from list's question: "Its scheduled backup
+  that runs daily at 02:00 will also be stopped." (several: "Its scheduled backups will also be
+  stopped: …; ….").

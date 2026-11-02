@@ -491,6 +491,19 @@ func cronPreview(s Spec) (string, error) {
 	return out, nil
 }
 
+// CadenceWords is a recorded schedule's interval and time in plain language, as cadenceGloss
+// says them ("daily at 02:00", "hourly at :15", "weekly on Sunday at 03:30"), or "" when either
+// is not one Install takes (a descriptor is untrusted: its words are never passed on).
+func CadenceWords(interval, at string) string {
+	if _, err := ParseInterval(interval); err != nil {
+		return ""
+	}
+	if _, _, err := parseHHMM(at); err != nil {
+		return ""
+	}
+	return cadenceGloss(Spec{Interval: Interval(interval), At: at})
+}
+
 // cadenceGloss renders the spec's cadence and time in plain language, e.g.
 // "daily at 02:00" or "weekly on Sunday at 03:30".
 func cadenceGloss(s Spec) string {

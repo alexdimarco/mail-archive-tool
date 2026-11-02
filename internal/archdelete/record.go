@@ -42,6 +42,10 @@ type RecordInput struct {
 	BytesRemoved        int64
 	SchedulesStopped    []string
 	SchedulesNotRemoved []string
+	// SchedulesAbsent are the entries the plan listed that step 2 found gone; RunNowRemoved the
+	// Run now backups whose job files step 3 removed (B1, B15).
+	SchedulesAbsent []string
+	RunNowRemoved   []string
 	// KeyForgotten is "forgotten", "kept: …" or "" (not applicable).
 	KeyForgotten string
 	// UnrecordedTicked is §4.3's box; for a plan, false.
@@ -128,9 +132,20 @@ func RecordText(in RecordInput) []byte {
 		anchor = "not known"
 	}
 	line(anchorKey(p), anchor)
+	// The schedules (B1, B15): the plan lists only what step 2 would stop (the scheduler asked),
+	// each by its name and when it runs, or "none"; the record repeats those lines with what
+	// happened — stopped, or already absent — and the Run now backup removed with its job file.
+	// An encrypted archive, which cannot have a schedule, says nothing of none.
 	if planned {
-		for _, n := range p.Schedules.Names() {
-			line("Schedule to stop", n)
+		listed := p.Schedules.Listed()
+		for _, e := range listed {
+			line("Schedule to stop", e.recordValue())
+		}
+		if len(listed) == 0 && p.Kind != Encrypted {
+			line("Schedule to stop", "none")
+		}
+		for _, e := range p.Schedules.RunNowBackups() {
+			line("Run now backup to remove", e.recordValue())
 		}
 		// §8.1 "those not removed: check it yourself": the names discovery could not
 		// confirm, another computer's, and the macOS custom names (conformance gap 2).
@@ -139,7 +154,16 @@ func RecordText(in RecordInput) []byte {
 		}
 	} else {
 		for _, n := range in.SchedulesStopped {
-			line("Schedule stopped", n)
+			line("Schedule stopped", p.Schedules.recordValue(n))
+		}
+		for _, n := range in.SchedulesAbsent {
+			line("Schedule already absent", p.Schedules.recordValue(n))
+		}
+		if len(in.SchedulesStopped)+len(in.SchedulesAbsent) == 0 && p.Kind != Encrypted {
+			line("Schedule stopped", "none")
+		}
+		for _, n := range in.RunNowRemoved {
+			line("Run now backup removed", p.Schedules.recordValue(n))
 		}
 		for _, n := range in.SchedulesNotRemoved {
 			line("Schedule not removed (check it yourself)", n)

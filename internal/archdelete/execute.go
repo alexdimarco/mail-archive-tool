@@ -256,9 +256,19 @@ func (e *run) stop(msg string) {
 
 func (e *run) stoppedLines() {
 	if e.step > 2 {
-		for _, n := range e.res.Stopped {
-			e.res.line("Stopped the scheduled backup %s", n)
-		}
+		e.scheduleResultLines()
+	}
+}
+
+// scheduleResultLines are the result's lines for what steps 2 and 3 did to the archive's backups
+// (B1, B15): each scheduled backup stopped, described as the plan described it, and the Run now
+// backup removed.
+func (e *run) scheduleResultLines() {
+	for _, n := range e.res.Stopped {
+		e.res.Lines = append(e.res.Lines, e.plan.Schedules.stoppedLine(n))
+	}
+	if len(e.res.RunNowRemoved) > 0 {
+		e.res.Lines = append(e.res.Lines, "Removed its Run now backup.")
 	}
 }
 
@@ -390,12 +400,18 @@ func (e *run) configSide() bool {
 		if !absent {
 			e.res.Stopped = append(e.res.Stopped, en.Name)
 			e.done = append(e.done, "scheduled backup "+en.Name+" stopped")
+		} else if en.listed() {
+			// The plan listed it, and step 2 found it gone: the record says so (B1).
+			e.res.AlreadyAbsent = append(e.res.AlreadyAbsent, en.Name)
 		}
 	}
 	e.step = 3
 	if f, err := removeNameFiles(p.Schedules.Names(), e.spellings(), e.x.SettingsDir); err != nil {
 		e.stop(fmt.Sprintf("Could not remove %s in MailArchive's settings folder (%s). Click Delete again.", f, cleanErr(err)))
 		return false
+	}
+	for _, en := range p.Schedules.RunNowBackups() {
+		e.res.RunNowRemoved = append(e.res.RunNowRemoved, en.Name) // its job file went with the rest (B15)
 	}
 	e.done = append(e.done, "their settings files removed")
 	if !e.proceed(4) {
@@ -806,9 +822,7 @@ func (e *run) stopAt6() {
 	if e.marked {
 		res.Lines = append(res.Lines, lockedLine)
 	}
-	for _, n := range res.Stopped {
-		res.line("Stopped the scheduled backup %s", n)
-	}
+	e.scheduleResultLines()
 	res.line("What Delete does not reach: %s", DoesNotReach)
 }
 
@@ -845,9 +859,7 @@ func (e *run) stopNoAnchor(gone, lockLeft bool) {
 	if e.marked {
 		e.res.Lines = append(e.res.Lines, lockedLine)
 	}
-	for _, s := range e.res.Stopped {
-		e.res.line("Stopped the scheduled backup %s", s)
-	}
+	e.scheduleResultLines()
 }
 
 // countLeft counts the files and the folders under folder, links not followed,
@@ -1069,9 +1081,7 @@ func (e *run) finish() {
 			res.line("Not removed: check it yourself: %s", n)
 		}
 	}
-	for _, n := range res.Stopped {
-		res.line("Stopped the scheduled backup %s", n)
-	}
+	e.scheduleResultLines()
 	res.Lines = append(res.Lines, e.notes...)
 	if res.RowRemoved {
 		res.Lines = append(res.Lines, "Removed from Your archives")
@@ -1203,6 +1213,7 @@ func (e *run) step10() {
 	rec := RecordText(RecordInput{
 		Status: status, When: e.now(), Computer: computer, Account: account, Version: e.x.Version, Plan: p,
 		FilesRemoved: res.Removed, BytesRemoved: res.Bytes, SchedulesStopped: res.Stopped,
+		SchedulesAbsent: res.AlreadyAbsent, RunNowRemoved: res.RunNowRemoved,
 		SchedulesNotRemoved: p.Schedules.notRemoved(), KeyForgotten: key, UnrecordedTicked: e.unrecorded,
 		NotRemoved: left, KeptFiles: res.Kept, LitterRemoved: res.LitterRemoved,
 	})

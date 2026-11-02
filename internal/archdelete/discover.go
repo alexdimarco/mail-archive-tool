@@ -34,6 +34,122 @@ type Entry struct {
 	// the current archive's capture registered under captureBackupFor() (§5.1 (c)).
 	// That folder is not one of this archive's spellings.
 	RegisteredFor string
+	// When is when the entry runs, in words ("daily at 02:00"), as the archive's descriptor that
+	// records it says; "" when none says (the 1.5.3 friction review's B1: a schedule is described
+	// by when it runs, not by its name).
+	When string
+	// State is what this computer's scheduler said of the entry at the plan, by step 2's own
+	// absent rule (Deps.Scheduler; B1: the plan lists only what step 2 would stop).
+	State EntryState
+}
+
+// EntryState is what the scheduler said of an entry at the plan.
+type EntryState int
+
+const (
+	// StateNotAsked: no scheduler was given to the plan; the entry is listed, as before B1.
+	StateNotAsked EntryState = iota
+	// StateInstalled: the scheduler has it, so step 2 stops it.
+	StateInstalled
+	// StateAbsent: step 2's absent rule finds it absent: nothing to stop.
+	StateAbsent
+	// StateUnanswered: the scheduler could not say; step 2 tries to stop it.
+	StateUnanswered
+)
+
+// listed reports whether the plan lists the entry among those step 2 stops: all but one the
+// scheduler says is absent.
+func (e Entry) listed() bool { return e.State != StateAbsent }
+
+// isVerify reports an integrity check's entry (a -verify name, or the verify descriptor's).
+func (e Entry) isVerify() bool {
+	return strings.HasSuffix(e.Name, "-verify") || e.From == "verify descriptor"
+}
+
+// Describe is the entry in the plan's and the result's words (B1): by when it runs, "the backup
+// that runs daily at 02:00" or "the integrity check that runs …"; the current archive's Microsoft
+// 365 backup registered under another folder's name says so; with no record of when it runs, its
+// name ("the backup mailarchive-1a2b3c4d").
+func (e Entry) Describe() string {
+	what := "backup"
+	if e.isVerify() {
+		what = "integrity check"
+	}
+	switch {
+	case e.RegisteredFor != "":
+		return "the Microsoft 365 backup of your current archive, registered under " + util.StripControl(e.RegisteredFor)
+	case e.When != "":
+		return "the " + what + " that runs " + e.When
+	}
+	return "the " + what + " " + util.StripControl(e.Name)
+}
+
+// stoppedLine is the result's line for an entry step 2 (or Remove from list) stopped.
+func (e Entry) stoppedLine() string {
+	return "Stopped the scheduled " + strings.TrimPrefix(e.Describe(), "the ") + "."
+}
+
+// recordValue is the entry as the saved plan and the deletion record name it: its name, for an
+// approver to check by hand, and when it runs when that is known.
+func (e Entry) recordValue() string {
+	if e.When != "" {
+		return e.Name + " (runs " + e.When + ")"
+	}
+	return e.Name
+}
+
+// RunNow reports a Run now backup: a job file of this archive whose entry the scheduler does not
+// have, so it has no scheduled times (MA-955 keeps one on a switch). Step 3 removes its job file
+// (the 1.5.3 friction review's B15).
+func (e Entry) RunNow() bool { return e.JobFile != "" && e.State == StateAbsent }
+
+// entry is the discovered entry named name.
+func (d Discovery) entry(name string) (Entry, bool) {
+	for _, e := range d.Entries {
+		if e.Name == name {
+			return e, true
+		}
+	}
+	return Entry{}, false
+}
+
+// stoppedLine is the result's line for the entry named name, stopped.
+func (d Discovery) stoppedLine(name string) string {
+	e, ok := d.entry(name)
+	if !ok {
+		e = Entry{Name: name}
+	}
+	return e.stoppedLine()
+}
+
+// recordValue is the entry named name as the record names it (its name, for one not discovered).
+func (d Discovery) recordValue(name string) string {
+	if e, ok := d.entry(name); ok {
+		return e.recordValue()
+	}
+	return name
+}
+
+// Listed are the entries the plan lists among those step 2 stops.
+func (d Discovery) Listed() []Entry {
+	var out []Entry
+	for _, e := range d.Entries {
+		if e.listed() {
+			out = append(out, e)
+		}
+	}
+	return out
+}
+
+// RunNowBackups are the Run now backups the delete removes with their job files.
+func (d Discovery) RunNowBackups() []Entry {
+	var out []Entry
+	for _, e := range d.Entries {
+		if e.RunNow() {
+			out = append(out, e)
+		}
+	}
+	return out
 }
 
 // Note is a descriptor the plan lists without acting on it: one whose name
@@ -150,6 +266,7 @@ func (fd FileDiscovery) Discover(folder string) (Discovery, error) {
 	addEntry(Entry{Name: def, From: "derived"})
 	addEntry(Entry{Name: def + "-verify", From: "derived"})
 
+	whenOf := map[string]string{} // when each confirmed entry runs, as its descriptor says (B1)
 	host, _ := os.Hostname()
 	for _, desc := range []struct {
 		file, what string
@@ -177,9 +294,12 @@ func (fd FileDiscovery) Discover(folder string) (Discovery, error) {
 				Text: fmt.Sprintf("Computer %s also backs up into this folder; remove its schedule there", rd.Host)})
 			continue
 		}
-		out := jobOutOf(rd.Job)
+		out := descriptorOut(rd.Job)
 		if confirmed(folder, out, rd.Name, goos, desc.bound) {
 			addEntry(Entry{Name: rd.Name, From: desc.what, Out: out})
+			if w := schedule.CadenceWords(rd.Interval, rd.At); w != "" {
+				whenOf[rd.Name] = w
+			}
 			continue
 		}
 		d.Unconfirmed = append(d.Unconfirmed, Note{File: path, Name: rd.Name,
@@ -197,11 +317,25 @@ func (fd FileDiscovery) Discover(folder string) (Discovery, error) {
 				if err != nil || j.Version < 1 || !schedule.SameArchivePath(j.Out, folder, goos) {
 					continue
 				}
-				addEntry(Entry{Name: strings.TrimSuffix(e.Name(), ".json"), From: "job file", Out: j.Out, JobFile: p})
+				name := strings.TrimSuffix(e.Name(), ".json")
+				if seen[name] {
+					// The entry found already (a derived name, a descriptor's) has this job file:
+					// a Run now backup is told by it (B15).
+					for i := range d.Entries {
+						if d.Entries[i].Name == name && d.Entries[i].JobFile == "" {
+							d.Entries[i].JobFile = p
+						}
+					}
+					continue
+				}
+				addEntry(Entry{Name: name, From: "job file", Out: j.Out, JobFile: p})
 			}
 		}
 	}
 
+	for i := range d.Entries {
+		d.Entries[i].When = whenOf[d.Entries[i].Name]
+	}
 	spell := map[string]bool{}
 	for _, s := range append([]string{folder}, outsOf(d.Entries)...) {
 		if s != "" && !spell[s] {
@@ -279,6 +413,31 @@ func readDescriptorIn(folder, name string) (schedule.Descriptor, bool, error) {
 		return d, true, unreadable
 	}
 	return d, true, nil
+}
+
+// descriptorOut is the -out a descriptor's job records: its own -out argument, or, for a run-job
+// (`-job FILE` or `run-job FILE`: the Desktop's and the wizard's backups, a Run now one included),
+// the Out of the job file it names — read only when that file is a job file in MailArchive's
+// settings folder (job.Dir, schedule.IsJobFileName), never another path the folder's untrusted
+// descriptor names (the 1.5.3 friction review's B15: a Run now backup's descriptor was listed as
+// one MailArchive could not confirm, beside the same backup listed as stopped).
+func descriptorOut(args []string) string {
+	if o := jobOutOf(args); o != "" {
+		return o
+	}
+	if schedule.KindOf(args) != schedule.KindRunJob || len(args) < 2 {
+		return ""
+	}
+	p := args[1]
+	dir, err := job.Dir()
+	if err != nil || !filepath.IsAbs(p) || filepath.Clean(filepath.Dir(p)) != filepath.Clean(dir) || !schedule.IsJobFileName(filepath.Base(p)) {
+		return ""
+	}
+	j, err := job.Read(p)
+	if err != nil || j.Version < 1 {
+		return ""
+	}
+	return j.Out
 }
 
 // jobOutOf is the -out a recorded job carries (`-out V` or `-out=V`), or "".

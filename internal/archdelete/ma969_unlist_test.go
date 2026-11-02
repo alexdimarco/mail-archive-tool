@@ -111,7 +111,9 @@ func TestRemoveFromListOfTheCurrentUnreachableArchiveStopsItsBackupForCapture(t 
 	captured := schedule.DefaultNameFor(other)
 	r.sched.state[captured] = schedule.Installed
 	q, err := PlanUnlist(cur, x)
-	if err != nil || !strings.Contains(q.Question, captured) {
+	// Named by what it is, not its internal name (MA-1025, friction B1): the folder it is
+	// registered under.
+	if err != nil || !contains(q.Named, captured) || !strings.Contains(q.Question, "Microsoft 365 backup of your current archive, registered under "+other) {
 		t.Fatalf("the capture registered under BackupFor is named: %q %v", q.Question, err)
 	}
 	res := yes(t, cur, x)

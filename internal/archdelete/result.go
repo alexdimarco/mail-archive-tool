@@ -78,6 +78,10 @@ type Result struct {
 	// plan lists as "not removed: check it yourself".
 	Stopped       []string
 	CheckYourself []string
+	// AlreadyAbsent are the entries the plan listed that step 2 found gone; RunNowRemoved the Run
+	// now backups whose job files step 3 removed (B1, B15).
+	AlreadyAbsent []string
+	RunNowRemoved []string
 	// KeyForgotten is "forgotten", "kept: …" or "" (not applicable or skipped).
 	KeyForgotten string
 	// KeySkipped: step 8 was skipped and this computer still remembers the key.
@@ -149,6 +153,38 @@ func (p *DeletePlan) KeyLine() string {
 		return "This computer keeps this archive's key for its other recorded copies: " + strings.Join(others, "; ") + ". If the folder is removed, it forgets only this copy."
 	}
 	return "If the folder is removed and it is the last copy of this archive this computer recorded, this computer will forget the archive's key; otherwise the key is kept for the other copies."
+}
+
+// ScheduleLines are the plan's lines about the archive's backups, shared by the Desktop's panel
+// and the command line (the 1.5.3 friction review's B1, B15): the scheduled backups step 2 would
+// stop, by when they run ("Scheduled backups it stops: the backup that runs daily at 02:00."), or
+// "none" — never for an encrypted archive, which cannot have one — and a Run now backup, which is
+// this archive's own and has no scheduled times, removed with its job file.
+func (p *DeletePlan) ScheduleLines() []string {
+	var descs []string
+	for _, e := range p.Schedules.Listed() {
+		descs = append(descs, e.Describe())
+	}
+	var lines []string
+	switch {
+	case len(descs) > 0:
+		lines = append(lines, "Scheduled backups it stops: "+strings.Join(descs, "; ")+".")
+	case p.Kind != Encrypted:
+		lines = append(lines, "Scheduled backups it stops: none.")
+	}
+	if len(p.Schedules.RunNowBackups()) > 0 {
+		lines = append(lines, "Its Run now backup is removed too (it has no scheduled times).")
+	}
+	return lines
+}
+
+// ScheduleDescriptions are the scheduled backups step 2 would stop, each as Describe says it.
+func (p *DeletePlan) ScheduleDescriptions() []string {
+	out := []string{}
+	for _, e := range p.Schedules.Listed() {
+		out = append(out, e.Describe())
+	}
+	return out
 }
 
 // SyncedLine is §9's warning for a folder synced with svc [C14].

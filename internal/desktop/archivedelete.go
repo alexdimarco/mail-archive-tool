@@ -232,6 +232,9 @@ func (cfg Config) deleteDeps(busy func(string) bool, sealed func(folder, archive
 		},
 		Protected: cfg.deleteProtected(),
 		Log:       logPath,
+		// The plan lists only the scheduled backups step 2 would stop (the 1.5.3 friction
+		// review's B1), asking the scheduler step 2 asks.
+		Scheduler: cfg.deleteScheduler(),
 	}
 }
 
@@ -430,7 +433,10 @@ func planView(p *archdelete.DeletePlan) map[string]any {
 	m := map[string]any{
 		"folder": p.Folder, "name": p.Name, "kind": p.Kind.String(),
 		"files": p.Files, "bytes": p.Bytes, "size": sizeText(p.Bytes),
-		"schedules": nonNil(p.Schedules.Names()), "checkYourself": nonNil(p.Schedules.CheckYourself), "notes": nonNil(notes),
+		// Only what step 2 would stop, by when it runs, or "none"; a Run now backup said once (B1,
+		// B15). scheduleLines are the panel's words.
+		"schedules": p.ScheduleDescriptions(), "scheduleLines": nonNil(p.ScheduleLines()),
+		"checkYourself": nonNil(p.Schedules.CheckYourself), "notes": nonNil(notes),
 		"paused": p.Paused, "synced": p.Synced,
 		"kept": len(p.Kept), "keptNames": nonNil(kept), "unrecorded": len(p.Unrecorded), "unrecordedNames": nonNil(unrecorded), "stores": stores,
 		"rerun": p.Rerun != archdelete.RerunNone,

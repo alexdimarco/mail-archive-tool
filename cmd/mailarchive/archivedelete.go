@@ -503,8 +503,9 @@ func deletePlanLines(p *archdelete.DeletePlan) []string {
 	for i, s := range p.Stores {
 		lines = append(lines, fmt.Sprintf("  store %d: %s", i+1, c(s)))
 	}
-	if names := p.Schedules.Names(); len(names) > 0 {
-		lines = append(lines, "  Schedules to stop: "+c(strings.Join(names, ", ")))
+	// Only what step 2 would stop, by when it runs, or "none"; a Run now backup once (B1, B15).
+	for _, l := range p.ScheduleLines() {
+		lines = append(lines, "  "+c(l))
 	}
 	for _, n := range p.Schedules.Unconfirmed {
 		lines = append(lines, "  Not removed, check it yourself: "+c(n.Text))

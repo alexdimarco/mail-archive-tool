@@ -132,7 +132,8 @@ func TestTheDeletePanelSitsBesideTheRowAndReadsThePlansReply(t *testing.T) {
 			t.Errorf("the panel reads p.%s, which the plan's reply does not carry", k)
 		}
 	}
-	for _, k := range []string{"folder", "size", "files", "stores", "schedules", "checkYourself", "notes", "pausedLine", "syncedLine", "kept",
+	// scheduleLines (MA-1025, friction B1): the schedule words, made on the server (was schedules).
+	for _, k := range []string{"folder", "size", "files", "stores", "scheduleLines", "checkYourself", "notes", "pausedLine", "syncedLine", "kept",
 		"unrecordedNames", "unrecordedBox", "keyLine", "doesNotReach", "logLine", "threeLine", "typeLine", "name", "token", "planText", "planName"} {
 		if !strings.Contains(panel, "p."+k) {
 			t.Errorf("the panel does not show the plan's %s (§3.1's list)", k)

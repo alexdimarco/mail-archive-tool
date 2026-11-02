@@ -89,13 +89,20 @@ func PlanUnlist(row string, x UnlistDeps) (*UnlistPlan, error) {
 		}
 	}
 	const tail = "Remove from list? The folder and its files are kept."
+	// Each named by when it runs when its descriptor says (B1), else by its name.
+	d := Discovery{Entries: q.Entries}
+	var descs []string
+	for _, n := range q.Named {
+		e, _ := d.entry(n)
+		descs = append(descs, strings.TrimPrefix(e.Describe(), "the "))
+	}
 	switch len(q.Named) {
 	case 0:
 		q.Question = tail
 	case 1:
-		q.Question = fmt.Sprintf("Its scheduled backup %s will also be stopped. %s", q.Named[0], tail)
+		q.Question = fmt.Sprintf("Its scheduled %s will also be stopped. %s", descs[0], tail)
 	default:
-		q.Question = fmt.Sprintf("Its scheduled backups %s will also be stopped. %s", strings.Join(q.Named, ", "), tail)
+		q.Question = fmt.Sprintf("Its scheduled backups will also be stopped: %s. %s", strings.Join(descs, "; "), tail)
 	}
 	return q, nil
 }
@@ -160,7 +167,7 @@ func Unlist(row string, x UnlistDeps) *UnlistResult {
 	spellings = append([]string{q.Folder, row}, spellings...)
 	if f, err := removeNameFiles(names, spellings, x.SettingsDir); err != nil {
 		res.Lines = []string{fmt.Sprintf("Could not remove %s in MailArchive's settings folder (%s). The row is kept.", f, cleanErr(err))}
-		return res.withStopped()
+		return res.withStopped(q.Entries)
 	}
 	isThis := func(s string) bool {
 		for _, sp := range spellings {
@@ -190,7 +197,7 @@ func Unlist(row string, x UnlistDeps) *UnlistResult {
 	}
 	if err != nil {
 		res.Lines = []string{"Could not save MailArchive's settings, so the row is kept. Click Remove from list again."}
-		return res.withStopped()
+		return res.withStopped(q.Entries)
 	}
 	forget := x.ForgetRow
 	if forget == nil {
@@ -206,16 +213,19 @@ func Unlist(row string, x UnlistDeps) *UnlistResult {
 			// Another MailArchive program is changing the list (CON-07): say so, and to try again.
 			res.Lines = []string{msgRowFailed + " " + busy.Error() + "."}
 		}
-		return res.withStopped()
+		return res.withStopped(q.Entries)
 	}
 	res.Removed = true
 	res.Lines = []string{"Removed from Your archives. The folder and its files are kept."}
-	return res.withStopped()
+	return res.withStopped(q.Entries)
 }
 
-func (r *UnlistResult) withStopped() *UnlistResult {
+// withStopped adds a line for each entry stopped, described as the question described it (B1),
+// with its period (B12).
+func (r *UnlistResult) withStopped(entries []Entry) *UnlistResult {
+	d := Discovery{Entries: entries}
 	for _, n := range r.Stopped {
-		r.Lines = append(r.Lines, "Stopped the scheduled backup "+n)
+		r.Lines = append(r.Lines, d.stoppedLine(n))
 	}
 	return r
 }

@@ -373,6 +373,11 @@ type Deps struct {
 	// what a re-run with the folder gone (§5.4) and Remove from list act on. Nil
 	// finds none.
 	Records Discoverer
+	// Scheduler is asked, read-only, whether each entry is there, by step 2's own absent rule
+	// (stopEntry's), so the plan lists only what step 2 would stop (the 1.5.3 friction review's
+	// B1: it listed the derived names whether or not any was installed). Nil asks nothing and
+	// lists every entry, as before.
+	Scheduler Scheduler
 }
 
 func (d Deps) goos() string {
@@ -390,8 +395,33 @@ func Plan(folder string, deps Deps) (*DeletePlan, error) {
 	p, err := planAny(folder, deps)
 	if err == nil {
 		addKeyAtPlan(p, deps)
+		askScheduler(p, deps)
 	}
 	return p, err
+}
+
+// askScheduler sets each entry's State from deps.Scheduler by step 2's absent rule (stopEntry),
+// asking only: nothing is stopped or removed (B1).
+func askScheduler(p *DeletePlan, deps Deps) {
+	s := deps.Scheduler
+	if s == nil {
+		return
+	}
+	goos := deps.goos()
+	for i := range p.Schedules.Entries {
+		e := &p.Schedules.Entries[i]
+		switch s.Query(e.Name) {
+		case schedule.Installed:
+			e.State = StateInstalled
+		case schedule.NotInstalled:
+			e.State = StateAbsent
+			if goos == "windows" && !s.SaysMissing(e.Name) && s.SideFilesExist(e.Name) {
+				e.State = StateInstalled // step 2 asks RemoveLiveEntry for it
+			}
+		default:
+			e.State = StateUnanswered
+		}
+	}
 }
 
 // addKeyAtPlan asks the keyring what step 8 would do with a recorded encrypted archive's key

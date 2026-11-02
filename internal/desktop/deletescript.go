@@ -177,7 +177,7 @@ function delPanel(p){
   line('Delete removes '+p.files+(p.files===1?' file':' files')+' ('+p.size+').');
   if(p.rerun)line('This finishes a delete that did not finish.');
   if(p.stores.length)line('Stores: '+p.stores.map(s=>'store '+s.number+' '+s.name).join(', '));
-  if(p.schedules.length)line('Scheduled backups it stops: '+p.schedules.join(', '));
+  (p.scheduleLines||[]).forEach(t=>line(t));
   if(p.checkYourself.length)line('Not removed, check it yourself: '+p.checkYourself.join(', '),'warn');
   p.notes.forEach(t=>line(t,'warn'));
   if(p.pausedLine)line(p.pausedLine);
