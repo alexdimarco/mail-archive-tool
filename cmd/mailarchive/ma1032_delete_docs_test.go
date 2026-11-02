@@ -33,17 +33,17 @@ func docSection(t *testing.T, rel, head string) string {
 // deleteDocControls are the MailArchive Desktop controls the delete docs may name in bold, each
 // with the source file and the words that draw it.
 var deleteDocControls = map[string][2]string{
-	"Delete…":                                {"internal/desktop/dashboard.go", ">Delete…</button>"},
-	"Remove from list":                       {"internal/desktop/dashboard.go", ">Remove from list</button>"},
-	"Your archives":                          {"internal/desktop/dashboard.go", "<h2>Your archives</h2>"},
-	"This archive":                           {"internal/desktop/dashboard.go", "<h2>This archive</h2>"},
-	"Open an archive folder…":                {"internal/desktop/dashboard.go", ">Open an archive folder…</button>"},
-	"Switch to this archive":                 {"internal/desktop/dashboard.go", "Switch to this archive</button>"},
+	"Delete…":                                 {"internal/desktop/dashboard.go", ">Delete…</button>"},
+	"Remove from list":                        {"internal/desktop/dashboard.go", ">Remove from list</button>"},
+	"Your archives":                           {"internal/desktop/dashboard.go", "<h2>Your archives</h2>"},
+	"This archive":                            {"internal/desktop/dashboard.go", "<h2>This archive</h2>"},
+	"Open an archive folder…":                 {"internal/desktop/dashboard.go", ">Open an archive folder…</button>"},
+	"Switch to this archive":                  {"internal/desktop/dashboard.go", "Switch to this archive</button>"},
 	"Delete not finished: click Delete again": {"internal/desktop/dashboard.go", `<span class="archive-tag">Delete not finished: click Delete again</span>`},
-	"Save this plan":                         {"internal/desktop/deletescript.go", "delButton('Save this plan'"},
-	"Delete permanently":                     {"internal/desktop/deletescript.go", "delButton('Delete permanently'"},
-	"Save deletion record":                   {"internal/desktop/deletescript.go", "delButton('Save deletion record'"},
-	"Dismiss":                                {"internal/desktop/deletescript.go", "delButton('Dismiss'"},
+	"Save this plan":                          {"internal/desktop/deletescript.go", "delButton('Save this plan'"},
+	"Delete permanently":                      {"internal/desktop/deletescript.go", "delButton('Delete permanently'"},
+	"Save deletion record":                    {"internal/desktop/deletescript.go", "delButton('Save deletion record'"},
+	"Dismiss":                                 {"internal/desktop/deletescript.go", "delButton('Dismiss'"},
 	// Amended 2026-11-02 (the uninstall-docs group's adversarial pass, finding 6): "Delete not
 	// finished" now says these start nothing, in place of "not backed up".
 	"Archive now": {"internal/desktop/dashboard.go", `{{end}}>Archive now</button>`},

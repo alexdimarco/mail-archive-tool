@@ -35,7 +35,7 @@ func TestThePlanPanelSaysWhetherTheKeyIsForgottenOrKept(t *testing.T) {
 	w.Destroy()
 
 	p := e.plan(out)
-	const last ="If the folder is removed, this computer will forget this archive's key: this is the last copy of it this computer recorded. Any other copy of this archive will then need its password or recovery key to open."
+	const last = "If the folder is removed, this computer will forget this archive's key: this is the last copy of it this computer recorded. Any other copy of this archive will then need its password or recovery key to open."
 	if p["ok"] != true || p["keyLine"] != last {
 		t.Fatalf("positive twin: the last recorded copy's plan says %q (%v)", p["keyLine"], p["error"])
 	}

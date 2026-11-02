@@ -6,7 +6,6 @@ import (
 	"os"
 	"path/filepath"
 	"sync"
-
 )
 
 // RowRefusal is what a row of Your archives says about Delete before any plan is made

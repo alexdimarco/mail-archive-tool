@@ -144,7 +144,9 @@ func TestTheDeleteRoutesActOnlyOnARow(t *testing.T) {
 		_, m := e.post(route, map[string]any{"path": stranger, "confirm": true})
 		msg, _ := m["error"].(string)
 		assure.Refused(t, http.StatusOK, msg, assure.Code(http.StatusOK), assure.Names("not in Your archives", "Reload the page"),
-			assure.NoSideEffect(func() bool { return reflect.DeepEqual(treeState(t, stranger), before) && !e.listed(stranger) && m["token"] == nil }))
+			assure.NoSideEffect(func() bool {
+				return reflect.DeepEqual(treeState(t, stranger), before) && !e.listed(stranger) && m["token"] == nil
+			}))
 	}
 
 	// A row that cannot be read: gone (an unplugged drive).

@@ -46,7 +46,9 @@ func TestADeleteRunsOnlyThroughItsPlansToken(t *testing.T) {
 	before := treeState(t, dir)
 	m := e.deleteWith(token, "mail archivé", false)
 	assure.Refused(t, http.StatusOK, replyErr(m), assure.Code(http.StatusOK), assure.Names("does not match", "Mail Archivé"),
-		assure.NoSideEffect(func() bool { return reflect.DeepEqual(treeState(t, dir), before) && e.d.pending.get(token, isDeletePlan) != nil }))
+		assure.NoSideEffect(func() bool {
+			return reflect.DeepEqual(treeState(t, dir), before) && e.d.pending.get(token, isDeletePlan) != nil
+		}))
 
 	// The positive twin: the name, typed decomposed (NFD), deletes.
 	done := e.deleteWith(token, "Mail Archivé", false)
@@ -80,7 +82,9 @@ func TestADeleteRunsOnlyThroughItsPlansToken(t *testing.T) {
 	ft := e.d.pending.put(&pendingItem{key: "forget-key", out: dir2, plan: &keyring.ForgetPlan{Out: dir2}})
 	m = e.deleteWith(ft, "Second", false)
 	assure.Refused(t, http.StatusOK, replyErr(m), assure.Code(http.StatusOK), assure.Names("no longer waiting"),
-		assure.NoSideEffect(func() bool { return reflect.DeepEqual(treeState(t, dir2), before2) && e.d.pending.get(ft, isForgetPlan) != nil }))
+		assure.NoSideEffect(func() bool {
+			return reflect.DeepEqual(treeState(t, dir2), before2) && e.d.pending.get(ft, isForgetPlan) != nil
+		}))
 	p3 := e.plan(dir2)
 	_, fm := e.post("/api/encryption/forget", map[string]any{"token": p3["token"]})
 	if fm["ok"] == true || e.d.pending.get(p3["token"].(string), isDeletePlan) == nil {

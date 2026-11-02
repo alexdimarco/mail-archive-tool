@@ -94,7 +94,7 @@ func TestEachLeftoverGetsTheRemedyOfItsErrorType(t *testing.T) {
 		remedy string
 	}{
 		{"in use", inUseErr, "Close Outlook or any program using it, then click Delete again."}, // one file (MA-1028, B7)
-		{"denied", deniedErr, deniedOneAtRoot()}, // one file (MA-1028, B7), in the archive's folder (B6)
+		{"denied", deniedErr, deniedOneAtRoot()},                                                // one file (MA-1028, B7), in the archive's folder (B6)
 		{"device gone", goneErr, "Reconnect the drive, then click Delete again."},
 	} {
 		t.Run(tc.name, func(t *testing.T) {

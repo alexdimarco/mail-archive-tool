@@ -53,7 +53,9 @@ func TestTheDeleteVerbsTerminalWords(t *testing.T) {
 		msg := errText(err)
 		assure.Refused(t, exitCode(err), msg, assure.Code(1),
 			assure.Names(`Your archives ("`+e.indexPath()+`") cannot be read: other users of this computer can read it`, "nothing was changed", `Run chmod 600 "`+e.indexPath()+`", then try again.`),
-			assure.NoSideEffect(func() bool { return sameTree(before, tree(t, dir)) && strings.Count(msg, "readable by other users") == 0 }))
+			assure.NoSideEffect(func() bool {
+				return sameTree(before, tree(t, dir)) && strings.Count(msg, "readable by other users") == 0
+			}))
 	}
 }
 
