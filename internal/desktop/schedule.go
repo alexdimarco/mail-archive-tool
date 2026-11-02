@@ -288,10 +288,15 @@ func (d *dashboard) scheduleInstallRouted(w http.ResponseWriter, r *http.Request
 		return
 	}
 	// A delete of the current archive under way holds its archive lock, which the running check
-	// below would word as a backup (the residual fixes' adversarial pass, finding 3).
-	if d.refuseBeingDeleted(w, out) {
+	// below would word as a backup (the residual fixes' adversarial pass, finding 3). The folder
+	// is held until the install ends, so a delete beginning after this check, whose step 2 removes
+	// the schedules, is refused rather than followed by a task for a folder being emptied (the
+	// delete residuals' security pass, CON-02).
+	release, ok := d.holdAgainstDelete(w, out, installingRefusal)
+	if !ok {
 		return
 	}
+	defer release()
 	rt := routeFor(out)
 	switch rt.kind {
 	case backupEncrypted:

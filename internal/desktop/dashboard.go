@@ -536,10 +536,14 @@ func (d *dashboard) saveSettings(w http.ResponseWriter, r *http.Request) {
 	}
 	out := strings.TrimSpace(in.Out)
 	// A save naming a folder being deleted (a Switch from a tab drawn before the delete, or a save
-	// that keeps it after step 4 cleared it) would make it the current archive again.
-	if d.refuseBeingDeleted(w, orElse(out, strings.TrimSpace(d.cfg.Out))) {
+	// that keeps it after step 4 cleared it) would make it the current archive again. The folder is
+	// held until the save ends, so a delete cannot begin and finish between this check and the
+	// write below, leaving a removed folder current (the delete residuals' security pass, CON-01).
+	release, ok := d.holdAgainstDelete(w, orElse(out, strings.TrimSpace(d.cfg.Out)), switchingRefusal)
+	if !ok {
 		return
 	}
+	defer release()
 	wasCurrent := d.cfg.effectiveOut()
 	// The archive is copied, synced and browsed; MailArchive's own settings and
 	// sign-in must not travel with it (design-local-confidentiality P10).
@@ -834,7 +838,7 @@ func (d *dashboard) pauseArchive(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
-	release, ok := d.holdAgainstDelete(w, path)
+	release, ok := d.holdAgainstDelete(w, path, pausingRefusal)
 	if !ok {
 		return
 	}
@@ -883,7 +887,7 @@ func (d *dashboard) resumeArchive(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
-	release, ok := d.holdAgainstDelete(w, path)
+	release, ok := d.holdAgainstDelete(w, path, pausingRefusal)
 	if !ok {
 		return
 	}
@@ -924,26 +928,20 @@ func (d *dashboard) archiveActionPath(w http.ResponseWriter, r *http.Request) (s
 	return path, true
 }
 
-// refuseBeingDeleted refuses, with MA-979's words, an action on a folder whose delete is under way
-// in this Desktop, and reports whether it did (del-s3a re-verification, R1). A tab drawn before the
-// delete still shows the row's Pause, Resume and Switch: Pause would write its marker into the
-// folder being emptied, Resume would put back the scheduled backup step 2 removed, and a Switch
-// would make the folder the current archive again.
-func (d *dashboard) refuseBeingDeleted(w http.ResponseWriter, path string) bool {
-	if d.running.of(path) == nil {
-		return false
-	}
-	writeJSON(w, map[string]any{"ok": false, "error": deletingRefusal})
-	return true
-}
-
-// holdAgainstDelete is refuseBeingDeleted for Pause and Resume, made one step with the action: a
-// delete of the folder under way refuses it in the same words, and otherwise the folder is held
-// until release, so a delete that begins while it runs is refused rather than run beside it — a
+// holdAgainstDelete refuses, with MA-979's words, an action on a folder whose delete is under way
+// in this Desktop (del-s3a re-verification, R1: a tab drawn before the delete still shows the
+// row's Pause, Resume and Switch — Pause would write its marker into the folder being emptied,
+// Resume would put back the scheduled backup step 2 removed, and a Switch would make the folder
+// the current archive again). Otherwise the folder is held until release, made one step with the
+// check, so a delete that begins while the action runs is refused rather than run beside it — a
 // slow Pause sealing a folder being emptied, or a Resume putting back the scheduled backup step 2
 // removed (the residual fixes' adversarial pass, finding 2).
-func (d *dashboard) holdAgainstDelete(w http.ResponseWriter, path string) (release func(), ok bool) {
-	release, ok = d.running.hold(path)
+//
+// why is what a delete of the folder beginning meanwhile is told. A Switch or Save settings naming
+// a folder and the Scheduled backup card's Install take the same hold for the whole request (the
+// delete residuals' security pass, CON-01, CON-02).
+func (d *dashboard) holdAgainstDelete(w http.ResponseWriter, path, why string) (release func(), ok bool) {
+	release, ok = d.running.hold(path, why)
 	if !ok {
 		writeJSON(w, map[string]any{"ok": false, "error": deletingRefusal})
 	}
