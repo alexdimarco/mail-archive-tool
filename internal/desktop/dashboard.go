@@ -2154,14 +2154,14 @@ pre{white-space:pre-wrap;overflow-wrap:anywhere;background:var(--bg);border:1px 
         <li><b>No MailArchive servers.</b> MailArchive reads your mail from Microsoft 365 or from mail files on this computer, and sends nothing to us. It connects elsewhere only for two things: backup alert emails, if you turn them on, go through the mail server you choose; and an encrypted archive that keeps copies of MailArchive (ticked by default when you make one) downloads them from MailArchive's GitHub releases page.</li>
         <li><b>Your own mailbox only.</b> Signing in as yourself archives only your mailbox, with no tenant-wide permission.</li>
         <li><b>Safe to open offline.</b> Every saved message page runs no scripts and loads nothing from the network, so opening old mail can never execute anything.</li>
-        <li><b>Reversible.</b> You can revoke access any time, and uninstalling keeps your archive — your saved mail is never deleted.</li>
+        <li><b>Reversible.</b> You can revoke access any time, and uninstalling keeps your archives — uninstalling never deletes your mail. Only Delete… deletes an archive's files, after you type its folder's name.</li>
       </ul>
     </div>
 
     <div class="card sec" id="sec-uninstall">
       <h2>Uninstall MailArchive</h2>
-      <p class="card-sub">Remove MailArchive's scheduled backups, settings and Microsoft sign-in from this computer. <b>Your archives are kept</b> — your saved mail is never deleted. Removing the program itself is a last step your system shows you.</p>
-      <button class="btn secondary" id="uninstallBtn" type="button" title="Remove MailArchive's scheduled backups, settings and sign-in from this computer. Your saved mail archives are never deleted. You remove the program itself afterwards; the last step tells you how.">Uninstall MailArchive…</button>
+      <p class="card-sub">Remove MailArchive's scheduled backups, settings and Microsoft sign-in from this computer. <b>Your archives are kept</b> — uninstalling never deletes your mail. Removing the program itself is a last step your system shows you.</p>
+      <button class="btn secondary" id="uninstallBtn" type="button" title="Remove MailArchive's scheduled backups, settings and sign-in from this computer. Uninstalling never deletes your mail. You remove the program itself afterwards; the last step tells you how.">Uninstall MailArchive…</button>
       <div class="device-box" id="uninstallPanel" hidden>
         <pre class="mono" id="uninstallPlan"></pre>
         <div style="margin-top:10px"><button class="btn" id="uninstallGo" type="button">Remove</button> <button class="btn secondary" id="uninstallCancel" type="button">Cancel</button></div>
@@ -2503,15 +2503,15 @@ function uninstallPlanText(d){
   const kept=d.keptArchives||[];
   const lines=['This will remove:',
     '- scheduled backups: '+((d.schedules||[]).length),
-    '- settings and log files: '+((d.configFiles||[]).length)];
+    '- settings and log files: '+((d.configFiles||[]).filter(f=>f!==d.deletionsLog).length)];
   const scratch=d.scratchFiles||[];
   if(scratch.length){lines.push("- leftover working copies in MailArchive's working folder: "+scratch.length);scratch.forEach(f=>lines.push('     '+f));}
   if(d.programCache)lines.push('- downloaded copies of MailArchive kept for encrypted archives: '+d.programCache);
   if(d.deletionsLog){lines.push('- the deletion log: '+d.deletionsLog);lines.push('     '+(d.deletionsLogNote||''));}
   if(d.clearedSignIn)lines.push('- the saved Microsoft sign-in');
   lines.push('');
-  lines.push('It will KEEP your '+kept.length+' archive(s) — your mail is never deleted:');
-  (kept.length?kept:['(none recorded)']).forEach(a=>lines.push('   '+a));
+  if(kept.length){lines.push('It will KEEP your '+kept.length+' archive(s) — uninstalling never deletes your mail:');kept.forEach(a=>lines.push('   '+a));}
+  else lines.push('It will KEEP your archives — uninstalling never deletes your mail. No archives are listed.');
   if(d.encryptedRecordKept)lines.push("It also keeps this computer's record of its encrypted archives and the keys it remembers for them, so a new install opens them as before.");
   return lines.join('\n');
 }

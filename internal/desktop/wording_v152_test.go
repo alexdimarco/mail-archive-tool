@@ -58,7 +58,9 @@ func TestDesktopWordsMatchWhatItDoes(t *testing.T) {
 		"Occasional housekeeping. These share the archive with backups, so only one runs at a time. Progress shows in the activity log on the Archive now card.",
 		"No backups have run yet. When a backup finishes (scheduled, Run now or Archive now), its result appears here.",
 		"Email someone about your scheduled backups. Tick what you want below: a failed backup (one email per run of failures, then one more when backups work again), Thunderbird not synced for 3 days, an auto-paused backup, or every success. MailArchive sends the email itself through the mail server you fill in below; there is nothing else to install.",
-		`title="Remove MailArchive's scheduled backups, settings and sign-in from this computer. Your saved mail archives are never deleted. You remove the program itself afterwards; the last step tells you how."`,
+		// Amended 2026-11-02 (MA-1030, the 1.5.3 friction review's B11): Delete… exists, so the
+		// promise is uninstall's alone.
+		`title="Remove MailArchive's scheduled backups, settings and sign-in from this computer. Uninstalling never deletes your mail. You remove the program itself afterwards; the last step tells you how."`,
 	} {
 		if !strings.Contains(body, want) {
 			t.Errorf("the Overview (no archive, no connection) lacks %q", want)

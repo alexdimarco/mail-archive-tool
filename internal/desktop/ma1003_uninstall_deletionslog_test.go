@@ -96,7 +96,7 @@ func TestUninstallPlanOnThePageNamesTheDeletionLog(t *testing.T) {
 		t.Fatalf("the plan must carry the deletion log %q and the sentence, got %q / %q", logPath, gotLog, gotNote)
 	}
 	text := uninstallPlanLines(t, body)
-	want := "- the deletion log: " + logPath + "\n     Copy deletions.log first if you need it to check saved deletion records."
+	want := "- the deletion log: " + logPath + "\n     Copy deletions.log first, somewhere you keep records (your Documents folder, for example), if you need it to check saved deletion records."
 	if !strings.Contains(text, want) {
 		t.Fatalf("the panel must name the deletion log and say to copy it first (%q):\n%s", want, text)
 	}

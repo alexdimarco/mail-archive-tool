@@ -40,7 +40,8 @@ func TestUninstallPlanNamesTheDeletionLogAndSaysCopyItFirst(t *testing.T) {
 	if rep.DeletionsLog != log {
 		t.Fatalf("the plan must name the deletion log %s, got %q (files %q)", log, rep.DeletionsLog, rep.ConfigFiles)
 	}
-	if DeletionsLogNote != "Copy deletions.log first if you need it to check saved deletion records." {
+	// The sentence says where to put the copy (amended 2026-11-02, the 1.5.3 friction review's B11).
+	if DeletionsLogNote != "Copy deletions.log first, somewhere you keep records (your Documents folder, for example), if you need it to check saved deletion records." {
 		t.Fatalf("the plan's sentence is not the design's: %q", DeletionsLogNote)
 	}
 	if _, err := os.Stat(log); err != nil {

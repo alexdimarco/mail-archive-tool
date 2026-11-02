@@ -10,6 +10,7 @@ import (
 	"strings"
 
 	"mail-archive-tool/internal/archdelete"
+	"mail-archive-tool/internal/encmark"
 	"mail-archive-tool/internal/graphconfig"
 	"mail-archive-tool/internal/progcache"
 	"mail-archive-tool/internal/schedule"
@@ -42,8 +43,35 @@ type Report struct {
 
 // DeletionsLogNote is what uninstall's plan says under the deletion log (design-archive-delete
 // §8.1): the log is the cross-check for a saved deletion record's digest, and uninstall
-// removes it.
-const DeletionsLogNote = "Copy deletions.log first if you need it to check saved deletion records."
+// removes it. It says where to put the copy (the 1.5.3 friction review's B11).
+const DeletionsLogNote = "Copy deletions.log first, somewhere you keep records (your Documents folder, for example), if you need it to check saved deletion records."
+
+// LogNotCopiedError refuses `uninstall -yes`, nothing removed, while deletions.log holds any line
+// and -log-copied was not given (the 1.5.3 friction review's D2, the main session's decision):
+// the run that removes the log must not be the one that first says to copy it.
+type LogNotCopiedError struct{ Log string }
+
+func (e *LogNotCopiedError) Error() string {
+	return fmt.Sprintf("MailArchive's deletion log, %s, lists the deletes made on this computer, and uninstall -yes removes it, so nothing was removed. Copy it somewhere you keep records (your Documents folder, for example), then run mailarchive uninstall -yes -log-copied.", e.Log)
+}
+
+// CheckLogCopied is `uninstall -yes`'s check before it removes anything: with the deletion log
+// at log ("" when there is none) holding any line, and copied (-log-copied) not given, it is
+// LogNotCopiedError; a log that cannot be read stops it the same way as Uninstall's own check
+// (LogUnreadableError, fail closed).
+func CheckLogCopied(log string, copied bool) error {
+	if log == "" || copied {
+		return nil
+	}
+	holds, err := archdelete.LogHoldsLines(log)
+	if err != nil {
+		return &LogUnreadableError{Log: log, Err: err}
+	}
+	if holds {
+		return &LogNotCopiedError{Log: log}
+	}
+	return nil
+}
 
 // DeleteNotFinishedError refuses an uninstall while deletions.log holds a delete that is under
 // way or did not finish (docs/design-archive-delete.md §5.4; del-s5-A1-06, A2-02): uninstall
@@ -51,19 +79,43 @@ const DeletionsLogNote = "Copy deletions.log first if you need it to check saved
 // that delete with no way to finish — a folder half deleted, or an encrypted archive's record
 // and key kept on this computer for a folder that is gone — and a delete running now would
 // write the log again, without its started line, after uninstall said the settings were
-// removed. Nothing is removed. Folders are the rows those deletes name.
+// removed. Nothing is removed. Folders are the rows those deletes name. A dry run (the plan)
+// returns it with its Report, and says Until in place of Error (the 1.5.3 friction review's
+// B11: a plan, not "removed nothing").
 type DeleteNotFinishedError struct {
 	Log     string
 	Folders []string
 }
 
 func (e *DeleteNotFinishedError) Error() string {
+	return fmt.Sprintf("A delete of %s is running or did not finish, so uninstall removed nothing: uninstalling would remove MailArchive's deletion log (%s), which that delete needs to finish. %s",
+		e.names(), e.Log, e.howToGoOn())
+}
+
+// Until is what a dry run says after the plan: uninstall will refuse until the delete ends.
+func (e *DeleteNotFinishedError) Until() string {
+	return fmt.Sprintf("Uninstall will refuse until the delete of %s is finished (it is running or did not finish): uninstalling would remove MailArchive's deletion log (%s), which that delete needs to finish. %s",
+		e.names(), e.Log, e.howToGoOn())
+}
+
+// names are the deletes' rows, control characters stripped.
+func (e *DeleteNotFinishedError) names() string {
 	names := make([]string, 0, len(e.Folders))
 	for _, f := range e.Folders {
 		names = append(names, util.StripControl(f))
 	}
-	return fmt.Sprintf("A delete of %s is running or did not finish, so uninstall removed nothing: uninstalling would remove MailArchive's deletion log (%s), which that delete needs to finish. Wait for its result, or finish it (Delete… on its row in MailArchive Desktop, or mailarchive delete-archive -out FOLDER), then uninstall again. If you no longer want to finish it, copy deletions.log somewhere safe, delete it, then uninstall again; for an encrypted archive, this computer then still remembers its key until you use Forget this encrypted archive here, or Forget every encrypted archive on this computer.",
-		strings.Join(names, "; "), e.Log)
+	return strings.Join(names, "; ")
+}
+
+// howToGoOn says how to finish each delete, its real folder in the command, or how to give up on
+// it.
+func (e *DeleteNotFinishedError) howToGoOn() string {
+	cmds := make([]string, 0, len(e.Folders))
+	for _, f := range e.Folders {
+		cmds = append(cmds, "mailarchive delete-archive -out "+encmark.CommandPath(util.StripControl(f)))
+	}
+	return fmt.Sprintf("Wait for its result, or finish it (Delete… on its row in MailArchive Desktop, or %s), then uninstall again. If you no longer want to finish it, copy deletions.log somewhere you keep records, delete it, then uninstall again; for an encrypted archive, this computer then still remembers its key until you use Forget this encrypted archive here, or Forget every encrypted archive on this computer.",
+		strings.Join(cmds, "; "))
 }
 
 // LogUnreadableError stops an uninstall, nothing removed, when deletions.log cannot be read to
@@ -148,10 +200,17 @@ func Uninstall(configDir string, knownArchives []string, exe string, dryRun bool
 			deletionsLog = f
 		}
 	}
-	// A delete under way or not finished keeps its log (§5.4): nothing is touched.
+	// A delete under way or not finished keeps its log (§5.4): nothing is touched. A dry run
+	// still works out the plan and returns it with the refusal, so the plan can be shown with
+	// "Uninstall will refuse until…" (the 1.5.3 friction review's B11).
+	var pending error
 	if deletionsLog != "" {
 		if err := checkNoPendingDelete(deletionsLog); err != nil {
-			return nil, err
+			var dn *DeleteNotFinishedError
+			if !dryRun || !errors.As(err, &dn) {
+				return nil, err
+			}
+			pending = err
 		}
 	}
 	var scratch []string
@@ -196,7 +255,7 @@ func Uninstall(configDir string, knownArchives []string, exe string, dryRun bool
 		rep.Schedules = append(rep.Schedules, e.Name)
 	}
 	if dryRun {
-		return rep, nil
+		return rep, pending
 	}
 
 	// 1) Schedules first (U-C5): nothing keeps running after the program is removed.

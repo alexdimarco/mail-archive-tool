@@ -12,12 +12,12 @@ import (
 // The command line's uninstall plan names the deletion log among what it removes and, under
 // it, says to copy it first (design-archive-delete §8.1; O2-07). Positive twin first: a plan
 // with no deletion log says nothing of it. Under -yes, the run that removes it, the plan says
-// so and when a copy had to be made instead, and the result says it was removed (del-s5
-// re-verify residual 4).
+// so and why it may (del-s5 re-verify residual 4; since the 1.5.3 friction review's D2, -yes
+// removes a log holding any line only with -log-copied), and the result says it was removed.
 func TestUninstallPlanAtTheTerminalNamesTheDeletionLog(t *testing.T) {
 	rep := &uninstall.Report{ConfigFiles: []string{"/cfg/desktop-settings.json"}, KeptArchives: []string{"/archives/mine"}}
 	var buf bytes.Buffer
-	printUninstallPlan(&buf, rep, false)
+	printUninstallPlan(&buf, rep, "")
 	if out := buf.String(); strings.Contains(out, "deletions.log") || strings.Contains(out, "deletion log") {
 		t.Fatalf("positive twin: no deletion log, none named:\n%s", out)
 	}
@@ -25,9 +25,9 @@ func TestUninstallPlanAtTheTerminalNamesTheDeletionLog(t *testing.T) {
 	rep.ConfigFiles = append(rep.ConfigFiles, "/cfg/deletions.log")
 	rep.DeletionsLog = "/cfg/deletions.log"
 	buf.Reset()
-	printUninstallPlan(&buf, rep, false)
+	printUninstallPlan(&buf, rep, "")
 	out := buf.String()
-	want := "  - the deletion log: /cfg/deletions.log\n      Copy deletions.log first if you need it to check saved deletion records.\n"
+	want := "  - the deletion log: /cfg/deletions.log\n      Copy deletions.log first, somewhere you keep records (your Documents folder, for example), if you need it to check saved deletion records.\n"
 	if !strings.Contains(out, want) {
 		t.Fatalf("the plan must name the deletion log and say to copy it first (%q), got:\n%s", want, out)
 	}
@@ -36,13 +36,15 @@ func TestUninstallPlanAtTheTerminalNamesTheDeletionLog(t *testing.T) {
 	}
 
 	// Under -yes the same run removes it: no "copy it first", but that this run removes it and
-	// that a copy had to be made before; the result names it removed.
-	buf.Reset()
-	printUninstallPlan(&buf, rep, true)
-	out = buf.String()
-	want = "  - the deletion log: /cfg/deletions.log\n      This run removes it. A copy had to be made before running uninstall -yes (uninstall -dry-run shows this list and removes nothing).\n"
-	if !strings.Contains(out, want) || strings.Contains(out, "Copy deletions.log first") {
-		t.Fatalf("under -yes the plan must say this run removes the deletion log (%q), got:\n%s", want, out)
+	// why it may; the result names it removed.
+	for _, note := range []string{deletionsLogCopiedNote, deletionsLogEmptyNote} {
+		buf.Reset()
+		printUninstallPlan(&buf, rep, note)
+		out = buf.String()
+		want = "  - the deletion log: /cfg/deletions.log\n      " + note + "\n"
+		if !strings.Contains(out, want) || strings.Contains(out, "Copy deletions.log first") || !strings.HasPrefix(note, "This run removes it: ") {
+			t.Fatalf("under -yes the plan must say this run removes the deletion log (%q), got:\n%s", want, out)
+		}
 	}
 	buf.Reset()
 	printUninstallDone(&buf, rep)

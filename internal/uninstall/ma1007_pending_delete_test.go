@@ -10,6 +10,7 @@ import (
 
 	"mail-archive-tool/internal/archdelete"
 	"mail-archive-tool/internal/assure"
+	"mail-archive-tool/internal/encmark"
 	"mail-archive-tool/internal/schedule"
 )
 
@@ -81,6 +82,11 @@ func TestUninstallRefusesWhileADeleteDidNotFinish(t *testing.T) {
 		t.Fatalf("positive twin: the real run removes a finished delete's log: %v (log there: %v)", err, exists(log))
 	}
 
+	// The command that finishes it names the real folder, never a placeholder (amended
+	// 2026-11-02, the 1.5.3 friction review's B11). The plan (a dry run) now returns its Report
+	// with the refusal, so the plan can be shown; its Until says "Uninstall will refuse until…",
+	// not "removed nothing". The real run returns no Report, as before.
+	finish := "mailarchive delete-archive -out " + encmark.CommandPath(gone)
 	for _, run := range []struct {
 		name string
 		dry  bool
@@ -94,11 +100,25 @@ func TestUninstallRefusesWhileADeleteDidNotFinish(t *testing.T) {
 			msg = err.Error()
 		}
 		assure.Refused(t, refusalCode(err), msg, assure.Code(1),
-			assure.Names(gone, log, "removed nothing", "Delete… on its row", "mailarchive delete-archive -out", "Forget this encrypted archive here"),
+			assure.Names(gone, log, "removed nothing", "Delete… on its row", finish, "Forget this encrypted archive here"),
+			assure.Forbid("FOLDER"),
 			assure.NoSideEffect(func() bool {
 				after, _ := os.ReadFile(log)
-				return rep == nil && string(after) == string(before) && exists(filepath.Join(cfg, "desktop-settings.json"))
+				planned := rep == nil
+				if run.dry {
+					planned = rep != nil && rep.DeletionsLog == log
+				}
+				return planned && string(after) == string(before) && exists(filepath.Join(cfg, "desktop-settings.json"))
 			}))
+		if run.dry {
+			var dn *DeleteNotFinishedError
+			if !errors.As(err, &dn) {
+				t.Fatalf("the plan's refusal is not a DeleteNotFinishedError: %v", err)
+			}
+			assure.Refused(t, 1, dn.Until(), assure.Code(1),
+				assure.Names("Uninstall will refuse until the delete of "+gone+" is finished", log, finish, "Delete… on its row", "Forget this encrypted archive here"),
+				assure.Forbid("FOLDER", "removed nothing"))
+		}
 	}
 }
 

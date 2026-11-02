@@ -1203,3 +1203,38 @@ words are the builder's, for the operator.
 - *Status names the row (MA-1027; finding 10).* `status`'s "run mailarchive delete-archive -out
   DIR again" names the row the unfinished delete was begun from; the Desktop's Status & health
   says nothing of a delete it is running now. No new words.
+
+**The 1.5.3 friction fixes, the uninstall and docs group (2 November 2026).** New or changed words
+are the builder's, for the operator, unless a quote says otherwise.
+- *Uninstall's words (MA-1030; B11).* §8.1's sentence under the deletion log is now "Copy
+  deletions.log first, somewhere you keep records (your Documents folder, for example), if you need
+  it to check saved deletion records." (terminal and Desktop). The log is listed once: the
+  terminal's "settings/log files" and the Desktop's "settings and log files" leave it out. What is
+  kept: "It will KEEP your N archive(s) — uninstalling never deletes your mail:", and with none
+  listed "It will KEEP your archives — uninstalling never deletes your mail. No archives are
+  listed." (the Desktop's "(none recorded)" is gone). Security & privacy: "Reversible. You can
+  revoke access any time, and uninstalling keeps your archives — uninstalling never deletes your
+  mail. Only Delete… deletes an archive's files, after you type its folder's name."; the Uninstall
+  card "Your archives are kept — uninstalling never deletes your mail."; its button's tooltip
+  "…Uninstalling never deletes your mail. …". `uninstall -dry-run` with a delete that did not
+  finish shows the plan, then "Uninstall will refuse until the delete of ROW is finished (it is
+  running or did not finish): uninstalling would remove MailArchive's deletion log (LOG), which
+  that delete needs to finish. Wait for its result, or finish it (Delete… on its row in
+  MailArchive Desktop, or mailarchive delete-archive -out "ROW"), then uninstall again. If you no
+  longer want to finish it, copy deletions.log somewhere you keep records, delete it, then
+  uninstall again; …" (exit 1). The real run's refusal keeps its words with the same two changes:
+  the real folder in the command (was FOLDER) and "somewhere you keep records" (was "somewhere
+  safe"); under -yes it now follows the plan.
+- *`uninstall -yes` and the deletion log (MA-1031; D2, the main session's decision).* §8.1's
+  "uninstall removes it" gains a stop at the terminal: `uninstall -yes` refuses, nothing removed,
+  while deletions.log holds any line: "MailArchive's deletion log, PATH, lists the deletes made
+  on this computer, and uninstall -yes removes it, so nothing was removed. Copy it somewhere you
+  keep records (your Documents folder, for example), then run mailarchive uninstall -yes
+  -log-copied." The new flag `-log-copied` ("you have copied deletions.log somewhere you keep
+  records, so -yes may remove it") lets it go ahead; the plan then says under the log "This run
+  removes it: you said you have copied it (-log-copied)." ("This run removes it: it lists no
+  deletes." for a log holding no line). This replaces del-s5 residual 4's "This run removes it. A
+  copy had to be made before running uninstall -yes …". Root usage: "mailarchive uninstall
+  -dry-run | -yes [-log-copied] — remove MailArchive's schedules, settings and sign-in (archives
+  are kept; -log-copied: you copied deletions.log)". The Desktop is unchanged: its Remove removes
+  only the plan the page showed, which says to copy the log first (MA-1008).

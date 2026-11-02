@@ -221,6 +221,23 @@ func (e *logReadError) Unwrap() []error { return []error{e.err, e.kind} }
 // readLog reads every line of the log; an absent log has none. A line that does
 // not parse is passed over.
 func readLog(path string) ([]logLine, error) {
+	data, err := readLogData(path)
+	if err != nil {
+		return nil, err
+	}
+	var out []logLine
+	for _, b := range bytes.Split(data, []byte("\n")) {
+		var l logLine
+		if len(bytes.TrimSpace(b)) == 0 || json.Unmarshal(b, &l) != nil || l.Event == "" {
+			continue
+		}
+		out = append(out, l)
+	}
+	return out, nil
+}
+
+// readLogData reads the log's bytes as readLog does; an absent log is empty.
+func readLogData(path string) ([]byte, error) {
 	data, err := util.ReadSecureFile(path, "MailArchive's deletion log", logCap)
 	if err != nil {
 		if errors.Is(err, os.ErrNotExist) {
@@ -236,15 +253,19 @@ func readLog(path string) ([]logLine, error) {
 		}
 		return nil, err
 	}
-	var out []logLine
-	for _, b := range bytes.Split(data, []byte("\n")) {
-		var l logLine
-		if len(bytes.TrimSpace(b)) == 0 || json.Unmarshal(b, &l) != nil || l.Event == "" {
-			continue
-		}
-		out = append(out, l)
+	return data, nil
+}
+
+// LogHoldsLines says whether the log at path holds any line at all, blank lines aside, whether
+// or not MailArchive can parse it: uninstall -yes asks it before removing the log (the 1.5.3
+// friction review's D2). An absent log holds none; one that cannot be read is an error, as
+// readLog's.
+func LogHoldsLines(path string) (bool, error) {
+	data, err := readLogData(path)
+	if err != nil {
+		return false, err
 	}
-	return out, nil
+	return len(bytes.TrimSpace(data)) > 0, nil
 }
 
 // Unfinished is a delete of a folder that did not finish (§5.4): a started line

@@ -26,7 +26,8 @@ func TestTheHelpSaysWhatThisVersionDoes(t *testing.T) {
 	for _, want := range []string{
 		"  mailarchive pause    -out DIR [-reason TEXT]           stop backups and make the archive read-only\n",
 		"  mailarchive resume   -out DIR                          make a paused archive writable and restore its schedule\n",
-		"  mailarchive uninstall -dry-run | -yes                  remove MailArchive's schedules, settings and sign-in (archives are kept)\n",
+		// Amended 2026-11-02 (MA-1031, the 1.5.3 friction review's D2): -log-copied is named.
+		"  mailarchive uninstall -dry-run | -yes [-log-copied]     remove MailArchive's schedules, settings and sign-in (archives are kept; -log-copied: you copied deletions.log)\n",
 		"  mailarchive setup                                      set up a Microsoft 365 connection in your browser\n",
 	} {
 		if !strings.Contains(usage, want) {
