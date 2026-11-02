@@ -884,3 +884,56 @@ built. Each is in its catalog row.
   step 2 still shows "Delete not finished: click Delete again" with a Delete… to click.
   This is the builder's placement: the operator may instead rule that Your archives is
   drawn for a lone current archive (amending MA-666).
+
+**The residual fixes and their security pass (1 November 2026; MA-979, MA-996, MA-999,
+MA-1000, MA-1010 to MA-1013).**
+- *The command line writes the Desktop's row first (MA-996, MA-997).* The Desktop adds
+  its current archive, the folder a scheduled backup is for and the wizard's last archive
+  to Your archives only when it draws its page, so such a row may be missing from
+  `known-archives.json`. `delete-archive` and `unlist-archive` match the list as the
+  Desktop would draw it, and before anything changes (the re-check before step 2, after
+  the name matched; before Remove from list acts) write that one row into the list as the
+  Desktop's tidy-up would (`CommandLineDelete.ListRow`): only the folder the Desktop would
+  add itself, nothing for a row already listed, nothing for a plan-only run or a name
+  that does not match. A delete stopped part way then still has its row and its "Delete
+  not finished". A list that cannot be saved refuses there, nothing changed.
+- *deletions.log keeps its last 1 MiB for deletes already started (MA-1013).* A new
+  delete's started line is refused at step 0 ("Could not write MailArchive's deletion log,
+  so nothing was deleted.") when the log, with that line and 1 MiB of room for the
+  delete's later lines, would pass the 32 MiB that MailArchive reads. A delete already
+  started is never stopped by the limit. So the log is never written past what MailArchive
+  can read back (rows, plans, uninstall).
+- *Actions that a delete must not meet hold their folder (MA-979).* Pause and Resume, a
+  Switch or Save settings naming a folder, and the Scheduled backup card's Install each
+  hold their folder in the record of deletes under way for the whole request, under the
+  lock a delete's start takes, so their check and their action are one step. A delete of
+  that folder that begins meanwhile is refused in the holder's own words, its plan kept
+  (Pause and Resume: "This archive is being paused or resumed…"; the save: "Settings
+  naming this archive are being saved…"; the Install: "A scheduled backup of this archive
+  is being installed…"). The holds, and the job, preview and export starts, match the
+  folder on disk as well as its spelling (builder's words, for the operator).
+- *No secret store: the key is kept, and said so everywhere (MA-999, MA-1010).* With no
+  secret store, step 8 keeps the last copy's record, any remembered key and the row; the
+  plan's key line says so ("This computer's secret store could not be opened, so this
+  computer will keep its record of this archive, any key it remembers for it and its row,
+  even if the folder is removed. Use Forget this encrypted archive here later."), and the
+  saved plan's "This computer's record and key" line now says the same thing ("to be
+  kept: this computer's secret store could not be opened"; with other recorded copies,
+  "this copy to be forgotten; the key is kept for N other recorded copies"; when the
+  keyring's plan is not known, "not known: …"). Forget this encrypted archive here
+  refuses the whole archive, `forget-archive` refuses Yes to it, and Forget every
+  encrypted archive on this computer forgets nothing (`keyring.ForgetAll` with no store),
+  each saying nothing was changed: no one can tell whether a key is remembered, and
+  forgetting the record would leave it with nothing pointing to it. Forgetting only a
+  folder still works.
+- *The archive open here is found by its folder on disk and its archive ID (MA-1011,
+  MA-1012).* The plan's sealed values and its "open here" excuse for this page's own
+  reader ask for the open archive whose folder is the folder planned on disk (by file
+  identity, as step 1 (b) closes it) and, for the sealed values, whose archive ID is the
+  one the folder's key files claim. Never by the folded name alone, which merges folders a
+  case-sensitive or NTFS drive keeps apart ("Straße" and "Strasse") and misses another
+  spelling of the same folder (a link, a mapped drive).
+- *A stop never waits on a folder that hangs (MA-1000).* At the command line, the removal
+  of a plan file being written when Ctrl-C arrives is bounded by the same two seconds as
+  its close; one that has not answered by then is reported as maybe incomplete, and the
+  verb exits.
