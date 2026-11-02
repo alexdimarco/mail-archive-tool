@@ -22,7 +22,13 @@ var helpDeleteSentences = []string{
 	"Click Delete…: nothing is deleted yet. Beside the archive, MailArchive shows what Delete would remove (how many files, and their size), the scheduled backups it would stop, and how many files in the folder are not the archive's, which are kept. To have the deletion approved first, click Save this plan to save the plan as a text file.",
 	"Type the folder's name exactly as it is shown, then click Delete permanently. Cancel deletes nothing.",
 	"The result says what was removed and what was kept. Click Save deletion record to save a copy as a text file: MailArchive keeps no copy after you close the result. Then click Dismiss.",
-	"What Delete removes: the archive's own files (its message pages and attachments, its search index and its records), its scheduled backups, its row under Your archives and, when nothing else is left in it, the folder. Files of your own in the folder are kept, and the folder with them. Mail copies in the folder that the archive did not record are kept too, unless you tick the box the plan shows for them. For an encrypted archive, this computer also forgets its key: any other copy of it then opens only with its password or recovery key.",
+	"What Delete removes: the archive's own files (its message pages and attachments, its search index and its records), its scheduled backups, its row under Your archives (for an encrypted archive, only when its folder goes too: see below) and, when nothing else is left in it, the folder. Files of your own in the folder are kept, and the folder with them. Mail copies in the folder that the archive did not record are kept too, unless you tick the box the plan shows for them.",
+	// An encrypted archive, as step 8 and step 9 do it (design §5.3; del-s5-A1-01, A2-01): the
+	// key goes only with the last recorded copy, and only when the folder goes.
+	"An encrypted archive: when the delete leaves its folder gone, this computer forgets its record of that folder. If that was the only copy of the archive this computer recorded, it also forgets the archive's key, and any other copy then opens only with its password or recovery key. If this computer recorded other copies of it, such as one on a USB drive, it keeps the key for them, so they still open here without the password: the result names them. When the folder is kept, because files of your own are in it, this computer still remembers the key and the archive stays under Your archives: the result says so, and Forget this encrypted archive here on its row forgets it. To be sure that no encrypted archive opens on this computer without its password, use Forget every encrypted archive on this computer… on the Uninstall MailArchive card.",
+	// The two partial results whose remedy is not Delete again (design §8 (a), §5.4;
+	// del-s5-A1-03, A2-05).
+	"Two results are different, and say so: if the only files left are mail copies you ticked to delete, the archive is already off Your archives, so there is no Delete… to click again: delete those files by hand. If it says the folder still holds files the delete can no longer identify, delete them by hand, or use Remove from list.",
 	"What Delete does not reach: " + archdelete.DoesNotReach + ".",
 	"Each delete adds a line to this computer's deletion log (deletions.log), which keeps the date, the folder and what was removed. Uninstalling MailArchive removes that log: copy deletions.log first if you need it to check saved deletion records.",
 	// Removing an archive from the list
@@ -30,8 +36,17 @@ var helpDeleteSentences = []string{
 	"Click Remove from list on the archive's row. MailArchive asks first, and names any scheduled backups that would stop with it: they would otherwise keep backing up a folder this page no longer shows. Click Yes to remove it, or No to change nothing.",
 	"An archive whose drive is unplugged can be removed from the list too; nothing on the drive is touched.",
 	"The archive marked Current archive can be removed only when its folder cannot be reached or no longer holds an archive. Otherwise, switch to another archive first, or add one with Add another archive.",
-	"For an encrypted archive, Remove from list keeps this computer's record of it and the key it remembers; Forget this encrypted archive here is what forgets those.",
+	// Forget is on the row only, so it comes first (del-s5-A2-06).
+	"For an encrypted archive, Remove from list keeps this computer's record of it and the key it remembers. To forget those too, click Forget this encrypted archive here on its row first, then Remove from list: once the row is gone, that button is gone with it.",
 	"To use the archive again later, click Open an archive folder… and choose its folder.",
+}
+
+// helpDeleteNever are claims no platform's guide makes, because the delete does not do them: the
+// key always forgotten (step 8 keeps it for other recorded copies and for a kept folder,
+// del-s5-A1-01, A2-01), and Forget offered after the row is gone (del-s5-A2-06).
+var helpDeleteNever = []string{
+	"this computer also forgets its key: any other copy",
+	"is what forgets those",
 }
 
 // helpDeletePlatforms are each platform's own sentences in the two parts, and what each must not say.
@@ -80,7 +95,7 @@ func TestHowToUseMailArchiveExplainsDeleteAndRemoveFromList(t *testing.T) {
 				t.Errorf("%s: the guide lacks %q", p.goos, s)
 			}
 		}
-		for _, s := range p.not {
+		for _, s := range append(append([]string{}, p.not...), helpDeleteNever...) {
 			if strings.Contains(h.text, s) {
 				t.Errorf("%s: the guide says %q, which is not true here", p.goos, s)
 			}
@@ -109,6 +124,8 @@ func TestTheGuidesDeletePartsNameRealControls(t *testing.T) {
 		{`<h2>Add another archive</h2>`, dash, "dashboard.go"},
 		{`Current archive</span>`, dash, "dashboard.go"},
 		{`>Forget this encrypted archive here</button>`, dash, "dashboard.go"},
+		{`>Forget every encrypted archive on this computer…</button>`, dash, "dashboard.go"},
+		{`<h2>Uninstall MailArchive</h2>`, dash, "dashboard.go"},
 		{`>Open an archive folder…</button>`, dash, "dashboard.go"},
 		{`delButton('Save this plan'`, script, "deletescript.go"},
 		{`delButton('Delete permanently'`, script, "deletescript.go"},
