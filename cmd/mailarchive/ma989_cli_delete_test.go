@@ -111,7 +111,7 @@ func TestDeleteArchiveDeletesAPlainArchiveAtTheTerminal(t *testing.T) {
 	if _, err := os.Stat(stray); err != nil {
 		t.Fatalf("the unrecorded copy was removed though the answer was no: %v", err)
 	}
-	if !strings.Contains(outD.String(), "The folder is kept: 2 files are left in it: 1 file of yours and 1 mail copy the archive did not record.") { // counted once (MA-1028, B7)
+	if !strings.Contains(outD.String(), "The folder is kept: 2 files are left in it: 1 file of yours (notes.txt) and 1 mail copy the archive did not record.") { // counted once (MA-1028, B7), yours named (MA-1038, N7)
 		t.Fatalf("the result does not say the copy was kept:\n%s", outD.String())
 	}
 }

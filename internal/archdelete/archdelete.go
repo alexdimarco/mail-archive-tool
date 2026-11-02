@@ -178,6 +178,10 @@ type DeletePlan struct {
 	// Stores is the store token set of §4.1, in byte order: store N is Stores[N-1]
 	// (§8.1 [R4:NF-R4-STORE-NUMBER-ORDER]).
 	Stores []string
+	// StoreFolders are, for each store (StoreFolders[i] for Stores[i]), the mail folders the
+	// manifest's records name inside it, sorted: what the screen shows beside the store's own
+	// folder (StoreLabel). Never in the saved plan or the record [O2-01].
+	StoreFolders [][]string
 	// Schedules are the scheduler entries discovery found (§5.1).
 	Schedules Discovery
 	// Record is this computer's record of an encrypted archive.
@@ -453,8 +457,19 @@ func addKeyAtPlan(p *DeletePlan, deps Deps) {
 	p.KeyAtPlan = KeyAtPlan{Known: true, Last: kp.Last, Others: append([]string(nil), kp.Others...), NoStore: kp.NoStore, Remembered: kp.Remembered}
 }
 
-// planAny is Plan before the key's outlook is asked.
+// planAny is Plan before the key's outlook is asked. A plan that finishes an earlier delete states
+// the archive as that delete's first run read it, where it knew more than this plan can (the 1.5.3
+// re-walk's N3, N5: the earlier runs removed the history, and perhaps the manifest).
 func planAny(folder string, deps Deps) (*DeletePlan, error) {
+	p, err := planOf(folder, deps)
+	if err == nil && p.Finishes != nil && p.Finishes.Captured != nil {
+		p.Captured = withFirstRun(p.Captured, *p.Finishes.Captured)
+	}
+	return p, err
+}
+
+// planOf is planAny before the first run's values are taken.
+func planOf(folder string, deps Deps) (*DeletePlan, error) {
 	p, err := planArchive(folder, deps)
 	if err == nil && deps.Log != "" {
 		// An ordinary delete may still finish one that stopped part way (D1): said, never a

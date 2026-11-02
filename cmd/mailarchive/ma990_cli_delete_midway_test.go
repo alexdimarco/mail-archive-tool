@@ -45,7 +45,7 @@ func TestADesktopStartedMidDeleteStopsItPartWay(t *testing.T) {
 		t.Fatalf("a Desktop found before step 4: exit %d (%v), want 3\n%s", exitCode(err), err, out.String())
 	}
 	res := out.String()
-	for _, want := range []string{"MailArchive Desktop started while the delete was running", "The delete stopped before step 4", "Steps done:", "scheduled backup " + entry + " stopped", "Status: not fully deleted"} {
+	for _, want := range []string{"MailArchive Desktop started while the delete was running", "The delete stopped before it updated MailArchive's settings.", "Steps done:", "scheduled backup " + entry + " stopped", "Status: not fully deleted"} {
 		if !strings.Contains(res, want) {
 			t.Fatalf("the stop does not say %q:\n%s", want, res)
 		}
@@ -79,7 +79,7 @@ func TestADesktopStartedMidDeleteStopsItPartWay(t *testing.T) {
 	out.Reset()
 	err = deleteArchive(&scripted{isAttended: true, answers: []string{"Archive F"}}, f, "", "", &out)
 	beforeDeleteStep = func(int) {}
-	if exitCode(err) != 3 || !strings.Contains(out.String(), "The delete stopped before step 8") {
+	if exitCode(err) != 3 || !strings.Contains(out.String(), "The delete stopped before its last steps (this computer's record of the archive, and its row in Your archives).") { // in words (MA-1038)
 		t.Fatalf("a Desktop found before step 8: exit %d (%v)\n%s", exitCode(err), err, out.String())
 	}
 	if _, err := os.Lstat(f); !os.IsNotExist(err) {

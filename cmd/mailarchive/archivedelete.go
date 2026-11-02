@@ -556,8 +556,9 @@ func deletePlanLines(p *archdelete.DeletePlan, logPath string) []string {
 	}
 	lines = append(lines, fmt.Sprintf("MailArchive will permanently delete the %s archive in this folder (no Recycle Bin or Trash):", p.Kind), "  "+visibleName(p.Folder))
 	lines = append(lines, fmt.Sprintf("  files: %d (%s)", p.Files, sizeWords(p.Bytes)))
-	for i, s := range p.Stores {
-		lines = append(lines, fmt.Sprintf("  mail folder %d: %s", i+1, c(s))) // not "store" (B12, item 6)
+	for i := range p.Stores {
+		// Not "store" (B12, item 6); the mail folders inside it named too (the 1.5.3 re-walk's N16).
+		lines = append(lines, fmt.Sprintf("  mail folder %d: %s", i+1, c(p.StoreLabel(i))))
 	}
 	// Only what step 2 would stop, by when it runs, or "none"; a Run now backup once (B1, B15).
 	for _, l := range p.ScheduleLines() {
@@ -578,8 +579,8 @@ func deletePlanLines(p *archdelete.DeletePlan, logPath string) []string {
 	if p.Synced != "" {
 		lines = append(lines, "  "+c(archdelete.SyncedLine(p.Synced)))
 	}
-	if n := len(p.Kept); n > 0 {
-		lines = append(lines, fmt.Sprintf("  Kept, not the archive's: %d", n))
+	if l := p.KeptLine(); l != "" {
+		lines = append(lines, "  "+c(l)) // named, as the panel names them (the 1.5.3 re-walk's N7)
 	}
 	if n := len(p.Unrecorded); n > 0 {
 		lines = append(lines, fmt.Sprintf("  Mail copies this archive did not record: %d (kept unless you choose to delete them)", n))

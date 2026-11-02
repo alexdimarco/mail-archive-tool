@@ -177,7 +177,7 @@ function delPanel(p){
   line(p.threeLine,'card-sub');
   line('Folder: '+p.folder,'mono');
   line('Delete removes '+p.files+(p.files===1?' file':' files')+' ('+p.size+').');
-  if(p.stores.length)line('Mail folders: '+p.stores.map(s=>s.name).join(', '));
+  if(p.stores.length)line('Mail folders: '+p.stores.map(s=>s.label||s.name).join(', '));
   (p.scheduleLines||[]).forEach(t=>line(t));
   if(p.checkYourself.length)line('Not removed, check it yourself: '+p.checkYourself.join(', '),'warn');
   p.notes.forEach(t=>line(t,'warn'));

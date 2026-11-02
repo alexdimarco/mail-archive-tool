@@ -57,7 +57,8 @@ func TestDeleteBesideThePersonsFilesCompletesAndKeepsThem(t *testing.T) {
 		t.Fatal("the lock file and the emptied store folders must go")
 	}
 	first := res.Lines[0]
-	if !strings.HasPrefix(first, "Deleted. ") || !strings.Contains(first, "The folder is kept: it holds 3 files that are not the archive's.") {
+	// The kept files named (MA-1038, the 1.5.3 re-walk's N7).
+	if !strings.HasPrefix(first, "Deleted. ") || !strings.Contains(first, "The folder is kept: it holds 3 files that are not the archive's: Mailbox/Inbox/notes.txt, Photos, taxes.pdf.") {
 		t.Fatalf("first line: %q", first)
 	}
 	for _, want := range []string{"Stopped the scheduled backup " + def, "Removed from Your archives", "What Delete does not reach: " + DoesNotReach, "Recorded in deletions.log"} {

@@ -106,7 +106,7 @@ func TestADesktopLockThatCannotBeProbedRefusesTheDeleteVerbs(t *testing.T) {
 		t.Fatalf("a re-check that cannot tell, before step 4: exit %d (%v), want 3\n%s", exitCode(err), err, out.String())
 	}
 	res := out.String()
-	for _, want := range []string{"cannot tell whether MailArchive Desktop is running", "the profile folder is not there", "The delete stopped before step 4", "Steps done:", "scheduled backup " + entry + " stopped"} {
+	for _, want := range []string{"cannot tell whether MailArchive Desktop is running", "the profile folder is not there", "The delete stopped before it updated MailArchive's settings.", "Steps done:", "scheduled backup " + entry + " stopped"} {
 		if !strings.Contains(res, want) {
 			t.Fatalf("the stop does not say %q:\n%s", want, res)
 		}

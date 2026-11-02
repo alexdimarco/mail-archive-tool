@@ -189,6 +189,7 @@ func (l *lister) plain() error {
 	for _, t := range p.Stores {
 		tokenByFold[fold(l.goos, t)] = t
 	}
+	p.StoreFolders = storeFolders(m, p.Stores, l.goos)
 
 	// Records [C11]: a recorded Path or AlsoFiles entry counts only in the shape of
 	// §4.1, and only its stem's three files are removed — never a bare Path.
@@ -801,6 +802,39 @@ func sortedValues(m map[string]string) []string {
 		out = append(out, v)
 	}
 	sort.Strings(out)
+	return out
+}
+
+// storeFolders are, for each of stores, the mail folders (state.Record.Folder) of the records
+// whose Path is in it, sorted, each once: the names the person knows ("Inbox"), which the store's
+// own folder may not be ("mbox", the source's name; the 1.5.3 re-walk's N16).
+func storeFolders(m *state.Manifest, stores []string, goos string) [][]string {
+	at := map[string]int{}
+	for i, t := range stores {
+		at[fold(goos, t)] = i
+	}
+	sets := make([]map[string]bool, len(stores))
+	for _, r := range m.All() {
+		parts, ok := util.ValidRecordedPath(r.Path)
+		if !ok || len(parts) < 2 || strings.TrimSpace(r.Folder) == "" {
+			continue
+		}
+		i, ok := at[fold(goos, parts[0])]
+		if !ok {
+			continue
+		}
+		if sets[i] == nil {
+			sets[i] = map[string]bool{}
+		}
+		sets[i][r.Folder] = true
+	}
+	out := make([][]string, len(stores))
+	for i, s := range sets {
+		for f := range s {
+			out[i] = append(out[i], f)
+		}
+		sort.Strings(out[i])
+	}
 	return out
 }
 

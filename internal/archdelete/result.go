@@ -204,13 +204,86 @@ func (p *DeletePlan) finishesValue() string {
 	return fmt.Sprintf("the delete begun %s (run %s)", when, f.FirstRun)
 }
 
-// earlierValue is the record's "Files removed earlier": what the runs before this one removed.
+// earlierValue is the record's "Files removed earlier": what the runs before this one removed. A
+// run that stopped with no finished line (Ctrl-C at the terminal, a crash) wrote no count, so when
+// no earlier run's count is known the value is "not known", never "at least 0" (the 1.5.3
+// re-walk's N2, the operator's delegate's choice of its two forms).
 func (p *DeletePlan) earlierValue() string {
 	f := p.Finishes
-	if !f.RemovedKnown {
-		return fmt.Sprintf("at least %d (%s); not known in full: a run stopped before it wrote its record", f.Removed, size(f.RemovedBytes))
+	switch {
+	case !f.RemovedKnown && f.Removed == 0:
+		return "not known: " + notKnownWhy
+	case !f.RemovedKnown:
+		return fmt.Sprintf("at least %d (%s); not known in full: %s", f.Removed, size(f.RemovedBytes), notKnownWhy)
 	}
 	return fmt.Sprintf("%d (%s)", f.Removed, size(f.RemovedBytes))
+}
+
+// notKnownWhy is why an earlier run's count is not known.
+const notKnownWhy = "a run stopped before it wrote its record"
+
+// finishedLine is the result's line of a delete that finishes one that stopped part way: the
+// whole delete's count, beside this run's own in the line before it (the 1.5.3 re-walk's N6: the
+// total was only in the record). removed and bytes are this run's.
+func (p *DeletePlan) finishedLine(removed int, bytes int64) string {
+	f := p.Finishes
+	begun := "This finishes a delete of this folder that did not finish"
+	if !f.FirstStarted.IsZero() {
+		begun = "This finishes the delete begun " + localStamp(f.FirstStarted)
+	}
+	if !f.RemovedKnown {
+		return begun + ". How many files its earlier runs removed is not known: " + notKnownWhy + "."
+	}
+	return fmt.Sprintf("%s: %s (%s) removed in all.", begun, plural(f.Removed+removed, "file", "files"), size(f.RemovedBytes+bytes))
+}
+
+// KeptLine is the plan's line naming the files and folders Delete keeps as not the archive's, on
+// the Desktop's panel and at the terminal: the first ten, then "and N more" (B6, MA-1019; the
+// 1.5.3 re-walk's N7: the terminal said only how many). "" when it keeps none.
+func (p *DeletePlan) KeptLine() string {
+	if len(p.Kept) == 0 {
+		return ""
+	}
+	return "Kept (not the archive's): " + namesAndMore(p.Kept)
+}
+
+// namesAndMore is the first ten names, control characters stripped, then " and N more", as the
+// panel words its kept files.
+func namesAndMore(names []string) string {
+	shown := names
+	if len(shown) > recordListMax {
+		shown = shown[:recordListMax]
+	}
+	out := make([]string, 0, len(shown))
+	for _, n := range shown {
+		out = append(out, util.StripControl(n))
+	}
+	s := strings.Join(out, ", ")
+	if more := len(names) - len(shown); more > 0 {
+		s += fmt.Sprintf(" and %d more", more)
+	}
+	return s
+}
+
+// StoreLabel is mail folder i's (0-based) label on screen: its folder in the archive, and the mail
+// folders the archive recorded inside it when they are named otherwise ("mbox (Inbox, Sent)"), the
+// first ten then "and N more" (the 1.5.3 re-walk's N16: "mail folder 1: mbox" named the source's
+// folder, not the Inbox the person knows). On screen only: the saved plan and the record name no
+// folder below a store [O2-01].
+func (p *DeletePlan) StoreLabel(i int) string {
+	tok := util.StripControl(p.Stores[i])
+	var inner []string
+	if i < len(p.StoreFolders) {
+		for _, f := range p.StoreFolders[i] {
+			if f != p.Stores[i] {
+				inner = append(inner, f)
+			}
+		}
+	}
+	if len(inner) == 0 {
+		return tok
+	}
+	return tok + " (" + namesAndMore(inner) + ")"
 }
 
 // ScheduleLines are the plan's lines about the archive's backups, shared by the Desktop's panel

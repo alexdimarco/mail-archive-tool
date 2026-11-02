@@ -95,10 +95,12 @@ func TestFinishingAPartWayDeleteSaysSoAndCarriesItsTotals(t *testing.T) {
 	appendRawLog(t, r2.x.Log, map[string]any{"at": first.Format(time.RFC3339Nano), "event": "started", "run": "crashedrun", "folder": d2, "row": d2,
 		"identity": map[string]any{"volume": p.Identity.Volume, "file_id": p.Identity.FileID}, "kind": "plain"})
 	p = r2.plan(t)
-	if p.Finishes == nil || p.Finishes.FirstRun != "crashedrun" || !strings.Contains(p.earlierValue(), "not known in full") {
+	// Nothing of it known: "not known", never "at least 0" (MA-1037, the 1.5.3 re-walk's N2).
+	const notKnown = "not known: a run stopped before it wrote its record"
+	if p.Finishes == nil || p.Finishes.FirstRun != "crashedrun" || p.earlierValue() != notKnown {
 		t.Fatalf("after a crash: %+v %q", p.Finishes, p.earlierValue())
 	}
-	if res := Execute(p, p.Name, false, r2.x); res.Status != StatusComplete || !strings.Contains(recordValueOf(string(res.Record), "Files removed earlier"), "not known in full") ||
+	if res := Execute(p, p.Name, false, r2.x); res.Status != StatusComplete || recordValueOf(string(res.Record), "Files removed earlier") != notKnown ||
 		strings.Contains(string(res.Record), "Files removed in all") {
 		t.Fatalf("after a crash, the record:\n%s", res.Record)
 	}

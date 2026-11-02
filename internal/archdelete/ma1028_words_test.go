@@ -113,7 +113,8 @@ func TestTheSharedDeleteWordsCountAndDateOnce(t *testing.T) {
 		{1, 1, "The folder is kept: 1 file is left in it: 1 mail copy the archive did not record."},
 		{5, 2, "The folder is kept: 5 files are left in it: 3 files of yours and 2 mail copies the archive did not record."},
 	} {
-		if got := keptSentence(c.kept, c.copies); got != c.want {
+		// No names given: the count alone (MA-1037 proves the names).
+		if got := keptSentence(c.kept, c.copies, nil); got != c.want {
 			t.Errorf("keptSentence(%d, %d) = %q, want %q", c.kept, c.copies, got, c.want)
 		}
 	}

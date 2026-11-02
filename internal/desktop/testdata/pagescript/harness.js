@@ -487,6 +487,17 @@ const scenarios = {
     const held = doc.querySelector('[data-held-id="HG"]'), b = held && held.querySelector('b');
     check(!!b && b.textContent === 'Result for D:\\Mail\\Gone' && !held.textContent.includes('Delete of'), 'the result is headed "Result for" its folder', b && b.textContent);
   },
+  // The panel's mail folders by their labels (MA-1038, the 1.5.3 re-walk's N16): a store's label
+  // names the mail folders inside it; a reply without one still names the store.
+  async mailFolderLabels() {
+    page([['D:\\Mail\\M', 'other'], ['E:\\Cur', 'current']], 'E:\\Cur');
+    boot(); await wait(30);
+    const m = doc.querySelectorAll('.archive-row')[0];
+    replies['api/archive/delete/plan'] = Object.assign(plan('D:\\Mail\\M', 'M', 'TOK'), { stores: [{ number: 1, name: 'mbox', label: 'mbox (Inbox, Sent)' }, { number: 2, name: 'Old' }] });
+    m.querySelector('[data-delete-archive]').click(); await wait(40);
+    const ps = m.querySelector('.delete-panel').all().filter(e => e.tagName === 'P').map(e => e.textContent);
+    check(ps.includes('Mail folders: mbox (Inbox, Sent), Old'), 'the panel names the mail folders inside each store', JSON.stringify(ps));
+  },
   // The page's layout fixes (MA-1020, B13, B14): Save this plan says so on screen and sends
   // nothing; a delete's result is brought into view; Remove from list's words are said again at
   // the top of Your archives after the reload it starts, once.

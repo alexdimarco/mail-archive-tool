@@ -17,7 +17,7 @@ func TestUnrecordedCopiesAreKeptUnlessTickedAndThenOnlyTheListedOnesGo(t *testin
 	r := newRig(t, dir)
 	res := r.run(t, false)
 	if res.Status != StatusComplete || !exists(filepath.Join(dir, filepath.FromSlash(unrecA))) ||
-		!strings.Contains(res.Lines[0], "The folder is kept: 4 files are left in it: 3 files of yours and 1 mail copy the archive did not record.") || !contains(res.Kept, unrecA) { // counted once (MA-1028, B7)
+		!strings.Contains(res.Lines[0], "The folder is kept: 4 files are left in it: 3 files of yours (Mailbox/Inbox/notes.txt, Photos, taxes.pdf) and 1 mail copy the archive did not record.") || !contains(res.Kept, unrecA) { // counted once (MA-1028, B7), yours named (MA-1038, N7)
 		t.Fatalf("unticked: %s (kept %q)", res.Message(), res.Kept)
 	}
 

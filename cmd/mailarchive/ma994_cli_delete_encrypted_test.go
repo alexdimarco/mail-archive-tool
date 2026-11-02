@@ -87,7 +87,7 @@ func TestDeleteArchiveForgetsAnEncryptedArchivesRecordAndKey(t *testing.T) {
 	res.Reset()
 	err = deleteArchive(&scripted{isAttended: true, answers: []string{"Second sealed"}}, out2, "", "", &res)
 	beforeDeleteStep = func(int) {}
-	if exitCode(err) != 3 || !strings.Contains(res.String(), "The delete stopped before step 4") {
+	if exitCode(err) != 3 || !strings.Contains(res.String(), "The delete stopped before it updated MailArchive's settings.") { // in words (MA-1038)
 		t.Fatalf("the stop before step 4: exit %d (%v)\n%s", exitCode(err), err, res.String())
 	}
 	if strings.Contains(res.String(), "locked on this page") {

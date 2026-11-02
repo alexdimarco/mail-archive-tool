@@ -1421,3 +1421,50 @@ changed words are the builder's, for the operator, unless a quote says otherwise
   scheduled run) asking deletions.log, which changes the engine's run path (the design's known gap
   in the emptied-folder guard); G3, which log the terminal's `schedule`, `pause` and `resume` ask
   when a delete was begun with `-config` (or a Desktop with `-config` misses a terminal delete).
+
+**The re-walk's technical wording and layout group (2 November 2026; N2, N3, N5, N6, N7, N8, N9,
+N10, N12 to N17, N19, N20, B20).** New or changed words are the builder's, for the operator, unless
+a quote says otherwise. N2, N9, N13 and N18 were decided by the operator's delegate, as said beside
+each; the operator approves the words later.
+- *The run that finishes a delete states the archive as its first run read it (MA-1037; N3, N5).*
+  Each started line now carries `captured` (the message count, the mail dates, the first run, the
+  last backup and where the run history begins), as that run read the archive, and a run that
+  finishes another carries the first run's forward; the plan takes them wherever the first run
+  knew them. An encrypted archive's started line carries only its last backup and where its run
+  history begins: its sealed values never reach deletions.log, which is a plain file (for the
+  operator: the log now holds a plain archive's message count and mail dates beside its folder's
+  name). With none in the log, a re-run's values that are not known read "not known: the
+  archive's files were already removed"; "not known: encrypted, key not open" is kept for an
+  encrypted archive whose key was not open.
+- *A stopped run's count is "not known" (MA-1037; N2, the operator's delegate's choice of "not
+  known" over "about N" from the log).* "Files removed earlier: not known: a run stopped before it
+  wrote its record" when no earlier run's count is known; "at least N (SIZE); not known in full:
+  a run stopped before it wrote its record" when some is, as before.
+- *The whole count on screen (MA-1037; N6).* The result's second line, at the terminal and on the
+  Desktop: "This finishes the delete begun DATE: N files (SIZE) removed in all." or "This finishes
+  the delete begun DATE. How many files its earlier runs removed is not known: a run stopped
+  before it wrote its record." ("This finishes a delete of this folder that did not finish…" when
+  the first run's date is not recorded).
+- *Kept files named on screen (MA-1038; N7).* The terminal's plan: "Kept (not the archive's):
+  my-notes.txt, todo.txt" (the first ten, then "and N more"; was "Kept, not the archive's: 2"); both
+  results: "The folder is kept: it holds 1 file that is not the archive's: my-notes.txt." and "The
+  folder is kept: 3 files are left in it: 2 files of yours (my-notes.txt, todo.txt) and 1 mail copy
+  the archive did not record.". *Not done, for the operator:* the saved plan and the record still
+  write "Kept: …" for a file of the person's, since §8.1 [O2-01] keeps every name MailArchive did
+  not give to the screen; naming them there changes that rule (a person's file name can carry an
+  address or a subject) and owes the operator's ruling.
+- *Mail folders as the person knows them (MA-1038; N16).* On screen each mail folder also names
+  the mail folders the archive recorded inside it when they differ: "mail folder 1: mbox (Inbox,
+  Sent)" at the terminal, "Mail folders: mbox (Inbox, Sent)" on the panel. The saved plan and the
+  record say "mail folder N/…" where they said "store N/…", and still name no folder below it.
+- *No step numbers (MA-1038; N20).* "The delete stopped before it updated MailArchive's settings."
+  ("…before its last steps (this computer's record of the archive, and its row in Your
+  archives).", "…before it removed the archive's row from Your archives."; were "…before step
+  4/8/9."); "The delete stopped unexpectedly (CAUSE)." (was "…at step N (CAUSE)."); the folder-gone
+  re-run: "This delete did not lock the archive, empty MailArchive's working folder for it or remove
+  any files: an earlier delete had already removed the folder." (was "Steps 1 and 5 to 7 (the lock,
+  the working folder, the files, the folder) were skipped: an earlier delete removed the folder.").
+- *The record keeps the whole "What Delete does not reach" line (N18, the operator's delegate's
+  decision; no change).* At the terminal without `-record-out` the printed record's line names every
+  computer's backup tools after the plan's shorter one: the saved files may be read on another
+  computer, as this section's B4 note says.

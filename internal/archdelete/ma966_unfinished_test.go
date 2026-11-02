@@ -55,7 +55,8 @@ func TestAPlainDeleteThatCrashedAfterFolderRemovedFinishesOnDeleteAgain(t *testi
 		t.Fatalf("rerun %v", p.Rerun)
 	}
 	res := Execute(p, p.Name, false, r.x)
-	if res.Status != StatusComplete || len(r.rows) != 1 || !hasLine(res, "skipped") {
+	// What it did not do, in words (MA-1038, the 1.5.3 re-walk's N20; was "Steps … were skipped").
+	if res.Status != StatusComplete || len(r.rows) != 1 || !hasLine(res, "This delete did not lock the archive, empty MailArchive's working folder for it or remove any files: an earlier delete had already removed the folder.") {
 		t.Fatalf("%s (rows %q)", res.Message(), r.rows)
 	}
 	if strings.Contains(strings.ToLower(res.Message()), "key") || len(r.kr.asked) != 0 {
@@ -178,7 +179,8 @@ func TestAStopBeforeStep8LeavesTheRowUnfinishedAndDeleteAgainFinishes(t *testing
 	}
 	res := r.run(t, false)
 	if res.Status != StatusPartial || !res.Unfinished || exists(dir) || len(r.rows) != 0 ||
-		!strings.HasPrefix(res.Lines[0], "A MailArchive Desktop is running. The delete stopped before step 8. Steps done: archive locked") {
+		// In words, not step numbers (MA-1038, the 1.5.3 re-walk's N20).
+		!strings.HasPrefix(res.Lines[0], "A MailArchive Desktop is running. The delete stopped before its last steps (this computer's record of the archive, and its row in Your archives). Steps done: archive locked") {
 		t.Fatalf("%s", res.Message())
 	}
 	r.x.BeforeStep = nil

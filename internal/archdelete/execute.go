@@ -176,6 +176,10 @@ func (e *run) logStarted() error {
 			l.FirstAt = f.FirstStarted.UTC().Format(time.RFC3339Nano)
 		}
 	}
+	// What the record says of the archive, as this run read it — for a run that finishes another,
+	// the first run's values it carries (planAny) — so the run that finishes it still has them once
+	// the history and the manifest are gone (N3, N5).
+	l.Captured = loggedCaptureOf(p.Captured, p.Kind)
 	if err := appendLog(e.log, l); err != nil {
 		return err
 	}
@@ -193,7 +197,8 @@ func (e *run) steps() {
 			return
 		}
 		e.res.FolderGone = true
-		e.notes = append(e.notes, "Steps 1 and 5 to 7 (the lock, the working folder, the files, the folder) were skipped: an earlier delete removed the folder.")
+		// What was not done, in words, not the design's step numbers (the 1.5.3 re-walk's N20).
+		e.notes = append(e.notes, "This delete did not lock the archive, empty MailArchive's working folder for it or remove any files: an earlier delete had already removed the folder.")
 		if !e.configSide() || !e.keyAndRow() {
 			return
 		}
@@ -918,8 +923,24 @@ func (e *run) proceed(step int) bool {
 	if len(e.done) > 0 {
 		done = strings.Join(e.done, ", ")
 	}
-	e.stop(fmt.Sprintf("%s. The delete stopped before step %d. Steps done: %s. Click Delete again.", cleanErr(err), step, done))
+	e.stop(fmt.Sprintf("%s. The delete stopped %s. Steps done: %s. Click Delete again.", cleanErr(err), stoppedBefore(step), done))
 	return false
+}
+
+// stoppedBefore says where a delete stopped, before step, in words, not the design's step numbers
+// (the 1.5.3 re-walk's N20).
+func stoppedBefore(step int) string {
+	switch step {
+	case 2:
+		return "before it stopped the archive's scheduled backups"
+	case 4:
+		return "before it updated MailArchive's settings"
+	case 8:
+		return "before its last steps (this computer's record of the archive, and its row in Your archives)"
+	case 9:
+		return "before it removed the archive's row from Your archives"
+	}
+	return "part way"
 }
 
 // keyAndRow is steps 8 and 9; false when the delete stopped before one of them.
@@ -1084,7 +1105,7 @@ func (e *run) finish() {
 		case res.FolderGone:
 			head += "The folder is gone."
 		case len(res.Kept) > 0:
-			head += keptSentence(len(res.Kept), copies)
+			head += keptSentence(len(res.Kept), copies, p.Kept)
 		case len(e.leftIn) > 0:
 			// What kept it, named (conformance 4): a folder of the archive's that stayed
 			// busy past its retries, or something put there during the delete.
@@ -1098,6 +1119,10 @@ func (e *run) finish() {
 		}
 	}
 	res.Lines = []string{head}
+	if p.Finishes != nil {
+		// The whole delete's count, on screen too (the 1.5.3 re-walk's N6).
+		res.Lines = append(res.Lines, p.finishedLine(res.Removed, res.Bytes))
+	}
 	res.CheckYourself = p.Schedules.notRemoved()
 	if res.LockFileLeft && !res.FolderGone {
 		res.Lines = append(res.Lines, msgLockFileLeft)
@@ -1118,20 +1143,29 @@ func (e *run) finish() {
 // keptSentence says what keeps the folder, counted once (the 1.5.3 friction review's B7: "it
 // holds 2 files that are not the archive's. 1 mail copy the archive did not record was kept."
 // read as three files, and one file "are"): kept files in all, of which copies are mail copies
-// the archive did not record.
-func keptSentence(kept, copies int) string {
+// the archive did not record; yours are the person's own, named as the plan named them, the first
+// ten then "and N more" (the 1.5.3 re-walk's N7: the result only counted them).
+func keptSentence(kept, copies int, yours []string) string {
 	if copies == 0 {
-		if kept == 1 {
-			return "The folder is kept: it holds 1 file that is not the archive's."
+		names := ""
+		if len(yours) > 0 {
+			names = ": " + namesAndMore(yours)
 		}
-		return fmt.Sprintf("The folder is kept: it holds %d files that are not the archive's.", kept)
+		if kept == 1 {
+			return "The folder is kept: it holds 1 file that is not the archive's" + names + "."
+		}
+		return fmt.Sprintf("The folder is kept: it holds %d files that are not the archive's%s.", kept, names)
 	}
 	left := "1 file is left in it"
 	if kept != 1 {
 		left = fmt.Sprintf("%d files are left in it", kept)
 	}
 	if own := kept - copies; own > 0 {
-		return fmt.Sprintf("The folder is kept: %s: %s of yours and %s.", left, plural(own, "file", "files"), copyWords(copies))
+		names := ""
+		if len(yours) > 0 {
+			names = " (" + namesAndMore(yours) + ")"
+		}
+		return fmt.Sprintf("The folder is kept: %s: %s of yours%s and %s.", left, plural(own, "file", "files"), names, copyWords(copies))
 	}
 	return fmt.Sprintf("The folder is kept: %s: %s.", left, copyWords(copies))
 }
@@ -1278,7 +1312,7 @@ func (e *run) panicked(r any) {
 	if len(e.done) > 0 {
 		done = strings.Join(e.done, ", ")
 	}
-	msg := fmt.Sprintf("The delete stopped unexpectedly at step %d (%s). Steps done: %s. Click Delete again.", e.step, util.StripControl(fmt.Sprint(r)), done)
+	msg := fmt.Sprintf("The delete stopped unexpectedly (%s). Steps done: %s. Click Delete again.", util.StripControl(fmt.Sprint(r)), done)
 	if e.stage2 {
 		e.outcome = outPartial
 		e.res.Status, e.res.Unfinished, e.res.Refusal = StatusPartial, true, nil

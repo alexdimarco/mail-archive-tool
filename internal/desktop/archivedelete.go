@@ -425,7 +425,9 @@ func planView(p *archdelete.DeletePlan) map[string]any {
 	}
 	stores := make([]map[string]any, 0, len(p.Stores))
 	for i, s := range p.Stores {
-		stores = append(stores, map[string]any{"number": i + 1, "name": s})
+		// label: the store's folder with the mail folders inside it, as the terminal shows it (the
+		// 1.5.3 re-walk's N16: "Mail folders: mbox" named the source's folder, not its Inbox).
+		stores = append(stores, map[string]any{"number": i + 1, "name": s, "label": p.StoreLabel(i)})
 	}
 	// The kept files are named, the first ten (the 1.5.3 friction review's B6, MA-1019): "Kept:
 	// not the archive's: 1" did not say which.

@@ -40,12 +40,13 @@ func TestTheRecordNamesNoSubjectNoAddressNoFolderBelowAStore(t *testing.T) {
 				t.Fatalf("the %s holds %q:\n%s", name, secret, text)
 			}
 		}
-		if !strings.Contains(text, "Mail copy not recorded: store 1/…/2019-01-01_0000_…_99999999.html\n") ||
-			!strings.Contains(text, "Mail copy not recorded: store 1/…/…-attachments.zip\n") {
+		// "mail folder N", as the terminal numbers it (MA-1038, the 1.5.3 re-walk's N16; was "store N").
+		if !strings.Contains(text, "Mail copy not recorded: mail folder 1/…/2019-01-01_0000_…_99999999.html\n") ||
+			!strings.Contains(text, "Mail copy not recorded: mail folder 1/…/…-attachments.zip\n") || strings.Contains(text, "store 1") {
 			t.Fatalf("the %s must name copies by store number and stem parts:\n%s", name, text)
 		}
 	}
-	if !strings.Contains(record, "Left: store 1/…/2024-03-01_0900_…_ab12cd34.html\n") || !strings.Contains(record, "Kept: store 1/…/…\n") {
+	if !strings.Contains(record, "Left: mail folder 1/…/2024-03-01_0900_…_ab12cd34.html\n") || !strings.Contains(record, "Kept: mail folder 1/…/…\n") {
 		t.Fatalf("record:\n%s", record)
 	}
 }
@@ -99,7 +100,7 @@ func TestStoreNumbersAreTheSameInThePlanAndTheRecord(t *testing.T) {
 	}
 	plan := string(RecordText(RecordInput{Status: StatusPlanned, When: when, Plan: p1}))
 	record := string(RecordText(RecordInput{Status: StatusComplete, When: when, Plan: p2}))
-	for _, want := range []string{"store 1/2024-01-01_0000_…_44444444.html", "store 2/2024-01-01_0000_…_33333333.html"} {
+	for _, want := range []string{"mail folder 1/2024-01-01_0000_…_44444444.html", "mail folder 2/2024-01-01_0000_…_33333333.html"} {
 		if !strings.Contains(plan, want) || !strings.Contains(record, want) {
 			t.Fatalf("%q must be in both:\n%s\n%s", want, plan, record)
 		}

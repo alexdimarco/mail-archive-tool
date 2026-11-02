@@ -108,6 +108,12 @@ type logLine struct {
 	EarlierFiles   *int   `json:"earlier_files,omitempty"`
 	EarlierBytes   *int64 `json:"earlier_bytes,omitempty"`
 	EarlierUnknown bool   `json:"earlier_unknown,omitempty"`
+	// Captured (started) is what the deletion record says of the archive, as the first run of the
+	// delete read it while the archive was whole, carried forward by each run that finishes it: a
+	// later run finds the history and the manifest the first one removed gone (the 1.5.3 re-walk's
+	// N3, N5). Never an encrypted archive's sealed values: only its last backup and where its run
+	// history begins, which are not sealed.
+	Captured *loggedCapture `json:"captured,omitempty"`
 
 	// finished: the outcome, whether the row is left "Delete not finished" (a partial
 	// written after step 2 began, §5.4), what was left and kept, and the deletion
@@ -299,8 +305,72 @@ type Unfinished struct {
 	Removed      int
 	RemovedBytes int64
 	RemovedKnown bool
+	// Captured is what the first run of the delete read of the archive (its started line's
+	// captured values, carried forward), or nil when the log has none (an older line).
+	Captured *Captured
 	// counted: this run's own finished line was read.
 	counted bool
+}
+
+// loggedCapture is Captured as a started line keeps it: each time in RFC 3339, "" when not known.
+type loggedCapture struct {
+	Known      bool   `json:"known,omitempty"`
+	Messages   int    `json:"messages,omitempty"`
+	MailFrom   string `json:"mail_from,omitempty"`
+	MailTo     string `json:"mail_to,omitempty"`
+	FirstRun   string `json:"first_run_at,omitempty"`
+	LastBackup string `json:"last_backup,omitempty"`
+	OldestRun  string `json:"oldest_run,omitempty"`
+}
+
+// loggedCaptureOf is c as a started line keeps it for an archive of kind k, nil when there is
+// nothing to keep. An encrypted archive's message count, mail dates and first run are sealed, so
+// they never reach the log, which is a plain file: only its last backup and where its run history
+// begins, read from its plain run history.
+func loggedCaptureOf(c Captured, k Kind) *loggedCapture {
+	at := func(t time.Time) string {
+		if t.IsZero() {
+			return ""
+		}
+		return t.UTC().Format(time.RFC3339Nano)
+	}
+	l := loggedCapture{LastBackup: at(c.LastBackup), OldestRun: at(c.OldestRun)}
+	if k != Encrypted && c.Known {
+		l.Known, l.Messages, l.MailFrom, l.MailTo, l.FirstRun = true, c.Messages, at(c.MailFrom), at(c.MailTo), at(c.FirstRun)
+	}
+	if l == (loggedCapture{}) {
+		return nil
+	}
+	return &l
+}
+
+// captured is l read back.
+func (l *loggedCapture) captured() Captured {
+	at := func(s string) time.Time {
+		t, _ := time.Parse(time.RFC3339Nano, s)
+		return t
+	}
+	return Captured{Known: l.Known, Messages: l.Messages, MailFrom: at(l.MailFrom), MailTo: at(l.MailTo),
+		FirstRun: at(l.FirstRun), LastBackup: at(l.LastBackup), OldestRun: at(l.OldestRun)}
+}
+
+// withFirstRun is own, the values a plan read now, with those the first run of the delete it
+// finishes read (first) in their place wherever the first run knew them: the history, the run
+// history and, for a folder an earlier run removed, the manifest are gone by now (N3, N5).
+func withFirstRun(own, first Captured) Captured {
+	out := own
+	if first.Known {
+		out.Known, out.Messages, out.MailFrom, out.MailTo = true, first.Messages, first.MailFrom, first.MailTo
+	}
+	for _, f := range []struct {
+		to   *time.Time
+		from time.Time
+	}{{&out.FirstRun, first.FirstRun}, {&out.LastBackup, first.LastBackup}, {&out.OldestRun, first.OldestRun}} {
+		if !f.from.IsZero() {
+			*f.to = f.from
+		}
+	}
+	return out
 }
 
 // UnfinishedDelete reads the log at logPath for folder's last delete that did not
@@ -458,6 +528,10 @@ func (dl *DeleteLog) Unfinished(folder, goos string) *Unfinished {
 					u.RemovedBytes = *l.EarlierBytes
 				}
 				u.RemovedKnown = !l.EarlierUnknown
+			}
+			if l.Captured != nil {
+				c := l.Captured.captured()
+				u.Captured = &c
 			}
 			if l.Identity != nil {
 				u.Identity = *l.Identity

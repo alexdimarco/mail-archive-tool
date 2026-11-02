@@ -133,7 +133,12 @@ func RecordText(in RecordInput) []byte {
 		}
 	}
 	const asRecorded = " (as recorded in the archive)"
-	const sealed = "not known: encrypted, key not open"
+	sealed := "not known: encrypted, key not open"
+	if p.Kind != Encrypted || p.Rerun != RerunNone {
+		// A folder an earlier run emptied or removed: its values are gone, not sealed — never
+		// "encrypted" for a plain archive (the 1.5.3 re-walk's N5).
+		sealed = "not known: the archive's files were already removed"
+	}
 	c := p.Captured
 	if c.Known {
 		line("Messages", fmt.Sprintf("%d%s", c.Messages, asRecorded))
@@ -344,7 +349,7 @@ func size(n int64) string {
 	return fmt.Sprintf("%.1f %cB", float64(n)/float64(div), "KMGTPE"[exp])
 }
 
-// redact names a file for the record [O2-01]: in a store, "store N/" (the store
+// redact names a file for the record [O2-01]: in a store, "mail folder N/" (the store
 // token's number in byte order), "…/" for any folders below it, and the
 // date-and-hash parts of the stem; outside the stores, only a name MailArchive
 // itself gives (a fixed root name, a sealed file's hex name), else "…".
@@ -359,7 +364,9 @@ func redact(rel string, stores []string) string {
 			}
 		}
 		if n > 0 {
-			prefix := fmt.Sprintf("store %d/", n)
+			// "mail folder N", as the terminal's plan numbers it (B12; the 1.5.3 re-walk's N16:
+			// "store" was the record's jargon alone).
+			prefix := fmt.Sprintf("mail folder %d/", n)
 			if len(parts) > 2 {
 				prefix += "…/"
 			}
