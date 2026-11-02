@@ -91,6 +91,15 @@ func TestUninstallsRefusalOfSeveralDeletesIsPlural(t *testing.T) {
 		strings.Count(u, keySentence) != 1 {
 		t.Fatalf("with an encrypted archive: %q", u)
 	}
+	// A started line that does not say its kind (written before kinds were logged) may be of an
+	// encrypted archive: the key sentence is said (the settle pass's LOW-7: no test caught it
+	// dropped). The plain twin above says none.
+	noKind := started("r1", c, "plain")
+	delete(noKind, "kind")
+	dn, _ = plan(noKind)
+	if u := dn.Until(); !strings.HasSuffix(u, "then uninstall again; for an encrypted archive, this computer then still remembers its key until you use Forget this encrypted archive here, or Forget every encrypted archive on this computer.") {
+		t.Fatalf("a delete of a kind the log does not say: %q", u)
+	}
 	// One encrypted alone keeps the one-delete key sentence.
 	dn, _ = plan(started("r1", b, "encrypted"))
 	if u := dn.Until(); !strings.HasSuffix(u, "then uninstall again; for an encrypted archive, this computer then still remembers its key until you use Forget this encrypted archive here, or Forget every encrypted archive on this computer.") {

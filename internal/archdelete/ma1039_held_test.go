@@ -23,6 +23,46 @@ func heldBy(t *testing.T, pick func(rel string) bool) *int {
 }
 
 // covers: MA-1039, R36
+// The probe asks only the folder planned and only its first heldProbeMax files (the settle pass's
+// LOW-7: no test caught either removed): a folder whose identity is no longer the plan's is asked
+// nothing, and a plan of 250 files asks 200. Positive twin first: the folder planned, with few
+// files, is asked about each.
+func TestTheHeldProbeAsksOnlyThePlannedFolderAndItsFirstFiles(t *testing.T) {
+	asks := heldBy(t, func(string) bool { return true })
+	dir := t.TempDir()
+	root, err := os.OpenRoot(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	id, err := rootIdentity(root)
+	root.Close()
+	if err != nil {
+		t.Fatal(err)
+	}
+	items := func(n int) []Item {
+		var out []Item
+		for i := 0; i < n; i++ {
+			out = append(out, Item{Rel: "f" + strings.Repeat("x", i%7) + ".html"})
+		}
+		return out
+	}
+	// Positive twin: the folder planned, three files, three asks.
+	if got := heldFiles(&DeletePlan{Folder: dir, Identity: id, Remove: items(3)}); len(got) != 3 || *asks != 3 {
+		t.Fatalf("the twin: held %d, %d asks", len(got), *asks)
+	}
+	*asks = 0
+	if got := heldFiles(&DeletePlan{Folder: dir, Identity: id, Remove: items(250)}); len(got) != heldProbeMax || *asks != heldProbeMax || heldProbeMax != 200 {
+		t.Fatalf("250 files: held %d, %d asks (max %d)", len(got), *asks, heldProbeMax)
+	}
+	*asks = 0
+	other := id
+	other.FileID++
+	if got := heldFiles(&DeletePlan{Folder: dir, Identity: other, Remove: items(3)}); len(got) != 0 || *asks != 0 {
+		t.Fatalf("another folder now: held %d, %d asks", len(got), *asks)
+	}
+}
+
+// covers: MA-1039, R36
 // A plan that finishes a delete which stopped part way says when a file of it is still held open
 // by another program, so this run would stop at it again (the 1.5.3 re-walk's N17: a re-run made
 // while Outlook still held the file said nothing until it failed). Positive twins first: with the

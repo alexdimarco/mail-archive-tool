@@ -180,6 +180,20 @@ func TestWhereADeleteStoppedIsSaidInWords(t *testing.T) {
 		}
 	}
 
+	// A stop before step 2: nothing has changed, so it is refused, never "The delete stopped …"
+	// (the settle pass's LOW-7: those words for step 2 could not be reached, and were removed).
+	r2 := newRig(t, smallArchive(t, t.TempDir()))
+	r2.x.BeforeStep = func(step int) error {
+		if step == 2 {
+			return errors.New("A MailArchive Desktop is running")
+		}
+		return nil
+	}
+	if res := r2.run(t, false); res.Status != StatusRefusedAfterStart || res.Refusal == nil || res.Refusal.Case != CaseStopped ||
+		res.Lines[0] != "A MailArchive Desktop is running." || strings.Contains(res.Message(), "The delete stopped") || !exists(r2.dir) {
+		t.Errorf("a stop before step 2: %s %s", res.Status, res.Message())
+	}
+
 	r := newRig(t, smallArchive(t, t.TempDir()))
 	stopBefore8(t, r)
 	res := r.run(t, false)

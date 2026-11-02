@@ -928,11 +928,10 @@ func (e *run) proceed(step int) bool {
 }
 
 // stoppedBefore says where a delete stopped, before step, in words, not the design's step numbers
-// (the 1.5.3 re-walk's N20).
+// (the 1.5.3 re-walk's N20). A stop before step 2 is never said so: nothing has changed then, and
+// proceed refuses instead (the settle pass's LOW-7 removed its unreachable words).
 func stoppedBefore(step int) string {
 	switch step {
-	case 2:
-		return "before it stopped the archive's scheduled backups"
 	case 4:
 		return "before it updated MailArchive's settings"
 	case 8:

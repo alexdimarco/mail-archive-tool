@@ -131,6 +131,9 @@ func TestADeleteNotFinishedRefusalSaysToReload(t *testing.T) {
 		{"/api/resume-archive", map[string]any{"path": parked}, "it was not resumed", func() bool { return seal.IsSealed(parked) }},
 		{"/api/settings", map[string]any{"Out": half}, "it was not made the current archive", func() bool { return e.d.cfg.effectiveOut() == cur }},
 		{"/api/archive/unlist", map[string]any{"path": half}, "it was not removed from the list", func() bool { return e.listed(half) }},
+		// Its Yes too, from a tab that asked before the delete began (the settle pass's LOW-7: no
+		// test caught the reload words dropped from the confirm route).
+		{"/api/archive/unlist", map[string]any{"path": half, "confirm": true}, "it was not removed from the list", func() bool { return e.listed(half) }},
 	} {
 		_, m := e.post(c.route, c.body)
 		msg := replyErr(m)
