@@ -145,7 +145,7 @@ func Unlist(row string, x UnlistDeps) *UnlistResult {
 	for _, e := range q.Entries {
 		absent, err := stopEntry(x.Scheduler, goos, e.Name)
 		if err != nil {
-			res.Lines = []string{stopEntryMessage(e.Name, err, res.Stopped, "click Remove from list again", "The row is kept.")}
+			res.Lines = []string{stopEntryMessage(e.Name, err, res.Stopped, "click Remove from list again", "The row is kept.", goos)}
 			return res
 		}
 		if !absent {

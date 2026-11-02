@@ -1011,6 +1011,9 @@ func installCron(s Spec) error {
 
 func removeCron(s Spec) error {
 	tab, err := readCrontabForEdit()
+	if errors.Is(err, errNoCrontab) {
+		return nil // no crontab program: no cron entry, so nothing to remove (H1)
+	}
 	if err != nil {
 		return err
 	}
@@ -1058,10 +1061,17 @@ func readCrontab() string {
 // table back. "No crontab yet" is an empty one; any other `crontab -l` failure
 // (a permission or spool error) is an error, never an empty table — writing back
 // only our block would destroy the user's other jobs (G8-AC5).
+//
+// A computer with no crontab program (a container, a systemd-timer-only host) is errNoCrontab:
+// it has no cron entry to remove (removeCron), and no schedule can be installed there (the
+// 1.5.3 friction review's H1).
 func readCrontabForEdit() (string, error) {
 	out, err := crontabList()
 	if err == nil {
 		return out, nil
+	}
+	if errors.Is(err, exec.ErrNotFound) {
+		return "", errNoCrontab
 	}
 	var ee *exec.ExitError
 	if errors.As(err, &ee) {
@@ -1069,8 +1079,14 @@ func readCrontabForEdit() (string, error) {
 			return "", nil // no crontab yet (or none for this user)
 		}
 	}
-	return "", fmt.Errorf("crontab -l failed, so the crontab was left alone rather than overwritten: %w: %s", err, strings.TrimSpace(out))
+	if o := strings.TrimSpace(out); o != "" {
+		return "", fmt.Errorf("crontab -l failed, so the crontab was left alone rather than overwritten: %w: %s", err, o)
+	}
+	return "", fmt.Errorf("crontab -l failed, so the crontab was left alone rather than overwritten: %w", err)
 }
+
+// errNoCrontab is readCrontabForEdit on a computer with no crontab program.
+var errNoCrontab = errors.New("this computer has no crontab program (cron is not installed), so no backup can be scheduled with cron here: install cron, then try again")
 
 func writeCrontab(content string) error { return crontabInstall(content) }
 

@@ -3,6 +3,7 @@ package schedule
 import (
 	"encoding/xml"
 	"errors"
+	"fmt"
 	"io/fs"
 	"os"
 	"runtime"
@@ -200,6 +201,37 @@ func RemoveSideFiles(name string) error {
 
 // RemoveLiveEntryNamed is RemoveLiveEntry for the entry name: the host's entry (and, on
 // Windows, its side-files), never the archive's descriptor.
-func RemoveLiveEntryNamed(name string) error {
-	return RemoveLiveEntry(Spec{Name: name, WrapperPath: DefaultWrapperPath(name)})
+func RemoveLiveEntryNamed(name string) error { return RemoveLiveEntryNamedOn(name, runtime.GOOS) }
+
+// RemoveLiveEntryNamedOn is RemoveLiveEntryNamed on the scheduler goos selects ("" is this
+// computer's): a test passes "linux" to remove through cron on any computer.
+func RemoveLiveEntryNamedOn(name, goos string) error {
+	if goos == "" {
+		goos = runtime.GOOS
+	}
+	return removeLiveEntryOn(Spec{Name: name, WrapperPath: DefaultWrapperPath(name)}, goos)
+}
+
+// RemoveByHand says how a person removes the entry name with goos's own tools, for a removal
+// MailArchive could not make (a delete's step 2, Remove from list; the 1.5.3 friction review's
+// H1: a stop there must say how to go on).
+func RemoveByHand(name, goos string) string {
+	switch goos {
+	case "windows":
+		return fmt.Sprintf("in Task Scheduler, or with: schtasks /Delete /TN %s /F", winQuote(name))
+	case "darwin":
+		return fmt.Sprintf("with: launchctl unload %s, then delete that file", shellJoin([]string{launchdPlistPath(name)}))
+	}
+	return fmt.Sprintf("with crontab -e: delete the lines under %q", CronMarker(name))
+}
+
+// SchedulerName is goos's scheduler as a person knows it.
+func SchedulerName(goos string) string {
+	switch goos {
+	case "windows":
+		return "Task Scheduler"
+	case "darwin":
+		return "launchd"
+	}
+	return "cron"
 }

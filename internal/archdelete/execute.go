@@ -384,7 +384,7 @@ func (e *run) configSide() bool {
 	for _, en := range p.Schedules.Entries {
 		absent, err := stopEntry(e.x.Scheduler, e.x.Deps.goos(), en.Name)
 		if err != nil {
-			e.stop(stopEntryMessage(en.Name, err, e.res.Stopped, "click Delete again", "Nothing else was changed."))
+			e.stop(stopEntryMessage(en.Name, err, e.res.Stopped, "click Delete again", "Nothing else was changed.", e.x.Deps.goos()))
 			return false
 		}
 		if !absent {
@@ -460,19 +460,22 @@ func stopEntry(s Scheduler, goos, name string) (absent bool, err error) {
 	return false, s.RemoveLiveEntry(name)
 }
 
-// stopEntryMessage is step 2's (and Remove from list's) stop.
-func stopEntryMessage(name string, err error, stopped []string, again, tail string) string {
+// stopEntryMessage is step 2's (and Remove from list's) stop. It ends with the way on (the
+// 1.5.3 friction review's H1): the scheduler made to work for this account, or the entry removed
+// by hand with goos's own tools — once it is gone, step 2 counts it absent and goes on.
+func stopEntryMessage(name string, err error, stopped []string, again, tail, goos string) string {
 	msg := fmt.Sprintf("Could not stop the scheduled backup %s: %s.", name, cleanErr(err))
 	if len(stopped) > 0 {
 		msg += fmt.Sprintf(" Already stopped: %s (set them up again in Settings, or %s).", strings.Join(stopped, ", "), again)
 	}
-	return msg + " " + tail
+	return msg + " " + tail + fmt.Sprintf(" To go on, make sure this computer's scheduler (%s) works for your account, or remove that scheduled backup by hand (%s), then %s.",
+		schedule.SchedulerName(goos), schedule.RemoveByHand(name, goos), again)
 }
 
 // cleanErr is an error's text for a result line: control characters stripped, no
-// closing full stop.
+// closing full stop (nor a colon left by an error with nothing after it).
 func cleanErr(err error) string {
-	return strings.TrimRight(strings.TrimSpace(util.StripControl(err.Error())), ".")
+	return strings.TrimRight(strings.TrimSpace(util.StripControl(err.Error())), ".: ")
 }
 
 // scratchRemove is step 5: the scratch folders listed again under the lock and

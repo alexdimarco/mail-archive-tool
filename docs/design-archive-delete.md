@@ -1064,3 +1064,17 @@ MA-1000, MA-1010 to MA-1013).**
     duplicate name becomes "FILE (1)"). Now (the attacker's words, for the operator):
     "Your browser was asked to save the plan as FILE (usually in Downloads). Nothing was
     deleted."
+
+**The 1.5.3 friction fixes, the shared and command-line group (2 November 2026).** New or
+changed words are the builder's, for the operator, unless a quote says otherwise.
+- *No crontab program is no cron entry (MA-1022; H1).* Step 2 and Remove from list ask
+  `schedule.QueryToStop`: on a cron computer without the `crontab` program the entry is not
+  installed, so a delete there finishes; `removeCron` there removes nothing. Status keeps
+  "scheduler unavailable" (MA-78). An install there is refused: "this computer has no crontab
+  program (cron is not installed), so no backup can be scheduled with cron here: install cron,
+  then try again". Every stop of step 2 or of Remove from list now ends: "To go on, make sure
+  this computer's scheduler (Task Scheduler / launchd / cron) works for your account, or remove
+  that scheduled backup by hand (HOW), then click Delete again." ("…click Remove from list
+  again."), HOW being `schtasks /Delete /TN NAME /F` (or Task Scheduler), `launchctl unload
+  PLIST, then delete that file`, or `crontab -e: delete the lines under "# mailarchive-backup
+  NAME"`.

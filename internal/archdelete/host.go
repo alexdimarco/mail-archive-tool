@@ -41,16 +41,20 @@ func timed[T any](limit time.Duration, fn func() T) (v T, ok bool) {
 }
 
 // HostScheduler is this computer's scheduler as Execute and Unlist reach it (Scheduler):
-// schedule.Query, schtasks's own "missing" words and the side-files on Windows, and
-// schedule.RemoveLiveEntry, which never touches the archive. A call that does not answer
-// within Timeout ("" is DefaultSchedulerTimeout) is never taken for an absent entry: a
-// query is SchedulerUnavailable, a removal an error.
+// schedule.QueryToStop (a computer whose scheduler is cron but has no crontab program has no
+// entry to stop: the 1.5.3 friction review's H1), schtasks's own "missing" words and the
+// side-files on Windows, and schedule.RemoveLiveEntry, which never touches the archive. A call
+// that does not answer within Timeout ("" is DefaultSchedulerTimeout) is never taken for an
+// absent entry: a query is SchedulerUnavailable, a removal an error.
 type HostScheduler struct {
 	Timeout time.Duration
+	// GOOS selects the scheduler asked for Query and RemoveLiveEntry ("" is this computer's): a
+	// test passes "linux" to reach cron on any computer.
+	GOOS string
 }
 
 func (h HostScheduler) Query(name string) schedule.State {
-	st, ok := timed(h.Timeout, func() schedule.State { return schedule.Query(name) })
+	st, ok := timed(h.Timeout, func() schedule.State { return schedule.QueryToStopOn(name, h.GOOS) })
 	if !ok {
 		return schedule.SchedulerUnavailable
 	}
@@ -67,7 +71,7 @@ func (h HostScheduler) SideFilesExist(name string) bool { return schedule.SideFi
 func (h HostScheduler) RemoveSideFiles(name string) error { return schedule.RemoveSideFiles(name) }
 
 func (h HostScheduler) RemoveLiveEntry(name string) error {
-	err, ok := timed(h.Timeout, func() error { return schedule.RemoveLiveEntryNamed(name) })
+	err, ok := timed(h.Timeout, func() error { return schedule.RemoveLiveEntryNamedOn(name, h.GOOS) })
 	if !ok {
 		return errSchedulerSilent
 	}

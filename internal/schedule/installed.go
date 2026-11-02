@@ -31,8 +31,10 @@ func (s State) String() string {
 // Query asks the host scheduler whether the named entry exists. It is a thin
 // shell around the pure predicates below, which are what the tests exercise;
 // the real-host behaviour is a lab row.
-func Query(name string) State {
-	switch runtime.GOOS {
+func Query(name string) State { return queryOn(name, runtime.GOOS) }
+
+func queryOn(name, goos string) State {
+	switch goos {
 	case "darwin":
 		_, err := os.Stat(launchdPlistPath(name))
 		return launchdState(err == nil)
@@ -43,6 +45,29 @@ func Query(name string) State {
 		out, err := crontabList()
 		return cronState(name, out, err)
 	}
+}
+
+// QueryToStop is Query as a removal asks it — a delete's step 2 and Remove from list
+// (archdelete.HostScheduler; the 1.5.3 friction review's H1): on a computer whose scheduler is
+// cron, a crontab program that is not installed means no cron entry exists, so the entry is not
+// installed and there is nothing to stop. Query keeps saying "scheduler unavailable" there
+// (MA-78: status warns that a recorded schedule cannot run on this computer).
+func QueryToStop(name string) State { return QueryToStopOn(name, runtime.GOOS) }
+
+// QueryToStopOn is QueryToStop on the scheduler goos selects ("" is this computer's): a test
+// passes "linux" to ask cron on any computer.
+func QueryToStopOn(name, goos string) State {
+	if goos == "" {
+		goos = runtime.GOOS
+	}
+	if goos == "darwin" || goos == "windows" {
+		return queryOn(name, goos)
+	}
+	out, err := crontabList()
+	if errors.Is(err, exec.ErrNotFound) {
+		return NotInstalled
+	}
+	return cronState(name, out, err)
 }
 
 // cronState classifies `crontab -l`: the command missing → the scheduler is

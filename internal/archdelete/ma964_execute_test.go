@@ -4,6 +4,7 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 
@@ -259,7 +260,9 @@ func TestStep2AStopNamesWhatWasAlreadyStoppedAndChangesNothingElse(t *testing.T)
 	before := treeWithoutLock(t, dir)
 	res := r.run(t, false)
 	want := "Could not stop the scheduled backup " + def + "-verify: Access is denied. Already stopped: " + def +
-		" (set them up again in Settings, or click Delete again). Nothing else was changed."
+		" (set them up again in Settings, or click Delete again). Nothing else was changed." +
+		" To go on, make sure this computer's scheduler (" + schedule.SchedulerName(runtime.GOOS) + ") works for your account, or remove that scheduled backup by hand (" +
+		schedule.RemoveByHand(def+"-verify", runtime.GOOS) + "), then click Delete again." // H1, MA-1022: the way on
 	if res.Status != StatusPartial || res.ExitCode() != 3 || !res.Unfinished || res.Lines[0] != want {
 		t.Fatalf("status %q unfinished %v:\n%s\nwant first line %q", res.Status, res.Unfinished, res.Message(), want)
 	}

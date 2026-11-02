@@ -4,6 +4,7 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 
@@ -138,7 +139,9 @@ func TestRemoveFromListOfAPausedArchiveOnANonEnglishSchedulerAndAPartialStop(t *
 	r.sched.fail[def+"-verify"] = errors.New("Access is denied")
 	res := yes(t, d2, x)
 	want := "Could not stop the scheduled backup " + def + "-verify: Access is denied. Already stopped: " + def +
-		" (set them up again in Settings, or click Remove from list again). The row is kept."
+		" (set them up again in Settings, or click Remove from list again). The row is kept." +
+		" To go on, make sure this computer's scheduler (" + schedule.SchedulerName(runtime.GOOS) + ") works for your account, or remove that scheduled backup by hand (" +
+		schedule.RemoveByHand(def+"-verify", runtime.GOOS) + "), then click Remove from list again." // H1, MA-1022: the way on
 	if res.Removed || len(r.rows) != 0 || len(res.Lines) == 0 || res.Lines[0] != want || r.ptr.saves != 0 {
 		t.Fatalf("%q\nwant %q", res.Lines, want)
 	}
