@@ -77,6 +77,47 @@ func TestAnIOErrorPastTheFirstMiBOfTheManifestIsNotCalledNoArchive(t *testing.T)
 }
 
 // covers: MA-1006, R36
+// The same for the manifest's Stat, the other place readManifest marks the manifest open (slice
+// 5's re-verification, the gap in MA-1006's cover): a Stat of the opened manifest that fails, even
+// with an error that counts as "not found", is "cannot read" — not "no longer an archive", and
+// with an unfinished delete of the folder in deletions.log not §5.4's no-manifest re-run. The
+// row says the same, and Remove from list of it while it is the archive in use stays refused.
+// Positive twin first: with the Stat answering, the folder is an ordinary Delete.
+func TestAFailedStatOfTheOpenedManifestIsNotCalledNoArchive(t *testing.T) {
+	dir := plainRowArchive(t, "Mail")
+	manifest := filepath.Join(dir, manifestName)
+	deps := testDeps()
+	deps.Log = filepath.Join(t.TempDir(), LogName)
+	appendRawLog(t, deps.Log, map[string]any{"at": "2026-11-01T10:00:00Z", "event": "started", "run": "r1", "folder": dir, "row": dir, "kind": "plain", "identity": idOf(t, dir)})
+	if p := mustPlan(t, dir, deps); p.Rerun != RerunNone {
+		t.Fatalf("positive twin: with the Stat answering, the folder is an ordinary Delete, got re-run %v", p.Rerun)
+	}
+
+	orig := manifestStat
+	t.Cleanup(func() { manifestStat = orig })
+	stats := 0
+	manifestStat = func(f *os.File) (os.FileInfo, error) {
+		stats++
+		return nil, &fs.PathError{Op: "fstat", Path: f.Name(), Err: syscall.ENOENT}
+	}
+	before := statTree(t, dir)
+	rc, msg, c := refusalOf(t, dir, deps)
+	if c != CaseUnreadable {
+		t.Fatalf("case = %q (%s): a failed Stat of the opened manifest must not make the folder %q or a re-run", c, msg, CaseNotArchive)
+	}
+	assure.Refused(t, rc, msg, assure.Code(1),
+		assure.Names("MailArchive cannot read "+manifest, "then click Delete again."),
+		assure.NoSideEffect(func() bool { return sameTree(before, statTree(t, dir)) }))
+	assure.Reached(t, stats > 0, "the manifest's Stat went through the fault")
+	if row := AsRefusal(RowRefusal(dir, testDeps(), false)); row == nil || row.Case != CaseUnreadable {
+		t.Fatalf("the row's Delete… must say the manifest cannot be read, got %v", row)
+	}
+	if r := AsRefusal(unlistedAsCurrent(dir)); r == nil || r.Case != CaseCurrentArchive {
+		t.Fatalf("Remove from list of the archive in use must stay refused, got %v", r)
+	}
+}
+
+// covers: MA-1006, R36
 // The same, for a read error that counts as "not found" (del-s5-A2-04): ENOENT, or on Windows
 // ERROR_PATH_NOT_FOUND or ERROR_BAD_NETPATH when a network folder drops part way through the
 // manifest. The manifest was open, so the folder is still "cannot read", never "no longer an

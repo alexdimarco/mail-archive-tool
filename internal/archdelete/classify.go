@@ -29,6 +29,10 @@ var manifestCap int64 = 1 << 30
 // that no file on a test machine gives on demand (MA-1006).
 var manifestSource = func(f *os.File) io.Reader { return f }
 
+// manifestStat is readManifest's Stat of the opened manifest: the file's own. A var only so a
+// test can inject a Stat that fails on a file already open (MA-1006).
+var manifestStat = func(f *os.File) (os.FileInfo, error) { return f.Stat() }
+
 // classify is §4's archive test: a plain archive (a manifest §4.1's reader parses),
 // an encrypted one, or neither. A folder that is both — a plaintext manifest beside
 // an encrypted archive's files, as encmark's case Other reads it — is mixed and
@@ -161,7 +165,7 @@ func readManifest(root *os.Root) (*state.Manifest, FileFacts, error) {
 		return nil, FileFacts{}, &manifestReadError{err: err}
 	}
 	defer f.Close()
-	fi, err := f.Stat()
+	fi, err := manifestStat(f)
 	if err != nil {
 		return nil, FileFacts{}, &manifestReadError{err: err, opened: true}
 	}
