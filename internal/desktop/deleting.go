@@ -22,6 +22,60 @@ type deletesUnderWay struct {
 	// blocked, when not "", is why no delete may begin: an uninstall is removing (or has
 	// removed) the settings folder deletions.log lives in (del-s5-A2-02).
 	blocked string
+	// holds are the Pause and Resume actions running now, each on its folder: no delete of that
+	// folder begins until it ends (the residual fixes' adversarial pass, finding 2).
+	holds map[int]*deleteUnderWay
+}
+
+// hold records an action on the folder at path (Pause, Resume) as running, unless a delete of
+// that folder is under way (ok false); release, called once it has ended, takes it off. It is
+// taken under the lock tryBegin takes, so a check and the action it guards are one step: a
+// delete beginning after the check is refused while the action runs, never run beside it.
+func (u *deletesUnderWay) hold(path string) (release func(), ok bool) {
+	if u == nil {
+		return func() {}, true
+	}
+	h := &deleteUnderWay{folder: path, fi: statOrNil(path)}
+	u.mu.Lock()
+	for _, it := range u.items {
+		if it.is(path, h.fi) {
+			u.mu.Unlock()
+			return nil, false
+		}
+	}
+	if u.holds == nil {
+		u.holds = map[int]*deleteUnderWay{}
+	}
+	u.next++
+	id := u.next
+	u.holds[id] = h
+	u.mu.Unlock()
+	var once sync.Once
+	return func() {
+		once.Do(func() {
+			u.mu.Lock()
+			delete(u.holds, id)
+			u.mu.Unlock()
+		})
+	}, true
+}
+
+// heldOn reports whether a Pause or Resume of the folder (planned from row) is running now.
+func (u *deletesUnderWay) heldOn(folder, row string) bool {
+	fi := statOrNil(folder)
+	u.mu.Lock()
+	defer u.mu.Unlock()
+	return u.heldLocked(folder, row, fi)
+}
+
+// heldLocked is heldOn under u.mu.
+func (u *deletesUnderWay) heldLocked(folder, row string, fi os.FileInfo) bool {
+	for _, h := range u.holds {
+		if h.is(folder, fi) || h.is(row, nil) {
+			return true
+		}
+	}
+	return false
 }
 
 // block stops any delete from beginning, saying why, unless one is under way (that delete is
@@ -83,7 +137,7 @@ func newDeletesUnderWay() *deletesUnderWay {
 }
 
 // tryBegin records a delete of folder (planned from row) as under way, unless one of that folder
-// is (ok false); end, called once it has ended, takes it off.
+// is, or a Pause or Resume of it is running (ok false); end, called once it has ended, takes it off.
 func (u *deletesUnderWay) tryBegin(folder, row string) (end func(), ok bool) {
 	it := &deleteUnderWay{folder: folder, row: row, fi: statOrNil(folder), done: make(chan struct{})}
 	u.mu.Lock()
@@ -96,6 +150,10 @@ func (u *deletesUnderWay) tryBegin(folder, row string) (end func(), ok bool) {
 			u.mu.Unlock()
 			return nil, false
 		}
+	}
+	if u.heldLocked(folder, row, it.fi) {
+		u.mu.Unlock()
+		return nil, false
 	}
 	u.next++
 	id := u.next
@@ -206,6 +264,8 @@ const (
 	deletingExport   = "This archive is being deleted, so it cannot be exported. Nothing was exported."
 	deletingPreview  = "This archive is being deleted, so it cannot be previewed. Nothing was read."
 	shuttingDownText = "MailArchive Desktop is shutting down, so nothing was deleted."
+	// A Pause or Resume of the folder running when Delete permanently is clicked; the plan waits.
+	pausingRefusal = "This archive is being paused or resumed. Click Delete permanently again when that ends; nothing was deleted."
 	// An uninstall and a delete never overlap (del-s5-A2-02): uninstall removes deletions.log and
 	// the settings a delete writes.
 	uninstallingText  = "MailArchive is being uninstalled from this computer, so nothing was deleted or changed."

@@ -12,10 +12,15 @@ import (
 // Pause, Resume and a Switch posted from a tab drawn before a delete began (its row still shows
 // those buttons) are refused while that folder's delete is under way, in MA-979's words, nothing
 // changed (del-s3a re-verification, R1): Pause writes no marker into the folder being emptied,
-// Resume leaves it paused (and puts back no scheduled backup), and a Switch leaves the current
+// Resume leaves it paused and puts back no scheduled backup (wizard.ResumeArchive, which would, is
+// never called), and a Switch leaves the current
 // archive as it was. Positive twins first: each works on another archive while the delete runs.
 func TestPauseResumeAndSwitchOfAnArchiveBeingDeletedAreRefused(t *testing.T) {
 	e := newDeleteEnv(t)
+	// Resume puts back a scheduled backup through wizard.ResumeArchive alone: counted, still run.
+	resumes, origResume := 0, resumeArchiveRun
+	t.Cleanup(func() { resumeArchiveRun = origResume })
+	resumeArchiveRun = func(p string) error { resumes++; return origResume(p) }
 	other := e.plainArchive("Other")
 	paused := e.plainArchive("PausedOne")
 	if err := seal.Seal(paused, "parked"); err != nil {
@@ -28,8 +33,8 @@ func TestPauseResumeAndSwitchOfAnArchiveBeingDeletedAreRefused(t *testing.T) {
 	if _, m := e.post("/api/pause-archive", map[string]any{"path": other}); m["ok"] != true || !seal.IsSealed(other) {
 		t.Fatalf("positive twin: Pause of another archive while a delete runs: %v", m)
 	}
-	if _, m := e.post("/api/resume-archive", map[string]any{"path": other}); m["ok"] != true || seal.IsSealed(other) {
-		t.Fatalf("positive twin: Resume of another archive while a delete runs: %v", m)
+	if _, m := e.post("/api/resume-archive", map[string]any{"path": other}); m["ok"] != true || seal.IsSealed(other) || resumes != 1 {
+		t.Fatalf("positive twin: Resume of another archive while a delete runs: %v (resumed %d times)", m, resumes)
 	}
 	if _, m := e.post("/api/settings", map[string]any{"Out": other}); m["ok"] != true || e.d.cfg.effectiveOut() != other {
 		t.Fatalf("positive twin: Switch to another archive while a delete runs: %v", m)
@@ -49,7 +54,7 @@ func TestPauseResumeAndSwitchOfAnArchiveBeingDeletedAreRefused(t *testing.T) {
 	release, done = blockedDelete(t, e, paused)
 	_, r := e.post("/api/resume-archive", map[string]any{"path": paused})
 	assure.Refused(t, http.StatusOK, replyErr(r), assure.Code(http.StatusOK), assure.Names(deletingRefusal),
-		assure.NoSideEffect(func() bool { return r["ok"] == false && seal.IsSealed(paused) }))
+		assure.NoSideEffect(func() bool { return r["ok"] == false && seal.IsSealed(paused) && resumes == 1 }))
 	close(release)
 	if r := <-done; r["status"] != "complete" {
 		t.Fatalf("the delete of %s: %v", paused, r)

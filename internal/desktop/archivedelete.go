@@ -477,6 +477,10 @@ func (d *dashboard) deleteAction(w http.ResponseWriter, r *http.Request) {
 			refuseDelete(w, why) // an uninstall (del-s5-A2-02); the plan's token is kept
 			return
 		}
+		if d.running.heldOn(it.deletePlan.plan.Folder, it.deletePlan.row) {
+			refuseDelete(w, pausingRefusal) // the token is kept: Delete permanently once it ends
+			return
+		}
 		refuseDelete(w, deletingRefusal)
 		return
 	}

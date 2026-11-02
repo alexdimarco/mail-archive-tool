@@ -831,9 +831,14 @@ func vaultPhrase() string {
 // never touched; Resume reverses it.
 func (d *dashboard) pauseArchive(w http.ResponseWriter, r *http.Request) {
 	path, ok := d.archiveActionPath(w, r)
-	if !ok || d.refuseBeingDeleted(w, path) {
+	if !ok {
 		return
 	}
+	release, ok := d.holdAgainstDelete(w, path)
+	if !ok {
+		return
+	}
+	defer release()
 	const reason = "paused from MailArchive Desktop"
 	// An encrypted archive open here keeps the reason sealed in its record; its pause
 	// file stays the empty marker (phase3 §6, E6; the P3-3 plan, 3d). Pausing is a
@@ -844,7 +849,7 @@ func (d *dashboard) pauseArchive(w http.ResponseWriter, r *http.Request) {
 			note = "Paused. The note saying why could not be saved in the encrypted archive (" + err.Error() + ")."
 		}
 	}
-	if err := wizard.PauseArchive(path, reason); err != nil {
+	if err := pauseArchiveRun(path, reason); err != nil {
 		writeJSON(w, map[string]any{"ok": false, "error": err.Error()})
 		return
 	}
@@ -865,13 +870,25 @@ func (d *dashboard) sealPauseNote(e *keyEntry, note string) error {
 // setPauseNote seals a pause note; a seam, so a test can make it fail.
 var setPauseNote = keyring.SetPauseNote
 
+// pauseArchiveRun and resumeArchiveRun are wizard.PauseArchive and wizard.ResumeArchive: seams,
+// so a test can begin a delete while one runs (timing only; the real one is still called).
+var (
+	pauseArchiveRun  = wizard.PauseArchive
+	resumeArchiveRun = wizard.ResumeArchive
+)
+
 // resumeArchive makes the named archive writable again and restores its backup schedule.
 func (d *dashboard) resumeArchive(w http.ResponseWriter, r *http.Request) {
 	path, ok := d.archiveActionPath(w, r)
-	if !ok || d.refuseBeingDeleted(w, path) {
+	if !ok {
 		return
 	}
-	if err := wizard.ResumeArchive(path); err != nil {
+	release, ok := d.holdAgainstDelete(w, path)
+	if !ok {
+		return
+	}
+	defer release()
+	if err := resumeArchiveRun(path); err != nil {
 		writeJSON(w, map[string]any{"ok": false, "error": err.Error()})
 		return
 	}
@@ -918,6 +935,19 @@ func (d *dashboard) refuseBeingDeleted(w http.ResponseWriter, path string) bool 
 	}
 	writeJSON(w, map[string]any{"ok": false, "error": deletingRefusal})
 	return true
+}
+
+// holdAgainstDelete is refuseBeingDeleted for Pause and Resume, made one step with the action: a
+// delete of the folder under way refuses it in the same words, and otherwise the folder is held
+// until release, so a delete that begins while it runs is refused rather than run beside it — a
+// slow Pause sealing a folder being emptied, or a Resume putting back the scheduled backup step 2
+// removed (the residual fixes' adversarial pass, finding 2).
+func (d *dashboard) holdAgainstDelete(w http.ResponseWriter, path string) (release func(), ok bool) {
+	release, ok = d.running.hold(path)
+	if !ok {
+		writeJSON(w, map[string]any{"ok": false, "error": deletingRefusal})
+	}
+	return release, ok
 }
 
 // uninstallRun is a seam so a test drives the uninstall handler without touching the real
