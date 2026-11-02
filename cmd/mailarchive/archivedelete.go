@@ -11,6 +11,7 @@ import (
 	"os"
 	"os/signal"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"sync"
 	"syscall"
@@ -425,7 +426,7 @@ func deleteArchiveWith(cfgPath string, a asker, out, planOut, recordOut string, 
 		return terminalRefusal(msg, row, cfgPath)
 	}
 	for _, l := range res.Lines {
-		fmt.Fprintln(stdout, util.StripControl(l))
+		fmt.Fprintln(stdout, util.StripControl(archdelete.LocalLine(l, runtime.GOOS)))
 	}
 	for _, h := range terminalHints(res.Message(), row, cfgPath) {
 		fmt.Fprintln(stdout, h)
@@ -593,7 +594,8 @@ func deletePlanLines(p *archdelete.DeletePlan, logPath string) []string {
 	if p.Kind == archdelete.Encrypted {
 		lines = append(lines, "  "+p.KeyLine())
 	}
-	return append(lines, "  What Delete does not reach: "+archdelete.DoesNotReach+".", "  "+archdelete.PlanLogLineAt(logPath))
+	// This computer's items only, as the Desktop shows it (B4, MA-1019); the saved plan keeps all.
+	return append(lines, "  "+archdelete.DoesNotReachLineOn(runtime.GOOS), "  "+archdelete.PlanLogLineAt(logPath))
 }
 
 // sizeWords is a byte count in words.

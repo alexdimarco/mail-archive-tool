@@ -473,36 +473,19 @@ func planView(p *archdelete.DeletePlan) map[string]any {
 	return m
 }
 
-// doesNotReachOn is design-archive-delete §2's "What Delete does not reach" (archdelete.DoesNotReach)
-// with only this computer's own items (the 1.5.3 friction review's B4, MA-1019): Windows File
-// History and Previous Versions on Windows, macOS Time Machine on a Mac, neither on Linux. The
-// saved plan and the deletion record keep the whole line: they may be read on another computer.
-func doesNotReachOn(goos string) string {
-	var out []string
-	for _, it := range strings.Split(archdelete.DoesNotReach, "; ") {
-		if (strings.HasPrefix(it, "Windows ") && goos != "windows") || (strings.HasPrefix(it, "macOS ") && goos != "darwin") {
-			continue
-		}
-		out = append(out, it)
-	}
-	return strings.Join(out, "; ")
-}
+// doesNotReachOn is design-archive-delete §2's "What Delete does not reach" with only this
+// computer's own items (archdelete.DoesNotReachOn, B4, MA-1019).
+func doesNotReachOn(goos string) string { return archdelete.DoesNotReachOn(goos) }
 
 // doesNotReachLine is the line the panel and the result show, with its final period (B4).
-func doesNotReachLine(goos string) string {
-	return "What Delete does not reach: " + doesNotReachOn(goos) + "."
-}
+func doesNotReachLine(goos string) string { return archdelete.DoesNotReachLineOn(goos) }
 
-// localResultLines are a delete's result lines as this page shows them: archdelete's "What
-// Delete does not reach" line, which names every platform's items, is this computer's
-// (doesNotReachLine). The record keeps archdelete's own lines.
+// localResultLines are a delete's result lines as this page shows them (archdelete.LocalLine).
+// The record keeps archdelete's own lines.
 func localResultLines(lines []string) []string {
 	out := make([]string, len(lines))
 	for i, l := range lines {
-		if l == "What Delete does not reach: "+archdelete.DoesNotReach {
-			l = doesNotReachLine(runtime.GOOS)
-		}
-		out[i] = l
+		out[i] = archdelete.LocalLine(l, runtime.GOOS)
 	}
 	return out
 }

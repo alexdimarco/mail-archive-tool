@@ -23,6 +23,36 @@ const (
 // DoesNotReach is §2's fixed "What Delete does not reach" line [C14].
 const DoesNotReach = "a sync service's online recycle bin (OneDrive keeps deleted files about 30 days on a personal account, up to 93 on a work account) and version history; Windows File History and Previous Versions; macOS Time Machine; copies, exports or decrypted copies made elsewhere; sync tools other than those detected"
 
+// DoesNotReachOn is DoesNotReach with only goos's own items (the 1.5.3 friction review's B4,
+// MA-1019): Windows File History and Previous Versions on Windows, macOS Time Machine on a Mac,
+// neither on Linux. The Desktop and the terminal show it; the saved plan and the deletion record
+// keep the whole line, as they may be read on another computer.
+func DoesNotReachOn(goos string) string {
+	var out []string
+	for _, it := range strings.Split(DoesNotReach, "; ") {
+		if (strings.HasPrefix(it, "Windows ") && goos != "windows") || (strings.HasPrefix(it, "macOS ") && goos != "darwin") {
+			continue
+		}
+		out = append(out, it)
+	}
+	return strings.Join(out, "; ")
+}
+
+// DoesNotReachLineOn is the "What Delete does not reach" line as shown on goos, with its final
+// period (B4).
+func DoesNotReachLineOn(goos string) string {
+	return "What Delete does not reach: " + DoesNotReachOn(goos) + "."
+}
+
+// LocalLine is a result line as shown on goos: the result's "What Delete does not reach" line,
+// which names every platform's items, becomes DoesNotReachLineOn; any other line is l.
+func LocalLine(l, goos string) string {
+	if l == "What Delete does not reach: "+DoesNotReach {
+		return DoesNotReachLineOn(goos)
+	}
+	return l
+}
+
 // recordListMax is how many names of one kind the record lists.
 const recordListMax = 10
 
