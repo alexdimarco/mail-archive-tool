@@ -1049,3 +1049,9 @@ MA-1000, MA-1010 to MA-1013).**
     whole manifest, or asks an offline share several times, on every page load. Its other
     refusals (`-out`, a capture registered under the folder's name, another spelling of
     the archive in use) are now tested. No new words.
+  - L1 (MA-1017): the empty page points at Switch to this archive only when a row offers
+    it. Otherwise, new words (builder's, for the operator): "No archive is chosen yet.
+    Your archives, below, lists the archives MailArchive knows on this computer, but none
+    can be switched to now: each row says why. To use a folder that is not listed, click
+    Open an archive folder… above; to make a new archive, click Make a new archive…
+    above."

@@ -1348,6 +1348,9 @@ func (cfg Config) overviewWith(csrf, epoch string, held []heldView) string {
 		Archives      []ArchiveRow
 		ShowArchives  bool
 		CanAddArchive bool
+		// CanSwitch: some row of Your archives offers Switch to this archive, so the empty page
+		// may point at it (the 1.5.3 friction fixes' adversarial pass, L1).
+		CanSwitch bool
 		// ShowThisArchive draws the lone current archive's row, with Remove from list and Delete…,
 		// on a card of its own (MA-986): Your archives stays hidden for it (MA-666), and without
 		// this the most common setup had no Delete anywhere (del-s3b-A2-01, A3-01, A3-02).
@@ -1425,6 +1428,7 @@ func (cfg Config) overviewWith(csrf, epoch string, held []heldView) string {
 		data.Archives = cfg.archiveRows(idx)
 		for _, r := range data.Archives {
 			data.CurrentUnfinished = data.CurrentUnfinished || (r.Current && r.Unfinished)
+			data.CanSwitch = data.CanSwitch || r.OffersSwitch()
 		}
 		data.ShowArchives = len(data.Archives) >= 2 || (len(data.Archives) == 1 && !data.Archives[0].Current)
 		data.ShowThisArchive = len(data.Archives) == 1 && data.Archives[0].Current
@@ -1836,7 +1840,7 @@ pre{white-space:pre-wrap;overflow-wrap:anywhere;background:var(--bg);border:1px 
       <div class="note" data-make-archive-note hidden></div>
       {{if .Offer}}<p>The MailArchive wizard last made or used <span class="mono">{{.Offer}}</span>. Use this archive?</p>{{end}}
       <button class="btn" id="useOffer" type="button" data-path="{{.Offer}}"{{if not .Offer}} hidden{{end}} title="Open this archive in MailArchive Desktop — read it, check its health, and keep it backed up.">Use this archive</button>{{if .Offer}} <span class="card-sub">Nothing changes until you click it.</span>{{end}}
-      <p class="steps">{{if .Offer}}To pick a different folder, click <b>Open an archive folder…</b> above, or type its folder in <b>Settings → Archive location</b> below (the folder that holds the .mailarchive-manifest.json file) and click <b>Save settings</b>.{{else if .ShowArchives}}<span id="noArchiveSwitch">No archive is chosen yet. <b>Your archives</b>, below, lists the archives MailArchive knows on this computer: to use one, click <b>Switch to this archive</b> on its row. To use a folder that is not listed, click <b>Open an archive folder…</b> above; to make a new archive, click <b>Make a new archive…</b> above.</span>{{else}}MailArchive Desktop has no archive yet. To use one you already have, click <b>Open an archive folder…</b> above. To make a new one from Thunderbird, Outlook or other mail files on this computer, click <b>Make a new archive…</b> above: the MailArchive wizard's windows open on your computer. When the wizard is done, this page offers the new archive at the top: click <b>Use this archive</b>. To back up a Microsoft 365 mailbox, fill in the <b>Microsoft 365 connection</b> card below, type a new folder in <b>Settings → Archive location</b>, click <b>Save settings</b>, then click <b>Archive now</b>.{{end}}</p>
+      <p class="steps">{{if .Offer}}To pick a different folder, click <b>Open an archive folder…</b> above, or type its folder in <b>Settings → Archive location</b> below (the folder that holds the .mailarchive-manifest.json file) and click <b>Save settings</b>.{{else if .ShowArchives}}{{if .CanSwitch}}<span id="noArchiveSwitch">No archive is chosen yet. <b>Your archives</b>, below, lists the archives MailArchive knows on this computer: to use one, click <b>Switch to this archive</b> on its row. To use a folder that is not listed, click <b>Open an archive folder…</b> above; to make a new archive, click <b>Make a new archive…</b> above.</span>{{else}}<span id="noArchiveNoSwitch">No archive is chosen yet. <b>Your archives</b>, below, lists the archives MailArchive knows on this computer, but none can be switched to now: each row says why. To use a folder that is not listed, click <b>Open an archive folder…</b> above; to make a new archive, click <b>Make a new archive…</b> above.</span>{{end}}{{else}}MailArchive Desktop has no archive yet. To use one you already have, click <b>Open an archive folder…</b> above. To make a new one from Thunderbird, Outlook or other mail files on this computer, click <b>Make a new archive…</b> above: the MailArchive wizard's windows open on your computer. When the wizard is done, this page offers the new archive at the top: click <b>Use this archive</b>. To back up a Microsoft 365 mailbox, fill in the <b>Microsoft 365 connection</b> card below, type a new folder in <b>Settings → Archive location</b>, click <b>Save settings</b>, then click <b>Archive now</b>.{{end}}</p>
     </div>
     {{.Help}}{{end}}
 

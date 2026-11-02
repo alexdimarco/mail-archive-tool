@@ -66,6 +66,13 @@ type ArchiveRow struct {
 	UnlistWhy string
 }
 
+// OffersSwitch reports whether the row draws Switch to this archive: as the row template decides
+// it (dashboard.go's row-state), not being deleted, its delete finished, no problem, reachable,
+// not paused and not the current archive.
+func (r ArchiveRow) OffersSwitch() bool {
+	return !r.Deleting && !r.Unfinished && r.Problem == "" && r.Available && !r.Sealed && !r.Current
+}
+
 // KindLabel is the short, plain-words form of Kind for the archive list ("" when
 // the archive's kind is unknown, e.g. the folder is unavailable).
 func (r ArchiveRow) KindLabel() string {
