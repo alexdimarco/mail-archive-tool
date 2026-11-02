@@ -7,10 +7,13 @@ import (
 	"os"
 	"path/filepath"
 	"runtime"
+	"strings"
 
+	"mail-archive-tool/internal/archdelete"
 	"mail-archive-tool/internal/graphconfig"
 	"mail-archive-tool/internal/progcache"
 	"mail-archive-tool/internal/schedule"
+	"mail-archive-tool/internal/util"
 )
 
 // Report is what a full uninstall will remove (a dry run) or did remove, plus — the
@@ -42,6 +45,45 @@ type Report struct {
 // removes it.
 const DeletionsLogNote = "Copy deletions.log first if you need it to check saved deletion records."
 
+// DeleteNotFinishedError refuses an uninstall while deletions.log holds a delete that is under
+// way or did not finish (docs/design-archive-delete.md §5.4; del-s5-A1-06, A2-02): uninstall
+// removes the log, and a delete's §5.4 re-run reads only the log, so removing it would leave
+// that delete with no way to finish — a folder half deleted, or an encrypted archive's record
+// and key kept on this computer for a folder that is gone — and a delete running now would
+// write the log again, without its started line, after uninstall said the settings were
+// removed. Nothing is removed. Folders are the rows those deletes name.
+type DeleteNotFinishedError struct {
+	Log     string
+	Folders []string
+}
+
+func (e *DeleteNotFinishedError) Error() string {
+	names := make([]string, 0, len(e.Folders))
+	for _, f := range e.Folders {
+		names = append(names, util.StripControl(f))
+	}
+	return fmt.Sprintf("A delete of %s is running or did not finish, so uninstall removed nothing: uninstalling would remove MailArchive's deletion log (%s), which that delete needs to finish. Wait for its result, or finish it (Delete… on its row in MailArchive Desktop, or mailarchive delete-archive -out FOLDER), then uninstall again. If you no longer want to finish it, copy deletions.log somewhere safe, delete it, then uninstall again; for an encrypted archive, this computer then still remembers its key until you use Forget this encrypted archive here, or Forget every encrypted archive on this computer.",
+		strings.Join(names, "; "), e.Log)
+}
+
+// pendingDeletes is archdelete.PendingDeletes (a seam only so a test can stand in for a delete
+// that starts between the plan and the removal).
+var pendingDeletes = archdelete.PendingDeletes
+
+// checkNoPendingDelete refuses (DeleteNotFinishedError) while the log at path holds a delete
+// under way or not finished, and fails closed when the log cannot be read (U-C4's rule: never
+// remove what could not be checked).
+func checkNoPendingDelete(path string) error {
+	pending, err := pendingDeletes(path, runtime.GOOS)
+	if err != nil {
+		return fmt.Errorf("could not read MailArchive's deletion log %s to check for a delete that did not finish, so uninstall stopped before removing anything: make sure your account can read it, then uninstall again: %w", path, err)
+	}
+	if len(pending) > 0 {
+		return &DeleteNotFinishedError{Log: path, Folders: pending}
+	}
+	return nil
+}
+
 // Seams (overridable in tests, so a test touches no real scheduler or credential store):
 // the live schedule sweep, the per-entry removal, and the sign-in clear.
 var (
@@ -68,6 +110,18 @@ func Uninstall(configDir string, knownArchives []string, exe string, dryRun bool
 	cfgTargets, err := ConfigTargets(configDir, knownArchives)
 	if err != nil {
 		return nil, err // ErrOverlap or a read error — nothing is touched
+	}
+	deletionsLog := ""
+	for _, f := range cfgTargets {
+		if filepath.Base(f) == deletionsLogName {
+			deletionsLog = f
+		}
+	}
+	// A delete under way or not finished keeps its log (§5.4): nothing is touched.
+	if deletionsLog != "" {
+		if err := checkNoPendingDelete(deletionsLog); err != nil {
+			return nil, err
+		}
 	}
 	var scratch []string
 	if root, rerr := scratchRoot(); rerr == nil {
@@ -106,11 +160,7 @@ func Uninstall(configDir string, knownArchives []string, exe string, dryRun bool
 	if len(cache) > 0 {
 		rep.ProgramCache = cache[len(cache)-1]
 	}
-	for _, f := range cfgTargets {
-		if filepath.Base(f) == deletionsLogName {
-			rep.DeletionsLog = f
-		}
-	}
+	rep.DeletionsLog = deletionsLog
 	for _, e := range entries {
 		rep.Schedules = append(rep.Schedules, e.Name)
 	}
@@ -153,7 +203,14 @@ func Uninstall(configDir string, knownArchives []string, exe string, dryRun bool
 			return rep, fmt.Errorf("could not remove %s from the Thunderbird sync's folder (stopping; the settings were not removed): %w", p, derr)
 		}
 	}
-	// 4) The config files (the enumeration sources, deleted last).
+	// 4) The config files (the enumeration sources, deleted last). A delete that began since the
+	// check above (another MailArchive window, the command line) is checked for again right
+	// before its log would go: the settings are then kept, as for any stop here.
+	if deletionsLog != "" {
+		if err := checkNoPendingDelete(deletionsLog); err != nil {
+			return rep, fmt.Errorf("stopping before the settings files were removed (the scheduled tasks, the sign-in and the working copies listed above were already removed): %w", err)
+		}
+	}
 	for _, f := range cfgTargets {
 		if derr := os.Remove(f); derr != nil && !errors.Is(derr, fs.ErrNotExist) {
 			return rep, fmt.Errorf("could not remove %s: %w", f, derr)

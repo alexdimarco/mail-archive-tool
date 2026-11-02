@@ -930,6 +930,20 @@ func (d *dashboard) uninstallAction(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	exe, _ := os.Executable()
+	// An uninstall and a delete never overlap (del-s5-A2-02): uninstall removes deletions.log
+	// and the settings a delete writes, and a delete running meanwhile would write them again
+	// (its started line lost). A delete under way refuses the uninstall, plan or removal; the
+	// removal stops any delete from beginning until it ends, and for good once it has removed
+	// the settings. (Another program's delete is caught by uninstall's own check of the log.)
+	if !in.Confirm {
+		if it := d.running.any(); it != nil {
+			writeJSON(w, map[string]any{"ok": false, "error": fmt.Sprintf(deletingUninstall, it.row)})
+			return
+		}
+	} else if it := d.running.block(uninstallingText); it != nil {
+		writeJSON(w, map[string]any{"ok": false, "error": fmt.Sprintf(deletingUninstall, it.row)})
+		return
+	}
 	// The Desktop's own encrypted archives are locked first, their readers' working
 	// copies removed, so neither the plan nor the removal meets them as another
 	// program's (phase3 §7.4; the P3-3 plan, 3c); no remembered key re-opens one
@@ -946,9 +960,13 @@ func (d *dashboard) uninstallAction(w http.ResponseWriter, r *http.Request) {
 	if err != nil {
 		if in.Confirm {
 			d.cfg.Keys.reopen()
+			d.running.unblock()
 		}
 		writeJSON(w, map[string]any{"ok": false, "error": err.Error()})
 		return
+	}
+	if in.Confirm {
+		d.running.block(uninstalledText) // the settings are gone: a delete would make them again
 	}
 	plan := map[string]any{
 		"ok":            true,

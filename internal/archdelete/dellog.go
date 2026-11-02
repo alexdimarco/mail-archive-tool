@@ -11,6 +11,7 @@ import (
 	"os"
 	"path/filepath"
 	"runtime"
+	"strings"
 	"sync"
 	"time"
 
@@ -282,6 +283,47 @@ func newDeleteLog(lines []logLine, stat *statMemo) *DeleteLog {
 		}
 	}
 	return l
+}
+
+// PendingDeletes are the deletes in the log at logPath that are under way or did not finish
+// (§5.4), by the row each names (its folder when it names none), for uninstall: removing the
+// log under a running delete loses its started line (its later lines would make the file
+// again), and removing it under an unfinished one leaves that delete with no way to finish —
+// Plan's §5.4 re-run reads only this log (del-s5-A1-06, A2-02). An absent log has none.
+func PendingDeletes(logPath, goos string) ([]string, error) {
+	l, err := ReadDeleteLog(logPath)
+	if err != nil {
+		return nil, err
+	}
+	return l.Pending(goos), nil
+}
+
+// Pending is PendingDeletes against this read of the log: each started line's folder whose
+// delete Unfinished still finds (a folder made again at the path since is a new folder, not
+// that delete's), once per folder. A started line naming no folder names nothing to finish.
+func (dl *DeleteLog) Pending(goos string) []string {
+	if dl == nil || !dl.pending {
+		return nil
+	}
+	var out []string
+	seen := map[string]bool{}
+	for _, l := range dl.lines {
+		if l.Event != evStarted || strings.TrimSpace(l.Folder) == "" || seen[l.Folder] {
+			continue
+		}
+		seen[l.Folder] = true
+		if u := dl.Unfinished(l.Folder, goos); u != nil {
+			name := u.Row
+			if name == "" {
+				name = u.Folder
+			}
+			if !seen["\x00"+name] {
+				seen["\x00"+name] = true
+				out = append(out, name)
+			}
+		}
+	}
+	return out
 }
 
 // Unfinished is UnfinishedDelete of folder against this read of the log.

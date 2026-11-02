@@ -472,6 +472,10 @@ func (d *dashboard) deleteAction(w http.ResponseWriter, r *http.Request) {
 	// second delete of the same folder is refused with its token kept.
 	end, ok := d.running.tryBegin(it.deletePlan.plan.Folder, it.deletePlan.row)
 	if !ok {
+		if why := d.running.blockedWhy(); why != "" {
+			refuseDelete(w, why) // an uninstall (del-s5-A2-02); the plan's token is kept
+			return
+		}
 		refuseDelete(w, deletingRefusal)
 		return
 	}
@@ -928,6 +932,11 @@ func (d *dashboard) unlistAction(w http.ResponseWriter, r *http.Request) {
 	}
 	if d.running.of(row) != nil {
 		refuseDelete(w, deletingRefusal)
+		return
+	}
+	// Not while an uninstall removes the settings it would write again (del-s5-A2-02).
+	if why := d.running.blockedWhy(); why != "" && in.Confirm {
+		refuseDelete(w, why)
 		return
 	}
 	x := d.cfg.deleteUnlistDeps(in.Named)

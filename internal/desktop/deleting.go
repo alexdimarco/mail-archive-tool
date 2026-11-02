@@ -19,6 +19,38 @@ type deletesUnderWay struct {
 	mu    sync.Mutex
 	next  int
 	items map[int]*deleteUnderWay
+	// blocked, when not "", is why no delete may begin: an uninstall is removing (or has
+	// removed) the settings folder deletions.log lives in (del-s5-A2-02).
+	blocked string
+}
+
+// block stops any delete from beginning, saying why, unless one is under way: then nothing is
+// set and that delete is returned. An uninstall takes it before it removes anything.
+func (u *deletesUnderWay) block(why string) *deleteUnderWay {
+	u.mu.Lock()
+	defer u.mu.Unlock()
+	for _, it := range u.items {
+		return it
+	}
+	u.blocked = why
+	return nil
+}
+
+// unblock lets deletes begin again (an uninstall that was refused or stopped).
+func (u *deletesUnderWay) unblock() {
+	u.mu.Lock()
+	u.blocked = ""
+	u.mu.Unlock()
+}
+
+// blockedWhy is why no delete may begin now, "" when one may.
+func (u *deletesUnderWay) blockedWhy() string {
+	if u == nil {
+		return ""
+	}
+	u.mu.Lock()
+	defer u.mu.Unlock()
+	return u.blocked
 }
 
 // deleteUnderWay is one delete: the folder planned, the row, the folder's identity at the start,
@@ -38,6 +70,10 @@ func newDeletesUnderWay() *deletesUnderWay {
 func (u *deletesUnderWay) tryBegin(folder, row string) (end func(), ok bool) {
 	it := &deleteUnderWay{folder: folder, row: row, fi: statOrNil(folder), done: make(chan struct{})}
 	u.mu.Lock()
+	if u.blocked != "" {
+		u.mu.Unlock()
+		return nil, false
+	}
 	for _, o := range u.items {
 		if o.is(folder, it.fi) || o.is(row, nil) {
 			u.mu.Unlock()
@@ -132,4 +168,9 @@ const (
 	deletingExport   = "This archive is being deleted, so it cannot be exported. Nothing was exported."
 	deletingPreview  = "This archive is being deleted, so it cannot be previewed. Nothing was read."
 	shuttingDownText = "MailArchive Desktop is shutting down, so nothing was deleted."
+	// An uninstall and a delete never overlap (del-s5-A2-02): uninstall removes deletions.log and
+	// the settings a delete writes.
+	uninstallingText  = "MailArchive is being uninstalled from this computer, so nothing was deleted or changed."
+	uninstalledText   = "MailArchive was uninstalled from this computer, so nothing was deleted or changed. Install MailArchive again first."
+	deletingUninstall = "A delete is running (%s). Uninstall when its result shows on this page: uninstalling now would remove the deletion log that delete writes. Nothing was removed."
 )
