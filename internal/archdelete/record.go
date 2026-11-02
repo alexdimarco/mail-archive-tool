@@ -149,7 +149,7 @@ func RecordText(in RecordInput) []byte {
 	case p.Kind != Encrypted || !p.Record.Recorded:
 		line("This computer's record and key", "not applicable")
 	case planned:
-		line("This computer's record and key", "to be forgotten")
+		line("This computer's record and key", plannedKeyValue(p))
 	case in.KeyForgotten == "":
 		line("This computer's record and key", "not applicable")
 	default:
@@ -180,6 +180,25 @@ func RecordText(in RecordInput) []byte {
 	sum := sha256.Sum256([]byte(b.String()))
 	b.WriteString("Record-SHA256: " + hex.EncodeToString(sum[:]) + "\n")
 	return []byte(b.String())
+}
+
+// plannedKeyValue is the saved plan's "This computer's record and key" for a recorded encrypted
+// archive: what step 8 will do, as KeyLine says it on the panel, picked from the keyring's plan at
+// the plan (the delete residuals' security pass, key-use finding 3), in the words step 8's own
+// record uses afterwards. Builder's words, for the operator.
+func plannedKeyValue(p *DeletePlan) string {
+	k := p.KeyAtPlan
+	switch {
+	case p.KeyForgottenBefore:
+		return "forgotten by the delete this one finishes"
+	case k.Known && k.Last && k.NoStore:
+		return "to be kept: this computer's secret store could not be opened"
+	case k.Known && k.Last:
+		return "to be forgotten"
+	case k.Known:
+		return "this copy to be forgotten; the key is kept for " + plural(len(k.Others), "other recorded copy", "other recorded copies")
+	}
+	return "not known: to be forgotten only if this is the last copy this computer recorded"
 }
 
 func listRedacted(line func(k, v string), key string, rels []string, stores []string) {

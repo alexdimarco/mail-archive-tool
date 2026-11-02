@@ -27,6 +27,11 @@ func TestWithNoSecretStoreThePlanPanelSaysTheKeyIsKept(t *testing.T) {
 	if p["ok"] != true || p["keyLine"] != noStore {
 		t.Fatalf("the plan with no secret store says %q (%v); want %q", p["keyLine"], p["error"], noStore)
 	}
+	// The saved plan an approver reads agrees with the panel (the delete residuals' security pass,
+	// key-use finding 3; added 2026-11-01).
+	if text, _ := p["planText"].(string); !strings.Contains(text, "This computer's record and key: to be kept: this computer's secret store could not be opened\n") {
+		t.Fatalf("the saved plan with no secret store does not say the record and key are kept:\n%s", text)
+	}
 
 	r := e.deleteWith(p["token"].(string), p["name"].(string), false)
 	lines := fmt.Sprint(r["lines"])
