@@ -127,6 +127,21 @@ func (r *RowsCheck) State(folder string, knownArchive bool) (*Unfinished, error)
 	return nil, nil
 }
 
+// UnlistRefusal is archdelete.UnlistRefusal for a row of the page (MA-1016's disabled Remove from
+// list; the 1.5.3 friction fixes' adversarial pass, M1): the same refusals in the same words, its
+// folders compared through the page's stat memo, so a folder on an offline network share costs
+// one wait per page, not two to four per row (del-s3a-A3-04), and the archive in use tested with
+// the row's kept manifest parse, so a large manifest is not read whole on every page load
+// (del-s3a-A3-03). The route asks UnlistRefusal itself, uncached.
+func (r *RowsCheck) UnlistRefusal(folder string) error {
+	same := func(a, b, goos string) bool { return sameFolderStat(r.stat.stat, a, b, goos) }
+	gone := func(abs string) bool {
+		_, err := rowArchiveTest(abs)
+		return unreachableOrNoArchiveErr(err)
+	}
+	return unlistRefusal(folder, r.deps, same, gone)
+}
+
 // rowArchiveTest is §4's archive test for a row, its manifest parse kept by the manifest's
 // identity, size and modification time (del-s3a-A3-03): archindex's 1 MiB read passes over an
 // archive of a few thousand messages, and the row then asked the whole manifest — megabytes,

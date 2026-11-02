@@ -624,24 +624,30 @@ func currentName(current string) string {
 // test), and a Desktop started with -out naming it. nil means Remove from list may
 // go on.
 func UnlistRefusal(folder string, deps Deps) error {
+	return unlistRefusal(folder, deps, sameFolder, unreachableOrNoArchive)
+}
+
+// unlistRefusal is UnlistRefusal with its folder comparison (same) and its archive test (gone)
+// asked of the caller: the route's own, or a page of rows' memo of them (RowsCheck.UnlistRefusal).
+func unlistRefusal(folder string, deps Deps, same func(a, b, goos string) bool, gone func(string) bool) error {
 	abs, err := filepath.Abs(folder)
 	if err != nil {
 		abs = filepath.Clean(folder)
 	}
 	s := deps.Settings
 	goos := deps.goos()
-	if s.LaunchOut != "" && sameFolder(s.LaunchOut, abs, goos) {
+	if s.LaunchOut != "" && same(s.LaunchOut, abs, goos) {
 		return refuse(CaseLaunchOut, "Restart MailArchive without -out, then remove it from the list.")
 	}
-	current := s.Current != "" && sameFolder(s.Current, abs, goos)
-	if s.CaptureBackupFor != "" && sameFolder(s.CaptureBackupFor, abs, goos) && !current {
+	current := s.Current != "" && same(s.Current, abs, goos)
+	if s.CaptureBackupFor != "" && same(s.CaptureBackupFor, abs, goos) && !current {
 		return refuse(CaseBackupFor, "%s In Settings, remove the scheduled backup and set it up again (it is then registered under %s), then remove this one from the list.", backupForReason(s.Current), currentName(s.Current))
 	}
 	// §5.2: Out is cleared, so the archive in use is unlisted, only when it is
 	// unreachable or no longer an archive. A folder whose archive test cannot decide
 	// — a manifest it cannot read, one a newer MailArchive wrote, a mixed folder, a
 	// manifest that is a link — is not "no longer an archive" (del-s1a-A1-03, A2-03).
-	if current && !unreachableOrNoArchive(abs) {
+	if current && !gone(abs) {
 		return refuse(CaseCurrentArchive, "This is the archive in use. Switch to another archive, or add one (Add another archive), then remove this one from the list.")
 	}
 	return nil
@@ -671,6 +677,11 @@ func archiveTest(folder string) (Kind, error) {
 // from list clear Out.
 func unreachableOrNoArchive(folder string) bool {
 	_, err := archiveTest(folder)
+	return unreachableOrNoArchiveErr(err)
+}
+
+// unreachableOrNoArchiveErr is unreachableOrNoArchive's verdict on an archive test's error.
+func unreachableOrNoArchiveErr(err error) bool {
 	r := AsRefusal(err)
 	return r != nil && (r.Case == CaseUnreachable || r.Case == CaseNotArchive)
 }
@@ -681,7 +692,10 @@ func linkRefusal(link string) error {
 
 // sameFolder is "the same folder" as §3.1 matches it: by file identity when both
 // can be read, else by spelling (case folded where the file system ignores case).
-func sameFolder(a, b, goos string) bool { return sameFolderStat(os.Stat, a, b, goos) }
+// It asks statSeam (os.Stat) each time, never a memo.
+func sameFolder(a, b, goos string) bool {
+	return sameFolderStat(func(p string) (os.FileInfo, error) { return statSeam(p) }, a, b, goos)
+}
 
 // statFunc is os.Stat, or a page's memo of it (statMemo).
 type statFunc func(string) (os.FileInfo, error)

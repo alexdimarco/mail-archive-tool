@@ -1043,3 +1043,9 @@ MA-1000, MA-1010 to MA-1013).**
     greyed in the "This archive was not fully deleted: …" words. "unfinished" is left for
     a delete that did not finish and left it the archive in use (a stop at step 2). No
     new words.
+  - M1, M2 (MA-1016, MA-1021): the row's disabled Remove from list now asks
+    `RowsCheck.UnlistRefusal` — the route's refusals and words, through the page's stat
+    memo and the row's kept manifest parse — so it no longer reads the archive in use's
+    whole manifest, or asks an offline share several times, on every page load. Its other
+    refusals (`-out`, a capture registered under the folder's name, another spelling of
+    the archive in use) are now tested. No new words.

@@ -163,8 +163,9 @@ func (cfg Config) archiveRows(idx archindex.Index) []ArchiveRow {
 		lostSince := sourceLostSince(e.Path)
 		del := cfg.deleteRowFacts(e.Path, rc, avail && kind != "" && problem == "")
 		unlistWhy := ""
-		if err := archdelete.UnlistRefusal(e.Path, deps); err != nil {
-			unlistWhy = refusalText(err) // the route's own refusal (MA-1016)
+		// The route's own refusal (MA-1016), through the page's memo of the file system.
+		if err := rc.UnlistRefusal(e.Path); err != nil {
+			unlistWhy = refusalText(err)
 		}
 		rows = append(rows, ArchiveRow{
 			UnlistWhy:       unlistWhy,
