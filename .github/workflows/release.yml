@@ -52,11 +52,13 @@ jobs:
       # A release is exactly vMAJOR.MINOR.PATCH: the release-stamp gate and the program
       # copies an encrypted archive keeps rely on it (program design §7). Every tag push
       # is checked; a dry run builds v0.0.0 and cannot publish (publish runs only on a
-      # tag push).
+      # tag push). A pushed v0.0.0 is refused too: it is the dry run's placeholder, and
+      # build-release.sh does not check that its programs say they are that release.
       - name: Refuse a tag that is not an exact release
         if: github.event_name == 'push'
         run: |
           [[ "${GITHUB_REF_NAME}" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]] || { echo "not an exact release tag: ${GITHUB_REF_NAME}"; exit 1; }
+          [ "${GITHUB_REF_NAME}" != "v0.0.0" ] || { echo "v0.0.0 is the dry run's placeholder, never a release"; exit 1; }
 
       - name: Build release artifacts
         run: bash packaging/build-release.sh "${RELEASE_TAG}"

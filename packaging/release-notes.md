@@ -20,7 +20,9 @@ scheduled backups, alerts and status), a step-by-step wizard, and a command line
 ### Windows — start here
 - **Install it (recommended):** download **`MailArchiveDesktop-<version>-x64.msi`** (the
   installer; `<version>` is this release's number, for example `MailArchiveDesktop-1.5.4-x64.msi`)
-  and double-click it. The installer is not signed yet, so Windows warns you twice:
+  and double-click it. The installer is not signed yet, so you will see warnings:
+  - Your browser may warn when you download it. In Microsoft Edge, if it says the file
+    "isn't commonly downloaded", choose **Keep** (and **Keep anyway** if it asks again).
   - If **"Windows protected your PC"** appears, click **More info**, then **Run anyway**.
   - Windows then asks for permission to make changes, and names the publisher as
     **Unknown publisher**. Click **Yes**. Installing needs administrator rights: if your
@@ -30,9 +32,17 @@ scheduled backups, alerts and status), a step-by-step wizard, and a command line
   **MailArchive Desktop**, **MailArchive wizard**, **Copy MailArchive link** and
   **Uninstall MailArchive Desktop** to the Start menu and a **MailArchive Desktop** shortcut
   on the desktop, and it starts MailArchive Desktop quietly, without opening your browser,
-  each time you sign in to Windows. Open **MailArchive Desktop** from the Start menu to
-  begin. To remove the program later, use **Settings → Apps → Installed apps → MailArchive
-  Desktop → Uninstall**; your archives are kept.
+  each time anyone signs in to this computer (every account on it, not only yours). Open
+  **MailArchive Desktop** from the Start menu to begin.
+- **Updating to a newer version.** First click **Shut down** at the top of MailArchive
+  Desktop's page; if a backup is running, let it finish first. On a computer several
+  people are signed in to, each of them has MailArchive Desktop running: ask them to sign
+  out first. Then download the new installer and double-click it: it replaces the
+  installed version.
+- **Removing it.** First, in MailArchive Desktop, use **Danger zone → Uninstall**: it
+  removes your scheduled backups, settings and sign-in from this computer (removing the
+  program alone leaves the scheduled backups behind, pointing at a program that is gone). Then use **Settings → Apps → Installed apps → MailArchive
+  Desktop → Uninstall**. Your archives are kept either way.
 - **No administrator rights?** Download **`mailarchive-windows-amd64.zip`** instead, unzip it,
   then double-click `mailarchivew.exe` (if SmartScreen warns: **More info → Run anyway**). It
   works the same, but it has no Start menu entries, no desktop shortcut, and does not start
@@ -65,7 +75,7 @@ MailArchive is one program with verbs; there is no separate GUI download.
 | Linux arm64 | `mailarchive-linux-arm64` | the same verbs (compiled, not lab-run) |
 
 ### New in 1.5.4 — a Windows installer
-- **Windows now has an installer.** Each release now includes **`MailArchiveDesktop-<version>-x64.msi`**: double-click it to install MailArchive with Start menu entries, a desktop shortcut, and MailArchive Desktop starting quietly when you sign in. It is not signed yet, so Windows shows **"Windows protected your PC"** (click **More info**, then **Run anyway**) and names an **Unknown publisher** when it asks for administrator permission. The zip is still there for computers where you cannot install programs. If you used the zip, the install section above says how to move your scheduled backups to the installed program.
+- **Windows now has an installer.** Each release now includes **`MailArchiveDesktop-<version>-x64.msi`**: double-click it to install MailArchive with Start menu entries, a desktop shortcut, and MailArchive Desktop starting quietly whenever anyone signs in to the computer. It is not signed yet, so Windows shows **"Windows protected your PC"** (click **More info**, then **Run anyway**) and names an **Unknown publisher** when it asks for administrator permission. The zip is still there for computers where you cannot install programs. If you used the zip, the install section above says how to move your scheduled backups to the installed program.
 
 ### New in 1.5.3 — large archives open normally
 - **An archive of more than about 2,200 messages works in Your archives again.** Since 1.1.0, MailArchive Desktop read only the first 1 MiB of an archive's record (the `.mailarchive-manifest.json` file in its folder), so a larger archive was shown greyed, as "Not reachable right now", with no **Switch to this archive** button, and **Open an archive folder…** refused its folder as one whose record "cannot be read". MailArchive Desktop now reads the whole record, a little at a time, so a large archive shows as a normal row: **Switch to this archive** and **Pause** are offered, and **Open an archive folder…** opens it. One email with an unusually long subject no longer makes an archive look broken either. Nothing in your archives changes, and nothing else changes in this version.

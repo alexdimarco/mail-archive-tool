@@ -4,7 +4,13 @@
 # that download unless its SHA-256 equals the first line below that is not a comment:
 # 64 hexadecimal digits, nothing else on the line.
 #
-# NOT FILLED IN YET. The line below is a placeholder that is not a SHA-256, so every
-# WiX download is refused (the MSI build fails closed) until a person who has checked
-# the file replaces it with the real value.
+# NOT FILLED IN YET, SO NO RELEASE CAN BE MADE. The line below is a placeholder that is
+# not a SHA-256, so every WiX download is refused: a tag push's msi job fails and nothing
+# at all is published (MA-1103). To fill it in, a person downloads the zip, compares its
+# SHA-256 with a second, independent source (not the same download), replaces the
+# placeholder with the value, and fills in the three lines below (MA-1103 checks them):
+#
+# Checked by:
+# Checked on:
+# Checked against:
 PLACEHOLDER-NOT-A-SHA256-REPLACE-WITH-THE-CHECKED-VALUE

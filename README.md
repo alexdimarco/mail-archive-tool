@@ -44,8 +44,11 @@ it in a text editor. Both are universal (Apple Silicon and Intel).
 On Windows the installer puts MailArchive in Program Files for everyone on the
 computer, adds **MailArchive Desktop**, **MailArchive wizard**, **Copy MailArchive
 link** and **Uninstall MailArchive Desktop** to the Start menu and a desktop
-shortcut, and starts MailArchive Desktop quietly (no browser tab) each time you
-sign in. The zip does none of that. Moving from the zip to the installer: shut
+shortcut, and starts MailArchive Desktop quietly (no browser tab) each time anyone
+signs in to this computer (every account on it, not only yours). The zip does none
+of that. To remove an installed copy, use **Danger zone → Uninstall** in MailArchive
+Desktop first (it removes the scheduled backups), then Settings → Apps → Installed
+apps → **MailArchive Desktop** → Uninstall. Moving from the zip to the installer: shut
 MailArchive Desktop down, install, open MailArchive Desktop from the Start menu,
 click **Repair** on each archive's **Scheduled backup** card (so the schedule
 runs the installed program, not the unzipped one), then delete the unzipped
@@ -1288,7 +1291,7 @@ terminal that is running `desktop`.
 
 | Your machine | Do this |
 |---|---|
-| **Windows (installed)** | Download the new `MailArchiveDesktop-<version>-x64.msi` and double-click it: it replaces the installed version in place (or, if your IT team deploys MailArchive, ask them for the new one). |
+| **Windows (installed)** | First click **Shut down** in MailArchive Desktop (if a backup is running, let it finish first). Then download the new `MailArchiveDesktop-<version>-x64.msi` and double-click it: it replaces the installed version in place (or, if your IT team deploys MailArchive, ask them for the new one). |
 | **Windows (zip)** | Download the new `mailarchive-windows-amd64.zip` and replace the old **`mailarchive.exe`** and **`mailarchivew.exe`** with the new pair — keep them together in the same folder. |
 | **macOS** | Download the new `MailArchive-macos.zip`, unzip it, and drag the new **`Mail Archive.app`** into `/Applications`, replacing the old one (right-click → **Open** the first time — it is unsigned). The command-line tool upgrades the same way from `mailarchive-cli-macos.tar.gz`. |
 | **Linux** | Download the new `mailarchive-linux-amd64` and replace the old binary on your `PATH`. |
