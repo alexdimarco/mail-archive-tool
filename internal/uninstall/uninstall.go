@@ -93,6 +93,10 @@ func CheckLogCopied(log string, copied bool) error {
 type DeleteNotFinishedError struct {
 	Log     string
 	Folders []string
+	// Config is the config file of a MailArchive Desktop started with -config, whose uninstall
+	// this is ("" the usual one): the finishing command then carries -config FILE, so it reaches
+	// that Desktop's list and log (the uninstall-docs group's adversarial pass, finding 8).
+	Config string
 }
 
 func (e *DeleteNotFinishedError) Error() string {
@@ -118,9 +122,13 @@ func (e *DeleteNotFinishedError) names() string {
 // howToGoOn says how to finish each delete, its real folder in the command, or how to give up on
 // it.
 func (e *DeleteNotFinishedError) howToGoOn() string {
+	config := ""
+	if c := strings.TrimSpace(e.Config); c != "" {
+		config = " -config " + encmark.CommandPath(util.StripControl(c))
+	}
 	cmds := make([]string, 0, len(e.Folders))
 	for _, f := range e.Folders {
-		cmds = append(cmds, "mailarchive delete-archive -out "+encmark.CommandPath(util.StripControl(f)))
+		cmds = append(cmds, "mailarchive delete-archive"+config+" -out "+encmark.CommandPath(util.StripControl(f)))
 	}
 	return fmt.Sprintf("Wait for its result, or finish it (Delete… on its row in MailArchive Desktop, or %s), then uninstall again. If you no longer want to finish it, copy deletions.log somewhere you keep records, delete it, then uninstall again; for an encrypted archive, this computer then still remembers its key until you use Forget this encrypted archive here, or Forget every encrypted archive on this computer.",
 		strings.Join(cmds, "; "))

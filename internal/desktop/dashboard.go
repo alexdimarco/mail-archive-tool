@@ -9,6 +9,7 @@ package desktop
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"html/template"
 	"io"
@@ -1069,7 +1070,7 @@ func (d *dashboard) uninstallAction(w http.ResponseWriter, r *http.Request) {
 		undo()
 		if err != nil {
 			d.running.unblock()
-			writeJSON(w, map[string]any{"ok": false, "error": err.Error()})
+			writeJSON(w, map[string]any{"ok": false, "error": d.namingConfig(err).Error()})
 			return
 		}
 		if in.Shown == nil || !in.Shown.same(shownOf(now)) {
@@ -1093,6 +1094,18 @@ func (d *dashboard) uninstallAction(w http.ResponseWriter, r *http.Request) {
 		defer d.cfg.Keys.hush()()
 	}
 	rep, err := uninstallRun(filepath.Dir(cfgPath), d.knownArchivePaths(), exe, !in.Confirm)
+	err = d.namingConfig(err)
+	// The plan with a delete not finished is still the plan: the page shows it, then why Remove
+	// waits ("Uninstall will refuse until…", refuseUntil), and Remove is disabled — never the real
+	// run's "removed nothing" (MA-1030 amended; the uninstall-docs group's adversarial pass,
+	// finding 2).
+	var pendingDelete *uninstall.DeleteNotFinishedError
+	if err != nil && !in.Confirm && rep != nil && errors.As(err, &pendingDelete) {
+		reply := uninstallPlanReply(rep, false)
+		reply["refuseUntil"] = pendingDelete.Until()
+		writeJSON(w, reply)
+		return
+	}
 	if err != nil {
 		if in.Confirm {
 			d.cfg.Keys.reopen()
@@ -1113,6 +1126,22 @@ func (d *dashboard) uninstallAction(w http.ResponseWriter, r *http.Request) {
 		d.running.uninstalled() // the settings are gone: a delete would make them again
 	}
 	writeJSON(w, uninstallPlanReply(rep, in.Confirm))
+}
+
+// namingConfig gives a delete-not-finished refusal this Desktop's -config, so the finishing
+// command it names reaches this Desktop's list and log: without it, delete-archive reads the
+// default ones and refuses the folder as not in Your archives (the uninstall-docs group's
+// adversarial pass, finding 8). A Desktop started without -config adds nothing. err is returned.
+func (d *dashboard) namingConfig(err error) error {
+	var dn *uninstall.DeleteNotFinishedError
+	if !errors.As(err, &dn) {
+		return err
+	}
+	cfgPath := strings.TrimSpace(d.cfg.ConfigPath)
+	if def, derr := graphconfig.DefaultConfigPath(); derr != nil || filepath.Clean(def) != filepath.Clean(cfgPath) {
+		dn.Config = cfgPath
+	}
+	return err
 }
 
 // uninstallPlanChanged is Remove's refusal when the plan is no longer the one shown (builder's
@@ -2521,9 +2550,11 @@ if(unBtn)unBtn.addEventListener('click',async()=>{
   const done=busy(unBtn,'Preparing…',n,'Working out what an uninstall would remove. Nothing is removed yet…');
   try{const d=await uninstallReq(false);
     if(!d.ok){unShown=null;if(p)p.hidden=true;if(n){n.hidden=false;n.textContent=d.error||'Could not prepare the uninstall.';}return;}
-    if(n)n.hidden=true;
+    // A delete not finished: the plan, then why Remove waits for it; Remove is disabled.
+    if(n){n.hidden=!d.refuseUntil;n.textContent=d.refuseUntil||'';}
     unShown=d;
     if(pl)pl.textContent=uninstallPlanText(d);
+    if(unGo){unGo.disabled=!!d.refuseUntil;unGo.title=d.refuseUntil?'Uninstall waits until that delete is finished.':'';}
     if(p)p.hidden=false;
   }catch(e){if(n){n.hidden=false;n.textContent='Error: '+e;}}
   finally{done();}

@@ -582,6 +582,36 @@ const scenarios = {
       doc.querySelector('.status-grid').hasAttribute('inert'), 'its cards and status tiles are greyed, do nothing and say so');
     check(cur2.hasAttribute('data-delete-unfinished') && !doc.getElementById('switchLocks'), 'its row says the delete is not finished, and the switch note goes');
   },
+  // The Uninstall panel with a delete not finished (MA-1030 amended; the uninstall-docs group's
+  // adversarial pass, finding 2): the plan is shown, then why Remove waits, never "removed
+  // nothing", and Remove is disabled and sends nothing; a plan with nothing waiting gives it back.
+  // Positive twin first: a plan with nothing waiting leaves Remove enabled and no note.
+  async uninstallWaits() {
+    page([['E:\\Cur', 'current']], 'E:\\Cur');
+    doc.getElementById('sec-uninstall').append(el('button', { class: 'btn secondary', type: 'button', id: 'uninstallBtn' }, 'Uninstall MailArchive…'),
+      el('div', { class: 'device-box', id: 'uninstallPanel', hidden: '' }, el('pre', { class: 'mono', id: 'uninstallPlan' }),
+        el('div', {}, el('button', { class: 'btn', id: 'uninstallGo', type: 'button' }, 'Remove'), el('button', { class: 'btn secondary', id: 'uninstallCancel', type: 'button' }, 'Cancel'))),
+      el('div', { class: 'note', id: 'uninstallNote', hidden: '' }));
+    boot(); await wait(30);
+    const until = 'Uninstall will refuse until the delete of E:\\Old is finished (it is running or did not finish): …';
+    const planReply = extra => Object.assign({ ok: true, done: false, schedules: [], configFiles: ['C:\\cfg\\desktop-settings.json', 'C:\\cfg\\deletions.log'],
+      deletionsLog: 'C:\\cfg\\deletions.log', deletionsLogNote: 'Copy deletions.log first.', keptArchives: ['E:\\Cur'], clearedSignIn: false, binaryNote: '' }, extra);
+    const go = doc.getElementById('uninstallGo'), note = doc.getElementById('uninstallNote'), open = doc.getElementById('uninstallBtn');
+    replies['api/uninstall'] = planReply({});
+    open.click(); await wait(40);
+    check(shown('uninstallPanel') && !go.disabled && note.hidden, 'a plan with nothing waiting leaves Remove enabled and no note');
+    replies['api/uninstall'] = planReply({ refuseUntil: until });
+    open.click(); await wait(40);
+    check(shown('uninstallPanel') && doc.getElementById('uninstallPlan').textContent.includes('- the deletion log: C:\\cfg\\deletions.log'), 'the plan is shown');
+    check(!note.hidden && note.textContent === until, 'then why Remove waits, never "removed nothing"', note.textContent);
+    check(go.disabled, 'Remove is disabled');
+    const before = posts.filter(p => p.path === 'api/uninstall').length;
+    go.click(); await wait(20);
+    check(posts.filter(p => p.path === 'api/uninstall').length === before, 'a click on Remove sends nothing');
+    replies['api/uninstall'] = planReply({});
+    open.click(); await wait(40);
+    check(!go.disabled && note.hidden, 'a plan with nothing waiting gives Remove back');
+  },
 };
 
 (async () => {

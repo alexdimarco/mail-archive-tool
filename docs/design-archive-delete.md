@@ -1292,3 +1292,12 @@ are the builder's, for the operator, unless a quote says otherwise.
   so it and the settings files were kept. Copy it somewhere you keep records (your Documents
   folder, for example), then run mailarchive uninstall -yes -log-copied." The Desktop's Remove is
   unchanged (MA-1008: the plan it showed named the log and said to copy it first).
+- *The Desktop's Uninstall preview with a delete not finished (MA-1030 amended; finding 2).* It
+  showed no plan and the real run's "…so uninstall removed nothing…". It now shows the plan, then
+  "Uninstall will refuse until the delete of ROW is finished …" under it, with Remove disabled
+  (tooltip "Uninstall waits until that delete is finished."). Remove's own refusal keeps its
+  words.
+- *The finishing command on a Desktop started with -config (MA-1030 amended; finding 8).* The
+  uninstall refusal's command is then `mailarchive delete-archive -config "FILE" -out "ROW"`, FILE
+  that Desktop's config file; without -config it is unchanged. `status` and `uninstall` at the
+  terminal take no -config, so their commands stay as they are.
