@@ -44,7 +44,10 @@ func causeOf(err error) Cause {
 
 // heldIn reports a file rel (native separators) inside root that another program holds open so
 // that it cannot be deleted now: a handle asking to delete it is refused as in use (a sharing
-// violation, a lock, a mapped file). It opens and closes that handle only; nothing is changed.
+// violation: a program that opened it without sharing delete, as Outlook holds its .pst). It opens
+// and closes that handle only; nothing is changed. Not reported: a file only memory-mapped or
+// byte-range locked by another program, which such a handle still opens (the settle pass's LOW-8;
+// not yet checked on Windows, where its delete may still fail and is then said by the result).
 func heldIn(root *os.Root, rel string) bool {
 	h, err := openAt(root, rel, windows.DELETE)
 	if err != nil {

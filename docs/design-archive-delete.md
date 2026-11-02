@@ -1533,3 +1533,44 @@ each; the operator approves the words later.
   decision; no change).* At the terminal without `-record-out` the printed record's line names every
   computer's backup tools after the plan's shorter one: the saved files may be read on another
   computer, as this section's B4 note says.
+
+**The words group's settle pass (2 November 2026; the adversarial findings MED-1 to LOW-8 on the
+group above).** New or changed words are the builder's, for the operator.
+- *The finishing record states what the archive records now (MA-1037; MED-1).* No new words. The
+  first run's values fill only what the finishing run cannot read: a delete stopped before it
+  removed a file, a backup ran into the archive since, and the record said the first run's older
+  "Last backup … (as recorded in the archive)". Now this run's message count and mail dates stand
+  when it read them, the later last backup and the earlier first run are said.
+- *"Of yours" counts what it names (MA-1038; MED-2).* No new words. A `.DS_Store` beside an
+  unticked mail copy is no longer counted among "N files of yours"; it goes with the copies. Not
+  changed, for the operator: a folder of the person's (a top-level "Photos") is still counted and
+  called a file, as before this group.
+- *Status with a delete not finished points at nothing gone (MA-1040; MED-3).* "Messages:   10 in
+  manifest · search index unreadable" (and "… search index busy"), "Messages:   (manifest present
+  but unreadable)", "Schedule:   (descriptor present but unreadable)", "Verify schedule:
+  (descriptor present but unreadable)", each without "see the posture below", whose posture now
+  holds only the delete's line; and for a folder whose manifest the delete removed "Messages:
+  (not known — a delete of this archive did not finish)" (was "(no manifest yet — no run has
+  completed here)").
+- *Uninstall gives no next step it would refuse (MA-1041; LOW-4).* With a delete not finished, the
+  plan no longer adds "Once it is copied, run mailarchive uninstall -yes -log-copied."; the refusal
+  of a delete not finished quotes the log: "MailArchive's deletion log ("PATH"), which that delete
+  needs to finish." ("…which they need to finish." for several). The plan's listing line "  - the
+  deletion log: PATH" stays unquoted, as every path it lists is.
+- *No home folder, said only when none is set (MA-998; LOW-5).* "…Check that your home folder is
+  set (HOME, or Local AppData on Windows), then try again." (was "AppData", which reads as the
+  roaming folder; MailArchive's Desktop folder is in Local AppData). Any other cause keeps its
+  words: "MailArchive cannot tell whether MailArchive Desktop is running for your account (cannot
+  determine your per-account folder: path in $XDG_CONFIG_HOME is relative), so nothing was
+  changed.". archdelete's "could not find its settings folder" refusal keeps "AppData": that
+  folder is in the roaming one.
+- *A row marked "Delete not finished" on the page drops its Remove from list reason (MA-1042;
+  LOW-6).* No new words: as the server draws such a row.
+- *Step 2's stop words removed (MA-1038; LOW-7).* "The delete stopped before it stopped the
+  archive's scheduled backups." could not be shown: a stop before step 2 is a refusal with nothing
+  changed. Guards were added for five other untested details (no words changed).
+- *Not done, for the Windows lab (LOW-8).* The held-file probe (MA-1039) reports a file opened
+  without sharing delete; a file only memory-mapped or byte-range locked by another program is not
+  reported (its code comment no longer says it is). A Ctrl-C (MA-1043) while the settings write
+  still holds its temp file open may fail to remove it on Windows, and a temp file is registered
+  only after it is created. Neither was run on Windows in this pass.
