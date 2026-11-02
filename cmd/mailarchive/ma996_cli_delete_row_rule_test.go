@@ -6,10 +6,12 @@ import (
 	"os"
 	"path/filepath"
 	"runtime"
+	"strings"
 	"testing"
 
 	"mail-archive-tool/internal/archindex"
 	"mail-archive-tool/internal/assure"
+	"mail-archive-tool/internal/desktop"
 	"mail-archive-tool/internal/schedule"
 )
 
@@ -92,5 +94,33 @@ func TestDeleteArchiveDeletesOnlyARowOfYourArchives(t *testing.T) {
 	}
 	if e.listed(n) || !sameTree(beforeN, tree(t, n)) {
 		t.Fatal("Remove from list at the terminal did not remove the row, or changed the folder")
+	}
+
+	// The Desktop's current archive not in its list yet (the Desktop adds it when it next draws
+	// its page, as right after the wizard): a row all the same, matched in memory with no file
+	// written; deleted, its "row" gone, and the Desktop draws it no more (del-s4 residual 3).
+	c := e.plainArchive("Archive C")
+	e.unlistForTest(c)
+	if err := desktop.UpdateSettings(e.settingsPath(), "test", func(s *desktop.Settings) { s.Out = c }); err != nil {
+		t.Fatal(err)
+	}
+	listBefore, _ := os.ReadFile(e.indexPath())
+	settingsBefore, _ := os.ReadFile(e.settingsPath())
+	out.Reset()
+	if err := deleteArchive(&scripted{isAttended: true}, c, filepath.Join(t.TempDir(), "plan.txt"), "", &out); err != nil {
+		t.Fatalf("the plan of the Desktop's current archive, not in its list yet: %v\n%s", err, out.String())
+	}
+	listAfter, _ := os.ReadFile(e.indexPath())
+	settingsAfter, _ := os.ReadFile(e.settingsPath())
+	if !bytes.Equal(listBefore, listAfter) || !bytes.Equal(settingsBefore, settingsAfter) || e.listed(c) {
+		t.Fatal("matching the current archive as a row wrote the list or the settings")
+	}
+	out.Reset()
+	if err := deleteArchive(&scripted{isAttended: true, answers: []string{"Archive C"}}, c, "", "", &out); err != nil {
+		t.Fatalf("delete-archive of the Desktop's current archive, not in its list yet: %v\n%s", err, out.String())
+	}
+	if r := out.String(); !strings.Contains(r, "Deleted.") || !strings.Contains(r, "Removed from Your archives") || strings.Contains(r, "No row for this folder was found") ||
+		e.listed(c) || desktop.LoadSettings(e.settingsPath()).Out != "" {
+		t.Fatalf("the current archive's delete:\n%s", r)
 	}
 }

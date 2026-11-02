@@ -807,7 +807,7 @@ func unlistArchive(a asker, out string, stdout io.Writer) error {
 	if err != nil {
 		return err
 	}
-	q, err := archdelete.PlanUnlist(row, seams.UnlistDeps(nil))
+	q, err := archdelete.PlanUnlist(row, seams.UnlistDeps(row, nil))
 	if err != nil {
 		return terminalRefusal(err.Error(), row)
 	}
@@ -825,7 +825,7 @@ func unlistArchive(a asker, out string, stdout io.Writer) error {
 		return err
 	}
 	watch.set(phaseFinishing)
-	res := archdelete.Unlist(row, seams.UnlistDeps(q.Named))
+	res := archdelete.Unlist(row, seams.UnlistDeps(row, q.Named))
 	watch.over()
 	if res.Refusal != nil {
 		return terminalRefusal(res.Refusal.Message, row)

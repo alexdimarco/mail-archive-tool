@@ -122,19 +122,25 @@ func (cfg Config) findRow(path string) (string, bool, error) {
 	if err != nil {
 		return "", false, err
 	}
+	row, ok := rowIn(idx, path)
+	return row, ok, nil
+}
+
+// rowIn is matchRow's rule over the entries of idx.
+func rowIn(idx archindex.Index, path string) (string, bool) {
 	for _, e := range idx.Entries {
 		if e.Path == path {
-			return e.Path, true, nil
+			return e.Path, true
 		}
 	}
 	if fi, err := os.Stat(path); err == nil {
 		for _, e := range idx.Entries {
 			if fe, err := os.Stat(e.Path); err == nil && os.SameFile(fi, fe) {
-				return e.Path, true, nil
+				return e.Path, true
 			}
 		}
 	}
-	return "", false, nil
+	return "", false
 }
 
 // knownArchives are the archive folders the Desktop knows (its list, and this computer's

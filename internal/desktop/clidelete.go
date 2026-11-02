@@ -1,8 +1,10 @@
 package desktop
 
 import (
+	"errors"
 	"os"
 	"path/filepath"
+	"strings"
 	"time"
 
 	"mail-archive-tool/internal/app"
@@ -24,6 +26,8 @@ import (
 type CommandLineDelete struct {
 	cfg   Config
 	store vault.Store
+	// drawn are the rows Row found only as the Desktop draws its page, not in its list yet.
+	drawn map[string]bool
 }
 
 // NewCommandLineDelete reads the Desktop's default configuration. store is the secret store a
@@ -36,7 +40,7 @@ func NewCommandLineDelete(store vault.Store, sched archdelete.Scheduler, install
 	}
 	cfg := Config{ConfigPath: cfgPath, SettingsPath: settingsPathFor(cfgPath), IndexPath: indexPathFor(cfgPath),
 		Version: buildVersion(), DeleteScheduler: sched, DeleteInstalled: installed}
-	return &CommandLineDelete{cfg: cfg, store: store}, nil
+	return &CommandLineDelete{cfg: cfg, store: store, drawn: map[string]bool{}}, nil
 }
 
 // PlannedText is the saved plan's text (§8.1, Status "planned, nothing deleted"), headed as the
@@ -59,9 +63,45 @@ func indexPathFor(cfgPath string) string {
 
 // Row is §3.1's row rule: the row of Your archives that path is, by its own spelling first,
 // then by file identity while the folder can be read; ok is false when it is no row. err says
-// the list itself could not be read, so whether path is a row cannot be told.
+// the list itself could not be read, so whether path is a row cannot be told. The rows are
+// those the Desktop draws: its list, and the archives its tidy-up adds to the list when it
+// draws the page (reconcileArchives: the current archive, the folder a scheduled backup is
+// for, the archive the wizard made last), added here in memory only, no file written (del-s4
+// residual 3).
 func (c *CommandLineDelete) Row(path string) (row string, ok bool, err error) {
-	return c.cfg.findRow(path)
+	path = strings.TrimSpace(path)
+	if path == "" {
+		return "", false, nil
+	}
+	idx, err := archindex.ReadFile(c.cfg.IndexPath)
+	if err != nil {
+		return "", false, err
+	}
+	if row, ok := rowIn(idx, path); ok {
+		return row, true, nil
+	}
+	drawn := c.cfg
+	drawn.LastArchive = OfferedArchive // as the Desktop's launch sets it
+	row, ok = rowIn(archindex.Reconcile(idx, drawn.archivePointers(), time.Now()), path)
+	if ok {
+		c.drawn[row] = true
+	}
+	return row, ok, nil
+}
+
+// forgetDrawn is step 9's (and Remove from list's) removal of row: for a row Row found only
+// as the Desktop draws it, the list holding none is no failure, since the delete cleared the
+// settings that drew it (step 4) and the Desktop draws it no more.
+func (c *CommandLineDelete) forgetDrawn(row string, forget func(string) error) func(string) error {
+	if !c.drawn[row] || forget == nil {
+		return forget
+	}
+	return func(r string) error {
+		if err := forget(r); !errors.Is(err, archdelete.ErrRowNotListed) {
+			return err
+		}
+		return nil
+	}
 }
 
 // ListPath is the Desktop's list of archives (known-archives.json) these verbs read.
@@ -91,10 +131,13 @@ func (c *CommandLineDelete) ExecDeps(row string, before func(step int) error) ar
 	host, _ := os.Hostname()
 	x := c.cfg.deleteExecDeps(row, func(string) bool { return false }, c.store, time.Now, host)
 	x.NoPage, x.BeforeStep = true, before
+	x.ForgetRow = c.forgetDrawn(row, x.ForgetRow)
 	return x
 }
 
-// UnlistDeps are Remove from list's seams, stopping only the names its question showed.
-func (c *CommandLineDelete) UnlistDeps(named []string) archdelete.UnlistDeps {
-	return c.cfg.deleteUnlistDeps(named)
+// UnlistDeps are Remove from list's seams for row, stopping only the names its question showed.
+func (c *CommandLineDelete) UnlistDeps(row string, named []string) archdelete.UnlistDeps {
+	x := c.cfg.deleteUnlistDeps(named)
+	x.ForgetRow = c.forgetDrawn(row, x.ForgetRow)
+	return x
 }
