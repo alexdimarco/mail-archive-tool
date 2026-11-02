@@ -592,7 +592,7 @@ func (l *lister) encrypted(deps Deps) error {
 	p.ArchiveID = archiveIDOf(l.root)
 	p.Captured = Captured{LastBackup: lastBackup(l.root)}
 	if deps.Sealed != nil {
-		if c, ok := deps.Sealed(l.folder); ok {
+		if c, ok := deps.Sealed(l.folder, p.ArchiveID); ok {
 			c.Known, c.KeyOpen = true, true
 			c.LastBackup = p.Captured.LastBackup
 			p.Captured = c

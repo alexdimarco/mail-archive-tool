@@ -88,7 +88,7 @@ func TestAnEncryptedPlanRecordsTheRecordAndSaysWhatIsSealed(t *testing.T) {
 	deps.Record = func(f string) (RecordRef, error) {
 		return RecordRef{Recorded: true, ID: "0123456789abcdef0123456789abcdef", Spelling: f}, nil
 	}
-	deps.Sealed = func(string) (Captured, bool) {
+	deps.Sealed = func(string, string) (Captured, bool) {
 		return Captured{Messages: 42, MailFrom: time.Date(2020, 1, 1, 0, 0, 0, 0, time.UTC), MailTo: time.Date(2024, 1, 1, 0, 0, 0, 0, time.UTC)}, true
 	}
 	p := mustPlan(t, dir, deps)
@@ -101,7 +101,7 @@ func TestAnEncryptedPlanRecordsTheRecordAndSaysWhatIsSealed(t *testing.T) {
 	}
 
 	// Key not open here: the three sealed values are not known, the last backup is.
-	deps.Sealed = func(string) (Captured, bool) { return Captured{}, false }
+	deps.Sealed = func(string, string) (Captured, bool) { return Captured{}, false }
 	p = mustPlan(t, dir, deps)
 	text = string(RecordText(RecordInput{Status: StatusPlanned, Plan: p}))
 	for _, want := range []string{"Messages: not known: encrypted, key not open", "Mail dates: not known: encrypted, key not open",

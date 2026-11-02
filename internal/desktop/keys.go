@@ -218,6 +218,34 @@ func (k *archiveKeys) get(out string) *keyEntry {
 	return k.entries[key]
 }
 
+// openAt is the archive open here whose folder is folder on disk — by file identity, under any
+// spelling, as LockForDelete matches it (MA-978) — or nil when none is or folder cannot be read.
+// Never by the registry's folded key alone: that folds letter case (and ß/ss on Windows and
+// macOS) where a drive may keep two such folders apart, and misses another spelling of the same
+// folder (a link, a mapped drive). A delete asks it (the delete residuals' security pass, key-use
+// findings 2 and 4). The file system is asked outside the registry's lock.
+func (k *archiveKeys) openAt(folder string) *keyEntry {
+	if k == nil {
+		return nil
+	}
+	fi := statOrNil(folder)
+	if fi == nil {
+		return nil
+	}
+	k.mu.Lock()
+	open := make([]*keyEntry, 0, len(k.entries))
+	for _, e := range k.entries {
+		open = append(open, e)
+	}
+	k.mu.Unlock()
+	for _, e := range open {
+		if pfi := statOrNil(e.path); pfi != nil && os.SameFile(pfi, fi) {
+			return e
+		}
+	}
+	return nil
+}
+
 // unlock opens the archive at out with what the person typed. One derivation at a
 // time per archive; a lock or Shut down that lands while it derives wins — the new
 // key is destroyed and the unlock refused (§3.2).

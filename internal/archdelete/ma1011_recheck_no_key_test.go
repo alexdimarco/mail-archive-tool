@@ -16,7 +16,7 @@ func TestTheRecheckUnderTheLockUsesNoKeyAndListsNoScratch(t *testing.T) {
 	r := newRig(t, encryptedClean(t))
 	r.x.Deps.Record = recordedAt(r.dir)
 	sealed, scratch := 0, 0
-	r.x.Deps.Sealed = func(string) (Captured, bool) { sealed++; return Captured{Messages: 1}, true }
+	r.x.Deps.Sealed = func(string, string) (Captured, bool) { sealed++; return Captured{Messages: 1}, true }
 	r.x.Deps.ScratchDir = func(spelling, id string) (string, error) {
 		scratch++
 		return scratchFor(r.scratch, spelling, id), nil

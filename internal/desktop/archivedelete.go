@@ -217,7 +217,7 @@ func (cfg Config) ownSettingsFolders() []string {
 // list and a re-run (§5.2), the settings §7 reads, the protected folders, deletions.log.
 // busy reports a run on the folder; sealed an encrypted archive's sealed values (nil: "not
 // known").
-func (cfg Config) deleteDeps(busy func(string) bool, sealed func(string) (archdelete.Captured, bool)) archdelete.Deps {
+func (cfg Config) deleteDeps(busy func(string) bool, sealed func(folder, archiveID string) (archdelete.Captured, bool)) archdelete.Deps {
 	logPath := cfg.deletionsLogPath()
 	return archdelete.Deps{
 		Discover: archdelete.HostDiscovery{Installed: cfg.DeleteInstalled},
@@ -239,10 +239,13 @@ func (cfg Config) deleteDeps(busy func(string) bool, sealed func(string) (archde
 // count, the mail's dates and the first run of an encrypted archive whose key is open on this
 // page, read from its sealed record (keyring.ReadSealedRecord: the open archive's key, for that
 // read only); ok false — "not known: encrypted, key not open" — when it is not open here or its
-// record cannot be read. The command line has no page (no Keys): never open.
-func (cfg Config) sealedOnPage(folder string) (archdelete.Captured, bool) {
-	e := cfg.Keys.get(folder)
-	if e == nil {
+// record cannot be read. The command line has no page (no Keys): never open. The open archive
+// counts only when it is the folder planned on disk (openAt) and its archive ID is archiveID, the
+// one the folder's key files claim: never another folder's open archive whose name folds to the
+// same key (the delete residuals' security pass, key-use finding 2).
+func (cfg Config) sealedOnPage(folder, archiveID string) (archdelete.Captured, bool) {
+	e := cfg.Keys.openAt(folder)
+	if e == nil || archiveID == "" || e.id != archiveID {
 		return archdelete.Captured{}, false
 	}
 	m, history, err := keyring.ReadSealedRecord(e.u)
@@ -367,7 +370,8 @@ func (d *dashboard) deletePlanAction(w http.ResponseWriter, r *http.Request) {
 	// started line and before this page's open archive is locked; this page's own reader is
 	// excused while the archive is open here, since step 1 closes it (del-s3a conformance D1).
 	deps.ScratchDir = app.ArchiveScratchFor
-	deps.OpenHere = func(folder string) bool { return d.cfg.Keys.get(folder) != nil }
+	// Open here by the folder on disk, under any spelling, as step 1 (b) closes it (key-use finding 4).
+	deps.OpenHere = func(folder string) bool { return d.cfg.Keys.openAt(folder) != nil }
 	plan, err := archdelete.Plan(row, deps)
 	if err != nil {
 		refuseDelete(w, refusalText(err))

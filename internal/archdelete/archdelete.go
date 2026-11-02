@@ -339,8 +339,11 @@ type Deps struct {
 	// (RecordLookup is the real one). Nil records nothing.
 	Record func(folder string) (RecordRef, error)
 	// Sealed returns an encrypted archive's sealed values when its key is open here
-	// (the Desktop's open archive); ok false when it is not.
-	Sealed func(folder string) (c Captured, ok bool)
+	// (the Desktop's open archive); ok false when it is not. archiveID is the ID the
+	// folder's key files claim (DeletePlan.ArchiveID, "" when none says): the open archive
+	// counts only when it is that archive in that folder (the delete residuals' security
+	// pass, key-use finding 2).
+	Sealed func(folder, archiveID string) (c Captured, ok bool)
 	// KeyPlan is the keyring's read-only plan to forget the record at a recorded
 	// spelling (Keyring.PlanForget): the plan says from it whether step 8 would forget
 	// the key or keep it for other recorded copies (§6, §14). Nil: the plan's key line
