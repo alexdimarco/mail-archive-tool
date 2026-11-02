@@ -2,6 +2,9 @@ package archdelete
 
 import (
 	"errors"
+	"os"
+	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 
@@ -37,6 +40,54 @@ func TestADeleteFinishesOnLinuxWithNoCrontabProgram(t *testing.T) {
 	}
 	if u, err := UnfinishedDelete(r.x.Log, dir, "linux"); u != nil || err != nil {
 		t.Fatalf("the row must not be left Delete not finished: %+v %v", u, err)
+	}
+}
+
+// covers: MA-1022, R36
+// A crontab program that is there but cannot be run is not "no crontab" (the 1.5.3 friction
+// fixes' adversarial pass, finding 2): a delete through the real host scheduler asking cron stops
+// at step 2, its scheduled backup not taken as absent, the folder untouched and the row "Delete
+// not finished", so a live cron entry is never left behind a deleted archive. Positive twin first:
+// with no crontab program the delete completes (TestADeleteFinishesOnLinuxWithNoCrontabProgram's
+// path, here again beside it).
+func TestADeleteStopsAtStep2WhenCrontabCannotBeRun(t *testing.T) {
+	t.Setenv("PATH", t.TempDir()) // no crontab here
+	twin := newRig(t, smallArchive(t, t.TempDir()))
+	twin.x.Deps.GOOS = "linux"
+	twin.x.Scheduler = HostScheduler{GOOS: "linux"}
+	if res := twin.run(t, false); res.Status != StatusComplete {
+		t.Fatalf("the positive twin: %s", res.Message())
+	}
+
+	bin := t.TempDir()
+	name := "crontab"
+	if runtime.GOOS == "windows" {
+		name += ".exe"
+	}
+	if err := os.WriteFile(filepath.Join(bin, name), []byte("this is not a program\n"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("PATH", bin)
+	dir := smallArchive(t, t.TempDir())
+	before := tree(t, dir)
+	r := newRig(t, dir)
+	r.x.Deps.GOOS = "linux"
+	r.x.Scheduler = HostScheduler{GOOS: "linux"}
+	res := r.run(t, false)
+	def := schedule.DefaultNameFor(dir)
+	if res.Status != StatusPartial || !res.Unfinished || len(r.rows) != 0 || len(res.Stopped) != 0 ||
+		!strings.HasPrefix(res.Lines[0], "Could not stop the scheduled backup "+def+": ") || !strings.Contains(res.Lines[0], "Nothing else was changed.") {
+		t.Fatalf("a crontab that cannot be run: status %q unfinished %v rows %q\n%s", res.Status, res.Unfinished, r.rows, res.Message())
+	}
+	// Step 2 is before any file is removed: every file the folder held is still there.
+	after := tree(t, dir)
+	for p := range before {
+		if _, ok := after[p]; !ok {
+			t.Fatalf("step 2's stop removed %s", p)
+		}
+	}
+	if u, err := UnfinishedDelete(r.x.Log, dir, "linux"); u == nil || err != nil {
+		t.Fatalf("the row must be left Delete not finished: %+v %v", u, err)
 	}
 }
 

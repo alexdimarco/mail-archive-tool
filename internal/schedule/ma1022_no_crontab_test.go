@@ -6,6 +6,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 
@@ -66,6 +67,51 @@ func TestNoCrontabProgramMeansNoCronEntryToStop(t *testing.T) {
 			_, derr := os.Stat(filepath.Join(out, DescriptorName))
 			return len(writes) == 0 && errors.Is(derr, fs.ErrNotExist)
 		}))
+}
+
+// unrunnableCrontab puts on PATH a crontab program that is there but cannot be run (not a
+// program: the system refuses to start it), and returns its folder.
+func unrunnableCrontab(t *testing.T) string {
+	t.Helper()
+	dir := t.TempDir()
+	name := "crontab"
+	if runtime.GOOS == "windows" {
+		name += ".exe"
+	}
+	if err := os.WriteFile(filepath.Join(dir, name), []byte("this is not a program\n"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("PATH", dir)
+	return dir
+}
+
+// covers: MA-1022, R14
+// Only a crontab program that is not installed means no cron entry (the 1.5.3 friction fixes'
+// adversarial pass, finding 2): one that is there but cannot be run leaves the scheduler
+// unavailable, so a removal does not take a live cron entry as absent (step 2 then tries to
+// remove it, and a crontab it cannot read is never overwritten). Positive twin first: no crontab
+// program on PATH is no entry. The real program is run.
+func TestOnlyAMissingCrontabIsNoCronEntry(t *testing.T) {
+	name := "mailarchive-1234abcd"
+	t.Setenv("PATH", t.TempDir())
+	if got := QueryToStopOn(name, "linux"); got != NotInstalled {
+		t.Fatalf("the positive twin, no crontab program: %v", got)
+	}
+	unrunnableCrontab(t)
+	_, err := crontabList()
+	if err == nil || errors.Is(err, exec.ErrNotFound) {
+		t.Fatalf("a crontab that cannot be run must fail to start, not be missing: %v", err)
+	}
+	var ee *exec.ExitError
+	if errors.As(err, &ee) {
+		t.Fatalf("a crontab that cannot be run must not start at all: %v", err)
+	}
+	if got := QueryToStopOn(name, "linux"); got != SchedulerUnavailable {
+		t.Fatalf("a removal's question with a crontab that cannot be run: %v, want scheduler unavailable", got)
+	}
+	if err := RemoveLiveEntryNamedOn(name, "linux"); err == nil {
+		t.Fatal("removing through a crontab that cannot be run must fail, never count as done")
+	}
 }
 
 // covers: MA-1022, R14
