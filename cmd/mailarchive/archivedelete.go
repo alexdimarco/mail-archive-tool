@@ -337,9 +337,9 @@ func deleteArchive(a asker, out, planOut, recordOut string, stdout io.Writer) er
 		return err
 	}
 	x := seams.ExecDeps(row, before)
-	// The delete says it is over as its last act, so a signal between its return and the
-	// result is never "did not finish": the result and the record are printed (del-s4
-	// residual 2).
+	// The delete says it is over right before its finished line is written, so a signal from
+	// then on, and between its return and the result, is never "did not finish": the result and
+	// the record are printed (del-s4 residual 2, and its adversarial pass's finding 5).
 	x.Finished = func() { watch.set(phaseDone) }
 	watch.set(phaseHolding)
 	res := archdelete.Execute(plan, typed, unrecorded, x)
@@ -602,13 +602,13 @@ const (
 
 // verbWatch is a delete verb's Ctrl-C and terminate signal, from its start to its end.
 type verbWatch struct {
-	mu          sync.Mutex
-	phase       watchPhase
-	held        os.Signal
-	row         string
-	savePath    string
-	owned       string
-	ownedFile   *os.File
+	mu        sync.Mutex
+	phase     watchPhase
+	held      os.Signal
+	row       string
+	savePath  string
+	owned     string
+	ownedFile *os.File
 	// creating is the file creator is making now, and made is closed once that returns; acting
 	// is set by a signal that waits for it, and closed once the signal has acted.
 	creating    string

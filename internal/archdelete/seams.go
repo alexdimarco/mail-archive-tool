@@ -135,10 +135,11 @@ type ExecDeps struct {
 	// written); from step 4 on it stops the delete there as not fully deleted, naming
 	// the steps done, and the row shows "Delete not finished" (§5.4).
 	BeforeStep func(step int) error
-	// Finished, when set, is called as Execute's last act, however it ends (after step 10:
-	// the finished line written, the lock released): the command line's signal watch then
-	// knows the delete is over, so a signal from there on is never a stop mid-delete (del-s4
-	// residual 2).
+	// Finished, when set, is called once the delete is over, however it ends: right before
+	// step 10 writes the finished line (the steps done, the lock released), or as Execute
+	// returns when there is no finished line to write. The command line's signal watch then
+	// knows the delete is over, so a signal from there on is never a stop mid-delete, even
+	// once the log says it finished (del-s4 residual 2, and its adversarial pass's finding 5).
 	Finished func()
 	// Now is the clock; nil is time.Now. Computer, Account and Version head the
 	// deletion record (§8.1); "" Computer and Account are this computer's.

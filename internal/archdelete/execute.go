@@ -45,11 +45,9 @@ func NameMatches(typed, name string) bool {
 // mark cleared and the finished line written in a deferred cleanup, after a
 // refusal or a recovered panic too.
 func Execute(plan *DeletePlan, typed string, unrecorded bool, x ExecDeps) (res *Result) {
-	if x.Finished != nil {
-		defer x.Finished() // deferred first, so it runs after the cleanup's step 10
-	}
 	res = &Result{}
 	e := &run{plan: plan, x: x, res: res, unrecorded: unrecorded}
+	defer e.sayFinished() // deferred first, so it runs last: when step 10 did not say it
 	if r := e.setUp(); r != nil {
 		res.refuseBefore(r)
 		return res
@@ -81,10 +79,11 @@ type run struct {
 	// id is this delete's run id, on each of its deletions.log lines.
 	id string
 
-	logged bool
-	lock   *lockfile.Lock
-	marked bool
-	root   *os.Root
+	logged   bool
+	finished bool // ExecDeps.Finished was called
+	lock     *lockfile.Lock
+	marked   bool
+	root     *os.Root
 	// step is the step running; stage2 is set once step 2 began: any stop from then
 	// on is "not fully deleted" and leaves the row unfinished.
 	step    int
@@ -1207,11 +1206,22 @@ func (e *run) step10() {
 	res.Record = rec
 	l := logLine{At: e.stamp(), Event: evFinished, Run: e.id, Folder: p.Folder, Row: e.row, Outcome: e.outcome, Unfinished: res.Unfinished,
 		Left: intp(len(left)), Kept: intp(len(res.Kept)), Detail: e.detail, RecordSHA256: recordSHA(rec)}
+	e.sayFinished() // before the line: once the log says finished, the delete has said it is over
 	if err := appendLog(e.log, l); err != nil {
 		res.Lines = append(res.Lines, msgDigestFailed)
 		return
 	}
 	res.Lines = append(res.Lines, "Recorded in deletions.log")
+}
+
+// sayFinished calls ExecDeps.Finished, once: right before step 10 writes the finished line, so
+// a signal once deletions.log says the delete finished is never a stop mid-delete (the residual
+// fixes' adversarial pass, finding 5); else as Execute returns.
+func (e *run) sayFinished() {
+	if !e.finished && e.x.Finished != nil {
+		e.finished = true
+		e.x.Finished()
+	}
 }
 
 // recordSHA is the hex on a record's last line.
