@@ -959,3 +959,16 @@ MA-1000, MA-1010 to MA-1013).**
   archive is being removed from Your archives, so nothing was deleted."). Before, it
   checked for an uninstall and wrote the list and settings later, so an uninstall could
   begin between and have them written again after it.
+- *Your archives is changed under a lock between programs (MA-1014, CON-07).* Every
+  read-change-write of `known-archives.json` — the command line's `ListRow`, step 9's and
+  Remove from list's `ForgetRowAt`, Add another archive and the page's tidy-up — goes
+  through `archindex.UpdateFile`, which holds `known-archives.lock` beside the list (the
+  same OS file lock as the archive lock: flock on macOS and Linux, LockFileEx on Windows)
+  for its one read and one write, so two programs never lose each other's change. A
+  change waits up to 5 seconds for another holder, then refuses with nothing written:
+  "Your archives (FILE) is being changed by another MailArchive window; try again" (at the
+  terminal "…, so nothing was deleted; try again" or "nothing was changed"; builder's
+  words, for the operator). Readers take no lock (the write is an atomic rename). The
+  page's tidy-up reads without the lock and takes it only when it would add a row.
+  Uninstall leaves `known-archives.lock` behind, as it leaves `encrypted-archives.lock`;
+  adding it to uninstall's list of files is the operator's call.

@@ -24,6 +24,7 @@ import (
 
 	"mail-archive-tool/internal/encmark"
 	"mail-archive-tool/internal/job"
+	"mail-archive-tool/internal/lockfile"
 	"mail-archive-tool/internal/state"
 	"mail-archive-tool/internal/util"
 )
@@ -139,6 +140,77 @@ func WriteFile(path string, idx Index) error {
 	}
 	fsyncDir(filepath.Dir(path))
 	return nil
+}
+
+// lockWait is how long a change of the index waits for another program's change of it:
+// a change holds the lock only for one read and one write, so a wait this long means the
+// holder is stuck, and the change refuses rather than hang.
+var lockWait = 5 * time.Second
+
+// LockPath is the lock file beside the index at path that every change of it takes
+// (known-archives.json's is known-archives.lock).
+func LockPath(path string) string {
+	return strings.TrimSuffix(path, filepath.Ext(path)) + ".lock"
+}
+
+// BusyError refuses a change of the index while another MailArchive program changes it
+// for longer than lockWait (the delete residuals' security pass, CON-07). Nothing was
+// changed.
+type BusyError struct {
+	Path string
+	Err  error
+}
+
+func (e *BusyError) Error() string {
+	return fmt.Sprintf("Your archives (%s) is being changed by another MailArchive window; try again", util.StripControl(e.Path))
+}
+
+func (e *BusyError) Unwrap() error { return e.Err }
+
+// UpdateFile changes the index at path under a lock every MailArchive program takes for a
+// change of it (LockPath, an OS file lock: flock on macOS and Linux, LockFileEx on
+// Windows, released however its holder ends), so two programs — two Desktops, a Desktop
+// and `mailarchive delete-archive` — never read the same list and each write back its own
+// change, one of them lost (the delete residuals' security pass, CON-07). change gets the
+// index as read under the lock and returns the index to write and whether to write it;
+// its error writes nothing and is returned. Another holder for longer than lockWait is a
+// *BusyError; a lock that cannot be taken at all (a planted link, a folder MailArchive
+// cannot write) is an error naming the list. Readers that only read take no lock: the
+// write is an atomic rename, so a reader sees the old list or the new one whole. With no
+// settings folder yet there is no list: one is made only for a change that writes.
+func UpdateFile(path string, change func(Index) (Index, bool, error)) error {
+	if err := encmark.RefuseSettingsWrite(path, "the list of your archives"); err != nil {
+		return err
+	}
+	dir := filepath.Dir(path)
+	if _, err := os.Stat(dir); errors.Is(err, os.ErrNotExist) {
+		if _, write, cerr := change(Index{Version: Version}); cerr != nil || !write {
+			return cerr
+		}
+		if err := os.MkdirAll(dir, 0o700); err != nil {
+			return err
+		}
+	}
+	lock, err := lockfile.AcquireWait(LockPath(path), "archives-list", lockWait)
+	if err != nil {
+		if errors.Is(err, lockfile.ErrHeld) {
+			return &BusyError{Path: path, Err: err}
+		}
+		return fmt.Errorf("Your archives (%s) could not be locked to change it, so nothing was changed: %w", util.StripControl(path), err)
+	}
+	defer lock.Release()
+	idx, err := ReadFile(path)
+	if err != nil {
+		return err
+	}
+	next, write, err := change(idx)
+	if err != nil || !write {
+		return err
+	}
+	if err := lock.StillHeld(); err != nil {
+		return err
+	}
+	return WriteFile(path, next)
 }
 
 // fsyncDir flushes a directory entry so the atomic rename is durable across a

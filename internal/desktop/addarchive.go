@@ -72,18 +72,14 @@ func (d *dashboard) addArchive(w http.ResponseWriter, r *http.Request) {
 // registerArchive folds a newly created archive's folder into the known-archives
 // index so the "Your archives" list shows it, WITHOUT making it the current archive
 // (archindex.Reconcile is monotone — it only ever adds). A blank path or no index is
-// a no-op. The Desktop stays the index's sole maintainer (SD-6).
+// a no-op. The Desktop stays the index's sole maintainer (SD-6). The list is read and
+// written under its lock (archindex.UpdateFile, CON-07).
 func (cfg Config) registerArchive(path string, now time.Time) error {
 	if strings.TrimSpace(cfg.IndexPath) == "" || strings.TrimSpace(path) == "" {
 		return nil
 	}
-	before, err := archindex.ReadFile(cfg.IndexPath)
-	if err != nil {
-		return err
-	}
-	after := archindex.Reconcile(before, []string{path}, now)
-	if len(after.Entries) == len(before.Entries) {
-		return nil
-	}
-	return archindex.WriteFile(cfg.IndexPath, after)
+	return archindex.UpdateFile(cfg.IndexPath, func(before archindex.Index) (archindex.Index, bool, error) {
+		after := archindex.Reconcile(before, []string{path}, now)
+		return after, len(after.Entries) != len(before.Entries), nil
+	})
 }

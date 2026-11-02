@@ -118,25 +118,24 @@ func forgetRowIn(settingsDir, row, goos string) error {
 
 // ForgetRowAt is forgetRowIn for the list of archives at path (a Desktop's known-archives.json
 // wherever it keeps it, MA-973): every entry naming the folder row is removed, and
-// ErrRowNotListed when none does, nothing written.
+// ErrRowNotListed when none does, nothing written. The list is read and written under its
+// lock (archindex.UpdateFile; the delete residuals' security pass, CON-07).
 func ForgetRowAt(path, row, goos string) error {
-	idx, err := archindex.ReadFile(path)
-	if err != nil {
-		return err
-	}
-	n := len(idx.Entries)
-	idx = archindex.Forget(idx, row)
-	kept := idx.Entries[:0]
-	for _, en := range idx.Entries {
-		if !sameFolder(en.Path, row, goos) {
-			kept = append(kept, en)
+	return archindex.UpdateFile(path, func(idx archindex.Index) (archindex.Index, bool, error) {
+		n := len(idx.Entries)
+		idx = archindex.Forget(idx, row)
+		kept := idx.Entries[:0]
+		for _, en := range idx.Entries {
+			if !sameFolder(en.Path, row, goos) {
+				kept = append(kept, en)
+			}
 		}
-	}
-	idx.Entries = kept
-	if len(idx.Entries) == n {
-		return ErrRowNotListed
-	}
-	return archindex.WriteFile(path, idx)
+		idx.Entries = kept
+		if len(idx.Entries) == n {
+			return idx, false, ErrRowNotListed
+		}
+		return idx, true, nil
+	})
 }
 
 // removeIfThere removes path; one already gone is no error.

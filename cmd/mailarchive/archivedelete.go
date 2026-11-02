@@ -17,6 +17,7 @@ import (
 	"time"
 
 	"mail-archive-tool/internal/archdelete"
+	"mail-archive-tool/internal/archindex"
 	"mail-archive-tool/internal/desktop"
 	"mail-archive-tool/internal/encmark"
 	"mail-archive-tool/internal/instance"
@@ -392,6 +393,11 @@ func deleteArchive(a asker, out, planOut, recordOut string, stdout io.Writer) er
 // before it changed anything (CommandLineDelete.ListRow): nothing was done (what: "deleted",
 // "changed").
 func listNotSaved(seams *desktop.CommandLineDelete, err error, what string) error {
+	var busy *archindex.BusyError
+	if errors.As(err, &busy) {
+		// Another MailArchive program is changing the list (CON-07).
+		return fmt.Errorf("Your archives (%s) is being changed by another MailArchive window, so nothing was %s; try again", util.StripControl(seams.ListPath()), what)
+	}
 	return fmt.Errorf("Your archives (%s) could not be saved (%s), so nothing was %s", util.StripControl(seams.ListPath()), util.StripControl(err.Error()), what)
 }
 

@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"strings"
 
+	"mail-archive-tool/internal/archindex"
 	"mail-archive-tool/internal/schedule"
 )
 
@@ -197,8 +198,13 @@ func Unlist(row string, x UnlistDeps) *UnlistResult {
 	}
 	if err := forget(row); err != nil {
 		res.Lines = []string{msgRowFailed}
-		if errors.Is(err, ErrRowNotListed) {
+		var busy *archindex.BusyError
+		switch {
+		case errors.Is(err, ErrRowNotListed):
 			res.Lines = []string{msgRowNotListed}
+		case errors.As(err, &busy):
+			// Another MailArchive program is changing the list (CON-07): say so, and to try again.
+			res.Lines = []string{msgRowFailed + " " + busy.Error() + "."}
 		}
 		return res.withStopped()
 	}

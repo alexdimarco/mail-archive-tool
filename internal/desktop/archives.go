@@ -115,13 +115,19 @@ func (cfg Config) reconcileArchives(now time.Time) (archindex.Index, error) {
 	if err != nil {
 		return archindex.Index{Version: archindex.Version}, err
 	}
-	after := archindex.Reconcile(before, cfg.archivePointers(), now)
-	if len(after.Entries) != len(before.Entries) {
-		if werr := archindex.WriteFile(cfg.IndexPath, after); werr != nil {
-			return after, werr
-		}
+	pointers := cfg.archivePointers()
+	after := archindex.Reconcile(before, pointers, now)
+	if len(after.Entries) == len(before.Entries) {
+		return after, nil
 	}
-	return after, nil
+	// It adds a row: read again and written under the list's lock, so a row another program
+	// added or removed meanwhile is kept as it left it (archindex.UpdateFile, CON-07).
+	werr := archindex.UpdateFile(cfg.IndexPath, func(fresh archindex.Index) (archindex.Index, bool, error) {
+		n := len(fresh.Entries)
+		after = archindex.Reconcile(fresh, pointers, now)
+		return after, len(after.Entries) != n, nil
+	})
+	return after, werr
 }
 
 // archiveRows turns an index into the list the Desktop shows. The row whose folder

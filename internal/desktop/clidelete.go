@@ -104,18 +104,13 @@ func (c *CommandLineDelete) drawnArchives() []string {
 // and Remove from list call it right before they change anything: a delete's step 4 clears the
 // settings that drew the row, and a delete stopped after that must leave a row, "Delete not
 // finished", to run again (the residual fixes' adversarial pass, finding 1). Step 9 then removes
-// it as any row.
+// it as any row. The list is read and written under its lock (archindex.UpdateFile, CON-07).
 func (c *CommandLineDelete) ListRow(row string) error {
-	idx, err := archindex.ReadFile(c.cfg.IndexPath)
-	if err != nil {
-		return err
-	}
-	n := len(idx.Entries)
-	idx = archindex.Reconcile(idx, []string{row}, time.Now())
-	if len(idx.Entries) == n {
-		return nil
-	}
-	return archindex.WriteFile(c.cfg.IndexPath, idx)
+	return archindex.UpdateFile(c.cfg.IndexPath, func(idx archindex.Index) (archindex.Index, bool, error) {
+		n := len(idx.Entries)
+		idx = archindex.Reconcile(idx, []string{row}, time.Now())
+		return idx, len(idx.Entries) != n, nil
+	})
 }
 
 // ListPath is the Desktop's list of archives (known-archives.json) these verbs read.
