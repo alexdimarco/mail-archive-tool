@@ -84,12 +84,14 @@ func TestADisabledRemoveFromListSaysWhyOnItsRow(t *testing.T) {
 // said a second time on the row, and give way to the next result, a removed row's reason going with it (unlistNote, 4 checks);
 // dismissing the result of a delete of the page's own archive draws the page again from its top,
 // and another archive's does not (dismissToTop); Save deletion record says what it asked of the
-// browser (saveRecordLine). Each scenario checks its positive twin first.
+// browser (saveRecordLine); a row the page marks "Delete not finished" drops its Remove from list
+// reason, as the server draws it (unfinishedDropsWhy, the settle pass's LOW-6). Each scenario checks
+// its positive twin first.
 func TestThePageAfterADeleteOrRemoveFromList(t *testing.T) {
 	for _, s := range []struct {
 		name   string
 		checks int
-	}{{"unlistNote", 4}, {"dismissToTop", 1}, {"saveRecordLine", 1}} {
+	}{{"unlistNote", 4}, {"dismissToTop", 1}, {"saveRecordLine", 1}, {"unfinishedDropsWhy", 1}} {
 		if passed := runPageScenario(t, s.name); len(passed) != s.checks {
 			t.Errorf("the %s scenario passed %d of its %d checks: %v", s.name, len(passed), s.checks, passed)
 		}

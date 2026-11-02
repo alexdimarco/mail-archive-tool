@@ -562,6 +562,23 @@ const scenarios = {
     check(!doc.querySelector('[data-unlisted-note]') && !!doc.querySelector('[data-held-id="HN"]'), 'the next result takes its place');
     check(!next.querySelector('[data-unlist-why]'), "a removed row's Remove from list reason goes with its button");
   },
+  // A row this page marks "Delete not finished" drops its Remove from list reason, as the server
+  // draws such a row (MA-1042, N13; the settle pass's LOW-6). Positive twin first: another row's
+  // reason, whose delete was not asked, stays.
+  async unfinishedDropsWhy() {
+    page([['D:\\Mail\\Half', 'other'], ['D:\\Mail\\Keep', 'other'], ['E:\\Cur', 'current']], 'E:\\Cur');
+    boot(); await wait(30);
+    const [half, keep] = doc.querySelectorAll('.archive-row');
+    [half, keep].forEach(li => li.append(el('span', { class: 'card-sub row-why', 'data-unlist-why': '' }, 'Remove from list is not offered for it now. Why.')));
+    replies['api/archive/delete/plan'] = plan('D:\\Mail\\Half', 'Half', 'TOK');
+    replies['api/archive/delete'] = result({ id: 'HH', row: 'D:\\Mail\\Half', folder: 'D:\\Mail\\Half', unfinished: true, rows: ['D:\\Mail\\Half'] });
+    half.querySelector('[data-delete-archive]').click(); await wait(40);
+    await typeAndDelete(half, 'Half'); await wait(40);
+    const marked = half.hasAttribute('data-delete-unfinished');
+    check(!!keep.querySelector('[data-unlist-why]') && marked && !half.querySelector('[data-unlist-why]'),
+      'a row marked Delete not finished drops its Remove from list reason; another row keeps its own',
+      JSON.stringify({ keep: !!keep.querySelector('[data-unlist-why]'), marked, half: !!half.querySelector('[data-unlist-why]') }));
+  },
   // Dismissing the result of a delete of the page's own archive draws the page again from its top
   // (MA-1042, N12). Positive twin first: dismissing another archive's result does not.
   async dismissToTop() {

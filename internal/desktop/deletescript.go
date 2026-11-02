@@ -75,6 +75,7 @@ function delMarkUnfinished(li){
   const st=li.querySelector('.row-state');
   if(st){while(st.firstChild)st.removeChild(st.firstChild);const t=document.createElement('span');t.className='archive-tag';t.textContent=delUnfinishedText;st.append(t);}
   li.setAttribute('data-delete-unfinished','');
+  li.querySelectorAll('[data-unlist-why]').forEach(x=>x.remove()); // its Delete not finished says why, as the server draws it (LOW-6)
 }
 // The archive this page was drawn for was deleted, or its delete did not finish (kind: the
 // reply's page): Archive now and Run now, and their sidebar links, are not offered for it. Once
