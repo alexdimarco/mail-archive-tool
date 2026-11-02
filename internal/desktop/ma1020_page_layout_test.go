@@ -7,8 +7,9 @@ import (
 
 // covers: MA-1020, R36, S41
 // The delete's page layout, as the 1.5.3 friction review's backlog asks (B13, B14), run on the
-// page script under Node: Save this plan says "Plan saved as FILE, in your browser's downloads.
-// Nothing was deleted." on screen and sends nothing; a delete's result is brought into view;
+// page script under Node: Save this plan says "Your browser was asked to save the plan as FILE
+// (usually in Downloads). Nothing was deleted." on screen (the page cannot know where, or whether,
+// the browser saved it: the 1.5.3 friction fixes' adversarial pass, L3) and sends nothing; a delete's result is brought into view;
 // Remove from list's words are said again at the top of Your archives after the reload it
 // starts, once (they showed for 1.5 seconds). Positive twin within: the page drawn a second time
 // says them no more.

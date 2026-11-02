@@ -114,9 +114,11 @@ func TestThePlanNamesKeptFilesAndCountsOneFile(t *testing.T) {
 // covers: MA-1019, R36, S41
 // The panel shows those words (B6, B7): "Delete removes 1 file (SIZE)." and "N files" for more,
 // "Kept (not the archive's): NAMES" with "and N more" past the names the plan sent, and the
-// prompt the plan sent with its name kept on one line (B14). Run on the page script under Node.
+// prompt the plan sent with its name kept on one line (B14) — the name itself, found between its
+// commas, even when it is also in the prompt's own words (the 1.5.3 friction fixes' adversarial
+// pass, L2: a folder named "a"). Run on the page script under Node.
 func TestThePanelSaysOneFileAndNamesKeptFiles(t *testing.T) {
-	if passed := runPageScenario(t, "panelWords"); len(passed) != 4 {
-		t.Errorf("the panelWords scenario passed %d of its 4 checks: %v", len(passed), passed)
+	if passed := runPageScenario(t, "panelWords"); len(passed) != 5 {
+		t.Errorf("the panelWords scenario passed %d of its 5 checks: %v", len(passed), passed)
 	}
 }

@@ -1028,7 +1028,7 @@ MA-1000, MA-1010 to MA-1013).**
   - "Type the folder's name, NAME, to delete it (capital letters count)"; NAME never
     breaks across lines.
   - "Plan saved as FILE, in your browser's downloads. Nothing was deleted." after Save
-    this plan.
+    this plan (replaced by the adversarial pass's L3, below).
   - Remove from list's result is said again at the top of Your archives after the
     reload, once.
   - Layout: the result is scrolled into view; a row's path keeps at least 16rem with the
@@ -1055,3 +1055,12 @@ MA-1000, MA-1010 to MA-1013).**
     can be switched to now: each row says why. To use a folder that is not listed, click
     Open an archive folder… above; to make a new archive, click Make a new archive…
     above."
+  - L2 (MA-1019): the folder's name kept on one line in "Type the folder's name, NAME, to
+    delete it (capital letters count)" is found between its commas, so a folder named
+    "a", "e", "me" or "the" no longer styles letters of the prompt's own words. No new
+    words.
+  - L3 (MA-1020): after Save this plan the page said "Plan saved as FILE, in your
+    browser's downloads.", which it cannot know (a Save As dialog may be cancelled, a
+    duplicate name becomes "FILE (1)"). Now (the attacker's words, for the operator):
+    "Your browser was asked to save the plan as FILE (usually in Downloads). Nothing was
+    deleted."

@@ -197,16 +197,18 @@ function delPanel(p){
   line(p.doesNotReach);
   const sa=delEl('div',null,'del-actions');
   const sv=delButton('Save this plan','btn secondary');sv.title='Save this plan as a text file, for example to have it approved first. Nothing is deleted.';
-  // Said on screen once saved (B13): the browser may save it without asking.
+  // Said on screen once asked (B13): the browser may save it without asking. The page cannot
+  // know whether it was saved, where, or under what name, so it says only what it asked.
   const saved=delEl('span',null,'card-sub');saved.setAttribute('role','status');saved.hidden=true;
-  sv.addEventListener('click',()=>{delSaveFile(p.planName,p.planText);saved.hidden=false;saved.textContent='Plan saved as '+p.planName+', in your browser\'s downloads. Nothing was deleted.';});
+  sv.addEventListener('click',()=>{delSaveFile(p.planName,p.planText);saved.hidden=false;saved.textContent='Your browser was asked to save the plan as '+p.planName+' (usually in Downloads). Nothing was deleted.';});
   sa.append(sv,saved);w.append(sa);
   line(p.logLine,'card-sub');
   // A delete waiting for its reply keeps its panel while another opens, so each box has an id of
   // its own and its label names it.
   const boxId='delTyped'+(++delBoxSeq);
-  // The folder's name never breaks across lines (B14: it broke at a hyphen at phone width).
-  const lab=delEl('label');const at=p.typeLine.indexOf(p.name);
+  // The folder's name never breaks across lines (B14: it broke at a hyphen at phone width). It
+  // is found between its commas, never inside the prompt's own words ("a" in "name").
+  const lab=delEl('label');const at0=p.typeLine.indexOf(', '+p.name+', ');const at=at0<0?-1:at0+2;
   if(at<0)lab.textContent=p.typeLine;
   else lab.append(document.createTextNode(p.typeLine.slice(0,at)),delEl('span',p.name,'mono del-name'),document.createTextNode(p.typeLine.slice(at+p.name.length)));
   const input=document.createElement('input');input.type='text';input.id=boxId;input.autocomplete='off';input.spellcheck=false;lab.htmlFor=boxId;

@@ -459,6 +459,17 @@ const scenarios = {
     replies['api/archive/delete/plan'] = Object.assign(plan('D:\\Mail\\Archive-Four', 'Archive-Four', 'TOK2'), { files: 3, kept: 1, keptNames: ['my-notes.txt'] });
     a.querySelector('[data-delete-archive]').click(); await wait(40);
     check(said('Delete removes 3 files (10 bytes).') && said("Kept (not the archive's): my-notes.txt"), 'more files are "N files", and one kept file is named alone');
+    // A folder whose name is also in the prompt's own words ("a" in "name"): the piece kept on
+    // one line is the name itself, between its commas (the 1.5.3 friction fixes' adversarial pass, L2).
+    doc.body.children.slice().forEach(c => c.remove()); doc.activeElement = null;
+    page([['D:\\Mail\\a', 'other'], ['E:\\Cur', 'current']], 'E:\\Cur');
+    boot(); await wait(30);
+    const sa = doc.querySelectorAll('.archive-row')[0];
+    replies['api/archive/delete/plan'] = Object.assign(plan('D:\\Mail\\a', 'a', 'TOK3'), { typeLine: "Type the folder's name, a, to delete it (capital letters count)" });
+    sa.querySelector('[data-delete-archive]').click(); await wait(40);
+    const sl = sa.querySelector('.delete-panel label'), sn = sl && sl.querySelector('.del-name');
+    check(!!sn && sn.textContent === 'a' && sl.children[0].text === "Type the folder's name, " && sl.textContent === "Type the folder's name, a, to delete it (capital letters count)",
+      "a name that is also in the prompt's words is the piece kept on one line");
   },
   // The page's layout fixes (MA-1020, B13, B14): Save this plan says so on screen and sends
   // nothing; a delete's result is brought into view; Remove from list's words are said again at
@@ -472,8 +483,8 @@ const scenarios = {
     const before = posts.length;
     byText(gone, 'Save this plan').click(); await wait(10);
     const st = gone.querySelector('.delete-panel [role=status]');
-    check(!!st && !st.hidden && st.textContent === "Plan saved as plan.txt, in your browser's downloads. Nothing was deleted." && posts.length === before,
-      'Save this plan says the plan was saved, and sends nothing');
+    check(!!st && !st.hidden && st.textContent === 'Your browser was asked to save the plan as plan.txt (usually in Downloads). Nothing was deleted.' && posts.length === before,
+      'Save this plan says the browser was asked to save it, and sends nothing');
     replies['api/archive/delete'] = result({ id: 'HG', row: 'D:\\Mail\\Gone', folder: 'D:\\Mail\\Gone', rowRemoved: true, rows: ['D:\\Mail\\Gone'] });
     await typeAndDelete(gone, 'Gone'); await wait(40);
     check(scrolled.length === 1 && scrolled[0] === doc.querySelector('[data-held-id="HG"]'), 'the result is brought into view');
