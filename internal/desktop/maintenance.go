@@ -103,6 +103,20 @@ func (d *dashboard) requireOut() (string, bool) {
 	return out, out != ""
 }
 
+// refuseMaintenance refuses Check integrity and Rebuild search index of the current archive out
+// while a delete of it is under way, when its delete did not finish, or when deletions.log cannot
+// be read, as Archive now and Run now are (MA-1009, del-s3b re-verification, leftover 4): a check
+// would report the files a delete removed as damage, and a rebuild would write a new index into a
+// folder the delete left part way. It reports whether it refused.
+func (d *dashboard) refuseMaintenance(w http.ResponseWriter, out string) bool {
+	msg := d.unfinishedRefusal(out)
+	if msg == "" {
+		return false
+	}
+	writeJSON(w, map[string]any{"ok": false, "error": msg})
+	return true
+}
+
 // verifyAction re-hashes every archived file against its recorded checksum
 // (read-only integrity check, R20). Loopback-only, CSRF-guarded; runs as a job.
 func (d *dashboard) verifyAction(w http.ResponseWriter, r *http.Request) {
@@ -113,6 +127,9 @@ func (d *dashboard) verifyAction(w http.ResponseWriter, r *http.Request) {
 	out, ok := d.requireOut()
 	if !ok {
 		writeJSON(w, map[string]any{"ok": false, "error": noArchiveText})
+		return
+	}
+	if d.refuseMaintenance(w, out) {
 		return
 	}
 	err := d.runJob(func(l *log.Logger) (string, error) {
@@ -139,6 +156,9 @@ func (d *dashboard) rebuildAction(w http.ResponseWriter, r *http.Request) {
 	out, ok := d.requireOut()
 	if !ok {
 		writeJSON(w, map[string]any{"ok": false, "error": noArchiveText})
+		return
+	}
+	if d.refuseMaintenance(w, out) {
 		return
 	}
 	// An encrypted archive's index is rebuilt with its key, from its sealed messages

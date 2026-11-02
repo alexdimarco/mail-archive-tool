@@ -2,7 +2,9 @@ package desktop
 
 import (
 	"net/http"
+	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"mail-archive-tool/internal/assure"
@@ -79,5 +81,64 @@ func TestArchiveNowAndRunNowRefuseAStalePageAndADeleteNotFinished(t *testing.T) 
 			assure.Refused(t, code, replyErr(m), assure.Code(http.StatusOK), assure.Names("Delete not finished: click Delete again", "not backed up"),
 				assure.NoSideEffect(notRunning))
 		}
+	}
+}
+
+// covers: MA-987, R36, S41
+// Archive now and Run now refuse what they cannot read rather than let the run through (del-s3b
+// re-verification, leftover 2): a body over 4 KiB is read up to the delete routes' 64 KiB, so a
+// page drawn for another archive is still told it is out of date; a body that cannot be read (not
+// JSON, or over 64 KiB) is an out-of-date page, since which archive it was drawn for cannot be
+// told; and a deletions.log that cannot be read refuses naming it, since whether the archive's
+// delete finished cannot be told. Nothing runs. Positive twins first: a body over 4 KiB naming the
+// current archive, and an empty body (a client older than this page), reach each route's own answer.
+func TestArchiveNowAndRunNowRefuseABodyOrALogTheyCannotRead(t *testing.T) {
+	e := newDeleteEnv(t, withoutM365)
+	useBackupFake(e.wsEnv, &backupFake{tasks: map[string]bool{}})
+	cur := e.plainArchive("Current")
+	other := e.plainArchive("Other")
+	if err := SaveSettings(e.cfg.SettingsPath, Settings{Out: cur}); err != nil {
+		t.Fatal(err)
+	}
+	routes := []string{"/api/capture", "/api/run-backup"}
+	notRunning := func() bool {
+		c := e.d.cap
+		c.mu.Lock()
+		defer c.mu.Unlock()
+		return !c.running
+	}
+	guarded := func(msg string) bool {
+		return msg == staleRefusal || msg == runUnfinishedText || msg == deletingRefusal || strings.Contains(msg, "deletion log")
+	}
+	pad := strings.Repeat("x", 8<<10)
+	for _, r := range routes {
+		for _, body := range []any{map[string]any{"drawnFor": cur, "pad": pad}, nil} {
+			if _, m := e.post(r, body); guarded(replyErr(m)) {
+				t.Fatalf("the positive twin: %s is refused: %v", r, m)
+			}
+		}
+	}
+
+	for _, r := range routes {
+		for _, body := range []any{
+			map[string]any{"drawnFor": other, "pad": pad},                       // over 4 KiB, another archive
+			"{this is not JSON",                                                 // cannot be read
+			map[string]any{"drawnFor": cur, "pad": strings.Repeat("x", 65<<10)}, // over 64 KiB
+		} {
+			code, m := e.post(r, body)
+			assure.Refused(t, code, replyErr(m), assure.Code(http.StatusOK), assure.Names("out of date", "reload"),
+				assure.NoSideEffect(notRunning))
+		}
+	}
+
+	// deletions.log that cannot be read: a folder where the file goes.
+	logPath := e.cfg.deletionsLogPath()
+	if err := os.MkdirAll(logPath, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	for _, r := range routes {
+		code, m := e.post(r, map[string]any{"drawnFor": cur})
+		assure.Refused(t, code, replyErr(m), assure.Code(http.StatusOK), assure.Names("could not read its deletion log", logPath, "nothing was started"),
+			assure.NoSideEffect(notRunning))
 	}
 }

@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"io/fs"
 	"net/http"
 	"os"
@@ -534,12 +535,17 @@ const runUnfinishedText = "Delete not finished: click Delete again. This archive
 // archive it was drawn for, del-s3b-A1-03, A3-03); a current archive being deleted; and one whose
 // delete did not finish (§5.4, §3.1: neither is offered for it, and the emptied-folder guard lets
 // a run into a folder a delete left part way, since its manifest goes last — del-s3b conformance
-// gap 2). A post that names no folder (a client older than this page) is not refused as stale.
+// gap 2). A post with no body (a client older than this page) is not refused as stale; one it
+// cannot read (over the delete routes' 64 KiB, or not JSON) is, since which archive it was drawn
+// for cannot be told; and a deletions.log that cannot be read refuses, since whether the
+// archive's delete finished cannot be told (del-s3b re-verification, leftover 2).
 func (d *dashboard) pageRunRefusal(w http.ResponseWriter, r *http.Request) string {
 	var in struct {
 		DrawnFor *string `json:"drawnFor"`
 	}
-	_ = json.NewDecoder(http.MaxBytesReader(w, r.Body, 4<<10)).Decode(&in)
+	if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, deleteBodyMax)).Decode(&in); err != nil && !errors.Is(err, io.EOF) {
+		return staleRefusal
+	}
 	if d.stalePage(in.DrawnFor) {
 		return staleRefusal
 	}
@@ -547,16 +553,30 @@ func (d *dashboard) pageRunRefusal(w http.ResponseWriter, r *http.Request) strin
 	if out == "" {
 		return ""
 	}
+	return d.unfinishedRefusal(out)
+}
+
+// unfinishedRefusal is why a run that writes into out does not start because of a delete of it
+// (MA-987, MA-1009), "" when none stops it: a delete of it under way, one that did not finish, or
+// a deletions.log that cannot be read.
+func (d *dashboard) unfinishedRefusal(out string) string {
 	if d.running.of(out) != nil {
 		return deletingRefusal
 	}
 	if logPath := d.cfg.deletionsLogPath(); logPath != "" {
-		if u, err := archdelete.UnfinishedDelete(logPath, out, runtime.GOOS); err == nil && u != nil {
+		u, err := archdelete.UnfinishedDelete(logPath, out, runtime.GOOS)
+		if err != nil {
+			return fmt.Sprintf(runLogUnreadableText, logPath, util.StripControl(err.Error()))
+		}
+		if u != nil {
 			return runUnfinishedText
 		}
 	}
 	return ""
 }
+
+// runLogUnreadableText refuses a run when deletions.log cannot be read (builder's words).
+const runLogUnreadableText = "MailArchive could not read its deletion log, %s (%s), so it cannot tell whether a delete of this archive did not finish; nothing was started. Check that file, then try again."
 
 // planAgainText ends a refusal that spent the plan's token (builder's words).
 const planAgainText = "Click Delete… again to try again."
