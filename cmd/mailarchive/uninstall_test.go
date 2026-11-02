@@ -58,7 +58,7 @@ func TestMA684_UninstallPreviewListsItemsByName(t *testing.T) {
 		KeptArchives:  []string{"/archives/mine"},
 	}
 	var buf bytes.Buffer
-	printUninstallPlan(&buf, rep)
+	printUninstallPlan(&buf, rep, false)
 	out := buf.String()
 	for _, want := range []string{
 		"mailarchive-abcd1234",                                 // the scheduled task, by name

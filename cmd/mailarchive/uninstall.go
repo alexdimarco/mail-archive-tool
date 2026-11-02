@@ -39,7 +39,7 @@ func runUninstall(args []string) error {
 	if err != nil {
 		return err
 	}
-	printUninstallPlan(os.Stdout, rep)
+	printUninstallPlan(os.Stdout, rep, *yes && !*dry)
 	if *dry {
 		return nil
 	}
@@ -50,11 +50,26 @@ func runUninstall(args []string) error {
 	if err != nil {
 		return err
 	}
-	fmt.Printf("\nDone — MailArchive's schedules, settings and sign-in are removed; your archives are untouched.\n%s\n", done.BinaryNote)
+	printUninstallDone(os.Stdout, done)
 	return nil
 }
 
-func printUninstallPlan(w io.Writer, rep *uninstall.Report) {
+// deletionsLogRemovingNote is said under the deletion log in place of DeletionsLogNote when this
+// run removes it (-yes): there is no "first" left to copy it in (del-s5 re-verify residual 4).
+const deletionsLogRemovingNote = "This run removes it. A copy had to be made before running uninstall -yes (uninstall -dry-run shows this list and removes nothing)."
+
+// printUninstallDone is what a finished uninstall says.
+func printUninstallDone(w io.Writer, done *uninstall.Report) {
+	fmt.Fprintf(w, "\nDone — MailArchive's schedules, settings and sign-in are removed; your archives are untouched.\n")
+	if done.DeletionsLog != "" {
+		fmt.Fprintf(w, "The deletion log was removed: %s\n", done.DeletionsLog)
+	}
+	fmt.Fprintf(w, "%s\n", done.BinaryNote)
+}
+
+// printUninstallPlan prints what uninstall removes and keeps; removing says this run removes it
+// (-yes), so the deletion log's note says it is being removed rather than to copy it first.
+func printUninstallPlan(w io.Writer, rep *uninstall.Report, removing bool) {
 	fmt.Fprintln(w, "MailArchive uninstall will REMOVE:")
 	fmt.Fprintf(w, "  - scheduled tasks: %d\n", len(rep.Schedules))
 	for _, s := range rep.Schedules {
@@ -68,7 +83,11 @@ func printUninstallPlan(w io.Writer, rep *uninstall.Report) {
 	}
 	// The delete's journal, named on its own with what to do first (design-archive-delete §8.1).
 	if rep.DeletionsLog != "" {
-		fmt.Fprintf(w, "  - the deletion log: %s\n      %s\n", rep.DeletionsLog, uninstall.DeletionsLogNote)
+		note := uninstall.DeletionsLogNote
+		if removing {
+			note = deletionsLogRemovingNote
+		}
+		fmt.Fprintf(w, "  - the deletion log: %s\n      %s\n", rep.DeletionsLog, note)
 	}
 	// Only when there is any: an encrypted archive's leftover working copies (P2a-C12).
 	if len(rep.Scratch) > 0 {

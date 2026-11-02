@@ -23,7 +23,7 @@ func TestUninstallPlanListsLeftoverWorkingCopiesOnlyWhenAny(t *testing.T) {
 		filepath.Join("scratch", "fedcba9876543210fedcba9876543210", "_outlook-pst", "mail.pst"),
 	}
 	var with bytes.Buffer
-	printUninstallPlan(&with, &uninstall.Report{Scratch: leftovers})
+	printUninstallPlan(&with, &uninstall.Report{Scratch: leftovers}, false)
 	plan := assure.Reached(t, with.String(), "the uninstall plan with leftovers")
 	head := "  - leftover working copies in MailArchive's working folder: 2\n"
 	at := strings.Index(plan, head)
@@ -38,7 +38,7 @@ func TestUninstallPlanListsLeftoverWorkingCopiesOnlyWhenAny(t *testing.T) {
 	}
 
 	var without bytes.Buffer
-	printUninstallPlan(&without, &uninstall.Report{})
+	printUninstallPlan(&without, &uninstall.Report{}, false)
 	if plan := assure.Reached(t, without.String(), "the uninstall plan without leftovers"); strings.Contains(plan, "leftover working copies") {
 		t.Fatalf("a plan with no leftovers still mentions them:\n%s", plan)
 	}
