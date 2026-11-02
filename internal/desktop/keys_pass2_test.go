@@ -80,14 +80,19 @@ func TestARefusedUninstallNeverUndoesShutDown(t *testing.T) {
 	d := newDashboard(Config{ConfigPath: filepath.Join(cfgDir, "config.json"), SettingsPath: settings, Store: store, Keys: keys, Lifecycle: life})
 	inRun, release := make(chan struct{}), make(chan struct{})
 	origU := uninstallRun
-	uninstallRun = func(string, []string, string, bool) (*uninstall.Report, error) {
+	uninstallRun = func(_ string, _ []string, _ string, dryRun bool) (*uninstall.Report, error) {
+		if dryRun {
+			return &uninstall.Report{}, nil // Remove's check of the plan shown (MA-1008)
+		}
 		close(inRun)
 		<-release
 		return nil, errors.New("refused: something overlaps")
 	}
 	t.Cleanup(func() { uninstallRun = origU })
 	done := make(chan map[string]any, 1)
-	go func() { done <- callAction(t, d, d.uninstallAction, map[string]any{"Confirm": true}) }()
+	go func() {
+		done <- callAction(t, d, d.uninstallAction, map[string]any{"Confirm": true, "shown": map[string]any{}})
+	}()
 	<-inRun
 	life.Stop()
 	<-life.Drained()

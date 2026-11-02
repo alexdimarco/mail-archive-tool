@@ -18,6 +18,7 @@ import (
 	"os/user"
 	"path/filepath"
 	"runtime"
+	"slices"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -919,8 +920,14 @@ func (d *dashboard) uninstallAction(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, csrfRefused, http.StatusForbidden)
 		return
 	}
-	var in struct{ Confirm bool }
-	if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, 16<<10)).Decode(&in); err != nil {
+	var in struct {
+		Confirm bool
+		// Shown is the plan the page showed (the plan reply, sent back with Remove): Remove
+		// removes only that plan (del-s5-A2-03).
+		Shown *uninstallShown `json:"shown"`
+	}
+	// A plan names every settings file and leftover working copy: room for a long one.
+	if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, 1<<20)).Decode(&in); err != nil {
 		http.Error(w, "bad request", http.StatusBadRequest)
 		return
 	}
@@ -943,6 +950,29 @@ func (d *dashboard) uninstallAction(w http.ResponseWriter, r *http.Request) {
 	} else if it := d.running.block(uninstallingText); it != nil {
 		writeJSON(w, map[string]any{"ok": false, "error": fmt.Sprintf(deletingUninstall, it.row)})
 		return
+	}
+	// Remove removes the plan the person saw, or nothing (del-s5-A2-03; design-archive-delete
+	// §8.1, O2-07: the plan names deletions.log and says to copy it first). The plan is worked
+	// out again, as the preview does, and compared with the one shown: a deletions.log made by a
+	// delete since (in another tab, or at the command line), or any other change, refuses with
+	// the new plan for the page to show, nothing removed. The real run that follows is fenced by
+	// the block above and by Uninstall's own last check of the log.
+	if in.Confirm {
+		undo := d.cfg.Keys.hush()
+		now, err := uninstallRun(filepath.Dir(cfgPath), d.knownArchivePaths(), exe, true)
+		undo()
+		if err != nil {
+			d.running.unblock()
+			writeJSON(w, map[string]any{"ok": false, "error": err.Error()})
+			return
+		}
+		if in.Shown == nil || !in.Shown.same(shownOf(now)) {
+			d.running.unblock()
+			reply := uninstallPlanReply(now, false)
+			reply["ok"], reply["planChanged"], reply["error"] = false, true, uninstallPlanChanged
+			writeJSON(w, reply)
+			return
+		}
 	}
 	// The Desktop's own encrypted archives are locked first, their readers' working
 	// copies removed, so neither the plan nor the removal meets them as another
@@ -968,9 +998,19 @@ func (d *dashboard) uninstallAction(w http.ResponseWriter, r *http.Request) {
 	if in.Confirm {
 		d.running.block(uninstalledText) // the settings are gone: a delete would make them again
 	}
+	writeJSON(w, uninstallPlanReply(rep, in.Confirm))
+}
+
+// uninstallPlanChanged is Remove's refusal when the plan is no longer the one shown (builder's
+// words, for the operator).
+const uninstallPlanChanged = "What uninstall would remove has changed since the plan was shown, so nothing was removed. Read the plan again below, then click Remove."
+
+// uninstallPlanReply is the uninstall route's reply for rep: the plan (done false) or what was
+// removed (done true).
+func uninstallPlanReply(rep *uninstall.Report, done bool) map[string]any {
 	plan := map[string]any{
 		"ok":            true,
-		"done":          in.Confirm,
+		"done":          done,
 		"schedules":     rep.Schedules,
 		"configFiles":   rep.ConfigFiles,
 		"clearedSignIn": rep.ClearedSignIn,
@@ -990,7 +1030,31 @@ func (d *dashboard) uninstallAction(w http.ResponseWriter, r *http.Request) {
 	if encryptedRecordKept() { // only when there is any (K8, A20)
 		plan["encryptedRecordKept"] = true
 	}
-	writeJSON(w, plan)
+	return plan
+}
+
+// uninstallShown is what a plan reply says uninstall removes, as the page sends it back with
+// Remove (the reply's own keys; the archives kept are not removed and not compared).
+type uninstallShown struct {
+	Schedules     []string `json:"schedules"`
+	ConfigFiles   []string `json:"configFiles"`
+	ScratchFiles  []string `json:"scratchFiles"`
+	ProgramCache  string   `json:"programCache"`
+	DeletionsLog  string   `json:"deletionsLog"`
+	ClearedSignIn bool     `json:"clearedSignIn"`
+}
+
+// shownOf is what the plan reply for rep says uninstall removes.
+func shownOf(rep *uninstall.Report) uninstallShown {
+	return uninstallShown{Schedules: rep.Schedules, ConfigFiles: rep.ConfigFiles, ScratchFiles: rep.Scratch,
+		ProgramCache: rep.ProgramCache, DeletionsLog: rep.DeletionsLog, ClearedSignIn: rep.ClearedSignIn}
+}
+
+// same reports that two plans remove the same things (an empty list and none are the same).
+func (a *uninstallShown) same(b uninstallShown) bool {
+	return slices.Equal(a.Schedules, b.Schedules) && slices.Equal(a.ConfigFiles, b.ConfigFiles) &&
+		slices.Equal(a.ScratchFiles, b.ScratchFiles) && a.ProgramCache == b.ProgramCache &&
+		a.DeletionsLog == b.DeletionsLog && a.ClearedSignIn == b.ClearedSignIn
 }
 
 // knownArchivePaths lists the archive folders recorded in the Desktop's index, so a full
@@ -2305,8 +2369,13 @@ document.querySelectorAll('[data-forget-archive]').forEach(b=>b.addEventListener
 
 // Uninstall (Danger zone): "Uninstall…" fetches the plan (a dry run that changes nothing)
 // and shows it; "Remove" performs it; "Cancel" closes. Archives are never touched.
-async function uninstallReq(confirm){
-  return (await fetch('api/uninstall',{method:'POST',headers:{'Content-Type':'application/json','X-CSRF-Token':csrf},body:JSON.stringify({confirm:confirm})})).json();
+// unShown is the plan the panel shows: Remove sends it back, and the server removes only that
+// plan, or refuses with the new one (planChanged) when it changed since (del-s5-A2-03).
+let unShown=null;
+async function uninstallReq(confirm,shown){
+  const body={confirm:confirm};
+  if(confirm)body.shown=shown;
+  return (await fetch('api/uninstall',{method:'POST',headers:{'Content-Type':'application/json','X-CSRF-Token':csrf},body:JSON.stringify(body)})).json();
 }
 function uninstallPlanText(d){
   const kept=d.keptArchives||[];
@@ -2329,8 +2398,9 @@ if(unBtn)unBtn.addEventListener('click',async()=>{
   const p=$('uninstallPanel'),pl=$('uninstallPlan'),n=$('uninstallNote');
   const done=busy(unBtn,'Preparing…',n,'Working out what an uninstall would remove. Nothing is removed yet…');
   try{const d=await uninstallReq(false);
-    if(!d.ok){if(n){n.hidden=false;n.textContent=d.error||'Could not prepare the uninstall.';}return;}
+    if(!d.ok){unShown=null;if(p)p.hidden=true;if(n){n.hidden=false;n.textContent=d.error||'Could not prepare the uninstall.';}return;}
     if(n)n.hidden=true;
+    unShown=d;
     if(pl)pl.textContent=uninstallPlanText(d);
     if(p)p.hidden=false;
   }catch(e){if(n){n.hidden=false;n.textContent='Error: '+e;}}
@@ -2340,7 +2410,13 @@ const unGo=$('uninstallGo'),unCancel=$('uninstallCancel');
 if(unGo)unGo.addEventListener('click',async()=>{
   const p=$('uninstallPanel'),n=$('uninstallNote');
   const done=busy(unGo,'Removing…',n,"Removing MailArchive's backups, settings and sign-in…");
-  try{const d=await uninstallReq(true);
+  try{const d=await uninstallReq(true,unShown);
+    if(!d.ok&&d.planChanged){
+      // The plan changed since it was shown: show the new one, Remove waits for it to be read.
+      unShown=d;const pl=$('uninstallPlan');if(pl)pl.textContent=uninstallPlanText(d);
+      if(n){n.hidden=false;n.textContent=d.error;}
+      return;
+    }
     if(p)p.hidden=true;
     if(n){n.hidden=false;n.textContent=d.ok?('Removed MailArchive backups, settings and sign-in; your archives are untouched. '+(d.binaryNote||'')):(d.error||'Could not uninstall.');}
   }catch(e){if(n){n.hidden=false;n.textContent='Error: '+e;}}

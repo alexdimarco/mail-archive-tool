@@ -75,8 +75,9 @@ func TestMA685_UninstallActionPreviewsAndExecutes(t *testing.T) {
 		t.Fatalf("preview must name the kept archive, got %v", out.KeptArchives)
 	}
 
-	// Execute (confirm=true): performs it (dryRun false).
-	rec = postUninstall(t, d, `{"confirm":true}`)
+	// Execute (confirm=true, with the plan shown): performs it (dryRun false), after working the
+	// plan out again to check it is the one shown (MA-1008).
+	rec = postUninstall(t, d, `{"confirm":true,"shown":`+rec.Body.String()+`}`)
 	if rec.Code != http.StatusOK {
 		t.Fatalf("execute status = %d, body %s", rec.Code, rec.Body)
 	}
@@ -86,8 +87,8 @@ func TestMA685_UninstallActionPreviewsAndExecutes(t *testing.T) {
 	if !out.OK || !out.Done {
 		t.Fatalf("execute must be ok and done, got %+v", out)
 	}
-	if len(gotDry) != 2 || gotDry[1] != false {
-		t.Fatalf("execute must call uninstall with dryRun=false, got %v", gotDry)
+	if len(gotDry) != 3 || gotDry[1] != true || gotDry[2] != false {
+		t.Fatalf("execute must check the plan (dryRun=true), then call uninstall with dryRun=false, got %v", gotDry)
 	}
 
 	// The Overview renders the Danger-zone uninstall control that drives this endpoint.

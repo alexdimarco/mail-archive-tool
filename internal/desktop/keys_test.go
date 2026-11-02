@@ -318,14 +318,14 @@ func TestUninstallLocksTheDesktopsOwnArchives(t *testing.T) {
 	e.post(t, "api/encryption/unlock", map[string]any{"secret": keysPassword})
 	e.read("/api/search?q=hello") // its reader is made
 	d := newDashboard(Config{ConfigPath: filepath.Join(t.TempDir(), "graph-config.json"), Keys: e.cfg.Keys})
-	postUninstall(t, d, `{"confirm":false}`)
+	shown := postUninstall(t, d, `{"confirm":false}`).Body.String()
 	if openAtPlan || e.cfg.Keys.get(out) != nil {
 		t.Fatal("the preview planned with the Desktop's own archive open")
 	}
 	if _, err := e.cfg.Keys.unlock(out, keysPassword, keyring.OpenOptions{}); err != nil {
 		t.Fatalf("after a preview, unlocking still works: %v", err)
 	}
-	postUninstall(t, d, `{"confirm":true}`)
+	postUninstall(t, d, `{"confirm":true,"shown":`+shown+`}`) // Remove with the plan shown (MA-1008)
 	_, err := e.cfg.Keys.unlock(out, keysPassword, keyring.OpenOptions{})
 	assure.Reached(t, !openAtPlan && errors.Is(err, errKeysClosed), "the real run locks and refuses every unlock after")
 }
