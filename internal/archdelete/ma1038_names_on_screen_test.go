@@ -62,6 +62,43 @@ func TestTheKeptFilesAreNamedInThePlanAndTheResult(t *testing.T) {
 	}
 }
 
+// covers: MA-1038, R36
+// The files "of yours" the result counts are the ones it names: the plan's kept list. Operating-
+// system litter in a folder only an unticked mail copy passes through goes with the copies and is
+// never counted as the person's (the settle pass's MED-2: a .DS_Store beside an unticked copy made
+// "4 files of yours" of three named). Positive twin first: the same folder with no litter beside
+// the copy says the same sentence.
+func TestTheKeptCountIsTheNamedFiles(t *testing.T) {
+	build := func(litter bool) (*DeletePlan, *Result) {
+		dir := plainBesidePersonsFiles(t)
+		writeManifest(t, dir, 6, map[string]string{"path:/mail/Mailbox.pst": "Mailbox", "path:/mail/Other.pst": "Other"}, []rec{
+			{Path: stemA + ".html"}, {Path: stemB + ".html"},
+		})
+		writeFile(t, filepath.Join(dir, "Other", "2020-01-02_0000_x_11bb11bb.eml"), "a copy")
+		if litter {
+			writeFile(t, filepath.Join(dir, "Other", ".DS_Store"), "litter")
+		}
+		r := newRig(t, dir)
+		p := r.plan(t)
+		return p, Execute(p, p.Name, false, r.x)
+	}
+	sentence := func(p *DeletePlan) string {
+		return fmt.Sprintf("The folder is kept: %d files are left in it: 3 files of yours (Mailbox/Inbox/notes.txt, Photos, taxes.pdf) and %s.",
+			3+len(p.Unrecorded), copyWords(len(p.Unrecorded)))
+	}
+	tp, twin := build(false)
+	if len(tp.UnrecordedLitter) != 0 || len(tp.Kept) != 3 || !strings.HasSuffix(twin.Lines[0], sentence(tp)) {
+		t.Fatalf("the twin (kept %q): %s", tp.Kept, twin.Lines[0])
+	}
+	p, res := build(true)
+	if len(p.UnrecordedLitter) != 1 {
+		t.Fatalf("fixture: no litter beside the copy: %q", p.UnrecordedLitter)
+	}
+	if !strings.HasSuffix(res.Lines[0], sentence(p)) {
+		t.Fatalf("with litter beside the unticked copy, want %q:\n%s", sentence(p), res.Lines[0])
+	}
+}
+
 // manifestWithFolders writes a manifest whose records sit in stores with the mail folders given
 // ({store, folder, stem}), and each record's page.
 func manifestWithFolders(t *testing.T, dir string, recs [][3]string) {

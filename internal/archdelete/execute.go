@@ -1105,7 +1105,9 @@ func (e *run) finish() {
 		case res.FolderGone:
 			head += "The folder is gone."
 		case len(res.Kept) > 0:
-			head += keptSentence(len(res.Kept), copies, p.Kept)
+			// Counted as named: the person's are the plan's kept list, and the litter in a folder
+			// only an unticked copy passes through goes with the copies (the settle pass's MED-2).
+			head += keptSentence(len(p.Kept)+copies, copies, p.Kept)
 		case len(e.leftIn) > 0:
 			// What kept it, named (conformance 4): a folder of the archive's that stayed
 			// busy past its retries, or something put there during the delete.
