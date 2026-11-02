@@ -538,6 +538,12 @@ func snapshotStoreID(old string) string {
 	return "path:" + p
 }
 
+// SnapshotStoreID is the id a snapshot (LoadFrom) keeps for the store id old (snapshotStoreID:
+// lexical, nothing looked up on disk). Archive recognition's streaming read (archindex) derives an
+// archive's kind from it without parsing the whole manifest, so a folder is told local, Microsoft
+// 365 or mixed exactly as a LoadFrom of its manifest would tell it (MA-1034).
+func SnapshotStoreID(old string) string { return snapshotStoreID(old) }
+
 // preferPlainToken picks which store token to keep when two source spellings
 // collapse to one id: the plain (hashless) segment if exactly one is plain, else
 // the lexicographically smaller — a stable, order-independent choice. The stale

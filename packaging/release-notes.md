@@ -34,6 +34,9 @@ Windows: SmartScreen → *More info → Run anyway*. Verify downloads against `S
 `mailarchive-desktop-windows-msi-payload.zip` builds a self-contained MSI
 (`packaging/mailarchive-desktop/`).
 
+### New in 1.5.3 — large archives open normally
+- **An archive of more than about 2,200 messages works in Your archives again.** Since 1.1.0, MailArchive Desktop read only the first 1 MiB of an archive's record (the `.mailarchive-manifest.json` file in its folder), so a larger archive was shown greyed, as "Not reachable right now", with no **Switch to this archive** button, and **Open an archive folder…** refused its folder as one whose record "cannot be read". MailArchive Desktop now reads the whole record, a little at a time, so a large archive shows as a normal row: **Switch to this archive** and **Pause** are offered, and **Open an archive folder…** opens it. One email with an unusually long subject no longer makes an archive look broken either. Nothing in your archives changes, and nothing else changes in this version.
+
 ### New in 1.5.2 — Run now syncs Thunderbird on a Mac and on Windows
 - **Run now syncs Thunderbird first, on a Mac and on Windows.**
   - On a Mac, Run now syncs Thunderbird first when the archive's Thunderbird sync is on, even while you are at the computer: it starts Thunderbird out of sight, waits for its mail (up to 20 minutes, often about 13; Stop waiting and back up now ends the wait), and leaves it open for you to quit. Scheduled backups still skip the sync while you are using the computer.

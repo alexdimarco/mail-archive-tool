@@ -24,7 +24,6 @@ import (
 
 	"mail-archive-tool/internal/encmark"
 	"mail-archive-tool/internal/job"
-	"mail-archive-tool/internal/state"
 	"mail-archive-tool/internal/util"
 )
 
@@ -45,9 +44,9 @@ const (
 	// maxIndexBytes caps the index read, sized to MaxEntries — NOT the 64 KiB
 	// job-file cap (SD-8).
 	maxIndexBytes = 256 * 1024
-	// maxManifestBytes caps the manifest read during recognition so a hostile
-	// folder cannot make it read without bound (SD-2).
-	maxManifestBytes = 1 << 20
+	// The manifest read during recognition is bounded by recognise.go's manifestCap and
+	// its walk's bounds (SD-2, amended 2026-11-02 by MA-1034: it was a 1 MiB read parsed
+	// whole, which a real archive of about 2,200 messages outgrows).
 	// manifestName marks a folder as a MailArchive archive.
 	manifestName = ".mailarchive-manifest.json"
 )
@@ -172,11 +171,17 @@ func Kind(folder string) string {
 
 // inspect reads folder's manifest the SAFE way and returns its derived kind. It
 // opens the manifest INSIDE an os.Root on the folder (so a manifest symlink cannot
-// escape it), reads at most maxManifestBytes (SD-2), and parses with
-// state.LoadFrom — the lexical snapshot path that never resolves the manifest's
-// store ids on disk, so a planted id like a UNC path never opens an SMB connection
-// or follows a link out of the folder (SD-1; state.LoadFrom, never state.Load /
-// archiveKind, which run filepath.EvalSymlinks on those untrusted ids).
+// escape it, and a pipe or a folder is refused: util.OpenRegularFileIn), and walks it
+// as it streams in under recognise.go's bounds (SD-2; MA-1034, MA-1035): at most
+// manifestCap bytes, only the stores (and a name or the version) kept, under bounds of
+// their own, the records checked byte by byte and skipped, never held. Its
+// store ids are read lexically (state.SnapshotStoreID, as state.LoadFrom reads them),
+// never resolved on disk, so a planted id like a UNC path never opens an SMB
+// connection or follows a link out of the folder (SD-1; never state.Load /
+// archiveKind, which run filepath.EvalSymlinks on those untrusted ids). The verdict is
+// kept for the folder while it and its manifest stay the same file, of the same size
+// and modification time (recognised), so a page load does not read a large manifest
+// again; reads of the same folder at once walk it once (walkAlone).
 func inspect(folder string) (kind string, ok bool) {
 	folder = strings.TrimSpace(folder)
 	if folder == "" {
@@ -187,6 +192,10 @@ func inspect(folder string) (kind string, ok bool) {
 	if enc, _, _ := encmark.Here(folder); enc {
 		return KindEncrypted, true
 	}
+	key := filepath.Clean(folder)
+	// Reads of the same folder at once walk it once: a later one waits, holding no file open,
+	// then takes the kept verdict (MA-1035).
+	defer walkAlone(key)()
 	root, err := os.OpenRoot(folder)
 	if err != nil {
 		return "", false
@@ -197,38 +206,42 @@ func inspect(folder string) (kind string, ok bool) {
 		return "", false
 	}
 	defer f.Close()
-	data, err := io.ReadAll(io.LimitReader(f, maxManifestBytes+1))
-	if err != nil || int64(len(data)) > maxManifestBytes {
-		return "", false
-	}
-	m, err := state.LoadFrom(manifestName, data)
+	man, err := f.Stat()
 	if err != nil {
 		return "", false
 	}
-	return kindOf(m), true
+	dir, err := statOpen(root)
+	if err != nil {
+		return "", false
+	}
+	if r, ok := remembered(key, dir, man); ok {
+		return r.kind, r.ok
+	}
+	if man.Size() > manifestCap {
+		remember(key, recognised{dir: dir, man: man})
+		return "", false
+	}
+	kind, err = scanManifest(manifestReader(f))
+	if err != nil && readError(err) {
+		return "", false // a read that failed may pass next time: not kept
+	}
+	remember(key, recognised{dir: dir, man: man, kind: kind, ok: err == nil})
+	return kind, err == nil
 }
 
-// kindOf mirrors the desktop's archiveKind over an already-parsed manifest: a store
-// id prefixed "mailbox:" is a Microsoft 365 source, anything else a local one.
-func kindOf(m *state.Manifest) string {
-	var local, cloud bool
-	for id := range m.Stores {
-		if strings.HasPrefix(id, "mailbox:") {
-			cloud = true
-		} else {
-			local = true
-		}
+// manifestReader is the open manifest as the walk reads it: the file itself. A var only so a test
+// can inject a read that fails part way, or hold a walk while another starts (fault injection).
+var manifestReader = func(f *os.File) io.Reader { return f }
+
+// statOpen is the root folder's own facts, read from an open handle so its identity holds on
+// Windows too (os.SameFile there reads a file's id from its handle).
+func statOpen(root *os.Root) (os.FileInfo, error) {
+	d, err := root.Open(".")
+	if err != nil {
+		return nil, err
 	}
-	switch {
-	case local && cloud:
-		return "mixed"
-	case local:
-		return "local"
-	case cloud:
-		return "m365"
-	default:
-		return "empty"
-	}
+	defer d.Close()
+	return d.Stat()
 }
 
 // Reconcile adds any pointer folder that is a real archive and not already listed,
