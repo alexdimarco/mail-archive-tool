@@ -237,6 +237,22 @@ func (p *DeletePlan) finishedLine(removed int, bytes int64) string {
 	return fmt.Sprintf("%s: %s (%s) removed in all.", begun, plural(f.Removed+removed, "file", "files"), size(f.RemovedBytes+bytes))
 }
 
+// HeldLine is the plan's warning, on the Desktop's panel and at the terminal, that files of a delete
+// it finishes are still held open by another program, so this run would stop at them again (the
+// 1.5.3 re-walk's N17: a re-run made while the file was still held said nothing until it failed);
+// "" when none is.
+func (p *DeletePlan) HeldLine() string {
+	switch n := len(p.Held); {
+	case n == 0:
+		return ""
+	case n == 1:
+		return "1 file this delete must remove is still in use by another program: " + namesAndMore(p.Held) +
+			". Close Outlook or any program using it before you delete, or this delete will stop at it again."
+	default:
+		return fmt.Sprintf("%d files this delete must remove are still in use by another program: %s. Close Outlook or any program using them before you delete, or this delete will stop at them again.", n, namesAndMore(p.Held))
+	}
+}
+
 // KeptLine is the plan's line naming the files and folders Delete keeps as not the archive's, on
 // the Desktop's panel and at the terminal: the first ten, then "and N more" (B6, MA-1019; the
 // 1.5.3 re-walk's N7: the terminal said only how many). "" when it keeps none.

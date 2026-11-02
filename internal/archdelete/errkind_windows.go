@@ -42,6 +42,18 @@ func causeOf(err error) Cause {
 	return CauseOther
 }
 
+// heldIn reports a file rel (native separators) inside root that another program holds open so
+// that it cannot be deleted now: a handle asking to delete it is refused as in use (a sharing
+// violation, a lock, a mapped file). It opens and closes that handle only; nothing is changed.
+func heldIn(root *os.Root, rel string) bool {
+	h, err := openAt(root, rel, windows.DELETE)
+	if err != nil {
+		return causeOf(err) == CauseInUse
+	}
+	windows.CloseHandle(h)
+	return false
+}
+
 // isNotEmpty reports a folder that could not be removed because it holds files.
 func isNotEmpty(err error) bool { return errors.Is(err, errDirNotEmpty) }
 

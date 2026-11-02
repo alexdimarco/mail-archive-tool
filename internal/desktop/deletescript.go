@@ -174,6 +174,8 @@ function delPanel(p){
   const head=delEl('p');head.append(delEl('b','Delete this archive permanently'));w.append(head);
   // First, when it finishes a delete that stopped part way (D1): the date it began.
   if(p.finishesLine)line(p.finishesLine);
+  // Then, when files of it are still held by another program, that this run would stop there (N17).
+  if(p.heldLine)line(p.heldLine,'warn');
   line(p.threeLine,'card-sub');
   line('Folder: '+p.folder,'mono');
   line('Delete removes '+p.files+(p.files===1?' file':' files')+' ('+p.size+').');

@@ -25,6 +25,9 @@ func causeOf(err error) Cause {
 	return CauseOther
 }
 
+// heldIn is Windows' alone: here a file another program has open can still be deleted.
+func heldIn(*os.Root, string) bool { return false }
+
 // isNotEmpty reports a folder that could not be removed because it holds files.
 func isNotEmpty(err error) bool {
 	return errors.Is(err, syscall.ENOTEMPTY) || errors.Is(err, syscall.EEXIST)

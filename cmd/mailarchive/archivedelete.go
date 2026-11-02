@@ -554,6 +554,9 @@ func deletePlanLines(p *archdelete.DeletePlan, logPath string) []string {
 	if l := p.FinishesLine(); l != "" {
 		lines = append(lines, l) // first: it finishes a delete that stopped part way (D1)
 	}
+	if l := p.HeldLine(); l != "" {
+		lines = append(lines, c(l)) // it would stop at the same file again (the 1.5.3 re-walk's N17)
+	}
 	lines = append(lines, fmt.Sprintf("MailArchive will permanently delete the %s archive in this folder (no Recycle Bin or Trash):", p.Kind), "  "+visibleName(p.Folder))
 	lines = append(lines, fmt.Sprintf("  files: %d (%s)", p.Files, sizeWords(p.Bytes)))
 	for i := range p.Stores {

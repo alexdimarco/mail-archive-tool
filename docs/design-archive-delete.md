@@ -1464,6 +1464,13 @@ each; the operator approves the words later.
   re-run: "This delete did not lock the archive, empty MailArchive's working folder for it or remove
   any files: an earlier delete had already removed the folder." (was "Steps 1 and 5 to 7 (the lock,
   the working folder, the files, the folder) were skipped: an earlier delete removed the folder.").
+- *A re-run warns of a file still held (MA-1039; N17).* The plan of a delete that finishes one
+  asks, read-only, whether its first 200 files are held open so that they cannot be deleted (on
+  Windows; nothing on macOS or Linux, where an open file can be deleted), and says, after its
+  first line: "1 file this delete must remove is still in use by another program: FILE. Close
+  Outlook or any program using it before you delete, or this delete will stop at it again." ("N
+  files this delete must remove are still in use by another program: A, B. Close Outlook or any
+  program using them before you delete, or this delete will stop at them again.").
 - *The record keeps the whole "What Delete does not reach" line (N18, the operator's delegate's
   decision; no change).* At the terminal without `-record-out` the printed record's line names every
   computer's backup tools after the plan's shorter one: the saved files may be read on another

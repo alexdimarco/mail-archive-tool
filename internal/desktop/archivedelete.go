@@ -450,6 +450,8 @@ func planView(p *archdelete.DeletePlan) map[string]any {
 		"rerun": p.Rerun != archdelete.RerunNone,
 		// The plan's first line when it finishes a delete that stopped part way (D1).
 		"finishesLine": p.FinishesLine(),
+		// Files of it another program still holds, at which this run would stop again (N17).
+		"heldLine": p.HeldLine(),
 		// Capitals count (B8): archdelete.NameMatches folds no case, though Windows names do.
 		"typeLine":     fmt.Sprintf("Type the folder's name, %s, to delete it (capital letters count)", p.Name),
 		"doesNotReach": doesNotReachLine(runtime.GOOS),

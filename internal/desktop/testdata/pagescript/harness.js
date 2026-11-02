@@ -498,6 +498,22 @@ const scenarios = {
     const ps = m.querySelector('.delete-panel').all().filter(e => e.tagName === 'P').map(e => e.textContent);
     check(ps.includes('Mail folders: mbox (Inbox, Sent), Old'), 'the panel names the mail folders inside each store', JSON.stringify(ps));
   },
+  // A re-run's panel warns of a file still held (MA-1039, the 1.5.3 re-walk's N17), right after the
+  // line that it finishes a delete; a plan with none held says nothing of it.
+  async heldLine() {
+    page([['D:\\Mail\\H', 'other'], ['E:\\Cur', 'current']], 'E:\\Cur');
+    boot(); await wait(30);
+    const h = doc.querySelectorAll('.archive-row')[0];
+    replies['api/archive/delete/plan'] = Object.assign(plan('D:\\Mail\\H', 'H', 'TOK'), { finishesLine: 'This finishes the delete begun D.' });
+    h.querySelector('[data-delete-archive]').click(); await wait(40);
+    const said = () => h.querySelector('.delete-panel').all().filter(e => e.tagName === 'P').map(e => e.textContent);
+    const none = !said().some(t => t.includes('still in use'));
+    const warn = '1 file this delete must remove is still in use by another program: x.html. Close Outlook or any program using it before you delete, or this delete will stop at it again.';
+    replies['api/archive/delete/plan'] = Object.assign(plan('D:\\Mail\\H', 'H', 'TOK2'), { finishesLine: 'This finishes the delete begun D.', heldLine: warn });
+    h.querySelector('[data-delete-archive]').click(); await wait(40);
+    const ps = said(), at = ps.indexOf(warn);
+    check(none && at === ps.indexOf('This finishes the delete begun D.') + 1, 'the panel warns of the held file after its finishing line', JSON.stringify(ps));
+  },
   // The page's layout fixes (MA-1020, B13, B14): Save this plan says so on screen and sends
   // nothing; a delete's result is brought into view; Remove from list's words are said again at
   // the top of Your archives after the reload it starts, once.

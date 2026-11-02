@@ -218,6 +218,9 @@ type DeletePlan struct {
 	// §5.4), or nil: the plan then begins "This finishes the delete begun DATE", and the record
 	// names its first run and carries what it removed (the 1.5.3 friction review's D1).
 	Finishes *Unfinished
+	// Held are the files of a plan that finishes a delete which another program holds open now, so
+	// that this run cannot remove them either (Windows; HeldLine says so; the 1.5.3 re-walk's N17).
+	Held []string
 }
 
 // KeyAtPlan is the keyring's forget plan for the record the plan found: Known when it was
@@ -465,7 +468,43 @@ func planAny(folder string, deps Deps) (*DeletePlan, error) {
 	if err == nil && p.Finishes != nil && p.Finishes.Captured != nil {
 		p.Captured = withFirstRun(p.Captured, *p.Finishes.Captured)
 	}
+	if err == nil && p.Finishes != nil && p.Rerun == RerunNone {
+		p.Held = heldFiles(p)
+	}
 	return p, err
+}
+
+// heldProbeMax bounds the files a plan asks about: a delete that stopped part way left a few.
+const heldProbeMax = 200
+
+// heldFn is heldIn: a test seam (a file another program holds, on any platform).
+var heldFn = heldIn
+
+// heldFiles are the files of p that another program holds open now so that they cannot be removed
+// (Windows; none elsewhere), asked only of a plan that finishes a delete that stopped part way —
+// usually because such a file could not be removed — and only of the first heldProbeMax files, so
+// the plan can say that this run will stop there again (the 1.5.3 re-walk's N17). It reads only,
+// through a root on the very folder planned; a folder that is not that one any more is asked
+// nothing (the delete's own re-check refuses it).
+func heldFiles(p *DeletePlan) []string {
+	root, err := os.OpenRoot(p.Folder)
+	if err != nil {
+		return nil
+	}
+	defer root.Close()
+	if id, err := rootIdentity(root); err != nil || id != p.Identity {
+		return nil
+	}
+	var held []string
+	for i, it := range p.Remove {
+		if i == heldProbeMax {
+			break
+		}
+		if heldFn(root, filepath.FromSlash(it.Rel)) {
+			held = append(held, it.Rel)
+		}
+	}
+	return held
 }
 
 // planOf is planAny before the first run's values are taken.
