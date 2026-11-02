@@ -2,7 +2,9 @@ package archdelete
 
 import (
 	"errors"
+	"io/fs"
 	"os"
+	"path/filepath"
 	"sync"
 
 	"mail-archive-tool/internal/util"
@@ -59,18 +61,31 @@ func (r *RowsCheck) State(folder string, knownArchive bool) (*Unfinished, error)
 	if r.log != nil {
 		u = r.log.Unfinished(abs, goos)
 	}
-	if deps.Settings.LaunchOut != "" && sameFolderStat(stat, deps.Settings.LaunchOut, abs, goos) {
-		return u, refuse(CaseLaunchOut, msgLaunchOut)
-	}
-	// A link, or a protected folder, the plan refuses whatever else holds (planArchive's
-	// order), so the row does not offer Delete for it (del-s3a-A2-02).
-	if fi, err := os.Lstat(abs); err == nil {
-		if link, lerr := util.IsLinkLike(abs); lerr == nil && link {
+	// A link, or a protected folder, the plan refuses whatever else holds, so the row does not
+	// offer Delete for it (del-s3a-A2-02); and in planArchive's order — the folder a link, then
+	// protected, then started with -out, then the manifest itself a link — so a folder that is
+	// more than one says the same on the row and in the plan (del-s3a re-verification, R4).
+	fi, lerr := os.Lstat(abs)
+	if lerr == nil {
+		if link, err := util.IsLinkLike(abs); err == nil && link {
 			return u, linkRefusal(abs)
 		}
 		if fi.IsDir() {
 			if err := checkProtectedStat(stat, abs, deps.Protected); err != nil {
 				return u, err
+			}
+		}
+	}
+	if deps.Settings.LaunchOut != "" && sameFolderStat(stat, deps.Settings.LaunchOut, abs, goos) {
+		return u, refuse(CaseLaunchOut, msgLaunchOut)
+	}
+	if lerr == nil && fi.IsDir() {
+		// The plan's archive test refuses a manifest that is a link, a known archive's too
+		// (classifyWith), which the row's knownArchive skips.
+		mp := filepath.Join(abs, manifestName)
+		if mfi, err := os.Lstat(mp); err == nil {
+			if link, err := util.IsLinkLike(mp); mfi.Mode()&fs.ModeSymlink != 0 || (err == nil && link) {
+				return u, linkRefusal(mp)
 			}
 		}
 	}
