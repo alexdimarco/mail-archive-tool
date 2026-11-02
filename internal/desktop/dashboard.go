@@ -42,6 +42,7 @@ import (
 	"mail-archive-tool/internal/server"
 	"mail-archive-tool/internal/state"
 	"mail-archive-tool/internal/uninstall"
+	"mail-archive-tool/internal/util"
 	"mail-archive-tool/internal/wizard"
 )
 
@@ -539,12 +540,24 @@ func (d *dashboard) saveSettings(w http.ResponseWriter, r *http.Request) {
 	// that keeps it after step 4 cleared it) would make it the current archive again. The folder is
 	// held until the save ends, so a delete cannot begin and finish between this check and the
 	// write below, leaving a removed folder current (the delete residuals' security pass, CON-01).
-	release, ok := d.holdAgainstDelete(w, orElse(out, strings.TrimSpace(d.cfg.Out)), switchingRefusal)
+	named := orElse(out, strings.TrimSpace(d.cfg.Out))
+	release, ok := d.holdAgainstDelete(w, named, switchingRefusal)
 	if !ok {
 		return
 	}
 	defer release()
 	wasCurrent := d.cfg.effectiveOut()
+	// A save naming a folder whose delete did not finish would make the half-deleted folder the
+	// current archive (a Switch from a tab drawn before the delete), or save settings for it
+	// (MA-1015): refused, nothing saved.
+	done := "it was not made the current archive"
+	if samePath(named, wasCurrent) {
+		done = "these settings were not saved"
+	}
+	if why := d.unfinishedActionRefusal(named, done); why != "" {
+		writeJSON(w, map[string]any{"ok": false, "error": why})
+		return
+	}
 	// The archive is copied, synced and browsed; MailArchive's own settings and
 	// sign-in must not travel with it (design-local-confidentiality P10).
 	if out != "" {
@@ -843,6 +856,12 @@ func (d *dashboard) pauseArchive(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	defer release()
+	// A delete of it that did not finish: no pause marker is written into the half-deleted
+	// folder (MA-1015).
+	if why := d.unfinishedActionRefusal(path, "it was not paused"); why != "" {
+		writeJSON(w, map[string]any{"ok": false, "error": why})
+		return
+	}
 	const reason = "paused from MailArchive Desktop"
 	// An encrypted archive open here keeps the reason sealed in its record; its pause
 	// file stays the empty marker (phase3 §6, E6; the P3-3 plan, 3d). Pausing is a
@@ -892,6 +911,12 @@ func (d *dashboard) resumeArchive(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	defer release()
+	// A delete of it that did not finish: its scheduled backup, which step 2 may have stopped, is
+	// not put back (MA-1015).
+	if why := d.unfinishedActionRefusal(path, "it was not resumed"); why != "" {
+		writeJSON(w, map[string]any{"ok": false, "error": why})
+		return
+	}
 	if err := resumeArchiveRun(path); err != nil {
 		writeJSON(w, map[string]any{"ok": false, "error": err.Error()})
 		return
@@ -947,6 +972,36 @@ func (d *dashboard) holdAgainstDelete(w http.ResponseWriter, path, why string) (
 	}
 	return release, ok
 }
+
+// unfinishedActionRefusal is why Pause, Resume or a Switch (Save settings naming the folder) does
+// not act on the folder at path because a delete of it did not finish (MA-1015; the 1.5.3
+// friction review's H2): deletions.log holds a started line for it with no finished line. A tab
+// drawn before that delete still offers those buttons, and Pause would seal the half-deleted
+// folder and a Switch make it the current archive again. done says what was not done ("it was
+// not paused", …); "" when nothing stops it. A deletions.log that cannot be read refuses, naming
+// it, since whether the delete finished cannot be told (as MA-987's runs do). It is asked under
+// the folder's hold, so no delete of it begins or ends between this check and the action.
+func (d *dashboard) unfinishedActionRefusal(path, done string) string {
+	logPath := d.cfg.deletionsLogPath()
+	if strings.TrimSpace(path) == "" || logPath == "" {
+		return ""
+	}
+	u, err := archdelete.UnfinishedDelete(logPath, path, runtime.GOOS)
+	if err != nil {
+		return fmt.Sprintf(unfinishedLogUnreadableText, logPath, util.StripControl(err.Error()))
+	}
+	if u != nil {
+		return fmt.Sprintf(unfinishedActionText, done)
+	}
+	return ""
+}
+
+// The words of MA-1015 (MA-987's "Delete not finished: click Delete again" first; the rest the
+// builder's, for the operator).
+const (
+	unfinishedActionText        = "Delete not finished: click Delete again. This archive's delete did not finish, so %s; nothing was changed."
+	unfinishedLogUnreadableText = "MailArchive could not read its deletion log, %s (%s), so it cannot tell whether a delete of this archive did not finish; nothing was changed. Check that file, then try again."
+)
 
 // uninstallRun is a seam so a test drives the uninstall handler without touching the real
 // config directory, scheduler, or credential store.
@@ -1722,6 +1777,8 @@ pre{white-space:pre-wrap;overflow-wrap:anywhere;background:var(--bg);border:1px 
 .archive-tag{font-size:.84rem;opacity:.75}
 .archive-tag.current{opacity:1;color:var(--accent);font-weight:700}
 .archive-kind{font-size:.78rem;opacity:.75;border:1px solid var(--line);border-radius:6px;padding:1px 7px}
+.archive-gone>*:not(.gone-tag){opacity:.45}
+.gone-tag{display:block;color:var(--warn);font-weight:700;opacity:1;margin:0 0 10px}
 .help details{border-top:1px solid var(--line);padding:10px 0 4px}.help summary{font-weight:750;cursor:pointer}
 .help p,.help li{line-height:1.5}.help li{margin:6px 0}.help ul,.help ol{padding-left:22px}
 @media(max-width:900px){.app-shell{grid-template-columns:1fr}.status-grid{grid-template-columns:1fr 1fr}.sidebar-foot{display:none}}
@@ -1777,7 +1834,7 @@ pre{white-space:pre-wrap;overflow-wrap:anywhere;background:var(--bg);border:1px 
       <div class="note" data-make-archive-note hidden></div>
       {{if .Offer}}<p>The MailArchive wizard last made or used <span class="mono">{{.Offer}}</span>. Use this archive?</p>{{end}}
       <button class="btn" id="useOffer" type="button" data-path="{{.Offer}}"{{if not .Offer}} hidden{{end}} title="Open this archive in MailArchive Desktop — read it, check its health, and keep it backed up.">Use this archive</button>{{if .Offer}} <span class="card-sub">Nothing changes until you click it.</span>{{end}}
-      <p class="steps">{{if .Offer}}To pick a different folder, click <b>Open an archive folder…</b> above, or type its folder in <b>Settings → Archive location</b> below (the folder that holds the .mailarchive-manifest.json file) and click <b>Save settings</b>.{{else}}MailArchive Desktop has no archive yet. To use one you already have, click <b>Open an archive folder…</b> above. To make a new one from Thunderbird, Outlook or other mail files on this computer, click <b>Make a new archive…</b> above: the MailArchive wizard's windows open on your computer. When the wizard is done, this page offers the new archive at the top: click <b>Use this archive</b>. To back up a Microsoft 365 mailbox, fill in the <b>Microsoft 365 connection</b> card below, type a new folder in <b>Settings → Archive location</b>, click <b>Save settings</b>, then click <b>Archive now</b>.{{end}}</p>
+      <p class="steps">{{if .Offer}}To pick a different folder, click <b>Open an archive folder…</b> above, or type its folder in <b>Settings → Archive location</b> below (the folder that holds the .mailarchive-manifest.json file) and click <b>Save settings</b>.{{else if .ShowArchives}}<span id="noArchiveSwitch">No archive is chosen yet. <b>Your archives</b>, below, lists the archives MailArchive knows on this computer: to use one, click <b>Switch to this archive</b> on its row. To use a folder that is not listed, click <b>Open an archive folder…</b> above; to make a new archive, click <b>Make a new archive…</b> above.</span>{{else}}MailArchive Desktop has no archive yet. To use one you already have, click <b>Open an archive folder…</b> above. To make a new one from Thunderbird, Outlook or other mail files on this computer, click <b>Make a new archive…</b> above: the MailArchive wizard's windows open on your computer. When the wizard is done, this page offers the new archive at the top: click <b>Use this archive</b>. To back up a Microsoft 365 mailbox, fill in the <b>Microsoft 365 connection</b> card below, type a new folder in <b>Settings → Archive location</b>, click <b>Save settings</b>, then click <b>Archive now</b>.{{end}}</p>
     </div>
     {{.Help}}{{end}}
 
@@ -1791,7 +1848,7 @@ pre{white-space:pre-wrap;overflow-wrap:anywhere;background:var(--bg);border:1px 
     </div>{{end}}
     {{if .ShowThisArchive}}<div class="card" id="sec-this-archive">
       <h2>This archive</h2>
-      <p class="card-sub">The archive this page shows. <b>Delete…</b> erases its files, after showing what it would remove; <b>Remove from list</b> takes it off MailArchive's list and keeps its files.</p>
+      <p class="card-sub">The archive this page shows. <b>Delete…</b> erases its files, after showing what it would remove{{with index .Archives 0}}{{if .UnlistWhy}}. <span id="thisArchiveUnlistWhy"><b>Remove from list</b> is not offered for it now. {{.UnlistWhy}}</span>{{else}}; <b>Remove from list</b> takes it off MailArchive's list and keeps its files.{{end}}{{end}}</p>
       <ul class="archive-list">
         {{range .Archives}}{{template "archiveRow" .}}{{end}}
       </ul>
@@ -2070,7 +2127,7 @@ pre{white-space:pre-wrap;overflow-wrap:anywhere;background:var(--bg);border:1px 
       <pre id="healthActionNote" class="small" hidden></pre>
     </div>
 
-    <div class="card">
+    <div class="card" id="sec-maintenance">
       <h2>Maintenance</h2>
       <p class="card-sub">Occasional housekeeping. These share the archive with backups, so only one runs at a time. Progress shows in the activity log on the Archive now card.</p>
       <button class="btn secondary" id="verifyBtn">Check integrity</button>
@@ -2119,7 +2176,7 @@ pre{white-space:pre-wrap;overflow-wrap:anywhere;background:var(--bg);border:1px 
           {{if .SourceLostSince}}<span class="archive-tag">This archive's source hasn't been reachable since {{.SourceLostSince}} — reconnect the source (its mailbox or mail folder){{if .RunNowOnly}}, then click {{if not .Current}}Switch to this archive and click {{end}}Run now on its Scheduled backup card: its backup runs only when you click Run now.{{else}} to resume backups.{{end}}</span>{{end}}
           {{if eq .Kind "encrypted"}}<button class="btn secondary" type="button" data-forget-archive data-path="{{.Path}}" title="Stop protecting this folder as an encrypted archive on this computer — for example after you removed the archive on purpose. Nothing in the folder is changed.">Forget this encrypted archive here</button>{{end}}
           <span class="row-state">{{if .Deleting}}<span class="archive-tag">Being deleted — its result shows on this page when the delete ends.</span>{{else if .Unfinished}}<span class="archive-tag">Delete not finished: click Delete again</span>{{else if .Problem}}<span class="archive-tag">{{.Problem}}</span>{{else if not .Available}}<span class="archive-tag">Not reachable right now — reconnect the drive or folder and it comes back. Nothing was removed.</span>{{else if .Sealed}}<span class="archive-tag">Paused (read-only) — Resume it to make changes.</span> <button class="btn secondary" type="button" data-resume-archive data-path="{{.Path}}" title="Make this archive writable again so backups and changes can resume.">Resume</button>{{else}}{{if .Current}}<span class="archive-tag current">Current archive</span>{{else}}<button class="btn secondary" type="button" data-switch-archive data-path="{{.Path}}" title="Make this the current archive: the one this page shows and changes.">Switch to this archive</button>{{end}} <button class="btn secondary" type="button" data-pause-archive data-path="{{.Path}}" title="Make this archive read-only so nothing can change it. You can Resume it any time; nothing is deleted.">Pause (make read-only)</button>{{end}}</span>
-          {{if not .Deleting}}<button class="btn secondary" type="button" data-unlist-archive data-path="{{.Path}}" title="Take this archive off this list. The folder and its files are kept; you are asked first, and told which scheduled backups would stop.">Remove from list</button> <button class="btn danger" type="button" data-delete-archive data-path="{{.Path}}" title="{{if .DeleteOK}}Permanently delete this archive's files. You see what would be removed first, and type the folder's name to confirm.{{else}}{{.DeleteWhy}}{{end}}"{{if not .DeleteOK}} disabled{{end}}>Delete…</button>{{end}}
+          {{if not .Deleting}}<button class="btn secondary" type="button" data-unlist-archive data-path="{{.Path}}" title="{{if .UnlistWhy}}{{.UnlistWhy}}{{else}}Take this archive off this list. The folder and its files are kept; you are asked first, and told which scheduled backups would stop.{{end}}"{{if .UnlistWhy}} disabled{{end}}>Remove from list</button> <button class="btn danger" type="button" data-delete-archive data-path="{{.Path}}" title="{{if .DeleteOK}}Permanently delete this archive's files. You see what would be removed first, and type the folder's name to confirm.{{else}}{{.DeleteWhy}}{{end}}"{{if not .DeleteOK}} disabled{{end}}>Delete…</button>{{end}}
         </li>{{end}}
 {{- define "switchLocks"}}Switching to another archive locks {{.SwitchLocks}}.{{if .EncRemembered}} This computer remembers its key, so it opens again by itself when you switch back.{{else}} When you switch back, unlock it again on its Encryption card.{{end}}{{end}}`))
 

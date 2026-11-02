@@ -35,9 +35,17 @@ func NewCommandLineDelete(store vault.Store, sched archdelete.Scheduler, install
 	if err != nil {
 		return nil, err
 	}
+	return NewCommandLineDeleteAt(cfgPath, store, sched, installed), nil
+}
+
+// NewCommandLineDeleteAt is NewCommandLineDelete for a Desktop started with -config cfgPath
+// (MA-1018; the 1.5.3 friction review's B19): its settings, its list of archives and its
+// deletions.log are the ones beside that config file, as that Desktop keeps them
+// (Config.deletionsLogPath), so `-config` on the command-line verbs reaches the same list and log.
+func NewCommandLineDeleteAt(cfgPath string, store vault.Store, sched archdelete.Scheduler, installed func() []schedule.InstalledEntry) *CommandLineDelete {
 	cfg := Config{ConfigPath: cfgPath, SettingsPath: settingsPathFor(cfgPath), IndexPath: indexPathFor(cfgPath),
 		Version: buildVersion(), DeleteScheduler: sched, DeleteInstalled: installed}
-	return &CommandLineDelete{cfg: cfg, store: store}, nil
+	return &CommandLineDelete{cfg: cfg, store: store}
 }
 
 // PlannedText is the saved plan's text (§8.1, Status "planned, nothing deleted"), headed as the

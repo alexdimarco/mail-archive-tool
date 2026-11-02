@@ -972,3 +972,45 @@ MA-1000, MA-1010 to MA-1013).**
   page's tidy-up reads without the lock and takes it only when it would add a row.
   Uninstall leaves `known-archives.lock` behind, as it leaves `encrypted-archives.lock`;
   adding it to uninstall's list of files is the operator's call.
+- *Pause, Resume and a Switch refuse a delete not finished (MA-1015; the 1.5.3 friction
+  review's H2, 2 November 2026).* MA-979 refused them only while a delete runs, so a tab
+  drawn before a delete that then stopped part way could still seal the folder or make it
+  current again. Each now asks `deletions.log` under the folder's hold and refuses, in
+  MA-987's words first: "Delete not finished: click Delete again. This archive's delete did
+  not finish, so it was not paused; nothing was changed." (likewise "…so it was not
+  resumed…", "…so it was not made the current archive…", and for a save that keeps the
+  folder current "…so these settings were not saved…"). A log that cannot be read refuses
+  all three: "MailArchive could not read its deletion log, LOG (CAUSE), so it cannot tell
+  whether a delete of this archive did not finish; nothing was changed. Check that file,
+  then try again." (builder's words, for the operator). This also refuses Pause, a safety
+  action, for any folder while the log cannot be read, as MA-987 refuses runs; the
+  operator may prefer to let Pause through then. It is a guard in the delete's design, so
+  it may owe the adversarial pass: the operator decides.
+- *Remove from list is disabled where it would be refused (MA-1016; the friction review's
+  D3).* Each row asks `archdelete.UnlistRefusal` as the route does; when it would refuse
+  (the archive in use, the folder MailArchive was started with, another archive's
+  scheduled capture), the button is disabled with the refusal's words as its title, as
+  Delete… is. The lone "This archive" card's note then reads "The archive this page shows.
+  Delete… erases its files, after showing what it would remove. Remove from list is not
+  offered for it now. This is the archive in use. Switch to another archive, or add one
+  (Add another archive), then remove this one from the list." (builder's words before the
+  refusal's own). In Your archives the reason is the title only.
+- *After deleting the page's own archive, its controls do nothing until Dismiss (MA-1017;
+  the friction review's H4).* When a delete's reply says the page's archive was deleted, or
+  not fully deleted past step 4, the page says "This archive was deleted: click Dismiss on
+  its result to refresh this page." ("This archive was not fully deleted: …"; these
+  replace "…dismiss its result to see the page as it is now.") at its top and at the top
+  of each of that archive's cards, greys those cards and makes them inert, clears the
+  switch notes about it and hides the sidebar's reader and Encryption links. Your
+  archives, This archive, Add another archive, the guide, Security & privacy and
+  Uninstall stay usable. With archives listed and none chosen, the empty page now says
+  "No archive is chosen yet. Your archives, below, lists the archives MailArchive knows
+  on this computer: to use one, click Switch to this archive on its row. To use a folder
+  that is not listed, click Open an archive folder… above; to make a new archive, click
+  Make a new archive… above." (builder's words, for the operator).
+- *The command line can reach a Desktop started with -config (MA-1018; the friction
+  review's B19, the Desktop's side).* `desktop.NewCommandLineDeleteAt(CONFIG, …)` reads
+  the settings, the list of archives and deletions.log beside the given config file, as
+  that Desktop keeps them; `NewCommandLineDelete` is it with the default config. Adding
+  `-config` to `delete-archive` and `unlist-archive` is the command line's part; no new
+  words here.

@@ -140,9 +140,12 @@ function row(path, state) {
 // page draws the Overview: rows [[path, state]], the archive it was drawn for, the held results.
 function page(rows, drawnFor, held) {
   doc.body.append(el('meta', { name: 'csrf', content: 'c'.repeat(64) }), el('meta', { name: 'drawn-for', content: drawnFor }));
-  doc.body.append(el('nav', { class: 'nav' }, el('a', { href: '#sec-archive', id: 'navArchive' }, 'Archive now'), el('a', { href: '#sec-backup', id: 'navRunNow' }, 'Run now')));
+  doc.body.append(el('nav', { class: 'nav' }, el('a', { href: '#sec-archive', id: 'navArchive' }, 'Archive now'), el('a', { href: '#sec-backup', id: 'navRunNow' }, 'Run now'),
+    el('a', { href: 'http://127.0.0.1:1/s/x/', target: '_blank', rel: 'noopener' }, 'Open archive'), el('a', { href: '#sec-encryption', id: 'navEncryption' }, 'Encryption'),
+    el('a', { href: '#sec-health' }, 'Status & health')));
   doc.body.append(el('div', { id: 'heldDeletes', 'data-held-deletes': JSON.stringify(held || []), hidden: '' }));
-  const card = el('div', { class: 'card', id: 'sec-archives' }, el('h2', {}, 'Your archives'));
+  doc.body.append(el('div', { class: 'status-grid' }, el('div', { class: 'status-card' }, 'Scheduled backup')));
+  const card = el('div', { class: 'card', id: 'sec-archives' }, el('h2', {}, 'Your archives'), el('p', { class: 'card-sub warn', id: 'switchLocks' }, 'Switching to another archive locks ' + drawnFor + '.'));
   const ul = el('ul', { class: 'archive-list' });
   rows.forEach(([p, s]) => ul.append(row(p, s)));
   card.append(ul); doc.body.append(card);
@@ -151,6 +154,10 @@ function page(rows, drawnFor, held) {
   const outDir = el('input', { id: 'outDir' }); outDir.value = drawnFor;
   doc.body.append(el('div', { class: 'card', id: 'sec-settings' }, outDir, el('div', { class: 'note', id: 'settingsNote', hidden: '' }),
     el('div', { class: 'note warnbox', id: 'settingsConfirm', hidden: '' }, el('p', { id: 'settingsConfirmText' }))));
+  doc.body.append(el('div', { class: 'card', id: 'sec-encryption' }, el('h2', {}, 'Encryption'), el('p', { class: 'card-sub', id: 'encState' }, "Unlocked: you can read this archive's messages."),
+    el('button', { class: 'btn secondary', type: 'button', id: 'encLock' }, 'Lock')));
+  doc.body.append(el('div', { class: 'card', id: 'sec-health' }, el('h2', {}, 'Status & health'), el('pre', {}, 'Posture: OK')));
+  doc.body.append(el('div', { class: 'card sec', id: 'sec-uninstall' }, el('h2', {}, 'Uninstall MailArchive'), el('button', { class: 'btn secondary', type: 'button' }, 'Uninstall MailArchive…')));
 }
 
 // ---- the browser around it -------------------------------------------------------------
@@ -431,6 +438,36 @@ const scenarios = {
       const p = posts.find(x => x.path === path);
       check(!!p && p.body && p.body.drawnFor === 'E:\\Cur', path + ' names the archive the page was drawn for');
     }
+  },
+  // A delete of the page's own archive that got past step 4: the page says so at the top, and
+  // its cards are greyed and inert, each saying so, until the result is dismissed; the switch
+  // note about it goes, and the sidebar's reader and Encryption links (MA-1017). Positive twin
+  // first: a delete of another archive leaves them all.
+  async deletedCurrent() {
+    const cards = ['sec-archive', 'sec-backup', 'sec-settings', 'sec-encryption', 'sec-health'];
+    page([['D:\\Mail\\Cur', 'current'], ['E:\\Other', 'other']], 'D:\\Mail\\Cur');
+    boot(); await wait(30);
+    const [cur, other] = doc.querySelectorAll('.archive-row');
+    replies['api/archive/delete/plan'] = x => plan(x.path, x.path === 'E:\\Other' ? 'Other' : 'Cur', 'TOK-' + x.path);
+    replies['api/archive/delete'] = result({ id: 'HO', row: 'E:\\Other', folder: 'E:\\Other', rowRemoved: true, rows: ['E:\\Other'], page: '' });
+    other.querySelector('[data-delete-archive]').click(); await wait(40);
+    await typeAndDelete(other, 'Other'); await wait(40);
+    check(!doc.root.all().some(e => e.hasAttribute('inert')) && !doc.getElementById('archiveGone') && !!doc.getElementById('switchLocks') && shown('archiveBtn'),
+      "a delete of another archive leaves the page's own controls");
+    replies['api/archive/delete'] = result({ id: 'HC', row: 'D:\\Mail\\Cur', folder: 'D:\\Mail\\Cur', rowRemoved: true, rows: ['D:\\Mail\\Cur'], page: 'deleted' });
+    cur.querySelector('[data-delete-archive]').click(); await wait(40);
+    await typeAndDelete(cur, 'Cur'); await wait(40);
+    const said = 'This archive was deleted: click Dismiss on its result to refresh this page.';
+    const top = doc.getElementById('archiveGone');
+    check(!!top && top.textContent === said && top.getAttribute('role') === 'status', 'the top of the page says the archive was deleted and to dismiss its result');
+    check(cards.every(id => { const c = doc.getElementById(id); return c.hasAttribute('inert') && c.classList.contains('archive-gone'); }) &&
+      doc.querySelector('.status-grid').hasAttribute('inert'), 'its cards and status tiles are greyed and do nothing');
+    check(cards.every(id => { const t = doc.getElementById(id).querySelector('.gone-tag'); return !!t && t.textContent === said; }), 'each card says so at its top');
+    check(!doc.getElementById('switchLocks'), 'the switch note about the deleted archive is cleared');
+    check(doc.querySelectorAll('.nav a[target]').every(a => a.hidden) && doc.getElementById('navEncryption').hidden && !doc.querySelector('.nav a[href="#sec-health"]').hidden,
+      "the sidebar's reader and Encryption links go; the others stay");
+    check(!doc.getElementById('sec-archives').hasAttribute('inert') && !doc.getElementById('sec-uninstall').hasAttribute('inert') && !!doc.querySelector('[data-held-id="HC"]'),
+      'Your archives, its result and Uninstall stay usable');
   },
 };
 

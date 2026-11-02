@@ -58,6 +58,12 @@ type ArchiveRow struct {
 	// Deleting marks a delete of the folder under way in this process (MA-979): the row says
 	// "Being deleted" in place of Switch and Pause and offers neither Delete nor Remove from list.
 	Deleting bool
+	// UnlistWhy, when not "", is why Remove from list would be refused for the row, in §7's words
+	// (archdelete.UnlistRefusal: the archive in use while it is reachable and still an archive,
+	// the folder MailArchive was started with, another archive's scheduled capture): the button
+	// is drawn disabled with these words as its title, as Delete… is (MA-1016; the 1.5.3 friction
+	// review's D3), never offered only to be refused.
+	UnlistWhy string
 }
 
 // KindLabel is the short, plain-words form of Kind for the archive list ("" when
@@ -142,7 +148,8 @@ func (cfg Config) archiveRows(idx archindex.Index) []ArchiveRow {
 	rows := make([]ArchiveRow, 0, len(idx.Entries))
 	// The row's busy check is the plan's: the Desktop's own runs and another program's holding
 	// the archive lock (del-s3a conformance gap 1).
-	rc := archdelete.NewRowsCheck(cfg.deleteDeps(cfg.rowBusy, nil))
+	deps := cfg.deleteDeps(cfg.rowBusy, nil)
+	rc := archdelete.NewRowsCheck(deps)
 	for _, e := range idx.Entries {
 		avail := archindex.Available(e)
 		kind := ""
@@ -155,7 +162,12 @@ func (cfg Config) archiveRows(idx archindex.Index) []ArchiveRow {
 		}
 		lostSince := sourceLostSince(e.Path)
 		del := cfg.deleteRowFacts(e.Path, rc, avail && kind != "" && problem == "")
+		unlistWhy := ""
+		if err := archdelete.UnlistRefusal(e.Path, deps); err != nil {
+			unlistWhy = refusalText(err) // the route's own refusal (MA-1016)
+		}
 		rows = append(rows, ArchiveRow{
+			UnlistWhy:       unlistWhy,
 			DeleteOK:        del.ok,
 			DeleteWhy:       del.why,
 			Unfinished:      del.unfinished,

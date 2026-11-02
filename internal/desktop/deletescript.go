@@ -18,7 +18,12 @@ const archiveDeleteJS = `
 const delUnfinishedText='Delete not finished: click Delete again';
 // What takes Archive now's and Run now's place on a page whose archive a delete reached (the
 // delete reply's page, MA-986).
-const delPageText={unfinished:delUnfinishedText,deleted:'This archive was deleted: dismiss its result to see the page as it is now.',partial:'This archive was not fully deleted: dismiss its result to see the page as it is now.'};
+const delPageText={unfinished:delUnfinishedText,deleted:'This archive was deleted: click Dismiss on its result to refresh this page.',partial:'This archive was not fully deleted: click Dismiss on its result to refresh this page.'};
+// The cards that show or change the page's own archive (MA-1017): after a delete of it got past
+// step 4 (it is no longer the archive in use) they are greyed and do nothing (inert) until its
+// result is dismissed and the page is drawn again. Your archives, This archive, Add another
+// archive, the guide, Security & privacy and Uninstall are not the archive's and stay.
+const delArchiveCards=['sec-m365','sec-export','sec-archive','sec-settings','sec-encsteps','sec-encryption','sec-backup','sec-alerts','sec-history','sec-health','sec-maintenance'];
 // delWait: a reload the page started was held; delInFlight: deletes this page has asked for whose
 // reply has not come; delSeq: the last Delete… or Remove from list clicked (an earlier one's
 // slower reply opens nothing, MA-986).
@@ -63,11 +68,30 @@ function delMarkUnfinished(li){
   li.setAttribute('data-delete-unfinished','');
 }
 // The archive this page was drawn for was deleted, or its delete did not finish (kind: the
-// reply's page): Archive now and Run now, and their sidebar links, are not offered for it.
+// reply's page): Archive now and Run now, and their sidebar links, are not offered for it. Once
+// it is no longer the archive in use (deleted, or not fully deleted past step 4), the rest of
+// its page goes too (delPageGone).
 function delPageArchive(kind){
   const text=delPageText[kind]||delUnfinishedText;
-  ['archiveBtn','runBackupBtn'].forEach(id=>{const x=$(id);if(x&&!x.hidden){x.hidden=true;const t=document.createElement('span');t.className='archive-tag';t.textContent=text;x.after(t);}});
+  const gone=kind==='deleted'||kind==='partial';
+  ['archiveBtn','runBackupBtn'].forEach(id=>{const x=$(id);if(x&&!x.hidden){x.hidden=true;if(!gone){const t=document.createElement('span');t.className='archive-tag';t.textContent=text;x.after(t);}}});
   ['navArchive','navRunNow'].forEach(id=>{const x=$(id);if(x)x.hidden=true;});
+  if(gone)delPageGone(text);
+}
+// The page's own archive is gone (MA-1017; the 1.5.3 friction review's H4): a line at the top
+// says so; its cards (Status & health, Settings, the Encryption card's Unlocked and Lock, the
+// Scheduled backup card…) are greyed and inert, each saying the same at its top; the sidebar's
+// reader and Encryption links go; and the switch notes about it, no longer true, are cleared.
+function delPageGone(text){
+  if(!$('archiveGone')){const b=delEl('div',text,'note warnbox');b.id='archiveGone';b.setAttribute('role','status');const hd=$('heldDeletes');if(hd)hd.before(b);}
+  const grey=c=>{if(c.hasAttribute('inert'))return;c.setAttribute('inert','');c.setAttribute('aria-disabled','true');c.classList.add('archive-gone');};
+  delArchiveCards.forEach(id=>{const c=$(id);if(!c)return;
+    if(!c.querySelector('.gone-tag')){const t=delEl('p',text,'archive-tag gone-tag');const h=c.querySelector('h2');if(h)h.after(t);else c.prepend(t);}
+    grey(c);});
+  document.querySelectorAll('.status-grid').forEach(grey);
+  document.querySelectorAll('.nav a[target]').forEach(a=>{a.hidden=true;});
+  const ne=$('navEncryption');if(ne)ne.hidden=true;
+  ['switchLocks','switchLocksSettings'].forEach(id=>{const x=$(id);if(x)x.remove();});
 }
 // A record saved is remembered for this tab (a reload is no dismissal), so Dismiss asks only
 // about a record not saved (§8.1).
