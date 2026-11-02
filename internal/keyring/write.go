@@ -75,6 +75,18 @@ func Forgotten(out string) (bool, error) {
 	return e != nil && e.Forgotten, nil
 }
 
+// ArchiveIDIn is the archive id a key file's bytes (either copy) record, read
+// without the key; ok is false when data is not a key file. A package that only
+// needs the id, such as a delete's plan, reads it here rather than through the
+// vault (phase3 §3.1: this package is the one path to a key file).
+func ArchiveIDIn(data []byte) (id string, ok bool) {
+	v, err := vault.Parse(data)
+	if err != nil {
+		return "", false
+	}
+	return v.ArchiveID.String(), true
+}
+
 // SetPauseNote seals note into the archive's record as its pause note, or clears
 // it when note is "" (§6, E6): a keyed write, so u must be a write lease. The
 // pause file beside the archive stays the empty marker.

@@ -11,6 +11,7 @@ import (
 
 	"mail-archive-tool/internal/container"
 	"mail-archive-tool/internal/encmark"
+	"mail-archive-tool/internal/keyring"
 	"mail-archive-tool/internal/seal"
 	"mail-archive-tool/internal/state"
 	"mail-archive-tool/internal/util"
@@ -626,13 +627,13 @@ func (l *lister) removedIndex(n string) int {
 }
 
 // archiveIDOf is the archive id an encrypted archive's vault file (either copy)
-// records, read without the key (vault.Parse), or else its manifest envelope's; ""
-// when neither says.
+// records, read without the key (keyring.ArchiveIDIn), or else its manifest
+// envelope's; "" when neither says.
 func archiveIDOf(root *os.Root) string {
 	for _, n := range []string{vault.FileName, vault.BackupName} {
 		if data, err := readSmallIn(root, n, vaultCap); err == nil {
-			if v, err := vault.Parse(data); err == nil {
-				return v.ArchiveID.String()
+			if id, ok := keyring.ArchiveIDIn(data); ok {
+				return id
 			}
 		}
 	}
