@@ -1016,10 +1016,18 @@ func (d *dashboard) unlistAction(w http.ResponseWriter, r *http.Request) {
 		refuseDelete(w, deletingRefusal)
 		return
 	}
-	// Not while an uninstall removes the settings it would write again (del-s5-A2-02).
-	if why := d.running.blockedWhy(); why != "" && in.Confirm {
-		refuseDelete(w, why)
-		return
+	// Yes is held against an uninstall and a delete for the whole of its work (the delete
+	// residuals' security pass, CON-06): refused while an uninstall removes (or has removed, or
+	// stopped part way through) the settings it would write again (del-s5-A2-02), and, once
+	// granted, an uninstall's Remove or a delete of the folder beginning meanwhile is refused
+	// until it ends — never a check here and the writes later with an uninstall between.
+	if in.Confirm {
+		release, why := d.running.holdSettings(row, unlistingRefusal)
+		if why != "" {
+			refuseDelete(w, why)
+			return
+		}
+		defer release()
 	}
 	x := d.cfg.deleteUnlistDeps(in.Named)
 	if !in.Confirm {

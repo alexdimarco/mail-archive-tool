@@ -937,3 +937,25 @@ MA-1000, MA-1010 to MA-1013).**
   of a plan file being written when Ctrl-C arrives is bounded by the same two seconds as
   its close; one that has not answered by then is reported as maybe incomplete, and the
   verb exits.
+- *An uninstall that stopped part way keeps deletes blocked (MA-1007; the delete
+  residuals' security pass, CON-06).* An uninstall's Remove that stops once it has begun
+  removing (a schedule, the sign-in, a working copy or a settings file could not be
+  removed) may have removed deletions.log and the settings already, so the Desktop no
+  longer lets deletes start again: Delete permanently and Remove from list's Yes are
+  refused, for as long as this Desktop runs, with "An uninstall of MailArchive did not
+  finish on this computer, and some of its settings may already be removed, so nothing was
+  deleted or changed. Run Uninstall again to finish it, or install MailArchive again
+  first." (builder's words, for the operator). Running Uninstall again from a fresh plan
+  is allowed and, when it finishes, the block becomes "MailArchive was uninstalled…"; a
+  Remove refused before it removes anything puts the part-way block back. "Begun removing"
+  is read from `uninstall.Uninstall` returning its report with the error, which it does
+  only after the plan; a first schedule that could not be removed counts, since its own
+  removal may have been partial.
+- *Remove from list holds against an uninstall (MA-1007, CON-06).* Remove from list's Yes
+  takes the record of deletes under way's hold for the whole of its work, refused while an
+  uninstall blocks deletes; while it runs, an uninstall's Remove is refused ("Remove from
+  list is running (ROW). Uninstall when it ends: uninstalling now would remove the list
+  and settings it writes. Nothing was removed.") and a delete of the row is refused ("This
+  archive is being removed from Your archives, so nothing was deleted."). Before, it
+  checked for an uninstall and wrote the list and settings later, so an uninstall could
+  begin between and have them written again after it.

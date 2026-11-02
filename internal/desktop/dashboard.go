@@ -997,8 +997,8 @@ func (d *dashboard) uninstallAction(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, map[string]any{"ok": false, "error": fmt.Sprintf(deletingUninstall, it.row)})
 		return
 	} else if why != "" {
-		// Another Remove is running, or one has already uninstalled: this one removes nothing and
-		// leaves that one's block as it is.
+		// Another Remove is running, one has already uninstalled, or Remove from list is running
+		// (CON-06): this one removes nothing and leaves that block or hold as it is.
 		writeJSON(w, map[string]any{"ok": false, "error": why})
 		return
 	}
@@ -1041,7 +1041,15 @@ func (d *dashboard) uninstallAction(w http.ResponseWriter, r *http.Request) {
 	if err != nil {
 		if in.Confirm {
 			d.cfg.Keys.reopen()
-			d.running.unblock()
+			// A real run returns its report with the error only once it has begun removing
+			// (uninstall.Uninstall): the settings folder may be half removed, so deletes stay
+			// blocked, in words saying the uninstall did not finish (CON-06). One refused before
+			// it removed anything lifts its block.
+			if rep != nil {
+				d.running.stoppedPartWay()
+			} else {
+				d.running.unblock()
+			}
 		}
 		writeJSON(w, map[string]any{"ok": false, "error": err.Error()})
 		return

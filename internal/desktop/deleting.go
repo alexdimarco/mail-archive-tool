@@ -2,6 +2,7 @@ package desktop
 
 import (
 	"context"
+	"fmt"
 	"os"
 	"strings"
 	"sync"
@@ -23,10 +24,15 @@ type deletesUnderWay struct {
 	// blocked, when not "", is why no delete may begin: an uninstall is removing (or has
 	// removed) the settings folder deletions.log lives in (del-s5-A2-02).
 	blocked string
+	// partWay records that an uninstall's Remove stopped after it had begun removing (the
+	// delete residuals' security pass, CON-06): the settings folder may be half removed, so
+	// lifting a later Remove's block puts uninstallUnfinishedText back, never "".
+	partWay bool
 	// holds are the actions running now that a delete must not meet, each on its folder — Pause
 	// and Resume (the residual fixes' adversarial pass, finding 2), a Switch or Save settings
-	// naming it, and the Scheduled backup card's Install (the delete residuals' security pass,
-	// CON-01, CON-02): no delete of that folder begins until it ends.
+	// naming it, the Scheduled backup card's Install (the delete residuals' security pass,
+	// CON-01, CON-02), and Remove from list (CON-06): no delete of that folder begins until it
+	// ends. Remove from list's hold also keeps an uninstall's Remove from beginning (settings).
 	holds map[int]*deleteUnderWay
 }
 
@@ -39,12 +45,35 @@ func (u *deletesUnderWay) hold(path, why string) (release func(), ok bool) {
 	if u == nil || strings.TrimSpace(path) == "" {
 		return func() {}, true
 	}
-	h := &deleteUnderWay{folder: path, fi: statOrNil(path), why: why}
+	release, refusal := u.holdLocked(path, why, false)
+	return release, refusal == ""
+}
+
+// holdSettings is hold for an action that writes the list and the settings an uninstall removes
+// — Remove from list (the delete residuals' security pass, CON-06): it is refused, with the
+// reason, while an uninstall blocks deletes (refusal is that reason) or a delete of the folder is
+// under way (deletingRefusal); and while it runs an uninstall's Remove is refused (block), so the
+// check and the writes it guards are one step, never split by an uninstall beginning between.
+func (u *deletesUnderWay) holdSettings(path, why string) (release func(), refusal string) {
+	if u == nil {
+		return func() {}, ""
+	}
+	return u.holdLocked(path, why, true)
+}
+
+// holdLocked is hold and holdSettings: settings marks a hold an uninstall must wait for.
+func (u *deletesUnderWay) holdLocked(path, why string, settings bool) (release func(), refusal string) {
+	h := &deleteUnderWay{folder: path, fi: statOrNil(path), why: why, settings: settings}
 	u.mu.Lock()
+	if settings && u.blocked != "" {
+		why := u.blocked
+		u.mu.Unlock()
+		return nil, why
+	}
 	for _, it := range u.items {
 		if it.is(path, h.fi) {
 			u.mu.Unlock()
-			return nil, false
+			return nil, deletingRefusal
 		}
 	}
 	if u.holds == nil {
@@ -61,7 +90,7 @@ func (u *deletesUnderWay) hold(path, why string) (release func(), ok bool) {
 			delete(u.holds, id)
 			u.mu.Unlock()
 		})
-	}, true
+	}, ""
 }
 
 // heldWhy is the refusal of a hold on the folder (planned from row) running now — a Pause or
@@ -87,30 +116,55 @@ func (u *deletesUnderWay) heldLocked(folder, row string, fi os.FileInfo) *delete
 }
 
 // block stops any delete from beginning, saying why, unless one is under way (that delete is
-// returned) or deletes are already blocked (that reason is returned): then nothing is set. An
-// uninstall's Remove takes it before it removes anything, so a second Remove at the same moment,
-// or one from a tab still showing the plan after an uninstall ended, is refused and cannot lift
-// the block another holds (del-s5 re-verification, residual 1).
+// returned), Remove from list is running (its refusal is returned), or deletes are already
+// blocked (that reason is returned): then nothing is set. An uninstall's Remove takes it before it
+// removes anything, so a second Remove at the same moment, or one from a tab still showing the
+// plan after an uninstall ended, is refused and cannot lift the block another holds (del-s5
+// re-verification, residual 1). The one block a Remove takes over is an uninstall that stopped
+// part way (CON-06): running Uninstall again is how it is finished.
 func (u *deletesUnderWay) block(why string) (*deleteUnderWay, string) {
 	u.mu.Lock()
 	defer u.mu.Unlock()
-	if u.blocked != "" {
+	if u.blocked != "" && u.blocked != uninstallUnfinishedText {
 		return nil, u.blocked
 	}
 	for _, it := range u.items {
 		return it, ""
 	}
+	for _, h := range u.holds {
+		if h.settings {
+			return nil, fmt.Sprintf(unlistingUninstall, h.folder)
+		}
+	}
 	u.blocked = why
 	return nil, ""
 }
 
-// unblock lets deletes begin again after an uninstall that was refused or stopped. It lifts only
-// uninstallingText: once an uninstall has removed the settings (uninstalledText), deletes stay
-// refused for as long as this Desktop runs.
+// unblock lets deletes begin again after an uninstall that was refused or stopped before it
+// removed anything. It lifts only uninstallingText: once an uninstall has removed the settings
+// (uninstalledText), deletes stay refused for as long as this Desktop runs; and once one stopped
+// part way (CON-06), lifting a later Remove's block puts uninstallUnfinishedText back.
 func (u *deletesUnderWay) unblock() {
 	u.mu.Lock()
 	if u.blocked == uninstallingText {
 		u.blocked = ""
+		if u.partWay {
+			u.blocked = uninstallUnfinishedText
+		}
+	}
+	u.mu.Unlock()
+}
+
+// stoppedPartWay blocks every delete for as long as this Desktop runs, as uninstalled does, after
+// an uninstall's Remove stopped once it had begun removing (the delete residuals' security pass,
+// CON-06): schedules, the sign-in, working copies or settings files, deletions.log among them,
+// may be gone, and a delete would write the log and the settings again into a half-removed
+// settings folder. Uninstall's Remove may run again to finish it.
+func (u *deletesUnderWay) stoppedPartWay() {
+	u.mu.Lock()
+	u.partWay = true
+	if u.blocked != uninstalledText {
+		u.blocked = uninstallUnfinishedText
 	}
 	u.mu.Unlock()
 }
@@ -139,6 +193,8 @@ type deleteUnderWay struct {
 	fi          os.FileInfo
 	done        chan struct{}
 	why         string
+	// settings marks a hold an uninstall's Remove waits for (holdSettings).
+	settings bool
 }
 
 func newDeletesUnderWay() *deletesUnderWay {
@@ -284,4 +340,10 @@ const (
 	uninstallingText  = "MailArchive is being uninstalled from this computer, so nothing was deleted or changed."
 	uninstalledText   = "MailArchive was uninstalled from this computer, so nothing was deleted or changed. Install MailArchive again first."
 	deletingUninstall = "A delete is running (%s). Uninstall when its result shows on this page: uninstalling now would remove the deletion log that delete writes. Nothing was removed."
+	// An uninstall's Remove that stopped after it began removing (CON-06).
+	uninstallUnfinishedText = "An uninstall of MailArchive did not finish on this computer, and some of its settings may already be removed, so nothing was deleted or changed. Run Uninstall again to finish it, or install MailArchive again first."
+	// Remove from list running when Delete permanently is clicked (CON-06).
+	unlistingRefusal = "This archive is being removed from Your archives, so nothing was deleted."
+	// Remove from list running when an uninstall's Remove is clicked (CON-06).
+	unlistingUninstall = "Remove from list is running (%s). Uninstall when it ends: uninstalling now would remove the list and settings it writes. Nothing was removed."
 )
