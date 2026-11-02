@@ -139,7 +139,9 @@ func (r *RowsCheck) UnlistRefusal(folder string) error {
 		_, err := rowArchiveTest(abs)
 		return unreachableOrNoArchiveErr(err)
 	}
-	return unlistRefusal(folder, r.deps, same, gone)
+	// The page's one read of deletions.log (MA-1029).
+	unfinished := func(abs string) bool { return r.log != nil && r.log.Unfinished(abs, r.deps.goos()) != nil }
+	return unlistRefusal(folder, r.deps, same, gone, unfinished)
 }
 
 // rowArchiveTest is §4's archive test for a row, its manifest parse kept by the manifest's

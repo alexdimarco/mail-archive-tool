@@ -1167,3 +1167,13 @@ changed words are the builder's, for the operator, unless a quote says otherwise
   OS config folder, on Windows Credential Manager; the no-store path is reached only when the
   config folder cannot be determined, not by a missing Secret Service or a locked Keychain. The
   §14 notes above that say otherwise are corrected by this one.
+
+**The adversarial pass of the shared and command-line group (2 November 2026).** New or changed
+words are the builder's, for the operator.
+- *Remove from list keeps a delete that did not finish (MA-1029; finding 1).* §5.2's Remove from
+  list gains a refusal: a folder deletions.log has an unfinished delete of (§5.4) keeps its row,
+  since the row is what Delete again finishes it from and a folder whose archive files are gone
+  cannot be listed again. Words: "Delete not finished: click Delete again. This archive's delete
+  did not finish, so it was not removed from the list; nothing was changed." (the row's button
+  disabled with them; at the terminal followed by "At this terminal, Delete again is: …"). The
+  review's other way, add-archive accepting such a folder, was not built.

@@ -284,7 +284,14 @@ const (
 	// CaseStopped is the command line's stop right before step 2, when nothing has changed
 	// yet (ExecDeps.BeforeStep(2): a MailArchive Desktop found, or Ctrl-C held until then).
 	CaseStopped Case = "stopped"
+	// CaseUnfinished is Remove from list of a folder whose delete did not finish (§5.4; MA-1029):
+	// the row is what Delete again finishes it from, so it is kept until the delete finishes.
+	CaseUnfinished Case = "delete-unfinished"
 )
+
+// msgUnlistUnfinished is Remove from list's refusal of a folder whose delete did not finish, in
+// MA-987's and MA-1015's words (builder's words, for the operator).
+const msgUnlistUnfinished = "Delete not finished: click Delete again. This archive's delete did not finish, so it was not removed from the list; nothing was changed."
 
 // Refusal is a §7 refusal: the cause, and a remedy that can be done from the row.
 // Nothing was changed.
@@ -667,15 +674,24 @@ func currentName(current string) string {
 // UnlistRefusal is Remove from list's refusals that facts decide (§7's Remove
 // column): the capture registered under this folder's name (§5.1 (b)), the archive
 // in use unless it is unreachable or no longer an archive (§5.2, by §4's archive
-// test), and a Desktop started with -out naming it. nil means Remove from list may
-// go on.
+// test), a Desktop started with -out naming it, and a delete of it in deps.Log that did
+// not finish (MA-1029). nil means Remove from list may go on.
 func UnlistRefusal(folder string, deps Deps) error {
-	return unlistRefusal(folder, deps, sameFolder, unreachableOrNoArchive)
+	unfinished := func(abs string) bool {
+		if deps.Log == "" {
+			return false
+		}
+		// A log that cannot be read refuses nothing here, as the row's state reads it (RowsCheck).
+		u, err := UnfinishedDelete(deps.Log, abs, deps.goos())
+		return err == nil && u != nil
+	}
+	return unlistRefusal(folder, deps, sameFolder, unreachableOrNoArchive, unfinished)
 }
 
-// unlistRefusal is UnlistRefusal with its folder comparison (same) and its archive test (gone)
-// asked of the caller: the route's own, or a page of rows' memo of them (RowsCheck.UnlistRefusal).
-func unlistRefusal(folder string, deps Deps, same func(a, b, goos string) bool, gone func(string) bool) error {
+// unlistRefusal is UnlistRefusal with its folder comparison (same), its archive test (gone) and
+// its unfinished-delete test asked of the caller: the route's own, or a page of rows' memo of them
+// (RowsCheck.UnlistRefusal).
+func unlistRefusal(folder string, deps Deps, same func(a, b, goos string) bool, gone, unfinished func(string) bool) error {
 	abs, err := filepath.Abs(folder)
 	if err != nil {
 		abs = filepath.Clean(folder)
@@ -684,6 +700,13 @@ func unlistRefusal(folder string, deps Deps, same func(a, b, goos string) bool, 
 	goos := deps.goos()
 	if s.LaunchOut != "" && same(s.LaunchOut, abs, goos) {
 		return refuse(CaseLaunchOut, "Restart MailArchive without -out, then remove it from the list.")
+	}
+	// A delete of the folder that did not finish (§5.4) is finished from its row: Remove from list
+	// would take that row away, and a folder whose archive files are gone cannot be listed again
+	// (add-archive and Open an archive folder… want an archive), so the delete could never be
+	// finished (the 1.5.3 friction fixes' adversarial pass, finding 1; MA-1029).
+	if unfinished != nil && unfinished(abs) {
+		return refuse(CaseUnfinished, "%s", msgUnlistUnfinished)
 	}
 	current := s.Current != "" && same(s.Current, abs, goos)
 	if s.CaptureBackupFor != "" && same(s.CaptureBackupFor, abs, goos) && !current {
