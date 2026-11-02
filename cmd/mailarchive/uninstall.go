@@ -66,6 +66,10 @@ func printUninstallPlan(w io.Writer, rep *uninstall.Report) {
 	for _, f := range rep.ConfigFiles {
 		fmt.Fprintf(w, "      %s\n", f)
 	}
+	// The delete's journal, named on its own with what to do first (design-archive-delete §8.1).
+	if rep.DeletionsLog != "" {
+		fmt.Fprintf(w, "  - the deletion log: %s\n      %s\n", rep.DeletionsLog, uninstall.DeletionsLogNote)
+	}
 	// Only when there is any: an encrypted archive's leftover working copies (P2a-C12).
 	if len(rep.Scratch) > 0 {
 		fmt.Fprintf(w, "  - leftover working copies in MailArchive's working folder: %d\n", len(rep.Scratch))

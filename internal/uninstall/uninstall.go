@@ -31,7 +31,16 @@ type Report struct {
 	programCache []string
 	KeptArchives []string // archives left untouched, named for the owner
 	BinaryNote   string   // how to remove the program itself (no self-delete, U-C6)
+	// DeletionsLog is the delete's journal (deletions.log) when it is among ConfigFiles, so
+	// the plan names it and says DeletionsLogNote; "" when there is none
+	// (docs/design-archive-delete.md §8.1, O2-07).
+	DeletionsLog string
 }
+
+// DeletionsLogNote is what uninstall's plan says under the deletion log (design-archive-delete
+// §8.1): the log is the cross-check for a saved deletion record's digest, and uninstall
+// removes it.
+const DeletionsLogNote = "Copy deletions.log first if you need it to check saved deletion records."
 
 // Seams (overridable in tests, so a test touches no real scheduler or credential store):
 // the live schedule sweep, the per-entry removal, and the sign-in clear.
@@ -96,6 +105,11 @@ func Uninstall(configDir string, knownArchives []string, exe string, dryRun bool
 	}
 	if len(cache) > 0 {
 		rep.ProgramCache = cache[len(cache)-1]
+	}
+	for _, f := range cfgTargets {
+		if filepath.Base(f) == deletionsLogName {
+			rep.DeletionsLog = f
+		}
 	}
 	for _, e := range entries {
 		rep.Schedules = append(rep.Schedules, e.Name)

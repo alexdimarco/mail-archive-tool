@@ -33,9 +33,13 @@ var fixedConfigNames = map[string]bool{
 	"known-archives.json":   true,
 	"desktop-capture.log":   true,
 	// The delete's journal (archdelete.LogName; docs/design-archive-delete.md §5.4):
-	// uninstall removes it with the other settings files.
-	"deletions.log": true,
+	// uninstall removes it with the other settings files, and its plan names it (§8.1).
+	deletionsLogName: true,
 }
+
+// deletionsLogName is the delete's journal, archdelete.LogName (MA-965's test keeps the two
+// in step).
+const deletionsLogName = "deletions.log"
 
 // alertStreakSuffix ends a scheduled backup's alert streak file, <key>.alert-streak, kept
 // beside the Desktop settings (backupalert.StreakSuffix; a test keeps the two in step).
