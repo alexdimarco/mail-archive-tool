@@ -12,7 +12,8 @@ import (
 // §8.1, slice 3b's adversarial pass and conformance review, MA-986): the served dashboard.js is
 // run under Node against a small stand-in for the browser's document
 // (testdata/pagescript/harness.js), so what the page does — not only what its text says — is
-// checked. Node is on every CI runner; a computer without it skips these, saying so.
+// checked. Node is on every CI runner, where these fail without it (the CI setting is present);
+// any other computer without it skips these, saying so.
 
 // runPageScenario runs one of the harness's scenarios on the served script and fails on each
 // check that failed; it returns the checks that passed.
@@ -20,6 +21,10 @@ func runPageScenario(t *testing.T, scenario string) []string {
 	t.Helper()
 	node, err := exec.LookPath("node")
 	if err != nil {
+		// On CI a missing Node would turn every page check into a silent skip (del-s3b leftover 3).
+		if os.Getenv("CI") != "" {
+			t.Fatal("Node is not installed, and CI must run the page script: install Node on this runner. " + err.Error())
+		}
 		t.Skip("Node is not installed on this computer, so the page script is not run here (CI runs it): " + err.Error())
 	}
 	js := filepath.Join(t.TempDir(), "dashboard.js")
@@ -47,6 +52,38 @@ func runPageScenario(t *testing.T, scenario string) []string {
 		t.Fatalf("the %s scenario did not run to its end (%v):\n%s", scenario, err, out)
 	}
 	return passed
+}
+
+// covers: MA-986, R36, S41
+// On CI the page script's tests fail when Node is missing, never skip (del-s3b leftover 3): this
+// test binary is run again for one page test with no Node on its PATH. Positive twin first:
+// without the CI setting, the same run skips, saying Node is not installed.
+func TestThePageScriptTestsFailOnCIWithoutNode(t *testing.T) {
+	run := func(ci bool) (string, error) {
+		t.Helper()
+		var env []string
+		for _, kv := range os.Environ() {
+			if !strings.HasPrefix(kv, "PATH=") && !strings.HasPrefix(kv, "CI=") {
+				env = append(env, kv)
+			}
+		}
+		env = append(env, "PATH="+t.TempDir()) // no node here
+		if ci {
+			env = append(env, "CI=true")
+		}
+		cmd := exec.Command(os.Args[0], "-test.run=^TestOnlyTheLastDeleteClickedOpensItsPanel$", "-test.count=1", "-test.v")
+		cmd.Env = env
+		out, err := cmd.CombinedOutput()
+		return string(out), err
+	}
+	out, err := run(false)
+	if err != nil || !strings.Contains(out, "--- SKIP") || !strings.Contains(out, "Node is not installed on this computer") {
+		t.Fatalf("the positive twin: without CI a missing Node skips (err %v):\n%s", err, out)
+	}
+	out, err = run(true)
+	if err == nil || !strings.Contains(out, "--- FAIL") || !strings.Contains(out, "CI must run the page script") || strings.Contains(out, "--- SKIP") {
+		t.Fatalf("on CI a missing Node must fail the page tests, not skip them (err %v):\n%s", err, out)
+	}
 }
 
 // covers: MA-986, R36, S41
