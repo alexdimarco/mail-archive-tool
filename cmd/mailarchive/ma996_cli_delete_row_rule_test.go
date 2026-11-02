@@ -65,7 +65,9 @@ func TestDeleteArchiveDeletesOnlyARowOfYourArchives(t *testing.T) {
 	var out bytes.Buffer
 	err := deleteArchive(a, u, "", "", &out)
 	assure.Refused(t, exitCode(err), errText(err), assure.Code(1),
-		assure.Names(u, "is not in Your archives", "nothing was deleted", "not one run as administrator or as another user", "Add another archive"),
+		// MA-1023 (friction H3): the way to list it is add-archive or Open an archive folder…, not
+		// Add another archive (which makes a new archive).
+		assure.Names(u, "is not in Your archives", "nothing was deleted", "not one run as administrator or as another user", "mailarchive add-archive", "Open an archive folder…"),
 		assure.NoSideEffect(func() bool {
 			return sameTree(beforeU, tree(t, u)) && e.logText() == logBefore && e.sched.installed[uEntry] && len(a.prompts) == 0 && out.Len() == 0
 		}))

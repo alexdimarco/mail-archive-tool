@@ -1078,3 +1078,18 @@ changed words are the builder's, for the operator, unless a quote says otherwise
   again."), HOW being `schtasks /Delete /TN NAME /F` (or Task Scheduler), `launchctl unload
   PLIST, then delete that file`, or `crontab -e: delete the lines under "# mailarchive-backup
   NAME"`.
+- *`mailarchive add-archive DIR` (MA-1023; H3, the main session's decision).* §3.3's row rule
+  stays; the command line gains a way to add a row. add-archive lists a folder that holds an
+  archive with the checks Open an archive folder… gives (`archiveFolderProblem`'s words, then
+  "Nothing was changed."), under the list's lock, without making it current or touching the
+  folder. It says "Added to Your archives: DIR" then "The folder and its files are unchanged. To
+  delete it: mailarchive delete-archive -out DIR", or "DIR is already in Your archives; nothing
+  was changed.". delete-archive's refusal of a folder not listed now ends "To list a folder that
+  holds an archive, run mailarchive add-archive DIR, or click Open an archive folder… in
+  MailArchive Desktop; then delete it." (it named Add another archive). Root usage: "mailarchive
+  add-archive DIR — add an archive folder you already have to MailArchive Desktop's list of
+  archives"; unlist-archive's line now says "MailArchive Desktop's list of archives" for "Your
+  archives" (wording item 35).
+- *`-config` on the three verbs (MA-1024; B19, the command line's part).* "the config file of a
+  MailArchive Desktop started with -config, to reach its list of archives (default: the usual
+  one)"; the commands the verbs print carry `-config FILE`.

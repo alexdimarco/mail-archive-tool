@@ -121,6 +121,34 @@ func (c *CommandLineDelete) ListRow(row string) error {
 	})
 }
 
+// AddRow is `mailarchive add-archive`: an archive folder listed in Your archives at the terminal
+// (the 1.5.3 friction review's H3: an archive made at the command line could not be deleted there,
+// and a computer with no Desktop could never list it). The folder gets the checks the Desktop's
+// "Open an archive folder…" gives a folder chosen (archiveFolderProblem: an archive at its own
+// folder, plain or encrypted; never a folder inside an encrypted archive, a recorded one that no
+// longer holds its archive, an unfinished unencrypted copy, or a folder with no archive), and is
+// listed under the list's lock as Add another archive lists one (registerArchive:
+// archindex.UpdateFile, CON-07). It is not made the current archive. row is the row as Your
+// archives shows it; added is false when it was listed already; problem is why the folder was not
+// listed ("" when it was, or already is); err says the list could not be read or written.
+func (c *CommandLineDelete) AddRow(path string) (row string, added bool, problem string, err error) {
+	abs, _ := keyOf(strings.TrimSpace(path))
+	idx, err := archindex.ReadFile(c.cfg.IndexPath)
+	if err != nil {
+		return "", false, "", err
+	}
+	if r, ok := rowIn(idx, abs); ok {
+		return r, false, "", nil
+	}
+	if why := archiveFolderProblem(abs); why != "" {
+		return "", false, why, nil
+	}
+	if err := c.cfg.registerArchive(abs, time.Now()); err != nil {
+		return "", false, "", err
+	}
+	return abs, true, "", nil
+}
+
 // ListPath is the Desktop's list of archives (known-archives.json) these verbs read.
 func (c *CommandLineDelete) ListPath() string { return c.cfg.IndexPath }
 

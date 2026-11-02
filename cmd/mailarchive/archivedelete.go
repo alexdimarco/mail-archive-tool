@@ -162,13 +162,32 @@ func desktopLockSession(name string) (string, bool) {
 // commandLineDelete is the Desktop's delete seams for these verbs, and why the secret store could
 // not be opened (nil when it was): without it a remembered key is never forgotten, and step 8
 // keeps the record, the key and the row (del-s4-A1-04).
-func commandLineDelete() (*desktop.CommandLineDelete, error, error) {
+// cfgPath is the Desktop's config file the verb was given with -config ("" is the default one): a
+// Desktop started with -config keeps its settings, its list and deletions.log beside that file
+// (MA-1018), so the verbs reach the same ones (the 1.5.3 friction review's B19).
+func commandLineDelete(cfgPath string) (*desktop.CommandLineDelete, error, error) {
 	store, storeErr := secretStore()
 	if storeErr != nil {
 		store = nil
 	}
+	if cfgPath != "" {
+		return desktop.NewCommandLineDeleteAt(abspath(cfgPath), store, deleteScheduler, deleteInstalled), storeErr, nil
+	}
 	seams, err := desktop.NewCommandLineDelete(store, deleteScheduler, deleteInstalled)
 	return seams, storeErr, err
+}
+
+// configFlag is the -config flag the three Your-archives verbs share.
+func configFlag(fs *flag.FlagSet) *string {
+	return fs.String("config", "", "the config file of a MailArchive Desktop started with -config, to reach its list of archives (default: the usual one)")
+}
+
+// configArg is " -config FILE" for a command the verb prints, when it was given one.
+func configArg(cfgPath string) string {
+	if cfgPath == "" {
+		return ""
+	}
+	return " -config " + encmark.CommandPath(abspath(cfgPath))
 }
 
 // rowOf is §3.1's row rule at the terminal: the row of Your archives that out is. A list that
@@ -190,9 +209,10 @@ func runDeleteArchive(args []string) error {
 	out := fs.String("out", "", "the archive folder to delete, as its row in Your archives shows it (required)")
 	planOut := fs.String("plan-out", "", "save the plan to this NEW file and delete nothing (to get approval first)")
 	recordOut := fs.String("record-out", "", "save the deletion record to this NEW file (without it, the record is printed at the end)")
+	cfgPath := configFlag(fs)
 	fs.Usage = func() {
-		fmt.Fprintf(fs.Output(), "Usage: mailarchive delete-archive -out DIR [-plan-out FILE | -record-out FILE]\n\n"+
-			"Permanently delete the archive in DIR, a folder in Your archives in MailArchive Desktop: its mail files, its index and MailArchive's own files in it — never a file it did not write, unless you choose to delete the mail copies it did not record — and stop its scheduled backups, remove it from Your archives and, for an encrypted archive, make this computer forget its key. There is no Recycle Bin or Trash. The plan is shown first; then you type the folder's name to confirm. It runs only at a terminal, and not while MailArchive Desktop is running (use Delete… on its Your archives card instead).\n\n%s\n\nOptions:\n", deleteVerbExit)
+		fmt.Fprintf(fs.Output(), "Usage: mailarchive delete-archive -out DIR [-plan-out FILE | -record-out FILE] [-config FILE]\n\n"+
+			"Permanently delete the archive in DIR, a folder in Your archives in MailArchive Desktop: its mail files, its index and MailArchive's own files in it — never a file it did not write, unless you choose to delete the mail copies it did not record — and stop its scheduled backups, remove it from Your archives and, for an encrypted archive, make this computer forget its key. There is no Recycle Bin or Trash. The plan is shown first; then you type the folder's name to confirm. It runs only at a terminal, and not while MailArchive Desktop is running (use Delete… on its Your archives card instead). A folder not in Your archives can be added first with mailarchive add-archive DIR.\n\n%s\n\nOptions:\n", deleteVerbExit)
 		fs.PrintDefaults()
 	}
 	if err := fs.Parse(args); err != nil {
@@ -207,21 +227,29 @@ func runDeleteArchive(args []string) error {
 	if *out == "" {
 		return errors.New("-out is required (the archive folder to delete)")
 	}
-	return interrupted(deleteArchive(stdAsker(), abspath(*out), *planOut, *recordOut, os.Stdout), os.Stderr)
+	return interrupted(deleteArchiveWith(*cfgPath, stdAsker(), abspath(*out), *planOut, *recordOut, os.Stdout), os.Stderr)
 }
 
 // notRowToDelete is delete-archive's refusal of a folder that is not a row of Your archives: it
 // names the folder as given, and the usual causes (an elevated or another account's terminal
-// reads that account's list; a mapped drive is another spelling there).
-func notRowToDelete(out string) string {
-	return fmt.Sprintf("%s is not in Your archives (MailArchive Desktop's list for the account this terminal runs as), so nothing was deleted. Give the folder as its row in Your archives shows it, in a terminal of your own account (not one run as administrator or as another user); a folder not listed can be added with Add another archive in MailArchive Desktop", util.StripControl(out))
+// reads that account's list; a mapped drive is another spelling there), and how to list it: the
+// Desktop's Open an archive folder… or, at this terminal, add-archive (the 1.5.3 friction review's
+// H3: it named Add another archive, which makes a new archive, and the command line had no way).
+func notRowToDelete(out, cfgPath string) string {
+	return fmt.Sprintf("%s is not in Your archives (MailArchive Desktop's list for the account this terminal runs as), so nothing was deleted. Give the folder as its row in Your archives shows it, in a terminal of your own account (not one run as administrator or as another user). To list a folder that holds an archive, run mailarchive add-archive%s %s, or click Open an archive folder… in MailArchive Desktop; then delete it.",
+		util.StripControl(out), configArg(cfgPath), encmark.CommandPath(util.StripControl(out)))
 }
 
-// deleteArchive is delete-archive after its flags (§3.3): the terminal and no Desktop, the row,
-// the saved files' checks, the plan, §4.3's question, the folder's name, the delete with its
-// re-checks, the result, and the deletion record saved or printed. A signal is watched
-// throughout (verbWatch).
+// deleteArchive is delete-archive after its flags (§3.3), for the Desktop's default config.
 func deleteArchive(a asker, out, planOut, recordOut string, stdout io.Writer) error {
+	return deleteArchiveWith("", a, out, planOut, recordOut, stdout)
+}
+
+// deleteArchiveWith is delete-archive after its flags (§3.3), for the Desktop whose config file is
+// cfgPath ("" the default): the terminal and no Desktop, the row, the saved files' checks, the
+// plan, §4.3's question, the folder's name, the delete with its re-checks, the result, and the
+// deletion record saved or printed. A signal is watched throughout (verbWatch).
+func deleteArchiveWith(cfgPath string, a asker, out, planOut, recordOut string, stdout io.Writer) error {
 	if !a.attended() {
 		return keyVerbTerminal("delete-archive", nil)
 	}
@@ -233,15 +261,18 @@ func deleteArchive(a asker, out, planOut, recordOut string, stdout io.Writer) er
 	if planOut != "" && recordOut != "" {
 		return errors.New("-plan-out saves the plan and deletes nothing, and -record-out saves the record of a delete: give one of them; nothing was deleted")
 	}
-	seams, storeErr, err := commandLineDelete()
+	seams, storeErr, err := commandLineDelete(cfgPath)
 	if err != nil {
 		return err
 	}
-	row, err := rowOf(seams, out, notRowToDelete(out))
+	row, err := rowOf(seams, out, notRowToDelete(out, cfgPath))
 	if err != nil {
 		return err
 	}
 	watch.setRow(row)
+	watch.mu.Lock()
+	watch.cfg = cfgPath
+	watch.mu.Unlock()
 	if planOut != "" || recordOut != "" {
 		known, kerr := seams.KnownArchives()
 		if kerr != nil {
@@ -265,7 +296,7 @@ func deleteArchive(a asker, out, planOut, recordOut string, stdout io.Writer) er
 	}
 	plan, err := archdelete.Plan(row, seams.PlanDeps())
 	if err != nil {
-		return terminalRefusal(err.Error(), row)
+		return terminalRefusal(err.Error(), row, cfgPath)
 	}
 	for _, l := range deletePlanLines(plan) {
 		a.say("%s", l)
@@ -353,12 +384,12 @@ func deleteArchive(a asker, out, planOut, recordOut string, stdout io.Writer) er
 			// (del-s4 residual 4), not stripped away.
 			msg = strings.Replace(msg, plan.Name, visibleName(plan.Name), 1)
 		}
-		return terminalRefusal(msg, row)
+		return terminalRefusal(msg, row, cfgPath)
 	}
 	for _, l := range res.Lines {
 		fmt.Fprintln(stdout, util.StripControl(l))
 	}
-	for _, h := range terminalHints(res.Message(), row) {
+	for _, h := range terminalHints(res.Message(), row, cfgPath) {
 		fmt.Fprintln(stdout, h)
 	}
 	printRecord := func() {
@@ -407,24 +438,25 @@ const recordHeading = "\nDeletion record (copy it now: MailArchive does not keep
 // terminalRefusal is a refusal in archdelete's words at the terminal: the folder named, since the
 // words were written to sit beside its row (del-s4-A3-05), as the plan shows it (its control
 // characters written out, del-s4 residual 4), and the terminal's equivalents of the Desktop
-// controls they name.
-func terminalRefusal(msg, row string) error {
+// controls they name. cfgPath is the verb's -config, carried into the commands it names.
+func terminalRefusal(msg, row, cfgPath string) error {
 	msg = util.StripControl(msg)
-	lines := append([]string{fmt.Sprintf("%s (Folder: %s)", msg, visibleName(row))}, terminalHints(msg, row)...)
+	lines := append([]string{fmt.Sprintf("%s (Folder: %s)", msg, visibleName(row))}, terminalHints(msg, row, cfgPath)...)
 	return errors.New(strings.Join(lines, "\n"))
 }
 
 // terminalHints are the terminal's equivalents of the Desktop controls a line in archdelete's
 // words names (del-s4-A3-06), for the row: the words are shared with the Desktop, where they fit.
-func terminalHints(text, row string) []string {
+// The delete verbs' commands carry the verb's own -config (B19).
+func terminalHints(text, row, cfgPath string) []string {
 	l := strings.ToLower(text)
 	p := encmark.CommandPath(util.StripControl(row))
 	var hints []string
 	if strings.Contains(l, "delete again") {
-		hints = append(hints, "At this terminal, Delete again is: mailarchive delete-archive -out "+p)
+		hints = append(hints, "At this terminal, Delete again is: mailarchive delete-archive"+configArg(cfgPath)+" -out "+p)
 	}
 	if strings.Contains(l, "remove from list") {
-		hints = append(hints, "At this terminal, Remove from list is: mailarchive unlist-archive -out "+p)
+		hints = append(hints, "At this terminal, Remove from list is: mailarchive unlist-archive"+configArg(cfgPath)+" -out "+p)
 	}
 	if strings.Contains(l, "forget this encrypted archive here") {
 		hints = append(hints, "At this terminal, Forget this encrypted archive here is: mailarchive forget-archive -out "+p)
@@ -612,6 +644,7 @@ type verbWatch struct {
 	phase     watchPhase
 	held      os.Signal
 	row       string
+	cfg       string // the verb's -config, carried into the command it names (B19)
 	savePath  string
 	owned     string
 	ownedFile *os.File
@@ -792,7 +825,7 @@ func (v *verbWatch) signal(s os.Signal) {
 			v.acting = nil
 		}
 	}
-	phase, row, path, record, code := v.phase, v.row, v.savePath, v.record, v.code
+	phase, row, path, record, code, cfg := v.phase, v.row, v.savePath, v.record, v.code, v.cfg
 	first := v.held == nil
 	if first && (phase == phaseHolding || phase == phaseFinishing) {
 		v.held = s
@@ -835,7 +868,7 @@ func (v *verbWatch) signal(s os.Signal) {
 			fmt.Fprintln(v.w, "mailarchive: Remove from list is finishing what it began; it stops when that is done.")
 		}
 	case phaseChanging:
-		fmt.Fprintf(v.w, "mailarchive: delete-archive was stopped by %s and did not finish: the folder may be partly deleted. Run `mailarchive delete-archive -out %s` again (or Delete… in MailArchive Desktop) to finish it.\n", signalWords(s), encmark.CommandPath(util.StripControl(row)))
+		fmt.Fprintf(v.w, "mailarchive: delete-archive was stopped by %s and did not finish: the folder may be partly deleted. Run `mailarchive delete-archive%s -out %s` again (or Delete… in MailArchive Desktop) to finish it.\n", signalWords(s), configArg(cfg), encmark.CommandPath(util.StripControl(row)))
 		v.exit(signalExit(s))
 	case phaseSaving:
 		fmt.Fprintln(v.stdout, recordHeading)
@@ -867,8 +900,9 @@ func signalWords(s os.Signal) string {
 func runUnlistArchive(args []string) error {
 	fs := flag.NewFlagSet("mailarchive unlist-archive", flag.ContinueOnError)
 	out := fs.String("out", "", "the archive folder to remove from Your archives (required)")
+	cfgPath := configFlag(fs)
 	fs.Usage = func() {
-		fmt.Fprintf(fs.Output(), "Usage: mailarchive unlist-archive -out DIR\n\n"+
+		fmt.Fprintf(fs.Output(), "Usage: mailarchive unlist-archive -out DIR [-config FILE]\n\n"+
 			"Remove DIR from Your archives in MailArchive Desktop. The folder and its files are kept. If the folder has scheduled backups, the question names them and they are stopped too. It runs only at a terminal, and not while MailArchive Desktop is running (use Remove from list on its Your archives card instead).\n\n%s\n\nOptions:\n", unlistVerbExit)
 		fs.PrintDefaults()
 	}
@@ -884,13 +918,18 @@ func runUnlistArchive(args []string) error {
 	if *out == "" {
 		return errors.New("-out is required (the archive folder to remove from Your archives)")
 	}
-	return interrupted(unlistArchive(stdAsker(), abspath(*out), os.Stdout), os.Stderr)
+	return interrupted(unlistArchiveWith(*cfgPath, stdAsker(), abspath(*out), os.Stdout), os.Stderr)
 }
 
-// unlistArchive is unlist-archive after its flags (§3.3, §3.2, §5.2): the terminal and no
-// Desktop, a row of Your archives, its question, then Remove from list stopping only what the
-// question named.
+// unlistArchive is unlist-archive after its flags, for the Desktop's default config.
 func unlistArchive(a asker, out string, stdout io.Writer) error {
+	return unlistArchiveWith("", a, out, stdout)
+}
+
+// unlistArchiveWith is unlist-archive after its flags (§3.3, §3.2, §5.2), for the Desktop whose
+// config file is cfgPath ("" the default): the terminal and no Desktop, a row of Your archives,
+// its question, then Remove from list stopping only what the question named.
+func unlistArchiveWith(cfgPath string, a asker, out string, stdout io.Writer) error {
 	if !a.attended() {
 		return keyVerbTerminal("unlist-archive", nil)
 	}
@@ -899,17 +938,17 @@ func unlistArchive(a asker, out string, stdout io.Writer) error {
 	if err := desktopRunning(); err != nil {
 		return err
 	}
-	seams, _, err := commandLineDelete()
+	seams, _, err := commandLineDelete(cfgPath)
 	if err != nil {
 		return err
 	}
-	row, err := rowOf(seams, out, fmt.Sprintf("%s is not in Your archives, so there is nothing to remove from the list; nothing was changed", util.StripControl(out)))
+	row, err := rowOf(seams, out, fmt.Sprintf("%s is not in Your archives, so there is nothing to remove from the list; nothing was changed.", util.StripControl(out)))
 	if err != nil {
 		return err
 	}
 	q, err := archdelete.PlanUnlist(row, seams.UnlistDeps(nil))
 	if err != nil {
-		return terminalRefusal(err.Error(), row)
+		return terminalRefusal(err.Error(), row, cfgPath)
 	}
 	a.say("%s", util.StripControl(row))
 	watch.set(phaseAsking)
@@ -933,16 +972,84 @@ func unlistArchive(a asker, out string, stdout io.Writer) error {
 	res := archdelete.Unlist(row, seams.UnlistDeps(q.Named))
 	watch.over()
 	if res.Refusal != nil {
-		return terminalRefusal(res.Refusal.Message, row)
+		return terminalRefusal(res.Refusal.Message, row, cfgPath)
 	}
 	for _, l := range res.Lines {
 		fmt.Fprintln(stdout, util.StripControl(l))
 	}
-	for _, h := range terminalHints(strings.Join(res.Lines, "\n"), row) {
+	for _, h := range terminalHints(strings.Join(res.Lines, "\n"), row, cfgPath) {
 		fmt.Fprintln(stdout, h)
 	}
 	if code := res.ExitCode(); code != 0 {
 		return &exitError{code: code}
 	}
+	return nil
+}
+
+// addVerbExit is add-archive's exit line in its help (X1).
+const addVerbExit = "Exit: 0 added (or already listed); 1 refused, nothing changed (a folder that holds no archive, or Your archives that cannot be read or saved)."
+
+// runAddArchive is `mailarchive add-archive FOLDER` (the 1.5.3 friction review's H3): an archive
+// folder you already have listed in Your archives, as MailArchive Desktop's "Open an archive
+// folder…" accepts one, so delete-archive and unlist-archive can reach it — on a computer with no
+// Desktop too. It changes no file in the folder and does not make it the current archive.
+func runAddArchive(args []string) error {
+	fs := flag.NewFlagSet("mailarchive add-archive", flag.ContinueOnError)
+	out := fs.String("out", "", "the archive folder to add (or give it as the one argument)")
+	cfgPath := configFlag(fs)
+	fs.Usage = func() {
+		fmt.Fprintf(fs.Output(), "Usage: mailarchive add-archive DIR [-config FILE]\n\n"+
+			"Add DIR, a folder that holds an archive you already have (plain or encrypted), to Your archives, MailArchive Desktop's list of archives, as Open an archive folder… in MailArchive Desktop does; then delete-archive and unlist-archive can reach it. Nothing in the folder is changed, and it does not become the archive MailArchive Desktop shows.\n\n%s\n\nOptions:\n", addVerbExit)
+		fs.PrintDefaults()
+	}
+	if err := fs.Parse(args); err != nil {
+		if errors.Is(err, flag.ErrHelp) {
+			return nil
+		}
+		return err
+	}
+	dir := *out
+	switch {
+	case fs.NArg() > 1 || (fs.NArg() == 1 && dir != ""):
+		return errors.New("give one folder: mailarchive add-archive DIR")
+	case fs.NArg() == 1:
+		dir = fs.Arg(0)
+	}
+	if strings.TrimSpace(dir) == "" {
+		return errors.New("the folder is required: mailarchive add-archive DIR")
+	}
+	return addArchiveWith(*cfgPath, abspath(dir), os.Stdout)
+}
+
+// addArchiveWith is add-archive after its flags, for the Desktop whose config file is cfgPath ("" the
+// default): the folder's checks and the row written under the list's lock (CommandLineDelete.AddRow).
+func addArchiveWith(cfgPath, dir string, stdout io.Writer) error {
+	// Listing needs no secret store: none is opened.
+	var seams *desktop.CommandLineDelete
+	if cfgPath != "" {
+		seams = desktop.NewCommandLineDeleteAt(abspath(cfgPath), nil, deleteScheduler, deleteInstalled)
+	} else {
+		s, err := desktop.NewCommandLineDelete(nil, deleteScheduler, deleteInstalled)
+		if err != nil {
+			return err
+		}
+		seams = s
+	}
+	row, added, problem, err := seams.AddRow(dir)
+	switch {
+	case err != nil:
+		var busy *archindex.BusyError
+		if errors.As(err, &busy) {
+			return fmt.Errorf("Your archives (%s) is being changed by another MailArchive window, so nothing was changed; try again", util.StripControl(seams.ListPath()))
+		}
+		return fmt.Errorf("Your archives (%s) could not be read or saved (%s), so nothing was changed", util.StripControl(seams.ListPath()), util.StripControl(err.Error()))
+	case problem != "":
+		return fmt.Errorf("%s. Nothing was changed.", strings.TrimSuffix(util.StripControl(problem), "."))
+	case !added:
+		fmt.Fprintf(stdout, "%s is already in Your archives; nothing was changed.\n", util.StripControl(row))
+		return nil
+	}
+	fmt.Fprintf(stdout, "Added to Your archives: %s\nThe folder and its files are unchanged. To delete it: mailarchive delete-archive%s -out %s\n",
+		util.StripControl(row), configArg(cfgPath), encmark.CommandPath(util.StripControl(row)))
 	return nil
 }

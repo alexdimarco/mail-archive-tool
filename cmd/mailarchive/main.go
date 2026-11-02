@@ -94,6 +94,8 @@ func main() {
 		err = runDeleteArchive(args[1:])
 	case len(args) > 0 && args[0] == "unlist-archive":
 		err = runUnlistArchive(args[1:])
+	case len(args) > 0 && args[0] == "add-archive":
+		err = runAddArchive(args[1:])
 	case len(args) > 0 && args[0] == "change-password":
 		err = runChangePassword(args[1:])
 	case len(args) > 0 && args[0] == "new-recovery-key":
@@ -170,7 +172,7 @@ func runExport(args []string) error {
 	inputs := append(o.inputs, fs.Args()...)
 
 	if *o.out == "" {
-		return errors.New("-out is required (or use a subcommand: desktop, wizard, run-job, setup, serve, search, reindex, schedule, graph, status, verify, extract, decrypt, pause, resume, uninstall, delete-archive, unlist-archive, change-password, new-recovery-key, restore-key-file, forget-key, forget-archive, repair-record, encrypt)")
+		return errors.New("-out is required (or use a subcommand: desktop, wizard, run-job, setup, serve, search, reindex, schedule, graph, status, verify, extract, decrypt, pause, resume, uninstall, delete-archive, unlist-archive, add-archive, change-password, new-recovery-key, restore-key-file, forget-key, forget-archive, repair-record, encrypt)")
 	}
 	if err := refuseEncryptWith(*kf.encrypt, *o.unattended, *o.manifest != "", *o.list); err != nil {
 		return err
@@ -1986,8 +1988,9 @@ Usage:
   mailarchive pause    -out DIR [-reason TEXT]           stop backups and make the archive read-only
   mailarchive resume   -out DIR                          make a paused archive writable and restore its schedule
   mailarchive uninstall -dry-run | -yes                  remove MailArchive's schedules, settings and sign-in (archives are kept)
-  mailarchive delete-archive -out DIR                    permanently delete an archive, at a terminal (-plan-out FILE: only save the plan; -record-out FILE: save the deletion record)
-  mailarchive unlist-archive -out DIR                    remove an archive from Your archives; the folder is kept
+  mailarchive delete-archive -out DIR                    permanently delete an archive, at a terminal (-plan-out FILE: only save the plan; -record-out FILE: save the deletion record; -config FILE: a Desktop's config)
+  mailarchive unlist-archive -out DIR                    remove an archive from MailArchive Desktop's list of archives; the folder is kept (-config FILE: a Desktop's config)
+  mailarchive add-archive DIR                            add an archive folder you already have to MailArchive Desktop's list of archives (-config FILE: a Desktop's config)
   mailarchive setup                                      set up a Microsoft 365 connection in your browser
   mailarchive desktop  [-capture]                        the dashboard & launcher (also opens on double-click)
   mailarchive wizard                                     step-by-step setup with native dialogs
