@@ -7,9 +7,11 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"runtime"
 	"time"
 
 	"mail-archive-tool/internal/app"
+	"mail-archive-tool/internal/archdelete"
 	"mail-archive-tool/internal/health"
 	"mail-archive-tool/internal/state"
 )
@@ -35,6 +37,14 @@ func runStatus(args []string) error {
 		return errors.New("-out is required (the archive directory to report on)")
 	}
 	in := health.Gather(abspath(*out), *name)
+	// A delete of this folder that did not finish is said, with how to finish it (the 1.5.3
+	// friction review's B2): deletions.log is read here, since health reads no log. A log that
+	// cannot be read says nothing here (the delete verbs say why).
+	if logPath, err := archdelete.DefaultLogPath(); err == nil {
+		if u, err := archdelete.UnfinishedDelete(logPath, in.Out, runtime.GOOS); err == nil && u != nil {
+			in.DeleteUnfinished = true
+		}
+	}
 	// A manifest FILE that exists but does not load (newer format, corrupt) is
 	// an archive with a problem, not "no archive": let Assess RED it rather than
 	// giving the wrong "run an export first" advice (friction #7a).

@@ -1117,3 +1117,9 @@ changed words are the builder's, for the operator, unless a quote says otherwise
   this folder that did not finish." are replaced. deletions.log gains `first_run`, `first_at`,
   `earlier_files`, `earlier_bytes`, `earlier_unknown` (started) and `removed`, `removed_bytes`
   (finished); older lines without them read as counts not known.
+- *Status says a delete did not finish (MA-1027; B2).* RED `delete_unfinished`: "a delete of
+  this archive did not finish — run mailarchive delete-archive -out DIR again, or click Delete…
+  on its row in MailArchive Desktop, to finish it" (the Desktop: "a delete of this archive did
+  not finish — click Delete… on its row in Your archives to finish it"); no "no schedule is
+  recorded" advice then; with the archive's files gone, "no archive at DIR: " followed by the
+  same line.

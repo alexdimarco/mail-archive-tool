@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"mail-archive-tool/internal/app"
+	"mail-archive-tool/internal/archdelete"
 	"mail-archive-tool/internal/health"
 	"mail-archive-tool/internal/keyring"
 	"mail-archive-tool/internal/server"
@@ -243,6 +244,12 @@ func (d *dashboard) healthAction(w http.ResponseWriter, r *http.Request) {
 	}
 	in := health.Gather(out, "")
 	in.Surface = "desktop" // name the Rebuild button, not a command line
+	// A delete of it that did not finish is said here too (the 1.5.3 friction review's B2).
+	if lp := d.cfg.deletionsLogPath(); lp != "" {
+		if u, err := archdelete.UnfinishedDelete(lp, out, d.cfg.goos()); err == nil && u != nil {
+			in.DeleteUnfinished = true
+		}
+	}
 	rep := health.Assess(in, time.Now())
 	summary := health.Summary(in, rep)
 	if d.cfg.localOnly() {
