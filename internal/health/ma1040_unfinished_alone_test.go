@@ -42,6 +42,42 @@ func TestADeleteNotFinishedIsTheWholePosture(t *testing.T) {
 		t.Errorf("the summary lost its facts or its line:\n%s", sum)
 	}
 
+	// The facts left point at no posture line that is gone, and a delete that removed the manifest
+	// is never "no run has completed here" (the settle pass's MED-3). Positive twins first: with no
+	// delete under way each still points at the posture, which holds that line.
+	for _, c := range []struct {
+		name    string
+		in      Input
+		twinHas string
+		want    string
+	}{
+		{"index unreadable", Input{HasManifest: true, HasManifestFile: true, Messages: 10, HasIndexFile: true},
+			"search index unreadable (see the posture below)", "Messages:   10 in manifest · search index unreadable\n"},
+		{"index busy", Input{HasManifest: true, HasManifestFile: true, Messages: 10, HasIndexFile: true, IndexBusy: true},
+			"search index busy (see the posture below)", "Messages:   10 in manifest · search index busy\n"},
+		{"manifest unreadable", Input{HasManifestFile: true},
+			"Messages:   (manifest present but unreadable — see the posture below)", "Messages:   (manifest present but unreadable)\n"},
+		{"manifest gone", Input{},
+			"Messages:   (no manifest yet — no run has completed here)", "Messages:   (not known — a delete of this archive did not finish)\n"},
+		{"schedule unreadable", Input{HasManifestFile: true, HasDescriptorFile: true},
+			"Schedule:   (descriptor present but unreadable — see the posture below)", "Schedule:   (descriptor present but unreadable)\n"},
+		{"verify schedule unreadable", Input{HasManifestFile: true, HasVerifyDescriptorFile: true},
+			"Verify schedule: (descriptor present but unreadable — see the posture below)", "Verify schedule: (descriptor present but unreadable)\n"},
+	} {
+		c.in.Out = t.TempDir()
+		tsum := strings.Join(Summary(c.in, Assess(c.in, now)), "\n")
+		if !strings.Contains(tsum, c.twinHas) {
+			t.Errorf("%s, the twin:\n%s", c.name, tsum)
+		}
+		c.in.DeleteUnfinished = true
+		r := Assess(c.in, now)
+		dsum := strings.Join(Summary(c.in, r), "\n") + "\n"
+		if len(r.Codes) != 1 || r.Codes[0] != "delete_unfinished" || !strings.Contains(dsum, c.want) ||
+			strings.Contains(dsum, "posture below") || strings.Contains(dsum, "no run has completed") {
+			t.Errorf("%s, a delete not finished (codes %q), want %q:\n%s", c.name, r.Codes, c.want, dsum)
+		}
+	}
+
 	// The Desktop's words end with their period too.
 	in.Surface = "desktop"
 	if got := Assess(in, now).Reasons; len(got) != 1 || got[0] != "RED: a delete of this archive did not finish — click Delete… on its row in Your archives to finish it." {

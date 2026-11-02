@@ -1631,6 +1631,15 @@ func (in Input) deleteRow() string {
 	return in.Out
 }
 
+// seePosture is a fact line's pointer to the posture's line about it: none when a delete of the
+// archive did not finish, whose posture holds that line alone (the settle pass's MED-3).
+func (in Input) seePosture(format string) string {
+	if in.DeleteUnfinished {
+		return ""
+	}
+	return fmt.Sprintf(format, "see the posture below")
+}
+
 // DeleteUnfinishedLine is the posture line for an archive whose delete did not finish (B2), in
 // the surface's words: the Desktop's Delete… on its row, or at the terminal the command too. It ends
 // with its period (the 1.5.3 re-walk's N20): it is the whole of the posture then (N8).
@@ -2020,9 +2029,9 @@ func Summary(in Input, rep Report) []string {
 		case in.HasIndex:
 			idx = fmt.Sprintf("%d indexed", in.Indexed)
 		case in.HasIndexFile && in.IndexBusy:
-			idx = "search index busy (see the posture below)"
+			idx = "search index busy" + in.seePosture(" (%s)")
 		case in.HasIndexFile:
-			idx = "search index unreadable (see the posture below)"
+			idx = "search index unreadable" + in.seePosture(" (%s)")
 		}
 		lines = append(lines, fmt.Sprintf("Messages:   %d in manifest · %s", in.Messages, idx))
 		if in.HasRange {
@@ -2136,7 +2145,10 @@ func Summary(in Input, rep Report) []string {
 		// Sealed, not absent: the counts and the timeline are inside the archive (F15).
 		lines = append(lines, "Messages:   sealed — this archive is encrypted; "+openToSee(in.Surface))
 	} else if in.HasManifestFile {
-		lines = append(lines, "Messages:   (manifest present but unreadable — see the posture below)")
+		lines = append(lines, "Messages:   (manifest present but unreadable"+in.seePosture(" — %s")+")")
+	} else if in.DeleteUnfinished {
+		// The delete removes the manifest last: gone, it was removed, not never written (MED-3).
+		lines = append(lines, "Messages:   (not known — a delete of this archive did not finish)")
 	} else {
 		lines = append(lines, "Messages:   (no manifest yet — no run has completed here)")
 	}
@@ -2219,7 +2231,7 @@ func Summary(in Input, rep Report) []string {
 		lines = append(lines, "Program:    "+programLabel(in))
 		lines = append(lines, "scheduled:  "+string(scheduledKind(in)))
 	case in.HasDescriptorFile:
-		lines = append(lines, "Schedule:   (descriptor present but unreadable — see the posture below)")
+		lines = append(lines, "Schedule:   (descriptor present but unreadable"+in.seePosture(" — %s")+")")
 		lines = append(lines, "scheduled (kind not readable)")
 	case in.Encrypted:
 		// Every backup into an encrypted archive asks for its password, so none runs on
@@ -2236,7 +2248,7 @@ func Summary(in Input, rep Report) []string {
 		lines = append(lines, fmt.Sprintf("Verify schedule: %q %s · %s at %s · runs %s · installed %s (UTC) on %s",
 			vd.Name, in.VerifySchedState, vd.Interval, vd.At, vd.Exe, vd.InstalledAt.UTC().Format("2006-01-02"), vd.Host))
 	case in.HasVerifyDescriptorFile:
-		lines = append(lines, "Verify schedule: (descriptor present but unreadable — see the posture below)")
+		lines = append(lines, "Verify schedule: (descriptor present but unreadable"+in.seePosture(" — %s")+")")
 	}
 	lines = append(lines, fmt.Sprintf("Posture:    %s", rep.Posture))
 	for i, reason := range rep.Reasons {
