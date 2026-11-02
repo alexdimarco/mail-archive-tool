@@ -64,6 +64,11 @@ type ArchiveRow struct {
 	// is drawn disabled with these words as its title, as Delete… is (MA-1016; the 1.5.3 friction
 	// review's D3), never offered only to be refused.
 	UnlistWhy string
+	// ShowUnlistWhy: the row also says UnlistWhy as text, after its buttons ("Remove from list is
+	// not offered for it now. WHY"), since a touch screen shows no tooltip (the 1.5.3 re-walk's N13,
+	// the operator's delegate's decision). Set for the rows of Your archives, not for one whose
+	// delete did not finish (its row already says "Delete not finished").
+	ShowUnlistWhy bool
 }
 
 // OffersSwitch reports whether the row draws Switch to this archive: as the row template decides

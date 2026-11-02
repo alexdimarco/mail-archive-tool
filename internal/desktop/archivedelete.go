@@ -1088,7 +1088,7 @@ func (d *dashboard) unlistAction(w http.ResponseWriter, r *http.Request) {
 	if !in.Confirm {
 		q, err := archdelete.PlanUnlist(row, x)
 		if err != nil {
-			refuseDelete(w, refusalText(err))
+			refuseDelete(w, withReload(err, refusalText(err))) // a stale tab is told to reload (N15)
 			return
 		}
 		writeJSON(w, map[string]any{"ok": true, "ask": true, "row": row, "question": q.Question, "named": nonNil(q.Named)})
@@ -1104,6 +1104,9 @@ func (d *dashboard) unlistAction(w http.ResponseWriter, r *http.Request) {
 	out := map[string]any{"ok": res.Removed, "row": row, "lines": nonNil(res.Lines), "stopped": nonNil(res.Stopped)}
 	if !res.Removed {
 		out["error"] = strings.Join(res.Lines, " ")
+		if res.Refusal != nil {
+			out["error"] = withReload(res.Refusal, out["error"].(string)) // N15
+		}
 	}
 	writeJSON(w, out)
 }

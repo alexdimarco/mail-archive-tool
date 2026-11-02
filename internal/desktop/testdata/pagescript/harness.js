@@ -162,7 +162,7 @@ function page(rows, drawnFor, held) {
 }
 
 // ---- the browser around it -------------------------------------------------------------
-const posts = [], gets = [], scrolled = [];
+const posts = [], gets = [], scrolled = [], scrolledTop = [];
 let reloads = 0;
 const replies = {}, delays = {};
 const store = {};
@@ -184,6 +184,7 @@ function boot() {
     location: { reload() { reloads++; }, hash: '' },
     sessionStorage: { getItem: k => (k in store ? store[k] : null), setItem: (k, v) => { store[k] = String(v); }, removeItem: k => { delete store[k]; } },
     setTimeout: (f, ms) => setTimeout(f, Math.min(ms, 20)), setInterval: () => 0, clearTimeout, console,
+    scrollTo: (x, y) => { scrolledTop.push([x, y]); },
     confirm: () => { throw new Error('the page asked through confirm()'); },
     prompt: () => { throw new Error('the page asked through prompt()'); },
   };
@@ -534,6 +535,70 @@ const scenarios = {
     open.click(); await wait(40);
     check(one && go.disabled && go.title === 'Uninstall waits until those deletes are finished.' && note.textContent === many, 'several deletes: the note keeps its lines and the tooltip is plural', go.title);
   },
+  // Remove from list's words after its reload name the archive, are not said twice beside the row,
+  // and give way to the next result (MA-1042, the 1.5.3 re-walk's N14). Positive twin first: a
+  // reload with nothing removed shows no such note.
+  async unlistNote() {
+    page([['D:\\Mail\\Old', 'other'], ['D:\\Mail\\Next', 'other'], ['E:\\Cur', 'current']], 'E:\\Cur');
+    boot(); await wait(30);
+    const twin = !doc.querySelector('[data-unlisted-note]');
+    const [old] = doc.querySelectorAll('.archive-row');
+    const said = 'Removed from Your archives. The folder and its files are kept.';
+    replies['api/archive/unlist'] = x => (x.confirm ? { ok: true, lines: [said] } : { ok: true, ask: true, question: 'Remove from list? The folder and its files are kept.', named: [] });
+    old.querySelector('[data-unlist-archive]').click(); await wait(40);
+    byText(old, 'Yes').click(); await wait(40);
+    check(twin && !old.all().some(e => e.className === 'archive-tag' && e.textContent === 'Removed from Your archives.'), 'the row does not say again what the note beside it says');
+    doc.body.children.slice().forEach(c => c.remove());
+    page([['D:\\Mail\\Next', 'other'], ['E:\\Cur', 'current']], 'E:\\Cur');
+    boot(); await wait(30);
+    const n = doc.querySelector('[data-unlisted-note]');
+    check(!!n && n.querySelector('b') && n.querySelector('b').textContent === 'Result for D:\\Mail\\Old', 'the note after the reload names the archive', n && n.textContent);
+    const next = doc.querySelectorAll('.archive-row')[0];
+    replies['api/archive/delete/plan'] = plan('D:\\Mail\\Next', 'Next', 'TOK');
+    replies['api/archive/delete'] = result({ id: 'HN', row: 'D:\\Mail\\Next', folder: 'D:\\Mail\\Next', rowRemoved: true, rows: ['D:\\Mail\\Next'] });
+    next.querySelector('[data-delete-archive]').click(); await wait(40);
+    await typeAndDelete(next, 'Next'); await wait(40);
+    check(!doc.querySelector('[data-unlisted-note]') && !!doc.querySelector('[data-held-id="HN"]'), 'the next result takes its place');
+  },
+  // Dismissing the result of a delete of the page's own archive draws the page again from its top
+  // (MA-1042, N12). Positive twin first: dismissing another archive's result does not.
+  async dismissToTop() {
+    page([['D:\\Mail\\Cur', 'current'], ['E:\\Other', 'other']], 'D:\\Mail\\Cur');
+    boot(); await wait(30);
+    const [cur, other] = doc.querySelectorAll('.archive-row');
+    replies['api/archive/delete/plan'] = x => plan(x.path, x.path === 'E:\\Other' ? 'Other' : 'Cur', 'TOK-' + x.path);
+    replies['api/archive/delete'] = result({ id: 'HO', row: 'E:\\Other', folder: 'E:\\Other', rowRemoved: true, rows: ['E:\\Other'], page: '' });
+    other.querySelector('[data-delete-archive]').click(); await wait(40);
+    await typeAndDelete(other, 'Other'); await wait(40);
+    store['mailarchive-deletion-record-saved-HO'] = '1'; doc.querySelector('[data-held-id="HO"]').dataset.saved = '1';
+    byText(doc.querySelector('[data-held-id="HO"]'), 'Dismiss').click(); await wait(40);
+    const twin = reloads === 1 && !('mailarchive-scroll-top' in store);
+    replies['api/archive/delete'] = result({ id: 'HC', row: 'D:\\Mail\\Cur', folder: 'D:\\Mail\\Cur', rowRemoved: true, rows: ['D:\\Mail\\Cur'], page: 'deleted' });
+    cur.querySelector('[data-delete-archive]').click(); await wait(40);
+    await typeAndDelete(cur, 'Cur'); await wait(40);
+    doc.querySelector('[data-held-id="HC"]').dataset.saved = '1';
+    byText(doc.querySelector('[data-held-id="HC"]'), 'Dismiss').click(); await wait(40);
+    const flagged = reloads === 2 && store['mailarchive-scroll-top'] === '1';
+    // The page drawn again (the empty page) starts at its top, once.
+    doc.body.children.slice().forEach(c => c.remove());
+    page([['E:\\Other2', 'other']], '');
+    boot(); await wait(30);
+    check(twin && flagged && scrolledTop.length === 1 && scrolledTop[0][1] === 0 && !('mailarchive-scroll-top' in store), 'dismissing the deleted archive\'s result draws the page again from its top',
+      JSON.stringify({ twin, flagged, scrolledTop }));
+  },
+  // Save deletion record says on screen what it asked of the browser (MA-1042, N20), as Save this
+  // plan does. Positive twin first: nothing is said before it is clicked.
+  async saveRecordLine() {
+    const held = [result({ id: 'HS', row: 'D:\\Gone', folder: 'D:\\Gone', rowRemoved: true, recordName: 'MailArchive deletion record - Gone - 2026-11-02.txt' })];
+    page([['E:\\Cur', 'current']], 'E:\\Cur', held);
+    boot(); await wait(30);
+    const h = doc.querySelector('[data-held-id="HS"]');
+    const st = h.querySelector('.del-actions [role=status]');
+    const before = !!st && st.hidden;
+    byText(h, 'Save deletion record').click(); await wait(10);
+    check(before && !st.hidden && st.textContent === 'Your browser was asked to save the deletion record as MailArchive deletion record - Gone - 2026-11-02.txt (usually in Downloads).',
+      'Save deletion record says what it asked of the browser', st && st.textContent);
+  },
   // The page's layout fixes (MA-1020, B13, B14): Save this plan says so on screen and sends
   // nothing; a delete's result is brought into view; Remove from list's words are said again at
   // the top of Your archives after the reload it starts, once.
@@ -560,7 +625,8 @@ const scenarios = {
     page([['E:\\Cur', 'current'], ['F:\\Other', 'other']], 'E:\\Cur');
     boot(); await wait(30);
     const n = doc.querySelector('[data-unlisted-note]');
-    const first = n && n.parent && n.parent.id === 'sec-archives' && n.textContent === said;
+    // Headed by its folder (MA-1042, the 1.5.3 re-walk's N14), then the words exactly.
+    const first = n && n.parent && n.parent.id === 'sec-archives' && n.textContent === 'Result for D:\\Mail\\Old' + said;
     doc.body.children.slice().forEach(c => c.remove());
     page([['E:\\Cur', 'current'], ['F:\\Other', 'other']], 'E:\\Cur');
     boot(); await wait(30);

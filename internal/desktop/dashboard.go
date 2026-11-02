@@ -992,9 +992,23 @@ func (d *dashboard) unfinishedActionRefusal(path, done string) string {
 		return ""
 	}
 	if err := archdelete.ActionRefusal(logPath, path, done); err != nil {
-		return err.Error()
+		return withReload(err, err.Error())
 	}
 	return ""
+}
+
+// reloadRowText ends a "Delete not finished" refusal on the page: a tab drawn before the delete
+// still offers what the refusal refused, and its row says what happened only once the page is
+// drawn again (the 1.5.3 re-walk's N15; builder's words).
+const reloadRowText = " Reload this page to see its row as it is now."
+
+// withReload is msg, err's words, with reloadRowText when err refuses because a delete of the
+// folder did not finish.
+func withReload(err error, msg string) string {
+	if r := archdelete.AsRefusal(err); r != nil && r.Case == archdelete.CaseUnfinished {
+		return msg + reloadRowText
+	}
+	return msg
 }
 
 // uninstallRun is a seam so a test drives the uninstall handler without touching the real
@@ -1491,7 +1505,6 @@ func (cfg Config) overviewWith(csrf, epoch string, held []heldView) string {
 		AlertSecurity: orElse(s.AlertSecurity, "starttls"), AlertFrom: s.AlertFrom, AlertTo: s.AlertTo, AlertUsername: s.AlertUsername}
 	data.KindLine = kindLine(archiveKind(data.OutDir))
 	data.IsM365 = archiveKind(data.OutDir) == kindM365
-	data.Help = helpCard(cfg.goos(), data.OutDir == "", archiveKind(data.OutDir) != kindEncrypted)
 	data.ArchiveExample = app.ArchiveExampleFor(cfg.goos())
 	data.CancelTitle, data.StopWaitTitle = jobCancelTitle, stopWaitTitle
 	data.RunNowTitle = runNowPlainTitle
@@ -1529,7 +1542,18 @@ func (cfg Config) overviewWith(csrf, epoch string, held []heldView) string {
 		data.ShowArchives = len(data.Archives) >= 2 || (len(data.Archives) == 1 && !data.Archives[0].Current)
 		data.ShowThisArchive = len(data.Archives) == 1 && data.Archives[0].Current
 		data.CanAddArchive = data.OutDir != "" && len(data.Archives) >= 1
+		// In Your archives a disabled Remove from list says why as text on its row, which a touch
+		// screen can read; the tooltip alone could not be (the 1.5.3 re-walk's N13). Not on a row
+		// whose delete did not finish, whose own "Delete not finished" says it; and not on the
+		// "This archive" card, whose note says it.
+		for i := range data.Archives {
+			data.Archives[i].ShowUnlistWhy = data.ShowArchives && !data.Archives[i].Unfinished
+		}
 	}
+	// The guide opens at Getting started only for someone with no archive at all: with archives
+	// listed it would push Your archives, which the empty page points to, a screen and a half down
+	// (the 1.5.3 re-walk's N12).
+	data.Help = helpCard(cfg.goos(), data.OutDir == "" && !data.ShowArchives, archiveKind(data.OutDir) != kindEncrypted)
 	// The Scheduled backup card and the Settings card (§4.6.3/MA-617, Q18(b);
 	// design-desktop-settings-card 3.2, 3.3, section 5; slices A3, A5): both follow the
 	// archive's record kind (backupKind, never the tenant) against what owner-side evidence
@@ -1868,6 +1892,7 @@ pre{white-space:pre-wrap;overflow-wrap:anywhere;background:var(--bg);border:1px 
 .archive-row.unavailable>.archive-path,.archive-row.unavailable>.archive-kind,.archive-row.unavailable>.row-state{opacity:.6}
 .archive-row>.note{flex-basis:100%}
 .archive-row>.note{min-width:0}
+.archive-row>.row-why{flex-basis:100%;margin:0;overflow-wrap:anywhere}
 .delete-panel,.held-result,.unlist-ask{overflow-wrap:anywhere}
 .btn.danger{background:var(--panel);color:var(--danger);border:1px solid var(--danger)}
 .btn.danger-fill{background:var(--danger);color:var(--panel)}
@@ -1926,11 +1951,11 @@ pre{white-space:pre-wrap;overflow-wrap:anywhere;background:var(--bg);border:1px 
     {{if .FormerNotice}}<div class="note warnbox" id="formerNotice" role="alert">{{.FormerNotice}}</div>{{end}}
     <h1>Overview</h1>
     <div id="heldDeletes" data-held-deletes="{{.HeldDeletes}}" hidden></div>
-    <p class="lede">{{if not .OutDir}}MailArchive keeps a copy of your mail on this computer. Open or make an archive below to begin.{{else if .Encrypted}}Your encrypted mail archive, kept on this computer.{{else if .IsM365}}Your Microsoft 365 mail archive, kept on this computer.{{else}}Your mail archive, kept on this computer.{{end}}</p>
+    <p class="lede">{{if and (not .OutDir) .ShowArchives}}MailArchive keeps a copy of your mail on this computer. Choose an archive under Your archives below.{{else if not .OutDir}}MailArchive keeps a copy of your mail on this computer. Open or make an archive below to begin.{{else if .Encrypted}}Your encrypted mail archive, kept on this computer.{{else if .IsM365}}Your Microsoft 365 mail archive, kept on this computer.{{else}}Your mail archive, kept on this computer.{{end}}</p>
     {{if .KindLine}}<p class="lede" id="archiveKind" style="margin-top:-14px">{{.KindLine}}</p>{{end}}
     {{if not .OutDir}}<div class="card" id="noArchive">
       <h2>No archive chosen yet</h2>
-      <p id="helpPointer">New to MailArchive? Read <a href="#sec-help">How to use MailArchive</a> below: it explains each part of this page, what Thunderbird needs, and how to connect Microsoft 365.</p>
+      {{if not .ShowArchives}}<p id="helpPointer">New to MailArchive? Read <a href="#sec-help">How to use MailArchive</a> below: it explains each part of this page, what Thunderbird needs, and how to connect Microsoft 365.</p>{{end}}
       <p><button class="btn" type="button" data-open-archive title="Choose an archive folder you already have — from another computer, a drive or a backup copy, encrypted or not.">Open an archive folder…</button>
       <button class="btn secondary" type="button" data-make-archive title="Make a new archive from Thunderbird, Outlook or other mail files on this computer. The MailArchive wizard's windows open on your computer and ask what to back up and where.">Make a new archive…</button>
       <button class="btn secondary" type="button" data-create-encrypted title="Make a new archive whose messages open only with its password or recovery key. The wizard's windows ask what to back up and where; the password is typed here.">Make a new encrypted archive…</button></p>
@@ -2280,6 +2305,7 @@ pre{white-space:pre-wrap;overflow-wrap:anywhere;background:var(--bg);border:1px 
           {{if eq .Kind "encrypted"}}<button class="btn secondary" type="button" data-forget-archive data-path="{{.Path}}" title="Stop protecting this folder as an encrypted archive on this computer — for example after you removed the archive on purpose. Nothing in the folder is changed.">Forget this encrypted archive here</button>{{end}}
           <span class="row-state">{{if .Deleting}}<span class="archive-tag">Being deleted — its result shows on this page when the delete ends.</span>{{else if .Unfinished}}<span class="archive-tag">Delete not finished: click Delete again</span>{{else if .Problem}}<span class="archive-tag">{{.Problem}}</span>{{else if not .Available}}<span class="archive-tag">Not reachable right now — reconnect the drive or folder and it comes back. Nothing was removed.</span>{{else if .Sealed}}<span class="archive-tag">Paused (read-only) — Resume it to make changes.</span> <button class="btn secondary" type="button" data-resume-archive data-path="{{.Path}}" title="Make this archive writable again so backups and changes can resume.">Resume</button>{{else}}{{if .Current}}<span class="archive-tag current">Current archive</span>{{else}}<button class="btn secondary" type="button" data-switch-archive data-path="{{.Path}}" title="Make this the current archive: the one this page shows and changes.">Switch to this archive</button>{{end}} <button class="btn secondary" type="button" data-pause-archive data-path="{{.Path}}" title="Make this archive read-only so nothing can change it. You can Resume it any time; nothing is deleted.">Pause (make read-only)</button>{{end}}</span>
           {{if not .Deleting}}<button class="btn secondary" type="button" data-unlist-archive data-path="{{.Path}}" title="{{if .UnlistWhy}}{{.UnlistWhy}}{{else}}Take this archive off this list. The folder and its files are kept; you are asked first, and told which scheduled backups would stop.{{end}}"{{if .UnlistWhy}} disabled{{end}}>Remove from list</button> <button class="btn danger" type="button" data-delete-archive data-path="{{.Path}}" title="{{if .DeleteOK}}Permanently delete this archive's files. You see what would be removed first, and type the folder's name to confirm.{{else}}{{.DeleteWhy}}{{end}}"{{if not .DeleteOK}} disabled{{end}}>Delete…</button>{{end}}
+          {{if and .ShowUnlistWhy .UnlistWhy (not .Deleting)}}<span class="card-sub row-why" data-unlist-why>Remove from list is not offered for it now. {{.UnlistWhy}}</span>{{end}}
         </li>{{end}}
 {{- define "switchLocks"}}Switching to another archive locks {{.SwitchLocks}}.{{if .EncRemembered}} This computer remembers its key, so it opens again by itself when you switch back.{{else}} When you switch back, unlock it again on its Encryption card.{{end}}{{end}}`))
 

@@ -55,11 +55,19 @@ function delSaveFile(name,data){
 // The row of Your archives (or This archive) the server named, by its own spelling.
 function delRowOf(path){let r=null;document.querySelectorAll('.archive-row').forEach(li=>{if(li.dataset.path===path)r=li;});return r;}
 // The row is gone from the list: its own buttons and its state go at once, the rest stays to read.
+// text, when given, is said on the row; Remove from list gives none, since the note beside the
+// row already says it (the 1.5.3 re-walk's N14: "Removed from Your archives." twice).
 function delRowGone(li,text){
-  Array.from(li.children).forEach(x=>{if(x.tagName==='BUTTON'||x.classList.contains('row-state'))x.remove();});
-  li.append(delEl('span',text,'archive-tag'));
+  Array.from(li.children).forEach(x=>{if(x.tagName==='BUTTON'||x.classList.contains('row-state')||x.hasAttribute('data-unlist-why'))x.remove();});
+  if(text)li.append(delEl('span',text,'archive-tag'));
   li.classList.add('unavailable');
 }
+// What Remove from list said is a result of its own: the next delete's or Remove from list's result
+// takes its place, so it never reads as said of that one (N14).
+function delUnlistedGone(){document.querySelectorAll('[data-unlisted-note]').forEach(x=>x.remove());}
+// Dismissing the result of a delete of the page's own archive draws the empty page again from its
+// top, not where the page was scrolled to (N12): said for the page drawn next, which scrolls up.
+const delTopKey='mailarchive-scroll-top';
 // A delete not finished (§5.4): the row's Switch, Pause and Resume give way to its words; Delete…
 // and Forget stay.
 function delMarkUnfinished(li){
@@ -107,7 +115,9 @@ async function delDismiss(h,reload){
   try{const d=await delPost('api/archive/delete/dismiss',{id:h.dataset.heldId});
     if(!d.ok&&!d.notHeld){if(msg){msg.hidden=false;msg.textContent=d.error||'Could not close this result.';}return false;}
     h.remove();
-    if((reload||delWait)&&delInFlight===0&&!document.querySelector('[data-held-id]')){location.reload();return 'reload';}
+    if((reload||delWait)&&delInFlight===0&&!document.querySelector('[data-held-id]')){
+      if($('archiveGone')||$('noArchive')){try{sessionStorage.setItem(delTopKey,'1');}catch(e){}}
+      location.reload();return 'reload';}
     return true;
   }catch(e){if(msg){msg.hidden=false;msg.textContent='Error: '+e;}return false;}
 }
@@ -133,14 +143,17 @@ function delShowHeld(v){
   const wait=delEl('p','This page refreshes when you dismiss this result.','card-sub');wait.setAttribute('data-held-wait','');wait.hidden=!delWait;h.append(wait);
   const acts=delEl('div',null,'del-actions');
   const sv=delButton('Save deletion record','btn');sv.setAttribute('data-held-save','');
-  sv.addEventListener('click',()=>{delSaveFile(v.recordName,Uint8Array.from(atob(v.recordBase64),c=>c.charCodeAt(0)));h.dataset.saved='1';try{sessionStorage.setItem(delSavedKey(v.id),'1');}catch(e){}});
+  // Said on screen once asked, as Save this plan says it (B13; the 1.5.3 re-walk's N20).
+  const svSaid=delEl('span',null,'card-sub');svSaid.setAttribute('role','status');svSaid.hidden=true;
+  sv.addEventListener('click',()=>{delSaveFile(v.recordName,Uint8Array.from(atob(v.recordBase64),c=>c.charCodeAt(0)));h.dataset.saved='1';try{sessionStorage.setItem(delSavedKey(v.id),'1');}catch(e){}
+    svSaid.hidden=false;svSaid.textContent='Your browser was asked to save the deletion record as '+v.recordName+' (usually in Downloads).';});
   const dis=delButton('Dismiss','btn secondary');
   dis.addEventListener('click',async()=>{
     if(h.dataset.saved!=='1'){delAsk(h,null);return;}
     const done=busy(dis,'Closing…',null,'Closing this result…');
     if(!await delDismiss(h,true))done();
   });
-  acts.append(sv,dis);h.append(acts);
+  acts.append(sv,dis,svSaid);h.append(acts);
   const ask=delEl('div',null,'held-ask');ask.hidden=true;
   ask.append(delEl('p','Close without saving the deletion record?'));
   const yes=delButton('Close without saving','btn secondary');yes.setAttribute('data-held-close','');
@@ -230,7 +243,7 @@ function delPanel(p){
     try{const d=await delPost('api/archive/delete',{token:p.token,typed:input.value,unrecorded:!!(box&&box.checked),drawnFor:drawnFor});
       // Its own panel goes, never another row's opened meanwhile (del-s3b leftover 1).
       // The result is brought into view (B14): on a narrow layout it sat at the top of the card, out of sight.
-      if(d.id){done(true);w.remove();const hv=delShowHeld(d);delAfterDelete(d);if(hv.scrollIntoView)hv.scrollIntoView({block:'nearest'});return;}
+      if(d.id){done(true);w.remove();delUnlistedGone();const hv=delShowHeld(d);delAfterDelete(d);if(hv.scrollIntoView)hv.scrollIntoView({block:'nearest'});return;}
       // A refusal that spent the plan (planUsed): Delete permanently could only fail now, so it
       // stays disabled and the reply says to click Delete… again (del-s3b conformance gap 3).
       done(!!d.planUsed);if(!d.planUsed)match();msg.hidden=false;msg.textContent=d.error||'Could not delete this archive.';
@@ -274,11 +287,12 @@ function delUnlistAsk(li,b,q){
   yes.addEventListener('click',async()=>{
     const n=$('settingsNote'),done=busy(yes,'Removing…',n,'Removing this archive from the list…');
     try{const d=await delPost('api/archive/unlist',{path:b.dataset.path,confirm:true,named:q.named});
-      if(d.ok){done(true);w.remove();const said=(d.lines||[]).join(' ')||'Removed from Your archives. The folder and its files are kept.';if(n){n.hidden=false;n.textContent=said;}
+      if(d.ok){done(true);w.remove();delUnlistedGone();const said=(d.lines||[]).join(' ')||'Removed from Your archives. The folder and its files are kept.';if(n){n.hidden=false;n.textContent=said;}
         // Said again at the top of the list once the page is drawn again, until the next reload (B14:
-        // it showed for 1.5 seconds, then the row was simply gone).
-        try{sessionStorage.setItem(delUnlistedKey,said);}catch(e){}
-        delRowGone(li,'Removed from Your archives.');setTimeout(()=>reloadPage(),1500);return;}
+        // it showed for 1.5 seconds, then the row was simply gone), under the archive's folder (N14:
+        // it named none).
+        try{sessionStorage.setItem(delUnlistedKey,JSON.stringify({path:b.dataset.path,said:said}));}catch(e){}
+        delRowGone(li,null);setTimeout(()=>reloadPage(),1500);return;}
       done();if(n){n.hidden=false;n.textContent=d.error||'Could not remove it from the list.';}
     }catch(e){done();if(n){n.hidden=false;n.textContent='Error: '+e;}}
   });
@@ -301,13 +315,22 @@ document.querySelectorAll('[data-unlist-archive]').forEach(b=>b.addEventListener
 // What Remove from list said, shown once at the top of Your archives (or This archive) after the
 // reload it started (B14, MA-1020); a page that cannot keep it says nothing more.
 const delUnlistedKey='mailarchive-unlisted-note';
-try{const said=sessionStorage.getItem(delUnlistedKey);
-  if(said){sessionStorage.removeItem(delUnlistedKey);
+try{const kept=sessionStorage.getItem(delUnlistedKey);
+  if(kept){sessionStorage.removeItem(delUnlistedKey);
+    let v=null;try{v=JSON.parse(kept);}catch(e){}
     const card=$('sec-archives')||$('sec-this-archive');
-    const note=delEl('div',said,'note');note.setAttribute('role','status');note.setAttribute('data-unlisted-note','');
+    const note=delEl('div',null,'note');note.setAttribute('role','status');note.setAttribute('data-unlisted-note','');
+    // Headed by its folder, as a delete's result is ("Result for FOLDER", MA-1033; N14).
+    if(v&&typeof v.said==='string'){const hp=delEl('p');hp.append(delEl('b','Result for '+(v.path||'')));note.append(hp,delEl('p',v.said));}
+    else note.textContent=kept;
     if(card){const h2=card.querySelector('h2');if(h2)h2.after(note);else card.prepend(note);}
     else{const top=$('heldDeletes');if(top)top.before(note);}}
 }catch(e){}
+// The page drawn after the result of a delete of its own archive was dismissed starts at its top
+// (N12): once now, and again once the browser has put back where the page was scrolled to.
+try{if(sessionStorage.getItem(delTopKey)){sessionStorage.removeItem(delTopKey);
+  const top=()=>{if(window.scrollTo)window.scrollTo(0,0);};top();
+  if(window.addEventListener)window.addEventListener('load',()=>setTimeout(top,0));}}catch(e){}
 // Every result the server holds is drawn when the page loads (a reload is no dismissal).
 const hd=$('heldDeletes');
 if(hd){try{JSON.parse(hd.dataset.heldDeletes||'[]').forEach(v=>delShowHeld(v));}catch(e){}}

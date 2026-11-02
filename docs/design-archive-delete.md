@@ -1498,6 +1498,29 @@ each; the operator approves the words later.
   line: "Copy deletions.log first, … if you need it to check saved deletion records. Once it is
   copied, run mailarchive uninstall -yes -log-copied."; `-yes`'s refusal quotes the path:
   "MailArchive's deletion log, "PATH", lists …".
+- *The empty page of someone with archives (MA-1042; N12).* With archives listed and none chosen,
+  the guide is drawn closed, the top line is "MailArchive keeps a copy of your mail on this
+  computer. Choose an archive under Your archives below." (was "…Open or make an archive below to
+  begin.") and "New to MailArchive? Read How to use MailArchive below…" is left out; with no archive
+  at all both stay. Dismissing a result after which the page has no archive draws it again from
+  its top. *Not done (for the operator):* the summary tiles and the Overview lines carry no
+  "This archive was deleted" banner before Dismiss (they are greyed); Your archives is not moved
+  above the guide.
+- *A disabled Remove from list says why on its row (MA-1042; N13, the operator's delegate's
+  decision).* In Your archives, under the row's buttons: "Remove from list is not offered for it
+  now. " and the refusal's words (as the "This archive" card's note says them); not on a row whose
+  delete did not finish. The reasons' own words (N13's suggested "Delete not finished: click Delete
+  again to finish it. Until then it stays on this list." and naming Open an archive folder… and Make
+  a new archive… on a lone archive) are not changed: they await the operator's wording.
+- *Remove from list's words after the reload (MA-1042; N14).* Headed "Result for FOLDER", as a
+  delete's result is; the next delete's or Remove from list's result takes their place (MA-1017 and
+  MA-1020 checked first: neither asks for them to stay); the row no longer says "Removed from Your
+  archives." beside the note that says it.
+- *A stale tab is told to reload (MA-1042; N15).* On the Desktop, Pause, Resume, a Switch and Remove
+  from list refused because a delete did not finish end " Reload this page to see its row as it is
+  now.".
+- *Save deletion record says so (MA-1042; N20).* "Your browser was asked to save the deletion record
+  as FILE (usually in Downloads)." beside the button, as Save this plan says it.
 - *The record keeps the whole "What Delete does not reach" line (N18, the operator's delegate's
   decision; no change).* At the terminal without `-record-out` the printed record's line names every
   computer's backup tools after the plan's shorter one: the saved files may be read on another
