@@ -104,6 +104,70 @@ func TestFinishingAPartWayDeleteSaysSoAndCarriesItsTotals(t *testing.T) {
 	}
 }
 
+// covers: MA-1026, R36
+// "Not known in full" is carried through a chain (the 1.5.3 friction fixes' adversarial pass,
+// finding 6): a run that crashed with no finished line, then a run that stops part way, then the
+// run that finishes the delete — the last record still says the earlier count is "not known in
+// full" and gives no "Files removed in all", since the crashed run's count was never written. The
+// part-way run's started line carries `earlier_unknown` forward. Positive twin first: the same
+// chain with no crash gives an exact "Files removed in all".
+func TestNotKnownInFullIsCarriedThroughAChain(t *testing.T) {
+	first := time.Date(2026, 11, 1, 22, 5, 0, 0, time.UTC)
+	held := false
+	faultOn(t, nil, func(rel string) error {
+		if held && strings.HasSuffix(rel, ".html") {
+			return errors.New("The process cannot access the file")
+		}
+		return nil
+	})
+	chain := func(crash bool) (*rig, *Result) {
+		t.Helper()
+		dir := smallArchive(t, t.TempDir())
+		writeFile(t, dir+"/README.txt", "the archive's readme")
+		r := newRig(t, dir)
+		r.x.Now = func() time.Time { return first }
+		if crash {
+			p := r.plan(t)
+			appendRawLog(t, r.x.Log, map[string]any{"at": first.Format(time.RFC3339Nano), "event": "started", "run": "crashedrun", "folder": dir, "row": dir,
+				"identity": map[string]any{"volume": p.Identity.Volume, "file_id": p.Identity.FileID}, "kind": "plain"})
+		}
+		held = true
+		if res := r.run(t, false); res.Status != StatusPartial || !res.Unfinished {
+			t.Fatalf("the part-way run: %s", res.Message())
+		}
+		held = false
+		res := r.run(t, false)
+		if res.Status != StatusComplete {
+			t.Fatalf("the finishing run: %s", res.Message())
+		}
+		return r, res
+	}
+
+	// Positive twin: no crash, an exact count in all.
+	_, res := chain(false)
+	if all := recordValueOf(string(res.Record), "Files removed in all"); all == "" || strings.Contains(string(res.Record), "not known in full") {
+		t.Fatalf("the positive twin's record:\n%s", res.Record)
+	}
+
+	r, res := chain(true)
+	rec := string(res.Record)
+	if !strings.Contains(recordValueOf(rec, "Files removed earlier"), "not known in full") || strings.Contains(rec, "Files removed in all") ||
+		!strings.Contains(recordValueOf(rec, "Finishes"), "(run crashedrun)") {
+		t.Fatalf("after a crash and a part-way run, the record:\n%s", rec)
+	}
+	// The part-way run's started line carried it forward.
+	var carried bool
+	for _, l := range logLines(t, r.x.Log) {
+		if l["event"] == "started" && l["run"] != "crashedrun" && l["first_run"] == "crashedrun" {
+			carried = l["earlier_unknown"] == true
+			break
+		}
+	}
+	if !carried {
+		t.Fatalf("the part-way run's started line does not carry earlier_unknown: %v", logLines(t, r.x.Log))
+	}
+}
+
 // earlier is a count as the record words it.
 func earlier(n int, b int64) string { return strings.TrimSpace(itoa(n) + " (" + size(b) + ")") }
 
