@@ -4,6 +4,7 @@ import (
 	"html/template"
 	"strings"
 
+	"mail-archive-tool/internal/archdelete"
 	"mail-archive-tool/internal/presync"
 )
 
@@ -59,6 +60,16 @@ type helpData struct {
 	Missed string
 	// ComeBack is how to open MailArchive Desktop again after Shut down.
 	ComeBack string
+	// DoesNotReach is design-archive-delete §2's fixed line (archdelete.DoesNotReach): the guide,
+	// the panel, the result and the record say the same.
+	DoesNotReach string
+	// NotFully is what usually keeps a file from a delete here, and what to do (§8 (a), §9: on
+	// Windows a program holding it open; elsewhere the platform's denied remedy). Fixed text
+	// with the button's name in bold, so HTML.
+	NotFully template.HTML
+	// Synced is which synced folders the plan recognises here (util.UnderCloudSync), and
+	// SyncedMore what it does not recognise ("" when there is nothing to add).
+	Synced, SyncedMore string
 }
 
 // helpMissedOnWake is Missed where the scheduler catches up a time slept through.
@@ -67,7 +78,25 @@ const helpMissedOnWake = "A time when the computer is switched off is skipped. I
 // helpDataFor is the guide's data on goos.
 func helpDataFor(goos string, open bool) helpData {
 	w := runNowWordsFor(goos)
-	d := helpData{Open: open, RunNowSyncs: runNowSyncs(goos), Hidden: w.hidden, Place: w.place, Wait: syncWaitWords, Hourly: presync.HourlySyncNote}
+	d := helpData{Open: open, RunNowSyncs: runNowSyncs(goos), Hidden: w.hidden, Place: w.place, Wait: syncWaitWords, Hourly: presync.HourlySyncNote,
+		DoesNotReach: archdelete.DoesNotReach}
+	switch goos {
+	case "windows":
+		// The causes §9 names for a file Windows will not let go of; §8 (a)'s remedies.
+		d.NotFully = "On Windows this is usually a program holding a file open, such as Outlook, an antivirus or Windows Search: close it, then click <b>Delete…</b> again on the archive's row. If the archive's drive was unplugged, reconnect it first."
+		// util.UnderCloudSync: the OneDrive* variables and the services' folder names. The
+		// SharePoint registry lookup of §9 is not built, so the guide says so (slice 5).
+		d.Synced = "OneDrive or in another sync service's folder that MailArchive recognises (Dropbox, Google Drive, iCloud Drive, Box and others)"
+		d.SyncedMore = "A SharePoint library synced to this computer is not recognised yet: if the archive is in one, empty its recycle bin on SharePoint too."
+	case "darwin":
+		d.NotFully = "This is usually a drive that was unplugged (reconnect it), or a file macOS did not let MailArchive remove (a locked file, or a read-only drive): fix that, then click <b>Delete…</b> again on the archive's row."
+		d.Synced = "iCloud Drive, in a folder under Library/CloudStorage (OneDrive, Dropbox, Google Drive and others) or in another sync service's folder that MailArchive recognises"
+		// util.MaySync's Desktop and Documents in iCloud: the delete's plan does not ask it.
+		d.SyncedMore = "If your Desktop and Documents folders are kept in iCloud, an archive in them is not recognised as synced: empty iCloud Drive's Recently Deleted too."
+	default:
+		d.NotFully = "This is usually a drive that was unplugged (reconnect it), or a file the system did not let MailArchive remove (a locked file, a folder you may not change, or a read-only drive): fix that, then click <b>Delete…</b> again on the archive's row."
+		d.Synced = "a sync service's folder that MailArchive recognises (Dropbox, Nextcloud, Google Drive and others)"
+	}
 	switch goos {
 	case "darwin":
 		d.On, d.Sync = "on a Mac", true
@@ -199,5 +228,28 @@ var helpTmpl = template.Must(template.New("help").Funcs(template.FuncMap{"upper"
         <p><b>Step 3: keep it backed up.</b> In Settings, choose <b>How often</b> (Daily or Weekly) and the time, then click <b>Save settings</b>. The scheduled backup uses your saved sign-in and runs even when this page is closed, as long as you stay logged in to this computer. Settings also has three Microsoft 365 boxes: <b>Keep each message's original .eml too</b>, <b>Include Deleted Items</b> and <b>Include Junk Email</b>. They apply to every Microsoft 365 backup on this computer. Deleted Items and Junk Email are left out unless you tick them.</p>
         <p><b>If the card says Microsoft 365 is not used by this archive,</b> the current archive was made from mail files. Keep the mailbox in an archive of its own: in Settings → Archive location, type a new folder and click Save settings (if it asks about the scheduled backup, choose <b>Save and keep the backup</b>), then fill in the Microsoft 365 connection card.</p>
         <p><b>App-only (admin)</b>, the card's other choice, uses a client secret instead of your own sign-in. It is for an administrator who backs up other people's mailboxes with the mailarchive command line, and it needs the Mail.Read application permission with admin consent. MailArchive Desktop's Archive now and scheduled backups always sign in as you, so choose Device (per-user) here.</p>
+      </details>
+      <details id="helpDelete"><summary>Deleting an archive</summary>
+        <p><b>Delete…</b> erases an archive's files from this computer for good. They are not moved to the Recycle Bin or the Trash, so they cannot be restored from there. Use it for mail you no longer need to keep, for example under a retention rule. Each archive has its own <b>Delete…</b> button: on its row under <b>Your archives</b>, or on the <b>This archive</b> card when it is your only archive. When the button cannot be used, point at it to see why.</p>
+        <ol>
+          <li>Click <b>Delete…</b>: nothing is deleted yet. Beside the archive, MailArchive shows what Delete would remove (how many files, and their size), the scheduled backups it would stop, and how many files in the folder are not the archive's, which are kept. To have the deletion approved first, click <b>Save this plan</b> to save the plan as a text file.</li>
+          <li>Type the folder's name exactly as it is shown, then click <b>Delete permanently</b>. <b>Cancel</b> deletes nothing.</li>
+          <li>The result says what was removed and what was kept. Click <b>Save deletion record</b> to save a copy as a text file: MailArchive keeps no copy after you close the result. Then click <b>Dismiss</b>.</li>
+        </ol>
+        <p><b>What Delete removes:</b> the archive's own files (its message pages and attachments, its search index and its records), its scheduled backups, its row under Your archives and, when nothing else is left in it, the folder. Files of your own in the folder are kept, and the folder with them. Mail copies in the folder that the archive did not record are kept too, unless you tick the box the plan shows for them. For an encrypted archive, this computer also forgets its key: any other copy of it then opens only with its password or recovery key.</p>
+        <p>If the result says <b>Not fully deleted</b>, the result names the files that could not be removed and what to do. {{.NotFully}}</p>
+        <p><b>Synced folders:</b> if the archive's folder is in {{.Synced}}, the plan says so. Deleting it here also deletes it there, and the service may keep it in its own recycle bin: empty that too.{{if .SyncedMore}} {{.SyncedMore}}{{end}}</p>
+        <p><b>What Delete does not reach:</b> {{.DoesNotReach}}.</p>
+        <p>Each delete adds a line to this computer's deletion log (deletions.log), which keeps the date, the folder and what was removed. Uninstalling MailArchive removes that log: copy deletions.log first if you need it to check saved deletion records.</p>
+      </details>
+      <details id="helpUnlist"><summary>Removing an archive from the list</summary>
+        <p><b>Remove from list</b> takes an archive off <b>Your archives</b> and keeps its folder and every file in it, for example an archive you now keep somewhere else, or one on a drive you no longer use.</p>
+        <ul>
+          <li>Click <b>Remove from list</b> on the archive's row. MailArchive asks first, and names any scheduled backups that would stop with it: they would otherwise keep backing up a folder this page no longer shows. Click <b>Yes</b> to remove it, or <b>No</b> to change nothing.</li>
+          <li>An archive whose drive is unplugged can be removed from the list too; nothing on the drive is touched.</li>
+          <li>The archive marked <b>Current archive</b> can be removed only when its folder cannot be reached or no longer holds an archive. Otherwise, switch to another archive first, or add one with <b>Add another archive</b>.</li>
+          <li>For an encrypted archive, Remove from list keeps this computer's record of it and the key it remembers; <b>Forget this encrypted archive here</b> is what forgets those.</li>
+          <li>To use the archive again later, click <b>Open an archive folder…</b> and choose its folder.</li>
+        </ul>
       </details>
     </div>`))

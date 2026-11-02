@@ -157,7 +157,9 @@ func TestHowToUseMailArchiveIsOnEveryPage(t *testing.T) {
 	const pointer = "New to MailArchive? Read How to use MailArchive below: it explains each part of this page, what Thunderbird needs, and how to connect Microsoft 365."
 	// The friction review's O5 (applied by the lead, 2026-10-31): "The parts of this page" is
 	// a part of its own, closed, so Getting started opens short.
-	wantParts := []string{"Getting started", "The parts of this page", "Thunderbird", "Microsoft 365"}
+	// Amended 2026-11-01 (design-archive-delete §10, slice 5, MA-1004): two parts after Microsoft
+	// 365, on Delete and Remove from list, closed like the others.
+	wantParts := []string{"Getting started", "The parts of this page", "Thunderbird", "Microsoft 365", "Deleting an archive", "Removing an archive from the list"}
 	for _, goos := range []string{"darwin", "windows", "linux"} {
 		for name, cfg := range helpPageStates(t) {
 			cfg.GOOS = goos
@@ -197,7 +199,8 @@ func TestHowToUseMailArchiveIsOnEveryPage(t *testing.T) {
 			if noArchive && !strings.Contains(page, `<a href="#sec-help">How to use MailArchive</a> below`) {
 				t.Errorf("%s: the no-archive pointer is not a link to the guide", what)
 			}
-			if h.open["Getting started"] != noArchive || h.open["The parts of this page"] || h.open["Thunderbird"] || h.open["Microsoft 365"] {
+			if h.open["Getting started"] != noArchive || h.open["The parts of this page"] || h.open["Thunderbird"] || h.open["Microsoft 365"] ||
+				h.open["Deleting an archive"] || h.open["Removing an archive from the list"] {
 				t.Errorf("%s: open parts %v, want Getting started open only with no archive", what, h.open)
 			}
 			// Getting started keeps "Your first archive"; the page's parts are no longer in it.
