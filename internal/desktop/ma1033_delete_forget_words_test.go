@@ -14,23 +14,26 @@ import (
 // covers: MA-1033, R36, S41
 // The delete panel's line on Remove from list, Delete and Forget says them in plain words (the
 // 1.5.3 friction review's wording item 49): "Remove from list takes this archive off the list and
-// keeps the folder. Delete erases its files.", and only for an encrypted archive "Forget this
-// encrypted archive here makes this computer forget its record of this archive and the key it
-// remembers." — never "forgets the row", never "protecting". Positive twin first: a plain
-// archive's line names no Forget.
+// keeps the folder. Delete erases its files.", and only for an encrypted archive what Forget
+// does: "Forget this encrypted archive here makes this computer forget this folder; for the
+// archive's last folder it asks whether to forget the whole archive and its remembered key." —
+// never "forgets the row", never "protecting", and never the promise that Forget forgets the key
+// outright (amended 2026-11-02, the uninstall-docs group's adversarial pass, finding 3: Forget
+// forgets the key only when asked, for the last folder). Positive twin first: a plain archive's
+// line names no Forget.
 func TestTheDeletePanelSaysRemoveDeleteAndForgetPlainly(t *testing.T) {
 	const plain = "Remove from list takes this archive off the list and keeps the folder. Delete erases its files."
 	if got := planView(&archdelete.DeletePlan{Kind: archdelete.Plain})["threeLine"]; got != plain {
 		t.Fatalf("positive twin: a plain archive's line is %q, want %q", got, plain)
 	}
 	got := planView(&archdelete.DeletePlan{Kind: archdelete.Encrypted})["threeLine"]
-	if want := plain + " Forget this encrypted archive here makes this computer forget its record of this archive and the key it remembers."; got != want {
+	if want := plain + " Forget this encrypted archive here makes this computer forget this folder; for the archive's last folder it asks whether to forget the whole archive and its remembered key."; got != want {
 		t.Fatalf("an encrypted archive's line is %q, want %q", got, want)
 	}
 	for _, k := range []archdelete.Kind{archdelete.Plain, archdelete.Encrypted} {
 		s := planView(&archdelete.DeletePlan{Kind: k})["threeLine"].(string)
-		if strings.Contains(s, "the row") || strings.Contains(s, "protecting") {
-			t.Errorf("%v: the line still says jargon: %q", k, s)
+		if strings.Contains(s, "the row") || strings.Contains(s, "protecting") || strings.Contains(s, "and the key it remembers") {
+			t.Errorf("%v: the line still says jargon, or promises the key is forgotten: %q", k, s)
 		}
 	}
 }

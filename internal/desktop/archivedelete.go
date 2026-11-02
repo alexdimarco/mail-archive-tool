@@ -52,12 +52,14 @@ const (
 
 // The plan's fixed lines (§3.1, §2, §6, §9).
 const (
-	deleteLogLine   = archdelete.PlanLogLine
+	deleteLogLine = archdelete.PlanLogLine
 	// deleteThreeLine and its encrypted sentence (the 1.5.3 friction review's wording item 49: "the
 	// row" and "protecting" were jargon, and Forget was named on a plain archive, which has none).
+	// Forget's sentence says what Forget does: this folder, then for the last folder it asks about
+	// the whole archive and its key (the uninstall-docs group's adversarial pass, finding 3).
 	deleteThreeLine          = "Remove from list takes this archive off the list and keeps the folder. Delete erases its files."
-	deleteThreeLineEncrypted = " Forget this encrypted archive here makes this computer forget its record of this archive and the key it remembers."
-	deleteSaveLine  = "Save this record now: MailArchive keeps no copy after you close this result."
+	deleteThreeLineEncrypted = " Forget this encrypted archive here makes this computer forget this folder; for the archive's last folder it asks whether to forget the whole archive and its remembered key."
+	deleteSaveLine           = "Save this record now: MailArchive keeps no copy after you close this result."
 )
 
 // heldPlan is a delete planned from a row and awaiting its typed name: the plan, and the

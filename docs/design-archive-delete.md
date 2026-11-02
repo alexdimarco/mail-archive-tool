@@ -1301,3 +1301,7 @@ are the builder's, for the operator, unless a quote says otherwise.
   uninstall refusal's command is then `mailarchive delete-archive -config "FILE" -out "ROW"`, FILE
   that Desktop's config file; without -config it is unchanged. `status` and `uninstall` at the
   terminal take no -config, so their commands stay as they are.
+- *Forget's sentence in the delete panel (MA-1033 amended; finding 3).* "…makes this computer
+  forget its record of this archive and the key it remembers." promised more than Forget does. It
+  is now " Forget this encrypted archive here makes this computer forget this folder; for the
+  archive's last folder it asks whether to forget the whole archive and its remembered key."
