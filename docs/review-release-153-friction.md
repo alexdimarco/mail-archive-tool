@@ -1,5 +1,179 @@
 # Friction review — release 1.5.3 (archive delete, Remove from list, the switch fix MA-955)
 
+## Re-walk 2026-11-02 at d914fc2
+
+**Verdict: HIGH_FRICTION_NOT_SHIPPABLE.** The fix round worked: of the first review's 27 items,
+19 are fixed, 6 are partly fixed, none is unfixed and 2 were not walked. H1, H2 and H4 are fixed
+where they were walked. But H3 is fixed only for small archives. `add-archive` (the new command
+that lists a folder) refuses a healthy archive whose record file, `.mailarchive-manifest.json`, is
+over 1 MiB. In the walk that was about 2,200 messages and up: 1,800 messages was added; 2,500 and
+20,000 were refused. So a command-line-only user still cannot delete an archive of ordinary size
+(N1 below). That is the one high-friction finding. The adversarial pass on the new guards found 6
+gaps: 1 medium (F1: the terminal's `pause` and `resume` skip the "delete not finished" check that
+H2 added on the Desktop) and 5 low. Everything else new is wording and layout (Type III).
+
+| Header | |
+|---|---|
+| Reviewed | branch `switch-keeps-runjob`, commit `d914fc2` (builds say "+dirty" only because of untracked files). The branch tip is now `d65bd0e`, which changes one test file only (`internal/archdelete/ma980_rows_check_test.go`), so this evidence still stands |
+| Date | 2026-11-02 |
+| Environments | **Windows:** the Parallels "Windows 11" VM as the signed-in user, a real console through the ConPty driver, headless Edge 156 with its own profile and real clicks in a 500-pixel window; everything under `%LOCALAPPDATA%\marewalk` with APPDATA, LOCALAPPDATA, USERPROFILE, HOME and TEMP pointed there. **macOS Desktop:** the real Desktop in Chrome, a 500 × 763 viewport, a stand-in `osascript` for the login link and a stand-in `launchctl` that was never called, the remembered key in the throwaway home's key file. **Command line:** macOS through `expect` with a real terminal; Linux in a Docker `golang:1.26` container, root, no `crontab`. All settings, homes and archives were throwaway; no real scheduled task, Keychain or Credential Manager entry, or real setting was touched. `uninstall -yes` was run, but only against throwaway settings, after its dry run showed only throwaway paths |
+| Actors | owner (Desktop and terminal), operator at a terminal, command-line-only operator, new operator cold, owner with an encrypted archive whose key is not remembered |
+| Commands and statuses | `delete-archive`, `add-archive` (new), `unlist-archive`, `status`, `uninstall -dry-run`, `-yes`, `-yes -log-copied`; `pause` and `resume` in the adversarial pass only. Exits reported: 0 and 1 |
+| Baseline digest | `docs/scenario-catalog.md` sha256 `b09f2533b818a31d99868b130b32a567febccfabf097a1547a47bd423f4e0761` at this tip (unchanged by this review; `d914fc2` itself changed the catalog, so it differs from the first review's digest) |
+| Cells walked | 32 rows (Windows 14, macOS Desktop 9, command line 9). The command-line walker's summary said 8 cells, 6 full and 2 partly; its table has 9 rows (counting "Extras"), 1 of them partial. As in the first review, this review counts the rows |
+| Function | 31 fully, 1 partly (command line 2b), 0 not |
+| High-friction findings | 1 (N1) |
+| Adversarial pass | 6 gaps: F1 medium, F2–F6 low, and one wording nit |
+| Verdict | **HIGH_FRICTION_NOT_SHIPPABLE** until N1 is fixed; F1 should be fixed in the same round (it reopens H2's harm by another door) |
+
+Cell names: W = Windows (a1–a3, b1, b2, c, d, e1–e5, f, g), M = macOS Desktop (1a, 1b, 2–9),
+C = command line (1, 2a, 2b, 2c, 3–6, X for "Extras").
+
+### The first review's items, re-checked
+
+| Item | Status | Evidence | What is left |
+|---|---|---|---|
+| H1 Linux without `crontab` | FIXED | C1: "Scheduled backups it stops: none.", exit 0, folder gone; `uninstall -dry-run` works after | Installing a schedule with no `crontab` (MA-1022) not walked |
+| H2 stale tab can pause or switch to a half-deleted folder | FIXED on the Desktop | W e2, M2: Pause, Resume, Switch, Remove from list all refused in the "Delete not finished…" words; on disk no pause file, settings untouched | The terminal's `pause` and `resume` have the same gap (F1) |
+| H3 command-line archive cannot be deleted at the command line | PARTLY | W d, C2a: the refusal names `add-archive "DIR"` and "Open an archive folder…"; `add-archive` then `delete-archive` work, 4 steps, 0 dead ends | Refused for archives over about 2,200 messages (N1) |
+| H4 page keeps a deleted archive's controls | FIXED | W e1, M1a, M1b: "This archive was deleted: click Dismiss on its result to refresh this page." at the top and on each card; cards greyed and inert (a real click on Save settings did nothing); after Dismiss the empty page says to click Switch to this archive | Layout of the empty page (N12) |
+| D1 finishing a part-way delete | PARTLY | W b1, b2, M8: "This finishes the delete begun DATE."; record has "Finishes: … (run ID)", "Files removed earlier", "Files removed in all" | After a Ctrl-C stop (the usual terminal case) the totals are lost (N2); the on-screen result gives only this run's count (N6) |
+| D2 `uninstall -yes` removes the log it tells you to copy | FIXED | W f, C5: `-yes` refuses and removes nothing; `-yes -log-copied` removes the log and says so | Dry run never mentions `-log-copied` (N10) |
+| D3 Remove from list on a lone current archive | FIXED | W e3, M3: disabled, reason as tooltip and in the card text | Wording of the reasons (N13) |
+| B1 schedules in the plan | FIXED | W a1, a3, C1, C X: "Scheduled backups it stops: none."; record "Schedule stopped: none"; no line for encrypted archives (M5, C6) | Naming a real backup by when it runs: not walked (no real install allowed) |
+| B2 `status` says a delete did not finish | FIXED (terminal) | W c, C3: "RED: a delete of this archive did not finish — run mailarchive delete-archive -out "DIR" again, or click Delete… on its row…" | Repair advice still shown under it (N8). The Desktop's Status & health line not walked: no walker could make a delete stop at step 2 |
+| B3 key wording with no remembered key | FIXED | M5, C6: plan, result and record all say "no key is/was remembered here" | — |
+| B4 only this computer's items | FIXED | W a1, M4, C X: no Time Machine on Windows or Linux; saved files keep the whole line by design (§14) | N18 |
+| B5 plan-only log line | FIXED | W a1, C X: "If you delete it, a line is added to this computer's deletion log (PATH)…" | — |
+| B6 name kept files; name the blocking folder | PARTLY | Desktop panel names them ("Kept (not the archive's): my-notes.txt, todo.txt", W a2, M4); blocking folder named ("…in the folder Inbox…", M1b) | Terminal plan, both results, saved plan and record still do not name them (N7) |
+| B7 plurals and counts | FIXED | W a1, b1, M4: "1 file that is not", "using it", "this 1 file" | — |
+| B8 "capital letters count" | FIXED | W, M4, C2a: terminal and Desktop | — |
+| B9 dates and first run | PARTLY | One date form everywhere ("Date: 2026-11-02 07:07:10 -05:00") | The new "First run" lines contradict themselves or lose dates (N3, N4) |
+| B10 retries at the terminal | FIXED | W a1, C X: 3 tries, "2 tries left", "1 try left" | — |
+| B11 uninstall wording | FIXED | W f, M6, C5: log listed once, "somewhere you keep records", "uninstalling never deletes your mail", "No archives are listed.", the dry run shows the plan and the real folder | Several unfinished deletes read badly (N9) |
+| B12 terminal polish | FIXED | W g, C X: Shut down named; per-verb no-terminal text, no doubled name; "Folder:" label; "mail folder 1" | Record still says "store 1/…" (N16) |
+| B13 Save this plan shows a line | FIXED | W a2, M4 | Save deletion record still shows none (N20) |
+| B14 Desktop layout | PARTLY | W e4, M7: path keeps its width, buttons wrap, "Delete not finished" on its own line, no sideways scroll; result scrolls into view | The repeated "Removed from Your archives." under the row is not fixed (M4, N14); a real 390-pixel phone width not walked (500 px only) |
+| B15 Run-now-only backup | FIXED | W a3: "Its Run now backup is removed too…", result "Removed its Run now backup.", record "Run now backup removed: mailarchive-95596e73 (no scheduled times)", job file gone | — |
+| B16 docs | FIXED (guide, README) | M9: guide covers Delete not finished, deleting the current archive, the log's Mac path, the command line; C2a: README has "Deleting an archive" | The 1.5.3 release notes not checked |
+| B17 short line for a Ctrl-C before any change | NOT WALKED | C3: two tries missed the moment; Windows did not try Ctrl-C | — |
+| B18 `forget-archive` names the folder | NOT WALKED | No walker ran `forget-archive` | — |
+| B19 `-config` on the new verbs | FIXED | C2c: both orders; the printed command carries `-config "FILE"`; a missing folder refused clearly | — |
+| B20 MA-999 catalog wording | PARTLY | The row was corrected 2026-11-02 (read by the synthesis owner) | The correction says the no-store path is reached when `HOME` and `XDG_CONFIG_HOME` are unset; C6 found that at the terminal `delete-archive` then stops before any plan ("MailArchive cannot tell whether MailArchive Desktop is running…"). So in this build it is reached only through the test seam |
+
+Tally: FIXED 19 (H1, H2, H4, D2, D3, B1, B2, B3, B4, B5, B7, B8, B10, B11, B12, B13, B15, B16,
+B19), PARTLY 6 (H3, D1, B6, B9, B14, B20), NOT FIXED 0, NOT WALKED 2 (B17, B18). H2, B1, B2 and
+B16 are counted fixed for what was walked; their rows say what was not.
+
+### New friction found
+
+Numbered here; the walkers' own numbers differ. Who: **T** = technical, the builder can do it;
+**O** = needs the operator (a product call, a security control, or wording approval).
+
+| # | Finding | Seen in | Type | Fix | Who |
+|---|---|---|---|---|---|
+| N1 | **Blocker.** `add-archive` refuses a healthy archive whose `.mailarchive-manifest.json` is over 1 MiB (about 2,200 messages and up), saying the record "cannot be read — type the folder in Settings → Archive location, and Status & health shows how to repair it". The record is fine (`status` reads it), and those are Desktop controls named at a terminal. Cause: `maxManifestBytes = 1 << 20` in `internal/archindex/index.go` line 51, the cap on recognising a folder (SD-2). The Desktop's "Open an archive folder…" uses the same check (`archiveFolderProblem` in `internal/desktop/encryption.go` calls `archindex.IsArchive`): read in code by the walker and the synthesis owner, not walked | C2b | II (a security cap meets the H3 fix); III (the words) | Recognise a folder without reading the whole record (decode only the fields needed, under a bound sized to real archives), or raise the cap to match the largest archive the program itself writes. Say "too large to check" when that is the reason, and give terminal words at the terminal. Walk 2,500 and 20,000 messages at the terminal and on the Desktop after | O (changes an SD-2 cap; owes the adversarial pass), then T |
+| N2 | After a Ctrl-C stop, the finishing record says "Files removed earlier: at least 0 (0 bytes); not known in full: a run stopped before it wrote its record", has no "Files removed in all", and loses "Last backup" and "First run". In the walk two stops had removed 362 files (1,807 down to 1,445); the log's started lines hold both counts. `-record-out` saves nothing when Ctrl-C stops the run | C3 | II (part of D1) | Count from the log's started lines ("about 362 files"), or say "not known" without "at least 0" | O (which form), then T |
+| N3 | The finishing record loses the dates the first record had: "First run: not known: the archive records no history of its runs" and "Last backup: not known". The first run deleted that history, so "records no history" misleads | W b1, C3 (item 23) | III | Carry the first run's dates from its record or the log, or say "its history was removed by the earlier delete" | T |
+| N4 | "First run: not known: the archive's history of its runs begins DATE" on an archive with exactly one run | W a1, M4, C2a | III | "First run: not recorded; its run history begins DATE" (the macOS walker's words) | O (wording) |
+| N5 | Finishing a **plain** archive whose folder an earlier run removed: "Kind: plain" then "Messages / Mail dates / First run: not known: encrypted, key not open" | C3 (item 25) | III | "not known: the archive's files were already removed" | T |
+| N6 | The on-screen result of a finishing delete gives only this run's count ("Deleted. 5 files (11.8 KB) removed."); the total is only in the record. The terminal result is the same | W b1, M8 | III | Add "This finishes the delete begun DATE: 10 files removed in all." | T |
+| N7 | Kept files are named only in the Desktop panel. The terminal plan says "Kept, not the archive's: 1"; both results say "it holds N files that are not the archive's"; the saved plan and record say "Kept: …" once per file (and "Kept: store 1/…" for a mail copy) | W a1, a2, e1, M4, M26 | III (B6 remainder) | Name the files in the terminal plan, both results, the saved plan and the record, as the panel does | T |
+| N8 | `status` on a half-deleted archive still gives repair advice under the RED line: "rebuild it… `reindex -rebuild`", "the remaining 1800 have no preserved original … -raw", plus the Extractable and History lines | W c, C X | III | When a delete did not finish, show the RED line and leave out repair advice | T |
+| N9 | The uninstall refusal with several unfinished deletes joins the folders with ";" inside a sentence written for one ("until the delete of A; B; C; D is finished… which that delete needs"), puts all commands in one bracket (about 1.5 screens at 500 px with 4), adds the encrypted-archive clause for plain archives, and lists the half-deleted folders under "KEEP your N archive(s)". The greyed Remove's tooltip is singular | W e5, f, M6 (items 28, 29), C5c, C33 | III | "Uninstall will refuse until these 4 deletes are finished:" with one folder and its command per line; the encrypted clause only for encrypted archives; plural tooltip | O (wording), then T |
+| N10 | The uninstall dry run never mentions `-log-copied`, so it is learnt only from the refusal (one extra run). The refusal's log path is not in quotes and holds a space on macOS ("Application Support"), so a pasted `cp` fails | C5a, C5b, C31, C34 | III | Add "then run uninstall -yes -log-copied" to the dry run's copy line; quote the path | T |
+| N11 | `add-archive` while the Desktop runs succeeds and prints "To delete it: mailarchive delete-archive …", which is then refused because the Desktop is running | W d, M33 | III | Add "(with MailArchive Desktop shut down)" when a Desktop is running, or point to Delete… on its row | T |
+| N12 | The empty page after deleting the current archive: the guide opens expanded between "Your archives, below, …" and the list (about 1.5 screens at 500 px), and "New to MailArchive?" / "Open or make an archive below to begin" still show to someone with archives. Before Dismiss, the summary tiles (Microsoft 365, Scheduled backup) and the Overview lines carry no banner. After Dismiss of a partial delete the page stays scrolled at the Microsoft 365 card | W e1, M1a, M1b | III | Collapse the guide and drop first-run lines when archives are listed (or put Your archives first); banner the tiles too; scroll to top on Dismiss | T |
+| N13 | Disabled Remove from list reasons: a hover tooltip only, which a touch screen cannot show; on a part-deleted current archive before Dismiss it says "This is the archive in use…", wrong at that moment; on an unfinished row it reads as if already clicked ("…so it was not removed from the list; nothing was changed"); on a lone archive "Switch to another archive, or add one (Add another archive)" assumes another archive and names a card, not a button | W e3, M1b, M3, M23, M24 | III | Show the reason as text beside the button; for an unfinished row: "Delete not finished: click Delete again to finish it. Until then it stays on this list."; on a lone archive name Open an archive folder… and Make a new archive… | O (wording), then T |
+| N14 | "Removed from Your archives. The folder and its files are kept." after the reload does not name the archive and stayed under the next delete's result (an encrypted archive whose folder was gone), where it reads as if that archive's files were kept. The repeated line under the row is not fixed. A lone card keeps "This is the archive in use…" above "Removed from Your archives." until Dismiss | M3, M4, M25 | III | Name the archive; clear it when the next result shows; drop the repeat | T (check MA-1017 and MA-1020 first: the macOS walker did not read whether persisting is meant) |
+| N15 | After a "Delete not finished" refusal a stale tab does not refresh, so the row still offers Switch and Pause; only the "out of date" refusal says to reload | M2 | III (minor) | Refresh the rows after that refusal, or add "reload this page" | T |
+| N16 | Windows shows "mail folder 1: mbox" / "Mail folders: mbox" (the source folder's name, not Inbox; macOS shows Inbox). The record's "Left:" and "Kept:" lines still say "store 1/…" | W a1, a2, M26 | III (low) | Show the mail folder's name; replace "store" in the record | T |
+| N17 | A re-run plan made while the file is still held does not warn that it will fail again | W b1 | III (low) | Check the held file in the plan and say so | T |
+| N18 | At the terminal without `-record-out`, "What Delete does not reach" without macOS items is followed at once by the printed record's line with "macOS Time Machine" | W a1 | III (minor) | Intended per design §14 (the saved files keep the whole line); confirm, or label the record's line "on any computer" | O |
+| N19 | A Ctrl-C timed just after the step that removes the archive's row left a 35-byte `.tmp-…` file in the settings folder, and uninstall did not remove it. `known-archives.lock` is also left by uninstall (already the operator's call) | C3d, C5d, W f | III | Remove the temporary file on the stop path; list leftover files in the uninstall plan | T (the `.tmp`); O (the lock) |
+| N20 | Polish: `status`'s RED line and the HOME-unset message lack final periods, and the latter shows Go's own error text ("neither $XDG_CONFIG_HOME nor $HOME are defined"); "Steps 1 and 5 to 7 (…) were skipped" is internal numbering; Save deletion record shows no line on screen; the stale-tab refusal says "not finished / did not finish" twice; the encrypted panel's "forget this folder" is long and odd; Security & privacy says "uninstalling" twice | C X, C24, C26, C36, M2, M4, M22, M30 | III (trivial) | Final periods; plain words for the HOME message; drop the step numbers; a "Record saved" line | T |
+
+Not settled: the browser tool's accessibility tree named the typed-name box "Type the folder's
+name, , to delete it…" with the name missing, though the page's HTML label holds it (M4). Probably
+the tool; a screen-reader check would settle it.
+
+### Adversarial pass on the new guards
+
+Run on a scratch clone at `d914fc2`, macOS only. All 9 packages run passed on the clean clone,
+including the vault reach gate and the `assureblock` meta-test. Each finding has a red probe test
+that asserts the safe behaviour; the probes live only in the scratch clone and must not reach this
+repo as they are (their `// covers:` markers exist only to satisfy the meta-test).
+
+| # | Severity | Gap | Suggested fix | Who |
+|---|---|---|---|---|
+| F1 | **MEDIUM** | The terminal's `mailarchive pause` and `resume` never check `deletions.log`. On a folder whose delete did not finish, `resume` clears the pause and, if the folder still holds its schedule record, reinstalls the scheduled backup into the half-deleted folder; the next run passes the emptied-folder guard because the manifest is removed last. `pause` writes its marker into the half-deleted folder. The harm H2's Desktop fix (MA-1015) blocks | Put the `archdelete.UnfinishedDelete` check inside `wizard.PauseArchive` and `wizard.ResumeArchive` so every caller gets it, in MA-1015's words; refuse when the log cannot be read | O (scope of a refusal), owes the security pass |
+| F2 | LOW | The Scheduled backup card's Install or Repair is not refused for the current archive whose delete did not finish (only the running-delete hold, MA-979, applies); it puts back the backup the delete was stopping. Files are still intact at that point | Call `d.unfinishedRefusal(out)` in `scheduleInstallRouted` (`internal/desktop/schedule.go`) right after the hold | T |
+| F3 | LOW | Remove from list fails open when `deletions.log` cannot be read (for example made readable by others after a restore); Pause, Resume, Switch and Archive now all refuse then. MA-1029 says "refuses nothing here" on purpose | Make `UnlistRefusal` and `RowsCheck.UnlistRefusal` refuse with "could not read its deletion log" | O (a design call against MA-1029's text) |
+| F4 | LOW | `uninstall -yes` does not stop when `deletions.log` is a folder or a link: `ConfigTargets` skips it, both log checks are skipped, and every settings file including `known-archives.json` is removed. MA-1031's proof covers `CheckLogCopied`, not the real run | In `run()`, Lstat the log; if present and not an ordinary file, stop with `LogUnreadableError`; test the real `UninstallYes` | T, owes the security pass |
+| F5 | LOW | The Desktop's Uninstall Remove checks only the log's path, not its content; a delete that finishes elsewhere after the preview has its new line removed without asking | Add the log's size and SHA-256 to `uninstallShown` and `same()` so a changed log refuses as "plan changed" | T, owes the security pass |
+| F6 | LOW | A window between uninstall's last log check and the removal (with `-log-copied`, and always on the Desktop's Remove): a delete in another process can write its started line in between and lose it. The terminal uninstall also does not refuse while a Desktop runs | A lock file beside the log, held by each delete from its started to its finished line and by uninstall across check and removal; make `uninstall -yes` refuse while a Desktop runs | O (design), owes the security pass |
+| nit | — | The `add-archive` refusal for a lock file that is a link says "so nothing was changed" twice | Say it once | T |
+
+What held, in short: other spellings of a folder (trailing separator, "..", a link, letter case on
+macOS) are refused; check and action happen under one hold; bad logs (over 32 MiB, a folder,
+readable by others) make Pause, Resume and Switch refuse; Archive now, Run now, Check integrity and
+Rebuild refuse; Remove from list refuses on all three routes; hostile `add-archive` and `-config`
+inputs are refused; `keyring.ArchiveIDIn` matches the old `vault.Parse` path. Not tried: Windows
+junctions and short names, offline network shares, and backup runs into a half-deleted folder (a
+known gap in the emptied-folder guard, already in the design).
+
+### Still for the operator
+
+**Product and security calls**
+
+- **N1:** how to recognise a large archive without dropping the SD-2 read cap. The fix changes a
+  security control, so it owes the adversarial pass, then a re-walk of C2b and the Desktop's
+  "Open an archive folder…" with 2,500 and 20,000 messages.
+- **F1:** refuse the terminal's `pause` and `resume` (and so every caller of the wizard's pause
+  and resume) for an unfinished delete. Owes the security pass.
+- **F3:** whether Remove from list should refuse when the log cannot be read, against MA-1029's
+  "refuses nothing here".
+- **F6:** a lock shared by delete and uninstall, and whether `uninstall -yes` refuses while a
+  Desktop runs. F4, F5 and F6 change the guard itself and owe the security pass.
+- **N2:** how the finishing record states files removed by a stopped run ("about N" from the log,
+  or "not known").
+- **N18:** confirm the record's full "does not reach" line beside the terminal's shorter one is
+  wanted.
+- **N19:** `known-archives.lock` left by uninstall (already the operator's call).
+- **N14:** check MA-1017 and MA-1020 on whether the reload notice should persist under a later
+  result.
+
+**Wording to approve** (suggested words in the table above): N4 "First run: not recorded; its
+run history begins DATE"; N9 the plural uninstall refusal with one row per line; N13 "Delete not
+finished: click Delete again to finish it. Until then it stays on this list." and the lone-archive
+reason naming Open an archive folder… and Make a new archive…; N5 "not known: the archive's files
+were already removed"; N11 "(with MailArchive Desktop shut down)"; N1's refusal words once the cap
+is settled; and the B20 correction of MA-999 (reached in this build only through the test seam).
+
+**Not walked this round:** a delete or Remove from list that stops a really installed schedule
+(and its "by when it runs" wording, and MA-1022's no-`crontab` install refusal); the Desktop's
+Status & health "delete did not finish" line and the "…so these settings were not saved…" refusal
+(both need a delete that stops at step 2); Remove from list's happy path with its schedule
+question; encrypted archives with the key open (MA-1011) and remembered keys on Windows; Ctrl-C on
+Windows and B17; `forget-archive` (B18); kept files and read-only folders at the terminal; the
+Desktop's Uninstall Remove; the 1.5.3 release notes; a real 390-pixel phone width.
+
+**Left behind by the walkers:** the stopped container `ma-rewalk-linux` (removing it was denied)
+and the throwaway `Big` and `M2500` archives; the Windows folder
+`C:\Users\alex.dimarco\AppData\Local\marewalk` (all throwaway, safe to delete); the scratch clones
+`…/scratchpad/rewalk/advclone` and `advprobe`. Screenshots: `…/scratchpad/rewalk/windows/`
+(`h4-before-dismiss.png`, `h4-archives.png`, `b14-rows.png`) under the session scratchpad.
+
+**About this re-walk.** Date 2026-11-02, from the session clock and the program's output.
+Register: a synthesis of three live walk reports and one adversarial pass; every result above is
+what a walker or the pass saw, and anything not run is listed as not walked. The synthesis owner
+read the 1 MiB cap and `archiveFolderProblem` in code (N1's Desktop half), the MA-999 row (B20) and
+the tip's commit list; the walkers compared wording against design §14's summaries, not catalog
+rows MA-1015 to MA-1033 one by one. Smallest check for the operator: export an archive of 2,500
+messages, then run `mailarchive add-archive DIR` on it (N1).
+
+## First review 2026-11-02 at c592a70 (kept as the record)
+
 Process: `../assurance-kit/process/friction-review.md`. Contract: `docs/ux-contract.md` (X-series).
 Design: `docs/design-archive-delete.md`.
 
