@@ -24,6 +24,11 @@ const manifestName = ".mailarchive-manifest.json"
 // A var only so a test can stand in for a manifest over it without writing 1 GiB.
 var manifestCap int64 = 1 << 30
 
+// manifestSource is what readManifest reads the opened manifest through: the file itself. A
+// var only so a test can inject a read fault (an I/O error part way through a real file)
+// that no file on a test machine gives on demand (MA-1006).
+var manifestSource = func(f *os.File) io.Reader { return f }
+
 // classify is §4's archive test: a plain archive (a manifest §4.1's reader parses),
 // an encrypted one, or neither. A folder that is both — a plaintext manifest beside
 // an encrypted archive's files, as encmark's case Other reads it — is mixed and
@@ -148,7 +153,7 @@ func readManifest(root *os.Root) (*state.Manifest, FileFacts, error) {
 		return nil, FileFacts{}, &manifestReadError{err}
 	}
 	h := sha256.New()
-	data, err := io.ReadAll(io.TeeReader(io.LimitReader(f, manifestCap+1), h))
+	data, err := io.ReadAll(io.TeeReader(io.LimitReader(manifestSource(f), manifestCap+1), h))
 	if err != nil {
 		return nil, FileFacts{}, &manifestReadError{err}
 	}

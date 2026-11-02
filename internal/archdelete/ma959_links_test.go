@@ -2,20 +2,45 @@ package archdelete
 
 import (
 	"os"
+	"os/exec"
 	"path/filepath"
 	"runtime"
 	"testing"
 
 	"mail-archive-tool/internal/assure"
+	"mail-archive-tool/internal/nowindow"
 )
 
+// symlinkOrSkip makes link a symbolic link to target. On Windows, where a symbolic link needs
+// a privilege most accounts lack (elevation or developer mode), a link to a folder is made a
+// junction instead, which needs none — the link Windows users meet most — so these tests run
+// there (MA-959, slice 5's carry-over). A link to a file without the privilege still skips:
+// a junction cannot point at a file.
 func symlinkOrSkip(t *testing.T, target, link string) {
 	t.Helper()
 	if err := os.Symlink(target, link); err != nil {
 		if runtime.GOOS == "windows" {
-			t.Skipf("no link privilege here (lab: run elevated or in developer mode): %v", err)
+			abs := target
+			if !filepath.IsAbs(abs) {
+				abs = filepath.Join(filepath.Dir(link), target)
+			}
+			if fi, serr := os.Stat(abs); serr == nil && fi.IsDir() {
+				junctionOrSkip(t, abs, link)
+				return
+			}
+			t.Skipf("no link privilege here, and a junction cannot point at a file (lab: run elevated or in developer mode): %v", err)
 		}
 		t.Fatal(err)
+	}
+}
+
+// junctionOrSkip makes link a Windows junction to the folder target with cmd's mklink /J (no
+// privilege needed), or skips where it cannot (lab).
+func junctionOrSkip(t *testing.T, target, link string) {
+	t.Helper()
+	out, err := nowindow.Hide(exec.Command("cmd", "/c", "mklink", "/J", link, target)).CombinedOutput()
+	if err != nil {
+		t.Skipf("could not make a junction (lab): %v %s", err, out)
 	}
 }
 
