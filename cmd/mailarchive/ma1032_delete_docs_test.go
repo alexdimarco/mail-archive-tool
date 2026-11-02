@@ -74,8 +74,10 @@ func TestTheDeleteDocsSayWhat153DoesAndNameRealControls(t *testing.T) {
 	}
 
 	readme := docSection(t, "README.md", "## Deleting an archive")
-	notes := docSection(t, "packaging/release-notes.md", "### New in 1.5.3")
-	for name, sec := range map[string]string{"README.md's Deleting an archive": readme, "the 1.5.3 release notes": notes} {
+	// The delete ships as 1.5.4: 1.5.3 became the large-archive patch of 1.5.2 (owner, 2026-11-02),
+	// so its notes are the "New in 1.5.4" section; every check below is unchanged.
+	notes := docSection(t, "packaging/release-notes.md", "### New in 1.5.4")
+	for name, sec := range map[string]string{"README.md's Deleting an archive": readme, "the 1.5.4 release notes": notes} {
 		if sec == "" {
 			t.Fatalf("%s is missing", name)
 		}
@@ -92,7 +94,7 @@ func TestTheDeleteDocsSayWhat153DoesAndNameRealControls(t *testing.T) {
 				t.Errorf("%s lacks %q", name, want)
 			}
 		}
-		if name == "the 1.5.3 release notes" && !strings.Contains(flat, "mailarchive uninstall -yes -log-copied") {
+		if name == "the 1.5.4 release notes" && !strings.Contains(flat, "mailarchive uninstall -yes -log-copied") {
 			t.Errorf("%s lacks uninstall -yes -log-copied", name)
 		}
 		// Finding 6: no backup reads deletions.log, so the docs do not promise none runs.
@@ -127,7 +129,7 @@ func TestTheDeleteDocsSayWhat153DoesAndNameRealControls(t *testing.T) {
 	}
 
 	// Finding 9: uninstall -yes refuses while the log holds any line, not only a delete's.
-	for name, sec := range map[string]string{"README.md's Desktop section": desktop, "the 1.5.3 release notes": notes} {
+	for name, sec := range map[string]string{"README.md's Desktop section": desktop, "the 1.5.4 release notes": notes} {
 		if flat := strings.Join(strings.Fields(sec), " "); strings.Contains(flat, "lists a delete") || !strings.Contains(flat, "holds any line") {
 			t.Errorf("%s must say uninstall -yes refuses while the log holds any line", name)
 		}
