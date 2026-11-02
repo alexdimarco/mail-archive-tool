@@ -262,12 +262,13 @@ func (e *run) stoppedLines() {
 
 // lockAndRecheck is step 1 (a): the archive lock, then the plan again under it, except the
 // scratch listing (§5.3 step 1 (a)): the page's own reader is still open until 1 (b), and
-// 1 (c) lists the scratch folders again.
+// 1 (c) lists the scratch folders again. Nor are the sealed values read again: the record
+// states the plan's, so a second read would use the archive's key for nothing, under the lock.
 func (e *run) lockAndRecheck() bool {
 	e.step = 1
 	p := e.plan
 	deps := e.x.Deps
-	deps.ScratchDir = nil
+	deps.ScratchDir, deps.Sealed = nil, nil
 	l, err := lockfile.AcquireAs(filepath.Join(p.Folder, lockName), "delete")
 	if err != nil {
 		if errors.Is(err, lockfile.ErrHeld) {
