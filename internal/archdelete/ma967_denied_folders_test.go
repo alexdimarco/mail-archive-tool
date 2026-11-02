@@ -72,3 +72,35 @@ func TestADeniedRemedyNamesTheFoldersOfTheFilesRefused(t *testing.T) {
 		})
 	}
 }
+
+// covers: MA-967, R36
+// The words naming the denied folders (deniedFolders) name at most three, then "and N more" for
+// the rest, each folder once, and strip a control character from a folder's name, so a name
+// cannot write over the result's line (amended 2026-11-02, the uninstall-docs group's adversarial
+// pass, finding 5: neither was proven). Files refused for another cause are not counted. Positive
+// twin first: three folders are all named, "the folders A, B and C".
+func TestTheDeniedFoldersAreCountedPastThreeAndStripped(t *testing.T) {
+	denied := func(rels ...string) []LeftFile {
+		var l []LeftFile
+		for _, r := range rels {
+			l = append(l, LeftFile{Rel: r, Cause: CauseDenied})
+		}
+		return l
+	}
+	if got, want := deniedFolders(denied("A/1.html", "B/1.html", "C/1.html", "A/2.html")), "the folders A, B and C"; got != want {
+		t.Fatalf("positive twin: three folders: %q, want %q", got, want)
+	}
+	for _, c := range []struct {
+		left []LeftFile
+		want string
+	}{
+		{denied("A/1.html", "B/1.html", "C/1.html", "D/1.html"), "the folders A, B, C and 1 more"},
+		{denied("A/1.html", "B/1.html", "C/1.html", "D/1.html", "E/1.html", "D/2.html", "search.db"), "the archive's folder and the folders A, B, C and 2 more"},
+		{append(denied("A/1.html"), LeftFile{Rel: "Z/1.html", Cause: CauseInUse}), "the folder A"},
+		{denied("Mail\x1b[2K\rbox/In\u0085box/1.html"), "the folder Mail[2Kbox/Inbox"},
+	} {
+		if got := deniedFolders(c.left); got != c.want {
+			t.Errorf("deniedFolders of %d files = %q, want %q", len(c.left), got, c.want)
+		}
+	}
+}
