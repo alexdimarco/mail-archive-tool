@@ -1133,7 +1133,14 @@ func addArchiveWith(cfgPath, dir string, stdout io.Writer) error {
 		fmt.Fprintf(stdout, "%s is already in Your archives; nothing was changed.\n", util.StripControl(row))
 		return nil
 	}
-	fmt.Fprintf(stdout, "Added to Your archives: %s\nThe folder and its files are unchanged. To delete it: mailarchive delete-archive%s -out %s\n",
-		util.StripControl(row), configArg(cfgPath), encmark.CommandPath(util.StripControl(row)))
+	// delete-archive refuses while a Desktop runs, so its command is given for then with the Desktop
+	// shut down, beside the Desktop's own Delete… (the 1.5.3 re-walk's N11); when this cannot tell,
+	// the condition is said too.
+	when, desk := "", ""
+	if desktopRunning() != nil {
+		when, desk = " (with MailArchive Desktop shut down)", ", or click Delete… on its row in Your archives in MailArchive Desktop."
+	}
+	fmt.Fprintf(stdout, "Added to Your archives: %s\nThe folder and its files are unchanged. To delete it%s: mailarchive delete-archive%s -out %s%s\n",
+		util.StripControl(row), when, configArg(cfgPath), encmark.CommandPath(util.StripControl(row)), desk)
 	return nil
 }

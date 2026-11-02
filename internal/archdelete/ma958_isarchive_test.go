@@ -27,13 +27,15 @@ func bigArchive(t *testing.T) string {
 	return dir
 }
 
-// covers: MA-958, R36
+// covers: MA-958, MA-1034, R36
 func TestAnArchiveWithAManifestOverOneMiBIsPlanned(t *testing.T) {
 	dir := bigArchive(t)
-	// Positive twin first: today's list reads it as no archive (1 MiB cap, C10's
-	// separate row) — the defect the delete must not inherit.
-	if archindex.IsArchive(dir) {
-		t.Fatal("expected archindex's capped reader to miss this archive")
+	// Positive twin first. It was: the list read it as no archive (1 MiB cap, C10's
+	// separate row) — the defect the delete must not inherit. Amended 2026-11-02
+	// (MA-1034, the 1.5.3 re-walk's N1): that defect is fixed, so the list's reader
+	// now sees the same archive, of its kind, as the delete's does.
+	if !archindex.IsArchive(dir) || archindex.Kind(dir) != "local" {
+		t.Fatalf("archindex's reader must see an archive with a manifest over 1 MiB: %v %q", archindex.IsArchive(dir), archindex.Kind(dir))
 	}
 	if !IsArchive(dir) {
 		t.Fatal("§4's archive test must see an archive with a manifest over 1 MiB")

@@ -144,7 +144,7 @@ func (r *RowsCheck) UnlistRefusal(folder string) error {
 }
 
 // rowArchiveTest is §4's archive test for a row, its manifest parse kept by the manifest's
-// identity, size and modification time (del-s3a-A3-03): archindex's 1 MiB read passes over an
+// identity, size and modification time (del-s3a-A3-03): archindex's old 1 MiB read passed over an
 // archive of a few thousand messages, and the row then asked the whole manifest — megabytes,
 // over a network drive seconds — on every page load. A manifest that changed is parsed again;
 // the plan never uses what is kept here, and reads it whole.

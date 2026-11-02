@@ -126,7 +126,8 @@ func (c *CommandLineDelete) ListRow(row string) error {
 // and a computer with no Desktop could never list it). The folder gets the checks the Desktop's
 // "Open an archive folder…" gives a folder chosen (archiveFolderProblem: an archive at its own
 // folder, plain or encrypted; never a folder inside an encrypted archive, a recorded one that no
-// longer holds its archive, an unfinished unencrypted copy, or a folder with no archive), and is
+// longer holds its archive, an unfinished unencrypted copy, or a folder with no archive, these last
+// in the terminal's words: folderProblem with atTerminal, the 1.5.3 re-walk's N1), and is
 // listed under the list's lock as Add another archive lists one (registerArchive:
 // archindex.UpdateFile, CON-07). It is not made the current archive. row is the row as Your
 // archives shows it; added is false when it was listed already; problem is why the folder was not
@@ -140,7 +141,7 @@ func (c *CommandLineDelete) AddRow(path string) (row string, added bool, problem
 	if r, ok := rowIn(idx, abs); ok {
 		return r, false, "", nil
 	}
-	if why := archiveFolderProblem(abs); why != "" {
+	if why := folderProblem(abs, true); why != "" {
 		return "", false, why, nil
 	}
 	if err := c.cfg.registerArchive(abs, time.Now()); err != nil {

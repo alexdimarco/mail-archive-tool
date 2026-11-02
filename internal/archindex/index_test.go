@@ -155,24 +155,37 @@ func TestMA660_RecognitionIsLexicalAndCapped(t *testing.T) {
 
 	// SD-2: a manifest larger than the cap is refused, not slurped whole. The
 	// fixture is VALID JSON over the cap (a huge store value), so the refusal turns
-	// on the bound, not on a parse error — remove the LimitReader and this reddens.
+	// on the bound, not on a parse error. Amended 2026-11-02 (MA-1034): the read's cap
+	// is manifestCap (1 GiB, sized for real archives) and the walk keeps one value and
+	// the stores under 1 MiB each, so this fixture is refused by the value's bound;
+	// the read's own cap is proven with manifestCap standing in under the fixture's
+	// size, and in TestAHostileManifestIsStillRefused.
 	big := filepath.Join(dir, "big")
 	if err := os.MkdirAll(big, 0o755); err != nil {
 		t.Fatal(err)
 	}
-	bigManifest, err := json.Marshal(map[string]any{"version": 6, "stores": map[string]string{"path:/x": strings.Repeat("x", maxManifestBytes)}})
+	bigManifest, err := json.Marshal(map[string]any{"version": 6, "stores": map[string]string{"path:/x": strings.Repeat("x", 1<<20)}})
 	if err != nil {
 		t.Fatal(err)
 	}
-	if int64(len(bigManifest)) <= maxManifestBytes {
-		t.Fatalf("fixture must exceed the %d-byte cap, got %d", maxManifestBytes, len(bigManifest))
+	if len(bigManifest) <= 1<<20 {
+		t.Fatalf("fixture must exceed 1 MiB, got %d", len(bigManifest))
 	}
 	if err := os.WriteFile(filepath.Join(big, manifestName), bigManifest, 0o644); err != nil {
 		t.Fatal(err)
 	}
 	if IsArchive(big) {
-		t.Fatal("a manifest over the size cap must be refused (SD-2), not recognized")
+		t.Fatal("a manifest whose one value is over its bound must be refused (SD-2), not recognized")
 	}
+	capped := filepath.Join(dir, "capped")
+	writeArchive(t, capped, map[string]string{"path:/mail/a.mbox": strings.Repeat("a", 200)})
+	old := manifestCap
+	manifestCap = 64
+	defer func() { manifestCap = old }()
+	if IsArchive(capped) {
+		t.Fatal("a manifest over the read's cap must be refused (SD-2), not recognized")
+	}
+	manifestCap = old
 
 	// SD-1: a manifest that is a symlink cannot be followed out of the archive
 	// folder — the os.Root open refuses it. (Symlinks need privilege on Windows.)

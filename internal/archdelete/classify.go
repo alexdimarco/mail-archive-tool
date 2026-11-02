@@ -20,7 +20,8 @@ const manifestName = ".mailarchive-manifest.json"
 
 // manifestCap bounds §4.1's manifest read: sized for real archives, as the copy
 // export's read of another archive is (app/copyexport_archive.go), never
-// archindex.inspect's 1 MiB, which an archive of about 1,450 messages passes [C10].
+// archindex.inspect's old 1 MiB, which an archive of about 1,450 messages passed [C10]
+// (archindex now walks the manifest under this same bound, MA-1034).
 // A var only so a test can stand in for a manifest over it without writing 1 GiB.
 var manifestCap int64 = 1 << 30
 

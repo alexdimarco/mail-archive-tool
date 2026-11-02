@@ -197,7 +197,10 @@ files Delete does not touch are ignored. Folders are removed with `os.Remove`
 
 **Whether a folder is an archive** [NEW-isarchive-cap] is decided everywhere in this
 design (§3, §5.2, §7, §10) by §4.1's manifest reader (no 1 MiB cap) or the encrypted
-marker, never by `archindex.IsArchive` or the row's Available flag.
+marker, never by `archindex.IsArchive` or the row's Available flag. *(Note 2026-11-02,
+MA-1034: `archindex.IsArchive` no longer stops at 1 MiB either — §14, "The large-archive
+group" — so the two agree on real archives; this rule stands, since the list's walk does
+not check the records the plan reads.)*
 
 ### 4.1 Plain archive
 
@@ -1316,3 +1319,30 @@ are the builder's, for the operator, unless a quote says otherwise.
   delete-archive -out FOLDER."; the README gives the same example. The README and the release
   notes: `uninstall -yes` refuses while the log "holds any line" (was "lists a delete"). The root
   usage's uninstall line is aligned with its neighbours.
+
+**The large-archive group, from the 1.5.3 re-walk (2 November 2026; N1, N11).** New or changed
+words are the builder's, for the operator, unless a quote says otherwise.
+- *A real archive is recognised whatever its size (MA-1034; N1).* `archindex` read at most 1 MiB
+  of the manifest, so from v1.1.0 an archive of more than about 2,200 messages was greyed in Your
+  archives with "Not reachable right now — reconnect the drive or folder and it comes back.
+  Nothing was removed." and no Switch, and Open an archive folder… and `add-archive` refused it.
+  Recognition now walks the manifest as it streams in (1 GiB read bound, one value and the stores
+  at most 1 MiB each, nesting at most 64), keeps only its stores and keeps its verdict while the
+  manifest is unchanged. No new words on the Desktop: the row is a normal row, and Open an archive
+  folder… opens the folder.
+- *`add-archive`'s refusals in the terminal's words (MA-1023 amended; N1's wording).* A folder
+  whose record cannot be read: "DIR holds an archive whose record (.mailarchive-manifest.json)
+  cannot be read — run mailarchive status -out "DIR" to see why and how to repair it. Nothing was
+  changed." (was "…— type the folder in Settings → Archive location, and Status & health shows how
+  to repair it."). A folder with no archive: "DIR isn't a MailArchive archive — give the folder
+  that holds the .mailarchive-manifest.json file. Nothing was changed." (was "choose the folder").
+  The Desktop's Open an archive folder… keeps its own words for both.
+- *`add-archive`'s delete line while a Desktop runs (MA-1023 amended; N11).* "To delete it (with
+  MailArchive Desktop shut down): mailarchive delete-archive -out "DIR", or click Delete… on its
+  row in Your archives in MailArchive Desktop." It is said so also when MailArchive cannot tell
+  whether a Desktop runs; with none running the line is unchanged: "To delete it: mailarchive
+  delete-archive -out "DIR"".
+- *Not done here (for the operator):* N1's suggested "too large to check" wording is not built: a
+  manifest over the new 1 GiB bound, like a newer or damaged one, gets the "cannot be read" words,
+  and `status` says which. The 2,500- and 20,000-message walks at the terminal and on the Desktop
+  are owed to the re-walk; this group proved them with tests only.

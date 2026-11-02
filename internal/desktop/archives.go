@@ -148,7 +148,8 @@ func (cfg Config) reconcileArchives(now time.Time) (archindex.Index, error) {
 // moves Current with no index write; a row whose folder is unreachable or no longer
 // an archive reads Available=false (shown greyed, never dropped — SD-6) with an
 // empty Kind; an available row's Kind is derived live by archindex's safe read
-// (state.LoadFrom inside an os.Root), never the Desktop's state.Load-based
+// (a bounded streaming walk inside an os.Root, its store ids read lexically as
+// state.LoadFrom reads them; MA-1034), never the Desktop's state.Load-based
 // archiveKind, which would resolve an untrusted manifest's store ids on disk (SD-1).
 func (cfg Config) archiveRows(idx archindex.Index) []ArchiveRow {
 	current := cleanPath(cfg.effectiveOut())

@@ -136,6 +136,17 @@ is read with `state.LoadFrom` over size-capped bytes — never `archiveKind()` /
 path or follow a symlink out of the folder (review **SD-1/SD-2**). Nothing cached
 means nothing to go stale, and no second owner for any fact.
 
+*Note 2026-11-02 (SD-2 amended; MA-1034, the 1.5.3 re-walk's N1):* the 1 MiB read cap
+made any archive over about 2,200 messages "not an archive" (greyed, no Switch, refused
+by Open an archive folder… and `add-archive`). Recognition now walks the manifest's JSON
+tokens as they stream in, inside the `os.Root` as before, under a 1 GiB read bound (the
+delete's, sized for real archives) with one value and the stores at most 1 MiB each and
+nesting at most 64; it keeps only `stores`, read lexically (`state.SnapshotStoreID`, as
+`state.LoadFrom` reads them; SD-1 holds), skips the records, and refuses a newer format.
+The kind is still derived live; the verdict alone is kept in process, per folder, while
+the folder and its manifest are the same files of the same size and modification time,
+so a page load does not read a large manifest again.
+
 **The active-archive invariant.** "Which archive is current" is owned by
 `desktop-settings.json` `out` (authoritative — `effectiveOut()`), **not** the
 index. The index MUST NOT hold an `active`/`current` field; adding one would
@@ -208,7 +219,9 @@ When `known-archives.json` is **absent** on launch:
      `state.LoadFrom` over bytes read under an explicit size cap from an
      `OpenRegularFile` descriptor (never `archiveKind`/`state.Load`-by-path — review
      **SD-1/SD-2**); reject zero-byte/non-JSON; list a newer-format manifest as
-     "upgrade to manage"; dedupe by `os.SameFile`.
+     "upgrade to manage"; dedupe by `os.SameFile`. *(Note 2026-11-02, MA-1034: the
+     explicit size cap is now a streaming walk under a 1 GiB bound, see §4's SD-2 note;
+     the recovery scan itself is still not built.)*
    - **Bounds — both gates required (review SD-5).** The install gate is necessary
      but not sufficient: a plain walk can still follow a symlink/junction or cross a
      mount into another user's world-readable files inside the home. Reuse the

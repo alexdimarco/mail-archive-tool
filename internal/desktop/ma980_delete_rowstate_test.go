@@ -1,7 +1,6 @@
 package desktop
 
 import (
-	"bytes"
 	"net/http"
 	"os"
 	"path/filepath"
@@ -101,27 +100,25 @@ func TestARowsDeleteStateAgreesWithItsPlan(t *testing.T) {
 		assure.NoSideEffect(func() bool { return e.listed(dir) }))
 }
 
-// covers: MA-980, R36, S41
-// An archive whose manifest is over archindex's 1 MiB read is shown greyed by the list's bounded
-// read, yet its row offers Delete (§10 [NEW-isarchive-cap], conformance gap 5) and its plan is
-// made. Positive twin first: the same archive with its usual manifest is offered.
+// covers: MA-980, MA-1034, R36, S41
+// An archive whose manifest is over 1 MiB offers Delete (§10 [NEW-isarchive-cap], conformance gap
+// 5) and its plan is made. Amended 2026-11-02 (MA-1034, the 1.5.3 re-walk's N1): the list's read
+// no longer stops at 1 MiB, so the row is no longer greyed: it is available and offers Switch to
+// this archive and Pause beside Delete. The stand-in was a manifest padded with 1 MiB of white
+// space, which the list's walk now refuses as one value over its bound (a shape no MailArchive
+// writes); it is now a real manifest, grown by the state package to thousands of records.
+// Positive twin first: the same archive with its usual manifest is offered.
 func TestAnArchiveWithAManifestOverOneMiBIsStillOfferedDelete(t *testing.T) {
 	e := newDeleteEnv(t)
 	dir := e.plainArchive("Large")
 	rowSays(t, e, dir, true, "")
-	man := filepath.Join(dir, ".mailarchive-manifest.json")
-	data, err := os.ReadFile(man)
-	if err != nil {
-		t.Fatal(err)
-	}
-	i := bytes.LastIndexByte(data, '}')
-	padded := append(append(append([]byte(nil), data[:i]...), bytes.Repeat([]byte(" "), 1<<20+1)...), data[i:]...)
-	if err := os.WriteFile(man, padded, 0o600); err != nil {
-		t.Fatal(err)
-	}
+	growManifest(t, dir, 6000)
 	row := rowFor(t, e.page(), dir)
-	if !strings.Contains(row, "archive-row unavailable") {
-		t.Fatalf("the stand-in: archindex's bounded read does not pass over this manifest: %s", row)
+	if strings.Contains(row, "unavailable") || strings.Contains(row, "Not reachable right now") {
+		t.Errorf("an archive with a manifest over 1 MiB is greyed: %s", row)
+	}
+	if !strings.Contains(row, "data-switch-archive") || !strings.Contains(row, "data-pause-archive") {
+		t.Errorf("an archive with a manifest over 1 MiB does not offer Switch to this archive and Pause: %s", row)
 	}
 	if !strings.Contains(row, `data-delete-ok="true"`) {
 		t.Errorf("an archive with a manifest over 1 MiB does not offer Delete: %s", row)

@@ -192,8 +192,13 @@ func (d *dashboard) openArchiveAction(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, map[string]any{"ok": true, "path": path})
 }
 
-// archiveFolderProblem says why path cannot be opened as an archive, or "".
-func archiveFolderProblem(path string) string {
+// archiveFolderProblem says why path cannot be opened as an archive, or "", in the Desktop's words.
+func archiveFolderProblem(path string) string { return folderProblem(path, false) }
+
+// folderProblem is archiveFolderProblem; atTerminal gives a folder with no archive, or with a
+// record that cannot be read, the words for `mailarchive add-archive` at a terminal, which name
+// no Desktop control (the 1.5.3 re-walk's N1).
+func folderProblem(path string, atTerminal bool) string {
 	abs, _ := keyOf(path)
 	if dir, _, _ := encmark.AtOrAbove(abs); dir != "" && cleanPath(dir) != cleanPath(abs) {
 		return fmt.Sprintf("%s is inside the encrypted archive %s — choose the archive's own folder.", abs, dir)
@@ -208,7 +213,13 @@ func archiveFolderProblem(path string) string {
 		// The same words as the No-archive card; a manifest that is there but cannot be
 		// read is told so, with where its repair shows (the P3-3 pass, REG-04).
 		if _, err := os.Lstat(filepath.Join(abs, ".mailarchive-manifest.json")); err == nil {
+			if atTerminal {
+				return fmt.Sprintf("%s holds an archive whose record (.mailarchive-manifest.json) cannot be read — run mailarchive status -out %s to see why and how to repair it.", abs, encmark.CommandPath(abs))
+			}
 			return fmt.Sprintf("%s holds an archive whose record (.mailarchive-manifest.json) cannot be read — type the folder in Settings → Archive location, and Status & health shows how to repair it.", abs)
+		}
+		if atTerminal {
+			return fmt.Sprintf("%s isn't a MailArchive archive — give the folder that holds the .mailarchive-manifest.json file.", abs)
 		}
 		return fmt.Sprintf("%s isn't a MailArchive archive — choose the folder that holds the .mailarchive-manifest.json file.", abs)
 	}
