@@ -63,6 +63,9 @@ var (
 	// afterDeleteReturned runs between Execute's return and the result being printed (a test
 	// sends a signal there); nothing in a real run.
 	afterDeleteReturned = func() {}
+	// removeInFlightTemps removes the temp files of this process's atomic writes not yet renamed,
+	// before a signal ends the delete at once (util.RemoveInFlightTemps; N19).
+	removeInFlightTemps = util.RemoveInFlightTemps
 	// notifyDeleteSignals subscribes c to the signals the verbs watch (signal.Notify).
 	notifyDeleteSignals = func(c chan<- os.Signal, sigs ...os.Signal) { signal.Notify(c, sigs...) }
 	// deleteExit ends the process with a signal's code.
@@ -946,6 +949,9 @@ func (v *verbWatch) signal(s os.Signal) {
 		}
 	case phaseChanging:
 		fmt.Fprintf(v.w, "mailarchive: delete-archive was stopped by %s and did not finish: the folder may be partly deleted. Run `mailarchive delete-archive%s -out %s` again (or Delete… in MailArchive Desktop) to finish it.\n", signalWords(s), configArg(cfg), encmark.CommandPath(util.StripControl(row)))
+		// A settings file being written now (Your archives at step 9, the settings at step 4) is
+		// abandoned with the process: its temp file goes, not left beside it (the 1.5.3 re-walk's N19).
+		removeInFlightTemps()
 		v.exit(signalExit(s))
 	case phaseSaving:
 		fmt.Fprintln(v.stdout, recordHeading)

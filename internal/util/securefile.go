@@ -7,6 +7,7 @@ import (
 	"os"
 	"path/filepath"
 	"runtime"
+	"sync"
 )
 
 // createTemp and syncDirFn are the temp-create and directory-sync steps of the
@@ -40,6 +41,8 @@ func WriteFileAtomic0600Temp(path string, data []byte, pattern string) error {
 	}
 	tmpName := tmp.Name()
 	defer os.Remove(tmpName) // no-op once renamed away
+	inFlight.Store(tmpName, struct{}{})
+	defer inFlight.Delete(tmpName)
 	if err := tmp.Chmod(0o600); err != nil {
 		tmp.Close()
 		return err
@@ -55,11 +58,33 @@ func WriteFileAtomic0600Temp(path string, data []byte, pattern string) error {
 	if err := tmp.Close(); err != nil {
 		return err
 	}
+	BeforeAtomicRename(tmpName)
 	if err := ReplaceRetrying(tmpName, path, renameFile, renameInUse, renameSleep); err != nil {
 		return fmt.Errorf("rename into place %s: %w", path, err)
 	}
 	syncDirFn(dir)
 	return nil
+}
+
+// inFlight are the temp files WriteFileAtomic0600Temp has made and not yet renamed or removed,
+// in this process.
+var inFlight sync.Map
+
+// BeforeAtomicRename runs between an atomic write's temp file being complete and its rename: a test
+// seam (a stop that lands in that moment), nothing in a real run.
+var BeforeAtomicRename = func(tmp string) {}
+
+// RemoveInFlightTemps removes, best effort, every temp file an atomic write of this process has
+// made and not yet renamed: for a process about to exit at once on a signal, whose deferred
+// removals will not run, so no ".tmp-…" file is left beside a settings file (the 1.5.3 re-walk's
+// N19: Ctrl-C just after a delete's step 9 left one in the settings folder). A write it races
+// either renames first, and the removal finds nothing, or fails its rename; the file it was
+// replacing is untouched either way.
+func RemoveInFlightTemps() {
+	inFlight.Range(func(k, _ any) bool {
+		_ = os.Remove(k.(string))
+		return true
+	})
 }
 
 // SyncDir fsyncs a directory (best effort) so a completed rename or removal in

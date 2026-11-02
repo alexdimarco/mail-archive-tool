@@ -1521,6 +1521,14 @@ each; the operator approves the words later.
   now.".
 - *Save deletion record says so (MA-1042; N20).* "Your browser was asked to save the deletion record
   as FILE (usually in Downloads)." beside the button, as Save this plan says it.
+- *A stop leaves no temp file (MA-1043; N19).* Ctrl-C or the terminate signal from step 2 on
+  removes the temp files of the process's atomic writes not yet renamed before it exits, so a
+  settings file written at that moment (Your archives at step 9) leaves no `.tmp-…` file beside
+  it. No new words. *Not done (for the operator):* uninstall listing leftover files in its plan.
+- *MA-999's correction corrected (B20).* The B20 note above says the no-store path is reached when
+  the config folder cannot be determined; at the terminal it is not, since `delete-archive` stops
+  first when it cannot find the folder that tells whether a Desktop runs (the re-walk's C6). In
+  this build `delete-archive` reaches it only through the test seam. No behaviour changed.
 - *The record keeps the whole "What Delete does not reach" line (N18, the operator's delegate's
   decision; no change).* At the terminal without `-record-out` the printed record's line names every
   computer's backup tools after the plan's shorter one: the saved files may be read on another
