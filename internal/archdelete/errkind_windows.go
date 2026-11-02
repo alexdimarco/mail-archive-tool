@@ -51,6 +51,10 @@ func isAccessDenied(err error) bool { return errors.Is(err, syscall.ERROR_ACCESS
 // deniedRemedy is §8 (a)'s remedy for access denied.
 const deniedRemedy = "Windows security or antivirus blocked it: allow MailArchive or delete these by hand."
 
+// deniedNamesFolders is false here: Windows refuses a file for the file itself (security, an
+// antivirus, a read-only file), not for its folder, so the remedy names no folder.
+const deniedNamesFolders = false
+
 // openAttrFn opens the file rel names inside root for its attributes (openAt); a
 // test seam for a file whose attributes cannot be read.
 var openAttrFn = openAt

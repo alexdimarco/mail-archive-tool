@@ -80,10 +80,14 @@ func TestADesktopStartedWithConfigKeepsItsDeletionLogWhereItsUninstallLooks(t *t
 	if got := planLog(); got != cfgLog {
 		t.Fatalf("the uninstall plan must name the log its Desktop wrote, %s; got %q", cfgLog, got)
 	}
-	// The rows read the same file: a delete left unfinished there marks its row.
+	// The rows read the same file: a delete left unfinished there marks its row. The mark is
+	// looked for as the row draws it (amended 2026-11-02: since MA-1032 the guide on the same page
+	// says "Delete not finished: click Delete again" in bold, so the bare words no longer tell a
+	// marked row from the guide).
+	const rowMark = `<span class="archive-tag">Delete not finished: click Delete again</span>`
 	other := e.plainArchive("Halfway")
-	if strings.Contains(e.page(), "Delete not finished") {
-		t.Fatal("positive twin: no row is marked not finished yet")
+	if page := e.page(); strings.Contains(page, rowMark) || !strings.Contains(page, "Switch to this archive</button>") {
+		t.Fatal("positive twin: no row is marked not finished yet, and a row offers Switch")
 	}
 	line, _ := json.Marshal(map[string]any{"at": "2026-11-01T10:00:00Z", "event": "started", "run": "r-halfway", "folder": other, "row": other, "kind": "plain"})
 	f, err := os.OpenFile(cfgLog, os.O_APPEND|os.O_WRONLY, 0o600)
@@ -92,7 +96,7 @@ func TestADesktopStartedWithConfigKeepsItsDeletionLogWhereItsUninstallLooks(t *t
 	}
 	f.Write(append(line, '\n'))
 	f.Close()
-	if !strings.Contains(e.page(), "Delete not finished: click Delete again") {
+	if !strings.Contains(e.page(), rowMark) {
 		t.Fatalf("a delete left unfinished in %s must mark its row", cfgLog)
 	}
 }

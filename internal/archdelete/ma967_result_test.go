@@ -75,6 +75,17 @@ func TestATickedFileThatCannotBeRemovedIsNotFullyDeletedWithTheByHandRemedy(t *t
 	}
 }
 
+// deniedOneAtRoot is the denied remedy for one file in the archive's own folder: on macOS and
+// Linux it names that folder (amended 2026-11-02, the 1.5.3 friction review's B6), on Windows
+// none.
+func deniedOneAtRoot() string {
+	r := strings.Replace(deniedRemedy, "delete these by hand", "delete it by hand", 1)
+	if deniedNamesFolders {
+		return "The system did not allow it in the archive's folder (a locked file, a folder you may not change, or a read-only drive): unlock it and click Delete again, or delete it by hand."
+	}
+	return r
+}
+
 // covers: MA-967, R36
 func TestEachLeftoverGetsTheRemedyOfItsErrorType(t *testing.T) {
 	for _, tc := range []struct {
@@ -83,7 +94,7 @@ func TestEachLeftoverGetsTheRemedyOfItsErrorType(t *testing.T) {
 		remedy string
 	}{
 		{"in use", inUseErr, "Close Outlook or any program using it, then click Delete again."}, // one file (MA-1028, B7)
-		{"denied", deniedErr, strings.Replace(deniedRemedy, "delete these by hand", "delete it by hand", 1)}, // one file (MA-1028, B7)
+		{"denied", deniedErr, deniedOneAtRoot()}, // one file (MA-1028, B7), in the archive's folder (B6)
 		{"device gone", goneErr, "Reconnect the drive, then click Delete again."},
 	} {
 		t.Run(tc.name, func(t *testing.T) {

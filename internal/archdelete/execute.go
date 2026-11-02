@@ -7,6 +7,7 @@ import (
 	"io/fs"
 	"os"
 	"os/user"
+	"path"
 	"path/filepath"
 	"runtime"
 	"strings"
@@ -1192,10 +1193,53 @@ func remedies(left []LeftFile) string {
 	var out []string
 	for _, c := range []Cause{CauseInUse, CauseDenied, CauseDeviceGone, CauseOther} {
 		if have[c] {
-			out = append(out, c.remedy(len(left)))
+			where := ""
+			if c == CauseDenied && deniedNamesFolders {
+				where = deniedFolders(left)
+			}
+			out = append(out, c.remedy(len(left), where))
 		}
 	}
 	return strings.Join(out, " ")
+}
+
+// deniedFolders names the folders holding the files refused for a permission (the 1.5.3 friction
+// review's B6): "the archive's folder" for its own files, "the folder src/Inbox", "the folders
+// src/Inbox and src/Sent" (up to three, then "and N more"), in the order first met, or both
+// ("the archive's folder and the folder src/Inbox"); "" when no file was refused so.
+func deniedFolders(left []LeftFile) string {
+	root := false
+	var subs []string
+	seen := map[string]bool{}
+	for _, l := range left {
+		if l.Cause != CauseDenied {
+			continue
+		}
+		switch d := path.Dir(l.Rel); {
+		case d == ".":
+			root = true
+		case !seen[d]:
+			seen[d] = true
+			subs = append(subs, util.StripControl(d))
+		}
+	}
+	const most = 3
+	sub := ""
+	switch {
+	case len(subs) == 1:
+		sub = "the folder " + subs[0]
+	case len(subs) > most:
+		sub = "the folders " + strings.Join(subs[:most], ", ") + fmt.Sprintf(" and %d more", len(subs)-most)
+	case len(subs) > 1:
+		sub = "the folders " + strings.Join(subs[:len(subs)-1], ", ") + " and " + subs[len(subs)-1]
+	}
+	switch {
+	case root && sub != "":
+		return "the archive's folder and " + sub
+	case root:
+		return "the archive's folder"
+	}
+	return sub
 }
 
 func plural(n int, one, many string) string {

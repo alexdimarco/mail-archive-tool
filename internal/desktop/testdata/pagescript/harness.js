@@ -471,6 +471,22 @@ const scenarios = {
     check(!!sn && sn.textContent === 'a' && sl.children[0].text === "Type the folder's name, " && sl.textContent === "Type the folder's name, a, to delete it (capital letters count)",
       "a name that is also in the prompt's words is the piece kept on one line");
   },
+  // The 1.5.3 friction review's wording items 50 and 57 (MA-1033): the plan names its sources as
+  // "Mail folders: NAMES", never "Stores: store 1 …", and a delete's result is headed "Result for
+  // FOLDER", never "Delete of FOLDER".
+  async words153() {
+    page([['D:\\Mail\\Gone', 'other'], ['E:\\Cur', 'current']], 'E:\\Cur');
+    boot(); await wait(30);
+    const g = doc.querySelectorAll('.archive-row')[0];
+    replies['api/archive/delete/plan'] = Object.assign(plan('D:\\Mail\\Gone', 'Gone', 'TOK'), { stores: [{ number: 1, name: 'Inbox' }, { number: 2, name: 'Sent' }] });
+    g.querySelector('[data-delete-archive]').click(); await wait(40);
+    const ps = g.querySelector('.delete-panel').all().filter(e => e.tagName === 'P').map(e => e.textContent);
+    check(ps.includes('Mail folders: Inbox, Sent') && !ps.some(t => t.startsWith('Stores') || t.includes('store 1')), "the plan names its mail folders", JSON.stringify(ps));
+    replies['api/archive/delete'] = result({ id: 'HG', row: 'D:\\Mail\\Gone', folder: 'D:\\Mail\\Gone', rowRemoved: true, rows: ['D:\\Mail\\Gone'] });
+    await typeAndDelete(g, 'Gone'); await wait(40);
+    const held = doc.querySelector('[data-held-id="HG"]'), b = held && held.querySelector('b');
+    check(!!b && b.textContent === 'Result for D:\\Mail\\Gone' && !held.textContent.includes('Delete of'), 'the result is headed "Result for" its folder', b && b.textContent);
+  },
   // The page's layout fixes (MA-1020, B13, B14): Save this plan says so on screen and sends
   // nothing; a delete's result is brought into view; Remove from list's words are said again at
   // the top of Your archives after the reload it starts, once.

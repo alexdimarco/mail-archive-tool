@@ -1238,3 +1238,44 @@ are the builder's, for the operator, unless a quote says otherwise.
   -dry-run | -yes [-log-copied] — remove MailArchive's schedules, settings and sign-in (archives
   are kept; -log-copied: you copied deletions.log)". The Desktop is unchanged: its Remove removes
   only the plan the page showed, which says to copy the log first (MA-1008).
+- *The docs (MA-1032, MA-1004 amended; B16).* §10's guide part "Deleting an archive" gains four
+  paragraphs: "Delete not finished: if a delete stops part way, for example because the computer
+  was switched off or the result said Not fully deleted, the archive's row says Delete not
+  finished: click Delete again. Until the delete is finished, that archive is not backed up, and it
+  cannot be paused, resumed, switched to or removed from the list. Click Delete… on its row again:
+  its plan begins "This finishes the delete begun" and the date, and its deletion record counts
+  what every run of it removed."; "Deleting the archive this page shows leaves no archive chosen.
+  Until you click Dismiss on the result, that archive's cards are greyed out. Then, to carry on,
+  click Switch to this archive on another archive's row under Your archives, or click Open an
+  archive folder… to choose one."; "The deletion log: each delete adds a line to this computer's
+  deletion log, deletions.log, which keeps the date, the folder and what was removed. On Windows,
+  it is %APPDATA%\mailarchive\deletions.log (a MailArchive Desktop started with -config keeps it
+  beside that config file). Uninstalling MailArchive removes that log: copy deletions.log first,
+  somewhere you keep records, if you need it to check saved deletion records." (on a Mac
+  "~/Library/Application Support/mailarchive/deletions.log", on Linux
+  "~/.config/mailarchive/deletions.log ($XDG_CONFIG_HOME/mailarchive/deletions.log when
+  XDG_CONFIG_HOME is set)"); and "At the command line: in a terminal, mailarchive delete-archive
+  -out FOLDER shows the same plan and asks you to type the folder's name; add -plan-out FILE to
+  only save the plan, or -record-out FILE to save the deletion record. mailarchive unlist-archive
+  -out FOLDER is Remove from list. Both work only on an archive under Your archives, and only while
+  MailArchive Desktop is shut down. mailarchive add-archive FOLDER adds an archive folder you
+  already have to Your archives, as Open an archive folder… does, without making it the archive
+  this page shows." with " On Windows the command-line program is mailarchive.exe, in
+  MailArchive's folder." / " On a Mac the command-line program is the separate download
+  mailarchive-cli-macos.tar.gz; run it in Terminal.". The README gains "Deleting an archive" and a
+  Desktop bullet; the 1.5.3 release notes gain the delete (heading "New in 1.5.3 — deleting an
+  archive, and switching archives says what happened where you clicked").
+- *A permission refused names its folders (MA-967 amended; B6, wording item 24).* On macOS and
+  Linux §8 (a)'s denied remedy names where: "The system did not allow it in the folder
+  Mailbox/Inbox (a locked file, a folder you may not change, or a read-only drive): unlock it and
+  click Delete again, or delete these by hand." ("in the folders A and B", "in the archive's
+  folder", "in the archive's folder and the folder A"). Windows' words are unchanged.
+- *The Desktop's remaining words (MA-1033; wording items 49, 50, 57, 81).* The panel's line:
+  "Remove from list takes this archive off the list and keeps the folder. Delete erases its
+  files." and, for an encrypted archive only, " Forget this encrypted archive here makes this
+  computer forget its record of this archive and the key it remembers."; "Mail folders: Inbox,
+  Sent" (was "Stores: store 1 Inbox, …"); the result's heading "Result for FOLDER" (was "Delete
+  of FOLDER"); Forget's plan "Another copy of this archive at this same folder path, such as
+  another drive mounted at the same place, is forgotten here too: MailArchive will no longer stop
+  backups into that path that lack the archive's key." (forget-archive's B18 line) and its whole
+  forget "This computer forgot the encrypted archive ID, last recorded at FOLDER.".

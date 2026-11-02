@@ -53,7 +53,10 @@ const (
 // The plan's fixed lines (§3.1, §2, §6, §9).
 const (
 	deleteLogLine   = archdelete.PlanLogLine
-	deleteThreeLine = "Remove from list forgets the row (and, after asking, stops its schedules) and keeps the folder. Delete erases the archive's files. Forget (encrypted archives) only stops this computer protecting the folder."
+	// deleteThreeLine and its encrypted sentence (the 1.5.3 friction review's wording item 49: "the
+	// row" and "protecting" were jargon, and Forget was named on a plain archive, which has none).
+	deleteThreeLine          = "Remove from list takes this archive off the list and keeps the folder. Delete erases its files."
+	deleteThreeLineEncrypted = " Forget this encrypted archive here makes this computer forget its record of this archive and the key it remembers."
 	deleteSaveLine  = "Save this record now: MailArchive keeps no copy after you close this result."
 )
 
@@ -463,6 +466,7 @@ func planView(p *archdelete.DeletePlan) map[string]any {
 	}
 	if p.Kind == archdelete.Encrypted {
 		m["keyLine"] = p.KeyLine()
+		m["threeLine"] = deleteThreeLine + deleteThreeLineEncrypted
 	}
 	return m
 }

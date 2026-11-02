@@ -269,6 +269,11 @@ What it gives you, beyond reading and searching the archive:
   *(You can also add one any time by
   running `mailarchive wizard` again and choosing a new output folder — it joins
   the list.)*
+- **Delete…** and **Remove from list** — on each row of **Your archives** (or the
+  **This archive** card when it is your only archive). **Delete…** erases an
+  archive's files for good, after showing a plan and asking you to type the
+  folder's name; **Remove from list** takes it off the list and keeps every file.
+  See [Deleting an archive](#deleting-an-archive).
 - **Run now** — run the backup straight away instead of waiting for the schedule.
   (A Microsoft 365 archive uses **Archive now** on its own card; a local or
   encrypted archive has **Run now** on its Scheduled backup card.) While Run now is
@@ -305,8 +310,68 @@ What it gives you, beyond reading and searching the archive:
   [upgrading](#upgrading-to-a-newer-version).
 - **Danger zone → Uninstall** — remove MailArchive's scheduled backups, settings
   and sign-in from this computer. It shows a plan first and **keeps every
-  archive** — your mail is never deleted. You remove the program itself
-  afterwards; the last step tells you how.
+  archive** — uninstalling never deletes your mail (only **Delete…** does). It
+  also removes the deletion log (see below), so copy that first. You remove the
+  program itself afterwards; the last step tells you how. At the command line,
+  `mailarchive uninstall -dry-run` shows the plan, and `mailarchive uninstall -yes`
+  refuses while the deletion log lists a delete, until you have copied it and run
+  `mailarchive uninstall -yes -log-copied`.
+
+## Deleting an archive
+
+**Delete…** erases an archive's files for good — for example mail you no longer
+need to keep under a retention rule. The files are not moved to the Recycle Bin
+or the Trash.
+
+**In MailArchive Desktop:** click **Delete…** on the archive's row under **Your
+archives** (or on the **This archive** card when it is your only archive).
+Nothing is deleted yet: the plan beside the row says what would be removed and
+what is kept, and **Save this plan** saves it as a text file, for example to have
+it approved. Type the folder's name exactly as shown (capital letters count) and
+click **Delete permanently**. The result says what was removed and what was
+kept: **Save deletion record** saves it (MailArchive keeps no copy), then click
+**Dismiss**. **Remove from list** takes an archive off Your archives and keeps its
+folder and every file; **Open an archive folder…** brings it back.
+
+**At the command line** (with MailArchive Desktop shut down):
+
+```sh
+mailarchive delete-archive -out DIR                       # show the plan, then type the folder's name to delete it
+mailarchive delete-archive -out DIR -plan-out plan.txt    # only save the plan; nothing is deleted
+mailarchive delete-archive -out DIR -record-out record.txt  # save the deletion record to a file
+mailarchive unlist-archive -out DIR                       # Remove from list: the folder and its files are kept
+mailarchive add-archive DIR                               # list an archive folder you already have (one made at the command line)
+```
+
+`delete-archive` and `unlist-archive` reach only an archive listed under Your
+archives: list one made at the command line with `add-archive` first. Each of the
+three takes `-config FILE` to reach a MailArchive Desktop started with `-config`.
+
+**Delete not finished.** If a delete stops part way (the computer was switched
+off, or a file could not be removed), the archive's row says **Delete not
+finished: click Delete again**, and `mailarchive status -out DIR` says so too.
+Until it is finished, the archive is not backed up and cannot be paused, resumed,
+switched to or removed from the list. Click **Delete…** again, or run
+`mailarchive delete-archive -out DIR` again: the plan begins "This finishes the
+delete begun" and the date, and the deletion record counts what every run of it
+removed.
+
+**After deleting the current archive**, no archive is chosen. Click **Switch to
+this archive** on another row under Your archives, or **Open an archive folder…**
+to choose one.
+
+**The deletion log.** Each delete adds a line to `deletions.log`, which keeps the
+date, the folder and what was removed: it is what a saved deletion record is
+checked against. It is in MailArchive's settings folder:
+
+| Computer | deletions.log |
+|---|---|
+| Windows | `%APPDATA%\mailarchive\deletions.log` |
+| macOS | `~/Library/Application Support/mailarchive/deletions.log` |
+| Linux | `~/.config/mailarchive/deletions.log` (`$XDG_CONFIG_HOME/mailarchive/deletions.log` when that is set) |
+
+A MailArchive Desktop started with `-config FILE` keeps it beside that file.
+Uninstalling MailArchive removes it, so copy it first, somewhere you keep records.
 
 ## Encrypted archives
 

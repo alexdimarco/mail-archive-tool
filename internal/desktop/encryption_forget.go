@@ -52,7 +52,9 @@ func (d *dashboard) forgetPlanAction(w http.ResponseWriter, r *http.Request) {
 	for _, o := range p.Others {
 		lines = append(lines, fmt.Sprintf("Its other folder %s (recorded %s) stays protected.", o.Spelling, o.Recorded.Local().Format("2006-01-02")))
 	}
-	lines = append(lines, "Another copy of this archive that used this same folder path, such as another drive mounted at the same place, loses this computer's protection at this path too.")
+	// The command line's words (the 1.5.3 friction review's B18, wording item 81): what forgetting
+	// changes, without "protection".
+	lines = append(lines, forgetSamePathLine)
 	if p.Strong {
 		lines = append(lines, "This folder may have been tampered with: it no longer holds the archive this computer made there.")
 	}
@@ -65,6 +67,10 @@ func (d *dashboard) forgetPlanAction(w http.ResponseWriter, r *http.Request) {
 	}
 	writeJSON(w, map[string]any{"ok": true, "token": token, "lines": lines, "strong": p.Strong, "spelling": p.Spelling, "last": p.Last, "remembered": p.Remembered})
 }
+
+// forgetSamePathLine is the forget plan's line on another copy at the same path, as forget-archive
+// says it.
+const forgetSamePathLine = "Another copy of this archive at this same folder path, such as another drive mounted at the same place, is forgotten here too: MailArchive will no longer stop backups into that path that lack the archive's key."
 
 // noStoreWholeLine is the forget plan's line, for an archive's last folder, when this computer's
 // secret store could not be opened: the whole archive is then refused (forgetAction).
@@ -149,7 +155,8 @@ func (d *dashboard) forgetAction(w http.ResponseWriter, r *http.Request) {
 	})
 	done := fmt.Sprintf("This computer no longer protects %s as an encrypted archive.", p.Out)
 	if o.Whole {
-		done = "This computer forgot the encrypted archive."
+		// It names the archive and its folder, as forget-archive does (B18, wording item 81).
+		done = fmt.Sprintf("This computer forgot the encrypted archive %s, last recorded at %s.", p.ID, p.Out)
 	}
 	writeJSON(w, map[string]any{"ok": true, "lines": []string{done}})
 }

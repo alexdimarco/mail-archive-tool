@@ -128,7 +128,7 @@ function delShowHeld(v){
   const h=document.createElement('div');h.className='note held-result';h.setAttribute('role','status');
   h.dataset.heldId=v.id;h.dataset.row=v.row;
   try{if(sessionStorage.getItem(delSavedKey(v.id))==='1')h.dataset.saved='1';}catch(e){}
-  const head=delEl('p');head.append(delEl('b','Delete of '+v.folder));h.append(head);
+  const head=delEl('p');head.append(delEl('b','Result for '+v.folder));h.append(head);
   (v.lines||[]).forEach(t=>h.append(delEl('p',t)));
   const wait=delEl('p','This page refreshes when you dismiss this result.','card-sub');wait.setAttribute('data-held-wait','');wait.hidden=!delWait;h.append(wait);
   const acts=delEl('div',null,'del-actions');
@@ -177,7 +177,7 @@ function delPanel(p){
   line(p.threeLine,'card-sub');
   line('Folder: '+p.folder,'mono');
   line('Delete removes '+p.files+(p.files===1?' file':' files')+' ('+p.size+').');
-  if(p.stores.length)line('Stores: '+p.stores.map(s=>'store '+s.number+' '+s.name).join(', '));
+  if(p.stores.length)line('Mail folders: '+p.stores.map(s=>s.name).join(', '));
   (p.scheduleLines||[]).forEach(t=>line(t));
   if(p.checkYourself.length)line('Not removed, check it yourself: '+p.checkYourself.join(', '),'warn');
   p.notes.forEach(t=>line(t,'warn'));

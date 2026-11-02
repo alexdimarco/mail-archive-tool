@@ -118,10 +118,10 @@ func TestTheSharedDeleteWordsCountAndDateOnce(t *testing.T) {
 		}
 	}
 	// B7: "them" for several files (twin), "it" for one.
-	if got := CauseInUse.remedy(2); got != "Close Outlook or any program using them, then click Delete again." {
+	if got := CauseInUse.remedy(2, ""); got != "Close Outlook or any program using them, then click Delete again." {
 		t.Errorf("two files: %q", got)
 	}
-	if got := CauseOther.remedy(1); got != "Close any program using it, then click Delete again." {
+	if got := CauseOther.remedy(1, ""); got != "Close any program using it, then click Delete again." {
 		t.Errorf("one file: %q", got)
 	}
 

@@ -70,6 +70,12 @@ type helpData struct {
 	// Synced is which synced folders the plan recognises here (util.UnderCloudSync), and
 	// SyncedMore what it does not recognise ("" when there is nothing to add).
 	Synced, SyncedMore string
+	// LogPath is where deletions.log is here: MailArchive's settings folder (job.Dir,
+	// archdelete.DefaultLogPath), written as a person finds it. It computes no folder: the guide's
+	// test checks it against archdelete.DefaultLogPath.
+	// CLIWhere is where the command-line program is here ("" on Linux, where it is the one
+	// program). The 1.5.3 friction review's B16.
+	LogPath, CLIWhere string
 }
 
 // helpMissedOnWake is Missed where the scheduler catches up a time slept through.
@@ -88,14 +94,19 @@ func helpDataFor(goos string, open bool) helpData {
 		// SharePoint registry lookup of §9 is not built, so the guide says so (slice 5).
 		d.Synced = "OneDrive or in another sync service's folder that MailArchive recognises (Dropbox, Google Drive, iCloud Drive, Box and others)"
 		d.SyncedMore = "A SharePoint library synced to this computer is not recognised yet: if the archive is in one, empty its recycle bin on SharePoint too."
+		d.LogPath = `%APPDATA%\mailarchive\deletions.log`
+		d.CLIWhere = " On Windows the command-line program is mailarchive.exe, in MailArchive's folder."
 	case "darwin":
 		d.NotFully = "This is usually a drive that was unplugged (reconnect it), or a file macOS did not let MailArchive remove (a locked file, or a read-only drive): fix that, then click <b>Delete…</b> again on the archive's row."
 		d.Synced = "iCloud Drive, in a folder under Library/CloudStorage (OneDrive, Dropbox, Google Drive and others) or in another sync service's folder that MailArchive recognises"
 		// util.MaySync's Desktop and Documents in iCloud: the delete's plan does not ask it.
 		d.SyncedMore = "If your Desktop and Documents folders are kept in iCloud, an archive in them is not recognised as synced: empty iCloud Drive's Recently Deleted too."
+		d.LogPath = "~/Library/Application Support/mailarchive/deletions.log"
+		d.CLIWhere = " On a Mac the command-line program is the separate download mailarchive-cli-macos.tar.gz; run it in Terminal."
 	default:
 		d.NotFully = "This is usually a drive that was unplugged (reconnect it), or a file the system did not let MailArchive remove (a locked file, a folder you may not change, or a read-only drive): fix that, then click <b>Delete…</b> again on the archive's row."
 		d.Synced = "a sync service's folder that MailArchive recognises (Dropbox, Nextcloud, Google Drive and others)"
+		d.LogPath = "~/.config/mailarchive/deletions.log ($XDG_CONFIG_HOME/mailarchive/deletions.log when XDG_CONFIG_HOME is set)"
 	}
 	switch goos {
 	case "darwin":
@@ -241,7 +252,10 @@ var helpTmpl = template.Must(template.New("help").Funcs(template.FuncMap{"upper"
         <p>If the result says <b>Not fully deleted</b>, the result names the files that could not be removed and what to do. {{.NotFully}} Two results are different, and say so: if the only files left are mail copies you ticked to delete, the archive is already off Your archives, so there is no Delete… to click again: delete those files by hand. If it says the folder still holds files the delete can no longer identify, delete them by hand, or use <b>Remove from list</b>.</p>
         <p><b>Synced folders:</b> if the archive's folder is in {{.Synced}}, the plan says so. Deleting it here also deletes it there, and the service may keep it in its own recycle bin: empty that too.{{if .SyncedMore}} {{.SyncedMore}}{{end}}</p>
         <p><b>What Delete does not reach:</b> {{.DoesNotReach}}.</p>
-        <p>Each delete adds a line to this computer's deletion log (deletions.log), which keeps the date, the folder and what was removed. Uninstalling MailArchive removes that log: copy deletions.log first if you need it to check saved deletion records.</p>
+        <p><b>Delete not finished:</b> if a delete stops part way, for example because the computer was switched off or the result said Not fully deleted, the archive's row says <b>Delete not finished: click Delete again</b>. Until the delete is finished, that archive is not backed up, and it cannot be paused, resumed, switched to or removed from the list. Click <b>Delete…</b> on its row again: its plan begins "This finishes the delete begun" and the date, and its deletion record counts what every run of it removed.</p>
+        <p><b>Deleting the archive this page shows</b> leaves no archive chosen. Until you click <b>Dismiss</b> on the result, that archive's cards are greyed out. Then, to carry on, click <b>Switch to this archive</b> on another archive's row under <b>Your archives</b>, or click <b>Open an archive folder…</b> to choose one.</p>
+        <p><b>The deletion log:</b> each delete adds a line to this computer's deletion log, deletions.log, which keeps the date, the folder and what was removed. {{upper .On}}, it is <span class="mono">{{.LogPath}}</span> (a MailArchive Desktop started with -config keeps it beside that config file). Uninstalling MailArchive removes that log: copy deletions.log first, somewhere you keep records, if you need it to check saved deletion records.</p>
+        <p><b>At the command line:</b> in a terminal, <span class="mono">mailarchive delete-archive -out FOLDER</span> shows the same plan and asks you to type the folder's name; add <span class="mono">-plan-out FILE</span> to only save the plan, or <span class="mono">-record-out FILE</span> to save the deletion record. <span class="mono">mailarchive unlist-archive -out FOLDER</span> is Remove from list. Both work only on an archive under Your archives, and only while MailArchive Desktop is shut down. <span class="mono">mailarchive add-archive FOLDER</span> adds an archive folder you already have to Your archives, as Open an archive folder… does, without making it the archive this page shows.{{.CLIWhere}}</p>
       </details>
       <details id="helpUnlist"><summary>Removing an archive from the list</summary>
         <p><b>Remove from list</b> takes an archive off <b>Your archives</b> and keeps its folder and every file in it, for example an archive you now keep somewhere else, or one on a drive you no longer use.</p>

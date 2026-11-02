@@ -47,3 +47,7 @@ func clearReadOnly(*os.Root, string) error {
 // file locked in the Finder, a folder that may not be changed, a read-only drive —
 // never Windows' words (del-s1b-A3-08).
 const deniedRemedy = "The system did not allow it (a locked file, a folder you may not change, or a read-only drive): unlock it and click Delete again, or delete these by hand."
+
+// deniedNamesFolders: here removing a file needs leave to change the folder holding it, so the
+// remedy names the folders of the files refused (the 1.5.3 friction review's B6, wording item 24).
+const deniedNamesFolders = true

@@ -29,8 +29,9 @@ const (
 )
 
 // remedy is §8 (a)'s remedy for a cause, for n files left: "it" for one, "them" or "these" for
-// more (the 1.5.3 friction review's B7).
-func (c Cause) remedy(n int) string {
+// more (the 1.5.3 friction review's B7). where names the folders of the files refused, for
+// CauseDenied on macOS and Linux ("" names none; B6).
+func (c Cause) remedy(n int, where string) string {
 	them := "them"
 	if n == 1 {
 		them = "it"
@@ -39,10 +40,14 @@ func (c Cause) remedy(n int) string {
 	case CauseInUse:
 		return "Close Outlook or any program using " + them + ", then click Delete again."
 	case CauseDenied:
+		r := deniedRemedy
 		if n == 1 {
-			return strings.Replace(deniedRemedy, "delete these by hand", "delete it by hand", 1)
+			r = strings.Replace(r, "delete these by hand", "delete it by hand", 1)
 		}
-		return deniedRemedy
+		if where != "" {
+			r = strings.Replace(r, "The system did not allow it", "The system did not allow it in "+where, 1)
+		}
+		return r
 	case CauseDeviceGone:
 		return "Reconnect the drive, then click Delete again."
 	}
