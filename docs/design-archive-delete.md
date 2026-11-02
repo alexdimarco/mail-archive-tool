@@ -832,3 +832,10 @@ built. Each is in its catalog row.
   cannot be had, the line that says both cases. The Desktop's panel and the command line
   show the same line. Without a secret store the command line's added sentence (MA-999)
   still says a remembered key is then kept.
+- *Sealed values when the key is open here (MA-1011; slice 3a's conformance D2).* §8.1's
+  "not known: encrypted, key not open" is written only when it is true. When the archive
+  is open on the Desktop's page, the plan reads its sealed manifest and timeline with that
+  open archive's key, for that read only (`keyring.ReadSealedRecord`, a reader's read-only
+  load; no new key handling), and states the message count, the mail dates and the first
+  run by the plain archive's rules. The command line has no page and always says "not
+  known".

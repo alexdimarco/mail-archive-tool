@@ -229,6 +229,23 @@ func (cfg Config) deleteDeps(busy func(string) bool, sealed func(string) (archde
 	}
 }
 
+// sealedOnPage is a delete's Sealed seam (§8.1 [O2-05], del-s3a conformance D2): the message
+// count, the mail's dates and the first run of an encrypted archive whose key is open on this
+// page, read from its sealed record (keyring.ReadSealedRecord: the open archive's key, for that
+// read only); ok false — "not known: encrypted, key not open" — when it is not open here or its
+// record cannot be read. The command line has no page (no Keys): never open.
+func (cfg Config) sealedOnPage(folder string) (archdelete.Captured, bool) {
+	e := cfg.Keys.get(folder)
+	if e == nil {
+		return archdelete.Captured{}, false
+	}
+	m, history, err := keyring.ReadSealedRecord(e.u)
+	if err != nil {
+		return archdelete.Captured{}, false
+	}
+	return archdelete.CaptureSealed(m, history), true
+}
+
 // deletionsLogPath is deletions.log in this Desktop's settings folder, beside its config file:
 // the folder its uninstall plans and removes (filepath.Dir(ConfigPath), dashboard.go's
 // uninstallAction), so the plan names the log and uninstall removes it for a Desktop started
@@ -338,7 +355,7 @@ func (d *dashboard) deletePlanAction(w http.ResponseWriter, r *http.Request) {
 		refuseDelete(w, deletingRefusal)
 		return
 	}
-	deps := d.cfg.deleteDeps(d.planBusy, nil)
+	deps := d.cfg.deleteDeps(d.planBusy, d.cfg.sealedOnPage)
 	deps.KeyPlan = desktopKeyring{store: d.cfg.Store}.PlanForget // the plan's key line (§6, §14)
 	plan, err := archdelete.Plan(row, deps)
 	if err != nil {
@@ -678,7 +695,7 @@ func (d *dashboard) execDeps(row string) archdelete.ExecDeps {
 // them), now the clock and computer this computer's name for the record.
 func (cfg Config) deleteExecDeps(row string, busy func(string) bool, store vault.Store, now func() time.Time, computer string) archdelete.ExecDeps {
 	x := archdelete.ExecDeps{
-		Deps:       cfg.deleteDeps(busy, nil),
+		Deps:       cfg.deleteDeps(busy, cfg.sealedOnPage),
 		Log:        cfg.deletionsLogPath(), // the file the plan and the rows read (del-s5-A1-04)
 		Row:        row,
 		Scheduler:  cfg.deleteScheduler(),

@@ -23,6 +23,34 @@ const runHistoryCap = 4 << 20
 // mail's date range from the manifest, the first recorded run from the history log
 // and the last backup from the run history, each read through root.
 func capturePlain(root *os.Root, m *state.Manifest) Captured {
+	c := captureRecords(m)
+	c.FirstRun = firstRun(root)
+	c.LastBackup = lastBackup(root)
+	return c
+}
+
+// CaptureSealed is the record's values of an encrypted archive whose key is open here, from its
+// sealed manifest and timeline (keyring.ReadSealedRecord), by the plain archive's rules: the
+// message count and the mail's date range from the records, the first run header of the
+// timeline. A chunk of the timeline that could not be read (a barrier) before any run header
+// leaves the first run not known, never a later run's. The plan adds the last backup, which is
+// not sealed (§8.1 [O2-05]).
+func CaptureSealed(m *state.Manifest, history []state.HistoryEvent) Captured {
+	c := captureRecords(m)
+	for _, ev := range history {
+		if ev.Barrier {
+			break
+		}
+		if t, ok := runStart(ev); ok {
+			c.FirstRun = t
+			break
+		}
+	}
+	return c
+}
+
+// captureRecords are the message count and the mail's date range of m.
+func captureRecords(m *state.Manifest) Captured {
 	c := Captured{Known: true, Messages: m.Len()}
 	for _, r := range m.All() {
 		t, ok := recordDate(r)
@@ -36,9 +64,17 @@ func capturePlain(root *os.Root, m *state.Manifest) Captured {
 			c.MailTo = t
 		}
 	}
-	c.FirstRun = firstRun(root)
-	c.LastBackup = lastBackup(root)
 	return c
+}
+
+// runStart is a run header's time: an event of a run (not a copy's) with its time.
+func runStart(ev state.HistoryEvent) (time.Time, bool) {
+	if ev.Run > 0 && ev.At != "" && !ev.Copy {
+		if t, err := time.Parse(time.RFC3339, ev.At); err == nil {
+			return t.UTC(), true
+		}
+	}
+	return time.Time{}, false
 }
 
 // recordDate is a record's mail date: its Date when the manifest carries one —
@@ -80,10 +116,8 @@ func firstRun(root *os.Root) time.Time {
 		if json.Unmarshal(line, &ev) != nil {
 			continue
 		}
-		if ev.Run > 0 && ev.At != "" && !ev.Copy {
-			if t, err := time.Parse(time.RFC3339, ev.At); err == nil {
-				return t.UTC()
-			}
+		if t, ok := runStart(ev); ok {
+			return t
 		}
 	}
 	return time.Time{}
