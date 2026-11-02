@@ -127,7 +127,8 @@ const (
 // KeyLine is §6's line for an encrypted archive [C8], picked at the plan from the keyring's
 // forget plan (§14, slice 5's re-verification, residual 2): step 8 forgets the key only when the
 // folder is removed and this is the last copy this computer recorded; otherwise the key is kept
-// for the other recorded copies, which it names. "" for a plain archive.
+// for the other recorded copies, which it names. With no secret store the last copy's record,
+// any remembered key and the row are kept (MA-999). "" for a plain archive.
 func (p *DeletePlan) KeyLine() string {
 	switch {
 	case p.Kind != Encrypted:
@@ -136,6 +137,8 @@ func (p *DeletePlan) KeyLine() string {
 		return "This computer already forgot this archive folder's record in the delete this one finishes."
 	case !p.Record.Recorded && !p.RecordUnknown:
 		return "This computer has not recorded this archive folder, so Delete forgets no key here."
+	case p.KeyAtPlan.Known && p.KeyAtPlan.Last && p.KeyAtPlan.NoStore:
+		return "This computer's secret store could not be opened, so this computer will keep its record of this archive, any key it remembers for it and its row, even if the folder is removed. Use Forget this encrypted archive here later."
 	case p.KeyAtPlan.Known && p.KeyAtPlan.Last:
 		return "If the folder is removed, this computer will forget this archive's key: this is the last copy of it this computer recorded. Any other copy of this archive will then need its password or recovery key to open."
 	case p.KeyAtPlan.Known:

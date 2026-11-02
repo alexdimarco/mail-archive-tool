@@ -44,6 +44,11 @@ func TestDeleteArchiveKeepsTheKeyWhenTheSecretStoreCannotBeOpened(t *testing.T) 
 	if plan := strings.Join(a.said, "\n"); !strings.Contains(plan, "secret store could not be opened (the Secret Service is not running)") {
 		t.Fatalf("the plan does not say the secret store could not be opened:\n%s", plan)
 	}
+	// The key line agrees with what step 8 then does (MA-1010; core-plan-record finding 1).
+	if plan := strings.Join(a.said, "\n"); !strings.Contains(plan, "  This computer's secret store could not be opened, so this computer will keep its record of this archive, any key it remembers for it and its row, even if the folder is removed. Use Forget this encrypted archive here later.") ||
+		strings.Contains(plan, "this computer will forget this archive's key") {
+		t.Fatalf("the plan's key line does not say the key is kept:\n%s", plan)
+	}
 	r := res.String()
 	if _, err := os.Lstat(out); !os.IsNotExist(err) {
 		t.Fatalf("the files were not deleted: %v\n%s", err, r)

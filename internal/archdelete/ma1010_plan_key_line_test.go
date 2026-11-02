@@ -13,7 +13,9 @@ import (
 // plan that cannot be had, or is of another record than the plan's, and no keyring at all, give
 // the line that says both cases — never the unconditional "will forget". A folder this computer
 // did not record forgets no key; a plain archive has no key line. The keyring is asked at the
-// record's own spelling. Positive twin first: the last recorded copy.
+// record's own spelling. With no secret store, the last copy's record, key and row are kept, as
+// step 8 then does (the core-plan-record adversarial pass, finding 1); other copies are as with
+// one. Positive twin first: the last recorded copy.
 func TestThePlansKeyLineSaysWhatStep8WillDo(t *testing.T) {
 	dir := encryptedClean(t)
 	const (
@@ -21,6 +23,7 @@ func TestThePlansKeyLineSaysWhatStep8WillDo(t *testing.T) {
 		both    = "If the folder is removed and it is the last copy of this archive this computer recorded, this computer will forget the archive's key; otherwise the key is kept for the other copies."
 		kept    = "This computer keeps this archive's key for its other recorded copies: /Volumes/Backup/Mail; /Volumes/Old/Mail copy. If the folder is removed, it forgets only this copy."
 		noKey   = "This computer has not recorded this archive folder, so Delete forgets no key here."
+		noStore = "This computer's secret store could not be opened, so this computer will keep its record of this archive, any key it remembers for it and its row, even if the folder is removed. Use Forget this encrypted archive here later."
 		oldLine = "This computer will forget this archive's key. Any other copy of this archive will need its password or recovery key to open."
 	)
 	var asked []string
@@ -52,6 +55,8 @@ func TestThePlansKeyLineSaysWhatStep8WillDo(t *testing.T) {
 		want   string
 	}{
 		{"other recorded copies keep the key", recordedAt(dir), keyPlan(KeyPlan{ID: testArchiveID, Others: []string{"/Volumes/Backup/Mail", "/Volumes/Old/Mail\x07 copy"}}, nil), kept},
+		{"the last copy with no secret store", recordedAt(dir), keyPlan(KeyPlan{ID: testArchiveID, Last: true, NoStore: true}, nil), noStore},
+		{"other copies with no secret store", recordedAt(dir), keyPlan(KeyPlan{ID: testArchiveID, NoStore: true, Others: []string{"/Volumes/Backup/Mail", "/Volumes/Old/Mail\x07 copy"}}, nil), kept},
 		{"another record's forget plan", recordedAt(dir), keyPlan(KeyPlan{ID: "ffffffffffffffffffffffffffffffff", Last: true}, nil), both},
 		{"a forget plan that cannot be had", recordedAt(dir), keyPlan(KeyPlan{}, errors.New("the record is damaged")), both},
 		{"no keyring", recordedAt(dir), nil, both},

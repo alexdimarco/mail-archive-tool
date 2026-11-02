@@ -211,11 +211,13 @@ type DeletePlan struct {
 
 // KeyAtPlan is the keyring's forget plan for the record the plan found: Known when it was
 // read and is that record's (its ID the plan's); Last when this is the last copy this
-// computer recorded; Others the other recorded copies, which keep the key.
+// computer recorded; Others the other recorded copies, which keep the key; NoStore when the
+// secret store could not be opened, so step 8 keeps the last copy's record and key.
 type KeyAtPlan struct {
-	Known  bool
-	Last   bool
-	Others []string
+	Known   bool
+	Last    bool
+	Others  []string
+	NoStore bool
 }
 
 // Rerun is how a plan finishes an unfinished delete (§5.4).
@@ -399,7 +401,7 @@ func addKeyAtPlan(p *DeletePlan, deps Deps) {
 	if err != nil || kp.ID != p.Record.ID {
 		return
 	}
-	p.KeyAtPlan = KeyAtPlan{Known: true, Last: kp.Last, Others: append([]string(nil), kp.Others...)}
+	p.KeyAtPlan = KeyAtPlan{Known: true, Last: kp.Last, Others: append([]string(nil), kp.Others...), NoStore: kp.NoStore}
 }
 
 // planAny is Plan before the key's outlook is asked.

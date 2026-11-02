@@ -74,6 +74,10 @@ type KeyPlan struct {
 	// Last: this spelling is the archive's last recorded copy; Others are the rest.
 	Last   bool
 	Others []string
+	// NoStore: this computer's secret store could not be opened, so Forget will not
+	// forget the last copy's whole record: step 8 keeps it, any remembered key and the
+	// row (MA-999).
+	NoStore bool
 	// Opaque is the real plan, handed back to Forget.
 	Opaque any
 }
