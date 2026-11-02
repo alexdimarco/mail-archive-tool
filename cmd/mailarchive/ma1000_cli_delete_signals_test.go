@@ -24,7 +24,9 @@ import (
 // started line and before step 2 it is held and the delete refuses before step 2, its finished
 // line written; from step 2 on it stops at once and names the row's own spelling to finish it;
 // while a finished delete's record is saved it prints the record and keeps the delete's code;
-// while Remove from list acts it waits for it.
+// while the plan is saved, or the saved file's folder probed, the file just made is removed
+// before the verb exits; once the delete has returned it changes nothing, and the record is
+// printed (del-s4 residuals 1, 2); while Remove from list acts it waits for it.
 func TestTheDeleteVerbsWatchSignalsFromStartToEnd(t *testing.T) {
 	e := newCLIDel(t)
 	logPath, err := archdelete.DefaultLogPath()
@@ -164,6 +166,79 @@ func TestTheDeleteVerbsWatchSignalsFromStartToEnd(t *testing.T) {
 	if code := f.exited(); code != 0 || !strings.Contains(stdout.String(), "Deletion record (copy it now") || !strings.Contains(stdout.String(), "Status: complete") ||
 		!strings.Contains(said, "may be incomplete") || !strings.Contains(said, recFile) {
 		t.Fatalf("Ctrl-C while the record is saved: exit %d\n%s\n%s", code, stdout.String(), said)
+	}
+
+	// While -plan-out is being written (the file just made): the file is removed before the verb
+	// exits, nothing deleted (del-s4 residual 1).
+	pl := e.plainArchive("Archive S6")
+	beforePl := tree(t, pl)
+	planFile := filepath.Join(t.TempDir(), "plan.txt")
+	planLeft := true
+	f.atExit = func() {
+		_, err := os.Lstat(planFile)
+		planLeft = err == nil
+	}
+	openSavedFile = func(path string) (*os.File, error) {
+		fh, err := os.OpenFile(path, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0o644)
+		if err == nil {
+			fh.WriteString("Status: planned, nothing del")
+			f.send(t, os.Interrupt)
+		}
+		return fh, err
+	}
+	saidBefore = len(f.said.String())
+	_ = deleteArchive(&scripted{isAttended: true}, pl, planFile, "", io.Discard)
+	code := f.waitExit()
+	openSavedFile = func(path string) (*os.File, error) {
+		return os.OpenFile(path, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0o644)
+	}
+	said = f.said.String()[saidBefore:]
+	if code != 130 || planLeft || !strings.Contains(said, "stopped by Ctrl-C while saving the plan to "+planFile+": the unfinished file was removed. Nothing was deleted.") ||
+		!sameTree(beforePl, tree(t, pl)) || !e.listed(pl) {
+		t.Fatalf("Ctrl-C while the plan is saved: exit %d, file left at exit %v\n%s", code, planLeft, said)
+	}
+
+	// While the saved file's folder is probed (the probe just made): the probe is removed before
+	// the verb exits, nothing changed.
+	var probe string
+	probeLeft := true
+	f.atExit = func() {
+		_, err := os.Lstat(probe)
+		probeLeft = probe == "" || err == nil
+	}
+	openProbeFile = func(path string) (*os.File, error) {
+		fh, err := os.OpenFile(path, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0o600)
+		if err == nil {
+			probe = path
+			f.send(t, syscall.SIGTERM)
+		}
+		return fh, err
+	}
+	saidBefore = len(f.said.String())
+	_ = deleteArchive(&scripted{isAttended: true}, pl, filepath.Join(t.TempDir(), "plan.txt"), "", io.Discard)
+	code = f.waitExit()
+	openProbeFile = func(path string) (*os.File, error) {
+		return os.OpenFile(path, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0o600)
+	}
+	f.atExit = nil
+	said = f.said.String()[saidBefore:]
+	if code != 143 || probeLeft || !strings.Contains(said, "delete-archive was stopped by a terminate signal; nothing was changed") {
+		t.Fatalf("a terminate signal while the folder is probed: exit %d, probe %q left at exit %v\n%s", code, probe, probeLeft, said)
+	}
+
+	// Between the delete's return and its result: the delete is over, so the signal changes
+	// nothing; the result and the deletion record are printed and the exit is the delete's own
+	// (del-s4 residual 2).
+	fin := e.plainArchive("Archive S7")
+	afterDeleteReturned = func() { f.send(t, os.Interrupt) }
+	stdout = &lockedBuffer{}
+	saidBefore = len(f.said.String())
+	err = deleteArchive(&scripted{isAttended: true, answers: []string{"Archive S7"}}, fin, "", "", stdout)
+	afterDeleteReturned = func() {}
+	said = f.said.String()[saidBefore:]
+	if err != nil || f.exited() != -1 || strings.Contains(said, "did not finish") || !strings.Contains(stdout.String(), "Deleted.") ||
+		!strings.Contains(stdout.String(), "Deletion record (copy it now") || !strings.Contains(stdout.String(), "Status: complete") || e.listed(fin) {
+		t.Fatalf("Ctrl-C just after the delete returned: %v\n%s\n%s", err, said, stdout.String())
 	}
 
 	// While Remove from list acts: the signal waits for it to finish.

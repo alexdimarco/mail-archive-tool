@@ -47,6 +47,13 @@ var (
 	openSavedFile = func(path string) (*os.File, error) {
 		return os.OpenFile(path, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0o644)
 	}
+	// openProbeFile creates checkSavedFile's probe file, new and owner-only.
+	openProbeFile = func(path string) (*os.File, error) {
+		return os.OpenFile(path, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0o600)
+	}
+	// afterDeleteReturned runs between Execute's return and the result being printed (a test
+	// sends a signal there); nothing in a real run.
+	afterDeleteReturned = func() {}
 	// notifyDeleteSignals subscribes c to the signals the verbs watch (signal.Notify).
 	notifyDeleteSignals = func(c chan<- os.Signal, sigs ...os.Signal) { signal.Notify(c, sigs...) }
 	// deleteExit ends the process with a signal's code.
@@ -236,7 +243,8 @@ func deleteArchive(a asker, out, planOut, recordOut string, stdout io.Writer) er
 			if f.path == "" {
 				continue
 			}
-			abs, err := checkSavedFile(f.flag, f.what, f.path, []string{out, row}, known)
+			abs, err := checkSavedFile(f.flag, f.what, f.path, []string{out, row}, known, watch.creator(openProbeFile))
+			watch.disown(phaseReading) // the probe is removed
 			if err != nil {
 				return err
 			}
@@ -259,10 +267,14 @@ func deleteArchive(a asker, out, planOut, recordOut string, stdout io.Writer) er
 	}
 	if planOut != "" {
 		text := seams.PlannedText(plan)
-		if err := writeSavedFile(planOut, text); err != nil {
+		watch.savingPlan(planOut)
+		err := writeSavedFile(watch.creator(openSavedFile), planOut, text)
+		if err != nil {
+			watch.disown(phaseReading)
 			stdout.Write(text)
 			return fmt.Errorf("The plan could not be saved to %s: it is shown above (%s). Nothing was deleted", planOut, util.StripControl(err.Error()))
 		}
+		watch.disown(phaseDone)
 		fmt.Fprintf(stdout, "The plan was saved to %s. Nothing was deleted.\n", planOut)
 		return nil
 	}
@@ -312,8 +324,14 @@ func deleteArchive(a asker, out, planOut, recordOut string, stdout io.Writer) er
 		}
 		return err
 	}
+	x := seams.ExecDeps(row, before)
+	// The delete says it is over as its last act, so a signal between its return and the
+	// result is never "did not finish": the result and the record are printed (del-s4
+	// residual 2).
+	x.Finished = func() { watch.set(phaseDone) }
 	watch.set(phaseHolding)
-	res := archdelete.Execute(plan, typed, unrecorded, seams.ExecDeps(row, before))
+	res := archdelete.Execute(plan, typed, unrecorded, x)
+	afterDeleteReturned()
 	held := watch.over()
 	if res.Status == archdelete.StatusRefused {
 		return terminalRefusal(res.Message(), row)
@@ -334,7 +352,7 @@ func deleteArchive(a asker, out, planOut, recordOut string, stdout io.Writer) er
 		printRecord()
 	default:
 		watch.saving(recordOut, res.Record, res.ExitCode())
-		err := writeSavedFile(recordOut, res.Record)
+		err := writeSavedFile(openSavedFile, recordOut, res.Record)
 		watch.set(phaseDone)
 		if err != nil {
 			printRecord()
@@ -474,9 +492,9 @@ func sizeWords(n int64) string {
 // checkSavedFile is §8.1's rule for -plan-out and -record-out [O2-02], before the plan is shown
 // and before step 0: keyring.CheckNewFileOut's rules (not inside the folder being deleted, not
 // inside an encrypted archive, not over an existing name or a link), not inside any known
-// archive, and its folder exists and can be written (a probe file created with O_EXCL and removed
-// at once). It returns the absolute path.
-func checkSavedFile(flagName, what, path string, folders, known []string) (string, error) {
+// archive, and its folder exists and can be written (a probe file created by create, new, and
+// removed at once). It returns the absolute path.
+func checkSavedFile(flagName, what, path string, folders, known []string, create func(string) (*os.File, error)) (string, error) {
 	var abs string
 	for _, f := range folders {
 		a, err := keyring.CheckNewFileOut(flagName, what, path, f)
@@ -497,7 +515,7 @@ func checkSavedFile(flagName, what, path string, folders, known []string) (strin
 	var nonce [8]byte
 	rand.Read(nonce[:])
 	probe := filepath.Join(dir, ".mailarchive-probe-"+hex.EncodeToString(nonce[:])+".tmp")
-	f, err := os.OpenFile(probe, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0o600)
+	f, err := create(probe)
 	if err != nil {
 		return "", fmt.Errorf("%s %s: its folder %s cannot be written (%s); choose a folder you can write to", flagName, abs, dir, util.StripControl(err.Error()))
 	}
@@ -506,10 +524,10 @@ func checkSavedFile(flagName, what, path string, folders, known []string) (strin
 	return abs, nil
 }
 
-// writeSavedFile creates path new and writes data, flushed; a file it could not finish is removed,
-// so no partial plan or record is left.
-func writeSavedFile(path string, data []byte) error {
-	f, err := openSavedFile(path)
+// writeSavedFile creates path new with open and writes data, flushed; a file it could not finish
+// is removed, so no partial plan or record is left.
+func writeSavedFile(open func(string) (*os.File, error), path string, data []byte) error {
+	f, err := open(path)
 	if err != nil {
 		return err
 	}
@@ -532,8 +550,11 @@ type watchPhase int
 
 const (
 	// phaseReading: only reading (the checks, the plan, the list): the verb stops at once with
-	// the signal's code, nothing changed.
+	// the signal's code, nothing changed (a probe file it made is removed first).
 	phaseReading watchPhase = iota
+	// phasePlanSaving: -plan-out is being written: the file, once made, is removed and the verb
+	// stops at once with the signal's code, nothing deleted (del-s4 residual 1).
+	phasePlanSaving
 	// phaseAsking: a question is asked; the prompt tells its own signal (interrupted).
 	phaseAsking
 	// phaseHolding: the delete began (its started line, its lock, the plan checked again) and has
@@ -548,7 +569,8 @@ const (
 	// phaseSaving: the delete is over and its record is being saved: the record is printed, the
 	// file named as maybe incomplete, and the verb ends with the delete's own code (del-s4-A2-08).
 	phaseSaving
-	// phaseDone: the result is being printed.
+	// phaseDone: the delete is over (ExecDeps.Finished) or the plan saved, and the result is
+	// being printed: a signal changes nothing, and the verb ends with its own code.
 	phaseDone
 )
 
@@ -559,6 +581,7 @@ type verbWatch struct {
 	held        os.Signal
 	row         string
 	savePath    string
+	owned       string
 	record      []byte
 	code        int
 	w, stdout   io.Writer
@@ -633,6 +656,45 @@ func (v *verbWatch) saving(path string, record []byte, code int) {
 	v.mu.Unlock()
 }
 
+// savingPlan is the plan being saved to path.
+func (v *verbWatch) savingPlan(path string) {
+	v.mu.Lock()
+	v.phase, v.savePath = phasePlanSaving, path
+	v.mu.Unlock()
+}
+
+// creator is open made through the watch: the file it creates is the verb's own until disown,
+// and a signal meanwhile removes it before the verb exits. The watch acts on no signal while
+// open runs, so a file just made is never left behind unowned (del-s4 residual 1).
+func (v *verbWatch) creator(open func(string) (*os.File, error)) func(string) (*os.File, error) {
+	return func(path string) (*os.File, error) {
+		v.mu.Lock()
+		defer v.mu.Unlock()
+		f, err := open(path)
+		if err == nil {
+			v.owned = path
+		}
+		return f, err
+	}
+}
+
+// disown keeps the file creator made, or it is gone already; then is the phase from now on.
+func (v *verbWatch) disown(then watchPhase) {
+	v.mu.Lock()
+	v.owned, v.phase = "", then
+	v.mu.Unlock()
+}
+
+// removeOwned removes the file the verb made and owns now, under v.mu; false when it is there
+// still.
+func (v *verbWatch) removeOwned() bool {
+	if v.owned == "" {
+		return true
+	}
+	err := os.Remove(v.owned)
+	return err == nil || errors.Is(err, fs.ErrNotExist)
+}
+
 // signal acts on one signal by the phase.
 func (v *verbWatch) signal(s os.Signal) {
 	v.mu.Lock()
@@ -641,11 +703,29 @@ func (v *verbWatch) signal(s os.Signal) {
 	if first && (phase == phaseHolding || phase == phaseFinishing) {
 		v.held = s
 	}
+	if phase == phaseReading || phase == phasePlanSaving {
+		// The verb's own file goes before it exits, and none is made meanwhile: v.mu is
+		// held to the end.
+		defer v.mu.Unlock()
+		owned, removed := v.owned != "", v.removeOwned()
+		if phase == phaseReading {
+			fmt.Fprintf(v.w, "mailarchive: %s was stopped by %s; nothing was changed\n", v.verb, signalWords(s))
+			v.exit(signalExit(s))
+			return
+		}
+		what := "nothing was saved"
+		switch {
+		case !removed:
+			what = "that file may be incomplete, so delete it"
+		case owned:
+			what = "the unfinished file was removed"
+		}
+		fmt.Fprintf(v.w, "mailarchive: delete-archive was stopped by %s while saving the plan to %s: %s. Nothing was deleted.\n", signalWords(s), path, what)
+		v.exit(signalExit(s))
+		return
+	}
 	v.mu.Unlock()
 	switch phase {
-	case phaseReading:
-		fmt.Fprintf(v.w, "mailarchive: %s was stopped by %s; nothing was changed\n", v.verb, signalWords(s))
-		v.exit(signalExit(s))
 	case phaseHolding:
 		if first {
 			fmt.Fprintln(v.w, "mailarchive: stopping: the delete stops before it changes anything.")

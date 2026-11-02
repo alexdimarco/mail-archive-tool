@@ -93,12 +93,14 @@ func newCLIDel(t *testing.T) *cliDel {
 		sched: &cliSched{installed: map[string]bool{}, failOn: map[string]error{}}}
 	origDir, origSched, origInst, origStep := desktopLockDir, deleteScheduler, deleteInstalled, beforeDeleteStep
 	origOpen, origWatch, origNotify, origExit := openSavedFile, startVerbWatch, notifyDeleteSignals, deleteExit
+	origProbe, origAfter := openProbeFile, afterDeleteReturned
 	desktopLockDir = func() (string, error) { return e.lockDir, nil }
 	deleteScheduler = e.sched
 	deleteInstalled = func() []schedule.InstalledEntry { return nil }
 	t.Cleanup(func() {
 		desktopLockDir, deleteScheduler, deleteInstalled, beforeDeleteStep = origDir, origSched, origInst, origStep
 		openSavedFile, startVerbWatch, notifyDeleteSignals, deleteExit = origOpen, origWatch, origNotify, origExit
+		openProbeFile, afterDeleteReturned = origProbe, origAfter
 	})
 	return e
 }
@@ -289,19 +291,27 @@ func (h *hooked) line(prompt string) (string, error) {
 // fakeSignals is a test's own signal watch for the delete verbs: the real watch (newVerbWatch)
 // on a channel the test sends on, its exits recorded instead of ending the test, and what it
 // says kept. Each verb's watch is remembered, so a test can ask a verb's phase from a seam.
+// atExit, when set before the verb runs, looks at the computer at the moment the process would
+// have ended.
 type fakeSignals struct {
 	mu      sync.Mutex
 	sigs    chan os.Signal
 	exits   chan int
 	said    *lockedBuffer
 	watches []*verbWatch
+	atExit  func()
 }
 
 func (e *cliDel) fakeSignals() *fakeSignals {
 	e.t.Helper()
 	f := &fakeSignals{sigs: make(chan os.Signal, 4), exits: make(chan int, 8), said: &lockedBuffer{}}
 	startVerbWatch = func(_, stdout io.Writer, verb string) *verbWatch {
-		v := newVerbWatch(f.sigs, f.said, stdout, verb, func(code int) { f.exits <- code })
+		v := newVerbWatch(f.sigs, f.said, stdout, verb, func(code int) {
+			if f.atExit != nil {
+				f.atExit()
+			}
+			f.exits <- code
+		})
 		f.mu.Lock()
 		f.watches = append(f.watches, v)
 		f.mu.Unlock()
@@ -340,6 +350,16 @@ func (f *fakeSignals) exited() int {
 	case c := <-f.exits:
 		return c
 	default:
+		return -1
+	}
+}
+
+// waitExit is the code the watch exits with, waiting for it; -1 when it does not within 5s.
+func (f *fakeSignals) waitExit() int {
+	select {
+	case c := <-f.exits:
+		return c
+	case <-time.After(5 * time.Second):
 		return -1
 	}
 }

@@ -45,6 +45,9 @@ func NameMatches(typed, name string) bool {
 // mark cleared and the finished line written in a deferred cleanup, after a
 // refusal or a recovered panic too.
 func Execute(plan *DeletePlan, typed string, unrecorded bool, x ExecDeps) (res *Result) {
+	if x.Finished != nil {
+		defer x.Finished() // deferred first, so it runs after the cleanup's step 10
+	}
 	res = &Result{}
 	e := &run{plan: plan, x: x, res: res, unrecorded: unrecorded}
 	if r := e.setUp(); r != nil {
