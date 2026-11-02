@@ -535,6 +535,11 @@ func (d *dashboard) saveSettings(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	out := strings.TrimSpace(in.Out)
+	// A save naming a folder being deleted (a Switch from a tab drawn before the delete, or a save
+	// that keeps it after step 4 cleared it) would make it the current archive again.
+	if d.refuseBeingDeleted(w, orElse(out, strings.TrimSpace(d.cfg.Out))) {
+		return
+	}
 	wasCurrent := d.cfg.effectiveOut()
 	// The archive is copied, synced and browsed; MailArchive's own settings and
 	// sign-in must not travel with it (design-local-confidentiality P10).
@@ -826,7 +831,7 @@ func vaultPhrase() string {
 // never touched; Resume reverses it.
 func (d *dashboard) pauseArchive(w http.ResponseWriter, r *http.Request) {
 	path, ok := d.archiveActionPath(w, r)
-	if !ok {
+	if !ok || d.refuseBeingDeleted(w, path) {
 		return
 	}
 	const reason = "paused from MailArchive Desktop"
@@ -863,7 +868,7 @@ var setPauseNote = keyring.SetPauseNote
 // resumeArchive makes the named archive writable again and restores its backup schedule.
 func (d *dashboard) resumeArchive(w http.ResponseWriter, r *http.Request) {
 	path, ok := d.archiveActionPath(w, r)
-	if !ok {
+	if !ok || d.refuseBeingDeleted(w, path) {
 		return
 	}
 	if err := wizard.ResumeArchive(path); err != nil {
@@ -900,6 +905,19 @@ func (d *dashboard) archiveActionPath(w http.ResponseWriter, r *http.Request) (s
 		return "", false
 	}
 	return path, true
+}
+
+// refuseBeingDeleted refuses, with MA-979's words, an action on a folder whose delete is under way
+// in this Desktop, and reports whether it did (del-s3a re-verification, R1). A tab drawn before the
+// delete still shows the row's Pause, Resume and Switch: Pause would write its marker into the
+// folder being emptied, Resume would put back the scheduled backup step 2 removed, and a Switch
+// would make the folder the current archive again.
+func (d *dashboard) refuseBeingDeleted(w http.ResponseWriter, path string) bool {
+	if d.running.of(path) == nil {
+		return false
+	}
+	writeJSON(w, map[string]any{"ok": false, "error": deletingRefusal})
+	return true
 }
 
 // uninstallRun is a seam so a test drives the uninstall handler without touching the real
