@@ -146,10 +146,26 @@ func TestTheRecoveryKeysCancelLeavesADeletePlan(t *testing.T) {
 // covers: MA-981, R36
 // A delete of the current archive, whose step 4 clears it, applies a switch's rules (del-s3a
 // re-verification, R3): a delete planned of another row while it was current ends ("That delete
-// is no longer waiting"), nothing of that row deleted. Positive twin first: a delete of an
-// archive that is not current leaves that plan waiting.
+// is no longer waiting"), nothing of that row deleted, and an encrypted archive open here locks.
+// Only this delete's own clearing does (the residual fixes' adversarial pass, finding 1). Positive
+// twins first: a delete of an archive that is not current leaves that plan waiting and the
+// encrypted archive open; and one that ends after another tab switched and then planned a delete
+// leaves that later plan waiting.
 func TestADeleteOfTheCurrentArchiveIsASwitch(t *testing.T) {
-	e := newDeleteEnv(t)
+	enc := backedUpEncrypted(t)
+	store := graphconfig.NewFileSecretStore(t.TempDir())
+	e := newDeleteEnv(t, func(w *wsEnv) { w.cfg.Store = store; w.cfg.Keys = newArchiveKeys(store, readerLockedNote) })
+	k := e.cfg.Keys
+	t.Cleanup(func() { k.lockAll(true) })
+	// The encrypted archive is unlocked while current; then another MailArchive makes a plain
+	// archive current, which this page did not switch, so it stays open here.
+	if err := SaveSettings(e.cfg.SettingsPath, Settings{Out: enc}); err != nil {
+		t.Fatal(err)
+	}
+	e.list(enc)
+	if _, m := e.post("/api/encryption/unlock", map[string]any{"secret": keysPassword}); m["ok"] != true || k.get(enc) == nil {
+		t.Fatalf("unlock: %v", m)
+	}
 	cur := e.plainArchive("Current")
 	if err := SaveSettings(e.cfg.SettingsPath, Settings{Out: cur}); err != nil {
 		t.Fatal(err)
@@ -166,9 +182,47 @@ func TestADeleteOfTheCurrentArchiveIsASwitch(t *testing.T) {
 	if e.d.pending.get(tok, isDeletePlan) == nil {
 		t.Fatal("the positive twin: a delete of an archive that is not current ended another row's plan")
 	}
+	if k.get(enc) == nil {
+		t.Fatal("the positive twin: a delete of an archive that is not current locked the encrypted archive")
+	}
 
+	// A delete of an archive that is not current, ending after another tab switched and then
+	// planned a delete: that later plan was made with the current archive it still has.
+	other := e.plainArchive("Other")
+	release, done := blockedDelete(t, e, e.plainArchive("NotCurrentEither"))
+	if _, s := e.post("/api/settings", map[string]any{"Out": other}); s["ok"] != true {
+		t.Fatalf("the switch: %v", s)
+	}
+	later := e.plainArchive("PlannedLater")
+	lp := e.plan(later)
+	if lp["ok"] != true {
+		t.Fatalf("the later plan: %v", lp)
+	}
+	close(release)
+	if r := <-done; r["status"] != "complete" {
+		t.Fatalf("the delete of an archive that is not current: %v", r)
+	}
+	if r := e.deleteWith(lp["token"].(string), lp["name"].(string), false); r["status"] != "complete" {
+		t.Fatalf("the positive twin: a plan made after a switch in another tab was ended by an unrelated delete: %v", r)
+	}
+
+	// The switch above locked the encrypted archive; open it again, current again elsewhere.
+	if err := SaveSettings(e.cfg.SettingsPath, Settings{Out: enc}); err != nil {
+		t.Fatal(err)
+	}
+	if _, m := e.post("/api/encryption/unlock", map[string]any{"secret": keysPassword}); m["ok"] != true || k.get(enc) == nil {
+		t.Fatalf("unlock again: %v", m)
+	}
+	if err := SaveSettings(e.cfg.SettingsPath, Settings{Out: cur}); err != nil {
+		t.Fatal(err)
+	}
+	p = e.plan(planned)
+	tok = p["token"].(string)
 	if r := e.planAndDelete(cur); r["status"] != "complete" || e.cfg.settings().Out != "" {
 		t.Fatalf("the delete of the current archive: %v (current now %q)", r, e.cfg.settings().Out)
+	}
+	if k.get(enc) != nil {
+		t.Error("a delete of the current archive left an encrypted archive open here")
 	}
 	r := e.deleteWith(tok, p["name"].(string), false)
 	assure.Refused(t, http.StatusOK, replyErr(r), assure.Code(http.StatusOK), assure.Names(deleteNotWaiting),

@@ -665,17 +665,17 @@ func (d *dashboard) saveSettings(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, map[string]any{"ok": true})
 }
 
-// afterCurrentMoved applies a switch's rules when the current archive is no longer before (what
-// it was before an action that may clear it): every encrypted archive but the new current one
-// locks (K4), every key change prepared on another archive's card ends (KEY-05), and every
-// delete planned ends (its plan read which archive was current, §5.1 (c), step 4). Remove from
-// list clears the current archive when it is unreachable or no longer an archive (§5.2), which is
-// such a switch (del-s3a-A4-04). Nothing happens when the current archive did not move.
-func (d *dashboard) afterCurrentMoved(before string) {
+// afterSwitch applies a switch's rules after a delete or Remove from list whose own settings
+// write cleared the current archive (desktopPointers.clearedOut): every encrypted archive but the
+// new current one locks (K4), every key change prepared on another archive's card ends (KEY-05),
+// and every delete planned ends (its plan read which archive was current, §5.1 (c), step 4).
+// Remove from list clears the current archive when it is unreachable or no longer an archive
+// (§5.2), which is such a switch (del-s3a-A4-04). It is asked of what the action wrote, not of
+// whether the current archive differs from before it: a switch another tab made meanwhile applied
+// these rules itself, and a plan made after that one is not the action's to end (the residual
+// fixes' adversarial pass, finding 1).
+func (d *dashboard) afterSwitch() {
 	now := d.cfg.effectiveOut()
-	if samePath(before, now) {
-		return
-	}
 	d.cfg.Keys.lockExcept(now)
 	_, current := keyOf(now)
 	d.pending.discardExcept(current)

@@ -495,11 +495,14 @@ func (d *dashboard) deleteAction(w http.ResponseWriter, r *http.Request) {
 	rows := d.cfg.rowsOfFolder(row, plan.Folder)
 	pageArchive := strings.TrimSpace(in.DrawnFor) != "" &&
 		(sameArchiveFolder(in.DrawnFor, plan.Folder) || sameArchiveFolder(in.DrawnFor, row))
-	before := d.cfg.effectiveOut()
-	res := d.runDelete(plan, row, in.Typed, in.Unrecorded)
+	res, cleared := d.runDelete(plan, row, in.Typed, in.Unrecorded)
 	// Step 4 clears the current archive when it is the one deleted: that is a switch, under the
-	// switch's rules, as Remove from list's is (del-s3a re-verification, R3).
-	d.afterCurrentMoved(before)
+	// switch's rules, as Remove from list's is (del-s3a re-verification, R3). Only when this
+	// delete's own write cleared it: a switch made in another tab while a delete of another
+	// archive ran already applied them, and a plan made after it is not this delete's to end.
+	if cleared {
+		d.afterSwitch()
+	}
 	v := heldView{Row: row, Folder: plan.Folder, Name: plan.Name, Status: res.Status, Lines: append([]string(nil), res.Lines...),
 		RowRemoved: res.RowRemoved, Unfinished: res.Unfinished}
 	if res.Record != nil {
@@ -641,12 +644,22 @@ func (cfg Config) rowsOfFolder(row, folder string) []string {
 // runDelete is Execute with the page's own reader of the archive closed and held off it for the
 // delete, released however Execute ends — a panic before Execute's own cleanup is set up
 // included, or the reader would refuse that archive until a restart (del-s3a gap 2, MA-978).
-func (d *dashboard) runDelete(plan *archdelete.DeletePlan, row, typed string, unrecorded bool) *archdelete.Result {
+// cleared reports whether its step 4 cleared the current archive.
+func (d *dashboard) runDelete(plan *archdelete.DeletePlan, row, typed string, unrecorded bool) (res *archdelete.Result, cleared bool) {
 	if d.cfg.ReaderHold != nil {
 		release := d.cfg.ReaderHold(plan.Folder)
 		defer release()
 	}
-	return archdelete.Execute(plan, typed, unrecorded, d.execDeps(row))
+	x := d.execDeps(row)
+	res = archdelete.Execute(plan, typed, unrecorded, x)
+	return res, clearedCurrent(x.Pointers)
+}
+
+// clearedCurrent reports whether a delete's or Remove from list's settings write cleared the
+// current archive.
+func clearedCurrent(ps archdelete.PointerStore) bool {
+	p, _ := ps.(*desktopPointers)
+	return p != nil && p.clearedOut
 }
 
 // execDeps are Execute's seams on this computer, for the row's delete.
@@ -707,9 +720,11 @@ func (cfg Config) deleteListSeams() (string, func(string) error) {
 // those two fields written, under the settings lock; last-archive.txt beside the job files.
 // Save writes a field only while it still holds what Load read (loaded): a switch in another
 // tab between the two is kept (del-s3a-A2-06). One value per delete or Remove from list.
+// clearedOut records that Save cleared the current archive: that write is a switch.
 type desktopPointers struct {
-	settings string
-	loaded   *archdelete.Pointers
+	settings   string
+	loaded     *archdelete.Pointers
+	clearedOut bool
 }
 
 func (p *desktopPointers) Load() (archdelete.Pointers, error) {
@@ -773,9 +788,12 @@ func (p *desktopPointers) Save(np archdelete.Pointers) error {
 	if np.Out == old.Out && np.BackupFor == old.BackupFor {
 		return nil
 	}
+	cleared := false
 	err = UpdateSettings(p.settings, "delete", func(s *Settings) {
+		cleared = false
 		if strings.TrimSpace(s.Out) == old.Out {
 			s.Out = np.Out
+			cleared = old.Out != "" && np.Out == ""
 		}
 		if strings.TrimSpace(s.BackupFor) == old.BackupFor {
 			s.BackupFor = np.BackupFor
@@ -784,6 +802,7 @@ func (p *desktopPointers) Save(np archdelete.Pointers) error {
 	if err != nil && lastChanged && oldLast != nil {
 		_ = os.WriteFile(lf, oldLast, 0o600)
 	}
+	p.clearedOut = err == nil && cleared
 	return err
 }
 
@@ -973,11 +992,13 @@ func (d *dashboard) unlistAction(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, map[string]any{"ok": true, "ask": true, "row": row, "question": q.Question, "named": nonNil(q.Named)})
 		return
 	}
-	before := d.cfg.effectiveOut()
 	res := archdelete.Unlist(row, x)
 	// Remove from list clears the current archive when it is unreachable or no longer an
-	// archive (§5.2): that is a switch, under the switch's rules (del-s3a-A4-04).
-	d.afterCurrentMoved(before)
+	// archive (§5.2): that is a switch, under the switch's rules (del-s3a-A4-04) — when its own
+	// write cleared it, as a delete's.
+	if clearedCurrent(x.Pointers) {
+		d.afterSwitch()
+	}
 	out := map[string]any{"ok": res.Removed, "row": row, "lines": nonNil(res.Lines), "stopped": nonNil(res.Stopped)}
 	if !res.Removed {
 		out["error"] = strings.Join(res.Lines, " ")
