@@ -258,6 +258,9 @@ const (
 	CaseReader   Case = "reader-open"
 	CaseScratch  Case = "scratch-unexpected"
 	CaseInternal Case = "internal"
+	// CaseStopped is the command line's stop right before step 2, when nothing has changed
+	// yet (ExecDeps.BeforeStep(2): a MailArchive Desktop found, or Ctrl-C held until then).
+	CaseStopped Case = "stopped"
 )
 
 // Refusal is a §7 refusal: the cause, and a remedy that can be done from the row.
@@ -292,6 +295,10 @@ const (
 	msgMixed       = "This folder holds files of more than one kind. Delete it by hand."
 	msgBusy        = "A backup of this archive is running. Try again when it ends."
 	msgLaunchOut   = "Restart MailArchive without -out, then delete."
+	// msgDeleting is the busy refusal when the archive's lock is another delete's (a second
+	// terminal, or the Desktop while a terminal deletes): trying again when it ends would meet a
+	// deleted archive (del-s4-A2-04).
+	msgDeleting = "This archive is being deleted by another MailArchive window or terminal, so nothing was changed here. When that delete ends, see its result there."
 )
 
 // Settings are the Desktop settings a refusal reads, injected by the caller.
@@ -399,7 +406,7 @@ func planArchive(folder string, deps Deps) (*DeletePlan, error) {
 		return nil, refuse(CaseLaunchOut, msgLaunchOut)
 	}
 	if deps.Busy != nil && deps.Busy(abs) {
-		return nil, refuse(CaseBusy, msgBusy)
+		return nil, refuse(CaseBusy, "%s", busyMessage(abs))
 	}
 	beforeOpenRoot(abs)
 	root, err := os.OpenRoot(abs)

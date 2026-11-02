@@ -124,10 +124,12 @@ type ExecDeps struct {
 	// ForgetRow removes the row (step 9); nil removes every entry naming the folder
 	// from the list in SettingsDir. ErrRowNotListed means none named it.
 	ForgetRow func(row string) error
-	// BeforeStep, when set, is asked right before steps 4, 8 and 9: the command
-	// line's re-check that no MailArchive Desktop is running (§3.3 [R3:C17]). An
-	// error stops the delete there as not fully deleted, naming the steps done, and
-	// the row shows "Delete not finished" (§5.4).
+	// BeforeStep, when set, is asked right before steps 2, 4, 8 and 9: the command
+	// line's re-check that no MailArchive Desktop is running (§3.3 [R3:C17]), and
+	// before step 2 also its Ctrl-C held until then (slice 4's fixes, del-s4-A2-01). An
+	// error before step 2 refuses with nothing changed (CaseStopped, the finished line
+	// written); from step 4 on it stops the delete there as not fully deleted, naming
+	// the steps done, and the row shows "Delete not finished" (§5.4).
 	BeforeStep func(step int) error
 	// Now is the clock; nil is time.Now. Computer, Account and Version head the
 	// deletion record (§8.1); "" Computer and Account are this computer's.

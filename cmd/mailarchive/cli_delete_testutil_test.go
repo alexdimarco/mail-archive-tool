@@ -92,13 +92,13 @@ func newCLIDel(t *testing.T) *cliDel {
 	e := &cliDel{t: t, home: home, lockDir: t.TempDir(),
 		sched: &cliSched{installed: map[string]bool{}, failOn: map[string]error{}}}
 	origDir, origSched, origInst, origStep := desktopLockDir, deleteScheduler, deleteInstalled, beforeDeleteStep
-	origOpen, origWatch := openSavedFile, watchDeleteSignals
+	origOpen, origWatch, origNotify, origExit := openSavedFile, startVerbWatch, notifyDeleteSignals, deleteExit
 	desktopLockDir = func() (string, error) { return e.lockDir, nil }
 	deleteScheduler = e.sched
 	deleteInstalled = func() []schedule.InstalledEntry { return nil }
 	t.Cleanup(func() {
 		desktopLockDir, deleteScheduler, deleteInstalled, beforeDeleteStep = origDir, origSched, origInst, origStep
-		openSavedFile, watchDeleteSignals = origOpen, origWatch
+		openSavedFile, startVerbWatch, notifyDeleteSignals, deleteExit = origOpen, origWatch, origNotify, origExit
 	})
 	return e
 }
@@ -284,6 +284,82 @@ func (h *hooked) line(prompt string) (string, error) {
 		h.hook = nil
 	}
 	return h.scripted.line(prompt)
+}
+
+// fakeSignals is a test's own signal watch for the delete verbs: the real watch (newVerbWatch)
+// on a channel the test sends on, its exits recorded instead of ending the test, and what it
+// says kept. Each verb's watch is remembered, so a test can ask a verb's phase from a seam.
+type fakeSignals struct {
+	mu      sync.Mutex
+	sigs    chan os.Signal
+	exits   chan int
+	said    *lockedBuffer
+	watches []*verbWatch
+}
+
+func (e *cliDel) fakeSignals() *fakeSignals {
+	e.t.Helper()
+	f := &fakeSignals{sigs: make(chan os.Signal, 4), exits: make(chan int, 8), said: &lockedBuffer{}}
+	startVerbWatch = func(_, stdout io.Writer, verb string) *verbWatch {
+		v := newVerbWatch(f.sigs, f.said, stdout, verb, func(code int) { f.exits <- code })
+		f.mu.Lock()
+		f.watches = append(f.watches, v)
+		f.mu.Unlock()
+		return v
+	}
+	return f
+}
+
+// phase is the phase of the verb running now (its watch is the last started).
+func (f *fakeSignals) phase() watchPhase {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if len(f.watches) == 0 {
+		return -1
+	}
+	return f.watches[len(f.watches)-1].now()
+}
+
+// send delivers s and waits until the watch has taken it (its channel drained).
+func (f *fakeSignals) send(t *testing.T, s os.Signal) {
+	t.Helper()
+	f.sigs <- s
+	deadline := time.Now().Add(5 * time.Second)
+	for len(f.sigs) > 0 {
+		if time.Now().After(deadline) {
+			t.Fatal("the signal watch did not take the signal")
+		}
+		time.Sleep(time.Millisecond)
+	}
+	time.Sleep(20 * time.Millisecond) // let it act on what it took
+}
+
+// exited is the code the watch exited with, or -1 when it did not.
+func (f *fakeSignals) exited() int {
+	select {
+	case c := <-f.exits:
+		return c
+	default:
+		return -1
+	}
+}
+
+// lockedBuffer is a buffer two goroutines write to.
+type lockedBuffer struct {
+	mu sync.Mutex
+	b  strings.Builder
+}
+
+func (l *lockedBuffer) Write(p []byte) (int, error) {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	return l.b.Write(p)
+}
+
+func (l *lockedBuffer) String() string {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	return l.b.String()
 }
 
 // storeFolder is the archive's first store folder (a top-level folder that is not MailArchive's).

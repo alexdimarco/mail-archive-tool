@@ -267,7 +267,7 @@ func (e *run) lockAndRecheck() bool {
 	l, err := lockfile.AcquireAs(filepath.Join(p.Folder, lockName), "delete")
 	if err != nil {
 		if errors.Is(err, lockfile.ErrHeld) {
-			e.refuseUnder(&Refusal{Case: CaseBusy, Message: msgBusy})
+			e.refuseUnder(&Refusal{Case: CaseBusy, Message: busyMessage(p.Folder)})
 			return false
 		}
 		if _, perr := Plan(p.Folder, e.x.Deps); perr != nil {
@@ -393,6 +393,9 @@ func (e *run) scratchCheck() bool {
 // settings that point at the archive.
 func (e *run) configSide() bool {
 	p := e.plan
+	if !e.proceed(2) {
+		return false
+	}
 	e.step, e.stage2 = 2, true
 	for _, en := range p.Schedules.Entries {
 		absent, err := stopEntry(e.x.Scheduler, e.x.Deps.goos(), en.Name)
@@ -877,7 +880,17 @@ func countLeft(folder string) (files, folders int) {
 	return files, folders
 }
 
-// proceed asks BeforeStep before step: an error stops the delete there.
+// busyMessage is the busy refusal for folder: msgDeleting when its lock's holder line names a
+// delete, else msgBusy.
+func busyMessage(folder string) string {
+	if lockfile.HolderVerb(filepath.Join(folder, lockName)) == "delete" {
+		return msgDeleting
+	}
+	return msgBusy
+}
+
+// proceed asks BeforeStep before step: an error stops the delete there; before step 2,
+// when nothing has changed yet, it refuses instead.
 func (e *run) proceed(step int) bool {
 	if e.x.BeforeStep == nil {
 		return true
@@ -885,6 +898,13 @@ func (e *run) proceed(step int) bool {
 	err := e.x.BeforeStep(step)
 	if err == nil {
 		return true
+	}
+	if !e.stage2 {
+		// Before step 2 nothing has changed: a refusal under the lock, its finished line
+		// written by the cleanup, so the row is never marked "Delete not finished"
+		// (del-s4-A2-01).
+		e.refuseUnder(&Refusal{Case: CaseStopped, Message: cleanErr(err) + "."})
+		return false
 	}
 	e.step = step
 	done := "none"

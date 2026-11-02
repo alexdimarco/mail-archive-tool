@@ -1986,7 +1986,7 @@ Usage:
   mailarchive pause    -out DIR [-reason TEXT]           stop backups and make the archive read-only
   mailarchive resume   -out DIR                          make a paused archive writable and restore its schedule
   mailarchive uninstall -dry-run | -yes                  remove MailArchive's schedules, settings and sign-in (archives are kept)
-  mailarchive delete-archive -out DIR                    permanently delete an archive, at a terminal (-plan-out FILE: only save the plan)
+  mailarchive delete-archive -out DIR                    permanently delete an archive, at a terminal (-plan-out FILE: only save the plan; -record-out FILE: save the deletion record)
   mailarchive unlist-archive -out DIR                    remove an archive from Your archives; the folder is kept
   mailarchive setup                                      set up a Microsoft 365 connection in your browser
   mailarchive desktop  [-capture]                        the dashboard & launcher (also opens on double-click)

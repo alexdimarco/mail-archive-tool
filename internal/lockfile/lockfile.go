@@ -181,6 +181,42 @@ func Held(path string) bool { return held(path, os.O_RDWR) }
 // for the instant without writing anything.
 func HeldReadOnly(path string) bool { return held(path, os.O_RDONLY) }
 
+// Probe is Held for a caller that must refuse when it cannot tell (the delete verbs'
+// check that no MailArchive Desktop runs, docs/design-archive-delete.md §3.3): a lock
+// file that is not there is not held (false, nil); one that is held is (true, nil); and
+// one that cannot be probed — not a regular file (a link, a junction, a folder), or not
+// openable for reading or writing (another account's lock, an ACL that denies this
+// token) — is an error. Like Held it never creates the file or writes to it, so a free
+// lock keeps its holder line; it tries a read-write handle, then a read-only one (a lock
+// file marked read-only can still be locked through it).
+func Probe(path string) (bool, error) {
+	fi, err := os.Lstat(path)
+	switch {
+	case errors.Is(err, os.ErrNotExist):
+		return false, nil
+	case err != nil:
+		return false, err
+	case !fi.Mode().IsRegular():
+		return false, fmt.Errorf("lock %s is not a regular file", path)
+	}
+	f, err := os.OpenFile(path, os.O_RDWR|noFollow, 0)
+	if err != nil {
+		var rerr error
+		if f, rerr = os.OpenFile(path, os.O_RDONLY|noFollow, 0); rerr != nil {
+			if errors.Is(rerr, os.ErrNotExist) {
+				return false, nil
+			}
+			return false, err
+		}
+	}
+	defer f.Close()
+	if err := tryLockFor(f, probeGrace); err != nil {
+		return true, nil
+	}
+	unlock(f)
+	return false, nil
+}
+
 func held(path string, mode int) bool {
 	// Never follow a symlink or junction: a planted link is not a held lock, and on
 	// Windows noFollow is 0, so this Lstat is the only guard (mirrors AcquireAs).

@@ -82,9 +82,11 @@ func TestTheDeleteVerbsExitByTheirDeclaredSet(t *testing.T) {
 	// exits with the signal's code at once.
 	for sig, want := range map[os.Signal]int{os.Interrupt: 130, syscall.SIGTERM: 143} {
 		sigs := make(chan os.Signal, 1)
-		var w bytes.Buffer
+		w := &lockedBuffer{}
 		got := make(chan int, 1)
-		stop := watchDeleteStop(sigs, &w, dir, func(code int) { got <- code })
+		v := newVerbWatch(sigs, w, io.Discard, "delete-archive", func(code int) { got <- code })
+		v.setRow(dir)
+		v.set(phaseChanging)
 		sigs <- sig
 		select {
 		case code := <-got:
@@ -94,7 +96,7 @@ func TestTheDeleteVerbsExitByTheirDeclaredSet(t *testing.T) {
 		case <-time.After(5 * time.Second):
 			t.Fatalf("%v during the delete did not stop it", sig)
 		}
-		stop()
+		v.stop()
 		for _, s := range []string{"did not finish", "mailarchive delete-archive -out", "Delete… in MailArchive Desktop"} {
 			if !strings.Contains(w.String(), s) {
 				t.Fatalf("the stop does not say %q: %s", s, w.String())
@@ -104,8 +106,9 @@ func TestTheDeleteVerbsExitByTheirDeclaredSet(t *testing.T) {
 	// A watch stopped before any signal exits nothing.
 	sigs := make(chan os.Signal, 1)
 	exited := false
-	stop := watchDeleteStop(sigs, io.Discard, dir, func(int) { exited = true })
-	stop()
+	v := newVerbWatch(sigs, io.Discard, io.Discard, "delete-archive", func(int) { exited = true })
+	v.set(phaseChanging)
+	v.stop()
 	if exited {
 		t.Fatal("a delete that ended exited by the signal watch")
 	}

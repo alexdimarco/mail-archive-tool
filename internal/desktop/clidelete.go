@@ -57,12 +57,19 @@ func indexPathFor(cfgPath string) string {
 }
 
 // Row is §3.1's row rule: the row of Your archives that path is, by its own spelling first,
-// then by file identity while the folder can be read; ok is false when it is no row.
-func (c *CommandLineDelete) Row(path string) (row string, ok bool) { return c.cfg.matchRow(path) }
+// then by file identity while the folder can be read; ok is false when it is no row. err says
+// the list itself could not be read, so whether path is a row cannot be told.
+func (c *CommandLineDelete) Row(path string) (row string, ok bool, err error) {
+	return c.cfg.findRow(path)
+}
+
+// ListPath is the Desktop's list of archives (known-archives.json) these verbs read.
+func (c *CommandLineDelete) ListPath() string { return c.cfg.IndexPath }
 
 // KnownArchives are the archive folders the Desktop knows: its list, and this computer's record
-// of encrypted archives (§8.1: a saved file is never put inside one).
-func (c *CommandLineDelete) KnownArchives() []string { return c.cfg.knownArchives() }
+// of encrypted archives (§8.1: a saved file is never put inside one). err says part of them
+// could not be read.
+func (c *CommandLineDelete) KnownArchives() ([]string, error) { return c.cfg.knownArchivesErr() }
 
 // PlanDeps are the facts and seams a plan reads (§3.1, §7). The busy row is another program's
 // run holding the archive lock (a scheduled backup, serve's rebuild): nothing of this process

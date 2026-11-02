@@ -106,34 +106,52 @@ func refusalText(err error) string {
 // drive, a folder gone after an unfinished delete, is matched only by its own spelling). It
 // returns the row's own spelling.
 func (cfg Config) matchRow(path string) (string, bool) {
+	row, ok, _ := cfg.findRow(path)
+	return row, ok
+}
+
+// findRow is matchRow saying why it found no row when the list cannot be read (corrupt, a
+// newer build's, held for a moment by an antivirus): the command line refuses then, since it
+// cannot tell (del-s4-A2-02), where the page simply shows no rows.
+func (cfg Config) findRow(path string) (string, bool, error) {
 	path = strings.TrimSpace(path)
 	if path == "" || strings.TrimSpace(cfg.IndexPath) == "" {
-		return "", false
+		return "", false, nil
 	}
 	idx, err := archindex.ReadFile(cfg.IndexPath)
 	if err != nil {
-		return "", false
+		return "", false, err
 	}
 	for _, e := range idx.Entries {
 		if e.Path == path {
-			return e.Path, true
+			return e.Path, true, nil
 		}
 	}
 	if fi, err := os.Stat(path); err == nil {
 		for _, e := range idx.Entries {
 			if fe, err := os.Stat(e.Path); err == nil && os.SameFile(fi, fe) {
-				return e.Path, true
+				return e.Path, true, nil
 			}
 		}
 	}
-	return "", false
+	return "", false, nil
 }
 
 // knownArchives are the archive folders the Desktop knows (its list, and this computer's
 // record of encrypted archives), read only: the uninstall's kept list and the delete's
 // protected "another known archive".
 func (cfg Config) knownArchives() []string {
+	paths, _ := cfg.knownArchivesErr()
+	return paths
+}
+
+// knownArchivesErr is knownArchives with the first error that left part of it unread (the
+// list, or this computer's record of encrypted archives): the command line refuses a saved
+// file it cannot check against every known archive (del-s4-A3-03). The paths it could read
+// are returned all the same.
+func (cfg Config) knownArchivesErr() ([]string, error) {
 	var paths []string
+	var first error
 	seen := map[string]bool{}
 	if strings.TrimSpace(cfg.IndexPath) != "" {
 		if idx, err := archindex.ReadFile(cfg.IndexPath); err == nil {
@@ -143,6 +161,8 @@ func (cfg Config) knownArchives() []string {
 					seen[encrecord.Spelling(p)] = true
 				}
 			}
+		} else {
+			first = err
 		}
 	}
 	if rec, err := encrecord.Load(); err == nil {
@@ -157,8 +177,10 @@ func (cfg Config) knownArchives() []string {
 		}
 		sort.Strings(recorded)
 		paths = append(paths, recorded...)
+	} else if first == nil {
+		first = err
 	}
-	return paths
+	return paths, first
 }
 
 // deleteProtected are the folders §7's protected row names, the Desktop's own settings
@@ -726,6 +748,10 @@ func (p *desktopPointers) Save(np archdelete.Pointers) error {
 // of the whole record — with its remembered key — only from its last copy.
 type desktopKeyring struct{ store vault.Store }
 
+// errNoSecretStore is the keyring adapter's refusal to forget an archive's last copy without
+// the secret store its key may be remembered in.
+var errNoSecretStore = errors.New("this computer's secret store could not be opened, so a remembered key could not be forgotten")
+
 func (k desktopKeyring) PlanForget(spelling string) (archdelete.KeyPlan, error) {
 	p, err := keyring.PlanForget(spelling, k.store)
 	if err != nil {
@@ -748,7 +774,13 @@ func (k desktopKeyring) Forget(kp archdelete.KeyPlan, whole bool) error {
 		return errors.New("this computer's record of the archive was not planned")
 	}
 	o := keyring.ForgetOptions{Whole: whole && p.Last}
-	if o.Whole && p.Remembered && k.store != nil {
+	if o.Whole && k.store == nil {
+		// Without the secret store no one can tell whether the key is remembered, and forgetting
+		// the whole record would leave a remembered key that nothing points to any more: step 8
+		// skips instead, keeping the record, the key and the row with its Forget (del-s4-A1-04).
+		return errNoSecretStore
+	}
+	if o.Whole && p.Remembered {
 		o.Keys, o.Store = true, k.store
 	}
 	return keyring.Forget(p, o)
