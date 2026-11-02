@@ -455,10 +455,36 @@ func PendingDeletes(logPath, goos string) ([]string, error) {
 // delete Unfinished still finds (a folder made again at the path since is a new folder, not
 // that delete's), once per folder. A started line naming no folder names nothing to finish.
 func (dl *DeleteLog) Pending(goos string) []string {
+	var out []string
+	for _, p := range dl.PendingKinds(goos) {
+		out = append(out, p.Row)
+	}
+	return out
+}
+
+// PendingDelete is a delete under way or not finished: the row it names (its folder when it names
+// none) and whether its started line says an encrypted archive — or says no kind, so it may be one
+// (uninstall's refusal says a key stays remembered only then; the 1.5.3 re-walk's N9).
+type PendingDelete struct {
+	Row       string
+	Encrypted bool
+}
+
+// PendingDeleteKinds is PendingDeletes with each delete's kind.
+func PendingDeleteKinds(logPath, goos string) ([]PendingDelete, error) {
+	l, err := ReadDeleteLog(logPath)
+	if err != nil {
+		return nil, err
+	}
+	return l.PendingKinds(goos), nil
+}
+
+// PendingKinds is Pending with each delete's kind.
+func (dl *DeleteLog) PendingKinds(goos string) []PendingDelete {
 	if dl == nil || !dl.pending {
 		return nil
 	}
-	var out []string
+	var out []PendingDelete
 	seen := map[string]bool{}
 	for _, l := range dl.lines {
 		if l.Event != evStarted || strings.TrimSpace(l.Folder) == "" || seen[l.Folder] {
@@ -472,7 +498,7 @@ func (dl *DeleteLog) Pending(goos string) []string {
 			}
 			if !seen["\x00"+name] {
 				seen["\x00"+name] = true
-				out = append(out, name)
+				out = append(out, PendingDelete{Row: name, Encrypted: u.Kind != Plain})
 			}
 		}
 	}

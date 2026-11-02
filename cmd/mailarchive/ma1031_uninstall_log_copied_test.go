@@ -9,6 +9,7 @@ import (
 	"testing"
 
 	"mail-archive-tool/internal/assure"
+	"mail-archive-tool/internal/encmark"
 )
 
 // uninstallHome is a throwaway home for one uninstall run of the real program: every OS's
@@ -118,7 +119,8 @@ func TestUninstallYesRefusesUntilTheDeletionLogIsCopied(t *testing.T) {
 	// -yes: refused, nothing removed.
 	code, out, errs = runUninstallIn(t, env, "-yes")
 	assure.Refused(t, code, errs, assure.Code(1),
-		assure.Names("mailarchive: MailArchive's deletion log, "+log+", lists the deletes made on this computer", "so nothing was removed",
+		// The path quoted, so a pasted copy command works (MA-1041, the 1.5.3 re-walk's N10).
+		assure.Names("mailarchive: MailArchive's deletion log, "+encmark.CommandPath(log)+", lists the deletes made on this computer", "so nothing was removed",
 			"Copy it somewhere you keep records", "then run mailarchive uninstall -yes -log-copied."),
 		assure.NoSideEffect(func() bool {
 			return untouched() && !strings.Contains(out, "Done —") && strings.Contains(out, "Copy deletions.log first")

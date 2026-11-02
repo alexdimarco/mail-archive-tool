@@ -1481,6 +1481,23 @@ each; the operator approves the words later.
   that your home folder is set (HOME, or LOCALAPPDATA on Windows), then try again." (was "…(cannot
   determine your per-account folder: neither $XDG_CONFIG_HOME nor $HOME are defined), so nothing
   was changed"). The other cannot-tell refusals gain their final period.
+- *Uninstall's refusal of several deletes (MA-1041; N9, the operator's delegate's decision).*
+  "Uninstall will refuse until these N deletes are finished (each is running or did not finish):
+  uninstalling would remove MailArchive's deletion log (LOG), which they need to finish.", then one
+  line per delete, "  - FOLDER: mailarchive delete-archive -out "FOLDER"", then "Wait for their
+  results, or finish each one (Delete… on its row in MailArchive Desktop, or the command beside it
+  above), then uninstall again. If you no longer want to finish them, copy deletions.log somewhere
+  you keep records, delete it, then uninstall again." (the real run: "Deletes of these N folders
+  are running or did not finish, so uninstall removed nothing: …"). "; for an encrypted archive
+  among them, this computer then still remembers its key until you use Forget this encrypted
+  archive here, or Forget every encrypted archive on this computer" only when one of them is
+  encrypted ("for an encrypted archive, …" for one); one delete keeps its words. The Desktop's
+  Remove: "Uninstall waits until those deletes are finished.". Not changed: the plan still lists a
+  half-deleted folder under "It will KEEP your N archive(s)" (the walkers' other half of N9).
+- *Uninstall and -log-copied (MA-1041; N10).* The terminal's plan, under the log when it holds any
+  line: "Copy deletions.log first, … if you need it to check saved deletion records. Once it is
+  copied, run mailarchive uninstall -yes -log-copied."; `-yes`'s refusal quotes the path:
+  "MailArchive's deletion log, "PATH", lists …".
 - *The record keeps the whole "What Delete does not reach" line (N18, the operator's delegate's
   decision; no change).* At the terminal without `-record-out` the printed record's line names every
   computer's backup tools after the plan's shorter one: the saved files may be read on another

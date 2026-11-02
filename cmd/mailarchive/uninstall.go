@@ -7,6 +7,7 @@ import (
 	"io"
 	"os"
 
+	"mail-archive-tool/internal/archdelete"
 	"mail-archive-tool/internal/archindex"
 	"mail-archive-tool/internal/graphconfig"
 	"mail-archive-tool/internal/uninstall"
@@ -53,7 +54,13 @@ func runUninstall(args []string) error {
 	}
 	note := uninstall.DeletionsLogNote
 	switch {
-	case !removing || notCopied != nil:
+	case !removing:
+		// A plan only: once the log is copied, -yes needs -log-copied when the log holds any line,
+		// so the plan says so, not only the refusal (the 1.5.3 re-walk's N10).
+		if holds, herr := archdelete.LogHoldsLines(rep.DeletionsLog); rep.DeletionsLog != "" && herr == nil && holds {
+			note += " " + uninstall.DeletionsLogCopyNext
+		}
+	case notCopied != nil:
 	case *logCopied:
 		note = deletionsLogCopiedNote
 	default:

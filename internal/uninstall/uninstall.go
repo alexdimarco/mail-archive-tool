@@ -56,12 +56,20 @@ type LogNotCopiedError struct {
 	Kept bool
 }
 
+// The log's path is quoted, so it can be pasted into a copy command: on a Mac it holds a space
+// ("Application Support"; the 1.5.3 re-walk's N10).
 func (e *LogNotCopiedError) Error() string {
+	log := encmark.CommandPath(util.StripControl(e.Log))
 	if e.Kept {
-		return fmt.Sprintf("MailArchive's deletion log, %s, now lists deletes made on this computer, and uninstall -yes would remove it, so it and the settings files were kept. Copy it somewhere you keep records (your Documents folder, for example), then run mailarchive uninstall -yes -log-copied.", e.Log)
+		return fmt.Sprintf("MailArchive's deletion log, %s, now lists deletes made on this computer, and uninstall -yes would remove it, so it and the settings files were kept. Copy it somewhere you keep records (your Documents folder, for example), then run mailarchive uninstall -yes -log-copied.", log)
 	}
-	return fmt.Sprintf("MailArchive's deletion log, %s, lists the deletes made on this computer, and uninstall -yes removes it, so nothing was removed. Copy it somewhere you keep records (your Documents folder, for example), then run mailarchive uninstall -yes -log-copied.", e.Log)
+	return fmt.Sprintf("MailArchive's deletion log, %s, lists the deletes made on this computer, and uninstall -yes removes it, so nothing was removed. Copy it somewhere you keep records (your Documents folder, for example), then run mailarchive uninstall -yes -log-copied.", log)
 }
+
+// DeletionsLogCopyNext is what the terminal's plan adds under DeletionsLogNote when the log holds
+// any line: how to go on once it is copied, so -log-copied is not first learnt from a refusal (the
+// 1.5.3 re-walk's N10; builder's words).
+const DeletionsLogCopyNext = "Once it is copied, run mailarchive uninstall -yes -log-copied."
 
 // CheckLogCopied is `uninstall -yes`'s check before it removes anything: with the deletion log
 // at log ("" when there is none) holding any line, and copied (-log-copied) not given, it is
@@ -97,17 +105,40 @@ type DeleteNotFinishedError struct {
 	// this is ("" the usual one): the finishing command then carries -config FILE, so it reaches
 	// that Desktop's list and log (the uninstall-docs group's adversarial pass, finding 8).
 	Config string
+	// Encrypted are the Folders whose delete is of an encrypted archive, or of one whose kind the
+	// log does not say: only for them is it said that the key stays remembered (the 1.5.3
+	// re-walk's N9, the operator's delegate's decision).
+	Encrypted []string
 }
 
+// With several deletes the words are plural, each folder and its finishing command on a line of
+// its own (the 1.5.3 re-walk's N9, the operator's delegate's decision: "the delete of A; B; C is
+// finished … which that delete needs", every command in one bracket, read badly).
 func (e *DeleteNotFinishedError) Error() string {
+	if len(e.Folders) > 1 {
+		return fmt.Sprintf("Deletes of these %d folders are running or did not finish, so uninstall removed nothing: uninstalling would remove MailArchive's deletion log (%s), which they need to finish.\n%s\n%s",
+			len(e.Folders), e.Log, e.eachLine(), e.howToGoOnAll())
+	}
 	return fmt.Sprintf("A delete of %s is running or did not finish, so uninstall removed nothing: uninstalling would remove MailArchive's deletion log (%s), which that delete needs to finish. %s",
 		e.names(), e.Log, e.howToGoOn())
 }
 
 // Until is what a dry run says after the plan: uninstall will refuse until the delete ends.
 func (e *DeleteNotFinishedError) Until() string {
+	if len(e.Folders) > 1 {
+		return fmt.Sprintf("Uninstall will refuse until these %d deletes are finished (each is running or did not finish): uninstalling would remove MailArchive's deletion log (%s), which they need to finish.\n%s\n%s",
+			len(e.Folders), e.Log, e.eachLine(), e.howToGoOnAll())
+	}
 	return fmt.Sprintf("Uninstall will refuse until the delete of %s is finished (it is running or did not finish): uninstalling would remove MailArchive's deletion log (%s), which that delete needs to finish. %s",
 		e.names(), e.Log, e.howToGoOn())
+}
+
+// Waits is the Desktop's tooltip on its disabled Remove (MA-1030), plural for several deletes (N9).
+func (e *DeleteNotFinishedError) Waits() string {
+	if len(e.Folders) > 1 {
+		return "Uninstall waits until those deletes are finished."
+	}
+	return "Uninstall waits until that delete is finished."
 }
 
 // names are the deletes' rows, control characters stripped.
@@ -119,19 +150,50 @@ func (e *DeleteNotFinishedError) names() string {
 	return strings.Join(names, "; ")
 }
 
-// howToGoOn says how to finish each delete, its real folder in the command, or how to give up on
-// it.
-func (e *DeleteNotFinishedError) howToGoOn() string {
+// command is the terminal's command that finishes the delete of folder.
+func (e *DeleteNotFinishedError) command(folder string) string {
 	config := ""
 	if c := strings.TrimSpace(e.Config); c != "" {
 		config = " -config " + encmark.CommandPath(util.StripControl(c))
 	}
+	return "mailarchive delete-archive" + config + " -out " + encmark.CommandPath(util.StripControl(folder))
+}
+
+// eachLine is one line per delete: its folder, then the command that finishes it.
+func (e *DeleteNotFinishedError) eachLine() string {
+	lines := make([]string, 0, len(e.Folders))
+	for _, f := range e.Folders {
+		lines = append(lines, "  - "+util.StripControl(f)+": "+e.command(f))
+	}
+	return strings.Join(lines, "\n")
+}
+
+// keyKept is what giving up on a delete leaves of an encrypted archive's key, said only when one
+// of the deletes is of an encrypted archive (or one whose kind is not known).
+func (e *DeleteNotFinishedError) keyKept(several bool) string {
+	switch {
+	case len(e.Encrypted) == 0:
+		return ""
+	case several:
+		return "; for an encrypted archive among them, this computer then still remembers its key until you use Forget this encrypted archive here, or Forget every encrypted archive on this computer"
+	}
+	return "; for an encrypted archive, this computer then still remembers its key until you use Forget this encrypted archive here, or Forget every encrypted archive on this computer"
+}
+
+// howToGoOn says how to finish the one delete, its real folder in the command, or how to give up
+// on it.
+func (e *DeleteNotFinishedError) howToGoOn() string {
 	cmds := make([]string, 0, len(e.Folders))
 	for _, f := range e.Folders {
-		cmds = append(cmds, "mailarchive delete-archive"+config+" -out "+encmark.CommandPath(util.StripControl(f)))
+		cmds = append(cmds, e.command(f))
 	}
-	return fmt.Sprintf("Wait for its result, or finish it (Delete… on its row in MailArchive Desktop, or %s), then uninstall again. If you no longer want to finish it, copy deletions.log somewhere you keep records, delete it, then uninstall again; for an encrypted archive, this computer then still remembers its key until you use Forget this encrypted archive here, or Forget every encrypted archive on this computer.",
-		strings.Join(cmds, "; "))
+	return fmt.Sprintf("Wait for its result, or finish it (Delete… on its row in MailArchive Desktop, or %s), then uninstall again. If you no longer want to finish it, copy deletions.log somewhere you keep records, delete it, then uninstall again%s.",
+		strings.Join(cmds, "; "), e.keyKept(false))
+}
+
+// howToGoOnAll is howToGoOn for several deletes, whose commands are on the lines above it.
+func (e *DeleteNotFinishedError) howToGoOnAll() string {
+	return "Wait for their results, or finish each one (Delete… on its row in MailArchive Desktop, or the command beside it above), then uninstall again. If you no longer want to finish them, copy deletions.log somewhere you keep records, delete it, then uninstall again" + e.keyKept(true) + "."
 }
 
 // LogUnreadableError stops an uninstall, nothing removed, when deletions.log cannot be read to
@@ -169,6 +231,10 @@ func (e *LogUnreadableError) advice() string {
 // that starts between the plan and the removal).
 var pendingDeletes = archdelete.PendingDeletes
 
+// pendingKinds is archdelete.PendingDeleteKinds, asked only to word the refusal: which pending
+// deletes are of an encrypted archive (N9).
+var pendingKinds = archdelete.PendingDeleteKinds
+
 // checkNoPendingDelete refuses (DeleteNotFinishedError) while the log at path holds a delete
 // under way or not finished, and fails closed when the log cannot be read (U-C4's rule: never
 // remove what could not be checked).
@@ -178,9 +244,30 @@ func checkNoPendingDelete(path string) error {
 		return &LogUnreadableError{Log: path, Err: err}
 	}
 	if len(pending) > 0 {
-		return &DeleteNotFinishedError{Log: path, Folders: pending}
+		return &DeleteNotFinishedError{Log: path, Folders: pending, Encrypted: encryptedAmong(path, pending)}
 	}
 	return nil
+}
+
+// encryptedAmong are the folders of pending whose delete the log says is not of a plain archive:
+// an encrypted one, one whose kind it does not say, and every one when the kinds cannot be read —
+// the key's sentence is left out only where it is known not to apply (N9).
+func encryptedAmong(path string, pending []string) []string {
+	plain := map[string]bool{}
+	if kinds, err := pendingKinds(path, runtime.GOOS); err == nil {
+		for _, k := range kinds {
+			if !k.Encrypted {
+				plain[k.Row] = true
+			}
+		}
+	}
+	var out []string
+	for _, f := range pending {
+		if !plain[f] {
+			out = append(out, f)
+		}
+	}
+	return out
 }
 
 // Seams (overridable in tests, so a test touches no real scheduler or credential store):

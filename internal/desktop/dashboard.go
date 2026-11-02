@@ -1101,6 +1101,7 @@ func (d *dashboard) uninstallAction(w http.ResponseWriter, r *http.Request) {
 	if err != nil && !in.Confirm && rep != nil && errors.As(err, &pendingDelete) {
 		reply := uninstallPlanReply(rep, false)
 		reply["refuseUntil"] = pendingDelete.Until()
+		reply["refuseWaits"] = pendingDelete.Waits() // Remove's tooltip, plural for several (N9)
 		writeJSON(w, reply)
 		return
 	}
@@ -1834,6 +1835,7 @@ h1{font-size:1.8rem;letter-spacing:-.02em;margin:0 0 4px}.lede{color:var(--muted
 .row:last-child{border-bottom:0}.row .k{color:var(--muted);font-size:.85rem}.row .v{font-weight:650;overflow-wrap:anywhere}
 .sec li{margin:8px 0;line-height:1.45}.sec b{color:var(--text)}
 .steps{white-space:pre-wrap;overflow-wrap:anywhere}
+#uninstallNote{white-space:pre-line;overflow-wrap:anywhere}
 .mono{font-family:ui-monospace,SFMono-Regular,Consolas,monospace}
 .btn-link{background:none;border:0;color:var(--accent);font:inherit;font-weight:700;cursor:pointer;padding:0;text-decoration:underline}
 .note{margin-top:12px;padding:10px 12px;border-radius:9px;font-size:.9rem;background:var(--accent-soft);border:1px solid color-mix(in srgb,var(--accent) 30%,var(--line))}
@@ -2621,7 +2623,7 @@ if(unBtn)unBtn.addEventListener('click',async()=>{
     if(n){n.hidden=!d.refuseUntil;n.textContent=d.refuseUntil||'';}
     unShown=d;
     if(pl)pl.textContent=uninstallPlanText(d);
-    if(unGo){unGo.disabled=!!d.refuseUntil;unGo.title=d.refuseUntil?'Uninstall waits until that delete is finished.':'';}
+    if(unGo){unGo.disabled=!!d.refuseUntil;unGo.title=d.refuseUntil?(d.refuseWaits||'Uninstall waits until that delete is finished.'):'';}
     if(p)p.hidden=false;
   }catch(e){if(n){n.hidden=false;n.textContent='Error: '+e;}}
   finally{done();}

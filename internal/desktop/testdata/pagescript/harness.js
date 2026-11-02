@@ -514,6 +514,26 @@ const scenarios = {
     const ps = said(), at = ps.indexOf(warn);
     check(none && at === ps.indexOf('This finishes the delete begun D.') + 1, 'the panel warns of the held file after its finishing line', JSON.stringify(ps));
   },
+  // Several deletes not finished (MA-1041, the 1.5.3 re-walk's N9): the note keeps its lines, and
+  // the disabled Remove's tooltip is the reply's own, plural; a reply without one keeps the
+  // one-delete words.
+  async uninstallWaitsMany() {
+    page([['E:\\Cur', 'current']], 'E:\\Cur');
+    doc.getElementById('sec-uninstall').append(el('button', { class: 'btn secondary', type: 'button', id: 'uninstallBtn' }, 'Uninstall MailArchive…'),
+      el('div', { class: 'device-box', id: 'uninstallPanel', hidden: '' }, el('pre', { class: 'mono', id: 'uninstallPlan' }),
+        el('div', {}, el('button', { class: 'btn', id: 'uninstallGo', type: 'button' }, 'Remove'), el('button', { class: 'btn secondary', id: 'uninstallCancel', type: 'button' }, 'Cancel'))),
+      el('div', { class: 'note', id: 'uninstallNote', hidden: '' }));
+    boot(); await wait(30);
+    const planReply = extra => Object.assign({ ok: true, done: false, schedules: [], configFiles: [], deletionsLog: 'C:\\cfg\\deletions.log', deletionsLogNote: 'Copy deletions.log first.', keptArchives: [], clearedSignIn: false, binaryNote: '' }, extra);
+    const go = doc.getElementById('uninstallGo'), note = doc.getElementById('uninstallNote'), open = doc.getElementById('uninstallBtn');
+    replies['api/uninstall'] = planReply({ refuseUntil: 'Uninstall will refuse until the delete of E:\\Old is finished …' });
+    open.click(); await wait(40);
+    const one = go.disabled && go.title === 'Uninstall waits until that delete is finished.';
+    const many = 'Uninstall will refuse until these 2 deletes are finished …\n  - E:\\A: mailarchive delete-archive -out "E:\\A"\n  - E:\\B: mailarchive delete-archive -out "E:\\B"\nWait for their results …';
+    replies['api/uninstall'] = planReply({ refuseUntil: many, refuseWaits: 'Uninstall waits until those deletes are finished.' });
+    open.click(); await wait(40);
+    check(one && go.disabled && go.title === 'Uninstall waits until those deletes are finished.' && note.textContent === many, 'several deletes: the note keeps its lines and the tooltip is plural', go.title);
+  },
   // The page's layout fixes (MA-1020, B13, B14): Save this plan says so on screen and sends
   // nothing; a delete's result is brought into view; Remove from list's words are said again at
   // the top of Your archives after the reload it starts, once.
