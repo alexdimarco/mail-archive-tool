@@ -37,7 +37,11 @@ var helpDeleteSentences = []string{
 	// deleting the archive the page shows, and the command line are said.
 	"The deletion log: each delete adds a line to this computer's deletion log, deletions.log, which keeps the date, the folder and what was removed.",
 	"(a MailArchive Desktop started with -config keeps it beside that config file). Uninstalling MailArchive removes that log: copy deletions.log first, somewhere you keep records, if you need it to check saved deletion records.",
-	"Delete not finished: if a delete stops part way, for example because the computer was switched off or the result said Not fully deleted, the archive's row says Delete not finished: click Delete again. Until the delete is finished, that archive is not backed up, and it cannot be paused, resumed, switched to or removed from the list. Click Delete… on its row again: its plan begins \"This finishes the delete begun\" and the date, and its deletion record counts what every run of it removed.",
+	// Amended 2026-11-02 (the uninstall-docs group's adversarial pass, finding 6): "that archive is
+	// not backed up" was more than is enforced (a scheduled backup a delete stopped before step 2
+	// left, and mailarchive -out at a terminal, read no deletions.log); Archive now and Run now do
+	// refuse (MA-987).
+	"Delete not finished: if a delete stops part way, for example because the computer was switched off or the result said Not fully deleted, the archive's row says Delete not finished: click Delete again. Until the delete is finished, Archive now and Run now start nothing on that archive, and it cannot be paused, resumed, switched to or removed from the list. Click Delete… on its row again: its plan begins \"This finishes the delete begun\" and the date, and its deletion record counts what every run of it removed.",
 	"Deleting the archive this page shows leaves no archive chosen. Until you click Dismiss on the result, that archive's cards are greyed out. Then, to carry on, click Switch to this archive on another archive's row under Your archives, or click Open an archive folder… to choose one.",
 	"At the command line: in a terminal, mailarchive delete-archive -out FOLDER shows the same plan and asks you to type the folder's name; add -plan-out FILE to only save the plan, or -record-out FILE to save the deletion record. mailarchive unlist-archive -out FOLDER is Remove from list. Both work only on an archive under Your archives, and only while MailArchive Desktop is shut down. mailarchive add-archive FOLDER adds an archive folder you already have to Your archives, as Open an archive folder… does, without making it the archive this page shows.",
 	// Removing an archive from the list
@@ -56,6 +60,7 @@ var helpDeleteSentences = []string{
 var helpDeleteNever = []string{
 	"this computer also forgets its key: any other copy",
 	"is what forgets those",
+	"not backed up", // finding 6: nothing stops every backup of a delete not finished
 }
 
 // "What Delete does not reach", each platform's (MA-1019, amending MA-1004 on 2026-11-02): §2's
@@ -73,7 +78,9 @@ var helpDeletePlatforms = []helpPlatform{
 		"Synced folders: if the archive's folder is in OneDrive or in another sync service's folder that MailArchive recognises (Dropbox, Google Drive, iCloud Drive, Box and others), the plan says so. Deleting it here also deletes it there, and the service may keep it in its own recycle bin: empty that too.",
 		"A SharePoint library synced to this computer is not recognised yet: if the archive is in one, empty its recycle bin on SharePoint too.",
 		`On Windows, it is %APPDATA%\mailarchive\deletions.log (a MailArchive Desktop`,
-		"without making it the archive this page shows. On Windows the command-line program is mailarchive.exe, in MailArchive's folder.",
+		// Amended 2026-11-02 (the uninstall-docs group's adversarial pass, finding 7): the .msi
+		// puts nothing on PATH, so the full path, quoted.
+		`without making it the archive this page shows. On Windows the command-line program is mailarchive.exe, in MailArchive's folder: C:\Program Files\MailArchive Desktop when installed from the .msi, or the folder you unzipped it to. The command line does not find it by name alone, so type its full path in quotes, for example "C:\Program Files\MailArchive Desktop\mailarchive.exe" delete-archive -out FOLDER.`,
 	}, not: []string{"Library/CloudStorage", "the Dock", "System Settings", "a folder you may not change", "Time Machine", "~/", "tar.gz"}},
 	{goos: "darwin", want: []string{
 		helpReachSync + "macOS Time Machine; " + helpReachRest,
@@ -196,6 +203,17 @@ func TestTheGuidesDeletePartsNameRealControls(t *testing.T) {
 	got = strings.Replace(got, "%APPDATA%", os.Getenv("APPDATA"), 1)
 	if filepath.Clean(got) != filepath.Clean(want) {
 		t.Errorf("the guide says deletions.log is at %s on this computer; MailArchive keeps it at %s", got, want)
+	}
+	// The Windows guide's folder for mailarchive.exe is where the .msi installs it, and the .msi
+	// puts nothing on PATH, which is why the guide gives the full path (finding 7).
+	wxs := read(filepath.Join("..", "..", "packaging", "mailarchive-desktop", "Product.wxs"))
+	for _, w := range []string{`<Directory Id="ProgramFiles64Folder">`, `<Directory Id="INSTALLFOLDER" Name="MailArchive Desktop">`, `Source="$(var.SourceDir)\mailarchive.exe"`} {
+		if !strings.Contains(wxs, w) {
+			t.Errorf(`the Windows guide says C:\Program Files\MailArchive Desktop\mailarchive.exe, but Product.wxs lacks %s`, w)
+		}
+	}
+	if strings.Contains(wxs, "<Environment") {
+		t.Error("Product.wxs now sets an environment variable (PATH?): the Windows guide's full path may no longer be needed")
 	}
 	// The plan's own sentences the guide repeats.
 	// "If you delete it" (MA-1028, B5): the guide's own sentence, "Each delete adds a line…", fits.

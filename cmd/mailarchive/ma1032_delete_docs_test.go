@@ -44,6 +44,10 @@ var deleteDocControls = map[string][2]string{
 	"Delete permanently":                     {"internal/desktop/deletescript.go", "delButton('Delete permanently'"},
 	"Save deletion record":                   {"internal/desktop/deletescript.go", "delButton('Save deletion record'"},
 	"Dismiss":                                {"internal/desktop/deletescript.go", "delButton('Dismiss'"},
+	// Amended 2026-11-02 (the uninstall-docs group's adversarial pass, finding 6): "Delete not
+	// finished" now says these start nothing, in place of "not backed up".
+	"Archive now": {"internal/desktop/dashboard.go", `{{end}}>Archive now</button>`},
+	"Run now":     {"internal/desktop/dashboard.go", `>Run now</button>`},
 }
 
 var (
@@ -91,6 +95,14 @@ func TestTheDeleteDocsSayWhat153DoesAndNameRealControls(t *testing.T) {
 		if name == "the 1.5.3 release notes" && !strings.Contains(flat, "mailarchive uninstall -yes -log-copied") {
 			t.Errorf("%s lacks uninstall -yes -log-copied", name)
 		}
+		// Finding 6: no backup reads deletions.log, so the docs do not promise none runs.
+		if strings.Contains(flat, "not backed up") {
+			t.Errorf("%s says a delete not finished is not backed up, which nothing enforces", name)
+		}
+		// Finding 7: on Windows the command line does not find mailarchive.exe by name.
+		if name == "README.md's Deleting an archive" && !strings.Contains(flat, `"C:\Program Files\MailArchive Desktop\mailarchive.exe" delete-archive -out DIR`) {
+			t.Errorf("%s lacks the Windows full path", name)
+		}
 
 		// Every bold name is a heading of the docs' own (ending "." or ":", or the two below) or a
 		// control the Desktop draws in those words.
@@ -111,6 +123,13 @@ func TestTheDeleteDocsSayWhat153DoesAndNameRealControls(t *testing.T) {
 			if !strings.Contains(string(src), c[1]) {
 				t.Errorf("%s names %q, which %s does not draw", name, label, c[0])
 			}
+		}
+	}
+
+	// Finding 9: uninstall -yes refuses while the log holds any line, not only a delete's.
+	for name, sec := range map[string]string{"README.md's Desktop section": desktop, "the 1.5.3 release notes": notes} {
+		if flat := strings.Join(strings.Fields(sec), " "); strings.Contains(flat, "lists a delete") || !strings.Contains(flat, "holds any line") {
+			t.Errorf("%s must say uninstall -yes refuses while the log holds any line", name)
 		}
 	}
 

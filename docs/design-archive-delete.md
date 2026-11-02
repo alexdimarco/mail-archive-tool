@@ -1305,3 +1305,14 @@ are the builder's, for the operator, unless a quote says otherwise.
   forget its record of this archive and the key it remembers." promised more than Forget does. It
   is now " Forget this encrypted archive here makes this computer forget this folder; for the
   archive's last folder it asks whether to forget the whole archive and its remembered key."
+- *The docs (MA-1032, MA-1004 amended; findings 6, 7 and a nit).* "Delete not finished": "Until
+  the delete is finished, Archive now and Run now start nothing on that archive, and it cannot be
+  paused, resumed, switched to or removed from the list." (was "that archive is not backed up":
+  no backup reads deletions.log), in the guide, the README and the release notes. The Windows
+  guide's command line: " On Windows the command-line program is mailarchive.exe, in
+  MailArchive's folder: C:\Program Files\MailArchive Desktop when installed from the .msi, or the
+  folder you unzipped it to. The command line does not find it by name alone, so type its full
+  path in quotes, for example "C:\Program Files\MailArchive Desktop\mailarchive.exe"
+  delete-archive -out FOLDER."; the README gives the same example. The README and the release
+  notes: `uninstall -yes` refuses while the log "holds any line" (was "lists a delete"). The root
+  usage's uninstall line is aligned with its neighbours.

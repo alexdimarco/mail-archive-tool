@@ -1987,7 +1987,7 @@ Usage:
   mailarchive decrypt  -out DIR -dest PARENT             make an UNENCRYPTED copy of an encrypted archive
   mailarchive pause    -out DIR [-reason TEXT]           stop backups and make the archive read-only
   mailarchive resume   -out DIR                          make a paused archive writable and restore its schedule
-  mailarchive uninstall -dry-run | -yes [-log-copied]     remove MailArchive's schedules, settings and sign-in (archives are kept; -log-copied: you copied deletions.log)
+  mailarchive uninstall -dry-run | -yes [-log-copied]    remove MailArchive's schedules, settings and sign-in (archives are kept; -log-copied: you copied deletions.log)
   mailarchive delete-archive -out DIR                    permanently delete an archive, at a terminal (-plan-out FILE: only save the plan; -record-out FILE: save the deletion record; -config FILE: a Desktop's config)
   mailarchive unlist-archive -out DIR                    remove an archive from MailArchive Desktop's list of archives; the folder is kept (-config FILE: a Desktop's config)
   mailarchive add-archive DIR                            add an archive folder you already have to MailArchive Desktop's list of archives (-config FILE: a Desktop's config)

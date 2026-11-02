@@ -314,7 +314,7 @@ What it gives you, beyond reading and searching the archive:
   also removes the deletion log (see below), so copy that first. You remove the
   program itself afterwards; the last step tells you how. At the command line,
   `mailarchive uninstall -dry-run` shows the plan, and `mailarchive uninstall -yes`
-  refuses while the deletion log lists a delete, until you have copied it and run
+  refuses while the deletion log holds any line, until you have copied it and run
   `mailarchive uninstall -yes -log-copied`.
 
 ## Deleting an archive
@@ -346,12 +346,16 @@ mailarchive add-archive DIR                               # list an archive fold
 `delete-archive` and `unlist-archive` reach only an archive listed under Your
 archives: list one made at the command line with `add-archive` first. Each of the
 three takes `-config FILE` to reach a MailArchive Desktop started with `-config`.
+On Windows the program is `mailarchive.exe` and is not on the command line's
+search path: type its full path in quotes, for example
+`"C:\Program Files\MailArchive Desktop\mailarchive.exe" delete-archive -out DIR`
+after an MSI install, or use the folder you unzipped it to.
 
 **Delete not finished.** If a delete stops part way (the computer was switched
 off, or a file could not be removed), the archive's row says **Delete not
 finished: click Delete again**, and `mailarchive status -out DIR` says so too.
-Until it is finished, the archive is not backed up and cannot be paused, resumed,
-switched to or removed from the list. Click **Delete…** again, or run
+Until it is finished, **Archive now** and **Run now** start nothing on that archive,
+and it cannot be paused, resumed, switched to or removed from the list. Click **Delete…** again, or run
 `mailarchive delete-archive -out DIR` again: the plan begins "This finishes the
 delete begun" and the date, and the deletion record counts what every run of it
 removed.
