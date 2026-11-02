@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"log"
 	"net/http"
+	"os"
 	"time"
 
 	"mail-archive-tool/internal/app"
@@ -31,14 +32,26 @@ func (d *dashboard) runJobOn(out string, fn func(*log.Logger) (string, error)) e
 // runJobOnClaiming is runJobOn with claimed, when set, called under the slot's lock as
 // the job takes the slot: an encrypted Run now's Lock window becomes the slot's there,
 // so no Lock falls between the two (design-presync-attended §3.2; gate-2 pass, AS8).
+// A job on a folder being deleted is refused as the slot is taken (MA-979's words): the
+// route's own check comes earlier, and a delete beginning between the two would otherwise
+// be seen by neither, since the delete's busy check reads the slot (the residual fixes'
+// adversarial pass, finding 4). The folder is asked of the disk before the slot's lock.
 func (d *dashboard) runJobOnClaiming(out string, claimed func(), fn func(*log.Logger) (string, error)) error {
 	c := d.cap
 	encrypted := out != "" && app.ArchiveEncrypted(out)
 	onCurrent := out != "" && samePath(out, d.cfg.effectiveOut())
+	var fi os.FileInfo
+	if out != "" {
+		fi = statOrNil(out)
+	}
 	c.mu.Lock()
 	if c.running {
 		c.mu.Unlock()
 		return fmt.Errorf("a task is already running — wait for it to finish")
+	}
+	if d.running.ofStat(out, fi) != nil {
+		c.mu.Unlock()
+		return errors.New(deletingRefusal)
 	}
 	c.running, c.device, c.lines, c.result, c.errMsg = true, nil, nil, "", ""
 	// A new job in the slot (design-presync-attended §4.6, C-15, C-71): its own id, its
