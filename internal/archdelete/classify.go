@@ -29,6 +29,11 @@ var manifestCap int64 = 1 << 30
 // that no file on a test machine gives on demand (MA-1006).
 var manifestSource = func(f *os.File) io.Reader { return f }
 
+// linkLike is util.IsLinkLike as the plan and the row ask it of the folder and its manifest. A
+// var only so a test can inject a check that fails, as reading a Windows reparse tag can, which
+// no file on a test machine gives on demand (MA-980).
+var linkLike = util.IsLinkLike
+
 // manifestStat is readManifest's Stat of the opened manifest: the file's own. A var only so a
 // test can inject a Stat that fails on a file already open (MA-1006).
 var manifestStat = func(f *os.File) (os.FileInfo, error) { return f.Stat() }
@@ -83,7 +88,7 @@ func classifyWith(root *os.Root, abs string, parse func(root *os.Root, abs strin
 	case err != nil:
 		return 0, unreadableRefusal(filepath.Join(abs, manifestName), err)
 	}
-	if link, lerr := util.IsLinkLike(filepath.Join(abs, manifestName)); fi.Mode()&fs.ModeSymlink != 0 || lerr != nil || link {
+	if link, lerr := linkLike(filepath.Join(abs, manifestName)); fi.Mode()&fs.ModeSymlink != 0 || lerr != nil || link {
 		return 0, linkRefusal(filepath.Join(abs, manifestName))
 	}
 	if err := parse(root, abs, fi); err != nil {

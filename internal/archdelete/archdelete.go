@@ -442,7 +442,7 @@ func planArchive(folder string, deps Deps) (*DeletePlan, error) {
 	if err != nil {
 		return nil, refuse(CaseUnreachable, msgUnreachable)
 	}
-	if link, lerr := util.IsLinkLike(abs); lerr != nil {
+	if link, lerr := linkLike(abs); lerr != nil {
 		return nil, refuse(CaseUnreachable, msgUnreachable)
 	} else if link {
 		return nil, linkRefusal(abs)

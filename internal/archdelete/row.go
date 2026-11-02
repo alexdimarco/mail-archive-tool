@@ -7,17 +7,17 @@ import (
 	"path/filepath"
 	"sync"
 
-	"mail-archive-tool/internal/util"
 )
 
 // RowRefusal is what a row of Your archives says about Delete before any plan is made
 // (docs/design-archive-delete.md §10: Delete's enabled state comes from §4's archive test
 // and §7, not from the row's greyed state, and when it is disabled its title says why in
-// §7's words; MA-975): a Desktop started with -out naming the folder, a folder that is or
-// holds a link, a protected folder (§7's protected row, another known archive among them),
-// the folder not reachable, the capture of the current archive registered under its name,
-// the archive test (not an archive, a mixed folder, a manifest it cannot read or a newer
-// one), a backup running on it. An unfinished delete of the folder in deps.Log (§5.4) is
+// §7's words; MA-975), in the plan's order: the folder a link, a protected folder (§7's
+// protected row, another known archive among them), a Desktop started with -out naming the
+// folder, a backup running on it, its manifest a link, the folder not reachable, the archive
+// test (not an archive, a mixed folder, a manifest it cannot read or a newer one), the
+// capture of the current archive registered under its name. It does not walk the folder, so
+// a link further inside it is the plan's to refuse. An unfinished delete of the folder in deps.Log (§5.4) is
 // never refused here but for a link or a protected folder, which the plan refuses as well:
 // Delete again finishes it, and the plan decides. knownArchive skips the archive test when
 // the caller's own read already found an archive (archindex's bounded read). nil: Delete is
@@ -63,11 +63,21 @@ func (r *RowsCheck) State(folder string, knownArchive bool) (*Unfinished, error)
 	}
 	// A link, or a protected folder, the plan refuses whatever else holds, so the row does not
 	// offer Delete for it (del-s3a-A2-02); and in planArchive's order — the folder a link, then
-	// protected, then started with -out, then the manifest itself a link — so a folder that is
-	// more than one says the same on the row and in the plan (del-s3a re-verification, R4).
+	// protected, then started with -out, then busy, then the manifest itself a link, then the
+	// archive test, then the capture registered under its name — so a folder that is more than
+	// one says the same on the row and in the plan (del-s3a re-verification, R4; core-plan-record
+	// finding 3). A link check that fails is the plan's answer too: the folder not reachable, its
+	// manifest a link.
 	fi, lerr := os.Lstat(abs)
 	if lerr == nil {
-		if link, err := util.IsLinkLike(abs); err == nil && link {
+		link, err := linkLike(abs)
+		if err != nil {
+			if u != nil {
+				return u, nil // the plan's §5.4 re-run, as for a folder not reachable
+			}
+			return nil, refuse(CaseUnreachable, msgUnreachable)
+		}
+		if link {
 			return u, linkRefusal(abs)
 		}
 		if fi.IsDir() {
@@ -79,12 +89,15 @@ func (r *RowsCheck) State(folder string, knownArchive bool) (*Unfinished, error)
 	if deps.Settings.LaunchOut != "" && sameFolderStat(stat, deps.Settings.LaunchOut, abs, goos) {
 		return u, refuse(CaseLaunchOut, msgLaunchOut)
 	}
+	if u == nil && lerr == nil && fi.IsDir() && deps.Busy != nil && deps.Busy(abs) {
+		return nil, refuse(CaseBusy, "%s", busyMessage(abs))
+	}
 	if lerr == nil && fi.IsDir() {
 		// The plan's archive test refuses a manifest that is a link, a known archive's too
 		// (classifyWith), which the row's knownArchive skips.
 		mp := filepath.Join(abs, manifestName)
 		if mfi, err := os.Lstat(mp); err == nil {
-			if link, err := util.IsLinkLike(mp); mfi.Mode()&fs.ModeSymlink != 0 || (err == nil && link) {
+			if link, err := linkLike(mp); mfi.Mode()&fs.ModeSymlink != 0 || err != nil || link {
 				return u, linkRefusal(mp)
 			}
 		}
@@ -99,9 +112,6 @@ func (r *RowsCheck) State(folder string, knownArchive bool) (*Unfinished, error)
 		}
 		return nil, refuse(CaseNotArchive, msgNotArchive)
 	}
-	if err := checkBackupFor(abs, deps); err != nil {
-		return nil, err
-	}
 	if !knownArchive {
 		k, err := rowArchiveTest(abs)
 		if err != nil {
@@ -111,8 +121,8 @@ func (r *RowsCheck) State(folder string, knownArchive bool) (*Unfinished, error)
 			return nil, refuse(CaseNotArchive, msgNotArchive)
 		}
 	}
-	if deps.Busy != nil && deps.Busy(abs) {
-		return nil, refuse(CaseBusy, msgBusy)
+	if err := checkBackupFor(abs, deps); err != nil {
+		return nil, err
 	}
 	return nil, nil
 }
