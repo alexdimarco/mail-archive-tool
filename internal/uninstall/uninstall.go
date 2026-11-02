@@ -66,6 +66,37 @@ func (e *DeleteNotFinishedError) Error() string {
 		strings.Join(names, "; "), e.Log)
 }
 
+// LogUnreadableError stops an uninstall, nothing removed, when deletions.log cannot be read to
+// check for a delete that did not finish (fail closed, U-C4's rule). Its advice is for the
+// cause (del-s5 re-verification, residual 5): an account that cannot read the log, a log other
+// accounts can read, one larger than MailArchive writes, a name that is not an ordinary file,
+// or anything else.
+type LogUnreadableError struct {
+	Log string
+	Err error
+}
+
+func (e *LogUnreadableError) Error() string {
+	return fmt.Sprintf("could not read MailArchive's deletion log %s to check for a delete that did not finish, so uninstall stopped before removing anything: %s: %v", e.Log, e.advice(), e.Err)
+}
+
+func (e *LogUnreadableError) Unwrap() error { return e.Err }
+
+// advice is what to do about the cause, ending "then uninstall again".
+func (e *LogUnreadableError) advice() string {
+	switch {
+	case errors.Is(e.Err, archdelete.ErrLogNotRegular):
+		return "it is not an ordinary file (a link, a folder or a device), so MailArchive does not read it. Put the log file itself there, or remove what is there, then uninstall again"
+	case errors.Is(e.Err, archdelete.ErrLogTooLarge):
+		return "it is larger than MailArchive ever writes, so it is not MailArchive's own log. Copy it somewhere safe if you need it, delete it, then uninstall again"
+	case errors.Is(e.Err, util.ErrReadableByOthers):
+		return fmt.Sprintf("other accounts on this computer can read it, so MailArchive does not trust it. Run chmod 600 %s, then uninstall again", e.Log)
+	case errors.Is(e.Err, fs.ErrPermission):
+		return "make sure your account can read it, then uninstall again"
+	}
+	return "check that the drive it is on is connected and working, then uninstall again"
+}
+
 // pendingDeletes is archdelete.PendingDeletes (a seam only so a test can stand in for a delete
 // that starts between the plan and the removal).
 var pendingDeletes = archdelete.PendingDeletes
@@ -76,7 +107,7 @@ var pendingDeletes = archdelete.PendingDeletes
 func checkNoPendingDelete(path string) error {
 	pending, err := pendingDeletes(path, runtime.GOOS)
 	if err != nil {
-		return fmt.Errorf("could not read MailArchive's deletion log %s to check for a delete that did not finish, so uninstall stopped before removing anything: make sure your account can read it, then uninstall again: %w", path, err)
+		return &LogUnreadableError{Log: path, Err: err}
 	}
 	if len(pending) > 0 {
 		return &DeleteNotFinishedError{Log: path, Folders: pending}

@@ -176,6 +176,21 @@ func appendLog(path string, l logLine) error {
 	return nil
 }
 
+// Why a deletion log could not be read, beside util.ErrReadableByOthers and fs.ErrPermission, so
+// a caller can say what to do about it (uninstall, del-s5 re-verification residual 5): a log
+// larger than MailArchive reads, and a name that is not an ordinary file (a link, a folder, a
+// device). errors.Is finds them in readLog's errors; the error's text is unchanged.
+var (
+	ErrLogTooLarge   = errors.New("the deletion log is larger than MailArchive reads")
+	ErrLogNotRegular = errors.New("the deletion log is not an ordinary file")
+)
+
+// logReadError is a read of the log that failed, with its kind when one is known.
+type logReadError struct{ err, kind error }
+
+func (e *logReadError) Error() string   { return e.err.Error() }
+func (e *logReadError) Unwrap() []error { return []error{e.err, e.kind} }
+
 // readLog reads every line of the log; an absent log has none. A line that does
 // not parse is passed over.
 func readLog(path string) ([]logLine, error) {
@@ -183,6 +198,14 @@ func readLog(path string) ([]logLine, error) {
 	if err != nil {
 		if errors.Is(err, os.ErrNotExist) {
 			return nil, nil
+		}
+		if fi, lerr := os.Lstat(path); lerr == nil {
+			switch {
+			case !fi.Mode().IsRegular():
+				return nil, &logReadError{err, ErrLogNotRegular}
+			case fi.Size() > logCap:
+				return nil, &logReadError{err, ErrLogTooLarge}
+			}
 		}
 		return nil, err
 	}
