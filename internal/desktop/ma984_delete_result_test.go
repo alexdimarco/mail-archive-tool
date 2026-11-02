@@ -161,7 +161,8 @@ func TestADeletesResultIsShownSavableAndDismissable(t *testing.T) {
 		t.Error("the page does not draw the held results when it loads")
 	}
 	panel := jsFunc(t, "delPanel")
-	if !strings.Contains(panel, "if(d.id){done(true);delClose();delShowHeld(d);delAfterDelete(d);return;}") {
+	// Its own panel goes, never another row's (del-s3b leftover 1; behaviour run in MA-986's twoPanels).
+	if !strings.Contains(panel, "if(d.id){done(true);w.remove();delShowHeld(d);delAfterDelete(d);return;}") {
 		t.Error("a delete's reply that names a held result is not shown at once")
 	}
 }

@@ -62,6 +62,18 @@ func TestOnlyTheLastDeleteClickedOpensItsPanel(t *testing.T) {
 }
 
 // covers: MA-986, R36, S41
+// A Delete… opened on another row while a delete waits for its reply leaves that delete's panel
+// and its "Keep this page open" note alone, and the delete's reply closes only its own panel, never
+// the one opened meanwhile (del-s3b leftover 1); each panel's box keeps an id of its own. Positive
+// twin within: the reply still closes its own panel and shows its result, and a delete refused
+// once it answered waits no more, so the next panel opened closes it.
+func TestADeletesReplyClosesOnlyItsOwnPanel(t *testing.T) {
+	if passed := runPageScenario(t, "twoPanels"); len(passed) != 5 {
+		t.Errorf("the twoPanels scenario passed %d of its 5 checks: %v", len(passed), passed)
+	}
+}
+
+// covers: MA-986, R36, S41
 // A delete's reply marks every row the server says is that folder and, when the server says it
 // was the page's own archive, takes Archive now and Run now off the page — but not for a delete
 // refused after its start, which removed nothing (§3.1 "Where the result sits", §5.4;

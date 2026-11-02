@@ -22,7 +22,7 @@ const delPageText={unfinished:delUnfinishedText,deleted:'This archive was delete
 // delWait: a reload the page started was held; delInFlight: deletes this page has asked for whose
 // reply has not come; delSeq: the last Delete… or Remove from list clicked (an earlier one's
 // slower reply opens nothing, MA-986).
-var delWait=false,delInFlight=0,delSeq=0;
+var delWait=false,delInFlight=0,delSeq=0,delBoxSeq=0;
 // reloadPage is every reload the page starts itself (§3.1 After a Delete, MA-984): while a
 // delete's result is held on the page, or a delete asked for here has not answered (its reply
 // would be lost, MA-986), it does not reload and says the page refreshes when the result is
@@ -34,8 +34,10 @@ function reloadPage(){
 function delPost(path,body){return fetch(path,{method:'POST',headers:{'Content-Type':'application/json','X-CSRF-Token':csrf},body:JSON.stringify(body)}).then(r=>r.json());}
 function delEl(tag,text,cls){const e=document.createElement(tag);if(text!==undefined&&text!==null)e.textContent=text;if(cls)e.className=cls;return e;}
 function delButton(text,cls){const b=delEl('button',text,cls);b.type='button';return b;}
-// One panel at a time: a delete's panel or Remove from list's question closes any other one.
-function delClose(){document.querySelectorAll('.delete-panel,.unlist-ask').forEach(x=>x.remove());}
+// One panel at a time: a delete's panel or Remove from list's question closes any other one — but
+// never the panel of a delete still waiting for its reply (data-delete-waiting), whose "Keep this
+// page open" note and result belong to that delete (del-s3b leftover 1).
+function delClose(){document.querySelectorAll('.delete-panel,.unlist-ask').forEach(x=>{if(!x.hasAttribute('data-delete-waiting'))x.remove();});}
 // The server's match (archdelete.NameMatches): not empty, both sides NFC, no case folding, no trimming.
 function delNameMatches(typed,name){return typed!==''&&typed.normalize('NFC')===name.normalize('NFC');}
 // A file saved through the browser, as the fingerprint receipt is: a string as UTF-8, bytes as they are.
@@ -173,8 +175,10 @@ function delPanel(p){
   sv.addEventListener('click',()=>{delSaveFile(p.planName,p.planText);});
   sa.append(sv);w.append(sa);
   line(p.logLine,'card-sub');
-  // One panel at a time (delPlan), so this id is its box's alone and its label names it.
-  const lab=delEl('label',p.typeLine);const input=document.createElement('input');input.type='text';input.id='delTyped';input.autocomplete='off';input.spellcheck=false;lab.htmlFor='delTyped';
+  // A delete waiting for its reply keeps its panel while another opens, so each box has an id of
+  // its own and its label names it.
+  const boxId='delTyped'+(++delBoxSeq);
+  const lab=delEl('label',p.typeLine);const input=document.createElement('input');input.type='text';input.id=boxId;input.autocomplete='off';input.spellcheck=false;lab.htmlFor=boxId;
   w.append(lab,input);
   const hint=delEl('span',"doesn't match yet",'name-hint');hint.setAttribute('aria-live','polite');
   const go=delButton('Delete permanently','btn danger-fill');go.disabled=true;
@@ -186,14 +190,15 @@ function delPanel(p){
   cancel.addEventListener('click',()=>{w.remove();const n=$('settingsNote');if(n){n.hidden=false;n.textContent='Nothing was deleted.';}});
   go.addEventListener('click',async()=>{
     const done=busy(go,'Deleting…',msg,'Deleting this archive. Keep this page open until its result shows here…');
-    delInFlight++;
+    delInFlight++;w.setAttribute('data-delete-waiting','');
     try{const d=await delPost('api/archive/delete',{token:p.token,typed:input.value,unrecorded:!!(box&&box.checked),drawnFor:drawnFor});
-      if(d.id){done(true);delClose();delShowHeld(d);delAfterDelete(d);return;}
+      // Its own panel goes, never another row's opened meanwhile (del-s3b leftover 1).
+      if(d.id){done(true);w.remove();delShowHeld(d);delAfterDelete(d);return;}
       // A refusal that spent the plan (planUsed): Delete permanently could only fail now, so it
       // stays disabled and the reply says to click Delete… again (del-s3b conformance gap 3).
       done(!!d.planUsed);if(!d.planUsed)match();msg.hidden=false;msg.textContent=d.error||'Could not delete this archive.';
     }catch(e){done();match();msg.hidden=false;msg.textContent='Error: '+e;}
-    finally{delInFlight--;if(delWait&&delInFlight===0&&!document.querySelector('[data-held-id]'))reloadPage();}
+    finally{delInFlight--;w.removeAttribute('data-delete-waiting');if(delWait&&delInFlight===0&&!document.querySelector('[data-held-id]'))reloadPage();}
   });
   return w;
 }

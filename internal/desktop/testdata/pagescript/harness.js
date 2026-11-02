@@ -233,6 +233,36 @@ const scenarios = {
     const ids = doc.root.all().filter(e => e.tagName === 'INPUT' && /^delTyped/.test(e.id)).map(e => e.id);
     check(new Set(ids).size === ids.length, 'no two delete boxes share an id', ids.join(','));
   },
+  // A Delete… opened on another row while a delete waits for its reply: the waiting delete keeps
+  // its panel and its "Keep this page open" note, and its reply closes only its own panel, never
+  // the one opened meanwhile (del-s3b leftover 1).
+  async twoPanels() {
+    page([['D:\\Mail\\A', 'other'], ['E:\\Mail\\B', 'other'], ['F:\\Cur', 'current']], 'F:\\Cur');
+    boot(); await wait(30);
+    const [a, b] = doc.querySelectorAll('.archive-row');
+    replies['api/archive/delete/plan'] = x => plan(x.path, x.path === a.dataset.path ? 'A' : 'B', x.path === a.dataset.path ? 'TOK-A' : 'TOK-B');
+    replies['api/archive/delete'] = result({ id: 'HA', row: 'D:\\Mail\\A', folder: 'D:\\Mail\\A', rowRemoved: true, rows: ['D:\\Mail\\A'] });
+    delays['api/archive/delete'] = 200;
+    a.querySelector('[data-delete-archive]').click(); await wait(40);
+    await typeAndDelete(a, 'A'); await wait(20);
+    b.querySelector('[data-delete-archive]').click(); await wait(40);
+    const keep = a.querySelector('.delete-panel [role=alert]');
+    check(!!keep && !keep.hidden && /Keep this page open/.test(keep.textContent), "the waiting delete keeps its panel and its 'Keep this page open' note");
+    const lab = b.querySelector('.delete-panel label');
+    const target = lab && doc.getElementById(lab.htmlFor);
+    check(!!target && target.closest('li') === b, "the other row's panel opens, its label naming its own box");
+    await wait(300);
+    check(!a.querySelector('.delete-panel') && !!doc.querySelector('[data-held-id="HA"]'), "the delete's reply closes its own panel and shows its result");
+    check(!!b.querySelector('.delete-panel'), 'the panel opened meanwhile stays open');
+    // A delete refused once it answered waits no more: the next panel opened closes its panel.
+    replies['api/archive/delete'] = { ok: false, error: 'Could not write the log. Click Delete… again to try again.', planUsed: true };
+    delays['api/archive/delete'] = 10;
+    await typeAndDelete(b, 'B'); await wait(40);
+    replies['api/archive/unlist'] = { ok: true, ask: true, question: 'Remove from list? The folder and its files are kept.', named: [] };
+    const cur = doc.querySelectorAll('.archive-row')[2];
+    cur.querySelector('[data-unlist-archive]').click(); await wait(40);
+    check(!b.querySelector('.delete-panel') && !!cur.querySelector('.unlist-ask'), 'a refused delete\'s panel closes when another opens');
+  },
   // A delete stopped at step 2 of a folder listed under two spellings, one the page's archive:
   // every spelling the server names is marked, and the page's Archive now and Run now go (A1-02).
   async alias() {
