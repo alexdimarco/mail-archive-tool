@@ -12,9 +12,18 @@ import (
 	"sync"
 	"sync/atomic"
 	"testing"
+	"time"
 
 	"mail-archive-tool/internal/state"
+	"mail-archive-tool/internal/util"
 )
+
+// saveOver renames tmp over dst as a save of the manifest does (state's replaceFile): on Windows a
+// rename refused while a reader holds the file open is waited out within util.RenameRetryBudget.
+func saveOver(tmp, dst string) error {
+	inUse := func(err error) bool { return runtime.GOOS == "windows" && util.WindowsRenameInUse(err) }
+	return util.ReplaceRetrying(tmp, dst, os.Rename, inUse, time.Sleep)
+}
 
 // wholeReadKind is the kind a whole state.LoadFrom of data gives, with ok false when LoadFrom
 // refuses it: the oracle the walk must agree with (loadFromKind's, on bytes in place of a folder).
@@ -220,6 +229,15 @@ func TestReadsDuringSavesSettleOnTheManifestThere(t *testing.T) {
 			for !stop.Load() {
 				_ = Kind(dir)
 				_ = IsArchive(dir)
+				// On Windows each look holds the manifest open for a moment, and a rename over a file
+				// held open is refused, so eight readers looking every millisecond or less keep a save
+				// refused past its wait (once in ten runs each way on the lab VM, 2026-11-02; with no
+				// reader no rename was refused, and one reader every 20 ms made the longest save 34 ms).
+				// No Desktop reads in such a loop: there each reader pauses between looks, and the
+				// reads stay concurrent with the saves.
+				if runtime.GOOS == "windows" {
+					time.Sleep(10 * time.Millisecond)
+				}
 			}
 		}()
 	}
@@ -232,7 +250,7 @@ func TestReadsDuringSavesSettleOnTheManifestThere(t *testing.T) {
 		if err := os.WriteFile(tmp, body, 0o600); err != nil {
 			t.Fatal(err)
 		}
-		if err := os.Rename(tmp, filepath.Join(dir, manifestName)); err != nil {
+		if err := saveOver(tmp, filepath.Join(dir, manifestName)); err != nil {
 			t.Fatal(err)
 		}
 	}
@@ -254,7 +272,7 @@ func TestReadsDuringSavesSettleOnTheManifestThere(t *testing.T) {
 	if err := os.WriteFile(tmp, cloudBytes, 0o600); err != nil {
 		t.Fatal(err)
 	}
-	if err := os.Rename(tmp, filepath.Join(dir, manifestName)); err != nil {
+	if err := saveOver(tmp, filepath.Join(dir, manifestName)); err != nil {
 		t.Fatal(err)
 	}
 	if got := Kind(dir); got != "m365" {
