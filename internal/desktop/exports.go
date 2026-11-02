@@ -244,8 +244,10 @@ func (d *dashboard) startAction(w http.ResponseWriter, r *http.Request) {
 	started := make(chan string, 1)
 	run.OnStart = func(id string) { started <- id }
 	slot := &exportSlot{run: run, src: src, started: d.now(), selected: len(prev.plan.Messages), mailbox: mailbox, archive: prev.bind.arch, done: make(chan struct{})}
+	var archFI os.FileInfo
 	if prev.bind.arch {
 		slot.archiveDir = prev.bind.path
+		archFI = statOrNil(slot.archiveDir) // asked of the disk before ex.mu, which other requests wait on
 	}
 
 	ex.mu.Lock()
@@ -259,7 +261,7 @@ func (d *dashboard) startAction(w http.ResponseWriter, r *http.Request) {
 	// An archive being deleted is not exported (MA-979, del-s3a-A4-03): checked under the lock
 	// that makes this the running export, which a delete's busy check reads, so of an export and
 	// a delete of one folder the later one always sees the earlier.
-	if slot.archiveDir != "" && d.running.of(slot.archiveDir) != nil {
+	if slot.archiveDir != "" && d.running.ofStat(slot.archiveDir, archFI) != nil {
 		ex.mu.Unlock()
 		if c, ok := src.(io.Closer); ok {
 			c.Close()

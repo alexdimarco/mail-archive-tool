@@ -134,16 +134,37 @@ func (u *deletesUnderWay) of(path string) *deleteUnderWay {
 	if u == nil || path == "" {
 		return nil
 	}
+	items := u.list()
+	if len(items) == 0 {
+		return nil
+	}
+	return match(items, path, statOrNil(path))
+}
+
+// ofStat is of with the folder's identity already asked of the file system (fi, nil when it
+// cannot be read): it asks nothing of the disk, so it is the check made under a lock other
+// requests wait on — an offline network folder then stalls only the request that asked it
+// (del-s3a re-verification, R5).
+func (u *deletesUnderWay) ofStat(path string, fi os.FileInfo) *deleteUnderWay {
+	if u == nil || path == "" {
+		return nil
+	}
+	return match(u.list(), path, fi)
+}
+
+// list are the deletes under way now.
+func (u *deletesUnderWay) list() []*deleteUnderWay {
 	u.mu.Lock()
+	defer u.mu.Unlock()
 	items := make([]*deleteUnderWay, 0, len(u.items))
 	for _, it := range u.items {
 		items = append(items, it)
 	}
-	u.mu.Unlock()
-	if len(items) == 0 {
-		return nil
-	}
-	fi := statOrNil(path)
+	return items
+}
+
+// match is the one of items that is the folder at path (fi: its identity, nil when unknown).
+func match(items []*deleteUnderWay, path string, fi os.FileInfo) *deleteUnderWay {
 	for _, it := range items {
 		if it.is(path, fi) {
 			return it

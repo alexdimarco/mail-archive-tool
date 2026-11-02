@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"net/http"
+	"os"
 	"path/filepath"
 	"sort"
 	"strings"
@@ -809,13 +810,15 @@ func (ws *workspace) startJob(fn func(ctx context.Context, job *wsPreviewJob) (*
 	d := ws.d
 	ctx, cancel := context.WithCancel(d.life.Context())
 	job := &wsPreviewJob{id: randomID(16), cancel: cancel, arch: bind.arch, state: "running", retry: retry}
+	var fi os.FileInfo
 	if bind.arch {
 		job.path = bind.path
+		fi = statOrNil(bind.path) // asked of the disk before ws.mu, which other requests wait on
 	}
 	ws.mu.Lock()
 	// An archive being deleted is not previewed (MA-979): checked under the lock that makes this
 	// the job, which a delete's busy check reads, so one of the two always sees the other.
-	deleting := bind.arch && d.running.of(bind.path) != nil
+	deleting := bind.arch && d.running.ofStat(bind.path, fi) != nil
 	old := ws.job
 	ws.job, ws.prev = job, nil
 	if deleting {

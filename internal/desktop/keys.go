@@ -499,9 +499,13 @@ type deleteMark struct {
 	keys []string
 }
 
+// statFolder asks the file system about a folder: a seam, so a test sees when that happens (an
+// offline network folder stalls there; fault injection only).
+var statFolder = os.Stat
+
 // statOrNil is the folder's os.Stat, nil when it cannot be read.
 func statOrNil(p string) os.FileInfo {
-	fi, err := os.Stat(p)
+	fi, err := statFolder(p)
 	if err != nil {
 		return nil
 	}
