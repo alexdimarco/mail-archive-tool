@@ -49,21 +49,54 @@ func Dir() (string, error) {
 	if runtime.GOOS == "windows" {
 		la := os.Getenv("LOCALAPPDATA")
 		if la == "" {
-			return "", fmt.Errorf("%w: %%LOCALAPPDATA%% is not set", ErrNoAccountFolder)
+			return "", accountFolderErr(errors.New("%LOCALAPPDATA% is not set"), true)
 		}
 		return filepath.Join(la, "MailArchiveDesktop"), nil
 	}
 	d, err := os.UserConfigDir()
 	if err != nil {
-		return "", fmt.Errorf("%w: %w", ErrNoAccountFolder, err)
+		return "", accountFolderErr(err, homeUnset(runtime.GOOS, os.Getenv))
 	}
 	return filepath.Join(d, "mailarchive"), nil
 }
 
 // ErrNoAccountFolder is Dir's error when the per-account folder cannot be determined (no HOME, no
-// %LOCALAPPDATA%), so a caller can say so in plain words (the 1.5.3 re-walk's N20); its text is
-// what Dir said before.
+// %LOCALAPPDATA%, a relative XDG_CONFIG_HOME), so a caller can say so in plain words (the 1.5.3
+// re-walk's N20); its text is what Dir said before.
 var ErrNoAccountFolder = errors.New("cannot determine your per-account folder")
+
+// ErrNoHomeFolder is also Dir's error when that is because no home folder is set (homeUnset), and
+// only then: another cause, such as a relative XDG_CONFIG_HOME with HOME set, keeps its own words
+// (the settle pass's LOW-5). Its text is never shown; Dir's error says ErrNoAccountFolder's.
+var ErrNoHomeFolder = errors.New("no home folder is set")
+
+// noHomeErr is an ErrNoAccountFolder error that is also ErrNoHomeFolder, its text unchanged.
+type noHomeErr struct{ error }
+
+func (e noHomeErr) Unwrap() error        { return e.error }
+func (e noHomeErr) Is(target error) bool { return target == ErrNoHomeFolder }
+
+// accountFolderErr is Dir's error for cause: ErrNoAccountFolder, and ErrNoHomeFolder when noHome.
+func accountFolderErr(cause error, noHome bool) error {
+	err := fmt.Errorf("%w: %w", ErrNoAccountFolder, cause)
+	if noHome {
+		return noHomeErr{err}
+	}
+	return err
+}
+
+// homeUnset says the folder Dir uses on goos cannot be found because no home folder is set: no
+// LOCALAPPDATA on Windows, no HOME on macOS, and on Linux and the other Unixes neither
+// XDG_CONFIG_HOME nor HOME (a relative XDG_CONFIG_HOME is a cause of its own).
+func homeUnset(goos string, getenv func(string) string) bool {
+	switch goos {
+	case "windows":
+		return getenv("LOCALAPPDATA") == ""
+	case "darwin", "ios":
+		return getenv("HOME") == ""
+	}
+	return getenv("HOME") == "" && getenv("XDG_CONFIG_HOME") == ""
+}
 
 // ServeFileName is the instance file of a `serve` of the archive at out, keyed by
 // a hash of its absolute path, in Dir [CC18].

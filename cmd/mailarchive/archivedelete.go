@@ -112,8 +112,9 @@ const noHomeText = "MailArchive could not find your home folder, so it cannot te
 
 func (c *cannotTellError) Error() string {
 	if c.noHome {
-		// As the settle pass's G7 words name it ("HOME, or AppData on Windows").
-		return noHomeText + "; nothing was changed. Check that your home folder is set (HOME, or AppData on Windows), then try again."
+		// Windows's folder named as Explorer shows it, Local AppData, the one MailArchive uses there
+		// (the settle pass's LOW-5; "AppData" alone could be read as the roaming one).
+		return noHomeText + "; nothing was changed. Check that your home folder is set (HOME, or Local AppData on Windows), then try again."
 	}
 	return fmt.Sprintf("MailArchive cannot tell whether MailArchive Desktop is running for your account (%s), so nothing was changed.", c.cause)
 }
@@ -158,7 +159,7 @@ func desktopRunning() error {
 }
 
 func cannotTell(err error) error {
-	return &cannotTellError{cause: util.StripControl(err.Error()), noHome: errors.Is(err, instance.ErrNoAccountFolder)}
+	return &cannotTellError{cause: util.StripControl(err.Error()), noHome: errors.Is(err, instance.ErrNoHomeFolder)}
 }
 
 // desktopLockSession is the logon session a Desktop's lock file is for: "" for desktop.lock, N
