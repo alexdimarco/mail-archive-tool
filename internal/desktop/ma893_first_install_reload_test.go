@@ -84,8 +84,19 @@ func TestAFirstInstallKeepsItsNoteAcrossTheRedraw(t *testing.T) {
 			t.Errorf("the page script's deletion-record mark is not guarded: %q missing", guarded)
 		}
 	}
-	if n := strings.Count(dashboardJS, "sessionStorage."); n != 5 {
-		t.Errorf("the page script calls storage %d times, want the 5 guarded ones", n)
+	// And Remove from list's words kept for its reload (MA-1020, amended 2026-11-02): its set, its
+	// read and its removal, each inside a try, named here so each new call is checked as guarded.
+	for _, guarded := range []string{"try{sessionStorage.setItem(delUnlistedKey,said);}catch(e){}",
+		"try{const said=sessionStorage.getItem(delUnlistedKey);\n  if(said){sessionStorage.removeItem(delUnlistedKey);"} {
+		if !strings.Contains(dashboardJS, guarded) {
+			t.Errorf("the page script's kept Remove from list note is not guarded: %q missing", guarded)
+		}
+	}
+	if !strings.Contains(dashboardJS, "else{const top=$('heldDeletes');if(top)top.before(note);}}\n}catch(e){}") {
+		t.Error("the kept Remove from list note's read is not closed by its catch")
+	}
+	if n := strings.Count(dashboardJS, "sessionStorage."); n != 8 {
+		t.Errorf("the page script calls storage %d times, want the 8 guarded ones", n)
 	}
 }
 

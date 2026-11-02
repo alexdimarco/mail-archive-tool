@@ -29,7 +29,8 @@ var helpDeleteSentences = []string{
 	// The two partial results whose remedy is not Delete again (design §8 (a), §5.4;
 	// del-s5-A1-03, A2-05).
 	"Two results are different, and say so: if the only files left are mail copies you ticked to delete, the archive is already off Your archives, so there is no Delete… to click again: delete those files by hand. If it says the folder still holds files the delete can no longer identify, delete them by hand, or use Remove from list.",
-	"What Delete does not reach: " + archdelete.DoesNotReach + ".",
+	// "What Delete does not reach" names only this platform's items since MA-1019 (B4): pinned
+	// whole per platform below (helpReach…), each with the other platforms' items refused.
 	"Each delete adds a line to this computer's deletion log (deletions.log), which keeps the date, the folder and what was removed. Uninstalling MailArchive removes that log: copy deletions.log first if you need it to check saved deletion records.",
 	// Removing an archive from the list
 	"Remove from list takes an archive off Your archives and keeps its folder and every file in it, for example an archive you now keep somewhere else, or one on a drive you no longer use.",
@@ -49,22 +50,32 @@ var helpDeleteNever = []string{
 	"is what forgets those",
 }
 
+// "What Delete does not reach", each platform's (MA-1019, amending MA-1004 on 2026-11-02): §2's
+// line with only that platform's backup and restore items.
+const (
+	helpReachSync = "What Delete does not reach: a sync service's online recycle bin (OneDrive keeps deleted files about 30 days on a personal account, up to 93 on a work account) and version history; "
+	helpReachRest = "copies, exports or decrypted copies made elsewhere; sync tools other than those detected."
+)
+
 // helpDeletePlatforms are each platform's own sentences in the two parts, and what each must not say.
 var helpDeletePlatforms = []helpPlatform{
 	{goos: "windows", want: []string{
+		helpReachSync + "Windows File History and Previous Versions; " + helpReachRest,
 		"If the result says Not fully deleted, the result names the files that could not be removed and what to do. On Windows this is usually a program holding a file open, such as Outlook, an antivirus or Windows Search: close it, then click Delete… again on the archive's row. If the archive's drive was unplugged, reconnect it first.",
 		"Synced folders: if the archive's folder is in OneDrive or in another sync service's folder that MailArchive recognises (Dropbox, Google Drive, iCloud Drive, Box and others), the plan says so. Deleting it here also deletes it there, and the service may keep it in its own recycle bin: empty that too.",
 		"A SharePoint library synced to this computer is not recognised yet: if the archive is in one, empty its recycle bin on SharePoint too.",
-	}, not: []string{"Library/CloudStorage", "the Dock", "System Settings", "a folder you may not change"}},
+	}, not: []string{"Library/CloudStorage", "the Dock", "System Settings", "a folder you may not change", "Time Machine"}},
 	{goos: "darwin", want: []string{
+		helpReachSync + "macOS Time Machine; " + helpReachRest,
 		"If the result says Not fully deleted, the result names the files that could not be removed and what to do. This is usually a drive that was unplugged (reconnect it), or a file macOS did not let MailArchive remove (a locked file, or a read-only drive): fix that, then click Delete… again on the archive's row.",
 		"Synced folders: if the archive's folder is in iCloud Drive, in a folder under Library/CloudStorage (OneDrive, Dropbox, Google Drive and others) or in another sync service's folder that MailArchive recognises, the plan says so. Deleting it here also deletes it there, and the service may keep it in its own recycle bin: empty that too.",
 		"If your Desktop and Documents folders are kept in iCloud, an archive in them is not recognised as synced: empty iCloud Drive's Recently Deleted too.",
-	}, not: []string{"Windows Search", "SharePoint", "taskbar", "press F5"}},
+	}, not: []string{"Windows Search", "SharePoint", "taskbar", "press F5", "File History"}},
 	{goos: "linux", want: []string{
+		helpReachSync + helpReachRest,
 		"If the result says Not fully deleted, the result names the files that could not be removed and what to do. This is usually a drive that was unplugged (reconnect it), or a file the system did not let MailArchive remove (a locked file, a folder you may not change, or a read-only drive): fix that, then click Delete… again on the archive's row.",
 		"Synced folders: if the archive's folder is in a sync service's folder that MailArchive recognises (Dropbox, Nextcloud, Google Drive and others), the plan says so. Deleting it here also deletes it there, and the service may keep it in its own recycle bin: empty that too.",
-	}, not: []string{"Windows Search", "SharePoint", "Library/CloudStorage", "the Dock", "taskbar"}},
+	}, not: []string{"Windows Search", "SharePoint", "Library/CloudStorage", "the Dock", "taskbar", "File History", "Time Machine"}},
 }
 
 // covers: MA-1004, R36, R12, S41

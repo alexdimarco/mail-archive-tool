@@ -70,6 +70,7 @@ class El {
   click() { if (this.disabled) return; (this.listeners.click || []).forEach(f => f({ preventDefault() {} })); if (this.onclick) this.onclick(); }
   fire(ev) { (this.listeners[ev] || []).forEach(f => f({})); }
   focus() { doc.activeElement = this; }
+  scrollIntoView() { scrolled.push(this); }
   all() { const r = []; const walk = n => n.children.forEach(c => { if (c.tagName !== '#TEXT') { r.push(c); walk(c); } }); walk(this); return r; }
   matches(sel) { return sel.split(',').some(s => matchComplex(this, s.trim())); }
   querySelectorAll(sel) { const r = this.all().filter(e => e.matches(sel)); r.item = i => r[i]; return r; }
@@ -161,7 +162,7 @@ function page(rows, drawnFor, held) {
 }
 
 // ---- the browser around it -------------------------------------------------------------
-const posts = [], gets = [];
+const posts = [], gets = [], scrolled = [];
 let reloads = 0;
 const replies = {}, delays = {};
 const store = {};
@@ -438,6 +439,58 @@ const scenarios = {
       const p = posts.find(x => x.path === path);
       check(!!p && p.body && p.body.drawnFor === 'E:\\Cur', path + ' names the archive the page was drawn for');
     }
+  },
+  // The panel's words (MA-1019, B6, B7, B14): "1 file" and "N files", the kept files by name with
+  // "and N more" past those the plan sent, and the folder's name in the prompt on one line.
+  async panelWords() {
+    page([['D:\\Mail\\Archive-Four', 'other'], ['E:\\Cur', 'current']], 'E:\\Cur');
+    boot(); await wait(30);
+    const a = doc.querySelectorAll('.archive-row')[0];
+    const names = Array.from({ length: 10 }, (_, i) => 'k' + (i + 1));
+    replies['api/archive/delete/plan'] = Object.assign(plan('D:\\Mail\\Archive-Four', 'Archive-Four', 'TOK'),
+      { files: 1, kept: 12, keptNames: names, typeLine: "Type the folder's name, Archive-Four, to delete it (capital letters count)" });
+    a.querySelector('[data-delete-archive]').click(); await wait(40);
+    const said = t => a.querySelector('.delete-panel').all().some(e => e.tagName === 'P' && e.textContent === t);
+    check(said('Delete removes 1 file (10 bytes).'), 'one file is "1 file"');
+    check(said("Kept (not the archive's): " + names.join(', ') + ' and 2 more'), 'the kept files are named, and the rest counted');
+    const lab = a.querySelector('.delete-panel label'), nm = lab && lab.querySelector('.del-name');
+    check(!!nm && nm.textContent === 'Archive-Four' && lab.textContent === "Type the folder's name, Archive-Four, to delete it (capital letters count)",
+      "the prompt keeps the folder's name in one unbreakable piece");
+    replies['api/archive/delete/plan'] = Object.assign(plan('D:\\Mail\\Archive-Four', 'Archive-Four', 'TOK2'), { files: 3, kept: 1, keptNames: ['my-notes.txt'] });
+    a.querySelector('[data-delete-archive]').click(); await wait(40);
+    check(said('Delete removes 3 files (10 bytes).') && said("Kept (not the archive's): my-notes.txt"), 'more files are "N files", and one kept file is named alone');
+  },
+  // The page's layout fixes (MA-1020, B13, B14): Save this plan says so on screen and sends
+  // nothing; a delete's result is brought into view; Remove from list's words are said again at
+  // the top of Your archives after the reload it starts, once.
+  async pageLayout() {
+    page([['D:\\Mail\\Old', 'other'], ['D:\\Mail\\Gone', 'other'], ['E:\\Cur', 'current']], 'E:\\Cur');
+    boot(); await wait(30);
+    const [old, gone] = doc.querySelectorAll('.archive-row');
+    replies['api/archive/delete/plan'] = plan('D:\\Mail\\Gone', 'Gone', 'TOK');
+    gone.querySelector('[data-delete-archive]').click(); await wait(40);
+    const before = posts.length;
+    byText(gone, 'Save this plan').click(); await wait(10);
+    const st = gone.querySelector('.delete-panel [role=status]');
+    check(!!st && !st.hidden && st.textContent === "Plan saved as plan.txt, in your browser's downloads. Nothing was deleted." && posts.length === before,
+      'Save this plan says the plan was saved, and sends nothing');
+    replies['api/archive/delete'] = result({ id: 'HG', row: 'D:\\Mail\\Gone', folder: 'D:\\Mail\\Gone', rowRemoved: true, rows: ['D:\\Mail\\Gone'] });
+    await typeAndDelete(gone, 'Gone'); await wait(40);
+    check(scrolled.length === 1 && scrolled[0] === doc.querySelector('[data-held-id="HG"]'), 'the result is brought into view');
+    const said = 'Removed from Your archives. The folder and its files are kept.';
+    replies['api/archive/unlist'] = x => (x.confirm ? { ok: true, lines: [said] } : { ok: true, ask: true, question: 'Remove from list? The folder and its files are kept.', named: [] });
+    old.querySelector('[data-unlist-archive]').click(); await wait(40);
+    byText(old, 'Yes').click(); await wait(60);
+    // The tab is reloaded: a fresh page reads what was said, once.
+    doc.body.children.slice().forEach(c => c.remove());
+    page([['E:\\Cur', 'current'], ['F:\\Other', 'other']], 'E:\\Cur');
+    boot(); await wait(30);
+    const n = doc.querySelector('[data-unlisted-note]');
+    const first = n && n.parent && n.parent.id === 'sec-archives' && n.textContent === said;
+    doc.body.children.slice().forEach(c => c.remove());
+    page([['E:\\Cur', 'current'], ['F:\\Other', 'other']], 'E:\\Cur');
+    boot(); await wait(30);
+    check(first && !doc.querySelector('[data-unlisted-note]'), "Remove from list's words are said at the top of Your archives after its reload, once");
   },
   // A delete of the page's own archive that got past step 4: the page says so at the top, and
   // its cards are greyed and inert, each saying so, until the result is dismissed; the switch

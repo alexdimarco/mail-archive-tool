@@ -170,7 +170,10 @@ var optionalJSIDs = map[string]bool{"clearSignin": true, "editM365": true, "canc
 	// after a delete of the page's own archive (MA-1017) delPageGone makes #archiveGone itself, once
 	// (its lookup checks whether it is there yet), and hides #navEncryption, which the sidebar has
 	// only for an encrypted archive (ShowEncryption); both lookups are null-checked
-	"archiveGone": true, "navEncryption": true}
+	"archiveGone": true, "navEncryption": true,
+	// the lone current archive's This archive card (ShowThisArchive), where Remove from list's note
+	// is said again after its reload when Your archives is not drawn (MA-1020); null-checked
+	"sec-this-archive": true}
 
 // jsBoundIDs lists every $('id') lookup in dashboard.js.
 func jsBoundIDs() []string {

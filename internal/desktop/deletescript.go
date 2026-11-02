@@ -174,7 +174,7 @@ function delPanel(p){
   const head=delEl('p');head.append(delEl('b','Delete this archive permanently'));w.append(head);
   line(p.threeLine,'card-sub');
   line('Folder: '+p.folder,'mono');
-  line('Delete removes '+p.files+' files ('+p.size+').');
+  line('Delete removes '+p.files+(p.files===1?' file':' files')+' ('+p.size+').');
   if(p.rerun)line('This finishes a delete that did not finish.');
   if(p.stores.length)line('Stores: '+p.stores.map(s=>'store '+s.number+' '+s.name).join(', '));
   if(p.schedules.length)line('Scheduled backups it stops: '+p.schedules.join(', '));
@@ -182,7 +182,8 @@ function delPanel(p){
   p.notes.forEach(t=>line(t,'warn'));
   if(p.pausedLine)line(p.pausedLine);
   if(p.syncedLine)line(p.syncedLine,'warn');
-  if(p.kept)line("Kept: not the archive's: "+p.kept);
+  // The kept files by name (B6): the plan sends the first ten.
+  if(p.kept){const kn=p.keptNames||[];line("Kept (not the archive's): "+(kn.length?kn.join(', ')+(p.kept>kn.length?' and '+(p.kept-kn.length)+' more':''):p.kept+(p.kept===1?' file':' files')));}
   let box=null;
   if(p.unrecorded){
     line('Mail copies this archive did not record: '+p.unrecorded);
@@ -196,13 +197,19 @@ function delPanel(p){
   line(p.doesNotReach);
   const sa=delEl('div',null,'del-actions');
   const sv=delButton('Save this plan','btn secondary');sv.title='Save this plan as a text file, for example to have it approved first. Nothing is deleted.';
-  sv.addEventListener('click',()=>{delSaveFile(p.planName,p.planText);});
-  sa.append(sv);w.append(sa);
+  // Said on screen once saved (B13): the browser may save it without asking.
+  const saved=delEl('span',null,'card-sub');saved.setAttribute('role','status');saved.hidden=true;
+  sv.addEventListener('click',()=>{delSaveFile(p.planName,p.planText);saved.hidden=false;saved.textContent='Plan saved as '+p.planName+', in your browser\'s downloads. Nothing was deleted.';});
+  sa.append(sv,saved);w.append(sa);
   line(p.logLine,'card-sub');
   // A delete waiting for its reply keeps its panel while another opens, so each box has an id of
   // its own and its label names it.
   const boxId='delTyped'+(++delBoxSeq);
-  const lab=delEl('label',p.typeLine);const input=document.createElement('input');input.type='text';input.id=boxId;input.autocomplete='off';input.spellcheck=false;lab.htmlFor=boxId;
+  // The folder's name never breaks across lines (B14: it broke at a hyphen at phone width).
+  const lab=delEl('label');const at=p.typeLine.indexOf(p.name);
+  if(at<0)lab.textContent=p.typeLine;
+  else lab.append(document.createTextNode(p.typeLine.slice(0,at)),delEl('span',p.name,'mono del-name'),document.createTextNode(p.typeLine.slice(at+p.name.length)));
+  const input=document.createElement('input');input.type='text';input.id=boxId;input.autocomplete='off';input.spellcheck=false;lab.htmlFor=boxId;
   w.append(lab,input);
   const hint=delEl('span',"doesn't match yet",'name-hint');hint.setAttribute('aria-live','polite');
   const go=delButton('Delete permanently','btn danger-fill');go.disabled=true;
@@ -217,7 +224,8 @@ function delPanel(p){
     delInFlight++;w.setAttribute('data-delete-waiting','');
     try{const d=await delPost('api/archive/delete',{token:p.token,typed:input.value,unrecorded:!!(box&&box.checked),drawnFor:drawnFor});
       // Its own panel goes, never another row's opened meanwhile (del-s3b leftover 1).
-      if(d.id){done(true);w.remove();delShowHeld(d);delAfterDelete(d);return;}
+      // The result is brought into view (B14): on a narrow layout it sat at the top of the card, out of sight.
+      if(d.id){done(true);w.remove();const hv=delShowHeld(d);delAfterDelete(d);if(hv.scrollIntoView)hv.scrollIntoView({block:'nearest'});return;}
       // A refusal that spent the plan (planUsed): Delete permanently could only fail now, so it
       // stays disabled and the reply says to click Delete… again (del-s3b conformance gap 3).
       done(!!d.planUsed);if(!d.planUsed)match();msg.hidden=false;msg.textContent=d.error||'Could not delete this archive.';
@@ -261,7 +269,10 @@ function delUnlistAsk(li,b,q){
   yes.addEventListener('click',async()=>{
     const n=$('settingsNote'),done=busy(yes,'Removing…',n,'Removing this archive from the list…');
     try{const d=await delPost('api/archive/unlist',{path:b.dataset.path,confirm:true,named:q.named});
-      if(d.ok){done(true);w.remove();if(n){n.hidden=false;n.textContent=(d.lines||[]).join(' ')||'Removed from Your archives. The folder and its files are kept.';}
+      if(d.ok){done(true);w.remove();const said=(d.lines||[]).join(' ')||'Removed from Your archives. The folder and its files are kept.';if(n){n.hidden=false;n.textContent=said;}
+        // Said again at the top of the list once the page is drawn again, until the next reload (B14:
+        // it showed for 1.5 seconds, then the row was simply gone).
+        try{sessionStorage.setItem(delUnlistedKey,said);}catch(e){}
         delRowGone(li,'Removed from Your archives.');setTimeout(()=>reloadPage(),1500);return;}
       done();if(n){n.hidden=false;n.textContent=d.error||'Could not remove it from the list.';}
     }catch(e){done();if(n){n.hidden=false;n.textContent='Error: '+e;}}
@@ -282,6 +293,16 @@ document.querySelectorAll('[data-unlist-archive]').forEach(b=>b.addEventListener
     li.append(delUnlistAsk(li,b,q));
   }catch(e){done();if(my===delSeq&&n){n.hidden=false;n.textContent='Error: '+e;}}
 }));
+// What Remove from list said, shown once at the top of Your archives (or This archive) after the
+// reload it started (B14, MA-1020); a page that cannot keep it says nothing more.
+const delUnlistedKey='mailarchive-unlisted-note';
+try{const said=sessionStorage.getItem(delUnlistedKey);
+  if(said){sessionStorage.removeItem(delUnlistedKey);
+    const card=$('sec-archives')||$('sec-this-archive');
+    const note=delEl('div',said,'note');note.setAttribute('role','status');note.setAttribute('data-unlisted-note','');
+    if(card){const h2=card.querySelector('h2');if(h2)h2.after(note);else card.prepend(note);}
+    else{const top=$('heldDeletes');if(top)top.before(note);}}
+}catch(e){}
 // Every result the server holds is drawn when the page loads (a reload is no dismissal).
 const hd=$('heldDeletes');
 if(hd){try{JSON.parse(hd.dataset.heldDeletes||'[]').forEach(v=>delShowHeld(v));}catch(e){}}

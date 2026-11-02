@@ -4,7 +4,6 @@ import (
 	"html/template"
 	"strings"
 
-	"mail-archive-tool/internal/archdelete"
 	"mail-archive-tool/internal/presync"
 )
 
@@ -60,8 +59,9 @@ type helpData struct {
 	Missed string
 	// ComeBack is how to open MailArchive Desktop again after Shut down.
 	ComeBack string
-	// DoesNotReach is design-archive-delete §2's fixed line (archdelete.DoesNotReach): the guide,
-	// the panel, the result and the record say the same.
+	// DoesNotReach is design-archive-delete §2's fixed line (archdelete.DoesNotReach) with this
+	// platform's items only (doesNotReachOn, MA-1019): the guide, the panel and the result say the
+	// same; the saved plan and the record keep the whole line.
 	DoesNotReach string
 	// NotFully is what usually keeps a file from a delete here, and what to do (§8 (a), §9: on
 	// Windows a program holding it open; elsewhere the platform's denied remedy). Fixed text
@@ -79,7 +79,7 @@ const helpMissedOnWake = "A time when the computer is switched off is skipped. I
 func helpDataFor(goos string, open bool) helpData {
 	w := runNowWordsFor(goos)
 	d := helpData{Open: open, RunNowSyncs: runNowSyncs(goos), Hidden: w.hidden, Place: w.place, Wait: syncWaitWords, Hourly: presync.HourlySyncNote,
-		DoesNotReach: archdelete.DoesNotReach}
+		DoesNotReach: doesNotReachOn(goos)} // this platform's items only (B4, MA-1019)
 	switch goos {
 	case "windows":
 		// The causes §9 names for a file Windows will not let go of; §8 (a)'s remedies.

@@ -162,7 +162,8 @@ func TestADeletesResultIsShownSavableAndDismissable(t *testing.T) {
 	}
 	panel := jsFunc(t, "delPanel")
 	// Its own panel goes, never another row's (del-s3b leftover 1; behaviour run in MA-986's twoPanels).
-	if !strings.Contains(panel, "if(d.id){done(true);w.remove();delShowHeld(d);delAfterDelete(d);return;}") {
+	// Amended 2026-11-02 (MA-1020, B14): the result shown is also brought into view.
+	if !strings.Contains(panel, "if(d.id){done(true);w.remove();const hv=delShowHeld(d);delAfterDelete(d);if(hv.scrollIntoView)hv.scrollIntoView({block:'nearest'});return;}") {
 		t.Error("a delete's reply that names a held result is not shown at once")
 	}
 }

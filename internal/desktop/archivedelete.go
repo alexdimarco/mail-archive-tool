@@ -418,15 +418,25 @@ func planView(p *archdelete.DeletePlan) map[string]any {
 	for i, s := range p.Stores {
 		stores = append(stores, map[string]any{"number": i + 1, "name": s})
 	}
+	// The kept files are named, the first ten (the 1.5.3 friction review's B6, MA-1019): "Kept:
+	// not the archive's: 1" did not say which.
+	var kept []string
+	for i, k := range p.Kept {
+		if i == 10 {
+			break
+		}
+		kept = append(kept, util.StripControl(k))
+	}
 	m := map[string]any{
 		"folder": p.Folder, "name": p.Name, "kind": p.Kind.String(),
 		"files": p.Files, "bytes": p.Bytes, "size": sizeText(p.Bytes),
 		"schedules": nonNil(p.Schedules.Names()), "checkYourself": nonNil(p.Schedules.CheckYourself), "notes": nonNil(notes),
 		"paused": p.Paused, "synced": p.Synced,
-		"kept": len(p.Kept), "unrecorded": len(p.Unrecorded), "unrecordedNames": nonNil(unrecorded), "stores": stores,
-		"rerun":        p.Rerun != archdelete.RerunNone,
-		"typeLine":     fmt.Sprintf("Type the folder's name, %s, to delete it", p.Name),
-		"doesNotReach": "What Delete does not reach: " + archdelete.DoesNotReach,
+		"kept": len(p.Kept), "keptNames": nonNil(kept), "unrecorded": len(p.Unrecorded), "unrecordedNames": nonNil(unrecorded), "stores": stores,
+		"rerun": p.Rerun != archdelete.RerunNone,
+		// Capitals count (B8): archdelete.NameMatches folds no case, though Windows names do.
+		"typeLine":     fmt.Sprintf("Type the folder's name, %s, to delete it (capital letters count)", p.Name),
+		"doesNotReach": doesNotReachLine(runtime.GOOS),
 		"logLine":      deleteLogLine,
 		"threeLine":    deleteThreeLine,
 	}
@@ -436,13 +446,50 @@ func planView(p *archdelete.DeletePlan) map[string]any {
 	if p.Synced != "" {
 		m["syncedLine"] = archdelete.SyncedLine(p.Synced)
 	}
-	if n := len(p.Unrecorded); n > 0 {
+	switch n := len(p.Unrecorded); {
+	case n == 1:
+		m["unrecordedBox"] = "Also delete this 1 file (for retention)" // B7: never "these 1 files"
+	case n > 1:
 		m["unrecordedBox"] = fmt.Sprintf("Also delete these %d files (for retention)", n)
 	}
 	if p.Kind == archdelete.Encrypted {
 		m["keyLine"] = p.KeyLine()
 	}
 	return m
+}
+
+// doesNotReachOn is design-archive-delete §2's "What Delete does not reach" (archdelete.DoesNotReach)
+// with only this computer's own items (the 1.5.3 friction review's B4, MA-1019): Windows File
+// History and Previous Versions on Windows, macOS Time Machine on a Mac, neither on Linux. The
+// saved plan and the deletion record keep the whole line: they may be read on another computer.
+func doesNotReachOn(goos string) string {
+	var out []string
+	for _, it := range strings.Split(archdelete.DoesNotReach, "; ") {
+		if (strings.HasPrefix(it, "Windows ") && goos != "windows") || (strings.HasPrefix(it, "macOS ") && goos != "darwin") {
+			continue
+		}
+		out = append(out, it)
+	}
+	return strings.Join(out, "; ")
+}
+
+// doesNotReachLine is the line the panel and the result show, with its final period (B4).
+func doesNotReachLine(goos string) string {
+	return "What Delete does not reach: " + doesNotReachOn(goos) + "."
+}
+
+// localResultLines are a delete's result lines as this page shows them: archdelete's "What
+// Delete does not reach" line, which names every platform's items, is this computer's
+// (doesNotReachLine). The record keeps archdelete's own lines.
+func localResultLines(lines []string) []string {
+	out := make([]string, len(lines))
+	for i, l := range lines {
+		if l == "What Delete does not reach: "+archdelete.DoesNotReach {
+			l = doesNotReachLine(runtime.GOOS)
+		}
+		out[i] = l
+	}
+	return out
 }
 
 func nonNil(s []string) []string {
@@ -540,7 +587,7 @@ func (d *dashboard) deleteAction(w http.ResponseWriter, r *http.Request) {
 	if cleared {
 		d.afterSwitch()
 	}
-	v := heldView{Row: row, Folder: plan.Folder, Name: plan.Name, Status: res.Status, Lines: append([]string(nil), res.Lines...),
+	v := heldView{Row: row, Folder: plan.Folder, Name: plan.Name, Status: res.Status, Lines: localResultLines(res.Lines),
 		RowRemoved: res.RowRemoved, Unfinished: res.Unfinished}
 	if res.Record != nil {
 		v.Record, v.RecordBase64 = string(res.Record), base64.StdEncoding.EncodeToString(res.Record)

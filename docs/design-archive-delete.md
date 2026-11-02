@@ -1014,3 +1014,25 @@ MA-1000, MA-1010 to MA-1013).**
   that Desktop keeps them; `NewCommandLineDelete` is it with the default config. Adding
   `-config` to `delete-archive` and `unlist-archive` is the command line's part; no new
   words here.
+- *The Desktop's delete words and layout (MA-1019, MA-1020; the friction review's B4, B6,
+  B7, B8, B13, B14, the Desktop's parts).* New or changed words, for the operator:
+  - "What Delete does not reach: …" in the panel, the result and the guide lists only
+    this computer's items and ends with a period: Windows "…version history; Windows File
+    History and Previous Versions; copies, exports or decrypted copies made elsewhere;
+    sync tools other than those detected.", a Mac "…; macOS Time Machine; …", Linux
+    neither. The saved plan and the record keep §2's whole line.
+  - "Kept (not the archive's): my-notes.txt" (the first ten names, then "and N more"),
+    was "Kept: not the archive's: 1".
+  - "Delete removes 1 file (SIZE)." and "Also delete this 1 file (for retention)", were
+    "1 files" and "these 1 files".
+  - "Type the folder's name, NAME, to delete it (capital letters count)"; NAME never
+    breaks across lines.
+  - "Plan saved as FILE, in your browser's downloads. Nothing was deleted." after Save
+    this plan.
+  - Remove from list's result is said again at the top of Your archives after the
+    reload, once.
+  - Layout: the result is scrolled into view; a row's path keeps at least 16rem with the
+    buttons wrapping under it; "Delete not finished: click Delete again" on its own line.
+  The shared result lines ("1 file that are", "them" for one file, the blocking folder)
+  and the key line when no key was remembered (B3) live in `internal/archdelete` and are
+  the shared group's.

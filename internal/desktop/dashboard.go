@@ -1761,7 +1761,9 @@ select{width:100%;padding:10px 11px;border:1px solid var(--line);border-radius:8
 pre{white-space:pre-wrap;overflow-wrap:anywhere;background:var(--bg);border:1px solid var(--line);border-radius:10px;padding:12px;max-height:280px;overflow:auto;margin-top:14px;font-size:.84rem}
 .archive-list{list-style:none;padding:0;margin:10px 0 0}
 .archive-row{display:flex;align-items:center;gap:10px;flex-wrap:wrap;padding:8px 0;border-top:1px solid var(--line)}
-.archive-row .archive-path{flex:1;min-width:0;overflow-wrap:anywhere}
+.archive-row .archive-path{flex:1 1 16rem;min-width:0;overflow-wrap:anywhere}
+.archive-row[data-delete-unfinished]>.row-state{flex-basis:100%}
+.del-name{white-space:nowrap;display:inline-block;max-width:100%;overflow-x:auto;vertical-align:bottom}
 .archive-row.unavailable>.archive-path,.archive-row.unavailable>.archive-kind,.archive-row.unavailable>.row-state{opacity:.6}
 .archive-row>.note{flex-basis:100%}
 .archive-row>.note{min-width:0}
