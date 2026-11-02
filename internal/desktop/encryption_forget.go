@@ -56,12 +56,19 @@ func (d *dashboard) forgetPlanAction(w http.ResponseWriter, r *http.Request) {
 	if p.Strong {
 		lines = append(lines, "This folder may have been tampered with: it no longer holds the archive this computer made there.")
 	}
+	if p.Last && d.cfg.Store == nil {
+		lines = append(lines, noStoreWholeLine)
+	}
 	token, ok := d.keep(w, &pendingItem{key: key, out: abs, plan: &p})
 	if !ok {
 		return
 	}
 	writeJSON(w, map[string]any{"ok": true, "token": token, "lines": lines, "strong": p.Strong, "spelling": p.Spelling, "last": p.Last, "remembered": p.Remembered})
 }
+
+// noStoreWholeLine is the forget plan's line, for an archive's last folder, when this computer's
+// secret store could not be opened: the whole archive is then refused (forgetAction).
+const noStoreWholeLine = "This computer's secret store could not be opened, so only this folder can be forgotten now: forgetting the whole archive could leave its remembered key behind."
 
 // forgetAllWord is what the person types to forget every encrypted archive here.
 const forgetAllWord = "FORGET"
@@ -113,6 +120,13 @@ func (d *dashboard) forgetAction(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	o := keyring.ForgetOptions{Whole: in.Whole && p.Last}
+	if o.Whole && d.cfg.Store == nil {
+		// Without the store no one can tell whether the key is remembered, and forgetting the
+		// whole record would leave such a key that nothing points to: the record is kept, as
+		// forget-archive and the delete keep it (the "cli" group's adversarial pass, finding 6).
+		writeJSON(w, map[string]any{"ok": false, "error": "This computer's secret store could not be opened, so MailArchive cannot tell whether it remembers this archive's key: this computer keeps its record of the archive, and nothing was changed. To forget only this folder, click Forget again and choose Cancel when asked about the whole archive; or try again once the secret store opens."})
+		return
+	}
 	if o.Whole && in.Keys && p.Remembered {
 		o.Keys, o.Store = true, d.cfg.Store
 	}
