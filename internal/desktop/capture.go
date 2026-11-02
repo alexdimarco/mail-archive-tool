@@ -57,6 +57,25 @@ var autoPauseIfDue = wizard.AutoPauseIfDue
 func HeadlessCapture(cfg Config, logw io.Writer) error {
 	out := cfg.effectiveOut()
 	key := backupalert.KeyFor(out) // the archive folder the capture backs up into
+	// Not into a folder whose delete did not finish (MA-1044; the 1.5.3 re-walk's guards pass,
+	// G2): refused first, before a start-failure record or any write into it, asking this
+	// Desktop's deletion log (its settings folder's, MailArchive's own without -config), as its
+	// Archive now and Install do. Told as the emptied-folder guard's refusal is: in the capture
+	// log, which is never in the refused folder (scheduledCapture), and the alert streak (an
+	// email). The engine asks again at its start and under its lock.
+	if out != "" {
+		if err := app.RefuseUnfinishedDelete(out, cfg.deletionsLogPath()); err != nil {
+			// A delete still running holds the archive's lock: skip quietly, as a capture that
+			// meets the lock does (MA-1045, the G2 settle pass's LOW-1).
+			if line, quiet := app.ScheduledLockSkip(out, err, time.Now()); quiet {
+				log.New(logw, "", log.LstdFlags).Printf("%s", line)
+				return nil
+			}
+			log.New(logw, "", log.LstdFlags).Printf("FAILED: %v", err)
+			cfg.reportRun(key, out, alert.ResultFailed, err, 0, nil)
+			return err
+		}
+	}
 	// A paused archive is hard read-only: refuse before recordStartFailure or any
 	// write (S2-C2). The caller logs this to the capture log (config dir), never into
 	// the archive.
@@ -114,7 +133,7 @@ func HeadlessCapture(cfg Config, logw io.Writer) error {
 	// (never recreate the archive on the boot disk when the backup drive is gone) and the
 	// source-loss streak (§5.7). The interactive dashboard capture leaves it unset.
 	opts := app.Options{Out: out, Mode: export.Incremental, Index: true, Pages: true, KeepRaw: s.KeepRaw, Unattended: true, OwnFiles: own,
-		ArchiveAtEntry: cfg.CaptureArchiveAtEntry}
+		ArchiveAtEntry: cfg.CaptureArchiveAtEntry, DeletionsLog: cfg.deletionsLogPath()}
 	// An archive location that holds the desktop's settings and sign-in copies
 	// them with the archive (design-local-confidentiality P10). The scheduled
 	// capture does not refuse — that would silently stop an installed backup —
@@ -132,8 +151,9 @@ func HeadlessCapture(cfg Config, logw io.Writer) error {
 		return nil
 	}
 	// Refused because the folder holds no archive (the emptied-folder guard under the lock, or
-	// the folder gone): said in the capture log too (del-s2-A3-01).
-	if app.FailureKind(err) == state.FailArchiveAbsent {
+	// the folder gone, or a delete of it that did not finish): said in the capture log too
+	// (del-s2-A3-01, MA-1044).
+	if app.RefusedAsNoArchive(err) {
 		logger.Printf("FAILED: %v", err)
 	}
 	// Built-in email alert for this scheduled run's result (MA-698), best-effort: a mail
@@ -377,7 +397,10 @@ func (d *dashboard) startCapture() error {
 			IncludeDeleted: s.IncludeDeleted, IncludeJunk: s.IncludeJunk,
 			Prompt: func(da graph.DeviceAuth) { d.cap.setDevice(da) },
 		}
-		opts := app.Options{Out: out, Mode: export.Incremental, Index: true, Pages: true, KeepRaw: s.KeepRaw}
+		// The engine asks this Desktop's deletion log at the capture's start and under its lock,
+		// as the Archive now refusal (MA-987) asked it before (MA-1044).
+		opts := app.Options{Out: out, Mode: export.Incremental, Index: true, Pages: true, KeepRaw: s.KeepRaw,
+			DeletionsLog: d.cfg.deletionsLogPath()}
 		res, err := app.RunGraph(context.Background(), g, opts, logger)
 		if err != nil {
 			return "", err

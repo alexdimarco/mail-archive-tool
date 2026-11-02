@@ -178,6 +178,16 @@ func runExport(args []string) error {
 	if err := refuseEncryptWith(*kf.encrypt, *o.unattended, *o.manifest != "", *o.list); err != nil {
 		return err
 	}
+	// Not into a folder whose delete did not finish (MA-1044; the 1.5.3 re-walk's guards pass,
+	// G2): refused first, before a recorded refusal, the run log or -outlook's PST export writes
+	// into it, in MA-1015's words with the folder and the terminal's Delete again; the engine asks
+	// again at its start and under its lock. MailArchive's own deletions.log, as `pause`, `resume`
+	// and `schedule` ask (a -config one is G3). -list only reads the sources.
+	if !*o.list {
+		if err := app.RefuseUnfinishedDelete(*o.out, ""); err != nil {
+			return deleteRefusalAtTerminal(err, *o.out)
+		}
+	}
 	if *o.unattended {
 		if err := requireExistingOut(*o.out); err != nil {
 			return err
@@ -438,7 +448,7 @@ func runExport(args []string) error {
 		}
 		// A scheduled run refused because its folder holds no archive (the emptied-folder
 		// guard, or the folder gone) leaves no copy of the mailbox there (del-s2-A1-02).
-		if *o.unattended && app.FailureKind(runErr) == state.FailArchiveAbsent {
+		if *o.unattended && app.RefusedAsNoArchive(runErr) {
 			outlookcom.RemoveExported(pstDir, outlookExported)
 		}
 	}
@@ -447,7 +457,9 @@ func runExport(args []string) error {
 		logger.Printf("interrupted; progress saved to the manifest")
 		return nil
 	}
-	err = runErr
+	// A delete that began while this run got ready and stopped part way is refused by the engine
+	// under its lock (MA-1044): said as at the start, with the terminal's Delete again.
+	err = deleteRefusalAtTerminal(runErr, *out)
 	return err
 }
 
@@ -1636,6 +1648,11 @@ func runGraph(args []string) (err error) {
 	if *o.clientID == "" {
 		return errors.New("-client-id is required (the Entra app id)")
 	}
+	// Not into a folder whose delete did not finish (MA-1044, G2): before any sign-in, log or
+	// recorded refusal, as the export verb (MailArchive's own deletions.log).
+	if err := app.RefuseUnfinishedDelete(*o.out, ""); err != nil {
+		return deleteRefusalAtTerminal(err, *o.out)
+	}
 	if *o.unattended {
 		if err := requireExistingOut(*o.out); err != nil {
 			return err
@@ -1827,7 +1844,7 @@ func runGraph(args []string) (err error) {
 
 	result, runErr := app.RunGraph(ctx, gopts, opts, logger)
 	printSummaryLed(logger, result, *o.index, *o.keepRaw, *o.out, summaryLead(runErr))
-	err = graphOutcome(logger, runErr)
+	err = deleteRefusalAtTerminal(graphOutcome(logger, runErr), *o.out)
 	return err
 }
 
@@ -1850,12 +1867,13 @@ func runLogMissing(path string) bool {
 }
 
 // dropRunLogOnRefusal handles the -log of a scheduled run refused because its archive folder
-// holds no archive — the emptied-folder guard, or the folder gone (archive_absent): a -log in
+// holds no archive — the emptied-folder guard, the folder gone (archive_absent), or a delete of it
+// that did not finish (MA-1044; app.RefusedAsNoArchive): a -log in
 // that folder, a folder of the person's files an archive was deleted from, gets no FAILED line
 // and is closed and removed when this run made it (design-archive-delete §7, del-s2-A2-03).
 // The refusal still goes to stderr, as main prints it. It reports whether it handled the log.
 func dropRunLogOnRefusal(logPath, out string, made bool, closeLog func(), err error) bool {
-	if logPath == "" || app.FailureKind(err) != state.FailArchiveAbsent || !app.PathIn(logPath, out) {
+	if logPath == "" || !app.RefusedAsNoArchive(err) || !app.PathIn(logPath, out) {
 		return false
 	}
 	closeLog()

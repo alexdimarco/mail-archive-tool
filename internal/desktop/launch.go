@@ -24,7 +24,6 @@ import (
 	"mail-archive-tool/internal/instance"
 	"mail-archive-tool/internal/localweb"
 	"mail-archive-tool/internal/seal"
-	"mail-archive-tool/internal/state"
 )
 
 // launchEnv is what a launch needs from its surroundings: the per-account state
@@ -354,7 +353,9 @@ func scheduledCapture(dcfg Config, lp, settingsLog string, stderr io.Writer) err
 	out := dcfg.effectiveOut()
 	dcfg.CaptureArchiveAtEntry = out != "" && app.ArchiveHere(out, "")
 	logPath := lp
-	if out != "" && app.PathIn(lp, out) && app.RefuseEmptiedFolder(out, "", dcfg.captureOwnFiles()...) != nil {
+	// Nor does a folder whose delete did not finish get the log (MA-1044): the capture refuses it.
+	if out != "" && app.PathIn(lp, out) && (app.RefuseEmptiedFolder(out, "", dcfg.captureOwnFiles()...) != nil ||
+		app.RefuseUnfinishedDelete(out, dcfg.deletionsLogPath()) != nil) {
 		logPath = settingsLog
 	}
 	_, serr := os.Lstat(logPath)
@@ -367,7 +368,7 @@ func scheduledCapture(dcfg Config, lp, settingsLog string, stderr io.Writer) err
 		w = io.MultiWriter(stderr, f)
 	}
 	err := startCapture(dcfg, w)
-	if f != nil && out != "" && app.FailureKind(err) == state.FailArchiveAbsent && app.PathIn(logPath, out) {
+	if f != nil && out != "" && app.RefusedAsNoArchive(err) && app.PathIn(logPath, out) {
 		_ = f.Close()
 		if made {
 			_ = os.Remove(logPath)

@@ -54,11 +54,22 @@ func runResume(args []string) error {
 }
 
 // deleteRefusalAtTerminal is a refusal in archdelete's words (a delete of the folder that did not
-// finish, or a deletions.log that cannot be read: MA-1015) as the terminal says it — the folder
-// named and the terminal's Delete again (terminalRefusal); any other error as it is.
+// finish, or a deletions.log that cannot be read: MA-1015, MA-1044) as the terminal says it — the
+// folder named and the terminal's Delete again (terminalRefusal); any other error as it is. The
+// refusal stays beneath the words (errors.As, app.FailureKind), so a backup's run log handling
+// still sees why it was refused.
 func deleteRefusalAtTerminal(err error, out string) error {
 	if r := archdelete.AsRefusal(err); r != nil {
-		return terminalRefusal(r.Message, out, "")
+		return &terminalWords{text: terminalRefusal(r.Message, out, "").Error(), err: err}
 	}
 	return err
 }
+
+// terminalWords is an error as the terminal says it (text) over the error it says (err).
+type terminalWords struct {
+	text string
+	err  error
+}
+
+func (e *terminalWords) Error() string { return e.text }
+func (e *terminalWords) Unwrap() error { return e.err }

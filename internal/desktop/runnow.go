@@ -393,6 +393,9 @@ func (d *dashboard) runNowHooks(goos string) (rn wizard.RunNow, slot uint64, end
 		Phase:           func(p string, since time.Time) { c.setPhase(slot, p, since) },
 		OnEnd:           func(o app.PresyncOutcome) { c.endSync(slot, o) },
 		StartNotAllowed: func() { c.noStart(slot) },
+		// The engine asks this Desktop's deletion log again at the run's start and under its
+		// lock, as the Run now refusal (MA-987) asked it before the run (MA-1044).
+		DeletionsLog: d.cfg.deletionsLogPath(),
 	}
 	return rn, slot, endWait
 }

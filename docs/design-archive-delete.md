@@ -1466,6 +1466,126 @@ changed words are the builder's, for the operator, unless a quote says otherwise
   scheduled run) asking deletions.log, which changes the engine's run path (the design's known gap
   in the emptied-folder guard); G3, which log the terminal's `schedule`, `pause` and `resume` ask
   when a delete was begun with `-config` (or a Desktop with `-config` misses a terminal delete).
+  *Amended 2 November 2026 (owner ruling "1 - yes"):* G2 is built (MA-1044, below); G3 stays open.
+
+**A backup refuses a folder whose delete did not finish (2 November 2026; the guards pass's G2,
+owner ruling "1 - yes"; MA-1044, MA-1015 and MA-1036 amended).** The known gap above is closed: a
+backup into a folder a delete stopped part way wrote into it, since the manifest goes last and the
+emptied-folder guard (§7) lets a folder with its manifest in. New words are the builder's, for the
+operator.
+- *Where.* The engine, `app.Run` and `app.RunGraph`, asks at a run's start (before any folder,
+  lock, record or sign-in) and again once it holds the archive's lock; a delete writes its started
+  line before it takes that lock (§5.3 steps 0 and 1), so one that began between the two asks and
+  stopped part way is refused under the lock, and one that begins after it is refused by the run's
+  lock (Busy). The check is `archdelete.BackupRefusal` (MA-1015's `ActionRefusal`, "…so it was not
+  backed up…"), which archdelete installs in package app when it loads (`app.SetUnfinishedDeleteCheck`):
+  app cannot import archdelete, which reaches app through keyring. The entry points also ask at
+  their own start, before what they write into the folder ahead of the engine: the terminal's export
+  and `graph` verbs (before a recorded refusal, the `-log`, `-outlook`'s PSTs and the sign-in),
+  `run-job` (`wizard.RunHeadless`: before its run log and the Outlook export) and the scheduled
+  Microsoft 365 capture (`desktop.HeadlessCapture`: before the start-failure record of a Desktop
+  whose Microsoft 365 is not set up; `scheduledCapture` does not open its log in such a folder).
+- *Which log.* `app.Options.DeletionsLog`; "" is MailArchive's own settings folder's deletions.log,
+  the rule the terminal's `pause`, `resume` and `schedule` follow, for the terminal's runs and
+  `run-job`. The Desktop's Run now, Archive now and scheduled capture pass the Desktop's own
+  (`deletionsLogPath`, the one its delete writes and its Archive now / Run now refusal reads), which
+  is the same file without `-config`. *Open for the operator (G3):* whether the terminal's runs and
+  `run-job` should read a `-config` folder's log; not built.
+- *Words.* "Delete not finished: click Delete again. This archive's delete did not finish, so it was
+  not backed up; nothing was changed. (Folder: DIR)"; at the terminal the folder and Delete again
+  as MA-1015's (`deleteRefusalAtTerminal`): "… nothing was changed. (Folder: DIR)" then "At this
+  terminal, Delete again is: mailarchive delete-archive -out DIR", exit 1. A log that cannot be read
+  refuses in MA-1015's words with " (Folder: DIR)" (fail closed), as does a settings folder that
+  cannot be found. The Desktop's Archive now and Run now refusals (MA-987, MA-1009) are unchanged;
+  the engine's asks behind them are a second barrier.
+- *A scheduled run's refusal is told outside the folder.* The refusal is kind archive_absent, as
+  the emptied-folder guard's: `run-job` writes it to its failure log beside the job file, the
+  start-failure record and the alert streak (email, notice), and takes back a run log it made in
+  the folder; the capture logs it to desktop-capture.log beside the settings and records it in the
+  alert streak; the terminal's scheduled run takes back a `-log` it made there. No last-run or run
+  history is written into the half-deleted folder (that would be a write into it), so the refusal
+  is told by the alert (and, for `run-job`, the start-failure record), not the folder's run history. It never extends the source-loss streak or auto-pauses (no run record is written, and
+  `FoundSourceUnreachable` is false).
+- *Not blocked.* A delete's own re-run (Delete again) is not a backup: archdelete never runs the
+  engine, and the re-run tests (MA-966's) pass with the check installed. A delete that finished
+  leaves no refusal; a backup into a fresh folder made at its path makes its archive.
+- *For the operator.* A computer where MailArchive cannot find its settings folder (no HOME or
+  AppData in the scheduler's environment) now refuses every backup, as Pause and Resume already
+  did there (fail closed, as ruled).
+  *Amended 2 November 2026 (the settle pass below):* "The known gap above is closed" was too broad.
+  It is closed for a backup on this computer, by this account, into a folder whose drive was not
+  plugged in again since the delete stopped; MED-1 and MED-2 below are not closed. "The refusal is
+  kind archive_absent" is now delete_unfinished (or deletion_log_unreadable), taken back the same
+  way.
+
+**The backup guard's settle pass (2 November 2026; the adversarial pass of G2: no HIGH, 4 MED,
+4 LOW; MA-1045, MA-1044 amended).** New words are the builder's, for the operator.
+- *Fixed: an encrypted archive's alert told the person to connect a drive (MED-3).* An encrypted
+  archive's alert and notice say the failure kind's fixed sentence, not the error, and kind
+  archive_absent's is "the archive's drive or folder is not there — connect it". The refusal now
+  has its own kinds: delete_unfinished, "a delete of this archive did not finish, so it was not
+  backed up — click Delete again on its row in MailArchive Desktop"; deletion_log_unreadable,
+  "MailArchive could not read its deletion log, so it could not tell whether a delete of this
+  archive did not finish, and it was not backed up — check that file in MailArchive's settings
+  folder, then try again". `app.RefusedAsNoArchive` takes both back as archive_absent is.
+- *Fixed: the wizard's own export wrote into the folder first (MED-4).* `runExport` (the
+  double-click wizard, and the Desktop's Add another archive) now asks before it opens its run log
+  in the folder and before the Outlook export writes its PSTs there. Not changed: a delete that
+  begins after that ask and stops part way is refused by the engine under its lock, and the
+  wizard's run log, opened in between, stays in the folder (its error box names it); the window is
+  the seconds between the ask and the engine's lock, plus the Outlook export's minutes on Windows.
+- *Fixed: a backup during a running delete was told the delete "did not finish" (LOW-1).* When
+  the delete holds the archive's lock (its holder line names a delete), the refusal is "This
+  archive is being deleted by another MailArchive window or terminal, so it was not backed up;
+  nothing was changed. When that delete ends, see its result there.", a held lock (archive_busy),
+  and `run-job` and the scheduled capture skip it quietly as before G2, naming "a delete of this
+  archive". Not changed: in the moment between a delete's started line and its taking the lock
+  (§5.3 steps 0 and 1), a backup still reads "Delete not finished".
+- *Fixed in part: nothing proved the check is installed (LOW-4).* Each program's test now asks
+  `app.UnfinishedDeleteCheckInstalled`. The engine still lets a run through when no check is
+  installed, since this package's own tests run without one.
+- *Open, for the operator: a remounted drive (MED-1).* On macOS and Linux a USB drive's or network
+  share's device number is handed out at mount and can change after a replug, a reboot or another
+  plug-in order; the delete's started line records the device number and file number, so after a
+  remount the half-deleted folder reads as "another folder", the backup is let in, and its row
+  loses "Delete not finished". The commonest way a delete stops part way is the drive dropping
+  out, so this is the main case there. Windows keys by the volume serial number and is not
+  affected. Encoded by TestABackupIntoAHalfDeletedFolderOnARemountedDriveIsRefused (a skip).
+- *Open, for the operator: another computer or account (MED-2).* Each computer and account reads
+  its own deletions.log, so a NAS share or a drive moved between computers is backed up into by
+  the other one's schedule. Whether this is in G2's scope is the operator's call. Encoded by
+  TestAnotherComputersBackupIntoAHalfDeletedFolderIsRefused (a skip).
+  *The fix both point to, not built:* the delete writes a marker file into the folder at its first
+  step, under its lock and before it removes anything, and removes it last, after the manifest;
+  the engine refuses any folder that holds it, as well as asking the log. That closes MED-1 and
+  MED-2 and survives a lost log; matching on a volume identity that survives a remount (the volume
+  UUID on macOS, the file system UUID on Linux) closes MED-1 only, and not on network shares. Either
+  changes the delete's own steps or its identity of a folder (§5.3, §5.4: what the plan counts and
+  keeps, the re-run, the folder-gone path, an encrypted archive's plain files), so it owes the
+  10-lens pre-code design review before any code; a fix limited to the backup guard (a recorded
+  file number matching on another device number) was not taken, since two rotation drives
+  formatted alike can give the same folder the same file number, and the words would then tell the
+  person to delete the other drive's archive.
+- *Accepted, with reasons (LOW-2).* A schedule installed from the terminal keeps its run log
+  (DIR/NAME.log) and the scheduler's stderr file (DIR/NAME.stderr.log, launchd's and the Windows
+  wrapper's redirect) in the archive folder, so its refusal is written there by the scheduler, every
+  run, and the terminal path sends no alert. The emptied-folder guard has the same limit. Moving
+  those files out of the folder changes where every terminal schedule logs (the schedule design),
+  for a run that changes nothing; it is left for the operator.
+- *Accepted, with reasons (LOW-3).* A deletion log that is readable by others (mode 0644 after a
+  restore or copy), a link or a folder now stops every backup on the computer, not only delete,
+  Pause, Resume and a Switch. This is fail closed, as ruled; the refusal names the log and says to
+  check it, and an encrypted archive's alert now says so too (MED-3). Accepting a log that is only
+  readable by others (it holds folder paths, not secrets) is the operator's call.
+- *Accepted, with reasons (LOW-4's other half).* `reindex`, the program-copies setting and
+  `RecordRefusedRun` write into a folder without asking deletions.log. They are outside G2 (a
+  backup run); `RecordRefusedRun` is only reached after the guard's own asks in each scheduled
+  entry point.
+- *Not tried by the pass (for the operator):* anything on Windows (FAT or exFAT file numbers, a
+  network folder spelt as a drive letter and as its \\server path, short names, the Task
+  Scheduler's environment); real remounts (MED-1 was simulated by recording another device
+  number); Linux case-insensitive volumes; waits when the log names an offline network folder; G3;
+  live Microsoft 365 and Outlook, and the real Desktop in a browser.
 
 **The re-walk's technical wording and layout group (2 November 2026; N2, N3, N5, N6, N7, N8, N9,
 N10, N12 to N17, N19, N20, B20).** New or changed words are the builder's, for the operator, unless

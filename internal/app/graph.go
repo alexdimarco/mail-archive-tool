@@ -85,6 +85,11 @@ func RunGraph(ctx context.Context, g GraphOptions, opts Options, logger *log.Log
 	if logger == nil {
 		logger = log.New(io.Discard, "", 0)
 	}
+	// Not into a folder whose delete did not finish: refused before the sign-in and any write,
+	// and asked again under the lock (MA-1044; the 1.5.3 re-walk's guards pass, G2).
+	if err := RefuseUnfinishedDelete(opts.Out, opts.DeletionsLog); err != nil {
+		return Result{}, err
+	}
 	// A paused archive is hard read-only: refuse the capture before the (interactive)
 	// sign-in and any write (archive-manager S2-C1/C2).
 	if err := seal.RefuseWrite(opts.Out); err != nil {
@@ -172,6 +177,11 @@ func RunGraph(ctx context.Context, g GraphOptions, opts Options, logger *log.Log
 		if err := guard.underLock(); err != nil {
 			return Result{}, err
 		}
+	}
+	// Again under the lock (MA-1044, G2): a delete that began during the sign-in and stopped part
+	// way is caught before the capture's record or any write.
+	if err := RefuseUnfinishedDelete(opts.Out, opts.DeletionsLog); err != nil {
+		return Result{}, err
 	}
 	if opts.Key == nil {
 		if err := RefuseKeyless("capture into it", opts.Out, manifestDir(opts.Manifest)); err != nil {

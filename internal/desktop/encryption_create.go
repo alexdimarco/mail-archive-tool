@@ -174,7 +174,7 @@ func (d *dashboard) commitCreate(w http.ResponseWriter, it *pendingItem) {
 		return withProgramLine(logger, func(logger *log.Logger) (string, error) {
 			// Attended, but inert: the first backup's job never carries the sync
 			// (design-presync-attended §2.2).
-			return wizard.RunJobInProcessKeyed(j.ctx, j.stop, jobPath, logger, wizard.RunNow{GOOS: d.cfg.goos()}, func(o *app.Options) (func(), error) {
+			return wizard.RunJobInProcessKeyed(j.ctx, j.stop, jobPath, logger, wizard.RunNow{GOOS: d.cfg.goos(), DeletionsLog: d.cfg.deletionsLogPath()}, func(o *app.Options) (func(), error) {
 				o.ProgramSkip, o.OnProgramWait, o.ProgramDownload = j.skip, j.onWait, d.life.Context()
 				return keyring.Apply(o, u)
 			})

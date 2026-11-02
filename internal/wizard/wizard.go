@@ -46,7 +46,6 @@ import (
 	"mail-archive-tool/internal/schedule"
 	"mail-archive-tool/internal/seal"
 	"mail-archive-tool/internal/source"
-	"mail-archive-tool/internal/state"
 	"mail-archive-tool/internal/thunderbird"
 	"mail-archive-tool/internal/util"
 )
@@ -212,6 +211,27 @@ func RunHeadless(path string) int {
 		return 1
 	}
 	key := backupalert.KeyFor(j.Out)
+	// Not into a folder whose delete did not finish (MA-1044; the 1.5.3 re-walk's guards pass,
+	// G2): a scheduled run the delete did not stop, or a run-job started by hand, is refused
+	// first, before its run log or the Outlook PST export writes into the folder and before any
+	// record there. It is told as the emptied-folder guard's refusal is: beside the job file, in
+	// the start-failure record and the alert streak (an email, a notice), never in the folder.
+	// MailArchive's own deletions.log, as the terminal's runs ask (a -config one is G3). The
+	// engine asks again at its start and under its lock. Not caught (for the operator, the G2
+	// settle pass's MED-1 and MED-2): another computer's or account's run, which reads its own
+	// deletions.log, and on macOS and Linux a folder whose drive was plugged in again under
+	// another device number (design-archive-delete §14).
+	if err := app.RefuseUnfinishedDelete(j.Out, ""); err != nil {
+		// A delete still running holds the archive's lock: skip quietly, as a run that meets the
+		// lock does, writing nothing into the folder (MA-1045, the settle pass's LOW-1).
+		if line, quiet := app.ScheduledLockSkip(j.Out, err, time.Now()); quiet {
+			fmt.Fprintln(os.Stderr, "mailarchive run-job: "+line)
+			return 0
+		}
+		jobFail(path, err)
+		reportRun(key, jobFileName(path), j.Out, backupalert.ResultFailed, err, 0, nil)
+		return 1
+	}
 	// Unattended guard: an absent -out (the backup drive is not mounted) must
 	// not become a fresh archive on the local disk that then reports "ok".
 	if fi, err := os.Stat(j.Out); err != nil || !fi.IsDir() {
@@ -309,11 +329,11 @@ func RunHeadless(path string) int {
 		return 0
 	}
 	// Refused because the folder holds no archive — the emptied-folder guard, or the folder
-	// gone (archive_absent): what this run wrote there before its lock goes too, the PSTs (a
-	// plaintext copy of the mailbox), the PST folder when that empties it, and the run log
-	// when this run made it; the refusal is told beside the job file, never in the folder
-	// (design-archive-delete §7; del-s2-A1-02, A2-03).
-	if app.FailureKind(runErr) == state.FailArchiveAbsent {
+	// gone (archive_absent), or a delete of it that did not finish (MA-1044): what this run
+	// wrote there before its lock goes too, the PSTs (a plaintext copy of the mailbox), the PST
+	// folder when that empties it, and the run log when this run made it; the refusal is told
+	// beside the job file, never in the folder (design-archive-delete §7; del-s2-A1-02, A2-03).
+	if app.RefusedAsNoArchive(runErr) {
 		takeBackRunWrites(j.Out, outlookExported, logf, runLog, logMade)
 		jobFail(path, runErr)
 		reportRun(key, j.Name, j.Out, backupalert.ResultFailed, runErr, 0, nil)
@@ -1678,6 +1698,13 @@ func autoInputLabel(p string) string {
 // ---- the run and the summary ------------------------------------------------
 
 func runExport(c wizardChoice) error {
+	// Not into a folder whose delete did not finish (MA-1044, MA-1045; the G2 settle pass's
+	// MED-4): refused first, before the run log opens inside the folder and before any Outlook
+	// PST export writes a plaintext copy of the mailbox there, as RunHeadless asks.
+	// MailArchive's own deletions.log, as the engine's ask below reads it.
+	if err := app.RefuseUnfinishedDelete(c.out, ""); err != nil {
+		return err
+	}
 	// Before the run log opens inside the archive and any Outlook PST export: an
 	// encrypted archive is written only with its key (phase2a §5).
 	if err := app.RefuseKeyless("archive into it", c.out); err != nil {

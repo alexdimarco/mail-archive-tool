@@ -35,6 +35,12 @@ const (
 	// FailRecordUnusable: this computer's record of encrypted archives cannot be
 	// used, so a folder holding MailArchive files is not written (phase3 §4.3).
 	FailRecordUnusable = "encrypted_record_unusable"
+	// FailDeleteUnfinished: a backup refused because a delete of its folder did not finish
+	// (MA-1044, MA-1045); FailDeletionLogUnreadable: refused because MailArchive's deletion
+	// log, which says so, cannot be read. A scheduled run's callers take back what they wrote
+	// into the folder for either, as for FailArchiveAbsent (app.RefusedAsNoArchive).
+	FailDeleteUnfinished      = "delete_unfinished"
+	FailDeletionLogUnreadable = "deletion_log_unreadable"
 
 	// NoteIndexBehind is the one kind a run that SUCCEEDED records: its search index
 	// still misses messages a later run adds (P2b-C16; owner ruling 2026-10-25, "keep
@@ -71,6 +77,8 @@ var failureText = map[string]string{
 	FailPartial:                   "some messages could not be backed up completely",
 	FailRunFailed:                 "the backup failed",
 	FailRecordUnusable:            "MailArchive's record of encrypted archives on this computer cannot be used, so nothing was written — run `mailarchive status` to see the fix",
+	FailDeleteUnfinished:          "a delete of this archive did not finish, so it was not backed up — click Delete again on its row in MailArchive Desktop",
+	FailDeletionLogUnreadable:     "MailArchive could not read its deletion log, so it could not tell whether a delete of this archive did not finish, and it was not backed up — check that file in MailArchive's settings folder, then try again",
 	NoteIndexBehind:               "the backup finished, but some of the archive's messages are not in its search index yet, so search does not find them — the next backup adds them; if the drive that holds MailArchive's working folder is full, free some space on it",
 }
 

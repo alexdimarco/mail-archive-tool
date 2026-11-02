@@ -83,6 +83,9 @@ func holderWords(verb string) string {
 		return "pausing this archive"
 	case "programcopies":
 		return "a change to the copies of MailArchive kept in this archive"
+	case "delete":
+		// A scheduled backup that meets a running delete (MA-1045, the G2 settle pass's LOW-1).
+		return "a delete of this archive"
 	}
 	return "another MailArchive task"
 }

@@ -40,6 +40,9 @@ type RunNow struct {
 	// OnReadStart is called right before the run reads its first source (app.Options'
 	// own, §3.2, C-76): the encrypted Run now's Lock window closes there.
 	OnReadStart func()
+	// DeletionsLog is the Desktop's deletion log, which the run asks whether a delete of the
+	// folder did not finish (app.Options.DeletionsLog, MA-1044); "" is MailArchive's own.
+	DeletionsLog string
 }
 
 // runHooks is what optsForJob hands the shared pre-sync hook besides the job: the
@@ -281,6 +284,7 @@ func optsForJob(j job.Job, inputs []string, logger *log.Logger, hooks runHooks, 
 	opts.PresyncWanted = j.ThunderbirdSync != nil
 	opts.PresyncAttended = mode == runAttended
 	opts.OnReadStart = hooks.rn.OnReadStart
+	opts.DeletionsLog = hooks.rn.DeletionsLog
 	if j.ThunderbirdSync != nil {
 		// A scheduled run names no button (neutral words); a Run now the Desktop's.
 		surface := presync.SurfaceCLI

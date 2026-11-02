@@ -87,6 +87,11 @@ type Options struct {
 	// left in it: a run that checked before a delete and got the lock after it is refused
 	// (design-archive-delete §7, MA-956). OwnFiles excuse only a run that found none.
 	ArchiveAtEntry bool
+	// DeletionsLog is the deletion log the run asks whether a delete of Out did not finish, at its
+	// start and again under its lock (RefuseUnfinishedDelete, MA-1044): "" is MailArchive's own,
+	// as the terminal's and run-job's runs ask; the Desktop passes its own (a Desktop started with
+	// -config keeps its log beside its settings).
+	DeletionsLog string
 
 	// FollowLinks names the inputs whose directory links are followed (owner ruling
 	// OR6: the per-input opt-in; the CLI's -follow-links, the wizard's "Follow folder
@@ -531,6 +536,11 @@ func Run(ctx context.Context, opts Options, logger *log.Logger, onProgress Progr
 		logger = log.New(io.Discard, "", 0)
 	}
 
+	// Not into a folder whose delete did not finish: refused before any write, lock or
+	// record, and asked again under the lock (MA-1044; the 1.5.3 re-walk's guards pass, G2).
+	if err := RefuseUnfinishedDelete(opts.Out, opts.DeletionsLog); err != nil {
+		return Result{}, err
+	}
 	// A paused archive is hard read-only: refuse every content-mutating run before
 	// any write, lock, or last-run record (archive-manager S2-C1/C2).
 	if err := seal.RefuseWrite(opts.Out); err != nil {
@@ -638,6 +648,12 @@ func Run(ctx context.Context, opts Options, logger *log.Logger, onProgress Progr
 		if err := guard.underLock(); err != nil {
 			return Result{}, err
 		}
+	}
+	// Again under the lock (MA-1044, G2): a delete that began after this run's first ask and
+	// stopped part way before the lock was free is caught here, before the run's record or any
+	// write; a delete that begins from now on is refused by this run's lock.
+	if err := RefuseUnfinishedDelete(opts.Out, opts.DeletionsLog); err != nil {
+		return Result{}, err
 	}
 	// Again under the lock: an encryption that finished while this run waited
 	// (a conversion's swap) is not a plaintext archive either (P2a-C9).
