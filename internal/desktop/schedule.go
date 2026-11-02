@@ -287,6 +287,11 @@ func (d *dashboard) scheduleInstallRouted(w http.ResponseWriter, r *http.Request
 		d.scheduleInstallCapture(w, in, out) // as before: it asks for an archive location first
 		return
 	}
+	// A delete of the current archive under way holds its archive lock, which the running check
+	// below would word as a backup (the residual fixes' adversarial pass, finding 3).
+	if d.refuseBeingDeleted(w, out) {
+		return
+	}
 	rt := routeFor(out)
 	switch rt.kind {
 	case backupEncrypted:
