@@ -355,21 +355,28 @@ func (l *loggedCapture) captured() Captured {
 }
 
 // withFirstRun is own, the values a plan read now, with those the first run of the delete it
-// finishes read (first) in their place wherever the first run knew them: the history, the run
-// history and, for a folder an earlier run removed, the manifest are gone by now (N3, N5).
+// finishes read (first) filling what own cannot read: the history, the run history and, for a
+// folder an earlier run removed, the manifest may be gone by now (N3, N5). What the archive still
+// records wins (the settle pass's MED-1: a delete stopped before it removed anything, and a backup
+// ran into the archive since): the message count and mail dates are own's when own read them (the
+// manifest is removed last, so while it is there it is the archive's own), the last backup is the
+// later of the two, and the first run and where the run history begins the earlier of the two.
 func withFirstRun(own, first Captured) Captured {
 	out := own
-	if first.Known {
+	if !own.Known && first.Known {
 		out.Known, out.Messages, out.MailFrom, out.MailTo = true, first.Messages, first.MailFrom, first.MailTo
 	}
-	for _, f := range []struct {
-		to   *time.Time
-		from time.Time
-	}{{&out.FirstRun, first.FirstRun}, {&out.LastBackup, first.LastBackup}, {&out.OldestRun, first.OldestRun}} {
-		if !f.from.IsZero() {
-			*f.to = f.from
+	pick := func(to *time.Time, from time.Time, later bool) {
+		if from.IsZero() {
+			return
+		}
+		if to.IsZero() || (later && from.After(*to)) || (!later && from.Before(*to)) {
+			*to = from
 		}
 	}
+	pick(&out.LastBackup, first.LastBackup, true)
+	pick(&out.FirstRun, first.FirstRun, false)
+	pick(&out.OldestRun, first.OldestRun, false)
 	return out
 }
 

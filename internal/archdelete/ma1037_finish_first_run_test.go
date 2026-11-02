@@ -61,6 +61,69 @@ func TestTheFinishingRecordKeepsTheFirstRunsDates(t *testing.T) {
 	}
 }
 
+// covers: MA-1037, R36
+// The first run's values fill only what the finishing run cannot read; they never replace what the
+// archive itself records now (the settle pass's MED-1). A delete stopped before step 4 removed no
+// file, a backup then ran into the whole archive, and the finishing record states that newer last
+// backup "as recorded in the archive", with the first run's first run kept. Positive twin first:
+// the stopped run's own record states the older last backup.
+func TestTheFinishingRecordPrefersWhatTheArchiveRecordsNow(t *testing.T) {
+	first := time.Date(2025, 3, 4, 10, 30, 0, 0, time.UTC)
+	last := first.Add(48 * time.Hour)
+	newer := last.Add(30 * 24 * time.Hour)
+	dir := smallArchive(t, t.TempDir())
+	withRunHistory(t, dir, first, last)
+	r := newRig(t, dir)
+	r.x.BeforeStep = func(step int) error {
+		if step == 4 {
+			return errors.New("A MailArchive Desktop is running")
+		}
+		return nil
+	}
+	res1 := r.run(t, false)
+	// Positive twin: the stopped run's record.
+	if res1.Status != StatusPartial || recordValueOf(string(res1.Record), "Last backup") != localStamp(last)+" (as recorded in the archive)" {
+		t.Fatalf("the stopped run (%s):\n%s", res1.Status, res1.Record)
+	}
+	r.x.BeforeStep = nil
+	// A backup runs into the still-whole archive: its run history now ends at newer.
+	withRunHistory(t, dir, first, newer)
+	p := r.plan(t)
+	if p.Finishes == nil || p.Finishes.Captured == nil {
+		t.Fatalf("fixture: the plan does not finish the stopped delete with its first run's values")
+	}
+	res := Execute(p, p.Name, false, r.x)
+	rec := string(res.Record)
+	if res.Status != StatusComplete || recordValueOf(rec, "Last backup") != localStamp(newer)+" (as recorded in the archive)" ||
+		recordValueOf(rec, "First run") != localStamp(first)+" (as recorded in the archive)" ||
+		recordValueOf(rec, "Messages") != "1 (as recorded in the archive)" {
+		t.Fatalf("the finishing record (%s):\n%s", res.Status, rec)
+	}
+}
+
+// TestWithFirstRunFillsOnlyWhatThisRunCannotRead pins the merge rule itself: this run's message
+// count and mail dates when it read them, the later last backup, the earlier first run and run
+// history start, and the first run's values only where this run has none.
+// covers: MA-1037
+func TestWithFirstRunFillsOnlyWhatThisRunCannotRead(t *testing.T) {
+	d := func(day int) time.Time { return time.Date(2025, 3, day, 0, 0, 0, 0, time.UTC) }
+	firstRun := Captured{Known: true, Messages: 5, MailFrom: d(1), MailTo: d(2), FirstRun: d(3), LastBackup: d(4), OldestRun: d(3)}
+	// Positive twin: this run read nothing (the files are gone), so the first run's values stand.
+	if got := withFirstRun(Captured{}, firstRun); got != firstRun {
+		t.Fatalf("this run read nothing: %+v", got)
+	}
+	own := Captured{Known: true, Messages: 9, MailFrom: d(1), MailTo: d(20), FirstRun: d(10), LastBackup: d(21), OldestRun: d(10), KeyOpen: false}
+	want := Captured{Known: true, Messages: 9, MailFrom: d(1), MailTo: d(20), FirstRun: d(3), LastBackup: d(21), OldestRun: d(3)}
+	if got := withFirstRun(own, firstRun); got != want {
+		t.Fatalf("this run read newer values:\n got %+v\nwant %+v", got, want)
+	}
+	// An older last backup read now (a run history put back from a copy) never replaces the newer one.
+	own2 := Captured{LastBackup: d(2)}
+	if got := withFirstRun(own2, firstRun); got.LastBackup != d(4) || got.Messages != 5 {
+		t.Fatalf("an older last backup read now: %+v", got)
+	}
+}
+
 // stopBefore8 deletes r's archive with a stop before step 8: the folder is removed and the delete
 // did not finish, so Delete again is §5.4's folder-gone re-run.
 func stopBefore8(t *testing.T, r *rig) {
