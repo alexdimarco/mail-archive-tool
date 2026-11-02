@@ -732,7 +732,10 @@ func (v *verbWatch) disown(then watchPhase) {
 // removeOwned removes the file the verb made and owns now, under v.mu; false when it is there
 // still. The verb's own handle is closed first: Windows removes no file a program holds open
 // (Go opens files without delete sharing), so the plan being written would otherwise stay. A
-// close that waits on a write to a folder that hangs is not waited for longer than createWait.
+// close that waits on a write to a folder that hangs is not waited for longer than createWait, and
+// neither is the remove after it: one that has not answered by then is "there still", so the verb
+// exits naming the file as maybe incomplete rather than stalling under v.mu (the delete residuals'
+// security pass, CON-03).
 func (v *verbWatch) removeOwned() bool {
 	if v.owned == "" {
 		return true
@@ -745,8 +748,14 @@ func (v *verbWatch) removeOwned() bool {
 		case <-time.After(createWait):
 		}
 	}
-	err := removeOwnedFile(v.owned)
-	return err == nil || errors.Is(err, fs.ErrNotExist)
+	removed := make(chan error, 1)
+	go func(path string) { removed <- removeOwnedFile(path) }(v.owned)
+	select {
+	case err := <-removed:
+		return err == nil || errors.Is(err, fs.ErrNotExist)
+	case <-time.After(createWait):
+		return false
+	}
 }
 
 // waitMade is a signal's wait, under v.mu, for a file creator is making: up to createWait, with
