@@ -93,14 +93,14 @@ func newCLIDel(t *testing.T) *cliDel {
 		sched: &cliSched{installed: map[string]bool{}, failOn: map[string]error{}}}
 	origDir, origSched, origInst, origStep := desktopLockDir, deleteScheduler, deleteInstalled, beforeDeleteStep
 	origOpen, origWatch, origNotify, origExit := openSavedFile, startVerbWatch, notifyDeleteSignals, deleteExit
-	origProbe, origAfter := openProbeFile, afterDeleteReturned
+	origProbe, origAfter, origRemove, origWait := openProbeFile, afterDeleteReturned, removeOwnedFile, createWait
 	desktopLockDir = func() (string, error) { return e.lockDir, nil }
 	deleteScheduler = e.sched
 	deleteInstalled = func() []schedule.InstalledEntry { return nil }
 	t.Cleanup(func() {
 		desktopLockDir, deleteScheduler, deleteInstalled, beforeDeleteStep = origDir, origSched, origInst, origStep
 		openSavedFile, startVerbWatch, notifyDeleteSignals, deleteExit = origOpen, origWatch, origNotify, origExit
-		openProbeFile, afterDeleteReturned = origProbe, origAfter
+		openProbeFile, afterDeleteReturned, removeOwnedFile, createWait = origProbe, origAfter, origRemove, origWait
 	})
 	return e
 }

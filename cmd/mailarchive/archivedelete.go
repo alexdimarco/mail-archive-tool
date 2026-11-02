@@ -14,6 +14,7 @@ import (
 	"strings"
 	"sync"
 	"syscall"
+	"time"
 
 	"mail-archive-tool/internal/archdelete"
 	"mail-archive-tool/internal/desktop"
@@ -51,6 +52,12 @@ var (
 	openProbeFile = func(path string) (*os.File, error) {
 		return os.OpenFile(path, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0o600)
 	}
+	// removeOwnedFile removes a file the verb made when a signal stops it (a test refuses it while
+	// the file is open, as Windows does).
+	removeOwnedFile = os.Remove
+	// createWait is how long a signal waits for a file being created to be made, so it can be
+	// removed: a folder on a network share that stopped answering is not waited for longer.
+	createWait = 2 * time.Second
 	// afterDeleteReturned runs between Execute's return and the result being printed (a test
 	// sends a signal there); nothing in a real run.
 	afterDeleteReturned = func() {}
@@ -601,6 +608,12 @@ type verbWatch struct {
 	row         string
 	savePath    string
 	owned       string
+	ownedFile   *os.File
+	// creating is the file creator is making now, and made is closed once that returns; acting
+	// is set by a signal that waits for it, and closed once the signal has acted.
+	creating    string
+	made        chan struct{}
+	acting      chan struct{}
 	record      []byte
 	code        int
 	w, stdout   io.Writer
@@ -683,15 +696,27 @@ func (v *verbWatch) savingPlan(path string) {
 }
 
 // creator is open made through the watch: the file it creates is the verb's own until disown,
-// and a signal meanwhile removes it before the verb exits. The watch acts on no signal while
-// open runs, so a file just made is never left behind unowned (del-s4 residual 1).
+// and a signal meanwhile removes it before the verb exits (del-s4 residual 1). A signal while
+// open runs waits a moment (createWait) for it, then acts first, so a file just made is never
+// left behind unowned; open is never run under v.mu, so a folder that hangs (a network share
+// that stopped answering) does not hold the signal off.
 func (v *verbWatch) creator(open func(string) (*os.File, error)) func(string) (*os.File, error) {
 	return func(path string) (*os.File, error) {
+		made := make(chan struct{})
 		v.mu.Lock()
-		defer v.mu.Unlock()
+		v.creating, v.made = path, made
+		v.mu.Unlock()
 		f, err := open(path)
+		v.mu.Lock()
+		v.creating, v.made = "", nil
 		if err == nil {
-			v.owned = path
+			v.owned, v.ownedFile = path, f
+		}
+		acting := v.acting
+		close(made)
+		v.mu.Unlock()
+		if acting != nil {
+			<-acting // a signal waited for this file: it acts on it first
 		}
 		return f, err
 	}
@@ -700,40 +725,81 @@ func (v *verbWatch) creator(open func(string) (*os.File, error)) func(string) (*
 // disown keeps the file creator made, or it is gone already; then is the phase from now on.
 func (v *verbWatch) disown(then watchPhase) {
 	v.mu.Lock()
-	v.owned, v.phase = "", then
+	v.owned, v.ownedFile, v.phase = "", nil, then
 	v.mu.Unlock()
 }
 
 // removeOwned removes the file the verb made and owns now, under v.mu; false when it is there
-// still.
+// still. The verb's own handle is closed first: Windows removes no file a program holds open
+// (Go opens files without delete sharing), so the plan being written would otherwise stay. A
+// close that waits on a write to a folder that hangs is not waited for longer than createWait.
 func (v *verbWatch) removeOwned() bool {
 	if v.owned == "" {
 		return true
 	}
-	err := os.Remove(v.owned)
+	if f := v.ownedFile; f != nil {
+		closed := make(chan struct{})
+		go func() { f.Close(); close(closed) }()
+		select {
+		case <-closed:
+		case <-time.After(createWait):
+		}
+	}
+	err := removeOwnedFile(v.owned)
 	return err == nil || errors.Is(err, fs.ErrNotExist)
+}
+
+// waitMade is a signal's wait, under v.mu, for a file creator is making: up to createWait, with
+// v.mu released meanwhile. It returns the file still being made then ("" when none is).
+func (v *verbWatch) waitMade() string {
+	if v.made == nil {
+		return ""
+	}
+	made := v.made
+	v.acting = make(chan struct{})
+	v.mu.Unlock()
+	select {
+	case <-made:
+	case <-time.After(createWait):
+	}
+	v.mu.Lock()
+	return v.creating
 }
 
 // signal acts on one signal by the phase.
 func (v *verbWatch) signal(s os.Signal) {
 	v.mu.Lock()
+	unmade := ""
+	if v.phase == phaseReading || v.phase == phasePlanSaving {
+		unmade = v.waitMade()
+		if v.acting != nil {
+			defer func(acting chan struct{}) { close(acting) }(v.acting)
+			v.acting = nil
+		}
+	}
 	phase, row, path, record, code := v.phase, v.row, v.savePath, v.record, v.code
 	first := v.held == nil
 	if first && (phase == phaseHolding || phase == phaseFinishing) {
 		v.held = s
 	}
 	if phase == phaseReading || phase == phasePlanSaving {
-		// The verb's own file goes before it exits, and none is made meanwhile: v.mu is
+		// The verb's own file goes before it exits, and no other is made meanwhile: v.mu is
 		// held to the end.
 		defer v.mu.Unlock()
 		owned, removed := v.owned != "", v.removeOwned()
 		if phase == phaseReading {
-			fmt.Fprintf(v.w, "mailarchive: %s was stopped by %s; nothing was changed\n", v.verb, signalWords(s))
+			if unmade != "" {
+				fmt.Fprintf(v.w, "mailarchive: %s was stopped by %s; nothing was deleted, but %s was still being created: delete that file if it is there\n", v.verb, signalWords(s), unmade)
+			} else {
+				fmt.Fprintf(v.w, "mailarchive: %s was stopped by %s; nothing was changed\n", v.verb, signalWords(s))
+			}
 			v.exit(signalExit(s))
 			return
 		}
 		what := "nothing was saved"
 		switch {
+		case unmade != "":
+			what = "the file was still being created, so delete it if it is there"
 		case !removed:
 			what = "that file may be incomplete, so delete it"
 		case owned:

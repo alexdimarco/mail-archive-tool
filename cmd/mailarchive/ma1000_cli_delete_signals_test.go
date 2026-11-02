@@ -2,6 +2,7 @@ package main
 
 import (
 	"bytes"
+	"errors"
 	"io"
 	"os"
 	"path/filepath"
@@ -10,6 +11,7 @@ import (
 	"strings"
 	"syscall"
 	"testing"
+	"time"
 
 	"mail-archive-tool/internal/archdelete"
 	"mail-archive-tool/internal/assure"
@@ -25,8 +27,10 @@ import (
 // line written; from step 2 on it stops at once and names the row's own spelling to finish it;
 // while a finished delete's record is saved it prints the record and keeps the delete's code;
 // while the plan is saved, or the saved file's folder probed, the file just made is removed
-// before the verb exits; once the delete has returned it changes nothing, and the record is
-// printed (del-s4 residuals 1, 2); while Remove from list acts it waits for it.
+// before the verb exits, its handle closed first (as Windows needs), and a file still being
+// created in a folder that hangs is waited for a moment only, then named; once the delete has
+// returned it changes nothing, and the record is printed (del-s4 residuals 1, 2, and their
+// adversarial pass's findings 2, 3); while Remove from list acts it waits for it.
 func TestTheDeleteVerbsWatchSignalsFromStartToEnd(t *testing.T) {
 	e := newCLIDel(t)
 	logPath, err := archdelete.DefaultLogPath()
@@ -169,7 +173,9 @@ func TestTheDeleteVerbsWatchSignalsFromStartToEnd(t *testing.T) {
 	}
 
 	// While -plan-out is being written (the file just made): the file is removed before the verb
-	// exits, nothing deleted (del-s4 residual 1).
+	// exits, nothing deleted (del-s4 residual 1). Its handle is closed first: the removal is
+	// refused while the file is open, as Windows refuses it (the residual fixes' adversarial
+	// pass, finding 3).
 	pl := e.plainArchive("Archive S6")
 	beforePl := tree(t, pl)
 	planFile := filepath.Join(t.TempDir(), "plan.txt")
@@ -178,9 +184,17 @@ func TestTheDeleteVerbsWatchSignalsFromStartToEnd(t *testing.T) {
 		_, err := os.Lstat(planFile)
 		planLeft = err == nil
 	}
+	var planHandle *os.File
+	removeOwnedFile = func(path string) error {
+		if _, err := planHandle.Stat(); path == planFile && !errors.Is(err, os.ErrClosed) {
+			return &os.PathError{Op: "remove", Path: path, Err: errors.New("the file is open in this program (Windows refuses it)")}
+		}
+		return os.Remove(path)
+	}
 	openSavedFile = func(path string) (*os.File, error) {
 		fh, err := os.OpenFile(path, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0o644)
 		if err == nil {
+			planHandle = fh
 			fh.WriteString("Status: planned, nothing del")
 			f.send(t, os.Interrupt)
 		}
@@ -192,6 +206,7 @@ func TestTheDeleteVerbsWatchSignalsFromStartToEnd(t *testing.T) {
 	openSavedFile = func(path string) (*os.File, error) {
 		return os.OpenFile(path, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0o644)
 	}
+	removeOwnedFile = os.Remove
 	said = f.said.String()[saidBefore:]
 	if code != 130 || planLeft || !strings.Contains(said, "stopped by Ctrl-C while saving the plan to "+planFile+": the unfinished file was removed. Nothing was deleted.") ||
 		!sameTree(beforePl, tree(t, pl)) || !e.listed(pl) {
@@ -224,6 +239,38 @@ func TestTheDeleteVerbsWatchSignalsFromStartToEnd(t *testing.T) {
 	said = f.said.String()[saidBefore:]
 	if code != 143 || probeLeft || !strings.Contains(said, "delete-archive was stopped by a terminate signal; nothing was changed") {
 		t.Fatalf("a terminate signal while the folder is probed: exit %d, probe %q left at exit %v\n%s", code, probe, probeLeft, said)
+	}
+
+	// While the probe is being created in a folder that hangs (a network share that stopped
+	// answering): the signal waits for it no longer than createWait, then stops the verb and names
+	// the file that may have been made (the residual fixes' adversarial pass, finding 2).
+	started, unblock := make(chan struct{}), make(chan struct{})
+	var hung string
+	openProbeFile = func(path string) (*os.File, error) {
+		hung = path
+		close(started)
+		<-unblock
+		return os.OpenFile(path, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0o600)
+	}
+	ran := make(chan struct{})
+	go func() {
+		defer close(ran)
+		_ = deleteArchive(&scripted{isAttended: true}, pl, filepath.Join(t.TempDir(), "plan.txt"), "", io.Discard)
+	}()
+	<-started
+	saidBefore = len(f.said.String())
+	sentAt := time.Now()
+	f.send(t, os.Interrupt)
+	code = f.waitExit()
+	took := time.Since(sentAt)
+	close(unblock)
+	<-ran
+	openProbeFile = func(path string) (*os.File, error) {
+		return os.OpenFile(path, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0o600)
+	}
+	said = f.said.String()[saidBefore:]
+	if code != 130 || took > createWait+time.Second || !strings.Contains(said, "nothing was deleted, but "+hung+" was still being created: delete that file if it is there") {
+		t.Fatalf("Ctrl-C while the probe is created in a folder that hangs: exit %d after %v\n%s", code, took, said)
 	}
 
 	// Between the delete's return and its result: the delete is over, so the signal changes
