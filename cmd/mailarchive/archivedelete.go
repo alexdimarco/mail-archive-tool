@@ -495,10 +495,11 @@ func visibleName(name string) string {
 // store's number beside its full name (§8.1).
 func deletePlanLines(p *archdelete.DeletePlan) []string {
 	c := util.StripControl
-	lines := []string{fmt.Sprintf("MailArchive will permanently delete the %s archive in this folder (no Recycle Bin or Trash):", p.Kind), "  " + visibleName(p.Folder)}
-	if p.Rerun != archdelete.RerunNone {
-		lines = append(lines, "  This finishes a delete of this folder that did not finish.")
+	var lines []string
+	if l := p.FinishesLine(); l != "" {
+		lines = append(lines, l) // first: it finishes a delete that stopped part way (D1)
 	}
+	lines = append(lines, fmt.Sprintf("MailArchive will permanently delete the %s archive in this folder (no Recycle Bin or Trash):", p.Kind), "  "+visibleName(p.Folder))
 	lines = append(lines, fmt.Sprintf("  files: %d (%s)", p.Files, sizeWords(p.Bytes)))
 	for i, s := range p.Stores {
 		lines = append(lines, fmt.Sprintf("  store %d: %s", i+1, c(s)))

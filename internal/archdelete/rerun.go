@@ -76,7 +76,7 @@ func planFolderGone(abs string, deps Deps, u *Unfinished) (*DeletePlan, error) {
 	}
 	// Identity is the folder's as the original started line recorded it: the deletion
 	// record names the folder deleted, and this re-run's own started line carries it.
-	p := &DeletePlan{Folder: abs, Name: filepath.Base(abs), Identity: u.Identity, Kind: u.Kind, Rerun: RerunFolderGone}
+	p := &DeletePlan{Folder: abs, Name: filepath.Base(abs), Identity: u.Identity, Kind: u.Kind, Rerun: RerunFolderGone, Finishes: u}
 	recordFrom(p, u)
 	if deps.Records != nil {
 		d, err := deps.Records.Discover(abs)
@@ -127,7 +127,7 @@ func planNoAnchor(abs string, deps Deps, u *Unfinished, orig *Refusal) (*DeleteP
 	if id != u.Identity {
 		return nil, orig
 	}
-	p := &DeletePlan{Folder: abs, Name: onDiskName(abs, fi), Identity: id, Kind: u.Kind, Rerun: RerunNoAnchor}
+	p := &DeletePlan{Folder: abs, Name: onDiskName(abs, fi), Identity: id, Kind: u.Kind, Rerun: RerunNoAnchor, Finishes: u}
 	recordFrom(p, u)
 	if err := checkBackupFor(abs, deps); err != nil {
 		return nil, err

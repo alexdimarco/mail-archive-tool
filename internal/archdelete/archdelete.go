@@ -207,6 +207,10 @@ type DeletePlan struct {
 	// KeyAtPlan is what step 8 would do with an encrypted archive's key, as the
 	// keyring's plan said at the plan (Deps.KeyPlan): KeyLine words it.
 	KeyAtPlan KeyAtPlan
+	// Finishes is the unfinished delete of this folder that this one finishes (deletions.log,
+	// §5.4), or nil: the plan then begins "This finishes the delete begun DATE", and the record
+	// names its first run and carries what it removed (the 1.5.3 friction review's D1).
+	Finishes *Unfinished
 }
 
 // KeyAtPlan is the keyring's forget plan for the record the plan found: Known when it was
@@ -440,6 +444,13 @@ func addKeyAtPlan(p *DeletePlan, deps Deps) {
 // planAny is Plan before the key's outlook is asked.
 func planAny(folder string, deps Deps) (*DeletePlan, error) {
 	p, err := planArchive(folder, deps)
+	if err == nil && deps.Log != "" {
+		// An ordinary delete may still finish one that stopped part way (D1): said, never a
+		// refusal — a log that cannot be read leaves it unsaid.
+		if u, lerr := UnfinishedDelete(deps.Log, p.Folder, deps.goos()); lerr == nil {
+			p.Finishes = u
+		}
+	}
 	if err == nil || deps.Log == "" {
 		return p, err
 	}

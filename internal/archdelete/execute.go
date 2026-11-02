@@ -168,6 +168,13 @@ func (e *run) logStarted() error {
 	case RerunNoAnchor:
 		l.Rerun = "no manifest"
 	}
+	if f := p.Finishes; f != nil && f.FirstRun != "" {
+		// The delete this one finishes, carried forward (D1).
+		l.FirstRun, l.EarlierFiles, l.EarlierBytes, l.EarlierUnknown = f.FirstRun, intp(f.Removed), int64p(f.RemovedBytes), !f.RemovedKnown
+		if !f.FirstStarted.IsZero() {
+			l.FirstAt = f.FirstStarted.UTC().Format(time.RFC3339Nano)
+		}
+	}
 	if err := appendLog(e.log, l); err != nil {
 		return err
 	}
@@ -1219,7 +1226,8 @@ func (e *run) step10() {
 	})
 	res.Record = rec
 	l := logLine{At: e.stamp(), Event: evFinished, Run: e.id, Folder: p.Folder, Row: e.row, Outcome: e.outcome, Unfinished: res.Unfinished,
-		Left: intp(len(left)), Kept: intp(len(res.Kept)), Detail: e.detail, RecordSHA256: recordSHA(rec)}
+		Left: intp(len(left)), Kept: intp(len(res.Kept)), Detail: e.detail, RecordSHA256: recordSHA(rec),
+		Removed: intp(res.Removed), RemovedBytes: int64p(res.Bytes)}
 	e.sayFinished() // before the line: once the log says finished, the delete has said it is over
 	if err := appendLog(e.log, l); err != nil {
 		res.Lines = append(res.Lines, msgDigestFailed)

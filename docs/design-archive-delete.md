@@ -1107,3 +1107,13 @@ changed words are the builder's, for the operator, unless a quote says otherwise
   job file in MailArchive's settings folder. Remove from list's question: "Its scheduled backup
   that runs daily at 02:00 will also be stopped." (several: "Its scheduled backups will also be
   stopped: …; ….").
+- *Finishing a part-way delete (MA-1026; D1, the design choice built as the review proposed).*
+  The plan of a folder with an unfinished delete begins "This finishes the delete begun DATE."
+  (terminal and panel; DATE "2026-11-01 17:05 -05:00", this computer's time with its offset);
+  the saved plan and the record say, after Status, "Finishes: the delete begun DATE (run ID)"
+  with the first run's id, and "Files removed earlier: N (SIZE)" (or "at least N (SIZE); not known
+  in full: a run stopped before it wrote its record"); the record adds "Files removed in all: N
+  (SIZE)". The previous "This finishes a delete that did not finish." / "This finishes a delete of
+  this folder that did not finish." are replaced. deletions.log gains `first_run`, `first_at`,
+  `earlier_files`, `earlier_bytes`, `earlier_unknown` (started) and `removed`, `removed_bytes`
+  (finished); older lines without them read as counts not known.

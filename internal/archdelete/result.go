@@ -155,6 +155,38 @@ func (p *DeletePlan) KeyLine() string {
 	return "If the folder is removed and it is the last copy of this archive this computer recorded, this computer will forget the archive's key; otherwise the key is kept for the other copies."
 }
 
+// FinishesLine is the plan's first line when it finishes a delete of this folder that did not
+// finish (the 1.5.3 friction review's D1), on the Desktop's panel and at the terminal: "This
+// finishes the delete begun DATE." ("" for an ordinary delete).
+func (p *DeletePlan) FinishesLine() string {
+	if p.Finishes == nil {
+		return ""
+	}
+	if p.Finishes.FirstStarted.IsZero() {
+		return "This finishes a delete of this folder that did not finish."
+	}
+	return "This finishes the delete begun " + localStamp(p.Finishes.FirstStarted) + "."
+}
+
+// finishesValue is the saved plan's and the record's "Finishes" line: the first run's date and id.
+func (p *DeletePlan) finishesValue() string {
+	f := p.Finishes
+	when := "on a date not recorded"
+	if !f.FirstStarted.IsZero() {
+		when = localStamp(f.FirstStarted)
+	}
+	return fmt.Sprintf("the delete begun %s (run %s)", when, f.FirstRun)
+}
+
+// earlierValue is the record's "Files removed earlier": what the runs before this one removed.
+func (p *DeletePlan) earlierValue() string {
+	f := p.Finishes
+	if !f.RemovedKnown {
+		return fmt.Sprintf("at least %d (%s); not known in full: a run stopped before it wrote its record", f.Removed, size(f.RemovedBytes))
+	}
+	return fmt.Sprintf("%d (%s)", f.Removed, size(f.RemovedBytes))
+}
+
 // ScheduleLines are the plan's lines about the archive's backups, shared by the Desktop's panel
 // and the command line (the 1.5.3 friction review's B1, B15): the scheduled backups step 2 would
 // stop, by when they run ("Scheduled backups it stops: the backup that runs daily at 02:00."), or

@@ -78,6 +78,10 @@ func RecordText(in RecordInput) []byte {
 	p := in.Plan
 	planned := in.Status == StatusPlanned
 	line("Status", in.Status)
+	if p.Finishes != nil {
+		// The delete this one finishes, its first run named (D1).
+		line("Finishes", p.finishesValue())
+	}
 	line("Date", in.When.Format("2006-01-02 15:04:05 MST (-07:00)"))
 	line("Computer", in.Computer)
 	line("Account", in.Account)
@@ -122,10 +126,16 @@ func RecordText(in RecordInput) []byte {
 	} else {
 		line("Last backup", stamp(c.LastBackup)+asRecorded)
 	}
+	if p.Finishes != nil {
+		line("Files removed earlier", p.earlierValue())
+	}
 	if planned {
 		line("Files to remove", fmt.Sprintf("%d (%s)", p.Files, size(p.Bytes)))
 	} else {
 		line("Files removed", fmt.Sprintf("%d (%s)", in.FilesRemoved, size(in.BytesRemoved)))
+		if f := p.Finishes; f != nil && f.RemovedKnown {
+			line("Files removed in all", fmt.Sprintf("%d (%s)", f.Removed+in.FilesRemoved, size(f.RemovedBytes+in.BytesRemoved)))
+		}
 	}
 	anchor := p.Anchor.SHA256
 	if anchor == "" {
@@ -261,6 +271,10 @@ func cleanValue(v string) string {
 	v = strings.NewReplacer("\r", " ", "\n", " ").Replace(v)
 	return util.StripControl(v)
 }
+
+// localStamp is a moment in this computer's time with its offset, the one form the plan's lines
+// use ("2026-11-02 01:08 -05:00").
+func localStamp(t time.Time) string { return t.Local().Format("2006-01-02 15:04 -07:00") }
 
 func day(t time.Time) string   { return t.UTC().Format("2006-01-02") }
 func stamp(t time.Time) string { return t.UTC().Format("2006-01-02 15:04 UTC") }

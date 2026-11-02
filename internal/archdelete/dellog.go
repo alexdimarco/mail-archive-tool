@@ -98,6 +98,16 @@ type logLine struct {
 	RecordSpelling   string `json:"record_spelling,omitempty"`
 	NotRecorded      bool   `json:"not_recorded,omitempty"`
 	Rerun            string `json:"rerun,omitempty"`
+	// FirstRun and FirstAt (started) are the delete this one finishes, as its first run's id and
+	// started time; EarlierFiles and EarlierBytes what its runs removed before this one, and
+	// EarlierUnknown that one of them stopped with no finished line, so its count is not known
+	// (the 1.5.3 friction review's D1: the record of the run that finishes a delete names the
+	// first and carries its totals).
+	FirstRun       string `json:"first_run,omitempty"`
+	FirstAt        string `json:"first_at,omitempty"`
+	EarlierFiles   *int   `json:"earlier_files,omitempty"`
+	EarlierBytes   *int64 `json:"earlier_bytes,omitempty"`
+	EarlierUnknown bool   `json:"earlier_unknown,omitempty"`
 
 	// finished: the outcome, whether the row is left "Delete not finished" (a partial
 	// written after step 2 began, §5.4), what was left and kept, and the deletion
@@ -108,6 +118,9 @@ type logLine struct {
 	Kept         *int   `json:"kept,omitempty"`
 	Detail       string `json:"detail,omitempty"`
 	RecordSHA256 string `json:"record_sha256,omitempty"`
+	// Removed and RemovedBytes (finished) are the archive's files this run removed (D1).
+	Removed      *int   `json:"removed,omitempty"`
+	RemovedBytes *int64 `json:"removed_bytes,omitempty"`
 }
 
 // errLogFull is appendLog's refusal of a started line the log has no room for.
@@ -255,6 +268,18 @@ type Unfinished struct {
 	// `key forgotten` line, or a re-run's started line carrying it forward).
 	Identity     Identity
 	KeyForgotten bool
+	// Run is the started line's run id; FirstRun and FirstStarted the first run of the delete it
+	// belongs to (itself, unless it finishes an earlier one). Removed and RemovedBytes are what
+	// every run of that delete removed so far; RemovedKnown is false when one of them stopped with
+	// no finished line, so its count is not known (D1).
+	Run          string
+	FirstRun     string
+	FirstStarted time.Time
+	Removed      int
+	RemovedBytes int64
+	RemovedKnown bool
+	// counted: this run's own finished line was read.
+	counted bool
 }
 
 // UnfinishedDelete reads the log at logPath for folder's last delete that did not
@@ -397,8 +422,22 @@ func (dl *DeleteLog) Unfinished(folder, goos string) *Unfinished {
 			if !names(l) {
 				continue
 			}
-			u := &Unfinished{Folder: l.Folder, Row: l.Row, Kind: kindOf(l.Kind), KeyForgotten: l.KeyForgotten}
+			u := &Unfinished{Folder: l.Folder, Row: l.Row, Kind: kindOf(l.Kind), KeyForgotten: l.KeyForgotten, Run: l.Run}
 			u.Started, _ = time.Parse(time.RFC3339Nano, l.At)
+			// The delete it belongs to (D1): an earlier one it finishes, with what that removed,
+			// or itself.
+			u.FirstRun, u.FirstStarted, u.RemovedKnown = l.Run, u.Started, true
+			if l.FirstRun != "" {
+				u.FirstRun = l.FirstRun
+				u.FirstStarted, _ = time.Parse(time.RFC3339Nano, l.FirstAt)
+				if l.EarlierFiles != nil {
+					u.Removed = *l.EarlierFiles
+				}
+				if l.EarlierBytes != nil {
+					u.RemovedBytes = *l.EarlierBytes
+				}
+				u.RemovedKnown = !l.EarlierUnknown
+			}
 			if l.Identity != nil {
 				u.Identity = *l.Identity
 			}
@@ -440,7 +479,17 @@ func (dl *DeleteLog) Unfinished(folder, goos string) *Unfinished {
 		case evFinished:
 			switch {
 			case l.Outcome == outPartial && l.Unfinished:
-				// the row stays "Delete not finished"
+				// the row stays "Delete not finished"; what this run removed counts toward the
+				// delete that finishes it (D1); a line with no count (an older one) is not known.
+				u.counted = true
+				if l.Removed != nil {
+					u.Removed += *l.Removed
+					if l.RemovedBytes != nil {
+						u.RemovedBytes += *l.RemovedBytes
+					}
+				} else {
+					u.RemovedKnown = false
+				}
 			case l.Outcome == outRefused:
 				for i, o := range open {
 					if o == u {
@@ -461,6 +510,9 @@ func (dl *DeleteLog) Unfinished(folder, goos string) *Unfinished {
 		u := open[i]
 		if there && (u.FolderRemoved || (u.Identity != Identity{} && u.Identity != now)) {
 			continue
+		}
+		if !u.counted {
+			u.RemovedKnown = false // it stopped with no finished line: what it removed is not known
 		}
 		return u
 	}

@@ -172,10 +172,11 @@ function delPanel(p){
   const w=document.createElement('div');w.className='note delete-panel';w.setAttribute('role','group');w.setAttribute('aria-label','Delete this archive');
   const line=(text,cls)=>{const x=delEl('p',text,cls);w.append(x);return x;};
   const head=delEl('p');head.append(delEl('b','Delete this archive permanently'));w.append(head);
+  // First, when it finishes a delete that stopped part way (D1): the date it began.
+  if(p.finishesLine)line(p.finishesLine);
   line(p.threeLine,'card-sub');
   line('Folder: '+p.folder,'mono');
   line('Delete removes '+p.files+(p.files===1?' file':' files')+' ('+p.size+').');
-  if(p.rerun)line('This finishes a delete that did not finish.');
   if(p.stores.length)line('Stores: '+p.stores.map(s=>'store '+s.number+' '+s.name).join(', '));
   (p.scheduleLines||[]).forEach(t=>line(t));
   if(p.checkYourself.length)line('Not removed, check it yourself: '+p.checkYourself.join(', '),'warn');
