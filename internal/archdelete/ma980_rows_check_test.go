@@ -199,8 +199,10 @@ func TestAKnownArchiveRecordedByItsFoldedSpellingIsStillProtected(t *testing.T) 
 		t.Fatal(err)
 	}
 	spelling := encrecord.Spelling(vault)
+	// On Linux the record keeps the exact spelling (no folding), which the file system opens: there
+	// is nothing to stand in for, and the record's own spelling is what protects.
 	ntfs := func(p string) (os.FileInfo, error) {
-		if p == spelling {
+		if p == spelling && spelling != vault {
 			return nil, &fs.PathError{Op: "stat", Path: p, Err: fs.ErrNotExist}
 		}
 		return os.Stat(p)
