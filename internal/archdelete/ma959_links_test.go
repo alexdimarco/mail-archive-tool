@@ -9,38 +9,51 @@ import (
 
 	"mail-archive-tool/internal/assure"
 	"mail-archive-tool/internal/nowindow"
+	"mail-archive-tool/internal/util"
 )
 
-// symlinkOrSkip makes link a symbolic link to target. On Windows, where a symbolic link needs
-// a privilege most accounts lack (elevation or developer mode), a link to a folder is made a
-// junction instead, which needs none — the link Windows users meet most — so these tests run
-// there (MA-959, slice 5's carry-over). A link to a file without the privilege still skips:
-// a junction cannot point at a file.
+// symlinkOrSkip makes link a symbolic link to target. On Windows a link to a folder is always
+// a junction (makeJunction), whatever the account may do: a junction is the link Windows users
+// meet most, and it needs no privilege, so these tests run there through a junction even on an
+// account that holds the link privilege (the lab runs as SYSTEM; developer mode; elevation),
+// where os.Symlink would succeed and the junction path would go untested (MA-959, slice 5's
+// carry-over; del-s5-A1-02 (a)). A link to a file on Windows is a symbolic link, and skips
+// without the privilege: a junction cannot point at a file (its junction variants run
+// instead).
 func symlinkOrSkip(t *testing.T, target, link string) {
 	t.Helper()
-	if err := os.Symlink(target, link); err != nil {
-		if runtime.GOOS == "windows" {
-			abs := target
-			if !filepath.IsAbs(abs) {
-				abs = filepath.Join(filepath.Dir(link), target)
-			}
-			if fi, serr := os.Stat(abs); serr == nil && fi.IsDir() {
-				junctionOrSkip(t, abs, link)
-				return
-			}
+	if runtime.GOOS == "windows" {
+		abs := target
+		if !filepath.IsAbs(abs) {
+			abs = filepath.Join(filepath.Dir(link), target)
+		}
+		if fi, err := os.Stat(abs); err == nil && fi.IsDir() {
+			makeJunction(t, abs, link)
+			return
+		}
+		if err := os.Symlink(target, link); err != nil {
 			t.Skipf("no link privilege here, and a junction cannot point at a file (lab: run elevated or in developer mode): %v", err)
 		}
+		return
+	}
+	if err := os.Symlink(target, link); err != nil {
 		t.Fatal(err)
 	}
 }
 
-// junctionOrSkip makes link a Windows junction to the folder target with cmd's mklink /J (no
-// privilege needed), or skips where it cannot (lab).
-func junctionOrSkip(t *testing.T, target, link string) {
+// makeJunction makes link a Windows junction to the folder target with cmd's mklink /J. It
+// fails the test, never skips, when it cannot (del-s5-A1-02 (b)): a junction needs no
+// privilege, so a failure here (a FAT or exFAT temp volume, cmd blocked) would otherwise
+// leave a test the catalog calls proven on Windows silently unrun. It also checks that what
+// it made is a link as util.IsLinkLike sees one, so the test cannot pass on a plain folder.
+func makeJunction(t *testing.T, target, link string) {
 	t.Helper()
 	out, err := nowindow.Hide(exec.Command("cmd", "/c", "mklink", "/J", link, target)).CombinedOutput()
 	if err != nil {
-		t.Skipf("could not make a junction (lab): %v %s", err, out)
+		t.Fatalf("could not make a junction %s -> %s, which needs no privilege (is the temp folder on NTFS?): %v %s", link, target, err, out)
+	}
+	if isLink, err := util.IsLinkLike(link); err != nil || !isLink {
+		t.Fatalf("mklink /J made %s, but it is not a link to util.IsLinkLike (%v, %v)", link, isLink, err)
 	}
 }
 
