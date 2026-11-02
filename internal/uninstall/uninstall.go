@@ -117,20 +117,20 @@ type DeleteNotFinishedError struct {
 func (e *DeleteNotFinishedError) Error() string {
 	if len(e.Folders) > 1 {
 		return fmt.Sprintf("Deletes of these %d folders are running or did not finish, so uninstall removed nothing: uninstalling would remove MailArchive's deletion log (%s), which they need to finish.\n%s\n%s",
-			len(e.Folders), e.Log, e.eachLine(), e.howToGoOnAll())
+			len(e.Folders), e.logPath(), e.eachLine(), e.howToGoOnAll())
 	}
 	return fmt.Sprintf("A delete of %s is running or did not finish, so uninstall removed nothing: uninstalling would remove MailArchive's deletion log (%s), which that delete needs to finish. %s",
-		e.names(), e.Log, e.howToGoOn())
+		e.names(), e.logPath(), e.howToGoOn())
 }
 
 // Until is what a dry run says after the plan: uninstall will refuse until the delete ends.
 func (e *DeleteNotFinishedError) Until() string {
 	if len(e.Folders) > 1 {
 		return fmt.Sprintf("Uninstall will refuse until these %d deletes are finished (each is running or did not finish): uninstalling would remove MailArchive's deletion log (%s), which they need to finish.\n%s\n%s",
-			len(e.Folders), e.Log, e.eachLine(), e.howToGoOnAll())
+			len(e.Folders), e.logPath(), e.eachLine(), e.howToGoOnAll())
 	}
 	return fmt.Sprintf("Uninstall will refuse until the delete of %s is finished (it is running or did not finish): uninstalling would remove MailArchive's deletion log (%s), which that delete needs to finish. %s",
-		e.names(), e.Log, e.howToGoOn())
+		e.names(), e.logPath(), e.howToGoOn())
 }
 
 // Waits is the Desktop's tooltip on its disabled Remove (MA-1030), plural for several deletes (N9).
@@ -148,6 +148,12 @@ func (e *DeleteNotFinishedError) names() string {
 		names = append(names, util.StripControl(f))
 	}
 	return strings.Join(names, "; ")
+}
+
+// logPath is the deletion log's path quoted, as LogNotCopiedError quotes it, so it can be pasted
+// into a copy command (the settle pass's LOW-4: on a Mac it holds a space, "Application Support").
+func (e *DeleteNotFinishedError) logPath() string {
+	return encmark.CommandPath(util.StripControl(e.Log))
 }
 
 // command is the terminal's command that finishes the delete of folder.

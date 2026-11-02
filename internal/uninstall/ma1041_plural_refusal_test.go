@@ -49,8 +49,12 @@ func TestUninstallsRefusalOfSeveralDeletesIsPlural(t *testing.T) {
 	// Positive twin: one plain delete.
 	dn, log := plan(started("r1", a, "plain"))
 	if u := dn.Until(); !strings.HasPrefix(u, "Uninstall will refuse until the delete of "+a+" is finished (it is running or did not finish): ") ||
-		!strings.Contains(u, finish(a)) || strings.Contains(u, keySentence) || strings.Contains(u, "\n") {
+		!strings.Contains(u, finish(a)) || strings.Contains(u, keySentence) || strings.Contains(u, "\n") ||
+		!strings.Contains(u, "MailArchive's deletion log ("+encmark.CommandPath(log)+"), which that delete needs") {
 		t.Fatalf("one plain delete: %q", u)
+	}
+	if e := dn.Error(); !strings.Contains(e, "MailArchive's deletion log ("+encmark.CommandPath(log)+"), which that delete needs") {
+		t.Fatalf("one plain delete's refusal: %q", e)
 	}
 	if dn.Waits() != "Uninstall waits until that delete is finished." {
 		t.Fatalf("one delete's tooltip: %q", dn.Waits())
@@ -58,7 +62,8 @@ func TestUninstallsRefusalOfSeveralDeletesIsPlural(t *testing.T) {
 
 	// Three plain deletes: plural, a line each, no key sentence.
 	dn, log = plan(started("r1", a, "plain"), started("r2", b, "plain"), started("r3", c, "plain"))
-	want := "Uninstall will refuse until these 3 deletes are finished (each is running or did not finish): uninstalling would remove MailArchive's deletion log (" + log + "), which they need to finish.\n" +
+	// The log's path quoted, as -yes's refusal quotes it (the settle pass's LOW-4).
+	want := "Uninstall will refuse until these 3 deletes are finished (each is running or did not finish): uninstalling would remove MailArchive's deletion log (" + encmark.CommandPath(log) + "), which they need to finish.\n" +
 		"  - " + a + ": " + finish(a) + "\n" +
 		"  - " + b + ": " + finish(b) + "\n" +
 		"  - " + c + ": " + finish(c) + "\n" +
@@ -76,7 +81,7 @@ func TestUninstallsRefusalOfSeveralDeletesIsPlural(t *testing.T) {
 		msg = err.Error()
 	}
 	assure.Refused(t, refusalCode(err), msg, assure.Code(1),
-		assure.Names("Deletes of these 3 folders are running or did not finish, so uninstall removed nothing", "\n  - "+b+": "+finish(b)+"\n", "If you no longer want to finish them"),
+		assure.Names("Deletes of these 3 folders are running or did not finish, so uninstall removed nothing", "MailArchive's deletion log ("+encmark.CommandPath(log)+"), which they need", "\n  - "+b+": "+finish(b)+"\n", "If you no longer want to finish them"),
 		assure.Forbid(keySentence, "; mailarchive delete-archive"),
 		assure.NoSideEffect(func() bool { return exists(log) && exists(filepath.Join(cfg, "desktop-settings.json")) }))
 

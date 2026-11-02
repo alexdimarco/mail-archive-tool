@@ -31,4 +31,18 @@ func TestUninstallsPlanSaysHowToGoOnOnceTheLogIsCopied(t *testing.T) {
 			t.Fatalf("uninstall %v: the plan does not say how to go on:\n%s%s", args, out, errs)
 		}
 	}
+
+	// A delete not finished: the plan gives no next step that would be refused (the settle pass's
+	// LOW-4); it says the log note alone, then that uninstall will refuse until the delete is done.
+	env, cfg = uninstallHome(t)
+	writeOwnerOnly(t, filepath.Join(cfg, "desktop-settings.json"), "{}")
+	writeOwnerOnly(t, filepath.Join(cfg, "deletions.log"), `{"at":"2026-11-01T10:00:00Z","event":"started","run":"r1","folder":"/gone/Old","row":"/gone/Old","kind":"plain"}`+"\n")
+	for _, args := range [][]string{{"-dry-run"}, nil} {
+		_, out, errs = runUninstallIn(t, env, args...)
+		if strings.Contains(out+errs, next) || strings.Contains(out+errs, "-log-copied") ||
+			!strings.Contains(out, "      Copy deletions.log first, somewhere you keep records (your Documents folder, for example), if you need it to check saved deletion records.\n") ||
+			!strings.Contains(errs, "Uninstall will refuse until the delete of /gone/Old is finished") {
+			t.Fatalf("uninstall %v with a delete not finished:\n%s%s", args, out, errs)
+		}
+	}
 }

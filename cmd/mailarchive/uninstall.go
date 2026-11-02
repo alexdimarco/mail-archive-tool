@@ -56,8 +56,10 @@ func runUninstall(args []string) error {
 	switch {
 	case !removing:
 		// A plan only: once the log is copied, -yes needs -log-copied when the log holds any line,
-		// so the plan says so, not only the refusal (the 1.5.3 re-walk's N10).
-		if holds, herr := archdelete.LogHoldsLines(rep.DeletionsLog); rep.DeletionsLog != "" && herr == nil && holds {
+		// so the plan says so, not only the refusal (the 1.5.3 re-walk's N10). Not while a delete is
+		// not finished: -yes is refused then whatever is copied, as the plan goes on to say (the
+		// settle pass's LOW-4).
+		if holds, herr := archdelete.LogHoldsLines(rep.DeletionsLog); pending == nil && rep.DeletionsLog != "" && herr == nil && holds {
 			note += " " + uninstall.DeletionsLogCopyNext
 		}
 	case notCopied != nil:
