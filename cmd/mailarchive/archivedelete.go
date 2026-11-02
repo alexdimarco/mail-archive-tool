@@ -84,7 +84,8 @@ const (
 )
 
 // desktopRunningText refuses either verb while a Desktop runs (§3.3 [R3:C17]).
-const desktopRunningText = "MailArchive Desktop is running for your account (in this or another sign-in to this computer), so nothing was changed. Use the Desktop, or shut it down first"
+// It names where Shut down is, with a final period (the 1.5.3 friction review's B12, item 32).
+const desktopRunningText = "MailArchive Desktop is running for your account (in this or another sign-in to this computer), so nothing was changed. Use the Desktop, or shut it down first: click Shut down at the top of MailArchive Desktop, then run this again."
 
 // errDesktopIsRunning is desktopRunning's refusal; errDesktopStarted is the re-check's stop
 // before steps 4, 8 and 9.
@@ -195,9 +196,13 @@ func configArg(cfgPath string) string {
 // (del-s4-A1-01), with what to do in the refusal for verb.
 func rowOf(seams *desktop.CommandLineDelete, out, notRow string) (string, error) {
 	row, ok, err := seams.Row(out)
+	list := `"` + util.StripControl(seams.ListPath()) + `"` // quoted: "Application Support" has a space (item 4)
 	switch {
+	case err != nil && errors.Is(err, util.ErrReadableByOthers):
+		// "readable by other users" said once, with the remedy (the 1.5.3 friction review's item 4).
+		return "", fmt.Errorf("Your archives (%s) cannot be read: other users of this computer can read it, so MailArchive will not, and cannot tell whether %s is in it; nothing was changed. Run chmod 600 %s, then try again.", list, util.StripControl(out), list)
 	case err != nil:
-		return "", fmt.Errorf("Your archives (%s) cannot be read (%s), so MailArchive cannot tell whether %s is in it; nothing was changed", util.StripControl(seams.ListPath()), util.StripControl(err.Error()), util.StripControl(out))
+		return "", fmt.Errorf("Your archives (%s) cannot be read (%s), so MailArchive cannot tell whether %s is in it; nothing was changed.", list, util.StripControl(err.Error()), util.StripControl(out))
 	case !ok:
 		return "", errors.New(notRow)
 	}
@@ -212,7 +217,7 @@ func runDeleteArchive(args []string) error {
 	cfgPath := configFlag(fs)
 	fs.Usage = func() {
 		fmt.Fprintf(fs.Output(), "Usage: mailarchive delete-archive -out DIR [-plan-out FILE | -record-out FILE] [-config FILE]\n\n"+
-			"Permanently delete the archive in DIR, a folder in Your archives in MailArchive Desktop: its mail files, its index and MailArchive's own files in it — never a file it did not write, unless you choose to delete the mail copies it did not record — and stop its scheduled backups, remove it from Your archives and, for an encrypted archive, make this computer forget its key. There is no Recycle Bin or Trash. The plan is shown first; then you type the folder's name to confirm. It runs only at a terminal, and not while MailArchive Desktop is running (use Delete… on its Your archives card instead). A folder not in Your archives can be added first with mailarchive add-archive DIR.\n\n%s\n\nOptions:\n", deleteVerbExit)
+			"Permanently delete the archive in DIR, a folder in Your archives in MailArchive Desktop: its mail files, its index and MailArchive's own files in it — never a file it did not write, unless you choose to delete the mail copies it did not record — and stop its scheduled backups, remove it from Your archives and, for an encrypted archive, make this computer forget its record and key when this is the last copy it recorded. There is no Recycle Bin or Trash. The plan is shown first; then you type the folder's name to confirm. It runs only at a terminal, and not while MailArchive Desktop is running (use Delete… on its Your archives card instead). A folder not in Your archives can be added first with mailarchive add-archive DIR.\n\n%s\n\nOptions:\n", deleteVerbExit)
 		fs.PrintDefaults()
 	}
 	if err := fs.Parse(args); err != nil {
@@ -298,7 +303,7 @@ func deleteArchiveWith(cfgPath string, a asker, out, planOut, recordOut string, 
 	if err != nil {
 		return terminalRefusal(err.Error(), row, cfgPath)
 	}
-	for _, l := range deletePlanLines(plan) {
+	for _, l := range deletePlanLines(plan, seams.LogPath()) {
 		a.say("%s", l)
 	}
 	if storeErr != nil && plan.Kind == archdelete.Encrypted {
@@ -320,23 +325,36 @@ func deleteArchiveWith(cfgPath string, a asker, out, planOut, recordOut string, 
 	unrecorded := false
 	if n := len(plan.Unrecorded); n > 0 {
 		watch.set(phaseAsking)
-		unrecorded, err = askYes(a, fmt.Sprintf("Also delete these %d files (for retention)?", n), false)
+		q := fmt.Sprintf("Also delete these %d files (for retention)?", n)
+		if n == 1 {
+			q = "Also delete this 1 file (for retention)?" // B7, item 12
+		}
+		unrecorded, err = askYes(a, q, false)
 		watch.set(phaseReading)
 		if err != nil {
 			return promptEnded(err)
 		}
 	}
 	shown := visibleName(plan.Name)
-	watch.set(phaseAsking)
-	typed, err := a.line(fmt.Sprintf("Type the folder's name, %s, to delete it: ", shown))
-	watch.set(phaseReading)
-	if err != nil {
-		return promptEnded(err)
-	}
-	if shown != plan.Name && archdelete.NameMatches(typed, shown) {
-		// The name as the terminal shows it, its control characters written out, is the name
-		// typed (del-s4-A2-06).
-		typed = plan.Name
+	// The folder's name is the decision: up to nameTries tries, a wrong one said each time and
+	// nothing deleted; the last wrong one refuses as before (the 1.5.3 friction review's B10, B8).
+	var typed string
+	for try := 1; ; try++ {
+		watch.set(phaseAsking)
+		typed, err = a.line(fmt.Sprintf("Type the folder's name, %s, to delete it (capital letters count): ", shown))
+		watch.set(phaseReading)
+		if err != nil {
+			return promptEnded(err)
+		}
+		if shown != plan.Name && archdelete.NameMatches(typed, shown) {
+			// The name as the terminal shows it, its control characters written out, is the name
+			// typed (del-s4-A2-06).
+			typed = plan.Name
+		}
+		if archdelete.NameMatches(typed, plan.Name) || try == nameTries {
+			break
+		}
+		a.say("That is not the folder's name, %s (capital letters count). Nothing was deleted; %s.", shown, triesLeft(nameTries-try))
 	}
 	// The person may have been a while: a Desktop started meanwhile refuses, nothing changed.
 	if err := desktopRunning(); err != nil {
@@ -396,8 +414,13 @@ func deleteArchiveWith(cfgPath string, a asker, out, planOut, recordOut string, 
 		fmt.Fprintln(stdout, recordHeading)
 		stdout.Write(res.Record)
 	}
+	// A stop before anything changed (Ctrl-C held until step 2, or a Desktop found there) prints
+	// its short line, not a whole record of nothing (the 1.5.3 friction review's B17); the record
+	// is still saved to -record-out when one was named, and its digest is in deletions.log.
+	stoppedEarly := res.Refusal != nil && res.Refusal.Case == archdelete.CaseStopped
 	switch {
 	case res.Record == nil:
+	case recordOut == "" && stoppedEarly:
 	case recordOut == "":
 		printRecord()
 	default:
@@ -418,6 +441,17 @@ func deleteArchiveWith(cfgPath string, a asker, out, planOut, recordOut string, 
 		return &exitError{code: code}
 	}
 	return nil
+}
+
+// nameTries is how many times delete-archive asks for the folder's name before it refuses (B10).
+const nameTries = 3
+
+// triesLeft says how many tries are left.
+func triesLeft(n int) string {
+	if n == 1 {
+		return "1 try left"
+	}
+	return fmt.Sprintf("%d tries left", n)
 }
 
 // listNotSaved is either verb's refusal when the row could not be written into Your archives
@@ -493,7 +527,7 @@ func visibleName(name string) string {
 // deletePlanLines are the plan as the terminal shows it (§3.1's panel, §3.3): every path and
 // name stripped of control characters (the folder's own written out, as its name is asked); each
 // store's number beside its full name (§8.1).
-func deletePlanLines(p *archdelete.DeletePlan) []string {
+func deletePlanLines(p *archdelete.DeletePlan, logPath string) []string {
 	c := util.StripControl
 	var lines []string
 	if l := p.FinishesLine(); l != "" {
@@ -502,7 +536,7 @@ func deletePlanLines(p *archdelete.DeletePlan) []string {
 	lines = append(lines, fmt.Sprintf("MailArchive will permanently delete the %s archive in this folder (no Recycle Bin or Trash):", p.Kind), "  "+visibleName(p.Folder))
 	lines = append(lines, fmt.Sprintf("  files: %d (%s)", p.Files, sizeWords(p.Bytes)))
 	for i, s := range p.Stores {
-		lines = append(lines, fmt.Sprintf("  store %d: %s", i+1, c(s)))
+		lines = append(lines, fmt.Sprintf("  mail folder %d: %s", i+1, c(s))) // not "store" (B12, item 6)
 	}
 	// Only what step 2 would stop, by when it runs, or "none"; a Run now backup once (B1, B15).
 	for _, l := range p.ScheduleLines() {
@@ -539,7 +573,7 @@ func deletePlanLines(p *archdelete.DeletePlan) []string {
 	if p.Kind == archdelete.Encrypted {
 		lines = append(lines, "  "+p.KeyLine())
 	}
-	return append(lines, "  What Delete does not reach: "+archdelete.DoesNotReach, "  "+archdelete.PlanLogLine)
+	return append(lines, "  What Delete does not reach: "+archdelete.DoesNotReach+".", "  "+archdelete.PlanLogLineAt(logPath))
 }
 
 // sizeWords is a byte count in words.
@@ -952,7 +986,7 @@ func unlistArchiveWith(cfgPath string, a asker, out string, stdout io.Writer) er
 	if err != nil {
 		return terminalRefusal(err.Error(), row, cfgPath)
 	}
-	a.say("%s", util.StripControl(row))
+	a.say("Folder: %s", util.StripControl(row)) // labelled (B12, item 31)
 	watch.set(phaseAsking)
 	yes, err := askYes(a, util.StripControl(q.Question), false)
 	watch.set(phaseReading)

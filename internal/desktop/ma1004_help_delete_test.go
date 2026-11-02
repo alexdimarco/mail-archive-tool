@@ -151,7 +151,8 @@ func TestTheGuidesDeletePartsNameRealControls(t *testing.T) {
 		}
 	}
 	// The plan's own sentences the guide repeats.
-	if archdelete.PlanLogLine != "A line is added to this computer's deletion log (deletions.log), which keeps the date, the folder and what was removed." {
+	// "If you delete it" (MA-1028, B5): the guide's own sentence, "Each delete adds a line…", fits.
+	if archdelete.PlanLogLine != "If you delete it, a line is added to this computer's deletion log (deletions.log), which keeps the date, the folder and what was removed." {
 		t.Errorf("the plan's deletion-log line changed; the guide repeats it: %q", archdelete.PlanLogLine)
 	}
 }

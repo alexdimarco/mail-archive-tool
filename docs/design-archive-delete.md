@@ -1123,3 +1123,47 @@ changed words are the builder's, for the operator, unless a quote says otherwise
   not finish — click Delete… on its row in Your archives to finish it"); no "no schedule is
   recorded" advice then; with the archive's files gone, "no archive at DIR: " followed by the
   same line.
+- *The shared and terminal words (MA-1028; B3, B5, B7, B8, B9, B10, B12, B17, B18).*
+  - B3, no key remembered: plan "If the folder is removed, this computer forgets its record of
+    this archive (no key is remembered here)."; saved plan "record to be forgotten (no key is
+    remembered)"; result "This computer forgot its record of this archive (no key was
+    remembered here)."; record "record forgotten (no key was remembered)"; a record of a delete
+    that stopped before step 8 "kept: the delete stopped before it reached them". "This computer
+    forgot the archive's key." gains its period.
+  - B5: "If you delete it, a line is added to this computer's deletion log (PATH), which keeps
+    the date, the folder and what was removed." (the panel and the terminal give the path);
+    result "Recorded in deletions.log (PATH)." and "Removed from Your archives.".
+  - B7: "Close Outlook or any program using it, then click Delete again." (one file), "…delete
+    it by hand." (one ticked file; the denied remedy likewise), "The folder is kept: it holds 1
+    file that is not the archive's.", "The folder is kept: N files are left in it: K files of
+    yours and M mail copies the archive did not record.", "Also delete this 1 file (for
+    retention)?".
+  - B8: "Type the folder's name, NAME, to delete it (capital letters count): "; the refusal ends
+    "Type it exactly as shown (capital letters count).".
+  - B9: one form for every moment in the saved plan and the record, this computer's time with
+    its offset ("2026-11-02 01:08:50 -05:00"); "First run: not known: the archive records no
+    history of its runs" or "…: the archive's history of its runs begins DATE (as recorded in
+    the archive)".
+  - B10: three tries for the name at the terminal; between them "That is not the folder's
+    name, NAME (capital letters count). Nothing was deleted; 2 tries left." ("1 try left").
+  - B12: "delete-archive needs you at a terminal: it shows the plan there, and you type the
+    folder's name to confirm. Run it in a terminal window (or use Delete… on its row of Your
+    archives in MailArchive Desktop)." (unlist-archive: "…you answer its question there… Remove
+    from list…"); "…Use the Desktop, or shut it down first: click Shut down at the top of
+    MailArchive Desktop, then run this again."; "Your archives ("PATH") cannot be read: other
+    users of this computer can read it, so MailArchive will not, and cannot tell whether DIR is
+    in it; nothing was changed. Run chmod 600 "PATH", then try again."; "Folder: PATH" before
+    Remove from list's question; the terminal plan's "mail folder 1: Inbox"; "What Delete does
+    not reach: …." with its period; delete-archive -h "…forget its record and key when this is
+    the last copy it recorded".
+  - B17: a stop before anything changed prints only its line ("Stopped by Ctrl-C before
+    anything was deleted, so nothing was changed."), not the record.
+  - B18 (forget-archive at the terminal; the Desktop's Forget keeps its words, for the Desktop
+    group): "Another copy of this archive at this same folder path, such as another drive
+    mounted at the same place, is forgotten here too: MailArchive will no longer stop backups
+    into that path that lack the archive's key." and "This computer forgot the encrypted archive
+    ID, last recorded at FOLDER.".
+- *MA-999's wording corrected (B20).* Off Windows the remembered-key store is a file under the
+  OS config folder, on Windows Credential Manager; the no-store path is reached only when the
+  config folder cannot be determined, not by a missing Secret Service or a locked Keychain. The
+  §14 notes above that say otherwise are corrected by this one.

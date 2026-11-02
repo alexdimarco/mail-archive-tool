@@ -31,7 +31,7 @@ func TestDeleteArchiveDeletesAPlainArchiveAtTheTerminal(t *testing.T) {
 	}
 	plan := strings.Join(a.said, "\n")
 	for _, want := range []string{
-		dir, "store 1: " + store, entry, "What Delete does not reach:", "A line is added to this computer's deletion log (deletions.log)",
+		dir, "mail folder 1: " + store, entry, "What Delete does not reach:", "If you delete it, a line is added to this computer's deletion log (" + e.logPath() + ")", // MA-1028: B5, B12
 	} {
 		if !strings.Contains(plan, want) {
 			t.Fatalf("the plan does not say %q:\n%s", want, plan)
@@ -77,7 +77,7 @@ func TestDeleteArchiveDeletesAPlainArchiveAtTheTerminal(t *testing.T) {
 	// A name that does not match (another case): nothing deleted, nothing logged.
 	c := e.plainArchive("Archive C")
 	beforeC, logBefore := tree(t, c), e.logText()
-	ac := &scripted{isAttended: true, answers: []string{"archive c"}}
+	ac := &scripted{isAttended: true, answers: []string{"archive c", "archive c", "archive c"}} // three tries (MA-1028, B10)
 	var outC bytes.Buffer
 	err := deleteArchive(ac, c, "", "", &outC)
 	assure.Refused(t, exitCode(err), errText(err), assure.Code(1),
@@ -85,6 +85,12 @@ func TestDeleteArchiveDeletesAPlainArchiveAtTheTerminal(t *testing.T) {
 		assure.NoSideEffect(func() bool { return sameTree(beforeC, tree(t, c)) && e.listed(c) && e.logText() == logBefore }))
 	if outC.Len() != 0 {
 		t.Fatalf("a refused delete printed a result:\n%s", outC.String())
+	}
+	// Asked three times, each wrong name said, nothing deleted between (MA-1028, B10, B8).
+	if said := strings.Join(ac.said, "\n"); len(ac.prompts) != 3 || !prompted(ac, "Type the folder's name, Archive C, to delete it (capital letters count): ") ||
+		!strings.Contains(said, "That is not the folder's name, Archive C (capital letters count). Nothing was deleted; 2 tries left.") ||
+		!strings.Contains(said, "Nothing was deleted; 1 try left.") || !strings.Contains(errText(err), "Type it exactly as shown (capital letters count).") {
+		t.Fatalf("the tries: %d prompts\n%s\n%v", len(ac.prompts), ac.transcript(), err)
 	}
 
 	// §4.3: an unrecorded mail copy is asked about, default no, and kept.
@@ -98,14 +104,14 @@ func TestDeleteArchiveDeletesAPlainArchiveAtTheTerminal(t *testing.T) {
 	if err := deleteArchive(ad, d, "", "", &outD); err != nil {
 		t.Fatalf("delete-archive with an unrecorded copy: %v\n%s\n%s", err, ad.transcript(), outD.String())
 	}
-	assure.Reached(t, prompted(ad, "Also delete these 1 files (for retention)?"), "§4.3's question")
+	assure.Reached(t, prompted(ad, "Also delete this 1 file (for retention)?"), "§4.3's question") // one file (MA-1028, B7)
 	if !strings.Contains(strings.Join(ad.said, "\n"), "old copy.eml") {
 		t.Fatalf("the plan does not name the unrecorded copy:\n%s", ad.transcript())
 	}
 	if _, err := os.Stat(stray); err != nil {
 		t.Fatalf("the unrecorded copy was removed though the answer was no: %v", err)
 	}
-	if !strings.Contains(outD.String(), "1 mail copy the archive did not record was kept.") {
+	if !strings.Contains(outD.String(), "The folder is kept: 2 files are left in it: 1 file of yours and 1 mail copy the archive did not record.") { // counted once (MA-1028, B7)
 		t.Fatalf("the result does not say the copy was kept:\n%s", outD.String())
 	}
 }

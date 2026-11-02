@@ -49,12 +49,14 @@ func TestTheDeleteVerbsRunOnlyAtATerminalWithNoDesktopRunning(t *testing.T) {
 
 	// No terminal: each verb's own words, the Desktop's row actions named, never the
 	// Encryption card; nothing asked.
+	// Each verb names only its own control, the program's name once (MA-1028, friction B12).
+	control := map[string][2]string{"delete-archive": {"Delete…", "Remove from list"}, "unlist-archive": {"Remove from list", "Delete…"}}
 	for verb, run := range verbs {
 		a := &scripted{isAttended: false}
 		err := run(a)
 		assure.Refused(t, exitCode(err), errText(err), assure.Code(1),
-			assure.Names("mailarchive "+verb+" needs you at a terminal", "Run it in a terminal window (or use Delete… / Remove from list on the Your archives card in MailArchive Desktop)"),
-			assure.Forbid("Encryption card", "panic", "goroutine"), assure.NoSideEffect(unchanged))
+			assure.Names(verb+" needs you at a terminal", "Run it in a terminal window (or use "+control[verb][0]+" on its row of Your archives in MailArchive Desktop)."),
+			assure.Forbid("Encryption card", "panic", "goroutine", "mailarchive "+verb, control[verb][1]), assure.NoSideEffect(unchanged))
 		if len(a.prompts) != 0 || len(a.said) != 0 {
 			t.Fatalf("%s without a terminal still asked or said: %s", verb, a.transcript())
 		}
@@ -65,9 +67,11 @@ func TestTheDeleteVerbsRunOnlyAtATerminalWithNoDesktopRunning(t *testing.T) {
 	}
 	// The real program, with no terminal (a pipe).
 	code, stderr := runCLI("delete-archive", "-out", dir)
-	assure.Refused(t, code, stderr, assure.Code(1), assure.Names("mailarchive delete-archive needs you at a terminal", "Your archives card"), assure.NoSideEffect(unchanged))
+	assure.Refused(t, code, stderr, assure.Code(1), assure.Names("mailarchive: delete-archive needs you at a terminal", "Your archives in MailArchive Desktop"),
+		assure.Forbid("mailarchive: mailarchive"), assure.NoSideEffect(unchanged))
 	code, stderr = runCLI("unlist-archive", "-out", dir)
-	assure.Refused(t, code, stderr, assure.Code(1), assure.Names("mailarchive unlist-archive needs you at a terminal", "Your archives card"), assure.NoSideEffect(unchanged))
+	assure.Refused(t, code, stderr, assure.Code(1), assure.Names("mailarchive: unlist-archive needs you at a terminal", "Your archives in MailArchive Desktop"),
+		assure.Forbid("mailarchive: mailarchive"), assure.NoSideEffect(unchanged))
 
 	// A Desktop running in the account's own session, then in another logon session.
 	for _, session := range []string{"", "2"} {

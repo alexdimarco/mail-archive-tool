@@ -170,7 +170,7 @@ func TestAFaultBeforeTheManifestKeepsARecognisedArchiveThatDeleteAgainFinishes(t
 		t.Fatalf("status %q exit %d unfinished %v:\n%s", res.Status, res.ExitCode(), res.Unfinished, res.Message())
 	}
 	if !strings.HasPrefix(res.Lines[0], "Not fully deleted. 1 file could not be removed: "+stemA+".eml.") ||
-		!strings.Contains(res.Lines[0], "Close Outlook or any program using them, then click Delete again.") {
+		!strings.Contains(res.Lines[0], "Close Outlook or any program using it, then click Delete again.") { // one file: "it" (MA-1028, B7)
 		t.Fatalf("first line: %q", res.Lines[0])
 	}
 	if !exists(filepath.Join(dir, manifestName)) || !IsArchive(dir) || exists(filepath.Join(dir, filepath.FromSlash(stemA+".html"))) {

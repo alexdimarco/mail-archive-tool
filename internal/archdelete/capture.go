@@ -25,7 +25,7 @@ const runHistoryCap = 4 << 20
 func capturePlain(root *os.Root, m *state.Manifest) Captured {
 	c := captureRecords(m)
 	c.FirstRun = firstRun(root)
-	c.LastBackup = lastBackup(root)
+	c.LastBackup, c.OldestRun = runHistoryEnds(root)
 	return c
 }
 
@@ -123,26 +123,29 @@ func firstRun(root *os.Root) time.Time {
 	return time.Time{}
 }
 
-// lastBackup is the run history's newest entry whose status is ok, or zero.
-func lastBackup(root *os.Root) time.Time {
+// runHistoryEnds reads the run history: its newest entry whose status is ok (the last backup)
+// and its oldest entry of any status (where it begins, B9), each zero when there is none.
+func runHistoryEnds(root *os.Root) (lastOK, oldest time.Time) {
 	f, err := util.OpenRegularFileIn(root, state.RunHistoryName)
 	if err != nil {
-		return time.Time{}
+		return time.Time{}, time.Time{}
 	}
 	defer f.Close()
 	data, err := io.ReadAll(io.LimitReader(f, runHistoryCap+1))
 	if err != nil || len(data) > runHistoryCap {
-		return time.Time{}
+		return time.Time{}, time.Time{}
 	}
 	var h []state.RunHistoryEntry
 	if json.Unmarshal(data, &h) != nil {
-		return time.Time{}
+		return time.Time{}, time.Time{}
 	}
-	var last time.Time
 	for _, e := range h {
-		if e.Status == state.RunOK && e.When.After(last) {
-			last = e.When
+		if e.Status == state.RunOK && e.When.After(lastOK) {
+			lastOK = e.When
+		}
+		if !e.When.IsZero() && (oldest.IsZero() || e.When.Before(oldest)) {
+			oldest = e.When
 		}
 	}
-	return last.UTC()
+	return lastOK.UTC(), oldest.UTC()
 }

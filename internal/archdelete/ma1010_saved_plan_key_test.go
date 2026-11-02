@@ -27,7 +27,7 @@ func TestTheSavedPlansRecordAndKeyLineSaysWhatStep8WillDo(t *testing.T) {
 	}
 	others := []string{"/Volumes/Backup/Mail", "/Volumes/Old/Mail"}
 
-	if text := saved(recordedAt(dir), keyPlan(KeyPlan{ID: testArchiveID, Last: true}, nil)); !strings.Contains(text, key+"to be forgotten\n") {
+	if text := saved(recordedAt(dir), keyPlan(KeyPlan{ID: testArchiveID, Last: true, Remembered: true}, nil)); !strings.Contains(text, key+"to be forgotten\n") {
 		t.Fatalf("positive twin: the last recorded copy with the store:\n%s", text)
 	}
 	for _, c := range []struct {

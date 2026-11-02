@@ -17,7 +17,7 @@ func TestUnrecordedCopiesAreKeptUnlessTickedAndThenOnlyTheListedOnesGo(t *testin
 	r := newRig(t, dir)
 	res := r.run(t, false)
 	if res.Status != StatusComplete || !exists(filepath.Join(dir, filepath.FromSlash(unrecA))) ||
-		!strings.Contains(res.Lines[0], "1 mail copy the archive did not record was kept.") || !contains(res.Kept, unrecA) {
+		!strings.Contains(res.Lines[0], "The folder is kept: 4 files are left in it: 3 files of yours and 1 mail copy the archive did not record.") || !contains(res.Kept, unrecA) { // counted once (MA-1028, B7)
 		t.Fatalf("unticked: %s (kept %q)", res.Message(), res.Kept)
 	}
 
@@ -60,7 +60,7 @@ func TestATickedFileThatCannotBeRemovedIsNotFullyDeletedWithTheByHandRemedy(t *t
 		return nil
 	})
 	res := r.run(t, true)
-	want := "Not fully deleted. 1 file you chose to delete could not be removed: " + unrecA + ". MailArchive no longer recognises this folder as an archive: delete them by hand."
+	want := "Not fully deleted. 1 file you chose to delete could not be removed: " + unrecA + ". MailArchive no longer recognises this folder as an archive: delete it by hand." // one file (MA-1028, B7)
 	if res.Status != StatusPartial || res.ExitCode() != 3 || res.Lines[0] != want {
 		t.Fatalf("got:\n%s\nwant first line %q", res.Message(), want)
 	}
@@ -82,8 +82,8 @@ func TestEachLeftoverGetsTheRemedyOfItsErrorType(t *testing.T) {
 		err    func(string) error
 		remedy string
 	}{
-		{"in use", inUseErr, "Close Outlook or any program using them, then click Delete again."},
-		{"denied", deniedErr, deniedRemedy},
+		{"in use", inUseErr, "Close Outlook or any program using it, then click Delete again."}, // one file (MA-1028, B7)
+		{"denied", deniedErr, strings.Replace(deniedRemedy, "delete these by hand", "delete it by hand", 1)}, // one file (MA-1028, B7)
 		{"device gone", goneErr, "Reconnect the drive, then click Delete again."},
 	} {
 		t.Run(tc.name, func(t *testing.T) {

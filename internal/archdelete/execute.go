@@ -53,7 +53,7 @@ func Execute(plan *DeletePlan, typed string, unrecorded bool, x ExecDeps) (res *
 		return res
 	}
 	if !NameMatches(typed, plan.Name) {
-		res.refuseBefore(&Refusal{Case: CaseName, Message: fmt.Sprintf("The name you typed does not match this folder's name, %s, so nothing was deleted. Type it exactly as shown.", plan.Name)})
+		res.refuseBefore(&Refusal{Case: CaseName, Message: fmt.Sprintf("The name you typed does not match this folder's name, %s, so nothing was deleted. Type it exactly as shown (capital letters count).", plan.Name)})
 		return res
 	}
 	if err := e.logStarted(); err != nil {
@@ -1005,10 +1005,15 @@ func (e *run) keyring() bool {
 	if ferr != nil {
 		return e.skipKey()
 	}
-	if kp.Last {
+	switch {
+	case kp.Last && !kp.Remembered:
+		// No key was remembered here: only the record went (B3).
+		e.res.KeyForgotten = "record forgotten (no key was remembered)"
+		e.notes = append(e.notes, "This computer forgot its record of this archive (no key was remembered here).")
+	case kp.Last:
 		e.res.KeyForgotten = "forgotten"
-		e.notes = append(e.notes, "This computer forgot the archive's key")
-	} else {
+		e.notes = append(e.notes, "This computer forgot the archive's key.")
+	default:
 		e.res.KeyForgotten = fmt.Sprintf("this copy forgotten; the key is kept for %s", plural(len(kp.Others), "other recorded copy", "other recorded copies"))
 		e.notes = append(e.notes, "This computer forgot this copy of the archive and keeps its key for the other recorded copies: "+strings.Join(kp.Others, "; "))
 	}
@@ -1058,11 +1063,15 @@ func (e *run) finish() {
 		head = "Deleted. The folder is gone: an earlier delete removed it, and this one finished what it left."
 	default:
 		head = fmt.Sprintf("Deleted. %s (%s) removed. ", plural(res.Removed, "file", "files"), size(res.Bytes))
+		copies := 0
+		if !e.unrecorded {
+			copies = len(p.Unrecorded)
+		}
 		switch {
 		case res.FolderGone:
 			head += "The folder is gone."
 		case len(res.Kept) > 0:
-			head += fmt.Sprintf("The folder is kept: it holds %s that are not the archive's.", plural(len(res.Kept), "file", "files"))
+			head += keptSentence(len(res.Kept), copies)
 		case len(e.leftIn) > 0:
 			// What kept it, named (conformance 4): a folder of the archive's that stayed
 			// busy past its retries, or something put there during the delete.
@@ -1070,12 +1079,9 @@ func (e *run) finish() {
 		default:
 			head += "The folder is kept."
 		}
-		if n := len(p.Unrecorded); n > 0 && !e.unrecorded {
-			if n == 1 {
-				head += " 1 mail copy the archive did not record was kept."
-			} else {
-				head += fmt.Sprintf(" %d mail copies the archive did not record were kept.", n)
-			}
+		if copies > 0 && len(res.Kept) == 0 {
+			// Kept copies always keep the folder (and are in Kept); said here only should they not.
+			head += " " + copiesKept(copies)
 		}
 	}
 	res.Lines = []string{head}
@@ -1091,9 +1097,46 @@ func (e *run) finish() {
 	e.scheduleResultLines()
 	res.Lines = append(res.Lines, e.notes...)
 	if res.RowRemoved {
-		res.Lines = append(res.Lines, "Removed from Your archives")
+		res.Lines = append(res.Lines, "Removed from Your archives.") // with its period (item 19)
 	}
 	res.line("What Delete does not reach: %s", DoesNotReach)
+}
+
+// keptSentence says what keeps the folder, counted once (the 1.5.3 friction review's B7: "it
+// holds 2 files that are not the archive's. 1 mail copy the archive did not record was kept."
+// read as three files, and one file "are"): kept files in all, of which copies are mail copies
+// the archive did not record.
+func keptSentence(kept, copies int) string {
+	if copies == 0 {
+		if kept == 1 {
+			return "The folder is kept: it holds 1 file that is not the archive's."
+		}
+		return fmt.Sprintf("The folder is kept: it holds %d files that are not the archive's.", kept)
+	}
+	left := "1 file is left in it"
+	if kept != 1 {
+		left = fmt.Sprintf("%d files are left in it", kept)
+	}
+	if own := kept - copies; own > 0 {
+		return fmt.Sprintf("The folder is kept: %s: %s of yours and %s.", left, plural(own, "file", "files"), copyWords(copies))
+	}
+	return fmt.Sprintf("The folder is kept: %s: %s.", left, copyWords(copies))
+}
+
+// copyWords is n mail copies the archive did not record.
+func copyWords(n int) string {
+	if n == 1 {
+		return "1 mail copy the archive did not record"
+	}
+	return fmt.Sprintf("%d mail copies the archive did not record", n)
+}
+
+// copiesKept is the sentence for n mail copies kept.
+func copiesKept(n int) string {
+	if n == 1 {
+		return "1 mail copy the archive did not record was kept."
+	}
+	return fmt.Sprintf("%d mail copies the archive did not record were kept.", n)
 }
 
 // namesUpTo joins up to ten names, then "and N more".
@@ -1120,8 +1163,12 @@ func leftLine(format string, left []LeftFile) string {
 // tickedLine is §4.3's result for ticked files that could not be removed
 // [R3:NEW-ticked-remedy]: never "click Delete again".
 func tickedLine(left []LeftFile) string {
+	them := "them"
+	if len(left) == 1 {
+		them = "it" // B7
+	}
 	return leftLine("Not fully deleted. %s you chose to delete could not be removed: %s.", left) +
-		" MailArchive no longer recognises this folder as an archive: delete them by hand."
+		" MailArchive no longer recognises this folder as an archive: delete " + them + " by hand."
 }
 
 // remedies are §8 (a)'s remedies for the causes present, in a fixed order.
@@ -1133,7 +1180,7 @@ func remedies(left []LeftFile) string {
 	var out []string
 	for _, c := range []Cause{CauseInUse, CauseDenied, CauseDeviceGone, CauseOther} {
 		if have[c] {
-			out = append(out, c.remedy())
+			out = append(out, c.remedy(len(left)))
 		}
 	}
 	return strings.Join(out, " ")
@@ -1233,7 +1280,8 @@ func (e *run) step10() {
 		res.Lines = append(res.Lines, msgDigestFailed)
 		return
 	}
-	res.Lines = append(res.Lines, "Recorded in deletions.log")
+	// Its full path, and a period (the review's item 19).
+	res.Lines = append(res.Lines, "Recorded in deletions.log ("+util.StripControl(e.log)+").")
 }
 
 // sayFinished calls ExecDeps.Finished, once: right before step 10 writes the finished line, so

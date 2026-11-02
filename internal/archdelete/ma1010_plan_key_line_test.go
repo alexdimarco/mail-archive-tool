@@ -40,7 +40,7 @@ func TestThePlansKeyLineSaysWhatStep8WillDo(t *testing.T) {
 		return mustPlan(t, dir, deps)
 	}
 
-	p := plan(recordedAt(dir), keyPlan(KeyPlan{ID: testArchiveID, Last: true}, nil))
+	p := plan(recordedAt(dir), keyPlan(KeyPlan{ID: testArchiveID, Last: true, Remembered: true}, nil)) // its key remembered (B3)
 	if got := p.KeyLine(); got != last {
 		t.Fatalf("positive twin: the last recorded copy:\n got  %q\n want %q", got, last)
 	}

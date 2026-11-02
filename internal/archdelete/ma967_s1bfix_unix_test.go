@@ -27,7 +27,7 @@ func TestADeniedFileOnMacOSAndLinuxIsNotBlamedOnWindows(t *testing.T) {
 			})
 			res := r.run(t, false)
 			if res.Status != StatusPartial || strings.Contains(res.Lines[0], "Windows") || strings.Contains(res.Lines[0], "antivirus") ||
-				!strings.Contains(res.Lines[0], "search.db") || !strings.HasSuffix(res.Lines[0], "a read-only drive): unlock it and click Delete again, or delete these by hand.") {
+				!strings.Contains(res.Lines[0], "search.db") || !strings.HasSuffix(res.Lines[0], "a read-only drive): unlock it and click Delete again, or delete it by hand.") { // one file (MA-1028, B7)
 				t.Fatalf("%s", res.Message())
 			}
 		})

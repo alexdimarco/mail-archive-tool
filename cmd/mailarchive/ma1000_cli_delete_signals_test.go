@@ -19,7 +19,7 @@ import (
 	"mail-archive-tool/internal/schedule"
 )
 
-// covers: MA-1000, R36, R12
+// covers: MA-1000, MA-1028, R36, R12
 // The delete verbs watch Ctrl-C and the terminate signal from start to end (slice 4's
 // adversarial pass, del-s4-A2-01, A2-07, A2-08, A3-01; conformance 4): while planning a signal
 // stops the verb at once with nothing changed; at a question the prompt tells it; after the
@@ -126,6 +126,10 @@ func TestTheDeleteVerbsWatchSignalsFromStartToEnd(t *testing.T) {
 		}))
 	if !strings.Contains(f.said.String(), "stopping: the delete stops before it changes anything") {
 		t.Fatalf("the held signal was not acknowledged:\n%s", f.said.String())
+	}
+	// Its short line only, never a whole record of nothing (MA-1028, friction B17).
+	if strings.Contains(out.String(), "Deletion record (copy it now") || strings.Contains(out.String(), "refused after start") {
+		t.Fatalf("a stop before any change printed a record:\n%s", out.String())
 	}
 	deleteInstalled = func() []schedule.InstalledEntry { return nil }
 

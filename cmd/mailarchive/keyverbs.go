@@ -483,7 +483,8 @@ func forgetArchive(a asker, out string) error {
 			a.say("    %s (recorded %s)", o.Spelling, o.Recorded.Local().Format("2006-01-02"))
 		}
 	}
-	a.say("Another copy of this archive that used this same folder path, such as another drive mounted at the same place, loses this computer's protection at this path too.")
+	// Said without "protection" (the 1.5.3 friction review's B18): what forgetting changes.
+	a.say("Another copy of this archive at this same folder path, such as another drive mounted at the same place, is forgotten here too: MailArchive will no longer stop backups into that path that lack the archive's key.")
 	if p.Strong {
 		a.say("This folder may have been tampered with: it no longer holds the archive this computer made there.")
 		typed, err := a.line("To forget it anyway, type the folder's path exactly as shown above: ")
@@ -532,7 +533,8 @@ func forgetArchive(a asker, out string) error {
 	}
 	switch {
 	case o.Whole:
-		a.say("This computer forgot the encrypted archive %s.", p.ID)
+		// The folder named, not only the archive's ID (B18).
+		a.say("This computer forgot the encrypted archive %s, last recorded at %s.", p.ID, shown)
 	default:
 		a.say("This computer no longer protects %s as an encrypted archive.", shown)
 	}

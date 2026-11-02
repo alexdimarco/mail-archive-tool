@@ -78,6 +78,10 @@ type KeyPlan struct {
 	// forget the last copy's whole record: step 8 keeps it, any remembered key and the
 	// row (MA-999).
 	NoStore bool
+	// Remembered: this computer remembers the archive's key (keyring.ForgetPlan.Remembered).
+	// When it does not, forgetting the last copy forgets only the record, and the words say so
+	// (the 1.5.3 friction review's B3).
+	Remembered bool
 	// Opaque is the real plan, handed back to Forget.
 	Opaque any
 }

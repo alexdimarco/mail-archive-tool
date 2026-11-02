@@ -121,7 +121,7 @@ func TestDeleteArchiveDeletesOnlyARowOfYourArchives(t *testing.T) {
 	}
 	// A name that does not match changes nothing either: the list is written only by a delete
 	// about to change something.
-	err = deleteArchive(&scripted{isAttended: true, answers: []string{"Archive X"}}, c, "", "", io.Discard)
+	err = deleteArchive(&scripted{isAttended: true, answers: []string{"Archive X", "Archive X", "Archive X"}}, c, "", "", io.Discard) // three tries (MA-1028, B10)
 	assure.Refused(t, exitCode(err), errText(err), assure.Code(1), assure.Names("does not match"),
 		assure.NoSideEffect(func() bool {
 			l, _ := os.ReadFile(e.indexPath())

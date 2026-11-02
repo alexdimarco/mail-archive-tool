@@ -9,7 +9,7 @@ import (
 	"mail-archive-tool/internal/keyring"
 )
 
-// covers: MA-1010, R36, R37
+// covers: MA-1010, MA-1028, R36, R37
 // The Desktop's plan panel says what step 8 will do with an encrypted archive's key, from this
 // computer's real record (the keyring adapter's forget plan, read at the plan): with this the
 // last copy recorded, the key is forgotten if the folder is removed; once a second copy of the
@@ -22,8 +22,20 @@ func TestThePlanPanelSaysWhetherTheKeyIsForgottenOrKept(t *testing.T) {
 	t.Cleanup(func() { e.cfg.Keys.lockAll(true) })
 	e.list(out)
 
+	// No key remembered in this Desktop's store yet: only the record would go (MA-1028, friction
+	// B3; the real keyring's ForgetPlan.Remembered reaches the plan).
+	if p := e.plan(out); p["ok"] != true || p["keyLine"] != "If the folder is removed, this computer forgets its record of this archive (no key is remembered here)." {
+		t.Fatalf("no key remembered: the plan says %q (%v)", p["keyLine"], p["error"])
+	}
+	// Its key remembered here, as the rest of this test has it.
+	w, err := keyring.Open(out, keyring.Password(keysPassword), keyring.OpenOptions{Remember: true, Store: store})
+	if err != nil {
+		t.Fatalf("remember the key: %v", err)
+	}
+	w.Destroy()
+
 	p := e.plan(out)
-	const last = "If the folder is removed, this computer will forget this archive's key: this is the last copy of it this computer recorded. Any other copy of this archive will then need its password or recovery key to open."
+	const last ="If the folder is removed, this computer will forget this archive's key: this is the last copy of it this computer recorded. Any other copy of this archive will then need its password or recovery key to open."
 	if p["ok"] != true || p["keyLine"] != last {
 		t.Fatalf("positive twin: the last recorded copy's plan says %q (%v)", p["keyLine"], p["error"])
 	}

@@ -590,11 +590,12 @@ func (l *lister) encrypted(deps Deps) error {
 		}
 	}
 	p.ArchiveID = archiveIDOf(l.root)
-	p.Captured = Captured{LastBackup: lastBackup(l.root)}
+	last, oldest := runHistoryEnds(l.root)
+	p.Captured = Captured{LastBackup: last, OldestRun: oldest}
 	if deps.Sealed != nil {
 		if c, ok := deps.Sealed(l.folder, p.ArchiveID); ok {
 			c.Known, c.KeyOpen = true, true
-			c.LastBackup = p.Captured.LastBackup
+			c.LastBackup, c.OldestRun = p.Captured.LastBackup, p.Captured.OldestRun
 			p.Captured = c
 		}
 	}

@@ -128,6 +128,9 @@ type Captured struct {
 	FirstRun time.Time
 	// LastBackup is the run history's newest entry whose status is ok.
 	LastBackup time.Time
+	// OldestRun is the run history's oldest entry, whatever its status: where the archive's
+	// record of its runs begins, said when the first run is not known (B9).
+	OldestRun time.Time
 	// KeyOpen says an encrypted archive's key was open here at the plan.
 	KeyOpen bool
 }
@@ -222,6 +225,8 @@ type KeyAtPlan struct {
 	Last    bool
 	Others  []string
 	NoStore bool
+	// Remembered: this computer remembers the archive's key (B3).
+	Remembered bool
 }
 
 // Rerun is how a plan finishes an unfinished delete (§5.4).
@@ -438,7 +443,7 @@ func addKeyAtPlan(p *DeletePlan, deps Deps) {
 	if err != nil || kp.ID != p.Record.ID {
 		return
 	}
-	p.KeyAtPlan = KeyAtPlan{Known: true, Last: kp.Last, Others: append([]string(nil), kp.Others...), NoStore: kp.NoStore}
+	p.KeyAtPlan = KeyAtPlan{Known: true, Last: kp.Last, Others: append([]string(nil), kp.Others...), NoStore: kp.NoStore, Remembered: kp.Remembered}
 }
 
 // planAny is Plan before the key's outlook is asked.

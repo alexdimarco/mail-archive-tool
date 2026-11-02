@@ -197,6 +197,16 @@ func (e *cliDel) desktopRunning(session string) func() {
 	return release
 }
 
+// logPath is deletions.log's path in this home.
+func (e *cliDel) logPath() string {
+	e.t.Helper()
+	p, err := archdelete.DefaultLogPath()
+	if err != nil {
+		e.t.Fatal(err)
+	}
+	return p
+}
+
 // logText is deletions.log ("" when it is not there).
 func (e *cliDel) logText() string {
 	e.t.Helper()

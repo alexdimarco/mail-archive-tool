@@ -51,7 +51,7 @@ func TestWindowsAFileHeldOpenIsReportedTheRestDeletedAndDeleteAgainFinishes(t *t
 	res := r.run(t, false)
 	f.Close()
 	if res.Status != StatusPartial || !strings.Contains(res.Lines[0], stemA+".eml") ||
-		!strings.HasSuffix(res.Lines[0], "Close Outlook or any program using them, then click Delete again.") {
+		!strings.HasSuffix(res.Lines[0], "Close Outlook or any program using it, then click Delete again.") { // one file: "it" (MA-1028, B7)
 		t.Fatalf("%s", res.Message())
 	}
 	if !exists(filepath.Join(dir, manifestName)) || exists(filepath.Join(dir, filepath.FromSlash(stemA+".html"))) {

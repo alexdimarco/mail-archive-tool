@@ -123,7 +123,8 @@ func TestTheRecordsDigestIsItsLastLineAndThePlanMatchesTheRecord(t *testing.T) {
 		t.Fatalf("Status first:\n%s", plan)
 	}
 	// No history log: the first run is not known, never left out (§8.1 [O2-04]).
-	if !strings.Contains(string(plan), "\nFirst run: not known\n") || !strings.Contains(string(plan), "\nMessages: 1 (as recorded in the archive)\n") {
+	// Said why (MA-1028, B9).
+	if !strings.Contains(string(plan), "\nFirst run: not known: the archive records no history of its runs\n") || !strings.Contains(string(plan), "\nMessages: 1 (as recorded in the archive)\n") {
 		t.Fatalf("captured values:\n%s", plan)
 	}
 	idLine := func(text []byte, key string) string {

@@ -1,6 +1,7 @@
 package desktop
 
 import (
+	"regexp"
 	"strings"
 	"testing"
 
@@ -8,7 +9,7 @@ import (
 	"mail-archive-tool/internal/keyring"
 )
 
-// covers: MA-1011, R36, R37
+// covers: MA-1011, MA-1028, R36, R37
 // The deletion record of an encrypted archive whose key is open on this page states its sealed
 // values (design-archive-delete §8.1 [O2-05]; del-s3a conformance D2): the saved plan and the
 // record read from the open archive's sealed record give the message count, the mail's dates and
@@ -48,10 +49,17 @@ func TestARecordOfAnArchiveOpenHereStatesItsSealedValues(t *testing.T) {
 		}
 		// This fixture's backup leaves its sealed timeline empty, so its first run is "not known",
 		// as for a plain archive with no history (archdelete's MA-1011 test reads a timeline).
-		for _, l := range []string{"Messages: 1 (as recorded in the archive)\n", "Mail dates: 2024-01-01 to 2024-01-01 (as recorded in the archive)\n", "First run: not known\n"} {
+		for _, l := range []string{"Messages: 1 (as recorded in the archive)\n", "Mail dates: 2024-01-01 to 2024-01-01 (as recorded in the archive)\n"} {
 			if !strings.Contains(s, l) {
 				t.Errorf("%s does not say %q:\n%s", what, strings.TrimSpace(l), s)
 			}
 		}
+		// "not known", saying why, in one of its two exact forms (MA-1028, friction B9).
+		if !firstRunNotKnown.MatchString(s) {
+			t.Errorf("%s does not say the first run is not known, and why:\n%s", what, s)
+		}
 	}
 }
+
+// firstRunNotKnown is the record's "First run: not known" line in its two exact forms (B9).
+var firstRunNotKnown = regexp.MustCompile(`\nFirst run: not known: (the archive records no history of its runs|the archive's history of its runs begins \d{4}-\d{2}-\d{2} \d{2}:\d{2} [+-]\d{2}:\d{2} \(as recorded in the archive\))\n`)

@@ -149,6 +149,9 @@ func (c *CommandLineDelete) AddRow(path string) (row string, added bool, problem
 	return abs, true, "", nil
 }
 
+// LogPath is the deletions.log these verbs read and write (the one beside the Desktop's config).
+func (c *CommandLineDelete) LogPath() string { return c.cfg.deletionsLogPath() }
+
 // ListPath is the Desktop's list of archives (known-archives.json) these verbs read.
 func (c *CommandLineDelete) ListPath() string { return c.cfg.IndexPath }
 

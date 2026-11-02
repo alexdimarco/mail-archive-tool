@@ -28,17 +28,25 @@ const (
 	CauseDeviceGone
 )
 
-// remedy is §8 (a)'s remedy for a cause.
-func (c Cause) remedy() string {
+// remedy is §8 (a)'s remedy for a cause, for n files left: "it" for one, "them" or "these" for
+// more (the 1.5.3 friction review's B7).
+func (c Cause) remedy(n int) string {
+	them := "them"
+	if n == 1 {
+		them = "it"
+	}
 	switch c {
 	case CauseInUse:
-		return "Close Outlook or any program using them, then click Delete again."
+		return "Close Outlook or any program using " + them + ", then click Delete again."
 	case CauseDenied:
+		if n == 1 {
+			return strings.Replace(deniedRemedy, "delete these by hand", "delete it by hand", 1)
+		}
 		return deniedRemedy
 	case CauseDeviceGone:
 		return "Reconnect the drive, then click Delete again."
 	}
-	return "Close any program using them, then click Delete again."
+	return "Close any program using " + them + ", then click Delete again."
 }
 
 // LeftFile is a file Delete was to remove and could not (§8 (a)).
@@ -124,9 +132,19 @@ const lockedLine = "This archive was locked on this page; unlock it again to rea
 // The plan's fixed sentences, shared by the Desktop's panel and the command line's plan
 // (§3.1, §6, §9; slice 4).
 const (
-	// PlanLogLine is §3.1's deletions.log line.
-	PlanLogLine = "A line is added to this computer's deletion log (deletions.log), which keeps the date, the folder and what was removed."
+	// PlanLogLine is §3.1's deletions.log line, said before anything is deleted, so "if" (the
+	// 1.5.3 friction review's B5: a plan-only run said a line "is added").
+	PlanLogLine = "If you delete it, a line is added to this computer's deletion log (deletions.log), which keeps the date, the folder and what was removed."
 )
+
+// PlanLogLineAt is PlanLogLine naming the log's full path (the review's item 9), "" path being
+// PlanLogLine.
+func PlanLogLineAt(path string) string {
+	if path == "" {
+		return PlanLogLine
+	}
+	return "If you delete it, a line is added to this computer's deletion log (" + util.StripControl(path) + "), which keeps the date, the folder and what was removed."
+}
 
 // KeyLine is §6's line for an encrypted archive [C8], picked at the plan from the keyring's
 // forget plan (§14, slice 5's re-verification, residual 2): step 8 forgets the key only when the
@@ -143,6 +161,9 @@ func (p *DeletePlan) KeyLine() string {
 		return "This computer has not recorded this archive folder, so Delete forgets no key here."
 	case p.KeyAtPlan.Known && p.KeyAtPlan.Last && p.KeyAtPlan.NoStore:
 		return "This computer's secret store could not be opened, so this computer will keep its record of this archive, any key it remembers for it and its row, even if the folder is removed. Use Forget this encrypted archive here later."
+	case p.KeyAtPlan.Known && p.KeyAtPlan.Last && !p.KeyAtPlan.Remembered:
+		// No key is remembered here: only the record goes (B3).
+		return "If the folder is removed, this computer forgets its record of this archive (no key is remembered here)."
 	case p.KeyAtPlan.Known && p.KeyAtPlan.Last:
 		return "If the folder is removed, this computer will forget this archive's key: this is the last copy of it this computer recorded. Any other copy of this archive will then need its password or recovery key to open."
 	case p.KeyAtPlan.Known:

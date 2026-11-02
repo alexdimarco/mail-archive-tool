@@ -137,7 +137,14 @@ func keyVerbTerminal(verb string, k *keyFlags) error {
 	closing := "Run it in a terminal window (or use the Encryption card in MailArchive Desktop)"
 	switch verb {
 	case "delete-archive", "unlist-archive":
-		closing = "Run it in a terminal window (or use Delete… / Remove from list on the Your archives card in MailArchive Desktop)"
+		// Each delete verb names only its own Desktop control, the program's name said once (the
+		// "mailarchive: " the refusal is printed after), with a final period (the 1.5.3 friction
+		// review's B12, item 1).
+		control := "Delete…"
+		if verb == "unlist-archive" {
+			control = "Remove from list"
+		}
+		return fmt.Errorf("%s needs you at a terminal: %s. Run it in a terminal window (or use %s on its row of Your archives in MailArchive Desktop).", verb, why, control)
 	}
 	return fmt.Errorf("mailarchive %s needs you at a terminal: %s. %s", verb, why, closing)
 }

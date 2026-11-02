@@ -186,7 +186,7 @@ func newRig(t *testing.T, dir string) *rig {
 	r.sched.state[schedule.DefaultNameFor(dir)] = schedule.Installed
 	r.ptr = &fakePointers{p: Pointers{Out: dir, LastArchive: dir}}
 	r.keys = &fakeKeys{events: &r.events, marked: map[string]bool{}}
-	r.kr = &fakeKeyring{plan: KeyPlan{ID: testArchiveID, Gone: true, Last: true}, folder: dir}
+	r.kr = &fakeKeyring{plan: KeyPlan{ID: testArchiveID, Gone: true, Last: true, Remembered: true}, folder: dir} // a key remembered here (B3: MA-1028 covers none)
 	r.x = ExecDeps{
 		Deps: deps, Log: log, Row: dir, Scheduler: r.sched, Pointers: r.ptr,
 		Keys: r.keys, Keyring: r.kr, Version: "test",

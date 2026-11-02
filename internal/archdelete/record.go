@@ -82,7 +82,8 @@ func RecordText(in RecordInput) []byte {
 		// The delete this one finishes, its first run named (D1).
 		line("Finishes", p.finishesValue())
 	}
-	line("Date", in.When.Format("2006-01-02 15:04:05 MST (-07:00)"))
+	// One form for every moment (B9): this computer's time with its offset, said once.
+	line("Date", in.When.Local().Format("2006-01-02 15:04:05 -07:00"))
 	line("Computer", in.Computer)
 	line("Account", in.Account)
 	line("MailArchive version", in.Version)
@@ -111,9 +112,13 @@ func RecordText(in RecordInput) []byte {
 		} else {
 			line("Mail dates", fmt.Sprintf("%s to %s%s", day(c.MailFrom), day(c.MailTo), asRecorded))
 		}
-		if c.FirstRun.IsZero() {
-			line("First run", "not known")
-		} else {
+		switch {
+		case c.FirstRun.IsZero() && !c.OldestRun.IsZero():
+			// Said why, and what the archive does record (B9).
+			line("First run", "not known: the archive's history of its runs begins "+stamp(c.OldestRun)+asRecorded)
+		case c.FirstRun.IsZero():
+			line("First run", "not known: the archive records no history of its runs")
+		default:
 			line("First run", stamp(c.FirstRun)+asRecorded)
 		}
 	} else {
@@ -185,7 +190,8 @@ func RecordText(in RecordInput) []byte {
 	case planned:
 		line("This computer's record and key", plannedKeyValue(p))
 	case in.KeyForgotten == "":
-		line("This computer's record and key", "not applicable")
+		// The delete did not reach step 8: the record is still there (B3, not "not applicable").
+		line("This computer's record and key", "kept: the delete stopped before it reached them")
 	default:
 		line("This computer's record and key", in.KeyForgotten)
 	}
@@ -227,6 +233,8 @@ func plannedKeyValue(p *DeletePlan) string {
 		return "forgotten by the delete this one finishes"
 	case k.Known && k.Last && k.NoStore:
 		return "to be kept: this computer's secret store could not be opened"
+	case k.Known && k.Last && !k.Remembered:
+		return "record to be forgotten (no key is remembered)" // B3
 	case k.Known && k.Last:
 		return "to be forgotten"
 	case k.Known:
@@ -276,8 +284,10 @@ func cleanValue(v string) string {
 // use ("2026-11-02 01:08 -05:00").
 func localStamp(t time.Time) string { return t.Local().Format("2006-01-02 15:04 -07:00") }
 
-func day(t time.Time) string   { return t.UTC().Format("2006-01-02") }
-func stamp(t time.Time) string { return t.UTC().Format("2006-01-02 15:04 UTC") }
+func day(t time.Time) string { return t.UTC().Format("2006-01-02") }
+
+// stamp is a recorded moment in the record's one form (B9): localStamp's.
+func stamp(t time.Time) string { return localStamp(t) }
 
 func size(n int64) string {
 	const unit = 1024

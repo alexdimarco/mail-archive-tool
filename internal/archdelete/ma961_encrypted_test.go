@@ -105,7 +105,7 @@ func TestAnEncryptedPlanRecordsTheRecordAndSaysWhatIsSealed(t *testing.T) {
 	p = mustPlan(t, dir, deps)
 	text = string(RecordText(RecordInput{Status: StatusPlanned, Plan: p}))
 	for _, want := range []string{"Messages: not known: encrypted, key not open", "Mail dates: not known: encrypted, key not open",
-		"First run: not known: encrypted, key not open", "Last backup: 2024-02-02 02:00 UTC (as recorded in the archive)"} {
+		"First run: not known: encrypted, key not open", "Last backup: " + localStamp(time.Date(2024, 2, 2, 2, 0, 0, 0, time.UTC)) + " (as recorded in the archive)"} { // one form (MA-1028, B9)
 		if !strings.Contains(text, want+"\n") {
 			t.Fatalf("missing %q in:\n%s", want, text)
 		}

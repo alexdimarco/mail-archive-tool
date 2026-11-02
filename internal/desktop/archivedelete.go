@@ -388,6 +388,7 @@ func (d *dashboard) deletePlanAction(w http.ResponseWriter, r *http.Request) {
 	}
 	out := planView(plan)
 	out["ok"], out["token"], out["row"] = true, token, row
+	out["logLine"] = archdelete.PlanLogLineAt(d.cfg.deletionsLogPath()) // the log's full path (item 9)
 	out["planText"], out["planName"] = string(text), fileNameFor("MailArchive deletion plan", plan.Name, d.now().Format("2006-01-02"))
 	writeJSON(w, out)
 }
@@ -929,7 +930,7 @@ func (k desktopKeyring) PlanForget(spelling string) (archdelete.KeyPlan, error) 
 	}
 	// No secret store: Forget refuses the last copy's whole record (errNoSecretStore), so the
 	// plan's key line says the record and key are kept (core-plan-record finding 1).
-	return archdelete.KeyPlan{ID: p.ID, Gone: gone, Last: p.Last, Others: others, NoStore: k.store == nil, Opaque: p}, nil
+	return archdelete.KeyPlan{ID: p.ID, Gone: gone, Last: p.Last, Others: others, NoStore: k.store == nil, Remembered: p.Remembered, Opaque: p}, nil
 }
 
 func (k desktopKeyring) Forget(kp archdelete.KeyPlan, whole bool) error {
