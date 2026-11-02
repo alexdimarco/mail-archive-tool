@@ -61,7 +61,7 @@ type archiveKeys struct {
 	// deletingAs are those deletes' folders by file identity, and the other keys each marked
 	// (an entry open under another spelling of the same folder), so an open under any spelling
 	// is refused and EndDelete clears what LockForDelete set (del-s3a gap 3, MA-978).
-	deletingAs []deleteMark
+	deletingAs []*deleteMark
 	hushed     int    // opens refused meanwhile: every remembered key is being forgotten
 	forgets    uint64 // bumped by every forget-all: a key change prepared across one is not kept
 	closed     bool   // Shut down: nothing more is unlocked, for good
@@ -441,8 +441,13 @@ func (k *archiveKeys) LockForDelete(folder string) error {
 	fi := statOrNil(folder)
 	// The archive may be open here under another spelling of the folder than the row's (the
 	// current archive set to a mapped drive, the row its network path): found by file identity,
-	// asked of the file system outside the registry's lock (del-s3a gap 3, MA-978).
+	// asked of the file system outside the registry's lock (del-s3a gap 3, MA-978). The folder's
+	// mark goes on the delete list in this first section, so an Unlock under another spelling that
+	// finishes between the two sections is refused by open's own check (del-s3a re-verification,
+	// R2); its other keys are filled in the second.
+	mark := &deleteMark{key: key, fi: fi, keys: []string{key}}
 	k.mu.Lock()
+	k.deletingAs = append(k.deletingAs, mark)
 	open := map[string]string{}
 	for ek, e := range k.entries {
 		if ek != key {
@@ -458,6 +463,9 @@ func (k *archiveKeys) LockForDelete(folder string) error {
 			}
 		}
 	}
+	if lockForDeleteGap != nil {
+		lockForDeleteGap()
+	}
 	k.mu.Lock()
 	var closing []*keyEntry
 	for _, kk := range keys {
@@ -469,7 +477,7 @@ func (k *archiveKeys) LockForDelete(folder string) error {
 		k.gen[kk]++
 		k.deleting[kk]++
 	}
-	k.deletingAs = append(k.deletingAs, deleteMark{key: key, fi: fi, keys: keys})
+	mark.keys = keys
 	k.mu.Unlock()
 	for _, e := range closing {
 		e.close(true)
@@ -479,6 +487,10 @@ func (k *archiveKeys) LockForDelete(folder string) error {
 	}
 	return nil
 }
+
+// lockForDeleteGap, when set, runs between LockForDelete's two locked sections: a test seam that
+// lands an Unlock in that gap (fault injection only).
+var lockForDeleteGap func()
 
 // deleteMark is one LockForDelete: its folder's key and identity, and every key it marked.
 type deleteMark struct {

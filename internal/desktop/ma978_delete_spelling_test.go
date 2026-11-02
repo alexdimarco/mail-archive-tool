@@ -193,6 +193,63 @@ func TestTheReaderAndThePageLockReachTheArchiveUnderAnySpelling(t *testing.T) {
 }
 
 // covers: MA-978, R36
+// An Unlock under another spelling of a folder, begun before the folder's delete locks it and
+// finishing between LockForDelete's two locked sections (after it looked for the archive open
+// under other spellings, before it closes them), is refused "This archive is being deleted." and
+// leaves the archive locked (del-s3a re-verification, R2): the folder's mark is on the delete list
+// from LockForDelete's first section, so open's own check after the key is derived refuses it.
+// Positive twin first: the same Unlock with no delete opens the archive.
+func TestAnUnlockFinishingInsideLockForDeleteIsRefused(t *testing.T) {
+	out := backedUpEncrypted(t)
+	k := newArchiveKeys(graphconfig.NewFileSecretStore(t.TempDir()), readerLockedNote)
+	t.Cleanup(func() { k.lockAll(true) })
+	alias := aliasOf(t, out)
+	opener := func(string) (*keyring.Unlocked, error) { return openArchive(out, keysPassword, keyring.OpenOptions{}) }
+	if _, err := k.open(alias, false, nil, opener); err != nil || k.get(alias) == nil {
+		t.Fatalf("the positive twin: an Unlock under the other spelling: %v", err)
+	}
+	k.lock(alias)
+
+	_, aliasKey := keyOf(alias)
+	derive, opened := make(chan struct{}), make(chan error, 1)
+	go func() {
+		_, err := k.open(alias, false, nil, func(abs string) (*keyring.Unlocked, error) {
+			<-derive
+			return opener(abs)
+		})
+		opened <- err
+	}()
+	for deadline := time.Now().Add(20 * time.Second); ; time.Sleep(5 * time.Millisecond) {
+		k.mu.Lock()
+		busy := k.busy[aliasKey]
+		k.mu.Unlock()
+		if busy {
+			break
+		}
+		if time.Now().After(deadline) {
+			t.Fatal("the Unlock never began")
+		}
+	}
+	t.Cleanup(func() { lockForDeleteGap = nil })
+	var gapErr error
+	lockForDeleteGap = func() {
+		close(derive)
+		gapErr = <-opened
+	}
+	if err := k.LockForDelete(out); err != nil {
+		t.Fatal(err)
+	}
+	lockForDeleteGap = nil
+	got := ""
+	if gapErr != nil {
+		got = gapErr.Error()
+	}
+	assure.Refused(t, 1, got, assure.Code(1), assure.Names("This archive is being deleted."),
+		assure.NoSideEffect(func() bool { return errors.Is(gapErr, errBeingDeleted) && k.get(alias) == nil && k.get(out) == nil }))
+	k.EndDelete(out)
+}
+
+// covers: MA-978, R36
 // With no archive set (Settings cleared, or a Delete of the current archive cleared it), the
 // reader closes the index it had open, so this process does not keep the old archive's
 // search.db, which Windows would refuse to delete (del-s3a-A1-02). Positive twin first: with the
