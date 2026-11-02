@@ -1,6 +1,7 @@
 package archdelete
 
 import (
+	"errors"
 	"os"
 	"path/filepath"
 	"reflect"
@@ -98,6 +99,131 @@ func TestThePlanListsOnlyTheScheduledBackupsStep2WouldStop(t *testing.T) {
 }
 
 // covers: MA-1025, R36
+// On Windows the plan asks step 2's whole absent rule (the 1.5.3 friction fixes' adversarial
+// pass, finding 7): a backup Task Scheduler does not list, but whose side files are there while
+// the scheduler does not say it is missing, is one step 2 stops (it asks RemoveLiveEntry), so the
+// plan lists it and it is never taken for a Run now backup, even with a job file. Positive twin
+// first: when the scheduler says it is missing, it is absent — not listed, and with a job file the
+// archive's Run now backup.
+func TestTheWindowsPlanAsksTheSideFileRule(t *testing.T) {
+	jobDir, err := job.Dir()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(jobDir, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	setup := func(saysMissing bool) (*rig, *DeletePlan, string) {
+		t.Helper()
+		dir := smallArchive(t, t.TempDir())
+		r := newRig(t, dir)
+		r.x.Deps.GOOS = "windows"
+		r.x.Deps.Scheduler = r.sched
+		def := schedule.DefaultNameFor(dir)
+		r.sched.state = map[string]schedule.State{} // Task Scheduler does not list it
+		r.sched.sideFiles[def] = true
+		r.sched.saysMissing = saysMissing
+		own := filepath.Join(jobDir, def+".json")
+		if err := job.Write(own, job.Job{Name: def, Inputs: []string{t.TempDir()}, Out: dir, Mode: "incremental"}); err != nil {
+			t.Fatal(err)
+		}
+		t.Cleanup(func() { os.Remove(own) })
+		writeBackupDescriptor(t, dir, []string{"-job", own})
+		return r, r.plan(t), def
+	}
+	listed := func(p *DeletePlan, name string) bool {
+		for _, e := range p.Schedules.Listed() {
+			if e.Name == name {
+				return true
+			}
+		}
+		return false
+	}
+	runNow := func(p *DeletePlan, name string) bool {
+		for _, e := range p.Schedules.RunNowBackups() {
+			if e.Name == name {
+				return true
+			}
+		}
+		return false
+	}
+
+	// Positive twin: the scheduler says it is missing.
+	_, p, def := setup(true)
+	if listed(p, def) || !runNow(p, def) {
+		t.Fatalf("said missing: listed %v, Run now %v (%+v)", listed(p, def), runNow(p, def), p.Schedules.Entries)
+	}
+
+	// Not said missing, its side files there: step 2 stops it, so the plan lists it.
+	r, p, def := setup(false)
+	if !listed(p, def) || runNow(p, def) {
+		t.Fatalf("side files there: listed %v, Run now %v (%+v)", listed(p, def), runNow(p, def), p.Schedules.Entries)
+	}
+	if got := p.ScheduleLines(); len(got) == 0 || got[0] != "Scheduled backups it stops: the backup that runs daily at 02:00." {
+		t.Fatalf("plan lines %q", got)
+	}
+	res := Execute(p, p.Name, false, r.x)
+	if res.Status != StatusComplete || !contains(r.sched.removed, def) || !containsLine(string(res.Record), "Schedule stopped: "+def+" (runs daily at 02:00)") ||
+		strings.Contains(string(res.Record), "Run now backup") {
+		t.Fatalf("the delete (removed %q): %s\n%s", r.sched.removed, res.Message(), res.Record)
+	}
+}
+
+// covers: MA-1025, R36
+// The record of a delete that stopped at step 2 answers every scheduled backup its plan listed (the
+// 1.5.3 friction fixes' adversarial pass, finding 5): one step 2 did not stop is "Schedule not
+// stopped: NAME (runs …)", beside "Schedule stopped" for one it did. Before, such a record said
+// "Schedule stopped: none" and nothing of the backups its plan said it would stop. Positive twin
+// first: a delete that completes has no "Schedule not stopped".
+func TestARecordStoppedAtStep2NamesTheBackupsNotStopped(t *testing.T) {
+	when := time.Date(2026, 11, 2, 9, 0, 0, 0, time.UTC)
+	dir := smallArchive(t, t.TempDir())
+	r := newRig(t, dir)
+	r.x.Deps.Scheduler = r.sched
+	name := writeBackupDescriptor(t, dir, []string{"-out", dir, "-mode", "incremental", "-unattended"})
+	p := r.plan(t)
+	res := Execute(p, p.Name, false, r.x)
+	if res.Status != StatusComplete || strings.Contains(string(res.Record), "Schedule not stopped") {
+		t.Fatalf("the positive twin:\n%s", res.Record)
+	}
+
+	dir = smallArchive(t, t.TempDir())
+	r = newRig(t, dir)
+	r.x.Deps.Scheduler = r.sched
+	name = writeBackupDescriptor(t, dir, []string{"-out", dir, "-mode", "incremental", "-unattended"})
+	verify := name + "-verify"
+	r.sched.state[verify] = schedule.Installed
+	p = r.plan(t)
+	if got := len(p.Schedules.Listed()); got != 2 {
+		t.Fatalf("the plan should list both: %d", got)
+	}
+	plan := string(RecordText(RecordInput{Status: StatusPlanned, When: when, Plan: p}))
+	if !containsLine(plan, "Schedule to stop: "+name+" (runs daily at 02:00)") || !containsLine(plan, "Schedule to stop: "+verify) {
+		t.Fatalf("saved plan:\n%s", plan)
+	}
+	r.sched.fail[verify] = errors.New("the scheduler refused") // the backup stops, its check does not
+	res = Execute(p, p.Name, false, r.x)
+	rec := string(res.Record)
+	if res.Status != StatusPartial || !containsLine(rec, "Schedule stopped: "+name+" (runs daily at 02:00)") ||
+		!containsLine(rec, "Schedule not stopped: "+verify) || strings.Contains(rec, "Schedule not stopped: "+name+" ") || containsLine(rec, "Schedule stopped: none") {
+		t.Fatalf("a delete stopped at step 2 (%s):\n%s", res.Status, rec)
+	}
+
+	// Stopped before any was stopped: each listed one is not stopped, and none is said stopped.
+	dir = smallArchive(t, t.TempDir())
+	r = newRig(t, dir)
+	r.x.Deps.Scheduler = r.sched
+	name = writeBackupDescriptor(t, dir, []string{"-out", dir, "-mode", "incremental", "-unattended"})
+	p = r.plan(t)
+	r.sched.fail[name] = errors.New("the scheduler refused")
+	res = Execute(p, p.Name, false, r.x)
+	rec = string(res.Record)
+	if res.Status != StatusPartial || !containsLine(rec, "Schedule not stopped: "+name+" (runs daily at 02:00)") || !containsLine(rec, "Schedule stopped: none") {
+		t.Fatalf("a delete stopped at its first backup:\n%s", rec)
+	}
+}
+
+// covers: MA-1025, R36
 // A Run now backup (a job file of the archive with no scheduler entry, MA-955) is the archive's
 // own (the 1.5.3 friction review's B15): its run-job descriptor is confirmed through the job file
 // it names, so the plan never lists it as "cannot confirm … check it yourself"; the plan says
@@ -157,7 +283,8 @@ func TestARunNowBackupIsTheArchivesOwn(t *testing.T) {
 		t.Fatalf("plan lines %q, want %q", got, want)
 	}
 	plan := string(RecordText(RecordInput{Status: StatusPlanned, When: time.Now(), Plan: p}))
-	if !containsLine(plan, "Run now backup to remove: "+def+" (runs daily at 02:00)") || strings.Contains(plan, "check it yourself") {
+	// No "(runs daily at 02:00)" beside "it has no scheduled times" (adversarial pass, finding 8).
+	if !containsLine(plan, "Run now backup to remove: "+def+" (no scheduled times)") || strings.Contains(plan, "check it yourself") || strings.Contains(plan, "(runs ") {
 		t.Fatalf("saved plan:\n%s", plan)
 	}
 	res := Execute(p, p.Name, false, r.x)
@@ -165,7 +292,7 @@ func TestARunNowBackupIsTheArchivesOwn(t *testing.T) {
 		t.Fatalf("the Run now backup's job file is still there: %v", err)
 	}
 	if res.Status != StatusComplete || !hasLine(res, "Removed its Run now backup.") || hasLine(res, "Stopped the scheduled") ||
-		!containsLine(string(res.Record), "Run now backup removed: "+def+" (runs daily at 02:00)") || len(r.sched.removed) != 0 {
+		!containsLine(string(res.Record), "Run now backup removed: "+def+" (no scheduled times)") || strings.Contains(string(res.Record), "(runs ") || len(r.sched.removed) != 0 {
 		t.Fatalf("the delete: %s\n%s", res.Message(), res.Record)
 	}
 }

@@ -90,8 +90,13 @@ func (e Entry) stoppedLine() string {
 }
 
 // recordValue is the entry as the saved plan and the deletion record name it: its name, for an
-// approver to check by hand, and when it runs when that is known.
+// approver to check by hand, and when it runs when that is known. A Run now backup has no
+// scheduled times, whatever its descriptor still says, as the plan's line says (the 1.5.3
+// friction fixes' adversarial pass, finding 8).
 func (e Entry) recordValue() string {
+	if e.RunNow() {
+		return e.Name + " (no scheduled times)"
+	}
 	if e.When != "" {
 		return e.Name + " (runs " + e.When + ")"
 	}

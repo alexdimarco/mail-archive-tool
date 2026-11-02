@@ -177,6 +177,18 @@ func RecordText(in RecordInput) []byte {
 		if len(in.SchedulesStopped)+len(in.SchedulesAbsent) == 0 && p.Kind != Encrypted {
 			line("Schedule stopped", "none")
 		}
+		// Each the plan listed that step 2 neither stopped nor found absent — a delete that stopped
+		// at step 2 — is said, so the record answers every line of its plan (the 1.5.3 friction
+		// fixes' adversarial pass, finding 5).
+		done := map[string]bool{}
+		for _, n := range append(append([]string(nil), in.SchedulesStopped...), in.SchedulesAbsent...) {
+			done[n] = true
+		}
+		for _, e := range p.Schedules.Listed() {
+			if !done[e.Name] {
+				line("Schedule not stopped", e.recordValue())
+			}
+		}
 		for _, n := range in.RunNowRemoved {
 			line("Run now backup removed", p.Schedules.recordValue(n))
 		}

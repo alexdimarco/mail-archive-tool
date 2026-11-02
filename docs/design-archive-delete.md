@@ -1177,3 +1177,10 @@ words are the builder's, for the operator.
   did not finish, so it was not removed from the list; nothing was changed." (the row's button
   disabled with them; at the terminal followed by "At this terminal, Delete again is: …"). The
   review's other way, add-archive accepting such a folder, was not built.
+- *The record answers each schedule its plan listed (MA-1025; finding 5).* A record of a delete
+  that stopped at step 2 adds "Schedule not stopped: NAME (runs …)" for each listed entry step 2
+  neither stopped nor found absent.
+- *A Run now backup has no scheduled times in the saved plan and the record (MA-1025; finding
+  8).* "Run now backup to remove: NAME (no scheduled times)", "Run now backup removed: NAME (no
+  scheduled times)" (were "(runs …)" from its descriptor; the note above that says "Run now
+  backup to remove: NAME" is completed by this one).
