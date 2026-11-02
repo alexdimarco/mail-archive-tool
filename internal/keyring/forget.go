@@ -19,6 +19,10 @@ import (
 // person confirmed it.
 var ErrForgetChanged = errors.New("this computer's record of the archive changed since you confirmed; run forget-archive again")
 
+// ErrForgetAllNoStore refuses forgetting every encrypted archive when this computer's secret
+// store could not be opened (the delete residuals' key-use pass, finding 1).
+var ErrForgetAllNoStore = errors.New("This computer's secret store could not be opened, so MailArchive cannot forget the keys it remembers: nothing was forgotten, and every encrypted archive stays recorded. Please try again once the secret store opens.")
+
 // ForgetPlan is what forgetting a folder would remove, shown before anything is
 // asked (§4.6). Nothing is held while the person answers.
 type ForgetPlan struct {
@@ -199,8 +203,13 @@ func sameEntry(a, b encrecord.Entry) bool {
 // what uninstall keeps): each one's remembered key first, then the record, emptied,
 // and the lost list — keys first, so a crash between leaves the record still naming
 // archives whose keys may be gone, never a remembered key the record no longer names.
-// Nothing in any archive folder changes. It returns how many archives it forgot.
+// Nothing in any archive folder changes. It returns how many archives it forgot. With no store
+// (nil: it could not be opened) nothing is forgotten: which keys are remembered cannot be told,
+// and emptying the record would leave each one with nothing pointing to it (MA-999's rule).
 func ForgetAll(s vault.Store) (int, error) {
+	if s == nil {
+		return 0, ErrForgetAllNoStore
+	}
 	rec, err := encrecord.Load()
 	if err != nil {
 		return 0, err
@@ -218,9 +227,6 @@ func ForgetAll(s vault.Store) (int, error) {
 		ids = append(ids, lost...)
 	}
 	for _, idHex := range ids {
-		if s == nil {
-			break
-		}
 		id, perr := parseID(idHex)
 		if perr != nil {
 			continue

@@ -87,6 +87,13 @@ func (d *dashboard) forgetAllAction(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, map[string]any{"ok": false, "error": "Nothing was forgotten: type " + forgetAllWord + " to go ahead."})
 		return
 	}
+	// Without the store no one can tell which keys are remembered, and emptying the record would
+	// leave each with nothing pointing to it: refused before anything is locked or discarded, as
+	// a single archive's Forget is (MA-999; the delete residuals' key-use pass, finding 1).
+	if d.cfg.Store == nil {
+		writeJSON(w, map[string]any{"ok": false, "error": keyring.ErrForgetAllNoStore.Error()})
+		return
+	}
 	// Every archive stays closed for the whole forget — no remembered key re-opens one
 	// meanwhile (CRIT-02) — and every key change prepared here goes first: a key file
 	// put back afterwards would record a forgotten archive again unasked (CRIT-01).
