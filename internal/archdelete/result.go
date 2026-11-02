@@ -3,6 +3,8 @@ package archdelete
 import (
 	"fmt"
 	"strings"
+
+	"mail-archive-tool/internal/util"
 )
 
 // StatusRefused is a delete refused before its started line: nothing was changed
@@ -120,9 +122,31 @@ const lockedLine = "This archive was locked on this page; unlock it again to rea
 const (
 	// PlanLogLine is §3.1's deletions.log line.
 	PlanLogLine = "A line is added to this computer's deletion log (deletions.log), which keeps the date, the folder and what was removed."
-	// PlanKeyLine is §6's line for an encrypted archive [C8].
-	PlanKeyLine = "This computer will forget this archive's key. Any other copy of this archive will need its password or recovery key to open."
 )
+
+// KeyLine is §6's line for an encrypted archive [C8], picked at the plan from the keyring's
+// forget plan (§14, slice 5's re-verification, residual 2): step 8 forgets the key only when the
+// folder is removed and this is the last copy this computer recorded; otherwise the key is kept
+// for the other recorded copies, which it names. "" for a plain archive.
+func (p *DeletePlan) KeyLine() string {
+	switch {
+	case p.Kind != Encrypted:
+		return ""
+	case p.KeyForgottenBefore:
+		return "This computer already forgot this archive folder's record in the delete this one finishes."
+	case !p.Record.Recorded && !p.RecordUnknown:
+		return "This computer has not recorded this archive folder, so Delete forgets no key here."
+	case p.KeyAtPlan.Known && p.KeyAtPlan.Last:
+		return "If the folder is removed, this computer will forget this archive's key: this is the last copy of it this computer recorded. Any other copy of this archive will then need its password or recovery key to open."
+	case p.KeyAtPlan.Known:
+		others := make([]string, 0, len(p.KeyAtPlan.Others))
+		for _, o := range p.KeyAtPlan.Others {
+			others = append(others, util.StripControl(o))
+		}
+		return "This computer keeps this archive's key for its other recorded copies: " + strings.Join(others, "; ") + ". If the folder is removed, it forgets only this copy."
+	}
+	return "If the folder is removed and it is the last copy of this archive this computer recorded, this computer will forget the archive's key; otherwise the key is kept for the other copies."
+}
 
 // SyncedLine is §9's warning for a folder synced with svc [C14].
 func SyncedLine(svc string) string {

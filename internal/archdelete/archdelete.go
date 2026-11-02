@@ -204,6 +204,18 @@ type DeletePlan struct {
 	// forget the archive's record (its `key forgotten` line, del-s1b-A2-01), so step 8
 	// is done and is not asked again.
 	KeyForgottenBefore bool
+	// KeyAtPlan is what step 8 would do with an encrypted archive's key, as the
+	// keyring's plan said at the plan (Deps.KeyPlan): KeyLine words it.
+	KeyAtPlan KeyAtPlan
+}
+
+// KeyAtPlan is the keyring's forget plan for the record the plan found: Known when it was
+// read and is that record's (its ID the plan's); Last when this is the last copy this
+// computer recorded; Others the other recorded copies, which keep the key.
+type KeyAtPlan struct {
+	Known  bool
+	Last   bool
+	Others []string
 }
 
 // Rerun is how a plan finishes an unfinished delete (§5.4).
@@ -327,6 +339,11 @@ type Deps struct {
 	// Sealed returns an encrypted archive's sealed values when its key is open here
 	// (the Desktop's open archive); ok false when it is not.
 	Sealed func(folder string) (c Captured, ok bool)
+	// KeyPlan is the keyring's read-only plan to forget the record at a recorded
+	// spelling (Keyring.PlanForget): the plan says from it whether step 8 would forget
+	// the key or keep it for other recorded copies (§6, §14). Nil: the plan's key line
+	// says both cases.
+	KeyPlan func(spelling string) (KeyPlan, error)
 	// Settings are the Desktop's settings §7 and §5.1 read.
 	Settings Settings
 	// Protected are the folders §7's protected row names [C15].
@@ -355,6 +372,28 @@ func (d Deps) goos() string {
 // set, a folder that is not reachable or no longer an archive is planned by §5.4's
 // rules when deletions.log has an unfinished delete of it (planUnfinished).
 func Plan(folder string, deps Deps) (*DeletePlan, error) {
+	p, err := planAny(folder, deps)
+	if err == nil {
+		addKeyAtPlan(p, deps)
+	}
+	return p, err
+}
+
+// addKeyAtPlan asks the keyring what step 8 would do with a recorded encrypted archive's key
+// (§6, §14): only a plan of the record the plan found counts.
+func addKeyAtPlan(p *DeletePlan, deps Deps) {
+	if p.Kind != Encrypted || !p.Record.Recorded || deps.KeyPlan == nil {
+		return
+	}
+	kp, err := deps.KeyPlan(p.Record.Spelling)
+	if err != nil || kp.ID != p.Record.ID {
+		return
+	}
+	p.KeyAtPlan = KeyAtPlan{Known: true, Last: kp.Last, Others: append([]string(nil), kp.Others...)}
+}
+
+// planAny is Plan before the key's outlook is asked.
+func planAny(folder string, deps Deps) (*DeletePlan, error) {
 	p, err := planArchive(folder, deps)
 	if err == nil || deps.Log == "" {
 		return p, err

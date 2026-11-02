@@ -53,7 +53,6 @@ const (
 // The plan's fixed lines (§3.1, §2, §6, §9).
 const (
 	deleteLogLine   = archdelete.PlanLogLine
-	deleteKeyLine   = archdelete.PlanKeyLine
 	deleteThreeLine = "Remove from list forgets the row (and, after asking, stops its schedules) and keeps the folder. Delete erases the archive's files. Forget (encrypted archives) only stops this computer protecting the folder."
 	deleteSaveLine  = "Save this record now: MailArchive keeps no copy after you close this result."
 )
@@ -339,7 +338,9 @@ func (d *dashboard) deletePlanAction(w http.ResponseWriter, r *http.Request) {
 		refuseDelete(w, deletingRefusal)
 		return
 	}
-	plan, err := archdelete.Plan(row, d.cfg.deleteDeps(d.planBusy, nil))
+	deps := d.cfg.deleteDeps(d.planBusy, nil)
+	deps.KeyPlan = desktopKeyring{store: d.cfg.Store}.PlanForget // the plan's key line (§6, §14)
+	plan, err := archdelete.Plan(row, deps)
 	if err != nil {
 		refuseDelete(w, refusalText(err))
 		return
@@ -407,7 +408,7 @@ func planView(p *archdelete.DeletePlan) map[string]any {
 		m["unrecordedBox"] = fmt.Sprintf("Also delete these %d files (for retention)", n)
 	}
 	if p.Kind == archdelete.Encrypted {
-		m["keyLine"] = deleteKeyLine
+		m["keyLine"] = p.KeyLine()
 	}
 	return m
 }

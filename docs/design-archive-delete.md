@@ -816,3 +816,19 @@ built. Each is in its catalog row.
   showed), `SettingsDir` (a Desktop started with `-config`) and, in the keyring adapter,
   `keyring.ForgetPlan.ID` into `KeyPlan.ID` (without it step 8 always skips: safe, but
   the key is never forgotten).
+
+**Slices 3 to 5 and their re-verifications (MA-1010 and the rows named).**
+- *§6's key line is picked at the plan (MA-1010; slice 5's re-verification, residual 2).*
+  "This computer will forget this archive's key" was not always true: step 8 forgets the
+  key only when the folder is removed and it is the last copy this computer recorded, and
+  otherwise keeps it for the other recorded copies (MA-1004's guide says so). The plan now
+  asks the keyring's read-only forget plan (`Keyring.PlanForget`, the record the plan found,
+  by its ID) and says one of: "If the folder is removed, this computer will forget this
+  archive's key: this is the last copy of it this computer recorded. Any other copy of this
+  archive will then need its password or recovery key to open."; "This computer keeps this
+  archive's key for its other recorded copies: COPIES. If the folder is removed, it forgets
+  only this copy."; for a folder this computer did not record, "This computer has not
+  recorded this archive folder, so Delete forgets no key here."; and, when the forget plan
+  cannot be had, the line that says both cases. The Desktop's panel and the command line
+  show the same line. Without a secret store the command line's added sentence (MA-999)
+  still says a remembered key is then kept.

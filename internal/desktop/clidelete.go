@@ -75,7 +75,9 @@ func (c *CommandLineDelete) KnownArchives() ([]string, error) { return c.cfg.kno
 // run holding the archive lock (a scheduled backup, serve's rebuild): nothing of this process
 // runs.
 func (c *CommandLineDelete) PlanDeps() archdelete.Deps {
-	return c.cfg.deleteDeps(func(folder string) bool { return lockfile.Held(filepath.Join(folder, lockfile.Name)) }, nil)
+	deps := c.cfg.deleteDeps(func(folder string) bool { return lockfile.Held(filepath.Join(folder, lockfile.Name)) }, nil)
+	deps.KeyPlan = desktopKeyring{store: c.store}.PlanForget // the plan's key line (§6, §14)
+	return deps
 }
 
 // ExecDeps are Execute's seams for a delete planned from row, with before the command line's

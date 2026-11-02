@@ -43,8 +43,9 @@ func TestDeleteArchiveForgetsAnEncryptedArchivesRecordAndKey(t *testing.T) {
 			t.Fatalf("a password was asked: %q", p)
 		}
 	}
-	if !strings.Contains(strings.Join(a.said, "\n"), "This computer will forget this archive's key.") {
-		t.Fatalf("the plan does not say the key is forgotten:\n%s", a.transcript())
+	// The last copy this computer recorded, as the real keyring's forget plan says (MA-1010).
+	if !strings.Contains(strings.Join(a.said, "\n"), "  If the folder is removed, this computer will forget this archive's key: this is the last copy of it this computer recorded. Any other copy of this archive will then need its password or recovery key to open.") {
+		t.Fatalf("the plan does not say the key is forgotten with the folder:\n%s", a.transcript())
 	}
 	r := res.String()
 	for _, want := range []string{"Deleted.", "The folder is gone.", "This computer forgot the archive's key", "Removed from Your archives", "Messages: not known: encrypted, key not open"} {

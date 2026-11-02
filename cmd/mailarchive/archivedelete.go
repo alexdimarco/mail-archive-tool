@@ -453,7 +453,7 @@ func deletePlanLines(p *archdelete.DeletePlan) []string {
 		}
 	}
 	if p.Kind == archdelete.Encrypted {
-		lines = append(lines, "  "+archdelete.PlanKeyLine)
+		lines = append(lines, "  "+p.KeyLine())
 	}
 	return append(lines, "  What Delete does not reach: "+archdelete.DoesNotReach, "  "+archdelete.PlanLogLine)
 }
