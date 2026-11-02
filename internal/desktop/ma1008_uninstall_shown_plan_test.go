@@ -51,7 +51,11 @@ func TestRemoveRemovesOnlyTheUninstallPlanThatWasShown(t *testing.T) {
 	if _, m := e.post("/api/uninstall", uninstallBody(true, shown)); m["ok"] != true || m["done"] != true || removals != 1 {
 		t.Fatalf("positive twin: Remove of the plan shown: %v (removals %d)", m, removals)
 	}
-	e.d.running.unblock() // the stand-in removed nothing: let this Desktop delete again
+	// The stand-in removed nothing: let this Desktop delete and uninstall again, as after a fresh
+	// install (unblock lifts only a Remove's own block, never "uninstalled": MA-1007).
+	e.d.running.mu.Lock()
+	e.d.running.blocked = ""
+	e.d.running.mu.Unlock()
 
 	// A delete in another tab makes deletions.log after the plan was shown.
 	_, shown = e.post("/api/uninstall", uninstallBody(false, nil))

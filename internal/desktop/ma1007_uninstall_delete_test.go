@@ -2,6 +2,7 @@ package desktop
 
 import (
 	"net/http"
+	"os"
 	"path/filepath"
 	"testing"
 
@@ -84,6 +85,87 @@ func TestTheDesktopNeverRunsAnUninstallAndADeleteTogether(t *testing.T) {
 	_, un := e.post("/api/archive/unlist", map[string]any{"path": during, "confirm": true, "named": []string{}})
 	assure.Refused(t, http.StatusOK, replyErr(un), assure.Code(http.StatusOK), assure.Names(uninstalledText),
 		assure.NoSideEffect(func() bool { return un["ok"] == false && e.listed(during) }))
+}
+
+// covers: MA-1007, R36
+// A Remove that removes nothing never lifts the block another Remove holds (del-s5
+// re-verification, residual 1): a second Remove while one runs is refused "MailArchive is being
+// uninstalled…", nothing removed, the first's block kept; and once an uninstall has removed the
+// settings, a Remove from a tab still showing the old plan is refused "MailArchive was
+// uninstalled…", and a delete after it stays refused, writing neither deletions.log nor the
+// settings. Positive twin first: a Remove refused because its plan changed lifts its own block,
+// and a delete then goes ahead.
+func TestAStaleOrSecondRemoveNeverLiftsTheUninstallBlock(t *testing.T) {
+	e := newDeleteEnv(t)
+	removed, realRuns := false, 0
+	var whileRemoving func()
+	orig := uninstallRun
+	t.Cleanup(func() { uninstallRun = orig })
+	uninstallRun = func(configDir string, known []string, exe string, dryRun bool) (*uninstall.Report, error) {
+		if removed {
+			return &uninstall.Report{KeptArchives: known}, nil // the settings are gone: an empty plan
+		}
+		if !dryRun {
+			realRuns++
+			if f := whileRemoving; f != nil {
+				whileRemoving = nil
+				f()
+			}
+			removed = true
+		}
+		return &uninstall.Report{ConfigFiles: []string{filepath.Join(configDir, "desktop-settings.json")}, KeptArchives: known}, nil
+	}
+
+	// Positive twin: a Remove refused because its plan changed (none was sent) lifts its own block.
+	if _, m := e.post("/api/uninstall", map[string]any{"confirm": true}); m["planChanged"] != true {
+		t.Fatalf("positive twin: a Remove sending no plan: %v", m)
+	}
+	if r := e.planAndDelete(e.plainArchive("Before")); r["ok"] != true {
+		t.Fatalf("positive twin: a delete after a refused Remove: %v", r)
+	}
+
+	// A second Remove while the first runs is refused and keeps the first's block.
+	_, shown := e.post("/api/uninstall", uninstallBody(false, nil))
+	var second map[string]any
+	var blockedAfterSecond string
+	whileRemoving = func() {
+		_, second = e.post("/api/uninstall", uninstallBody(true, shown))
+		blockedAfterSecond = e.d.running.blockedWhy()
+	}
+	if _, m := e.post("/api/uninstall", uninstallBody(true, shown)); m["ok"] != true {
+		t.Fatalf("the first Remove: %v", m)
+	}
+	assure.Refused(t, http.StatusOK, replyErr(second), assure.Code(http.StatusOK), assure.Names(uninstallingText),
+		assure.NoSideEffect(func() bool {
+			return second["ok"] == false && realRuns == 1 && blockedAfterSecond == uninstallingText
+		}))
+
+	// A Remove from a tab still showing the old plan, after the uninstall, is refused and keeps
+	// deletes blocked: a delete then writes neither deletions.log nor the settings.
+	logBefore := deletionsLog(t, e.cfg)
+	settingsBefore, _ := os.ReadFile(e.cfg.SettingsPath)
+	code, stale := e.post("/api/uninstall", uninstallBody(true, shown))
+	assure.Refused(t, code, replyErr(stale), assure.Code(http.StatusOK), assure.Names(uninstalledText),
+		assure.NoSideEffect(func() bool {
+			return stale["ok"] == false && realRuns == 1 && e.d.running.blockedWhy() == uninstalledText
+		}))
+	dir := e.plainArchive("After")
+	p := e.plan(dir)
+	if p["ok"] != true {
+		t.Fatalf("the plan of %s after the uninstall: %v", dir, p)
+	}
+	_, after := e.post("/api/archive/delete", map[string]any{"token": p["token"], "typed": p["name"]})
+	assure.Refused(t, http.StatusOK, replyErr(after), assure.Code(http.StatusOK), assure.Names(uninstalledText),
+		assure.NoSideEffect(func() bool {
+			settingsNow, _ := os.ReadFile(e.cfg.SettingsPath)
+			return after["ok"] == false && archdelete.IsArchive(dir) &&
+				deletionsLog(t, e.cfg) == logBefore && string(settingsNow) == string(settingsBefore)
+		}))
+	// Lifting a refused or stopped Remove's block never lifts "uninstalled".
+	e.d.running.unblock()
+	if why := e.d.running.blockedWhy(); why != uninstalledText {
+		t.Errorf("unblock lifted the uninstalled block: now %q", why)
+	}
 }
 
 // uninstallBody is the uninstall route's body: the plan, or the removal of the plan shown.

@@ -947,8 +947,13 @@ func (d *dashboard) uninstallAction(w http.ResponseWriter, r *http.Request) {
 			writeJSON(w, map[string]any{"ok": false, "error": fmt.Sprintf(deletingUninstall, it.row)})
 			return
 		}
-	} else if it := d.running.block(uninstallingText); it != nil {
+	} else if it, why := d.running.block(uninstallingText); it != nil {
 		writeJSON(w, map[string]any{"ok": false, "error": fmt.Sprintf(deletingUninstall, it.row)})
+		return
+	} else if why != "" {
+		// Another Remove is running, or one has already uninstalled: this one removes nothing and
+		// leaves that one's block as it is.
+		writeJSON(w, map[string]any{"ok": false, "error": why})
 		return
 	}
 	// Remove removes the plan the person saw, or nothing (del-s5-A2-03; design-archive-delete
@@ -996,7 +1001,7 @@ func (d *dashboard) uninstallAction(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if in.Confirm {
-		d.running.block(uninstalledText) // the settings are gone: a delete would make them again
+		d.running.uninstalled() // the settings are gone: a delete would make them again
 	}
 	writeJSON(w, uninstallPlanReply(rep, in.Confirm))
 }

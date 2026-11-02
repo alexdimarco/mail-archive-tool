@@ -24,22 +24,39 @@ type deletesUnderWay struct {
 	blocked string
 }
 
-// block stops any delete from beginning, saying why, unless one is under way: then nothing is
-// set and that delete is returned. An uninstall takes it before it removes anything.
-func (u *deletesUnderWay) block(why string) *deleteUnderWay {
+// block stops any delete from beginning, saying why, unless one is under way (that delete is
+// returned) or deletes are already blocked (that reason is returned): then nothing is set. An
+// uninstall's Remove takes it before it removes anything, so a second Remove at the same moment,
+// or one from a tab still showing the plan after an uninstall ended, is refused and cannot lift
+// the block another holds (del-s5 re-verification, residual 1).
+func (u *deletesUnderWay) block(why string) (*deleteUnderWay, string) {
 	u.mu.Lock()
 	defer u.mu.Unlock()
+	if u.blocked != "" {
+		return nil, u.blocked
+	}
 	for _, it := range u.items {
-		return it
+		return it, ""
 	}
 	u.blocked = why
-	return nil
+	return nil, ""
 }
 
-// unblock lets deletes begin again (an uninstall that was refused or stopped).
+// unblock lets deletes begin again after an uninstall that was refused or stopped. It lifts only
+// uninstallingText: once an uninstall has removed the settings (uninstalledText), deletes stay
+// refused for as long as this Desktop runs.
 func (u *deletesUnderWay) unblock() {
 	u.mu.Lock()
-	u.blocked = ""
+	if u.blocked == uninstallingText {
+		u.blocked = ""
+	}
+	u.mu.Unlock()
+}
+
+// uninstalled blocks every delete for good: the uninstall holding the block removed the settings.
+func (u *deletesUnderWay) uninstalled() {
+	u.mu.Lock()
+	u.blocked = uninstalledText
 	u.mu.Unlock()
 }
 
