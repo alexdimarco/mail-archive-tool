@@ -1,0 +1,10 @@
+# The SHA-256 of wix314-binaries.zip, the portable WiX 3.14 build tools, from
+#   https://github.com/wixtoolset/wix3/releases/download/wix314rtm/wix314-binaries.zip
+# Get-WiX.ps1 (used by Build-MSI.ps1, release.yml and windows-msi-lab.yml) refuses
+# that download unless its SHA-256 equals the first line below that is not a comment:
+# 64 hexadecimal digits, nothing else on the line.
+#
+# NOT FILLED IN YET. The line below is a placeholder that is not a SHA-256, so every
+# WiX download is refused (the MSI build fails closed) until a person who has checked
+# the file replaces it with the real value.
+PLACEHOLDER-NOT-A-SHA256-REPLACE-WITH-THE-CHECKED-VALUE

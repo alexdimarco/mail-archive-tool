@@ -30,7 +30,8 @@ it makes — that page needs no software to read.
 
 | Your machine | Download | First run |
 |---|---|---|
-| **Windows** | `mailarchive-windows-amd64.zip` (IT teams can build an MSI from `mailarchive-desktop-windows-msi-payload.zip`) | unzip, then double-click **`mailarchivew.exe`** (SmartScreen → *More info → Run anyway*) |
+| **Windows** | **`MailArchiveDesktop-<version>-x64.msi`**, the installer (needs administrator rights) | double-click it; it is unsigned, so on **"Windows protected your PC"** click *More info → Run anyway*, and at the permission prompt that names an **Unknown publisher** click **Yes**. Then open **MailArchive Desktop** from the Start menu |
+| **Windows, without administrator rights** | `mailarchive-windows-amd64.zip` | unzip, then double-click **`mailarchivew.exe`** (SmartScreen → *More info → Run anyway*) |
 | **macOS** | `MailArchive-macos.zip` | unzip to **`Mail Archive.app`**, drag it into Applications, then **right-click → Open → Open** once (it is unsigned) |
 | **Linux** | `mailarchive-linux-amd64` | needs `zenity` and a desktop session; run **`mailarchive wizard`** (or `mailarchive desktop`) |
 
@@ -39,6 +40,17 @@ On macOS the double-click app is **`MailArchive-macos.zip`** (it unzips to
 **`mailarchive-cli-macos.tar.gz`** — a Terminal program, so run it from Terminal
 (`tar -xzf …`, then `./mailarchive -h`); do not double-click it, or macOS opens
 it in a text editor. Both are universal (Apple Silicon and Intel).
+
+On Windows the installer puts MailArchive in Program Files for everyone on the
+computer, adds **MailArchive Desktop**, **MailArchive wizard**, **Copy MailArchive
+link** and **Uninstall MailArchive Desktop** to the Start menu and a desktop
+shortcut, and starts MailArchive Desktop quietly (no browser tab) each time you
+sign in. The zip does none of that. Moving from the zip to the installer: shut
+MailArchive Desktop down, install, open MailArchive Desktop from the Start menu,
+click **Repair** on each archive's **Scheduled backup** card (so the schedule
+runs the installed program, not the unzipped one), then delete the unzipped
+folder; the release notes give the steps. IT teams can deploy the same MSI
+silently, or build their own from `mailarchive-desktop-windows-msi-payload.zip`.
 
 **One program.** MailArchive is a single program with verbs (`wizard`, `desktop`,
 `run-job`, and the command-line exporter). On Windows it is a pair of files built
@@ -1276,7 +1288,8 @@ terminal that is running `desktop`.
 
 | Your machine | Do this |
 |---|---|
-| **Windows** | Download the new `mailarchive-windows-amd64.zip` (or, if your IT team installs an MSI, ask them for the new one) and replace the old **`mailarchive.exe`** and **`mailarchivew.exe`** with the new pair — keep them together in the same folder. |
+| **Windows (installed)** | Download the new `MailArchiveDesktop-<version>-x64.msi` and double-click it: it replaces the installed version in place (or, if your IT team deploys MailArchive, ask them for the new one). |
+| **Windows (zip)** | Download the new `mailarchive-windows-amd64.zip` and replace the old **`mailarchive.exe`** and **`mailarchivew.exe`** with the new pair — keep them together in the same folder. |
 | **macOS** | Download the new `MailArchive-macos.zip`, unzip it, and drag the new **`Mail Archive.app`** into `/Applications`, replacing the old one (right-click → **Open** the first time — it is unsigned). The command-line tool upgrades the same way from `mailarchive-cli-macos.tar.gz`. |
 | **Linux** | Download the new `mailarchive-linux-amd64` and replace the old binary on your `PATH`. |
 

@@ -17,7 +17,45 @@ scheduled backups, alerts and status), a step-by-step wizard, and a command line
 - macOS ships exactly these two downloads (the app and the CLI tarball); there
   are no bare per-arch macOS binaries to pick wrong.
 
-### Linux / Windows
+### Windows — start here
+- **Install it (recommended):** download **`MailArchiveDesktop-<version>-x64.msi`** (the
+  installer; `<version>` is this release's number, for example `MailArchiveDesktop-1.5.4-x64.msi`)
+  and double-click it. The installer is not signed yet, so Windows warns you twice:
+  - If **"Windows protected your PC"** appears, click **More info**, then **Run anyway**.
+  - Windows then asks for permission to make changes, and names the publisher as
+    **Unknown publisher**. Click **Yes**. Installing needs administrator rights: if your
+    account is not an administrator, Windows asks for an administrator's password.
+
+  It installs MailArchive for everyone on this computer, in Program Files. It adds
+  **MailArchive Desktop**, **MailArchive wizard**, **Copy MailArchive link** and
+  **Uninstall MailArchive Desktop** to the Start menu and a **MailArchive Desktop** shortcut
+  on the desktop, and it starts MailArchive Desktop quietly, without opening your browser,
+  each time you sign in to Windows. Open **MailArchive Desktop** from the Start menu to
+  begin. To remove the program later, use **Settings → Apps → Installed apps → MailArchive
+  Desktop → Uninstall**; your archives are kept.
+- **No administrator rights?** Download **`mailarchive-windows-amd64.zip`** instead, unzip it,
+  then double-click `mailarchivew.exe` (if SmartScreen warns: **More info → Run anyway**). It
+  works the same, but it has no Start menu entries, no desktop shortcut, and does not start
+  when you sign in.
+- **Moving from the zip to the installer.** Your archives stay where they are; only the
+  program changes. A scheduled backup you set up with the zip still runs the programs in
+  the unzipped folder, so point it at the installed program before you delete that folder:
+  1. If MailArchive Desktop is open, click **Shut down** at the top of its page.
+  2. Install the MSI as above, then open **MailArchive Desktop** from the Start menu.
+  3. For each archive with a scheduled backup: open it (in **Your archives**, click **Switch
+     to this archive** if it is not the one shown), then click **Repair** on its **Scheduled
+     backup** card. How often it runs and
+     its Thunderbird sync setting are kept. A backup set up at the command line has no
+     **Repair** button: run its `mailarchive schedule … -install` command again with the
+     installed `C:\Program Files\MailArchive Desktop\mailarchive.exe`.
+  4. Then delete the unzipped folder.
+
+Verify downloads against `SHA256SUMS` (the installer is listed there too). For an IT/RMM
+rollout, the same installer installs silently (`msiexec /i MailArchiveDesktop-<version>-x64.msi /qn`),
+and `mailarchive-desktop-windows-msi-payload.zip` still lets you build the MSI yourself
+(`packaging/mailarchive-desktop/README-RMM.md`).
+
+### Linux
 
 MailArchive is one program with verbs; there is no separate GUI download.
 
@@ -25,14 +63,9 @@ MailArchive is one program with verbs; there is no separate GUI download.
 |---|---|---|
 | Linux x86-64 | `mailarchive-linux-amd64` | `mailarchive wizard` or `mailarchive desktop` (the wizard needs `zenity` and a desktop session) |
 | Linux arm64 | `mailarchive-linux-arm64` | the same verbs (compiled, not lab-run) |
-| Windows x86-64 | `mailarchive-windows-amd64.zip` | unzip, then double-click `mailarchivew.exe` |
 
-Windows: SmartScreen → *More info → Run anyway*. Verify downloads against `SHA256SUMS`.
-
-**Windows — MailArchive Desktop:** the dashboard is `mailarchivew.exe desktop` — double-click
-`mailarchivew.exe` to open it (it opens the dashboard in your browser). For an IT/RMM rollout,
-`mailarchive-desktop-windows-msi-payload.zip` builds a self-contained MSI
-(`packaging/mailarchive-desktop/`).
+### New in 1.5.4 — a Windows installer
+- **Windows now has an installer.** Each release now includes **`MailArchiveDesktop-<version>-x64.msi`**: double-click it to install MailArchive with Start menu entries, a desktop shortcut, and MailArchive Desktop starting quietly when you sign in. It is not signed yet, so Windows shows **"Windows protected your PC"** (click **More info**, then **Run anyway**) and names an **Unknown publisher** when it asks for administrator permission. The zip is still there for computers where you cannot install programs. If you used the zip, the install section above says how to move your scheduled backups to the installed program.
 
 ### New in 1.5.3 — large archives open normally
 - **An archive of more than about 2,200 messages works in Your archives again.** Since 1.1.0, MailArchive Desktop read only the first 1 MiB of an archive's record (the `.mailarchive-manifest.json` file in its folder), so a larger archive was shown greyed, as "Not reachable right now", with no **Switch to this archive** button, and **Open an archive folder…** refused its folder as one whose record "cannot be read". MailArchive Desktop now reads the whole record, a little at a time, so a large archive shows as a normal row: **Switch to this archive** and **Pause** are offered, and **Open an archive folder…** opens it. One email with an unusually long subject no longer makes an archive look broken either. Nothing in your archives changes, and nothing else changes in this version.

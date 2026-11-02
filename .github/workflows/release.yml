@@ -1,18 +1,31 @@
 name: release
 
-# On every version tag (v*), run the gates, build the full cross-platform
-# binary matrix (incl. the macOS .app), and publish a GitHub Release with the
-# artifacts attached.
+# On every version tag (v*): run the gates and build the full cross-platform binary
+# matrix (incl. the macOS .app) on Linux (job build), build the unsigned Windows
+# installer from that build's MSI payload on Windows and install and uninstall it once
+# there (job msi), then publish a GitHub Release with every file attached (job
+# publish). publish needs both build and msi: if either fails, nothing is published.
+#
+# Run by hand (workflow_dispatch), it is a dry run: the same gates, build and installer,
+# as version 0.0.0 (the lab builds' placeholder, never a release); the installer is kept
+# as this run's workflow artifact "msi", and publish does not run, so no release is
+# made.
 on:
   push:
     tags:
       - 'v*'
+  workflow_dispatch: {}
 
 permissions:
-  contents: write
+  contents: read
+
+env:
+  # A tag push builds that tag; a dry run builds v0.0.0.
+  RELEASE_TAG: ${{ github.event_name == 'push' && github.ref_name || 'v0.0.0' }}
 
 jobs:
-  release:
+  # (a) The gates and every release file but the installer, on Linux.
+  build:
     runs-on: ubuntu-latest
     env:
       GOTOOLCHAIN: local
@@ -37,32 +50,174 @@ jobs:
         run: go run golang.org/x/vuln/cmd/govulncheck@v1.8.0 ./...
 
       # A release is exactly vMAJOR.MINOR.PATCH: the release-stamp gate and the program
-      # copies an encrypted archive keeps rely on it (program design §7).
+      # copies an encrypted archive keeps rely on it (program design §7). Every tag push
+      # is checked; a dry run builds v0.0.0 and cannot publish (publish runs only on a
+      # tag push).
       - name: Refuse a tag that is not an exact release
+        if: github.event_name == 'push'
         run: |
           [[ "${GITHUB_REF_NAME}" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]] || { echo "not an exact release tag: ${GITHUB_REF_NAME}"; exit 1; }
 
       - name: Build release artifacts
-        run: bash packaging/build-release.sh "${GITHUB_REF_NAME}"
+        run: bash packaging/build-release.sh "${RELEASE_TAG}"
 
       - name: Compose release notes (changelog + install guide)
         run: |
-          prev=$(git describe --tags --abbrev=0 "${GITHUB_REF_NAME}^" 2>/dev/null || true)
+          mkdir -p "${RUNNER_TEMP}/notes"
+          prev=$(git describe --tags --abbrev=0 "${GITHUB_SHA}^" 2>/dev/null || true)
           {
-            echo "## What's changed in ${GITHUB_REF_NAME}"
+            echo "## What's changed in ${RELEASE_TAG}"
             echo
             if [ -n "$prev" ]; then
-              git log --no-merges --pretty='- %s' "${prev}..${GITHUB_REF_NAME}"
+              git log --no-merges --pretty='- %s' "${prev}..${GITHUB_SHA}"
               echo
-              echo "**Full changelog:** https://github.com/${GITHUB_REPOSITORY}/compare/${prev}...${GITHUB_REF_NAME}"
+              echo "**Full changelog:** https://github.com/${GITHUB_REPOSITORY}/compare/${prev}...${RELEASE_TAG}"
             else
-              git log --no-merges --pretty='- %s' "${GITHUB_REF_NAME}"
+              git log --no-merges --pretty='- %s' "${GITHUB_SHA}"
             fi
             echo
             echo "---"
             echo
             cat packaging/release-notes.md
-          } > "${RUNNER_TEMP}/release-notes.md"
+          } > "${RUNNER_TEMP}/notes/release-notes.md"
+
+      - name: Keep the release files for the msi and publish jobs
+        uses: actions/upload-artifact@v4
+        with:
+          name: dist
+          path: dist/
+          if-no-files-found: error
+
+      - name: Keep the release notes for the publish job
+        uses: actions/upload-artifact@v4
+        with:
+          name: release-notes
+          path: ${{ runner.temp }}/notes/release-notes.md
+          if-no-files-found: error
+
+  # (b) The unsigned Windows installer (MailArchiveDesktop-<version>-x64.msi), built
+  # with WiX 3.14 from (a)'s MSI payload, then installed and uninstalled silently on the
+  # runner as a smoke check, as windows-msi-lab.yml does. Only an installer that passed
+  # both is handed to publish.
+  msi:
+    needs: build
+    runs-on: windows-latest
+    steps:
+      # Build-MSI.ps1, Product.wxs, Get-WiX.ps1 and the pinned WiX SHA-256.
+      - uses: actions/checkout@v5
+
+      - name: Fetch the release files
+        uses: actions/download-artifact@v4
+        with:
+          name: dist
+          path: ${{ runner.temp }}/dist
+
+      # Get-WiX.ps1 is the one WiX download (shared with windows-msi-lab.yml and
+      # Build-MSI.ps1): it refuses the zip unless its SHA-256 equals
+      # packaging/mailarchive-desktop/wix314-binaries.sha256, before expanding it.
+      # Writing the tools' folder to $GITHUB_PATH is what reaches the next step (see
+      # windows-msi-lab.yml for why not choco).
+      - name: Install WiX 3.14 build tools (portable, checked against the pinned SHA-256)
+        shell: pwsh
+        run: |
+          $tool = Join-Path $env:RUNNER_TEMP 'wix314'
+          & .\packaging\mailarchive-desktop\Get-WiX.ps1 -Destination $tool
+          Add-Content -Path $env:GITHUB_PATH -Value $tool
+
+      # No -Version: the MSI version comes from the payload's PRODUCT-VERSION.txt, which
+      # build-release.sh wrote from the tag (MA-614).
+      - name: Build the MSI
+        working-directory: packaging/mailarchive-desktop
+        shell: pwsh
+        run: |
+          $payload = Join-Path $env:RUNNER_TEMP 'dist\mailarchive-desktop-windows-msi-payload.zip'
+          $out = Join-Path $env:RUNNER_TEMP 'msi-build'
+          .\Build-MSI.ps1 -PayloadDir $payload -OutputDirectory $out
+          $name = "MailArchiveDesktop-$($env:RELEASE_TAG -replace '^v','')-x64.msi"
+          $built = Join-Path $out $name
+          if (-not (Test-Path $built)) { throw "Build-MSI.ps1 did not produce $name" }
+          $asset = Join-Path $env:RUNNER_TEMP 'msi'
+          New-Item -ItemType Directory -Force -Path $asset | Out-Null
+          Copy-Item $built (Join-Path $asset $name)
+          "MSI_PATH=$(Join-Path $asset $name)" | Add-Content -Path $env:GITHUB_ENV
+
+      - name: Install the MSI (silent, per-machine)
+        shell: pwsh
+        run: |
+          "Installing $env:MSI_PATH"
+          $p = Start-Process msiexec -ArgumentList "/i `"$env:MSI_PATH`" /qn /norestart /l*v `"$env:RUNNER_TEMP\install.log`"" -Wait -PassThru
+          if (Test-Path "$env:RUNNER_TEMP\install.log") { Get-Content "$env:RUNNER_TEMP\install.log" -Tail 40 }
+          if ($p.ExitCode -ne 0) { throw "msiexec /i exited $($p.ExitCode)" }
+
+      - name: Detect the install (the repo's own Detect-RMM.ps1), informational
+        working-directory: packaging/mailarchive-desktop
+        shell: pwsh
+        continue-on-error: true
+        run: |
+          .\Detect-RMM.ps1
+          "Detect-RMM.ps1 exit: $LASTEXITCODE"
+
+      - name: Uninstall the MSI (silent)
+        shell: pwsh
+        run: |
+          $p = Start-Process msiexec -ArgumentList "/x `"$env:MSI_PATH`" /qn /norestart" -Wait -PassThru
+          if ($p.ExitCode -ne 0) { throw "msiexec /x exited $($p.ExitCode)" }
+
+      - name: Keep the installer for the publish job (and a dry run's artifact)
+        uses: actions/upload-artifact@v4
+        with:
+          name: msi
+          path: ${{ runner.temp }}/msi/
+          if-no-files-found: error
+
+      - name: Upload the install log on failure
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: msi-install-log
+          path: ${{ runner.temp }}/install.log
+          if-no-files-found: ignore
+
+  # (c) Publish: only on a tag push, and only when build AND msi succeeded.
+  publish:
+    needs: [build, msi]
+    if: success() && github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v')
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v5
+
+      - name: Fetch the release files
+        uses: actions/download-artifact@v4
+        with:
+          name: dist
+          path: dist
+
+      - name: Fetch the installer
+        uses: actions/download-artifact@v4
+        with:
+          name: msi
+          path: msi
+
+      - name: Fetch the release notes
+        uses: actions/download-artifact@v4
+        with:
+          name: release-notes
+          path: ${{ runner.temp }}/notes
+
+      # The installer joins the release files and gets its line in SHA256SUMS (the same
+      # sha256sum format as every other line); then every file is checked against
+      # SHA256SUMS, and SHA256SUMS must name exactly the files to publish.
+      - name: Add the installer and its checksum
+        run: |
+          msi="MailArchiveDesktop-${RELEASE_TAG#v}-x64.msi"
+          [ "$(ls msi)" = "$msi" ] || { echo "the msi job did not hand over exactly $msi:"; ls -la msi; exit 1; }
+          [ ! -e "dist/$msi" ] || { echo "dist already holds $msi"; exit 1; }
+          mv "msi/$msi" "dist/$msi"
+          (cd dist && sha256sum "$msi" >> SHA256SUMS)
+          (cd dist && sha256sum -c SHA256SUMS)
+          diff <(sed -E 's/^[0-9a-f]{64} [ *]//' dist/SHA256SUMS | sort) <(ls dist | grep -vx SHA256SUMS | sort)
 
       # Published releases are unchangeable (owner ruling O7; program design §7): the
       # release is made as a draft with every asset; every uploaded file is downloaded
@@ -76,7 +231,7 @@ jobs:
         run: |
           gh release create "${GITHUB_REF_NAME}" dist/* --draft \
             --title "${GITHUB_REF_NAME}" \
-            --notes-file "${RUNNER_TEMP}/release-notes.md"
+            --notes-file "${RUNNER_TEMP}/notes/release-notes.md"
           check="${RUNNER_TEMP}/release-check"
           mkdir -p "$check"
           gh release download "${GITHUB_REF_NAME}" --dir "$check"

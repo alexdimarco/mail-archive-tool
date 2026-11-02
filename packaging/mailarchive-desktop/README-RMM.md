@@ -39,9 +39,15 @@ Hand Steve: this `packaging/mailarchive-desktop/` folder **plus** that payload z
 
 ## B. Build the MSI (Steve — Windows, WiX 3)
 
+Every release now also publishes the MSI the release workflow builds this way,
+`MailArchiveDesktop-<version>-x64.msi` (unsigned; listed in `SHA256SUMS`); building it
+yourself is optional.
+
 Requirements: 64-bit Windows + PowerShell. **Go is not required** — the EXEs are in
-the payload. WiX 3 is used if installed; otherwise Build-MSI.ps1 downloads the
-portable WiX 3.14 tools into a private `.tools\` folder (needs internet once).
+the payload. WiX 3 is used if installed; otherwise Build-MSI.ps1 has `Get-WiX.ps1`
+download the portable WiX 3.14 tools into a private `.tools\` folder (needs internet
+once). `Get-WiX.ps1` uses the download only if its SHA-256 equals the one pinned in
+`wix314-binaries.sha256`, and refuses it otherwise.
 
 1. Put `mailarchive-desktop-windows-msi-payload.zip` beside `Build-MSI.ps1` (or let
    it find the unzipped folder, or a sibling repo `dist\`; or pass `-PayloadDir`).
