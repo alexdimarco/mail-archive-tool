@@ -109,7 +109,8 @@ const noHomeText = "MailArchive could not find your home folder, so it cannot te
 
 func (c *cannotTellError) Error() string {
 	if c.noHome {
-		return noHomeText + "; nothing was changed. Check that your home folder is set (HOME, or LOCALAPPDATA on Windows), then try again."
+		// As the settle pass's G7 words name it ("HOME, or AppData on Windows").
+		return noHomeText + "; nothing was changed. Check that your home folder is set (HOME, or AppData on Windows), then try again."
 	}
 	return fmt.Sprintf("MailArchive cannot tell whether MailArchive Desktop is running for your account (%s), so nothing was changed.", c.cause)
 }

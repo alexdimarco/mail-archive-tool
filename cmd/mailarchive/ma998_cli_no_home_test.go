@@ -38,7 +38,7 @@ func TestNoHomeFolderIsSaidPlainly(t *testing.T) {
 	if err != nil {
 		msg = err.Error()
 	}
-	want := "MailArchive could not find your home folder, so it cannot tell whether MailArchive Desktop is running for your account; nothing was changed. Check that your home folder is set (HOME, or LOCALAPPDATA on Windows), then try again."
+	want := "MailArchive could not find your home folder, so it cannot tell whether MailArchive Desktop is running for your account; nothing was changed. Check that your home folder is set (HOME, or AppData on Windows), then try again."
 	assure.Refused(t, exitCode(err), msg, assure.Code(1), assure.Names(want),
 		assure.NoSideEffect(func() bool {
 			return msg == want && !strings.Contains(msg, "$HOME") && !strings.Contains(a.transcript(), "MailArchive will permanently delete") && sameTree(before, tree(t, dir))

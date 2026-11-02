@@ -1478,7 +1478,7 @@ each; the operator approves the words later.
   mend the archive (Incomplete, Fixity coverage, Extractable, History, the capture gaps).
 - *No home folder (MA-998 amended; N20).* "MailArchive could not find your home folder, so it
   cannot tell whether MailArchive Desktop is running for your account; nothing was changed. Check
-  that your home folder is set (HOME, or LOCALAPPDATA on Windows), then try again." (was "…(cannot
+  that your home folder is set (HOME, or AppData on Windows), then try again." (was "…(cannot
   determine your per-account folder: neither $XDG_CONFIG_HOME nor $HOME are defined), so nothing
   was changed"). The other cannot-tell refusals gain their final period.
 - *Uninstall's refusal of several deletes (MA-1041; N9, the operator's delegate's decision).*
