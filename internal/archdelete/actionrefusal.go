@@ -16,6 +16,10 @@ const CaseLogUnreadable Case = "log-unreadable"
 const (
 	msgActionUnfinished    = "Delete not finished: click Delete again. This archive's delete did not finish, so %s; nothing was changed."
 	msgActionLogUnreadable = "MailArchive could not read its deletion log, %s (%s), so it cannot tell whether a delete of this archive did not finish; nothing was changed. Check that file, then try again."
+	// msgActionNoSettings is the refusal when MailArchive's settings folder, and so its deletion
+	// log's path, cannot be found (no home folder set): there is no file to name (the re-walk's
+	// guards pass, G7; builder's words).
+	msgActionNoSettings = "MailArchive could not find its settings folder, which holds its deletion log (%s), so it cannot tell whether a delete of this archive did not finish; nothing was changed. Check that your home folder is set (HOME, or AppData on Windows), then try again."
 )
 
 // ActionRefusal is why Pause, Resume or a Switch does not act on folder because a delete of it
@@ -31,7 +35,7 @@ func ActionRefusal(logPath, folder, done string) error {
 	if logPath == "" {
 		p, err := DefaultLogPath()
 		if err != nil {
-			return refuse(CaseLogUnreadable, msgActionLogUnreadable, LogName, util.StripControl(err.Error()))
+			return refuse(CaseLogUnreadable, msgActionNoSettings, util.StripControl(err.Error()))
 		}
 		logPath = p
 	}

@@ -93,7 +93,7 @@ func ResumeArchive(out, deletionsLog string) error {
 	// A backup run only when the person clicks Run now had no entry for Pause to stop, so
 	// Resume puts none back (MA-949).
 	if d, err := schedule.ReadDescriptor(out); err == nil && !d.IsManual() {
-		if rerr := repairSchedule(out, d); rerr != nil {
+		if rerr := repairSchedule(out, d, deletionsLog); rerr != nil {
 			return fmt.Errorf("the archive is writable again, but its backup schedule could not be restored (re-install it from Settings): %w", rerr)
 		}
 	}

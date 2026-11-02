@@ -45,6 +45,7 @@ import (
 	"mail-archive-tool/internal/server"
 	"mail-archive-tool/internal/state"
 	"mail-archive-tool/internal/uninstall"
+	"mail-archive-tool/internal/util"
 	"mail-archive-tool/internal/wizard"
 )
 
@@ -1065,10 +1066,15 @@ func (d *dashboard) uninstallAction(w http.ResponseWriter, r *http.Request) {
 			writeJSON(w, map[string]any{"ok": false, "error": d.namingConfig(err).Error()})
 			return
 		}
-		if in.Shown == nil || !in.Shown.same(shownOf(now)) {
+		if cur := shownOf(now); in.Shown == nil || !in.Shown.same(cur) {
 			d.running.unblock()
 			reply := uninstallPlanReply(now, false)
-			reply["ok"], reply["planChanged"], reply["error"] = false, true, uninstallPlanChanged
+			msg := uninstallPlanChanged
+			if in.Shown != nil && cur.DeletionsLog != "" && (in.Shown.DeletionsLog != cur.DeletionsLog ||
+				in.Shown.DeletionsLogSize != cur.DeletionsLogSize || in.Shown.DeletionsLogSHA256 != cur.DeletionsLogSHA256) {
+				msg += " " + logChanged(cur.DeletionsLog) // say what is new in the log (G5)
+			}
+			reply["ok"], reply["planChanged"], reply["error"] = false, true, msg
 			writeJSON(w, reply)
 			return
 		}
@@ -1140,6 +1146,25 @@ func (d *dashboard) namingConfig(err error) error {
 // words, for the operator).
 const uninstallPlanChanged = "What uninstall would remove has changed since the plan was shown, so nothing was removed. Read the plan again below, then click Remove."
 
+// logTime is a deletion log line's time as the delete's record writes dates.
+func logTime(t time.Time) string { return t.Local().Format("2006-01-02 15:04:05 -07:00") }
+
+// logChanged is the sentence Remove's plan-changed refusal adds when the deletion log is not the
+// one the plan showed (the 1.5.3 re-walk's guards pass, G5; builder's words, for the operator):
+// what it holds now, as the panel says it, and to copy it again.
+func logChanged(path string) string {
+	const head = "The deletion log changed since the plan was shown"
+	n, last, err := archdelete.LogSummary(path)
+	if err != nil {
+		return head + ". Copy it again first if you keep it."
+	}
+	s := fmt.Sprintf("%s: it now holds %d line%s", head, n, map[bool]string{true: "", false: "s"}[n == 1])
+	if !last.IsZero() {
+		s += ", the last written " + logTime(last)
+	}
+	return s + ". Copy it again first if you keep it."
+}
+
 // uninstallPlanReply is the uninstall route's reply for rep: the plan (done false) or what was
 // removed (done true).
 func uninstallPlanReply(rep *uninstall.Report, done bool) map[string]any {
@@ -1163,6 +1188,14 @@ func uninstallPlanReply(rep *uninstall.Report, done bool) map[string]any {
 		plan["deletionsLogNote"] = uninstall.DeletionsLogNote
 		// What is in it, so Remove takes only the log the plan showed (F5): sent back with it.
 		plan["deletionsLogSize"], plan["deletionsLogSHA256"] = logFingerprint(rep.DeletionsLog)
+		// And what is in it, for the person to read, so a plan refused for new lines reads
+		// differently from the one shown (G5).
+		if n, last, err := archdelete.LogSummary(rep.DeletionsLog); err == nil {
+			plan["deletionsLogLines"] = n
+			if !last.IsZero() {
+				plan["deletionsLogLast"] = logTime(last)
+			}
+		}
 	}
 	if encryptedRecordKept() { // only when there is any (K8, A20)
 		plan["encryptedRecordKept"] = true
@@ -1212,9 +1245,15 @@ const logFingerprintCap = 64 << 20
 // logFingerprint is the size and SHA-256 (hex) of the deletion log at path, read once; a log that
 // cannot be read is -1 and "", which differs from any log that could, so a log readable at the
 // preview and not at Remove (or the other way) refuses as changed. The real run reads the log
-// again and fails closed on its own.
+// again and fails closed on its own. It opens the log as every other read of it does (the 1.5.3
+// re-walk's guards pass, G6): a name that is not an ordinary file (a link, a pipe, a folder) is
+// not opened, and the open neither follows a link nor waits on a pipe swapped in since
+// (util.OpenRegularFile), so Remove never hangs holding the block on deletes.
 func logFingerprint(path string) (int64, string) {
-	f, err := os.Open(path)
+	if fi, err := os.Lstat(path); err != nil || !util.DescriptorReadable(runtime.GOOS, fi.Mode()) {
+		return -1, ""
+	}
+	f, err := util.OpenRegularFile(path)
 	if err != nil {
 		return -1, ""
 	}
@@ -2563,7 +2602,8 @@ function uninstallPlanText(d){
   const scratch=d.scratchFiles||[];
   if(scratch.length){lines.push("- leftover working copies in MailArchive's working folder: "+scratch.length);scratch.forEach(f=>lines.push('     '+f));}
   if(d.programCache)lines.push('- downloaded copies of MailArchive kept for encrypted archives: '+d.programCache);
-  if(d.deletionsLog){lines.push('- the deletion log: '+d.deletionsLog);lines.push('     '+(d.deletionsLogNote||''));}
+  if(d.deletionsLog){lines.push('- the deletion log: '+d.deletionsLog);lines.push('     '+(d.deletionsLogNote||''));
+    if(typeof d.deletionsLogLines==='number')lines.push('     It holds '+d.deletionsLogLines+(d.deletionsLogLines===1?' line':' lines')+(d.deletionsLogLast?', the last written '+d.deletionsLogLast:'')+'.');}
   if(d.clearedSignIn)lines.push('- the saved Microsoft sign-in');
   lines.push('');
   if(kept.length){lines.push('It will KEEP your '+kept.length+' archive(s) — uninstalling never deletes your mail:');kept.forEach(a=>lines.push('   '+a));}

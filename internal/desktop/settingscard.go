@@ -261,6 +261,11 @@ func yesNoEml(raw bool) string {
 // "Nothing was changed" together.
 func scheduleReason(msg string) string {
 	msg = strings.TrimSpace(msg)
+	// A refusal in archdelete's words says "…; nothing was changed." in the middle or at the end
+	// (MA-1015, MA-1036): the reason keeps the sentence and drops the clause (the guards pass, G7).
+	if strings.Contains(msg, "; nothing was changed.") {
+		return strings.Replace(msg, "; nothing was changed.", ".", 1)
+	}
 	for _, tail := range []string{" Nothing was changed.", ", so nothing was changed."} {
 		if strings.HasSuffix(msg, tail) {
 			msg = strings.TrimSuffix(msg, tail)

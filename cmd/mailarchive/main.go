@@ -37,6 +37,7 @@ import (
 	"time"
 
 	"mail-archive-tool/internal/app"
+	"mail-archive-tool/internal/archdelete"
 	"mail-archive-tool/internal/encmark"
 	"mail-archive-tool/internal/export"
 	"mail-archive-tool/internal/graphconfig"
@@ -1429,8 +1430,13 @@ func runSchedule(args []string) error {
 		// records name running (Install never removes it); read it before the
 		// install rewrites the verify descriptor, so it can be named below.
 		superseded := schedule.SupersededVerify(spec)
-		if err := schedule.Install(spec); err != nil {
-			return err
+		// A folder whose delete did not finish gets no schedule: its run would write into the
+		// half-deleted folder (MA-1036; the 1.5.3 re-walk's guards pass, G1). Asked before and
+		// after the install, so one a delete raced is removed again (G4).
+		if err := archdelete.GuardedInstall("", j.out, "its schedule",
+			func() error { return schedule.Install(spec) },
+			func() error { return schedule.RemoveLiveEntry(spec) }); err != nil {
+			return deleteRefusalAtTerminal(err, j.out)
 		}
 		kind := "backup"
 		if j.verb == "verify" {

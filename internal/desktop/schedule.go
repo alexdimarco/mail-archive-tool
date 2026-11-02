@@ -12,6 +12,7 @@ import (
 	"strings"
 
 	"mail-archive-tool/internal/alert"
+	"mail-archive-tool/internal/archdelete"
 	"mail-archive-tool/internal/backupalert"
 	"mail-archive-tool/internal/job"
 	"mail-archive-tool/internal/keyring"
@@ -299,10 +300,13 @@ func (d *dashboard) scheduleInstallRouted(w http.ResponseWriter, r *http.Request
 	defer release()
 	// A delete of it that did not finish (a stop at step 2 leaves it current): Install or Repair
 	// would put back the scheduled backup the delete was stopping, so neither is done, in MA-987's
-	// words; a deletions.log that cannot be read refuses too (MA-1015; the 1.5.3 re-walk's F2).
-	if why := d.unfinishedRefusal(out); why != "" {
-		refuse(why)
-		return
+	// words; a deletions.log that cannot be read refuses too (MA-1015; the 1.5.3 re-walk's F2). The
+	// words say what was not done: the scheduled backup was not installed (the guards pass, G7).
+	if logPath := d.cfg.deletionsLogPath(); logPath != "" {
+		if err := archdelete.ActionRefusal(logPath, out, "its scheduled backup was not installed"); err != nil {
+			refuse(err.Error())
+			return
+		}
 	}
 	rt := routeFor(out)
 	switch rt.kind {

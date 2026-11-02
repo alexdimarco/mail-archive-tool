@@ -33,6 +33,7 @@ import (
 	"github.com/ncruces/zenity"
 
 	"mail-archive-tool/internal/app"
+	"mail-archive-tool/internal/archdelete"
 	"mail-archive-tool/internal/backupalert"
 	"mail-archive-tool/internal/encmark"
 	"mail-archive-tool/internal/export"
@@ -1182,7 +1183,7 @@ func healthCheck() error {
 		}
 		return zenity.Info(msg, zenity.Title(appTitle))
 	case repair:
-		return repairSchedule(out, in.Desc)
+		return repairSchedule(out, in.Desc, "")
 	case remove:
 		return removeSchedule(out)
 	default:
@@ -1324,8 +1325,14 @@ func RepairSpec(out string, d schedule.Descriptor, exe string) (schedule.Spec, e
 // into a schedule (MA-949): it has no scheduler entry to put back.
 const ManualNoRepair = "This archive backs up only when you click Run now, so it has no scheduled backup to repair. To back it up on a schedule, choose How often in MailArchive Desktop's Settings. Nothing was changed."
 
-// repairSchedule re-installs a recorded schedule from the current executable.
-func repairSchedule(out string, d schedule.Descriptor) error {
+// repairSchedule re-installs a recorded schedule from the current executable. deletionsLog is the
+// deletions.log to ask ("" is MailArchive's own).
+func repairSchedule(out string, d schedule.Descriptor, deletionsLog string) error {
+	// A folder whose delete did not finish is refused before any question (MA-1036); the install
+	// below asks again.
+	if err := archdelete.ActionRefusal(deletionsLog, out, scheduledBackup+" was not installed"); err != nil {
+		return err
+	}
 	// §4.6.1 (MA-615): resolve the program through ProgramForSchedule, keeping the
 	// recorded wrapper decision; a translocated program is refused before install.
 	exe, progReason, err := schedule.ProgramForSchedule(d.Wrapper != "")
@@ -1343,7 +1350,10 @@ func repairSchedule(out string, d schedule.Descriptor) error {
 	if err != nil {
 		return err
 	}
-	if err := schedule.Install(spec); err != nil {
+	if err := guardedInstall(deletionsLog, out, spec, nil); err != nil {
+		if archdelete.AsRefusal(err) != nil {
+			return err
+		}
 		return fmt.Errorf("could not repair the scheduled backup:\n%v", err)
 	}
 	rememberArchive(out)
@@ -1964,6 +1974,11 @@ func offerSchedule(c wizardChoice) error {
 	const no = "No — just this once"
 	const daily = "Yes — every day at 2:00 AM"
 	const weekly = "Yes — every week, Sunday at 3:00 AM"
+	// A folder whose delete did not finish is not offered a schedule (MA-1036): refused before
+	// the question; the install asks again.
+	if err := archdelete.ActionRefusal("", c.out, scheduledBackup+" was not installed"); err != nil {
+		return err
+	}
 	pick, err := zenity.List(scheduleQuestionFor(runtime.GOOS),
 		[]string{no, daily, weekly}, zenity.Title(appTitle), zenity.DefaultItems(no))
 	if err != nil {
@@ -2007,18 +2022,9 @@ func offerSchedule(c wizardChoice) error {
 		return nil
 	}
 
-	name := schedule.DefaultNameFor(c.out)
-	jobPath, err := job.PathFor(name)
+	spec, err := installOffered(c, iv, at, exe, "")
 	if err != nil {
 		return err
-	}
-	if err := job.Write(jobPath, jobFor(name, c)); err != nil {
-		return err
-	}
-
-	spec := installSpec(c.out, name, jobPath, iv, at, exe)
-	if err := schedule.Install(spec); err != nil {
-		return fmt.Errorf("could not install the schedule:\n%v", err)
 	}
 	// A new schedule starts with no failing streak: its first failure sends (R3C-10).
 	_ = backupalert.ClearStreakDefault(backupalert.KeyFor(c.out))
@@ -2036,6 +2042,52 @@ func offerSchedule(c wizardChoice) error {
 	}
 	return zenity.Info(fmt.Sprintf("Scheduled: %s at %s.\n\nArchive: %s\nLog: %s%s\n\nOpen the MailArchive wizard (mailarchive wizard) any time to check the backup's health.%s",
 		iv, at, c.out, spec.Log, syncLine, note), zenity.Title(appTitle))
+}
+
+// installOffered writes the job file and installs the offer's run-job schedule for c.out (the
+// "Yes — every day" answer), returning the Spec installed.
+func installOffered(c wizardChoice, iv schedule.Interval, at, exe, deletionsLog string) (schedule.Spec, error) {
+	name := schedule.DefaultNameFor(c.out)
+	jobPath, err := job.PathFor(name)
+	if err != nil {
+		return schedule.Spec{}, err
+	}
+	spec := installSpec(c.out, name, jobPath, iv, at, exe)
+	var writeErr error
+	err = guardedInstall(deletionsLog, c.out, spec, func() error { writeErr = job.Write(jobPath, jobFor(name, c)); return writeErr })
+	switch {
+	case err == nil:
+		return spec, nil
+	case writeErr != nil, archdelete.AsRefusal(err) != nil:
+		return schedule.Spec{}, err
+	}
+	return schedule.Spec{}, fmt.Errorf("could not install the schedule:\n%v", err)
+}
+
+// installEntry is a seam over the host scheduler's install, so a test of the wizard's installs
+// decides what is installed without touching the real scheduler.
+var installEntry = schedule.Install
+
+// scheduledBackup names what the wizard's installs put in, in a refusal's words.
+const scheduledBackup = "its scheduled backup"
+
+// guardedInstall runs prepare (when given: a job file) and installs spec, for the folder out, only
+// while no delete of out is unfinished by deletionsLog ("" is MailArchive's own): the one install
+// path of the wizard's repair (and so Resume) and its offer (and so the Desktop's Add another
+// archive). archdelete.GuardedInstall asks before (nothing is prepared or installed) and after (an
+// entry a delete raced is removed again through removeLiveEntry) (MA-1036; the 1.5.3 re-walk's
+// guards pass, G1 and G4).
+func guardedInstall(deletionsLog, out string, spec schedule.Spec, prepare func() error) error {
+	return archdelete.GuardedInstall(deletionsLog, out, scheduledBackup,
+		func() error {
+			if prepare != nil {
+				if err := prepare(); err != nil {
+					return err
+				}
+			}
+			return installEntry(spec)
+		},
+		func() error { return removeLiveEntry(spec) })
 }
 
 // jobFor builds the scheduled-job file from the wizard's answers. A repeat is

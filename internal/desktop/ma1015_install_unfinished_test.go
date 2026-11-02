@@ -3,6 +3,7 @@ package desktop
 import (
 	"net/http"
 	"os"
+	"strings"
 	"testing"
 
 	"mail-archive-tool/internal/assure"
@@ -50,8 +51,13 @@ func TestInstallAndRepairOfACurrentArchiveWhoseDeleteDidNotFinishAreRefused(t *t
 	} {
 		code, m := e.post("/api/schedule-install", body)
 		assure.Refused(t, code, replyErr(m), assure.Code(http.StatusOK),
-			assure.Names("Delete not finished: click Delete again. This archive's delete did not finish, so it is not backed up; nothing was changed."),
+			assure.Names("Delete not finished: click Delete again. This archive's delete did not finish, so its scheduled backup was not installed; nothing was changed."),
 			assure.NoSideEffect(func() bool { return m["ok"] == false && installs == 1 }))
+		// The Settings card quotes the reason inside "…saved. The backup schedule was not changed:
+		// REASON": it never says "nothing was changed" there (the re-walk's guards pass, G7).
+		if m["reason"] != "Delete not finished: click Delete again. This archive's delete did not finish, so its scheduled backup was not installed." {
+			t.Errorf("%s: the reason the Settings card quotes: %q", name, m["reason"])
+		}
 		if t.Failed() {
 			t.Fatalf("%s: %v", name, m)
 		}
@@ -83,6 +89,9 @@ func TestInstallRefusesADeletionLogItCannotRead(t *testing.T) {
 	}
 	code, m := e.post("/api/schedule-install", body)
 	assure.Refused(t, code, replyErr(m), assure.Code(http.StatusOK),
-		assure.Names("MailArchive could not read its deletion log, "+logPath, "so it cannot tell whether a delete of this archive did not finish"),
+		assure.Names("MailArchive could not read its deletion log, "+logPath, "so it cannot tell whether a delete of this archive did not finish; nothing was changed. Check that file, then try again."),
 		assure.NoSideEffect(func() bool { return m["ok"] == false && installs == 1 }))
+	if r, _ := m["reason"].(string); !strings.Contains(r, "did not finish. Check that file, then try again.") || strings.Contains(strings.ToLower(r), "nothing was") {
+		t.Errorf("the reason the Settings card quotes: %q", m["reason"])
+	}
 }

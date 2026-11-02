@@ -1378,3 +1378,46 @@ F5).** New or changed words are the builder's, for the operator, unless a quote 
   allowed (MA-1029's escape hatch; `add-archive`, then Delete again, recovers the row while the
   folder's manifest is there), and F6, the window between uninstall's last check of the log and its
   removal, is an accepted limit as MA-1007's (MA-1031's ruling note).
+
+**The guards' settle pass, from the 1.5.3 re-walk (2 November 2026; G1, G4, G5, G6, G7; MA-1036,
+MA-1015 and MA-1008 amended).** A second adversarial pass on the F1–F5 fixes found that the harm
+F1 closed for `resume` was still reachable through every other install outside the Desktop. New or
+changed words are the builder's, for the operator, unless a quote says otherwise.
+- *No schedule is installed for a folder whose delete did not finish (MA-1036; G1).* The
+  terminal's `schedule -install`, the wizard's "Repair the scheduled backup" and its "Yes — every
+  day" offer (which the Desktop's Add another archive reaches) install through
+  `archdelete.GuardedInstall`. At the terminal: "mailarchive: Delete not finished: click Delete
+  again. This archive's delete did not finish, so its schedule was not installed; nothing was
+  changed. (Folder: DIR)" then "At this terminal, Delete again is: mailarchive delete-archive -out
+  "DIR"", exit 1 ("its schedule": the job may be a verify). In the wizard: "…so its scheduled
+  backup was not installed; nothing was changed.", shown before the offer's question or the
+  repair's, with no job file written.
+- *An install a delete raced is removed again (MA-1036; G4).* `GuardedInstall` asks the log again
+  after the install, so a delete that began meanwhile (whose step 2 may have stopped the schedules
+  before the entry existed) does not leave the entry behind: "…so its schedule was installed and
+  then removed again; nothing was changed."; if the removal fails: "Delete not finished: click
+  Delete again. A delete of this archive began while its schedule was being installed, and that
+  schedule could not be removed again (CAUSE), so it may still run: click Delete again, which
+  stops it." No lock is taken: a delete writes its started line before its step 2, so one of the
+  two always sees the other. Resume's repair goes through it, so the window G4 named (Resume asks
+  the log, a delete begins, Resume reinstalls) closes the same way; the archive is then writable
+  again with no schedule, which the delete then deletes.
+- *Install and Repair on the Desktop say what was not done (MA-1015 amended; G7).* "Delete not
+  finished: click Delete again. This archive's delete did not finish, so its scheduled backup was
+  not installed; nothing was changed." (was "…so it is not backed up…"); a log that cannot be
+  read: "…did not finish; nothing was changed. Check that file, then try again." (was "…nothing
+  was started…"). The Settings card's quoted reason drops "; nothing was changed.".
+- *No home folder (MA-1015 amended; G7).* "MailArchive could not find its settings folder, which
+  holds its deletion log (CAUSE), so it cannot tell whether a delete of this archive did not
+  finish; nothing was changed. Check that your home folder is set (HOME, or AppData on Windows),
+  then try again." (was the bare name "deletions.log" and "Check that file").
+- *The uninstall plan says what the log holds (MA-1008 amended; G5).* Under the log: "It holds N
+  lines, the last written DATE." (DATE as the deletion record writes dates; "1 line" for one). A
+  Remove refused because the log changed adds: "The deletion log changed since the plan was shown:
+  it now holds N lines, the last written DATE. Copy it again first if you keep it."
+- *The fingerprint opens the log as every other read of it does (MA-1008 amended; G6).* An
+  ordinary file only, never through a link, never waiting on a pipe. No new words.
+- *Not built (for the operator):* G2, the export run itself (`mailarchive -out DIR`, `run-job`, a
+  scheduled run) asking deletions.log, which changes the engine's run path (the design's known gap
+  in the emptied-folder guard); G3, which log the terminal's `schedule`, `pause` and `resume` ask
+  when a delete was begun with `-config` (or a Desktop with `-config` misses a terminal delete).
