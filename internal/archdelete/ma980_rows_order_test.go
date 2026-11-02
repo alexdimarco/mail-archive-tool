@@ -3,6 +3,7 @@ package archdelete
 import (
 	"os"
 	"path/filepath"
+	"runtime"
 	"testing"
 
 	"mail-archive-tool/internal/assure"
@@ -41,29 +42,38 @@ func TestARowRefusesALinkedManifestAndKeepsThePlansOrder(t *testing.T) {
 	if err := os.Remove(filepath.Join(linked, manifestName)); err != nil {
 		t.Fatal(err)
 	}
+	// A link to a file needs the link privilege on Windows (a junction cannot point at a file):
+	// without it only that case is left out, so the folder cases below still run there.
+	fileLinked := true
 	if err := os.Symlink(real, filepath.Join(linked, manifestName)); err != nil {
-		t.Skipf("links cannot be made here: %v", err)
+		if runtime.GOOS != "windows" {
+			t.Fatal(err)
+		}
+		fileLinked = false
+		t.Logf("the linked-manifest case is not run: no link privilege here (lab: run elevated or in developer mode): %v", err)
 	}
 
-	// The folder a link, and protected, each also the -out folder.
+	// The folder a link (a junction on Windows), and protected, each also the -out folder.
 	link := filepath.Join(t.TempDir(), "MailLink")
-	if err := os.Symlink(dir, link); err != nil {
-		t.Skipf("links cannot be made here: %v", err)
-	}
+	symlinkOrSkip(t, dir, link)
 	outer := plainRowArchive(t, "Outer")
 	inner := filepath.Join(outer, "Inner")
 	writeManifest(t, inner, 6, map[string]string{"path:/m": "Mailbox"}, []rec{{Path: "Mailbox/Inbox/two.html"}})
 
-	for _, c := range []struct {
+	type rowCase struct {
 		name, row, launchOut string
 		protected            []string
 		want                 Case
 		says                 string
-	}{
-		{"a linked manifest", linked, "", nil, CaseLink, filepath.Join(linked, manifestName)},
+	}
+	cases := []rowCase{
 		{"a link started with -out", link, link, nil, CaseLink, "is, or holds where its files are, a link: " + link},
 		{"a protected folder started with -out", outer, outer, []string{outer, inner}, CaseProtected, "it is (or is inside, or holds) " + inner},
-	} {
+	}
+	if fileLinked {
+		cases = append([]rowCase{{"a linked manifest", linked, "", nil, CaseLink, filepath.Join(linked, manifestName)}}, cases...)
+	}
+	for _, c := range cases {
 		d := testDeps()
 		d.Settings.LaunchOut = c.launchOut
 		if c.protected != nil {

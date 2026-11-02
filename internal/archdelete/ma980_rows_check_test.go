@@ -33,9 +33,7 @@ func TestARowRefusesALinkAndAProtectedFolderAsThePlanDoes(t *testing.T) {
 	inner := filepath.Join(outer, "Inner")
 	writeManifest(t, inner, 6, map[string]string{"path:/m": "Mailbox"}, []rec{{Path: "Mailbox/Inbox/two.html"}})
 	link := filepath.Join(t.TempDir(), "MailLink")
-	if err := os.Symlink(dir, link); err != nil {
-		t.Skipf("links cannot be made here: %v", err)
-	}
+	symlinkOrSkip(t, dir, link) // a folder: a junction on Windows, never skipped
 	deps := testDeps()
 	deps.Protected = DefaultProtected([]string{link, dir, outer, inner})
 

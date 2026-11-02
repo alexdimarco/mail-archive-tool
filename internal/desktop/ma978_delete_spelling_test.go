@@ -5,8 +5,10 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"reflect"
+	"runtime"
 	"strings"
 	"testing"
 	"time"
@@ -14,6 +16,7 @@ import (
 	"mail-archive-tool/internal/assure"
 	"mail-archive-tool/internal/graphconfig"
 	"mail-archive-tool/internal/keyring"
+	"mail-archive-tool/internal/nowindow"
 )
 
 // aliasOf is a second spelling of folder: the same folder reached through a link to its parent,
@@ -21,10 +24,23 @@ import (
 func aliasOf(t *testing.T, folder string) string {
 	t.Helper()
 	link := filepath.Join(t.TempDir(), "alias")
-	if err := os.Symlink(filepath.Dir(folder), link); err != nil {
-		t.Skipf("links cannot be made here: %v", err)
-	}
+	linkFolder(t, filepath.Dir(folder), link)
 	return filepath.Join(link, filepath.Base(folder))
+}
+
+// linkFolder makes link a link to the folder target: a junction on Windows, which needs no
+// privilege where a symbolic link does. It never skips, or these tests would never run on
+// Windows, where other spellings of a folder matter most (MA-959's rule).
+func linkFolder(t *testing.T, target, link string) {
+	t.Helper()
+	if runtime.GOOS == "windows" {
+		out, err := nowindow.Hide(exec.Command("cmd", "/c", "mklink", "/J", link, target)).CombinedOutput()
+		if err != nil {
+			t.Fatalf("could not make a junction %s -> %s: %v %s", link, target, err, out)
+		}
+	} else if err := os.Symlink(target, link); err != nil {
+		t.Fatalf("could not make a link %s -> %s: %v", link, target, err)
+	}
 }
 
 // unlistedArchive is a plain archive not yet listed.
@@ -68,9 +84,7 @@ func TestTheRowClickedIsTheRowPlannedAndRemoved(t *testing.T) {
 	e2 := newDeleteEnv(t)
 	real := unlistedArchive(t, "Real")
 	link := filepath.Join(t.TempDir(), "MailLink")
-	if err := os.Symlink(real, link); err != nil {
-		t.Skipf("links cannot be made here: %v", err)
-	}
+	linkFolder(t, real, link)
 	e2.list(link, real)
 	p = e2.plan(real)
 	if p["ok"] != true || p["row"] != real {

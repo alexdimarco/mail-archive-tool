@@ -43,9 +43,7 @@ func TestARowsDeleteStateAgreesWithItsPlan(t *testing.T) {
 	}
 	buildArchiveAt(t, inner)
 	link := filepath.Join(t.TempDir(), "MailLink")
-	if err := os.Symlink(dir, link); err != nil {
-		t.Skipf("links cannot be made here: %v", err)
-	}
+	linkFolder(t, dir, link)
 	rowSays(t, e, dir, true, "")
 	rowSays(t, e, outer, true, "")
 	e.list(link, inner)
