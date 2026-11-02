@@ -506,9 +506,18 @@ func forgetArchive(a asker, out string) error {
 	}
 	var o keyring.ForgetOptions
 	if p.Last {
+		if serr != nil {
+			a.say("This computer's secret store could not be opened (%s), so the whole archive cannot be forgotten now: its remembered key could be left behind. Answer No to forget only this folder.", util.StripControl(serr.Error()))
+		}
 		whole, err := askYes(a, "It is the last folder this computer recorded for the archive. Forget the whole archive on this computer?", false)
 		if err != nil {
 			return err
+		}
+		if whole && serr != nil {
+			// Without the store no one can tell whether the key is remembered, and forgetting
+			// the whole record would leave such a key that nothing points to: the record is
+			// kept, as delete-archive keeps it (del-s4-A1-04, del-s4 residual 4).
+			return fmt.Errorf("this computer's secret store could not be opened (%s), so MailArchive cannot tell whether it remembers this archive's key; this computer keeps its record of the archive %s, and nothing was changed. Run forget-archive again once the secret store opens, or answer No to forget only this folder", util.StripControl(serr.Error()), p.ID)
 		}
 		o.Whole = whole
 		if whole && p.Remembered {

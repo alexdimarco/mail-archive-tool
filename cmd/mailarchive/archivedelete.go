@@ -334,7 +334,13 @@ func deleteArchive(a asker, out, planOut, recordOut string, stdout io.Writer) er
 	afterDeleteReturned()
 	held := watch.over()
 	if res.Status == archdelete.StatusRefused {
-		return terminalRefusal(res.Message(), row)
+		msg := res.Message()
+		if res.Refusal != nil && res.Refusal.Case == archdelete.CaseName {
+			// The name quoted as the question showed it, its control characters written out
+			// (del-s4 residual 4), not stripped away.
+			msg = strings.Replace(msg, plan.Name, visibleName(plan.Name), 1)
+		}
+		return terminalRefusal(msg, row)
 	}
 	for _, l := range res.Lines {
 		fmt.Fprintln(stdout, util.StripControl(l))
@@ -374,11 +380,12 @@ func deleteArchive(a asker, out, planOut, recordOut string, stdout io.Writer) er
 const recordHeading = "\nDeletion record (copy it now: MailArchive does not keep a copy)"
 
 // terminalRefusal is a refusal in archdelete's words at the terminal: the folder named, since the
-// words were written to sit beside its row (del-s4-A3-05), and the terminal's equivalents of the
-// Desktop controls they name.
+// words were written to sit beside its row (del-s4-A3-05), as the plan shows it (its control
+// characters written out, del-s4 residual 4), and the terminal's equivalents of the Desktop
+// controls they name.
 func terminalRefusal(msg, row string) error {
 	msg = util.StripControl(msg)
-	lines := append([]string{fmt.Sprintf("%s (Folder: %s)", msg, util.StripControl(row))}, terminalHints(msg, row)...)
+	lines := append([]string{fmt.Sprintf("%s (Folder: %s)", msg, visibleName(row))}, terminalHints(msg, row)...)
 	return errors.New(strings.Join(lines, "\n"))
 }
 

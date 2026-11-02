@@ -90,6 +90,13 @@ func TestTheDeleteVerbsSpeakTheTerminalsWords(t *testing.T) {
 
 	// A name holding a control character: shown written out, and typed as shown it deletes.
 	odd := e.plainArchive("Arch\u0085ive")
+	// Typed otherwise, the refusal quotes the name as it was shown, the character written
+	// out, not stripped to another name (del-s4 residual 4).
+	beforeOdd := tree(t, odd)
+	err = deleteArchive(&scripted{isAttended: true, answers: []string{"Archive"}}, odd, "", "", io.Discard)
+	assure.Refused(t, exitCode(err), errText(err), assure.Code(1),
+		assure.Names(`does not match this folder's name, Arch\u0085ive, so nothing was deleted`, "(Folder: "+filepath.Join(filepath.Dir(odd), `Arch\u0085ive`)+")"),
+		assure.NoSideEffect(func() bool { return sameTree(beforeOdd, tree(t, odd)) && e.listed(odd) }))
 	a := &scripted{isAttended: true, answers: []string{`Arch\u0085ive`}}
 	out.Reset()
 	if err := deleteArchive(a, odd, "", "", &out); err != nil {
