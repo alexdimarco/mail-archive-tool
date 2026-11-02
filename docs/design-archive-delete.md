@@ -1036,3 +1036,10 @@ MA-1000, MA-1010 to MA-1013).**
   The shared result lines ("1 file that are", "them" for one file, the blocking folder)
   and the key line when no key was remembered (B3) live in `internal/archdelete` and are
   the shared group's.
+- *The Desktop fixes' adversarial pass (2 November 2026).*
+  - H1 (MA-1017): a delete of the page's archive that did not finish after its step 4
+    cleared it as the archive in use (a stop at step 6 or later: a file it could not
+    remove) now tells the page "partial", not "unfinished", so the archive's cards are
+    greyed in the "This archive was not fully deleted: …" words. "unfinished" is left for
+    a delete that did not finish and left it the archive in use (a stop at step 2). No
+    new words.

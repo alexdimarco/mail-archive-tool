@@ -598,7 +598,7 @@ func (d *dashboard) deleteAction(w http.ResponseWriter, r *http.Request) {
 	out := map[string]any{"ok": res.Refusal == nil, "id": v.ID, "row": row, "folder": v.Folder, "name": v.Name, "status": v.Status,
 		"lines": v.Lines, "rowRemoved": v.RowRemoved, "unfinished": v.Unfinished,
 		"record": v.Record, "recordBase64": v.RecordBase64, "recordName": v.RecordName,
-		"rows": rows, "page": pageAfterDelete(pageArchive, res)}
+		"rows": rows, "page": pageAfterDelete(pageArchive, cleared, res)}
 	if res.Refusal != nil {
 		out["error"] = res.Message()
 	}
@@ -685,14 +685,20 @@ func refusePlanUsed(w http.ResponseWriter, msg string) {
 	writeJSON(w, map[string]any{"ok": false, "error": planUsedText(msg), "planUsed": true})
 }
 
-// The page's own archive after a delete of it (§3.1 "Where the result sits", MA-986): "unfinished"
-// (§5.4: Archive now and Run now give way to "Delete not finished: click Delete again"), "deleted"
-// or "partial" (the delete got past step 4, which cleared it as the archive in use), or "" — not
-// the page's archive, or a delete refused after its start, which removed nothing (del-s3b-A2-02).
-func pageAfterDelete(pageArchive bool, res *archdelete.Result) string {
+// The page's own archive after a delete of it (§3.1 "Where the result sits", MA-986, MA-1017):
+// "unfinished" — a delete that did not finish and left it the archive in use (a stop at step 2;
+// §5.4: Archive now and Run now give way to "Delete not finished: click Delete again"); "partial"
+// — not fully deleted once its step 4 cleared it as the archive in use (cleared: a stop at step
+// 6 or later is unfinished too, and the page's cards must go, the 1.5.3 friction fixes'
+// adversarial pass, H1), or not fully deleted with only files the person ticked left; "deleted";
+// or "" — not the page's archive, or a delete refused after its start, which removed nothing
+// (del-s3b-A2-02).
+func pageAfterDelete(pageArchive, cleared bool, res *archdelete.Result) string {
 	switch {
 	case !pageArchive:
 		return ""
+	case res.Unfinished && cleared:
+		return "partial"
 	case res.Unfinished:
 		return "unfinished"
 	case res.Status == archdelete.StatusComplete:

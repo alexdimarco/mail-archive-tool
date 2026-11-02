@@ -522,6 +522,39 @@ const scenarios = {
     check(!doc.getElementById('sec-archives').hasAttribute('inert') && !doc.getElementById('sec-uninstall').hasAttribute('inert') && !!doc.querySelector('[data-held-id="HC"]'),
       'Your archives, its result and Uninstall stay usable');
   },
+  // A delete of the page's own archive not finished after step 4 cleared it (the reply's page
+  // "partial", the 1.5.3 friction fixes' adversarial pass H1): its cards are greyed as for
+  // "deleted", in "not fully deleted" words, and its row says the delete is not finished.
+  // Positive twin first: "unfinished" (a stop at step 2, still the archive in use) greys nothing.
+  async partialCurrent() {
+    const cards = ['sec-archive', 'sec-backup', 'sec-settings', 'sec-encryption', 'sec-health'];
+    page([['D:\\Mail\\Cur', 'current'], ['E:\\Other', 'other']], 'D:\\Mail\\Cur');
+    boot(); await wait(30);
+    const cur = doc.querySelectorAll('.archive-row')[0];
+    replies['api/archive/delete/plan'] = plan('D:\\Mail\\Cur', 'Cur', 'TOK');
+    replies['api/archive/delete'] = result({ ok: false, id: 'HU', row: 'D:\\Mail\\Cur', folder: 'D:\\Mail\\Cur', status: 'not fully deleted', unfinished: true,
+      rows: ['D:\\Mail\\Cur'], page: 'unfinished', error: 'stopped' });
+    cur.querySelector('[data-delete-archive]').click(); await wait(40);
+    await typeAndDelete(cur, 'Cur'); await wait(40);
+    check(!doc.root.all().some(e => e.hasAttribute('inert')) && !doc.getElementById('archiveGone') && !!doc.getElementById('switchLocks'),
+      'a delete stopped at step 2 greys none of the page');
+    // A fresh page drawn for the same archive, as before the delete that goes past step 4.
+    doc.body.children.slice().forEach(c => c.remove());
+    page([['D:\\Mail\\Cur', 'current'], ['E:\\Other', 'other']], 'D:\\Mail\\Cur');
+    boot(); await wait(30);
+    const cur2 = doc.querySelectorAll('.archive-row')[0];
+    replies['api/archive/delete/plan'] = plan('D:\\Mail\\Cur', 'Cur', 'TOK2');
+    replies['api/archive/delete'] = result({ ok: false, id: 'HP', row: 'D:\\Mail\\Cur', folder: 'D:\\Mail\\Cur', status: 'not fully deleted', unfinished: true,
+      rows: ['D:\\Mail\\Cur'], page: 'partial', error: 'stopped' });
+    cur2.querySelector('[data-delete-archive]').click(); await wait(40);
+    await typeAndDelete(cur2, 'Cur'); await wait(40);
+    const said = 'This archive was not fully deleted: click Dismiss on its result to refresh this page.';
+    const top = doc.getElementById('archiveGone');
+    check(!!top && top.textContent === said, 'the top of the page says the archive was not fully deleted');
+    check(cards.every(id => { const c = doc.getElementById(id); const t = c.querySelector('.gone-tag'); return c.hasAttribute('inert') && c.classList.contains('archive-gone') && !!t && t.textContent === said; }) &&
+      doc.querySelector('.status-grid').hasAttribute('inert'), 'its cards and status tiles are greyed, do nothing and say so');
+    check(cur2.hasAttribute('data-delete-unfinished') && !doc.getElementById('switchLocks'), 'its row says the delete is not finished, and the switch note goes');
+  },
 };
 
 (async () => {
