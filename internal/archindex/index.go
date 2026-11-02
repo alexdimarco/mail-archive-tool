@@ -16,6 +16,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"os"
 	"path/filepath"
 	"strings"
@@ -243,15 +244,16 @@ func Kind(folder string) string {
 // inspect reads folder's manifest the SAFE way and returns its derived kind. It
 // opens the manifest INSIDE an os.Root on the folder (so a manifest symlink cannot
 // escape it, and a pipe or a folder is refused: util.OpenRegularFileIn), and walks it
-// as it streams in under recognise.go's bounds (SD-2; MA-1034): at most manifestCap
-// bytes, one value and the stores kept small, the records skipped, never kept. Its
+// as it streams in under recognise.go's bounds (SD-2; MA-1034, MA-1035): at most
+// manifestCap bytes, only the stores (and a name or the version) kept, under bounds of
+// their own, the records checked byte by byte and skipped, never held. Its
 // store ids are read lexically (state.SnapshotStoreID, as state.LoadFrom reads them),
 // never resolved on disk, so a planted id like a UNC path never opens an SMB
 // connection or follows a link out of the folder (SD-1; never state.Load /
 // archiveKind, which run filepath.EvalSymlinks on those untrusted ids). The verdict is
 // kept for the folder while it and its manifest stay the same file, of the same size
 // and modification time (recognised), so a page load does not read a large manifest
-// again.
+// again; reads of the same folder at once walk it once (walkAlone).
 func inspect(folder string) (kind string, ok bool) {
 	folder = strings.TrimSpace(folder)
 	if folder == "" {
@@ -262,6 +264,10 @@ func inspect(folder string) (kind string, ok bool) {
 	if enc, _, _ := encmark.Here(folder); enc {
 		return KindEncrypted, true
 	}
+	key := filepath.Clean(folder)
+	// Reads of the same folder at once walk it once: a later one waits, holding no file open,
+	// then takes the kept verdict (MA-1035).
+	defer walkAlone(key)()
 	root, err := os.OpenRoot(folder)
 	if err != nil {
 		return "", false
@@ -280,7 +286,6 @@ func inspect(folder string) (kind string, ok bool) {
 	if err != nil {
 		return "", false
 	}
-	key := filepath.Clean(folder)
 	if r, ok := remembered(key, dir, man); ok {
 		return r.kind, r.ok
 	}
@@ -288,13 +293,17 @@ func inspect(folder string) (kind string, ok bool) {
 		remember(key, recognised{dir: dir, man: man})
 		return "", false
 	}
-	kind, err = scanManifest(f)
+	kind, err = scanManifest(manifestReader(f))
 	if err != nil && readError(err) {
 		return "", false // a read that failed may pass next time: not kept
 	}
 	remember(key, recognised{dir: dir, man: man, kind: kind, ok: err == nil})
 	return kind, err == nil
 }
+
+// manifestReader is the open manifest as the walk reads it: the file itself. A var only so a test
+// can inject a read that fails part way, or hold a walk while another starts (fault injection).
+var manifestReader = func(f *os.File) io.Reader { return f }
 
 // statOpen is the root folder's own facts, read from an open handle so its identity holds on
 // Windows too (os.SameFile there reads a file's id from its handle).

@@ -157,7 +157,8 @@ func TestMA660_RecognitionIsLexicalAndCapped(t *testing.T) {
 	// fixture is VALID JSON over the cap (a huge store value), so the refusal turns
 	// on the bound, not on a parse error. Amended 2026-11-02 (MA-1034): the read's cap
 	// is manifestCap (1 GiB, sized for real archives) and the walk keeps one value and
-	// the stores under 1 MiB each, so this fixture is refused by the value's bound;
+	// the stores under 1 MiB each, so this fixture is refused by the value's bound
+	// (since MA-1035 the stores' bound: a store's value is part of what is kept);
 	// the read's own cap is proven with manifestCap standing in under the fixture's
 	// size, and in TestAHostileManifestIsStillRefused.
 	big := filepath.Join(dir, "big")

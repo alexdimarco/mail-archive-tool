@@ -145,7 +145,12 @@ nesting at most 64; it keeps only `stores`, read lexically (`state.SnapshotStore
 `state.LoadFrom` reads them; SD-1 holds), skips the records, and refuses a newer format.
 The kind is still derived live; the verdict alone is kept in process, per folder, while
 the folder and its manifest are the same files of the same size and modification time,
-so a page load does not read a large manifest again.
+so a page load does not read a large manifest again. *Amended 2026-11-02 (MA-1035, that
+change's adversarial pass):* one value held under 1 MiB let one email (a subject json.Marshal
+wrote over 1 MiB) make an archive "not an archive" again; the walk now checks the bytes as
+JSON and holds nothing it skips, holding only a top-level name and the version (256 bytes
+each) and the stores (1 MiB, counting 64 bytes for each store beside its text); reads of
+one folder at once walk it once.
 
 **The active-archive invariant.** "Which archive is current" is owned by
 `desktop-settings.json` `out` (authoritative — `effectiveOut()`), **not** the

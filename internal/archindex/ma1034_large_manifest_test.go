@@ -143,6 +143,7 @@ func TestARealManifestOverOneMiBIsRecognised(t *testing.T) {
 // json.Unmarshal fills a map), names in other letter case, a zero-byte manifest, null, a version
 // that is null or older, a newer version (refused), and records the walk skips.
 func TestRecognitionAgreesWithAWholeParse(t *testing.T) {
+	const bs = `\` // a backslash, so a JSON escape is spelt out in these manifests
 	manifests := map[string]string{
 		"legacy mailbox id":    `{"version":2,"stores":{"user@contoso.com":"a"}}`,
 		"legacy path id":       `{"version":3,"stores":{"/mail/a.mbox":"a"}}`,
@@ -173,6 +174,30 @@ func TestRecognitionAgreesWithAWholeParse(t *testing.T) {
 		"trailing text":        `{"version":6} x`,
 		"white space only":     "   ",
 		"truncated":            `{"version":6,"stores":{"path:/m":"a"}`,
+		// Added 2026-11-02 (MA-1035): the walk checks a skipped value byte by byte, so its
+		// separators, escapes and numbers are read as LoadFrom reads them.
+		"comma before }":             `{"version":6,"stores":{"path:/m":"a"},}`,
+		"comma before } in a record": `{"version":6,"stores":{"path:/m":"a"},"entries":{"k":{"a":1,}}}`,
+		"comma before } in entries":  `{"version":6,"stores":{"path:/m":"a"},"entries":{"k":{},}}`,
+		"comma before ]":             `{"version":6,"stores":{"path:/m":"a"},"x":[1,]}`,
+		"two commas":                 `{"version":6,,"stores":{"path:/m":"a"}}`,
+		"no comma":                   `{"version":6 "stores":{"path:/m":"a"}}`,
+		"no colon":                   `{"version":6,"x" 1,"stores":{"path:/m":"a"}}`,
+		"a name not a string":        `{"version":6,x:1,"stores":{"path:/m":"a"}}`,
+		"numbers":                    `{"version":6,"x":[0,-0,1.5,-2e10,3E+2,4e-1],"stores":{"path:/m":"a"}}`,
+		"a leading zero":             `{"version":6,"x":01,"stores":{"path:/m":"a"}}`,
+		"a bare point":               `{"version":6,"x":1.,"stores":{"path:/m":"a"}}`,
+		"an exponent with no digit":  `{"version":6,"x":1e,"stores":{"path:/m":"a"}}`,
+		"escapes":                    `{"version":6,"x":"\"\\\/\b\f\n\r\t` + bs + `u00e9","stores":{"path:/m":"a"}}`,
+		"a bad escape":               `{"version":6,"x":"\x","stores":{"path:/m":"a"}}`,
+		"a short \\u":                `{"version":6,"x":"\u00g9","stores":{"path:/m":"a"}}`,
+		"a control character":        "{\"version\":6,\"x\":\"a\tb\",\"stores\":{\"path:/m\":\"a\"}}",
+		"invalid UTF-8":              "{\"version\":6,\"x\":\"\xff\xfe\",\"stores\":{\"path:/m\":\"a\"}}",
+		"literals":                   `{"version":6,"x":[true,false,null],"stores":{"path:/m":"a"}}`,
+		"a bad literal":              `{"version":6,"x":nul,"stores":{"path:/m":"a"}}`,
+		"a long name":                `{"version":6,"` + strings.Repeat("n", 1000) + `":1,"stores":{"path:/m":"a"}}`,
+		"an escaped name":            `{"` + bs + `u0076ersion":7,"stores":{"path:/m":"a"}}`,
+		"a folded name":              `{"version":6,"ſtores":{"mailbox:x@y":"a"}}`,
 	}
 	for name, body := range manifests {
 		dir := filepath.Join(t.TempDir(), "A")
@@ -193,9 +218,11 @@ func TestRecognitionAgreesWithAWholeParse(t *testing.T) {
 // covers: MA-1034, MA-660
 // A hostile manifest is still refused, and none is read without bound: one over the read's cap
 // (manifestCap stands in at 64 KiB for 1 GiB), one that nests deeper than any manifest, one that
-// stops part way, one value or one run of white space over 1 MiB, stores over 1 MiB, a newer
-// format, a manifest that is a folder, and one that is a link out of the folder to a real
-// manifest. Positive twin first: the same real manifest in the folder is recognised.
+// stops part way, a version over its bound, a skipped value over 1 MiB that does not parse, stores
+// over 1 MiB, a newer format, a manifest that is a folder, and one that is a link out of the
+// folder to a real manifest. Positive twin first: the same real manifest in the folder is
+// recognised. (Amended 2026-11-02, MA-1035: one value or one run of white space over 1 MiB that
+// the walk skips is now read as LoadFrom reads it.)
 func TestAHostileManifestIsStillRefused(t *testing.T) {
 	real := filepath.Join(t.TempDir(), "Real")
 	realArchive(t, real, 3000, m365Source)
@@ -232,9 +259,18 @@ func TestAHostileManifestIsStillRefused(t *testing.T) {
 	refused("a record nested deeper than any manifest", []byte(`{"version":6,"entries":{"k":{"a":`+strings.Repeat("[", 200)+strings.Repeat("]", 200)+`}}}`))
 	refused("a manifest that stops part way", realBytes[:len(realBytes)/2])
 	refused("a malformed manifest", []byte(`{"version":6,"stores":{"path:/m":"a",}}`))
-	refused("one value over 1 MiB", []byte(`{"version":6,"subject":"`+strings.Repeat("x", 1<<20+1)+`","stores":{"path:/m":"a"}}`))
+	// Amended 2026-11-02 (MA-1035, the MA-1034 adversarial pass, finding 1): one value over 1 MiB
+	// that the walk skips, and a run of white space over 1 MiB, are no longer refused: the walk
+	// holds neither, and one email's subject is written over 1 MiB in a real manifest. They are
+	// read as LoadFrom reads them in TestARecordValueOverOneMiBIsRecognised. What the walk does
+	// hold is still bounded, and what it skips is still checked byte by byte: a version over its
+	// bound, and a skipped value over 1 MiB that does not parse (a control character, a bad
+	// escape, a string never closed), are refused.
+	refused("a version over its bound", []byte(`{"version":6`+strings.Repeat("0", 300)+`,"stores":{"path:/m":"a"}}`))
+	refused("a value over 1 MiB holding a control character", []byte(`{"version":6,"subject":"`+strings.Repeat("x", 1<<20+1)+"\x01"+`","stores":{"path:/m":"a"}}`))
+	refused("a record's value over 1 MiB with a bad escape", []byte(`{"version":6,"stores":{"path:/m":"a"},"entries":{"k":{"subject":"`+strings.Repeat("x", 1<<20+1)+`\q"}}}`))
+	refused("a record's value over 1 MiB never closed", []byte(`{"version":6,"stores":{"path:/m":"a"},"entries":{"k":{"subject":"`+strings.Repeat("x", 1<<20+1)))
 	refused("a store over 1 MiB", []byte(`{"version":6,"stores":{"path:/m":"`+strings.Repeat("x", 1<<20+1)+`"}}`))
-	refused("a run of white space over 1 MiB", []byte(`{"version":6,`+strings.Repeat(" ", 2<<20)+`"stores":{"path:/m":"a"}}`))
 	var many bytes.Buffer
 	many.WriteString(`{"version":6,"stores":{`)
 	for i, kept := 0, 0; kept <= 1<<20; i++ {

@@ -1341,11 +1341,16 @@ words are the builder's, for the operator, unless a quote says otherwise.
   MailArchive Desktop shut down): mailarchive delete-archive -out "DIR", or click Delete… on its
   row in Your archives in MailArchive Desktop." It is said so also when MailArchive cannot tell
   whether a Desktop runs; with none running the line is unchanged: "To delete it: mailarchive
-  delete-archive -out "DIR"".
+  delete-archive -out "DIR"". *(Superseded 2026-11-02 by "The large-archive group's adversarial
+  pass" below, finding 5: the bracket covered the Desktop's Delete… too.)*
 - *Not done here (for the operator):* N1's suggested "too large to check" wording is not built: a
   manifest over the new 1 GiB bound, like a newer or damaged one, gets the "cannot be read" words,
   and `status` says which. The 2,500- and 20,000-message walks at the terminal and on the Desktop
-  are owed to the re-walk; this group proved them with tests only.
+  are owed to the re-walk; this group proved them with tests only. *(Corrected 2026-11-02 by "The
+  large-archive group's adversarial pass" below, finding 1: `status` says which only for a newer or
+  damaged manifest. It reads the whole manifest with no cap and reports nothing wrong for one over
+  1 GiB, nesting deeper than 64 or stores over their bound, and did not for the one-email archive
+  either.)*
 
 **The adversarial findings on the new guards, from the 1.5.3 re-walk (2 November 2026; F1, F2, F4,
 F5).** New or changed words are the builder's, for the operator, unless a quote says otherwise.
@@ -1378,6 +1383,46 @@ F5).** New or changed words are the builder's, for the operator, unless a quote 
   allowed (MA-1029's escape hatch; `add-archive`, then Delete again, recovers the row while the
   folder's manifest is there), and F6, the window between uninstall's last check of the log and its
   removal, is an accepted limit as MA-1007's (MA-1031's ruling note).
+
+**The large-archive group's adversarial pass (2 November 2026; MA-1035, MA-980 and MA-1023
+amended).** New or changed words are the builder's, for the operator, unless a quote says
+otherwise.
+- *One email no longer makes an archive "not an archive" (MA-1035; finding 1, HIGH).* The walk
+  held each value whole under a 1 MiB bound, and json.Marshal writes each `<`, `&`, control
+  character and invalid UTF-8 byte of a string as six bytes, so a message whose subject was
+  180,000 `<` (about 176 KiB, under the 1 MiB header cap) with a dangling `cid:` image (the
+  exporter records the subject of a message with issues) made a two-message archive greyed in
+  Your archives and refused by `add-archive` with "…cannot be read — run mailarchive status…",
+  while `status` found nothing wrong. MA-1034's row and the group above called a value over 1 MiB
+  "a shape no MailArchive writes"; that was wrong. The walk now checks the manifest byte by byte
+  as JSON and holds nothing it skips: a record's value, a top-level value it does not use, and
+  white space, whatever their length. It holds only a top-level name and the version (256 bytes
+  each: no longer one can be "version", "stores" or "entries", or an integer) and the stores. No
+  new words.
+- *The stores' bound counts each store (MA-1035; finding 6).* Each store costs its text as written
+  and 64 bytes, within 1 MiB: an archive of 1,000 sources with ids of real length is recognised;
+  70,000 tiny stores (under 1 MiB of text, several MiB of map) are refused. Text alone let
+  238,328 tiny stores grow the heap by 30 MiB (the pass's measure).
+- *The read's cap holds on the stream (MA-1035; finding 3).* Over `manifestCap` bytes are never
+  read, whether the bytes past it are records or white space after the object, and the refusal is
+  "too large", not a parse error.
+- *A read that fails part way is read again (MA-1035; finding 4).* Proven with a read failing part
+  way through a real manifest (fault injection), then the same folder recognised.
+- *Two first reads of the same folder walk it once (MA-1035; finding 7).* The later one waits for
+  the walk under way and takes its verdict.
+- *A greyed row still offers Delete (MA-980 amended; finding 2).* With large manifests now
+  recognised, the stand-in for a row the list cannot read but the delete's reader can is a real
+  manifest with one value nested 70 deep (the walk allows 64; `state.LoadFrom` reads it).
+- *`add-archive`'s delete line while a Desktop runs, or when it cannot tell (MA-1023 amended;
+  finding 5).* "(with MailArchive Desktop shut down)" before both choices said Delete… needs the
+  Desktop shut down. Now: "To delete it: click Delete… on its row in Your archives in MailArchive
+  Desktop, or shut MailArchive Desktop down and run mailarchive delete-archive -out "DIR"." (the
+  finding's own wording, with the path quoted as before). With no Desktop running the line is
+  unchanged: "To delete it: mailarchive delete-archive -out "DIR"".
+- *Still refused at recognition though `state.LoadFrom` reads them (for the operator):* a manifest
+  over 1 GiB, nesting deeper than 64, and stores over their bound (about 5,000 sources with ids of
+  real length). `status` reads each whole and reports nothing wrong, so `add-archive`'s "run
+  mailarchive status … to see why" leads nowhere for them, as for finding 1.
 
 **The guards' settle pass, from the 1.5.3 re-walk (2 November 2026; G1, G4, G5, G6, G7; MA-1036,
 MA-1015 and MA-1008 amended).** A second adversarial pass on the F1–F5 fixes found that the harm

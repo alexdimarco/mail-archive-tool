@@ -105,8 +105,10 @@ func TestARowsDeleteStateAgreesWithItsPlan(t *testing.T) {
 // 5) and its plan is made. Amended 2026-11-02 (MA-1034, the 1.5.3 re-walk's N1): the list's read
 // no longer stops at 1 MiB, so the row is no longer greyed: it is available and offers Switch to
 // this archive and Pause beside Delete. The stand-in was a manifest padded with 1 MiB of white
-// space, which the list's walk now refuses as one value over its bound (a shape no MailArchive
-// writes); it is now a real manifest, grown by the state package to thousands of records.
+// space, which the list's walk then refused as one value over its bound; it is now a real
+// manifest, grown by the state package to thousands of records. (Since MA-1035 the walk holds no
+// skipped value or white space; a greyed row's Delete is proven by
+// TestARowTheListCannotRecogniseIsGreyedAndStillOfferedDelete.)
 // Positive twin first: the same archive with its usual manifest is offered.
 func TestAnArchiveWithAManifestOverOneMiBIsStillOfferedDelete(t *testing.T) {
 	e := newDeleteEnv(t)

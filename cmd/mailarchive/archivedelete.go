@@ -1159,14 +1159,16 @@ func addArchiveWith(cfgPath, dir string, stdout io.Writer) error {
 		fmt.Fprintf(stdout, "%s is already in Your archives; nothing was changed.\n", util.StripControl(row))
 		return nil
 	}
-	// delete-archive refuses while a Desktop runs, so its command is given for then with the Desktop
-	// shut down, beside the Desktop's own Delete… (the 1.5.3 re-walk's N11); when this cannot tell,
-	// the condition is said too.
-	when, desk := "", ""
+	// delete-archive refuses while a Desktop runs, so then (and when this cannot tell) the Desktop's
+	// own Delete… comes first, and delete-archive is a separate choice for once the Desktop is shut
+	// down (the 1.5.3 re-walk's N11; the MA-1034 adversarial pass, finding 5: "(with MailArchive
+	// Desktop shut down)" before both choices said Delete… needs the Desktop shut down).
+	path := encmark.CommandPath(util.StripControl(row))
+	fmt.Fprintf(stdout, "Added to Your archives: %s\nThe folder and its files are unchanged. ", util.StripControl(row))
 	if desktopRunning() != nil {
-		when, desk = " (with MailArchive Desktop shut down)", ", or click Delete… on its row in Your archives in MailArchive Desktop."
+		fmt.Fprintf(stdout, "To delete it: click Delete… on its row in Your archives in MailArchive Desktop, or shut MailArchive Desktop down and run mailarchive delete-archive%s -out %s.\n", configArg(cfgPath), path)
+		return nil
 	}
-	fmt.Fprintf(stdout, "Added to Your archives: %s\nThe folder and its files are unchanged. To delete it%s: mailarchive delete-archive%s -out %s%s\n",
-		util.StripControl(row), when, configArg(cfgPath), encmark.CommandPath(util.StripControl(row)), desk)
+	fmt.Fprintf(stdout, "To delete it: mailarchive delete-archive%s -out %s\n", configArg(cfgPath), path)
 	return nil
 }

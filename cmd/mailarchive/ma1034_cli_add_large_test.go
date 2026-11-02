@@ -140,7 +140,9 @@ func TestAddArchiveSpeaksTheTerminalsWords(t *testing.T) {
 	if err := addArchiveWith("", second, &out); err != nil || !e.listed(second) {
 		t.Fatalf("add-archive while a Desktop runs: %v", err)
 	}
-	want = "To delete it (with MailArchive Desktop shut down): mailarchive delete-archive -out " + encmark.CommandPath(second) + ", or click Delete… on its row in Your archives in MailArchive Desktop.\n"
+	// Amended 2026-11-02 (the MA-1034 adversarial pass, finding 5): the Desktop's Delete… first,
+	// delete-archive a separate choice once the Desktop is shut down.
+	want = "To delete it: click Delete… on its row in Your archives in MailArchive Desktop, or shut MailArchive Desktop down and run mailarchive delete-archive -out " + encmark.CommandPath(second) + ".\n"
 	if !strings.Contains(out.String(), want) {
 		t.Fatalf("while a Desktop runs, add-archive says:\n%s\nwant %q", out.String(), want)
 	}
