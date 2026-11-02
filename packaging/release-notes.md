@@ -24,6 +24,7 @@ scheduled backups, alerts and status), a step-by-step wizard, and a command line
   - Your browser may warn when you download it. In Microsoft Edge, if it says the file
     "isn't commonly downloaded", choose **Keep** (and **Keep anyway** if it asks again).
   - If **"Windows protected your PC"** appears, click **More info**, then **Run anyway**.
+  - If Windows says **"The publisher could not be verified"**, click **Run**.
   - Windows then asks for permission to make changes, and names the publisher as
     **Unknown publisher**. Click **Yes**. Installing needs administrator rights: if your
     account is not an administrator, Windows asks for an administrator's password.
@@ -38,8 +39,9 @@ scheduled backups, alerts and status), a step-by-step wizard, and a command line
   Desktop's page; if a backup is running, let it finish first. On a computer several
   people are signed in to, each of them has MailArchive Desktop running: ask them to sign
   out first. Then download the new installer and double-click it: it replaces the
-  installed version.
-- **Removing it.** First, in MailArchive Desktop, use **Danger zone → Uninstall**: it
+  installed version. If you forgot to shut it down, the old version keeps running until
+  you sign out and back in (or restart the computer), so do that once.
+- **Removing it.** First, in MailArchive Desktop, click **Uninstall MailArchive…**: it
   removes your scheduled backups, settings and sign-in from this computer (removing the
   program alone leaves the scheduled backups behind, pointing at a program that is gone). Then use **Settings → Apps → Installed apps → MailArchive
   Desktop → Uninstall**. Your archives are kept either way.
@@ -129,7 +131,7 @@ MailArchive is one program with verbs; there is no separate GUI download.
 - **Backup run history.** A **Recent backups** card (and an archive-local history record) shows the last several runs — when, result, how many messages — not just the latest.
 - **Run now / Shut down / Add another archive.** Run the backup immediately instead of waiting for the schedule; shut the dashboard down cleanly to free its port (do this before an upgrade); and set up an additional archive with the wizard without disturbing the current one.
 - **Source-loss surfacing.** When an archive's **source** (its mailbox or mail folder) stops being reachable across scheduled runs, the dashboard shows a banner and `status` reports a WARN (`source_lost`), so a stalled backup is never silent.
-- **Uninstall keeps your archives.** A **Danger zone → Uninstall** removes MailArchive's program and schedules from this computer, shows a plan first, and **never deletes an archive**.
+- **Uninstall keeps your archives.** **Uninstall MailArchive…** in MailArchive Desktop removes MailArchive's program and schedules from this computer, shows a plan first, and **never deletes an archive**.
 - **Upgrading to a newer version.** Stop the program (**Shut down**), replace the files, relaunch — your archives are untouched; if the program's path changed, the app's **Repair** re-points the schedule. See "Upgrading to a newer version" in the README.
 
 ### Fixed in 0.7.2

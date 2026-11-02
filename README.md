@@ -46,7 +46,7 @@ computer, adds **MailArchive Desktop**, **MailArchive wizard**, **Copy MailArchi
 link** and **Uninstall MailArchive Desktop** to the Start menu and a desktop
 shortcut, and starts MailArchive Desktop quietly (no browser tab) each time anyone
 signs in to this computer (every account on it, not only yours). The zip does none
-of that. To remove an installed copy, use **Danger zone → Uninstall** in MailArchive
+of that. To remove an installed copy, click **Uninstall MailArchive…** in MailArchive
 Desktop first (it removes the scheduled backups), then Settings → Apps → Installed
 apps → **MailArchive Desktop** → Uninstall. Moving from the zip to the installer: shut
 MailArchive Desktop down, install, open MailArchive Desktop from the Start menu,
@@ -318,7 +318,7 @@ What it gives you, beyond reading and searching the archive:
 - **Shut down** — stop the dashboard cleanly and free its port; your mail,
   archives and schedules are untouched. Do this before
   [upgrading](#upgrading-to-a-newer-version).
-- **Danger zone → Uninstall** — remove MailArchive's scheduled backups, settings
+- **Uninstall MailArchive…** — remove MailArchive's scheduled backups, settings
   and sign-in from this computer. It shows a plan first and **keeps every
   archive** — your mail is never deleted. You remove the program itself
   afterwards; the last step tells you how.

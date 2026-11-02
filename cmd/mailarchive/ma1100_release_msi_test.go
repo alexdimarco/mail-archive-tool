@@ -405,9 +405,8 @@ func TestMA1101_WiXDownloadIsCheckedAgainstThePin(t *testing.T) {
 // is refused, so a tag push's msi job fails and NO release is published (no zip, no Mac
 // app, nothing), and windows-msi-lab.yml is red.
 //
-// OPEN GAP ENCODER: while the pin is the placeholder this test SKIPS, naming the block,
-// so an unfiltered run shows it. Once the pin is filled in, the skip no longer fires and
-// the checks below hold; then REMOVE the placeholder branch so it is a permanent guard.
+// The pin was filled in on 2026-11-02, so the open-gap skip for the placeholder is gone and
+// this is a permanent guard: a placeholder (or anything not a SHA-256) is red.
 func TestMA1103_TheWiXPinIsFilledInAndSaysWhoCheckedIt(t *testing.T) {
 	pinFile := readRepo(t, "packaging/mailarchive-desktop/wix314-binaries.sha256")
 	var pinLine string
@@ -418,9 +417,6 @@ func TestMA1103_TheWiXPinIsFilledInAndSaysWhoCheckedIt(t *testing.T) {
 		}
 	}
 	assure.Reached(t, pinLine, "the pin line of wix314-binaries.sha256")
-	if strings.HasPrefix(pinLine, "PLACEHOLDER-") {
-		t.Skipf("OPEN (MA-1103): wix314-binaries.sha256 is still the placeholder %q; the release is BLOCKED (a tag push publishes nothing) until a person fills in the checked SHA-256 and who checked it, when, and against what", pinLine)
-	}
 	if !regexp.MustCompile(`^[0-9A-Fa-f]{64}$`).MatchString(pinLine) {
 		t.Errorf("wix314-binaries.sha256's pin line %q is not 64 hexadecimal digits", pinLine)
 	}
@@ -461,8 +457,14 @@ func TestMA1102_InstallWordsNameTheInstaller(t *testing.T) {
 		// browser may warn at download (L4).
 		"each time anyone signs in to this computer",
 		"**Updating to a newer version.** First click **Shut down**", "let it finish",
-		"**Danger zone → Uninstall**", "removes your scheduled backups", "Settings → Apps",
+		"removes your scheduled backups", "Settings → Apps",
 		"choose **Keep**",
+		// The installer's friction walk on the Windows VM (2026-11-02): the uninstall control
+		// is named as the page draws it (there is no "Danger zone" heading); the "publisher
+		// could not be verified" prompt it met on double-click is named; and an upgrade that
+		// met a running Desktop says to sign out and back in.
+		"click **Uninstall MailArchive…**", `**"The publisher could not be verified"**, click **Run**`,
+		"sign out and back in",
 	} {
 		if !strings.Contains(win, want) {
 			t.Errorf("release-notes.md's Windows section lacks %q", want)
@@ -483,10 +485,17 @@ func TestMA1102_InstallWordsNameTheInstaller(t *testing.T) {
 	for _, want := range []string{
 		"| **Windows (installed)** | First click **Shut down** in MailArchive Desktop (if a backup is running, let it finish first).",
 		"each time anyone\nsigns in to this computer",
-		"use **Danger zone → Uninstall** in MailArchive\nDesktop first (it removes the scheduled backups)",
+		"click **Uninstall MailArchive…** in MailArchive\nDesktop first (it removes the scheduled backups)",
 	} {
 		if !strings.Contains(readme, want) {
 			t.Errorf("README.md lacks %q", want)
 		}
+	}
+	// The control the docs name is the one the Desktop draws, in those words.
+	if dash := readRepo(t, "internal/desktop/dashboard.go"); !strings.Contains(dash, `id="uninstallBtn"`) || !strings.Contains(dash, ">Uninstall MailArchive…</button>") {
+		t.Error("internal/desktop/dashboard.go no longer draws the Uninstall MailArchive… button the docs name")
+	}
+	if strings.Contains(notes+readme, "Danger zone") {
+		t.Error("the docs name a \"Danger zone\", which the Desktop's page does not show")
 	}
 }

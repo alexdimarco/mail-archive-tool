@@ -9,8 +9,8 @@
     Order, each step refusing before the next:
       1. read the pinned SHA-256 from wix314-binaries.sha256 beside this script (the
          first line that is not a comment); refuse, before downloading anything, when
-         it is not 64 hexadecimal digits (the file ships with a placeholder until a
-         person fills it in, so an unfilled pin fails closed);
+         it is not 64 hexadecimal digits (so a missing, garbled or placeholder pin
+         fails closed);
       2. download wix314-binaries.zip to a temporary file (or, with -ZipPath, use a
          copy of it already on this computer; nothing is downloaded then);
       3. refuse it unless its SHA-256 equals the pinned value;

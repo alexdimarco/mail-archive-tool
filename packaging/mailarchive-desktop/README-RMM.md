@@ -55,13 +55,12 @@ only a fresh download goes through the pin. To be sure you build with the checke
 tools, delete `.tools\wix314` and build on a PC without WiX installed. (The release
 workflow is not affected: it puts the checked copy first on `PATH`.)
 
-**Release blocked until the pin is filled in (2026-11-02).** `wix314-binaries.sha256`
-still holds a placeholder, so every WiX download is refused: a tag push's msi job fails
-and **no release is published at all** (no zip, no Mac app, nothing), and
-`windows-msi-lab.yml` is red. A person fills it in: download `wix314-binaries.zip`,
-compare its SHA-256 with a second, independent source, write the value in place of the
-placeholder and fill in the file's "Checked by / Checked on / Checked against" lines
-(test MA-1103 checks them; it is skipped, and says the release is blocked, until then).
+**The pin is trust on first use (filled in 2026-11-02).** `wix314-binaries.sha256` holds
+the SHA-256 of the zip downloaded that day, with who checked it, when, and against what
+(test MA-1103 checks those lines). No second source publishes a SHA-256 for this zip, and
+its programs are not signed, so the pin proves only that every build uses those same
+bytes. If the pin ever fails, a tag push's msi job fails and **no release is published
+at all** (no zip, no Mac app, nothing).
 
 **Upgrading while MailArchive Desktop runs.** The MSI starts `mailarchivew.exe desktop
 -no-browser` for every account that signs in, so an upgrade or uninstall usually meets a

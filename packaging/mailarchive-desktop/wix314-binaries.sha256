@@ -2,15 +2,15 @@
 #   https://github.com/wixtoolset/wix3/releases/download/wix314rtm/wix314-binaries.zip
 # Get-WiX.ps1 (used by Build-MSI.ps1, release.yml and windows-msi-lab.yml) refuses
 # that download unless its SHA-256 equals the first line below that is not a comment:
-# 64 hexadecimal digits, nothing else on the line.
+# 64 hexadecimal digits, nothing else on the line (MA-1103).
 #
-# NOT FILLED IN YET, SO NO RELEASE CAN BE MADE. The line below is a placeholder that is
-# not a SHA-256, so every WiX download is refused: a tag push's msi job fails and nothing
-# at all is published (MA-1103). To fill it in, a person downloads the zip, compares its
-# SHA-256 with a second, independent source (not the same download), replaces the
-# placeholder with the value, and fills in the three lines below (MA-1103 checks them):
+# This pin is trust on first use. The WiX project publishes no SHA-256 for this zip,
+# GitHub records no digest for it (it was uploaded before GitHub kept them), and the
+# programs inside are not Authenticode-signed (Get-AuthenticodeSignature: NotSigned on
+# candle.exe, light.exe and WixUtilExtension.dll). What it proves: every build uses
+# the same bytes as the zip downloaded on the date below.
 #
-# Checked by:
-# Checked on:
-# Checked against:
-PLACEHOLDER-NOT-A-SHA256-REPLACE-WITH-THE-CHECKED-VALUE
+# Checked by: Claude (the lead agent), for Alex DiMarco, who approved the download
+# Checked on: 2026-11-02
+# Checked against: GitHub's release record for wix314rtm (size 41,282,726 bytes, uploaded 2024-02-06T23:39:35Z, matching the download); no published SHA-256 exists to compare
+13f067f38969faf163d93a804b48ea0576790a202c8f10291f2000f0e356e934
