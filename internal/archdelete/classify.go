@@ -91,7 +91,15 @@ func classifyWith(root *os.Root, abs string, parse func(root *os.Root, abs strin
 // The manifest reader's failures, by what they mean for §4's archive test.
 var errManifestTooLarge = errors.New("manifest over its cap")
 
-type manifestReadError struct{ err error }  // the bytes could not be read
+// manifestReadError: the bytes could not be read. opened says the manifest was already open
+// when the read failed (its Stat or a read part way through): whatever the error says, even one
+// that counts as "not found" — ENOENT, or on Windows ERROR_PATH_NOT_FOUND or ERROR_BAD_NETPATH
+// when a network folder drops — the file was there, so it is "cannot read", never "no longer an
+// archive" (del-s5-A2-04).
+type manifestReadError struct {
+	err    error
+	opened bool
+}
 type manifestParseError struct{ err error } // they were read and do not parse
 
 func (e *manifestReadError) Error() string  { return e.err.Error() }
@@ -105,7 +113,12 @@ func manifestRefusal(abs string, err error) error {
 	var newer *state.NewerFormatError
 	var notRegular *util.NotRegularError
 	var parse *manifestParseError
+	var read *manifestReadError
 	switch {
+	case errors.As(err, &read) && read.opened:
+		// Checked before isNotExist: a read of an opened manifest that failed is never
+		// "no longer an archive" (del-s5-A2-04).
+		return unreadableRefusal(path, err)
 	case errors.As(err, &newer):
 		return refuse(CaseNewerFormat, "This archive was written by a newer version of MailArchive (manifest format %d; this version understands %d). Update MailArchive, then delete it.", newer.Version, newer.Understood)
 	case errors.Is(err, errManifestTooLarge):
@@ -145,17 +158,17 @@ func pathOf(err error, def string) string {
 func readManifest(root *os.Root) (*state.Manifest, FileFacts, error) {
 	f, err := util.OpenRegularFileIn(root, manifestName)
 	if err != nil {
-		return nil, FileFacts{}, &manifestReadError{err}
+		return nil, FileFacts{}, &manifestReadError{err: err}
 	}
 	defer f.Close()
 	fi, err := f.Stat()
 	if err != nil {
-		return nil, FileFacts{}, &manifestReadError{err}
+		return nil, FileFacts{}, &manifestReadError{err: err, opened: true}
 	}
 	h := sha256.New()
 	data, err := io.ReadAll(io.TeeReader(io.LimitReader(manifestSource(f), manifestCap+1), h))
 	if err != nil {
-		return nil, FileFacts{}, &manifestReadError{err}
+		return nil, FileFacts{}, &manifestReadError{err: err, opened: true}
 	}
 	if int64(len(data)) > manifestCap {
 		return nil, FileFacts{}, errManifestTooLarge
