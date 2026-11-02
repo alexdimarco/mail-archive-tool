@@ -158,6 +158,15 @@ func (e *cliDel) listed(p string) bool {
 func (e *cliDel) plainArchive(name string) string {
 	e.t.Helper()
 	dir := filepath.Join(e.t.TempDir(), name)
+	e.archiveAt(dir)
+	e.list(dir)
+	return dir
+}
+
+// archiveAt makes a real plain archive in dir, beside the person's own file notes.txt, and does
+// not list it.
+func (e *cliDel) archiveAt(dir string) {
+	e.t.Helper()
 	if err := os.MkdirAll(dir, 0o755); err != nil {
 		e.t.Fatal(err)
 	}
@@ -172,8 +181,6 @@ func (e *cliDel) plainArchive(name string) string {
 	if err := os.WriteFile(filepath.Join(dir, "notes.txt"), []byte("the person's own notes\n"), 0o644); err != nil {
 		e.t.Fatal(err)
 	}
-	e.list(dir)
-	return dir
 }
 
 // desktopRunning stands for a MailArchive Desktop running in the logon session ("" is the

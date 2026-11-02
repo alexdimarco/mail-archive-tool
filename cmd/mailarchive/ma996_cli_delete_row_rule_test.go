@@ -9,9 +9,11 @@ import (
 	"strings"
 	"testing"
 
+	"mail-archive-tool/internal/archdelete"
 	"mail-archive-tool/internal/archindex"
 	"mail-archive-tool/internal/assure"
 	"mail-archive-tool/internal/desktop"
+	jobfile "mail-archive-tool/internal/job"
 	"mail-archive-tool/internal/schedule"
 )
 
@@ -115,6 +117,15 @@ func TestDeleteArchiveDeletesOnlyARowOfYourArchives(t *testing.T) {
 	if !bytes.Equal(listBefore, listAfter) || !bytes.Equal(settingsBefore, settingsAfter) || e.listed(c) {
 		t.Fatal("matching the current archive as a row wrote the list or the settings")
 	}
+	// A name that does not match changes nothing either: the list is written only by a delete
+	// about to change something.
+	err = deleteArchive(&scripted{isAttended: true, answers: []string{"Archive X"}}, c, "", "", io.Discard)
+	assure.Refused(t, exitCode(err), errText(err), assure.Code(1), assure.Names("does not match"),
+		assure.NoSideEffect(func() bool {
+			l, _ := os.ReadFile(e.indexPath())
+			s, _ := os.ReadFile(e.settingsPath())
+			return bytes.Equal(listBefore, l) && bytes.Equal(settingsBefore, s)
+		}))
 	out.Reset()
 	if err := deleteArchive(&scripted{isAttended: true, answers: []string{"Archive C"}}, c, "", "", &out); err != nil {
 		t.Fatalf("delete-archive of the Desktop's current archive, not in its list yet: %v\n%s", err, out.String())
@@ -122,5 +133,114 @@ func TestDeleteArchiveDeletesOnlyARowOfYourArchives(t *testing.T) {
 	if r := out.String(); !strings.Contains(r, "Deleted.") || !strings.Contains(r, "Removed from Your archives") || strings.Contains(r, "No row for this folder was found") ||
 		e.listed(c) || desktop.LoadSettings(e.settingsPath()).Out != "" {
 		t.Fatalf("the current archive's delete:\n%s", r)
+	}
+
+	// Such a row whose delete stops part way, after step 4 cleared the settings that drew it, is a
+	// row still: the delete listed it before it changed anything, as the Desktop's tidy-up would
+	// have, so it is "Delete not finished" and running the delete again finishes it (the residual
+	// fixes' adversarial pass, finding 1).
+	d := e.plainArchive("Archive D")
+	os.Remove(filepath.Join(d, "notes.txt")) // nothing of the person's: the folder goes
+	e.unlistForTest(d)
+	if err := desktop.UpdateSettings(e.settingsPath(), "test", func(s *desktop.Settings) { s.Out = d }); err != nil {
+		t.Fatal(err)
+	}
+	// The list cannot be written then (its folder made read-only, off Windows): refused before
+	// anything changed, the row still drawn by the settings.
+	if runtime.GOOS != "windows" {
+		listBefore, _ := os.ReadFile(e.indexPath())
+		beforeD := tree(t, d)
+		beforeDeleteStep = func(step int) {
+			if step == 2 {
+				os.Chmod(e.configDir(), 0o500)
+			}
+		}
+		out.Reset()
+		err = deleteArchive(&scripted{isAttended: true, answers: []string{"Archive D"}}, d, "", "", &out)
+		beforeDeleteStep = func(int) {}
+		os.Chmod(e.configDir(), 0o700)
+		afterD := tree(t, d)
+		delete(afterD, filepath.Join(d, ".mailarchive.lock"))
+		assure.Refused(t, exitCode(err), out.String(), assure.Code(1),
+			assure.Names("Your archives ("+e.indexPath()+") could not be saved", "nothing was deleted"),
+			assure.NoSideEffect(func() bool {
+				l, _ := os.ReadFile(e.indexPath())
+				return bytes.Equal(listBefore, l) && sameTree(beforeD, afterD) && desktop.LoadSettings(e.settingsPath()).Out == d
+			}))
+	}
+	var release func()
+	beforeDeleteStep = func(step int) {
+		if step == 8 {
+			release = e.desktopRunning("2")
+		}
+	}
+	out.Reset()
+	err = deleteArchive(&scripted{isAttended: true, answers: []string{"Archive D"}}, d, "", "", &out)
+	beforeDeleteStep = func(int) {}
+	logPath, lerr := archdelete.DefaultLogPath()
+	if lerr != nil {
+		t.Fatal(lerr)
+	}
+	unf, uerr := archdelete.UnfinishedDelete(logPath, d, runtime.GOOS)
+	if exitCode(err) != 3 || !e.listed(d) || desktop.LoadSettings(e.settingsPath()).Out != "" || uerr != nil || unf == nil {
+		t.Fatalf("a drawn row's delete stopped before step 8: exit %d (%v), listed %v, unfinished %v (%v)\n%s", exitCode(err), err, e.listed(d), unf != nil, uerr, out.String())
+	}
+	release()
+	out.Reset()
+	if err := deleteArchive(&scripted{isAttended: true, answers: []string{"Archive D"}}, d, "", "", &out); err != nil {
+		t.Fatalf("delete-archive again of a drawn row stopped part way: %v\n%s", err, out.String())
+	}
+	if e.listed(d) || !strings.Contains(out.String(), "Removed from Your archives") {
+		t.Fatalf("delete-archive again did not finish:\n%s", out.String())
+	}
+
+	// The archive the wizard made last, not in the list yet, is removed from Your archives at the
+	// terminal: listed first, then removed, and the wizard's note of it cleared.
+	w := e.plainArchive("Archive W")
+	e.unlistForTest(w)
+	lastFile, err := jobfile.LastArchiveFile()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(lastFile, []byte(w+"\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	out.Reset()
+	if err := unlistArchive(&scripted{isAttended: true, answers: []string{"y"}}, w, &out); err != nil {
+		t.Fatalf("unlist-archive of the wizard's last archive, not in the list yet: %v\n%s", err, out.String())
+	}
+	if r := out.String(); !strings.Contains(r, "Removed from Your archives") || e.listed(w) || jobfile.ReadLastArchive(lastFile) != "" {
+		t.Fatalf("Remove from list of the wizard's last archive:\n%s", r)
+	}
+
+	// An archive the Desktop draws is another known archive to a delete (§7), as on the Desktop:
+	// a listed folder that holds it is refused at the plan, nothing logged and no name asked
+	// (finding 4's sibling).
+	p := e.plainArchive("Archive P")
+	inner := filepath.Join(p, "Inner")
+	e.archiveAt(inner)
+	setOut := func(out string) {
+		t.Helper()
+		if err := desktop.UpdateSettings(e.settingsPath(), "test", func(s *desktop.Settings) { s.Out = out }); err != nil {
+			t.Fatal(err)
+		}
+	}
+	setOut(inner)
+	beforeP, logBefore := tree(t, p), e.logText()
+	a = &scripted{isAttended: true, answers: []string{"Archive P"}}
+	err = deleteArchive(a, p, "", "", io.Discard)
+	assure.Refused(t, exitCode(err), errText(err), assure.Code(1), assure.Names("will not delete this folder", inner),
+		assure.NoSideEffect(func() bool {
+			return sameTree(beforeP, tree(t, p)) && e.listed(p) && !e.listed(inner) && e.logText() == logBefore && !prompted(a, "Type the folder's name")
+		}))
+	// Drawn only once the name is being typed: Execute's own plan under the lock refuses it.
+	setOut("")
+	h := &hooked{scripted: &scripted{isAttended: true, answers: []string{"Archive P"}}, at: "Type the folder's name", hook: func() { setOut(inner) }}
+	out.Reset()
+	err = deleteArchive(h, p, "", "", &out)
+	afterP := tree(t, p)
+	delete(afterP, filepath.Join(p, ".mailarchive.lock")) // the delete's own lock, released
+	if exitCode(err) != 1 || !strings.Contains(out.String(), "will not delete this folder") || !sameTree(beforeP, afterP) || !e.listed(p) {
+		t.Fatalf("an archive the Desktop draws from the name on: exit %d (%v)\n%s", exitCode(err), err, out.String())
 	}
 }

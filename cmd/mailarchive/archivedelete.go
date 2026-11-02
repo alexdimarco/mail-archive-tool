@@ -311,6 +311,11 @@ func deleteArchive(a asker, out, planOut, recordOut string, stdout io.Writer) er
 			if err != nil {
 				return err
 			}
+			// A row only the Desktop draws is listed first, as its tidy-up would list it: step 4
+			// clears what draws it, and a delete stopped after that is finished from its row.
+			if err := seams.ListRow(row); err != nil {
+				return listNotSaved(seams, err, "deleted")
+			}
 			return watch.beginChanges()
 		}
 		var ct *cannotTellError
@@ -374,6 +379,13 @@ func deleteArchive(a asker, out, planOut, recordOut string, stdout io.Writer) er
 		return &exitError{code: code}
 	}
 	return nil
+}
+
+// listNotSaved is either verb's refusal when the row could not be written into Your archives
+// before it changed anything (CommandLineDelete.ListRow): nothing was done (what: "deleted",
+// "changed").
+func listNotSaved(seams *desktop.CommandLineDelete, err error, what string) error {
+	return fmt.Errorf("Your archives (%s) could not be saved (%s), so nothing was %s", util.StripControl(seams.ListPath()), util.StripControl(err.Error()), what)
 }
 
 // recordHeading heads the deletion record printed at the terminal.
@@ -814,7 +826,7 @@ func unlistArchive(a asker, out string, stdout io.Writer) error {
 	if err != nil {
 		return err
 	}
-	q, err := archdelete.PlanUnlist(row, seams.UnlistDeps(row, nil))
+	q, err := archdelete.PlanUnlist(row, seams.UnlistDeps(nil))
 	if err != nil {
 		return terminalRefusal(err.Error(), row)
 	}
@@ -832,7 +844,12 @@ func unlistArchive(a asker, out string, stdout io.Writer) error {
 		return err
 	}
 	watch.set(phaseFinishing)
-	res := archdelete.Unlist(row, seams.UnlistDeps(row, q.Named))
+	// A row only the Desktop draws is listed first, so Remove from list removes it as any row.
+	if err := seams.ListRow(row); err != nil {
+		watch.over()
+		return listNotSaved(seams, err, "changed")
+	}
+	res := archdelete.Unlist(row, seams.UnlistDeps(q.Named))
 	watch.over()
 	if res.Refusal != nil {
 		return terminalRefusal(res.Refusal.Message, row)

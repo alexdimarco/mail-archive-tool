@@ -8,6 +8,7 @@ import (
 	"testing"
 
 	"mail-archive-tool/internal/assure"
+	"mail-archive-tool/internal/desktop"
 	"mail-archive-tool/internal/encrecord"
 )
 
@@ -27,6 +28,22 @@ func TestAnUnreadableListOfArchivesRefusesTheDeleteVerbs(t *testing.T) {
 	err := deleteArchive(&scripted{isAttended: true, answers: []string{"Archive L"}}, l, "", inO, io.Discard)
 	assure.Refused(t, exitCode(err), errText(err), assure.Code(1), assure.Names("is inside the archive", o),
 		assure.NoSideEffect(func() bool { _, serr := os.Stat(inO); return os.IsNotExist(serr) && e.logText() == "" }))
+
+	// So is a file inside an archive that is a row only as the Desktop draws it (its current
+	// archive, not in its list yet): the saved-file rule knows the rows the row rule does (the
+	// residual fixes' adversarial pass, finding 4).
+	c := e.plainArchive("Archive C")
+	e.unlistForTest(c)
+	if err := desktop.UpdateSettings(e.settingsPath(), "test", func(s *desktop.Settings) { s.Out = c }); err != nil {
+		t.Fatal(err)
+	}
+	inC := filepath.Join(c, "plan-of-l.txt")
+	err = deleteArchive(&scripted{isAttended: true}, l, inC, "", io.Discard)
+	assure.Refused(t, exitCode(err), errText(err), assure.Code(1), assure.Names("is inside the archive", c),
+		assure.NoSideEffect(func() bool { _, serr := os.Stat(inC); return os.IsNotExist(serr) && e.logText() == "" && !e.listed(c) }))
+	if err := desktop.UpdateSettings(e.settingsPath(), "test", func(s *desktop.Settings) { s.Out = "" }); err != nil {
+		t.Fatal(err)
+	}
 
 	beforeL := tree(t, l)
 	unchanged := func() bool {

@@ -1,7 +1,6 @@
 package desktop
 
 import (
-	"errors"
 	"os"
 	"path/filepath"
 	"strings"
@@ -26,8 +25,6 @@ import (
 type CommandLineDelete struct {
 	cfg   Config
 	store vault.Store
-	// drawn are the rows Row found only as the Desktop draws its page, not in its list yet.
-	drawn map[string]bool
 }
 
 // NewCommandLineDelete reads the Desktop's default configuration. store is the secret store a
@@ -40,7 +37,7 @@ func NewCommandLineDelete(store vault.Store, sched archdelete.Scheduler, install
 	}
 	cfg := Config{ConfigPath: cfgPath, SettingsPath: settingsPathFor(cfgPath), IndexPath: indexPathFor(cfgPath),
 		Version: buildVersion(), DeleteScheduler: sched, DeleteInstalled: installed}
-	return &CommandLineDelete{cfg: cfg, store: store, drawn: map[string]bool{}}, nil
+	return &CommandLineDelete{cfg: cfg, store: store}, nil
 }
 
 // PlannedText is the saved plan's text (§8.1, Status "planned, nothing deleted"), headed as the
@@ -80,45 +77,66 @@ func (c *CommandLineDelete) Row(path string) (row string, ok bool, err error) {
 	if row, ok := rowIn(idx, path); ok {
 		return row, true, nil
 	}
-	drawn := c.cfg
-	drawn.LastArchive = OfferedArchive // as the Desktop's launch sets it
-	row, ok = rowIn(archindex.Reconcile(idx, drawn.archivePointers(), time.Now()), path)
-	if ok {
-		c.drawn[row] = true
-	}
+	row, ok = rowIn(c.drawn(idx), path)
 	return row, ok, nil
 }
 
-// forgetDrawn is step 9's (and Remove from list's) removal of row: for a row Row found only
-// as the Desktop draws it, the list holding none is no failure, since the delete cleared the
-// settings that drew it (step 4) and the Desktop draws it no more.
-func (c *CommandLineDelete) forgetDrawn(row string, forget func(string) error) func(string) error {
-	if !c.drawn[row] || forget == nil {
-		return forget
+// drawn is idx as the Desktop draws its page: the archives its tidy-up adds added, in memory.
+func (c *CommandLineDelete) drawn(idx archindex.Index) archindex.Index {
+	cfg := c.cfg
+	cfg.LastArchive = OfferedArchive // as the Desktop's launch sets it
+	return archindex.Reconcile(idx, cfg.archivePointers(), time.Now())
+}
+
+// drawnArchives are the archives the Desktop's tidy-up adds when it draws its page, listed or
+// not: known archives as its list is (§7's other known archive, §8.1's saved file), since on the
+// Desktop they are in its list by then (the residual fixes' adversarial pass, finding 4).
+func (c *CommandLineDelete) drawnArchives() []string {
+	var paths []string
+	for _, e := range c.drawn(archindex.Index{}).Entries {
+		paths = append(paths, e.Path)
 	}
-	return func(r string) error {
-		if err := forget(r); !errors.Is(err, archdelete.ErrRowNotListed) {
-			return err
-		}
+	return paths
+}
+
+// ListRow writes row into the Desktop's list when it is a row only as the Desktop draws it,
+// as the Desktop's tidy-up would on its next page load; a listed row writes nothing. A delete
+// and Remove from list call it right before they change anything: a delete's step 4 clears the
+// settings that drew the row, and a delete stopped after that must leave a row, "Delete not
+// finished", to run again (the residual fixes' adversarial pass, finding 1). Step 9 then removes
+// it as any row.
+func (c *CommandLineDelete) ListRow(row string) error {
+	idx, err := archindex.ReadFile(c.cfg.IndexPath)
+	if err != nil {
+		return err
+	}
+	n := len(idx.Entries)
+	idx = archindex.Reconcile(idx, []string{row}, time.Now())
+	if len(idx.Entries) == n {
 		return nil
 	}
+	return archindex.WriteFile(c.cfg.IndexPath, idx)
 }
 
 // ListPath is the Desktop's list of archives (known-archives.json) these verbs read.
 func (c *CommandLineDelete) ListPath() string { return c.cfg.IndexPath }
 
-// KnownArchives are the archive folders the Desktop knows: its list, and this computer's record
-// of encrypted archives (§8.1: a saved file is never put inside one). err says part of them
-// could not be read.
-func (c *CommandLineDelete) KnownArchives() ([]string, error) { return c.cfg.knownArchivesErr() }
+// KnownArchives are the archive folders the Desktop knows: its list, the archives it adds to
+// the list when it draws its page, and this computer's record of encrypted archives (§8.1: a
+// saved file is never put inside one). err says part of them could not be read.
+func (c *CommandLineDelete) KnownArchives() ([]string, error) {
+	paths, err := c.cfg.knownArchivesErr()
+	return append(paths, c.drawnArchives()...), err
+}
 
 // PlanDeps are the facts and seams a plan reads (§3.1, §7). The busy row is another program's
 // run holding the archive lock (a scheduled backup, serve's rebuild): nothing of this process
-// runs.
+// runs. The other known archives §7 protects include those the Desktop draws.
 func (c *CommandLineDelete) PlanDeps() archdelete.Deps {
 	deps := c.cfg.deleteDeps(func(folder string) bool { return lockfile.Held(filepath.Join(folder, lockfile.Name)) }, nil)
 	deps.KeyPlan = desktopKeyring{store: c.store}.PlanForget // the plan's key line (§6, §14)
 	deps.ScratchDir = app.ArchiveScratchFor                  // a reader held elsewhere refuses at the plan (§3.1)
+	deps.Protected.Archives = append(deps.Protected.Archives, c.drawnArchives()...)
 	return deps
 }
 
@@ -131,13 +149,11 @@ func (c *CommandLineDelete) ExecDeps(row string, before func(step int) error) ar
 	host, _ := os.Hostname()
 	x := c.cfg.deleteExecDeps(row, func(string) bool { return false }, c.store, time.Now, host)
 	x.NoPage, x.BeforeStep = true, before
-	x.ForgetRow = c.forgetDrawn(row, x.ForgetRow)
+	x.Deps.Protected.Archives = append(x.Deps.Protected.Archives, c.drawnArchives()...) // as PlanDeps: Execute plans again
 	return x
 }
 
-// UnlistDeps are Remove from list's seams for row, stopping only the names its question showed.
-func (c *CommandLineDelete) UnlistDeps(row string, named []string) archdelete.UnlistDeps {
-	x := c.cfg.deleteUnlistDeps(named)
-	x.ForgetRow = c.forgetDrawn(row, x.ForgetRow)
-	return x
+// UnlistDeps are Remove from list's seams, stopping only the names its question showed.
+func (c *CommandLineDelete) UnlistDeps(named []string) archdelete.UnlistDeps {
+	return c.cfg.deleteUnlistDeps(named)
 }
