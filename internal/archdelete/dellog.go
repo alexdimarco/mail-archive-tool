@@ -35,6 +35,10 @@ func DefaultLogPath() (string, error) {
 // logCap bounds a read of deletions.log: three or four short lines per delete.
 const logCap = 32 << 20
 
+// logReserve is the room a delete's started line leaves under logCap for that delete's later
+// lines (a few short lines each), so MailArchive never writes the log past what it reads.
+const logReserve = 1 << 20
+
 // The log's events (§5.3 steps 0, 7, 8, 10).
 const (
 	evStarted       = "started"
@@ -106,6 +110,9 @@ type logLine struct {
 	RecordSHA256 string `json:"record_sha256,omitempty"`
 }
 
+// errLogFull is appendLog's refusal of a started line the log has no room for.
+var errLogFull = errors.New("the deletion log is as large as MailArchive reads")
+
 // appendLog appends one line to the log at path and flushes it to disk before
 // returning (§5.3 step 0 "append and fsync"): owner-only (0600, as util's secure
 // files are, an existing file made so), never through a link, never a file other
@@ -140,6 +147,13 @@ func appendLog(path string, l logLine) error {
 	if !fi.Mode().IsRegular() {
 		f.Close()
 		return fmt.Errorf("%s is not a regular file", path)
+	}
+	// A new delete starts only while the log keeps room for its lines under what readLog
+	// reads; past that, every read of the log — a row's, the plan's, uninstall's — would fail
+	// and lose the unfinished deletes it holds (core-plan-record finding 4).
+	if l.Event == evStarted && fi.Size()+int64(len(data))+1+logReserve > logCap {
+		f.Close()
+		return errLogFull
 	}
 	if runtime.GOOS != "windows" && fi.Mode().Perm()&0o077 != 0 {
 		if err := f.Chmod(0o600); err != nil {
