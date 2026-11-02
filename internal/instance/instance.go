@@ -49,16 +49,21 @@ func Dir() (string, error) {
 	if runtime.GOOS == "windows" {
 		la := os.Getenv("LOCALAPPDATA")
 		if la == "" {
-			return "", errors.New("cannot determine your per-account folder: %LOCALAPPDATA% is not set")
+			return "", fmt.Errorf("%w: %%LOCALAPPDATA%% is not set", ErrNoAccountFolder)
 		}
 		return filepath.Join(la, "MailArchiveDesktop"), nil
 	}
 	d, err := os.UserConfigDir()
 	if err != nil {
-		return "", fmt.Errorf("cannot determine your per-account folder: %w", err)
+		return "", fmt.Errorf("%w: %w", ErrNoAccountFolder, err)
 	}
 	return filepath.Join(d, "mailarchive"), nil
 }
+
+// ErrNoAccountFolder is Dir's error when the per-account folder cannot be determined (no HOME, no
+// %LOCALAPPDATA%), so a caller can say so in plain words (the 1.5.3 re-walk's N20); its text is
+// what Dir said before.
+var ErrNoAccountFolder = errors.New("cannot determine your per-account folder")
 
 // ServeFileName is the instance file of a `serve` of the archive at out, keyed by
 // a hash of its absolute path, in Dir [CC18].

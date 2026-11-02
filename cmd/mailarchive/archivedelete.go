@@ -96,14 +96,28 @@ var (
 )
 
 // cannotTellError is desktopRunning's refusal when it cannot tell: nothing was changed at the
-// start; midway is its words once the delete has changed something (del-s4-A2-03).
-type cannotTellError struct{ cause string }
+// start; midway is its words once the delete has changed something (del-s4-A2-03). noHome: the
+// folder that tells could not be found because no home folder is set, said in plain words, not
+// Go's ("neither $XDG_CONFIG_HOME nor $HOME are defined"; the 1.5.3 re-walk's N20).
+type cannotTellError struct {
+	cause  string
+	noHome bool
+}
+
+// noHomeText is cannotTellError's words when no home folder is set (builder's words).
+const noHomeText = "MailArchive could not find your home folder, so it cannot tell whether MailArchive Desktop is running for your account"
 
 func (c *cannotTellError) Error() string {
-	return fmt.Sprintf("MailArchive cannot tell whether MailArchive Desktop is running for your account (%s), so nothing was changed", c.cause)
+	if c.noHome {
+		return noHomeText + "; nothing was changed. Check that your home folder is set (HOME, or LOCALAPPDATA on Windows), then try again."
+	}
+	return fmt.Sprintf("MailArchive cannot tell whether MailArchive Desktop is running for your account (%s), so nothing was changed.", c.cause)
 }
 
 func (c *cannotTellError) midway() error {
+	if c.noHome {
+		return errors.New(noHomeText)
+	}
 	return fmt.Errorf("MailArchive cannot tell whether MailArchive Desktop is running for your account (%s)", c.cause)
 }
 
@@ -140,7 +154,7 @@ func desktopRunning() error {
 }
 
 func cannotTell(err error) error {
-	return &cannotTellError{cause: util.StripControl(err.Error())}
+	return &cannotTellError{cause: util.StripControl(err.Error()), noHome: errors.Is(err, instance.ErrNoAccountFolder)}
 }
 
 // desktopLockSession is the logon session a Desktop's lock file is for: "" for desktop.lock, N

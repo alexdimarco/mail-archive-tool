@@ -1471,6 +1471,16 @@ each; the operator approves the words later.
   Outlook or any program using it before you delete, or this delete will stop at it again." ("N
   files this delete must remove are still in use by another program: A, B. Close Outlook or any
   program using them before you delete, or this delete will stop at them again.").
+- *Status says only that the delete did not finish (MA-1040; N8, N20).* With a delete not
+  finished, `status` and Status & health give the RED line alone, now with its period ("a delete of
+  this archive did not finish — run mailarchive delete-archive -out DIR again, or click Delete… on
+  its row in MailArchive Desktop, to finish it."), and `status` leaves out the lines that would
+  mend the archive (Incomplete, Fixity coverage, Extractable, History, the capture gaps).
+- *No home folder (MA-998 amended; N20).* "MailArchive could not find your home folder, so it
+  cannot tell whether MailArchive Desktop is running for your account; nothing was changed. Check
+  that your home folder is set (HOME, or LOCALAPPDATA on Windows), then try again." (was "…(cannot
+  determine your per-account folder: neither $XDG_CONFIG_HOME nor $HOME are defined), so nothing
+  was changed"). The other cannot-tell refusals gain their final period.
 - *The record keeps the whole "What Delete does not reach" line (N18, the operator's delegate's
   decision; no change).* At the terminal without `-record-out` the printed record's line names every
   computer's backup tools after the plan's shorter one: the saved files may be read on another

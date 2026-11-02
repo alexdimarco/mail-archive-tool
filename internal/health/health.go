@@ -383,6 +383,16 @@ func IntervalOf(iv string) time.Duration {
 func Assess(in Input, now time.Time) Report {
 	r := Report{Posture: "GREEN", now: now}
 
+	// A delete of this archive that did not finish (§5.4; the 1.5.3 friction review's B2): the
+	// folder may be partly deleted, and the remedy is to finish it. Said alone: every other reason
+	// here is about mending or keeping the archive — rebuild its index, fill its messages, baseline
+	// or repair its history, set up its schedule — which works against finishing the delete (the
+	// 1.5.3 re-walk's N8).
+	if in.DeleteUnfinished {
+		r.red("delete_unfinished", DeleteUnfinishedLine(in.deleteRow(), in.Surface))
+		return r
+	}
+
 	// A headless run-job that could not even start leaves a breadcrumb but no
 	// archive-local last-run record (§4.6.6, MA-634). Raise it first, under
 	// MA-168's rule: when the archive is unreachable (its own last run cannot
@@ -412,12 +422,6 @@ func Assess(in Input, now time.Time) Report {
 	// and not complete (design-encrypted-archives-phase3 §10).
 	if in.Out != "" && state.UnfinishedCopy(in.Out) {
 		r.red("unfinished_copy", fmt.Sprintf("%s holds an UNENCRYPTED copy of an encrypted archive that did not finish: it holds readable mail and is not complete — delete it, then make the copy again", in.Out))
-	}
-
-	// A delete of this archive that did not finish (§5.4; the 1.5.3 friction review's B2):
-	// the folder may be partly deleted, and the remedy is to finish it.
-	if in.DeleteUnfinished {
-		r.red("delete_unfinished", DeleteUnfinishedLine(in.deleteRow(), in.Surface))
 	}
 
 	// OP-3 (R18): the archive location itself is gone (an unplugged removable/
@@ -1628,12 +1632,13 @@ func (in Input) deleteRow() string {
 }
 
 // DeleteUnfinishedLine is the posture line for an archive whose delete did not finish (B2), in
-// the surface's words: the Desktop's Delete… on its row, or at the terminal the command too.
+// the surface's words: the Desktop's Delete… on its row, or at the terminal the command too. It ends
+// with its period (the 1.5.3 re-walk's N20): it is the whole of the posture then (N8).
 func DeleteUnfinishedLine(out, surface string) string {
 	if surface == "desktop" {
-		return "a delete of this archive did not finish — click Delete… on its row in Your archives to finish it"
+		return "a delete of this archive did not finish — click Delete… on its row in Your archives to finish it."
 	}
-	return fmt.Sprintf("a delete of this archive did not finish — run mailarchive delete-archive -out %s again, or click Delete… on its row in MailArchive Desktop, to finish it", encmark.CommandPath(out))
+	return fmt.Sprintf("a delete of this archive did not finish — run mailarchive delete-archive -out %s again, or click Delete… on its row in MailArchive Desktop, to finish it.", encmark.CommandPath(out))
 }
 
 // plainEncryptedWhy is what showed a folder is an encrypted archive, in words for
@@ -2023,104 +2028,108 @@ func Summary(in Input, rep Report) []string {
 		if in.HasRange {
 			lines = append(lines, fmt.Sprintf("Archived range: %s – %s (UTC)", in.RangeOldest.Format("2006-01-02"), in.RangeNewest.Format("2006-01-02")))
 		}
-		// A partly-read record is fillable too, but it has its own line and reason
-		// (below and in the posture): it is not "missing content" to download.
-		// An unparsed record is kept as raw text, not source-empty (it has its own
-		// line below), so it is left out of the terminal count here (F7).
-		sourceEmpty := in.Terminal - in.UnparsedTerminal
-		if content := in.Fillable - in.UnreadableOnly; content > 0 || sourceEmpty > 0 || in.Unknown > 0 || in.Undecodable > 0 {
-			// A record with a part this version cannot decode is its own count between the
-			// two: it is not empty at the source, its part is kept as received (§4.9).
-			line := fmt.Sprintf("Incomplete: %d still missing content · %d source-empty (never fillable) · %d not yet re-examined", content, sourceEmpty, in.Unknown)
-			if in.Undecodable > 0 {
-				line = fmt.Sprintf("Incomplete: %d still missing content · %d source-empty (never fillable) · %d with parts this version cannot decode · %d not yet re-examined", content, sourceEmpty, in.Undecodable, in.Unknown)
-			}
-			if in.ReportExists {
-				line += " — " + in.ReportPath
-			}
-			lines = append(lines, line)
-			if onlyParseGap(in, content) {
-				lines = append(lines, "            (still missing content = cut short, or its parts could not be told apart, in the file it was read from; fills on the next run once a complete copy is there)")
+		// A delete of this archive did not finish: what the lines below say would mend it (fill,
+		// baseline, keep originals) works against finishing the delete (the 1.5.3 re-walk's N8).
+		if !in.DeleteUnfinished {
+			// A partly-read record is fillable too, but it has its own line and reason
+			// (below and in the posture): it is not "missing content" to download.
+			// An unparsed record is kept as raw text, not source-empty (it has its own
+			// line below), so it is left out of the terminal count here (F7).
+			sourceEmpty := in.Terminal - in.UnparsedTerminal
+			if content := in.Fillable - in.UnreadableOnly; content > 0 || sourceEmpty > 0 || in.Unknown > 0 || in.Undecodable > 0 {
+				// A record with a part this version cannot decode is its own count between the
+				// two: it is not empty at the source, its part is kept as received (§4.9).
+				line := fmt.Sprintf("Incomplete: %d still missing content · %d source-empty (never fillable) · %d not yet re-examined", content, sourceEmpty, in.Unknown)
+				if in.Undecodable > 0 {
+					line = fmt.Sprintf("Incomplete: %d still missing content · %d source-empty (never fillable) · %d with parts this version cannot decode · %d not yet re-examined", content, sourceEmpty, in.Undecodable, in.Unknown)
+				}
+				if in.ReportExists {
+					line += " — " + in.ReportPath
+				}
+				lines = append(lines, line)
+				if onlyParseGap(in, content) {
+					lines = append(lines, "            (still missing content = cut short, or its parts could not be told apart, in the file it was read from; fills on the next run once a complete copy is there)")
+				} else {
+					lines = append(lines, "            (still missing content = not downloaded yet; fills on the next run)")
+				}
+				if in.FillableParseGap > 0 {
+					lines = append(lines, fmt.Sprintf("            (%d of the messages still missing content %s also counted as having parts this version cannot decode)", in.FillableParseGap, plural(in.FillableParseGap, "is", "are")))
+				}
+				if in.FillableParseGap > 0 && !onlyParseGap(in, content) {
+					lines = append(lines, "            ("+mixedCutRemedy(in.FillableParseGap)+")")
+				}
+				if in.Undecodable > 0 {
+					lines = append(lines, "            (with parts this version cannot decode = kept as received in the attachments zip; the report says which part and why)")
+				}
 			} else {
-				lines = append(lines, "            (still missing content = not downloaded yet; fills on the next run)")
+				lines = append(lines, "Incomplete: none")
 			}
-			if in.FillableParseGap > 0 {
-				lines = append(lines, fmt.Sprintf("            (%d of the messages still missing content %s also counted as having parts this version cannot decode)", in.FillableParseGap, plural(in.FillableParseGap, "is", "are")))
+			// What the source holds that the capture-gap ledger says is not in the archive:
+			// the records above are complete or not on their own terms; this line is the
+			// ledger's, so "Incomplete: none" is never the whole story (F6).
+			if l := notCapturedLine(in, summaryNow(rep)); l != "" {
+				lines = append(lines, l)
 			}
-			if in.FillableParseGap > 0 && !onlyParseGap(in, content) {
-				lines = append(lines, "            ("+mixedCutRemedy(in.FillableParseGap)+")")
+			if in.Unreadable > 0 {
+				lines = append(lines, fmt.Sprintf("Partly read: %d message(s) could only be partly read from the source (see the posture below)", in.Unreadable))
+				shown := in.PartlyRead
+				if len(shown) > maxPartlyReadNamed {
+					shown = shown[:maxPartlyReadNamed]
+				}
+				for _, p := range shown {
+					lines = append(lines, "            "+p)
+				}
+				if more := in.Unreadable - len(shown); more > 0 && len(shown) > 0 {
+					line := fmt.Sprintf("            +%d more", more)
+					if in.ReportExists {
+						line += " — see " + in.ReportPath
+					}
+					lines = append(lines, line)
+				}
 			}
-			if in.Undecodable > 0 {
-				lines = append(lines, "            (with parts this version cannot decode = kept as received in the attachments zip; the report says which part and why)")
+			if in.Unparsed > 0 {
+				lines = append(lines, fmt.Sprintf("Raw text:   %d message(s) could not be parsed and are kept as raw text (see the posture below)", in.Unparsed))
 			}
-		} else {
-			lines = append(lines, "Incomplete: none")
-		}
-		// What the source holds that the capture-gap ledger says is not in the archive:
-		// the records above are complete or not on their own terms; this line is the
-		// ledger's, so "Incomplete: none" is never the whole story (F6).
-		if l := notCapturedLine(in, summaryNow(rep)); l != "" {
-			lines = append(lines, l)
-		}
-		if in.Unreadable > 0 {
-			lines = append(lines, fmt.Sprintf("Partly read: %d message(s) could only be partly read from the source (see the posture below)", in.Unreadable))
-			shown := in.PartlyRead
-			if len(shown) > maxPartlyReadNamed {
-				shown = shown[:maxPartlyReadNamed]
-			}
-			for _, p := range shown {
-				lines = append(lines, "            "+p)
-			}
-			if more := in.Unreadable - len(shown); more > 0 && len(shown) > 0 {
-				line := fmt.Sprintf("            +%d more", more)
+			if in.FidelityFallback > 0 {
+				line := fmt.Sprintf("Fallback:   %d message(s) are kept as an earlier version read them, because this version could not decode them in full; nothing is lost", in.FidelityFallback)
 				if in.ReportExists {
 					line += " — see " + in.ReportPath
 				}
 				lines = append(lines, line)
 			}
-		}
-		if in.Unparsed > 0 {
-			lines = append(lines, fmt.Sprintf("Raw text:   %d message(s) could not be parsed and are kept as raw text (see the posture below)", in.Unparsed))
-		}
-		if in.FidelityFallback > 0 {
-			line := fmt.Sprintf("Fallback:   %d message(s) are kept as an earlier version read them, because this version could not decode them in full; nothing is lost", in.FidelityFallback)
-			if in.ReportExists {
-				line += " — see " + in.ReportPath
+			// RV-10: a page shown as plain text is complete, but the owner should
+			// be able to learn it here, not only from the run log.
+			if txt := shownAsSourceText(in.ShownAsSource); txt != "" {
+				if in.ReportExists {
+					txt += " Details: " + in.ReportPath
+				}
+				lines = append(lines, "Shown as source: "+txt)
 			}
-			lines = append(lines, line)
-		}
-		// RV-10: a page shown as plain text is complete, but the owner should
-		// be able to learn it here, not only from the run log.
-		if txt := shownAsSourceText(in.ShownAsSource); txt != "" {
-			if in.ReportExists {
-				txt += " Details: " + in.ReportPath
+			// Fixity COVERAGE: how many records carry file digests, from manifest
+			// fields alone — this hashes nothing (that is `verify`), so it measures
+			// coverage, not integrity. The line says so and points at `verify` to
+			// check the bytes; when some records lack a digest it also names the
+			// baseline remedy (FC12, friction #4).
+			if in.Messages > 0 {
+				fx := fmt.Sprintf("Fixity coverage: %d of %d records recorded (run `mailarchive verify -out %q` to check the bytes)", in.WithFixity, in.Messages, in.Out)
+				if in.WithFixity < in.Messages {
+					fx += fmt.Sprintf(" · run `mailarchive verify -record -out %q` to baseline the rest", in.Out)
+				}
+				lines = append(lines, fx)
 			}
-			lines = append(lines, "Shown as source: "+txt)
-		}
-		// Fixity COVERAGE: how many records carry file digests, from manifest
-		// fields alone — this hashes nothing (that is `verify`), so it measures
-		// coverage, not integrity. The line says so and points at `verify` to
-		// check the bytes; when some records lack a digest it also names the
-		// baseline remedy (FC12, friction #4).
-		if in.Messages > 0 {
-			fx := fmt.Sprintf("Fixity coverage: %d of %d records recorded (run `mailarchive verify -out %q` to check the bytes)", in.WithFixity, in.Messages, in.Out)
-			if in.WithFixity < in.Messages {
-				fx += fmt.Sprintf(" · run `mailarchive verify -record -out %q` to baseline the rest", in.Out)
-			}
-			lines = append(lines, fx)
-		}
-		// Extractability (design K4): how many records have a preserved original
-		// (.eml) present on disk — the same FILE-PRESENCE signal `extract` drains
-		// and `verify` counts (never a recorded digest, so it agrees with them).
-		// Informational like fixity coverage: it never changes the posture and
-		// never prints a categorical "re-archive" verdict — for the records with
-		// no original it names both remedies (re-run with -raw for a raw-capable
-		// source; keep the .pst itself for Outlook, which never carries one).
-		// Omitted when the manifest has no records.
-		if in.Extractable.Total > 0 {
-			lines = append(lines, fmt.Sprintf("Extractable: %d of %d records have a preserved original (.eml) on disk", in.Extractable.WithEML, in.Extractable.Total))
-			if in.Extractable.WithEML < in.Extractable.Total {
-				lines = append(lines, fmt.Sprintf("            the remaining %d have no preserved original — an mbox/maildir/Microsoft 365 source keeps one only when archived with -raw; Outlook .pst/.ost items never carry one, so keep the .pst itself to migrate", in.Extractable.Total-in.Extractable.WithEML))
+			// Extractability (design K4): how many records have a preserved original
+			// (.eml) present on disk — the same FILE-PRESENCE signal `extract` drains
+			// and `verify` counts (never a recorded digest, so it agrees with them).
+			// Informational like fixity coverage: it never changes the posture and
+			// never prints a categorical "re-archive" verdict — for the records with
+			// no original it names both remedies (re-run with -raw for a raw-capable
+			// source; keep the .pst itself for Outlook, which never carries one).
+			// Omitted when the manifest has no records.
+			if in.Extractable.Total > 0 {
+				lines = append(lines, fmt.Sprintf("Extractable: %d of %d records have a preserved original (.eml) on disk", in.Extractable.WithEML, in.Extractable.Total))
+				if in.Extractable.WithEML < in.Extractable.Total {
+					lines = append(lines, fmt.Sprintf("            the remaining %d have no preserved original — an mbox/maildir/Microsoft 365 source keeps one only when archived with -raw; Outlook .pst/.ost items never carry one, so keep the .pst itself to migrate", in.Extractable.Total-in.Extractable.WithEML))
+				}
 			}
 		}
 	} else if in.Encrypted {
@@ -2135,6 +2144,8 @@ func Summary(in Input, rep Report) []string {
 	// whether a past-date view is fully available. Absent is normal for a
 	// one-shot local import.
 	switch {
+	case in.DeleteUnfinished:
+		// Its go-back history is being deleted with it (N8).
 	case in.Encrypted:
 		lines = append(lines, "History:    sealed — this archive is encrypted")
 	case !in.History.Exists:
@@ -2237,7 +2248,7 @@ func Summary(in Input, rep Report) []string {
 	}
 	// What was not captured, at most 20 gaps with their source, folder, subject,
 	// date and remedy, then "+N more" (FC22).
-	if in.HasManifest {
+	if in.HasManifest && !in.DeleteUnfinished {
 		lines = append(lines, gapLines(in, summaryNow(rep))...)
 	}
 	return lines
