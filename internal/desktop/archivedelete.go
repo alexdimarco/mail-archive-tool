@@ -494,7 +494,11 @@ func (d *dashboard) deleteAction(w http.ResponseWriter, r *http.Request) {
 	rows := d.cfg.rowsOfFolder(row, plan.Folder)
 	pageArchive := strings.TrimSpace(in.DrawnFor) != "" &&
 		(sameArchiveFolder(in.DrawnFor, plan.Folder) || sameArchiveFolder(in.DrawnFor, row))
+	before := d.cfg.effectiveOut()
 	res := d.runDelete(plan, row, in.Typed, in.Unrecorded)
+	// Step 4 clears the current archive when it is the one deleted: that is a switch, under the
+	// switch's rules, as Remove from list's is (del-s3a re-verification, R3).
+	d.afterCurrentMoved(before)
 	v := heldView{Row: row, Folder: plan.Folder, Name: plan.Name, Status: res.Status, Lines: append([]string(nil), res.Lines...),
 		RowRemoved: res.RowRemoved, Unfinished: res.Unfinished}
 	if res.Record != nil {

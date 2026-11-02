@@ -144,6 +144,38 @@ func TestTheRecoveryKeysCancelLeavesADeletePlan(t *testing.T) {
 }
 
 // covers: MA-981, R36
+// A delete of the current archive, whose step 4 clears it, applies a switch's rules (del-s3a
+// re-verification, R3): a delete planned of another row while it was current ends ("That delete
+// is no longer waiting"), nothing of that row deleted. Positive twin first: a delete of an
+// archive that is not current leaves that plan waiting.
+func TestADeleteOfTheCurrentArchiveIsASwitch(t *testing.T) {
+	e := newDeleteEnv(t)
+	cur := e.plainArchive("Current")
+	if err := SaveSettings(e.cfg.SettingsPath, Settings{Out: cur}); err != nil {
+		t.Fatal(err)
+	}
+	planned := e.plainArchive("Planned")
+	p := e.plan(planned)
+	if p["ok"] != true {
+		t.Fatalf("the plan of %s: %v", planned, p)
+	}
+	tok := p["token"].(string)
+	if r := e.planAndDelete(e.plainArchive("NotCurrent")); r["status"] != "complete" {
+		t.Fatalf("the positive twin: a delete of an archive that is not current: %v", r)
+	}
+	if e.d.pending.get(tok, isDeletePlan) == nil {
+		t.Fatal("the positive twin: a delete of an archive that is not current ended another row's plan")
+	}
+
+	if r := e.planAndDelete(cur); r["status"] != "complete" || e.cfg.settings().Out != "" {
+		t.Fatalf("the delete of the current archive: %v (current now %q)", r, e.cfg.settings().Out)
+	}
+	r := e.deleteWith(tok, p["name"].(string), false)
+	assure.Refused(t, http.StatusOK, replyErr(r), assure.Code(http.StatusOK), assure.Names(deleteNotWaiting),
+		assure.NoSideEffect(func() bool { return r["ok"] == false && archdelete.IsArchive(planned) && e.listed(planned) }))
+}
+
+// covers: MA-981, R36
 // Remove from list that clears the current archive (it is unreachable, §5.2) applies a switch's
 // rules (del-s3a-A4-04): the encrypted archive open here locks, and a delete planned ends. Positive
 // twin first: Remove from list of another row leaves the current archive open.
