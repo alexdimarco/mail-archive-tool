@@ -5,6 +5,7 @@ import (
 	"path/filepath"
 	"time"
 
+	"mail-archive-tool/internal/app"
 	"mail-archive-tool/internal/archdelete"
 	"mail-archive-tool/internal/archindex"
 	"mail-archive-tool/internal/graphconfig"
@@ -77,12 +78,13 @@ func (c *CommandLineDelete) KnownArchives() ([]string, error) { return c.cfg.kno
 func (c *CommandLineDelete) PlanDeps() archdelete.Deps {
 	deps := c.cfg.deleteDeps(func(folder string) bool { return lockfile.Held(filepath.Join(folder, lockfile.Name)) }, nil)
 	deps.KeyPlan = desktopKeyring{store: c.store}.PlanForget // the plan's key line (§6, §14)
+	deps.ScratchDir = app.ArchiveScratchFor                  // a reader held elsewhere refuses at the plan (§3.1)
 	return deps
 }
 
 // ExecDeps are Execute's seams for a delete planned from row, with before the command line's
 // re-check before steps 4, 8 and 9 (§3.3). There is no page (NoPage): no archive is open here to
-// lock in one, and a reader another program holds is refused at step 1 (c). Under the delete's
+// lock in one, and a reader another program holds is refused at the plan and again at step 1 (c). Under the delete's
 // own lock nothing of this process can be busy on the folder, and another program's run was
 // refused by that lock, so the busy row asks nothing more.
 func (c *CommandLineDelete) ExecDeps(row string, before func(step int) error) archdelete.ExecDeps {

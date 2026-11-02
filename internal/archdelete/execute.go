@@ -260,17 +260,21 @@ func (e *run) stoppedLines() {
 	}
 }
 
-// lockAndRecheck is step 1 (a): the archive lock, then the plan again under it.
+// lockAndRecheck is step 1 (a): the archive lock, then the plan again under it, except the
+// scratch listing (§5.3 step 1 (a)): the page's own reader is still open until 1 (b), and
+// 1 (c) lists the scratch folders again.
 func (e *run) lockAndRecheck() bool {
 	e.step = 1
 	p := e.plan
+	deps := e.x.Deps
+	deps.ScratchDir = nil
 	l, err := lockfile.AcquireAs(filepath.Join(p.Folder, lockName), "delete")
 	if err != nil {
 		if errors.Is(err, lockfile.ErrHeld) {
 			e.refuseUnder(&Refusal{Case: CaseBusy, Message: busyMessage(p.Folder)})
 			return false
 		}
-		if _, perr := Plan(p.Folder, e.x.Deps); perr != nil {
+		if _, perr := Plan(p.Folder, deps); perr != nil {
 			if r := AsRefusal(perr); r != nil {
 				e.refuseUnder(r)
 				return false
@@ -281,7 +285,7 @@ func (e *run) lockAndRecheck() bool {
 	}
 	e.lock = l
 	e.done = append(e.done, "archive locked")
-	again, err := Plan(p.Folder, e.x.Deps)
+	again, err := Plan(p.Folder, deps)
 	if err != nil {
 		r := AsRefusal(err)
 		if r == nil {
@@ -346,30 +350,7 @@ func (e *run) lockOnPage() bool {
 // the plan's, the row's, each entry's recorded -out and the record's Spelling
 // (§3.1 [R3:NF-C7-SCRATCH-NAME]). None when the archive's id is not known.
 func (e *run) scratchDirs() ([]string, error) {
-	p := e.plan
-	id := p.Record.ID
-	if id == "" {
-		id = p.ArchiveID
-	}
-	if id == "" {
-		return nil, nil
-	}
-	seen := map[string]bool{}
-	var out []string
-	for _, s := range append([]string{p.Folder, e.row, p.Record.Spelling}, p.Schedules.Spellings...) {
-		if s == "" {
-			continue
-		}
-		d, err := e.x.ScratchDir(s, id)
-		if err != nil {
-			return nil, err
-		}
-		if d != "" && !seen[d] {
-			seen[d] = true
-			out = append(out, d)
-		}
-	}
-	return out, nil
+	return scratchDirsOf(e.plan, e.row, e.x.ScratchDir)
 }
 
 // scratchCheck is step 1 (c): the scratch folders listed again, where any held
@@ -377,7 +358,7 @@ func (e *run) scratchDirs() ([]string, error) {
 func (e *run) scratchCheck() bool {
 	dirs, err := e.scratchDirs()
 	if err != nil {
-		e.refuseUnder(&Refusal{Case: CaseScratch, Message: fmt.Sprintf("MailArchive's working folder for this archive cannot be found (%s), so nothing was deleted. Click Delete again.", cleanErr(err))})
+		e.refuseUnder(scratchNotFound(err))
 		return false
 	}
 	for _, d := range dirs {

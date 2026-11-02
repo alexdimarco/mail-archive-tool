@@ -99,5 +99,8 @@ func TestUninstallSaysWhyItCannotReadTheDeletionLog(t *testing.T) {
 	assure.Refused(t, unreadableCode(err), errText(err), assure.Code(1),
 		assure.Names(log, "uninstall stopped before removing anything",
 			"it is not an ordinary file (a link, a folder or a device), so MailArchive does not read it. Put the log file itself there, or remove what is there, then uninstall again"),
-		assure.NoSideEffect(func() bool { fi, lerr := os.Lstat(log); return lerr == nil && fi.Mode()&os.ModeSymlink != 0 && exists(real) }))
+		assure.NoSideEffect(func() bool {
+			fi, lerr := os.Lstat(log)
+			return lerr == nil && fi.Mode()&os.ModeSymlink != 0 && exists(real)
+		}))
 }

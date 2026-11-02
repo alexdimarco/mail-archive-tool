@@ -344,6 +344,16 @@ type Deps struct {
 	// the key or keep it for other recorded copies (§6, §14). Nil: the plan's key line
 	// says both cases.
 	KeyPlan func(spelling string) (KeyPlan, error)
+	// ScratchDir is an encrypted archive's scratch folder for one spelling of its folder
+	// and its archive id (app.archiveScratch's rule): when set, the plan lists the scratch
+	// folders (§3.1 [C7]) and refuses a reader another program holds, or what MailArchive
+	// did not put there, before anything is logged or locked. Execute's re-check under the
+	// lock leaves it out (§5.3 step 1 (a)); step 1 (c) lists them again.
+	ScratchDir func(spelling, archiveID string) (string, error)
+	// OpenHere reports that this page has the archive open: a reader lock of this process
+	// then does not refuse the plan, since step 1 closes it [R3:NF-C7-OWN-READER]. Nil:
+	// none is excused (the command line has no page).
+	OpenHere func(folder string) bool
 	// Settings are the Desktop's settings §7 and §5.1 read.
 	Settings Settings
 	// Protected are the folders §7's protected row names [C15].
@@ -498,6 +508,9 @@ func planArchive(folder string, deps Deps) (*DeletePlan, error) {
 		return nil, err
 	}
 	l.finish()
+	if err := checkScratchAtPlan(p, deps); err != nil {
+		return nil, err
+	}
 	return p, nil
 }
 

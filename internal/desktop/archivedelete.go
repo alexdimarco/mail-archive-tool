@@ -357,6 +357,11 @@ func (d *dashboard) deletePlanAction(w http.ResponseWriter, r *http.Request) {
 	}
 	deps := d.cfg.deleteDeps(d.planBusy, d.cfg.sealedOnPage)
 	deps.KeyPlan = desktopKeyring{store: d.cfg.Store}.PlanForget // the plan's key line (§6, §14)
+	// The scratch listing (§3.1 [C7]): a reader another program holds refuses here, before the
+	// started line and before this page's open archive is locked; this page's own reader is
+	// excused while the archive is open here, since step 1 closes it (del-s3a conformance D1).
+	deps.ScratchDir = app.ArchiveScratchFor
+	deps.OpenHere = func(folder string) bool { return d.cfg.Keys.get(folder) != nil }
 	plan, err := archdelete.Plan(row, deps)
 	if err != nil {
 		refuseDelete(w, refusalText(err))

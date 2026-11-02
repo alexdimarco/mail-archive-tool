@@ -759,7 +759,7 @@ R3:NF-R3-UNLOCK-MIDDELETE, R5:NF-R5-Q3-KEYSLOCK]; Q4 →
 5. **Uninstall and the guide**: `deletions.log` in `ConfigTargets`, the uninstall
    plan's line, the guide's two sections.
 
-## 14. Build notes (1 November 2026, from slices 2, 1a and 1b)
+## 14. Build notes (1 November 2026, from slices 1 to 5)
 
 Rulings the builders' adversarial passes asked for, made in the main session under the
 owner's standing instruction to make technical calls and surface only product rulings.
@@ -839,3 +839,48 @@ built. Each is in its catalog row.
   load; no new key handling), and states the message count, the mail dates and the first
   run by the plain archive's rules. The command line has no page and always says "not
   known".
+- *The scratch listing is at the plan, as §3.1 says (MA-1012; slice 3a's conformance
+  D1).* Slice 3a listed the scratch folders only at step 1 (c), after the started line
+  and after the page had locked its open archive. The plan now lists them (the Desktop's
+  plan route and the command line's plan): a reader another program holds, or a file
+  MailArchive did not put there, refuses there, before anything is logged or locked. A
+  reader of this process is excused only while this page has the archive open. Step 1
+  (a)'s re-check under the lock leaves the listing out; step 1 (c) still lists again.
+- *Uninstall and a delete never overlap (MA-1007; slice 5's adversarial pass, a gap in
+  §8.1, which says only "uninstall removes it").* Uninstall, its plan and its real run, on
+  the Desktop and at the command line, refuses while deletions.log holds a delete that is
+  running or did not finish: removing the log would leave that delete with no way to
+  finish, since a re-run reads only the log. It names the row and how to finish it
+  (Delete… on its row, or `mailarchive delete-archive -out FOLDER`), and checks again
+  right before the settings files go. A log it cannot read stops it too, with advice for
+  the cause. The way out for a delete that will never be finished: copy deletions.log
+  somewhere safe, delete it by hand, then uninstall again (an encrypted archive's key is
+  then kept until Forget). On the Desktop, Delete permanently and Remove from list's Yes
+  are refused while Remove runs and after it has uninstalled.
+- *No secret store (MA-999).* When the secret store cannot be opened (a headless Linux
+  session, a locked Keychain or Credential Manager), step 8 does not forget an archive's
+  last recorded copy: no one can tell whether its key is remembered, and forgetting the
+  record would leave a key nothing points to. The files are deleted; the record, any
+  remembered key and the row (with its Forget) are kept, and the result says this
+  computer still remembers the key. The command line's plan says so first.
+- *A stop held until just before step 2 (MA-1000, `CaseStopped`).* At the command line,
+  Ctrl-C or the terminate signal after the started line is held, and the delete refuses
+  right before step 2 (`ExecDeps.BeforeStep(2)`): nothing changed, its finished line
+  written, so the row is never "Delete not finished". The same check refuses when a
+  MailArchive Desktop started meanwhile. From step 2 on a stop is "not fully deleted"
+  (§5.4).
+- *A name typed in its `\uXXXX` form (MA-1002).* A folder name holding a control
+  character (U+0080 to U+009F are allowed in NTFS names) is shown at the terminal with
+  that character written out as `\uXXXX`; typing the name as shown deletes the archive,
+  as typing the name itself does.
+- *The "At this terminal…" lines (MA-1002).* A result line in the Desktop's words that
+  names a Desktop control is followed at the terminal by its command: "At this terminal,
+  Delete again is: mailarchive delete-archive -out ROW", Remove from list's
+  `unlist-archive`, Forget this encrypted archive here's `forget-archive`, and
+  "Switching archives, Add another archive and Settings are in MailArchive Desktop."
+- *The "This archive" card (MA-982, MA-986).* A lone current archive has no Your
+  archives card (MA-666), so its row — Remove from list and Delete… with the rest of a
+  row — is drawn on a card of its own, "This archive", and a delete of it that stopped at
+  step 2 still shows "Delete not finished: click Delete again" with a Delete… to click.
+  This is the builder's placement: the operator may instead rule that Your archives is
+  drawn for a lone current archive (amending MA-666).
