@@ -60,6 +60,38 @@ func TestTheKeyWordsSayWhenNoKeyWasRemembered(t *testing.T) {
 }
 
 // covers: MA-1028, R36
+// When step 8 is skipped (the folder kept: it still holds the archive's leftovers) and no key is
+// remembered here, the result and the record say this computer keeps its record of the archive,
+// not its key (the 1.5.3 friction fixes' adversarial pass, finding 9: B3's words were not used
+// there). Positive twin first: with the key remembered, it is said to be remembered still.
+func TestTheSkippedKeyWordsSayWhenNoKeyWasRemembered(t *testing.T) {
+	keyValue := func(res *Result) string { return recordValueOf(string(res.Record), "This computer's record and key") }
+
+	// Positive twin: remembered.
+	dir := encryptedArchive(t) // units/ab/stray.txt and inventory/notes.txt are kept
+	r := newRig(t, dir)
+	r.x.Deps.Record = recordedAt(dir)
+	r.x.Deps.KeyPlan = r.kr.PlanForget
+	res := r.run(t, false)
+	if !res.KeySkipped || !hasLine(res, msgKeySkipped) || keyValue(res) != "kept: this computer still remembers its key" {
+		t.Fatalf("the twin: %s\n%s", res.Message(), res.Record)
+	}
+
+	// No key remembered here.
+	dir = encryptedArchive(t)
+	r = newRig(t, dir)
+	r.kr.plan.Remembered = false
+	r.x.Deps.Record = recordedAt(dir)
+	r.x.Deps.KeyPlan = r.kr.PlanForget
+	res = r.run(t, false)
+	if !res.KeySkipped || hasLine(res, "still remembers its key") ||
+		!hasLine(res, "Files deleted; this computer still keeps its record of this archive (no key is remembered here): use Forget this encrypted archive here.") ||
+		keyValue(res) != "kept: this computer still keeps its record of this archive (no key is remembered)" || len(r.kr.forgot) != 0 || len(r.rows) != 0 {
+		t.Fatalf("no key remembered: %s\n%s", res.Message(), res.Record)
+	}
+}
+
+// covers: MA-1028, R36
 // The shared result and record words of the 1.5.3 friction review's B7, B8, B9 and B5: one file
 // is "it", never "them"; the folder kept is counted once ("2 files are left in it: 1 file of
 // yours and 1 mail copy the archive did not record", "1 file that is not the archive's"); a name

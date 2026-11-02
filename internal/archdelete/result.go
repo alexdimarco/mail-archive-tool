@@ -257,6 +257,9 @@ const msgSettingsFailed = "Could not save MailArchive's settings, so this archiv
 // msgKeySkipped is step 8's skipped line.
 const msgKeySkipped = "Files deleted; this computer still remembers its key: use Forget this encrypted archive here."
 
+// msgKeySkippedNoKey is step 8's skipped line when no key is remembered here (B3; builder's words).
+const msgKeySkippedNoKey = "Files deleted; this computer still keeps its record of this archive (no key is remembered here): use Forget this encrypted archive here."
+
 // msgRowFailed is step 9's failure line.
 const msgRowFailed = "Could not remove the row from Your archives."
 

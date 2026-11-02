@@ -1184,3 +1184,7 @@ words are the builder's, for the operator.
   8).* "Run now backup to remove: NAME (no scheduled times)", "Run now backup removed: NAME (no
   scheduled times)" (were "(runs …)" from its descriptor; the note above that says "Run now
   backup to remove: NAME" is completed by this one).
+- *Step 8 skipped with no key remembered (MA-1028; finding 9, B3).* Result "Files deleted; this
+  computer still keeps its record of this archive (no key is remembered here): use Forget this
+  encrypted archive here."; record "kept: this computer still keeps its record of this archive
+  (no key is remembered)". With a key remembered, or the store not read, the words are as before.

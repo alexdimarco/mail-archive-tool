@@ -1023,8 +1023,20 @@ func (e *run) keyring() bool {
 
 func (e *run) skipKey() bool {
 	e.res.KeySkipped = true
-	e.notes = append(e.notes, msgKeySkipped)
+	if noKeyHere(e.plan) {
+		e.notes = append(e.notes, msgKeySkippedNoKey)
+	} else {
+		e.notes = append(e.notes, msgKeySkipped)
+	}
 	return false
+}
+
+// noKeyHere reports a plan that read this computer's key store and found no key remembered for the
+// archive (KeyAtPlan; B3): step 8 skipped then keeps only the record, and the words say so (the
+// 1.5.3 friction fixes' adversarial pass, finding 9).
+func noKeyHere(p *DeletePlan) bool {
+	k := p.KeyAtPlan
+	return k.Known && !k.NoStore && !k.Remembered
 }
 
 // goneOrOnlyLock reports the folder gone, or holding only an unheld
@@ -1250,6 +1262,9 @@ func (e *run) step10() {
 	key := res.KeyForgotten
 	if res.KeySkipped {
 		key = "kept: this computer still remembers its key"
+		if noKeyHere(p) {
+			key = "kept: this computer still keeps its record of this archive (no key is remembered)"
+		}
 	}
 	var left []string
 	for _, l := range append(append([]LeftFile(nil), res.NotRemoved...), res.TickedLeft...) {
