@@ -167,6 +167,9 @@ func desktopLockSession(name string) (string, bool) {
 // Desktop started with -config keeps its settings, its list and deletions.log beside that file
 // (MA-1018), so the verbs reach the same ones (the 1.5.3 friction review's B19).
 func commandLineDelete(cfgPath string) (*desktop.CommandLineDelete, error, error) {
+	if err := configFolderMissing(cfgPath); err != nil {
+		return nil, nil, err
+	}
 	store, storeErr := secretStore()
 	if storeErr != nil {
 		store = nil
@@ -176,6 +179,23 @@ func commandLineDelete(cfgPath string) (*desktop.CommandLineDelete, error, error
 	}
 	seams, err := desktop.NewCommandLineDelete(store, deleteScheduler, deleteInstalled)
 	return seams, storeErr, err
+}
+
+// configFolderMissing refuses a -config FILE whose folder does not exist (the 1.5.3 friction fixes'
+// adversarial pass, finding 4): a mistyped folder otherwise made a new, empty list there, and the
+// verbs then listed, deleted and logged against a list and a deletions.log the real Desktop never
+// reads. FILE itself may be missing — a Desktop started with -config keeps its list beside FILE
+// before it writes FILE — but its folder is there once that Desktop has run.
+func configFolderMissing(cfgPath string) error {
+	if cfgPath == "" {
+		return nil
+	}
+	dir := filepath.Dir(abspath(cfgPath))
+	if fi, err := os.Stat(dir); err == nil && fi.IsDir() {
+		return nil
+	}
+	return fmt.Errorf("There are no MailArchive Desktop settings beside %s: its folder %s does not exist, so nothing was changed. Give -config the config file MailArchive Desktop was started with.",
+		encmark.CommandPath(util.StripControl(abspath(cfgPath))), encmark.CommandPath(util.StripControl(dir)))
 }
 
 // configFlag is the -config flag the three Your-archives verbs share.
@@ -1034,25 +1054,42 @@ func runAddArchive(args []string) error {
 	out := fs.String("out", "", "the archive folder to add (or give it as the one argument)")
 	cfgPath := configFlag(fs)
 	fs.Usage = func() {
-		fmt.Fprintf(fs.Output(), "Usage: mailarchive add-archive DIR [-config FILE]\n\n"+
+		fmt.Fprintf(fs.Output(), "Usage: mailarchive add-archive [-config FILE] DIR\n\n"+
 			"Add DIR, a folder that holds an archive you already have (plain or encrypted), to Your archives, MailArchive Desktop's list of archives, as Open an archive folder… in MailArchive Desktop does; then delete-archive and unlist-archive can reach it. Nothing in the folder is changed, and it does not become the archive MailArchive Desktop shows.\n\n%s\n\nOptions:\n", addVerbExit)
 		fs.PrintDefaults()
 	}
-	if err := fs.Parse(args); err != nil {
-		if errors.Is(err, flag.ErrHelp) {
-			return nil
+	// The flags may come before or after the folder (the 1.5.3 friction fixes' adversarial pass,
+	// finding 3: Go's flag parsing stops at the first plain argument, so "add-archive DIR -config
+	// FILE" read -config as a second folder). After a "--" every argument is a folder.
+	var dirs []string
+	rest := args
+	for {
+		if err := fs.Parse(rest); err != nil {
+			if errors.Is(err, flag.ErrHelp) {
+				return nil
+			}
+			return err
 		}
-		return err
+		if fs.NArg() == 0 {
+			break
+		}
+		consumed := len(rest) - fs.NArg()
+		if consumed > 0 && rest[consumed-1] == "--" {
+			dirs = append(dirs, fs.Args()...)
+			break
+		}
+		dirs = append(dirs, fs.Arg(0))
+		rest = fs.Args()[1:]
 	}
 	dir := *out
 	switch {
-	case fs.NArg() > 1 || (fs.NArg() == 1 && dir != ""):
-		return errors.New("give one folder: mailarchive add-archive DIR")
-	case fs.NArg() == 1:
-		dir = fs.Arg(0)
+	case len(dirs) > 1 || (len(dirs) == 1 && dir != ""):
+		return errors.New("give one folder: mailarchive add-archive [-config FILE] DIR.")
+	case len(dirs) == 1:
+		dir = dirs[0]
 	}
 	if strings.TrimSpace(dir) == "" {
-		return errors.New("the folder is required: mailarchive add-archive DIR")
+		return errors.New("the folder is required: mailarchive add-archive [-config FILE] DIR.")
 	}
 	return addArchiveWith(*cfgPath, abspath(dir), os.Stdout)
 }
@@ -1061,6 +1098,9 @@ func runAddArchive(args []string) error {
 // default): the folder's checks and the row written under the list's lock (CommandLineDelete.AddRow).
 func addArchiveWith(cfgPath, dir string, stdout io.Writer) error {
 	// Listing needs no secret store: none is opened.
+	if err := configFolderMissing(cfgPath); err != nil {
+		return err
+	}
 	var seams *desktop.CommandLineDelete
 	if cfgPath != "" {
 		seams = desktop.NewCommandLineDeleteAt(abspath(cfgPath), nil, deleteScheduler, deleteInstalled)
@@ -1072,13 +1112,19 @@ func addArchiveWith(cfgPath, dir string, stdout io.Writer) error {
 		seams = s
 	}
 	row, added, problem, err := seams.AddRow(dir)
+	list := `"` + util.StripControl(seams.ListPath()) + `"` // quoted, as rowOf quotes it (item 4)
 	switch {
 	case err != nil:
 		var busy *archindex.BusyError
 		if errors.As(err, &busy) {
-			return fmt.Errorf("Your archives (%s) is being changed by another MailArchive window, so nothing was changed; try again", util.StripControl(seams.ListPath()))
+			return fmt.Errorf("Your archives (%s) is being changed by another MailArchive window, so nothing was changed; try again.", util.StripControl(seams.ListPath()))
 		}
-		return fmt.Errorf("Your archives (%s) could not be read or saved (%s), so nothing was changed", util.StripControl(seams.ListPath()), util.StripControl(err.Error()))
+		if errors.Is(err, util.ErrReadableByOthers) {
+			// "readable by other users" said once, with the remedy, as delete-archive says it
+			// (the 1.5.3 friction fixes' adversarial pass, finding 11).
+			return fmt.Errorf("Your archives (%s) cannot be read: other users of this computer can read it, so MailArchive will not, and nothing was changed. Run chmod 600 %s, then try again.", list, list)
+		}
+		return fmt.Errorf("Your archives (%s) could not be read or saved (%s), so nothing was changed.", list, util.StripControl(err.Error()))
 	case problem != "":
 		return fmt.Errorf("%s. Nothing was changed.", strings.TrimSuffix(util.StripControl(problem), "."))
 	case !added:

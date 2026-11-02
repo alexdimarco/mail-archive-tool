@@ -94,7 +94,7 @@ func TestAddArchiveListsOnlyAnArchiveFolder(t *testing.T) {
 		}))
 
 	code, stderr := runCLI("add-archive", "-h")
-	for _, w := range []string{"Usage: mailarchive add-archive DIR", "-config", "Open an archive folder…", "Exit: 0 added (or already listed); 1 refused"} {
+	for _, w := range []string{"Usage: mailarchive add-archive [-config FILE] DIR", "-config", "Open an archive folder…", "Exit: 0 added (or already listed); 1 refused"} {
 		if code != 0 || !strings.Contains(stderr, w) {
 			t.Fatalf("add-archive -h (exit %d) lacks %q:\n%s", code, w, stderr)
 		}

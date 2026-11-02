@@ -1188,3 +1188,15 @@ words are the builder's, for the operator.
   computer still keeps its record of this archive (no key is remembered here): use Forget this
   encrypted archive here."; record "kept: this computer still keeps its record of this archive
   (no key is remembered)". With a key remembered, or the store not read, the words are as before.
+- *add-archive's flags and words (MA-1023; findings 3 and 11).* `-config` may come before or
+  after the folder; usage "Usage: mailarchive add-archive [-config FILE] DIR"; "give one folder:
+  mailarchive add-archive [-config FILE] DIR." and "the folder is required: mailarchive
+  add-archive [-config FILE] DIR."; a list readable by other users: "Your archives ("PATH")
+  cannot be read: other users of this computer can read it, so MailArchive will not, and nothing
+  was changed. Run chmod 600 "PATH", then try again."; "Your archives ("PATH") could not be read
+  or saved (CAUSE), so nothing was changed."; "Your archives (PATH) is being changed by another
+  MailArchive window, so nothing was changed; try again." (periods added).
+- *A `-config` in a folder that does not exist (MA-1024; finding 4).* delete-archive,
+  unlist-archive and add-archive refuse: "There are no MailArchive Desktop settings beside FILE:
+  its folder DIR does not exist, so nothing was changed. Give -config the config file MailArchive
+  Desktop was started with."
