@@ -21,7 +21,7 @@ func TestPauseResumeAndSwitchOfAnArchiveWhoseDeleteDidNotFinishAreRefused(t *tes
 	e := newDeleteEnv(t)
 	resumes, origResume := 0, resumeArchiveRun
 	t.Cleanup(func() { resumeArchiveRun = origResume })
-	resumeArchiveRun = func(p string) error { resumes++; return origResume(p) }
+	resumeArchiveRun = func(p, deletionsLog string) error { resumes++; return origResume(p, deletionsLog) }
 	other := e.plainArchive("Other")
 	stopped := e.plainArchive("Stopped")
 	stopAt2(t, e, stopped)

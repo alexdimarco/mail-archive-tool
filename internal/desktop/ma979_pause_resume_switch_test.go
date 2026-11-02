@@ -20,7 +20,7 @@ func TestPauseResumeAndSwitchOfAnArchiveBeingDeletedAreRefused(t *testing.T) {
 	// Resume puts back a scheduled backup through wizard.ResumeArchive alone: counted, still run.
 	resumes, origResume := 0, resumeArchiveRun
 	t.Cleanup(func() { resumeArchiveRun = origResume })
-	resumeArchiveRun = func(p string) error { resumes++; return origResume(p) }
+	resumeArchiveRun = func(p, deletionsLog string) error { resumes++; return origResume(p, deletionsLog) }
 	other := e.plainArchive("Other")
 	paused := e.plainArchive("PausedOne")
 	if err := seal.Seal(paused, "parked"); err != nil {

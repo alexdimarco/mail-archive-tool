@@ -4,6 +4,7 @@ import (
 	"fmt"
 
 	"mail-archive-tool/internal/app"
+	"mail-archive-tool/internal/archdelete"
 	"mail-archive-tool/internal/encmark"
 	"mail-archive-tool/internal/schedule"
 	"mail-archive-tool/internal/seal"
@@ -28,7 +29,14 @@ var removeLiveEntry = schedule.RemoveLiveEntry
 // AutoPauseIfDue decides what is running without asking the real scheduler.
 var queryLiveEntry = schedule.Query
 
-func PauseArchive(out, reason string) error {
+// PauseArchive is Pause (described above). deletionsLog is the deletions.log to ask ("" is
+// MailArchive's own): a folder whose delete did
+// not finish, or a log that cannot be read, is refused before anything changes (MA-1015; the 1.5.3
+// re-walk's F1), so every caller — the Desktop, the terminal's `pause` — gets the check.
+func PauseArchive(out, reason, deletionsLog string) error {
+	if err := archdelete.ActionRefusal(deletionsLog, out, "it was not paused"); err != nil {
+		return err
+	}
 	// Remove the live entries this archive OWNS, each proven "ours" through bound.go
 	// (RecordedBackupName/RecordedVerifyName) exactly as `-out X -remove` and the GUI remove
 	// do — NEVER the raw descriptor name, which a handed-over folder can set to a foreign OS
@@ -73,7 +81,12 @@ func PauseArchive(out, reason string) error {
 // (repairSchedule: the cadence comes from the descriptor, the job args are rebuilt from the
 // sanitized name + -out, never the descriptor's recorded Job/Exe). A scheduled verify is
 // not auto-restored in this release — its descriptor is kept and the owner can re-enable it.
-func ResumeArchive(out string) error {
+// A folder whose delete did not finish, by deletionsLog ("" is MailArchive's own), stays paused
+// and gets no schedule back, as for PauseArchive (MA-1015; the 1.5.3 re-walk's F1).
+func ResumeArchive(out, deletionsLog string) error {
+	if err := archdelete.ActionRefusal(deletionsLog, out, "it was not resumed"); err != nil {
+		return err
+	}
 	if err := seal.Unseal(out); err != nil {
 		return err
 	}

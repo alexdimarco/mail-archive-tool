@@ -46,9 +46,9 @@ func TestAPauseThroughAnotherSpellingMeetsTheDeleteOfItsFolder(t *testing.T) {
 	orig := pauseArchiveRun
 	t.Cleanup(func() { pauseArchiveRun = orig })
 	var during map[string]any
-	pauseArchiveRun = func(path, reason string) error {
+	pauseArchiveRun = func(path, reason, deletionsLog string) error {
 		during = e.deleteWith(tok, pl["name"].(string), false)
-		return orig(path, reason)
+		return orig(path, reason, deletionsLog)
 	}
 	if _, m := e.post("/api/pause-archive", map[string]any{"path": aliasOf(t, held)}); m["ok"] != true {
 		t.Fatalf("the Pause through a link: %v", m)

@@ -32,10 +32,10 @@ func TestADeleteCannotBeginWhileAPauseOrResumeOfItsFolderRuns(t *testing.T) {
 	t.Cleanup(func() { pauseArchiveRun, resumeArchiveRun = origPause, origResume })
 
 	var twin, during map[string]any
-	pauseArchiveRun = func(path, reason string) error {
+	pauseArchiveRun = func(path, reason, deletionsLog string) error {
 		twin = e.deleteWith(op["token"].(string), op["name"].(string), false)
 		during = e.deleteWith(tok, p["name"].(string), false)
-		return origPause(path, reason)
+		return origPause(path, reason, deletionsLog)
 	}
 	if _, m := e.post("/api/pause-archive", map[string]any{"path": dir}); m["ok"] != true || !seal.IsSealed(dir) {
 		t.Fatalf("the Pause: %v", m)
@@ -49,10 +49,10 @@ func TestADeleteCannotBeginWhileAPauseOrResumeOfItsFolderRuns(t *testing.T) {
 		}))
 
 	resumes := 0
-	resumeArchiveRun = func(path string) error {
+	resumeArchiveRun = func(path, deletionsLog string) error {
 		resumes++
 		during = e.deleteWith(tok, p["name"].(string), false)
-		return origResume(path)
+		return origResume(path, deletionsLog)
 	}
 	if _, m := e.post("/api/resume-archive", map[string]any{"path": dir}); m["ok"] != true || seal.IsSealed(dir) || resumes != 1 {
 		t.Fatalf("the Resume: %v (called %d times)", m, resumes)

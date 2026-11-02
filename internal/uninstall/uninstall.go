@@ -233,6 +233,21 @@ func run(configDir string, knownArchives []string, exe string, dryRun, logCopied
 			deletionsLog = f
 		}
 	}
+	// ConfigTargets lists only ordinary files, so a deletions.log that is a folder or a link (to a
+	// log holding a delete that did not finish, or to nothing) would leave both checks below
+	// unasked and every settings file removed: the name itself is asked, and anything there that
+	// is not an ordinary file stops the uninstall, nothing removed (fail closed, U-C4's rule; the
+	// 1.5.3 re-walk's F4).
+	if deletionsLog == "" {
+		p := filepath.Join(configDir, deletionsLogName)
+		if fi, lerr := os.Lstat(p); lerr == nil {
+			if !fi.Mode().IsRegular() {
+				return nil, &LogUnreadableError{Log: p, Err: archdelete.ErrLogNotRegular}
+			}
+		} else if !errors.Is(lerr, fs.ErrNotExist) {
+			return nil, &LogUnreadableError{Log: p, Err: lerr}
+		}
+	}
 	// A delete under way or not finished keeps its log (§5.4): nothing is touched. A dry run
 	// still works out the plan and returns it with the refusal, so the plan can be shown with
 	// "Uninstall will refuse until…" (the 1.5.3 friction review's B11).

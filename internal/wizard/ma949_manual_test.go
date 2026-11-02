@@ -56,10 +56,10 @@ func TestRunNowOnlyIsNeverRepairedIntoASchedule(t *testing.T) {
 	orig := removeLiveEntry
 	removeLiveEntry = func(s schedule.Spec) error { removed = append(removed, s.Name); return nil }
 	defer func() { removeLiveEntry = orig }()
-	if err := PauseArchive(out, "parked"); err != nil || !seal.IsSealed(out) {
+	if err := PauseArchive(out, "parked", ""); err != nil || !seal.IsSealed(out) {
 		t.Fatalf("pause: %v", err)
 	}
-	if err := ResumeArchive(out); err != nil || seal.IsSealed(out) {
+	if err := ResumeArchive(out, ""); err != nil || seal.IsSealed(out) {
 		t.Fatalf("resume of a Run now only archive: %v", err)
 	}
 	if d, err := schedule.ReadDescriptor(out); err != nil || !d.IsManual() {

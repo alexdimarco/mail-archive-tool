@@ -18,7 +18,7 @@ import (
 func TestMA675_PauseResumeSealTransitions(t *testing.T) {
 	out := t.TempDir() // no schedule installed: PauseArchive just seals
 
-	if err := PauseArchive(out, "parked by the owner"); err != nil {
+	if err := PauseArchive(out, "parked by the owner", ""); err != nil {
 		t.Fatalf("pause: %v", err)
 	}
 	if !seal.IsSealed(out) {
@@ -32,11 +32,11 @@ func TestMA675_PauseResumeSealTransitions(t *testing.T) {
 	}
 
 	// Pause is idempotent.
-	if err := PauseArchive(out, "again"); err != nil {
+	if err := PauseArchive(out, "again", ""); err != nil {
 		t.Fatalf("second pause must be idempotent: %v", err)
 	}
 
-	if err := ResumeArchive(out); err != nil {
+	if err := ResumeArchive(out, ""); err != nil {
 		t.Fatalf("resume: %v", err)
 	}
 	if seal.IsSealed(out) {
@@ -47,7 +47,7 @@ func TestMA675_PauseResumeSealTransitions(t *testing.T) {
 	}
 
 	// Resume is idempotent.
-	if err := ResumeArchive(out); err != nil {
+	if err := ResumeArchive(out, ""); err != nil {
 		t.Fatalf("second resume must be idempotent: %v", err)
 	}
 }
@@ -73,7 +73,7 @@ func TestMA680_PauseBindsScheduleNameBeforeRemoving(t *testing.T) {
 	}); err != nil {
 		t.Fatalf("seed legit descriptor: %v", err)
 	}
-	if err := PauseArchive(legit, "parked"); err != nil {
+	if err := PauseArchive(legit, "parked", ""); err != nil {
 		t.Fatalf("pause legit: %v", err)
 	}
 	if len(removed) != 1 || removed[0] != schedule.DefaultNameFor(legit) {
@@ -94,7 +94,7 @@ func TestMA680_PauseBindsScheduleNameBeforeRemoving(t *testing.T) {
 	}); err != nil {
 		t.Fatalf("seed foreign descriptor: %v", err)
 	}
-	if err := PauseArchive(victim, "parked"); err != nil {
+	if err := PauseArchive(victim, "parked", ""); err != nil {
 		t.Fatalf("pausing a handed-over archive must still succeed: %v", err)
 	}
 	if len(removed) != 0 {

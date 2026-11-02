@@ -1346,3 +1346,35 @@ words are the builder's, for the operator, unless a quote says otherwise.
   manifest over the new 1 GiB bound, like a newer or damaged one, gets the "cannot be read" words,
   and `status` says which. The 2,500- and 20,000-message walks at the terminal and on the Desktop
   are owed to the re-walk; this group proved them with tests only.
+
+**The adversarial findings on the new guards, from the 1.5.3 re-walk (2 November 2026; F1, F2, F4,
+F5).** New or changed words are the builder's, for the operator, unless a quote says otherwise.
+- *The terminal's `pause` and `resume` refuse a delete not finished (MA-1015 amended; F1).* The
+  check is in `wizard.PauseArchive` and `wizard.ResumeArchive`, which the Desktop and the terminal
+  both reach, so `mailarchive pause -out DIR` writes no pause marker into a half-deleted folder and
+  `mailarchive resume -out DIR` puts back no scheduled backup the delete stopped. The words are
+  MA-1015's, new only at the terminal, where the folder and its command follow them: "mailarchive:
+  Delete not finished: click Delete again. This archive's delete did not finish, so it was not
+  paused; nothing was changed. (Folder: DIR)" then "At this terminal, Delete again is: mailarchive
+  delete-archive -out "DIR"" ("…so it was not resumed…"); a log that cannot be read: "MailArchive
+  could not read its deletion log, LOG (CAUSE), so it cannot tell whether a delete of this archive
+  did not finish; nothing was changed. Check that file, then try again. (Folder: DIR)". Exit 1.
+  The terminal reads MailArchive's own deletions.log: `pause` and `resume` take no `-config`, so a
+  delete begun on a Desktop started with -config is not seen there (for the operator: adding
+  `-config` to them, as to the delete verbs, is not built).
+- *Install and Repair refuse a delete not finished (MA-1015 amended; F2).* The Scheduled backup
+  card's Install and Repair of the current archive whose delete did not finish are refused right
+  after MA-979's hold, in MA-987's words ("…so it is not backed up; nothing was changed."; a log
+  that cannot be read: "…nothing was started. Check that file, then try again."). No new words.
+- *Uninstall asks deletions.log by its name (MA-1031 amended; F4).* A deletions.log that is a
+  folder, a link or anything but an ordinary file stops `uninstall -yes`, the Desktop's Remove and
+  the plan (`-dry-run`, the Desktop's preview) in `LogUnreadableError`'s existing words ("…it is
+  not an ordinary file (a link, a folder or a device), so MailArchive does not read it. Put the log
+  file itself there, or remove what is there, then uninstall again…"). No new words.
+- *The Desktop's Remove compares what is in the log (MA-1008 amended; F5).* The plan reply carries
+  the log's size and SHA-256, and lines written after the preview refuse Remove with MA-1008's
+  "What uninstall would remove has changed since the plan was shown…". No new words.
+- *Decided, no change:* F3, Remove from list with a deletions.log that cannot be read, stays
+  allowed (MA-1029's escape hatch; `add-archive`, then Delete again, recovers the row while the
+  folder's manifest is there), and F6, the window between uninstall's last check of the log and its
+  removal, is an accepted limit as MA-1007's (MA-1031's ruling note).

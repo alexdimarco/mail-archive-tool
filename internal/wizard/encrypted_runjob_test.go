@@ -26,7 +26,7 @@ import (
 // pause keeps the note.
 func TestPausingAnEncryptedArchiveKeepsNoNoteInIt(t *testing.T) {
 	plain := t.TempDir()
-	if err := PauseArchive(plain, "parked by the owner"); err != nil || seal.Reason(plain) != "parked by the owner" {
+	if err := PauseArchive(plain, "parked by the owner", ""); err != nil || seal.Reason(plain) != "parked by the owner" {
 		t.Fatalf("the positive twin: a plaintext pause keeps its note (%v)", err)
 	}
 	sealed := t.TempDir()
@@ -42,13 +42,13 @@ func TestPausingAnEncryptedArchiveKeepsNoNoteInIt(t *testing.T) {
 	// A folder inside the encrypted archive is not paused at all (MA-746): its pause
 	// file, and the folder itself, would be written into the archive.
 	inside := filepath.Join(sealed, "sub")
-	if err := PauseArchive(inside, "SECRET note"); !errors.Is(err, app.ErrEncryptedNeedsKey) {
+	if err := PauseArchive(inside, "SECRET note", ""); !errors.Is(err, app.ErrEncryptedNeedsKey) {
 		t.Fatalf("pausing a folder inside an encrypted archive: want ErrEncryptedNeedsKey, got %v", err)
 	}
 	if _, err := os.Stat(inside); !os.IsNotExist(err) {
 		t.Fatal("a refused pause created the folder inside the encrypted archive")
 	}
-	if err := PauseArchive(sealed, "SECRET note about the mail"); err != nil {
+	if err := PauseArchive(sealed, "SECRET note about the mail", ""); err != nil {
 		t.Fatal(err)
 	}
 	raw, err := os.ReadFile(filepath.Join(sealed, seal.Name))

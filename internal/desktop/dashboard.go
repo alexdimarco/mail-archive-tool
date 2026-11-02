@@ -8,6 +8,8 @@ package desktop
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -43,7 +45,6 @@ import (
 	"mail-archive-tool/internal/server"
 	"mail-archive-tool/internal/state"
 	"mail-archive-tool/internal/uninstall"
-	"mail-archive-tool/internal/util"
 	"mail-archive-tool/internal/wizard"
 )
 
@@ -873,7 +874,7 @@ func (d *dashboard) pauseArchive(w http.ResponseWriter, r *http.Request) {
 			note = "Paused. The note saying why could not be saved in the encrypted archive (" + err.Error() + ")."
 		}
 	}
-	if err := pauseArchiveRun(path, reason); err != nil {
+	if err := pauseArchiveRun(path, reason, d.cfg.deletionsLogPath()); err != nil {
 		writeJSON(w, map[string]any{"ok": false, "error": err.Error()})
 		return
 	}
@@ -918,7 +919,7 @@ func (d *dashboard) resumeArchive(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, map[string]any{"ok": false, "error": why})
 		return
 	}
-	if err := resumeArchiveRun(path); err != nil {
+	if err := resumeArchiveRun(path, d.cfg.deletionsLogPath()); err != nil {
 		writeJSON(w, map[string]any{"ok": false, "error": err.Error()})
 		return
 	}
@@ -981,28 +982,19 @@ func (d *dashboard) holdAgainstDelete(w http.ResponseWriter, path, why string) (
 // folder and a Switch make it the current archive again. done says what was not done ("it was
 // not paused", …); "" when nothing stops it. A deletions.log that cannot be read refuses, naming
 // it, since whether the delete finished cannot be told (as MA-987's runs do). It is asked under
-// the folder's hold, so no delete of it begins or ends between this check and the action.
+// the folder's hold, so no delete of it begins or ends between this check and the action. The
+// words are archdelete.ActionRefusal's, which wizard.PauseArchive and wizard.ResumeArchive ask
+// too, so the terminal's `pause` and `resume` refuse alike (the 1.5.3 re-walk's F1).
 func (d *dashboard) unfinishedActionRefusal(path, done string) string {
 	logPath := d.cfg.deletionsLogPath()
 	if strings.TrimSpace(path) == "" || logPath == "" {
 		return ""
 	}
-	u, err := archdelete.UnfinishedDelete(logPath, path, runtime.GOOS)
-	if err != nil {
-		return fmt.Sprintf(unfinishedLogUnreadableText, logPath, util.StripControl(err.Error()))
-	}
-	if u != nil {
-		return fmt.Sprintf(unfinishedActionText, done)
+	if err := archdelete.ActionRefusal(logPath, path, done); err != nil {
+		return err.Error()
 	}
 	return ""
 }
-
-// The words of MA-1015 (MA-987's "Delete not finished: click Delete again" first; the rest the
-// builder's, for the operator).
-const (
-	unfinishedActionText        = "Delete not finished: click Delete again. This archive's delete did not finish, so %s; nothing was changed."
-	unfinishedLogUnreadableText = "MailArchive could not read its deletion log, %s (%s), so it cannot tell whether a delete of this archive did not finish; nothing was changed. Check that file, then try again."
-)
 
 // uninstallRun is a seam so a test drives the uninstall handler without touching the real
 // config directory, scheduler, or credential store.
@@ -1169,6 +1161,8 @@ func uninstallPlanReply(rep *uninstall.Report, done bool) map[string]any {
 	if rep.DeletionsLog != "" { // only when there is one: the delete's journal (design-archive-delete §8.1)
 		plan["deletionsLog"] = rep.DeletionsLog
 		plan["deletionsLogNote"] = uninstall.DeletionsLogNote
+		// What is in it, so Remove takes only the log the plan showed (F5): sent back with it.
+		plan["deletionsLogSize"], plan["deletionsLogSHA256"] = logFingerprint(rep.DeletionsLog)
 	}
 	if encryptedRecordKept() { // only when there is any (K8, A20)
 		plan["encryptedRecordKept"] = true
@@ -1177,27 +1171,60 @@ func uninstallPlanReply(rep *uninstall.Report, done bool) map[string]any {
 }
 
 // uninstallShown is what a plan reply says uninstall removes, as the page sends it back with
-// Remove (the reply's own keys; the archives kept are not removed and not compared).
+// Remove (the reply's own keys; the archives kept are not removed and not compared). The deletion
+// log is compared by what is in it, its size and SHA-256, as well as by its name: a delete that
+// finished elsewhere after the preview (`delete-archive -config` pointed at this Desktop's
+// settings, another account's terminal) adds lines the person never saw, and Remove would take
+// them with the log, unasked (the 1.5.3 re-walk's F5).
 type uninstallShown struct {
-	Schedules     []string `json:"schedules"`
-	ConfigFiles   []string `json:"configFiles"`
-	ScratchFiles  []string `json:"scratchFiles"`
-	ProgramCache  string   `json:"programCache"`
-	DeletionsLog  string   `json:"deletionsLog"`
-	ClearedSignIn bool     `json:"clearedSignIn"`
+	Schedules          []string `json:"schedules"`
+	ConfigFiles        []string `json:"configFiles"`
+	ScratchFiles       []string `json:"scratchFiles"`
+	ProgramCache       string   `json:"programCache"`
+	DeletionsLog       string   `json:"deletionsLog"`
+	DeletionsLogSize   int64    `json:"deletionsLogSize"`
+	DeletionsLogSHA256 string   `json:"deletionsLogSHA256"`
+	ClearedSignIn      bool     `json:"clearedSignIn"`
 }
 
 // shownOf is what the plan reply for rep says uninstall removes.
 func shownOf(rep *uninstall.Report) uninstallShown {
-	return uninstallShown{Schedules: rep.Schedules, ConfigFiles: rep.ConfigFiles, ScratchFiles: rep.Scratch,
+	s := uninstallShown{Schedules: rep.Schedules, ConfigFiles: rep.ConfigFiles, ScratchFiles: rep.Scratch,
 		ProgramCache: rep.ProgramCache, DeletionsLog: rep.DeletionsLog, ClearedSignIn: rep.ClearedSignIn}
+	if rep.DeletionsLog != "" {
+		s.DeletionsLogSize, s.DeletionsLogSHA256 = logFingerprint(rep.DeletionsLog)
+	}
+	return s
 }
 
 // same reports that two plans remove the same things (an empty list and none are the same).
 func (a *uninstallShown) same(b uninstallShown) bool {
 	return slices.Equal(a.Schedules, b.Schedules) && slices.Equal(a.ConfigFiles, b.ConfigFiles) &&
 		slices.Equal(a.ScratchFiles, b.ScratchFiles) && a.ProgramCache == b.ProgramCache &&
-		a.DeletionsLog == b.DeletionsLog && a.ClearedSignIn == b.ClearedSignIn
+		a.DeletionsLog == b.DeletionsLog && a.DeletionsLogSize == b.DeletionsLogSize &&
+		a.DeletionsLogSHA256 == b.DeletionsLogSHA256 && a.ClearedSignIn == b.ClearedSignIn
+}
+
+// logFingerprintCap bounds the read of deletions.log for its fingerprint: past what MailArchive
+// reads (32 MiB), so a log over that still differs from one at it.
+const logFingerprintCap = 64 << 20
+
+// logFingerprint is the size and SHA-256 (hex) of the deletion log at path, read once; a log that
+// cannot be read is -1 and "", which differs from any log that could, so a log readable at the
+// preview and not at Remove (or the other way) refuses as changed. The real run reads the log
+// again and fails closed on its own.
+func logFingerprint(path string) (int64, string) {
+	f, err := os.Open(path)
+	if err != nil {
+		return -1, ""
+	}
+	defer f.Close()
+	h := sha256.New()
+	n, err := io.Copy(h, io.LimitReader(f, logFingerprintCap))
+	if err != nil {
+		return -1, ""
+	}
+	return n, hex.EncodeToString(h.Sum(nil))
 }
 
 // knownArchivePaths lists the archive folders recorded in the Desktop's index, so a full

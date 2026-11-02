@@ -297,6 +297,13 @@ func (d *dashboard) scheduleInstallRouted(w http.ResponseWriter, r *http.Request
 		return
 	}
 	defer release()
+	// A delete of it that did not finish (a stop at step 2 leaves it current): Install or Repair
+	// would put back the scheduled backup the delete was stopping, so neither is done, in MA-987's
+	// words; a deletions.log that cannot be read refuses too (MA-1015; the 1.5.3 re-walk's F2).
+	if why := d.unfinishedRefusal(out); why != "" {
+		refuse(why)
+		return
+	}
 	rt := routeFor(out)
 	switch rt.kind {
 	case backupEncrypted:
