@@ -1279,3 +1279,16 @@ are the builder's, for the operator, unless a quote says otherwise.
   another drive mounted at the same place, is forgotten here too: MailArchive will no longer stop
   backups into that path that lack the archive's key." (forget-archive's B18 line) and its whole
   forget "This computer forgot the encrypted archive ID, last recorded at FOLDER.".
+
+**The adversarial pass of the uninstall and docs group (2 November 2026).** New or changed words
+are the builder's, for the operator, unless a quote says otherwise.
+- *`uninstall -yes` asks the log on its real run (MA-1031 amended; finding 1).* The check was made
+  once, on the plan's log, so a log absent or empty then, filled by a delete begun and finished
+  before the removal, went without -log-copied. `uninstall.UninstallYes` now asks before anything
+  is removed (same words, "so nothing was removed") and again right before the settings files
+  would go, after MA-1007's check: "stopping before the settings files were removed (the scheduled
+  tasks, the sign-in and the working copies listed above were already removed): MailArchive's
+  deletion log, PATH, now lists deletes made on this computer, and uninstall -yes would remove it,
+  so it and the settings files were kept. Copy it somewhere you keep records (your Documents
+  folder, for example), then run mailarchive uninstall -yes -log-copied." The Desktop's Remove is
+  unchanged (MA-1008: the plan it showed named the log and said to copy it first).

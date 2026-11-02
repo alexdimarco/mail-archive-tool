@@ -48,10 +48,18 @@ const DeletionsLogNote = "Copy deletions.log first, somewhere you keep records (
 
 // LogNotCopiedError refuses `uninstall -yes`, nothing removed, while deletions.log holds any line
 // and -log-copied was not given (the 1.5.3 friction review's D2, the main session's decision):
-// the run that removes the log must not be the one that first says to copy it.
-type LogNotCopiedError struct{ Log string }
+// the run that removes the log must not be the one that first says to copy it. Kept is the
+// refusal made right before the settings files would go (UninstallYes's step 4), after the
+// schedules, the sign-in and the working copies were removed: the log and the settings are kept.
+type LogNotCopiedError struct {
+	Log  string
+	Kept bool
+}
 
 func (e *LogNotCopiedError) Error() string {
+	if e.Kept {
+		return fmt.Sprintf("MailArchive's deletion log, %s, now lists deletes made on this computer, and uninstall -yes would remove it, so it and the settings files were kept. Copy it somewhere you keep records (your Documents folder, for example), then run mailarchive uninstall -yes -log-copied.", e.Log)
+	}
 	return fmt.Sprintf("MailArchive's deletion log, %s, lists the deletes made on this computer, and uninstall -yes removes it, so nothing was removed. Copy it somewhere you keep records (your Documents folder, for example), then run mailarchive uninstall -yes -log-copied.", e.Log)
 }
 
@@ -188,8 +196,25 @@ var (
 // (R36: ConfigTargets refuses on any overlap and names only a fixed allow-list; the
 // schedule removal uses RemoveLiveEntry, which keeps the archive-side descriptor). dryRun
 // computes the Report without changing anything. On a real run a step's error stops it
-// (fail-closed), returning the Report of what had been done.
+// (fail-closed), returning the Report of what had been done. It removes a deletion log however
+// many lines it holds: the Desktop's Remove removes only the plan the page showed, which names
+// the log and says to copy it first (MA-1008). `uninstall -yes` is UninstallYes.
 func Uninstall(configDir string, knownArchives []string, exe string, dryRun bool) (*Report, error) {
+	return run(configDir, knownArchives, exe, dryRun, true)
+}
+
+// UninstallYes is `uninstall -yes`'s real run: Uninstall, refusing (LogNotCopiedError) while
+// deletions.log holds any line and logCopied (-log-copied) is false. It asks before anything is
+// removed and again right before the log would go, so a log made or filled by a delete since the
+// plan was printed (another Desktop tab, another terminal) is never removed without -log-copied
+// (MA-1031 amended; the uninstall-docs group's adversarial pass, finding 1). A log made after the
+// settings folder was read is not among the files removed.
+func UninstallYes(configDir string, knownArchives []string, exe string, logCopied bool) (*Report, error) {
+	return run(configDir, knownArchives, exe, false, logCopied)
+}
+
+// run is Uninstall; logCopied false is UninstallYes's check of the deletion log.
+func run(configDir string, knownArchives []string, exe string, dryRun, logCopied bool) (*Report, error) {
 	cfgTargets, err := ConfigTargets(configDir, knownArchives)
 	if err != nil {
 		return nil, err // ErrOverlap or a read error — nothing is touched
@@ -257,6 +282,10 @@ func Uninstall(configDir string, knownArchives []string, exe string, dryRun bool
 	if dryRun {
 		return rep, pending
 	}
+	// -yes without -log-copied: a log holding any line stops it before anything is removed (D2).
+	if err := CheckLogCopied(deletionsLog, logCopied); err != nil {
+		return nil, err
+	}
 
 	// 1) Schedules first (U-C5): nothing keeps running after the program is removed.
 	for _, e := range entries {
@@ -295,9 +324,19 @@ func Uninstall(configDir string, knownArchives []string, exe string, dryRun bool
 	}
 	// 4) The config files (the enumeration sources, deleted last). A delete that began since the
 	// check above (another MailArchive window, the command line) is checked for again right
-	// before its log would go: the settings are then kept, as for any stop here.
+	// before its log would go: the settings are then kept, as for any stop here. So is one that
+	// began and finished since (-yes without -log-copied asks again: D2).
 	if deletionsLog != "" {
-		if err := checkNoPendingDelete(deletionsLog); err != nil {
+		err := checkNoPendingDelete(deletionsLog)
+		if err == nil {
+			if err = CheckLogCopied(deletionsLog, logCopied); err != nil {
+				var nc *LogNotCopiedError
+				if errors.As(err, &nc) {
+					err = &LogNotCopiedError{Log: nc.Log, Kept: true}
+				}
+			}
+		}
+		if err != nil {
 			return rep, fmt.Errorf("stopping before the settings files were removed (the scheduled tasks, the sign-in and the working copies listed above were already removed): %w", err)
 		}
 	}

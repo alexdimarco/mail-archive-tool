@@ -46,6 +46,7 @@ func runUninstall(args []string) error {
 	}
 	realRun := *yes && !*dry
 	removing := realRun && pending == nil
+	// notCopied picks the note said under the log; the refusal itself is UninstallYes's.
 	var notCopied error
 	if removing {
 		notCopied = uninstall.CheckLogCopied(rep.DeletionsLog, *logCopied)
@@ -68,10 +69,11 @@ func runUninstall(args []string) error {
 		return nil
 	case !*yes:
 		return errors.New("this removes MailArchive's schedules, settings and sign-in — your archives are kept. Re-run with -yes to proceed, or -dry-run to preview")
-	case notCopied != nil:
-		return notCopied
 	}
-	done, err := uninstall.Uninstall(configDir, known, exe, false)
+	// The real run asks the log again itself, before anything is removed and right before the log
+	// would go, so a log a delete made or filled since this plan was printed is not removed
+	// without -log-copied (LogNotCopiedError, as notCopied above; adversarial finding 1).
+	done, err := uninstall.UninstallYes(configDir, known, exe, *logCopied)
 	if err != nil {
 		return err
 	}
