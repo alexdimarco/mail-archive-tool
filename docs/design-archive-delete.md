@@ -1619,3 +1619,32 @@ group above).** New or changed words are the builder's, for the operator.
   reported (its code comment no longer says it is). A Ctrl-C (MA-1043) while the settings write
   still holds its temp file open may fail to remove it on Windows, and a temp file is registered
   only after it is created. Neither was run on Windows in this pass.
+
+**The bounded walk's second adversarial pass (2 November 2026; MA-1035 and MA-1034 amended).** The
+pass found no high or medium finding and one LOW, fixed here. No new words.
+- *The fields beside the records are checked (MA-1035; the pass's one finding, LOW).* The walk
+  skipped `capture_gaps` and `collapsed_tokens` unchecked, so a manifest whose `capture_gaps` was a
+  number, an array or a string, or whose `collapsed_tokens` was a string or held one, showed as an
+  available archive offered Switch, and Open an archive folder… and `add-archive` listed it, while
+  `status` and every backup refused it. The walk now checks each as `state.LoadFrom` types it:
+  `capture_gaps` null or an object of objects (or null), `collapsed_tokens` null or an object of
+  true, false or null. Such a folder is greyed like any manifest that cannot be read, and
+  `add-archive` refuses it in MA-1023's "…cannot be read — run mailarchive status…" words, which
+  now lead somewhere: `status` reports the damage.
+- *Accepted limit, for the operator: what one gap holds is not checked, as for one record.* A gap
+  whose own fields have the wrong type (`"scope": 5`) is recognised and refused by `status`. Checking
+  it would mean typing every field of the gap (its dates among them) in the walk, which MA-1034
+  chose not to do for records; MA-1034's not-checked list now reads "the records' and the capture
+  gaps' contents". MailArchive writes every gap field as a fixed text, number, true or false, so
+  only a hand-edited or damaged manifest reaches this.
+- *The pass's probes kept as guards.* Its differential fuzz against a whole LoadFrom (now also
+  failing when the walk accepts what LoadFrom refuses for anything but what records and gaps hold;
+  30.4 million inputs over 90 seconds after the fix, no disagreement), its folder link pointed at
+  another archive, and its reads while the manifest is saved over and over, in
+  `internal/archindex/ma1035_walk_agreement_test.go`. Its time measure (512 MiB walked in 1.34 s,
+  so about 2.7 s at the 1 GiB cap) and its count of real-length Windows .pst sources within the
+  stores' bound (about 6,900) were measures, not kept as tests.
+- *Not tried by the pass (for the Windows lab and the operator):* anything run on Windows (its
+  reading of Go 1.26's source says a long read does not block a save's rename on NTFS and the kept
+  verdict's identity check holds there); FAT, exFAT and ReFS drives, where file identity is weaker;
+  network shares that stall; cloud placeholder files; a real manifest over 1 GiB.

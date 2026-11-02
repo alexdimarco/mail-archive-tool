@@ -31,10 +31,12 @@ import (
 //
 // It checks what makes the file a manifest this build can read — one JSON object (or null, or
 // nothing at all, as LoadFrom reads them), a version no newer than this build's, a "stores"
-// object of strings, an "entries" object of records — and keeps only "stores", whose ids are read
-// lexically (state.SnapshotStoreID: never resolved on disk, SD-1). The records themselves are
-// skipped, never kept: each reader that uses them (status, a backup, a delete's plan) reads the
-// whole manifest itself and refuses what it cannot use.
+// object of strings, an "entries" object of records, a "capture_gaps" object of gaps and a
+// "collapsed_tokens" object of true or false (MA-1035, amended: the two fields beside the records
+// are checked as LoadFrom types them) — and keeps only "stores", whose ids are read lexically
+// (state.SnapshotStoreID: never resolved on disk, SD-1). The records and the gaps themselves are
+// skipped, never kept nor their contents checked: each reader that uses them (status, a backup, a
+// delete's plan) reads the whole manifest itself and refuses what it cannot use.
 
 // manifestCap bounds recognition's read of a manifest: sized for real archives, as a delete's
 // manifest read is (archdelete's manifestCap, "sized for real archives"). A var only so a test can
@@ -465,8 +467,12 @@ func (s *scanner) manifest() (stores map[string]string, version int, err error) 
 			if stores, used, err = s.stores(c, stores, used); err != nil {
 				return nil, 0, err
 			}
-		case strings.EqualFold(name, "entries"):
-			if err := s.entries(c); err != nil {
+		case strings.EqualFold(name, "entries"), strings.EqualFold(name, "capture_gaps"):
+			if err := s.records(c); err != nil {
+				return nil, 0, err
+			}
+		case strings.EqualFold(name, "collapsed_tokens"):
+			if err := s.flags(c); err != nil {
 				return nil, 0, err
 			}
 		default:
@@ -511,9 +517,41 @@ func (s *scanner) stores(c byte, stores map[string]string, used int) (map[string
 	return stores, used + cost, nil
 }
 
-// entries checks an "entries" value whose first byte c was read without keeping it: null, or an
-// object whose values are records (objects, or null).
-func (s *scanner) entries(c byte) error {
+// records checks an "entries" or a "capture_gaps" value whose first byte c was read without
+// keeping it: null, or an object whose values are records or gaps (objects, or null). What a
+// record or a gap holds is not checked (MA-1034's not-checked list).
+func (s *scanner) records(c byte) error {
+	return s.mapOf(c, func(c byte) error {
+		switch c {
+		case 'n':
+			return s.lit("ull")
+		case '{':
+			return s.object(3)
+		}
+		return errManifestShape
+	})
+}
+
+// flags checks a "collapsed_tokens" value whose first byte c was read without keeping it: null, or
+// an object whose values are true, false or null, as json.Unmarshal fills the manifest's
+// map[string]bool (MA-1035, amended: a value of another type refuses there, so here too).
+func (s *scanner) flags(c byte) error {
+	return s.mapOf(c, func(c byte) error {
+		switch c {
+		case 't':
+			return s.lit("rue")
+		case 'f':
+			return s.lit("alse")
+		case 'n':
+			return s.lit("ull")
+		}
+		return errManifestShape
+	})
+}
+
+// mapOf checks a top-level value whose first byte c was read, that the manifest reads into a map:
+// null, or an object each of whose values, its first byte read, member checks.
+func (s *scanner) mapOf(c byte, member func(c byte) error) error {
 	switch c {
 	case 'n':
 		return s.lit("ull")
@@ -535,15 +573,7 @@ func (s *scanner) entries(c byte) error {
 		if c, err = s.colon(); err != nil {
 			return err
 		}
-		switch c {
-		case 'n':
-			err = s.lit("ull")
-		case '{':
-			err = s.object(3)
-		default:
-			err = errManifestShape
-		}
-		if err != nil {
+		if err := member(c); err != nil {
 			return err
 		}
 		var done bool
