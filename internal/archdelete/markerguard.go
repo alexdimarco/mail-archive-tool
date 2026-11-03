@@ -34,17 +34,40 @@ const (
 //
 // Three asks stay log-only (DM-21): Remove from list (UnlistRefusal, MA-1029), uninstall
 // (PendingDeletes, MA-1007) and the plan's Finishes (planOf; it reads the marker itself, §15.4).
+// They never refuse on the marker alone; since slice 5 they ask the log with the marker's run too
+// (§15.5), so a delete this log knows stays known after a remount.
+//
+// The log is asked with the marker's run (§15.5, DeleteLog.UnfinishedFor): after a drive is plugged
+// in again, this computer's own line still matches the folder when the marker names its delete
+// (ByRun), and a delete only the marker knows whose run this log began says so (BegunHere, DM-10).
 func UnfinishedAt(logPath, folder, goos string) (*Unfinished, error) {
 	st, err := delmark.Present(folder)
 	if err != nil {
 		return nil, err
 	}
+	var d delmark.Details
+	if st == delmark.Regular {
+		d = delmark.Read(folder)
+	}
 	var u *Unfinished
+	var dl *DeleteLog
 	var lerr error
 	if logPath != "" {
-		u, lerr = UnfinishedDelete(logPath, folder, goos)
+		if dl, lerr = ReadDeleteLog(logPath); lerr == nil {
+			u = dl.UnfinishedFor(folder, goos, d.Run)
+		}
 	}
-	return withMarker(u, lerr, folder, st)
+	return withMarker(u, lerr, folder, st, d, dl)
+}
+
+// unfinishedRouted is UnfinishedDelete with the folder's marker run (§15.5's routes), for the plan:
+// a log that cannot be read is its error. dl is the log read, for DM-10's "begun here".
+func unfinishedRouted(logPath, folder, goos string) (*Unfinished, *DeleteLog, error) {
+	dl, err := ReadDeleteLog(logPath)
+	if err != nil {
+		return nil, nil, err
+	}
+	return dl.UnfinishedFor(folder, goos, delmark.Read(folder).Run), dl, nil
 }
 
 // UnfinishedToSay is the delete of folder that a status line says (`mailarchive status`, the
@@ -60,6 +83,7 @@ func UnfinishedToSay(logPath, folder, goos string) (*Unfinished, error) {
 	if !errors.As(err, &le) || logPath == "" {
 		return u, err
 	}
+	// The marker could not be looked up, so its run is not known: the log's own match alone.
 	if lu, lerr := UnfinishedDelete(logPath, folder, goos); lerr == nil && lu != nil {
 		lu.Marker = delmark.Unknown
 		return lu, nil
@@ -67,14 +91,12 @@ func UnfinishedToSay(logPath, folder, goos string) (*Unfinished, error) {
 	return u, err
 }
 
-// withMarker is the log's answer (u, lerr) for folder with the marker's state st beside it.
-func withMarker(u *Unfinished, lerr error, folder string, st delmark.State) (*Unfinished, error) {
+// withMarker is the log's answer (u, lerr) for folder with the marker's state st and details d
+// beside it; dl is the log read (nil when none was), which says whether a delete only the marker
+// knows was begun here (DM-10).
+func withMarker(u *Unfinished, lerr error, folder string, st delmark.State, d delmark.Details, dl *DeleteLog) (*Unfinished, error) {
 	if st == delmark.Absent || st == delmark.Unknown {
 		return u, lerr
-	}
-	var d delmark.Details
-	if st == delmark.Regular {
-		d = delmark.Read(folder)
 	}
 	if lerr == nil && u != nil {
 		u.Marker, u.MarkerDetails = st, d
@@ -84,8 +106,22 @@ func withMarker(u *Unfinished, lerr error, folder string, st delmark.State) (*Un
 	only := &Unfinished{Folder: abs, Row: abs, Marker: st, MarkerOnly: true, MarkerDetails: d}
 	if lerr != nil {
 		only.LogUnreadable = util.StripBidi(cleanErr(lerr))
+	} else if d.Known && dl.RunBegunHere(d.Run) {
+		only.BegunHere = true
 	}
 	return only, nil
+}
+
+// WithoutSettings is u, a delete UnfinishedAt or UnfinishedToSay found with no deletion log asked,
+// marked as one whose log was not asked because MailArchive's settings folder could not be found
+// (why): a delete only the marker knows is then never said to have "no record" in this computer's
+// log (the slice-2 adversarial pass's LOW-4, its last item). `mailarchive status` asks it when
+// DefaultLogPath fails. u itself is returned (nil stays nil).
+func WithoutSettings(u *Unfinished, why error) *Unfinished {
+	if u != nil && u.MarkerOnly && why != nil {
+		u.NoSettings = util.StripBidi(cleanErr(why))
+	}
+	return u
 }
 
 // CouldNotCheck is why the marker's lookup failed at a folder that is there, when err (UnfinishedAt's
@@ -120,6 +156,12 @@ func MarkerRefusal(u *Unfinished, err error, done string) error {
 	case u.MarkerOnly && u.LogUnreadable != "":
 		// The log could not be read: never "has no record of it" (LOW-4 (a)).
 		return refuse(CaseUnfinished, "%s", delmark.LogUnreadableWords(done, u.LogUnreadable))
+	case u.MarkerOnly && u.NoSettings != "":
+		// No log was asked: the settings folder could not be found (LOW-4's last item).
+		return refuse(CaseUnfinished, "%s", delmark.NoSettingsWords(done, u.NoSettings))
+	case u.MarkerOnly && u.BegunHere:
+		// This computer's log began it (DM-10): never "begun on another computer".
+		return refuse(CaseUnfinished, "%s", delmark.BegunHereWords(done))
 	case u.MarkerOnly:
 		return refuse(CaseUnfinished, "%s", delmark.OnlyMarkerWords(done))
 	}
@@ -182,6 +224,11 @@ func MarkerRowText(u *Unfinished) string {
 	if u.LogUnreadable != "" {
 		// The log could not be read (LOW-4 (a); lead's words, owner-delegated 2026-11-02).
 		return "Delete not finished: " + begun + ", and MailArchive could not read this computer's deletion log (" + u.LogUnreadable + "). Check that file, then click Delete… to finish it."
+	}
+	if u.BegunHere {
+		// DM-10 (lead's words, owner-delegated 2026-11-02): begun here, though this computer's log no
+		// longer matches the folder.
+		return "Delete not finished: " + begun + ". It was begun on this computer, which no longer matches it to this folder (the drive may have been plugged in again under another name). Click Delete… to finish it."
 	}
 	return "Delete not finished: " + begun + ". This computer's deletion log has no record of it (it was begun on another computer or user account). Click Delete… to finish it."
 }

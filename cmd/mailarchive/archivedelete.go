@@ -1119,7 +1119,7 @@ func runAddArchive(args []string) error {
 	cfgPath := configFlag(fs)
 	fs.Usage = func() {
 		fmt.Fprintf(fs.Output(), "Usage: mailarchive add-archive [-config FILE] DIR\n\n"+
-			"Add DIR, a folder that holds an archive you already have (plain or encrypted), to Your archives, MailArchive Desktop's list of archives, as Open an archive folder… in MailArchive Desktop does; then delete-archive and unlist-archive can reach it. Nothing in the folder is changed, and it does not become the archive MailArchive Desktop shows.\n\n%s\n\nOptions:\n", addVerbExit)
+			"Add DIR, a folder that holds an archive you already have (plain or encrypted), to Your archives, MailArchive Desktop's list of archives, as Open an archive folder… in MailArchive Desktop does; then delete-archive and unlist-archive can reach it. Nothing in the folder is changed, and it does not become the archive MailArchive Desktop shows. A folder whose delete did not finish (one holding .mailarchive-deleting.json, for example a delete begun on another computer or user account) is added the same way, with or without its archive's files, so delete-archive can finish that delete.\n\n%s\n\nOptions:\n", addVerbExit)
 		fs.PrintDefaults()
 	}
 	// The flags may come before or after the folder (the 1.5.3 friction fixes' adversarial pass,

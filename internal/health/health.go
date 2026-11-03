@@ -131,6 +131,14 @@ type Input struct {
 	// a device), which MailArchive never writes: the line says to remove it by hand, never to click
 	// a Delete that refuses it (LOW-4 (b)).
 	DeleteMarkerNotRegular bool
+	// DeleteBegunHere: a delete only the marker knows whose run this computer's deletion log began,
+	// though no line of it matches the folder now (design-archive-delete §15.4's DM-10 note: a drive
+	// back under another name and another device number). The line says it was begun here.
+	DeleteBegunHere bool
+	// DeleteNoSettings is why MailArchive's settings folder, which holds this computer's deletion log,
+	// could not be found when only the marker answered (DeleteMarkerOnly): no log was asked, so the
+	// line never says it "has no record of it" (the slice-2 adversarial pass's LOW-4, last item).
+	DeleteNoSettings string
 	// DeleteCouldNotCheck is why the marker's lookup failed at a folder that is there, when this
 	// computer's deletion log has no line to say in its place: RED, since every backup and action
 	// refuses the folder "could not check" (LOW-4 (c)). "" when it did not fail.
@@ -1677,6 +1685,10 @@ func (in Input) deleteUnfinishedLine() string {
 		return DeleteMarkerNotRegularLine(in.deleteRow(), in.Surface, !in.DeleteMarkerOnly)
 	case in.DeleteMarkerOnly && in.DeleteLogUnreadable != "":
 		return DeleteMarkerLogUnreadableLine(in.deleteRow(), in.Surface, in.DeleteBegun, in.DeleteLogUnreadable)
+	case in.DeleteMarkerOnly && in.DeleteNoSettings != "":
+		return DeleteMarkerNoSettingsLine(in.deleteRow(), in.Surface, in.DeleteBegun, in.DeleteNoSettings)
+	case in.DeleteMarkerOnly && in.DeleteBegunHere:
+		return DeleteMarkerBegunHereLine(in.deleteRow(), in.Surface, in.DeleteBegun)
 	case in.DeleteMarkerOnly:
 		return DeleteMarkerOnlyLine(in.deleteRow(), in.Surface, in.DeleteBegun)
 	}
@@ -1700,6 +1712,39 @@ func DeleteMarkerLogUnreadableLine(out, surface, begun, cause string) string {
 		return what + " — check that file, then click Delete… on its row in Your archives to finish it."
 	}
 	return fmt.Sprintf("%s — check that file, then run mailarchive delete-archive -out %s, or click Delete… on its row in MailArchive Desktop, to finish it.", what, encmark.CommandPath(out))
+}
+
+// DeleteMarkerNoSettingsLine is the posture line for a delete the marker knows while MailArchive's
+// settings folder, which holds this computer's deletion log, could not be found (cause says why): no
+// log was asked, so it never says the log "has no record of it" (the slice-2 adversarial pass's
+// LOW-4, last item; lead's words, owner-delegated 2026-11-02).
+func DeleteMarkerNoSettingsLine(out, surface, begun, cause string) string {
+	what := "a delete of this archive did not finish"
+	if begun != "" {
+		what = "a delete of this archive begun " + begun + " did not finish"
+	}
+	what += ", and MailArchive could not find its settings folder, which holds this computer's deletion log (" + cause + ")"
+	if surface == "desktop" {
+		return what + " — check that your home folder is set (HOME, or AppData on Windows), then click Delete… on its row in Your archives to finish it."
+	}
+	return fmt.Sprintf("%s — check that your home folder is set (HOME, or AppData on Windows), then run mailarchive delete-archive -out %s, or click Delete… on its row in MailArchive Desktop, to finish it.", what, encmark.CommandPath(out))
+}
+
+// DeleteMarkerBegunHereLine is the posture line for a delete only the marker knows whose run this
+// computer's deletion log began, though the log no longer matches the folder (design-archive-delete
+// §15.4's DM-10 note; lead's words, owner-delegated 2026-11-02): it was begun here, never "on another
+// computer". The folder may not be under Your archives at its new place, so the Desktop's words say
+// how to list it.
+func DeleteMarkerBegunHereLine(out, surface, begun string) string {
+	what := "a delete of this archive did not finish"
+	if begun != "" {
+		what = "a delete of this archive begun " + begun + " did not finish"
+	}
+	what += "; it was begun on this computer, which no longer matches it to this folder (the drive may have been plugged in again under another name)"
+	if surface == "desktop" {
+		return what + " — click Delete… on its row in Your archives to finish it (add the folder first with Open an archive folder… if it is not listed)."
+	}
+	return fmt.Sprintf("%s — run mailarchive delete-archive -out %s (add it first with mailarchive add-archive if it is not in Your archives), or click Delete… on its row in MailArchive Desktop, to finish it.", what, encmark.CommandPath(out))
 }
 
 // DeleteMarkerNotRegularLine is the posture line for a name at the marker's that is not a regular

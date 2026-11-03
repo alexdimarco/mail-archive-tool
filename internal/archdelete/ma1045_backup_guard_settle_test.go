@@ -276,10 +276,9 @@ func ma1045StoppedInStep6(t *testing.T) (half, logPath, mbox string) {
 // the device number (MA-1048), so this test asks more: that THIS computer's log still finds its
 // delete — the device-and-file-number match alone finds no line (the remount is real), and the
 // refusal is the log's own words, without the "begun on another computer" sentence — which needs
-// §15.5's run-id route. Skipped until slice 5 builds that route (§15.7's DM-2 (b) correction, 3
-// November 2026); every assertion is kept, nothing narrowed.
+// §15.5's run-id route. A guard since slice 5 built that route (§15.7's DM-2 (b) correction, 3
+// November 2026: the slice-3 skip removed); every assertion is kept, nothing narrowed.
 func TestABackupIntoAHalfDeletedFolderOnARemountedDriveIsRefused(t *testing.T) {
-	t.Skip("open until slice 5 (design-archive-delete §15.5's run-id route; §15.7's DM-2 (b) correction, 3 November 2026): after a remount on macOS or Linux this computer's deletion log no longer finds its own delete of the folder by device and file number, so the refusal is the marker's \"begun on another computer\" words, not the log's (MED-1 of the G2 settle pass, MA-1044)")
 	if runtime.GOOS == "windows" {
 		t.Skip("Windows keys by the volume serial number, which survives a remount")
 	}

@@ -340,7 +340,7 @@ mailarchive delete-archive -out DIR                       # show the plan, then 
 mailarchive delete-archive -out DIR -plan-out plan.txt    # only save the plan; nothing is deleted
 mailarchive delete-archive -out DIR -record-out record.txt  # save the deletion record to a file
 mailarchive unlist-archive -out DIR                       # Remove from list: the folder and its files are kept
-mailarchive add-archive DIR                               # list an archive folder you already have (one made at the command line)
+mailarchive add-archive DIR                               # list an archive folder you already have (one made at the command line, or one whose delete did not finish)
 ```
 
 `delete-archive` and `unlist-archive` reach only an archive listed under Your
@@ -359,6 +359,14 @@ and it cannot be paused, resumed, switched to or removed from the list. Click **
 `mailarchive delete-archive -out DIR` again: the plan begins "This finishes the
 delete begun" and the date, and the deletion record counts what every run of it
 removed.
+
+**A delete begun on another computer.** A shared folder or a drive can hold an
+archive whose delete was begun on another computer or user account and did not
+finish (its folder holds `.mailarchive-deleting.json`). Its row here says Delete
+not finished too, and **Archive now** and **Run now** start nothing on it. Click
+**Delete…** on its row to finish the delete. A folder not under **Your archives**
+is added with **Open an archive folder…** or `mailarchive add-archive DIR`, without
+becoming the archive MailArchive Desktop shows.
 
 **After deleting the current archive**, no archive is chosen. Click **Switch to
 this archive** on another row under Your archives, or **Open an archive folder…**

@@ -108,6 +108,28 @@ func LogUnreadableWords(done, cause string) string {
 		cause + "), so " + done + "; nothing was changed. To finish it, check that file, then click Delete… on its row in MailArchive Desktop."
 }
 
+// BegunHereWords refuses an action (done says what was not done) when the marker's run is a
+// delete this computer's deletion log began, though no line of the log matches the folder now —
+// its path and its identity both changed, as after a drive is plugged in again under another name
+// on macOS or Linux (design-archive-delete §15.4's DM-10 note, §15.10 slice 5). This person began
+// the delete, so the words say so, never "begun on another computer"; the folder may not be under
+// Your archives at its new place, so they say how to list it (lead's words, owner-delegated
+// 2026-11-02: what happened first, the remedy named).
+func BegunHereWords(done string) string {
+	return "Delete not finished: a delete of this archive was begun on this computer and did not finish, so " + done +
+		"; nothing was changed. To finish it, click Delete… on its row in MailArchive Desktop (if the folder is not under Your archives, add it first with Open an archive folder…)."
+}
+
+// NoSettingsWords refuses an action (done says what was not done) when the marker is there and
+// MailArchive's settings folder, which holds this computer's deletion log, cannot be found (no
+// home folder set), cause saying why: the log was never asked, so the words never say it "has no
+// record of it" (the slice-2 adversarial pass's LOW-4, its last item; lead's words,
+// owner-delegated 2026-11-02: what happened first, no "again", the remedy).
+func NoSettingsWords(done, cause string) string {
+	return "Delete not finished: a delete of this archive did not finish (its folder still holds the delete's marker), and MailArchive could not find its settings folder, which holds this computer's deletion log (" +
+		cause + "), so " + done + "; nothing was changed. To finish it, check that your home folder is set (HOME, or AppData on Windows), then click Delete… on its row in MailArchive Desktop."
+}
+
 // OnlyMarkerTerminal is the terminal's line after MsgOnlyMarker; dir is the folder as
 // the person types it (quoted for their command line).
 func OnlyMarkerTerminal(dir string) string {

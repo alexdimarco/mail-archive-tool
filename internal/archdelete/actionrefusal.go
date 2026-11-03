@@ -40,7 +40,10 @@ func ActionRefusal(logPath, folder, done string) error {
 	if logPath == "" {
 		p, err := DefaultLogPath()
 		if err != nil {
-			if r := MarkerActionRefusal(folder, done); r != nil {
+			// The marker still refuses, in words that say no log was asked (the slice-2 adversarial
+			// pass's LOW-4, its last item), never that the log "has no record of it".
+			u, merr := UnfinishedAt("", folder, runtime.GOOS)
+			if r := MarkerRefusal(WithoutSettings(u, err), merr, done); r != nil {
 				return r
 			}
 			return refuse(CaseLogUnreadable, msgActionNoSettings, util.StripControl(err.Error()))

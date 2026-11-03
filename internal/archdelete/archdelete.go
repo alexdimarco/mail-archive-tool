@@ -24,6 +24,7 @@ import (
 	"strings"
 	"time"
 
+	"mail-archive-tool/internal/delmark"
 	"mail-archive-tool/internal/schedule"
 	"mail-archive-tool/internal/util"
 )
@@ -232,6 +233,12 @@ type DeletePlan struct {
 	// then complete with what it cannot name kept, as DM-9's marker case is, and the earlier runs'
 	// count is not known.
 	NoteGone bool
+	// Disagrees: this computer's log has a delete of this folder that wrote its `marked` line, but the
+	// folder holds its anchor with no marker, or a marker naming another delete (§15.4's DM-27: the
+	// marker removed, or another drive with the same device and file numbers). The plan is an ordinary
+	// delete that claims to finish nothing (Finishes nil), with its own record lookup — never that
+	// delete's record, so step 8 cannot forget another vault's key — and says why (MsgLogDisagrees).
+	Disagrees bool
 }
 
 // KeyAtPlan is the keyring's forget plan for the record the plan found: Known when it was
@@ -554,11 +561,20 @@ func planOf(folder string, deps Deps) (*DeletePlan, error) {
 	if err == nil && deps.Log != "" {
 		// An ordinary delete may still finish one that stopped part way (D1): said, never a
 		// refusal — a log that cannot be read leaves it unsaid. With no line of this computer's
-		// log for it, the folder's marker may name one (§15.4, DM-8).
-		if u, lerr := UnfinishedDelete(deps.Log, p.Folder, deps.goos()); lerr == nil {
-			p.Finishes = u
-			if u == nil {
+		// log for it, the folder's marker may name one (§15.4, DM-8). The log is asked with the
+		// marker's run (§15.5): after a remount this computer's own line still matches.
+		if u, dl, lerr := unfinishedRouted(deps.Log, p.Folder, deps.goos()); lerr == nil {
+			switch {
+			case u != nil && logAndFolderDisagree(p.Folder, u):
+				// DM-27: this folder may not be that delete's; an ordinary delete, claiming nothing.
+				p.Disagrees = true
+			case u != nil:
+				p.Finishes = u
+			default:
 				p.Finishes = markerFinishes(p.Folder)
+				if p.Finishes != nil {
+					p.Finishes.BegunHere = dl.RunBegunHere(p.Finishes.FirstRun)
+				}
 			}
 		}
 	}
@@ -569,7 +585,7 @@ func planOf(folder string, deps Deps) (*DeletePlan, error) {
 	if r == nil || (r.Case != CaseUnreachable && r.Case != CaseNotArchive) {
 		return nil, err
 	}
-	u, lerr := UnfinishedDelete(deps.Log, folder, deps.goos())
+	u, dl, lerr := unfinishedRouted(deps.Log, folder, deps.goos())
 	if lerr != nil {
 		// Said, not dropped (del-s1b-A3-10): a log that cannot be read would otherwise
 		// turn a §5.4 re-run into the plain refusal with no hint why.
@@ -579,11 +595,34 @@ func planOf(folder string, deps Deps) (*DeletePlan, error) {
 		if r.Case == CaseNotArchive {
 			// No line of this computer's log: a folder holding the delete marker is finished from the
 			// marker, with only MailArchive's own names (§15.4, DM-19).
-			return planMarkerNoAnchor(folder, deps, r)
+			return planMarkerNoAnchor(folder, deps, r, dl)
 		}
 		return nil, err
 	}
 	return planUnfinished(folder, deps, u, r)
+}
+
+// logAndFolderDisagree is DM-27's test (§15.4) for a folder that holds its anchor and a delete this
+// computer's log matched (u): a run of that delete wrote its `marked` line — so it created, or found,
+// the folder's marker at step 6 — yet the folder holds no marker, or one naming another delete. The
+// marker was removed (by hand, a sync conflict, an antivirus), or this is another drive with the same
+// device and file numbers (two rotation drives). An empty or damaged marker, whose run cannot be
+// read, does not disagree.
+func logAndFolderDisagree(folder string, u *Unfinished) bool {
+	if !u.Marked {
+		return false
+	}
+	st, err := delmark.Present(folder)
+	switch {
+	case err != nil:
+		return false
+	case st == delmark.Absent:
+		return true
+	case st != delmark.Regular:
+		return false
+	}
+	d := delmark.Read(folder)
+	return d.Known && d.Run != u.Run && d.Run != u.FirstRun
 }
 
 // logUnreadable is the sentence added to a refusal when deletions.log cannot be read.
@@ -786,7 +825,9 @@ func UnlistRefusal(folder string, deps Deps) error {
 			return false
 		}
 		// A log that cannot be read refuses nothing here, as the row's state reads it (RowsCheck).
-		u, err := UnfinishedDelete(deps.Log, abs, deps.goos())
+		// Asked with the folder's marker run (§15.5), so a delete this log knows is still known after a
+		// remount, as the row says it (DM-6); a delete only the marker knows is not (DM-21).
+		u, _, err := unfinishedRouted(deps.Log, abs, deps.goos())
 		return err == nil && u != nil
 	}
 	return unlistRefusal(folder, deps, sameFolder, unreachableOrNoArchive, unfinished)

@@ -2127,7 +2127,7 @@ or needed here.
 > - Not built here: slice 5 (the run-id route, the remount guard, DM-10's "begun here" words, the
 >   DM-27 disagreement rule) and slice 6 (auto-pause, Q5). The plan from the marker still says
 >   "begun on another computer or user account" when this computer's log lost the line (DM-10's
->   words are slice 5's).
+>   words are slice 5's). *(Built in slice 5, 3 November 2026: see "Slice 5" at the end of §14.)*
 
 > **Slice 4's adversarial pass, settled 3 November 2026 (MA-1047, MA-1051, MA-1057 and MA-966
 > amended; no new id).** The pass found one MED and five LOWs, no HIGH; in every probe the delete
@@ -2210,6 +2210,86 @@ or needed here.
 > - *Existing tests changed (none narrowed):* the crash test's "marker" cases now assert complete
 >   (they pinned the open limit); `TestANoManifestReRunSaysWhatIsLeftAndHowToGoOn` and the guide's
 >   `TestHowToUseMailArchiveExplainsDeleteAndRemoveFromList` take the new words.
+
+> **Slice 5, 3 November 2026 (§15.10 slice 5: the log after a remount, and disagreement; MA-1050 and
+> MA-1056 added; MA-1044, MA-1048 and MA-1052 amended).** New words below are lead's words,
+> owner-delegated 2026-11-02 (what happened first, never "again" to a person who began no delete, the
+> remedy named). The builder's calls, for the lead and the slice's adversarial pass:
+> - *Where the routes live.* `DeleteLog.UnfinishedFor(folder, goos, markerRun)` (`dellog.go`): the
+>   log asked with the run the folder's marker names. `UnfinishedDelete` stays the identity match
+>   alone (the MED-1 guard's precondition asks exactly that). Everything that says or decides
+>   "this computer's delete of the folder" reads the marker's run first: `UnfinishedAt` (so every
+>   backup and action), the rows (`RowsCheck`, the marker's bounded read kept in its page memo),
+>   `status` and Status & health, the plan (`unfinishedRouted`), and — a correction beside DM-21,
+>   which DM-6 assumed — Remove from list (MA-1029) and uninstall's `PendingDeletes` (MA-1007). They
+>   still never refuse on the marker alone; without the route, after a remount the row would say "Delete
+>   not finished: click Delete again" while Remove from list let its row go and uninstall removed the
+>   log it is finished from.
+> - *The run-id route (§15.5)* and *the identity route (DM-10 item 1)* as written: two proofs each,
+>   never after `folder removed`, never by the file number alone. `Unfinished.ByRun` marks either.
+> - *DM-6:* `planNoAnchor` accepts a folder whose identity differs from the line's only when its own
+>   marker, read through the plan's root (`markerNamesIn`), names the line's run or first run. The plan
+>   then takes the line's record, captured values and `key forgotten` state (R3:NF-NF2-RERUN).
+> - *DM-10 item 2, the `first_run` ending, with §15's DM-8 qualification stated in the code*: a finished
+>   line that ends its run ends the delete its started line names as `first_run`, whatever folder
+>   either names. Builder's call: "ends" is the same test the log already uses for a run's own finished
+>   line (any outcome but refused and a partial that leaves the row unfinished), not `complete` alone —
+>   a "Not fully deleted" run that removed the row (ticked unrecorded copies left) also ends the delete,
+>   and the old row should clear with it. The ending lives in the scan alone (`newDeleteLog`'s fast
+>   path does not know it, so such a log is read whole: a cost, no change of answer). Residual, as
+>   DM-8's qualification says: a marker copied into another folder and finished there on this computer
+>   ends the original's delete in this log early; the original's own marker still refuses its backups
+>   and finishes by the marker-only plan (now with the "begun here" words, below).
+> - *"Begun here" (DM-10's third case).* `DeleteLog.RunBegunHere`: a started line's own run, or the
+>   first run of one *not* planned from a marker (a `from_marker` line's first run may have been begun
+>   anywhere). `Unfinished.BegunHere` on a delete only the marker knows. Words: the row "Delete not
+>   finished: a delete of this archive begun DATE did not finish. It was begun on this computer, which
+>   no longer matches it to this folder (the drive may have been plugged in again under another name).
+>   Click Delete… to finish it."; `status` and Status & health (`health.DeleteMarkerBegunHereLine`)
+>   "…did not finish; it was begun on this computer, which no longer matches it to this folder (…) —
+>   run mailarchive delete-archive -out DIR (add it first with mailarchive add-archive if it is not in
+>   Your archives), or click Delete… on its row in MailArchive Desktop, to finish it." (the Desktop:
+>   "— click Delete… on its row in Your archives to finish it (add the folder first with Open an archive
+>   folder… if it is not listed)."); every backup and action (`delmark.BegunHereWords`) "Delete not
+>   finished: a delete of this archive was begun on this computer and did not finish, so WHAT; nothing
+>   was changed. To finish it, click Delete… on its row in MailArchive Desktop (if the folder is not
+>   under Your archives, add it first with Open an archive folder…)." — the design named the row,
+>   `status` and the plan; the refusals said "begun on another computer … or this computer's deletion
+>   log has no record of it", which is not true there either. The plan from the marker says "It was
+>   begun on this computer, which no longer matches it to this folder (the drive may have been plugged
+>   in again under another name), so this plan is made from the note the delete left in the folder." in
+>   place of "…begun on another computer or user account.", and its earlier count "not known: this
+>   computer's deletion log no longer matches the delete's earlier runs to this folder". The record's
+>   DM-8 labels are unchanged (no second proof).
+> - *DM-27, the disagreement rule* (`logAndFolderDisagree`, `DeletePlan.Disagrees`): only with the
+>   anchor there and the delete's `marked` line in this log; no marker, or a marker naming another run
+>   (an empty or damaged one does not disagree). The plan claims nothing (no Finishes, no first run, no
+>   captured values carried) and says "This computer's deletion log has a delete of this folder that
+>   did not finish, but this folder does not hold the note that delete left in its archive's folder. It
+>   may be another drive's archive with the same name. Delete it only if you mean to delete this
+>   archive." — the design's builder's words with what happened said first, so "that delete" names one.
+>   Its record lookup is its own by construction (an anchor-there plan never takes the line's record).
+>   Builder's call: `samePlan` does not compare it — the plan's re-check under the lock reads this run's
+>   own started line, which has no `marked` line yet, so it could never hold; a marker that appears
+>   between the plan and the typed name is met at step 6 as §15.2 point 4 says (kept, removed last).
+> - *LOW-4's last item (the slice-2 settle; the slice-2b note's "Not changed: a computer whose settings
+>   folder cannot be found")*: worded and built. `ActionRefusal`'s no-settings branch and `status` with
+>   no log path (`archdelete.WithoutSettings`) say "…and MailArchive could not find its settings folder,
+>   which holds this computer's deletion log (CAUSE)…" with "check that your home folder is set (HOME,
+>   or AppData on Windows), then …" (`delmark.NoSettingsWords`, `health.DeleteMarkerNoSettingsLine`),
+>   never "has no record of it". Not changed: the Desktop's rows when it has no deletion log path at all
+>   (no config path and no home folder), which no shipped launch reaches.
+> - *Help text (slice 4's add-archive and Open an archive folder… behaviour):* the guide's "Deleting an
+>   archive" gains "A delete begun on another computer: …" (every platform), `add-archive -h` says a
+>   folder whose delete did not finish is added too, and the README says both.
+> - *The MED-1 guard:* `TestABackupIntoAHalfDeletedFolderOnARemountedDriveIsRefused`'s slice-3 skip is
+>   removed, every assertion kept (its Windows skip stays, with its reason). The two no-marker encoders
+>   stay skipped (§15.6, DM-1 (b)).
+> - *Not covered, for the adversarial pass:* a no-anchor folder holding a marker that names another run
+>   while this computer's line matches by path and identity — DM-27 speaks of the anchor there, so the
+>   no-anchor re-run still plans from this computer's line and its record (as before slice 5); a
+>   rotation drive in that state would give step 8 the line's record. The slice-4 pass's MED-1 change
+>   (when a delete ends complete) also still owes its pass, as its note says.
 
 ## 15. The delete marker (G2 for another computer, another account, and a remounted drive)
 
@@ -2910,6 +2990,10 @@ on macOS and Linux is a lab row (pending: lab).
 > number recorded) is the MED-1 guard and MA-1050, which need §15.5's run-id route: slice 5 (DM-2
 > (b)). Read it as "to be proven by MA-1050 and the MED-1 guard in slice 5". The real unplug and
 > replug stays lab row MA-1055.
+>
+> *Noted 3 November 2026 (slice 5):* now proven on one computer by MA-1050 and the MED-1 guard (its
+> skip removed); the real unplug and replug is still lab row MA-1055. As built, Remove from list and
+> uninstall also ask the log with the marker's run (§14, "Slice 5").
 
 **The log's match changes, additively.** Today a started line is this folder's only when the
 folder's device + file number now equal the recorded ones, so after a remount this computer's own
@@ -3142,6 +3226,8 @@ no-marker case they modelled is §15.6's second limit, stated, not a guard.
 > test keeps every assertion, and it is skipped today, so this is not a gate reduction. Under Q1,
 > the fixture "the real delete stopped at step 6 by a removal fault" still leaves a marker (it is
 > written just before the first removal); the fault must be on a removal, not before it.
+> *Done 3 November 2026 (slice 5):* the remount test's skip is removed and it passes as a guard,
+> every assertion as written (its Windows skip stays).
 >
 > **Folded — test additions by condition** (each prove-fail → prove-pass):
 > MA-1046: a re-run *without* an anchor never creates a marker (DM-9; prove-fail: let it);

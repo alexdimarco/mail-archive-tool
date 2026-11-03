@@ -50,11 +50,16 @@ func runStatus(args []string) error {
 	// A marker lookup that fails does not hide the log's line (UnfinishedToSay; LOW-3).
 	// Its line says a log that could not be read, a name at the marker's that is not a regular file,
 	// and a lookup the log does not answer for as what they are (the slice-2 pass's LOW-4).
+	// With no settings folder, no log is asked: a delete only the marker knows is said so, never with
+	// "has no record of it" (WithoutSettings; the slice-2 pass's LOW-4, last item). A marker whose run
+	// this computer's log began is said to be begun here (DM-10).
 	if u, err := archdelete.UnfinishedToSay(logPath, in.Out, runtime.GOOS); err == nil && u != nil {
+		u = archdelete.WithoutSettings(u, lerr)
 		in.DeleteUnfinished = true
 		in.DeleteRow = u.Row // the spelling delete-archive -out finds the row by
 		in.DeleteMarkerOnly, in.DeleteBegun = u.MarkerOnly, archdelete.MarkerBegun(u)
 		in.DeleteLogUnreadable, in.DeleteMarkerNotRegular = u.LogUnreadable, u.Marker == delmark.NotRegular
+		in.DeleteBegunHere, in.DeleteNoSettings = u.BegunHere, u.NoSettings
 	} else {
 		in.DeleteCouldNotCheck = archdelete.CouldNotCheck(err)
 	}

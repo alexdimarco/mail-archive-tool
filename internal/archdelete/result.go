@@ -210,6 +210,15 @@ const (
 	// MsgNoteGone is the plan's line for a no-anchor re-run whose folder no longer holds the note
 	// this delete left there (DeletePlan.NoteGone; the slice-4 adversarial pass's MED-1).
 	MsgNoteGone = "The archive's files are already gone, and so is the note this delete left in its folder: an earlier run of this delete, here or on another computer or user account, removed them. What MailArchive can still name is removed; everything else in the folder is kept."
+	// MsgMarkerBegunHere follows "This finishes the delete begun DATE." in place of MsgMarkerNoRecord
+	// when the marker's run is a delete this computer's log began, though no line of the log matches
+	// the folder now (DM-10's third case: a drive back under another name and another device number;
+	// lead's words, owner-delegated 2026-11-02).
+	MsgMarkerBegunHere = "It was begun on this computer, which no longer matches it to this folder (the drive may have been plugged in again under another name), so this plan is made from the note the delete left in the folder."
+	// MsgLogDisagrees is the plan's line when this computer's log and the folder disagree (§15.4's
+	// DM-27; lead's words, owner-delegated 2026-11-02: the design's builder's words with what happened
+	// said first, so "that delete" names one): the plan claims to finish nothing.
+	MsgLogDisagrees = "This computer's deletion log has a delete of this folder that did not finish, but this folder does not hold the note that delete left in its archive's folder. It may be another drive's archive with the same name. Delete it only if you mean to delete this archive."
 )
 
 // notKnownNoteGoneWhy is why the earlier runs' count is not known for such a re-run.
@@ -220,7 +229,8 @@ const elsewhereValue = "the folder was not found here; you said this delete was 
 
 // FinishesNotes are the plan's sentences after FinishesLine, on the Desktop's panel and at the
 // terminal: none for an ordinary delete or one this computer's log saw begin, but for a no-anchor
-// re-run whose folder lost the delete's note (NoteGone).
+// re-run whose folder lost the delete's note (NoteGone), and for a folder that disagrees with this
+// computer's log (Disagrees, DM-27; then FinishesLine is "").
 func (p *DeletePlan) FinishesNotes() []string {
 	var out []string
 	if p.Elsewhere {
@@ -229,8 +239,15 @@ func (p *DeletePlan) FinishesNotes() []string {
 	if p.NoteGone {
 		out = append(out, MsgNoteGone)
 	}
+	if p.Disagrees {
+		out = append(out, MsgLogDisagrees)
+	}
 	if f := p.Finishes; f != nil && f.FromMarker {
-		out = append(out, MsgMarkerNoRecord)
+		if f.BegunHere {
+			out = append(out, MsgMarkerBegunHere)
+		} else {
+			out = append(out, MsgMarkerNoRecord)
+		}
 		// DM-28: a backup into the archive after its delete began (an older MailArchive elsewhere).
 		if began := f.FirstStarted; !began.IsZero() && p.Captured.LastBackup.After(began) {
 			out = append(out, MsgMarkerBackupAfter)
@@ -288,11 +305,18 @@ func (p *DeletePlan) notKnownWhy() string {
 	if p.NoteGone {
 		return notKnownNoteGoneWhy
 	}
+	if p.Finishes != nil && p.Finishes.FromMarker && p.Finishes.BegunHere {
+		return notKnownBegunHereWhy
+	}
 	if p.Finishes != nil && p.Finishes.FromMarker {
 		return notKnownMarkerWhy
 	}
 	return notKnownWhy
 }
+
+// notKnownBegunHereWhy is why it is not known for a delete planned from the folder's marker whose run
+// this computer's log began (DM-10; lead's words, owner-delegated 2026-11-02).
+const notKnownBegunHereWhy = "this computer's deletion log no longer matches the delete's earlier runs to this folder"
 
 // finishedLine is the result's line of a delete that finishes one that stopped part way: the
 // whole delete's count, beside this run's own in the line before it (the 1.5.3 re-walk's N6: the

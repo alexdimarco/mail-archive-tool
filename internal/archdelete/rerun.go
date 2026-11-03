@@ -89,7 +89,9 @@ func markerFinishes(folder string) *Unfinished {
 // that record; not recorded here, its kind is not known, step 8 does not apply and no record is
 // touched; and it removes only MailArchive's own names (DM-19, planNoAnchor). orig is the refusal
 // a folder without the marker gets.
-func planMarkerNoAnchor(folder string, deps Deps, orig *Refusal) (*DeletePlan, error) {
+//
+// dl is this computer's log as read: a marker whose run it began is said to be begun here (DM-10).
+func planMarkerNoAnchor(folder string, deps Deps, orig *Refusal, dl *DeleteLog) (*DeletePlan, error) {
 	abs := cleanAbs(folder)
 	st, err := delmark.Present(abs)
 	if err != nil {
@@ -111,6 +113,7 @@ func planMarkerNoAnchor(folder string, deps Deps, orig *Refusal) (*DeletePlan, e
 	if st == delmark.Regular {
 		u.MarkerDetails = delmark.Read(abs)
 		u.FirstRun, u.FirstStarted = u.MarkerDetails.Run, u.MarkerDetails.BeganAt()
+		u.BegunHere = dl.RunBegunHere(u.FirstRun)
 	}
 	if deps.Record != nil {
 		ref, rerr := deps.Record(abs)
@@ -122,6 +125,13 @@ func planMarkerNoAnchor(folder string, deps Deps, orig *Refusal) (*DeletePlan, e
 		}
 	}
 	return planNoAnchor(abs, deps, u, orig)
+}
+
+// markerNamesIn reports whether the marker in root (an os.Root on folder) names u's delete: its run
+// is u's run or first run (§15.5). A marker whose run cannot be read names none.
+func markerNamesIn(root *os.Root, folder string, u *Unfinished) bool {
+	d := delmark.ReadIn(root, folder)
+	return d.Known && (d.Run == u.Run || d.Run == u.FirstRun)
 }
 
 // volumeKeptAcrossReplug: this system's volume number survives a drive unplugged and plugged in
@@ -256,7 +266,10 @@ func planNoAnchor(abs string, deps Deps, u *Unfinished, orig *Refusal) (*DeleteP
 	if err != nil {
 		return nil, refuse(CaseUnreachable, msgUnreachable)
 	}
-	if id != u.Identity {
+	// Another identity than the started line records is another folder (del-s1b-A1-01), unless the
+	// folder's own marker names this delete (§15.5's run-id route after a remount, DM-6): read here,
+	// through the root on the very folder planned.
+	if id != u.Identity && !markerNamesIn(root, abs, u) {
 		return nil, orig
 	}
 	p := &DeletePlan{Folder: abs, Name: onDiskName(abs, fi), Identity: id, Kind: u.Kind, Rerun: RerunNoAnchor, Finishes: u}

@@ -339,6 +339,20 @@ type Unfinished struct {
 	// (DM-27). With the anchor and the marker both gone, step 6 had finished (DeletePlan.NoteGone;
 	// the slice-4 adversarial pass's MED-1).
 	Marked bool
+	// ByRun: this computer's log found the delete through §15.5's run id — the folder's marker names
+	// its run or first run — because the folder's identity (and, by DM-10's identity route, its path)
+	// no longer matches its started line alone: the drive was plugged in again (MED-1). Identity is
+	// still the started line's; the folder's now is the plan's.
+	ByRun bool
+	// BegunHere: a delete only the marker knows (MarkerOnly) whose run is one this computer's
+	// deletion log began, though no line matches the folder now — its path and identity both changed
+	// (DM-10's third case). The row, `status`, the plan and the refusals say it was begun on this
+	// computer, never "on another computer".
+	BegunHere bool
+	// NoSettings is why MailArchive's settings folder, which holds this computer's deletion log, could
+	// not be found when only the marker answered (MarkerOnly), in words fit to show: no log was asked,
+	// so no words say it "has no record of it" (the slice-2 adversarial pass's LOW-4, its last item).
+	NoSettings string
 	// counted: this run's own finished line was read.
 	counted bool
 }
@@ -445,6 +459,19 @@ type DeleteLog struct {
 	// began), or a started line with no run id (none is written so).
 	pending bool
 	stat    *statMemo
+	// firstOf is each started line's first run by its own run (D1), whatever folder it names: a
+	// finished line that ends a run ends its first run's delete too (DM-10 item 2).
+	firstOf map[string]string
+	// begun are the runs this computer's log began: each started line's own run, and the first run
+	// of one that finishes a delete this log began (not one planned from a folder's marker, whose
+	// first run may have been begun anywhere). DM-10's "begun here".
+	begun map[string]bool
+}
+
+// finishedEnds reports a finished line that ends its run's delete: any outcome but refused (which
+// changed nothing) and a partial that leaves the row "Delete not finished".
+func finishedEnds(l logLine) bool {
+	return l.Event == evFinished && l.Outcome != outRefused && !(l.Outcome == outPartial && l.Unfinished)
 }
 
 // ReadDeleteLog reads the log at path once; an absent log has no lines.
@@ -457,10 +484,24 @@ func ReadDeleteLog(path string) (*DeleteLog, error) {
 }
 
 func newDeleteLog(lines []logLine, stat *statMemo) *DeleteLog {
-	l := &DeleteLog{lines: lines, stat: stat}
+	l := &DeleteLog{lines: lines, stat: stat, firstOf: map[string]string{}, begun: map[string]bool{}}
+	for _, ln := range lines {
+		if ln.Event != evStarted || ln.Run == "" {
+			continue
+		}
+		l.begun[ln.Run] = true
+		if ln.FirstRun != "" {
+			l.firstOf[ln.Run] = ln.FirstRun
+			if !ln.FromMarker {
+				l.begun[ln.FirstRun] = true
+			}
+		}
+	}
 	// A run whose own finished line ends it (any outcome but a partial that leaves the row
 	// unfinished) is out of UnfinishedDelete's open list by the end of the log, whatever
 	// folder it names: refused removes it, any other ends every open delete of its folder.
+	// (DM-10 item 2's `first_run` ending is UnfinishedFor's scan alone: a first run it ends
+	// leaves this log pending, which only costs that scan.)
 	ended := map[string]bool{}
 	for _, ln := range lines {
 		if ln.Event == evFinished && ln.Run != "" && !(ln.Outcome == outPartial && ln.Unfinished) {
@@ -529,7 +570,9 @@ func (dl *DeleteLog) PendingKinds(goos string) []PendingDelete {
 			continue
 		}
 		seen[l.Folder] = true
-		if u := dl.Unfinished(l.Folder, goos); u != nil {
+		// With the folder's marker run (§15.5): a delete of this log stays pending after its drive
+		// was plugged in again under another device number.
+		if u := dl.UnfinishedFor(l.Folder, goos, delmark.Read(l.Folder).Run); u != nil {
 			name := u.Row
 			if name == "" {
 				name = u.Folder
@@ -545,6 +588,41 @@ func (dl *DeleteLog) PendingKinds(goos string) []PendingDelete {
 
 // Unfinished is UnfinishedDelete of folder against this read of the log.
 func (dl *DeleteLog) Unfinished(folder, goos string) *Unfinished {
+	return dl.UnfinishedFor(folder, goos, "")
+}
+
+// RunBegunHere reports whether run is a delete this computer's log began (DM-10): a started line's
+// own run, or the first run of one that finishes a delete this log began — whatever folder it names,
+// and whether or not that delete has ended. A first run carried from a folder's marker (a delete
+// planned from the marker) is not: it may have been begun anywhere.
+func (dl *DeleteLog) RunBegunHere(run string) bool {
+	return dl != nil && run != "" && dl.begun[run]
+}
+
+// UnfinishedFor is Unfinished with markerRun, the run the folder's delete marker names ("" when it
+// holds no marker whose run can be read), for §15.5's two routes after a drive is plugged in again
+// (MED-1; §15.10 slice 5). A started line is the folder's, as before, when it names the folder by
+// path or row and its recorded identity is the folder's now; and also —
+//   - the run-id route: when it names the folder by path or row, its identity differs, and the
+//     marker names its run or first run;
+//   - the identity route (DM-10 item 1): when it names the folder under any path, the marker names
+//     its run or first run, AND its recorded identity equals the folder's now (another drive
+//     letter on Windows, whose volume serial number survives).
+//
+// Each takes two proofs, so a marker copied into another folder matches neither (DM-8). Never after
+// the line's `folder removed` (a folder found after it is a new folder, whatever marker it holds),
+// and never by the file number alone (two rotation drives formatted alike can give a folder the same
+// one). Such an answer has ByRun set. A finished line that ends a run whose started line names a
+// first run ends that first run's delete too, whatever folder it named (DM-10 item 2), so a delete
+// finished at a drive's new letter or name clears the row at its old one.
+//
+// DM-8's qualification (§15, 3 November 2026), stated: "run never decides alone" holds for the two
+// routes above, not for that ending — the first run a finishing run names may have come from a
+// marker with no second proof (§15.4's marker-only plan copies it). A marker copied into another
+// folder and finished there on this computer can end the original's delete in this log early; the
+// original folder's own marker still refuses its backups and still finishes by the marker-only plan,
+// so nothing is written into it.
+func (dl *DeleteLog) UnfinishedFor(folder, goos, markerRun string) *Unfinished {
 	if dl == nil || !dl.pending {
 		return nil
 	}
@@ -553,6 +631,16 @@ func (dl *DeleteLog) Unfinished(folder, goos string) *Unfinished {
 	}
 	lines := dl.lines
 	stat := dl.stat.stat
+	ofMarker := func(run, first string) bool { return markerRun != "" && (run == markerRun || first == markerRun) }
+	var now Identity
+	there := false
+	if markerRun != "" {
+		now, there = folderIdentity(folder)
+	}
+	// byIdentity: the started line is the folder's by DM-10's identity route alone.
+	byIdentity := func(l logLine) bool {
+		return there && l.Identity != nil && *l.Identity != (Identity{}) && *l.Identity == now && ofMarker(l.Run, l.FirstRun)
+	}
 	names := func(l logLine) bool {
 		return sameFolderStat(stat, l.Folder, folder, goos) || (l.Row != "" && sameFolderStat(stat, l.Row, folder, goos))
 	}
@@ -575,12 +663,61 @@ func (dl *DeleteLog) Unfinished(folder, goos string) *Unfinished {
 		}
 		return false
 	}
+	// readLater reads a line after a started line into the delete it belongs to: by its run id, or
+	// (a line with none) the folder's latest.
+	readLater := func(l logLine) {
+		var u *Unfinished
+		if l.Run != "" {
+			u = byRun[l.Run]
+		} else if names(l) {
+			u = latest()
+		}
+		if u == nil || !isOpen(u) {
+			return
+		}
+		switch l.Event {
+		case evFolderRemoved, evFolderKept:
+			u.FolderRemoved = l.Event == evFolderRemoved
+		case evMarked:
+			markedFirst[u.FirstRun] = true
+		case evKeyForgotten:
+			u.KeyForgotten = true
+		case evFinished:
+			switch {
+			case l.Outcome == outPartial && l.Unfinished:
+				// the row stays "Delete not finished"; what this run removed counts toward the
+				// delete that finishes it (D1); a line with no count (an older one) is not known.
+				u.counted = true
+				if l.Removed != nil {
+					u.Removed += *l.Removed
+					if l.RemovedBytes != nil {
+						u.RemovedBytes += *l.RemovedBytes
+					}
+				} else {
+					u.RemovedKnown = false
+				}
+			case l.Outcome == outRefused:
+				for i, o := range open {
+					if o == u {
+						open = append(open[:i], open[i+1:]...)
+						break
+					}
+				}
+			default:
+				open = nil
+			}
+		}
+	}
 	for _, l := range lines {
 		if l.Event == evStarted {
+			viaIdentity := false
 			if !names(l) {
-				continue
+				if !byIdentity(l) {
+					continue
+				}
+				viaIdentity = true
 			}
-			u := &Unfinished{Folder: l.Folder, Row: l.Row, Kind: kindOf(l.Kind), KeyForgotten: l.KeyForgotten, Run: l.Run, FromMarker: l.FromMarker}
+			u := &Unfinished{Folder: l.Folder, Row: l.Row, Kind: kindOf(l.Kind), KeyForgotten: l.KeyForgotten, Run: l.Run, FromMarker: l.FromMarker, ByRun: viaIdentity}
 			u.Started, _ = time.Parse(time.RFC3339Nano, l.At)
 			// The delete it belongs to (D1): an earlier one it finishes, with what that removed,
 			// or itself.
@@ -624,56 +761,36 @@ func (dl *DeleteLog) Unfinished(folder, goos string) *Unfinished {
 			}
 			continue
 		}
-		var u *Unfinished
-		if l.Run != "" {
-			u = byRun[l.Run]
-		} else if names(l) {
-			u = latest()
-		}
-		if u == nil || !isOpen(u) {
-			continue
-		}
-		switch l.Event {
-		case evFolderRemoved, evFolderKept:
-			u.FolderRemoved = l.Event == evFolderRemoved
-		case evMarked:
-			markedFirst[u.FirstRun] = true
-		case evKeyForgotten:
-			u.KeyForgotten = true
-		case evFinished:
-			switch {
-			case l.Outcome == outPartial && l.Unfinished:
-				// the row stays "Delete not finished"; what this run removed counts toward the
-				// delete that finishes it (D1); a line with no count (an older one) is not known.
-				u.counted = true
-				if l.Removed != nil {
-					u.Removed += *l.Removed
-					if l.RemovedBytes != nil {
-						u.RemovedBytes += *l.RemovedBytes
-					}
-				} else {
-					u.RemovedKnown = false
+		readLater(l)
+		// A run that ends the delete it finishes ends that delete's first run here too, whatever folder
+		// either names (DM-10 item 2), after its own line is read as before.
+		if f := dl.firstOf[l.Run]; f != "" && l.Run != "" && finishedEnds(l) {
+			kept := open[:0:0]
+			for _, o := range open {
+				if o.FirstRun != f {
+					kept = append(kept, o)
 				}
-			case l.Outcome == outRefused:
-				for i, o := range open {
-					if o == u {
-						open = append(open[:i], open[i+1:]...)
-						break
-					}
-				}
-			default:
-				open = nil
 			}
+			open = kept
 		}
 	}
 	if len(open) == 0 {
 		return nil
 	}
-	now, there := folderIdentity(folder)
+	if markerRun == "" {
+		now, there = folderIdentity(folder)
+	}
 	for i := len(open) - 1; i >= 0; i-- {
 		u := open[i]
-		if there && (u.FolderRemoved || (u.Identity != Identity{} && u.Identity != now)) {
+		if there && u.FolderRemoved {
 			continue
+		}
+		if there && u.Identity != (Identity{}) && u.Identity != now {
+			// §15.5's run-id route: the folder's marker names this delete.
+			if !ofMarker(u.Run, u.FirstRun) {
+				continue
+			}
+			u.ByRun = true
 		}
 		if !u.counted {
 			u.RemovedKnown = false // it stopped with no finished line: what it removed is not known

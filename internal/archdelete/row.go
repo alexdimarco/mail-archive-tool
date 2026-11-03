@@ -42,15 +42,21 @@ type RowsCheck struct {
 	logErr error
 	// marks is the page's own memo of the delete marker's lookup (DM-15): an Lstat
 	// (delmark.Present), never the stat memo's os.Stat, which follows a link at the name and
-	// would read a dangling one as "not there".
+	// would read a dangling one as "not there"; with a regular marker's bounded read.
 	marksMu sync.Mutex
-	marks   map[string]delmark.State
+	marks   map[string]markMemo
+}
+
+// markMemo is a folder's marker as the page read it once.
+type markMemo struct {
+	st delmark.State
+	d  delmark.Details
 }
 
 // NewRowsCheck reads deps.Log once (one that cannot be read reports no unfinished delete,
 // and the plan says why).
 func NewRowsCheck(deps Deps) *RowsCheck {
-	r := &RowsCheck{deps: deps, stat: newStatMemo(), marks: map[string]delmark.State{}}
+	r := &RowsCheck{deps: deps, stat: newStatMemo(), marks: map[string]markMemo{}}
 	if deps.Log != "" {
 		if lines, err := readLog(deps.Log); err == nil {
 			r.log = newDeleteLog(lines, r.stat)
@@ -68,15 +74,16 @@ func (r *RowsCheck) State(folder string, knownArchive bool) (*Unfinished, error)
 	deps := r.deps
 	goos := deps.goos()
 	stat := r.stat.stat
-	var u *Unfinished
-	if r.log != nil {
-		u = r.log.Unfinished(abs, goos)
-	}
 	// The marker, outside the log's guard (DM-21): a computer with no log, or no line for the
 	// folder, still sees a delete only the marker knows. A lookup that fails says nothing on the
-	// row; every action on the folder refuses it (the "could not check" words).
-	mark := r.marker(abs)
-	u, _ = withMarker(u, r.logErr, abs, mark)
+	// row; every action on the folder refuses it (the "could not check" words). Its run is read only
+	// when it is there, for §15.5's routes and DM-10's "begun here".
+	mark, details := r.marker(abs)
+	var u *Unfinished
+	if r.log != nil {
+		u = r.log.UnfinishedFor(abs, goos, details.Run)
+	}
+	u, _ = withMarker(u, r.logErr, abs, mark, details, r.log)
 	// A link, or a protected folder, the plan refuses whatever else holds, so the row does not
 	// offer Delete for it (del-s3a-A2-02); and in planArchive's order — the folder a link, then
 	// protected, then started with -out, then busy, then the manifest itself a link, then the
@@ -147,19 +154,24 @@ func (r *RowsCheck) State(folder string, knownArchive bool) (*Unfinished, error)
 	return nil, nil
 }
 
-// marker is what is at the delete marker's name in abs, looked up once for the page.
-func (r *RowsCheck) marker(abs string) delmark.State {
+// marker is what is at the delete marker's name in abs, looked up once for the page, and a regular
+// marker's details (its bounded read, only when it is there).
+func (r *RowsCheck) marker(abs string) (delmark.State, delmark.Details) {
 	r.marksMu.Lock()
 	defer r.marksMu.Unlock()
-	if st, ok := r.marks[abs]; ok {
-		return st
+	if m, ok := r.marks[abs]; ok {
+		return m.st, m.d
 	}
 	st, err := delmark.Present(abs)
 	if err != nil {
 		st = delmark.Unknown
 	}
-	r.marks[abs] = st
-	return st
+	var d delmark.Details
+	if st == delmark.Regular {
+		d = delmark.Read(abs)
+	}
+	r.marks[abs] = markMemo{st, d}
+	return st, d
 }
 
 // markerLink reports whether the marker's name in abs is a link (a symbolic link, a junction):
@@ -186,8 +198,15 @@ func (r *RowsCheck) UnlistRefusal(folder string) error {
 		_, err := rowArchiveTest(abs)
 		return unreachableOrNoArchiveErr(err)
 	}
-	// The page's one read of deletions.log (MA-1029).
-	unfinished := func(abs string) bool { return r.log != nil && r.log.Unfinished(abs, r.deps.goos()) != nil }
+	// The page's one read of deletions.log (MA-1029), with the folder's marker run (§15.5, DM-6), as
+	// the row's own state asks it.
+	unfinished := func(abs string) bool {
+		if r.log == nil {
+			return false
+		}
+		_, d := r.marker(abs)
+		return r.log.UnfinishedFor(abs, r.deps.goos(), d.Run) != nil
+	}
 	return unlistRefusal(folder, r.deps, same, gone, unfinished)
 }
 

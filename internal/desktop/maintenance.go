@@ -257,6 +257,7 @@ func (d *dashboard) healthAction(w http.ResponseWriter, r *http.Request) {
 			in.DeleteUnfinished = true
 			in.DeleteMarkerOnly, in.DeleteBegun = u.MarkerOnly, archdelete.MarkerBegun(u)
 			in.DeleteLogUnreadable, in.DeleteMarkerNotRegular = u.LogUnreadable, u.Marker == delmark.NotRegular
+			in.DeleteBegunHere = u.BegunHere // DM-10: begun here, though the log no longer matches the folder
 		} else {
 			in.DeleteCouldNotCheck = archdelete.CouldNotCheck(err)
 		}
