@@ -79,6 +79,23 @@ path selected in the Folder box; Tab to **Select Folder**, then Enter, chose it.
 wizard's output picker two Enters were enough. Not about which window is in front; for a
 later look.
 
+## Settled for 1.5.5 (the release settle step, 2026-11-03)
+
+No note here needed a code change: none is high or medium, and none is caused by the fix.
+
+- **A** stays as designed (R39); the page's note stays, by the lead's call.
+- **B** is kept as a backlog lab check on a real Windows PC with classic Outlook and a large
+  profile; the 8-second rule stands (lead's call). It is also why the adversarial pass's L1
+  fix (a 2 s life for an answer's ask) was declined: it would have made this case worse
+  (`docs/review-windows-dialog-front-adversarial.md`).
+- **C** and **D** are older than this fix and left for a later release.
+
+The adversarial pass's L2, L3 and L4 were fixed in the same commit (MA-1118; MA-1113, MA-1114
+and MA-1116 amended). They change only which window gets the keyboard back after a dialog the
+person clicked from the taskbar, whether the zero-distance mouse move is sent when our window
+is already in front, and which clock the 8 seconds are timed on; the final VM walk repeated
+cell 1's start and Esc.
+
 ## The walk's own extra steps (not the product's)
 
 Edge's Ctrl+F sometimes matched the guide text instead of the button, so a few presses were

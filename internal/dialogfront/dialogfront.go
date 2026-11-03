@@ -22,15 +22,17 @@
 // person answered it, so the next window of the same flow is theirs too). Such a
 // dialog is lifted above the other windows once (always-on-top, then at once not,
 // so it never stays on top), sent one mouse move of zero distance so Windows counts
-// this program as the source of the last input, and made the active window; the
+// this program as the source of the last input (only when a window of another
+// program, or none, is active: MA-1118), and made the active window; the
 // file and folder pickers reorder themselves just after they show, so this is
 // tried again at 200, 600 and 1200 ms, while the dialog has never yet been the
 // active window and the person has not moved to another one (MA-1110, MA-1112).
 // Any other dialog — one that opens after a long export while the person types in
 // the browser — is left where Windows puts it and only flashes its taskbar button
 // (MA-1114). When the last of our dialogs closes and no window is active, the
-// window that was active before the dialogs (the browser) is made active again
-// (MA-1116). No dialog call changes. Off Windows Install and Arm do nothing: there
+// window that was active just before our dialogs took the keyboard (the browser,
+// or the program the person clicked a flashing dialog from) is made active again
+// (MA-1116). The 8 seconds are timed on the process's steady clock. No dialog call changes. Off Windows Install and Arm do nothing: there
 // each dialog is a window of a separate helper program (osascript on macOS, zenity
 // on Linux), and the report is from Windows.
 //
@@ -57,22 +59,33 @@ func Install() { once.Do(install) }
 // answered for.
 const armFor = 8 * time.Second
 
-// asked is when Arm was last called (UnixNano), or 0 once a dialog has used it.
+// start is when this process's steady clock began.
+var start = time.Now()
+
+// steady reads the process's steady clock: the time since start, measured on the
+// monotonic clock Go keeps beside the wall clock, which setting the computer's
+// clock does not move. The ask is timed on it, so a press made before the clock
+// was set back does not count again (adversarial pass L4). A variable so the test
+// can step it.
+var steady = func() time.Duration { return time.Since(start) }
+
+// asked is the steady clock's reading when Arm was last called, plus one so that 0
+// means none; 0 again once a dialog has used it.
 var asked atomic.Int64
 
 // Arm records that the person just asked for a window (a button press that opens
 // a dialog, the wizard's start, or their answer to our previous dialog): the next
 // dialog this process shows within armFor comes in front and takes the keyboard.
-func Arm() { asked.Store(time.Now().UnixNano()) }
+func Arm() { asked.Store(int64(steady()) + 1) }
 
 // takeAsk reads and clears the ask: one ask brings one dialog forward. ok is false
-// when there is none; since is how long ago it was made.
-func takeAsk(now time.Time) (since time.Duration, ok bool) {
+// when there is none; since is how long ago it was made, on the steady clock.
+func takeAsk() (since time.Duration, ok bool) {
 	v := asked.Swap(0)
 	if v == 0 {
 		return 0, false
 	}
-	return now.Sub(time.Unix(0, v)), true
+	return steady() - time.Duration(v-1), true
 }
 
 // mayTakeKeyboard reports whether a dialog shown now may become the active window:
@@ -98,6 +111,34 @@ const (
 func isDialogWindow(idObject, idChild int32, isRoot bool, style uint32) bool {
 	return idObject == objidWindow && idChild == childidSelf && isRoot &&
 		style&wsChild == 0 && style&wsCaption == wsCaption
+}
+
+// windowOps are the Windows calls bring makes: the Windows file gives the real
+// ones, the logic test a record of them.
+type windowOps interface {
+	lift(h uintptr)               // above the other windows once: always-on-top, then at once not
+	active() uintptr              // the active window, or 0
+	isOurs(h uintptr) bool        // whether h is a window of this process
+	nudge()                       // one mouse move of zero distance
+	setForeground(h uintptr) bool // make h the active window; false when Windows refuses
+}
+
+// bring lifts h above the other windows and makes it the active window. The mouse
+// move of zero distance, which makes Windows count this program as the source of
+// the last input, is sent only when Windows needs it: when a window of ours is
+// active, this program already has the person's attention and may make h active
+// without it. Each such move restarts Windows' idle countdown, so a person who left
+// our progress window in front and walked away would otherwise have the screen lock
+// put off when the next window came forward (adversarial pass L2). Should Windows
+// refuse even so (our window closed in between), the move is sent and it is tried
+// again.
+func bring(h uintptr, o windowOps) {
+	o.lift(h)
+	if o.isOurs(o.active()) && o.setForeground(h) {
+		return
+	}
+	o.nudge()
+	o.setForeground(h)
 }
 
 // retryAfter are the later tries, counted from when the window showed.
@@ -127,6 +168,8 @@ type watch struct {
 	beenActive map[uintptr]bool // those of them that have been the active window
 	active     uintptr          // our dialog that is the active window, or was when it closed
 	returnTo   uintptr          // the window active before our dialogs took the keyboard
+	last       uintptr          // the active window at the last change noted
+	lastOurs   bool             // whether last is a window of ours
 }
 
 func newWatch() *watch {
@@ -152,11 +195,20 @@ func (w *watch) showed(h uintptr, takesKeyboard bool, activeBefore uintptr, acti
 // after a dialog shows). A window of another program becoming active while our
 // active dialog is still shown means the person moved away from it; while it is
 // closing (no longer shown on screen), it is only Windows passing the keyboard on.
+// When one of our dialogs becomes active straight from another program's window —
+// the person clicked a flashing taskbar button, or we brought it forward — that
+// window is the one to give the keyboard back to (adversarial pass L3: not an older
+// window from an earlier flow).
 func (w *watch) foreground(h uintptr, isOurs bool, stillOnScreen func(uintptr) bool) {
 	w.mu.Lock()
 	defer w.mu.Unlock()
+	prev, prevOurs := w.last, w.lastOurs
+	w.last, w.lastOurs = h, isOurs
 	switch {
 	case w.shown[h]:
+		if prev != 0 && prev != h && !prevOurs {
+			w.returnTo = prev
+		}
 		w.active = h
 		w.beenActive[h] = true
 	case isOurs:

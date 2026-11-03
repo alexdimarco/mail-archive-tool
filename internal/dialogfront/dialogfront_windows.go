@@ -184,7 +184,7 @@ func onShow(hwnd uintptr) {
 	ours := isOurs(activeWhenShown)
 	takes := ours
 	if !takes {
-		since, ok := takeAsk(time.Now())
+		since, ok := takeAsk()
 		takes = mayTakeKeyboard(false, ok, since)
 	}
 	the.showed(hwnd, takes, activeWhenShown, ours)
@@ -232,19 +232,35 @@ func giveBack(r uintptr) {
 	if activeWindow() == r {
 		return
 	}
-	in := input{typ: inputMouse, mi: mouseInput{flags: mouseeventfMove}}
-	procSendInput.Call(1, uintptr(unsafe.Pointer(&in)), unsafe.Sizeof(in))
+	winOps{}.nudge()
 	procSetForegroundWindow.Call(r)
 }
 
-// bringForward lifts hwnd above the other windows without leaving it always on
-// top, sends a mouse move of zero distance so Windows counts this process as the
-// source of the last input, and makes hwnd the active window.
-func bringForward(hwnd uintptr) {
+// bringForward brings hwnd forward with the real Windows calls (see bring).
+func bringForward(hwnd uintptr) { bring(hwnd, winOps{}) }
+
+// winOps are the real Windows calls behind bring.
+type winOps struct{}
+
+// lift puts h above the other windows without leaving it always on top.
+func (winOps) lift(h uintptr) {
 	const flags = swpNoMove | swpNoSize | swpNoActivate
-	procSetWindowPos.Call(hwnd, hwndTopmost, 0, 0, 0, 0, flags)
-	procSetWindowPos.Call(hwnd, hwndNoTopmost, 0, 0, 0, 0, flags)
+	procSetWindowPos.Call(h, hwndTopmost, 0, 0, 0, 0, flags)
+	procSetWindowPos.Call(h, hwndNoTopmost, 0, 0, 0, 0, flags)
+}
+
+func (winOps) active() uintptr { return activeWindow() }
+
+func (winOps) isOurs(h uintptr) bool { return isOurs(h) }
+
+// nudge sends one mouse move of zero distance, so Windows counts this process as
+// the source of the last input.
+func (winOps) nudge() {
 	in := input{typ: inputMouse, mi: mouseInput{flags: mouseeventfMove}}
 	procSendInput.Call(1, uintptr(unsafe.Pointer(&in)), unsafe.Sizeof(in))
-	procSetForegroundWindow.Call(hwnd)
+}
+
+func (winOps) setForeground(h uintptr) bool {
+	r, _, _ := procSetForegroundWindow.Call(h)
+	return r != 0
 }

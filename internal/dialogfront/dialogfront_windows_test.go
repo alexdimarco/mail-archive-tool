@@ -51,13 +51,20 @@ func windowTitle(hwnd uintptr) string {
 	return windows.UTF16ToString(buf)
 }
 
-// idleFor is how long the session has had no input.
-func idleFor() time.Duration {
+// lastInputTick is Windows' tick count at the session's last input (real or
+// injected), from GetLastInputInfo.
+func lastInputTick() uint32 {
 	var lii struct{ size, time uint32 }
 	lii.size = uint32(unsafe.Sizeof(lii))
 	procGetLastInputInfo.Call(uintptr(unsafe.Pointer(&lii)))
+	return lii.time
+}
+
+// idleFor is how long the session has had no input.
+func idleFor() time.Duration {
+	last := lastInputTick()
 	now, _, _ := procGetTickCount.Call()
-	return time.Duration(uint32(now)-lii.time) * time.Millisecond
+	return time.Duration(uint32(now)-last) * time.Millisecond
 }
 
 // waitFor polls cond every 20 ms until it holds or d has passed.
@@ -283,10 +290,40 @@ func TestEachKindOfDialogComesUpActiveInFrontOfAnotherProgram(t *testing.T) {
 	}
 
 	// The keyboard goes back to the window active before the dialogs.
-	if !waitFor(giveBackAfter+2*time.Second, func() bool { return activeWindow() == before }) {
-		the.mu.Lock()
-		state := fmt.Sprintf("dialogs still recorded as shown %v, window to return to %#x", the.shown, the.returnTo)
-		the.mu.Unlock()
-		t.Errorf("after the last dialog closed, the active window is %#x (process %d), not %#x, the one active before (%s)", activeWindow(), processOf(activeWindow()), before, state)
+	gaveBack := func(when string) {
+		t.Helper()
+		if !waitFor(giveBackAfter+2*time.Second, func() bool { return activeWindow() == before }) {
+			the.mu.Lock()
+			state := fmt.Sprintf("dialogs still recorded as shown %v, window to return to %#x", the.shown, the.returnTo)
+			the.mu.Unlock()
+			t.Errorf("after %s, the active window is %#x (process %d), not %#x, the one active before (%s)", when, activeWindow(), processOf(activeWindow()), before, state)
+		}
 	}
+	gaveBack("the last dialog closed")
+
+	// A window opened while one of ours is active (the summary after our progress
+	// window) comes forward with no injected mouse move, so Windows' idle countdown
+	// is not restarted (adversarial pass L2): the session's last-input time is the
+	// same before and after it becomes active. Positive twin: it does become active.
+	Arm()
+	first, firstDone, firstCancel := openDialog(t, "chain: first", kinds[0].open)
+	if !waitFor(3*time.Second, func() bool { return activeWindow() == first }) {
+		t.Errorf("chain: the first dialog asked for is not the active window (the active one is %#x)", activeWindow())
+	}
+	time.Sleep(retryAfter[len(retryAfter)-1] + 300*time.Millisecond) // its tries are over
+	tick := lastInputTick()
+	asked.Store(0)
+	next, nextDone, nextCancel := openDialog(t, "chain: next", kinds[1].open)
+	nextActive := waitFor(3*time.Second, func() bool { return activeWindow() == next })
+	time.Sleep(retryAfter[len(retryAfter)-1] + 300*time.Millisecond)
+	tickAfter := lastInputTick()
+	closeDialog(t, "chain: next", next, nextDone, nextCancel)
+	closeDialog(t, "chain: first", first, firstDone, firstCancel)
+	if !nextActive {
+		t.Errorf("chain: a dialog opened while ours was active is not the active window (the active one is %#x)", activeWindow())
+	}
+	if tickAfter != tick {
+		t.Errorf("chain: the session's last input moved from tick %d to %d while a dialog came forward from our own active one: an input was injected", tick, tickAfter)
+	}
+	gaveBack("the chain's dialogs closed")
 }

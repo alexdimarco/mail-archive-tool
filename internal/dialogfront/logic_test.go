@@ -1,6 +1,7 @@
 package dialogfront
 
 import (
+	"strings"
 	"testing"
 	"time"
 )
@@ -98,7 +99,7 @@ func TestADialogTakesTheKeyboardOnlyWhenThePersonAskedForIt(t *testing.T) {
 	// Positive twins.
 	asked.Store(0)
 	Arm()
-	since, ok := takeAsk(time.Now())
+	since, ok := takeAsk()
 	if !ok || !mayTakeKeyboard(false, ok, since) {
 		t.Errorf("a dialog shown just after Arm does not take the keyboard (asked %v, %v ago)", ok, since)
 	}
@@ -109,7 +110,7 @@ func TestADialogTakesTheKeyboardOnlyWhenThePersonAskedForIt(t *testing.T) {
 		t.Errorf("an ask exactly %v old does not count", armFor)
 	}
 
-	if _, ok := takeAsk(time.Now()); ok {
+	if _, ok := takeAsk(); ok {
 		t.Error("one ask brought two dialogs forward: takeAsk did not clear it")
 	}
 	if mayTakeKeyboard(false, false, 0) {
@@ -121,10 +122,15 @@ func TestADialogTakesTheKeyboardOnlyWhenThePersonAskedForIt(t *testing.T) {
 	if mayTakeKeyboard(false, true, -time.Second) {
 		t.Error("an ask dated after the dialog counts")
 	}
-	asked.Store(time.Now().Add(-armFor - time.Second).UnixNano())
-	if since, ok := takeAsk(time.Now()); mayTakeKeyboard(false, ok, since) {
+	restore := steady
+	clock := time.Hour
+	steady = func() time.Duration { return clock }
+	Arm()
+	clock += armFor + time.Second
+	if since, ok := takeAsk(); mayTakeKeyboard(false, ok, since) {
 		t.Errorf("an ask made %v ago still brings a dialog forward", since)
 	}
+	steady = restore
 	if armFor != 8*time.Second {
 		t.Errorf("armFor = %v, want 8s", armFor)
 	}
@@ -257,5 +263,128 @@ func TestTheKeyboardGoesBackToTheBrowserWhenOurDialogsClose(t *testing.T) {
 	w.hidden(dialog)
 	if got := w.giveBackTo(0, onScreen); got != 0 {
 		t.Errorf("a dialog that only flashed gives the keyboard to %#x", got)
+	}
+}
+
+// covers: MA-1116, R39
+// The keyboard goes back to where the person was, not to an older window
+// (adversarial pass L3): when the person brings one of our dialogs to the front
+// themselves — a click on a flashing taskbar button — the window of another program
+// that was active just before is the one to return to. Positive twin first: a flow
+// started from the browser returns to the browser. Then, later, the person works in
+// another program and clicks a dialog that only flashed into the front: when it
+// closes, the keyboard goes to that program, not to the first flow's browser. A
+// dialog of ours made active from another of ours (a flow's next window) leaves the
+// window to return to as it is.
+func TestTheKeyboardGoesBackToWhereThePersonWas(t *testing.T) {
+	const dialog, second, third, browser, other = 0x10, 0x11, 0x12, 0x20, 0x30
+	on := map[uintptr]bool{browser: true, other: true}
+	onScreen := func(h uintptr) bool { return on[h] }
+
+	w := newWatch()
+	w.foreground(browser, false, onScreen)
+	w.showed(dialog, true, browser, false)
+	w.foreground(dialog, true, onScreen)
+	w.hidden(dialog)
+	w.foreground(0, false, onScreen)
+	if got := w.giveBackTo(0, onScreen); got != browser {
+		t.Fatalf("a flow started from the browser gives the keyboard back to %#x, want the browser %#x", got, browser)
+	}
+	w.foreground(browser, false, onScreen) // given back
+
+	// Later: the person works in another program; a dialog of ours opens, only flashes,
+	// and the person clicks it into the front.
+	w.foreground(other, false, onScreen)
+	w.showed(second, false, other, false)
+	w.foreground(second, true, onScreen)
+	// Its answer brings the flow's next window, from our own active one.
+	w.showed(third, true, second, true)
+	w.hidden(second)
+	w.foreground(third, true, onScreen)
+	w.hidden(third)
+	w.foreground(0, false, onScreen)
+	if got := w.giveBackTo(0, onScreen); got != other {
+		t.Errorf("after the person clicked a flashing dialog from %#x, the keyboard goes back to %#x, want %#x (where they were)", other, got, other)
+	}
+}
+
+// covers: MA-1114, R39
+// The ask is timed on the process's steady clock, which setting the computer's
+// clock does not move (adversarial pass L4: an ask stored as wall-clock time could
+// count again after the clock was set back). With the steady clock read through its
+// seam: positive twin first, an ask 1 s old counts and reads as 1 s; an ask
+// armFor + 1 s old on that clock does not, however recent the wall clock says it is.
+func TestAnAskIsTimedOnTheSteadyClock(t *testing.T) {
+	restore := steady
+	defer func() { steady = restore; asked.Store(0) }()
+	clock := 100 * time.Second
+	steady = func() time.Duration { return clock }
+
+	Arm()
+	clock += time.Second
+	if since, ok := takeAsk(); !ok || since != time.Second || !mayTakeKeyboard(false, ok, since) {
+		t.Errorf("an ask 1 s old on the steady clock: asked %v, %v ago (want true, 1s, and it counts)", ok, since)
+	}
+
+	Arm()
+	clock += armFor + time.Second
+	if since, ok := takeAsk(); !ok || since != armFor+time.Second || mayTakeKeyboard(false, ok, since) {
+		t.Errorf("an ask %v old on the steady clock: asked %v, %v ago (want true, %v, and it does not count)", armFor+time.Second, ok, since, armFor+time.Second)
+	}
+}
+
+// fakeOps records the Windows calls bring makes.
+type fakeOps struct {
+	activeNow uintptr
+	ours      map[uintptr]bool
+	refuse    int // how many SetForegroundWindow calls Windows refuses first
+	calls     []string
+}
+
+func (f *fakeOps) lift(uintptr)          { f.calls = append(f.calls, "lift") }
+func (f *fakeOps) active() uintptr       { return f.activeNow }
+func (f *fakeOps) isOurs(h uintptr) bool { return f.ours[h] }
+func (f *fakeOps) nudge()                { f.calls = append(f.calls, "nudge") }
+func (f *fakeOps) setForeground(h uintptr) bool {
+	f.calls = append(f.calls, "set")
+	if f.refuse > 0 {
+		f.refuse--
+		return false
+	}
+	f.activeNow = h
+	return true
+}
+
+// covers: MA-1118, R39
+// The zero-distance mouse move is sent only when Windows needs it (adversarial pass
+// L2: each fake move restarts Windows' idle countdown, so a person who left our
+// progress window in front and walked away would have the screen lock put off when
+// the summary came forward). Positive twin first, the path the lab proved: with
+// another program's window active (the browser), the dialog is lifted, the move is
+// sent, then it is made active. With a window of ours active, this program already
+// has the person's attention: lifted and made active, no move. Should Windows refuse
+// even so (our window closed meanwhile), the move is sent and it is tried again.
+func TestTheMouseMoveIsSentOnlyWhenWindowsNeedsIt(t *testing.T) {
+	const dialog, ourProgress, browser = 0x10, 0x11, 0x20
+	ours := map[uintptr]bool{dialog: true, ourProgress: true}
+	for _, c := range []struct {
+		name   string
+		active uintptr
+		refuse int
+		want   string
+	}{
+		{"the browser active", browser, 0, "lift nudge set"},
+		{"no window active", 0, 0, "lift nudge set"},
+		{"our window active", ourProgress, 0, "lift set"},
+		{"our window active, Windows refuses once", ourProgress, 1, "lift set nudge set"},
+	} {
+		f := &fakeOps{activeNow: c.active, ours: ours, refuse: c.refuse}
+		bring(dialog, f)
+		if got := strings.Join(f.calls, " "); got != c.want {
+			t.Errorf("%s: bring made %q, want %q", c.name, got, c.want)
+		}
+		if f.activeNow != dialog {
+			t.Errorf("%s: the dialog is not the active window after bring", c.name)
+		}
 	}
 }

@@ -76,7 +76,7 @@ MailArchive is one program with verbs; there is no separate GUI download.
 | Linux x86-64 | `mailarchive-linux-amd64` | `mailarchive wizard` or `mailarchive desktop` (the wizard needs `zenity` and a desktop session) |
 | Linux arm64 | `mailarchive-linux-arm64` | the same verbs (compiled, not lab-run) |
 
-### Fixed in the next release
+### New in 1.5.5 — MailArchive's windows open in front on Windows
 - **On Windows, the wizard and MailArchive Desktop's other windows open in front of your browser.** When you clicked **Make a new archive…** (or **Open an archive folder…**, or another button that opens a window) in MailArchive Desktop on Windows, the window could open behind the browser, so it looked as if nothing had happened. It now opens in front of the browser, ready for you to type, and does not stay on top once you switch to another window. A window you did not just ask for — for example the summary at the end of a long copy, if you went back to the browser meanwhile — does not take your typing: its button flashes in the taskbar until you click it. When MailArchive's windows close, your typing goes back to the browser.
 
 ### New in 1.5.4 — a Windows installer
