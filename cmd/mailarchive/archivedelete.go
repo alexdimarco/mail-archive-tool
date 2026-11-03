@@ -196,7 +196,7 @@ func commandLineDelete(cfgPath string) (*desktop.CommandLineDelete, error, error
 		store = nil
 	}
 	if cfgPath != "" {
-		return desktop.NewCommandLineDeleteAt(abspath(cfgPath), store, deleteScheduler, deleteInstalled), storeErr, nil
+		return desktop.NewCommandLineDeleteAt(configAbs(cfgPath), store, deleteScheduler, deleteInstalled), storeErr, nil
 	}
 	seams, err := desktop.NewCommandLineDelete(store, deleteScheduler, deleteInstalled)
 	return seams, storeErr, err
@@ -211,12 +211,25 @@ func configFolderMissing(cfgPath string) error {
 	if cfgPath == "" {
 		return nil
 	}
-	dir := filepath.Dir(abspath(cfgPath))
+	dir := filepath.Dir(configAbs(cfgPath))
 	if fi, err := os.Stat(dir); err == nil && fi.IsDir() {
 		return nil
 	}
 	return fmt.Errorf("There are no MailArchive Desktop settings beside %s: its folder %s does not exist, so nothing was changed. Give -config the config file MailArchive Desktop was started with.",
-		encmark.CommandPath(util.StripControl(abspath(cfgPath))), encmark.CommandPath(util.StripControl(dir)))
+		encmark.CommandPath(util.StripControl(configAbs(cfgPath))), encmark.CommandPath(util.StripControl(dir)))
+}
+
+// configAbs is a -config path made absolute as a MailArchive Desktop started with it reads it: a
+// path typed with a trailing separator keeps it, so its folder (filepath.Dir) is the folder that
+// Desktop keeps its settings, list and deletions.log in (settingsPathFor, desktop.DeletionsLogFor),
+// not that folder's parent, which abspath's cleaning would give (MA-1064; the slice-6 and G3
+// adversarial pass's LOW-1).
+func configAbs(cfgPath string) string {
+	a := abspath(cfgPath)
+	if a != "" && os.IsPathSeparator(cfgPath[len(cfgPath)-1]) && !os.IsPathSeparator(a[len(a)-1]) {
+		a += string(filepath.Separator)
+	}
+	return a
 }
 
 // configFlag is the -config flag the three Your-archives verbs share.
@@ -229,7 +242,7 @@ func configArg(cfgPath string) string {
 	if cfgPath == "" {
 		return ""
 	}
-	return " -config " + encmark.CommandPath(abspath(cfgPath))
+	return " -config " + encmark.CommandPath(configAbs(cfgPath))
 }
 
 // rowOf is §3.1's row rule at the terminal: the row of Your archives that out is. A list that
@@ -1167,7 +1180,7 @@ func addArchiveWith(cfgPath, dir string, stdout io.Writer) error {
 	}
 	var seams *desktop.CommandLineDelete
 	if cfgPath != "" {
-		seams = desktop.NewCommandLineDeleteAt(abspath(cfgPath), nil, deleteScheduler, deleteInstalled)
+		seams = desktop.NewCommandLineDeleteAt(configAbs(cfgPath), nil, deleteScheduler, deleteInstalled)
 	} else {
 		s, err := desktop.NewCommandLineDelete(nil, deleteScheduler, deleteInstalled)
 		if err != nil {

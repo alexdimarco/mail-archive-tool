@@ -70,7 +70,8 @@ const configLogUsage = "the config file of a MailArchive Desktop started with -c
 
 // configLog is the deletion log that pause, resume and schedule given -config cfgPath ask, and only
 // it (G3, design-archive-delete §16.2; the owner's ruling: never both logs): the one beside
-// cfgPath made absolute, which that Desktop and `delete-archive -config` write
+// cfgPath made absolute as that Desktop reads it (configAbs: a trailing separator kept, MA-1064),
+// which that Desktop and `delete-archive -config` write
 // (desktop.DeletionsLogFor), or "" — MailArchive's own — without -config. A -config whose folder
 // does not exist is refused in the delete verbs' words, so nothing reads a log no Desktop writes.
 func configLog(cfgPath string) (string, error) {
@@ -80,7 +81,7 @@ func configLog(cfgPath string) (string, error) {
 	if err := configFolderMissing(cfgPath); err != nil {
 		return "", err
 	}
-	return desktop.DeletionsLogFor(abspath(cfgPath)), nil
+	return desktop.DeletionsLogFor(configAbs(cfgPath)), nil
 }
 
 // deleteRefusalAtTerminal is a refusal in archdelete's words (a delete of the folder that did not

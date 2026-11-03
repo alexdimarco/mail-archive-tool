@@ -2371,6 +2371,13 @@ or needed here.
 >   check, or refused for anything else); so do the auto-pause and a schedule's create or Remove
 >   (`ClearStreak`). The delete's step 3 removes the folder's count with its alert files, and uninstall
 >   removes every one.
+>   > *Corrected 3 November 2026 (the slice-6 and G3 adversarial pass, MED-1; MA-1063):* "Any other
+>   > outcome of a scheduled run ends it (a run past the delete check …)" reads "a run that got past
+>   > the delete check with the folder there ends it; a run that found the folder absent leaves it".
+>   > An absent folder reads no marker (DM-22), so such a run says nothing about the delete; the
+>   > source-loss rule this follows leaves its streak on a run that says nothing about the source.
+>   > As first built, every run with the drive away restarted the count, so a drive or share that
+>   > comes and goes almost never paused. §14, "Slice 6 and G3's adversarial pass".
 > - *The pause.* `wizard.AutoPauseForDeleteIfDue`, called on both scheduled paths — the local job
 >   (`RunHeadless`: its early refusal, and the engine's refusal under the lock) and the scheduled
 >   Microsoft 365 capture (`HeadlessCapture`: the same two places). At the threshold it stops this
@@ -2418,6 +2425,60 @@ or needed here.
 >   Windows the entry's side files beside the wrapper go with it, as for the source-loss pause. A
 >   folder spelled two ways keys two counts (`KeyFor`, as the alert streak). It owes its own
 >   adversarial pass (§15.10).
+
+> **Slice 6 and G3's adversarial pass, settled 3 November 2026 (MA-1063 and MA-1064 added; MA-1058
+> and MA-1062 amended).** The pass (`docs/review-delete-marker-slice6-g3-adversarial.md`, reviewed at
+> 358931f: slice 6, f284689, and G3, 358931f) found one MED and three LOWs, no HIGH. No new sentence
+> a person reads.
+> - *MED-1, fixed: the count started over whenever the folder was missing.* Both scheduled paths
+>   ended the count right after the delete check passed, before they knew the folder was there; an
+>   absent folder reads no marker (DM-22), so a run with the backup drive unplugged deleted the count.
+>   On a drive or share that comes and goes — the setup the marker was built for — the 30 days were
+>   almost never reached. Fix: the local job (`RunHeadless`) ends the count only after its "folder
+>   present" check; the capture (`HeadlessCapture`) only when the folder is there at its early check,
+>   and after the engine only for the engine's `delete_unfinished` refusal (its other no-archive
+>   refusals, the absent folder's among them, leave the count). That is the source-loss rule, as
+>   §15.10 item 6 says: a run that says nothing either way leaves the count. *What a person may
+>   notice:* a drive away 30 days or more pauses on its first refused run after it comes back, as the
+>   source-loss pause already does (a weekly schedule pauses after two refused runs 35 days apart).
+>   The lead's reading: inside the owner's ruling Q5, "after the same 30 refused runs as an
+>   unreachable mail source"; not a new ruling. Prove-fail (each alone, each red): the local job's
+>   end call back above its folder check (M1); the capture's end call with no folder check (M2); the
+>   capture's count after the engine back to any no-archive refusal (M3); that call dropped (M4,
+>   which no test caught before: the new test covers it); the end call dropped on either path (M5 —
+>   MA-1058's "a run past the check ends the count" red; M6 — MA-1063 red). *Residual, noted:* a
+>   folder there at the local job's delete check and gone before its folder check (microseconds)
+>   ends the count once; the job's call after the engine is unchanged, reached only with the folder
+>   there at entry, where the count has already ended.
+> - *LOW-1, fixed: a `-config` ending in a separator read another log than the Desktop's.* The
+>   Desktop with `-config "DIR/"` keeps its settings and `deletions.log` in DIR (`filepath.Dir` keeps
+>   DIR); the terminal made the path absolute first, which cleans the separator away, so it read
+>   DIR's parent's log. Fix: `configAbs` (cmd/mailarchive) keeps a typed trailing separator, and
+>   every terminal `-config` site uses it — `pause`, `resume`, `schedule` (`configLog`),
+>   `delete-archive` and `unlist-archive` (`commandLineDelete`), `add-archive`, the folder check
+>   (MA-1024's) and the hints. §16.5 corrected beside its third bullet. Prove-fail: the separator not
+>   kept (M7); `delete-archive`'s site (M8), `configLog` (M9), `add-archive`'s site (M10) or the
+>   hint (M11) back to the plain absolute path — each red. `cmd/mailarchive` cannot run on the
+>   Windows lab VM; `os.IsPathSeparator` takes `\` and `/` there.
+> - *LOW-2, a stated limit (§15.6):* a delete begun from a Desktop started with `-config`, or by
+>   `delete-archive -config`, is not in MailArchive's own log, which the local job asks (§16.6); if a
+>   run-job's schedule into that folder survives the delete's schedule stop, its refused runs count,
+>   and after 30 days the email says "begun on another computer or user account". The same after the
+>   person removed `deletions.log` by hand (MA-1007's way out). The pause does no harm (those
+>   backups were refused anyway); only the words are wrong. Not fixed here: telling the two apart
+>   needs the job to know of another log, which the ruling on G3 (never both logs) and §16.6 leave
+>   out.
+> - *LOW-3, a stated limit (§15.6):* only the Desktop's schedule create and Remove clear the count;
+>   the wizard, `schedule -install`/`-remove` and a removal in Task Scheduler or launchd do not. An
+>   old count can then survive a schedule removed outside the Desktop and re-made, and the first
+>   refused run after a new marker pauses at once. Several steps must line up, and it fails toward a
+>   pause that only stops the entry, with the email. Not fixed: clearing it from every schedule path
+>   touches the schedule code of three systems for a narrow case.
+> - *Notes N1 to N3 (the pass's, for the lead; no change):* only the two scheduled paths auto-pause
+>   (a terminal `schedule -install` entry and a verify schedule do not; §15.10's scope); a weekly
+>   schedule pauses after about five refused runs, or two 30 days apart (builder's call (b)); the
+>   email's remedy assumes the row is listed in the Desktop the person opens (for a wizard-made job
+>   or a `-config` Desktop, they may first need Open an archive folder… or that Desktop).
 
 ## 15. The delete marker (G2 for another computer, another account, and a remounted drive)
 
@@ -3362,6 +3423,21 @@ before step 2).
 >   began on and finish it there — is said nowhere; with that drive lost, the ways out are deleting
 >   this archive, or moving deletions.log aside (MA-1007's). This was so before slice 5. Words for the
 >   lead (§14, "Slice 5's adversarial pass").
+>
+> **Added 3 November 2026 (slice 6 and G3's adversarial pass, LOW-2 and LOW-3):**
+> - **A delete begun from a `-config` Desktop can count as "another computer's".** The local job asks
+>   MailArchive's own deletion log (§16.6), which has no line for a delete begun from a Desktop
+>   started with `-config` or by `delete-archive -config`, nor after the person removed
+>   `deletions.log` by hand. A run-job schedule into that folder that the delete's schedule stop
+>   missed then counts toward slice 6's auto-pause, and its email says the delete "was begun on
+>   another computer or user account". The pause does no harm (the backups were refused anyway); the
+>   words are wrong for this case. Telling it apart needs the job to read another log, which §16.6
+>   leaves out.
+> - **An old count can make a later pause come early.** Only the Desktop's schedule create and Remove
+>   clear slice 6's count; the wizard, `schedule -install`/`-remove` and a removal in the system's
+>   scheduler do not. A count kept across a schedule removed and re-made outside the Desktop, with no
+>   run past the check before a new marker, pauses on the first refused run. Narrow, and it fails
+>   toward a pause that only stops this computer's entry, with the email.
 
 ### 15.7 Tests (each prove-fail → prove-pass; Windows run first in the lab)
 
@@ -3956,6 +4032,12 @@ narrowed as a side effect").
   parent's `deletions.log` is read, as `delete-archive -config` and the Desktop itself would read
   it. This is kept the same as theirs on purpose, so the verbs never read a different log from the
   delete that wrote it; the help says "the config file".
+  > *Corrected 3 November 2026 (the slice-6 and G3 adversarial pass, LOW-1; MA-1064):* this held for
+  > a folder typed without a trailing separator only. Typed with one (`-config "DIR/"`, on Windows
+  > `DIR\`), the Desktop reads DIR's own `deletions.log`, while the terminal's verbs, which made the
+  > path absolute first and so cleaned the separator away, read DIR's parent's. The terminal now
+  > keeps a typed trailing separator (`configAbs`) for every `-config` it reads or prints, so it reads
+  > DIR's, as the Desktop does.
 
 ### 16.6 Limits (stated, not closed)
 

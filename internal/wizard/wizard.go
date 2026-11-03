@@ -235,9 +235,6 @@ func RunHeadless(path string) int {
 		autoPauseForDelete(path, j.Out, key, err)
 		return 1
 	}
-	// Past the delete check: a count of runs refused for a delete this computer never began ends
-	// (MA-1058).
-	autoPauseForDelete(path, j.Out, key, nil)
 	// Unattended guard: an absent -out (the backup drive is not mounted) must
 	// not become a fresh archive on the local disk that then reports "ok".
 	if fi, err := os.Stat(j.Out); err != nil || !fi.IsDir() {
@@ -246,6 +243,11 @@ func RunHeadless(path string) int {
 		reportRun(key, jobFileName(path), j.Out, backupalert.ResultFailed, e, 0, nil)
 		return 1
 	}
+	// Past the delete check with the folder there: a count of runs refused for a delete this
+	// computer never began ends (MA-1058). A run that found the folder absent says nothing about
+	// the delete (an absent folder reads no marker, DM-22), so it leaves the count, as the
+	// source-loss streak leaves itself on a run that says nothing about the source (MA-1063).
+	autoPauseForDelete(path, j.Out, key, nil)
 	// A paused archive is hard read-only: refuse before the run-log open and any PST
 	// recreate, which write into the archive before the engine lock (S2-C2). This is
 	// not a failure, so no jobFail record or notification — just stderr and a non-zero

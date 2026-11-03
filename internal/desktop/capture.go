@@ -7,6 +7,7 @@ import (
 	"io"
 	"log"
 	"net/http"
+	"os"
 	"strings"
 	"sync"
 	"time"
@@ -78,9 +79,14 @@ func HeadlessCapture(cfg Config, logw io.Writer) error {
 			cfg.autoPauseForDelete(key, out, err, logw)
 			return err
 		}
-		// Past the delete check: a count of runs refused for a delete this computer never began
-		// ends (MA-1058).
-		cfg.autoPauseForDelete(key, out, nil, logw)
+		// Past the delete check with the folder there: a count of runs refused for a delete this
+		// computer never began ends (MA-1058). A capture that found the folder absent (the backup
+		// drive not plugged in) says nothing about the delete (an absent folder reads no marker,
+		// DM-22), so it leaves the count, as the source-loss streak leaves itself on a run that says
+		// nothing about the source (MA-1063); the engine then refuses the absent folder.
+		if fi, serr := os.Stat(out); serr == nil && fi.IsDir() {
+			cfg.autoPauseForDelete(key, out, nil, logw)
+		}
 	}
 	// A paused archive is hard read-only: refuse before recordStartFailure or any
 	// write (S2-C2). The caller logs this to the capture log (config dir), never into
@@ -183,8 +189,10 @@ func HeadlessCapture(cfg Config, logw io.Writer) error {
 		logger.Printf("auto-paused the scheduled backup: the source has been unreachable for too long; the schedule was stopped (reconnect the source, then click Repair on the archive's Scheduled backup card)")
 		backupalert.RecordAutoPause(cfg.SettingsPath, cfg.Store, key, out, errors.New(wizard.AutoPauseWhy), logger)
 	}
-	if app.RefusedAsNoArchive(err) {
-		cfg.autoPauseForDelete(key, out, err, logw) // a delete met under the lock counts too (MA-1058)
+	// A delete met under the lock counts too (MA-1058); the engine's other refusals for a folder
+	// with no archive leave the count, the absent folder's among them (MA-1063).
+	if app.FailureKind(err) == state.FailDeleteUnfinished {
+		cfg.autoPauseForDelete(key, out, err, logw)
 	}
 	return err
 }
