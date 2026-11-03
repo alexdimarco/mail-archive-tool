@@ -24,6 +24,7 @@ import (
 	"slices"
 	"strings"
 
+	"mail-archive-tool/internal/delmark"
 	"mail-archive-tool/internal/encrecord"
 	"mail-archive-tool/internal/graph"
 	"mail-archive-tool/internal/graphconfig"
@@ -82,7 +83,9 @@ var ErrRecordUnusable = errors.New("this computer's record of encrypted archives
 
 // reserved are the names an encrypted archive itself writes at its root (the
 // tree grammar, MA-743; a test pins the two together), plus the conversion marker
-// and the program copies (phase3 §11, §13).
+// and the program copies (phase3 §11, §13), and the delete marker a delete writes
+// into it (design-archive-delete §15, MA-1053): a recorded archive holding it is
+// its own archive part way through a delete, not "other files".
 var reserved = map[string]bool{
 	".mailarchive-vault.json": true, ".mailarchive-vault.bak.json": true,
 	".mailarchive-manifest.json": true, ".mailarchive-manifest.ptr": true, ".mailarchive-manifest.ptr.bak": true,
@@ -91,6 +94,7 @@ var reserved = map[string]bool{
 	".mailarchive-sourcestreak.json": true, ".mailarchive-lastverify.json": true, ".mailarchive-paused.json": true,
 	"BACKUP-NEEDS-ATTENTION.txt": true, "ARCHIVE-INTEGRITY-ATTENTION.txt": true, "README.txt": true,
 	".mailarchive-convert.json": true, "program": true,
+	delmark.Name: true,
 }
 
 // sealedData are the reserved names that hold the archive's sealed content: one

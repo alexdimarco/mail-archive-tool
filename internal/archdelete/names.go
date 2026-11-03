@@ -7,6 +7,7 @@ import (
 	"strings"
 
 	"mail-archive-tool/internal/container"
+	"mail-archive-tool/internal/delmark"
 	"mail-archive-tool/internal/encmark"
 	"mail-archive-tool/internal/export"
 	"mail-archive-tool/internal/lockfile"
@@ -52,10 +53,12 @@ const stateFilePrefix = ".mailarchive-"
 // encRootFiles are the files an encrypted archive keeps at its root, taken from
 // encmark's reserved names (the tree grammar, §4.2) so the two cannot drift apart
 // (conformance gap 6): every reserved name but the lock (removed after unlocking,
-// step 7), the vault files (removed last) and the folders of the validated layouts.
+// step 7), the vault files (removed last), the delete marker (the delete's own note,
+// written and removed by its own two steps, never in the plan: §15.2) and the
+// folders of the validated layouts.
 var encRootFiles = func() map[string]bool {
 	notFiles := map[string]bool{
-		lockName: true, vault.FileName: true, vault.BackupName: true,
+		lockName: true, vault.FileName: true, vault.BackupName: true, delmark.Name: true,
 		export.UnitsDir: true, container.ChunksDir: true, container.InventoryDir: true, container.ProgramDir: true,
 	}
 	out := map[string]bool{}
@@ -86,9 +89,13 @@ var (
 // archive's marker: the whole delete is refused (§4.1). They are vault.EncryptedMarker's
 // file signals and the manifest; its folder signals (units/, chunks/, inventory/ in
 // their layouts) are asked of vault.EncryptedMarker for each folder walked
-// (del-s1a-A1-08).
+// (del-s1a-A1-08). Another archive's delete marker is one too (§15.7, MA-1053).
 var otherArchiveMarkers = []string{manifestName, vault.FileName, vault.BackupName, container.PointerName,
-	container.MirrorName, container.InventoryName, ".mailarchive-convert.json"}
+	container.MirrorName, container.InventoryName, ".mailarchive-convert.json", delmark.Name}
+
+// isDeleteMarker reports the delete marker's name at an archive's root, as the
+// platform's file system compares names (§15.1).
+func isDeleteMarker(goos, name string) bool { return eqName(goos, name, delmark.Name) }
 
 // lateStateFiles are the root state files removed after every other name and just
 // before the anchor, in this order (del-s1a-A2-05): a delete stopped part way (a

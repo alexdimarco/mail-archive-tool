@@ -185,6 +185,8 @@ func planNoAnchor(abs string, deps Deps, u *Unfinished, orig *Refusal) (*DeleteP
 			if link {
 				return nil, linkRefusal(filepath.Join(abs, name))
 			}
+		case isDeleteMarker(l.goos, name) && !link && l.fileLike(efi):
+			// The delete's own note, never in the plan's lists (§15.2).
 		case link && removable:
 			return nil, linkRefusal(filepath.Join(abs, name))
 		case link:

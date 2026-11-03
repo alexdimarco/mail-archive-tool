@@ -8,6 +8,7 @@ import (
 	"strings"
 
 	"mail-archive-tool/internal/container"
+	"mail-archive-tool/internal/delmark"
 	"mail-archive-tool/internal/export"
 	"mail-archive-tool/internal/lockfile"
 	"mail-archive-tool/internal/seal"
@@ -30,13 +31,16 @@ type Violation struct{ Path, Why string }
 // rootFiles are the files an encrypted archive may hold at its root: the vault and
 // its mirror, the lock, the minimised run records and notices (A6), the empty pause
 // marker, the encrypted README, and the sealed record's envelope, root pointer and
-// mirror, and inventory top file (phase2b §7).
+// mirror, and inventory top file (phase2b §7); and the delete marker a delete writes
+// before it removes anything (design-archive-delete §15, MA-1053), which encmark
+// reserves too.
 var rootFiles = map[string]bool{
 	vault.FileName: true, vault.BackupName: true, lockfile.Name: true,
 	state.LastRunName: true, state.RunHistoryName: true, state.SourceStreakName: true,
 	state.LastVerifyName: true, state.AttentionName: true, state.IntegrityAttentionName: true,
 	seal.Name: true, "README.txt": true,
 	container.EnvelopeName: true, container.PointerName: true, container.MirrorName: true, container.InventoryName: true,
+	delmark.Name: true,
 }
 
 // shardedDirs are the folders laid out as two-hex shards of 32-hex files: the unit

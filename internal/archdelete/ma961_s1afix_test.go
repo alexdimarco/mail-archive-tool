@@ -11,6 +11,7 @@ import (
 
 	"mail-archive-tool/internal/assure"
 	"mail-archive-tool/internal/container"
+	"mail-archive-tool/internal/delmark"
 	"mail-archive-tool/internal/encmark"
 	"mail-archive-tool/internal/encrecord"
 	"mail-archive-tool/internal/vault"
@@ -114,10 +115,12 @@ func TestTheArchiveIdIsGivenForAnUnrecordedEncryptedArchive(t *testing.T) {
 	}
 }
 
-// covers: MA-961, R36
+// covers: MA-961, MA-1053, R36
 // An encrypted archive's root names are encmark's reserved names, one list: a root
 // holding every one of them is planned, never refused as mixed, and each file among
-// them is listed (conformance gap 6).
+// them is listed (conformance gap 6) — but the lock (step 7's) and, amended for the
+// delete marker (design-archive-delete §15.2, §15.9; MA-1053), the marker, which is
+// the delete's own note and in none of the plan's lists.
 func TestEveryReservedNameOfAnEncryptedRootIsTheArchives(t *testing.T) {
 	dir := encryptedArchive(t)
 	folders := map[string]bool{"units": true, "chunks": true, "inventory": true, "program": true}
@@ -132,6 +135,12 @@ func TestEveryReservedNameOfAnEncryptedRootIsTheArchives(t *testing.T) {
 	p := mustPlan(t, dir, testDeps())
 	for _, n := range encmark.ReservedNames() {
 		if folders[n] || n == lockName {
+			continue
+		}
+		if n == delmark.Name {
+			if contains(removeRels(p), n) || contains(p.Kept, n) || contains(p.Litter, n) {
+				t.Fatalf("the delete marker must be in none of the plan's lists: remove %q kept %q litter %q", removeRels(p), p.Kept, p.Litter)
+			}
 			continue
 		}
 		if !contains(removeRels(p), n) {
