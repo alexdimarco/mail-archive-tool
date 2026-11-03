@@ -45,6 +45,26 @@ func UnfinishedAt(logPath, folder, goos string) (*Unfinished, error) {
 	return withMarker(u, lerr, folder, st)
 }
 
+// UnfinishedToSay is the delete of folder that a status line says (`mailarchive status`, the
+// Desktop's Status & health): UnfinishedAt's answer, except that a marker lookup that failed at a
+// folder that is there (*delmark.LookupError) does not hide what this computer's deletion log
+// knows (the slice-2 adversarial pass's LOW-3): the log's own line is returned then, its Marker
+// Unknown. A failed lookup the log does not answer, and a log that cannot be read, stay errors:
+// such a line says nothing of a delete, and every backup and action refuses the folder in its own
+// words ("could not check", "could not read its deletion log").
+func UnfinishedToSay(logPath, folder, goos string) (*Unfinished, error) {
+	u, err := UnfinishedAt(logPath, folder, goos)
+	var le *delmark.LookupError
+	if !errors.As(err, &le) || logPath == "" {
+		return u, err
+	}
+	if lu, lerr := UnfinishedDelete(logPath, folder, goos); lerr == nil && lu != nil {
+		lu.Marker = delmark.Unknown
+		return lu, nil
+	}
+	return u, err
+}
+
 // withMarker is the log's answer (u, lerr) for folder with the marker's state st beside it.
 func withMarker(u *Unfinished, lerr error, folder string, st delmark.State) (*Unfinished, error) {
 	if st == delmark.Absent || st == delmark.Unknown {

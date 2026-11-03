@@ -1834,6 +1834,69 @@ high or medium finding, two LOWs to fix and one LOW note. All three are fixed he
   parent cannot be searched (no marker, DM-22); and a byte-order mark and `"version":1.0` as
   details not known.
 
+**The delete marker's slice-2 adversarial pass (3 November 2026; §15.10 slice 2, MA-1048 and
+MA-1049 amended).** The pass, on e7a8d10 with probes on macOS only, found no high or medium
+finding and five LOWs. LOW-1 and LOW-3 are fixed here; LOW-2, LOW-4 and LOW-5 are recorded below
+as accepted limits. No new words. None of the owner's open questions (§15.8, 1 to 5) is decided
+or needed here.
+- *The DM-14 writers ask again under their lock (LOW-1).* `reindex`, `reindex -rebuild`, an
+  encrypted archive's index rebuild, the program-copies setting and `RecordRefusedRun` asked the
+  marker once, before their lock: a delete on another computer that wrote its marker in that gap,
+  stopped part way and let the lock go was not seen, and the writer rewrote the index or the
+  last-run record in a half-deleted folder (the probe saw each). Each now asks again under its
+  lock, as `app.Run` does, in the same words; `RecordRefusedRun` writes nothing then. Each takes
+  its lock through `app`'s `acquireArchiveLock` seam (no change in what it does), so the test
+  plants the marker exactly between the two asks. DM-14's own text said "before their lock": a gap
+  in the design, not the build. The first ask stays, so a folder already holding the marker gets
+  no lock file (pinned for `RecordRefusedRun`, whose first ask the older test no longer proved once
+  the second was added).
+- *A failed marker lookup no longer hides the log's line in `status` and Status & health (LOW-3).*
+  Both read `UnfinishedAt` only when it had no error, so a lookup that failed at a folder that is
+  there (an I/O error, a folder that cannot be searched) dropped MA-1027's RED "a delete of this
+  archive did not finish" that this computer's log gives (the real program showed reindex advice
+  in its place). They now ask `archdelete.UnfinishedToSay`: the log's own line when the lookup
+  fails. Backups and actions were never affected (they refuse "could not check").
+- *Accepted limits, for the operator (none needs the owner):*
+  - *Writers outside DM-14's list (LOW-2).* `mailarchive verify` (plain, with or without
+    `-record`, and so a scheduled verify) checks a folder holding the marker and writes
+    `.mailarchive-lastverify.json` there; by reading only, `verify -full` writes the same record,
+    and `change-password`, `new-recovery-key` and `restore-key-file` rewrite an encrypted
+    archive's key files there. None asked the deletion log before this slice either (only the
+    Desktop's Check integrity refuses, MA-1009). What is written is a `.mailarchive-` state file
+    the delete's re-run removes; the harm is a scheduled verify on another computer reporting the
+    files a delete removed as damage. Not changed here: refusing a check, and above all the
+    key verbs (security-sensitive), is a change of what those verbs do beyond §15's list, for
+    the operator to weigh as its own change — the key verbs with a security pass. `app.SealPauseNote`
+    writes when called directly; its only caller, the Desktop's Pause, asks the marker first
+    (MA-1048), so that path holds.
+  - *Words (LOW-4), for the operator's words review.* (a) With this computer's log unreadable and
+    the marker there, the row, `status` and the backup's refusal treat the delete as marker-only:
+    the row and `status` say "This computer's deletion log has no record of it (it was begun on
+    another computer or user account)", which is not known then (the log could not be read); the
+    refusal's "or this computer's deletion log has no record of it" reads the same way. Fail
+    closed (every backup and action is refused); the words need a third variant. (b) A folder (or
+    device) at the marker's name: `status` and Status & health give the marker-only line, whose
+    "run mailarchive delete-archive -out DIR" Delete then refuses ("…which MailArchive did not
+    write (it is a folder or a device): remove it by hand, then click Delete again."). The row
+    already says the not-regular words; the health line has no such branch. (c) A failed lookup
+    that the log does not answer says nothing in `status` (no "could not check" line): backups and
+    actions refuse it in their words.
+  - *Costs on Windows and offline shares (LOW-5; reasoned, not run).* `delmark.Read` opens a
+    regular marker on every check (each refusal, row and status): a OneDrive placeholder at the
+    name may be downloaded each time it is opened — add "a placeholder at the name is not
+    downloaded on every check" to lab row MA-1055 when it is written (DM-20 already puts a
+    placeholder there). Each row's check now looks up the marker, and on a failed lookup the
+    folder itself: about two more slow lookups per page load for a row on an offline share.
+- *The pass's probes kept as tests:* the marker planted between a writer's two asks
+  (`internal/app/ma1048_writers_under_lock_test.go`, all five writers); a case variant of the name
+  the volume joins refusing every backup, and one it keeps apart not
+  (`internal/app/ma1048_case_variant_test.go`); the failed lookup beside the log's line
+  (`internal/archdelete/ma1049_unfinished_to_say_test.go`, `internal/desktop/ma1049_lookup_fails_health_test.go`,
+  and the real program in `cmd/mailarchive/ma1049_status_lookup_unix_test.go`). Not kept: the
+  probes of LOW-2 and LOW-4, which only print today's accepted behaviour; the plan's case-variant
+  probe, which slice 1's `TestEveryListerSkipsWhatPresentCallsTheMarkerAndNothingElse` already
+  covers.
+
 ## 15. The delete marker (G2 for another computer, another account, and a remounted drive)
 
 Status: DESIGN AMENDMENT, 2 November 2026, for the 10-lens pre-code review

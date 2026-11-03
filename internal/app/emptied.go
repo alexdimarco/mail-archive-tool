@@ -16,7 +16,10 @@ import (
 
 // acquireArchiveLock takes a run's archive lock (lockfile.AcquireAs); a var so a test
 // can empty or remove the archive folder between a run's checks and its lock, as a
-// delete that finishes at that moment would (design-archive-delete §5.3 "After step 7").
+// delete that finishes at that moment would (design-archive-delete §5.3 "After step 7"),
+// or plant the delete marker there, as a delete stopped part way would (§15.3). The
+// other writers into an archive (reindex, the rebuilds, the program-copies setting,
+// RecordRefusedRun) take their lock through it too, so the same test reaches them.
 var acquireArchiveLock = lockfile.AcquireAs
 
 // makeArchiveDir creates an attended run's archive folder (os.MkdirAll); a var so a test

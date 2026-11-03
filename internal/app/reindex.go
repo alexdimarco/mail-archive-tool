@@ -56,11 +56,16 @@ func Reindex(out string, logger *log.Logger) (kept, pruned int, err error) {
 
 	// One run per archive at a time (R5): reindex sweeps and rewrites, so it
 	// must never overlap an export.
-	lock, err := lockfile.AcquireAs(filepath.Join(out, lockfile.Name), "reindex")
+	lock, err := acquireArchiveLock(filepath.Join(out, lockfile.Name), "reindex")
 	if err != nil {
 		return 0, 0, err
 	}
 	defer lock.Release()
+	// Again under the lock, as Run asks (the slice-2 pass's LOW-1): a delete that wrote its marker
+	// after the ask above and stopped part way before the lock was free.
+	if err := RefuseDeleteMarker(out, "its search index was not changed"); err != nil {
+		return 0, 0, err
+	}
 	if err := RefuseKeyless("prune its search index", out); err != nil {
 		return 0, 0, err
 	}
@@ -290,11 +295,15 @@ func Rebuild(out string, logger *log.Logger) (RebuildReport, error) {
 		return rep, err
 	}
 	// One run per archive at a time (R5): rebuild rewrites the index and pages.
-	lock, err := lockfile.AcquireAs(filepath.Join(out, lockfile.Name), "reindex")
+	lock, err := acquireArchiveLock(filepath.Join(out, lockfile.Name), "reindex")
 	if err != nil {
 		return rep, err
 	}
 	defer lock.Release()
+	// Again under the lock (LOW-1, as Reindex).
+	if err := RefuseDeleteMarker(out, "its search index was not rebuilt"); err != nil {
+		return rep, err
+	}
 	if err := RefuseKeyless("rebuild its search index", out); err != nil {
 		return rep, err
 	}

@@ -347,11 +347,15 @@ func RebuildEncrypted(ctx context.Context, opts Options, logger *log.Logger) (In
 	if err := preflightEncrypted(opts); err != nil {
 		return IndexCatchUp{}, err
 	}
-	lock, err := lockfile.AcquireAs(filepath.Join(out, lockfile.Name), lockVerb(opts, "rebuild"))
+	lock, err := acquireArchiveLock(filepath.Join(out, lockfile.Name), lockVerb(opts, "rebuild"))
 	if err != nil {
 		return IndexCatchUp{}, withKind(state.FailArchiveUnwritable, err)
 	}
 	defer lock.Release()
+	// Again under the lock (the slice-2 pass's LOW-1, as Run asks).
+	if err := RefuseDeleteMarker(out, "its search index was not rebuilt"); err != nil {
+		return IndexCatchUp{}, err
+	}
 	manifest, units, store, err := openEncrypted(opts, lock.StillHeld, time.Now().UTC(), logger, nil)
 	if err != nil {
 		return IndexCatchUp{}, err

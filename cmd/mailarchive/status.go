@@ -46,7 +46,8 @@ func runStatus(args []string) error {
 	if lerr != nil {
 		logPath = ""
 	}
-	if u, err := archdelete.UnfinishedAt(logPath, in.Out, runtime.GOOS); err == nil && u != nil {
+	// A marker lookup that fails does not hide the log's line (UnfinishedToSay; LOW-3).
+	if u, err := archdelete.UnfinishedToSay(logPath, in.Out, runtime.GOOS); err == nil && u != nil {
 		in.DeleteUnfinished = true
 		in.DeleteRow = u.Row // the spelling delete-archive -out finds the row by
 		in.DeleteMarkerOnly, in.DeleteBegun = u.MarkerOnly, archdelete.MarkerBegun(u)

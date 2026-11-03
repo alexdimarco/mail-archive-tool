@@ -1260,15 +1260,27 @@ func RecordRefusedRun(opts Options, cause error) {
 	if insideEncrypted(opts.Out) || seal.IsSealed(opts.Out) {
 		return
 	}
-	if st, err := delmark.Present(opts.Out); err != nil || st != delmark.Absent {
+	if !noDeleteMarker(opts.Out) {
 		return
 	}
-	lock, err := lockfile.AcquireAs(filepath.Join(opts.Out, lockfile.Name), lockVerb(opts, "export"))
+	lock, err := acquireArchiveLock(filepath.Join(opts.Out, lockfile.Name), lockVerb(opts, "export"))
 	if err != nil {
 		return
 	}
 	defer lock.Release()
+	// Again under the lock (the slice-2 pass's LOW-1): a delete that wrote its marker after the
+	// ask above and stopped part way before the lock was free.
+	if !noDeleteMarker(opts.Out) {
+		return
+	}
 	writeRefusedRun(opts, cause)
+}
+
+// noDeleteMarker reports whether out is confirmed to hold no delete marker (DM-14): a marker
+// there, or a lookup of it that failed, is false.
+func noDeleteMarker(out string) bool {
+	st, err := delmark.Present(out)
+	return err == nil && st == delmark.Absent
 }
 
 // writeRefusedRun writes RecordRefusedRun's failed record and history entry; the

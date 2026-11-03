@@ -35,11 +35,15 @@ func SealProgramCopies(ctx context.Context, opts Options, choice ProgramChoice, 
 	if err := preflightEncrypted(opts); err != nil {
 		return err
 	}
-	lock, err := lockfile.AcquireAs(filepath.Join(out, lockfile.Name), lockVerb(opts, "program copies"))
+	lock, err := acquireArchiveLock(filepath.Join(out, lockfile.Name), lockVerb(opts, "program copies"))
 	if err != nil {
 		return withKind(state.FailArchiveUnwritable, err)
 	}
 	defer lock.Release()
+	// Again under the lock (the slice-2 pass's LOW-1, as Run asks).
+	if err := RefuseDeleteMarker(out, "the program-copies setting was not saved"); err != nil {
+		return err
+	}
 	opts.ProgramCopies = ProgramCopiesUnset // set below, so a refusal is told, not logged
 	opts.settingOnly = true
 	manifest, _, store, err := openEncrypted(opts, lock.StillHeld, time.Now().UTC(), logger, nil)
