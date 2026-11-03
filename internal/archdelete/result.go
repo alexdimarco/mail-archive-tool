@@ -207,17 +207,27 @@ const (
 	// MsgElsewhereSaid is the plan's and the result's line for a delete the person said was finished
 	// elsewhere (MA-1057).
 	MsgElsewhereSaid = "The folder was not found here; you said this delete was finished elsewhere."
+	// MsgNoteGone is the plan's line for a no-anchor re-run whose folder no longer holds the note
+	// this delete left there (DeletePlan.NoteGone; the slice-4 adversarial pass's MED-1).
+	MsgNoteGone = "The archive's files are already gone, and so is the note this delete left in its folder: an earlier run of this delete, here or on another computer or user account, removed them. What MailArchive can still name is removed; everything else in the folder is kept."
 )
+
+// notKnownNoteGoneWhy is why the earlier runs' count is not known for such a re-run.
+const notKnownNoteGoneWhy = "some may have been removed on another computer or user account, or by a run that stopped before it wrote its record"
 
 // elsewhereValue is the deletion record's "Folder here" value for a delete finished elsewhere.
 const elsewhereValue = "the folder was not found here; you said this delete was finished elsewhere"
 
 // FinishesNotes are the plan's sentences after FinishesLine, on the Desktop's panel and at the
-// terminal: none for an ordinary delete or one this computer's log saw begin.
+// terminal: none for an ordinary delete or one this computer's log saw begin, but for a no-anchor
+// re-run whose folder lost the delete's note (NoteGone).
 func (p *DeletePlan) FinishesNotes() []string {
 	var out []string
 	if p.Elsewhere {
 		out = append(out, MsgElsewhereSaid)
+	}
+	if p.NoteGone {
+		out = append(out, MsgNoteGone)
 	}
 	if f := p.Finishes; f != nil && f.FromMarker {
 		out = append(out, MsgMarkerNoRecord)
@@ -275,6 +285,9 @@ const notKnownMarkerWhy = "the delete was begun where this computer's deletion l
 
 // notKnownWhy is why the earlier runs' count of the delete p finishes is not known.
 func (p *DeletePlan) notKnownWhy() string {
+	if p.NoteGone {
+		return notKnownNoteGoneWhy
+	}
 	if p.Finishes != nil && p.Finishes.FromMarker {
 		return notKnownMarkerWhy
 	}

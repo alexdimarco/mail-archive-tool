@@ -104,8 +104,11 @@ func crashAt(t *testing.T, at, dir, logPath string, enc bool) {
 //     holds only what a complete delete keeps: the archive's emptied folders went before the anchor
 //     (the slice-3 pass's MED-1), so none is left or called "not the archive's"; an archive beside
 //     none of the person's files ends with its folder gone;
-//   - right after the marker's removal (the stated open limit, §15.6, §15.7's DM-9 correction): no
-//     marker, and Delete again creates none and is never complete (§5.4).
+//   - right after the marker's removal: no marker, and Delete again creates none; this computer's
+//     log has the delete's `marked` line, so the marker gone with the anchor says step 6 had
+//     finished, and Delete again ends complete as after the anchor (the slice-4 pass's MED-1,
+//     settled 3 November 2026: this case was the stated open limit, "never complete", of §15.7's
+//     DM-9 correction; it is now a guard).
 func TestMA1047_ARealCrashAtEachStep6BoundaryLeavesWhatTheCrashTableSays(t *testing.T) {
 	if at := os.Getenv(crashChildEnv); at != "" {
 		crashChild(t, at)
@@ -176,18 +179,16 @@ func TestMA1047_ARealCrashAtEachStep6BoundaryLeavesWhatTheCrashTableSays(t *test
 				if wantRerun := c.at == "anchor" || c.at == "marker"; (p.Rerun == RerunNoAnchor) != wantRerun {
 					t.Fatalf("Delete again: rerun %v", p.Rerun)
 				}
+				// The delete's note gone with its anchor only after the marker's removal (MED-1).
+				if p.NoteGone != (c.at == "marker") {
+					t.Fatalf("Delete again: note gone %v", p.NoteGone)
+				}
 				res := Execute(p, p.Name, false, r.x)
 				if exists(filepath.Join(dir, delmark.Name)) {
 					t.Fatalf("a marker after Delete again:\n%s", res.Message())
 				}
 				if !enc && !exists(filepath.Join(dir, "taxes.pdf")) {
 					t.Fatal("the person's file was removed")
-				}
-				if c.at == "marker" {
-					if res.Status == StatusComplete || !res.Unfinished {
-						t.Fatalf("no marker and no anchor: never complete (§5.4):\n%s", res.Message())
-					}
-					return
 				}
 				if res.Status != StatusComplete || len(r.rows) != 1 {
 					t.Fatalf("Delete again: rows %v\n%s", r.rows, res.Message())

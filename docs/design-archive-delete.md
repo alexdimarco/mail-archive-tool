@@ -2129,6 +2129,88 @@ or needed here.
 >   "begun on another computer or user account" when this computer's log lost the line (DM-10's
 >   words are slice 5's).
 
+> **Slice 4's adversarial pass, settled 3 November 2026 (MA-1047, MA-1051, MA-1057 and MA-966
+> amended; no new id).** The pass found one MED and five LOWs, no HIGH; in every probe the delete
+> kept every file of the person's that has content. Words below are lead's words, owner-delegated
+> 2026-11-02.
+> - *MED-1, fixed: the computer that began a delete (A) was stuck for good once another computer
+>   (B) finished it from the marker and kept the folder for the person's own files.* A's Delete
+>   again found no anchor and no marker and ended "Not fully deleted: the folder still holds 1 file
+>   the delete can no longer identify. Delete them by hand, or use Remove from list." every time,
+>   Remove from list refused (MA-1029), uninstall refused (MA-1007), A's backups refused by A's log.
+>   Fix (the correction beside DM-9 in §15.2): A's log keeps the delete's `marked` line, written at
+>   step 6 before the first removal; `Unfinished.Marked` says a run of that delete wrote one, and
+>   `planNoAnchor` sets `DeletePlan.NoteGone` when the folder holds neither the anchor nor the
+>   marker. Step 6 then ends the re-run as DM-9 does: complete, what it cannot name kept, steps 8
+>   and 9. The plan says "The archive's files are already gone, and so is the note this delete left
+>   in its folder: an earlier run of this delete, here or on another computer or user account,
+>   removed them. What MailArchive can still name is removed; everything else in the folder is
+>   kept."; the earlier count is "not known: some may have been removed on another computer or user
+>   account, or by a run that stopped before it wrote its record". The plan's re-check under the
+>   lock compares `NoteGone`, so a marker that appears after the plan refuses "This archive changed
+>   since you clicked Delete". It also closes slice 3's open limit (a crash right after the marker's
+>   removal, §15.7's DM-9 correction case (i)). Not taken: asking §15.8 question 2 in a "folder
+>   kept" form (the pass's first option) — the `marked` line is a fact this computer recorded, so no
+>   answer is needed, and nothing more is removed than the no-anchor names. Prove-fail: the step-6
+>   exception removed, `Marked` never set, `NoteGone` set with the marker there, the count kept as
+>   known, the reason or the plan's sentence dropped, `samePlan` ignoring `NoteGone` — each turns
+>   `TestMA1057_ADeleteFinishedElsewhereThatKeptTheFolderEndsHereToo` red (and the first three
+>   `TestMA1047_ARealCrashAtEachStep6BoundaryLeavesWhatTheCrashTableSays`). **For the lead:** this
+>   changes when a delete ends complete (security-sensitive); it should go through the next
+>   adversarial pass (slice 5's, or a short one of its own).
+> - *MED-1's residual, accepted (no data at risk; not an owner ruling):* with no `marked` line — A
+>   stopped before step 6 (no marker, so B could not know of A's delete) and B then deleted the
+>   archive as a delete of its own and kept the folder — A's Delete again stays §5.4's "never
+>   complete". This existed before slice 4. Its words were wrong (MA-1029 refuses Remove from list
+>   there): the result and the guide now say "Move them out of the folder (or delete them by hand),
+>   then click Delete again." (the guide: "…then click Delete… on its row again."); moved out, the
+>   folder empties and Delete again ends the delete (pinned in the same test's positive twin). An
+>   optional owner question, not blocking: the "finished elsewhere" question also for a kept folder.
+>   Recommendation: no — rare, and the words now give a way out that keeps the person's files.
+> - *LOW-1, fixed: a plan from a planted marker removed the metadata files of the person's kept
+>   files* (`._README.txt`, `._Report.pdf`, `.VolumeIcon.icns`, `Thumbs.db`, `.DS_Store`). The
+>   correction stands beside DM-19 (§15.4): `._X` only when X goes or is not there, no other litter
+>   listed; step 7 still removes all litter with an emptied folder (`appleDoubleOfGone`). Prove-fail:
+>   the old routing, the orphan rule dropped, the marker's own `._` file kept — each turns
+>   `TestMA1051_APlanFromTheMarkerKeepsTheMetadataOfThePersonsFiles` red. Seen in the code, not run,
+>   and not changed (outside DM-19): an ordinary delete of an archive also removes a root `._X`
+>   whose X is the person's kept file (§4.4's litter rule, `lister.go`); for the lead.
+> - *LOW-2, fixed on Windows; the limit stays on macOS and Linux.* Where the volume number survives
+>   a replug (`volumeKeptAcrossReplug`, Windows' volume serial number), a parent on another volume
+>   than the started line records is refused "This archive's folder is not there, and the drive it
+>   was on is not the one plugged in now. Plug in the drive that holds this archive, then click
+>   Delete again." — never the question, even with the answer given. Delete refuses a drive's top
+>   folder (`driveRoot`), so the folder was on its parent's volume when the delete began. On macOS
+>   and Linux the device number changes on a remount, so the question is still asked there (the
+>   person types the folder's name; the words name the unplugged drive). Prove-fail: the check off,
+>   or on for every system — each turns `TestMA1057_AnotherDriveAtTheSamePlaceIsNotAskedTheQuestion`
+>   red.
+> - *LOW-3, fixed (words):* a delete of unknown kind (planned from a marker, never recorded here)
+>   was asked "…forgets this computer's record and key of it…"; `ElsewhereQuestion` now names the
+>   record and key only for an encrypted archive. Prove-fail: `k == Plain` again turns
+>   `TestMA1057_TheQuestionForADeleteOfUnknownKindForgetsNoKey` red.
+> - *LOW-4, fixed (words):* a computer finishing from the marker whose folder was removed before
+>   the typed name was shown the question's words as a refusal with no answer to give (its re-check
+>   under the lock reads its own started line, just written). `changedUnder` makes that "This
+>   archive changed since you clicked Delete. Click Delete again." Prove-fail: without it,
+>   `TestMA1057_TheFolderGoneUnderTheLockIsAChangeNotTheQuestion` is red.
+> - *LOW-5, fixed (words):* a marker lookup that fails on a folder with no anchor and no line of
+>   this computer's log said "This folder no longer holds an archive. Use Remove from list."; it now
+>   refuses in DM-23's words ("MailArchive could not check this archive's folder for a delete that did
+>   not finish (CAUSE), so it was not deleted; nothing was changed. …"), case `could-not-check`, the
+>   lookup's kind kept. Prove-fail: the old `return orig` turns
+>   `TestMA1051_AMarkerLookupThatFailsIsCouldNotCheck` red.
+> - *The pass's probes kept as tests* (no throwaway files): probe 9 (MED-1) and its pre-slice-4 form,
+>   probes 3, 4 and 10 in `internal/archdelete/ma1057_s4_settle_test.go`; probe 1 and the LOW-5 case
+>   in `internal/archdelete/ma1051_s4_settle_test.go`. Not kept: probes 2 (case-variant marker), 5
+>   (killed after the first line), 6 (unreadable log), 7 (read-only folder) and 8 (stopped after
+>   the key step) — they held, and existing tests cover them (slice 1's case-variant listers,
+>   `TestMA1051_ARunAgainOfAMarkerPlanKeepsOnlyMailArchivesNames`, MA-1052's save tests, the
+>   create-failure seam, `TestMA1057_TheFolderBackBeforeTheDeleteRefuses`).
+> - *Existing tests changed (none narrowed):* the crash test's "marker" cases now assert complete
+>   (they pinned the open limit); `TestANoManifestReRunSaysWhatIsLeftAndHowToGoOn` and the guide's
+>   `TestHowToUseMailArchiveExplainsDeleteAndRemoveFromList` take the new words.
+
 ## 15. The delete marker (G2 for another computer, another account, and a remounted drive)
 
 Status: DESIGN AMENDMENT, 2 November 2026, for the 10-lens pre-code review
@@ -2413,6 +2495,22 @@ delete finds either the marker or no archive (§5.3, "After step 7"). Then step 
   > delete stopped in step 6 with the marker) also gives "marker there, anchor gone"; Delete again
   > then ends complete and names the archive's files left as not the archive's — words only,
   > nothing is removed that §4 does not name (§14's slice-3 settle notes).
+
+  > **Corrected 3 November 2026 (slice 4's adversarial pass, MED-1; the notes above are left as
+  > written):** "a no-anchor folder without a marker keeps §5.4's rule" now has one exception. When
+  > this computer's log has the delete's `marked` line (a run of it created the marker at step 6, or
+  > found its own there) and the no-anchor re-run finds neither the anchor nor the marker, the marker
+  > went after the anchor, so step 6 had finished — the same proof as DM-9's, read from this
+  > computer's own log instead of the folder. The re-run is then complete with what it cannot name
+  > kept, and goes on to steps 8 and 9 (`DeletePlan.NoteGone`). Two causes reach it: another computer
+  > or user account finished the delete and kept the folder for the person's files (the computer
+  > that began it was otherwise stuck for good: never complete, Remove from list refused by MA-1029,
+  > uninstall refused by MA-1007, its own backups refused by its log), and a crash right after the
+  > marker's removal (the limit §15.7's DM-9 correction left open). Nothing more is removed: the
+  > names are the no-anchor re-run's as before; an encrypted archive whose folder keeps the person's
+  > files skips step 8 and keeps its row, as any delete that keeps such a folder does. What the
+  > earlier runs removed is then "not known". A no-anchor folder with no `marked` line (a delete
+  > stopped before step 6, or begun by MailArchive 1.5.5 or earlier) keeps §5.4's rule.
 - The marker is never in the plan's file list, counts, "Kept" list, saved plan or record: it is
   the delete's own note, written and removed by these two steps alone. The plain lister, the
   encrypted lister (`encRootFiles` leaves it out, beside the lock and the vault) and
@@ -2695,6 +2793,13 @@ line alone, no repair advice) applies to it too.
   > *Corrected 3 November 2026 (slice 4, builder):* except a line written by a run of this
   > computer that itself finished a delete planned from the marker: it carries `from_marker` and
   > keeps DM-19's names (§14, "Slice 4"), or a planted marker's stopped first run would widen them.
+  > *Corrected 3 November 2026 (slice 4's adversarial pass, LOW-1):* "litter" in that list is too
+  > wide for a folder of the person's own files: an AppleDouble file `._X` holds X's Finder tags,
+  > colour label and resource fork on exFAT, FAT and network drives, and `.VolumeIcon.icns`,
+  > `desktop.ini` and `Icon\r` are the drive's or folder's own look. A plan from the marker alone
+  > now removes `._X` only when X goes too (a name it removes, or the marker) or X is not there, and
+  > lists no other litter; step 7 still removes every litter file with the folder once nothing else
+  > is left in it. A delete planned from this computer's own log keeps §4.4's litter rule.
   > **[DM-9]** "Never complete while it leaves files" does not apply when the marker is there:
   > see the note under §15.2's "no-anchor re-run".
   > **[DM-6]** The identity sentence above stands for the marker-only plan. For this computer's
@@ -2779,6 +2884,17 @@ likely, since it invites B to finish. It is an owner question (§15.8, question 
 > **Folded from the 10-lens review [DM-10]:** the same dead end could be reached from one computer
 > (a drive that came back under another letter or mount name, finished at its new path). That
 > case is closed by §15.5's `first_run` ending. The two-computer case stays question 2.
+
+> **Corrected 3 November 2026 (slice 4's adversarial pass, MED-1):** the dead end has a second
+> form the question does not reach: B finishes the delete and *keeps* the folder, because the
+> person's own files are in it. A then finds the folder there with no anchor and no marker, and
+> §5.4's "never complete" kept A's row, Remove from list, uninstall and A's backups refused for good.
+> When A's log has the delete's `marked` line (A's delete reached step 6, the only way B could
+> learn of it from the marker), A's Delete again now ends complete with those files kept (the
+> correction beside DM-9 in §15.2). Without it (A stopped before step 6 and B deleted the archive as
+> a delete of its own), §5.4's rule stands, and its words now say "Move them out of the folder (or
+> delete them by hand), then click Delete again." instead of "…or use Remove from list", which
+> MA-1029 refuses there (§14, "Slice 4's adversarial pass").
 
 ### 15.5 MED-1: the remounted drive, and the log's device + file number
 
@@ -3067,6 +3183,12 @@ no-marker case they modelled is §15.6's second limit, stated, not a guard.
 >   the marker and ends complete with the person's file kept. Case (i) is §5.4's rule, unchanged
 >   by §15. Open for the lead, not built here: this computer cannot tell from the folder that
 >   step 6 had finished in case (i), though a log line written after the marker's removal could.
+>   *Corrected 3 November 2026 (slice 4's adversarial pass, MED-1):* case (i) is now told apart by
+>   the `marked` line written before the marker's first removal, not by a line after it: with that
+>   line in this computer's log and neither the anchor nor the marker in the folder, Delete again
+>   ends complete with the person's file kept (the correction beside DM-9 in §15.2).
+>   `TestMA1047_ARealCrashAtEachStep6BoundaryLeavesWhatTheCrashTableSays`'s "marker" cases, which
+>   pinned "never complete", now assert it, as a guard.
 > - **MA-1048's added line (DM-24).** "The name is pinned (DM-24)" belongs to **MA-1053**: slice 1
 >   built it there (`internal/delmark/ma1053_pin_test.go`, `TestTheMarkersNameAndKindsArePinned`,
 >   `// covers: MA-1053`). The test that `app`'s fallback words and kind equal the installed

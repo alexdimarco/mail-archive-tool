@@ -28,8 +28,10 @@ var helpDeleteSentences = []string{
 	// key goes only with the last recorded copy, and only when the folder goes.
 	"An encrypted archive: when the delete leaves its folder gone, this computer forgets its record of that folder. If that was the only copy of the archive this computer recorded, it also forgets the archive's key, and any other copy then opens only with its password or recovery key. If this computer recorded other copies of it, such as one on a USB drive, it keeps the key for them, so they still open here without the password: the result names them. When the folder is kept, because files of your own are in it, this computer still remembers the key and the archive stays under Your archives: the result says so, and Forget this encrypted archive here on its row forgets it. To be sure that no encrypted archive opens on this computer without its password, use Forget every encrypted archive on this computer… on the Uninstall MailArchive card.",
 	// The two partial results whose remedy is not Delete again (design §8 (a), §5.4;
-	// del-s5-A1-03, A2-05).
-	"Two results are different, and say so: if the only files left are mail copies you ticked to delete, the archive is already off Your archives, so there is no Delete… to click again: delete those files by hand. If it says the folder still holds files the delete can no longer identify, delete them by hand, or use Remove from list.",
+	// del-s5-A1-03, A2-05). Amended 2026-11-03 (the delete marker's slice-4 pass, MED-1): Remove from
+	// list is refused while that delete is not finished (MA-1029), so the second remedy is to move
+	// the files out, then Delete again.
+	"Two results are different, and say so: if the only files left are mail copies you ticked to delete, the archive is already off Your archives, so there is no Delete… to click again: delete those files by hand. If it says the folder still holds files the delete can no longer identify, move them out of the folder (or delete them by hand), then click Delete… on its row again.",
 	// "What Delete does not reach" names only this platform's items since MA-1019 (B4): pinned
 	// whole per platform below (helpReach…), each with the other platforms' items refused.
 	// Amended 2026-11-02 (MA-1032, the 1.5.3 friction review's B16): the deletion log's sentence

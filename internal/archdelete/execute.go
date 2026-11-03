@@ -250,13 +250,17 @@ func (e *run) steps() {
 	gone, lockLeft, emptyLeft := e.tidyFolder()
 	e.res.FolderGone, e.res.LockFileLeft, e.emptyLeft = gone, lockLeft, emptyLeft
 	e.logFolder(gone)
-	if p.Rerun == RerunNoAnchor && !e.markerGone {
+	if p.Rerun == RerunNoAnchor && !e.markerGone && !(p.NoteGone && !e.markerThere) {
 		// §5.4: never complete, and never steps 8 and 9 here. With the folder gone its
 		// `folder removed` line makes Delete again the folder-gone re-run, which
 		// finishes the keyring and the row (del-s1b-A1-02, conformance 9).
 		// Not when this re-run found the delete marker and removed it (§15.2, DM-9): a marker
 		// with the anchor gone proves step 6 had finished, so what is left is kept, as a
 		// complete delete keeps the person's files, and the delete goes on to steps 8 and 9.
+		// Nor when this computer's log says the delete wrote its marker and step 6 found neither
+		// it nor the anchor (NoteGone; the slice-4 adversarial pass's MED-1): the same proof, read
+		// from this computer's own `marked` line — another computer or account that finished the
+		// delete and kept the folder for the person's files, or a crash right after the marker.
 		e.stopNoAnchor(gone, lockLeft)
 		return
 	}
@@ -322,7 +326,7 @@ func (e *run) lockAndRecheck() bool {
 		}
 		if _, perr := Plan(p.Folder, deps); perr != nil {
 			if r := AsRefusal(perr); r != nil {
-				e.refuseUnder(r)
+				e.refuseUnder(changedUnder(r))
 				return false
 			}
 		}
@@ -337,7 +341,7 @@ func (e *run) lockAndRecheck() bool {
 		if r == nil {
 			r = &Refusal{Case: CaseUnreadable, Message: util.StripControl(err.Error())}
 		}
-		e.refuseUnder(r)
+		e.refuseUnder(changedUnder(r))
 		return false
 	}
 	if !samePlan(p, again) {
@@ -347,13 +351,24 @@ func (e *run) lockAndRecheck() bool {
 	return true
 }
 
+// changedUnder is a refusal of the plan made again under the lock, as this run says it: Delete
+// again's "finished elsewhere" question there is this run's own started line, just written, with
+// the folder gone since the plan — the question would be a refusal with no answer to give (the
+// slice-4 adversarial pass's LOW-4), so it says the archive changed since the plan.
+func changedUnder(r *Refusal) *Refusal {
+	if r.Case == CaseFinishedElsewhere {
+		return &Refusal{Case: CaseChanged, Message: msgChanged}
+	}
+	return r
+}
+
 // samePlan is §3.1's re-check: the same folder, the manifest or vault unchanged,
 // the same names, unrecorded copies and schedules, and this computer's record of an
 // encrypted archive as the plan found it — a record forgotten (or recorded) since would
 // otherwise reach step 8 with the plan's, and the result say this computer still
 // remembers a key it forgot (del-s3a-A2-01).
 func samePlan(a, b *DeletePlan) bool {
-	return a.Identity == b.Identity && a.Kind == b.Kind && a.Rerun == b.Rerun && a.Record == b.Record &&
+	return a.Identity == b.Identity && a.Kind == b.Kind && a.Rerun == b.Rerun && a.Record == b.Record && a.NoteGone == b.NoteGone &&
 		a.Anchor.Name == b.Anchor.Name && a.Anchor.Size == b.Anchor.Size && a.Anchor.SHA256 == b.Anchor.SHA256 &&
 		a.Anchor.ModTime.Equal(b.Anchor.ModTime) &&
 		sameList(itemRels(a.Remove), itemRels(b.Remove)) && sameList(itemRels(a.Unrecorded), itemRels(b.Unrecorded)) &&
@@ -901,7 +916,9 @@ func (e *run) stopNoAnchor(gone, lockLeft bool) {
 			what = plural(folders, "folder", "folders")
 		}
 		e.detail = fmt.Sprintf("the folder still holds %s the delete can no longer identify", what)
-		line = "Not fully deleted: " + e.detail + ". Delete them by hand, or use Remove from list."
+		// Not "or use Remove from list": MA-1029 refuses it while this delete is not finished (the
+		// slice-4 adversarial pass's MED-1). Moved out, the folder empties and Delete again finishes.
+		line = "Not fully deleted: " + e.detail + ". Move them out of the folder (or delete them by hand), then click Delete again."
 	case lockLeft:
 		e.detail = "the lock file could not be removed"
 		line = "Not fully deleted: one MailArchive lock file (.mailarchive.lock) could not be removed. Click Delete again; if it stays, delete that file by hand (not the folder), then click Delete again."

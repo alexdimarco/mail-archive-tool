@@ -334,6 +334,11 @@ type Unfinished struct {
 	// MailArchive's own names when the anchor is gone (DM-19), and its record's lines from the marker
 	// say so (DM-8).
 	FromMarker bool
+	// Marked: a run of this delete (one whose started line names its first run, FirstRun) wrote its
+	// `marked` line — it created the folder's marker at step 6, or found this delete's own there
+	// (DM-27). With the anchor and the marker both gone, step 6 had finished (DeletePlan.NoteGone;
+	// the slice-4 adversarial pass's MED-1).
+	Marked bool
 	// counted: this run's own finished line was read.
 	counted bool
 }
@@ -553,6 +558,9 @@ func (dl *DeleteLog) Unfinished(folder, goos string) *Unfinished {
 	}
 	var open []*Unfinished
 	byRun := map[string]*Unfinished{}
+	// markedFirst: the first runs of the deletes of this folder one of whose runs wrote a `marked`
+	// line (Unfinished.Marked).
+	markedFirst := map[string]bool{}
 	latest := func() *Unfinished {
 		if len(open) == 0 {
 			return nil
@@ -628,6 +636,8 @@ func (dl *DeleteLog) Unfinished(folder, goos string) *Unfinished {
 		switch l.Event {
 		case evFolderRemoved, evFolderKept:
 			u.FolderRemoved = l.Event == evFolderRemoved
+		case evMarked:
+			markedFirst[u.FirstRun] = true
 		case evKeyForgotten:
 			u.KeyForgotten = true
 		case evFinished:
@@ -668,6 +678,7 @@ func (dl *DeleteLog) Unfinished(folder, goos string) *Unfinished {
 		if !u.counted {
 			u.RemovedKnown = false // it stopped with no finished line: what it removed is not known
 		}
+		u.Marked = markedFirst[u.FirstRun]
 		return u
 	}
 	return nil

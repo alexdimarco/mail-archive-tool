@@ -451,7 +451,7 @@ func TestANoManifestReRunSaysWhatIsLeftAndHowToGoOn(t *testing.T) {
 	p = r.plan(t)
 	res = Execute(p, p.Name, false, r.x)
 	if res.Status != StatusPartial || strings.Contains(res.Message(), "0 files") ||
-		res.Lines[0] != "Not fully deleted: the folder still holds 2 folders the delete can no longer identify. Delete them by hand, or use Remove from list." {
+		res.Lines[0] != "Not fully deleted: the folder still holds 2 folders the delete can no longer identify. Move them out of the folder (or delete them by hand), then click Delete again." {
 		t.Fatalf("%s", res.Message())
 	}
 }

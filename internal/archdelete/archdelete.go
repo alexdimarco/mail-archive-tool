@@ -225,6 +225,13 @@ type DeletePlan struct {
 	// MA-1057): the folder was not found here and no `folder removed` line says this computer's
 	// delete removed it.
 	Elsewhere bool
+	// NoteGone: a no-anchor re-run of a delete this computer's log says wrote (or found) the folder's
+	// marker at step 6 (its `marked` line), whose folder now holds neither the anchor nor the marker.
+	// The marker goes only after the anchor, so step 6 had finished — here, or on another computer
+	// or user account that finished the delete (the slice-4 adversarial pass's MED-1): the re-run is
+	// then complete with what it cannot name kept, as DM-9's marker case is, and the earlier runs'
+	// count is not known.
+	NoteGone bool
 }
 
 // KeyAtPlan is the keyring's forget plan for the record the plan found: Known when it was
@@ -312,10 +319,12 @@ const (
 )
 
 // ElsewhereQuestion is §15.8 question 2's words for an archive of kind k (lead's words,
-// owner-delegated 2026-11-02): a plain archive has no record or key to forget here.
+// owner-delegated 2026-11-02): a plain archive, or one of a kind not known here (planned from a
+// marker, never recorded by this computer; the slice-4 adversarial pass's LOW-3), has no record or
+// key to forget here — step 8 applies only to an encrypted one.
 func ElsewhereQuestion(k Kind) string {
 	does := "it stops this computer's schedules for it, forgets this computer's record and key of it, and removes its row"
-	if k == Plain {
+	if k != Encrypted {
 		does = "it stops this computer's schedules for it and removes its row"
 	}
 	return "This archive's folder is not there. If its delete was finished from another computer or user account, MailArchive can finish it here too: " +

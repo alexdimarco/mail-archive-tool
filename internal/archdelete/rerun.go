@@ -5,6 +5,7 @@ import (
 	"io/fs"
 	"os"
 	"path/filepath"
+	"runtime"
 	"sort"
 	"strings"
 
@@ -45,6 +46,11 @@ func planUnfinished(folder string, deps Deps, u *Unfinished, orig *Refusal) (*De
 			return nil, refuse(CaseUnreachable, msgUnreachable)
 		}
 		if !u.FolderRemoved {
+			if otherDrive(filepath.Dir(abs), u) {
+				// Another drive at the same letter or label (the slice-4 adversarial pass's LOW-2): plug
+				// in the one the delete began on, never the question.
+				return nil, refuse(CaseUnreachable, msgOtherDrive)
+			}
 			if !deps.FinishedElsewhere {
 				return nil, refuse(CaseFinishedElsewhere, "%s", ElsewhereQuestion(u.Kind))
 			}
@@ -86,7 +92,15 @@ func markerFinishes(folder string) *Unfinished {
 func planMarkerNoAnchor(folder string, deps Deps, orig *Refusal) (*DeletePlan, error) {
 	abs := cleanAbs(folder)
 	st, err := delmark.Present(abs)
-	if err != nil || st == delmark.Absent {
+	if err != nil {
+		// The lookup failed at a folder that is there: whether a delete is under way is not known, so
+		// not "no longer holds an archive" (the slice-4 adversarial pass's LOW-5; DM-23's words).
+		if r := MarkerRefusal(nil, err, "it was not deleted"); r != nil {
+			return nil, r
+		}
+		return nil, refuse(CaseUnreachable, msgUnreachable)
+	}
+	if st == delmark.Absent {
 		return nil, orig
 	}
 	id, ok := folderIdentity(abs)
@@ -108,6 +122,57 @@ func planMarkerNoAnchor(folder string, deps Deps, orig *Refusal) (*DeletePlan, e
 		}
 	}
 	return planNoAnchor(abs, deps, u, orig)
+}
+
+// volumeKeptAcrossReplug: this system's volume number survives a drive unplugged and plugged in
+// again — Windows' volume serial number does; macOS's and Linux's device number changes on a
+// remount — so a parent on another volume than the started line records is another drive at the
+// same place (the slice-4 adversarial pass's LOW-2). A var: a test turns it on elsewhere.
+var volumeKeptAcrossReplug = runtime.GOOS == "windows"
+
+// msgOtherDrive is Delete again's refusal when the folder is gone and its parent is on another
+// drive than the one the delete began on (lead's words, owner-delegated 2026-11-02): this person
+// began the delete, so "again" is right.
+const msgOtherDrive = "This archive's folder is not there, and the drive it was on is not the one plugged in now. Plug in the drive that holds this archive, then click Delete again."
+
+// appleDoubleOfGone are the names of litter (operating-system files) a plan from the marker alone
+// removes (the slice-4 adversarial pass's LOW-1): an AppleDouble file `._X` only when X goes too (a
+// name in remove, or the marker) or is not there. `._X` holds X's Finder tags, colour label and
+// resource fork on exFAT, FAT and network drives, so it is X's while X is kept; and the folder's
+// own (`.VolumeIcon.icns`, `desktop.ini`, `.DS_Store`, `Thumbs.db`, …) stays while the folder does.
+// Step 7 removes every litter file with the folder once nothing else is left in it.
+func appleDoubleOfGone(goos string, litter []string, ents []fs.DirEntry, remove []Item, marker string) []string {
+	present, going := map[string]bool{}, map[string]bool{}
+	for _, e := range ents {
+		present[fold(goos, e.Name())] = true
+	}
+	for _, it := range remove {
+		going[fold(goos, it.Rel)] = true
+	}
+	if marker != "" {
+		going[fold(goos, marker)] = true
+	}
+	var out []string
+	for _, n := range litter {
+		if !strings.HasPrefix(n, "._") {
+			continue
+		}
+		if x := fold(goos, n[2:]); going[x] || !present[x] {
+			out = append(out, n)
+		}
+	}
+	return out
+}
+
+// otherDrive reports a parent on another volume than the one u's started line records, where the
+// volume number survives a replug (volumeKeptAcrossReplug). Delete refuses a drive's top folder
+// (driveRoot), so the folder a delete began on was on its parent's volume then.
+func otherDrive(parent string, u *Unfinished) bool {
+	if !volumeKeptAcrossReplug || u.Identity == (Identity{}) {
+		return false
+	}
+	v, ok := volumeOf(parent)
+	return ok && v != u.Identity.Volume
 }
 
 func dirReachable(dir string) bool {
@@ -238,6 +303,17 @@ func planNoAnchor(abs string, deps Deps, u *Unfinished, orig *Refusal) (*DeleteP
 		return nil, err
 	}
 	marker := deleteMarkerIn(root, ents)
+	// This computer's log says the delete wrote (or found) its marker at step 6, and neither the
+	// anchor nor the marker is here now: the marker goes only after the anchor, so step 6 had
+	// finished, here or where another computer or user account finished the delete (the slice-4
+	// adversarial pass's MED-1). What its earlier runs removed is then not known.
+	if u.Marked && marker == "" {
+		p.NoteGone = true
+		u.RemovedKnown = false
+	}
+	// A plan from the marker alone keeps the operating system's files that belong to what it keeps
+	// (the slice-4 adversarial pass's LOW-1): decided once every name is classed.
+	var maybeLitter []string
 	for _, e := range ents {
 		name := e.Name()
 		f := fold(l.goos, name)
@@ -277,6 +353,8 @@ func planNoAnchor(abs string, deps Deps, u *Unfinished, orig *Refusal) (*DeleteP
 			return nil, linkRefusal(filepath.Join(abs, name))
 		case link:
 			p.Kept = append(p.Kept, name)
+		case util.IsLitter(name) && !efi.IsDir() && !(p.Kind != Encrypted && own[f]) && u.FromMarker:
+			maybeLitter = append(maybeLitter, name)
 		case util.IsLitter(name) && !efi.IsDir() && !(p.Kind != Encrypted && own[f]):
 			p.Litter = append(p.Litter, name)
 		case removable && l.fileLike(efi):
@@ -289,6 +367,7 @@ func planNoAnchor(abs string, deps Deps, u *Unfinished, orig *Refusal) (*DeleteP
 			p.Kept = append(p.Kept, name)
 		}
 	}
+	p.Litter = append(p.Litter, appleDoubleOfGone(l.goos, maybeLitter, ents, p.Remove, marker)...)
 	sort.Slice(p.Remove, func(i, j int) bool { return p.Remove[i].Rel < p.Remove[j].Rel })
 	sort.Strings(p.Litter)
 	sort.Strings(p.Kept)
