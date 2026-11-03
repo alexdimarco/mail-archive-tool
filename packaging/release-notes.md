@@ -76,6 +76,9 @@ MailArchive is one program with verbs; there is no separate GUI download.
 | Linux x86-64 | `mailarchive-linux-amd64` | `mailarchive wizard` or `mailarchive desktop` (the wizard needs `zenity` and a desktop session) |
 | Linux arm64 | `mailarchive-linux-arm64` | the same verbs (compiled, not lab-run) |
 
+### Fixed in the next release
+- **On Windows, the wizard and MailArchive Desktop's other windows open in front of your browser.** When you clicked **Make a new archive…** (or **Open an archive folder…**, or another button that opens a window) in MailArchive Desktop on Windows, the window could open behind the browser, so it looked as if nothing had happened. It now opens in front of the browser, ready for you to type, and does not stay on top once you switch to another window.
+
 ### New in 1.5.4 — a Windows installer
 - **Windows now has an installer.** Each release now includes **`MailArchiveDesktop-<version>-x64.msi`**: double-click it to install MailArchive with Start menu entries, a desktop shortcut, and MailArchive Desktop starting quietly whenever anyone signs in to the computer. It is not signed yet, so Windows shows **"Windows protected your PC"** (click **More info**, then **Run anyway**) and names an **Unknown publisher** when it asks for administrator permission. The zip is still there for computers where you cannot install programs. If you used the zip, the install section above says how to move your scheduled backups to the installed program.
 
