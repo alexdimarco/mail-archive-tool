@@ -105,8 +105,20 @@ func TestAFirstInstallKeepsItsNoteAcrossTheRedraw(t *testing.T) {
 	if !strings.Contains(dashboardJS, "try{sessionStorage.setItem(keptNoteKey,d.note);}catch(e){}") {
 		t.Error("the page script's kept Open an archive folder… note is not guarded")
 	}
-	if n := strings.Count(dashboardJS, "sessionStorage."); n != 12 {
-		t.Errorf("the page script calls storage %d times, want the 12 guarded ones", n)
+	// Amended 2026-11-03 (MA-1065, the 1.5.6 friction review's note B): the page drawn again after
+	// Dismiss or Remove from list is asked to start at Your archives — three more calls (its set, its
+	// read and its removal), each named here and guarded.
+	for _, guarded := range []string{"function delBackToArchives(){try{sessionStorage.setItem(delArchivesKey,'1');}catch(e){}}",
+		"try{if(sessionStorage.getItem(delArchivesKey)){sessionStorage.removeItem(delArchivesKey);"} {
+		if !strings.Contains(dashboardJS, guarded) {
+			t.Errorf("the page script's back-to-Your-archives mark is not guarded: %q missing", guarded)
+		}
+	}
+	if !strings.Contains(dashboardJS, "if(window.addEventListener)window.addEventListener('load',()=>setTimeout(go,0));}}}catch(e){}") {
+		t.Error("the back-to-Your-archives read is not closed by its catch")
+	}
+	if n := strings.Count(dashboardJS, "sessionStorage."); n != 15 {
+		t.Errorf("the page script calls storage %d times, want the 15 guarded ones", n)
 	}
 }
 
