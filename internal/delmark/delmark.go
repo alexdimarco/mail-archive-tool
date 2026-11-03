@@ -83,6 +83,16 @@ func OnlyMarkerWords(done string) string { return onlyMarkerHead + done + onlyMa
 // OnlyMarkerWords is.
 func NotRegularWords(done string) string { return notRegularHead + done + notRegularTail }
 
+// LogUnreadableWords refuses an action (done says what was not done, WhatNotBackedUp for
+// a backup) when the marker is there and this computer's deletion log could not be read,
+// cause saying why: the log may hold the delete's started line, so the words never say it
+// "has no record of it" (the slice-2 adversarial pass's LOW-4 (a); lead's words,
+// owner-delegated 2026-11-02: what happened first, no "again", the remedy).
+func LogUnreadableWords(done, cause string) string {
+	return "Delete not finished: a delete of this archive did not finish (its folder still holds the delete's marker), and MailArchive could not read this computer's deletion log (" +
+		cause + "), so " + done + "; nothing was changed. To finish it, check that file, then click Delete… on its row in MailArchive Desktop."
+}
+
 // OnlyMarkerTerminal is the terminal's line after MsgOnlyMarker; dir is the folder as
 // the person types it (quoted for their command line).
 func OnlyMarkerTerminal(dir string) string {
@@ -136,13 +146,19 @@ func (e *LookupError) Kind() string { return KindCouldNotCheck }
 // Refusal is the "could not check" words (§15.3, DM-23), what saying what was not done
 // ("it was not backed up", "it was not paused", …).
 func (e *LookupError) Refusal(what string) string {
+	return fmt.Sprintf("MailArchive could not check this archive's folder for a delete that did not finish (%s), so %s; nothing was changed. Check that the drive or folder can be read, then try again.",
+		e.Cause(), what)
+}
+
+// Cause is why the lookup failed, in words fit to show: the path left out (the folder is
+// named beside it), control and bidi characters stripped.
+func (e *LookupError) Cause() string {
 	cause := e.Err
 	var pe *fs.PathError
 	if errors.As(cause, &pe) {
 		cause = pe.Err
 	}
-	return fmt.Sprintf("MailArchive could not check this archive's folder for a delete that did not finish (%s), so %s; nothing was changed. Check that the drive or folder can be read, then try again.",
-		util.StripBidi(util.StripControl(cause.Error())), what)
+	return util.StripBidi(util.StripControl(cause.Error()))
 }
 
 // lstat is the marker's lookup, a var so a test can make it fail as a dead drive does.

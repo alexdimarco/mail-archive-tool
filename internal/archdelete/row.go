@@ -37,6 +37,9 @@ type RowsCheck struct {
 	deps Deps
 	stat *statMemo
 	log  *DeleteLog
+	// logErr is why deps.Log could not be read: a delete only the marker answers for is then not
+	// said to have "no record" in the log (the slice-2 adversarial pass's LOW-4 (a)).
+	logErr error
 	// marks is the page's own memo of the delete marker's lookup (DM-15): an Lstat
 	// (delmark.Present), never the stat memo's os.Stat, which follows a link at the name and
 	// would read a dangling one as "not there".
@@ -51,6 +54,8 @@ func NewRowsCheck(deps Deps) *RowsCheck {
 	if deps.Log != "" {
 		if lines, err := readLog(deps.Log); err == nil {
 			r.log = newDeleteLog(lines, r.stat)
+		} else {
+			r.logErr = err
 		}
 	}
 	return r
@@ -71,7 +76,7 @@ func (r *RowsCheck) State(folder string, knownArchive bool) (*Unfinished, error)
 	// folder, still sees a delete only the marker knows. A lookup that fails says nothing on the
 	// row; every action on the folder refuses it (the "could not check" words).
 	mark := r.marker(abs)
-	u, _ = withMarker(u, nil, abs, mark)
+	u, _ = withMarker(u, r.logErr, abs, mark)
 	// A link, or a protected folder, the plan refuses whatever else holds, so the row does not
 	// offer Delete for it (del-s3a-A2-02); and in planArchive's order — the folder a link, then
 	// protected, then started with -out, then busy, then the manifest itself a link, then the

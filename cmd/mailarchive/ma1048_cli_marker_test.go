@@ -113,8 +113,12 @@ func TestMA1049_StatusSeesTheMarker(t *testing.T) {
 		}
 		t.Fatal(err)
 	}
+	// Amended 2026-11-03 (slice 2b, the slice-2 pass's LOW-4 (b)): a name that is not a regular file
+	// is said as such, to remove by hand, never "run mailarchive delete-archive" (its Delete refuses
+	// it); still exact.
 	got, code = statusOf(t, dir)
-	if code != 0 || !strings.Contains(got, "RED") || !strings.Contains(got, "a delete of this archive did not finish"+tail) {
+	if code != 0 || !strings.Contains(got, "RED: this archive's folder holds .mailarchive-deleting.json, which MailArchive did not write (it is a link, a folder or a device), so nothing is backed up into it — if no delete of this archive is under way, remove it by hand.") ||
+		strings.Contains(got, "delete-archive") {
 		t.Fatalf("status of a folder holding a dangling link at the marker's name:\n%s", got)
 	}
 }

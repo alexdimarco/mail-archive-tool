@@ -15,6 +15,7 @@ import (
 	"syscall"
 	"time"
 
+	"mail-archive-tool/internal/delmark"
 	"mail-archive-tool/internal/encmark"
 	"mail-archive-tool/internal/index"
 	"mail-archive-tool/internal/instance"
@@ -122,6 +123,18 @@ type Input struct {
 	// began as the caller words a moment, "" when the marker does not say.
 	DeleteMarkerOnly bool
 	DeleteBegun      string
+	// DeleteLogUnreadable is why this computer's deletion log could not be read when only the
+	// marker answered (DeleteMarkerOnly): the line says so, never "has no record of it" (the delete
+	// marker's slice-2 adversarial pass, LOW-4 (a)). "" when the log was read.
+	DeleteLogUnreadable string
+	// DeleteMarkerNotRegular: what is at the marker's name is not a regular file (a link, a folder,
+	// a device), which MailArchive never writes: the line says to remove it by hand, never to click
+	// a Delete that refuses it (LOW-4 (b)).
+	DeleteMarkerNotRegular bool
+	// DeleteCouldNotCheck is why the marker's lookup failed at a folder that is there, when this
+	// computer's deletion log has no line to say in its place: RED, since every backup and action
+	// refuses the folder "could not check" (LOW-4 (c)). "" when it did not fail.
+	DeleteCouldNotCheck string
 
 	// HasIndex is true when search.db opened; HasIndexFile when it exists on
 	// disk at all. A present index that cannot be opened (corrupt) carries the
@@ -396,6 +409,12 @@ func Assess(in Input, now time.Time) Report {
 	// 1.5.3 re-walk's N8).
 	if in.DeleteUnfinished {
 		r.red("delete_unfinished", in.deleteUnfinishedLine())
+		return r
+	}
+	// Whether a delete of it did not finish could not be checked (LOW-4 (c)): every backup and
+	// action refuses the folder until it can be, so that is said alone too.
+	if in.DeleteCouldNotCheck != "" {
+		r.red("delete_could_not_check", DeleteCouldNotCheckLine(in.DeleteCouldNotCheck))
 		return r
 	}
 
@@ -1626,6 +1645,10 @@ func NoArchive(in Input) error {
 		// "run an export into it".
 		return fmt.Errorf("no archive at %s: %s", in.Out, in.deleteUnfinishedLine())
 	}
+	if in.DeleteCouldNotCheck != "" {
+		// The folder could not be looked into (LOW-4 (c)): say that, not "run an export into it".
+		return fmt.Errorf("cannot report on %s: %s", in.Out, DeleteCouldNotCheckLine(in.DeleteCouldNotCheck))
+	}
 	return fmt.Errorf("no archive at %s: no manifest, schedule descriptor or last-run record (run an export into it first, or check the path)", in.Out)
 }
 
@@ -1649,10 +1672,57 @@ func (in Input) seePosture(format string) string {
 // deleteUnfinishedLine is the posture line for this Input's unfinished delete: the marker's when
 // only the folder's delete marker knows it.
 func (in Input) deleteUnfinishedLine() string {
-	if in.DeleteMarkerOnly {
+	switch {
+	case in.DeleteMarkerNotRegular:
+		return DeleteMarkerNotRegularLine(in.deleteRow(), in.Surface, !in.DeleteMarkerOnly)
+	case in.DeleteMarkerOnly && in.DeleteLogUnreadable != "":
+		return DeleteMarkerLogUnreadableLine(in.deleteRow(), in.Surface, in.DeleteBegun, in.DeleteLogUnreadable)
+	case in.DeleteMarkerOnly:
 		return DeleteMarkerOnlyLine(in.deleteRow(), in.Surface, in.DeleteBegun)
 	}
 	return DeleteUnfinishedLine(in.deleteRow(), in.Surface)
+}
+
+// The delete marker's lines for the slice-2 adversarial pass's LOW-4 (design-archive-delete §14;
+// lead's words, owner-delegated 2026-11-02: what happened first, never "again" to a person who
+// began no delete, the remedy named). Each ends with its period.
+
+// DeleteMarkerLogUnreadableLine is the posture line for a delete the marker knows while this
+// computer's deletion log could not be read (cause says why): the log may hold its started line,
+// so it never says the log "has no record of it" (LOW-4 (a)).
+func DeleteMarkerLogUnreadableLine(out, surface, begun, cause string) string {
+	what := "a delete of this archive did not finish"
+	if begun != "" {
+		what = "a delete of this archive begun " + begun + " did not finish"
+	}
+	what += ", and MailArchive could not read this computer's deletion log (" + cause + ")"
+	if surface == "desktop" {
+		return what + " — check that file, then click Delete… on its row in Your archives to finish it."
+	}
+	return fmt.Sprintf("%s — check that file, then run mailarchive delete-archive -out %s, or click Delete… on its row in MailArchive Desktop, to finish it.", what, encmark.CommandPath(out))
+}
+
+// DeleteMarkerNotRegularLine is the posture line for a name at the marker's that is not a regular
+// file (a link, a folder, a device), which MailArchive never writes and Delete's plan refuses
+// (LOW-4 (b)): it is removed by hand. logKnows: this computer's deletion log has the delete's own
+// line, so Delete finishes it once the name is removed ("again" is said to the person who began it).
+func DeleteMarkerNotRegularLine(out, surface string, logKnows bool) string {
+	held := "holds " + delmark.Name + ", which MailArchive did not write (it is a link, a folder or a device)"
+	if !logKnows {
+		return "this archive's folder " + held + ", so nothing is backed up into it — if no delete of this archive is under way, remove it by hand."
+	}
+	what := "a delete of this archive did not finish, and its folder " + held
+	if surface == "desktop" {
+		return what + " — remove it by hand, then click Delete… on its row in Your archives to finish the delete."
+	}
+	return fmt.Sprintf("%s — remove it by hand, then run mailarchive delete-archive -out %s again, or click Delete… on its row in MailArchive Desktop, to finish the delete.", what, encmark.CommandPath(out))
+}
+
+// DeleteCouldNotCheckLine is the posture line for a folder whose delete marker could not be looked
+// up (cause says why) while this computer's deletion log has no line to say in its place (LOW-4
+// (c)): every backup and action refuses it "could not check".
+func DeleteCouldNotCheckLine(cause string) string {
+	return "MailArchive could not check this archive's folder for a delete that did not finish (" + cause + "), so nothing is backed up or changed in it — check that the drive or folder can be read."
 }
 
 // DeleteMarkerOnlyLine is the posture line for a delete only the folder's delete marker knows

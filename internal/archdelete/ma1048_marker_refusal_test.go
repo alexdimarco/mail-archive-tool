@@ -80,9 +80,16 @@ func TestMA1048_EveryBackupRefusesTheMarkerWithNoLogLine(t *testing.T) {
 		}
 	}
 
+	// Amended 2026-11-03 (slice 2b, the slice-2 pass's LOW-4 (a)): with the log unreadable the words
+	// say so (delmark.LogUnreadableWords), never that the log "has no record of it"; still exact.
+	unreadableWords := delmark.LogUnreadableWords(delmark.WhatNotBackedUp, "MailArchive's deletion log "+unreadable+" must be a regular file (not a symlink, pipe or device)") + " (Folder: " + half + ")"
 	for name, lp := range map[string]string{"another computer's log": anotherComputers, "a log that cannot be read": unreadable} {
 		err := app.RefuseUnfinishedDelete(half, lp)
-		assure.Refused(t, refusalCode(err), errText(err), assure.Code(1), assure.Names(onlyMarker), assure.Forbid("Delete again", "could not read its deletion log"))
+		want := onlyMarker
+		if lp == unreadable {
+			want = unreadableWords
+		}
+		assure.Refused(t, refusalCode(err), errText(err), assure.Code(1), assure.Names(want), assure.Forbid("Delete again", "could not read its deletion log"))
 		if r := AsRefusal(err); r == nil || r.Case != CaseUnfinished {
 			t.Errorf("%s: the refusal's case: %+v", name, r)
 		}

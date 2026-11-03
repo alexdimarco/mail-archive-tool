@@ -1897,6 +1897,32 @@ or needed here.
   probe, which slice 1's `TestEveryListerSkipsWhatPresentCallsTheMarkerAndNothingElse` already
   covers.
 
+> **Slice 2b, 3 November 2026 (beside the accepted limits above; MA-1048 and MA-1049 amended, no
+> new id).** Built at the lead's instruction after the owner's rulings of 2 November:
+> - *LOW-4, the words* (lead's words, owner-delegated 2026-11-02: what happened first, never
+>   "again" to a person who began no delete, the remedy named). (a) A log that cannot be read with
+>   the marker there: `Unfinished.LogUnreadable` carries why; the backup's and every action's
+>   refusal (`delmark.LogUnreadableWords`), the row (`MarkerRowText`) and the status line
+>   (`health.DeleteMarkerLogUnreadableLine`) say "MailArchive could not read this computer's
+>   deletion log (CAUSE)" and "check that file, then … Delete…", never "has no record of it". (b) A
+>   name at the marker's that is not a regular file: `status` and Status & health say
+>   `health.DeleteMarkerNotRegularLine` — MailArchive did not write it, remove it by hand — and
+>   point to Delete only after that, and only when this computer's log knows the delete. (c) A
+>   lookup that fails with no log line: `status` and Status & health say RED
+>   `delete_could_not_check` (`health.DeleteCouldNotCheckLine`), and `status`'s refusal of a folder
+>   it sees no archive in says it in place of "run an export into it first". The words are in
+>   MA-1048's and MA-1049's amendments.
+> - *LOW-2, its verify part.* `mailarchive verify` (plain, `-record`, scheduled with
+>   `-unattended`, `-full`, an encrypted archive's keyless check) asks `archdelete.ActionRefusal`
+>   first, as every other action does, and refuses with "it was not checked", writing nothing (no
+>   last-verify record, no log). Side effect, as for every action: a deletion log that cannot be
+>   read now refuses a verify too (fail closed, as G2 ruled for backups). Not changed, still the
+>   accepted limit above: `change-password`, `new-recovery-key` and `restore-key-file` (the key
+>   verbs: their own change with a security pass).
+> - Not changed: a computer whose settings folder cannot be found (no home folder) asks no log,
+>   so its words for a delete only the marker knows still say the log "has no record of it"
+>   (`ActionRefusal`'s no-settings branch and `status` with no log path). Rare; noted for the lead.
+
 ## 15. The delete marker (G2 for another computer, another account, and a remounted drive)
 
 Status: DESIGN AMENDMENT, 2 November 2026, for the 10-lens pre-code review
@@ -3025,6 +3051,8 @@ rulings.
 >   for a marker that cannot be written. The slice-2 settle pass's wording items (LOW-4: a log that
 >   cannot be read but a marker there; a folder at the marker's name; a failed lookup with no log
 >   line in `status`) are still the lead's to word.
+>   *Note, 3 November 2026 (slice 2b):* those three are now worded and built under this
+>   delegation; see the slice-2b note at the end of §14 and MA-1048's and MA-1049's amendments.
 
 ### 15.9 What this amends above (for the review)
 

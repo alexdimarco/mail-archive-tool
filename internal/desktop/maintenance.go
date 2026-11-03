@@ -10,6 +10,7 @@ import (
 
 	"mail-archive-tool/internal/app"
 	"mail-archive-tool/internal/archdelete"
+	"mail-archive-tool/internal/delmark"
 	"mail-archive-tool/internal/health"
 	"mail-archive-tool/internal/keyring"
 	"mail-archive-tool/internal/server"
@@ -250,9 +251,14 @@ func (d *dashboard) healthAction(w http.ResponseWriter, r *http.Request) {
 	// The folder's delete marker is asked too, with or without a log here (§15.4, DM-15); a lookup
 	// of it that fails does not hide the log's line (UnfinishedToSay; LOW-3).
 	if d.running == nil || d.running.of(out) == nil {
+		// A log that could not be read, a name at the marker's that is not a regular file, and a
+		// lookup the log does not answer for are said as what they are (the slice-2 pass's LOW-4).
 		if u, err := archdelete.UnfinishedToSay(d.cfg.deletionsLogPath(), out, d.cfg.goos()); err == nil && u != nil {
 			in.DeleteUnfinished = true
 			in.DeleteMarkerOnly, in.DeleteBegun = u.MarkerOnly, archdelete.MarkerBegun(u)
+			in.DeleteLogUnreadable, in.DeleteMarkerNotRegular = u.LogUnreadable, u.Marker == delmark.NotRegular
+		} else {
+			in.DeleteCouldNotCheck = archdelete.CouldNotCheck(err)
 		}
 	}
 	rep := health.Assess(in, time.Now())

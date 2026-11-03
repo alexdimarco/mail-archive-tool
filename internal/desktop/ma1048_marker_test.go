@@ -250,7 +250,10 @@ func TestMA1049_TheRowAndStatusAndHealthSeeTheMarker(t *testing.T) {
 	if !strings.Contains(row, "data-delete-unfinished") || !strings.Contains(row, `data-delete-ok="false"`) || strings.Contains(row, "data-pause-archive") {
 		t.Fatalf("the row of a folder holding a dangling link at the marker's name: %s", row)
 	}
-	if posture, summary := health(); posture != "RED" || !strings.Contains(summary, "a delete of this archive did not finish, and this computer's deletion log has no record of it") {
+	// Amended 2026-11-03 (slice 2b, the slice-2 pass's LOW-4 (b)): a name that is not a regular file
+	// is said as such, to remove by hand, never a Delete… that refuses it; still exact.
+	if posture, summary := health(); posture != "RED" || !strings.Contains(summary, "RED: this archive's folder holds .mailarchive-deleting.json, which MailArchive did not write (it is a link, a folder or a device), so nothing is backed up into it — if no delete of this archive is under way, remove it by hand.") ||
+		strings.Contains(summary, "Delete…") {
 		t.Fatalf("health of a dangling link at the name: %s\n%s", posture, summary)
 	}
 }

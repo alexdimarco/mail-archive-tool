@@ -5,6 +5,7 @@ import (
 	"path/filepath"
 
 	"mail-archive-tool/internal/delmark"
+	"mail-archive-tool/internal/util"
 )
 
 // The delete marker's refusals (docs/design-archive-delete.md §15.3, §15.4; §15.10 slice 2):
@@ -79,7 +80,22 @@ func withMarker(u *Unfinished, lerr error, folder string, st delmark.State) (*Un
 		return u, nil
 	}
 	abs := cleanAbs(folder)
-	return &Unfinished{Folder: abs, Row: abs, Marker: st, MarkerOnly: true, MarkerDetails: d}, nil
+	only := &Unfinished{Folder: abs, Row: abs, Marker: st, MarkerOnly: true, MarkerDetails: d}
+	if lerr != nil {
+		only.LogUnreadable = util.StripBidi(cleanErr(lerr))
+	}
+	return only, nil
+}
+
+// CouldNotCheck is why the marker's lookup failed at a folder that is there, when err (UnfinishedAt's
+// or UnfinishedToSay's) is that failure, in words fit to show; "" otherwise. A status line says it
+// (the slice-2 adversarial pass's LOW-4 (c)): every backup and action refuses the folder then.
+func CouldNotCheck(err error) string {
+	var le *delmark.LookupError
+	if errors.As(err, &le) {
+		return le.Cause()
+	}
+	return ""
 }
 
 // MarkerRefusal is the refusal of an action on a folder for the marker's part of UnfinishedAt's
@@ -100,6 +116,9 @@ func MarkerRefusal(u *Unfinished, err error, done string) error {
 	switch {
 	case u.Marker == delmark.NotRegular:
 		return refuse(CaseMarkerNotRegular, "%s", delmark.NotRegularWords(done))
+	case u.MarkerOnly && u.LogUnreadable != "":
+		// The log could not be read: never "has no record of it" (LOW-4 (a)).
+		return refuse(CaseUnfinished, "%s", delmark.LogUnreadableWords(done, u.LogUnreadable))
 	case u.MarkerOnly:
 		return refuse(CaseUnfinished, "%s", delmark.OnlyMarkerWords(done))
 	}
@@ -142,11 +161,15 @@ func MarkerRowText(u *Unfinished) string {
 	case u.Marker == delmark.NotRegular:
 		return delmark.NotRegularWords("it is not backed up")
 	}
-	begun := "a delete of this archive did not finish."
+	begun := "a delete of this archive did not finish"
 	if b := MarkerBegun(u); b != "" {
-		begun = "a delete of this archive begun " + b + " did not finish."
+		begun = "a delete of this archive begun " + b + " did not finish"
 	}
-	return "Delete not finished: " + begun + " This computer's deletion log has no record of it (it was begun on another computer or user account). Click Delete… to finish it."
+	if u.LogUnreadable != "" {
+		// The log could not be read (LOW-4 (a); lead's words, owner-delegated 2026-11-02).
+		return "Delete not finished: " + begun + ", and MailArchive could not read this computer's deletion log (" + u.LogUnreadable + "). Check that file, then click Delete… to finish it."
+	}
+	return "Delete not finished: " + begun + ". This computer's deletion log has no record of it (it was begun on another computer or user account). Click Delete… to finish it."
 }
 
 // markerPlanRefusal is Delete's plan's refusal of a marker name that is not a regular file

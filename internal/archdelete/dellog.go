@@ -317,6 +317,11 @@ type Unfinished struct {
 	Marker        delmark.State
 	MarkerOnly    bool
 	MarkerDetails delmark.Details
+	// LogUnreadable is why this computer's deletion log could not be read when the marker answered
+	// in its place (MarkerOnly), in words fit to show; "" when the log was read or none was asked.
+	// The log may then hold the delete's started line, so no words say it "has no record of it"
+	// (the slice-2 adversarial pass's LOW-4 (a)).
+	LogUnreadable string
 	// counted: this run's own finished line was read.
 	counted bool
 }

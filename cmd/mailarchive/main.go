@@ -945,6 +945,14 @@ func runVerify(args []string) error {
 			return err
 		}
 	}
+	// A folder a delete did not finish in — this computer's deletion log or the folder's delete
+	// marker says so (design-archive-delete §15.3) — is not checked: the files the delete removed
+	// would be reported as damage, and the last-verify record (or a scheduled verify's log) written
+	// into the half-deleted folder. archdelete's one question, as every other action asks it, before
+	// anything is written or any key asked (the delete marker's slice-2 pass, LOW-2's verify part).
+	if err := archdelete.ActionRefusal("", abspath(*o.out), "it was not checked"); err != nil {
+		return deleteRefusalAtTerminal(err, *o.out)
+	}
 	if kerr := app.RefuseVerify(*o.out, *o.record); kerr != nil {
 		return kerr
 	}
