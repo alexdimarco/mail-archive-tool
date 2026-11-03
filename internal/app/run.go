@@ -17,6 +17,7 @@ import (
 	"time"
 
 	"mail-archive-tool/internal/container"
+	"mail-archive-tool/internal/delmark"
 	"mail-archive-tool/internal/encmark"
 	"mail-archive-tool/internal/export"
 	"mail-archive-tool/internal/index"
@@ -641,6 +642,14 @@ func Run(ctx context.Context, opts Options, logger *log.Logger, onProgress Progr
 		return Result{}, lockRefusal(opts, lockPath, err)
 	}
 	defer lock.Release()
+	// Again under the lock (MA-1044, G2): a delete that began after this run's first ask and
+	// stopped part way before the lock was free is caught here, before the run's record or any
+	// write; a delete that begins from now on is refused by this run's lock. Before the
+	// emptied-folder guard (DM-25): a run that queued while a delete removed the archive's anchor
+	// is told "Delete not finished", not that the folder holds no archive.
+	if err := RefuseUnfinishedDelete(opts.Out, opts.DeletionsLog); err != nil {
+		return Result{}, err
+	}
 	// Again under the lock (design-archive-delete §7, NF-3): a delete that finished
 	// between this run's checks and its lock left no archive to write into; a run that saw
 	// one, at its checks or its caller's, is refused whatever the delete left (outGuard).
@@ -648,12 +657,6 @@ func Run(ctx context.Context, opts Options, logger *log.Logger, onProgress Progr
 		if err := guard.underLock(); err != nil {
 			return Result{}, err
 		}
-	}
-	// Again under the lock (MA-1044, G2): a delete that began after this run's first ask and
-	// stopped part way before the lock was free is caught here, before the run's record or any
-	// write; a delete that begins from now on is refused by this run's lock.
-	if err := RefuseUnfinishedDelete(opts.Out, opts.DeletionsLog); err != nil {
-		return Result{}, err
 	}
 	// Again under the lock: an encryption that finished while this run waited
 	// (a conversion's swap) is not a plaintext archive either (P2a-C9).
@@ -1252,8 +1255,12 @@ func RecordRefusedRun(opts Options, cause error) {
 	}
 	// An out inside an encrypted archive is never written: its record would break
 	// the outer archive's allow-listed tree (P2a-C8). Nor is a paused one: a paused
-	// archive takes no write, no lock and no record (S2-C1, F21).
+	// archive takes no write, no lock and no record (S2-C1, F21). Nor is a folder that holds the
+	// delete marker, or whose marker cannot be looked up: a half-deleted archive (DM-14).
 	if insideEncrypted(opts.Out) || seal.IsSealed(opts.Out) {
+		return
+	}
+	if st, err := delmark.Present(opts.Out); err != nil || st != delmark.Absent {
 		return
 	}
 	lock, err := lockfile.AcquireAs(filepath.Join(opts.Out, lockfile.Name), lockVerb(opts, "export"))

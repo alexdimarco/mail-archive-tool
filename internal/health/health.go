@@ -116,6 +116,12 @@ type Input struct {
 	// `delete-archive -out` finds it by ("" is Out): the finishing command names it (the 1.5.3
 	// friction fixes' adversarial pass, finding 10).
 	DeleteRow string
+	// DeleteMarkerOnly: only the folder's delete marker knows that delete — this computer's
+	// deletion log has no line for it (design-archive-delete §15.4; it was begun on another
+	// computer or user account) — so the line says so and drops "again". DeleteBegun is when it
+	// began as the caller words a moment, "" when the marker does not say.
+	DeleteMarkerOnly bool
+	DeleteBegun      string
 
 	// HasIndex is true when search.db opened; HasIndexFile when it exists on
 	// disk at all. A present index that cannot be opened (corrupt) carries the
@@ -389,7 +395,7 @@ func Assess(in Input, now time.Time) Report {
 	// or repair its history, set up its schedule — which works against finishing the delete (the
 	// 1.5.3 re-walk's N8).
 	if in.DeleteUnfinished {
-		r.red("delete_unfinished", DeleteUnfinishedLine(in.deleteRow(), in.Surface))
+		r.red("delete_unfinished", in.deleteUnfinishedLine())
 		return r
 	}
 
@@ -1618,7 +1624,7 @@ func NoArchive(in Input) error {
 	if in.DeleteUnfinished {
 		// Its delete removed the archive's own files and did not finish (B2): say that, not
 		// "run an export into it".
-		return fmt.Errorf("no archive at %s: %s", in.Out, DeleteUnfinishedLine(in.deleteRow(), in.Surface))
+		return fmt.Errorf("no archive at %s: %s", in.Out, in.deleteUnfinishedLine())
 	}
 	return fmt.Errorf("no archive at %s: no manifest, schedule descriptor or last-run record (run an export into it first, or check the path)", in.Out)
 }
@@ -1638,6 +1644,31 @@ func (in Input) seePosture(format string) string {
 		return ""
 	}
 	return fmt.Sprintf(format, "see the posture below")
+}
+
+// deleteUnfinishedLine is the posture line for this Input's unfinished delete: the marker's when
+// only the folder's delete marker knows it.
+func (in Input) deleteUnfinishedLine() string {
+	if in.DeleteMarkerOnly {
+		return DeleteMarkerOnlyLine(in.deleteRow(), in.Surface, in.DeleteBegun)
+	}
+	return DeleteUnfinishedLine(in.deleteRow(), in.Surface)
+}
+
+// DeleteMarkerOnlyLine is the posture line for a delete only the folder's delete marker knows
+// (design-archive-delete §15.4, builder's words): begun is when it began ("" when not known), and
+// "again" is dropped, since nothing was begun here. It ends with its period, as
+// DeleteUnfinishedLine does.
+func DeleteMarkerOnlyLine(out, surface, begun string) string {
+	what := "a delete of this archive did not finish"
+	if begun != "" {
+		what = "a delete of this archive begun " + begun + " did not finish"
+	}
+	what += ", and this computer's deletion log has no record of it (it was begun on another computer or user account)"
+	if surface == "desktop" {
+		return what + " — click Delete… on its row in Your archives to finish it."
+	}
+	return fmt.Sprintf("%s — run mailarchive delete-archive -out %s, or click Delete… on its row in MailArchive Desktop, to finish it.", what, encmark.CommandPath(out))
 }
 
 // DeleteUnfinishedLine is the posture line for an archive whose delete did not finish (B2), in

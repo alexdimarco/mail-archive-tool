@@ -40,11 +40,16 @@ func runStatus(args []string) error {
 	// A delete of this folder that did not finish is said, with how to finish it (the 1.5.3
 	// friction review's B2): deletions.log is read here, since health reads no log. A log that
 	// cannot be read says nothing here (the delete verbs say why).
-	if logPath, err := archdelete.DefaultLogPath(); err == nil {
-		if u, err := archdelete.UnfinishedDelete(logPath, in.Out, runtime.GOOS); err == nil && u != nil {
-			in.DeleteUnfinished = true
-			in.DeleteRow = u.Row // the spelling delete-archive -out finds the row by
-		}
+	// The folder's delete marker is asked too (design-archive-delete §15.4, DM-15): with no log, or
+	// no line in it, a delete only the marker knows is said, begun on another computer or account.
+	logPath, lerr := archdelete.DefaultLogPath()
+	if lerr != nil {
+		logPath = ""
+	}
+	if u, err := archdelete.UnfinishedAt(logPath, in.Out, runtime.GOOS); err == nil && u != nil {
+		in.DeleteUnfinished = true
+		in.DeleteRow = u.Row // the spelling delete-archive -out finds the row by
+		in.DeleteMarkerOnly, in.DeleteBegun = u.MarkerOnly, archdelete.MarkerBegun(u)
 	}
 	// A manifest FILE that exists but does not load (newer format, corrupt) is
 	// an archive with a problem, not "no archive": let Assess RED it rather than

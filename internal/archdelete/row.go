@@ -6,6 +6,8 @@ import (
 	"os"
 	"path/filepath"
 	"sync"
+
+	"mail-archive-tool/internal/delmark"
 )
 
 // RowRefusal is what a row of Your archives says about Delete before any plan is made
@@ -35,12 +37,17 @@ type RowsCheck struct {
 	deps Deps
 	stat *statMemo
 	log  *DeleteLog
+	// marks is the page's own memo of the delete marker's lookup (DM-15): an Lstat
+	// (delmark.Present), never the stat memo's os.Stat, which follows a link at the name and
+	// would read a dangling one as "not there".
+	marksMu sync.Mutex
+	marks   map[string]delmark.State
 }
 
 // NewRowsCheck reads deps.Log once (one that cannot be read reports no unfinished delete,
 // and the plan says why).
 func NewRowsCheck(deps Deps) *RowsCheck {
-	r := &RowsCheck{deps: deps, stat: newStatMemo()}
+	r := &RowsCheck{deps: deps, stat: newStatMemo(), marks: map[string]delmark.State{}}
 	if deps.Log != "" {
 		if lines, err := readLog(deps.Log); err == nil {
 			r.log = newDeleteLog(lines, r.stat)
@@ -60,6 +67,11 @@ func (r *RowsCheck) State(folder string, knownArchive bool) (*Unfinished, error)
 	if r.log != nil {
 		u = r.log.Unfinished(abs, goos)
 	}
+	// The marker, outside the log's guard (DM-21): a computer with no log, or no line for the
+	// folder, still sees a delete only the marker knows. A lookup that fails says nothing on the
+	// row; every action on the folder refuses it (the "could not check" words).
+	mark := r.marker(abs)
+	u, _ = withMarker(u, nil, abs, mark)
 	// A link, or a protected folder, the plan refuses whatever else holds, so the row does not
 	// offer Delete for it (del-s3a-A2-02); and in planArchive's order — the folder a link, then
 	// protected, then started with -out, then busy, then the manifest itself a link, then the
@@ -101,6 +113,10 @@ func (r *RowsCheck) State(folder string, knownArchive bool) (*Unfinished, error)
 			}
 		}
 	}
+	if mark == delmark.NotRegular {
+		// Delete's plan refuses it (§15.3), so the row does not offer Delete either.
+		return u, markerPlanRefusal(abs, delmark.Name, markerLink(abs))
+	}
 	if u != nil {
 		return u, nil
 	}
@@ -124,6 +140,33 @@ func (r *RowsCheck) State(folder string, knownArchive bool) (*Unfinished, error)
 		return nil, err
 	}
 	return nil, nil
+}
+
+// marker is what is at the delete marker's name in abs, looked up once for the page.
+func (r *RowsCheck) marker(abs string) delmark.State {
+	r.marksMu.Lock()
+	defer r.marksMu.Unlock()
+	if st, ok := r.marks[abs]; ok {
+		return st
+	}
+	st, err := delmark.Present(abs)
+	if err != nil {
+		st = delmark.Unknown
+	}
+	r.marks[abs] = st
+	return st
+}
+
+// markerLink reports whether the marker's name in abs is a link (a symbolic link, a junction):
+// the plan's link row refuses it, any other name that is not a regular file is delmark's words.
+func markerLink(abs string) bool {
+	p := filepath.Join(abs, delmark.Name)
+	fi, err := os.Lstat(p)
+	if err != nil {
+		return false
+	}
+	link, lerr := linkLike(p)
+	return fi.Mode()&fs.ModeSymlink != 0 || (lerr == nil && link)
 }
 
 // UnlistRefusal is archdelete.UnlistRefusal for a row of the page (MA-1016's disabled Remove from

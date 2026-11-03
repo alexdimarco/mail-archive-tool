@@ -84,7 +84,7 @@ func TestAnEncryptedArchivesUnfinishedDeleteAlertSaysToFinishTheDelete(t *testin
 	serr := app.RefuseUnfinishedDelete(sealed, logPath)
 	got = alertFor(sealed, serr)
 	assure.Refused(t, 1, got, assure.Code(1),
-		assure.Names("a delete of this archive did not finish, so it was not backed up — click Delete again on its row in MailArchive Desktop"),
+		assure.Names("a delete of this archive did not finish, so it was not backed up — finish it with Delete… on its row in MailArchive Desktop"),
 		assure.Forbid("connect it", sealed),
 		assure.NoSideEffect(func() bool { return len(ma1045Names(sealed)) == sealedNames }))
 	if k := app.FailureKind(serr); k != state.FailDeleteUnfinished {

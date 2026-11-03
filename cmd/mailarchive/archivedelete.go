@@ -19,6 +19,7 @@ import (
 
 	"mail-archive-tool/internal/archdelete"
 	"mail-archive-tool/internal/archindex"
+	"mail-archive-tool/internal/delmark"
 	"mail-archive-tool/internal/desktop"
 	"mail-archive-tool/internal/encmark"
 	"mail-archive-tool/internal/instance"
@@ -528,6 +529,11 @@ func terminalHints(text, row, cfgPath string) []string {
 	var hints []string
 	if strings.Contains(l, "delete again") {
 		hints = append(hints, "At this terminal, Delete again is: mailarchive delete-archive"+configArg(cfgPath)+" -out "+p)
+	}
+	// A delete only the folder's marker knows: its person may never have deleted anything, so the
+	// way to finish it is said without "again" (design-archive-delete §15.3, DM-11).
+	if strings.Contains(l, "to finish it, click delete… on its row") {
+		hints = append(hints, strings.Replace(delmark.OnlyMarkerTerminal(p), "mailarchive delete-archive", "mailarchive delete-archive"+configArg(cfgPath), 1))
 	}
 	if strings.Contains(l, "remove from list") {
 		hints = append(hints, "At this terminal, Remove from list is: mailarchive unlist-archive"+configArg(cfgPath)+" -out "+p)

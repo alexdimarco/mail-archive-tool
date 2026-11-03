@@ -170,6 +170,12 @@ func RunGraph(ctx context.Context, g GraphOptions, opts Options, logger *log.Log
 		return Result{}, lockRefusal(opts, lockPath, err)
 	}
 	defer lock.Release()
+	// Again under the lock (MA-1044, G2): a delete that began during the sign-in and stopped part
+	// way is caught before the capture's record or any write. Before the emptied-folder guard
+	// (DM-25), so a capture that queued while a delete removed the anchor says the delete.
+	if err := RefuseUnfinishedDelete(opts.Out, opts.DeletionsLog); err != nil {
+		return Result{}, err
+	}
 	// Again under the lock (design-archive-delete §7, NF-3): a delete that finished
 	// between this capture's checks and its lock left no archive to write into; a capture
 	// that saw one, at its checks or its caller's, is refused whatever the delete left.
@@ -177,11 +183,6 @@ func RunGraph(ctx context.Context, g GraphOptions, opts Options, logger *log.Log
 		if err := guard.underLock(); err != nil {
 			return Result{}, err
 		}
-	}
-	// Again under the lock (MA-1044, G2): a delete that began during the sign-in and stopped part
-	// way is caught before the capture's record or any write.
-	if err := RefuseUnfinishedDelete(opts.Out, opts.DeletionsLog); err != nil {
-		return Result{}, err
 	}
 	if opts.Key == nil {
 		if err := RefuseKeyless("capture into it", opts.Out, manifestDir(opts.Manifest)); err != nil {

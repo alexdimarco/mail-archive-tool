@@ -28,6 +28,10 @@ func SealProgramCopies(ctx context.Context, opts Options, choice ProgramChoice, 
 	if err := seal.RefuseWrite(out); err != nil {
 		return err
 	}
+	// Nor a half-deleted archive, before its lock (DM-14).
+	if err := RefuseDeleteMarker(out, "the program-copies setting was not saved"); err != nil {
+		return err
+	}
 	if err := preflightEncrypted(opts); err != nil {
 		return err
 	}

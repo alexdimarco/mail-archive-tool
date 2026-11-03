@@ -59,15 +59,29 @@ const (
 // show the folder adds " (Folder: DIR)", as for MA-1044's words.
 const (
 	// MsgOnlyMarker refuses a backup when only the marker knows of the delete.
-	MsgOnlyMarker = "Delete not finished: a delete of this archive was begun on another computer or user account, or this computer's deletion log has no record of it, and it did not finish, so it was not backed up; nothing was changed. To finish it, click Delete… on its row in MailArchive Desktop."
+	MsgOnlyMarker = onlyMarkerHead + WhatNotBackedUp + onlyMarkerTail
 	// MsgNotRegular refuses a backup when the name is not a regular file.
-	MsgNotRegular = "This archive's folder holds " + Name + ", which MailArchive did not write (it is a link, a folder or a device), so it was not backed up; nothing was changed. If no delete of this archive is under way, remove it by hand, then try again."
+	MsgNotRegular = notRegularHead + WhatNotBackedUp + notRegularTail
 	// MsgPlanNotRegular refuses Delete's plan when the name is a folder or a device
 	// (a link there is refused by the plan's link row).
 	MsgPlanNotRegular = "This archive's folder holds " + Name + ", which MailArchive did not write (it is a folder or a device): remove it by hand, then click Delete again."
-	// WhatNotBackedUp is what a backup's "could not check" refusal says was not done.
+	// WhatNotBackedUp is what a backup's refusal says was not done.
 	WhatNotBackedUp = "it was not backed up"
+
+	onlyMarkerHead = "Delete not finished: a delete of this archive was begun on another computer or user account, or this computer's deletion log has no record of it, and it did not finish, so "
+	onlyMarkerTail = "; nothing was changed. To finish it, click Delete… on its row in MailArchive Desktop."
+	notRegularHead = "This archive's folder holds " + Name + ", which MailArchive did not write (it is a link, a folder or a device), so "
+	notRegularTail = "; nothing was changed. If no delete of this archive is under way, remove it by hand, then try again."
 )
+
+// OnlyMarkerWords is MsgOnlyMarker for another action than a backup: done says what
+// was not done ("it was not paused", "its scheduled backup was not installed"; §15.4,
+// DM-11's shape, builder's words). OnlyMarkerWords(WhatNotBackedUp) is MsgOnlyMarker.
+func OnlyMarkerWords(done string) string { return onlyMarkerHead + done + onlyMarkerTail }
+
+// NotRegularWords is MsgNotRegular for another action than a backup, as
+// OnlyMarkerWords is.
+func NotRegularWords(done string) string { return notRegularHead + done + notRegularTail }
 
 // OnlyMarkerTerminal is the terminal's line after MsgOnlyMarker; dir is the folder as
 // the person types it (quoted for their command line).
@@ -133,6 +147,16 @@ func (e *LookupError) Refusal(what string) string {
 
 // lstat is the marker's lookup, a var so a test can make it fail as a dead drive does.
 var lstat = os.Lstat
+
+// SetLookupForTest replaces the marker's lookup (Present's Lstat of the name) and
+// returns the function that puts the real one back: a fault seam for the tests of the
+// packages that ask Present (a dead drive's "device not ready", a lookup that fails at a
+// reachable folder; DM-22, DM-23). Nothing in a program calls it.
+func SetLookupForTest(f func(name string) (fs.FileInfo, error)) (restore func()) {
+	old := lstat
+	lstat = f
+	return func() { lstat = old }
+}
 
 // openIn is Read's open, a var so a test can swap the name between the judgment and
 // the open.

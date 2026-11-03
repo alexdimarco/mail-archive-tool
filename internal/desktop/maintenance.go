@@ -247,9 +247,11 @@ func (d *dashboard) healthAction(w http.ResponseWriter, r *http.Request) {
 	// A delete of it that did not finish is said here too (the 1.5.3 friction review's B2) — not
 	// one this Desktop is running now, whose started line has no finished line yet (the 1.5.3
 	// friction fixes' adversarial pass, finding 10): its result shows on the page when it ends.
-	if lp := d.cfg.deletionsLogPath(); lp != "" && (d.running == nil || d.running.of(out) == nil) {
-		if u, err := archdelete.UnfinishedDelete(lp, out, d.cfg.goos()); err == nil && u != nil {
+	// The folder's delete marker is asked too, with or without a log here (§15.4, DM-15).
+	if d.running == nil || d.running.of(out) == nil {
+		if u, err := archdelete.UnfinishedAt(d.cfg.deletionsLogPath(), out, d.cfg.goos()); err == nil && u != nil {
 			in.DeleteUnfinished = true
+			in.DeleteMarkerOnly, in.DeleteBegun = u.MarkerOnly, archdelete.MarkerBegun(u)
 		}
 	}
 	rep := health.Assess(in, time.Now())

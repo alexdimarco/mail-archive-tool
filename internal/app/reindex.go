@@ -43,6 +43,10 @@ func Reindex(out string, logger *log.Logger) (kept, pruned int, err error) {
 	if err := seal.RefuseWrite(out); err != nil {
 		return 0, 0, err
 	}
+	// Nor into a half-deleted archive: not before its lock either (DM-14).
+	if err := RefuseDeleteMarker(out, "its search index was not changed"); err != nil {
+		return 0, 0, err
+	}
 	// Reindex stats each record's files by its logical path: on an encrypted
 	// archive every one would read as gone, and it would prune the whole manifest,
 	// index and history. It refuses before anything (phase2a §5).
@@ -279,6 +283,10 @@ func Rebuild(out string, logger *log.Logger) (RebuildReport, error) {
 	// archive every one reads as missing and the rebuilt index would be empty. It
 	// refuses before anything (phase2a §5).
 	if err := RefuseKeyless("rebuild its search index", out); err != nil {
+		return rep, err
+	}
+	// Not into a half-deleted archive, before its lock (DM-14).
+	if err := RefuseDeleteMarker(out, "its search index was not rebuilt"); err != nil {
 		return rep, err
 	}
 	// One run per archive at a time (R5): rebuild rewrites the index and pages.

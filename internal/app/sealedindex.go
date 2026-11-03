@@ -340,6 +340,10 @@ func RebuildEncrypted(ctx context.Context, opts Options, logger *log.Logger) (In
 	if err := seal.RefuseWrite(out); err != nil {
 		return IndexCatchUp{}, err
 	}
+	// Nor a half-deleted archive, before its lock (DM-14).
+	if err := RefuseDeleteMarker(out, "its search index was not rebuilt"); err != nil {
+		return IndexCatchUp{}, err
+	}
 	if err := preflightEncrypted(opts); err != nil {
 		return IndexCatchUp{}, err
 	}

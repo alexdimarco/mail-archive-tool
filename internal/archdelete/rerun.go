@@ -190,6 +190,8 @@ func planNoAnchor(abs string, deps Deps, u *Unfinished, orig *Refusal) (*DeleteP
 			return nil, linkRefusal(filepath.Join(abs, name)) // §15.3; the slice-1 pass's LOW-2
 		case name == marker && l.fileLike(efi):
 			// The delete's own note, never in the plan's lists (§15.2).
+		case name == marker:
+			return nil, markerPlanRefusal(abs, name, false) // a folder, a device or a pipe (§15.3, MA-1049)
 		case link && removable:
 			return nil, linkRefusal(filepath.Join(abs, name))
 		case link:

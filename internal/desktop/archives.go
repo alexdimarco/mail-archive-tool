@@ -55,6 +55,10 @@ type ArchiveRow struct {
 	DeleteOK   bool
 	DeleteWhy  string
 	Unfinished bool
+	// UnfinishedText, when not "", is said in place of "Delete not finished: click Delete again":
+	// a delete only the folder's delete marker knows (archdelete.MarkerRowText; design-archive-delete
+	// §15.4), whose person on this computer may never have deleted anything.
+	UnfinishedText string
 	// Deleting marks a delete of the folder under way in this process (MA-979): the row says
 	// "Being deleted" in place of Switch and Pause and offers neither Delete nor Remove from list.
 	Deleting bool
@@ -185,6 +189,7 @@ func (cfg Config) archiveRows(idx archindex.Index) []ArchiveRow {
 			DeleteOK:        del.ok,
 			DeleteWhy:       del.why,
 			Unfinished:      del.unfinished,
+			UnfinishedText:  del.unfinishedText,
 			Deleting:        del.deleting,
 			Path:            e.Path,
 			Current:         current != "" && cleanPath(e.Path) == current,

@@ -988,10 +988,15 @@ func (d *dashboard) holdAgainstDelete(w http.ResponseWriter, path, why string) (
 // too, so the terminal's `pause` and `resume` refuse alike (the 1.5.3 re-walk's F1).
 func (d *dashboard) unfinishedActionRefusal(path, done string) string {
 	logPath := d.cfg.deletionsLogPath()
-	if strings.TrimSpace(path) == "" || logPath == "" {
+	if strings.TrimSpace(path) == "" {
 		return ""
 	}
-	if err := archdelete.ActionRefusal(logPath, path, done); err != nil {
+	// With no deletion log here, the folder's delete marker is still asked (§15.3, DM-21).
+	ask := func() error { return archdelete.MarkerActionRefusal(path, done) }
+	if logPath != "" {
+		ask = func() error { return archdelete.ActionRefusal(logPath, path, done) }
+	}
+	if err := ask(); err != nil {
 		return withReload(err, err.Error())
 	}
 	return ""
@@ -2303,7 +2308,7 @@ pre{white-space:pre-wrap;overflow-wrap:anywhere;background:var(--bg);border:1px 
           {{if .KindLabel}}<span class="archive-kind">{{.KindLabel}}</span>{{end}}
           {{if .SourceLostSince}}<span class="archive-tag">This archive's source hasn't been reachable since {{.SourceLostSince}} — reconnect the source (its mailbox or mail folder){{if .RunNowOnly}}, then click {{if not .Current}}Switch to this archive and click {{end}}Run now on its Scheduled backup card: its backup runs only when you click Run now.{{else}} to resume backups.{{end}}</span>{{end}}
           {{if eq .Kind "encrypted"}}<button class="btn secondary" type="button" data-forget-archive data-path="{{.Path}}" title="Stop protecting this folder as an encrypted archive on this computer — for example after you removed the archive on purpose. Nothing in the folder is changed.">Forget this encrypted archive here</button>{{end}}
-          <span class="row-state">{{if .Deleting}}<span class="archive-tag">Being deleted — its result shows on this page when the delete ends.</span>{{else if .Unfinished}}<span class="archive-tag">Delete not finished: click Delete again</span>{{else if .Problem}}<span class="archive-tag">{{.Problem}}</span>{{else if not .Available}}<span class="archive-tag">Not reachable right now — reconnect the drive or folder and it comes back. Nothing was removed.</span>{{else if .Sealed}}<span class="archive-tag">Paused (read-only) — Resume it to make changes.</span> <button class="btn secondary" type="button" data-resume-archive data-path="{{.Path}}" title="Make this archive writable again so backups and changes can resume.">Resume</button>{{else}}{{if .Current}}<span class="archive-tag current">Current archive</span>{{else}}<button class="btn secondary" type="button" data-switch-archive data-path="{{.Path}}" title="Make this the current archive: the one this page shows and changes.">Switch to this archive</button>{{end}} <button class="btn secondary" type="button" data-pause-archive data-path="{{.Path}}" title="Make this archive read-only so nothing can change it. You can Resume it any time; nothing is deleted.">Pause (make read-only)</button>{{end}}</span>
+          <span class="row-state">{{if .Deleting}}<span class="archive-tag">Being deleted — its result shows on this page when the delete ends.</span>{{else if .Unfinished}}{{if .UnfinishedText}}<span class="archive-tag">{{.UnfinishedText}}</span>{{else}}<span class="archive-tag">Delete not finished: click Delete again</span>{{end}}{{else if .Problem}}<span class="archive-tag">{{.Problem}}</span>{{else if not .Available}}<span class="archive-tag">Not reachable right now — reconnect the drive or folder and it comes back. Nothing was removed.</span>{{else if .Sealed}}<span class="archive-tag">Paused (read-only) — Resume it to make changes.</span> <button class="btn secondary" type="button" data-resume-archive data-path="{{.Path}}" title="Make this archive writable again so backups and changes can resume.">Resume</button>{{else}}{{if .Current}}<span class="archive-tag current">Current archive</span>{{else}}<button class="btn secondary" type="button" data-switch-archive data-path="{{.Path}}" title="Make this the current archive: the one this page shows and changes.">Switch to this archive</button>{{end}} <button class="btn secondary" type="button" data-pause-archive data-path="{{.Path}}" title="Make this archive read-only so nothing can change it. You can Resume it any time; nothing is deleted.">Pause (make read-only)</button>{{end}}</span>
           {{if not .Deleting}}<button class="btn secondary" type="button" data-unlist-archive data-path="{{.Path}}" title="{{if .UnlistWhy}}{{.UnlistWhy}}{{else}}Take this archive off this list. The folder and its files are kept; you are asked first, and told which scheduled backups would stop.{{end}}"{{if .UnlistWhy}} disabled{{end}}>Remove from list</button> <button class="btn danger" type="button" data-delete-archive data-path="{{.Path}}" title="{{if .DeleteOK}}Permanently delete this archive's files. You see what would be removed first, and type the folder's name to confirm.{{else}}{{.DeleteWhy}}{{end}}"{{if not .DeleteOK}} disabled{{end}}>Delete…</button>{{end}}
           {{if and .ShowUnlistWhy .UnlistWhy (not .Deleting)}}<span class="card-sub row-why" data-unlist-why>Remove from list is not offered for it now. {{.UnlistWhy}}</span>{{end}}
         </li>{{end}}

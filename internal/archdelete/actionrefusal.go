@@ -31,15 +31,26 @@ const (
 // naming it), since whether the delete finished cannot be told. An empty logPath is MailArchive's
 // own deletions.log (DefaultLogPath), so no caller skips the check by passing none. nil means
 // nothing stops the action.
+//
+// The delete marker is asked first (§15.3, UnfinishedAt): a folder holding it is refused whether
+// or not the log can be read, in the marker's words when the log has no line for it (MarkerRefusal:
+// DM-11, DM-23); a lookup of it that fails at a folder that is there refuses in the "could not
+// check" words.
 func ActionRefusal(logPath, folder, done string) error {
 	if logPath == "" {
 		p, err := DefaultLogPath()
 		if err != nil {
+			if r := MarkerActionRefusal(folder, done); r != nil {
+				return r
+			}
 			return refuse(CaseLogUnreadable, msgActionNoSettings, util.StripControl(err.Error()))
 		}
 		logPath = p
 	}
-	u, err := UnfinishedDelete(logPath, folder, runtime.GOOS)
+	u, err := UnfinishedAt(logPath, folder, runtime.GOOS)
+	if r := MarkerRefusal(u, err, done); r != nil {
+		return r
+	}
 	if err != nil {
 		return refuse(CaseLogUnreadable, msgActionLogUnreadable, logPath, util.StripControl(err.Error()))
 	}

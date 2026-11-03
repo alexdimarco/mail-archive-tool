@@ -4,6 +4,7 @@ import (
 	"errors"
 	"sync"
 
+	"mail-archive-tool/internal/delmark"
 	"mail-archive-tool/internal/state"
 	"mail-archive-tool/internal/util"
 )
@@ -53,23 +54,73 @@ func SetUnfinishedDeleteCheck(check func(logPath, out string) error) (restore fu
 // refusal outside it, as for the emptied-folder guard (RefusedAsNoArchive; design-archive-delete
 // §7). nil when nothing stops the run, or when no check is installed (a test of this package
 // alone; each program proves it installs it, MA-1045).
+//
+// The delete marker (design-archive-delete §15.3): archdelete's check asks it first. When no check
+// is installed, this asks the marker itself (RefuseDeleteMarker), in the same words and kind as the
+// installed check gives a delete only the marker knows (MA-1054, DM-24), so the marker half of G2
+// does not depend on the install seam. A marker lookup that failed at a folder that is there
+// (*delmark.LookupError) is kind archive_unwritable (DM-23).
 func RefuseUnfinishedDelete(out, logPath string) error {
 	unfinishedDeleteMu.RLock()
 	check := unfinishedDeleteCheck
 	unfinishedDeleteMu.RUnlock()
 	if check == nil {
-		return nil
+		return RefuseDeleteMarker(out, delmark.WhatNotBackedUp)
 	}
 	if err := check(logPath, out); err != nil {
-		kind := state.FailDeleteUnfinished
-		var lu interface{ LogUnreadable() bool }
-		if errors.As(err, &lu) && lu.LogUnreadable() {
-			kind = state.FailDeletionLogUnreadable
-		}
-		return withKind(kind, &folderNamedError{err: err, folder: out})
+		return deleteRefusal(err, out)
 	}
 	return nil
 }
+
+// deleteRefusal is err, a refusal of the unfinished-delete check or of the marker, with its kind
+// and the folder it is about.
+func deleteRefusal(err error, out string) error {
+	kind := state.FailDeleteUnfinished
+	var lu interface{ LogUnreadable() bool }
+	var le *delmark.LookupError
+	switch {
+	case errors.As(err, &le):
+		kind = le.Kind()
+	case errors.As(err, &lu) && lu.LogUnreadable():
+		kind = state.FailDeletionLogUnreadable
+	}
+	return withKind(kind, &folderNamedError{err: err, folder: out})
+}
+
+// RefuseDeleteMarker is the refusal of a write into out because it holds the delete marker
+// (design-archive-delete §15.3; delmark): a regular marker in delmark's marker-only words, a name
+// that is not a regular file in its own (both kind delete_unfinished), a lookup that failed at a
+// folder that is there in the "could not check" words (kind archive_unwritable); each followed by
+// " (Folder: DIR)". done says what was not done (delmark.WhatNotBackedUp for a backup). It reads
+// no deletion log: the engine asks it where no check is installed, and reindex, the index rebuild
+// and the program-copies setting ask it before they write (DM-14). nil when out holds no marker,
+// or cannot be reached (a dead drive: DM-22).
+func RefuseDeleteMarker(out, done string) error {
+	st, err := delmark.Present(out)
+	switch {
+	case err != nil:
+		var le *delmark.LookupError
+		if errors.As(err, &le) {
+			return deleteRefusal(&markerError{msg: le.Refusal(done), err: le}, out)
+		}
+		return deleteRefusal(err, out)
+	case st == delmark.Regular:
+		return deleteRefusal(&markerError{msg: delmark.OnlyMarkerWords(done)}, out)
+	case st == delmark.NotRegular:
+		return deleteRefusal(&markerError{msg: delmark.NotRegularWords(done)}, out)
+	}
+	return nil
+}
+
+// markerError is RefuseDeleteMarker's words over the lookup's error, when there is one.
+type markerError struct {
+	msg string
+	err error
+}
+
+func (e *markerError) Error() string { return e.msg }
+func (e *markerError) Unwrap() error { return e.err }
 
 // UnfinishedDeleteCheckInstalled reports whether a program has installed the engine's
 // unfinished-delete check (archdelete does when it loads). Each program's own test asks it, so a
@@ -86,10 +137,17 @@ func UnfinishedDeleteCheckInstalled() bool {
 // or a deletion log that cannot tell (delete_unfinished, deletion_log_unreadable; MA-1044). A
 // scheduled run's callers then take back what they wrote into the folder before the engine's lock
 // and tell the refusal outside it (design-archive-delete §7).
+//
+// A marker lookup that failed at a folder that is there (archive_unwritable, its error a
+// *delmark.LookupError) is counted too, so a run refused by it under its lock takes back its earlier
+// writes (DM-23); no other archive_unwritable refusal is.
 func RefusedAsNoArchive(err error) bool {
 	switch FailureKind(err) {
 	case state.FailArchiveAbsent, state.FailDeleteUnfinished, state.FailDeletionLogUnreadable:
 		return true
+	case state.FailArchiveUnwritable:
+		var le *delmark.LookupError
+		return errors.As(err, &le)
 	}
 	return false
 }

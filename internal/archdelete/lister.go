@@ -343,6 +343,8 @@ func (l *lister) plain() error {
 			if l.fileLike(fi) {
 				continue
 			}
+			// A folder, a device or a pipe at the name: never opened, refused (§15.3, MA-1049).
+			return markerPlanRefusal(l.folder, name, false)
 		}
 		// A store folder (or a link in its place) is the store loop's; a file that
 		// only shares a token's name is judged as any root file is.
@@ -559,6 +561,8 @@ func (l *lister) encrypted(deps Deps) error {
 			return linkRefusal(filepath.Join(l.folder, name)) // §15.3; the slice-1 pass's LOW-2
 		case name == marker && l.fileLike(fi):
 			// The delete's own note, left out beside the lock and the vault (§15.2).
+		case name == marker:
+			return markerPlanRefusal(l.folder, name, false) // a folder, a device or a pipe (§15.3, MA-1049)
 		case link && (isDirName || encRootFiles[name] || name == vault.FileName || name == vault.BackupName || encRootTmp(name)):
 			return linkRefusal(filepath.Join(l.folder, name))
 		case link:

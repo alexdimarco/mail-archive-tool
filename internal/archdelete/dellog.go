@@ -15,6 +15,7 @@ import (
 	"sync"
 	"time"
 
+	"mail-archive-tool/internal/delmark"
 	"mail-archive-tool/internal/job"
 	"mail-archive-tool/internal/util"
 )
@@ -308,6 +309,14 @@ type Unfinished struct {
 	// Captured is what the first run of the delete read of the archive (its started line's
 	// captured values, carried forward), or nil when the log has none (an older line).
 	Captured *Captured
+	// Marker is what is at the delete marker's name in the folder (§15.3; UnfinishedAt asks it,
+	// UnfinishedDelete leaves it Absent). MarkerOnly: no line of this computer's deletion log
+	// knows the delete (or the log could not be read), only the marker; Folder and Row are then
+	// the folder asked about. MarkerDetails are the marker's run and began, for words only (a
+	// regular marker's bounded read; DM-8).
+	Marker        delmark.State
+	MarkerOnly    bool
+	MarkerDetails delmark.Details
 	// counted: this run's own finished line was read.
 	counted bool
 }

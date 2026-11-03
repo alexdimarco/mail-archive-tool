@@ -66,7 +66,7 @@ func TestMA1045_AnUnfinishedDeleteRefusalIsNamedForWhatItIs(t *testing.T) {
 		}
 	}
 	assure.Reached(t, len(state.FailureText(state.FailDeleteUnfinished)) > 0 &&
-		state.FailureText(state.FailDeleteUnfinished) == "a delete of this archive did not finish, so it was not backed up — click Delete again on its row in MailArchive Desktop",
+		state.FailureText(state.FailDeleteUnfinished) == "a delete of this archive did not finish, so it was not backed up — finish it with Delete… on its row in MailArchive Desktop",
 		"delete_unfinished's sentence")
 
 	// With no check installed (a test of this package alone) nothing is refused, and the

@@ -20,6 +20,7 @@ import (
 	"mail-archive-tool/internal/app"
 	"mail-archive-tool/internal/archdelete"
 	"mail-archive-tool/internal/archindex"
+	"mail-archive-tool/internal/delmark"
 	"mail-archive-tool/internal/encmark"
 	"mail-archive-tool/internal/encrecord"
 	"mail-archive-tool/internal/job"
@@ -328,6 +329,8 @@ func (d *dashboard) planBusy(folder string) bool {
 type deleteFacts struct {
 	ok, unfinished, deleting bool
 	why                      string
+	// unfinishedText is the row's line for a delete only the folder's marker knows (§15.4).
+	unfinishedText string
 }
 
 // deleteRowFacts is a row's Delete state: offered, or why not, in §7's words; whether a delete
@@ -342,6 +345,7 @@ func (cfg Config) deleteRowFacts(path string, rc *archdelete.RowsCheck, knownArc
 	var f deleteFacts
 	u, err := rc.State(path, knownArchive)
 	f.unfinished = u != nil
+	f.unfinishedText = archdelete.MarkerRowText(u)
 	if err != nil {
 		f.why = refusalText(err)
 		return f
@@ -652,14 +656,18 @@ func (d *dashboard) unfinishedRefusal(out string) string {
 	if d.running.of(out) != nil {
 		return deletingRefusal
 	}
-	if logPath := d.cfg.deletionsLogPath(); logPath != "" {
-		u, err := archdelete.UnfinishedDelete(logPath, out, runtime.GOOS)
-		if err != nil {
-			return fmt.Sprintf(runLogUnreadableText, logPath, util.StripControl(err.Error()))
-		}
-		if u != nil {
-			return runUnfinishedText
-		}
+	// The folder's delete marker first (design-archive-delete §15.3): asked even with no deletion
+	// log here, and in its own words when the log has no line for it (DM-11).
+	logPath := d.cfg.deletionsLogPath()
+	u, err := archdelete.UnfinishedAt(logPath, out, runtime.GOOS)
+	if r := archdelete.MarkerRefusal(u, err, delmark.WhatNotBackedUp); r != nil {
+		return r.Error()
+	}
+	if err != nil {
+		return fmt.Sprintf(runLogUnreadableText, logPath, util.StripControl(err.Error()))
+	}
+	if u != nil {
+		return runUnfinishedText
 	}
 	return ""
 }
