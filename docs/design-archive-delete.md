@@ -1776,6 +1776,13 @@ Status: DESIGN AMENDMENT, 2 November 2026, for the 10-lens pre-code review
 (§5.3 steps 1 and 6), §5.4's re-run, §4.1/§4.2's name lists and §7, so build waits for that
 review. Target: 1.5.5, with the rest of this branch.
 
+> **Folded from the 10-lens review** (`docs/review-delete-marker-10lens.md`, 2 November 2026,
+> reviewed at 10b6e65): **GO WITH CONDITIONS**, conditions DM-1 to DM-31, each folded below beside
+> the text it changes, marked [DM-n]; the original text is kept as it was. Build may start with
+> §15.10's slices 1 and 2. Slice 3 (the delete writes the marker) waits for owner question 1 (where
+> it is written, DM-3); 1.5.5 does not ship before owner question 2 (the planted-marker security
+> acceptance). The fold verification is owed before slice 3.
+
 **Why.** Owner ruling, 2 November 2026, quoted: "yes to the other computer or account". G2
 ("every backup run refuses a folder whose delete did not finish", MA-1044) must also hold when
 the backup is started by another computer or another user account, whose `deletions.log` never
@@ -1792,6 +1799,25 @@ action MA-1015 and MA-1036 already refuse, refuses a folder that holds it, as we
 log. Its *presence* is the signal; its content is only for words. This is the pause seal's model
 (`internal/seal`, S2-C6), which already works this way for Pause.
 
+> **Folded from the 10-lens review [DM-8]:** "only for words" has one exception: the marker's
+> `run` also decides whether a line of this computer's log belongs to this folder (§15.5, with
+> DM-6 and DM-10) and is copied into this computer's started line and record (§15.4). Anyone who
+> can write the folder can set it. Trust argument: `run` never decides alone; it decides only
+> together with a second proof (the line's path, or the line's recorded identity, equals the
+> folder's now), and a clone or a restored copy at that place is the same half-deleted archive.
+> Whatever the record takes from the marker is labelled "as the folder's note says; MailArchive
+> cannot confirm it". Presence still decides every refusal.
+>
+> **[DM-4] The pause seal as a belt for older versions, weighed and not adopted for 1.5.5.** The
+> delete could also write `.mailarchive-paused.json` (with a delete reason), which every version
+> since 1.1.0 refuses to write into. Not adopted, because: no shipped version can delete (DM-1),
+> so the exposure is the window until other computers update; the belt adds a second file to the
+> delete's own steps (more crash states, a seal the person set before the delete, a later "keep"
+> path that must know which seal it wrote), which would need these lenses again; and an older
+> version shows it as "Paused" with a Resume button that removes it without a lock, so it guards
+> only until someone presses Resume. The owner may overrule (§15.8, question 3); it would then be
+> its own slice with its own review.
+
 ### 15.1 The marker: name, place, content, permissions
 
 - **Name and place.** `.mailarchive-deleting.json`, at the archive folder's root, nowhere else.
@@ -1802,6 +1828,16 @@ log. Its *presence* is the signal; its content is only for words. This is the pa
   macOS and Linux. It is not given the Windows hidden attribute, as no other `.mailarchive-*`
   file is. Only the folder itself is checked, never a folder above it: MA-1045's guard lets a
   folder *inside* a half-deleted one through (its positive twin), and this keeps that rule.
+
+  > **Folded from the 10-lens review [DM-24]:** the name is frozen: no later version renames it,
+  > and every later version refuses on its presence whatever its content, `version` or file type.
+  > A test pins the name, as the seal's name is pinned. `internal/delmark` holds the name, the
+  > refusal kinds and the marker-only words as constants (§15.3).
+  > **[DM-20]** Wherever this section says "a regular file" for the marker (the presence words,
+  > step 1 (d), step 6's removal), it means what `lister.fileLike` means: `util.DescriptorReadable`
+  > (a regular file, or on Windows an irregular one that is not a folder, such as a OneDrive or
+  > HSM placeholder) and not `util.IsLinkLike`. A marker synced to another device as a
+  > not-yet-downloaded placeholder is then a marker, not "a file MailArchive did not write".
 - **Content.** One JSON object, UTF-8, under 512 bytes, the same fields for a plain and an
   encrypted archive:
   `{"what":"MailArchive delete marker","version":1,"run":"<16 hex>","began":"2026-11-02T15:04:05Z","note":"A MailArchive delete of this archive is under way or did not finish. MailArchive does not back up into this folder until the delete is finished: click Delete on its row in MailArchive Desktop."}`
@@ -1822,6 +1858,12 @@ log. Its *presence* is the signal; its content is only for words. This is the pa
   for the operator, outside this change: the archive lock file a delete holds already carries
   `host=` (the computer's name) and `verb=delete` (`lockfile.AcquireAs`), and a delete that
   crashed leaves it in the folder until Delete again removes it.
+
+  > **Folded from the 10-lens review [DM-7]:** "which the folder's own file dates already show"
+  > is not true: file dates do not show that a delete began. Corrected: a reader learns that
+  > someone decided to delete this archive, when, and a run id that links to a line in the
+  > deletion log of the computer that began it. On Windows the name is visible and says
+  > "deleting". This is the signal the owner asked for; nothing more is in it.
 - **Permissions.** Owner-only (0600) on macOS and Linux, as the pause seal and every other state
   file MailArchive writes into an archive (S2-C6); no ACL change on Windows (the folder's
   inherited ACL applies). Presence is decided by a directory lookup (`Lstat`), which needs no
@@ -1861,6 +1903,45 @@ nothing and leaves no marker. How:
 
 The folder-gone re-run (§5.4) writes nothing: the folder is gone.
 
+> **Folded from the 10-lens review [DM-7]:** "the first thing the delete changes anywhere" and
+> "every refusal before it changes nothing" over-claim: step 0's log line and step 1 (a)'s lock
+> file (which records `host=` and `verb=delete`) come first, and step 1 (b) locks the page.
+> Corrected: the marker is the first change to the archive's own files. In step 3, "Such a folder
+> could not have its files deleted either" is not always true (a full drive, an exFAT folder that
+> needs a new cluster for a new name, a Windows ACL that allows delete but not create, a quota);
+> the delete then refuses, nothing deleted, which fails safe. When the cause is a full drive
+> (`ENOSPC`, `ERROR_DISK_FULL`), the words are: "The drive is full: free a little space, then
+> click Delete again." (builder's words).
+>
+> **[DM-3] Where it is written: an owner question.** As written, the marker comes at step 1 (d),
+> before step 2. Steps 2 to 5 never touch the archive folder (they stop this computer's schedules,
+> remove settings files, update settings, clear scratch folders), so a delete that stops there
+> (a scheduler that says "access denied", step 5's "working folder in use") leaves a whole archive
+> that every other computer then refuses to back up. The alternative: write it just before step
+> 6's first removal, after step 5, still under the archive lock, through the same `os.Root` step 6
+> opens and checks (`execute.go`, `removeFiles`). Then the claim becomes "from the first removal
+> in the folder", the crash table's "steps 2 to 5" row becomes "another computer backs up as
+> before", and MA-1046's mutation moves to "write it after the first removal". Cost: on shares
+> whose locks do not reach across computers, another computer can slip in during steps 2 to 5
+> (the limit §15.6 already states). Moving it would narrow the owner's ruling of 2 November (G2 on
+> another computer for a delete stopped in steps 2 to 5), so this review does not impose it:
+> §15.8 question 1. Until the owner answers, step 1 (d) stands; it is one call site in slice 3.
+>
+> **[DM-9] Which runs write it.** Only a run whose folder still holds the anchor (the manifest or
+> the vault) creates a marker. The no-anchor re-run (§5.4, from this computer's log or from the
+> marker) **never creates one**: a folder without its anchor holds no archive files left to
+> protect, and §7's emptied-folder guard already refuses unattended runs into it.
+>
+> **[DM-26] An empty marker** (a power cut between creating the name and writing its bytes) is
+> never filled in by a later run: opening an existing name to write would follow a planted hard
+> link to its target. It still refuses every backup by presence; only §15.5's run-id route is lost
+> for it. Stated, accepted.
+>
+> **[DM-27] The `marked` line.** When step 1 (d) has created the marker (or found this delete's
+> own), the log gets a durable line `{"event":"marked","run":…,"first_run":…}` (fsynced as the
+> started line is). It lets the plan tell "the delete stopped before it wrote its note" from "its
+> note is missing" (§15.4, DM-27).
+
 **Removed: the last removal of step 6, under the lock.** Right after the anchor (the manifest, or
 the vault files last), and only when the anchor is gone and no name the archive recorded is left
 (§8 (a); files ticked under §4.3 that could not be removed do not keep it, since that delete
@@ -1882,6 +1963,18 @@ delete finds either the marker or no archive (§5.3, "After step 7"). Then step 
   files it can no longer identify, the delete stays "not finished" in the log and the marker
   stays with it, so every computer agrees. (The way out is §5.4's own: delete those files by
   hand, then Delete again, which then removes the marker and the folder.)
+
+  > **Folded from the 10-lens review [DM-9]:** this rule traps a delete for good. Step 6 removes
+  > the anchor only when every other recorded name is gone (`execute.go` lines 594-608), so what
+  > a folder without its anchor still holds is what a complete delete keeps: the person's own
+  > files and the unrecorded copies of §4.3 left unticked. A crash after the marker went, then
+  > Delete again (which, as written, created a new marker), or a marker an indexer held, left a
+  > marker that refused every computer's backups and could be cleared only by deleting the
+  > person's files. Corrected: when the no-anchor re-run finds a marker, it removes it once every
+  > name §4 can name is gone, and reports what is left as Kept, as step 7 keeps a folder that
+  > holds the person's files. **A marker present with the anchor absent proves step 6 had
+  > finished**, so such a re-run is complete with those files kept; this amends §5.4's "never
+  > complete" for this case only (a no-anchor folder without a marker keeps §5.4's rule).
 - The marker is never in the plan's file list, counts, "Kept" list, saved plan or record: it is
   the delete's own note, written and removed by these two steps alone. The plain lister, the
   encrypted lister (`encRootFiles` leaves it out, beside the lock and the vault) and
@@ -1904,6 +1997,16 @@ So the claim, with its condition next to it: **from the moment a delete first ch
 §15.7's tests on one computer; that another computer sees it is conditional on that computer
 running MailArchive 1.5.5 or later and seeing the folder's names (§15.6).
 
+> **Folded from the 10-lens review [DM-30]:** "proven by §15.7's tests" is not yet true: read it
+> as "to be proven by MA-1046 to MA-1050" until they are built. **[DM-12]** A second condition
+> belongs next to the claim: the folder's metadata must reach the disk in order. The marker's
+> folder flush is best effort (`util.SyncDir` ignores errors and does little on Windows); on a
+> FAT or exFAT drive (common between a Mac and a PC; no journal), a power cut or a pulled drive
+> during step 6 can keep later removals and lose the marker's name, leaving a half-deleted folder
+> with no marker. Lab row (MA-1055): an exFAT drive pulled right after the marker is written and
+> the first file removed. **[DM-3]** If the owner moves the write (question 1), the claim reads
+> "from the first removal in the folder (step 6)".
+
 ### 15.3 Who asks, and how a backup refuses
 
 **One question, everywhere.** "Did a delete of this folder not finish?" becomes: the log says so
@@ -1921,12 +2024,30 @@ The marker is asked first: it is in the folder, a single lookup, and certain. Wh
 the action is refused whether or not the log can be read; when it is not, the log is asked as
 today (a log that cannot be read refuses as today, fail closed, LOW-3).
 
+> **Folded from the 10-lens review [DM-21]:** not every place asks `UnfinishedAt`. Three stay
+> log-only, as §15.4 says: `UnlistRefusal` (MA-1029, Remove from list), uninstall's
+> `PendingDeletes` (MA-1007), and `planOf`'s `Finishes` (which reads the marker separately,
+> §15.4). The marker check sits outside `RowsCheck`'s `r.log != nil` guard (`row.go`) and before
+> `DeleteLog`'s `!pending` early return (`dellog.go`), so a computer with no log, or no pending
+> line, still sees the marker.
+> **[DM-25]** Under the archive lock, `app.Run` and `app.RunGraph` ask the delete check before the
+> emptied-folder guard (today `guard.underLock` comes first: `run.go` 648 then 655, `graph.go` 177
+> then 183), so a run that queued before the anchor went is told "Delete not finished", not the
+> emptied-folder words.
+
 **The engine asks it even without archdelete.** The marker's name, its presence test and its
 bounded read are a leaf package, `internal/delmark` (standard library and `internal/util` only,
 as `internal/seal` is). `app.RefuseUnfinishedDelete` asks the installed check as now; when no
 check is installed (a test of package app alone — LOW-4's other half), it asks
 `delmark.Present` itself and refuses in the same words. So the marker half of G2 does not depend
 on the install seam. archdelete, encmark and health import `delmark` for the name.
+
+> **Folded from the 10-lens review [DM-24]:** one owner of the words. `delmark` holds the name,
+> the kinds and the marker-only refusal words as constants; `app`'s fallback and archdelete both
+> use them, never a second copy. The fallback has no "delete still running" branch (that needs
+> the lock holder's line, which archdelete reads); it runs only where no check is installed (a
+> test of package app alone; every MailArchive program installs the check), and a test pins that
+> its words and kind equal the installed check's for the not-running case.
 
 **Every backup path, and when.** No new call sites: the marker rides the ask each path already
 makes before it writes anything into the folder (§14, MA-1044 and MA-1045): `app.Run` and
@@ -1942,6 +2063,13 @@ the scheduler write its stderr file into the folder before MailArchive runs (LOW
 `reindex`, the program-copies setting and `RecordRefusedRun` do not ask (LOW-4's other half; the
 leaf package makes adding them cheap, for the review to weigh).
 
+> **Folded from the 10-lens review [DM-14]:** weighed and added. `RecordRefusedRun` skips a
+> folder holding the marker, beside its `seal.IsSealed` check (`run.go` line 1256), so a run on
+> another computer refused for another reason (its mail source missing) writes no last-run record
+> or history line into a half-deleted folder; `reindex` and the program-copies setting ask
+> `delmark.Present` before writing and refuse in the marker's words. One line each. Tests in
+> MA-1048. (The scheduler's own stderr file, LOW-2, stays a limit.)
+
 **Words and kinds.**
 - A marker that is a regular file (any content, any size, readable or not): MA-1044's refusal
   unchanged — "Delete not finished: click Delete again. This archive's delete did not finish, so
@@ -1951,6 +2079,21 @@ leaf package makes adding them cheap, for the review to weigh).
   folder: "It was begun on another computer or user account, or this computer's deletion log has
   no record of it." (builder's words). At the terminal, "At this terminal, Delete again is:
   mailarchive delete-archive -out DIR" follows as now.
+
+  > **Folded from the 10-lens review [DM-11]:** the person on the other computer never deleted
+  > anything, so the first words must not be "click Delete again". When only the marker knows,
+  > the refusal leads with what happened and never says "again": "Delete not finished: a delete
+  > of this archive was begun on another computer or user account, or this computer's deletion
+  > log has no record of it, and it did not finish, so it was not backed up; nothing was changed.
+  > To finish it, click Delete… on its row in MailArchive Desktop. (Folder: DIR)" — at the
+  > terminal, "To finish it at this terminal: mailarchive delete-archive -out DIR" (builder's
+  > words). Kind `delete_unfinished` as before. When this computer's log knows, MA-1044's words
+  > stay. The encrypted alert's fixed sentence (`state/encrypted_record.go`, one per kind) becomes
+  > one that fits both: "a delete of this archive did not finish, so it was not backed up — finish
+  > it with Delete… on its row in MailArchive Desktop" (builder's words); the two MA-1045 tests
+  > that pin it pin the new sentence exactly. A Desktop row for a terminal-only schedule may not
+  > exist: the terminal words cover it. §15.4's `status` line already drops "again"; the
+  > surfaces now agree.
 - A delete still running (it holds the lock, its holder line `verb=delete`): MA-1045's
   `msgBackupDeleting`, kind `archive_busy`, a scheduled run skips quietly — whether the log or
   the marker found it. On a network share whose locks do not reach across computers, another
@@ -1973,6 +2116,28 @@ leaf package makes adding them cheap, for the review to weigh).
   (builder's words). A folder that cannot be searched could not be written either. A folder that
   is not there at all is "not there" (the parent missing gives the same answer), so MA-689's
   archive-absent refusal stays the one a missing folder gets.
+
+  > **Folded from the 10-lens review [DM-22]:** that last claim holds only for the errors Go
+  > counts as "not there" (file or path not found, bad network path, `ENOENT`). A dead share or
+  > drive gives others: on Windows "device not ready" (an empty card reader) or "network name
+  > deleted"; on macOS and Linux `EIO`, `ESTALE`, `ENOTCONN`, a timeout. Those would get "could not
+  > check … for a delete" in place of MA-689's "is the backup drive connected", and the delete
+  > check runs first (`run.go` 541 before 568). Corrected: on a lookup error other than "not
+  > there", MailArchive checks the folder itself. If the folder cannot be reached, the answer is
+  > "no marker" and MA-689's archive-absent refusal speaks (the run cannot write into a folder it
+  > cannot reach, and the re-ask under the lock still finds a marker if the folder comes back).
+  > "Could not check" (kind `archive_unwritable`) is used only when the folder is a reachable
+  > folder and the marker lookup still fails. Test: a fault seam on the lookup returning "device
+  > not ready" and "network name deleted" asserts `archive_absent`. Lab row (MA-1055, Windows): an
+  > unplugged USB drive letter and a dropped mapped drive.
+  > **[DM-23]** The kind route: `delmark`'s lookup returns a typed error, and
+  > `app.RefuseUnfinishedDelete` picks `archive_unwritable` from it (today it picks only between
+  > `delete_unfinished` and `deletion_log_unreadable`, `deleteguard.go`); `RefusedAsNoArchive`
+  > gains `archive_unwritable` so a run refused under the lock takes back its earlier writes. The
+  > other actions' words: "MailArchive could not check this archive's folder for a delete that did
+  > not finish (CAUSE), so it was not paused / resumed / switched to / these settings were not
+  > saved / the schedule was not installed / not repaired; nothing was changed. Check that the
+  > drive or folder can be read, then try again." (builder's words).
 - **The bounded read**, for words only (the date, the run id): through an `os.Root` on the
   folder with `util.OpenRegularFileIn` (no link, no pipe, a Windows cloud placeholder accepted,
   as the manifest read), at most 4 KiB read; a file over that, empty, unreadable, not JSON, of
@@ -1980,6 +2145,10 @@ leaf package makes adding them cheap, for the review to weigh).
   details are not known. `began` is shown as written (the other computer's clock). Nothing read
   from it is echoed without `util.StripControl`, and only `run` (16 hex) and `began` (a time)
   are ever shown.
+
+  > **Folded from the 10-lens review [DM-8]:** "for words only" is not quite so: `run` from this
+  > read also feeds §15.5's match and this computer's started line (see the note under §15's
+  > opening, and its trust argument).
 
 ### 15.4 Finishing where the log has no line, and the other actions
 
@@ -1995,6 +2164,14 @@ stat memo; the bounded read only when the marker is there. `archindex` itself do
 it still recognises an archive by its manifest or encrypted marker, so a folder holding only
 the marker is a greyed row, and the "Delete not finished" line comes from the delete's own check,
 as it does for a log one today.
+
+> **Folded from the 10-lens review [DM-15]:** the page's stat memo uses `os.Stat`, which follows
+> links, so a dangling link at the marker's name would read as "not there" on the row and in
+> `status` (backups would still refuse it, by `Lstat`). The row and `status` use an `Lstat` memo
+> of their own for the marker; MA-1049 covers the row and `status` as well as backups.
+> **[DM-10]** When the marker's `run` is in this computer's own log (a started line that did not
+> match by path or identity), the row, `status` and the plan say the delete was begun here, not
+> "on another computer".
 
 **`mailarchive status` and Status & health.** The RED `delete_unfinished` line (MA-1027,
 MA-1040) for a delete only the marker knows: "a delete of this archive begun DATE did not finish,
@@ -2015,6 +2192,27 @@ line alone, no repair advice) applies to it too.
   computer's own started line carries `first_run`, `first_at` and `earlier_unknown`, as D1's do.
   Everything else (the record lookup, the scratch listing, the key line, step 8) is this
   computer's own, as for any delete here.
+
+  > **Folded from the 10-lens review [DM-8]:** the record's lines that come from the marker say
+  > so: "Finishes: the delete begun DATE (run ID), as the folder's note says; MailArchive cannot
+  > confirm it". **[DM-28]** When the archive's last backup (its last-run record) is later than the
+  > marker's `began`, the plan adds: "A backup ran into this archive after its delete began,
+  > probably from a computer with an older MailArchive." (builder's words; words only, since the
+  > two times may come from two clocks). **[DM-27] When this computer's log and the folder
+  > disagree:** this computer's log has a `marked` line for the delete, but the folder holds the
+  > anchor with no marker, or a marker naming another run. Causes: the marker was removed (by
+  > hand, a sync conflict, an antivirus), or this is another drive that happens to have the same
+  > device and file numbers (two rotation drives). Rule: backups stay refused whenever either
+  > the log or the marker says so (fail closed). Delete again does not say "This finishes the
+  > delete begun DATE"; it says "This folder does not hold the note that delete left in its
+  > archive's folder. It may be another drive's archive with the same name. Delete it only if you
+  > mean to delete this archive." (builder's words), and is an ordinary delete under the typed
+  > name with its own record lookup — never the started line's ID and Spelling (R3:NF-NF2-RERUN
+  > applies to a re-run of *that* delete, and this folder may not be its), so step 8 cannot forget
+  > another vault's key; its `folder removed` line then ends lines at that path by §5.4's
+  > existing rule. With no `marked` line (the delete stopped before
+  > step 1 (d) wrote its note: nothing changed), the plan is as today. Catalog row MA-1056, one
+  > test per cause.
 - *No anchor, the marker there*: §5.4's no-anchor re-run, planned from the marker instead of a
   log line. The folder's identity is the one it has now (the marker is in the folder, so it is
   the folder's own word; no recorded identity is needed). The kind and an encrypted archive's
@@ -2024,6 +2222,25 @@ line alone, no repair advice) applies to it too.
   removes are the plain archive's no-anchor names (a superset of the encrypted ones: every
   `.mailarchive-*` state file and leftover, the fixed root names, the root `index.html`), so the
   kind is not needed for them. Never "complete" while it leaves files it cannot identify (§5.4).
+
+  > **Folded from the 10-lens review [DM-19]:** the marker alone must not be enough to delete
+  > ordinary file names. Anyone who can write a folder of the person's own files (a shared drive,
+  > an exFAT stick with no permissions) could plant `.mailarchive-deleting.json` there; as written,
+  > add-archive accepts the folder, and Delete under the typed name removes its README.txt,
+  > index.html and *.log files. "The folder's own word" was too strong: the marker says only that
+  > someone wrote that name. Corrected: when only the marker knows and there is no anchor, the
+  > plan removes only MailArchive's own names: files starting `.mailarchive-` (state files and
+  > leftovers), the marker, `.mailarchive.lock`, litter, and the log files of this computer's own
+  > discovered schedules into the folder; every other name is listed as Kept, "files the delete
+  > can no longer identify" (§5.4's words). Nothing real is lost: step 6 removes the fixed names
+  > before the anchor, so a folder a real delete left without its anchor never holds them. With
+  > DM-9, such a re-run then removes the marker and is complete with those files kept. MA-1051
+  > test: a planted marker beside README.txt and index.html keeps both. A no-anchor re-run that
+  > this computer's own log line matched (§5.4, or DM-6) keeps §5.4's names as before.
+  > **[DM-9]** "Never complete while it leaves files" does not apply when the marker is there:
+  > see the note under §15.2's "no-anchor re-run".
+  > **[DM-6]** The identity sentence above stands for the marker-only plan. For this computer's
+  > own log line after a remount, see §15.5's note.
 - *Folder gone*: nothing to read here; as today.
 - *The computer must list the folder first* (§3.1's row rule). Open an archive folder… and
   `mailarchive add-archive DIR` now accept a folder holding the marker, with or without a
@@ -2034,11 +2251,32 @@ line alone, no repair advice) applies to it too.
   builder's words). Without this, a computer that never listed the folder could not finish a
   delete whose manifest is gone.
 
+  > **Folded from the 10-lens review [DM-17]:** as built today, the Desktop's "Open an archive
+  > folder…" does not add a row: its script sends the chosen folder into the settings save
+  > (`dashboard.go`, `doSave('')`), which makes it the current archive, and the marker refuses
+  > that save ("…it was not made the current archive"), so no row is ever added and a
+  > Desktop-only person (Windows, the biggest group) could never reach Delete…. Corrected: for a
+  > folder holding the marker, the open action itself adds the row (`registerArchive`, as
+  > `AddRow` does) and returns without switching; the page then shows the "Added to Your
+  > archives…" words above and does not call the save. MA-1052 tests the real button flow, not
+  > only `folderProblem`.
+
 **The other actions, when only the marker knows:**
 - *Pause, Resume, Switch, Save settings naming the folder, Install, Repair, `schedule -install`,
   `pause`, `resume`*: refused, through `ActionRefusal`, in MA-1015's and MA-1036's words, plus the
   "begun on another computer" sentence. Pause would write its seal into a half-deleted folder,
   Resume or an install would set up a backup the marker then refuses every run.
+
+  > **Folded from the 10-lens review [DM-18]:** "Save settings naming the folder" catches every
+  > save on the other computer, because the save names the current archive whenever it keeps the
+  > location (`dashboard.go` line 546). MA-1015 was built for the computer that began the delete,
+  > where step 4 clears the current archive; on another computer nothing clears it, so its person
+  > could save no setting at all, not even the alert settings that are emailing "Delete not
+  > finished". Corrected, **for a delete only the marker knows**: a save that keeps the location
+  > unchanged and installs or repairs no schedule is allowed (the engine refuses every backup
+  > anyway, and the program-copies writer asks the marker, DM-14). A save that newly makes the
+  > folder current, and Install and Repair, stay refused. A delete this computer's log knows keeps
+  > MA-1015's refusal unchanged. MA-1052 test.
 - *Remove from list* (`unlist-archive`): **allowed** for a delete only the marker knows.
   MA-1029 refuses it for a log one because "a folder whose archive files are gone cannot be listed
   again"; a marker folder can (add-archive, above), and on a computer that did not begin the
@@ -2061,6 +2299,10 @@ finished", A's Remove from list is refused (MA-1029) and A's uninstall is refuse
 dead end exists today (a folder deleted by hand after a delete stopped); the marker makes it more
 likely, since it invites B to finish. It is an owner question (§15.8, question 2), not built here.
 
+> **Folded from the 10-lens review [DM-10]:** the same dead end could be reached from one computer
+> (a drive that came back under another letter or mount name, finished at its new path). That
+> case is closed by §15.5's `first_run` ending. The two-computer case stays question 2.
+
 ### 15.5 MED-1: the remounted drive, and the log's device + file number
 
 **The marker alone closes MED-1's harm** (the backup into the half-deleted folder): presence is
@@ -2082,6 +2324,42 @@ it is a new folder, whatever marker it holds). Not taken: recording a volume UUI
 UUID, Linux's file system UUID) in the started line — it does not exist for network shares, it is
 new platform code on two systems, and with the marker it adds nothing a person would see.
 
+> **Folded from the 10-lens review [DM-7]:** "a run id is 64 random bits that only that delete ever
+> wrote into that folder": a cloned drive or a restored copy carries the same id. The harm is
+> small (the clone is the same half-deleted archive), and the route also needs the path (or,
+> below, the identity) to match.
+>
+> **[DM-6] The no-anchor re-run after a remount.** This route keeps the row, but Delete again on a
+> folder with no anchor goes through `planNoAnchor`, which refuses on any identity mismatch
+> (`rerun.go` line 127: `if id != u.Identity { return nil, orig }`, where `orig` is "This folder no
+> longer holds an archive. Use Remove from list."), and MA-1029 refuses Remove from list because
+> the log knows: neither works. Corrected: `planNoAnchor` also accepts the folder when its marker
+> names the line's `run` or `first_run`. MA-1050 gains this case (macOS or Linux, the anchor gone,
+> the marker there, the device number changed); prove-fail: drop the marker route from
+> `planNoAnchor` (the re-run says "Use Remove from list").
+>
+> **[DM-10] The path changed too.** The route above needs the line to name the folder by path or
+> row, and `sameFolderStat` (`archdelete.go` line 827) compares identities only when both paths can
+> be read; after Windows gives the drive another letter (E: to F:), E:\Mail cannot be read, so the
+> spelling is compared and fails, though the Windows identity (volume serial number and file id)
+> is unchanged. macOS can remount a drive as "/Volumes/Name 1", Linux can add a number to a
+> label: path and device number both change. Corrected:
+> 1. The run-id route also accepts a started line *under any path* when the folder's marker names
+>    its run (or `first_run`) AND the line's recorded identity equals the folder's identity now.
+>    Two independent proofs, so a copied marker cannot use it. This covers the letter change.
+> 2. A finished line with outcome `complete` whose run's started line carries `first_run` R also
+>    ends R's open delete in this log, whatever path R named (the ended set gains `first_run`).
+>    Finishing the delete at its new path then clears the old row and unblocks uninstall
+>    (MA-1007). Residual (lens 6): a copied marker finished elsewhere on this computer could end
+>    R early; the original folder's marker still refuses its backups and still finishes by the
+>    marker-only plan, so nothing is written into it.
+> 3. Path *and* identity both changed (macOS, Linux): neither route matches, a stated limit
+>    (§15.6). The marker still refuses backups; the person adds the folder at its new path and
+>    finishes there, and item 2 clears the old row.
+> MA-1050 gains a case where the path changes and the identity stays, finished at the new path:
+> the old row must clear. Prove-fail: leave out the `first_run` ending. Lab row (MA-1055): a drive
+> mounted again under another name (macOS, Linux) or letter (Windows).
+
 **G3 is narrowed as a side effect.** A Desktop started with `-config` and the terminal read
 different logs (G3, open). For a folder that exists, both now see the marker, so backups, Pause,
 Resume and installs are refused whichever log they read. G3 remains for what only the log knows
@@ -2100,6 +2378,21 @@ before step 2).
 - **A delete begun by 1.5.4 or before, or one that stopped before step 2**, leaves no marker:
   only the computer that began it refuses (by its log), as today. A delete that stopped before
   step 2 changed nothing, so nothing is at risk.
+
+  > **Folded from the 10-lens review [DM-1]:** these two bullets name a version that cannot
+  > delete. No release up to 1.5.3 holds `internal/archdelete` (`git ls-tree v1.5.3`), nor does
+  > the installer branch (provisionally 1.5.4); Delete ships first in 1.5.5, already writing the
+  > marker. Corrected: (a) **versions without Delete** (every release before 1.5.5) matter only as
+  > backup takers: they ignore the marker in a plain archive and back up into a half-deleted
+  > folder, and (from 1.5.0, which has encrypted archives) their `encmark` reads a recorded
+  > encrypted folder holding the marker as "now holds other files" and refuses with the
+  > "tampered" words; (b) a half-deleted folder **without** the marker can come only from a marker
+  > removed by hand (or by a sync conflict or an antivirus), a share that hides dot names, a power
+  > cut on FAT or exFAT (DM-12), or a development build of this branch from before §15 (on the
+  > owner's or testers' computers: §15.8 question 3); a delete stopped before step 1 (d) changed
+  > nothing. Only the computer that began such a delete refuses (by its log); that case stays
+  > encoded by two skipped tests (§15.7, DM-2). **Rule (DM-1, DM-5):** the delete feature ships
+  > in no release without §15.10's slices 1 to 5.
 - **A planted marker blocks backups.** Anyone who can write the folder can stop its backups by
   creating the name, on every computer, until someone deletes the archive or removes the file by
   hand. Such a person can already delete or damage the archive itself, and the refusal is loud
@@ -2107,11 +2400,30 @@ before step 2).
   already has more power than it needs. A file copied from another folder's marker cannot make
   this computer's log treat this folder as that delete's unless the folder is also at that
   delete's path. Accepting this is a security acceptance (owner question 3).
+
+  > **Folded from the 10-lens review [DM-31]:** two of the reasons overstate. "The refusal is
+  > loud": an alert email goes once per failing streak and only when the person set up email
+  > alerts (`backupalert/streak.go`, MA-870); the Desktop notice also comes once per streak;
+  > `status` is red only when someone opens it. So a planted marker on a shared folder can stop
+  > another computer's hourly backups with one notice, and no email if alerts are off, for weeks.
+  > "They can already delete the archive" depends on the folder: planting needs only "create" on
+  > the folder, which can be less than deleting other people's files (a sticky-bit folder on
+  > macOS or Linux, a Windows "drop box" ACL that allows create but not delete). Corrected
+  > statement for the owner: a planted marker is a denial of backups by anyone who can create a
+  > file in the folder, told to the person once per streak. And with DM-19, a planted marker can
+  > no longer make Delete remove any file but MailArchive's own. The copied-marker sentence above
+  > also holds for §15.5's identity route (DM-10): the copy must also be in the folder that line
+  > recorded.
 - **No way to keep the archive.** A marker means "finish the delete": there is no "cancel" — the
   same as for a "Delete not finished" row today. On another computer, whose person never decided
   the delete, the only way to back up again is to finish it (deleting the archive) or remove the
   marker by hand. For a regular marker the words never suggest removing it by hand. Owner
   question 1.
+
+  > **Folded from the 10-lens review [DM-3]:** if the owner moves the write to just before step
+  > 6's first removal (question 1), this limit shrinks to a crash inside step 6 before its first
+  > removal; a delete that stopped in steps 2 to 5 then leaves no marker and another computer backs
+  > up as before.
 - **Shares whose locks do not reach across computers** (some NFS and SMB set-ups): another
   computer can take the archive lock while the delete holds it, as two backups can today (R5's
   limit there). It still finds the marker under its lock unless it checked in the moments before
@@ -2126,15 +2438,44 @@ before step 2).
 - **Synced folders** (OneDrive, iCloud Drive): the marker syncs with the folder, so another
   device's backup into its synced copy is refused too, and its removal syncs as well (conditional
   on the sync timing, §9's synced-folder lab row).
+
+  > **Folded from the 10-lens review [DM-13]:** conditional on order as well as timing. OneDrive
+  > and iCloud do not promise that changes reach another device in the order they were made: that
+  > device can receive "marker removed" before "manifest removed", back up into its copy in
+  > between, and sync files back into a folder the delete emptied.
 - **A crash after the marker was removed and before step 7's folder line** leaves no marker
   (§15.2's last table row): the archive's files are already gone, and §7's guard covers the rest.
 - **A completely full drive** where not even a new name can be created refuses the delete
   (§15.2 step 3); the person must free a little space first. Creating a name usually succeeds
   on a full drive; this is untested on Windows (lab).
+
+  > **Folded from the 10-lens review [DM-7]:** "usually succeeds" is unchecked on every system,
+  > not only Windows, and a full backup drive is exactly when people delete archives. The words
+  > for this cause are in §15.2's note ("The drive is full: free a little space, then click Delete
+  > again."). Lab rows (MA-1055): a completely full drive on macOS, Linux and Windows.
 - **Windows ACLs.** Whether another account on the same Windows computer can remove the marker
   depends on the folder's ACL, as for every other archive file (lab row).
 - **The computer that began a delete another one finished** is left with a "Delete not finished"
   row it cannot clear (§15.4; owner question 2).
+
+> **Folded from the 10-lens review** — limits added:
+> - **[DM-10] A drive back under another path and another identity** (macOS "/Volumes/Name 1",
+>   a Linux label with a number added): neither of §15.5's routes matches this computer's line,
+>   so the row at the new path says "begun on another computer". The marker still refuses
+>   backups; finishing at the new path clears the old row through the `first_run` ending.
+> - **[DM-12] Power loss on FAT or exFAT** can leave a half-deleted folder without the marker
+>   (§15.2's note).
+> - **[DM-26] An empty marker** (a power cut while it was written) refuses backups but cannot be
+>   matched by run id.
+> - **[DM-16] Years of refused runs.** A `delete_unfinished` refusal does not count toward the
+>   source-loss auto-pause (`wizard/pause.go` counts only an unreachable mail source), so another
+>   computer's schedule keeps running and failing, with an alert once per streak, until someone
+>   finishes the delete or removes the row. Whether it should auto-pause is owner question 5.
+> - **[DM-29] Rolling the rollout back.** The only rollback is installing an earlier release,
+>   which has no Delete and no marker check: an unfinished delete then cannot be finished there,
+>   its backups go into the half-deleted folder, and `deletions.log` stays. A misfiring marker
+>   check is undone only by removing the file by hand; a dead-drive misfire is DM-22's. The 1.5.5
+>   release notes say so.
 
 ### 15.7 Tests (each prove-fail → prove-pass; Windows run first in the lab)
 
@@ -2153,6 +2494,59 @@ by hand into a folder with no marker, which models a delete from before this cha
 the real delete stopped at step 6 by a removal fault (`removeFileFn`), so the folder is what a
 1.5.5 delete leaves. MED-1's then rewrites the started line's device number as now. The
 no-marker case they modelled is §15.6's second limit, stated, not a guard.
+
+> **Folded from the 10-lens review [DM-2]:** the setup change is not a weakening in substance (no
+> released version can delete, DM-1), but three things change:
+> 1. **"Nothing written" cannot stay word for word.** Both tests assert
+>    `len(ma1044Names(half)) == 1` (lines 262 and 278); a real delete stopped at step 6 leaves at
+>    least the anchor, the marker and the lock, so that count would fail even when the backup wrote
+>    nothing. It becomes: the folder's sorted name list before the backup equals the list after
+>    (as `TestABackupWhileADeleteRunsIsToldTheDeleteIsRunning` already checks) — stricter. The
+>    setup stops step 6 on a file that is not the anchor and asserts as preconditions that the
+>    anchor and the marker are both there.
+> 2. **The remount test must still test the log.** With a marker present, the refusal comes from
+>    the marker whatever the device number, so the test would stay green with §15.5 broken. It
+>    runs against this computer's own log; asserts as a precondition that the device-and-file-
+>    number match alone finds no line (the remount is real); and asserts the refusal *without* the
+>    "begun on another computer" sentence (`assure.Forbid`), which proves the run-id route matched.
+>    MA-1050 stays the main guard of that route.
+> 3. **The other-computer test** uses a brand-new log for the other computer and asserts DM-11's
+>    marker-only words in full (starting "Delete not finished:"), not MA-1044's "click Delete
+>    again", which are this computer's words.
+> 4. **The no-marker case stays a test, not a stated limit.** The two original bodies (a hand-written
+>    started line, no marker) are kept, still skipped, under new names —
+>    `TestAnotherComputersBackupIntoAHalfDeletedFolderWithoutItsMarkerIsRefused` and
+>    `TestABackupIntoAHalfDeletedFolderWithoutItsMarkerOnARemountedDriveIsRefused` — each with
+>    `// covers: MA-1044` and a skip text citing §15.6's corrected limit (DM-1). So no property is
+>    dropped from the test suite, and no reduction needs the operator's acceptance.
+>
+> **Folded — test additions by condition** (each prove-fail → prove-pass):
+> MA-1046: a re-run *without* an anchor never creates a marker (DM-9; prove-fail: let it);
+> the `marked` line follows a created marker (DM-27); a full-drive cause gives DM-7's words.
+> MA-1047: a person's file in the folder, a crash after the marker went, Delete again ends with no
+> marker and complete-with-kept (DM-9); a marker an indexer holds, then Delete again, the same.
+> MA-1048: `RecordRefusedRun`, `reindex` and the program-copies setting write nothing into a marker
+> folder (DM-14); a run queued before the anchor went is told "Delete not finished" under the lock
+> (DM-25); the marker-only words in full (DM-11); a fault seam on the lookup returning "device not
+> ready" and "network name deleted" gives `archive_absent` (DM-22); `app`'s fallback words and kind
+> equal the installed check's (DM-24); the name is pinned (DM-24).
+> MA-1049: a cloud placeholder at the name is a marker (DM-20, lab on Windows); the row and
+> `status` see a dangling link at the name (DM-15).
+> MA-1050: the no-anchor re-run after a remount (DM-6); the path changed and the identity kept,
+> finished at the new path, the old row clears (DM-10); the marker's run in this computer's log
+> gives "begun here" words (DM-10).
+> MA-1051: a planted marker beside README.txt and index.html keeps both (DM-19); the record labels
+> marker facts as unconfirmed (DM-8); a backup after `began` adds DM-28's sentence.
+> MA-1052: the real "Open an archive folder…" button flow on a marker folder adds the row and does
+> not switch (DM-17); a settings save keeping the location on a marker-only current archive is
+> allowed, a save newly making it current, Install and Repair are refused, and a log-known delete
+> keeps MA-1015's refusal (DM-18); "could not check" words per action (DM-23).
+> **MA-1056 (new) — the log and the marker disagree (DM-27).** A `marked` line with the anchor and
+> no marker (removed by hand), with another run's marker, and a rotation drive with the same
+> numbers: backups refused, the plan does not say "This finishes…", says DM-27's words, and uses
+> its own record lookup; with no `marked` line the plan is as today. Prove-fail: let the plan
+> claim "finishes" whenever the log matches.
+> MA-1057 to MA-1059 stay spare.
 
 - **MA-1046 — the delete writes the marker (§15.1, §15.2).** Its exact bytes' fields and nothing
   else (a test plants a folder named with a person's name, an address-like store token and a
@@ -2229,6 +2623,13 @@ no-marker case they modelled is §15.6's second limit, stated, not a guard.
   and stopped, the other's scheduled backup refused and its Delete finishing it; another Windows
   account removing the marker; a nearly full drive; a junction at the marker's name.
 
+  > **Folded from the 10-lens review [DM-30]:** the SMB row uses a real SMB share (macOS File
+  > Sharing, or a Windows share), not Parallels shared folders, which handle locks and dot names
+  > differently. Rows added: an exFAT drive pulled right after the marker and the first removal
+  > (DM-12); a completely full drive on macOS, Linux and Windows (DM-7); an unplugged USB drive
+  > letter and a dropped mapped drive on Windows (DM-22); a drive mounted again under another
+  > name or letter (DM-10); a OneDrive placeholder at the marker's name (DM-20).
+
 ### 15.8 Questions only the owner can answer
 
 1. **No way to keep the archive.** A delete that did not finish can only be finished; with the
@@ -2257,6 +2658,34 @@ no-marker case they modelled is §15.6's second limit, stated, not a guard.
 The words marked "builder's words" above are for the operator to approve, as usual; they are not
 rulings.
 
+> **Folded from the 10-lens review — the owner's questions after the review** (they replace the
+> four above for asking; the four stay as written). The reviewers' other questions are settled as
+> technical calls: DM-2 keeps the no-marker case as a skipped test, so no gate reduction needs
+> accepting; DM-27's and DM-11's words follow the usual "builder's words" approval; the release
+> rule is DM-1/DM-5.
+> 1. **Where the marker is written, and the way out on another computer** (question 1 above, with
+>    DM-3). Recommendation: write it just before step 6's first removal; until then the archive
+>    is whole, so another computer's backup harms nothing (the person who began the delete
+>    removes what it added when they finish), and that computer's person is spared a block they
+>    can clear only by deleting. It narrows the 2 November ruling for a delete stopped in steps 2
+>    to 5, which is why it is asked. With it, "no way to keep the archive" shrinks to a crash inside
+>    step 6 before its first removal: keep "finish it, or remove the marker by hand" for 1.5.5.
+>    Blocks: slice 3's write position only.
+> 2. **Security acceptance of a planted marker** (question 3 above, with DM-31's corrected facts:
+>    told once per streak, email only if alerts are set up; planting can need less than deleting;
+>    and with DM-19 it can no longer make Delete remove the person's files). Recommendation:
+>    accept. Blocks: shipping 1.5.5.
+> 3. **Older versions** (question 4 above, with DM-4 and DM-1). Recommendation: no seal belt; the
+>    1.5.5 release notes say "update MailArchive on every computer that backs up into a shared
+>    folder or drive". Also: is a development build of this branch that can delete running on your
+>    or a tester's computer? If so, the notes say to finish those deletes after updating. Blocks:
+>    the release notes only.
+> 4. **The computer that began a delete another one finished** (question 2 above, unchanged; DM-10
+>    closes the same-computer variant). Does not block.
+> 5. **Auto-pause for a delete this computer never began** (DM-16). Recommendation: yes, after the
+>    same 30 refused runs as an unreachable mail source. Does not block slices 1 to 5; a yes adds a
+>    small slice.
+
 ### 15.9 What this amends above (for the review)
 
 - §4.1 and §4.2: the marker is in neither name list; it is removed by §5.3 step 6's last
@@ -2270,3 +2699,52 @@ rulings.
 - §14: MA-1029's refusal is limited to deletes the log knows; MA-1023's add-archive and Open an
   archive folder… accept a marker folder; MED-1 and MED-2 are closed by this section once built,
   with the limits of §15.6.
+
+> **Folded from the 10-lens review [DM-2]:** "closed" carries its condition here: MED-1 and MED-2
+> are closed, once built, for a delete begun by MailArchive 1.5.5 or later that reached step 1 (d)
+> (or step 6, if question 1 moves it), seen from a computer running 1.5.5 or later that sees the
+> folder's dot names. At release that is no other computer until each updates. A half-deleted
+> folder without its marker stays open, encoded by the two renamed skipped tests (§15.7). The same
+> condition goes into the MA-1044 and MA-1045 amendments when they are written.
+> **Further amendments from the review:** §5.3 gains the `marked` log line after step 1 (d)
+> (DM-27); §5.4's "never complete" does not apply to a no-anchor folder holding the marker (DM-9),
+> and the no-anchor re-run never creates a marker; §7 gains the full-drive words (DM-7) and the
+> dead-drive routing (DM-22); MA-1015's save refusal is eased only for a delete the marker alone
+> knows, and only for a save that keeps the location and installs nothing (DM-18); the Desktop's
+> "Open an archive folder…" adds the row itself for a marker folder (DM-17); `RecordRefusedRun`,
+> `reindex` and the program-copies setting ask the marker (DM-14); under the lock the delete check
+> comes before the emptied-folder guard (DM-25); the encrypted alert's fixed sentence changes
+> (DM-11).
+
+### 15.10 Build slices (folded from the 10-lens review [DM-5])
+
+Readers before the writer: no slice writes the marker before every list and check that must
+recognise it exists. Each slice: its tests prove-fail → prove-pass, the unfiltered `go test ./...`
+green, pushed alone, and its own adversarial pass (the delete is security-sensitive). The delete
+feature ships in no release without slices 1 to 5 together (DM-1): slice 3 alone would tell another
+computer "click Delete…" while it could not list a folder whose manifest is gone.
+
+1. **The `delmark` leaf and every name list.** The name, presence (`Lstat`, DM-20's "regular"),
+   the bounded read, the typed lookup error (DM-22/DM-23), the constants (DM-24); `encmark`'s
+   reserved names and MA-743's tree grammar; the plain lister's, the encrypted lister's and
+   `planNoAnchor`'s carve-outs; §4.1's "another archive's marker" list. Nothing writes the marker
+   yet. MA-1053, the name pin.
+2. **The refusals.** `UnfinishedAt` and its log-only exceptions (DM-21); `app`'s fallback (MA-1054);
+   every backup path, including the order under the lock (DM-25) and the dead-drive routing
+   (DM-22); `RecordRefusedRun`, `reindex`, program copies (DM-14); Pause, Resume, Switch, Save,
+   Install, Repair through `ActionRefusal` with their words (DM-23); the rows and `status` (the
+   `Lstat` memo, DM-15); the marker-only words and the alert sentence (DM-11). Tests plant the
+   marker by hand. MA-1048, MA-1049.
+3. **The delete writes and removes the marker.** Step 1 (d) (or step 6, question 1), the `marked`
+   line (DM-27), the last removal, the no-anchor re-run's rules (DM-9, DM-26), the full-drive
+   words (DM-7); the two skipped tests become guards and the two no-marker encoders are added
+   (DM-2). MA-1046, MA-1047. Owes the fold verification first.
+4. **Finishing from another computer.** Planning from the marker with only MailArchive's own names
+   (DM-19) and its record labels (DM-8, DM-28); add-archive and "Open an archive folder…" adding
+   the row (DM-17); the settings save (DM-18); Remove from list allowed for a marker-only delete.
+   MA-1051, MA-1052.
+5. **The log after a remount, and disagreement.** The run-id route (§15.5), `planNoAnchor`'s marker
+   route (DM-6), the identity route and the `first_run` ending (DM-10), the "begun here" words, and
+   the disagreement rule (DM-27). MA-1050, MA-1056.
+
+Lab rows (MA-1055) run before release, Windows first.
