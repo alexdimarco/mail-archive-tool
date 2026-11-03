@@ -3,6 +3,7 @@ package archdelete
 import (
 	"errors"
 	"path/filepath"
+	"runtime"
 
 	"mail-archive-tool/internal/delmark"
 	"mail-archive-tool/internal/util"
@@ -130,6 +131,19 @@ func MarkerRefusal(u *Unfinished, err error, done string) error {
 func MarkerActionRefusal(folder, done string) error {
 	u, err := UnfinishedAt("", folder, "")
 	return MarkerRefusal(u, err, done)
+}
+
+// OnlyMarkerKnows reports a delete of folder that only its marker knows (§15.4, DM-18): a regular
+// marker is there, this computer's deletion log at logPath was read ("" asks none) and has no line
+// for it. False when the log knows the delete, cannot be read, or the lookup fails, and for a name
+// that is not a regular file: those stay refused as ActionRefusal refuses them. The Desktop's
+// settings save asks it to allow a save that keeps the location and installs nothing — on a
+// computer that began no delete, nothing else clears the current archive, so its person could
+// otherwise save no setting at all, not even the alert settings that are mailing "Delete not
+// finished".
+func OnlyMarkerKnows(logPath, folder string) bool {
+	u, err := UnfinishedAt(logPath, folder, runtime.GOOS)
+	return err == nil && u != nil && u.MarkerOnly && u.LogUnreadable == "" && u.Marker == delmark.Regular
 }
 
 // couldNotCheckRefusal is the "could not check" refusal: a *Refusal that also unwraps to the

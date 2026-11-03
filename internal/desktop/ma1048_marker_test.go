@@ -118,9 +118,14 @@ func TestMA1048_TheDesktopsActionsRefuseAFolderHoldingTheMarker(t *testing.T) {
 	if err := SaveSettings(e.cfg.SettingsPath, Settings{Out: marked}); err != nil {
 		t.Fatal(err)
 	}
-	_, k := e.post("/api/settings", map[string]any{"Out": marked, "KeepRaw": true})
-	assure.Refused(t, http.StatusOK, replyErr(k), assure.Code(http.StatusOK), assure.Names(words("these settings were not saved")),
-		assure.NoSideEffect(func() bool { return k["ok"] == false && !LoadSettings(e.cfg.SettingsPath).KeepRaw }))
+	// Changed 3 November 2026 (§15.4's DM-18, §15.10 slice 4): a save that keeps the location and
+	// installs nothing is allowed for a delete only the marker knows (slice 2 refused it "for now");
+	// MA-1052's TestMA1052_ASaveKeepingAMarkerOnlyCurrentArchiveIsAllowed pins it, with the save that
+	// newly makes the folder current and a log-known delete still refused. Install and Repair below
+	// stay refused.
+	if _, k := e.post("/api/settings", map[string]any{"Out": marked, "KeepRaw": true}); k["ok"] != true || !LoadSettings(e.cfg.SettingsPath).KeepRaw {
+		t.Fatalf("a save keeping the location of a delete only the marker knows (DM-18): %v", k)
+	}
 	for name, body := range map[string]map[string]any{
 		"Install": {"interval": "weekly", "time": "03:00", "drawnFor": marked},
 		"Repair":  {"drawnFor": marked},

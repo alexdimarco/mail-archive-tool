@@ -107,13 +107,22 @@ func TestAnEncryptedDeleteReachedThroughAnotherSpellingFinishesWithTheStartedLin
 
 // covers: MA-966, R36
 func TestACrashInStep6ThenTheDriveUnpluggedIsRefusedAndTheKeyringUntouched(t *testing.T) {
-	dir := encryptedClean(t)
+	// Fixture changed 3 November 2026 (the owner's ruling Q4, §15.10 slice 4): the folder sits on a
+	// "Drive" folder that is unplugged with it, so its parent cannot be reached either, as on a real
+	// drive. A folder gone with its parent still reachable now asks whether the delete was finished
+	// elsewhere (MA-1057, TestMA1057_DeleteAgainWithTheFolderGoneAsksAndChangesNothing, which keeps
+	// this test's no-side-effect check); every assertion here is unchanged.
+	drive := filepath.Join(t.TempDir(), "Drive")
+	dir := filepath.Join(drive, "Vault")
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		t.Fatal(err)
+	}
 	r := newRig(t, dir)
 	appendRawLog(t, r.x.Log, map[string]any{"at": "2026-11-01T10:00:00Z", "event": "started", "folder": dir, "row": dir,
 		"kind": "encrypted", "record_id": testArchiveID, "record_spelling": dir})
 	// The drive unplugged: the folder is not reachable, and the log has no folder
 	// removed line.
-	if err := os.RemoveAll(dir); err != nil {
+	if err := os.RemoveAll(drive); err != nil {
 		t.Fatal(err)
 	}
 	u, _ := UnfinishedDelete(r.x.Log, dir, "")

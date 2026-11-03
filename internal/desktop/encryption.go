@@ -17,6 +17,7 @@ import (
 	"mail-archive-tool/internal/encrecord"
 	"mail-archive-tool/internal/keyring"
 	"mail-archive-tool/internal/state"
+	"mail-archive-tool/internal/util"
 	"mail-archive-tool/internal/vault"
 )
 
@@ -183,6 +184,22 @@ func (d *dashboard) openArchiveAction(w http.ResponseWriter, r *http.Request) {
 	path, err := d.pick(ctx, "Choose the archive's folder")
 	if err != nil || strings.TrimSpace(path) == "" {
 		writeJSON(w, map[string]any{"ok": true, "canceled": true})
+		return
+	}
+	// A folder holding the delete marker is listed here and never switched to (design-archive-delete
+	// §15.4, DM-17): the save the page would send next makes it the current archive, which the marker
+	// refuses, so no row would ever be added and its delete could not be finished from this Desktop.
+	if abs, _ := keyOf(path); markerFolderAt(abs) {
+		row, added, lerr := d.cfg.listMarkerFolder(abs, d.now())
+		if lerr != nil {
+			writeJSON(w, map[string]any{"ok": false, "error": "Your archives could not be saved (" + util.StripControl(lerr.Error()) + "), so the folder was not added; nothing was changed."})
+			return
+		}
+		note := markerAddedText(row)
+		if !added {
+			note = markerListedText(row)
+		}
+		writeJSON(w, map[string]any{"ok": true, "added": added, "note": note})
 		return
 	}
 	if why := archiveFolderProblem(path); why != "" {

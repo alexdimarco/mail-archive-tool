@@ -194,9 +194,56 @@ func (p *DeletePlan) FinishesLine() string {
 	return "This finishes the delete begun " + localStamp(p.Finishes.FirstStarted) + "."
 }
 
+// The plan's sentences after its first line when it finishes a delete this computer's log did not
+// see begin, or one finished elsewhere (§15.4, DM-28, §15.8 question 2; lead's words,
+// owner-delegated 2026-11-02: what happened first, no "again" to a person who began no delete).
+const (
+	// MsgMarkerNoRecord follows "This finishes the delete begun DATE." for a delete planned from the
+	// folder's marker: this computer's log has no line of its start.
+	MsgMarkerNoRecord = "This computer's deletion log has no record of when it began: it was begun on another computer or user account."
+	// MsgMarkerBackupAfter is DM-28's: the archive's last backup is later than the marker's began
+	// (words only: the two times may come from two clocks).
+	MsgMarkerBackupAfter = "A backup ran into this archive after its delete began, probably from a computer with an older MailArchive."
+	// MsgElsewhereSaid is the plan's and the result's line for a delete the person said was finished
+	// elsewhere (MA-1057).
+	MsgElsewhereSaid = "The folder was not found here; you said this delete was finished elsewhere."
+)
+
+// elsewhereValue is the deletion record's "Folder here" value for a delete finished elsewhere.
+const elsewhereValue = "the folder was not found here; you said this delete was finished elsewhere"
+
+// FinishesNotes are the plan's sentences after FinishesLine, on the Desktop's panel and at the
+// terminal: none for an ordinary delete or one this computer's log saw begin.
+func (p *DeletePlan) FinishesNotes() []string {
+	var out []string
+	if p.Elsewhere {
+		out = append(out, MsgElsewhereSaid)
+	}
+	if f := p.Finishes; f != nil && f.FromMarker {
+		out = append(out, MsgMarkerNoRecord)
+		// DM-28: a backup into the archive after its delete began (an older MailArchive elsewhere).
+		if began := f.FirstStarted; !began.IsZero() && p.Captured.LastBackup.After(began) {
+			out = append(out, MsgMarkerBackupAfter)
+		}
+	}
+	return out
+}
+
 // finishesValue is the saved plan's and the record's "Finishes" line: the first run's date and id.
+// One planned from the folder's marker says the marker is its source, which MailArchive cannot
+// confirm (DM-8).
 func (p *DeletePlan) finishesValue() string {
 	f := p.Finishes
+	if f.FromMarker {
+		const asNoted = ", as the folder's note says; MailArchive cannot confirm it"
+		if f.FirstRun == "" {
+			return "a delete of this folder that did not finish" + asNoted
+		}
+		if f.FirstStarted.IsZero() {
+			return fmt.Sprintf("the delete begun on a date not recorded (run %s)%s", f.FirstRun, asNoted)
+		}
+		return fmt.Sprintf("the delete begun %s (run %s)%s", localStamp(f.FirstStarted), f.FirstRun, asNoted)
+	}
 	when := "on a date not recorded"
 	if !f.FirstStarted.IsZero() {
 		when = localStamp(f.FirstStarted)
@@ -210,17 +257,29 @@ func (p *DeletePlan) finishesValue() string {
 // re-walk's N2, the operator's delegate's choice of its two forms).
 func (p *DeletePlan) earlierValue() string {
 	f := p.Finishes
+	why := p.notKnownWhy()
 	switch {
 	case !f.RemovedKnown && f.Removed == 0:
-		return "not known: " + notKnownWhy
+		return "not known: " + why
 	case !f.RemovedKnown:
-		return fmt.Sprintf("at least %d (%s); not known in full: %s", f.Removed, size(f.RemovedBytes), notKnownWhy)
+		return fmt.Sprintf("at least %d (%s); not known in full: %s", f.Removed, size(f.RemovedBytes), why)
 	}
 	return fmt.Sprintf("%d (%s)", f.Removed, size(f.RemovedBytes))
 }
 
 // notKnownWhy is why an earlier run's count is not known.
 const notKnownWhy = "a run stopped before it wrote its record"
+
+// notKnownMarkerWhy is why it is not known for a delete planned from the folder's marker (DM-8).
+const notKnownMarkerWhy = "the delete was begun where this computer's deletion log does not see it"
+
+// notKnownWhy is why the earlier runs' count of the delete p finishes is not known.
+func (p *DeletePlan) notKnownWhy() string {
+	if p.Finishes != nil && p.Finishes.FromMarker {
+		return notKnownMarkerWhy
+	}
+	return notKnownWhy
+}
 
 // finishedLine is the result's line of a delete that finishes one that stopped part way: the
 // whole delete's count, beside this run's own in the line before it (the 1.5.3 re-walk's N6: the
@@ -232,7 +291,7 @@ func (p *DeletePlan) finishedLine(removed int, bytes int64) string {
 		begun = "This finishes the delete begun " + localStamp(f.FirstStarted)
 	}
 	if !f.RemovedKnown {
-		return begun + ". How many files its earlier runs removed is not known: " + notKnownWhy + "."
+		return begun + ". How many files its earlier runs removed is not known: " + p.notKnownWhy() + "."
 	}
 	return fmt.Sprintf("%s: %s (%s) removed in all.", begun, plural(f.Removed+removed, "file", "files"), size(f.RemovedBytes+bytes))
 }

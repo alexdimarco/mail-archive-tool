@@ -573,8 +573,16 @@ func TestMA1046_AReRunKeepsTheMarkerAndWritesOneWithTheFirstRunsIdWhenNoneIsTher
 			if res := r.run(t, false); res.Status != StatusComplete {
 				t.Fatalf("%s", res.Message())
 			}
-			if !there || !bytes.Equal(got, planted) || len(ma1046Marked(t, r.x.Log)) != 0 {
-				t.Fatalf("kept as it is, no marked line: %q (marked %v)", got, ma1046Marked(t, r.x.Log))
+			// Changed 3 November 2026 (§15.4, §15.10 slice 4, MA-1051): the plan now finishes the delete a
+			// readable marker names, so the marker is this delete's own and its `marked` line names that
+			// run (DM-27); an empty marker names none, and gets no `marked` line. Kept as it is either way.
+			marked := ma1046Marked(t, r.x.Log)
+			wantMarked := 0
+			if len(planted) > 0 {
+				wantMarked = 1
+			}
+			if !there || !bytes.Equal(got, planted) || len(marked) != wantMarked || (wantMarked == 1 && marked[0]["first_run"] != "fedcba9876543210") {
+				t.Fatalf("kept as it is, its marked line naming its run only when it names one: %q (marked %v)", got, marked)
 			}
 			if exists(filepath.Join(dir, delmark.Name)) {
 				t.Fatal("removed last with the archive, as the delete's own is")

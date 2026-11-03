@@ -2052,6 +2052,83 @@ or needed here.
 >   words); the LOW-1 probe (it only prints the accepted limit); the DM-2 remount body run without
 >   its skip (it stays skipped until slice 5, failing as stated).
 
+> **Slice 4, 3 November 2026 (§15.10 slice 4 with the owner's ruling Q4; MA-1051, MA-1052 and
+> MA-1057 added; MA-1046, MA-1048 and MA-966 amended).** Finishing from another computer, and the
+> "finished elsewhere" question. The builder's calls, for the lead and the slice's adversarial pass:
+> - *Planning from the marker* (`archdelete.go` `planOf`, `rerun.go` `markerFinishes` and
+>   `planMarkerNoAnchor`). Only when this computer's log was read and has no line for the folder.
+>   With the anchor there: an ordinary delete whose `Finishes` is the marker's (`FromMarker`), its
+>   first run and began as the marker says them, "not known" when it says nothing (an empty or
+>   damaged marker: "This finishes a delete of this folder that did not finish." and "Finishes: a
+>   delete of this folder that did not finish, as the folder's note says; MailArchive cannot
+>   confirm it"). Without the anchor: §5.4's no-anchor re-run with only MailArchive's own names
+>   (DM-19: files starting `.mailarchive-`, the run leftovers, the logs of this computer's own
+>   discovered schedules; everything else kept), its kind and record this computer's record of
+>   the folder, **its kind "unknown" when not recorded here** (the record says "Kind: unknown"; the
+>   design gave no kind for that case).
+> - *DM-19 carried on this computer's log* (a correction beside DM-19's last sentence, "A no-anchor
+>   re-run that this computer's own log line matched … keeps §5.4's names as before"): a run of this
+>   computer that finishes a delete planned from the marker writes `from_marker` on its started line,
+>   and a later plan from that line keeps DM-19's names. Without it, a planted marker's first run
+>   stopped part way would, on Delete again, plan from this computer's own line and remove README.txt
+>   and index.html. The plan's re-check under the lock reads that same line, so it plans the same
+>   names. `from_marker` also keeps the record's DM-8 labels on later runs.
+> - *The record's labels (DM-8)*: "Finishes: the delete begun DATE (run ID), as the folder's note
+>   says; MailArchive cannot confirm it" and "Files removed earlier: not known: the delete was begun
+>   where this computer's deletion log does not see it" (also in the result's "How many files its
+>   earlier runs removed is not known: …"). The plan's sentences after its first line
+>   (`DeletePlan.FinishesNotes`, both surfaces; lead's words, owner-delegated 2026-11-02): "This
+>   computer's deletion log has no record of when it began: it was begun on another computer or user
+>   account." (the design's "has no record of it" would be false on a later run, whose own line the
+>   log then has) and DM-28's sentence as written.
+> - *DM-27's `marked` line on such a delete*: its marker is now this delete's own (its run is the
+>   plan's first run), so it gets the `marked` line naming that run. This replaces slice 3's "A
+>   marker already there that is not this delete's (another run id …) gets no `marked` line" for a
+>   readable marker; an empty one still gets none. `TestMA1046_AReRunKeepsTheMarker…`'s "another
+>   delete's" case is amended to expect the one line (stricter: it names the run).
+> - *Open an archive folder… and add-archive (DM-17)* accept a folder holding the marker — a regular
+>   one or a name that is not a regular file (its row then says to remove it by hand) — that is not
+>   inside an encrypted archive, with or without its manifest, before any other check (a recorded
+>   encrypted folder whose vault is gone is listed, not refused as "no longer holds its archive").
+>   The row is added under the list's lock without archindex's archive test (`desktop/markerfolder.go`);
+>   the Desktop's route answers `added` and its note and the page never sends the save; the note is
+>   kept across the page drawn again. Words (lead's words, owner-delegated 2026-11-02), Desktop:
+>   "Added to Your archives: DIR. A delete of this archive did not finish: to finish it, click Delete…
+>   on its row." ("DIR is already in Your archives. …" when listed); terminal: "Added to Your
+>   archives: DIR" then "A delete of this archive did not finish: to finish it: mailarchive
+>   delete-archive -out DIR" (with a Desktop running: "…click Delete… on its row in Your archives in
+>   MailArchive Desktop, or shut MailArchive Desktop down and run mailarchive delete-archive -out DIR.").
+> - *The settings save (DM-18)*: allowed when it keeps the location and only the marker knows the
+>   delete (`archdelete.OnlyMarkerKnows`: a regular marker, this computer's log read and silent). A
+>   log that cannot be read, a lookup that fails, or a name that is not a regular file stay refused.
+>   MA-1048's Desktop test asserted the slice-2 refusal of that save "for now"; it now asserts the
+>   save is allowed (Install and Repair still refused there), and MA-1052 pins the refusals left.
+> - *Remove from list (DM-21)* needed no code: `UnlistRefusal` was already log-only. Pinned by
+>   MA-1052's tests (archdelete and the Desktop route); prove-fail: let it ask the marker.
+> - *The "finished elsewhere" question (Q4, MA-1057)*. `planUnfinished` refuses with
+>   `CaseFinishedElsewhere` and `ElsewhereQuestion` when the folder is confirmed gone
+>   (`ErrNotExist`), its parent reachable and no `folder removed` line; `Deps.FinishedElsewhere`
+>   (the answer) plans §5.4's folder-gone re-run with `Elsewhere` set. The question's words are
+>   §15.8 question 2's (lead's words, owner-delegated 2026-11-02), without "forgets this computer's
+>   record and key of it" for a plain archive. **The answer leads to the plan, not straight to the
+>   steps** (a correction beside §15.10's "On 'It was finished elsewhere' it runs the folder-gone
+>   re-run"): the panel (or the terminal's plan) shows "The folder was not found here; you said this
+>   delete was finished elsewhere." and the folder's name is typed as for any delete. A wrong answer
+>   forgets a key whose vault may still be on an unplugged drive (§15.10's note), so the delete's
+>   own decision step is kept. The terminal's form: the question's words, then "Was it finished
+>   elsewhere? [y/N]" (No and Enter change nothing, exit 1). The started line says `rerun: finished
+>   elsewhere`; a run of it that stops part way is asked again next time. The result: "Finished
+>   here. The folder was not found here; you said this delete was finished elsewhere."; the record:
+>   "Folder here: the folder was not found here; you said this delete was finished elsewhere".
+> - *MA-966's `TestACrashInStep6ThenTheDriveUnpluggedIsRefusedAndTheKeyringUntouched`*: its folder now
+>   sits on a "Drive" folder unplugged with it, so its parent is unreachable as on a real drive; every
+>   assertion is unchanged. With the parent reachable, the same state is MA-1057's question, whose
+>   test keeps the same no-side-effect check.
+> - Not built here: slice 5 (the run-id route, the remount guard, DM-10's "begun here" words, the
+>   DM-27 disagreement rule) and slice 6 (auto-pause, Q5). The plan from the marker still says
+>   "begun on another computer or user account" when this computer's log lost the line (DM-10's
+>   words are slice 5's).
+
 ## 15. The delete marker (G2 for another computer, another account, and a remounted drive)
 
 Status: DESIGN AMENDMENT, 2 November 2026, for the 10-lens pre-code review
@@ -2615,6 +2692,9 @@ line alone, no repair advice) applies to it too.
   > DM-9, such a re-run then removes the marker and is complete with those files kept. MA-1051
   > test: a planted marker beside README.txt and index.html keeps both. A no-anchor re-run that
   > this computer's own log line matched (§5.4, or DM-6) keeps §5.4's names as before.
+  > *Corrected 3 November 2026 (slice 4, builder):* except a line written by a run of this
+  > computer that itself finished a delete planned from the marker: it carries `from_marker` and
+  > keeps DM-19's names (§14, "Slice 4"), or a planted marker's stopped first run would widen them.
   > **[DM-9]** "Never complete while it leaves files" does not apply when the marker is there:
   > see the note under §15.2's "no-anchor re-run".
   > **[DM-6]** The identity sentence above stands for the marker-only plan. For this computer's
@@ -3304,6 +3384,10 @@ computer "click Delete…" while it could not list a folder whose manifest is go
 >   answer, not the parent check, is what tells an unplugged drive from a folder removed
 >   elsewhere, and a wrong answer makes step 8 forget a key whose vault is still on that drive.
 >   The terminal's form is the slice's to design.
+>   *Corrected 3 November 2026 (slice 4, builder):* "it runs the folder-gone re-run" reads "it plans
+>   the folder-gone re-run": the plan says the answer, and the folder's name is typed before
+>   anything is changed, as for any delete; the terminal asks "Was it finished elsewhere? [y/N]"
+>   after the question's words (§14, "Slice 4").
 >
 > Two slices follow slice 5:
 

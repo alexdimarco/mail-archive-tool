@@ -221,6 +221,10 @@ type DeletePlan struct {
 	// Held are the files of a plan that finishes a delete which another program holds open now, so
 	// that this run cannot remove them either (Windows; HeldLine says so; the 1.5.3 re-walk's N17).
 	Held []string
+	// Elsewhere: a folder-gone re-run the person said was finished elsewhere (Deps.FinishedElsewhere,
+	// MA-1057): the folder was not found here and no `folder removed` line says this computer's
+	// delete removed it.
+	Elsewhere bool
 }
 
 // KeyAtPlan is the keyring's forget plan for the record the plan found: Known when it was
@@ -294,7 +298,29 @@ const (
 	// CaseUnfinished is Remove from list of a folder whose delete did not finish (§5.4; MA-1029):
 	// the row is what Delete again finishes it from, so it is kept until the delete finishes.
 	CaseUnfinished Case = "delete-unfinished"
+	// CaseFinishedElsewhere is Delete again's question, not a cause to fix: this computer's delete of
+	// the folder did not finish, the folder is gone, its parent is reachable and no `folder removed`
+	// line says this computer removed it (MA-1057). Its message is ElsewhereQuestion; the answer
+	// "It was finished elsewhere" plans again with Deps.FinishedElsewhere.
+	CaseFinishedElsewhere Case = "finished-elsewhere"
 )
+
+// The answers to ElsewhereQuestion, as the Desktop's buttons say them (§15.8 question 2).
+const (
+	ElsewhereYes = "It was finished elsewhere"
+	ElsewhereNo  = "Cancel"
+)
+
+// ElsewhereQuestion is §15.8 question 2's words for an archive of kind k (lead's words,
+// owner-delegated 2026-11-02): a plain archive has no record or key to forget here.
+func ElsewhereQuestion(k Kind) string {
+	does := "it stops this computer's schedules for it, forgets this computer's record and key of it, and removes its row"
+	if k == Plain {
+		does = "it stops this computer's schedules for it and removes its row"
+	}
+	return "This archive's folder is not there. If its delete was finished from another computer or user account, MailArchive can finish it here too: " +
+		does + ". If the folder is on a drive that is not plugged in, plug it in instead."
+}
 
 // msgUnlistUnfinished is Remove from list's refusal of a folder whose delete did not finish, in
 // MA-987's and MA-1015's words (builder's words, for the operator).
@@ -401,6 +427,12 @@ type Deps struct {
 	// B1: it listed the derived names whether or not any was installed). Nil asks nothing and
 	// lists every entry, as before.
 	Scheduler Scheduler
+	// FinishedElsewhere is the person's answer "It was finished elsewhere" to the question a delete
+	// of this computer's log asks when its folder is gone, its parent reachable and no `folder
+	// removed` line says this computer removed it (CaseFinishedElsewhere; §15.8 question 2, the
+	// owner's ruling Q4, MA-1057): the plan is then the folder-gone re-run. It never applies when the
+	// parent cannot be reached.
+	FinishedElsewhere bool
 }
 
 func (d Deps) goos() string {
@@ -512,9 +544,13 @@ func planOf(folder string, deps Deps) (*DeletePlan, error) {
 	p, err := planArchive(folder, deps)
 	if err == nil && deps.Log != "" {
 		// An ordinary delete may still finish one that stopped part way (D1): said, never a
-		// refusal — a log that cannot be read leaves it unsaid.
+		// refusal — a log that cannot be read leaves it unsaid. With no line of this computer's
+		// log for it, the folder's marker may name one (§15.4, DM-8).
 		if u, lerr := UnfinishedDelete(deps.Log, p.Folder, deps.goos()); lerr == nil {
 			p.Finishes = u
+			if u == nil {
+				p.Finishes = markerFinishes(p.Folder)
+			}
 		}
 	}
 	if err == nil || deps.Log == "" {
@@ -531,6 +567,11 @@ func planOf(folder string, deps Deps) (*DeletePlan, error) {
 		return nil, &Refusal{Case: r.Case, Message: r.Message + " " + logUnreadable(lerr)}
 	}
 	if u == nil {
+		if r.Case == CaseNotArchive {
+			// No line of this computer's log: a folder holding the delete marker is finished from the
+			// marker, with only MailArchive's own names (§15.4, DM-19).
+			return planMarkerNoAnchor(folder, deps, r)
+		}
 		return nil, err
 	}
 	return planUnfinished(folder, deps, u, r)

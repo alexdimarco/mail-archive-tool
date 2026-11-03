@@ -112,6 +112,10 @@ func RecordText(in RecordInput) []byte {
 		// The delete this one finishes, its first run named (D1).
 		line("Finishes", p.finishesValue())
 	}
+	if p.Elsewhere {
+		// The person's answer to Delete again's question (MA-1057).
+		line("Folder here", elsewhereValue)
+	}
 	// One form for every moment (B9): this computer's time with its offset, said once.
 	line("Date", in.When.Local().Format("2006-01-02 15:04:05 -07:00"))
 	line("Computer", in.Computer)

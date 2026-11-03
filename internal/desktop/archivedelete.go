@@ -361,6 +361,9 @@ func (cfg Config) deleteRowFacts(path string, rc *archdelete.RowsCheck, knownArc
 func (d *dashboard) deletePlanAction(w http.ResponseWriter, r *http.Request) {
 	var in struct {
 		Path string `json:"path"`
+		// Elsewhere is the answer "It was finished elsewhere" to the question a plan answered with
+		// (archdelete.CaseFinishedElsewhere; MA-1057).
+		Elsewhere bool `json:"elsewhere"`
 	}
 	if !readDeleteBody(w, r, &in) {
 		return
@@ -384,8 +387,15 @@ func (d *dashboard) deletePlanAction(w http.ResponseWriter, r *http.Request) {
 	deps.ScratchDir = app.ArchiveScratchFor
 	// Open here by the folder on disk, under any spelling, as step 1 (b) closes it (key-use finding 4).
 	deps.OpenHere = func(folder string) bool { return d.cfg.Keys.openAt(folder) != nil }
+	deps.FinishedElsewhere = in.Elsewhere
 	plan, err := archdelete.Plan(row, deps)
 	if err != nil {
+		if r := archdelete.AsRefusal(err); r != nil && r.Case == archdelete.CaseFinishedElsewhere {
+			// Delete again's question (§15.8 question 2, MA-1057): the page asks it in the row, with
+			// its two answers; nothing was changed.
+			writeJSON(w, map[string]any{"ok": false, "elsewhere": true, "error": r.Message, "yes": archdelete.ElsewhereYes, "no": archdelete.ElsewhereNo})
+			return
+		}
 		refuseDelete(w, refusalText(err))
 		return
 	}
@@ -454,6 +464,9 @@ func planView(p *archdelete.DeletePlan) map[string]any {
 		"rerun": p.Rerun != archdelete.RerunNone,
 		// The plan's first line when it finishes a delete that stopped part way (D1).
 		"finishesLine": p.FinishesLine(),
+		// Then what the plan knows of that delete's start (§15.4, DM-28) or the person's answer that
+		// it was finished elsewhere (MA-1057).
+		"finishesNotes": nonNil(p.FinishesNotes()),
 		// Files of it another program still holds, at which this run would stop again (N17).
 		"heldLine": p.HeldLine(),
 		// Capitals count (B8): archdelete.NameMatches folds no case, though Windows names do.

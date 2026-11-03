@@ -42,7 +42,7 @@ function delButton(text,cls){const b=delEl('button',text,cls);b.type='button';re
 // One panel at a time: a delete's panel or Remove from list's question closes any other one — but
 // never the panel of a delete still waiting for its reply (data-delete-waiting), whose "Keep this
 // page open" note and result belong to that delete (del-s3b leftover 1).
-function delClose(){document.querySelectorAll('.delete-panel,.unlist-ask').forEach(x=>{if(!x.hasAttribute('data-delete-waiting'))x.remove();});}
+function delClose(){document.querySelectorAll('.delete-panel,.unlist-ask,.elsewhere-ask').forEach(x=>{if(!x.hasAttribute('data-delete-waiting'))x.remove();});}
 // The server's match (archdelete.NameMatches): not empty, both sides NFC, no case folding, no trimming.
 function delNameMatches(typed,name){return typed!==''&&typed.normalize('NFC')===name.normalize('NFC');}
 // A file saved through the browser, as the fingerprint receipt is: a string as UTF-8, bytes as they are.
@@ -189,6 +189,9 @@ function delPanel(p){
   const head=delEl('p');head.append(delEl('b','Delete this archive permanently'));w.append(head);
   // First, when it finishes a delete that stopped part way (D1): the date it began.
   if(p.finishesLine)line(p.finishesLine);
+  // Then what the plan knows of that delete's start, or the person's answer that it was finished
+  // elsewhere (design-archive-delete §15.4, MA-1057).
+  (p.finishesNotes||[]).forEach(t=>line(t));
   // Then, when files of it are still held by another program, that this run would stop there (N17).
   if(p.heldLine)line(p.heldLine,'warn');
   line(p.threeLine,'card-sub');
@@ -257,14 +260,27 @@ function delPanel(p){
 // Delete… (§3.1 step 1): every other panel closed, the plan route, then the panel inside the row
 // — only for the last Delete… or Remove from list clicked, so no other panel opens meanwhile
 // (MA-986).
-async function delPlan(b,li){
+// Delete again's question when the folder is gone and this computer's delete did not remove it
+// (design-archive-delete §15.8 question 2, MA-1057): in the row, the server's words and its two
+// answers; the first plans again saying it was finished elsewhere, Cancel changes nothing.
+function delElsewhereAsk(b,li,p){
+  const w=document.createElement('div');w.className='note elsewhere-ask';w.setAttribute('role','group');
+  w.append(delEl('p',p.error));
+  const yes=delButton(p.yes||'It was finished elsewhere','btn'),no=delButton(p.no||'Cancel','btn secondary');
+  const acts=delEl('div',null,'del-actions');acts.append(yes,no);w.append(acts);
+  no.addEventListener('click',()=>{w.remove();const n=$('settingsNote');if(n){n.hidden=false;n.textContent='Nothing was changed.';}});
+  yes.addEventListener('click',()=>{w.remove();delPlan(b,li,true);});
+  return w;
+}
+async function delPlan(b,li,elsewhere){
   const my=++delSeq;
   delClose();
   noteBeside(li);
   const n=$('settingsNote'),done=busy(b,'Checking…',n,'Working out what Delete would remove. Nothing is deleted yet…');
-  try{const p=await delPost('api/archive/delete/plan',{path:b.dataset.path});
+  try{const p=await(elsewhere?delPost('api/archive/delete/plan',{path:b.dataset.path,elsewhere:true}):delPost('api/archive/delete/plan',{path:b.dataset.path}));
     done();
     if(my!==delSeq)return;
+    if(!p.ok&&p.elsewhere){if(n)n.hidden=true;li.append(delElsewhereAsk(b,li,p));return;}
     if(!p.ok){if(n){n.hidden=false;n.textContent=p.error||'Could not plan the delete.';}return;}
     if(n)n.hidden=true;
     li.append(delPanel(p));

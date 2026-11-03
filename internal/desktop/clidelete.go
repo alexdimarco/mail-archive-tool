@@ -141,6 +141,12 @@ func (c *CommandLineDelete) AddRow(path string) (row string, added bool, problem
 	if r, ok := rowIn(idx, abs); ok {
 		return r, false, "", nil
 	}
+	// A folder holding the delete marker, with or without its manifest (design-archive-delete §15.4,
+	// DM-17): listed so its delete can be finished here (MarkerAt says so to the person).
+	if markerFolderAt(abs) {
+		row, added, err := c.cfg.listMarkerFolder(abs, time.Now())
+		return row, added, "", err
+	}
 	if why := folderProblem(abs, true); why != "" {
 		return "", false, why, nil
 	}
@@ -149,6 +155,10 @@ func (c *CommandLineDelete) AddRow(path string) (row string, added bool, problem
 	}
 	return abs, true, "", nil
 }
+
+// MarkerAt reports that the folder holds the delete marker (a delete of it did not finish), as
+// AddRow lists such a folder (§15.4, DM-17).
+func (c *CommandLineDelete) MarkerAt(dir string) bool { return markerFolderAt(dir) }
 
 // LogPath is the deletions.log these verbs read and write (the one beside the Desktop's config).
 func (c *CommandLineDelete) LogPath() string { return c.cfg.deletionsLogPath() }

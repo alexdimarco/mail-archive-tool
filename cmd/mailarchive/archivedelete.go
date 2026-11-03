@@ -340,7 +340,25 @@ func deleteArchiveWith(cfgPath string, a asker, out, planOut, recordOut string, 
 			}
 		}
 	}
-	plan, err := archdelete.Plan(row, seams.PlanDeps())
+	deps := seams.PlanDeps()
+	plan, err := archdelete.Plan(row, deps)
+	if r := archdelete.AsRefusal(err); r != nil && r.Case == archdelete.CaseFinishedElsewhere {
+		// Delete again's question (design-archive-delete §15.8 question 2, the owner's ruling Q4,
+		// MA-1057): its words, then yes or no, No by default; yes plans the delete again saying so,
+		// and the folder's name is still asked, as for any delete.
+		a.say("%s", util.StripControl(r.Message))
+		watch.set(phaseAsking)
+		yes, aerr := askYes(a, elsewhereAsk, false)
+		watch.set(phaseReading)
+		if aerr != nil {
+			return promptEnded(aerr)
+		}
+		if !yes {
+			return errors.New("nothing was changed")
+		}
+		deps.FinishedElsewhere = true
+		plan, err = archdelete.Plan(row, deps)
+	}
 	if err != nil {
 		return terminalRefusal(err.Error(), row, cfgPath)
 	}
@@ -487,6 +505,10 @@ func deleteArchiveWith(cfgPath string, a asker, out, planOut, recordOut string, 
 // nameTries is how many times delete-archive asks for the folder's name before it refuses (B10).
 const nameTries = 3
 
+// elsewhereAsk is the terminal's form of the question's two answers, "It was finished elsewhere" and
+// "Cancel" (MA-1057; lead's words, owner-delegated 2026-11-02).
+const elsewhereAsk = "Was it finished elsewhere?"
+
 // triesLeft says how many tries are left.
 func triesLeft(n int) string {
 	if n == 1 {
@@ -580,10 +602,17 @@ func deletePlanLines(p *archdelete.DeletePlan, logPath string) []string {
 	if l := p.FinishesLine(); l != "" {
 		lines = append(lines, l) // first: it finishes a delete that stopped part way (D1)
 	}
+	// Then what the plan knows of that delete's start (§15.4, DM-28), or the person's answer that it
+	// was finished elsewhere (MA-1057).
+	lines = append(lines, p.FinishesNotes()...)
 	if l := p.HeldLine(); l != "" {
 		lines = append(lines, c(l)) // it would stop at the same file again (the 1.5.3 re-walk's N17)
 	}
-	lines = append(lines, fmt.Sprintf("MailArchive will permanently delete the %s archive in this folder (no Recycle Bin or Trash):", p.Kind), "  "+visibleName(p.Folder))
+	kind := p.Kind.String() + " "
+	if p.Kind != archdelete.Plain && p.Kind != archdelete.Encrypted {
+		kind = "" // planned from the folder's marker, not recorded here: its kind is not known (§15.4)
+	}
+	lines = append(lines, fmt.Sprintf("MailArchive will permanently delete the %sarchive in this folder (no Recycle Bin or Trash):", kind), "  "+visibleName(p.Folder))
 	lines = append(lines, fmt.Sprintf("  files: %d (%s)", p.Files, sizeWords(p.Bytes)))
 	for i := range p.Stores {
 		// Not "store" (B12, item 6); the mail folders inside it named too (the 1.5.3 re-walk's N16).
@@ -1171,6 +1200,17 @@ func addArchiveWith(cfgPath, dir string, stdout io.Writer) error {
 	// down (the 1.5.3 re-walk's N11; the MA-1034 adversarial pass, finding 5: "(with MailArchive
 	// Desktop shut down)" before both choices said Delete… needs the Desktop shut down).
 	path := encmark.CommandPath(util.StripControl(row))
+	if seams.MarkerAt(row) {
+		// A folder holding the delete marker (design-archive-delete §15.4, DM-17): a delete of it did
+		// not finish, and finishing it is the way on (lead's words, owner-delegated 2026-11-02).
+		fmt.Fprintf(stdout, "Added to Your archives: %s\nA delete of this archive did not finish: ", util.StripControl(row))
+		if desktopRunning() != nil {
+			fmt.Fprintf(stdout, "to finish it, click Delete… on its row in Your archives in MailArchive Desktop, or shut MailArchive Desktop down and run mailarchive delete-archive%s -out %s.\n", configArg(cfgPath), path)
+			return nil
+		}
+		fmt.Fprintf(stdout, "to finish it: mailarchive delete-archive%s -out %s\n", configArg(cfgPath), path)
+		return nil
+	}
 	fmt.Fprintf(stdout, "Added to Your archives: %s\nThe folder and its files are unchanged. ", util.StripControl(row))
 	if desktopRunning() != nil {
 		fmt.Fprintf(stdout, "To delete it: click Delete… on its row in Your archives in MailArchive Desktop, or shut MailArchive Desktop down and run mailarchive delete-archive%s -out %s.\n", configArg(cfgPath), path)

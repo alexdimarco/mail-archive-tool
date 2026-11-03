@@ -554,12 +554,20 @@ func (d *dashboard) saveSettings(w http.ResponseWriter, r *http.Request) {
 	// current archive (a Switch from a tab drawn before the delete), or save settings for it
 	// (MA-1015): refused, nothing saved.
 	done := "it was not made the current archive"
-	if samePath(named, wasCurrent) {
+	keeps := samePath(named, wasCurrent)
+	if keeps {
 		done = "these settings were not saved"
 	}
-	if why := d.unfinishedActionRefusal(named, done); why != "" {
-		writeJSON(w, map[string]any{"ok": false, "error": why})
-		return
+	// A save that keeps the location of a delete only the folder's marker knows, and installs or
+	// repairs nothing (a save never does: Install and Repair are their own routes), is allowed
+	// (design-archive-delete §15.4, DM-18): on a computer that began no delete nothing clears the
+	// current archive, and every backup into it is refused anyway. A save newly making it current,
+	// and a delete this computer's log knows (MA-1015), stay refused.
+	if !keeps || !archdelete.OnlyMarkerKnows(d.cfg.deletionsLogPath(), named) {
+		if why := d.unfinishedActionRefusal(named, done); why != "" {
+			writeJSON(w, map[string]any{"ok": false, "error": why})
+			return
+		}
 	}
 	// The archive is copied, synced and browsed; MailArchive's own settings and
 	// sign-in must not travel with it (design-local-confidentiality P10).
@@ -2557,6 +2565,10 @@ document.querySelectorAll('[data-open-archive]').forEach(b=>b.addEventListener('
   try{const d=await(await fetch('api/open-archive',{method:'POST',headers:{'Content-Type':'application/json','X-CSRF-Token':csrf},body:'{}'})).json();
     if(d.canceled){if(n)n.hidden=true;return;}
     if(!d.ok){if(n){n.hidden=false;n.textContent=d.error||'Could not open that folder.';}return;}
+    // A folder holding the delete marker: the server listed it itself and it is never saved as the
+    // current archive (design-archive-delete §15.4, DM-17). Its words are kept for the page drawn
+    // again, which shows its row.
+    if(d.added!==undefined){keep=true;if(n){n.hidden=false;n.textContent=d.note;}try{sessionStorage.setItem(keptNoteKey,d.note);}catch(e){}setTimeout(()=>reloadPage(),600);return;}
     $('outDir').value=d.path;
     if(await doSave('')){keep=true;setTimeout(()=>reloadPage(),500);}
   }catch(e){if(n){n.hidden=false;n.textContent='Error: '+e;}}

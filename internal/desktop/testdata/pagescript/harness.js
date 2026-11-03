@@ -714,6 +714,59 @@ const scenarios = {
       doc.querySelector('.status-grid').hasAttribute('inert'), 'its cards and status tiles are greyed, do nothing and say so');
     check(cur2.hasAttribute('data-delete-unfinished') && !doc.getElementById('switchLocks'), 'its row says the delete is not finished, and the switch note goes');
   },
+  // Open an archive folder… on a folder holding the delete marker (MA-1052, DM-17): the server lists
+  // it itself and answers its words with no path; the page shows them, never sends the save that
+  // would switch to it, keeps the words across the page drawn again, and draws it again. Positive
+  // twin first: an ordinary folder is answered with its path, which the page saves.
+  async openMarker() {
+    page([['E:\\Cur', 'current']], 'E:\\Cur');
+    doc.body.append(el('div', { class: 'card', id: 'sec-open' }, el('button', { class: 'btn', type: 'button', 'data-open-archive': '' }, 'Open an archive folder…')));
+    replies['api/open-archive'] = { ok: true, path: 'F:\\Ordinary' };
+    replies['api/settings'] = { ok: true };
+    boot(); await wait(30);
+    const btn = doc.querySelector('[data-open-archive]');
+    btn.click(); await wait(60);
+    check(posts.some(p => p.path === 'api/settings' && p.body.out === 'F:\\Ordinary'), 'an ordinary folder is saved as the current archive');
+    posts.length = 0; const before = reloads;
+    btn.disabled = false; // the page a browser draws again gives the button back
+    const said = 'Added to Your archives: G:\\Half. A delete of this archive did not finish: to finish it, click Delete… on its row.';
+    replies['api/open-archive'] = { ok: true, added: true, note: said };
+    btn.click(); await wait(60);
+    const n = doc.getElementById('settingsNote');
+    check(!posts.some(p => p.path === 'api/settings'), 'a marker folder is never sent to the save');
+    check(!!n && !n.hidden && n.textContent === said, "the server's words are shown", n && n.textContent);
+    check(store['mailarchive.settingsNote'] === said && reloads === before + 1, 'they are kept across the page drawn again, which shows its row', JSON.stringify({ kept: store['mailarchive.settingsNote'], reloads }));
+  },
+  // Delete… of a folder gone whose delete this computer began (MA-1057, §15.8 question 2): the plan
+  // route asks whether it was finished elsewhere; the question shows in the row with its two answers
+  // and no panel; Cancel opens nothing and says nothing was changed; "It was finished elsewhere"
+  // asks for the plan again saying so, and the panel opens with the plan's line saying it. Positive
+  // twin first: an ordinary plan opens its panel at once.
+  async elsewhere() {
+    page([['D:\\Mail\\Gone', 'other'], ['E:\\Cur', 'current']], 'E:\\Cur');
+    boot(); await wait(30);
+    const [gone, cur] = doc.querySelectorAll('.archive-row');
+    replies['api/archive/delete/plan'] = x => plan(x.path, 'Cur', 'TOK0');
+    cur.querySelector('[data-delete-archive]').click(); await wait(40);
+    check(!!cur.querySelector('.delete-panel'), 'an ordinary plan opens its panel');
+    const q = 'This archive\'s folder is not there. If its delete was finished from another computer or user account, MailArchive can finish it here too: it stops this computer\'s schedules for it and removes its row. If the folder is on a drive that is not plugged in, plug it in instead.';
+    const said = 'The folder was not found here; you said this delete was finished elsewhere.';
+    replies['api/archive/delete/plan'] = x => (x.elsewhere ? Object.assign(plan(x.path, 'Gone', 'TOK1'), { finishesLine: 'This finishes the delete begun D.', finishesNotes: [said] })
+      : { ok: false, elsewhere: true, error: q, yes: 'It was finished elsewhere', no: 'Cancel' });
+    gone.querySelector('[data-delete-archive]').click(); await wait(40);
+    const ask = gone.querySelector('.elsewhere-ask');
+    check(!!ask && ask.querySelector('p').textContent === q && !!byText(ask, 'It was finished elsewhere') && !!byText(ask, 'Cancel') && !gone.querySelector('.delete-panel'),
+      'the question shows in the row with its two answers and no panel');
+    byText(ask, 'Cancel').click(); await wait(20);
+    const n = doc.getElementById('settingsNote');
+    check(!gone.querySelector('.elsewhere-ask') && !gone.querySelector('.delete-panel') && !!n && n.textContent === 'Nothing was changed.', 'Cancel opens nothing and says nothing was changed');
+    gone.querySelector('[data-delete-archive]').click(); await wait(40);
+    byText(gone.querySelector('.elsewhere-ask'), 'It was finished elsewhere').click(); await wait(60);
+    const asked = posts.filter(p => p.path === 'api/archive/delete/plan' && p.body.path === 'D:\\Mail\\Gone');
+    const ps = gone.querySelector('.delete-panel') ? gone.querySelector('.delete-panel').all().filter(e => e.tagName === 'P').map(e => e.textContent) : [];
+    check(asked.length === 3 && asked[2].body.elsewhere === true && !asked[0].body.elsewhere && ps.indexOf(said) === ps.indexOf('This finishes the delete begun D.') + 1 && !gone.querySelector('.elsewhere-ask'),
+      'the answer asks for the plan again saying so, and the panel says it', JSON.stringify(ps));
+  },
   // The Uninstall panel with a delete not finished (MA-1030 amended; the uninstall-docs group's
   // adversarial pass, finding 2): the plan is shown, then why Remove waits, never "removed
   // nothing", and Remove is disabled and sends nothing; a plan with nothing waiting gives it back.

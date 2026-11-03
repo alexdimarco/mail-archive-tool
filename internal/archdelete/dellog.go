@@ -111,6 +111,10 @@ type logLine struct {
 	EarlierFiles   *int   `json:"earlier_files,omitempty"`
 	EarlierBytes   *int64 `json:"earlier_bytes,omitempty"`
 	EarlierUnknown bool   `json:"earlier_unknown,omitempty"`
+	// FromMarker (started): the delete this run finishes was planned from the folder's marker, no line
+	// of this log knowing its start (§15.4): carried forward, so a later run's plan keeps only
+	// MailArchive's own names (DM-19) and the record's labels (DM-8).
+	FromMarker bool `json:"from_marker,omitempty"`
 	// Captured (started) is what the deletion record says of the archive, as the first run of the
 	// delete read it while the archive was whole, carried forward by each run that finishes it: a
 	// later run finds the history and the manifest the first one removed gone (the 1.5.3 re-walk's
@@ -324,6 +328,12 @@ type Unfinished struct {
 	// The log may then hold the delete's started line, so no words say it "has no record of it"
 	// (the slice-2 adversarial pass's LOW-4 (a)).
 	LogUnreadable string
+	// FromMarker: the delete was planned from the folder's marker, no line of this computer's log
+	// knowing its start (§15.4): the plan's own Finishes, or a started line that carries it
+	// (`from_marker`) for a run of this computer that finishes such a delete. Its plan removes only
+	// MailArchive's own names when the anchor is gone (DM-19), and its record's lines from the marker
+	// say so (DM-8).
+	FromMarker bool
 	// counted: this run's own finished line was read.
 	counted bool
 }
@@ -562,7 +572,7 @@ func (dl *DeleteLog) Unfinished(folder, goos string) *Unfinished {
 			if !names(l) {
 				continue
 			}
-			u := &Unfinished{Folder: l.Folder, Row: l.Row, Kind: kindOf(l.Kind), KeyForgotten: l.KeyForgotten, Run: l.Run}
+			u := &Unfinished{Folder: l.Folder, Row: l.Row, Kind: kindOf(l.Kind), KeyForgotten: l.KeyForgotten, Run: l.Run, FromMarker: l.FromMarker}
 			u.Started, _ = time.Parse(time.RFC3339Nano, l.At)
 			// The delete it belongs to (D1): an earlier one it finishes, with what that removed,
 			// or itself.
@@ -594,7 +604,7 @@ func (dl *DeleteLog) Unfinished(folder, goos string) *Unfinished {
 			}
 			// A re-run's own started line keeps the state it re-runs: the folder was
 			// removed by the delete it finishes.
-			if l.Rerun == rerunFolderGoneWord {
+			if l.Rerun == rerunFolderGoneWord || l.Rerun == rerunElsewhereWord {
 				u.FolderRemoved = true
 				if prev := latest(); prev != nil {
 					u.FolderRemoved = prev.FolderRemoved
@@ -697,8 +707,12 @@ func (s *statMemo) stat(p string) (os.FileInfo, error) {
 	return fi, err
 }
 
-// rerunFolderGoneWord marks a folder-gone re-run's started line.
-const rerunFolderGoneWord = "folder gone"
+// rerunFolderGoneWord marks a folder-gone re-run's started line; rerunElsewhereWord one the person
+// said was finished elsewhere (MA-1057), whose folder no `folder removed` line says was removed.
+const (
+	rerunFolderGoneWord = "folder gone"
+	rerunElsewhereWord  = "finished elsewhere"
+)
 
 func kindOf(s string) Kind {
 	switch s {

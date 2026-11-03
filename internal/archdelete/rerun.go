@@ -8,6 +8,7 @@ import (
 	"sort"
 	"strings"
 
+	"mail-archive-tool/internal/delmark"
 	"mail-archive-tool/internal/util"
 )
 
@@ -28,17 +29,83 @@ import (
 //     started line records, or none recorded — a folder always has one): not this
 //     delete's either; orig stands (planNoAnchor; del-s1b-A1-01: another drive under
 //     the same letter, an empty mount point, a folder made again at the path).
+//
+// Not reachable without that line, but the folder confirmed gone and its parent reachable, Delete
+// again asks whether the delete was finished elsewhere (CaseFinishedElsewhere; §15.8 question 2,
+// the owner's ruling Q4, MA-1057); the answer "It was finished elsewhere" (deps.FinishedElsewhere)
+// is the folder-gone re-run, its plan saying so (Elsewhere). Only the person's answer tells a folder
+// removed elsewhere from a drive whose parent stays reachable unplugged (macOS's /Volumes, Linux's
+// /media), so the question names that case too.
 func planUnfinished(folder string, deps Deps, u *Unfinished, orig *Refusal) (*DeletePlan, error) {
 	abs := cleanAbs(folder)
 	_, lerr := os.Lstat(abs)
 	switch {
 	case lerr != nil:
-		if !errors.Is(lerr, fs.ErrNotExist) || !u.FolderRemoved || !dirReachable(filepath.Dir(abs)) {
+		if !errors.Is(lerr, fs.ErrNotExist) || !dirReachable(filepath.Dir(abs)) {
 			return nil, refuse(CaseUnreachable, msgUnreachable)
+		}
+		if !u.FolderRemoved {
+			if !deps.FinishedElsewhere {
+				return nil, refuse(CaseFinishedElsewhere, "%s", ElsewhereQuestion(u.Kind))
+			}
+			p, err := planFolderGone(abs, deps, u)
+			if p != nil {
+				p.Elsewhere = true
+			}
+			return p, err
 		}
 		return planFolderGone(abs, deps, u)
 	case u.FolderRemoved || orig.Case != CaseNotArchive:
 		return nil, orig
+	}
+	return planNoAnchor(abs, deps, u, orig)
+}
+
+// markerFinishes is the delete a folder's marker names, for a plan whose anchor is there and whose
+// folder no line of this computer's log knows (§15.4, DM-8): planned from the marker (FromMarker),
+// its first run and when it began as the marker says them (not known when it does not say: an empty
+// or damaged marker), what its earlier runs removed not known. nil when the folder holds no regular
+// marker (a name that is not a regular file is the lister's refusal).
+func markerFinishes(folder string) *Unfinished {
+	st, err := delmark.Present(folder)
+	if err != nil || st != delmark.Regular {
+		return nil
+	}
+	d := delmark.Read(folder)
+	return &Unfinished{Folder: folder, Row: folder, Marker: st, MarkerOnly: true, MarkerDetails: d, FromMarker: true,
+		FirstRun: d.Run, FirstStarted: d.BeganAt()}
+}
+
+// planMarkerNoAnchor is §5.4's no-anchor re-run planned from the folder's marker, when no line of
+// this computer's log knows the delete (§15.4): the folder's identity is the one it has now (the
+// marker is in it); its kind and an encrypted archive's record are this computer's record of the
+// folder, looked up while it exists (§3.1 [NF-2]) — recorded here, it is encrypted and step 8 uses
+// that record; not recorded here, its kind is not known, step 8 does not apply and no record is
+// touched; and it removes only MailArchive's own names (DM-19, planNoAnchor). orig is the refusal
+// a folder without the marker gets.
+func planMarkerNoAnchor(folder string, deps Deps, orig *Refusal) (*DeletePlan, error) {
+	abs := cleanAbs(folder)
+	st, err := delmark.Present(abs)
+	if err != nil || st == delmark.Absent {
+		return nil, orig
+	}
+	id, ok := folderIdentity(abs)
+	if !ok {
+		return nil, refuse(CaseUnreachable, msgUnreachable)
+	}
+	u := &Unfinished{Folder: abs, Row: abs, Marker: st, MarkerOnly: true, FromMarker: true, Identity: id}
+	if st == delmark.Regular {
+		u.MarkerDetails = delmark.Read(abs)
+		u.FirstRun, u.FirstStarted = u.MarkerDetails.Run, u.MarkerDetails.BeganAt()
+	}
+	if deps.Record != nil {
+		ref, rerr := deps.Record(abs)
+		if rerr != nil {
+			return nil, refuse(CaseRecord, "This computer's record of encrypted archives cannot be read, so MailArchive cannot tell whether it must forget this archive's key: %s", util.StripControl(rerr.Error()))
+		}
+		if ref.Recorded {
+			u.Kind, u.Record, u.RecordKnown = Encrypted, ref, true
+		}
 	}
 	return planNoAnchor(abs, deps, u, orig)
 }
@@ -142,6 +209,17 @@ func planNoAnchor(abs string, deps Deps, u *Unfinished, orig *Refusal) (*DeleteP
 	addCaptureBackupFor(p, abs, deps)
 	l := lister{root: root, folder: abs, goos: deps.goos(), plan: p}
 	l.init()
+	// A delete planned from the folder's marker, with no line of this computer's log knowing its start
+	// (or this computer's run that finishes such a delete): only MailArchive's own names (DM-19). The
+	// marker says only that someone wrote that name, so README.txt, index.html and the *.log files of
+	// a folder of the person's own files are kept; a real delete's step 6 removed them before its
+	// anchor, so nothing of the archive's is lost.
+	ownLogs := map[string]bool{}
+	for _, n := range p.Schedules.Names() {
+		ownLogs[fold(l.goos, n+".log")] = true
+		ownLogs[fold(l.goos, n+".log"+rotatedSuffix)] = true
+		ownLogs[fold(l.goos, n+".stderr.log")] = true
+	}
 	fixed := map[string]bool{}
 	for _, n := range plainFixedNames {
 		fixed[fold(l.goos, n)] = true
@@ -176,9 +254,12 @@ func planNoAnchor(abs string, deps Deps, u *Unfinished, orig *Refusal) (*DeleteP
 			return nil, l.ioRefusal(name, lerr)
 		}
 		var removable bool
-		if p.Kind == Encrypted {
+		switch {
+		case u.FromMarker:
+			removable = strings.HasPrefix(f, stateFilePrefix) || isLeftover(name) || ownLogs[f]
+		case p.Kind == Encrypted:
 			removable = encRootFiles[name] || encRootTmp(name) || isLeftover(name)
-		} else {
+		default:
 			removable = fixed[f] || f == "index.html" || strings.HasPrefix(f, stateFilePrefix)
 		}
 		switch {

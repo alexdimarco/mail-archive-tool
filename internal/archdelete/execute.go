@@ -169,10 +169,12 @@ func (e *run) logStarted() error {
 			l.NotRecorded = true
 		}
 	}
-	switch p.Rerun {
-	case RerunFolderGone:
+	switch {
+	case p.Rerun == RerunFolderGone && p.Elsewhere:
+		l.Rerun = rerunElsewhereWord
+	case p.Rerun == RerunFolderGone:
 		l.Rerun = rerunFolderGoneWord
-	case RerunNoAnchor:
+	case p.Rerun == RerunNoAnchor:
 		l.Rerun = "no manifest"
 	}
 	if f := p.Finishes; f != nil && f.FirstRun != "" {
@@ -181,6 +183,11 @@ func (e *run) logStarted() error {
 		if !f.FirstStarted.IsZero() {
 			l.FirstAt = f.FirstStarted.UTC().Format(time.RFC3339Nano)
 		}
+	}
+	if f := p.Finishes; f != nil && f.FromMarker {
+		// Planned from the folder's marker (§15.4): carried forward, and what was removed before is
+		// not known here (DM-8).
+		l.FromMarker, l.EarlierUnknown = true, true
 	}
 	// What the record says of the archive, as this run read it — for a run that finishes another,
 	// the first run's values it carries (planAny) — so the run that finishes it still has them once
@@ -204,7 +211,11 @@ func (e *run) steps() {
 		}
 		e.res.FolderGone = true
 		// What was not done, in words, not the design's step numbers (the 1.5.3 re-walk's N20).
-		e.notes = append(e.notes, "This delete did not lock the archive, empty MailArchive's working folder for it or remove any files: an earlier delete had already removed the folder.")
+		if p.Elsewhere {
+			e.notes = append(e.notes, "This delete did not lock the archive, empty MailArchive's working folder for it or remove any files: the folder was not found here.")
+		} else {
+			e.notes = append(e.notes, "This delete did not lock the archive, empty MailArchive's working folder for it or remove any files: an earlier delete had already removed the folder.")
+		}
 		if !e.configSide() || !e.keyAndRow() {
 			return
 		}
@@ -1122,6 +1133,9 @@ func (e *run) finish() {
 	case len(res.TickedLeft) > 0:
 		e.outcome, res.Status = outPartial, StatusPartial
 		head = tickedLine(res.TickedLeft)
+	case p.Rerun == RerunFolderGone && p.Elsewhere:
+		// The person's word, not this computer's: said as theirs (MA-1057).
+		head = "Finished here. " + MsgElsewhereSaid
 	case p.Rerun == RerunFolderGone:
 		head = "Deleted. The folder is gone: an earlier delete removed it, and this one finished what it left."
 	default:

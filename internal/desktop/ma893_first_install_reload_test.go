@@ -99,8 +99,14 @@ func TestAFirstInstallKeepsItsNoteAcrossTheRedraw(t *testing.T) {
 	if !strings.Contains(dashboardJS, "else{const top=$('heldDeletes');if(top)top.before(note);}}\n}catch(e){}") {
 		t.Error("the kept Remove from list note's read is not closed by its catch")
 	}
-	if n := strings.Count(dashboardJS, "sessionStorage."); n != 11 {
-		t.Errorf("the page script calls storage %d times, want the 11 guarded ones", n)
+	// Amended 2026-11-03 (MA-1052, design-archive-delete §15.4's DM-17): Open an archive folder… keeps
+	// the server's words for a folder it listed across the page drawn again, through the same kept
+	// note (read above) — one more call, named here and guarded.
+	if !strings.Contains(dashboardJS, "try{sessionStorage.setItem(keptNoteKey,d.note);}catch(e){}") {
+		t.Error("the page script's kept Open an archive folder… note is not guarded")
+	}
+	if n := strings.Count(dashboardJS, "sessionStorage."); n != 12 {
+		t.Errorf("the page script calls storage %d times, want the 12 guarded ones", n)
 	}
 }
 
