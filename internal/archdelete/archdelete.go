@@ -843,15 +843,26 @@ func currentName(current string) string {
 // test), a Desktop started with -out naming it, and a delete of it in deps.Log that did
 // not finish (MA-1029). nil means Remove from list may go on.
 func UnlistRefusal(folder string, deps Deps) error {
-	unfinished := func(abs string) bool {
+	unfinished := func(abs string) *Unfinished {
 		if deps.Log == "" {
-			return false
+			return nil
 		}
 		// A log that cannot be read refuses nothing here, as the row's state reads it (RowsCheck).
 		// Asked with the folder's marker run (§15.5), so a delete this log knows is still known after a
 		// remount, as the row says it (DM-6); a delete only the marker knows is not (DM-21).
 		u, _, err := unfinishedRouted(deps.Log, abs, deps.goos())
-		return err == nil && u != nil
+		if err != nil || u == nil {
+			return nil
+		}
+		// DM-27's state is said in its own words (MA-1068); a marker lookup that fails says the log's.
+		if st, serr := delmark.Present(abs); serr == nil {
+			var d delmark.Details
+			if st == delmark.Regular {
+				d = delmark.Read(abs)
+			}
+			u.Disagrees = logDisagrees(abs, u, st, d)
+		}
+		return u
 	}
 	return unlistRefusal(folder, deps, sameFolder, unreachableOrNoArchive, unfinished)
 }
@@ -859,7 +870,7 @@ func UnlistRefusal(folder string, deps Deps) error {
 // unlistRefusal is UnlistRefusal with its folder comparison (same), its archive test (gone) and
 // its unfinished-delete test asked of the caller: the route's own, or a page of rows' memo of them
 // (RowsCheck.UnlistRefusal).
-func unlistRefusal(folder string, deps Deps, same func(a, b, goos string) bool, gone, unfinished func(string) bool) error {
+func unlistRefusal(folder string, deps Deps, same func(a, b, goos string) bool, gone func(string) bool, unfinished func(string) *Unfinished) error {
 	abs, err := filepath.Abs(folder)
 	if err != nil {
 		abs = filepath.Clean(folder)
@@ -873,8 +884,12 @@ func unlistRefusal(folder string, deps Deps, same func(a, b, goos string) bool, 
 	// would take that row away, and a folder whose archive files are gone cannot be listed again
 	// (add-archive and Open an archive folder… want an archive), so the delete could never be
 	// finished (the 1.5.3 friction fixes' adversarial pass, finding 1; MA-1029).
-	if unfinished != nil && unfinished(abs) {
-		return refuse(CaseUnfinished, "%s", msgUnlistUnfinished)
+	if unfinished != nil {
+		if u := unfinished(abs); u != nil && u.Disagrees {
+			return refuse(CaseUnfinished, "%s", DisagreesWords("it was not removed from the list"))
+		} else if u != nil {
+			return refuse(CaseUnfinished, "%s", msgUnlistUnfinished)
+		}
 	}
 	current := s.Current != "" && same(s.Current, abs, goos)
 	if s.CaptureBackupFor != "" && same(s.CaptureBackupFor, abs, goos) && !current {

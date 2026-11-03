@@ -22,6 +22,22 @@ const (
 	msgActionNoSettings = "MailArchive could not find its settings folder, which holds its deletion log (%s), so it cannot tell whether a delete of this archive did not finish; nothing was changed. Check that your home folder is set (HOME, or AppData on Windows), then try again."
 )
 
+// DisagreesWords refuses an action (done says what was not done, "it was not backed up" for a backup)
+// in DM-27's state (Unfinished.Disagrees; design-archive-delete §15.4; the slice-5 adversarial pass's
+// LOW-4, MA-1068). On a rotation drive "click Delete again" is no way out: the delete is finished on
+// the drive it began on. MailArchive cannot tell that drive from a marker removed by hand, so one
+// sentence names both ways out (lead's words, owner-delegated 2026-11-02: what happened first, the
+// remedy named; "again" is not said, since the person may never have deleted this drive's archive).
+func DisagreesWords(done string) string {
+	return disagreesHead + ", so " + done + "; nothing was changed. " + disagreesWayOut + ", click Delete… on its row in MailArchive Desktop to finish it."
+}
+
+// disagreesHead and disagreesWayOut are DM-27's words shared by its refusals and its row's line.
+const (
+	disagreesHead   = "Delete not finished: a delete this computer began in this folder did not finish, but the folder does not hold the note that delete left"
+	disagreesWayOut = "If this is a different drive, plug in the drive the delete began on and finish the delete there; if it is the same drive and the note was removed"
+)
+
 // ActionRefusal is why Pause, Resume or a Switch does not act on folder because a delete of it
 // did not finish (§5.4; MA-1015, the 1.5.3 friction review's H2 and its re-walk's F1): the log at
 // logPath holds a started line for it with no finished line, and Pause would write its marker into
@@ -56,6 +72,9 @@ func ActionRefusal(logPath, folder, done string) error {
 	}
 	if err != nil {
 		return refuse(CaseLogUnreadable, msgActionLogUnreadable, logPath, util.StripControl(err.Error()))
+	}
+	if u != nil && u.Disagrees {
+		return refuse(CaseUnfinished, "%s", DisagreesWords(done))
 	}
 	if u != nil {
 		return refuse(CaseUnfinished, msgActionUnfinished, done)

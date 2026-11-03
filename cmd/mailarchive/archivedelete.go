@@ -568,7 +568,9 @@ func terminalHints(text, row, cfgPath string) []string {
 	// A delete only the folder's marker knows: its person may never have deleted anything, so the
 	// way to finish it is said without "again" (design-archive-delete §15.3, DM-11).
 	// Its log unreadable, the file is checked first (delmark.LogUnreadableWords).
-	if strings.Contains(l, "to finish it, click delete… on its row") || strings.Contains(l, "to finish it, check that file, then click delete… on its row") {
+	// DM-27's words (archdelete.DisagreesWords, MA-1068) end with the same way to finish it.
+	if strings.Contains(l, "to finish it, click delete… on its row") || strings.Contains(l, "to finish it, check that file, then click delete… on its row") ||
+		strings.Contains(l, "click delete… on its row in mailarchive desktop to finish it") {
 		hints = append(hints, strings.Replace(delmark.OnlyMarkerTerminal(p), "mailarchive delete-archive", "mailarchive delete-archive"+configArg(cfgPath), 1))
 	}
 	if strings.Contains(l, "remove from list") {

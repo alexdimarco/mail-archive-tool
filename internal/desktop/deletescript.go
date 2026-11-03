@@ -129,10 +129,11 @@ async function delDismiss(h,reload){
   }catch(e){if(msg){msg.hidden=false;msg.textContent='Error: '+e;}return false;}
 }
 // "Close without saving the deletion record?" asked in the result itself (§3.1, §8.1); then, when
-// given, what was asked for goes on (not when the page is being drawn again).
+// given, what was asked for goes on (not when the page is being drawn again). The cursor opens on
+// Keep it, so Enter keeps the result (MA-1069; the 1.5.6 friction review's note A).
 function delAsk(h,then){
   const ask=h.querySelector('.held-ask'),yes=h.querySelector('[data-held-close]'),no=h.querySelector('[data-held-keep]');
-  ask.hidden=false;yes.focus();
+  ask.hidden=false;no.focus();
   yes.onclick=async()=>{const done=busy(yes,'Closing…',null,'Closing this result…');const r=await delDismiss(h,!then);if(!r){done();return;}if(then&&r!=='reload')then();};
   no.onclick=()=>{ask.hidden=true;const s=h.querySelector('[data-held-save]');if(s)s.focus();};
 }

@@ -643,6 +643,31 @@ const scenarios = {
     byText(doc.querySelector('[data-held-id="HC"]'), 'Dismiss').click(); await wait(40);
     check(reloads === 3 && store['mailarchive-scroll-top'] === '1' && !(key in store), "the page's own archive deleted still starts at the top, not at Your archives", JSON.stringify(store));
   },
+  // The question asked on Dismiss of a result whose record was not saved opens with the cursor on
+  // Keep it (MA-1069; the 1.5.6 friction review's note A: it sat on Close without saving, so Enter
+  // twice lost the record). Enter there keeps the result and moves to Save deletion record, so Enter
+  // twice saves the record. Positive twin first: Close without saving, clicked, still closes a result
+  // without its record.
+  async keepItFocused() {
+    const held = [result({ id: 'HK', row: 'D:\\Gone', folder: 'D:\\Gone', rowRemoved: true }), result({ id: 'HL', row: 'D:\\Gone2', folder: 'D:\\Gone2', rowRemoved: true })];
+    page([['E:\\Cur', 'current']], 'E:\\Cur', held);
+    boot(); await wait(30);
+    const heldOf = id => doc.querySelector('[data-held-id="' + id + '"]');
+    const twin = heldOf('HL');
+    byText(twin, 'Dismiss').click(); await wait(20);
+    twin.querySelector('[data-held-close]').click(); await wait(40);
+    check(posts.some(p => p.path === 'api/archive/delete/dismiss' && p.body.id === 'HL') && store['mailarchive-deletion-record-saved-HL'] === undefined,
+      'Close without saving, clicked, still closes a result without its record');
+    const h = heldOf('HK');
+    byText(h, 'Dismiss').click(); await wait(20);
+    const keep = h.querySelector('[data-held-keep]');
+    check(!h.querySelector('.held-ask').hidden && doc.activeElement === keep, 'the question opens with the cursor on Keep it',
+      doc.activeElement && doc.activeElement.textContent);
+    doc.activeElement.click(); await wait(20); // Enter
+    doc.activeElement.click(); await wait(20); // Enter again
+    check(h.querySelector('.held-ask').hidden && store['mailarchive-deletion-record-saved-HK'] === '1' && !posts.some(p => p.body && p.body.id === 'HK') && !!heldOf('HK'),
+      'Enter twice keeps the result and saves its record', JSON.stringify({ active: doc.activeElement && doc.activeElement.textContent, store }));
+  },
   // Save deletion record says on screen what it asked of the browser (MA-1042, N20), as Save this
   // plan does. Positive twin first: nothing is said before it is clicked.
   async saveRecordLine() {

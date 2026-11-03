@@ -258,6 +258,7 @@ func (d *dashboard) healthAction(w http.ResponseWriter, r *http.Request) {
 			in.DeleteMarkerOnly, in.DeleteBegun = u.MarkerOnly, archdelete.MarkerBegun(u)
 			in.DeleteLogUnreadable, in.DeleteMarkerNotRegular = u.LogUnreadable, u.Marker == delmark.NotRegular
 			in.DeleteBegunHere = u.BegunHere // DM-10: begun here, though the log no longer matches the folder
+			in.DeleteDisagrees = u.Disagrees // DM-27: names the drive the delete began on (MA-1068)
 		} else {
 			in.DeleteCouldNotCheck = archdelete.CouldNotCheck(err)
 		}

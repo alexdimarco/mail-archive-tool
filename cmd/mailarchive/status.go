@@ -60,6 +60,7 @@ func runStatus(args []string) error {
 		in.DeleteMarkerOnly, in.DeleteBegun = u.MarkerOnly, archdelete.MarkerBegun(u)
 		in.DeleteLogUnreadable, in.DeleteMarkerNotRegular = u.LogUnreadable, u.Marker == delmark.NotRegular
 		in.DeleteBegunHere, in.DeleteNoSettings = u.BegunHere, u.NoSettings
+		in.DeleteDisagrees = u.Disagrees // DM-27: names the drive the delete began on (MA-1068)
 	} else {
 		in.DeleteCouldNotCheck = archdelete.CouldNotCheck(err)
 	}

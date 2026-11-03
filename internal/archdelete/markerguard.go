@@ -95,6 +95,9 @@ func UnfinishedToSay(logPath, folder, goos string) (*Unfinished, error) {
 // beside it; dl is the log read (nil when none was), which says whether a delete only the marker
 // knows was begun here (DM-10).
 func withMarker(u *Unfinished, lerr error, folder string, st delmark.State, d delmark.Details, dl *DeleteLog) (*Unfinished, error) {
+	if lerr == nil && u != nil {
+		u.Disagrees = logDisagrees(folder, u, st, d)
+	}
 	if st == delmark.Absent || st == delmark.Unknown {
 		return u, lerr
 	}
@@ -110,6 +113,26 @@ func withMarker(u *Unfinished, lerr error, folder string, st delmark.State, d de
 		only.BegunHere = true
 	}
 	return only, nil
+}
+
+// logDisagrees is DM-27's state (§15.4) as a backup, an action, a row or a status line sees it (the
+// slice-5 adversarial pass's LOW-4; MA-1068): u, this computer's log's line for folder, wrote its
+// `marked` line, and the folder's marker (st, d) names another delete, or is not there beside the
+// folder's anchor (§4's archive test passes) — the plan's own Disagrees. With the anchor and the
+// marker both gone, step 6 had finished (NoteGone): not this state. A marker whose lookup failed, an
+// empty or damaged one, and a name that is not a regular file never disagree. Words only.
+func logDisagrees(folder string, u *Unfinished, st delmark.State, d delmark.Details) bool {
+	if u == nil || u.MarkerOnly || !u.Marked {
+		return false
+	}
+	switch st {
+	case delmark.Regular:
+		return d.Known && d.Run != u.Run && d.Run != u.FirstRun
+	case delmark.Absent:
+		k, err := rowArchiveTest(cleanAbs(folder))
+		return err == nil && k != 0
+	}
+	return false
 }
 
 // WithoutSettings is u, a delete UnfinishedAt or UnfinishedToSay found with no deletion log asked,
@@ -228,9 +251,12 @@ func MarkerBegun(u *Unfinished) string {
 
 // MarkerRowText is a row's line for a delete only the marker knows (§15.4, builder's words), or ""
 // when this computer's log knows it (the row's own "Delete not finished: click Delete again").
-// A name that is not a regular file says so in delmark's words for it.
+// A name that is not a regular file says so in delmark's words for it. DM-27's state (Disagrees)
+// names both ways out, as DisagreesWords does (MA-1068; lead's words, owner-delegated 2026-11-02).
 func MarkerRowText(u *Unfinished) string {
 	switch {
+	case u != nil && !u.MarkerOnly && u.Disagrees:
+		return disagreesHead + ". " + disagreesWayOut + ", click Delete… to finish it."
 	case u == nil || !u.MarkerOnly:
 		return ""
 	case u.Marker == delmark.NotRegular:

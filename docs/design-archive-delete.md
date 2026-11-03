@@ -2357,6 +2357,9 @@ or needed here.
 >   folder, but the folder does not hold the note that delete left. If this is a different drive,
 >   plug in the drive the delete began on and finish it there; if this is that archive, click Delete…
 >   to finish it." Recorded as a limit in §15.6.
+>   > *Corrected 3 November 2026 (MA-1068):* done, on all five surfaces and Remove from list, in
+>   > tightened words; see "LOW-4 of slice 5's adversarial pass, and friction notes A and H, settled"
+>   > below.
 > - *The builder's calls (b) and (c):* accepted by the pass, unchanged.
 > - *Process note, from the pass:* slice 5's own tests were written after its code, each then proven
 >   by mutation (its M1-M13), as its commit says. This settle's tests were written first and seen red
@@ -2524,11 +2527,70 @@ or needed here.
 >   finished stays live until the reload), H (the terminal record names macOS Time Machine on
 >   Windows), I ("First run: not known" for an archive made at the terminal), J (older than this
 >   feature). G is §16.6's stated limit.
+>   > *Corrected 3 November 2026:* A is fixed (MA-1069) and H is answered without a change, in the
+>   > block below.
 > - *Prove-fail (each alone, each red, then reverted):* M1 the old D sentence; M2 the E line not used
 >   after "It was finished elsewhere"; M3 the E line used for every finishing delete (MA-1066's twin
 >   and MA-1037's total red); M4 Dismiss setting no mark; M5 Remove from list setting none; M6 the
 >   heading not focused; M7 the mark also set when the page's own archive was deleted; M8 the guide's
 >   or the README's paragraphs missing (red before they were written).
+
+> **LOW-4 of slice 5's adversarial pass, and friction notes A and H, settled 3 November 2026
+> (MA-1068, MA-1069 added; MA-1056 amended, words only).** Test-first, each seen red before its fix.
+> - *LOW-4, fixed (MA-1068): DM-27's state names the drive the delete began on.* On a rotation drive
+>   in DM-27's state (§15.4: this computer's `marked` line, the anchor there, no note or another
+>   delete's) every surface said "Delete not finished: click Delete again", while the way out is on
+>   the other drive. MailArchive cannot tell that drive from a note removed by hand, so one sentence
+>   names both (lead's words, owner-delegated 2026-11-02: what happened first, no "again", the remedy
+>   named; tightened from the words suggested in "Slice 5's adversarial pass" above):
+>   - refusals (`archdelete.DisagreesWords(WHAT)`: every `ActionRefusal`, so backups, Pause, Resume,
+>     a Switch, Install and Repair; Remove from list, the route's and the page's; the Desktop's
+>     Archive now and Run now): "Delete not finished: a delete this computer began in this folder did
+>     not finish, but the folder does not hold the note that delete left, so WHAT; nothing was
+>     changed. If this is a different drive, plug in the drive the delete began on and finish the
+>     delete there; if it is the same drive and the note was removed, click Delete… on its row in
+>     MailArchive Desktop to finish it." — at the terminal followed by "(Folder: DIR)" and "To finish
+>     it at this terminal: mailarchive delete-archive -out DIR";
+>   - the row (`MarkerRowText`): the same, without "so WHAT; nothing was changed", ending "click
+>     Delete… to finish it.";
+>   - `status` and Status & health (`health.DeleteDisagreesLine`): "a delete this computer began in
+>     this folder did not finish, but the folder does not hold the note that delete left — if this is
+>     a different drive, plug in the drive the delete began on and finish the delete there; if it is
+>     the same drive and the note was removed, run mailarchive delete-archive -out DIR, or click
+>     Delete… on its row in MailArchive Desktop, to finish it." (the Desktop's ends "click Delete… on
+>     its row in Your archives to finish it.").
+>
+>   The state is `Unfinished.Disagrees`, set where the note is read (`withMarker`, so `UnfinishedAt`,
+>   `UnfinishedToSay` and `RowsCheck.State`; both Remove from list checks) by `logDisagrees`, the
+>   plan's own DM-27 rule: the note names another delete, or it is absent while §4's archive test
+>   passes (the row's cached parse). With the anchor and the note both gone, step 6 had finished
+>   (`NoteGone`): the old words stay. Behaviour is unchanged: the same folders are refused, case
+>   `delete-unfinished`, exit 1, nothing changed. MA-1056's shared test helper now
+>   asserts these words in full where it asserted the old ones. Not changed: the Archive now and Run
+>   now cards' short tag "Delete not finished: click Delete again" (MA-982), drawn in place of the
+>   buttons; the row beside it says the words above. Prove-fail (each alone, each red, then reverted):
+>   M1 `logDisagrees` never true (all four new tests); M2 true whenever the note is absent (the
+>   NoteGone twin); M3 Remove from list ignoring it; M4 only the route's Remove from list ignoring it;
+>   M5 the row's branch dropped (the delete package's and the Desktop's tests); M6 `status` not passing
+>   it on; M7 Status & health not passing it on (red before the wiring); M8 the Desktop's Archive now
+>   refusal ignoring it; M9 `ActionRefusal` ignoring it; M10 the terminal hint missing (red before it
+>   was added).
+> - *Note A, fixed (MA-1069; the lead's call under the UX contract: the safe choice is the default
+>   for a choice that loses something):* "Close without saving the deletion record?" opens with the
+>   cursor on **Keep it**, which hides the question and moves the cursor to **Save deletion record**,
+>   so Enter twice saves the record. Close without saving, clicked, closes as before. Prove-fail: the
+>   cursor on Close without saving again (red); Keep it not moving the cursor on (the Enter-twice
+>   check red). Checked under Node, not yet in a real browser.
+> - *Note H, not changed (a correction to the note, with the reason).* The terminal's own "What
+>   Delete does not reach" lines (the plan's and the result's) are already the Desktop's per-computer
+>   line (MA-1019's B4 terminal amendment: `DoesNotReachLineOn`, `LocalLine`). What the walk saw on
+>   Windows is the deletion record the terminal prints for the person to copy ("copy it now: MailArchive
+>   does not keep a copy"). That record keeps §2's whole line on purpose, on both surfaces (the
+>   Desktop's **Save deletion record** saves the same bytes), since it may be read on another computer,
+>   and its SHA-256 is in `deletions.log`; MA-1019 pins it (`cmd/mailarchive/ma1019_cli_reach_test.go`,
+>   "the record does not keep the whole line"). Printing a per-computer copy would make the copied
+>   record differ from the one the log's digest names. Left for the lead, if wanted: a record per
+>   computer would reverse MA-1019's rule and change the record on both surfaces.
 
 ## 15. The delete marker (G2 for another computer, another account, and a remounted drive)
 
@@ -3473,6 +3535,10 @@ before step 2).
 >   began on and finish it there — is said nowhere; with that drive lost, the ways out are deleting
 >   this archive, or moving deletions.log aside (MA-1007's). This was so before slice 5. Words for the
 >   lead (§14, "Slice 5's adversarial pass").
+>   > *Corrected 3 November 2026 (MA-1068):* the words now name it: every refusal, the row and the
+>   > status line say to plug in the drive the delete began on and finish it there, or, if this is
+>   > that drive and the note was removed, to click Delete… (§14, "LOW-4 of slice 5's adversarial
+>   > pass, and friction notes A and H, settled"). With that drive lost, the ways out are as above.
 >
 > **Added 3 November 2026 (slice 6 and G3's adversarial pass, LOW-2 and LOW-3):**
 > - **A delete begun from a `-config` Desktop can count as "another computer's".** The local job asks

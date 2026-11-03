@@ -135,6 +135,11 @@ type Input struct {
 	// though no line of it matches the folder now (design-archive-delete §15.4's DM-10 note: a drive
 	// back under another name and another device number). The line says it was begun here.
 	DeleteBegunHere bool
+	// DeleteDisagrees: this computer's deletion log has a delete of this folder that wrote its note,
+	// yet the folder does not hold it (design-archive-delete §15.4's DM-27: another drive at the same
+	// place, or the note removed by hand). The line names both ways out (the slice-5 adversarial pass's
+	// LOW-4; MA-1068).
+	DeleteDisagrees bool
 	// DeleteNoSettings is why MailArchive's settings folder, which holds this computer's deletion log,
 	// could not be found when only the marker answered (DeleteMarkerOnly): no log was asked, so the
 	// line never says it "has no record of it" (the slice-2 adversarial pass's LOW-4, last item).
@@ -1691,8 +1696,23 @@ func (in Input) deleteUnfinishedLine() string {
 		return DeleteMarkerBegunHereLine(in.deleteRow(), in.Surface, in.DeleteBegun)
 	case in.DeleteMarkerOnly:
 		return DeleteMarkerOnlyLine(in.deleteRow(), in.Surface, in.DeleteBegun)
+	case in.DeleteDisagrees:
+		return DeleteDisagreesLine(in.deleteRow(), in.Surface)
 	}
 	return DeleteUnfinishedLine(in.deleteRow(), in.Surface)
+}
+
+// DeleteDisagreesLine is the posture line in design-archive-delete §15.4's DM-27 state: this
+// computer's deletion log has a delete of this folder that wrote its note, yet the folder does not
+// hold it. On another drive at the same place (a rotation drive) the delete is finished on the drive
+// it began on; MailArchive cannot tell that from a note removed by hand, so the line names both ways
+// out (the slice-5 adversarial pass's LOW-4, MA-1068; lead's words, owner-delegated 2026-11-02).
+func DeleteDisagreesLine(out, surface string) string {
+	what := "a delete this computer began in this folder did not finish, but the folder does not hold the note that delete left — if this is a different drive, plug in the drive the delete began on and finish the delete there; if it is the same drive and the note was removed, "
+	if surface == "desktop" {
+		return what + "click Delete… on its row in Your archives to finish it."
+	}
+	return fmt.Sprintf("%srun mailarchive delete-archive -out %s, or click Delete… on its row in MailArchive Desktop, to finish it.", what, encmark.CommandPath(out))
 }
 
 // The delete marker's lines for the slice-2 adversarial pass's LOW-4 (design-archive-delete §14;

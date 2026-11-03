@@ -117,6 +117,15 @@ scheduled backup is stopped" for an archive that has none.
 > `docs/design-archive-delete.md` §14, "The 1.5.6 friction review settled". B's fix is checked
 > under Node, not yet on Edge.
 
+> **Settled further, 3 November 2026 (the notes above stay as written).** **A** is fixed test-first
+> (MA-1069): the question opens with the cursor on **Keep it**, and Enter twice saves the record;
+> checked under Node, not yet on Edge. **H** is answered without a change: the terminal's own plan
+> and result lines are already the Desktop's per-computer line (MA-1019); what this walk saw is the
+> deletion record the terminal prints to be copied, which keeps the whole line on both surfaces on
+> purpose (it may be read on another computer, and `deletions.log` holds its SHA-256), as MA-1019
+> pins. Changing it is the lead's call. Detail in `docs/design-archive-delete.md` §14, "LOW-4 of
+> slice 5's adversarial pass, and friction notes A and H, settled". C, I and J stay left.
+
 ## Type I friction, counted and kept
 
 - The typed folder name, and Tab to the button (no Enter submit): the typed name is the decision

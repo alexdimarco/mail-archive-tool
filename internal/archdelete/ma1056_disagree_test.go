@@ -22,14 +22,17 @@ import (
 // first run carried — says why, and is an ordinary delete with its own record lookup, never the
 // started line's ID and Spelling, so step 8 cannot forget another vault's key.
 
-// ma1056Refused asserts every backup and action is refused in the log's own words, nothing written.
+// ma1056Refused asserts every backup and action is refused, nothing written. Since MA-1068 (the
+// slice-5 adversarial pass's LOW-4) the words are DM-27's own, naming the drive the delete began on
+// and a note removed by hand (was the log's "Delete not finished: click Delete again. …"); the
+// refusal, its code and its absent side effect are asserted as before.
 func ma1056Refused(t *testing.T, logPath, dir string) {
 	t.Helper()
 	names := func() []string { n := ma1044Names(dir); slices.Sort(n); return n }
 	before := names()
 	err := BackupRefusal(logPath, dir)
 	assure.Refused(t, refusalCode(err), errText(err), assure.Code(1),
-		assure.Names("Delete not finished: click Delete again. This archive's delete did not finish, so it was not backed up; nothing was changed."),
+		assure.Names(ma1068Refusal("it was not backed up")),
 		assure.NoSideEffect(func() bool { return slices.Equal(before, names()) }))
 }
 

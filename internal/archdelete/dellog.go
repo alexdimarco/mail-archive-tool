@@ -362,6 +362,13 @@ type Unfinished struct {
 	// not be found when only the marker answered (MarkerOnly), in words fit to show: no log was asked,
 	// so no words say it "has no record of it" (the slice-2 adversarial pass's LOW-4, its last item).
 	NoSettings string
+	// Disagrees: DM-27's state as a backup, an action, a row or a status line sees it (the slice-5
+	// adversarial pass's LOW-4; MA-1068): this line's delete wrote its `marked` line, yet the folder
+	// holds a marker naming another delete, or no marker beside its anchor — another drive at the
+	// same path with the same identity (a rotation drive), or the marker removed by hand. Words only:
+	// every backup and action is still refused (DisagreesWords, MarkerRowText). Set by UnfinishedAt,
+	// UnfinishedToSay and RowsCheck.State; false on a line UnfinishedDelete returns.
+	Disagrees bool
 	// counted: this run's own finished line was read.
 	counted bool
 }

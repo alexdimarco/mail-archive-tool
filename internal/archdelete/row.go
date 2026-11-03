@@ -200,12 +200,16 @@ func (r *RowsCheck) UnlistRefusal(folder string) error {
 	}
 	// The page's one read of deletions.log (MA-1029), with the folder's marker run (§15.5, DM-6), as
 	// the row's own state asks it.
-	unfinished := func(abs string) bool {
+	unfinished := func(abs string) *Unfinished {
 		if r.log == nil {
-			return false
+			return nil
 		}
-		_, d := r.marker(abs)
-		return r.log.UnfinishedFor(abs, r.deps.goos(), d.Run) != nil
+		st, d := r.marker(abs)
+		u := r.log.UnfinishedFor(abs, r.deps.goos(), d.Run)
+		if u != nil {
+			u.Disagrees = logDisagrees(abs, u, st, d) // DM-27's own words (MA-1068)
+		}
+		return u
 	}
 	return unlistRefusal(folder, r.deps, same, gone, unfinished)
 }

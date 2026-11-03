@@ -692,6 +692,9 @@ func (d *dashboard) unfinishedRefusal(out string) string {
 	if err != nil {
 		return fmt.Sprintf(runLogUnreadableText, logPath, util.StripControl(err.Error()))
 	}
+	if u != nil && u.Disagrees {
+		return archdelete.DisagreesWords(delmark.WhatNotBackedUp) // DM-27 (MA-1068)
+	}
 	if u != nil {
 		return runUnfinishedText
 	}
