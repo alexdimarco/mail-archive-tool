@@ -5,6 +5,9 @@ Checked into the repo — the WiX/RMM layer (hand to Steve with the payload zip)
   Product.wxs               WiX installer definition (DC6 UpgradeCode preserved)
   Build-MSI.ps1             MSI builder — consumes the payload zip, stages notices, runs WiX
   BUILD-MSI.cmd             double-click wrapper for Build-MSI.ps1
+  Get-WiX.ps1               the one WiX 3.14 download (Build-MSI.ps1, release.yml,
+                            windows-msi-lab.yml): used only if it matches the pin below
+  wix314-binaries.sha256    the pinned SHA-256 of wix314-binaries.zip
   Install-RMM.ps1           RMM install helper (ends running instances first, CC22)
   Detect-RMM.ps1            RMM detection helper (exit 0 = installed)
   Uninstall-RMM.ps1         RMM silent uninstaller

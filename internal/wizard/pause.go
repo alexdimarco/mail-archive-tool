@@ -7,6 +7,7 @@ import (
 	"mail-archive-tool/internal/app"
 	"mail-archive-tool/internal/archdelete"
 	"mail-archive-tool/internal/backupalert"
+	"mail-archive-tool/internal/dialogfront"
 	"mail-archive-tool/internal/encmark"
 	"mail-archive-tool/internal/schedule"
 	"mail-archive-tool/internal/seal"
@@ -83,9 +84,12 @@ func PauseArchive(out, reason, deletionsLog string) error {
 // (repairSchedule: the cadence comes from the descriptor, the job args are rebuilt from the
 // sanitized name + -out, never the descriptor's recorded Job/Exe). A scheduled verify is
 // not auto-restored in this release — its descriptor is kept and the owner can re-enable it.
+// The repair may ask a question; the person asked for it with Resume (R39), so Arm comes
+// first (MA-1117's walk requires it as the first statement).
 // A folder whose delete did not finish, by deletionsLog ("" is MailArchive's own), stays paused
 // and gets no schedule back, as for PauseArchive (MA-1015; the 1.5.3 re-walk's F1).
 func ResumeArchive(out, deletionsLog string) error {
+	dialogfront.Arm()
 	if err := archdelete.ActionRefusal(deletionsLog, out, "it was not resumed"); err != nil {
 		return err
 	}

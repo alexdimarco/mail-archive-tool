@@ -9,7 +9,7 @@ import "testing"
 // Applications would not find. Windows and Linux keep their own steps.
 func TestBinaryNoteNamesTheInstalledProgram(t *testing.T) {
 	for _, c := range []struct{ goos, exe, want string }{
-		{"windows", "", "To remove the program itself, open Settings → Apps → Installed apps (or Add/Remove Programs) and uninstall MailArchive."},
+		{"windows", "", "To remove the program itself: if you installed it, open Settings → Apps → Installed apps (or Add/Remove Programs) and uninstall MailArchive Desktop; if you unzipped it, delete the folder you unzipped it into (the one with mailarchive.exe and mailarchivew.exe)."},
 		{"darwin", "", "To remove the program itself, drag Mail Archive.app (in your Applications folder, or wherever you put it) to the Trash."},
 		{"linux", "/usr/local/bin/mailarchive", "To remove the program itself, delete the mailarchive binary (/usr/local/bin/mailarchive)."},
 	} {

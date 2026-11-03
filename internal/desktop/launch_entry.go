@@ -19,12 +19,15 @@ import (
 	"syscall"
 
 	"mail-archive-tool/internal/browser"
+	"mail-archive-tool/internal/dialogfront"
 	"mail-archive-tool/internal/localweb"
 )
 
 // run is the binary's entry: it launches with the operating system's own
-// surroundings, until the process is interrupted.
+// surroundings, until the process is interrupted. Its dialogs, and those of the
+// wizard it runs in-process, come up in front of the browser on Windows (MA-1110).
 func Launch(args []string) error {
+	dialogfront.Install()
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
 	return launch(ctx, args, osEnv())

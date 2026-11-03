@@ -39,9 +39,38 @@ Hand Steve: this `packaging/mailarchive-desktop/` folder **plus** that payload z
 
 ## B. Build the MSI (Steve — Windows, WiX 3)
 
+Every release now also publishes the MSI the release workflow builds this way,
+`MailArchiveDesktop-<version>-x64.msi` (unsigned; listed in `SHA256SUMS`); building it
+yourself is optional.
+
 Requirements: 64-bit Windows + PowerShell. **Go is not required** — the EXEs are in
-the payload. WiX 3 is used if installed; otherwise Build-MSI.ps1 downloads the
-portable WiX 3.14 tools into a private `.tools\` folder (needs internet once).
+the payload. WiX 3 is used if installed; otherwise Build-MSI.ps1 has `Get-WiX.ps1`
+download the portable WiX 3.14 tools into a private `.tools\` folder (needs internet
+once). `Get-WiX.ps1` uses the download only if its SHA-256 equals the one pinned in
+`wix314-binaries.sha256`, and refuses it otherwise.
+
+**Not checked by the pin (2026-11-02):** a WiX 3 already installed on this PC (on
+`PATH`), and an earlier download already in `.tools\wix314`, are used as they are;
+only a fresh download goes through the pin. To be sure you build with the checked
+tools, delete `.tools\wix314` and build on a PC without WiX installed. (The release
+workflow is not affected: it puts the checked copy first on `PATH`.)
+
+**The pin is trust on first use (filled in 2026-11-02).** `wix314-binaries.sha256` holds
+the SHA-256 of the zip downloaded that day, with who checked it, when, and against what
+(test MA-1103 checks those lines). No second source publishes a SHA-256 for this zip, and
+its programs are not signed, so the pin proves only that every build uses those same
+bytes. If the pin ever fails, a tag push's msi job fails and **no release is published
+at all** (no zip, no Mac app, nothing).
+
+**Upgrading while MailArchive Desktop runs.** The MSI starts `mailarchivew.exe desktop
+-no-browser` for every account that signs in, so an upgrade or uninstall usually meets a
+running dashboard, and possibly a running backup. The MSI's close-running-copies step
+targets only the former name `mailarchive-desktop.exe`, deliberately: it matches by
+program name and cannot tell a backup from a dashboard. Until the lab checks in §D
+(MA-1104) have run, tell users who double-click the MSI to click **Shut down** first
+(and let a running backup finish). For a silent RMM upgrade use `Install-RMM.ps1` (§C:
+it stops running `mailarchivew.exe` dashboards first, picked out by their command line)
+and deploy outside the users' backup times.
 
 1. Put `mailarchive-desktop-windows-msi-payload.zip` beside `Build-MSI.ps1` (or let
    it find the unzipped folder, or a sibling repo `dist\`; or pass `-PayloadDir`).
@@ -186,6 +215,18 @@ integration below is **lab-pending** and is exactly what this round covers:
 
 Also smoke-test the DC6 upgrade: install the old 1.1.0 MSI first, then this one — it
 should replace it with one Apps & Features entry and the archive/sign-in preserved.
+
+4. **Upgrade and uninstall while MailArchive Desktop runs** (MA-1104, pending; added
+   2026-11-02 by the installer's adversarial pass, finding M3). The Startup shortcut
+   keeps `mailarchivew.exe desktop -no-browser` running, so this is the normal case.
+   Double-click the newer MSI (not Install-RMM.ps1) and record, for each: whether
+   Windows asks to close programs or to restart, whether the old dashboard keeps
+   serving, whether the new one starts, and what the archive and the run history show.
+   - Upgrade with MailArchive Desktop running and idle.
+   - Upgrade while a **Run now** backup is running (does the backup finish, fail
+     cleanly, or leave a half-written archive?).
+   - Uninstall from Settings → Apps with MailArchive Desktop running.
+   Until these have run, the release notes tell users to click **Shut down** first.
 
 ---
 

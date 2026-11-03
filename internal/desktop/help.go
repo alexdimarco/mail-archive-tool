@@ -125,7 +125,7 @@ func helpDataFor(goos string, open bool) helpData {
 		d.ComeBack = "To come back, open Mail Archive.app and choose Microsoft 365, folder export, browsing & tools (open MailArchive Desktop)."
 	case "windows":
 		d.On, d.Sync = "on Windows", true
-		d.WizardHow = "On Windows, open MailArchive wizard from the Start menu. If MailArchive was unzipped rather than installed, there is no Start menu entry: open the MailArchive folder, click in the address bar at the top of the window, type cmd and press Enter, then type mailarchivew.exe wizard and press Enter."
+		d.WizardHow = "On Windows, open MailArchive wizard from the Start menu; the MailArchive installer (MailArchiveDesktop-…-x64.msi) puts it there. If MailArchive was unzipped rather than installed, there is no Start menu entry: open the MailArchive folder, click in the address bar at the top of the window, type cmd and press Enter, then type mailarchivew.exe wizard and press Enter."
 		d.AppPlace = ` in its usual place: a Mozilla Thunderbird folder in Program Files (or Program Files (x86)), or in AppData\Local\Programs in your user folder. The Thunderbird sync looks for it only there`
 		d.Profiles = `%APPDATA%\Thunderbird\Profiles`
 		// Started minimized and not activated (MA-923; lab L-A10 saw no window on screen).

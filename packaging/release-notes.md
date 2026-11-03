@@ -17,7 +17,57 @@ scheduled backups, alerts and status), a step-by-step wizard, and a command line
 - macOS ships exactly these two downloads (the app and the CLI tarball); there
   are no bare per-arch macOS binaries to pick wrong.
 
-### Linux / Windows
+### Windows — start here
+- **Install it (recommended):** download **`MailArchiveDesktop-<version>-x64.msi`** (the
+  installer; `<version>` is this release's number, for example `MailArchiveDesktop-1.5.4-x64.msi`)
+  and double-click it. The installer is not signed yet, so you will see warnings:
+  - Your browser may warn when you download it. In Microsoft Edge, if it says the file
+    "isn't commonly downloaded", choose **Keep** (and **Keep anyway** if it asks again).
+  - If **"Windows protected your PC"** appears, click **More info**, then **Run anyway**.
+  - If Windows says **"The publisher could not be verified"**, click **Run**.
+  - Windows then asks for permission to make changes, and names the publisher as
+    **Unknown publisher**. Click **Yes**. Installing needs administrator rights: if your
+    account is not an administrator, Windows asks for an administrator's password.
+
+  It installs MailArchive for everyone on this computer, in Program Files. It adds
+  **MailArchive Desktop**, **MailArchive wizard**, **Copy MailArchive link** and
+  **Uninstall MailArchive Desktop** to the Start menu and a **MailArchive Desktop** shortcut
+  on the desktop, and it starts MailArchive Desktop quietly, without opening your browser,
+  each time anyone signs in to this computer (every account on it, not only yours). Open
+  **MailArchive Desktop** from the Start menu to begin.
+- **Updating to a newer version.** First click **Shut down** at the top of MailArchive
+  Desktop's page; if a backup is running, let it finish first. On a computer several
+  people are signed in to, each of them has MailArchive Desktop running: ask them to sign
+  out first. Then download the new installer and double-click it: it replaces the
+  installed version. If you forgot to shut it down, the old version keeps running until
+  you sign out and back in (or restart the computer), so do that once.
+- **Removing it.** First, in MailArchive Desktop, click **Uninstall MailArchive…**: it
+  removes your scheduled backups, settings and sign-in from this computer (removing the
+  program alone leaves the scheduled backups behind, pointing at a program that is gone). Then use **Settings → Apps → Installed apps → MailArchive
+  Desktop → Uninstall**. Your archives are kept either way.
+- **No administrator rights?** Download **`mailarchive-windows-amd64.zip`** instead, unzip it,
+  then double-click `mailarchivew.exe` (if SmartScreen warns: **More info → Run anyway**). It
+  works the same, but it has no Start menu entries, no desktop shortcut, and does not start
+  when you sign in.
+- **Moving from the zip to the installer.** Your archives stay where they are; only the
+  program changes. A scheduled backup you set up with the zip still runs the programs in
+  the unzipped folder, so point it at the installed program before you delete that folder:
+  1. If MailArchive Desktop is open, click **Shut down** at the top of its page.
+  2. Install the MSI as above, then open **MailArchive Desktop** from the Start menu.
+  3. For each archive with a scheduled backup: open it (in **Your archives**, click **Switch
+     to this archive** if it is not the one shown), then click **Repair** on its **Scheduled
+     backup** card. How often it runs and
+     its Thunderbird sync setting are kept. A backup set up at the command line has no
+     **Repair** button: run its `mailarchive schedule … -install` command again with the
+     installed `C:\Program Files\MailArchive Desktop\mailarchive.exe`.
+  4. Then delete the unzipped folder.
+
+Verify downloads against `SHA256SUMS` (the installer is listed there too). For an IT/RMM
+rollout, the same installer installs silently (`msiexec /i MailArchiveDesktop-<version>-x64.msi /qn`),
+and `mailarchive-desktop-windows-msi-payload.zip` still lets you build the MSI yourself
+(`packaging/mailarchive-desktop/README-RMM.md`).
+
+### Linux
 
 MailArchive is one program with verbs; there is no separate GUI download.
 
@@ -25,16 +75,8 @@ MailArchive is one program with verbs; there is no separate GUI download.
 |---|---|---|
 | Linux x86-64 | `mailarchive-linux-amd64` | `mailarchive wizard` or `mailarchive desktop` (the wizard needs `zenity` and a desktop session) |
 | Linux arm64 | `mailarchive-linux-arm64` | the same verbs (compiled, not lab-run) |
-| Windows x86-64 | `mailarchive-windows-amd64.zip` | unzip, then double-click `mailarchivew.exe` |
 
-Windows: SmartScreen → *More info → Run anyway*. Verify downloads against `SHA256SUMS`.
-
-**Windows — MailArchive Desktop:** the dashboard is `mailarchivew.exe desktop` — double-click
-`mailarchivew.exe` to open it (it opens the dashboard in your browser). For an IT/RMM rollout,
-`mailarchive-desktop-windows-msi-payload.zip` builds a self-contained MSI
-(`packaging/mailarchive-desktop/`).
-
-### New in 1.5.4 — deleting an archive, and switching archives says what happened where you clicked
+### New in 1.5.6 — deleting an archive, and switching archives says what happened where you clicked
 - **Delete an archive for good.** Each row of **Your archives** (and the **This archive** card, when it is your only archive) has **Delete…**. It first shows a plan beside the row: what it would remove, the scheduled backups it would stop, and the files of yours in the folder that it keeps. **Save this plan** saves it as a text file, for example to have it approved. Type the folder's name exactly as shown (capital letters count) and click **Delete permanently**. The files are not moved to the Recycle Bin or the Trash. The result says what was removed: **Save deletion record** saves it, because MailArchive keeps no copy.
 - **Remove from list** takes an archive off Your archives and keeps its folder and every file. **Open an archive folder…** brings it back.
 - **At the command line:** `mailarchive delete-archive -out DIR` shows the same plan and asks for the folder's name (`-plan-out FILE` only saves the plan; `-record-out FILE` saves the deletion record); `mailarchive unlist-archive -out DIR` is Remove from list; `mailarchive add-archive DIR` lists an archive folder you already have, such as one made at the command line, so the other two can reach it. Each takes `-config FILE` for a MailArchive Desktop started with `-config`, and delete-archive and unlist-archive run only while MailArchive Desktop is shut down.
@@ -43,6 +85,12 @@ Windows: SmartScreen → *More info → Run anyway*. Verify downloads against `S
 - **The deletion log.** Each delete adds a line to `deletions.log` in MailArchive's settings folder: `%APPDATA%\mailarchive\deletions.log` on Windows, `~/Library/Application Support/mailarchive/deletions.log` on a Mac, `~/.config/mailarchive/deletions.log` on Linux. A saved deletion record is checked against it. Uninstalling MailArchive removes it, so copy it first, somewhere you keep records: `mailarchive uninstall -yes` now refuses while it holds any line, until you run `mailarchive uninstall -yes -log-copied`. Uninstalling still never deletes your mail.
 - **Switch to this archive no longer stops to ask about a backup it doesn't affect.** An archive made from mail files (for example Thunderbird) has a scheduled backup that always backs up its own folder, so switching to another archive leaves it running as it is, with no question. A Microsoft 365 backup, which follows the current archive, still asks first.
 - **Messages appear beside the button you pressed.** Switch to this archive, Forget this encrypted archive here, Pause, Resume, Open an archive folder… and Use this archive now show their messages and questions right there, not in the Settings card further down the page, where they were easy to miss and the button seemed to do nothing.
+
+### New in 1.5.5 — MailArchive's windows open in front on Windows
+- **On Windows, the wizard and MailArchive Desktop's other windows open in front of your browser.** When you clicked **Make a new archive…** (or **Open an archive folder…**, or another button that opens a window) in MailArchive Desktop on Windows, the window could open behind the browser, so it looked as if nothing had happened. It now opens in front of the browser, ready for you to type, and does not stay on top once you switch to another window. A window you did not just ask for — for example the summary at the end of a long copy, if you went back to the browser meanwhile — does not take your typing: its button flashes in the taskbar until you click it. When MailArchive's windows close, your typing goes back to the browser.
+
+### New in 1.5.4 — a Windows installer
+- **Windows now has an installer.** Each release now includes **`MailArchiveDesktop-<version>-x64.msi`**: double-click it to install MailArchive with Start menu entries, a desktop shortcut, and MailArchive Desktop starting quietly whenever anyone signs in to the computer. It is not signed yet, so Windows shows **"Windows protected your PC"** (click **More info**, then **Run anyway**) and names an **Unknown publisher** when it asks for administrator permission. The zip is still there for computers where you cannot install programs. If you used the zip, the install section above says how to move your scheduled backups to the installed program.
 
 ### New in 1.5.3 — large archives open normally
 - **An archive of more than about 2,200 messages works in Your archives again.** Since 1.1.0, MailArchive Desktop read only the first 1 MiB of an archive's record (the `.mailarchive-manifest.json` file in its folder), so a larger archive was shown greyed, as "Not reachable right now", with no **Switch to this archive** button, and **Open an archive folder…** refused its folder as one whose record "cannot be read". MailArchive Desktop now reads the whole record, a little at a time, so a large archive shows as a normal row: **Switch to this archive** and **Pause** are offered, and **Open an archive folder…** opens it. One email with an unusually long subject no longer makes an archive look broken either. Nothing in your archives changes, and nothing else changes in this version.
@@ -96,7 +144,7 @@ Windows: SmartScreen → *More info → Run anyway*. Verify downloads against `S
 - **Backup run history.** A **Recent backups** card (and an archive-local history record) shows the last several runs — when, result, how many messages — not just the latest.
 - **Run now / Shut down / Add another archive.** Run the backup immediately instead of waiting for the schedule; shut the dashboard down cleanly to free its port (do this before an upgrade); and set up an additional archive with the wizard without disturbing the current one.
 - **Source-loss surfacing.** When an archive's **source** (its mailbox or mail folder) stops being reachable across scheduled runs, the dashboard shows a banner and `status` reports a WARN (`source_lost`), so a stalled backup is never silent.
-- **Uninstall keeps your archives.** A **Danger zone → Uninstall** removes MailArchive's program and schedules from this computer, shows a plan first, and **never deletes an archive**.
+- **Uninstall keeps your archives.** **Uninstall MailArchive…** in MailArchive Desktop removes MailArchive's program and schedules from this computer, shows a plan first, and **never deletes an archive**.
 - **Upgrading to a newer version.** Stop the program (**Shut down**), replace the files, relaunch — your archives are untouched; if the program's path changed, the app's **Repair** re-points the schedule. See "Upgrading to a newer version" in the README.
 
 ### Fixed in 0.7.2

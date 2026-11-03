@@ -493,7 +493,9 @@ func binaryNote(exe string) string { return binaryNoteFor(runtime.GOOS, exe) }
 func binaryNoteFor(goos, exe string) string {
 	switch goos {
 	case "windows":
-		return "To remove the program itself, open Settings → Apps → Installed apps (or Add/Remove Programs) and uninstall MailArchive."
+		// The installer's entry in Installed apps is its Product Name, "MailArchive Desktop"
+		// (packaging/mailarchive-desktop/Product.wxs); a copy from the zip has no entry there.
+		return "To remove the program itself: if you installed it, open Settings → Apps → Installed apps (or Add/Remove Programs) and uninstall MailArchive Desktop; if you unzipped it, delete the folder you unzipped it into (the one with mailarchive.exe and mailarchivew.exe)."
 	case "darwin":
 		return "To remove the program itself, drag Mail Archive.app (in your Applications folder, or wherever you put it) to the Trash."
 	default:

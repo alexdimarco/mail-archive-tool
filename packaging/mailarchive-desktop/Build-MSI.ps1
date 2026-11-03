@@ -5,7 +5,8 @@
 
     Go is NOT needed on the build PC — the pair and the two former-name copies are
     already in the payload.
-    WiX 3 is used if installed, else the portable WiX 3.14 tools are fetched once.
+    WiX 3 is used if installed, else the portable WiX 3.14 tools are fetched once by
+    Get-WiX.ps1, which uses them only if they match wix314-binaries.sha256.
 
     Payload resolution order (first that exists wins), unless -PayloadDir is given:
       1. <script>\mailarchive-desktop-windows-msi-payload\            (unzipped beside script)
@@ -140,16 +141,10 @@ if (-not $candle -or -not $light) {
     $candle = Join-Path $toolDir 'candle.exe'
     $light  = Join-Path $toolDir 'light.exe'
     if (-not (Test-Path $candle) -or -not (Test-Path $light)) {
-        New-Item -ItemType Directory -Force -Path $toolDir | Out-Null
-        $zipPath = Join-Path $Root '.tools\wix314-binaries.zip'
-        $url = 'https://github.com/wixtoolset/wix3/releases/download/wix314rtm/wix314-binaries.zip'
-        Write-Host 'Downloading portable WiX 3.14 build tools...'
-        # Force TLS 1.2 so the GitHub download works on older/hardened Windows images
-        # (Server 2016/2012R2 without SchUseStrongCrypto default to SSL3/TLS1.0, which
-        # GitHub rejects with "Could not create SSL/TLS secure channel").
-        try { [Net.ServicePointManager]::SecurityProtocol = [Net.ServicePointManager]::SecurityProtocol -bor [Net.SecurityProtocolType]::Tls12 } catch {}
-        Invoke-WebRequest -Uri $url -OutFile $zipPath -UseBasicParsing
-        Expand-Archive -Path $zipPath -DestinationPath $toolDir -Force
+        # The one WiX download (shared with release.yml and windows-msi-lab.yml): it is
+        # used only if its SHA-256 equals the one pinned in wix314-binaries.sha256.
+        Write-Host 'Fetching the portable WiX 3.14 build tools (checked against the pinned SHA-256)...'
+        & (Join-Path $Root 'Get-WiX.ps1') -Destination $toolDir
     }
 }
 if (-not (Test-Path $candle) -or -not (Test-Path $light)) { throw 'WiX candle.exe/light.exe could not be located.' }

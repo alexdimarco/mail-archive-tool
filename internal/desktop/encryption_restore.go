@@ -11,6 +11,7 @@ import (
 
 	"github.com/ncruces/zenity"
 
+	"mail-archive-tool/internal/dialogfront"
 	"mail-archive-tool/internal/encmark"
 	"mail-archive-tool/internal/keyring"
 	"mail-archive-tool/internal/util"
@@ -24,8 +25,10 @@ import (
 // with a new password and a new recovery key, shown and typed back (K2) through the
 // same steps as a new recovery key before anything is written.
 
-// pickFile is the system's file dialog, a seam a test replaces.
+// pickFile is the system's file dialog, a seam a test replaces. Only a button press
+// opens it, so it comes in front and takes the keyboard (R39).
 var pickFile = func(ctx context.Context, title string) (string, error) {
+	dialogfront.Arm()
 	return zenity.SelectFile(zenity.Title(title), zenity.Context(ctx))
 }
 

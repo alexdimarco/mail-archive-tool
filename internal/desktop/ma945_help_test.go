@@ -326,7 +326,7 @@ const (
 // (friction review M3), say to open the wizard.
 const (
 	helpMacWizard = "On a Mac, open Mail Archive.app and choose Archive a mail file on this computer (Outlook, Thunderbird, mbox)."
-	helpWinWizard = "On Windows, open MailArchive wizard from the Start menu. If MailArchive was unzipped rather than installed, there is no Start menu entry: open the MailArchive folder, click in the address bar at the top of the window, type cmd and press Enter, then type mailarchivew.exe wizard and press Enter."
+	helpWinWizard = "On Windows, open MailArchive wizard from the Start menu; the MailArchive installer (MailArchiveDesktop-…-x64.msi) puts it there. If MailArchive was unzipped rather than installed, there is no Start menu entry: open the MailArchive folder, click in the address bar at the top of the window, type cmd and press Enter, then type mailarchivew.exe wizard and press Enter."
 	helpLinWizard = "On Linux, run mailarchive wizard."
 )
 

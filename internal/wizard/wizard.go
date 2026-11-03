@@ -35,6 +35,7 @@ import (
 	"mail-archive-tool/internal/app"
 	"mail-archive-tool/internal/archdelete"
 	"mail-archive-tool/internal/backupalert"
+	"mail-archive-tool/internal/dialogfront"
 	"mail-archive-tool/internal/encmark"
 	"mail-archive-tool/internal/export"
 	"mail-archive-tool/internal/health"
@@ -123,6 +124,12 @@ var detectOutlook = func() bool { _, ok := outlookcom.Detect(); return ok }
 // mailarchive-gui binary all reach in-process (R33); it never starts a copy of
 // itself (MA-612).
 func Run() (code int) {
+	// Its dialogs come up in front of whatever window was active on Windows
+	// (MA-1110), as MailArchive Desktop's do: the person just started it, so its
+	// first window is one they asked for (R39).
+	dialogfront.Install()
+	dialogfront.Arm()
+
 	// The GUI-subsystem build has no console, so an unhandled panic would exit
 	// silently. Surface it on stderr and then in a dialog — in that order, as the
 	// desktop's showRefusal does (§4.4, MA-639) — a visible error beats a vanish.
@@ -682,6 +689,7 @@ func wizard() error {
 // dialog (zenity.ErrCanceled) before choosing one — a cancel is "nothing added", not an
 // error. A folder whose copy did not finish comes back with ErrStoppedEarly (MA-954).
 func AddArchive() (string, error) {
+	dialogfront.Arm() // only a Desktop button runs it: its first window was asked for (R39)
 	if refusal, ok := dialogPreflight(runtime.GOOS, dialogToolOnPath(), displayIsSet()); !ok {
 		return "", errors.New(refusal)
 	}

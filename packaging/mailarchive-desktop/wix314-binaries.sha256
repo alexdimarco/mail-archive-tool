@@ -1,0 +1,16 @@
+# The SHA-256 of wix314-binaries.zip, the portable WiX 3.14 build tools, from
+#   https://github.com/wixtoolset/wix3/releases/download/wix314rtm/wix314-binaries.zip
+# Get-WiX.ps1 (used by Build-MSI.ps1, release.yml and windows-msi-lab.yml) refuses
+# that download unless its SHA-256 equals the first line below that is not a comment:
+# 64 hexadecimal digits, nothing else on the line (MA-1103).
+#
+# This pin is trust on first use. The WiX project publishes no SHA-256 for this zip,
+# GitHub records no digest for it (it was uploaded before GitHub kept them), and the
+# programs inside are not Authenticode-signed (Get-AuthenticodeSignature: NotSigned on
+# candle.exe, light.exe and WixUtilExtension.dll). What it proves: every build uses
+# the same bytes as the zip downloaded on the date below.
+#
+# Checked by: Claude (the lead agent), for Alex DiMarco, who approved the download
+# Checked on: 2026-11-02
+# Checked against: GitHub's release record for wix314rtm (size 41,282,726 bytes, uploaded 2024-02-06T23:39:35Z, matching the download); no published SHA-256 exists to compare
+13f067f38969faf163d93a804b48ea0576790a202c8f10291f2000f0e356e934
