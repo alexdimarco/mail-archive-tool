@@ -1967,6 +1967,90 @@ or needed here.
 >   (slice 5). Still open, as §15.7's DM-9 correction says: a crash after the marker's removal with
 >   the person's files left stays "never complete" (§5.4), since nothing in the folder then says
 >   step 6 had finished.
+>
+> **Corrected 3 November 2026 (slice 3's adversarial pass, LOW-3 and LOW-4; the text above is left
+> as written):**
+> - *"The `marked` line cannot be appended: said … and the delete goes on"* is replaced: the delete
+>   now stops there, before its first removal (see the settle notes below).
+> - *"A lookup of the name that fails at step 6 … stops as a name that cannot be created (the Q1
+>   words)"*: it still stops there, in its own words now (LOW-5, below).
+> - *The Windows note ("reasoned, not run")* is wrong for NTFS. Run on the VM: a marker held open
+>   **with** share-delete is removed at once (the name is gone, `delmark.Present` says absent) and
+>   the delete is complete; one held **without** share-delete (most programs) cannot be removed and
+>   ends "Not fully deleted. 1 file could not be removed: .mailarchive-deleting.json.", another
+>   computer refused, and Delete again, once the program lets go, ends complete. A volume that
+>   leaves a name "delete pending" (not NTFS) would read as the note says and still end complete.
+>   Pinned by `internal/archdelete/ma1047_held_marker_windows_test.go`.
+
+> **Slice 3's adversarial pass, settled 3 November 2026 (MA-1046 and MA-1047 amended; no new id).**
+> The pass found one MED and five LOWs, no HIGH; nothing removed a file it should keep.
+> - *MED-1, fixed: a crash between the anchor and the marker's removal left the archive's emptied
+>   folders, which Delete again called "not the archive's" and ended "complete" with* (plain: "it
+>   holds 1 file that is not the archive's: Mailbox"; encrypted: "4 files … chunks, inventory,
+>   program, units", step 8 skipped, the key not forgotten and the row kept, yet `finished
+>   complete`). Cause: step 6 removed the plan's folders after the anchor and the marker, and the
+>   no-anchor re-run never lists folders. Fix: step 6 removes the folders the archive emptied right
+>   after its files and litter, **before** the late state files, the anchor and the marker
+>   (`execute.go`, `removeFiles`). The anchor, the late state files and the marker are root files,
+>   so a folder is as empty then as it will ever be; the result, the record and the order before
+>   the anchor are otherwise unchanged. A correction stands beside DM-9 in §15.2. Prove-fail: the
+>   folder loop moved back after the marker turns `TestMA1047_ARealCrashAtEachStep6BoundaryLeavesWhatTheCrashTableSays`
+>   (plain and encrypted "anchor", and "anchor, nothing of the person's") and
+>   `TestMA1047_TheArchivesEmptiedFoldersGoBeforeTheAnchor` red. Not taken: the pass's other
+>   suggestion, listing every empty folder in the marker's no-anchor re-run, which would also remove
+>   a person's own empty folder there, and nothing names which are the archive's once the manifest
+>   is gone. Residual (accepted, words only): an emptied folder that Windows held past
+>   `removeDir`'s retries **and** a crash between the anchor and the marker's removal; Delete again
+>   then names that folder as not the archive's (and, encrypted, skips step 8, as a delete that ends
+>   with such a folder does today).
+> - *LOW-1, accepted (words only, no data at risk): "marker there, anchor gone" does not prove step
+>   6 finished when the anchor was lost outside the delete* — a delete stopped in step 6 with the
+>   marker and the manifest still there, then the manifest deleted by hand or lost to a sync
+>   conflict. Delete again then ends "complete" and calls the archive's mail pages left "not the
+>   archive's"; nothing is removed that §4 does not name, the row is removed and the log's delete
+>   ends. Not fixed: telling it apart needs a fact the folder no longer holds (this computer's log
+>   could narrow it, the marker-only plan could not), for a loss the person or a sync service
+>   caused. Stated beside DM-9's premise in §15.2. Not an owner ruling; for the lead.
+> - *LOW-2, pinned as intended (an FYI for the owner, not a ruling): Q1's "this computer's own log
+>   still refuses here" stops being true on macOS and Linux after the drive is unplugged and plugged
+>   in again.* A delete stopped before step 6 leaves no marker; after a remount the log's started
+>   line no longer matches the folder's device number, and §15.5's run-id route needs a marker, so
+>   this computer's real backup goes into the archive. The archive is whole, so nothing is at risk,
+>   and this is what Q1 already accepts for another computer. Pinned by
+>   `TestMA1046_AStopBeforeStep6ThenARemountLetsThisComputersBackupIntoTheWholeArchive`; noted beside
+>   Q1 (§15.2) and in §15.6. Windows keys by the volume serial number, which survives a remount.
+> - *LOW-3, fixed: a `marked` line that cannot be appended now stops the delete before its first
+>   removal* (the builder's call was "said, and the delete goes on"). Without the line, slice 4's
+>   rule for a log and a folder that disagree (DM-27) reads the log "as today" and would hand step 8
+>   the started line's record — the rotation-drive case DM-27 exists for — while stopping there
+>   costs nothing, no file being removed yet. The marker stays (the crash table's "name created,
+>   before the first removal" row: the whole archive and its marker); `finished partial` where the
+>   log can take it, the row "Delete not finished". Words (lead's words, owner-delegated
+>   2026-11-02): "MailArchive could not write to its deletion log, LOG (CAUSE), so none of the
+>   archive's files were deleted. Steps done: STEPS. Check that file, then click Delete again."
+>   Delete again, the log back, writes its own `marked` line and finishes. Prove-fail: the old
+>   "note and go on" turns `TestMA1046_AMarkedLineThatCannotBeWrittenStopsBeforeAnyRemoval` red.
+> - *LOW-4, corrected beside the Windows note above* (a note only; the behaviour was right), and
+>   pinned by a Windows test.
+> - *LOW-5, fixed (words): a lookup of the marker's name that fails at step 6* said "could not write
+>   a note", which the no-anchor re-run never writes. Now, for every run (lead's words,
+>   owner-delegated 2026-11-02): "MailArchive could not check the archive's folder for its note that
+>   a delete is under way (CAUSE), so none of the archive's files were deleted. Steps done: STEPS.
+>   Check that the folder can be read, then click Delete again." Through a new seam,
+>   `markerLookup`. Prove-fail: the old words turn
+>   `TestMA1046_ALookupThatFailsAtStep6StopsInItsOwnWords` red (an ordinary delete and the no-anchor
+>   re-run).
+> - *The pass's probes kept as tests* (no throwaway files): a real crash (a child process that exits
+>   on the spot) at each step-6 boundary, plain and encrypted, with another computer's backup and
+>   Delete again after each (`internal/archdelete/ma1047_crash_test.go`), a hard link planted at the
+>   marker's name never written through, a marker swapped for a folder never removed and still
+>   refusing (same file), the `marked`-line, lookup and remount tests
+>   (`internal/archdelete/ma1046_marker_settle_test.go`), and the marker held open on Windows
+>   (`ma1047_held_marker_windows_test.go`). Not kept: the case-variant probe (slice 1's
+>   `TestEveryListerSkipsWhatPresentCallsTheMarkerAndNothingElse` covers it); the read-only folder
+>   probe (Unix permissions, which a root test run ignores; the create-failure seam test covers the
+>   words); the LOW-1 probe (it only prints the accepted limit); the DM-2 remount body run without
+>   its skip (it stays skipped until slice 5, failing as stated).
 
 ## 15. The delete marker (G2 for another computer, another account, and a remounted drive)
 
@@ -2195,6 +2279,15 @@ The folder-gone re-run (§5.4) writes nothing: the folder is gone.
 >   point if none is there. DM-9 is unchanged: the no-anchor re-run never creates one.
 > - **DM-3's note above** now describes what is built: the claim reads "from the first removal in
 >   the folder (step 6)", and MA-1046's mutation is "write it after the first removal".
+>
+> > **Noted 3 November 2026 (slice 3's adversarial pass, LOW-2; for the owner, no ruling asked):**
+> > "this computer's own log still refuses here" holds until the drive is unplugged and plugged in
+> > again on macOS or Linux. Then the folder's device number changes, the log's started line no
+> > longer matches it, and with no marker there §15.5's run-id route cannot apply, so this
+> > computer's own backup goes into the archive, as another computer's does under this ruling. The
+> > archive is whole, so nothing is at risk. Pinned as intended by
+> > `TestMA1046_AStopBeforeStep6ThenARemountLetsThisComputersBackupIntoTheWholeArchive`; §15.6
+> > lists it. (Windows keys by the volume serial number, which survives a remount.)
 
 **Removed: the last removal of step 6, under the lock.** Right after the anchor (the manifest, or
 the vault files last), and only when the anchor is gone and no name the archive recorded is left
@@ -2229,6 +2322,20 @@ delete finds either the marker or no archive (§5.3, "After step 7"). Then step 
   > holds the person's files. **A marker present with the anchor absent proves step 6 had
   > finished**, so such a re-run is complete with those files kept; this amends §5.4's "never
   > complete" for this case only (a no-anchor folder without a marker keeps §5.4's rule).
+
+  > **Corrected 3 November 2026 (slice 3's adversarial pass, MED-1 and LOW-1; the note above is
+  > left as reviewed).** "What a folder without its anchor still holds is what a complete delete
+  > keeps" missed the folders the archive emptied: step 6, as built, removed them after the anchor
+  > and the marker, so a crash between the two left them, and the no-anchor re-run (which lists no
+  > folders) called them "not the archive's" and ended complete — for an encrypted archive with
+  > step 8 skipped. Corrected in step 6, not in the re-run: the folders the archive emptied are
+  > removed right after its files and litter, **before** the late state files, the anchor and the
+  > marker, so the premise holds for any crash after the anchor. (Listing empty folders in the
+  > re-run instead would also remove a person's own empty folder.) A second limit of the premise,
+  > accepted: an anchor lost outside the delete (removed by hand, or by a sync conflict, after a
+  > delete stopped in step 6 with the marker) also gives "marker there, anchor gone"; Delete again
+  > then ends complete and names the archive's files left as not the archive's — words only,
+  > nothing is removed that §4 does not name (§14's slice-3 settle notes).
 - The marker is never in the plan's file list, counts, "Kept" list, saved plan or record: it is
   the delete's own note, written and removed by these two steps alone. The plain lister, the
   encrypted lister (`encRootFiles` leaves it out, beside the lock and the vault) and
@@ -2774,6 +2881,16 @@ before step 2).
 >   its backups go into the half-deleted folder, and `deletions.log` stays. A misfiring marker
 >   check is undone only by removing the file by hand; a dead-drive misfire is DM-22's. The 1.5.5
 >   release notes say so.
+>
+> **Added 3 November 2026 (slice 3's adversarial pass, LOW-2 and LOW-1):**
+> - **A delete stopped before step 6, then a remount (macOS, Linux).** No marker was written (Q1);
+>   after the drive is plugged in again, this computer's log no longer finds the delete by the
+>   folder's device and file number, and §15.5's run-id route needs a marker, so this computer's
+>   own backup goes into the archive. The archive is whole, so nothing is at risk (the same as
+>   another computer under Q1). Pinned by MA-1046's remount test.
+> - **An anchor lost outside the delete** after a stop in step 6 (by hand, a sync conflict): the
+>   marker with no anchor reads as "step 6 finished", and Delete again ends complete, naming the
+>   archive's files left as not the archive's. Words only (§15.2's DM-9 correction).
 
 ### 15.7 Tests (each prove-fail → prove-pass; Windows run first in the lab)
 

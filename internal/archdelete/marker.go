@@ -57,7 +57,9 @@ func createMarkerIn(root *os.Root, data []byte) (wrote bool, err error) {
 // words that list the steps done — after steps 2 to 5 it is "not fully deleted", never "nothing
 // changed" (§15.2's Q1 note).
 //   - None there: created with this delete's first run and its start, unless the anchor is gone
-//     (the no-anchor re-run never creates one: DM-9); then the `marked` line (DM-27).
+//     (the no-anchor re-run never creates one: DM-9); then the `marked` line (DM-27), whose
+//     failure stops the delete here, the marker kept.
+//   - A lookup that fails for another reason than "not there": the delete stops, nothing removed.
 //   - A marker there (an earlier run's, this computer's or another's): kept as it is — never
 //     rewritten or filled in (DM-26: opening an existing name to write would follow a planted
 //     hard link) — with the `marked` line when it is this delete's own.
@@ -65,7 +67,7 @@ func createMarkerIn(root *os.Root, data []byte) (wrote bool, err error) {
 //     followed or opened.
 func (e *run) markFolder() (present, stopped bool) {
 	p := e.plan
-	fi, err := e.root.Lstat(delmark.Name)
+	fi, err := markerLookup(e.root)
 	switch {
 	case errors.Is(err, fs.ErrNotExist):
 		if p.Rerun == RerunNoAnchor {
@@ -77,10 +79,14 @@ func (e *run) markFolder() (present, stopped bool) {
 			return false, true
 		}
 		util.SyncDir(p.Folder) // best effort: the name survives a power cut
-		e.logMarked(first)
+		if !e.logMarked(first) {
+			return true, true
+		}
 		return true, false
 	case err != nil:
-		e.stop(e.markerNotWritten(err))
+		// A lookup that fails is not a note that could not be written: the no-anchor re-run never
+		// writes one (the slice-3 pass's LOW-5).
+		e.stop(e.markerNotLookedUp(err))
 		return false, true
 	}
 	l := &lister{root: e.root, folder: p.Folder, goos: runtime.GOOS}
@@ -89,11 +95,15 @@ func (e *run) markFolder() (present, stopped bool) {
 			delmark.Name, e.stepsDone()))
 		return false, true
 	}
-	if first, _ := e.firstRun(); delmark.ReadIn(e.root, p.Folder).Run == first {
-		e.logMarked(first)
+	if first, _ := e.firstRun(); delmark.ReadIn(e.root, p.Folder).Run == first && !e.logMarked(first) {
+		return true, true
 	}
 	return true, false
 }
+
+// markerLookup looks up the marker's name in root, never following it: a test seam for a lookup
+// that fails for another reason than "not there".
+var markerLookup = func(root *os.Root) (fs.FileInfo, error) { return root.Lstat(delmark.Name) }
 
 // firstRun is the run id and start of the first run of the delete this run belongs to, as the
 // marker records them (§15.1): the delete it finishes (D1), else this run.
@@ -108,13 +118,34 @@ func (e *run) firstRun() (string, time.Time) {
 }
 
 // logMarked appends DM-27's durable `marked` line: this run, and the first run the folder's marker
-// names. One that cannot be written is said, as step 7's folder line is, and the delete goes on:
-// without it a later plan reads the log as it did before the marker (§15.4's DM-27 note).
-func (e *run) logMarked(first string) {
+// names. false: it could not be written, and the delete has stopped before its first removal (the
+// slice-3 pass's LOW-3, replacing the builder's "said, and the delete goes on"): without the line,
+// slice 4's rule for a log and a folder that disagree reads the log "as today" and would hand step 8
+// the started line's record, the very case DM-27 is there for, while stopping here costs nothing —
+// no file has been removed. The marker stays: the whole archive and its marker, the crash table's
+// row for a stop between the name and the first removal, and Delete again finishes.
+func (e *run) logMarked(first string) bool {
 	p := e.plan
 	if err := appendLog(e.log, logLine{At: e.stamp(), Event: evMarked, Run: e.id, Folder: p.Folder, Row: e.row, FirstRun: first}); err != nil {
-		e.notes = append(e.notes, fmt.Sprintf("This step could not be added to deletions.log (%s).", cleanErr(err)))
+		e.stop(e.markedLineNotWritten(err))
+		return false
 	}
+	return true
+}
+
+// markedLineNotWritten is the stop for a `marked` line that could not be appended (lead's words,
+// owner-delegated 2026-11-02): what happened first, the log named, the remedy; this person began the
+// delete, so "again" is right.
+func (e *run) markedLineNotWritten(err error) string {
+	return fmt.Sprintf("MailArchive could not write to its deletion log, %s (%s), so none of the archive's files were deleted. Steps done: %s. Check that file, then click Delete again.",
+		util.StripControl(e.log), cleanErr(err), e.stepsDone())
+}
+
+// markerNotLookedUp is the stop for a lookup of the marker's name that failed for another reason
+// than "not there" (lead's words, owner-delegated 2026-11-02; the slice-3 pass's LOW-5).
+func (e *run) markerNotLookedUp(err error) string {
+	return fmt.Sprintf("MailArchive could not check the archive's folder for its note that a delete is under way (%s), so none of the archive's files were deleted. Steps done: %s. Check that the folder can be read, then click Delete again.",
+		cleanErr(err), e.stepsDone())
 }
 
 // markerNotWritten is the stop for a marker name that could not be created (§15.2's Q1 note, with

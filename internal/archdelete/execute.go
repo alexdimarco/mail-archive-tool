@@ -547,8 +547,9 @@ func step5Message(folder string) string {
 }
 
 // removeFiles is step 6: the plan's names through an os.Root on the very folder
-// planned, the late state files and the manifest or vault last, and only when every
-// other name the archive recorded is gone. ok is false when a recorded name is
+// planned, then the folders they emptied, then the late state files and the manifest
+// or vault last, and only when every other name the archive recorded is gone; the
+// delete marker after the anchor. ok is false when a recorded name is
 // left; stopped when the step stopped the delete itself.
 func (e *run) removeFiles() (ok, stopped bool) {
 	e.step = 6
@@ -606,6 +607,14 @@ func (e *run) removeFiles() (ok, stopped bool) {
 			res.LitterRemoved++
 		}
 	}
+	// The folders the archive emptied, before the anchor (the slice-3 pass's MED-1, a correction
+	// beside DM-9): the anchor, the late state files and the marker are root files, so a folder is
+	// as empty now as it will ever be; and a crash after the anchor then leaves what a complete
+	// delete keeps, never the archive's emptied folders for the no-anchor re-run to call "not the
+	// archive's".
+	for _, d := range p.Folders {
+		e.removeDir(d)
+	}
 	if len(res.NotRemoved) == 0 {
 		for _, it := range p.Remove {
 			if !isLast(it) {
@@ -629,9 +638,6 @@ func (e *run) removeFiles() (ok, stopped bool) {
 				e.markerGone = true
 			}
 		}
-	}
-	for _, d := range p.Folders {
-		e.removeDir(d)
 	}
 	res.Kept = append(res.Kept, p.Kept...)
 	if !e.unrecorded {
