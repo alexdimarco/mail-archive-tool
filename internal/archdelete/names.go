@@ -1,6 +1,8 @@
 package archdelete
 
 import (
+	"io/fs"
+	"os"
 	"path/filepath"
 	"regexp"
 	"sort"
@@ -93,9 +95,36 @@ var (
 var otherArchiveMarkers = []string{manifestName, vault.FileName, vault.BackupName, container.PointerName,
 	container.MirrorName, container.InventoryName, ".mailarchive-convert.json", delmark.Name}
 
-// isDeleteMarker reports the delete marker's name at an archive's root, as the
-// platform's file system compares names (§15.1).
-func isDeleteMarker(goos, name string) bool { return eqName(goos, name, delmark.Name) }
+// deleteMarkerIn is the name, among the archive root's listed entries ents, that is
+// the delete marker: the very entry the file system gives for the marker's exact name,
+// which is what delmark.Present looks up (§15.1) — "" when that lookup finds nothing.
+// Every root lister skips that entry and only it, so no plan names what Present calls
+// the marker, and nothing Present calls absent goes unlisted (the slice-1 pass's
+// LOW-1). The platform's fold is not used to decide it: it is wider than a file
+// system on purpose (util.FoldKey joins ı with i and ſ with s, which NTFS keeps apart)
+// and, on Linux, exact even on a case-insensitive drive. util.FoldKey only narrows the
+// entries asked about, and the exact name, when listed, is the marker before any other
+// spelling, so a second name for the same file (a hard link) is never taken for it.
+func deleteMarkerIn(root *os.Root, ents []fs.DirEntry) string {
+	for _, e := range ents {
+		if e.Name() == delmark.Name {
+			return delmark.Name
+		}
+	}
+	mfi, err := root.Lstat(delmark.Name)
+	if err != nil {
+		return ""
+	}
+	key := util.FoldKey(delmark.Name)
+	for _, e := range ents {
+		if n := e.Name(); util.FoldKey(n) == key && !rootCannotName(n) {
+			if fi, err := root.Lstat(n); err == nil && os.SameFile(fi, mfi) {
+				return n
+			}
+		}
+	}
+	return ""
+}
 
 // lateStateFiles are the root state files removed after every other name and just
 // before the anchor, in this order (del-s1a-A2-05): a delete stopped part way (a

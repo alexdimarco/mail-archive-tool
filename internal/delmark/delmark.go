@@ -134,6 +134,10 @@ func (e *LookupError) Refusal(what string) string {
 // lstat is the marker's lookup, a var so a test can make it fail as a dead drive does.
 var lstat = os.Lstat
 
+// openIn is Read's open, a var so a test can swap the name between the judgment and
+// the open.
+var openIn = util.OpenRegularFileIn
+
 // Present says what is at the marker's name in folder, by a directory lookup that
 // needs no read permission on the file and never opens it. An empty folder name is
 // no folder: Absent.
@@ -205,8 +209,9 @@ func validBegan(s string) bool {
 
 // Read is the bounded read of folder's marker (§15.3): through an os.Root on the
 // folder, only a regular file that is not a link (util.OpenRegularFileIn: no link, no
-// pipe, a Windows placeholder accepted), at most MaxRead bytes. Nothing it returns is
-// anything but a run id of its shape and a time of its shape.
+// pipe, a Windows placeholder accepted) and is the very file its Lstat judged, at most
+// MaxRead bytes. Nothing it returns is anything but a run id of its shape and a time
+// of its shape.
 func Read(folder string) Details {
 	if st, err := Present(folder); err != nil || st != Regular {
 		return Details{}
@@ -220,11 +225,17 @@ func Read(folder string) Details {
 	if err != nil || stateOf(runtime.GOOS, filepath.Join(folder, Name), fi.Mode(), util.IsLinkLike) != Regular {
 		return Details{}
 	}
-	f, err := util.OpenRegularFileIn(root, Name)
+	f, err := openIn(root, Name)
 	if err != nil {
 		return Details{}
 	}
 	defer f.Close()
+	// The open goes through the os.Root, which follows a link that stays inside the
+	// folder: a name swapped for one after the judgment above would be read through.
+	// Only the very file judged is read (the slice-1 pass's LOW-3).
+	if ofi, err := f.Stat(); err != nil || !os.SameFile(ofi, fi) {
+		return Details{}
+	}
 	data, ok := readBounded(f)
 	if !ok {
 		return Details{}

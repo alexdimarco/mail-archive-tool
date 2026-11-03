@@ -206,6 +206,8 @@ func TestTheBoundedReadGivesOnlyTheRunAndWhenItBegan(t *testing.T) {
 		"two objects":         marker + marker,
 		"version 2":           strings.Replace(marker, `"version":1`, `"version":2`, 1),
 		"version a string":    strings.Replace(marker, `"version":1`, `"version":"1"`, 1),
+		"version 1.0":         strings.Replace(marker, `"version":1`, `"version":1.0`, 1),
+		"a byte-order mark":   "\xef\xbb\xbf" + marker,
 		"no version":          strings.Replace(marker, `"version":1,`, ``, 1),
 		"run too short":       strings.Replace(marker, `0123456789abcdef`, `0123456789abcde`, 1),
 		"run upper case":      strings.Replace(marker, `0123456789abcdef`, `0123456789ABCDEF`, 1),

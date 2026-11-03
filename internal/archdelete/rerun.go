@@ -159,6 +159,7 @@ func planNoAnchor(abs string, deps Deps, u *Unfinished, orig *Refusal) (*DeleteP
 	if err != nil {
 		return nil, err
 	}
+	marker := deleteMarkerIn(root, ents)
 	for _, e := range ents {
 		name := e.Name()
 		f := fold(l.goos, name)
@@ -185,7 +186,9 @@ func planNoAnchor(abs string, deps Deps, u *Unfinished, orig *Refusal) (*DeleteP
 			if link {
 				return nil, linkRefusal(filepath.Join(abs, name))
 			}
-		case isDeleteMarker(l.goos, name) && !link && l.fileLike(efi):
+		case name == marker && link:
+			return nil, linkRefusal(filepath.Join(abs, name)) // §15.3; the slice-1 pass's LOW-2
+		case name == marker && l.fileLike(efi):
 			// The delete's own note, never in the plan's lists (§15.2).
 		case link && removable:
 			return nil, linkRefusal(filepath.Join(abs, name))

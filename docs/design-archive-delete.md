@@ -1769,6 +1769,71 @@ pass found no high or medium finding and one LOW, fixed here. No new words.
   verdict's identity check holds there); FAT, exFAT and ReFS drives, where file identity is weaker;
   network shares that stall; cloud placeholder files; a real manifest over 1 GiB.
 
+**The delete marker's slice-1 adversarial pass (2 November 2026; §15.10 slice 1, MA-1053
+amended).** The pass, on bc37668 with probes on macOS (APFS) and the Windows VM (NTFS), found no
+high or medium finding, two LOWs to fix and one LOW note. All three are fixed here. No new words.
+- *Every root lister skips what `delmark.Present` calls the marker, and nothing else (LOW-1).*
+  The plain lister, the encrypted lister and `planNoAnchor` decided "this is the marker" by the
+  platform's fold, which is wider than a file system on purpose (`util.FoldKey` joins the dotless
+  ı with i, and ſ with s), while `Present` asks the file system for the exact name. A file named
+  `.maılarchive-deleting.json` (on APFS and NTFS) or `.mailarchive-deleting.jſon` (on NTFS) was
+  then in none of a plan's lists — neither removed nor shown as kept — and an encrypted folder
+  holding it was planned, where `encmark` calls it "other files". The other way round, Linux's
+  exact rules on a case-insensitive drive (exFAT) kept `.MAILARCHIVE-DELETING.JSON`, which
+  `Present` calls the marker, and listed `.mailarchive-deleting.jſon` for removal where the
+  volume makes it the marker. Now each lister skips only the very entry the file system gives
+  for the exact name (`archdelete.deleteMarkerIn`: the exact name when listed, else the one
+  entry `util.FoldKey` joins with it that `os.SameFile` finds is that file); every other spelling
+  is judged by the lists' own rules (a plain plan names it in exactly one list; an encrypted one
+  refuses it as more than one kind). The exact name, when listed, is the marker before any other
+  spelling, so a hard link at another case of the name (possible only on a case-sensitive
+  volume) is never taken for it: without that rule the marker itself was listed for removal
+  (seen on Linux). The store trees' check ("another archive's marker", §4.1) stays wide on
+  purpose: there any spelling the fold joins refuses the whole delete as mixed, failing closed.
+- *A link at the marker's name is the link row's refusal in every lister (LOW-2).* §15.3 says
+  Delete's plan refuses a link at the name by §7's link row. The plain lister and the plain
+  re-run did; the encrypted lister refused it as "more than one kind" (right outcome, wrong
+  words), and the encrypted no-anchor re-run planned it, keeping the link. All three now give
+  the link row's words ("This archive's folder is, or holds where its files are, a link: LINK.
+  Delete it by hand."). The link was never followed or removed.
+- *The bounded read reads only the file it judged (LOW-3).* `delmark.Read` judged the name with
+  `Lstat` and then opened it through the `os.Root`, which follows a link that stays inside the
+  folder: a name swapped for such a link in between was read through (204 times in about 2
+  million reads under a tight swap loop). Only a run id and a time of fixed shape could come
+  back, which a writer of the folder could write directly, so there was no harm. Now the opened
+  file must be the one judged (`os.SameFile`), or its details are not known.
+- *Accepted limits and notes, for the operator (none needs the owner):*
+  - `util.OpenRegularFileIn`, the shared open every reader through an `os.Root` uses (the
+    manifest read among them; it predates this slice), has the same gap as LOW-3 for its other
+    callers: it follows an in-folder link swapped in after the caller's judgment. Fixed here for
+    the marker only. Fixing it in `util` for every caller (compare the opened file with the one
+    judged) changes shared code under the export and the delete, so it is its own change with
+    its own pass, not done here.
+  - `util.FoldKey`'s comment says NTFS treats ı as I; on the lab VM's NTFS a lookup of the
+    plain-i name did not find the ı file. `FoldKey` is a collision key, so being wider than
+    NTFS only makes an export rename a name it did not have to. The comment is not changed here
+    (outside this slice).
+  - `encmark` compares its reserved names exactly, so a folder this computer recorded as
+    encrypted that holds the marker under another case (one name on APFS and NTFS) reads as
+    case Other, not None, while Delete's plan skips it as the marker. That fails closed (every
+    writer is refused, and `Present` finds the marker), as before this pass.
+  - A Windows marker held open by another program and then deleted ("delete pending") still
+    reads as present (the pass's probe). That fails closed; slice 3's removal should expect it.
+    It is not kept as a test: whether Windows deletes a file at once depends on the volume and
+    the Windows version.
+  - Not tried: a real Linux exFAT drive (the new test runs Linux's rules on the Mac's
+    case-insensitive volume instead), Windows symbolic links (the VM has no link privilege;
+    junctions were used), WSL links and OneDrive placeholders.
+- *The pass's probes kept as tests* (`internal/archdelete/ma1053_marker_identity_test.go`,
+  `internal/delmark/ma1053_read_identity_test.go`): the agreement of every lister with
+  `Present` for four spellings under this computer's, Linux's and macOS's rules; the link at
+  the name in all four listers, and at another case under Linux's rules (which also kills the
+  slice's mutation 13, which survived on macOS); a hard link at another case of the name; a
+  store tree holding the marker in any spelling; the read with a link swapped in at its open (a
+  seam, so the test is exact rather than a race); a folder that is a file and a folder whose
+  parent cannot be searched (no marker, DM-22); and a byte-order mark and `"version":1.0` as
+  details not known.
+
 ## 15. The delete marker (G2 for another computer, another account, and a remounted drive)
 
 Status: DESIGN AMENDMENT, 2 November 2026, for the 10-lens pre-code review

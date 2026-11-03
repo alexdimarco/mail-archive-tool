@@ -305,6 +305,7 @@ func (l *lister) plain() error {
 	if err != nil {
 		return err
 	}
+	marker := deleteMarkerIn(l.root, ents)
 	for _, e := range ents {
 		name := e.Name()
 		f := fold(l.goos, name)
@@ -333,9 +334,15 @@ func (l *lister) plain() error {
 		}
 		// The delete marker is the delete's own note, written and removed by its own
 		// two steps, never in the plan's lists or counts (§15.2): a regular one (DM-20)
-		// is skipped; a link at the name is refused below as any removable name's is.
-		if isDeleteMarker(l.goos, name) && !link && l.fileLike(fi) {
-			continue
+		// is skipped; a link at the name is the link row's refusal (§15.3), whatever
+		// the platform's rules make of its spelling.
+		if name == marker {
+			if link {
+				return linkRefusal(filepath.Join(l.folder, name))
+			}
+			if l.fileLike(fi) {
+				continue
+			}
 		}
 		// A store folder (or a link in its place) is the store loop's; a file that
 		// only shares a token's name is judged as any root file is.
@@ -525,6 +532,7 @@ func (l *lister) encrypted(deps Deps) error {
 		return err
 	}
 	var vaultItems []Item
+	marker := deleteMarkerIn(l.root, ents)
 	for _, e := range ents {
 		name := e.Name()
 		if rootCannotName(name) {
@@ -547,7 +555,9 @@ func (l *lister) encrypted(deps Deps) error {
 		case name == lockName && link:
 			return linkRefusal(filepath.Join(l.folder, name)) // step 7 removes it (del-s1a-A1-11)
 		case name == lockName:
-		case isDeleteMarker(l.goos, name) && !link && l.fileLike(fi):
+		case name == marker && link:
+			return linkRefusal(filepath.Join(l.folder, name)) // §15.3; the slice-1 pass's LOW-2
+		case name == marker && l.fileLike(fi):
 			// The delete's own note, left out beside the lock and the vault (§15.2).
 		case link && (isDirName || encRootFiles[name] || name == vault.FileName || name == vault.BackupName || encRootTmp(name)):
 			return linkRefusal(filepath.Join(l.folder, name))
