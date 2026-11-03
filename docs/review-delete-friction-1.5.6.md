@@ -126,6 +126,13 @@ scheduled backup is stopped" for an archive that has none.
 > pins. Changing it is the lead's call. Detail in `docs/design-archive-delete.md` §14, "LOW-4 of
 > slice 5's adversarial pass, and friction notes A and H, settled". C, I and J stay left.
 
+> **Walked on Edge, 3 November 2026 (MA-1055's Windows lab; the notes above stay as written).**
+> **A** holds on Edge: the question opens with the cursor on Keep it, and Enter on Keep it moves it
+> to Save deletion record. **B** holds on Edge after Remove from list, and after Dismiss while an
+> archive is chosen: the page is at Your archives, its heading focused. With no archive chosen,
+> Dismiss still lands at the page's top (N12's branch also takes that case; LOW, for the lead).
+> Detail in `docs/lab/delete-marker-windows-2026-11-03.md`.
+
 ## Type I friction, counted and kept
 
 - The typed folder name, and Tab to the button (no Enter submit): the typed name is the decision
