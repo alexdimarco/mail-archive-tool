@@ -209,11 +209,15 @@ func RecordAutoPauseDefault(key, out string, why error, logger *log.Logger) {
 // ClearStreak removes the streak for key beside the settings file at settingsPath: a schedule's
 // create and Remove clear it, so a re-created schedule's first failure sends. It removes the
 // key's Thunderbird-not-synced told-file too (design-presync-attended §5.5, C-40), so a
-// re-created schedule's stale sync streak is told again.
+// re-created schedule's stale sync streak is told again, and its count of runs refused for an
+// unfinished delete (MA-1058), so an auto-pause, or a re-created schedule, starts that count again.
 func ClearStreak(settingsPath, key string) error {
 	err := clearStreakAt(StreakPath(settingsPath, key))
 	if serr := clearStreakAt(SyncAlertPath(settingsPath, key)); err == nil {
 		err = serr
+	}
+	if derr := clearStreakAt(DeleteRefusedPath(settingsPath, key)); err == nil {
+		err = derr
 	}
 	return err
 }

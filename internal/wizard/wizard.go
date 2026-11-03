@@ -230,8 +230,14 @@ func RunHeadless(path string) int {
 		}
 		jobFail(path, err)
 		reportRun(key, jobFileName(path), j.Out, backupalert.ResultFailed, err, 0, nil)
+		// A delete this computer never began refuses every run: after 30 days of them, this
+		// computer's schedule is stopped (MA-1058).
+		autoPauseForDelete(path, j.Out, key, err)
 		return 1
 	}
+	// Past the delete check: a count of runs refused for a delete this computer never began ends
+	// (MA-1058).
+	autoPauseForDelete(path, j.Out, key, nil)
 	// Unattended guard: an absent -out (the backup drive is not mounted) must
 	// not become a fresh archive on the local disk that then reports "ok".
 	if fi, err := os.Stat(j.Out); err != nil || !fi.IsDir() {
@@ -337,6 +343,7 @@ func RunHeadless(path string) int {
 		takeBackRunWrites(j.Out, outlookExported, logf, runLog, logMade)
 		jobFail(path, runErr)
 		reportRun(key, j.Name, j.Out, backupalert.ResultFailed, runErr, 0, nil)
+		autoPauseForDelete(path, j.Out, key, runErr) // a delete met under the lock counts too (MA-1058)
 		return 1
 	}
 	// "Done." only for a run that finished or was cancelled: a refused or failed
@@ -434,6 +441,29 @@ const scheduleSyncLine = "\nThunderbird: synced before each run. A run skips the
 // the local job.
 const AutoPauseWhy = "the mailbox or mail folder has been unreachable for 30 days, so its scheduled backup was stopped. Your archive is kept. Do this: reconnect the source, then in MailArchive Desktop click Repair on the archive's Scheduled backup card to start the schedule again."
 
+// AutoPauseDeleteWhy is the auto-pause email's reason, and its log line's, for a delete this
+// computer never began (docs/design-archive-delete.md §15.10 slice 6, MA-1058), the same words for
+// the Desktop's capture and the local job. What happened first, no "again" (this computer's person
+// began no delete), the remedy the archive's row names (MarkerRowText). Lead's words,
+// owner-delegated 2026-11-02.
+const AutoPauseDeleteWhy = "a delete of this archive was begun on another computer or user account and did not finish, so this computer's scheduled backups into it have been refused for 30 days. Its scheduled backup on this computer was stopped; nothing in the archive's folder was changed. Do this: to finish the delete, open MailArchive Desktop on this computer and click Delete… on the archive's row in Your archives."
+
+// autoPauseForDelete is MA-1058 for the local scheduled job at path, backing up into out, after a
+// run whose outcome was runErr (nil: it got past the delete check): AutoPauseForDeleteIfDue with
+// MailArchive's own deletion log and the job file's name as this computer's entry, which is the
+// name its schedule was installed under. What it did is told beside the job file, never in the
+// folder, and a pause sends the auto-pause email, which ends the count. Best effort.
+func autoPauseForDelete(path, out, key string, runErr error) {
+	paused, err := AutoPauseForDeleteIfDue(backupalert.DefaultSettingsPath(), key, jobFileName(path), out, "", runErr, time.Now())
+	if err != nil {
+		jobNote(path, "auto-pause: "+err.Error())
+	}
+	if paused {
+		jobNote(path, "auto-paused the scheduled backup: "+AutoPauseDeleteWhy)
+		backupalert.RecordAutoPauseDefault(key, out, errors.New(AutoPauseDeleteWhy), nil)
+	}
+}
+
 // jobFileName is the schedule name a job file carries: its file name without .json.
 func jobFileName(path string) string { return strings.TrimSuffix(filepath.Base(path), ".json") }
 
@@ -451,9 +481,17 @@ var jobFailLogCap int64 = 1 << 20
 // view can find later (friction #20). The desktop notice is the caller's, through
 // the alert streak (reportRun), once per failing streak.
 func jobFail(path string, err error) {
+	jobNote(path, err.Error())
+	recordHeadlessFailure(jobFileName(path), err)
+	fmt.Fprintln(os.Stderr, "mailarchive run-job: "+err.Error())
+}
+
+// jobNote appends one dated line to the job's .jobfail.log beside the job file, under its cap
+// (jobFailLogCap): a sink that is never in the archive folder.
+func jobNote(path, text string) {
 	name := jobFileName(path)
 	sink := filepath.Join(filepath.Dir(path), name+".jobfail.log")
-	line := fmt.Sprintf("%s %v\n", time.Now().Format(time.RFC3339), err)
+	line := fmt.Sprintf("%s %s\n", time.Now().Format(time.RFC3339), text)
 	if fi, e := os.Lstat(sink); e == nil && fi.Mode().IsRegular() && fi.Size()+int64(len(line)) > jobFailLogCap {
 		_ = os.Rename(sink, filepath.Join(filepath.Dir(path), name+".older.jobfail.log"))
 	}
@@ -461,8 +499,6 @@ func jobFail(path string, err error) {
 		fmt.Fprint(f, line)
 		f.Close()
 	}
-	recordHeadlessFailure(name, err)
-	fmt.Fprintln(os.Stderr, "mailarchive run-job: "+err.Error())
 }
 
 // reportRun records a scheduled local run's outcome in the alert streak (key), sends the email

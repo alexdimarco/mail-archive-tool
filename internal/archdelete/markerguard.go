@@ -188,6 +188,25 @@ func OnlyMarkerKnows(logPath, folder string) bool {
 	return err == nil && u != nil && u.MarkerOnly && u.LogUnreadable == "" && u.Marker == delmark.Regular
 }
 
+// NeverBegunHere reports a delete of folder this computer never began (§15.10 slice 6, the owner's
+// ruling Q5, DM-16; MA-1058): a regular marker is there, this computer's deletion log at logPath
+// ("" is MailArchive's own, DefaultLogPath) was read and has no line for the folder, and the
+// marker's run is not one this log began (DM-10's "begun here"). A scheduled backup refused for
+// such a delete counts toward its auto-pause. False when the log knows the delete (by the folder or
+// by the marker's run), cannot be read or found, the marker's lookup fails, or its name is not a
+// regular file: a run refused for those never counts.
+func NeverBegunHere(logPath, folder string) bool {
+	if logPath == "" {
+		p, err := DefaultLogPath()
+		if err != nil {
+			return false
+		}
+		logPath = p
+	}
+	u, err := UnfinishedAt(logPath, folder, runtime.GOOS)
+	return err == nil && u != nil && u.MarkerOnly && u.Marker == delmark.Regular && u.LogUnreadable == "" && !u.BegunHere
+}
+
 // couldNotCheckRefusal is the "could not check" refusal: a *Refusal that also unwraps to the
 // lookup's *delmark.LookupError, so app.RefuseUnfinishedDelete names its kind archive_unwritable.
 type couldNotCheckRefusal struct {

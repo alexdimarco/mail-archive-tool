@@ -2350,6 +2350,70 @@ or needed here.
 >   by mutation (its M1-M13), as its commit says. This settle's tests were written first and seen red
 >   before each fix.
 
+> **Slice 6, 3 November 2026 (§15.10 slice 6, the owner's ruling Q5; MA-1058).** A scheduled backup
+> refused `delete_unfinished` for a delete this computer never began now ends in an auto-pause, so a
+> forgotten delete on another computer no longer fails and alerts here for years (DM-16).
+> - *What counts.* `archdelete.NeverBegunHere`: a regular marker in the folder, this computer's
+>   deletion log read (MailArchive's own for the local job, the Desktop's own for the capture) with no
+>   line for the folder, and the marker's run not one this log began (DM-10's "begun here"). A delete
+>   the log knows, by the folder or by the marker's run, never counts; nor does a log that cannot be
+>   read, a failed marker lookup, or a marker name that is not a regular file. An empty or damaged
+>   marker (DM-26, no run to read) counts when no line matches the folder: only the marker knows it.
+> - *The count.* `backupalert.NoteDeleteRefused` keeps such runs in `<key>.delete-refused` beside the
+>   alert streak (the Desktop's settings folder, `KeyFor(out)`), as a `state.SourceStreak` under the
+>   same rule as the source-loss auto-pause: due once the refused runs span 30 days, at least two of
+>   them, never measured to now. Any other outcome of a scheduled run ends it (a run past the delete
+>   check, or refused for anything else); so do the auto-pause and a schedule's create or Remove
+>   (`ClearStreak`). The delete's step 3 removes the folder's count with its alert files, and uninstall
+>   removes every one.
+> - *The pause.* `wizard.AutoPauseForDeleteIfDue`, called on both scheduled paths — the local job
+>   (`RunHeadless`: its early refusal, and the engine's refusal under the lock) and the scheduled
+>   Microsoft 365 capture (`HeadlessCapture`: the same two places). At the threshold it stops this
+>   computer's live scheduler entry through the source-loss pause's own step (`stopLiveBackup`: only
+>   an entry the scheduler said was running is reported paused; a stop that found nothing is told,
+>   and sends no email). It writes nothing into the folder and never seals. The auto-pause email goes
+>   through the source-loss pause's path (`backupalert.RecordAutoPause`, result `paused`, under the
+>   "when a backup is paused" option), with the reason `wizard.AutoPauseDeleteWhy`; the same sentence
+>   is written beside the job file (`<name>.jobfail.log`) or in the capture log, never in the folder.
+>   No Desktop notice, as for the source-loss pause.
+> - *Words (lead's words, owner-delegated 2026-11-02):* "a delete of this archive was begun on another
+>   computer or user account and did not finish, so this computer's scheduled backups into it have
+>   been refused for 30 days. Its scheduled backup on this computer was stopped; nothing in the
+>   archive's folder was changed. Do this: to finish the delete, open MailArchive Desktop on this
+>   computer and click Delete… on the archive's row in Your archives." What happened first, no
+>   "again", and the remedy the row itself names (`MarkerRowText`). The email's subject stays the
+>   alerts' own ("MailArchive backup PAUSED after repeated failures: FOLDER").
+> - *The builder's calls, for the lead and the slice's adversarial pass:* (a) "counts toward the same
+>   streak as an unreachable mail source" cannot be the folder's own streak, which is a file in the
+>   folder (`.mailarchive-sourcestreak.json`) and §15.10 says the slice writes nothing there; it is the
+>   same record type and rule, kept on this computer (correction beside §15.10 item 6). (b) "30
+>   refused runs" is read as the source-loss rule it is the same as: since the owner's ruling of 28
+>   October 2026 that rule is 30 days between the first and latest such run (it counted 30 runs
+>   before; an hourly schedule would pause after 30 hours). Switching to 30 runs is one condition in
+>   `AutoPauseForDeleteIfDue`. (c) The entry stopped is named by this computer, never by the folder:
+>   the job file's name for the local job (the name its schedule was installed under), and
+>   `schedule.DefaultNameFor` of the `-out` the scheduler passes for the capture. The folder's
+>   descriptor, which the source-loss pause reads, may be gone (step 6 removes it) or written by the
+>   other computer. Only the backup entry is stopped: a verify schedule into the folder is named only
+>   by the folder's descriptor, and is left as it is. (d) A capture whose `-out` differs from the
+>   location it now backs up into ("Save and keep the backup") stops the entry named for the `-out`,
+>   which is the entry that runs it; tested only with the two the same.
+> - *Tests:* `internal/backupalert/ma1058_delete_refused_test.go` (the count: beside the settings,
+>   the 30-day rule, ends, `ClearStreak`, a file it cannot read, uninstall),
+>   `internal/archdelete/ma1058_never_begun_here_test.go` (`NeverBegunHere`'s cases; step 3),
+>   `internal/wizard/ma1058_autopause_delete_test.go` (the local job: 29 days counted and nothing
+>   stopped, 31 days stopped with the email and the note beside the job file, the folder unchanged;
+>   the log knowing the delete by the folder or by the marker's run never counts; a run past the
+>   check ends the count; a stop that finds nothing sends no email) and
+>   `internal/desktop/ma1058_capture_autopause_delete_test.go` (the capture: the same, with this
+>   Desktop's own deletion log). Prove-fail: 18 mutations, each red (the commit lists them). *Process
+>   note:* the tests were written in the same pass as the code, then each proven by mutation; none was
+>   seen red before its code existed.
+> - *Not covered, for the pass:* the real schedulers (the tests use a stand-in, as MA-871's do); on
+>   Windows the entry's side files beside the wrapper go with it, as for the source-loss pause. A
+>   folder spelled two ways keys two counts (`KeyFor`, as the alert streak). It owes its own
+>   adversarial pass (§15.10).
+
 ## 15. The delete marker (G2 for another computer, another account, and a remounted drive)
 
 Status: DESIGN AMENDMENT, 2 November 2026, for the 10-lens pre-code review
@@ -3256,6 +3320,12 @@ before step 2).
 >   source-loss auto-pause (`wizard/pause.go` counts only an unreachable mail source), so another
 >   computer's schedule keeps running and failing, with an alert once per streak, until someone
 >   finishes the delete or removes the row. Whether it should auto-pause is owner question 5.
+>   *Built 3 November 2026 (slice 6, the owner's ruling Q5; MA-1058):* such a refusal, for a delete
+>   this computer never began, now counts toward an auto-pause by the source-loss rule (30 days of
+>   refused runs), kept on this computer, not in the folder; at the threshold this computer's
+>   schedule into the folder is stopped and the auto-pause email goes (§14, "Slice 6"). What stays:
+>   a delete this computer's log knows still fails and alerts once per streak until it is finished
+>   here; a verify schedule into the folder is not stopped.
 > - **[DM-29] Rolling the rollout back.** The only rollback is installing an earlier release,
 >   which has no Delete and no marker check: an unfinished delete then cannot be finished there,
 >   its backups go into the half-deleted folder, and `deletions.log` stays. A misfiring marker
@@ -3615,6 +3685,10 @@ rulings.
 > - **Q5, auto-pause after 30 refused runs for a delete this computer never began (DM-16): YES.**
 >   Built in a later slice, not in slices 1 to 5: §15.10 slice 6, catalog MA-1058. §15.6's DM-16
 >   limit holds until then.
+>   *Note, 3 November 2026 (slice 6):* built; the auto-pause email's reason
+>   (`wizard.AutoPauseDeleteWhy`) is lead's words, owner-delegated 2026-11-02 (§14, "Slice 6"). The
+>   threshold is the source-loss rule as it stands since 28 October 2026, 30 days of refused runs
+>   rather than 30 runs (the builder's call (b) there, for the lead).
 > - **Words.** Owner, 2 November 2026: "I trust your wording on the new sentences". The "builder's
 >   words" of DM-11, DM-23, DM-27 and the marker-only words are delegated to the lead. The rule:
 >   say what happened first, never say "again" to a person who began no delete, name the remedy.
@@ -3730,6 +3804,15 @@ computer "click Delete…" while it could not list a folder whose manifest is go
    Microsoft 365 capture). It writes nothing into the folder. A delete this computer's log knows
    does not count. Words: lead's words, owner-delegated 2026-11-02. Its own adversarial pass.
    MA-1058.
+
+   > *Corrected 3 November 2026 (slice 6, builder):* "counts toward the same streak as an
+   > unreachable mail source" reads "counts by the same rule as an unreachable mail source": the
+   > source-loss streak is a file in the folder (`.mailarchive-sourcestreak.json`), which this slice
+   > must not write, so the refused runs are kept on this computer beside the alert streak
+   > (`<key>.delete-refused`), as the same record type. "At 30 refused runs" reads "once the refused
+   > runs span 30 days, at least two of them", the source-loss rule since the owner's ruling of 28
+   > October 2026. The entry stopped is named by this computer (the job file's name, or the
+   > capture's `-out`), not by the folder's descriptor. §14, "Slice 6".
 7. **G3: `-config` for schedule, pause, resume (MA-1060+).** As the owner already ruled: the
    terminal's `schedule`, `pause` and `resume` read the deletions.log of the `-config` folder they
    are given, so a delete begun from a Desktop started with `-config` is seen there. This design

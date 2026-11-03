@@ -15,12 +15,15 @@ import (
 )
 
 // The per-archive files beside the Desktop's settings that a scheduled backup's
-// alerts keep (backupalert.StreakSuffix, backupalert.SyncAlertSuffix; a test keeps
-// them in step: backupalert imports the engine, which this package must not).
+// alerts keep (backupalert.StreakSuffix, backupalert.SyncAlertSuffix,
+// backupalert.DeleteRefusedSuffix — the count of runs refused for a delete this
+// computer never began, MA-1058; a test keeps them in step: backupalert imports the
+// engine, which this package must not).
 const (
-	alertStreakSuffix = ".alert-streak"
-	syncAlertSuffix   = ".sync-alert"
-	lastFailureName   = "last-failure.json"
+	alertStreakSuffix   = ".alert-streak"
+	syncAlertSuffix     = ".sync-alert"
+	deleteRefusedSuffix = ".delete-refused"
+	lastFailureName     = "last-failure.json"
 )
 
 // alertKey is backupalert.KeyFor: the alert files' key for a run backing up into
@@ -73,7 +76,7 @@ func removeNameFiles(names, spellings []string, settingsDir string) (string, err
 		}
 		seen[k] = true
 		for _, d := range alertDirs {
-			for _, suffix := range []string{alertStreakSuffix, syncAlertSuffix} {
+			for _, suffix := range []string{alertStreakSuffix, syncAlertSuffix, deleteRefusedSuffix} {
 				if err := removeIfThere(filepath.Join(d, k+suffix)); err != nil {
 					return filepath.Join(d, k+suffix), err
 				}

@@ -73,8 +73,14 @@ func HeadlessCapture(cfg Config, logw io.Writer) error {
 			}
 			log.New(logw, "", log.LstdFlags).Printf("FAILED: %v", err)
 			cfg.reportRun(key, out, alert.ResultFailed, err, 0, nil)
+			// A delete this computer never began refuses every run: after 30 days of them, this
+			// computer's schedule is stopped (MA-1058).
+			cfg.autoPauseForDelete(key, out, err, logw)
 			return err
 		}
+		// Past the delete check: a count of runs refused for a delete this computer never began
+		// ends (MA-1058).
+		cfg.autoPauseForDelete(key, out, nil, logw)
 	}
 	// A paused archive is hard read-only: refuse before recordStartFailure or any
 	// write (S2-C2). The caller logs this to the capture log (config dir), never into
@@ -177,7 +183,33 @@ func HeadlessCapture(cfg Config, logw io.Writer) error {
 		logger.Printf("auto-paused the scheduled backup: the source has been unreachable for too long; the schedule was stopped (reconnect the source, then click Repair on the archive's Scheduled backup card)")
 		backupalert.RecordAutoPause(cfg.SettingsPath, cfg.Store, key, out, errors.New(wizard.AutoPauseWhy), logger)
 	}
+	if app.RefusedAsNoArchive(err) {
+		cfg.autoPauseForDelete(key, out, err, logw) // a delete met under the lock counts too (MA-1058)
+	}
 	return err
+}
+
+// autoPauseForDelete is MA-1058 for the scheduled capture backing up into out, after a run whose
+// outcome was runErr (nil: it got past the delete check): wizard.AutoPauseForDeleteIfDue with this
+// Desktop's deletion log and settings, and as this computer's entry the name the capture's schedule
+// was installed under (schedule.DefaultNameFor of the -out it was installed with, which the
+// scheduler passes back as cfg.Out; the archive location when there is none). Told in the capture
+// log logw, which is never in a refused folder (scheduledCapture); a pause sends the auto-pause
+// email, which ends the count. Best effort.
+func (cfg Config) autoPauseForDelete(key, out string, runErr error, logw io.Writer) {
+	installedFor := strings.TrimSpace(cfg.Out)
+	if installedFor == "" {
+		installedFor = out
+	}
+	paused, perr := wizard.AutoPauseForDeleteIfDue(cfg.SettingsPath, key, schedule.DefaultNameFor(installedFor), out, cfg.deletionsLogPath(), runErr, time.Now())
+	logger := log.New(logw, "", log.LstdFlags)
+	if perr != nil {
+		logger.Printf("auto-pause: %v", perr)
+	}
+	if paused {
+		logger.Printf("auto-paused the scheduled backup: %s", wizard.AutoPauseDeleteWhy)
+		backupalert.RecordAutoPause(cfg.SettingsPath, cfg.Store, key, out, errors.New(wizard.AutoPauseDeleteWhy), logger)
+	}
 }
 
 // captureOwnFiles are the files and folders of MailArchive's own a scheduled capture may

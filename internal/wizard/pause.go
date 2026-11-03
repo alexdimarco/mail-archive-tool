@@ -2,9 +2,11 @@ package wizard
 
 import (
 	"fmt"
+	"time"
 
 	"mail-archive-tool/internal/app"
 	"mail-archive-tool/internal/archdelete"
+	"mail-archive-tool/internal/backupalert"
 	"mail-archive-tool/internal/encmark"
 	"mail-archive-tool/internal/schedule"
 	"mail-archive-tool/internal/seal"
@@ -127,16 +129,8 @@ func AutoPauseIfDue(out string, runFoundSourceUnreachable bool) (bool, error) {
 	if nerr != nil {
 		return false, fmt.Errorf("auto-pause is due, but this archive records no backup schedule of its own to stop (%v), so nothing was paused", nerr)
 	}
-	// Only an entry the scheduler said was there is stopped: the removal succeeds on a missing
-	// entry on every system, so "removed" alone is not "was running". A scheduler that can't
-	// answer (Windows' SchedulerUnavailable) is not "installed", so it never reports a pause. The
-	// removal itself stays unconditional, so a missing entry's leftover side files still go.
-	wasLive := queryLiveEntry(name) == schedule.Installed
-	if rerr := removeLiveEntry(schedule.Spec{Name: name, Out: out, WrapperPath: schedule.DefaultWrapperPath(name)}); rerr != nil {
-		return false, rerr
-	}
-	if !wasLive {
-		return false, fmt.Errorf("auto-pause is due, but no live backup schedule was running under %s, so nothing was paused", name)
+	if paused, err := stopLiveBackup(name, out); !paused {
+		return false, err
 	}
 	// The verify goes only with a backup this pause stopped: a "nothing was paused" result never
 	// leaves a verify stopped with no email (the part A re-verification).
@@ -146,4 +140,62 @@ func AutoPauseIfDue(out string, runFoundSourceUnreachable bool) (bool, error) {
 		}
 	}
 	return true, nil
+}
+
+// stopLiveBackup stops the live scheduler entry name, which backs up into out, and reports whether
+// it stopped one that was running. Only an entry the scheduler said was there is stopped: the
+// removal succeeds on a missing entry on every system, so "removed" alone is not "was running". A
+// scheduler that can't answer (Windows' SchedulerUnavailable) is not "installed", so it never
+// reports a pause. The removal itself stays unconditional, so a missing entry's leftover side
+// files still go. It never touches out: the entry, and on Windows its side files beside the
+// wrapper, are this computer's.
+func stopLiveBackup(name, out string) (bool, error) {
+	wasLive := queryLiveEntry(name) == schedule.Installed
+	if rerr := removeLiveEntry(schedule.Spec{Name: name, Out: out, WrapperPath: schedule.DefaultWrapperPath(name)}); rerr != nil {
+		return false, rerr
+	}
+	if !wasLive {
+		return false, fmt.Errorf("auto-pause is due, but no live backup schedule was running under %s, so nothing was paused", name)
+	}
+	return true, nil
+}
+
+// AutoPauseForDeleteIfDue is the auto-pause for a delete this computer never began
+// (docs/design-archive-delete.md §15.10 slice 6, the owner's ruling Q5, DM-16; MA-1058). A
+// scheduled run calls it with its own outcome runErr (nil for a run that got past the delete
+// check): a run refused delete_unfinished for a delete only the folder's marker knows, whose run
+// this computer's deletion log at deletionsLog ("" is MailArchive's own) never began
+// (archdelete.NeverBegunHere), extends the count of such runs kept for key beside the settings
+// file at settingsPath (backupalert.NoteDeleteRefused); any other outcome ends it. Once the refused
+// runs span state.AutoPauseAfter (30 days, at least two runs: the source-loss rule) it stops this
+// computer's live scheduler entry named entry — the job file's name for a local job, the name the
+// Desktop installed its capture under — as the source-loss auto-pause does (stopLiveBackup), and
+// reports paused only when that entry was running. It writes nothing into out and never seals: the
+// folder holds a half-deleted archive, and its descriptor may already be gone, so the entry is named
+// by this computer, not by the folder. A delete this computer's log knows never counts: its row
+// already says "click Delete again". The caller sends the auto-pause email
+// (backupalert.RecordAutoPause, which also ends the count).
+func AutoPauseForDeleteIfDue(settingsPath, key, entry, out, deletionsLog string, runErr error, now time.Time) (bool, error) {
+	refused := runErr != nil && app.FailureKind(runErr) == state.FailDeleteUnfinished && archdelete.NeverBegunHere(deletionsLog, out)
+	count, err := backupalert.NoteDeleteRefused(settingsPath, key, refused, now)
+	if err != nil {
+		return false, fmt.Errorf("could not keep the count of backups refused for this archive's unfinished delete: %w", err)
+	}
+	if !refused || !count.AutoPauseDue() {
+		return false, nil
+	}
+	name, nerr := schedule.SanitizeName(entry)
+	if nerr != nil || name != entry {
+		return false, fmt.Errorf("auto-pause is due, but %q is not a backup schedule's name, so nothing was paused", entry)
+	}
+	return stopLiveBackup(name, out)
+}
+
+// SetSchedulerForTest replaces the host scheduler the auto-pauses ask and stop (query, remove) and
+// returns the function that puts the real one back: another package's test (the Desktop's scheduled
+// capture) drives a real auto-pause without touching this computer's scheduler.
+func SetSchedulerForTest(query func(string) schedule.State, remove func(schedule.Spec) error) (restore func()) {
+	oq, or := queryLiveEntry, removeLiveEntry
+	queryLiveEntry, removeLiveEntry = query, remove
+	return func() { queryLiveEntry, removeLiveEntry = oq, or }
 }

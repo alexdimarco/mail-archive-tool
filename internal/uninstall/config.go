@@ -50,6 +50,11 @@ const alertStreakSuffix = ".alert-streak"
 // keeps the two in step by behaviour).
 const syncAlertSuffix = ".sync-alert"
 
+// deleteRefusedSuffix ends a scheduled backup's count of runs refused for a delete this computer
+// never began, <key>.delete-refused, beside the alert streak (backupalert.DeleteRefusedSuffix;
+// MA-1058's test keeps the two in step by behaviour).
+const deleteRefusedSuffix = ".delete-refused"
+
 // ErrOverlap refuses the WHOLE config cleanup because the config dir is, contains, or
 // sits inside a mail archive; deleting its contents could destroy mail (R36, U-C1).
 var ErrOverlap = errors.New("refusing to clean the config directory: it overlaps a mail archive")
@@ -117,6 +122,8 @@ func deletableConfigName(name string) bool {
 	case strings.HasSuffix(name, alertStreakSuffix): // a scheduled backup's alert streak
 		return true
 	case strings.HasSuffix(name, syncAlertSuffix): // its Thunderbird-not-synced told-file
+		return true
+	case strings.HasSuffix(name, deleteRefusedSuffix): // its count of runs refused for an unfinished delete
 		return true
 	}
 	return false
