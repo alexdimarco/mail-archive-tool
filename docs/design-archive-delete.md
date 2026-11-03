@@ -1367,6 +1367,9 @@ F5).** New or changed words are the builder's, for the operator, unless a quote 
   The terminal reads MailArchive's own deletions.log: `pause` and `resume` take no `-config`, so a
   delete begun on a Desktop started with -config is not seen there (for the operator: adding
   `-config` to them, as to the delete verbs, is not built).
+  *Amended 3 November 2026 (G3, the owner's ruling of 2 November 2026):* built. `pause`, `resume`
+  and `schedule -install` take `-config` and then ask the log beside it, never both (§16;
+  MA-1060 to MA-1062).
 - *Install and Repair refuse a delete not finished (MA-1015 amended; F2).* The Scheduled backup
   card's Install and Repair of the current archive whose delete did not finish are refused right
   after MA-979's hold, in MA-987's words ("…so it is not backed up; nothing was changed."; a log
@@ -1467,6 +1470,8 @@ changed words are the builder's, for the operator, unless a quote says otherwise
   in the emptied-folder guard); G3, which log the terminal's `schedule`, `pause` and `resume` ask
   when a delete was begun with `-config` (or a Desktop with `-config` misses a terminal delete).
   *Amended 2 November 2026 (owner ruling "1 - yes"):* G2 is built (MA-1044, below); G3 stays open.
+  *Amended 3 November 2026:* G3 is built for `schedule`, `pause` and `resume` (§16, MA-1060 to
+  MA-1062); the runs and `run-job` still ask MailArchive's own log (§16.6).
 
 **A backup refuses a folder whose delete did not finish (2 November 2026; the guards pass's G2,
 owner ruling "1 - yes"; MA-1044, MA-1015 and MA-1036 amended).** The known gap above is closed: a
@@ -3818,5 +3823,206 @@ computer "click Delete…" while it could not list a folder whose manifest is go
    are given, so a delete begun from a Desktop started with `-config` is seen there. This design
    does not restate that ruling. Catalog MA-1060 onward, reserved for it; it owes its own design
    note and review under the process gates.
+   *Note, 3 November 2026:* its design note is §16 below, reviewed in
+   `docs/review-g3-config-10lens.md`.
 
 Lab rows (MA-1055) run before release, Windows first.
+
+## 16. G3: `-config` for `schedule`, `pause` and `resume` (§15.10 item 7; MA-1060 onward)
+
+Design note, 3 November 2026, written by the builder for the lead. Reviewed before code in
+`docs/review-g3-config-10lens.md` (GO WITH CONDITIONS; one reviewer, the builder, in a separate
+pass); its six conditions are folded below, each marked "[G3-n]".
+
+**The ruling it builds** (owner, 2 November 2026, as given to the lead and as §15.10 item 7 records
+it): "give schedule, pause, resume a -config option (and carry it into the 'Delete again' hint);
+never read both logs". Nothing here goes beyond that ruling; what it leaves open is listed in
+§16.6.
+
+**Why.** A MailArchive Desktop started with `-config FILE` keeps its settings, its list of archives
+and its `deletions.log` beside FILE (MA-1018). Its deletes write that log. The terminal's `pause`,
+`resume` and `schedule -install` read only MailArchive's own log, so a delete begun from such a
+Desktop that stopped before its marker was written (or whose folder is gone) is not seen there: the
+terminal could pause, resume (and put back the scheduled backup) or install a schedule for that
+folder (§14, "the adversarial findings on the new guards", F1's last sentence; §15.5's "G3 is
+narrowed as a side effect").
+
+### 16.1 What the person types
+
+- `mailarchive pause -out DIR [-reason TEXT] [-config FILE]`
+- `mailarchive resume -out DIR [-config FILE]`
+- `mailarchive schedule … [-config FILE]`: in the flat form among the schedule's own flags
+  (`schedule -out DIR -auto -install -config FILE`); in the job form before the `--`
+  (`schedule -config FILE -install -- -out DIR -auto`). A `-config` after the `--` belongs to the
+  job, and no job verb takes one, so it is refused as any unknown job flag is today.
+  > *Folded from the 10-lens review [G3-1]:* the job form's allow-list of schedule flags (the
+  > stray-flag check, `main.go`, today `interval`, `at`, `name`, `install`, `remove`) gains
+  > `config`; without it `-config` before `--` would be refused as a job flag. MA-1061 proves both
+  > forms.
+- FILE means what it means for `delete-archive`, `unlist-archive` and `add-archive`: the config
+  file of a MailArchive Desktop started with `-config FILE`. FILE itself need not exist (that
+  Desktop keeps its list beside FILE before it writes FILE); its folder must.
+
+### 16.2 Which log each reads: one, never both
+
+- **Without `-config`:** MailArchive's own `deletions.log` (`archdelete.DefaultLogPath`). Unchanged.
+- **With `-config FILE`:** the `deletions.log` in FILE's folder, FILE first made absolute against
+  the terminal's current folder (`filepath.Abs`): `filepath.Join(filepath.Dir(abs FILE),
+  "deletions.log")`. This is the file the Desktop started with `-config FILE` writes
+  (`Config.deletionsLogPath`) and the one `delete-archive -config FILE` writes
+  (`NewCommandLineDeleteAt`). One function names it for all of them
+  (`desktop.DeletionsLogFor`), which `Config.deletionsLogPath` and the verbs both call, so the
+  three cannot drift apart; a test pins that the verbs' log is the delete verbs' log.
+  > *Folded from the 10-lens review [G3-2]:* "the file the Desktop writes" holds when FILE names
+  > the same file. The terminal makes a relative FILE absolute against its own current folder; the
+  > Desktop keeps `-config` as given, so its relative FILE is read against the folder it was
+  > started from. A relative `-config cfg.json` names the Desktop's file only when typed in that
+  > folder. The hints always print the absolute path, so a command copied from a hint is not
+  > ambiguous.
+  > *Folded from the 10-lens review [G3-3]:* `desktop.DeletionsLogFor("")` is "" (which archdelete
+  > reads as MailArchive's own log), so a verb passes its flag through; `Config.deletionsLogPath`
+  > keeps its behaviour exactly (spaces around the config path trimmed; MailArchive's own log when
+  > there is no config path), and the Desktop's existing deletion-log tests pass unchanged.
+- **Never both.** The `-config` log takes the place of MailArchive's own; it is not asked as well.
+  Nothing in the three verbs reads the other one.
+- **Where it is asked.** `pause` passes it to `wizard.PauseArchive`; `resume` to
+  `wizard.ResumeArchive`, which carries it into its schedule repair (`GuardedInstall`, before and
+  after the install); `schedule -install` to `archdelete.GuardedInstall` (before and after). Each
+  of these already takes a log path (the Desktop passes its own); only the terminal passed "".
+  `schedule -remove` and the schedule's preview (no `-install`) ask no log, as today: removing an
+  entry or printing one writes nothing into the folder.
+- **A `-config` whose folder does not exist** is refused before anything is done, by all three
+  verbs and every `schedule` form (`-install`, `-remove`, the preview), in the delete verbs'
+  existing words (`configFolderMissing`, MA-1024): "There are no MailArchive Desktop settings
+  beside FILE: its folder DIR does not exist, so nothing was changed. Give -config the config file
+  MailArchive Desktop was started with." Exit 1. For `-remove` and the preview this
+  refuses work that reads no log; it is done so that a mistyped `-config` is said once, the same
+  way, wherever it is typed, rather than accepted silently by some forms.
+- No `deletions.log` in FILE's folder reads as no deletes, as for the default log and the delete
+  verbs (*corrected by the 10-lens review [G3-4]; it read "A `deletions.log` that is not in an
+  existing FILE folder reads as 'no deletes'"*). A log there that cannot be read refuses in MA-1015's words,
+  naming that log (fail closed, unchanged).
+- With `-config`, no home folder is needed to find the log, so MA-1015's "could not find its
+  settings folder" refusal (no HOME or AppData) does not apply; without `-config` it is unchanged.
+
+### 16.3 The hints carry `-config`
+
+- Every refusal these verbs print in archdelete's words is printed by `terminalRefusal` with the
+  verb's `-config` (today they pass ""), so its hints name the command that reads the same log:
+  "At this terminal, Delete again is: mailarchive delete-archive -config "FILE" -out "DIR"";
+  for a delete only the marker knows, "To finish it at this terminal: mailarchive delete-archive
+  -config "FILE" -out "DIR"" (§15.3, DM-11); and "Remove from list" likewise
+  (`unlist-archive -config "FILE"`). FILE is the absolute path, quoted for this computer's command
+  line (`encmark.CommandPath`, as the delete verbs quote it). Without `-config`, every hint is
+  unchanged.
+  > *Folded from the 10-lens review [G3-5]:* `deleteRefusalAtTerminal` takes the verb's
+  > `-config`. Its other callers, the export and `graph` runs, take no `-config`, pass "" and print
+  > what they print today (MA-1044's and MA-1048's tests, unchanged).
+- `pause`'s success line names `resume` with the same `-config`: "Run `mailarchive resume -config
+  "FILE" -out DIR` to undo." Only the command gains `-config`; without it the line is unchanged.
+  (Lead's words, owner-delegated 2026-11-02: the command is the one that reads the same log.)
+- `schedule -install`'s success lines are unchanged: they name `mailarchive status`,
+  which takes no `-config` (§14, "the finishing command on a Desktop started with -config").
+
+### 16.4 With the marker (§15, slices 2 to 6)
+
+- The marker is asked first, whichever log is read (`ActionRefusal` → `UnfinishedAt`), so a folder
+  holding it is refused by `pause`, `resume` and `schedule -install` with or without `-config`, as
+  since slice 2. `-config` changes only:
+  - what only a log knows: a folder whose delete stopped before step 6's first removal (no marker;
+    the archive is whole, owner ruling Q1), and a folder already removed; and
+  - which words a marker folder gets: when its run is in the log asked, MA-1015's "Delete not
+    finished: click Delete again"; when it is not, the marker-only words (DM-11).
+- Slices 3 to 6 are unchanged: the delete writes the marker and the log it was started with;
+  finishing from the marker (slice 4), the run-id and identity routes (slice 5) are the delete's
+  own; slice 6's auto-pause belongs to scheduled runs (`run-job`, the capture), which do not take
+  `-config` (§16.6).
+- Nothing here writes the marker or any log: the three verbs only read the log.
+
+### 16.5 Paths: Windows first, then macOS and Linux
+
+- **Windows.** FILE may be `C:\Users\A\My Config\desktop.json`, a network path
+  `\\server\share\mailarchive\config.json`, a path relative to the current folder (`config.json`)
+  or to a drive's current folder (`D:config.json`); `filepath.Abs` makes each absolute the way the
+  Desktop's `-config` and `delete-archive -config` already do, and the log is beside it. The hints
+  quote FILE in double quotes with a trailing backslash doubled (`CommandPath`). A spelling in
+  another case names the same file (the Windows file system ignores case); nothing compares
+  spellings here.
+- **macOS and Linux.** The shell, not MailArchive, turns `~` into the home folder, and only when it
+  is not quoted: `-config "~/x/config.json"` names a folder `~` in the current folder, which does
+  not exist, so §16.2's check refuses it. The hints quote FILE with Go's `%q`, as the delete verbs
+  do.
+- **A FILE that is a folder** (the person gave the settings folder, not the file): its
+  parent's `deletions.log` is read, as `delete-archive -config` and the Desktop itself would read
+  it. This is kept the same as theirs on purpose, so the verbs never read a different log from the
+  delete that wrote it; the help says "the config file".
+
+### 16.6 Limits (stated, not closed)
+
+- **Never both logs.** By the ruling, `pause -config FILE` does not see a delete begun from a
+  Desktop started without `-config` (or at the terminal without it), and `pause` without `-config`
+  does not see one begun with it. For a folder holding the marker both are refused (§16.4); what
+  is left is a folder whose delete stopped before step 6 (the archive whole: owner ruling Q1's
+  reasoning) and a folder already removed.
+- **The marker-only words can be wrong about where.** With `-config FILE`, a marker whose
+  delete is in MailArchive's own log (begun on this computer without `-config`) gets "This
+  computer's deletion log has no record of it (it was begun on another computer or user
+  account)". The Desktop started with `-config` says the same today (slice 2). The remedy it
+  names (finish the delete from the row) still works: `delete-archive -config FILE` finishes it
+  from the marker (slice 4). Rewording it needs the verbs to know of the other log, which the
+  ruling rules out; left for the lead.
+- **The scheduled job does not take `-config`.** `schedule -config FILE -install` asks the
+  `-config` log when it installs; the job it installs (`mailarchive …`) asks MailArchive's own log
+  when it runs (G2, §14 "Which log"), and the marker. Whether runs and `run-job` read a `-config`
+  log stays open (§14's G3 note on runs); the ruling covers `schedule`, `pause` and `resume` only.
+- **The root usage lines are unchanged.** The lines for `pause`, `resume` and `schedule` in
+  `mailarchive -h` are pinned by MA-939 and are left as they are; each verb's own `-h` names
+  `-config`, and the README says it (§16.7).
+- **Not run here:** the real program on Windows (`cmd/mailarchive` cannot run in the lab VM: it
+  is compiled for Windows and vetted there; the shared function and its paths are tested on
+  Windows in `internal/desktop`). A Windows terminal walk with a `-config` path holding spaces
+  and a network path is owed to the lab rows (MA-1055).
+  > *Folded from the 10-lens review [G3-6]:* MA-1062's test of `desktop.DeletionsLogFor` runs the
+  > Windows spellings (a drive path with spaces, a network path, a drive root) on Windows, in the
+  > lab VM, and the macOS and Linux spellings there; `cmd/mailarchive` is compiled and vetted for
+  > Windows (GOOS=windows `go vet`). The Windows terminal walk is pending (MA-1055).
+
+### 16.7 Words (lead's words, owner-delegated 2026-11-02)
+
+- `pause -h` and `resume -h`, for `-config`: "the config file of a MailArchive Desktop started with
+  -config, to ask the deletion log beside it whether a delete of the folder did not finish
+  (default: MailArchive's own)".
+- `schedule -h`, for `-config`: "the config file of a MailArchive Desktop started with -config:
+  -install asks the deletion log beside it whether a delete of the folder did not finish
+  (default: MailArchive's own); the scheduled job itself does not take it".
+- The README, after "Each of the three takes `-config FILE` to reach a MailArchive Desktop started
+  with `-config`.": "`pause`, `resume` and `schedule -install` take it too, so they ask that
+  Desktop's deletion log, not MailArchive's own."
+- No refusal gets new words: the refusals are MA-1015's, MA-1036's, the marker-only words and
+  MA-1024's, with `-config` in the commands they name.
+
+### 16.8 Tests (each prove-fail → prove-pass; catalog MA-1060 onward)
+
+- **MA-1060** `pause` and `resume` with `-config` ask the `-config` folder's log, and only it: a
+  delete there and not in MailArchive's own log refuses both, with the hint's `-config`; a delete in
+  MailArchive's own log only does not refuse them with `-config` (and does without it); positive
+  twins first; `pause`'s success line names `resume` with the same `-config`.
+- **MA-1061** `schedule -install` with `-config`, the flat and the job form: refused for a delete
+  in the `-config` log, nothing installed and no descriptor written, the hint's `-config`; a delete
+  in MailArchive's own log only does not refuse it with `-config`; `-config` before `--` is
+  accepted, and `-config` is in `schedule -h`.
+- **MA-1062** A `-config` whose folder does not exist refuses `pause`, `resume` and each `schedule`
+  form with nothing changed; a marker folder is refused under `-config` with the marker-only hint
+  carrying `-config`; and `desktop.DeletionsLogFor` is the log `delete-archive -config` and the
+  Desktop write, for Windows, macOS and Linux spellings (run on Windows in the lab VM).
+
+### 16.9 Build note (3 November 2026)
+
+Built as written, with the six conditions. The tests were written first and failed ("flag
+provided but not defined: -config"; `DeletionsLogFor` undefined); eleven mutations, each applied
+alone, were each caught by a failing test (the commit lists them). Run: the changed packages on
+Linux (Docker) and macOS, the unfiltered suite on macOS, `internal/desktop` on Windows in the lab
+VM (MA-1062's path test passed there with the Windows spellings), and `cmd/mailarchive` compiled
+and vetted for Windows. Owed: the Windows terminal walk (MA-1055), and the adversarial pass if
+the lead counts this change as security-sensitive (it changes which log three refusals read; it
+writes nothing new).

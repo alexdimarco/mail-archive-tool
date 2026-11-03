@@ -273,11 +273,24 @@ func (cfg Config) sealedOnPage(folder, archiveID string) (archdelete.Captured, b
 // With no ConfigPath, archdelete.DefaultLogPath ("" when it cannot be had: the delete then
 // refuses before its start, as Execute does with no log).
 func (cfg Config) deletionsLogPath() string {
-	if p := strings.TrimSpace(cfg.ConfigPath); p != "" {
-		return filepath.Join(filepath.Dir(p), archdelete.LogName)
+	if p := DeletionsLogFor(cfg.ConfigPath); p != "" {
+		return p
 	}
 	p, _ := archdelete.DefaultLogPath()
 	return p
+}
+
+// DeletionsLogFor is the deletions.log beside the config file cfgPath of a Desktop started with
+// -config: the one that Desktop writes (deletionsLogPath), the one `delete-archive -config`
+// writes, and so the one the terminal's `pause`, `resume` and `schedule` given the same -config
+// read (design-archive-delete §16.2, G3). "" (no -config) is "", which archdelete reads as
+// MailArchive's own deletions.log, so a caller passes its flag through.
+func DeletionsLogFor(cfgPath string) string {
+	p := strings.TrimSpace(cfgPath)
+	if p == "" {
+		return ""
+	}
+	return filepath.Join(filepath.Dir(p), archdelete.LogName)
 }
 
 // deleteScheduler is the computer's scheduler as a delete reaches it.

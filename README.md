@@ -346,6 +346,8 @@ mailarchive add-archive DIR                               # list an archive fold
 `delete-archive` and `unlist-archive` reach only an archive listed under Your
 archives: list one made at the command line with `add-archive` first. Each of the
 three takes `-config FILE` to reach a MailArchive Desktop started with `-config`.
+`pause`, `resume` and `schedule -install` take it too, so they ask that Desktop's
+deletion log, not MailArchive's own.
 On Windows the program is `mailarchive.exe` and is not on the command line's
 search path: type its full path in quotes, for example
 `"C:\Program Files\MailArchive Desktop\mailarchive.exe" delete-archive -out DIR`

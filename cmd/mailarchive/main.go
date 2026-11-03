@@ -182,10 +182,11 @@ func runExport(args []string) error {
 	// G2): refused first, before a recorded refusal, the run log or -outlook's PST export writes
 	// into it, in MA-1015's words with the folder and the terminal's Delete again; the engine asks
 	// again at its start and under its lock. MailArchive's own deletions.log, as `pause`, `resume`
-	// and `schedule` ask (a -config one is G3). -list only reads the sources.
+	// and `schedule` ask without -config (with it they ask the one beside it, G3; a run takes no
+	// -config, design-archive-delete §16.6). -list only reads the sources.
 	if !*o.list {
 		if err := app.RefuseUnfinishedDelete(*o.out, ""); err != nil {
-			return deleteRefusalAtTerminal(err, *o.out)
+			return deleteRefusalAtTerminal(err, *o.out, "")
 		}
 	}
 	if *o.unattended {
@@ -459,7 +460,7 @@ func runExport(args []string) error {
 	}
 	// A delete that began while this run got ready and stopped part way is refused by the engine
 	// under its lock (MA-1044): said as at the start, with the terminal's Delete again.
-	err = deleteRefusalAtTerminal(runErr, *out)
+	err = deleteRefusalAtTerminal(runErr, *out, "")
 	return err
 }
 
@@ -951,7 +952,7 @@ func runVerify(args []string) error {
 	// into the half-deleted folder. archdelete's one question, as every other action asks it, before
 	// anything is written or any key asked (the delete marker's slice-2 pass, LOW-2's verify part).
 	if err := archdelete.ActionRefusal("", abspath(*o.out), "it was not checked"); err != nil {
-		return deleteRefusalAtTerminal(err, *o.out)
+		return deleteRefusalAtTerminal(err, *o.out, "")
 	}
 	if kerr := app.RefuseVerify(*o.out, *o.record); kerr != nil {
 		return kerr
@@ -1290,6 +1291,9 @@ func runSchedule(args []string) error {
 	name := fs.String("name", "", "scheduler entry name (default: mailarchive-<hash of the archive path>, one schedule per archive)")
 	install := fs.Bool("install", false, "install the schedule (default: print it without applying)")
 	remove := fs.Bool("remove", false, "remove a previously installed schedule (by -name, or by the -out archive's descriptor)")
+	// G3 (design-archive-delete §16): the deletion log -install asks; lead's words,
+	// owner-delegated 2026-11-02.
+	cfgPath := fs.String("config", "", "the config file of a MailArchive Desktop started with -config: -install asks the deletion log beside it whether a delete of the folder did not finish (default: MailArchive's own); the scheduled job itself does not take it")
 	// Flat form: the export job's flags, validated through the same definitions.
 	eo := exportFlags(fs)
 	if err := fs.Parse(args); err != nil {
@@ -1297,6 +1301,12 @@ func runSchedule(args []string) error {
 	}
 	if *install && *remove {
 		return errors.New("choose either -install or -remove, not both")
+	}
+	// One log, never both (§16.2): a -config whose folder does not exist is refused in every form,
+	// before anything is done.
+	deletionsLog, err := configLog(*cfgPath)
+	if err != nil {
+		return err
 	}
 	iv, err := schedule.ParseInterval(*interval)
 	if err != nil {
@@ -1309,7 +1319,7 @@ func runSchedule(args []string) error {
 		var stray []string
 		fs.Visit(func(f *flag.Flag) {
 			switch f.Name {
-			case "interval", "at", "name", "install", "remove":
+			case "interval", "at", "name", "install", "remove", "config": // config: G3-1
 			default:
 				stray = append(stray, "-"+f.Name)
 			}
@@ -1452,11 +1462,12 @@ func runSchedule(args []string) error {
 		superseded := schedule.SupersededVerify(spec)
 		// A folder whose delete did not finish gets no schedule: its run would write into the
 		// half-deleted folder (MA-1036; the 1.5.3 re-walk's guards pass, G1). Asked before and
-		// after the install, so one a delete raced is removed again (G4).
-		if err := archdelete.GuardedInstall("", j.out, "its schedule",
+		// after the install, so one a delete raced is removed again (G4). With -config, the log
+		// beside it, and only it (G3, design-archive-delete §16).
+		if err := archdelete.GuardedInstall(deletionsLog, j.out, "its schedule",
 			func() error { return schedule.Install(spec) },
 			func() error { return schedule.RemoveLiveEntry(spec) }); err != nil {
-			return deleteRefusalAtTerminal(err, j.out)
+			return deleteRefusalAtTerminal(err, j.out, *cfgPath)
 		}
 		kind := "backup"
 		if j.verb == "verify" {
@@ -1659,7 +1670,7 @@ func runGraph(args []string) (err error) {
 	// Not into a folder whose delete did not finish (MA-1044, G2): before any sign-in, log or
 	// recorded refusal, as the export verb (MailArchive's own deletions.log).
 	if err := app.RefuseUnfinishedDelete(*o.out, ""); err != nil {
-		return deleteRefusalAtTerminal(err, *o.out)
+		return deleteRefusalAtTerminal(err, *o.out, "")
 	}
 	if *o.unattended {
 		if err := requireExistingOut(*o.out); err != nil {
@@ -1852,7 +1863,7 @@ func runGraph(args []string) (err error) {
 
 	result, runErr := app.RunGraph(ctx, gopts, opts, logger)
 	printSummaryLed(logger, result, *o.index, *o.keepRaw, *o.out, summaryLead(runErr))
-	err = deleteRefusalAtTerminal(graphOutcome(logger, runErr), *o.out)
+	err = deleteRefusalAtTerminal(graphOutcome(logger, runErr), *o.out, "")
 	return err
 }
 
