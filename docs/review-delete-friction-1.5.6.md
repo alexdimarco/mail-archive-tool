@@ -105,6 +105,18 @@ day will find it odd. A later look, not for 1.5.6.
 prints `mailarchive status -out "C:\\Users\\…"` with doubled backslashes. `pause` says "its
 scheduled backup is stopped" for an archive that has none.
 
+> **Settled 3 November 2026 (the lead's settle step; the notes above stay as written).** Fixed
+> test-first, each with its prove-fail: **B** (MA-1065: the page drawn again after Dismiss or
+> Remove from list is at Your archives, its heading focused), **D** (MA-1066: "It was begun on
+> another computer or user account: this computer's deletion log has no record of its start." — not
+> the proposed "…has no record of this delete…", which §15.4 had turned down because a later run
+> here does have its own line), **E** (MA-1066: the proposed words, as written above) and **F**
+> (MA-1067: the guide and the README name the note file, say what removing it by hand does, and
+> describe the "It was finished elsewhere" question). Words: lead's words, owner-delegated
+> 2026-11-02. Left for the lead, not changed: A, C, H, I, J; G is a stated limit. Detail in
+> `docs/design-archive-delete.md` §14, "The 1.5.6 friction review settled". B's fix is checked
+> under Node, not yet on Edge.
+
 ## Type I friction, counted and kept
 
 - The typed folder name, and Tab to the button (no Enter submit): the typed name is the decision

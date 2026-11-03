@@ -385,6 +385,24 @@ not finished too, and **Archive now** and **Run now** start nothing on it. Click
 is added with **Open an archive folder…** or `mailarchive add-archive DIR`, without
 becoming the archive MailArchive Desktop shows.
 
+**The note in the folder.** Once a delete starts removing an archive's files, it
+leaves a note in the archive's folder, `.mailarchive-deleting.json`, until the
+delete is finished. While it is there, MailArchive does not back up into that
+folder, on this computer or on another computer or user account that runs this
+version or a later one. MailArchive removes the note only by finishing the delete.
+Removing it by hand lets backups write into the folder again, into an archive the
+delete may already have half emptied.
+
+**A delete finished on another computer.** If you began a delete here and it was
+finished from another computer or user account, this computer's row still says
+Delete not finished. Click **Delete…** on it: when the folder is not there,
+MailArchive asks whether the delete was finished elsewhere. **It was finished
+elsewhere** stops this computer's scheduled backups for the archive and removes its
+row (for an encrypted archive, this computer also forgets its record and key of
+it); then type the folder's name, as for any delete. If the folder is on a drive
+that is not plugged in, click **Cancel** and plug the drive in instead.
+`mailarchive delete-archive -out DIR` asks the same question.
+
 **After deleting the current archive**, no archive is chosen. Click **Switch to
 this archive** on another row under Your archives, or **Open an archive folder…**
 to choose one.

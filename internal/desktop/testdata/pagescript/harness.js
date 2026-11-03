@@ -605,6 +605,44 @@ const scenarios = {
     check(twin && flagged && scrolledTop.length === 1 && scrolledTop[0][1] === 0 && !('mailarchive-scroll-top' in store), 'dismissing the deleted archive\'s result draws the page again from its top',
       JSON.stringify({ twin, flagged, scrolledTop }));
   },
+  // After a reload the person started with Dismiss or Remove from list, the page drawn again is at
+  // Your archives, its heading focused (MA-1065; the 1.5.6 friction review's note B: the browser left
+  // it at the Microsoft 365 card). Positive twin first: a page drawn with nothing asked is not moved.
+  // The result of a delete of the page's own archive still draws the page again from its top (N12),
+  // not at Your archives.
+  async backToArchives() {
+    const key = 'mailarchive-scroll-archives';
+    const fresh = rows => { doc.body.children.slice().forEach(c => c.remove()); doc.activeElement = null; page(rows, 'D:\\Mail\\Cur'); const s0 = scrolled.length; boot(); return s0; };
+    const atArchives = s0 => { const card = doc.getElementById('sec-archives'), h2 = card && card.querySelector('h2');
+      return !!h2 && scrolled.slice(s0).includes(card) && doc.activeElement === h2 && h2.getAttribute('tabindex') === '-1' && !(key in store); };
+    page([['D:\\Mail\\Cur', 'current'], ['E:\\Other', 'other'], ['F:\\Old', 'other']], 'D:\\Mail\\Cur');
+    const s0 = scrolled.length; boot(); await wait(30);
+    check(scrolled.length === s0 && doc.activeElement === null && !(key in store), 'a page drawn with nothing asked is not moved');
+    const other = doc.querySelectorAll('.archive-row')[1];
+    replies['api/archive/delete/plan'] = x => plan(x.path, x.path === 'E:\\Other' ? 'Other' : 'Cur', 'TOK-' + x.path);
+    replies['api/archive/delete'] = result({ id: 'HO', row: 'E:\\Other', folder: 'E:\\Other', rowRemoved: true, rows: ['E:\\Other'], page: '' });
+    other.querySelector('[data-delete-archive]').click(); await wait(40);
+    await typeAndDelete(other, 'Other'); await wait(40);
+    doc.querySelector('[data-held-id="HO"]').dataset.saved = '1';
+    byText(doc.querySelector('[data-held-id="HO"]'), 'Dismiss').click(); await wait(40);
+    const asked = reloads === 1 && store[key] === '1' && !('mailarchive-scroll-top' in store);
+    let s1 = fresh([['D:\\Mail\\Cur', 'current'], ['F:\\Old', 'other']]); await wait(30);
+    check(asked && atArchives(s1), 'after Dismiss, the page drawn again is at Your archives, its heading focused', JSON.stringify({ asked, reloads, store }));
+    const old = doc.querySelectorAll('.archive-row')[1];
+    replies['api/archive/unlist'] = x => (x.confirm ? { ok: true, lines: ['Removed from Your archives. The folder and its files are kept.'] } : { ok: true, ask: true, question: 'Remove from list? The folder and its files are kept.', named: [] });
+    old.querySelector('[data-unlist-archive]').click(); await wait(40);
+    byText(old, 'Yes').click(); await wait(80);
+    const asked2 = reloads === 2 && store[key] === '1';
+    s1 = fresh([['D:\\Mail\\Cur', 'current']]); await wait(30);
+    check(asked2 && atArchives(s1), 'after Remove from list, the page drawn again is at Your archives, its heading focused', JSON.stringify({ asked2, reloads }));
+    const cur = doc.querySelectorAll('.archive-row')[0];
+    replies['api/archive/delete'] = result({ id: 'HC', row: 'D:\\Mail\\Cur', folder: 'D:\\Mail\\Cur', rowRemoved: true, rows: ['D:\\Mail\\Cur'], page: 'deleted' });
+    cur.querySelector('[data-delete-archive]').click(); await wait(40);
+    await typeAndDelete(cur, 'Cur'); await wait(40);
+    doc.querySelector('[data-held-id="HC"]').dataset.saved = '1';
+    byText(doc.querySelector('[data-held-id="HC"]'), 'Dismiss').click(); await wait(40);
+    check(reloads === 3 && store['mailarchive-scroll-top'] === '1' && !(key in store), "the page's own archive deleted still starts at the top, not at Your archives", JSON.stringify(store));
+  },
   // Save deletion record says on screen what it asked of the browser (MA-1042, N20), as Save this
   // plan does. Positive twin first: nothing is said before it is clicked.
   async saveRecordLine() {

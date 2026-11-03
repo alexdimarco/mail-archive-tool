@@ -69,6 +69,11 @@ function delUnlistedGone(){document.querySelectorAll('[data-unlisted-note]').for
 // Dismissing the result of a delete of the page's own archive draws the empty page again from its
 // top, not where the page was scrolled to (N12): said for the page drawn next, which scrolls up.
 const delTopKey='mailarchive-scroll-top';
+// Every other reload the person started — Dismiss on a delete's result, Remove from list — draws the
+// page again at Your archives (or This archive), its heading focused, where the person was (MA-1065;
+// the 1.5.6 friction review's note B: the browser left the view at the Microsoft 365 card).
+const delArchivesKey='mailarchive-scroll-archives';
+function delBackToArchives(){try{sessionStorage.setItem(delArchivesKey,'1');}catch(e){}}
 // A delete not finished (§5.4): the row's Switch, Pause and Resume give way to its words; Delete…
 // and Forget stay.
 function delMarkUnfinished(li){
@@ -118,6 +123,7 @@ async function delDismiss(h,reload){
     if(!d.ok&&!d.notHeld){if(msg){msg.hidden=false;msg.textContent=d.error||'Could not close this result.';}return false;}
     h.remove();
     if((reload||delWait)&&delInFlight===0&&!document.querySelector('[data-held-id]')&&($('archiveGone')||$('noArchive'))){try{sessionStorage.setItem(delTopKey,'1');}catch(e){}}
+    else if(reload&&delInFlight===0&&!document.querySelector('[data-held-id]'))delBackToArchives();
     if((reload||delWait)&&delInFlight===0&&!document.querySelector('[data-held-id]')){location.reload();return 'reload';}
     return true;
   }catch(e){if(msg){msg.hidden=false;msg.textContent='Error: '+e;}return false;}
@@ -310,6 +316,7 @@ function delUnlistAsk(li,b,q){
         // it showed for 1.5 seconds, then the row was simply gone), under the archive's folder (N14:
         // it named none).
         try{sessionStorage.setItem(delUnlistedKey,JSON.stringify({path:b.dataset.path,said:said}));}catch(e){}
+        delBackToArchives(); // the page drawn again is at Your archives (MA-1065)
         delRowGone(li,null);setTimeout(()=>reloadPage(),1500);return;}
       done();if(n){n.hidden=false;n.textContent=d.error||'Could not remove it from the list.';}
     }catch(e){done();if(n){n.hidden=false;n.textContent='Error: '+e;}}
@@ -349,6 +356,14 @@ try{const kept=sessionStorage.getItem(delUnlistedKey);
 try{if(sessionStorage.getItem(delTopKey)){sessionStorage.removeItem(delTopKey);
   const top=()=>{if(window.scrollTo)window.scrollTo(0,0);};top();
   if(window.addEventListener)window.addEventListener('load',()=>setTimeout(top,0));}}catch(e){}
+// The page drawn again after Dismiss or Remove from list starts at Your archives (or This archive),
+// its heading focused so the keyboard carries on from there (MA-1065): once now, and again once the
+// browser has put back where the page was scrolled to.
+try{if(sessionStorage.getItem(delArchivesKey)){sessionStorage.removeItem(delArchivesKey);
+  const card=$('sec-archives')||$('sec-this-archive');
+  if(card){const go=()=>{if(card.scrollIntoView)card.scrollIntoView({block:'start'});};go();
+    const h2=card.querySelector('h2');if(h2){h2.setAttribute('tabindex','-1');h2.focus({preventScroll:true});}
+    if(window.addEventListener)window.addEventListener('load',()=>setTimeout(go,0));}}}catch(e){}
 // Every result the server holds is drawn when the page loads (a reload is no dismissal).
 const hd=$('heldDeletes');
 if(hd){try{JSON.parse(hd.dataset.heldDeletes||'[]').forEach(v=>delShowHeld(v));}catch(e){}}

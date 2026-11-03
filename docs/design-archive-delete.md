@@ -2088,6 +2088,11 @@ or needed here.
 >   computer's deletion log has no record of when it began: it was begun on another computer or user
 >   account." (the design's "has no record of it" would be false on a later run, whose own line the
 >   log then has) and DM-28's sentence as written.
+>   *Corrected 3 November 2026 (the 1.5.6 friction review's note D, MA-1066; lead's words,
+>   owner-delegated 2026-11-02):* right after "This finishes the delete begun DATE.", "no record of
+>   when it began" read as a contradiction on the Windows walk. The sentence is now "It was begun on
+>   another computer or user account: this computer's deletion log has no record of its start." —
+>   what happened first, and still true on a later run here, for the reason given above.
 > - *DM-27's `marked` line on such a delete*: its marker is now this delete's own (its run is the
 >   plan's first run), so it gets the `marked` line naming that run. This replaces slice 3's "A
 >   marker already there that is not this delete's (another run id …) gets no `marked` line" for a
@@ -2481,6 +2486,49 @@ or needed here.
 >   schedule pauses after about five refused runs, or two 30 days apart (builder's call (b)); the
 >   email's remedy assumes the row is listed in the Desktop the person opens (for a wizard-made job
 >   or a `-config` Desktop, they may first need Open an archive folder… or that Desktop).
+
+> **The 1.5.6 friction review settled, 3 November 2026 (MA-1065, MA-1066, MA-1067 added; MA-1051
+> amended, words only).** The review (`docs/review-delete-friction-1.5.6.md`, walked on the Windows
+> VM at 666148b, committed as ddea8bf) found no high-friction cell and ten notes. The settle step
+> took the two low-to-medium notes (B, F) and the two whose fix is words only (D, E); the new
+> sentences are lead's words, owner-delegated 2026-11-02 (§15.8, "Words"): what happened first, no
+> "again" to a person who began no delete, the remedy named.
+> - *Note B, fixed (MA-1065):* after **Dismiss** on a delete's result and after **Remove from
+>   list**, the page drawn again is at Your archives (or This archive), its heading focused; the
+>   browser had left the view at the Microsoft 365 card. A one-time mark for the tab, as N12's
+>   "start at the top" (which still wins when the page's own archive was deleted). No behaviour a
+>   person decides; a builder's fix, as the review says. Not yet walked on Edge.
+> - *Note D, fixed (MA-1066):* the plan's sentence after "This finishes the delete begun DATE." for
+>   a delete planned from the folder's note is now "It was begun on another computer or user
+>   account: this computer's deletion log has no record of its start." The review proposed "…has no
+>   record of this delete: …", but §15.4 had already turned down "has no record of it" because a later
+>   run of this computer finishing such a delete has its own line in the log (its started line
+>   carries `from_marker`, and the sentence is said again on that run); "its start" stays true there.
+>   Correction beside §15.4's DM-8 bullet.
+> - *Note E, fixed (MA-1066):* after "It was finished elsewhere", the result's line is "This
+>   finishes the delete begun DATE: this computer's runs of it removed N files (SIZE); the rest were
+>   removed elsewhere." (the review's proposed words) in place of "… removed in all.". The deletion
+>   record keeps its "Files removed in all" line: beside its "Folder here: the folder was not found
+>   here; you said this delete was finished elsewhere" it is read as this computer's, and changing the
+>   record's lines is not needed for the note (the review: "the record's and the log's counts are
+>   right as they are").
+> - *Note F, fixed (MA-1067):* the guide and the README say what `.mailarchive-deleting.json` is and
+>   that removing it by hand lets backups write into a folder the delete may have half emptied
+>   (§15.8 question 1's recommendation; §15.6's "the words never suggest removing it by hand" is about
+>   a refusal's remedy, and this is a warning in the guide, not a remedy), and that Delete… on a
+>   delete finished on another computer asks "It was finished elsewhere" (MA-1057), at the terminal
+>   too.
+> - *Not taken, for the lead (low; each changes what a person sees in a way not asked about, or is
+>   a later look):* A (the "Close without saving the deletion record?" question focuses "Close without
+>   saving"; the proposal focuses "Keep it"), C (Remove from list on a row just marked Delete not
+>   finished stays live until the reload), H (the terminal record names macOS Time Machine on
+>   Windows), I ("First run: not known" for an archive made at the terminal), J (older than this
+>   feature). G is §16.6's stated limit.
+> - *Prove-fail (each alone, each red, then reverted):* M1 the old D sentence; M2 the E line not used
+>   after "It was finished elsewhere"; M3 the E line used for every finishing delete (MA-1066's twin
+>   and MA-1037's total red); M4 Dismiss setting no mark; M5 Remove from list setting none; M6 the
+>   heading not focused; M7 the mark also set when the page's own archive was deleted; M8 the guide's
+>   or the README's paragraphs missing (red before they were written).
 
 ## 15. The delete marker (G2 for another computer, another account, and a remounted drive)
 

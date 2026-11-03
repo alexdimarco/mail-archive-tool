@@ -199,8 +199,10 @@ func (p *DeletePlan) FinishesLine() string {
 // owner-delegated 2026-11-02: what happened first, no "again" to a person who began no delete).
 const (
 	// MsgMarkerNoRecord follows "This finishes the delete begun DATE." for a delete planned from the
-	// folder's marker: this computer's log has no line of its start.
-	MsgMarkerNoRecord = "This computer's deletion log has no record of when it began: it was begun on another computer or user account."
+	// folder's marker: this computer's log has no line of its start. What happened first; it no
+	// longer says "no record of when it began" right after the date (the 1.5.6 friction review's
+	// note D, MA-1066; lead's words, owner-delegated 2026-11-02). True on a later run here too.
+	MsgMarkerNoRecord = "It was begun on another computer or user account: this computer's deletion log has no record of its start."
 	// MsgMarkerBackupAfter is DM-28's: the archive's last backup is later than the marker's began
 	// (words only: the two times may come from two clocks).
 	MsgMarkerBackupAfter = "A backup ran into this archive after its delete began, probably from a computer with an older MailArchive."
@@ -329,6 +331,11 @@ func (p *DeletePlan) finishedLine(removed int, bytes int64) string {
 	}
 	if !f.RemovedKnown {
 		return begun + ". How many files its earlier runs removed is not known: " + p.notKnownWhy() + "."
+	}
+	if p.Elsewhere {
+		// Finished elsewhere: this computer knows only its own runs' count (the 1.5.6 friction
+		// review's note E, MA-1066; lead's words, owner-delegated 2026-11-02).
+		return fmt.Sprintf("%s: this computer's runs of it removed %s (%s); the rest were removed elsewhere.", begun, plural(f.Removed+removed, "file", "files"), size(f.RemovedBytes+bytes))
 	}
 	return fmt.Sprintf("%s: %s (%s) removed in all.", begun, plural(f.Removed+removed, "file", "files"), size(f.RemovedBytes+bytes))
 }

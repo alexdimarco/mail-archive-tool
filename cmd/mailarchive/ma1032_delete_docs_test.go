@@ -48,6 +48,10 @@ var deleteDocControls = map[string][2]string{
 	// finished" now says these start nothing, in place of "not backed up".
 	"Archive now": {"internal/desktop/dashboard.go", `{{end}}>Archive now</button>`},
 	"Run now":     {"internal/desktop/dashboard.go", `>Run now</button>`},
+	// Added 2026-11-03 (MA-1067, the 1.5.6 friction review's note F): the "finished elsewhere"
+	// question's two buttons, whose labels archdelete gives the page.
+	"It was finished elsewhere": {"internal/archdelete/archdelete.go", `ElsewhereYes = "It was finished elsewhere"`},
+	"Cancel":                    {"internal/archdelete/archdelete.go", `ElsewhereNo  = "Cancel"`},
 }
 
 var (
