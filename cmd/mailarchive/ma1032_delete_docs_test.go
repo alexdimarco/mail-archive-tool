@@ -165,3 +165,38 @@ func TestTheDeleteDocsSayWhat153DoesAndNameRealControls(t *testing.T) {
 		}
 	}
 }
+
+// covers: MA-1032, R36
+// The 1.5.6 release notes carry the owner's ruling Q3 of 2 November 2026
+// (`docs/design-archive-delete.md` §15.8): "Update MailArchive on every computer that backs up
+// into a shared folder or drive.", with why in plain words — an older MailArchive does not look
+// for the delete's note (`.mailarchive-deleting.json`), so it could back up into a half-deleted
+// archive. And the section is the newest: above "New in 1.5.5". Positive twin first: the section
+// is found and is the delete's.
+func TestThe156NotesSayToUpdateEveryComputerThatSharesAFolder(t *testing.T) {
+	const head = "### New in 1.5.6 — deleting an archive"
+	notes := docSection(t, "packaging/release-notes.md", head)
+	if !strings.Contains(notes, "**Delete an archive for good.**") {
+		t.Fatalf("positive twin: the 1.5.6 section is missing or is not the delete's:\n%s", notes)
+	}
+	flat := strings.Join(strings.Fields(notes), " ")
+	for _, want := range []string{
+		"Update MailArchive on every computer that backs up into a shared folder or drive.",
+		"`.mailarchive-deleting.json`",
+		"an older MailArchive does not look for it",
+		"half-deleted archive",
+	} {
+		if !strings.Contains(flat, want) {
+			t.Errorf("the 1.5.6 release notes lack %q (owner ruling Q3)", want)
+		}
+	}
+	b, err := os.ReadFile(filepath.Join(moduleRoot(t), "packaging/release-notes.md"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	text := string(b)
+	i156, i155 := strings.Index(text, "\n"+head), strings.Index(text, "\n### New in 1.5.5")
+	if i156 < 0 || i155 < 0 || i156 > i155 {
+		t.Errorf("the 1.5.6 section is not above New in 1.5.5 (at %d and %d)", i156, i155)
+	}
+}

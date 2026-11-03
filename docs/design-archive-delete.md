@@ -1892,6 +1892,8 @@ or needed here.
     downloaded on every check" to lab row MA-1055 when it is written (DM-20 already puts a
     placeholder there). Each row's check now looks up the marker, and on a failed lookup the
     folder itself: about two more slow lookups per page load for a row on an offline share.
+    *Note, 3 November 2026 (1.5.6 release prep):* catalog row MA-1055 is now written, as a
+    pending lab row; its item (6) carries this LOW-5 check and the offline-share timing.
 - *The pass's probes kept as tests:* the marker planted between a writer's two asks
   (`internal/app/ma1048_writers_under_lock_test.go`, all five writers); a case variant of the name
   the volume joins refusing every backup, and one it keeps apart not
@@ -3655,6 +3657,11 @@ no-marker case they modelled is §15.6's second limit, stated, not a guard.
   > letter and a dropped mapped drive on Windows (DM-22); a drive mounted again under another
   > name or letter (DM-10); a OneDrive placeholder at the marker's name (DM-20).
 
+  > *Note, 3 November 2026 (1.5.6 release prep):* written in the catalog as row MA-1055 (tier L,
+  > pending), with these items, the full-drive and exFAT rows of MA-1046, the Windows terminal
+  > walk owed by §16 (G3-6), and the slice-2 pass's LOW-5 (a OneDrive placeholder at the name is
+  > not downloaded on every check; a page load with a row on an offline share timed).
+
 ### 15.8 Questions only the owner can answer
 
 1. **No way to keep the archive.** A delete that did not finish can only be finished; with the
@@ -3759,6 +3766,14 @@ rulings.
 >   development build of this branch that can delete running on your or a tester's computer?" It
 >   decides only whether the notes also say to finish those deletes after updating; open for the
 >   lead.
+>   *Note, 3 November 2026 (1.5.6 release prep):* written as the first bullet of
+>   `packaging/release-notes.md`'s "New in 1.5.6 — deleting an archive" section, the ruling's
+>   sentence in bold, then why (lead's words, owner-delegated 2026-11-02): "Once a delete starts
+>   removing an archive's files, it leaves a note in the archive's folder
+>   (`.mailarchive-deleting.json`) until it finishes, and MailArchive 1.5.6 backs up into no folder
+>   holding that note; an older MailArchive does not look for it, so it could go on backing up
+>   into a half-deleted archive." Pinned by MA-1032's amendment. The development-build question
+>   above is still the lead's; nothing about it was written.
 > - **Q4, the "finished elsewhere" prompt on Delete again: YES**, as question 2 above recommends.
 >   What it changes: built in slice 4 (§15.10), catalog MA-1057. §15.4's "not built here" and
 >   §15.6's last bullet hold until it is built. Question 2's words are lead's words,
