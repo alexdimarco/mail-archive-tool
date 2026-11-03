@@ -35,7 +35,9 @@ func TestADeleteFinishesOnLinuxWithNoCrontabProgram(t *testing.T) {
 		len(res.Stopped) != 0 || hasLine(res, "Stopped the scheduled") {
 		t.Fatalf("a delete with no crontab program: status %q exit %d rows %v\n%s", res.Status, res.ExitCode(), r.rows, res.Message())
 	}
-	if ev := events(logLines(t, r.x.Log)); strings.Join(ev, ",") != "started,folder removed,finished complete" {
+	// Amended 2026-11-03 (design-archive-delete §15.2, DM-27, MA-1046): the `marked` line before step
+	// 6's first removal.
+	if ev := events(logLines(t, r.x.Log)); strings.Join(ev, ",") != "started,marked,folder removed,finished complete" {
 		t.Fatalf("deletions.log: %q", ev)
 	}
 	if u, err := UnfinishedDelete(r.x.Log, dir, "linux"); u != nil || err != nil {

@@ -57,6 +57,12 @@ func heldIn(root *os.Root, rel string) bool {
 	return false
 }
 
+// isDiskFull reports a drive with no room left (112 ERROR_DISK_FULL, 39 ERROR_HANDLE_DISK_FULL):
+// the delete marker's full-drive words (§15.2, DM-7).
+func isDiskFull(err error) bool {
+	return errors.Is(err, syscall.Errno(112)) || errors.Is(err, syscall.Errno(39))
+}
+
 // isNotEmpty reports a folder that could not be removed because it holds files.
 func isNotEmpty(err error) bool { return errors.Is(err, errDirNotEmpty) }
 

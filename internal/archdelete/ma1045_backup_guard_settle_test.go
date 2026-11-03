@@ -1,7 +1,9 @@
 package archdelete
 
 import (
+	"bytes"
 	"context"
+	"encoding/json"
 	"errors"
 	"io"
 	"log"
@@ -15,6 +17,7 @@ import (
 
 	"mail-archive-tool/internal/app"
 	"mail-archive-tool/internal/assure"
+	"mail-archive-tool/internal/delmark"
 	"mail-archive-tool/internal/export"
 	"mail-archive-tool/internal/lockfile"
 	"mail-archive-tool/internal/state"
@@ -240,14 +243,135 @@ func TestTheBackupGuardFailsClosedOnALogItCannotTrust(t *testing.T) {
 		assure.NoSideEffect(func() bool { return len(ma1044Names(half)) == 1 }))
 }
 
-// covers: MA-1044
-// OPEN GAP (the settle pass's MED-1; design-archive-delete §14): on macOS and Linux a removable or
-// network volume's device number is handed out at mount, so after the drive is unplugged and
-// plugged in again the half-deleted folder can have another one; its started line's identity
-// then no longer matches, and the backup is let in. When it is closed (a volume identity that
-// survives a remount, or a marker in the folder) remove the Skip: this becomes a guard.
+// ma1045StoppedInStep6 is a folder a real delete stopped in step 6 (design-archive-delete §15.7,
+// DM-2 item 1, with the owner's ruling Q1): a removal fault on a file that is not the anchor, so
+// the manifest, the delete's marker (written just before the first removal) and the lock file are
+// all left — what a 1.5.6 delete stopped part way leaves. logPath is the deletion log of the
+// computer that began it; mbox is an mbox to back up.
+func ma1045StoppedInStep6(t *testing.T) (half, logPath, mbox string) {
+	t.Helper()
+	half = smallArchive(t, filepath.Join(t.TempDir(), "Half deleted"))
+	writeFile(t, filepath.Join(half, "search.db"), "index")
+	r := newRig(t, half)
+	faultOn(t, nil, func(rel string) error {
+		if rel == "search.db" {
+			return inUseErr(rel)
+		}
+		return nil
+	})
+	if res := r.run(t, false); res.Status != StatusPartial || !res.Unfinished {
+		t.Fatalf("precondition: the delete stops in step 6:\n%s", res.Message())
+	}
+	if !exists(filepath.Join(half, manifestName)) || !exists(filepath.Join(half, delmark.Name)) || exists(filepath.Join(half, filepath.FromSlash(stemA+".html"))) {
+		t.Fatal("precondition: half deleted, the anchor and the marker both there")
+	}
+	return half, r.x.Log, ma1046Mbox(t)
+}
+
+// covers: MA-1044, MA-1046
+// The remounted drive (the settle pass's MED-1; design-archive-delete §15.5, §15.7 with DM-2 items 1
+// and 2): on macOS and Linux a removable or network volume's device number is handed out at mount,
+// so after the drive is unplugged and plugged in again the half-deleted folder can have another
+// one, and its started line's identity no longer matches. The marker refuses the backup whatever
+// the device number (MA-1048), so this test asks more: that THIS computer's log still finds its
+// delete — the device-and-file-number match alone finds no line (the remount is real), and the
+// refusal is the log's own words, without the "begun on another computer" sentence — which needs
+// §15.5's run-id route. Skipped until slice 5 builds that route (§15.7's DM-2 (b) correction, 3
+// November 2026); every assertion is kept, nothing narrowed.
 func TestABackupIntoAHalfDeletedFolderOnARemountedDriveIsRefused(t *testing.T) {
-	t.Skip("open gap MED-1 (G2 settle pass, MA-1044): a folder whose drive was plugged in again under another device number is not refused on macOS and Linux; closing it changes the delete's identity or adds a marker to its steps, which owes the 10-lens pre-code design review; recorded in design-archive-delete §14")
+	t.Skip("open until slice 5 (design-archive-delete §15.5's run-id route; §15.7's DM-2 (b) correction, 3 November 2026): after a remount on macOS or Linux this computer's deletion log no longer finds its own delete of the folder by device and file number, so the refusal is the marker's \"begun on another computer\" words, not the log's (MED-1 of the G2 settle pass, MA-1044)")
+	if runtime.GOOS == "windows" {
+		t.Skip("Windows keys by the volume serial number, which survives a remount")
+	}
+	half, logPath, mbox := ma1045StoppedInStep6(t)
+	ma1045Remount(t, logPath)
+	if u, err := UnfinishedDelete(logPath, half, ""); err != nil || u != nil {
+		t.Fatalf("precondition: the device and file number alone no longer find the delete: %+v %v", u, err)
+	}
+	names := func() []string { n := ma1044Names(half); slices.Sort(n); return n }
+	before := names()
+	_, err := app.Run(context.Background(), app.Options{Inputs: []string{mbox}, Out: half, Mode: export.Incremental, Unattended: true, DeletionsLog: logPath}, log.New(io.Discard, "", 0), nil)
+	assure.Refused(t, refusalCode(err), errText(err), assure.Code(1), assure.Names("Delete not finished: click Delete again."),
+		assure.Forbid("another computer"),
+		assure.NoSideEffect(func() bool { return slices.Equal(before, names()) }))
+}
+
+// ma1045Remount rewrites the started lines of the log at path as recorded before a remount: the
+// folder's device number one more than it is now.
+func ma1045Remount(t *testing.T, path string) {
+	t.Helper()
+	data, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var out []byte
+	for _, b := range bytes.Split(bytes.TrimSpace(data), []byte("\n")) {
+		var l logLine
+		if err := json.Unmarshal(b, &l); err != nil {
+			t.Fatal(err)
+		}
+		if l.Event == evStarted && l.Identity != nil {
+			l.Identity.Volume++
+		}
+		nb, err := json.Marshal(l)
+		if err != nil {
+			t.Fatal(err)
+		}
+		out = append(append(out, nb...), '\n')
+	}
+	if err := os.WriteFile(path, out, 0o600); err != nil {
+		t.Fatal(err)
+	}
+}
+
+// covers: MA-1044, MA-1046
+// Another computer's or another user account's backup into a folder whose delete stopped in step 6
+// (the settle pass's MED-2, closed by the delete's marker: design-archive-delete §15.2, §15.7 with
+// DM-2 items 1 and 3, §15.10 slice 3): its own deletions.log — a brand-new one — never saw the delete,
+// and the real engine refuses it on the marker the delete wrote, in the marker-only words in full
+// (DM-11: what happened first, no "click Delete again" to a person who began no delete), nothing
+// written into the folder: its sorted name list is the same after as before (DM-2 item 1, stricter
+// than the one-name count of the hand-made fixture this replaced).
+func TestAnotherComputersBackupIntoAHalfDeletedFolderIsRefused(t *testing.T) {
+	half, _, mbox := ma1045StoppedInStep6(t)
+	otherComputersLog := filepath.Join(t.TempDir(), LogName) // its own settings folder: no such delete
+	names := func() []string { n := ma1044Names(half); slices.Sort(n); return n }
+	before := names()
+	_, err := app.Run(context.Background(), app.Options{Inputs: []string{mbox}, Out: half, Mode: export.Incremental, Unattended: true, DeletionsLog: otherComputersLog}, log.New(io.Discard, "", 0), nil)
+	assure.Refused(t, refusalCode(err), errText(err), assure.Code(1), assure.Names(delmark.MsgOnlyMarker+" (Folder: "+half+")"),
+		assure.Forbid("click Delete again"),
+		assure.NoSideEffect(func() bool { return slices.Equal(before, names()) }))
+	if app.FailureKind(err) != state.FailDeleteUnfinished {
+		t.Fatalf("kind %q", app.FailureKind(err))
+	}
+}
+
+// covers: MA-1044
+// OPEN, a stated limit (design-archive-delete §15.6, DM-1 (b); §15.7, DM-2 item 4): a half-deleted
+// folder WITHOUT its marker — removed by hand, by a sync conflict or an antivirus, hidden by a share
+// that hides dot names, or lost to a power cut on FAT or exFAT (DM-12) — is refused only by the
+// computer whose deletion log began the delete: another computer's or account's backup reads its
+// own log and is let in. The original MED-2 body (a hand-written started line, no marker), kept so
+// no property leaves the suite. Not the owner's Q1 case: a delete stopped before step 6's first
+// removal leaves a whole archive that another computer backs up as intended (pinned by
+// TestMA1046_EveryStopBeforeTheFirstRemovalLeavesNoMarker).
+func TestAnotherComputersBackupIntoAHalfDeletedFolderWithoutItsMarkerIsRefused(t *testing.T) {
+	t.Skip("open, a stated limit (design-archive-delete §15.6, DM-1 (b); §15.7, DM-2 item 4): a half-deleted folder whose marker is gone (removed by hand, a sync conflict, an antivirus, a share hiding dot names, a power cut on FAT or exFAT) is refused only by the computer whose deletion log began the delete; another computer's or account's backup is let in (MED-2 of the G2 settle pass, MA-1044)")
+	half, logPath, mbox := ma1045Half(t)
+	ma1045Started(t, logPath, half, nil)
+	otherComputersLog := filepath.Join(t.TempDir(), LogName) // its own settings folder: no such delete
+	_, err := app.Run(context.Background(), app.Options{Inputs: []string{mbox}, Out: half, Mode: export.Incremental, Unattended: true, DeletionsLog: otherComputersLog}, log.New(io.Discard, "", 0), nil)
+	assure.Refused(t, refusalCode(err), errText(err), assure.Code(1), assure.Names("Delete not finished: click Delete again."),
+		assure.NoSideEffect(func() bool { return len(ma1044Names(half)) == 1 }))
+}
+
+// covers: MA-1044
+// OPEN, a stated limit (design-archive-delete §15.6, DM-1 (b); §15.7, DM-2 item 4): the remounted
+// drive's case for a half-deleted folder WITHOUT its marker — no marker names the delete, so even
+// §15.5's run-id route (slice 5) cannot find this computer's line after the device number changed.
+// The original MED-1 body, kept so no property leaves the suite.
+func TestABackupIntoAHalfDeletedFolderWithoutItsMarkerOnARemountedDriveIsRefused(t *testing.T) {
+	t.Skip("open, a stated limit (design-archive-delete §15.6, DM-1 (b); §15.7, DM-2 item 4): a half-deleted folder whose marker is gone, on a drive plugged in again under another device number (macOS, Linux), is not refused: no marker names the delete for §15.5's run-id route (MED-1 of the G2 settle pass, MA-1044)")
 	if runtime.GOOS == "windows" {
 		t.Skip("Windows keys by the volume serial number, which survives a remount")
 	}
@@ -258,22 +382,6 @@ func TestABackupIntoAHalfDeletedFolderOnARemountedDriveIsRefused(t *testing.T) {
 	}
 	ma1045Started(t, logPath, half, &Identity{Volume: id.Volume + 1, FileID: id.FileID}) // as recorded before the remount
 	_, err := app.Run(context.Background(), app.Options{Inputs: []string{mbox}, Out: half, Mode: export.Incremental, Unattended: true, DeletionsLog: logPath}, log.New(io.Discard, "", 0), nil)
-	assure.Refused(t, refusalCode(err), errText(err), assure.Code(1), assure.Names("Delete not finished: click Delete again."),
-		assure.NoSideEffect(func() bool { return len(ma1044Names(half)) == 1 }))
-}
-
-// covers: MA-1044
-// OPEN GAP (the settle pass's MED-2; design-archive-delete §14, for the operator): another
-// computer's or another user account's backup into the same folder (a NAS share, a drive moved
-// between computers) reads its own deletions.log, which never saw this delete, so it is let in.
-// When it is closed (a marker the delete writes into the folder first and removes last) remove the
-// Skip: this becomes a guard.
-func TestAnotherComputersBackupIntoAHalfDeletedFolderIsRefused(t *testing.T) {
-	t.Skip("open gap MED-2 (G2 settle pass, MA-1044): another computer's or account's backup reads its own deletions.log and is not refused; whether it is in G2's scope is the operator's call, and the fix (a marker in the folder) changes the delete's steps, which owes the 10-lens pre-code design review; recorded in design-archive-delete §14")
-	half, logPath, mbox := ma1045Half(t)
-	ma1045Started(t, logPath, half, nil)
-	otherComputersLog := filepath.Join(t.TempDir(), LogName) // its own settings folder: no such delete
-	_, err := app.Run(context.Background(), app.Options{Inputs: []string{mbox}, Out: half, Mode: export.Incremental, Unattended: true, DeletionsLog: otherComputersLog}, log.New(io.Discard, "", 0), nil)
 	assure.Refused(t, refusalCode(err), errText(err), assure.Code(1), assure.Names("Delete not finished: click Delete again."),
 		assure.NoSideEffect(func() bool { return len(ma1044Names(half)) == 1 }))
 }

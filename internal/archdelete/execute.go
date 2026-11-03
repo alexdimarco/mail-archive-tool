@@ -15,6 +15,7 @@ import (
 
 	"golang.org/x/text/unicode/norm"
 
+	"mail-archive-tool/internal/delmark"
 	"mail-archive-tool/internal/lockfile"
 	"mail-archive-tool/internal/schedule"
 	"mail-archive-tool/internal/util"
@@ -77,8 +78,13 @@ type run struct {
 	res        *Result
 	unrecorded bool
 	log, row   string
-	// id is this delete's run id, on each of its deletions.log lines.
-	id string
+	// id is this delete's run id, on each of its deletions.log lines; started is when its started
+	// line says it began.
+	id      string
+	started time.Time
+	// markerThere: step 6 began with the delete marker in the folder, created or found (§15.2);
+	// markerGone: step 6's last removal took it.
+	markerThere, markerGone bool
 
 	logged   bool
 	finished bool // ExecDeps.Finished was called
@@ -147,8 +153,8 @@ func (e *run) logStarted() error {
 	if e.unrecorded {
 		choice = "yes"
 	}
-	e.id = newRunID()
-	l := logLine{At: e.stamp(), Event: evStarted, Run: e.id, Folder: p.Folder, Row: e.row, Kind: p.Kind.String(),
+	e.id, e.started = newRunID(), e.now()
+	l := logLine{At: e.started.UTC().Format(time.RFC3339Nano), Event: evStarted, Run: e.id, Folder: p.Folder, Row: e.row, Kind: p.Kind.String(),
 		Files: intp(p.Files), Bytes: int64p(p.Bytes), Unrecorded: intp(len(p.Unrecorded)), DeleteUnrecorded: choice,
 		KeyForgotten: p.KeyForgottenBefore}
 	if p.Identity != (Identity{}) {
@@ -233,10 +239,13 @@ func (e *run) steps() {
 	gone, lockLeft, emptyLeft := e.tidyFolder()
 	e.res.FolderGone, e.res.LockFileLeft, e.emptyLeft = gone, lockLeft, emptyLeft
 	e.logFolder(gone)
-	if p.Rerun == RerunNoAnchor {
+	if p.Rerun == RerunNoAnchor && !e.markerGone {
 		// §5.4: never complete, and never steps 8 and 9 here. With the folder gone its
 		// `folder removed` line makes Delete again the folder-gone re-run, which
 		// finishes the keyring and the row (del-s1b-A1-02, conformance 9).
+		// Not when this re-run found the delete marker and removed it (§15.2, DM-9): a marker
+		// with the anchor gone proves step 6 had finished, so what is left is kept, as a
+		// complete delete keeps the person's files, and the delete goes on to steps 8 and 9.
 		e.stopNoAnchor(gone, lockLeft)
 		return
 	}
@@ -554,6 +563,12 @@ func (e *run) removeFiles() (ok, stopped bool) {
 		e.stop(msgChanged)
 		return false, true
 	}
+	// The delete marker, just before the first removal (§15.2, the owner's ruling Q1).
+	there, stopped := e.markFolder()
+	if stopped {
+		return false, true
+	}
+	e.markerThere = there
 	goos := e.x.Deps.goos()
 	late := map[string]bool{}
 	for _, n := range lateStateFiles {
@@ -604,6 +619,15 @@ func (e *run) removeFiles() (ok, stopped bool) {
 			}
 			res.Removed++
 			res.Bytes += it.Size
+		}
+		// The marker last, right after the anchor, while no name the archive recorded is left (a
+		// §4.3 ticked copy left does not keep it); one that cannot be removed is such a name.
+		if len(res.NotRemoved) == 0 && e.markerThere {
+			if err := e.removeMarker(); err != nil {
+				res.NotRemoved = append(res.NotRemoved, leftFile(delmark.Name, err, p.Folder))
+			} else {
+				e.markerGone = true
+			}
 		}
 	}
 	for _, d := range p.Folders {

@@ -25,6 +25,12 @@ func causeOf(err error) Cause {
 	return CauseOther
 }
 
+// isDiskFull reports a drive with no room left (or the account's quota used up): the delete
+// marker's full-drive words (§15.2, DM-7).
+func isDiskFull(err error) bool {
+	return errors.Is(err, syscall.ENOSPC) || errors.Is(err, syscall.EDQUOT)
+}
+
 // heldIn is Windows' alone: here a file another program has open can still be deleted.
 func heldIn(*os.Root, string) bool { return false }
 

@@ -10,6 +10,7 @@ import (
 
 	"mail-archive-tool/internal/assure"
 	"mail-archive-tool/internal/backupalert"
+	"mail-archive-tool/internal/delmark"
 	"mail-archive-tool/internal/job"
 	"mail-archive-tool/internal/lockfile"
 	"mail-archive-tool/internal/schedule"
@@ -148,7 +149,12 @@ func TestTheStepsRunInTheirOrder(t *testing.T) {
 			t.Errorf("%s was not removed before the manifest", it.Rel)
 		}
 	}
-	for _, s := range seen[m+1:] {
+	// Amended 2026-11-03 (design-archive-delete §15.2, MA-1047): the delete's own marker is the one
+	// removal right after the manifest; after it, only folders and the lock file.
+	if m+1 >= len(seen) || seen[m+1] != delmark.Name {
+		t.Fatalf("the delete's marker is not removed right after the manifest: %q", seen[m+1:])
+	}
+	for _, s := range seen[m+2:] {
 		if s != lockName && !contains(p.Folders, s) {
 			t.Errorf("%s was removed after the manifest: only folders and the lock file may follow it", s)
 		}

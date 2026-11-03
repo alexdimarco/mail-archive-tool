@@ -16,3 +16,6 @@ func deniedErr(rel string) error {
 	return &fs.PathError{Op: "remove", Path: rel, Err: syscall.ERROR_ACCESS_DENIED}
 }
 func goneErr(rel string) error { return &fs.PathError{Op: "remove", Path: rel, Err: syscall.Errno(21)} }
+
+// fullErr is a drive with no room left, as Windows reports it (112, ERROR_DISK_FULL).
+func fullErr() error { return syscall.Errno(112) }

@@ -40,9 +40,11 @@ const logCap = 32 << 20
 // lines (a few short lines each), so MailArchive never writes the log past what it reads.
 const logReserve = 1 << 20
 
-// The log's events (§5.3 steps 0, 7, 8, 10).
+// The log's events (§5.3 steps 0, 7, 8, 10; `marked` is step 6's, §15.2 DM-27: the delete
+// marker created, or this delete's own found, just before the first removal).
 const (
 	evStarted       = "started"
+	evMarked        = "marked"
 	evFolderRemoved = "folder removed"
 	evFolderKept    = "folder kept"
 	evKeyForgotten  = "key forgotten"

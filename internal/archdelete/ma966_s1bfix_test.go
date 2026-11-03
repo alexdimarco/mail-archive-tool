@@ -193,7 +193,9 @@ func TestOverlappingDeletesOfOneFolderKeepTheirOwnState(t *testing.T) {
 	if res.Status != StatusPartial || !res.Unfinished || exists(dir) {
 		t.Fatalf("%s", res.Message())
 	}
-	if ev := strings.Join(events(logLines(t, r.x.Log)), ","); ev != "started,started,finished refused,folder removed,finished partial" {
+	// Amended 2026-11-03 (design-archive-delete §15.2, DM-27, MA-1046): the `marked` line before step
+	// 6's first removal.
+	if ev := strings.Join(events(logLines(t, r.x.Log)), ","); ev != "started,started,finished refused,marked,folder removed,finished partial" {
 		t.Fatalf("log %s", ev)
 	}
 	u, err := UnfinishedDelete(r.x.Log, dir, "")
@@ -307,8 +309,10 @@ func TestAStopAfterStep8KnowsTheKeyIsForgottenOnDeleteAgain(t *testing.T) {
 	if res.Status != StatusPartial || res.KeyForgotten != "forgotten" || len(r.rows) != 0 || exists(dir) {
 		t.Fatalf("%s", res.Message())
 	}
-	if ev := strings.Join(events(logLines(t, r.x.Log)), ","); ev != "started,folder kept,key forgotten,folder removed,finished partial" &&
-		ev != "started,folder removed,key forgotten,finished partial" {
+	// Amended 2026-11-03 (design-archive-delete §15.2, DM-27, MA-1046): the `marked` line before step
+	// 6's first removal.
+	if ev := strings.Join(events(logLines(t, r.x.Log)), ","); ev != "started,marked,folder kept,key forgotten,folder removed,finished partial" &&
+		ev != "started,marked,folder removed,key forgotten,finished partial" {
 		t.Fatalf("log %s", ev)
 	}
 	r.kr.planErr = errors.New("is not a folder this computer recorded")

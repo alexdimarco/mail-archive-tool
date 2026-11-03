@@ -35,7 +35,9 @@ func TestDeletionsLogKeepsStartedFolderAndFinishedLines(t *testing.T) {
 		t.Fatalf("%s", res.Message())
 	}
 	lines := assure.Reached(t, logLines(t, r.x.Log), "deletions.log's lines")
-	if ev := strings.Join(events(lines), ","); ev != "started,folder removed,finished complete" {
+	// Amended 2026-11-03 (design-archive-delete §15.2, DM-27, MA-1046): the `marked` line before step
+	// 6's first removal.
+	if ev := strings.Join(events(lines), ","); ev != "started,marked,folder removed,finished complete" {
 		t.Fatalf("events: %s", ev)
 	}
 	s := lines[0]
@@ -43,8 +45,8 @@ func TestDeletionsLogKeepsStartedFolderAndFinishedLines(t *testing.T) {
 		t.Fatalf("started line: %v", s)
 	}
 	stated, computed := recordDigest(t, res.Record)
-	if stated != computed || lines[2]["record_sha256"] != stated {
-		t.Fatalf("the finished line's digest %v, the record's %s, recomputed %s", lines[2]["record_sha256"], stated, computed)
+	if stated != computed || lines[3]["record_sha256"] != stated { // the finished line, after the marked line (amended 2026-11-03)
+		t.Fatalf("the finished line's digest %v, the record's %s, recomputed %s", lines[3]["record_sha256"], stated, computed)
 	}
 	if runtime.GOOS != "windows" {
 		fi, err := os.Stat(r.x.Log)

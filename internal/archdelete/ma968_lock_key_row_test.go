@@ -53,7 +53,9 @@ func TestTheLockFileGoesAfterUnlockingAndThenTheFolder(t *testing.T) {
 	if hasLine(res, "The folder is kept: it holds") {
 		t.Fatal("the lock file is never counted as the person's file")
 	}
-	if ev := events(logLines(t, r.x.Log)); strings.Join(ev, ",") != "started,folder kept,finished complete" {
+	// Amended 2026-11-03 (design-archive-delete §15.2, DM-27, MA-1046): the `marked` line before step
+	// 6's first removal.
+	if ev := events(logLines(t, r.x.Log)); strings.Join(ev, ",") != "started,marked,folder kept,finished complete" {
 		t.Fatalf("log %q", ev)
 	}
 }
@@ -105,7 +107,9 @@ func TestAFolderKeptOnlyForTheLockFileIsRemovedByStep8sRetry(t *testing.T) {
 	if hasLine(res, msgLockFileLeft) || hasLine(res, msgEmptyFolderLeft) {
 		t.Fatalf("step 7's lock-file line is dropped once step 8 removed the folder:\n%s", res.Message())
 	}
-	if ev := strings.Join(events(logLines(t, r.x.Log)), ","); ev != "started,folder kept,key forgotten,folder removed,finished complete" {
+	// Amended 2026-11-03 (design-archive-delete §15.2, DM-27, MA-1046): the `marked` line before step
+	// 6's first removal.
+	if ev := strings.Join(events(logLines(t, r.x.Log)), ","); ev != "started,marked,folder kept,key forgotten,folder removed,finished complete" {
 		t.Fatalf("log %s", ev)
 	}
 

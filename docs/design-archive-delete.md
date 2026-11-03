@@ -1923,6 +1923,51 @@ or needed here.
 >   so its words for a delete only the marker knows still say the log "has no record of it"
 >   (`ActionRefusal`'s no-settings branch and `status` with no log path). Rare; noted for the lead.
 
+> **Slice 3, 3 November 2026 (§15.10 slice 3, with the owner's ruling Q1; MA-1046 and MA-1047
+> added, MA-1044 amended).** The delete writes `.mailarchive-deleting.json` just before step 6's
+> first removal and removes it right after the anchor (`internal/archdelete/marker.go`, called from
+> step 6 in `execute.go`), as §15.2's Q1 note says; the bytes come from `delmark.Content`. The
+> builder's calls, for the lead and the slice's adversarial pass:
+> - *The `marked` line cannot be appended:* said as step 7's folder line is ("This step could not
+>   be added to deletions.log (CAUSE).") and the delete goes on. The marker, not the line, is what
+>   refuses backups; without the line a later plan reads the log as it did before the marker
+>   (§15.4's DM-27 note: "with no `marked` line … the plan is as today").
+> - *A link, a folder or a device at the name at step 6* (put there after the plan's re-check): the
+>   delete stops before any removal, `finished partial`, the row "Delete not finished", nothing
+>   followed or opened, in words beside §15.2's Q1 words (lead's words, owner-delegated
+>   2026-11-02): "This archive's folder holds .mailarchive-deleting.json, which MailArchive did
+>   not write (it is a link, a folder or a device), so none of the archive's files were deleted.
+>   Steps done: STEPS. Remove it by hand, then click Delete again."
+> - *A lookup of the name that fails at step 6* for any reason but "not there" stops as a name
+>   that cannot be created (the Q1 words, with that cause).
+> - *The marker's `began` on a re-run* is the first run's start as this computer's log carries it
+>   (D1's `first_at`); a started line without it gives this run's start.
+> - *A marker already there that is not this delete's* (another run id, or an empty one) is kept
+>   as it is, gets no `marked` line, and is removed last with the archive's files, as the
+>   delete's own is.
+> - *Existing tests amended, none narrowed:* six exact log-sequence assertions now include the
+>   `marked` line (MA-965's, MA-966's two in ma966_s1bfix_test.go, MA-968's two, MA-1022's), and
+>   MA-965's digest check reads the finished line at its new place; MA-964's
+>   `TestTheStepsRunInTheirOrder` now also asserts the marker is the one removal right after the
+>   manifest (before, nothing but folders and the lock file could follow it).
+> - *DM-2:* the other-computer test (MED-2) is a guard, on a real delete stopped in step 6; the
+>   remount test (MED-1) has its new fixture and item 2's assertions and stays skipped until slice
+>   5 (run with its skip removed, it fails as expected: the refusal is the marker's "begun on
+>   another computer" words). The two no-marker encoders keep the original bodies, skipped,
+>   `// covers: MA-1044`: they encode a half-deleted folder whose marker is gone (DM-1 (b)), a
+>   confirmed-open limit. A delete stopped before step 6's first removal (steps 2 to 5) is not that
+>   case: under Q1 another computer backing up into that whole archive is intended, and
+>   `TestMA1046_EveryStopBeforeTheFirstRemovalLeavesNoMarker` pins it as a passing test, this
+>   computer's own log still refusing (G2).
+> - *Windows (reasoned, not run):* a marker that another program holds open when the delete
+>   removes it is "delete pending" and still reads present until that program closes it (the
+>   slice-1 settle note); step 7 then keeps the folder, naming the marker as an item that could not
+>   be removed, and the delete is complete.
+> - Left for later slices: the marker-only plan (slice 4), the run-id route and the remount guard
+>   (slice 5). Still open, as §15.7's DM-9 correction says: a crash after the marker's removal with
+>   the person's files left stays "never complete" (§5.4), since nothing in the folder then says
+>   step 6 had finished.
+
 ## 15. The delete marker (G2 for another computer, another account, and a remounted drive)
 
 Status: DESIGN AMENDMENT, 2 November 2026, for the 10-lens pre-code review

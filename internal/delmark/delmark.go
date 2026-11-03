@@ -48,6 +48,21 @@ const (
 // MaxRead bounds the read of the marker (§15.3): a larger file's details are not known.
 const MaxRead = 4 << 10
 
+// Content is a marker's bytes (§15.1): one JSON object holding the fixed fields, the first run's
+// id and when that run began (UTC, to the second) — nothing of the person, the computer, the
+// account, the folder, the archive or its kind. This leaf only shapes them; the delete writes
+// them (§15.2, MA-1046).
+func Content(run string, began time.Time) []byte {
+	b, _ := json.Marshal(struct {
+		What    string `json:"what"`
+		Version int    `json:"version"`
+		Run     string `json:"run"`
+		Began   string `json:"began"`
+		Note    string `json:"note"`
+	}{What, Version, run, began.UTC().Format(beganLayout), Note})
+	return b
+}
+
 // The refusal kinds (state.FailDeleteUnfinished, state.FailArchiveUnwritable; a test
 // pins them equal, since this leaf cannot import state).
 const (
@@ -261,6 +276,12 @@ func Read(folder string) Details {
 		return Details{}
 	}
 	defer root.Close()
+	return ReadIn(root, folder)
+}
+
+// ReadIn is Read through root, an os.Root already open on folder: the delete's step 6 root, so the
+// marker it asks about is in the very folder it checked (§15.2, MA-1046).
+func ReadIn(root *os.Root, folder string) Details {
 	fi, err := root.Lstat(Name)
 	if err != nil || stateOf(runtime.GOOS, filepath.Join(folder, Name), fi.Mode(), util.IsLinkLike) != Regular {
 		return Details{}
