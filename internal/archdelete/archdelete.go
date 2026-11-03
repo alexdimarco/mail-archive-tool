@@ -239,6 +239,11 @@ type DeletePlan struct {
 	// delete that claims to finish nothing (Finishes nil), with its own record lookup — never that
 	// delete's record, so step 8 cannot forget another vault's key — and says why (MsgLogDisagrees).
 	Disagrees bool
+	// OwnNames: a no-anchor re-run planned from this computer's log whose folder was accepted only by
+	// its marker naming that delete (another identity than the line records), or that finishes such a
+	// run: it removes only MailArchive's own names (DM-19), and its started line says so (`own_names`)
+	// for the next plan (the slice-5 adversarial pass's MED-1).
+	OwnNames bool
 }
 
 // KeyAtPlan is the keyring's forget plan for the record the plan found: Known when it was
@@ -599,6 +604,18 @@ func planOf(folder string, deps Deps) (*DeletePlan, error) {
 		}
 		return nil, err
 	}
+	if r.Case == CaseNotArchive && u.Marked && markerNamesAnother(folder, u) {
+		// DM-27 with no anchor (the slice-5 adversarial pass's LOW-1): this computer's delete wrote its
+		// note, yet the folder holds another delete's — another drive with the same device and file
+		// numbers, or the note replaced. Planned from that note, as when no line knows the delete: only
+		// MailArchive's own names (DM-19), this computer's own record lookup (never the line's ID and
+		// Spelling, so step 8 cannot forget another vault's key), saying why.
+		p, perr := planMarkerNoAnchor(folder, deps, r, dl)
+		if p != nil {
+			p.Disagrees = true
+		}
+		return p, perr
+	}
 	return planUnfinished(folder, deps, u, r)
 }
 
@@ -613,12 +630,18 @@ func logAndFolderDisagree(folder string, u *Unfinished) bool {
 		return false
 	}
 	st, err := delmark.Present(folder)
-	switch {
-	case err != nil:
-		return false
-	case st == delmark.Absent:
+	if err == nil && st == delmark.Absent {
 		return true
-	case st != delmark.Regular:
+	}
+	return markerNamesAnother(folder, u)
+}
+
+// markerNamesAnother reports whether folder holds a regular marker whose run can be read and is
+// neither u's run nor its first run: another delete's note (DM-27). An empty or damaged marker, or one
+// whose lookup fails, names none.
+func markerNamesAnother(folder string, u *Unfinished) bool {
+	st, err := delmark.Present(folder)
+	if err != nil || st != delmark.Regular {
 		return false
 	}
 	d := delmark.Read(folder)

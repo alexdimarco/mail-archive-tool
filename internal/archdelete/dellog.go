@@ -115,6 +115,11 @@ type logLine struct {
 	// of this log knowing its start (§15.4): carried forward, so a later run's plan keeps only
 	// MailArchive's own names (DM-19) and the record's labels (DM-8).
 	FromMarker bool `json:"from_marker,omitempty"`
+	// OwnNames (started): this run's plan removed only MailArchive's own names (DM-19) though a line
+	// of this log knew the delete's start, because the folder was accepted only by its marker naming
+	// that delete (§15.5's run-id route with another identity: the slice-5 adversarial pass's MED-1):
+	// carried forward, so a later run's plan, which this line now matches by identity, keeps them.
+	OwnNames bool `json:"own_names,omitempty"`
 	// Captured (started) is what the deletion record says of the archive, as the first run of the
 	// delete read it while the archive was whole, carried forward by each run that finishes it: a
 	// later run finds the history and the manifest the first one removed gone (the 1.5.3 re-walk's
@@ -334,6 +339,10 @@ type Unfinished struct {
 	// MailArchive's own names when the anchor is gone (DM-19), and its record's lines from the marker
 	// say so (DM-8).
 	FromMarker bool
+	// OwnNames: a run of this computer planned the delete with MailArchive's own names only (DM-19)
+	// because its folder was accepted only by its marker (the started line's `own_names`): a later plan
+	// keeps them (the slice-5 adversarial pass's MED-1).
+	OwnNames bool
 	// Marked: a run of this delete (one whose started line names its first run, FirstRun) wrote its
 	// `marked` line — it created the folder's marker at step 6, or found this delete's own there
 	// (DM-27). With the anchor and the marker both gone, step 6 had finished (DeletePlan.NoteGone;
@@ -619,9 +628,10 @@ func (dl *DeleteLog) RunBegunHere(run string) bool {
 // DM-8's qualification (§15, 3 November 2026), stated: "run never decides alone" holds for the two
 // routes above, not for that ending — the first run a finishing run names may have come from a
 // marker with no second proof (§15.4's marker-only plan copies it). A marker copied into another
-// folder and finished there on this computer can end the original's delete in this log early; the
-// original folder's own marker still refuses its backups and still finishes by the marker-only plan,
-// so nothing is written into it.
+// folder and finished there on this computer can end the original's delete in this log early only
+// when the original is not at its line's path with its line's identity (stillAsLogged; the slice-5
+// adversarial pass's LOW-2); the original folder's own marker, if it is still there, still refuses
+// its backups and still finishes by the marker-only plan.
 func (dl *DeleteLog) UnfinishedFor(folder, goos, markerRun string) *Unfinished {
 	if dl == nil || !dl.pending {
 		return nil
@@ -717,7 +727,7 @@ func (dl *DeleteLog) UnfinishedFor(folder, goos, markerRun string) *Unfinished {
 				}
 				viaIdentity = true
 			}
-			u := &Unfinished{Folder: l.Folder, Row: l.Row, Kind: kindOf(l.Kind), KeyForgotten: l.KeyForgotten, Run: l.Run, FromMarker: l.FromMarker, ByRun: viaIdentity}
+			u := &Unfinished{Folder: l.Folder, Row: l.Row, Kind: kindOf(l.Kind), KeyForgotten: l.KeyForgotten, Run: l.Run, FromMarker: l.FromMarker, OwnNames: l.OwnNames, ByRun: viaIdentity}
 			u.Started, _ = time.Parse(time.RFC3339Nano, l.At)
 			// The delete it belongs to (D1): an earlier one it finishes, with what that removed,
 			// or itself.
@@ -763,11 +773,14 @@ func (dl *DeleteLog) UnfinishedFor(folder, goos, markerRun string) *Unfinished {
 		}
 		readLater(l)
 		// A run that ends the delete it finishes ends that delete's first run here too, whatever folder
-		// either names (DM-10 item 2), after its own line is read as before.
+		// either names (DM-10 item 2), after its own line is read as before — but not a delete whose
+		// folder is still at its line's path with its line's identity: that folder is proven not to be
+		// the one the run finished elsewhere (a copy of its marker finished here: the slice-5 adversarial
+		// pass's LOW-2). A drive under another letter or name is not at the old path, so its row clears.
 		if f := dl.firstOf[l.Run]; f != "" && l.Run != "" && finishedEnds(l) {
 			kept := open[:0:0]
 			for _, o := range open {
-				if o.FirstRun != f {
+				if o.FirstRun != f || stillAsLogged(o) {
 					kept = append(kept, o)
 				}
 			}
@@ -799,6 +812,16 @@ func (dl *DeleteLog) UnfinishedFor(folder, goos, markerRun string) *Unfinished {
 		return u
 	}
 	return nil
+}
+
+// stillAsLogged reports whether u's folder is at its started line's path with that line's recorded
+// identity now: the very folder the delete began on.
+func stillAsLogged(u *Unfinished) bool {
+	if u.Identity == (Identity{}) || strings.TrimSpace(u.Folder) == "" {
+		return false
+	}
+	id, ok := folderIdentity(u.Folder)
+	return ok && id == u.Identity
 }
 
 // statMemo is os.Stat taken once per path for its life: a page of rows asks the same folders

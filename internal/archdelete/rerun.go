@@ -272,7 +272,17 @@ func planNoAnchor(abs string, deps Deps, u *Unfinished, orig *Refusal) (*DeleteP
 	if id != u.Identity && !markerNamesIn(root, abs, u) {
 		return nil, orig
 	}
-	p := &DeletePlan{Folder: abs, Name: onDiskName(abs, fi), Identity: id, Kind: u.Kind, Rerun: RerunNoAnchor, Finishes: u}
+	// Accepted only because its marker names the line's delete (another identity), or by a run of this
+	// computer that was (`own_names`): whoever can write a file into the folder is already at the line's
+	// path, so the path is no second proof against a copy of the marker placed there, and the run id is
+	// the only one (the slice-5 adversarial pass's MED-1). The plan then removes only MailArchive's own
+	// names, as a plan from the marker alone does (DM-19); it keeps the line's record, captured values
+	// and `key forgotten` state (DM-6). A real remount loses nothing: step 6 removes the fixed names
+	// before the anchor, so a folder a real delete left without its anchor never holds them.
+	byMarker := id != u.Identity || u.OwnNames
+	ownOnly := u.FromMarker || byMarker
+	p := &DeletePlan{Folder: abs, Name: onDiskName(abs, fi), Identity: id, Kind: u.Kind, Rerun: RerunNoAnchor, Finishes: u,
+		OwnNames: byMarker && !u.FromMarker}
 	recordFrom(p, u)
 	if err := checkBackupFor(abs, deps); err != nil {
 		return nil, err
@@ -288,7 +298,8 @@ func planNoAnchor(abs string, deps Deps, u *Unfinished, orig *Refusal) (*DeleteP
 	l := lister{root: root, folder: abs, goos: deps.goos(), plan: p}
 	l.init()
 	// A delete planned from the folder's marker, with no line of this computer's log knowing its start
-	// (or this computer's run that finishes such a delete): only MailArchive's own names (DM-19). The
+	// (or this computer's run that finishes such a delete), or a folder accepted only by its marker
+	// (byMarker, above): only MailArchive's own names (DM-19). The
 	// marker says only that someone wrote that name, so README.txt, index.html and the *.log files of
 	// a folder of the person's own files are kept; a real delete's step 6 removed them before its
 	// anchor, so nothing of the archive's is lost.
@@ -344,7 +355,7 @@ func planNoAnchor(abs string, deps Deps, u *Unfinished, orig *Refusal) (*DeleteP
 		}
 		var removable bool
 		switch {
-		case u.FromMarker:
+		case ownOnly:
 			removable = strings.HasPrefix(f, stateFilePrefix) || isLeftover(name) || ownLogs[f]
 		case p.Kind == Encrypted:
 			removable = encRootFiles[name] || encRootTmp(name) || isLeftover(name)
@@ -366,7 +377,7 @@ func planNoAnchor(abs string, deps Deps, u *Unfinished, orig *Refusal) (*DeleteP
 			return nil, linkRefusal(filepath.Join(abs, name))
 		case link:
 			p.Kept = append(p.Kept, name)
-		case util.IsLitter(name) && !efi.IsDir() && !(p.Kind != Encrypted && own[f]) && u.FromMarker:
+		case util.IsLitter(name) && !efi.IsDir() && !(p.Kind != Encrypted && own[f]) && ownOnly:
 			maybeLitter = append(maybeLitter, name)
 		case util.IsLitter(name) && !efi.IsDir() && !(p.Kind != Encrypted && own[f]):
 			p.Litter = append(p.Litter, name)

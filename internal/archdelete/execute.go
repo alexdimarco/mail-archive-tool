@@ -189,6 +189,8 @@ func (e *run) logStarted() error {
 		// not known here (DM-8).
 		l.FromMarker, l.EarlierUnknown = true, true
 	}
+	// A folder accepted only by its marker: the next plan keeps MailArchive's own names (MED-1).
+	l.OwnNames = p.OwnNames
 	// What the record says of the archive, as this run read it — for a run that finishes another,
 	// the first run's values it carries (planAny) — so the run that finishes it still has them once
 	// the history and the manifest are gone (N3, N5).

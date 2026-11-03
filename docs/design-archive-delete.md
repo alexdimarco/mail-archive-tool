@@ -2291,6 +2291,65 @@ or needed here.
 >   rotation drive in that state would give step 8 the line's record. The slice-4 pass's MED-1 change
 >   (when a delete ends complete) also still owes its pass, as its note says.
 
+> **Slice 5's adversarial pass, settled 3 November 2026 (MA-1047, MA-1050 and MA-1056 amended; no
+> new id).** The pass (`docs/review-delete-marker-slice5-adversarial.md`, reviewed at 510c574 with
+> the slice-4 settle's `NoteGone` change, 2cd7a0f) found one MED and four LOWs, no HIGH. No new
+> sentence a person reads: the fixes reuse words already pinned.
+> - *MED-1, fixed: a copy of this computer's marker made Delete remove the person's files.* This
+>   computer's delete of a plain archive at P stopped in step 6; P was later replaced by a new folder
+>   of the person's own (another identity, no `folder removed` line), and a copy of the old marker was
+>   placed in it. §15.5's run-id route matched (the path, and the marker's run), and `planNoAnchor`
+>   then classed names by the line's kind — removing the person's README.txt and index.html (an
+>   encrypted line's names hold README.txt too). The path is no second proof against someone who can
+>   write the folder. Fix (corrections beside DM-8 in §15, DM-19 in §15.4, DM-31 in §15.6, and §15.8's
+>   folded question 2): `planNoAnchor` gives a folder accepted only by its marker (`id != u.Identity`)
+>   DM-19's names and litter rule, as a plan from the marker alone; it keeps the line's record,
+>   captured values and `key forgotten` state (DM-6). `DeletePlan.OwnNames` writes `own_names` on the
+>   run's started line and `Unfinished.OwnNames` reads it back, so a run that stops keeps DM-19's names
+>   for the next Delete again, which matches that line by identity (and the plan's re-check under the
+>   lock, which reads it, agrees). A real remount loses nothing: step 6 removes the fixed names before
+>   the anchor (DM-19's own argument). Prove-fail: DM-19 for the marker-matched folder dropped (both
+>   `TestMA1050_APlantedCopyOfThisComputersMarkerKeepsThePersonsFiles` and
+>   `TestMA1050_APlantedCopyOfAnEncryptedDeletesMarkerKeepsThePersonsReadme` red); `own_names` not
+>   read, or not written (the first test red: the run is refused "This archive changed since you
+>   clicked Delete" under the lock).
+> - *LOW-1, fixed (the slice-5 builder's note (a)): a no-anchor folder holding another delete's
+>   marker took this computer's line's record.* The folder at the line's path with its identity, no
+>   anchor, a marker naming another run, and this computer's `marked` line: DM-27 now applies with no
+>   anchor too (`planOf`, `markerNamesAnother`): planned from the folder's marker by
+>   `planMarkerNoAnchor` (DM-19's names, this computer's own record lookup), `Disagrees` set, so the
+>   plan says `MsgLogDisagrees` then the marker's sentence. Step 8 can no longer forget the other
+>   drive's vault's key. With no marker, `NoteGone` stands. Prove-fail: the branch off, or `Disagrees`
+>   not set — `TestMA1056_ANoAnchorFolderHoldingAnotherDeletesMarkerTakesItsOwnRecord` red. Not
+>   changed (a stated limit beside DM-27, as before slice 5): with no `marked` line the line's record
+>   is still taken.
+> - *LOW-2, fixed: the `first_run` ending ended an open delete whose folder is still there.* With the
+>   original's marker gone (DM-27's state) and a copy of it finished on this computer, the ending
+>   dropped this log's refusal of the original half-deleted folder. Now it never ends a delete whose
+>   folder is at its line's path with its line's identity (`stillAsLogged`); a drive back under
+>   another letter or name is not at the old path, so DM-10 item 2's old row still clears. With it,
+>   the original's row no longer says "begun on this computer, which no longer matches it…".
+>   Prove-fail: the guard dropped (`TestMA1050_ACopyFinishedHereLeavesTheOriginalsDeleteOpenWhileItIsThere`
+>   red); the ending never applied (that test's positive twin and two existing MA-1050 tests red).
+> - *LOW-3, a stated limit (§15.6, "The anchor and the marker both lost outside the delete"):* the
+>   slice-4 settle's `NoteGone` after the manifest and the marker are both removed by hand. No code
+>   change; `TestMA1047_TheAnchorAndMarkerRemovedByHandKeepWhatIsLeft` pins that nothing is removed
+>   but MailArchive's names (prove-fail: let that plan remove every root file — red). What else the
+>   pass checked in 2cd7a0f held: no new name removed, no new key-forget route.
+> - *LOW-4, open, for the lead (words; existed before slice 5):* on a rotation drive in DM-27's state
+>   every backup and action says "Delete not finished: click Delete again", while the real way out is
+>   on the other drive. Not done here: it touches five surfaces (backups, actions, the row, `status`,
+>   Status & health) on three systems, and MailArchive cannot tell the rotation drive from a marker
+>   removed by hand, so the words must name both. Suggested words (lead's words, owner-delegated
+>   2026-11-02, not built): "Delete not finished: this computer began deleting an archive in this
+>   folder, but the folder does not hold the note that delete left. If this is a different drive,
+>   plug in the drive the delete began on and finish it there; if this is that archive, click Delete…
+>   to finish it." Recorded as a limit in §15.6.
+> - *The builder's calls (b) and (c):* accepted by the pass, unchanged.
+> - *Process note, from the pass:* slice 5's own tests were written after its code, each then proven
+>   by mutation (its M1-M13), as its commit says. This settle's tests were written first and seen red
+>   before each fix.
+
 ## 15. The delete marker (G2 for another computer, another account, and a remounted drive)
 
 Status: DESIGN AMENDMENT, 2 November 2026, for the 10-lens pre-code review
@@ -2357,6 +2416,22 @@ log. Its *presence* is the signal; its content is only for words. This is the pa
 > this log; the original folder's own marker still refuses its backups and still finishes by the
 > marker-only plan, so nothing is written into it. Slice 5 builds the ending with this stated, and
 > its adversarial pass weighs it. Presence still decides every refusal.
+>
+> **Corrected 3 November 2026 (slice 5's adversarial pass, MED-1 and LOW-2; the text above is left
+> as it was):** two of these sentences were too strong. (1) "the line's path" is no second proof
+> against someone who can write the folder: whoever can create a file in it is already at that path,
+> so for the run-id route the run id is the only proof, and a copy of the marker placed in a new
+> folder at the path of this computer's stopped delete matched that line and was planned with §5.4's
+> names, removing the person's README.txt and index.html (MED-1). Now a no-anchor folder accepted only
+> by its marker (another identity than the line records) gets DM-19's names, as a plan from the
+> marker alone does, and keeps the line's record and state (DM-6); the identity route keeps its two
+> proofs. (2) "the original folder's own marker still refuses its backups" is not true once that
+> marker is gone (DM-27's state: only this computer's log refuses), and the `first_run` ending
+> ended the log's delete there too (LOW-2). Now the ending never ends a delete whose folder is still
+> at its line's path with its line's identity: that folder is proven not to be the one finished
+> elsewhere. The residual left: a copy finished here ends the original's delete in this log only
+> while the original is not at its old path with its old identity (unplugged, moved, or under
+> another letter or name); its own marker, if it still has one, refuses its backups.
 >
 > **[DM-4] The pause seal as a belt for older versions, weighed and not adopted for 1.5.5.** The
 > delete could also write `.mailarchive-paused.json` (with a delete reason), which every version
@@ -2846,6 +2921,16 @@ line alone, no repair advice) applies to it too.
   > existing rule. With no `marked` line (the delete stopped before
   > step 1 (d) wrote its note: nothing changed), the plan is as today. Catalog row MA-1056, one
   > test per cause.
+  > *Corrected 3 November 2026 (slice 5's adversarial pass, LOW-1):* the rule spoke only of a folder
+  > holding its anchor. A folder with no anchor, at the line's path with its identity, holding a
+  > marker that names another delete, while this computer's delete wrote its `marked` line, was
+  > planned from the line and took its ID and Spelling, so step 8 could forget the other drive's
+  > vault's key. Now it is planned from the folder's marker, as when no line knows the delete (DM-19's
+  > names, this computer's own record lookup, "This finishes the delete begun DATE … as the folder's
+  > note says"), with the words above before the marker's. With no marker there the slice-4 pass's
+  > `NoteGone` rule stands. Not changed, a stated limit: with no `marked` line (this computer's delete
+  > stopped before step 6) a no-anchor folder at the line's path and identity is still planned from
+  > the line and its record, as before slice 5.
 - *No anchor, the marker there*: §5.4's no-anchor re-run, planned from the marker instead of a
   log line. The folder's identity is the one it has now (the marker is in the folder, so it is
   the folder's own word; no recorded identity is needed). The kind and an encrypted archive's
@@ -2880,6 +2965,12 @@ line alone, no repair advice) applies to it too.
   > now removes `._X` only when X goes too (a name it removes, or the marker) or X is not there, and
   > lists no other litter; step 7 still removes every litter file with the folder once nothing else
   > is left in it. A delete planned from this computer's own log keeps §4.4's litter rule.
+  > *Corrected 3 November 2026 (slice 5's adversarial pass, MED-1):* "A no-anchor re-run that this
+  > computer's own log line matched (§5.4, or DM-6) keeps §5.4's names" is too wide for DM-6: a folder
+  > accepted only because its marker names the line's delete (its identity differs) gets DM-19's names
+  > and litter rule too, since a copy of the marker placed at the line's path proves nothing more than
+  > the marker alone. Its started line carries `own_names`, so a later run of it (which then matches
+  > by identity) keeps them. A line matched by path and identity keeps §5.4's names.
   > **[DM-9]** "Never complete while it leaves files" does not apply when the marker is there:
   > see the note under §15.2's "no-anchor re-run".
   > **[DM-6]** The identity sentence above stands for the marker-only plan. For this computer's
@@ -3038,6 +3129,9 @@ new platform code on two systems, and with the marker it adds nothing a person w
 >    (MA-1007). Residual (lens 6): a copied marker finished elsewhere on this computer could end
 >    R early; the original folder's marker still refuses its backups and still finishes by the
 >    marker-only plan, so nothing is written into it.
+>    *Corrected 3 November 2026 (slice 5's adversarial pass, LOW-2):* the ending no longer ends R
+>    while R's folder is at its line's path with its line's identity (that folder is not the one
+>    finished elsewhere); see the correction beside DM-8 in §15.
 > 3. Path *and* identity both changed (macOS, Linux): neither route matches, a stated limit
 >    (§15.6). The marker still refuses backups; the person adds the folder at its new path and
 >    finishes there, and item 2 clears the old row.
@@ -3099,6 +3193,12 @@ before step 2).
   > no longer make Delete remove any file but MailArchive's own. The copied-marker sentence above
   > also holds for §15.5's identity route (DM-10): the copy must also be in the folder that line
   > recorded.
+  > *Corrected 3 November 2026 (slice 5's adversarial pass, MED-1):* "A file copied from another
+  > folder's marker cannot make this computer's log treat this folder as that delete's unless the
+  > folder is also at that delete's path" is true, and the run-id route then matched such a copy at
+  > that path — and planned §5.4's names, so "can no longer make Delete remove any file but
+  > MailArchive's own" was false there between slice 5 and its settle. Fixed: a folder accepted only
+  > by its marker gets DM-19's names (the correction beside DM-19 in §15.4).
 - **No way to keep the archive.** A marker means "finish the delete": there is no "cancel" — the
   same as for a "Delete not finished" row today. On another computer, whose person never decided
   the delete, the only way to back up again is to finish it (deleting the archive) or remove the
@@ -3171,6 +3271,22 @@ before step 2).
 > - **An anchor lost outside the delete** after a stop in step 6 (by hand, a sync conflict): the
 >   marker with no anchor reads as "step 6 finished", and Delete again ends complete, naming the
 >   archive's files left as not the archive's. Words only (§15.2's DM-9 correction).
+>
+> **Added 3 November 2026 (slice 5's adversarial pass, LOW-3 and LOW-4):**
+> - **The anchor and the marker both lost outside the delete** after a stop in step 6 that left
+>   archive files (both removed by hand, or the marker's name lost on an exFAT drive with no journal,
+>   DM-12): this computer's `marked` line then reads as "step 6 finished" (the slice-4 pass's
+>   `NoteGone`), so Delete again ends complete, keeps the archive's leftover files as not the
+>   archive's, and this computer's log stops refusing the folder's backups; the plan's sentence
+>   "The archive's files are already gone…" is not true there. No file is lost (pinned by
+>   `TestMA1047_TheAnchorAndMarkerRemovedByHandKeepWhatIsLeft`), and with the manifest gone the
+>   emptied-folder guard still refuses scheduled runs. Words only, two unlikely events.
+> - **A rotation drive in DM-27's state** (the anchor there, this computer's `marked` line, and no
+>   marker or another delete's): every backup and action is refused in MA-1015's words, "Delete not
+>   finished: click Delete again". The real way out on the other drive — plug in the drive the delete
+>   began on and finish it there — is said nowhere; with that drive lost, the ways out are deleting
+>   this archive, or moving deletions.log aside (MA-1007's). This was so before slice 5. Words for the
+>   lead (§14, "Slice 5's adversarial pass").
 
 ### 15.7 Tests (each prove-fail → prove-pass; Windows run first in the lab)
 
@@ -3433,6 +3549,13 @@ rulings.
 >    told once per streak, email only if alerts are set up; planting can need less than deleting;
 >    and with DM-19 it can no longer make Delete remove the person's files). Recommendation:
 >    accept. Blocks: shipping 1.5.5.
+>    *Noted 3 November 2026 (slice 5's adversarial pass, MED-1; a dated note, the question stays as
+>    asked):* between slice 5 (510c574) and its settle, "it can no longer make Delete remove the
+>    person's files" was false for §15.5's run-id route: a copy of this computer's own marker, placed
+>    in a new folder of the person's at the path of this computer's stopped delete, made Delete remove
+>    that folder's README.txt and index.html. The settle gives that route DM-19's names too (§14,
+>    "Slice 5's adversarial pass"), so the fact the owner accepted holds again. No released build had
+>    the gap (Delete first ships in 1.5.6).
 > 3. **Older versions** (question 4 above, with DM-4 and DM-1). Recommendation: no seal belt; the
 >    1.5.5 release notes say "update MailArchive on every computer that backs up into a shared
 >    folder or drive". Also: is a development build of this branch that can delete running on your
