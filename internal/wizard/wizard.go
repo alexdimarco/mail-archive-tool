@@ -124,8 +124,10 @@ var detectOutlook = func() bool { _, ok := outlookcom.Detect(); return ok }
 // itself (MA-612).
 func Run() (code int) {
 	// Its dialogs come up in front of whatever window was active on Windows
-	// (MA-1110), as MailArchive Desktop's do.
+	// (MA-1110), as MailArchive Desktop's do: the person just started it, so its
+	// first window is one they asked for (R39).
 	dialogfront.Install()
+	dialogfront.Arm()
 
 	// The GUI-subsystem build has no console, so an unhandled panic would exit
 	// silently. Surface it on stderr and then in a dialog — in that order, as the
@@ -560,6 +562,7 @@ func wizard() error {
 // dialog (zenity.ErrCanceled) before choosing one — a cancel is "nothing added", not an
 // error. A folder whose copy did not finish comes back with ErrStoppedEarly (MA-954).
 func AddArchive() (string, error) {
+	dialogfront.Arm() // only a Desktop button runs it: its first window was asked for (R39)
 	if refusal, ok := dialogPreflight(runtime.GOOS, dialogToolOnPath(), displayIsSet()); !ok {
 		return "", errors.New(refusal)
 	}

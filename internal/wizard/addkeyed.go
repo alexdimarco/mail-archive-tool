@@ -9,6 +9,7 @@ import (
 	"github.com/ncruces/zenity"
 
 	"mail-archive-tool/internal/app"
+	"mail-archive-tool/internal/dialogfront"
 	"mail-archive-tool/internal/job"
 	"mail-archive-tool/internal/schedule"
 )
@@ -53,8 +54,10 @@ var addEncryptedFlow = func(check func(string) error) (*PendingAdd, error) {
 // AddEncryptedArchive asks the add-an-archive questions for an encrypted archive:
 // check judges the folder as soon as it is chosen (empty, outside every archive and
 // the settings), before anything else is asked. nil with no error: the person backed
-// out.
+// out. Only a Desktop button runs it, so its first window is one the person asked
+// for (R39).
 func AddEncryptedArchive(check func(out string) error) (*PendingAdd, error) {
+	dialogfront.Arm()
 	return addEncryptedFlow(check)
 }
 

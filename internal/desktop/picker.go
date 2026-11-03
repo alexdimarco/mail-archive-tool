@@ -10,6 +10,7 @@ import (
 	"github.com/ncruces/zenity"
 
 	"mail-archive-tool/internal/app"
+	"mail-archive-tool/internal/dialogfront"
 )
 
 // The destination chooser (extraction design §4.8): the OS folder picker, opened in this
@@ -22,8 +23,10 @@ import (
 // pickerBudget is how long one folder dialog may stay open.
 const pickerBudget = 10 * time.Minute
 
-// pickFolder is the zenity seam: the OS folder dialog, dismissed through ctx.
+// pickFolder is the zenity seam: the OS folder dialog, dismissed through ctx. Only a
+// button press opens it, so it comes in front and takes the keyboard (R39).
 var pickFolder = func(ctx context.Context, title string) (string, error) {
+	dialogfront.Arm()
 	return zenity.SelectFile(zenity.Directory(), zenity.Title(title), zenity.Context(ctx))
 }
 

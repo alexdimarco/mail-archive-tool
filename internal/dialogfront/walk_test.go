@@ -41,6 +41,21 @@ var waysInNotThroughInstall = []struct{ decl, reason string }{
 	},
 }
 
+// waysInNotAsked are the ways to a dialog that do not pass an Arm, each with its
+// reason: such a dialog does not take the keyboard, it only flashes its taskbar
+// button (R39). A listed way the walk no longer reaches a dialog through is
+// reported too.
+var waysInNotAsked = []struct{ decl, reason string }{
+	{
+		decl: "internal/desktop.osEnv",
+		reason: "Desktop's start (launch.go): a refusal, the other-version notice or the " +
+			"dashboard's link when the browser did not open is shown as the program starts, " +
+			"often at sign-in from the Startup shortcut, with no button pressed; it waits " +
+			"in the taskbar, flashing, unless Windows lets the program forward itself (it " +
+			"usually does for a program the person has just started from the foreground)",
+	},
+}
+
 // zenityWindows are the zenity functions that open a window. Notify is not one:
 // it shows a notification, with no title bar, which the watch leaves alone.
 var zenityWindows = map[string]bool{
@@ -58,14 +73,54 @@ type decl struct {
 	refs     map[*decl]bool // the declarations it names
 	dialogs  []string       // the zenity windows it opens or names (file:line zenity.X)
 	installs bool           // a function whose first statement is dialogfront.Install()
+	arms     bool           // a function (or a variable holding one) that starts with dialogfront.Arm()
 }
 
 // dialogWalk is what the walk found.
 type dialogWalk struct {
-	decls    map[string]*decl
-	dialogs  int             // zenity window references followed
-	findings []string        // dialogs reached by a way in that does not install first
-	listed   map[string]bool // the listed ways in that a dialog was reached through
+	decls     map[string]*decl
+	dialogs   int             // zenity window references followed
+	findings  []string        // dialogs reached by a way in that does not install first
+	listed    map[string]bool // the listed ways in that a dialog was reached through
+	unasked   []string        // dialogs reached without passing an Arm (R39, MA-1117)
+	notAsked  map[string]bool // the listed waysInNotAsked a dialog was reached through
+	armedWays int             // arming declarations a dialog was followed back to
+}
+
+// leadingCalls are the names of the dialogfront functions called, with no
+// arguments, by the first statements of body, in order (stopping at the first
+// statement that is not one).
+func leadingCalls(body *ast.BlockStmt, dn string) []string {
+	var out []string
+	if body == nil {
+		return nil
+	}
+	for _, st := range body.List {
+		es, ok := st.(*ast.ExprStmt)
+		if !ok {
+			return out
+		}
+		c, ok := es.X.(*ast.CallExpr)
+		if !ok || len(c.Args) != 0 {
+			return out
+		}
+		s, ok := c.Fun.(*ast.SelectorExpr)
+		if !ok {
+			return out
+		}
+		if id, ok := s.X.(*ast.Ident); !ok || id.Name != dn {
+			return out
+		}
+		out = append(out, s.Sel.Name)
+	}
+	return out
+}
+
+// startsWithArm reports whether body asks first: dialogfront.Arm() as its first
+// statement, or right after dialogfront.Install().
+func startsWithArm(body *ast.BlockStmt, dn string) bool {
+	c := leadingCalls(body, dn)
+	return (len(c) > 0 && c[0] == "Arm") || (len(c) > 1 && c[0] == "Install" && c[1] == "Arm")
 }
 
 // importNames maps each import path of f to the name the file uses for it.
@@ -106,10 +161,14 @@ func (s stubImporter) Import(p string) (*types.Package, error) {
 // is dialogfront.Install(); a declaration nothing names (main, init, an entry
 // called only from outside) reached without passing one is a finding.
 func walkDialogs(fset *token.FileSet, files map[string]*ast.File) *dialogWalk {
-	w := &dialogWalk{decls: map[string]*decl{}, listed: map[string]bool{}}
+	w := &dialogWalk{decls: map[string]*decl{}, listed: map[string]bool{}, notAsked: map[string]bool{}}
 	isListed := map[string]bool{}
 	for _, l := range waysInNotThroughInstall {
 		isListed[l.decl] = true
+	}
+	isNotAsked := map[string]bool{}
+	for _, l := range waysInNotAsked {
+		isNotAsked[l.decl] = true
 	}
 	byDir := map[string][]string{}
 	for rel := range files {
@@ -218,6 +277,7 @@ func walkDialogs(fset *token.FileSet, files map[string]*ast.File) *dialogWalk {
 								}
 							}
 						}
+						d.arms = startsWithArm(x.Body, dn)
 					}
 					bodies = append(bodies, body{d, x, names, recv})
 				case *ast.GenDecl:
@@ -226,10 +286,16 @@ func walkDialogs(fset *token.FileSet, files map[string]*ast.File) *dialogWalk {
 						if !ok {
 							continue
 						}
-						for _, n := range vs.Names {
+						for i, n := range vs.Names {
 							d := newDecl(dir+"."+n.Name, n)
 							if obj := info.Defs[n]; obj != nil {
 								byObj[obj] = d
+							}
+							// A variable holding a function literal that asks first (a dialog seam).
+							if dn, ok := names[thisPkg]; ok && i < len(vs.Values) {
+								if fl, ok := vs.Values[i].(*ast.FuncLit); ok {
+									d.arms = startsWithArm(fl.Body, dn)
+								}
 							}
 							bodies = append(bodies, body{d, vs, names, nil})
 						}
@@ -314,6 +380,41 @@ func walkDialogs(fset *token.FileSet, files map[string]*ast.File) *dialogWalk {
 				}
 				w.findings = append(w.findings, d.dialogs[0]+" in "+d.at+" is reached from "+cur.key+
 					" ("+cur.at+"), which does not call dialogfront.Install first: "+strings.Join(chain, " → "))
+				continue
+			}
+			for _, p := range namedBy[cur] {
+				if _, seen := from[p]; !seen {
+					from[p] = cur
+					queue = append(queue, p)
+				}
+			}
+		}
+
+		// And back to every way in again, stopping where the person asks (Arm): a
+		// dialog reached without one does not take the keyboard (R39, MA-1117).
+		from = map[*decl]*decl{d: nil}
+		queue = []*decl{d}
+		for len(queue) > 0 {
+			cur := queue[0]
+			queue = queue[1:]
+			if cur.arms {
+				w.armedWays++
+				continue
+			}
+			if isNotAsked[cur.key] {
+				w.notAsked[cur.key] = true
+				continue
+			}
+			if isListed[cur.key] {
+				continue // not through Install either: reported by the walk above
+			}
+			if len(namedBy[cur]) == 0 || cur.installs {
+				var chain []string
+				for c := cur; c != nil; c = from[c] {
+					chain = append(chain, c.key)
+				}
+				w.unasked = append(w.unasked, d.dialogs[0]+" in "+d.at+" is reached from "+cur.key+
+					" ("+cur.at+") with no dialogfront.Arm on the way: "+strings.Join(chain, " → "))
 				continue
 			}
 			for _, p := range namedBy[cur] {
@@ -497,6 +598,89 @@ type card struct{}
 		},
 	} {
 		if r := walkPlanted(t, srcs); len(r.findings) == 0 {
+			t.Errorf("fail-closed twin %q was not caught", name)
+		}
+	}
+}
+
+// askingWays are the declarations where the person asks for a dialog, each of which
+// starts with dialogfront.Arm() (wizard.Run right after Install): the wizard on its
+// own, the wizard's flows a Desktop button runs in-process, and Desktop's two
+// picker seams, which only a button press calls.
+var askingWays = []string{
+	"internal/wizard.Run", "internal/wizard.AddArchive", "internal/wizard.AddEncryptedArchive",
+	"internal/wizard.ResumeArchive", "internal/desktop.pickFolder", "internal/desktop.pickFile",
+}
+
+// covers: MA-1117, R39
+// Every dialog MailArchive opens is reached only through a place where the person
+// asks for it — a declaration that starts with dialogfront.Arm(), or Install then
+// Arm — or through a listed way with its reason (Desktop's start, which shows a
+// refusal or a notice with no button pressed): a dialog reached otherwise would
+// open behind the browser, flashing, and the person who pressed a button for it
+// would have to click it (review finding 1's fix gives the keyboard only to a
+// dialog asked for). The same walk as MA-1111, stopping at Arm instead of Install.
+// Positive twin first (a planted handler that arms, a seam variable whose function
+// arms, and an entry that installs then arms each pass), then the real tree, then
+// each way round is caught (an entry that only installs, Arm not first, a seam
+// that arms after opening).
+func TestEveryDialogTheDesktopOpensIsOneThePersonAskedFor(t *testing.T) {
+	twin := walkPlanted(t, map[string]string{
+		"internal/desktop/launch.go": `package desktop
+import "mail-archive-tool/internal/dialogfront"
+	func Launch() { dialogfront.Install(); serve() }
+	func serve() { press(); pick(); wizardRun() }
+	func press() { dialogfront.Arm(); ask() }
+	func wizardRun() { dialogfront.Install(); dialogfront.Arm(); ask() }
+`,
+		"internal/desktop/picker.go": `package desktop
+import ("github.com/ncruces/zenity"; "mail-archive-tool/internal/dialogfront")
+var pick = func() { dialogfront.Arm(); _, _ = zenity.SelectFile(zenity.Directory()) }
+	func ask() { _ = zenity.Question("sure?") }
+`,
+	})
+	if len(twin.unasked) != 0 || twin.dialogs != 2 || twin.armedWays != 3 {
+		t.Errorf("positive twin: unasked %v, dialogs %d, arming ways %d (want none, 2, 3)", twin.unasked, twin.dialogs, twin.armedWays)
+	}
+
+	w := walkTree(t, moduleRoot(t))
+	for _, f := range w.unasked {
+		t.Errorf("a dialog that would not take the keyboard though a button asked for it: %s", f)
+	}
+	for _, k := range askingWays {
+		if d := w.decls[k]; d == nil || !d.arms {
+			t.Errorf("%s does not start with dialogfront.Arm()", k)
+		}
+	}
+	for _, l := range waysInNotAsked {
+		if !w.notAsked[l.decl] {
+			t.Errorf("listed way %s reaches no dialog without an Arm any more: remove it from waysInNotAsked", l.decl)
+		}
+	}
+	assure.Reached(t, w.armedWays, "dialogs followed back to a place where the person asks")
+
+	for name, srcs := range map[string]map[string]string{
+		"an entry that only installs": {
+			"internal/desktop/launch.go": `package desktop
+import ("github.com/ncruces/zenity"; "mail-archive-tool/internal/dialogfront")
+	func Launch() { dialogfront.Install(); _ = zenity.Info("hello") }`,
+		},
+		"Arm not first": {
+			"internal/desktop/launch.go": `package desktop
+import ("github.com/ncruces/zenity"; "mail-archive-tool/internal/dialogfront")
+	func Launch() { dialogfront.Install(); press() }
+	func press() { _ = zenity.Info("hello"); dialogfront.Arm() }`,
+		},
+		"a seam that arms after opening": {
+			"internal/desktop/launch.go": `package desktop
+import "mail-archive-tool/internal/dialogfront"
+	func Launch() { dialogfront.Install(); _ = pick() }`,
+			"internal/desktop/picker.go": `package desktop
+import ("github.com/ncruces/zenity"; "mail-archive-tool/internal/dialogfront")
+var pick = func() error { _, err := zenity.SelectFile(); dialogfront.Arm(); return err }`,
+		},
+	} {
+		if r := walkPlanted(t, srcs); len(r.unasked) == 0 {
 			t.Errorf("fail-closed twin %q was not caught", name)
 		}
 	}

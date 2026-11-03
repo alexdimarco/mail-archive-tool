@@ -4,6 +4,7 @@ import (
 	"fmt"
 
 	"mail-archive-tool/internal/app"
+	"mail-archive-tool/internal/dialogfront"
 	"mail-archive-tool/internal/encmark"
 	"mail-archive-tool/internal/schedule"
 	"mail-archive-tool/internal/seal"
@@ -73,7 +74,9 @@ func PauseArchive(out, reason string) error {
 // (repairSchedule: the cadence comes from the descriptor, the job args are rebuilt from the
 // sanitized name + -out, never the descriptor's recorded Job/Exe). A scheduled verify is
 // not auto-restored in this release — its descriptor is kept and the owner can re-enable it.
+// The repair may ask a question; the person asked for it with Resume (R39).
 func ResumeArchive(out string) error {
+	dialogfront.Arm()
 	if err := seal.Unseal(out); err != nil {
 		return err
 	}
