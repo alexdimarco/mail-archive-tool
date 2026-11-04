@@ -4,10 +4,12 @@ MailArchive on Linux: a menu entry with its icon
 These files add MailArchive Desktop to your app menu, with MailArchive's icon.
 You need nothing else installed, and nothing here needs administrator rights.
 
-1. Download the program from the same release into this folder:
-   mailarchive-linux-amd64 (most computers), or mailarchive-linux-arm64 (an ARM
-   computer, such as a Raspberry Pi).
-2. Open a terminal in this folder and run these three lines:
+1. Put the program in this folder. Download it from the same release page as
+   these files, then move it here from your Downloads folder:
+   mailarchive-linux-amd64 for most computers, or mailarchive-linux-arm64 for a
+   64-bit ARM computer, such as a Raspberry Pi running a 64-bit system.
+2. Open a terminal in this folder (in most file managers: right-click an empty
+   spot in the folder and choose Open in Terminal), then run these three lines:
 
    install -D -m 755 mailarchive-linux-amd64 ~/.local/bin/mailarchive
    install -D -m 644 mailarchive.png ~/.local/share/icons/hicolor/256x256/apps/mailarchive.png
@@ -15,12 +17,22 @@ You need nothing else installed, and nothing here needs administrator rights.
 
    On an ARM computer, write mailarchive-linux-arm64 in the first line instead.
 
-MailArchive Desktop is now in your app menu. If clicking it does nothing, sign
-out and back in once: some desktops only look in ~/.local/bin after that.
+If MailArchive Desktop is not in your app menu yet, or clicking it does
+nothing, sign out and back in once. Many systems only look for programs in
+~/.local/bin after a new sign-in, and until then some menus (GNOME's, for one)
+leave the entry out. If it is still missing after that, your system never looks
+there; you can always start it from a terminal with:
 
-mailarchive.svg is the same icon as a drawing, for a desktop that wants one.
+   ~/.local/bin/mailarchive desktop
+
+You can leave mailarchive.svg where it is: it is the same icon as a drawing,
+and the three lines do not need it.
 
 To update MailArchive later, click Shut down at the top of MailArchive Desktop's
-page, then run the first line again with the new program.
-To remove the menu entry, delete the three files the lines above made. Your
-archives are not touched either way.
+page, put the new program in this folder, and run the first line again.
+
+To remove MailArchive, first click the Uninstall MailArchive button on
+MailArchive Desktop's page: it stops your scheduled backups and removes
+MailArchive's settings. Then delete the three files the lines above made (to
+remove only the menu entry and its icon, delete the last two). Your archives
+are not touched either way.

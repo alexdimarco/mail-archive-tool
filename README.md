@@ -123,7 +123,8 @@ The **wizard** (`mailarchive wizard`) is a small wizard built on native OS dialo
 Windows no console window. Open it from: the **MailArchive wizard** shortcut in the
 Start menu (Windows MSI); on a Windows zip without the MSI, make a shortcut to
 `mailarchivew.exe` and add ` wizard` to its Target; `Mail Archive.app` on macOS;
-the `.desktop` entry (or `mailarchive wizard`) on Linux. It walks you through:
+`mailarchive wizard` in a terminal on Linux (the optional app-menu entry opens
+MailArchive Desktop, not the wizard). It walks you through:
 
 - **What would you like to do?** — archive a mail file on this computer (the
   default; the steps below), open MailArchive Desktop (*Microsoft 365, folder
@@ -1400,7 +1401,7 @@ terminal that is running `desktop`.
 | **Windows (installed)** | First click **Shut down** in MailArchive Desktop (if a backup is running, let it finish first). Then download the new `MailArchiveDesktop-<version>-x64.msi` and double-click it: it replaces the installed version in place (or, if your IT team deploys MailArchive, ask them for the new one). |
 | **Windows (zip)** | Download the new `mailarchive-windows-amd64.zip` and replace the old **`mailarchive.exe`** and **`mailarchivew.exe`** with the new pair — keep them together in the same folder. |
 | **macOS** | Download the new `MailArchive-macos.zip`, unzip it, and drag the new **`Mail Archive.app`** into `/Applications`, replacing the old one (right-click → **Open** the first time — it is unsigned). The command-line tool upgrades the same way from `mailarchive-cli-macos.tar.gz`. |
-| **Linux** | Download the new `mailarchive-linux-amd64` and replace the old binary on your `PATH`. |
+| **Linux** | Download the new `mailarchive-linux-amd64` and replace the old binary on your `PATH`. If you added the app-menu entry, the program is `~/.local/bin/mailarchive`: put the new one in the entry's folder and run the first line of its `READ ME.txt` again. |
 
 **3. Start it again.** That is the upgrade.
 

@@ -170,6 +170,26 @@ func TestMA1080_LinuxDesktopEntryAsset(t *testing.T) {
 	if strings.Join(installs, "\n") != strings.Join(wantInstalls, "\n") {
 		t.Errorf("READ ME.txt's install lines are\n%s\nwant\n%s", strings.Join(installs, "\n"), strings.Join(wantInstalls, "\n"))
 	}
+
+	// The friction review of 2026-11-04 (docs/review-linux-desktop-entry-friction.md):
+	// GNOME leaves the entry out of the menu while ~/.local/bin is not on the session's
+	// PATH, so the READ ME says what to do when it is MISSING, gives a way to start it
+	// that needs no PATH, and sends the person to Uninstall MailArchive (which stops the
+	// scheduled backups) before the program file is deleted.
+	prose := strings.Join(strings.Fields(string(members[dir+"READ ME.txt"])), " ")
+	for _, want := range []string{
+		"If MailArchive Desktop is not in your app menu yet",
+		"sign out and back in once",
+		"~/.local/bin/mailarchive desktop",
+		"Uninstall MailArchive",
+	} {
+		if !strings.Contains(prose, want) {
+			t.Errorf("READ ME.txt does not say %q", want)
+		}
+	}
+	if u, del := strings.Index(prose, "Uninstall MailArchive"), strings.Index(prose, "delete the three files"); u < 0 || del < 0 || u > del {
+		t.Error("READ ME.txt must name Uninstall MailArchive before it says to delete the three files")
+	}
 }
 
 // readRepoBytes reads a file under the module root.
