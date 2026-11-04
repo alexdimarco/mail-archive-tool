@@ -13,15 +13,16 @@ You need nothing else installed, and nothing here needs administrator rights.
 
    install -D -m 755 mailarchive-linux-amd64 ~/.local/bin/mailarchive
    install -D -m 644 mailarchive.png ~/.local/share/icons/hicolor/256x256/apps/mailarchive.png
-   install -D -m 644 mailarchive.desktop ~/.local/share/applications/mailarchive.desktop
+   sed "s|^Exec=mailarchive |Exec=\"$HOME/.local/bin/mailarchive\" |" mailarchive.desktop | install -D -m 644 /dev/stdin ~/.local/share/applications/mailarchive.desktop
 
    On an ARM computer, write mailarchive-linux-arm64 in the first line instead.
+   The third line is long: copy it whole. It writes where the program now is
+   (in your home folder) into the menu entry, so the menu can start it.
 
 If MailArchive Desktop is not in your app menu yet, or clicking it does
-nothing, sign out and back in once. Many systems only look for programs in
-~/.local/bin after a new sign-in, and until then some menus (GNOME's, for one)
-leave the entry out. If it is still missing after that, your system never looks
-there; you can always start it from a terminal with:
+nothing, sign out and back in once: some menus only notice a new entry after a
+new sign-in. If it is still missing after that, you can always start it from a
+terminal with:
 
    ~/.local/bin/mailarchive desktop
 

@@ -93,6 +93,38 @@ FRICTION: before: 'mailarchive' is not on PATH in this session (~/.local/bin mis
   entry with **no** `~/.local/bin` on PATH. Then cells 7 and 9 need no sign-out and no
   terminal. Cost: the line is longer to paste, and MA-1080's pinned line changes, so it is
   the owner's call.
+
+  *Settled 4 November 2026 (the lead's call, built by a workflow subagent on `app-icon`
+  after 4549de1):* **built as proposed.** READ ME.txt's third line is now exactly the line
+  above; the shipped `mailarchive.desktop` is unchanged (`Exec=mailarchive desktop`, still
+  valid on its own), and the line rewrites only its `Exec` when it installs it. The shell
+  expands `$HOME` when the line runs (a .desktop file expands neither `~` nor `$HOME`), and
+  the path is double-quoted in `Exec`, so a home folder with a space works. Under the lines
+  the READ ME now says the third line is long, to copy it whole, and that it writes where
+  the program is into the menu entry. The "not in your app menu yet → sign out and back in
+  once" paragraph stays as a fallback, with the PATH reason replaced by "some menus only
+  notice a new entry after a new sign-in", which was not checked.
+  - MA-1080's test now expects this line word for word (an intended change of the pinned
+    text, not a weakening), and on Linux it also runs the three lines for real for a home
+    folder named `pat smith` and checks the installed entry is the shipped one with only
+    `Exec="<home>/.local/bin/mailarchive" desktop` changed. Prove-fail: with the old READ ME,
+    red on the Mac (the line) and in Docker `golang:1.26` (the line, and the installed
+    entry's `Exec`); with the new READ ME, green on both.
+  - Re-walked in Docker `ubuntu:24.04` (arm64, GLib 2.80.0-6ubuntu3.10) as a new non-root
+    user whose home is `/home/pat smith`, with the tarball from `build-desktop-entry.sh`
+    (built on the Mac) and the program cross-compiled for linux/arm64: the three lines exit
+    0 (first line edited to arm64); program 755, icon and entry 644; the installed entry
+    differs from the shipped one only in `Exec="/home/pat smith/.local/bin/mailarchive"
+    desktop`; `desktop-file-validate` reports nothing. GLib loads it and shows it in menus
+    **in the same login session that ran the lines** (no `~/.local/bin` on PATH), and in a
+    session whose PATH never has it. GLib's own launch (what a menu click calls) started
+    `/home/pat smith/.local/bin/mailarchive desktop`. So cells 7 and 9 need no sign-out
+    and no terminal, as far as GLib decides.
+  - Limits, found and not fixed: GLib's `get_executable()` returns the raw first word of
+    `Exec` with its quote (`"/home/pat` here), so anything that matches a window to its app
+    by that value may not match; the launch itself is right. A home folder whose path holds
+    `"`, `\`, `` ` ``, `$`, `%`, `&` or `|` would need escaping the line does not do (none is
+    usual). Not walked: a real GNOME or KDE session redrawing its menu live, Fedora, Arch.
 - **P2 (later): one command instead of three lines.** A verb in the program that writes the
   icon and the entry with its own full path would remove the move, the ARM edit and P1's
   long line.

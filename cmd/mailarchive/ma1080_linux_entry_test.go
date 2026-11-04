@@ -64,9 +64,11 @@ func desktopEntry(t *testing.T, src string) map[string]string {
 // READ ME.txt. The .desktop is a valid [Desktop Entry]: Type=Application,
 // Name=MailArchive Desktop, Exec=mailarchive desktop, Icon=mailarchive,
 // Terminal=false, Categories ending in ";". READ ME.txt has exactly three install
-// lines, which put the program at ~/.local/bin/mailarchive (the name Exec runs), the
-// PNG at ~/.local/share/icons/hicolor/256x256/apps/mailarchive.png (the name Icon
-// finds) and the .desktop in ~/.local/share/applications/.
+// lines, which put the program at ~/.local/bin/mailarchive, the PNG at
+// ~/.local/share/icons/hicolor/256x256/apps/mailarchive.png (the name Icon finds) and
+// the .desktop in ~/.local/share/applications/ with Exec naming the program by its full
+// path (friction proposal P1, 2026-11-04); on Linux the three lines are run for real
+// for a home folder with a space in its name.
 //
 // Prove-fail (recorded in the commit): build-release.sh without the call, or the
 // script without the SVG, each red.
@@ -156,19 +158,27 @@ func TestMA1080_LinuxDesktopEntryAsset(t *testing.T) {
 		t.Errorf(".desktop: Categories=%q must be set and end in ;", c)
 	}
 
+	// The install lines are the READ ME's lines that start with install or sed. Since
+	// proposal P1 of the friction review (settled 2026-11-04), the third line writes the
+	// menu entry with the program's full path, $HOME expanded by the shell when it runs
+	// and quoted for a home folder with a space, because a .desktop file expands neither
+	// ~ nor $HOME and GLib drops an entry whose program is not on the session's PATH.
 	var installs []string
 	for _, ln := range strings.Split(string(members[dir+"READ ME.txt"]), "\n") {
-		if s := strings.TrimSpace(ln); strings.HasPrefix(s, "install ") {
+		if s := strings.TrimSpace(ln); strings.HasPrefix(s, "install ") || strings.HasPrefix(s, "sed ") {
 			installs = append(installs, s)
 		}
 	}
 	wantInstalls := []string{
 		"install -D -m 755 mailarchive-linux-amd64 ~/.local/bin/mailarchive",
 		"install -D -m 644 mailarchive.png ~/.local/share/icons/hicolor/256x256/apps/mailarchive.png",
-		"install -D -m 644 mailarchive.desktop ~/.local/share/applications/mailarchive.desktop",
+		`sed "s|^Exec=mailarchive |Exec=\"$HOME/.local/bin/mailarchive\" |" mailarchive.desktop | install -D -m 644 /dev/stdin ~/.local/share/applications/mailarchive.desktop`,
 	}
 	if strings.Join(installs, "\n") != strings.Join(wantInstalls, "\n") {
 		t.Errorf("READ ME.txt's install lines are\n%s\nwant\n%s", strings.Join(installs, "\n"), strings.Join(wantInstalls, "\n"))
+	}
+	if runtime.GOOS == "linux" {
+		runInstallLines(t, members, dir, installs)
 	}
 
 	// The friction review of 2026-11-04 (docs/review-linux-desktop-entry-friction.md):
@@ -189,6 +199,77 @@ func TestMA1080_LinuxDesktopEntryAsset(t *testing.T) {
 	}
 	if u, del := strings.Index(prose, "Uninstall MailArchive"), strings.Index(prose, "delete the three files"); u < 0 || del < 0 || u > del {
 		t.Error("READ ME.txt must name Uninstall MailArchive before it says to delete the three files")
+	}
+}
+
+// runInstallLines runs the READ ME's three lines for real with bash, in a copy of the
+// unpacked folder (with a stand-in program file), for a home folder whose name has a
+// space, and checks what they made: the program (755), the icon (644, the tarball's
+// PNG) and the menu entry (644), which is the shipped entry with only its Exec line
+// changed to the program's full path, quoted. Linux only: the lines use GNU install.
+func runInstallLines(t *testing.T, members map[string][]byte, dir string, lines []string) {
+	t.Helper()
+	folder := t.TempDir()
+	for name, b := range members {
+		if strings.HasSuffix(name, "/") {
+			continue
+		}
+		if err := os.WriteFile(filepath.Join(folder, strings.TrimPrefix(name, dir)), b, 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	prog := []byte("#!/bin/sh\necho stand-in\n")
+	if err := os.WriteFile(filepath.Join(folder, "mailarchive-linux-amd64"), prog, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	home := filepath.Join(t.TempDir(), "pat smith")
+	if err := os.Mkdir(home, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	for _, ln := range assure.Reached(t, lines, "install lines") {
+		cmd := exec.Command("bash", "-e", "-o", "pipefail", "-c", ln)
+		cmd.Dir = folder
+		cmd.Env = []string{"HOME=" + home, "PATH=" + os.Getenv("PATH")}
+		if b, err := cmd.CombinedOutput(); err != nil {
+			t.Fatalf("READ ME line %q: %v\n%s", ln, err, b)
+		}
+	}
+	for rel, want := range map[string]struct {
+		mode os.FileMode
+		body []byte
+	}{
+		".local/bin/mailarchive":                                  {0o755, prog},
+		".local/share/icons/hicolor/256x256/apps/mailarchive.png": {0o644, members[dir+"mailarchive.png"]},
+	} {
+		p := filepath.Join(home, rel)
+		fi, err := os.Stat(p)
+		if err != nil {
+			t.Errorf("the three lines did not make ~/%s: %v", rel, err)
+			continue
+		}
+		if fi.Mode().Perm() != want.mode {
+			t.Errorf("~/%s has mode %o, want %o", rel, fi.Mode().Perm(), want.mode)
+		}
+		if got, _ := os.ReadFile(p); !bytes.Equal(got, want.body) {
+			t.Errorf("~/%s is not the file the line installs", rel)
+		}
+	}
+	entry := filepath.Join(home, ".local/share/applications/mailarchive.desktop")
+	fi, err := os.Stat(entry)
+	if err != nil {
+		t.Fatalf("the third line did not make the menu entry: %v", err)
+	}
+	if fi.Mode().Perm() != 0o644 {
+		t.Errorf("the installed menu entry has mode %o, want 644", fi.Mode().Perm())
+	}
+	got, _ := os.ReadFile(entry)
+	shipped := string(members[dir+"mailarchive.desktop"])
+	wantExec := `Exec="` + home + `/.local/bin/mailarchive" desktop`
+	if want := strings.Replace(shipped, "\nExec=mailarchive desktop\n", "\n"+wantExec+"\n", 1); want == shipped || string(got) != want {
+		t.Errorf("the installed menu entry is\n%s\nwant the shipped entry with only %s", got, wantExec)
+	}
+	if keys := desktopEntry(t, string(got)); keys["Exec"] != strings.TrimPrefix(wantExec, "Exec=") {
+		t.Errorf("installed .desktop: Exec=%q", keys["Exec"])
 	}
 }
 
