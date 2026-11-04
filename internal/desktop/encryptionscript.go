@@ -123,14 +123,18 @@ if(cp)cp.addEventListener('click',async()=>{
 });
 let newKey='',token='',restoring=false,creating=false;
 function showKey(on){const k=$('encNewKey');if(k)k.textContent=on?newKey:'';}
-function startKey(d){
+// startKey shows a new recovery key and brings its box into view, the keyboard on its first button,
+// its status line saying what happened and what to save (text; MA-1070).
+function startKey(d,text){
   newKey=d.recoveryKey;token=d.token;showKey(true);
   const w=$('encNewKeyWarn');if(w)w.textContent=d.warning||'';
   const box=$('encNewKeyBox');if(box)box.hidden=false;steps();
+  showStep(box,$('encSaveFileBtn'),text);
 }
 // Make a new encrypted archive: the wizard's windows choose what and where, then the
 // password is typed here and the recovery key shown and typed back before anything
-// is written.
+// is written. When the windows answer, the password step is brought into view with the
+// keyboard in its first box (MA-1070): it is far down the page from the button.
 document.querySelectorAll('[data-create-encrypted]').forEach(b=>b.addEventListener('click',async()=>{
   const done=busy(b,'Waiting for the wizard…','Answer the questions in the windows that open on your computer. They may be behind this browser window: if they are not in view, move or minimize this window.');
   let d;
@@ -143,6 +147,7 @@ document.querySelectorAll('[data-create-encrypted]').forEach(b=>b.addEventListen
   if(p)p.textContent='The new encrypted archive goes in '+d.path+'. Choose its password.';
   if(h)h.textContent=d.hint||'';
   if(f)f.hidden=false;say('');
+  showStep(f,$('encCreatePw'),'The folder is chosen. Next, choose a password for the new archive: type it below, then type it again.');
 }));
 const ckb=$('encCreateKeyBtn');
 if(ckb)ckb.addEventListener('click',async()=>{
@@ -155,14 +160,14 @@ if(ckb)ckb.addEventListener('click',async()=>{
   if(!d.ok){say(d.error||'Could not make the key.');return;}
   if(a)a.value='';if(c)c.value='';
   const f=$('encCreateForm');if(f)f.hidden=true;
-  startKey(d);say('');
+  startKey(d,'The password is set. Next, save the recovery key shown below (groups of letters and digits) somewhere safe, such as a password manager, then click I have saved the recovery key.');say('');
 });
 const nk=$('encNewKeyBtn');
 if(nk)nk.addEventListener('click',async()=>{
   const done=busy(nk,'Making a key…','Making a new recovery key…');
   try{const d=await change('api/encryption/new-recovery-key',{});done();
     if(!d.ok){say(d.error||'Could not make a new recovery key.');return;}
-    startKey(d);nk.hidden=true;say('');}
+    startKey(d,'A new recovery key is made. Next, save it (the groups of letters and digits below) somewhere safe, such as a password manager, then click I have saved the recovery key.');nk.hidden=true;say('');}
   catch(e){done();say('Could not reach MailArchive Desktop — reload the page.');}
 });
 // Put back the key file: from the recovery file and recovery key, or the remembered key.
@@ -186,19 +191,22 @@ for(const [id,from] of [['encRestoreFileBtn','file'],['encRestoreRememberedBtn',
     if(d&&d.canceled){say('Nothing was changed.');return;}
     if(!d||!d.ok){say((d&&d.error)||'Could not put back the key file.');return;}
     if(k)k.value='';if(a)a.value='';if(c)c.value='';
-    restoring=true;startKey(d);say('');const f=$('encRestoreForm');if(f)f.hidden=true;
+    restoring=true;startKey(d,'The new password is set. Next, save the new recovery key shown below (groups of letters and digits) somewhere safe, such as a password manager, then click I have saved the recovery key.');say('');const f=$('encRestoreForm');if(f)f.hidden=true;
   });
 }
 const sv=$('encSaveFileBtn');
 if(sv)sv.addEventListener('click',async()=>{
   const done=busy(sv,'Saving…','Choose where to save the recovery file in the window that opens — it may be behind this window.');
   try{const d=await send('api/encryption/new-recovery-key/save-file',{token:token});
-    if(d.canceled){say('The recovery file was not saved.');return;}say(d.ok?('Saved: '+d.path+'\n'+d.note):(d.error||'Could not save the recovery file.'));}
+    if(d.canceled){say('The recovery file was not saved.');return;}say(d.ok?('Saved the recovery file: '+d.path+'. '+d.note):(d.error||'Could not save the recovery file.'));}
   catch(e){say('Could not reach MailArchive Desktop — reload the page.');}
   finally{done();}
 });
 const sd=$('encSavedBtn');
-if(sd)sd.addEventListener('click',()=>{showKey(false);const t=$('encTypeBack');if(t)t.hidden=false;sd.hidden=true;});
+// I have saved the recovery key: the key is hidden and the box to type it back is brought into view
+// with the keyboard in it, its status line asking for the key's groups, not the recovery file (MA-1070, MA-1071).
+if(sd)sd.addEventListener('click',()=>{showKey(false);const t=$('encTypeBack');if(t)t.hidden=false;sd.hidden=true;
+  showStep(t,$('encTypedKey'),'The recovery key is hidden now. Type it below from where you saved it: the groups of letters and digits, like ABCD-EFGH-…, not the recovery file. Show it again brings it back.');});
 const sa=$('encShowAgainBtn');
 if(sa)sa.addEventListener('click',()=>showKey(true));
 const uk=$('encUseKeyBtn');

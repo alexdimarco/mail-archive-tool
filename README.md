@@ -439,6 +439,14 @@ your password manager, then type it back. `-recovery-key-out FILE` and
 key files back) to new files outside the archive. MailArchive Desktop's
 **Encryption** card does the same in the browser.
 
+The recovery key and the recovery file are two different things. The recovery
+key is short, groups of letters and digits like `ABCD-EFGH-…`, and it is what
+you type back. The recovery file is a small text file that MailArchive opens
+itself, with the recovery key, if the archive's key files are ever lost
+(`restore-key-file -from`, or the Encryption card's **Choose the recovery file
+and put back the key file**). You never type or paste the recovery file, and it
+does not contain the recovery key, so keep both, apart from each other.
+
 Later backups into it are the same command without `-encrypt`; they ask for the
 password at the terminal unless this computer remembers the key. Scheduled
 (unattended) backups into an encrypted archive are not available in this

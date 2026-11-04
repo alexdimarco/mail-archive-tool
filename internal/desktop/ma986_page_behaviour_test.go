@@ -16,8 +16,9 @@ import (
 // any other computer without it skips these, saying so.
 
 // runPageScenario runs one of the harness's scenarios on the served script and fails on each
-// check that failed; it returns the checks that passed.
-func runPageScenario(t *testing.T, scenario string) []string {
+// check that failed; it returns the checks that passed. With withEncryption, the served
+// encryption.js runs after it in the same page, as the Overview loads them (MA-1070).
+func runPageScenario(t *testing.T, scenario string, withEncryption ...bool) []string {
 	t.Helper()
 	node, err := exec.LookPath("node")
 	if err != nil {
@@ -35,7 +36,15 @@ func runPageScenario(t *testing.T, scenario string) []string {
 	if err != nil {
 		t.Fatal(err)
 	}
-	out, err := exec.Command(node, harness, js, scenario).CombinedOutput()
+	args := []string{harness, js, scenario}
+	if len(withEncryption) > 0 && withEncryption[0] {
+		enc := filepath.Join(filepath.Dir(js), "encryption.js")
+		if err := os.WriteFile(enc, []byte(encryptionJS), 0o600); err != nil {
+			t.Fatal(err)
+		}
+		args = append(args, enc)
+	}
+	out, err := exec.Command(node, args...).CombinedOutput()
 	var passed []string
 	done := false
 	for _, line := range strings.Split(strings.TrimSpace(string(out)), "\n") {

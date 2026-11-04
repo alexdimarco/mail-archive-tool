@@ -188,7 +188,7 @@ func (d *dashboard) saveRecoveryFileAction(w http.ResponseWriter, r *http.Reques
 	defer cancel()
 	stop := context.AfterFunc(r.Context(), cancel)
 	defer stop()
-	dir, err := d.pick(ctx, "Choose a folder for the recovery file (outside the archive)")
+	dir, err := d.pick(ctx, recoveryFilePickTitle)
 	if err != nil || strings.TrimSpace(dir) == "" {
 		writeJSON(w, map[string]any{"ok": true, "canceled": true})
 		return
@@ -223,7 +223,7 @@ func (d *dashboard) saveRecoveryFileAction(w http.ResponseWriter, r *http.Reques
 	if earlier != "" {
 		_ = keyring.VoidFile(earlier)
 	}
-	writeJSON(w, map[string]any{"ok": true, "path": path, "note": keyring.RecoveryFileNote})
+	writeJSON(w, map[string]any{"ok": true, "path": path, "note": recoveryFileSavedNote})
 }
 
 // confirmRecoveryAction puts the new recovery key in effect once it was typed back
@@ -243,6 +243,11 @@ func (d *dashboard) confirmRecoveryAction(w http.ResponseWriter, r *http.Request
 	d.pending.withItem(in.Token, it, func() { shown = it.recoveryKey() })
 	if shown == "" {
 		writeJSON(w, map[string]any{"ok": false, "error": "Type your new password first; its recovery key is shown next."})
+		return
+	}
+	// The recovery file's contents typed back are told as such, quoting none of it (MA-1071).
+	if keyring.LooksLikeRecoveryFile(in.Typed) {
+		writeJSON(w, map[string]any{"ok": false, "error": recoveryFileTypedBack})
 		return
 	}
 	if err := keyring.CheckRecoveryKey(shown, in.Typed); err != nil {

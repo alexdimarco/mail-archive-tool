@@ -2140,6 +2140,7 @@ pre{white-space:pre-wrap;overflow-wrap:anywhere;background:var(--bg);border:1px 
     <div class="card" id="sec-encsteps" hidden>
       <h2>Encryption</h2>
       <div id="encCreateForm" hidden>
+        <p class="card-sub" role="status" data-step-status hidden></p>
         <p class="card-sub" id="encCreatePath"></p>
         <p class="card-sub" id="encCreateHint"></p>
         <label for="encCreatePw">Password for the new archive</label> <input type="password" id="encCreatePw" autocomplete="new-password" spellcheck="false">
@@ -2149,13 +2150,16 @@ pre{white-space:pre-wrap;overflow-wrap:anywhere;background:var(--bg);border:1px 
         <button class="btn" type="button" id="encCreateKeyBtn">Continue — show the recovery key</button>
       </div>
       <div id="encNewKeyBox" hidden>
-        <p class="card-sub">Your new recovery key:</p>
+        <p class="card-sub" role="status" data-step-status hidden></p>
+        <p class="card-sub">Your new recovery key: the groups of letters and digits below. This is what you type back.</p>
         <p class="mono" id="encNewKey"></p>
         <p class="card-sub warn" id="encNewKeyWarn"></p>
-        <button class="btn secondary" type="button" id="encSaveFileBtn" title="Save its recovery file in a folder you choose, outside the archive: with the recovery key it puts back lost key files.">Save the recovery file…</button>
+        <p class="card-sub" id="encFileWhat">` + recoveryFileWhat + `</p>
+        <button class="btn secondary" type="button" id="encSaveFileBtn" title="` + recoveryFileButtonTitle + `">Save the recovery file (for lost key files)…</button>
         <button class="btn secondary" type="button" id="encSavedBtn">I have saved the recovery key</button>
         <div id="encTypeBack" hidden>
-          <label for="encTypedKey">Type the recovery key from where you saved it</label> <input type="text" id="encTypedKey" autocomplete="off" spellcheck="false" autocapitalize="off">
+          <p class="card-sub" role="status" data-step-status hidden></p>
+          <label for="encTypedKey">Type the recovery key you saved: the groups of letters and digits, like ABCD-EFGH-…, not the recovery file</label> <input type="text" id="encTypedKey" autocomplete="off" spellcheck="false" autocapitalize="off">
           <button class="btn" type="button" id="encUseKeyBtn">Use this recovery key</button>
           <button class="btn secondary" type="button" id="encShowAgainBtn">Show it again</button>
         </div>
@@ -2166,6 +2170,7 @@ pre{white-space:pre-wrap;overflow-wrap:anywhere;background:var(--bg);border:1px 
 
     {{if .ShowEncryption}}<div class="card" id="sec-encryption">
       <h2>Encryption</h2>
+      <p class="card-sub" role="status" data-step-status hidden></p>
       {{if .EncNotSetUp}}<p class="card-sub warn" id="encNotSetUp">Finish setting up: {{.EncNotSetUp}}{{if .EncRunNow}} Unlock it, then click Run now on the Scheduled backup card.{{end}}</p>{{end}}
       {{if .EncUnlocked}}<p class="card-sub" id="encState">Unlocked: you can read this archive's messages, search it and go back in time.{{if .EncRemembered}} This computer remembers its key.{{end}}</p>
       {{if .EncPauseNote}}<p class="card-sub" id="encPauseNote">Paused: {{.EncPauseNote}}</p>{{end}}
@@ -2187,7 +2192,8 @@ pre{white-space:pre-wrap;overflow-wrap:anywhere;background:var(--bg);border:1px 
       </details>
       {{else if .EncKeysMissing}}<p class="card-sub warn" id="encState">This archive's key files are missing or damaged, so it cannot be unlocked. Put them back from its recovery file and recovery key{{if .EncRemembered}}, or from the key this computer remembers{{end}}: you choose a new password, and get a new recovery key.</p>
       <div id="encRestoreForm">
-        <label for="encRestoreKey">Recovery key</label> <input type="text" id="encRestoreKey" autocomplete="off" spellcheck="false" autocapitalize="off">
+        <label for="encRestoreKey">Recovery key: the groups of letters and digits you saved, like ABCD-EFGH-…, not the recovery file</label> <input type="text" id="encRestoreKey" autocomplete="off" spellcheck="false" autocapitalize="off">
+        <p class="card-sub" id="encRestoreHow">` + restoreHowLine + `</p>
         <label for="encRestorePw">New password</label> <input type="password" id="encRestorePw" autocomplete="new-password" spellcheck="false">
         <label for="encRestorePw2">Type it again</label> <input type="password" id="encRestorePw2" autocomplete="new-password" spellcheck="false">
         <button class="btn" type="button" id="encRestoreFileBtn" title="Choose the recovery file saved with this archive's recovery key.">` + app.RestoreKeyWords + `</button>
@@ -2351,6 +2357,31 @@ function busy(b,label,note,text){
   return keep=>{b.removeAttribute('aria-busy');if(label)b.textContent=was;b.disabled=!!keep;if(own)own.remove();
     if(had&&!keep&&b.isConnected&&(!document.activeElement||document.activeElement===document.body))b.focus();};
 }
+
+// showStep brings a step that needs the person's input into view after a window MailArchive opened
+// on the computer (the wizard, a folder or file picker) or a longer action answered (MA-1070; the
+// owner's report of 2026-11-03: the new archive's password waited far down the page, unseen). The
+// step is scrolled to — at once when the person asked for reduced motion, smoothly otherwise — the
+// keyboard goes to its first field (or button), and the step's own status line (role=status) says
+// in plain words what is needed next. It reads no field's value and writes only text.
+function showStep(step,field,text){
+  if(!step)return;
+  const still=!window.matchMedia||window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+  const st=step.querySelector('[data-step-status]');
+  if(st&&text){st.hidden=false;st.textContent=text;}
+  if(step.scrollIntoView)step.scrollIntoView({block:'start',behavior:still?'auto':'smooth'});
+  const f=field||step;
+  if(f===step&&!step.hasAttribute('tabindex'))step.setAttribute('tabindex','-1');
+  if(f.focus)f.focus({preventScroll:true});
+}
+// stepUnlockKey: Open an archive folder… asks the page drawn next to bring in what the archive needs
+// first, if it is an encrypted one that is locked (its Unlock box) or has lost its key files (its
+// recovery key box) — once (MA-1070).
+const stepUnlockKey='mailarchive-step-unlock';
+try{if(sessionStorage.getItem(stepUnlockKey)){sessionStorage.removeItem(stepUnlockKey);
+  const card=$('sec-encryption'),s=$('encSecret'),k=$('encRestoreKey');
+  if(card&&(s||k)){const go=()=>showStep(card,s||k,s?'This archive is encrypted and locked. Next, type its password or recovery key below and click Unlock.':"This archive's key files are missing. Next, type its recovery key below and choose a new password, then click ` + app.RestoreKeyWords + `.");go();
+    if(window.addEventListener)window.addEventListener('load',()=>setTimeout(go,0));}}}catch(e){}
 
 // "Use another browser…": a fresh one-time link to copy into a browser that is not
 // the default one the shortcut opens.
@@ -2570,7 +2601,8 @@ document.querySelectorAll('[data-open-archive]').forEach(b=>b.addEventListener('
     // again, which shows its row.
     if(d.added!==undefined){keep=true;if(n){n.hidden=false;n.textContent=d.note;}try{sessionStorage.setItem(keptNoteKey,d.note);}catch(e){}setTimeout(()=>reloadPage(),600);return;}
     $('outDir').value=d.path;
-    if(await doSave('')){keep=true;setTimeout(()=>reloadPage(),500);}
+    // An encrypted archive opened asks for its password next: the page drawn for it brings its Unlock box in (MA-1070).
+    if(await doSave('')){keep=true;try{sessionStorage.setItem(stepUnlockKey,'1');}catch(e){}setTimeout(()=>reloadPage(),500);}
   }catch(e){if(n){n.hidden=false;n.textContent='Error: '+e;}}
   finally{done(keep);}
 }));

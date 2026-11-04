@@ -256,6 +256,8 @@ var helpSentences = []string{
 	// The recovery key is typed back (encSavedBtn, encTypeBack), and "Remember the key on
 	// this computer" is ticked by default (encCreateRemember).
 	"MailArchive then shows a recovery key: save it somewhere safe, such as a password manager, click I have saved the recovery key, and type it back to show it was saved. If you lose both the password and the recovery key, only a computer that remembers the archive's key can still open it; otherwise nobody can, not even you.",
+	// The recovery key told from the recovery file (MA-1071; the owner's report of 2026-11-03).
+	"The recovery key is the short groups of letters and digits shown on the page, like ABCD-EFGH-…: that is what you type back. Save the recovery file (for lost key files)… saves something else: a file MailArchive opens itself, with your recovery key, if the archive's key files are ever lost. You never type or paste the recovery file, and it does not contain the recovery key, so keep both, apart from each other.",
 	"Scheduled backups of an encrypted archive aren't available yet: back it up with Run now while it is unlocked. An encrypted archive made at the command line has no Run now: it is backed up at the command line, and its Archive now card says how.",
 	"Shut down (at the top of the page): stops MailArchive Desktop. Your archives and scheduled backups are not affected.",
 	// Thunderbird
@@ -540,7 +542,7 @@ func TestHowToUseMailArchiveNamesRealControls(t *testing.T) {
 		"Save settings", "Directory (tenant) ID", "Application (client) ID", "Device (per-user)", "App-only (admin)", "Save configuration",
 		"Archive now", "Keep each message's original .eml too", "Include Deleted Items", "Include Junk Email", "Save alert settings", "Send test email",
 		"Shut down", "Stop waiting and back up now", "Cancel the backup", "Recent backups", "Status & health", "Microsoft 365 connection", "Settings",
-		"Send backup alerts by email", "a failed backup, or Thunderbird not synced for 3 days", "I have saved the recovery key"} {
+		"Send backup alerts by email", "a failed backup, or Thunderbird not synced for 3 days", "I have saved the recovery key", "Save the recovery file (for lost key files)…"} {
 		if !strings.Contains(h.text, label) {
 			t.Errorf("fixture: the guide does not name %q", label)
 		}

@@ -96,7 +96,12 @@ func (d *dashboard) restoreAction(w http.ResponseWriter, r *http.Request) {
 		p, err = keyring.RestoreFromRemembered(out, d.cfg.Store, in.NewPassword, o)
 	case "file":
 		// A typing mistake is told before the file dialog opens, in words that quote
-		// none of what was typed (HTTP-01).
+		// none of what was typed (HTTP-01); the recovery file's contents typed here are
+		// told as such (MA-1071).
+		if keyring.LooksLikeRecoveryFile(in.RecoveryKey) {
+			writeJSON(w, map[string]any{"ok": false, "error": recoveryFileInKeyBox})
+			return
+		}
 		if perr := keyring.RecoveryKeyProblem(in.RecoveryKey); perr != nil {
 			writeJSON(w, map[string]any{"ok": false, "error": "That is not a recovery key (" + perr.Error() + "). Type it again from where you saved it."})
 			return

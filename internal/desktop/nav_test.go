@@ -173,7 +173,11 @@ var optionalJSIDs = map[string]bool{"clearSignin": true, "editM365": true, "canc
 	"archiveGone": true, "navEncryption": true,
 	// the lone current archive's This archive card (ShowThisArchive), where Remove from list's note
 	// is said again after its reload when Your archives is not drawn (MA-1020); null-checked
-	"sec-this-archive": true}
+	"sec-this-archive": true,
+	// the Encryption card (ShowEncryption) with its Unlock box (locked) or recovery key box (key files
+	// missing), which the page drawn after Open an archive folder… brings into view (MA-1070); the
+	// lookups are null-checked (if(card&&(s||k)))
+	"sec-encryption": true, "encSecret": true, "encRestoreKey": true}
 
 // jsBoundIDs lists every $('id') lookup in dashboard.js.
 func jsBoundIDs() []string {

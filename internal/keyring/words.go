@@ -3,6 +3,7 @@ package keyring
 import (
 	"errors"
 	"fmt"
+	"strings"
 
 	"golang.org/x/text/unicode/norm"
 
@@ -64,6 +65,18 @@ func RecoveryKeyRetry(err error) string {
 	}
 	return "That is a recovery key, but not the one just shown: type the one you saved from this screen."
 }
+
+// LooksLikeRecoveryFile reports that text typed where a recovery key is asked is (part of) a
+// recovery file's contents (MA-1071): the file's kind, or the braces, quotes and colons of its
+// JSON, none of which a recovery key has however it is typed (letters, digits, dashes, spaces). It
+// only tells which words to answer with; the text is never quoted or kept.
+func LooksLikeRecoveryFile(text string) bool {
+	return strings.Contains(text, recoveryFileKind) || strings.ContainsAny(text, "{}\":")
+}
+
+// recoveryFileKind is the kind every recovery file names (the vault's own, which keeps its API as
+// frozen; the MA-1071 test reads it from a real recovery file).
+const recoveryFileKind = "mailarchive-recovery-file"
 
 // NewPasswordProblem says what is wrong with pw as a new password, before any key
 // is made from it, or "" when it will do.

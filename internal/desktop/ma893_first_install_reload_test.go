@@ -117,8 +117,20 @@ func TestAFirstInstallKeepsItsNoteAcrossTheRedraw(t *testing.T) {
 	if !strings.Contains(dashboardJS, "if(window.addEventListener)window.addEventListener('load',()=>setTimeout(go,0));}}}catch(e){}") {
 		t.Error("the back-to-Your-archives read is not closed by its catch")
 	}
-	if n := strings.Count(dashboardJS, "sessionStorage."); n != 15 {
-		t.Errorf("the page script calls storage %d times, want the 15 guarded ones", n)
+	// Amended 2026-11-03 (MA-1070): Open an archive folder… asks the page drawn next to bring an
+	// encrypted archive's Unlock box in — three more calls (its set, its read and its removal), each
+	// named here and guarded.
+	for _, guarded := range []string{"try{sessionStorage.setItem(stepUnlockKey,'1');}catch(e){}",
+		"try{if(sessionStorage.getItem(stepUnlockKey)){sessionStorage.removeItem(stepUnlockKey);"} {
+		if !strings.Contains(dashboardJS, guarded) {
+			t.Errorf("the page script's step-unlock mark is not guarded: %q missing", guarded)
+		}
+	}
+	if !strings.Contains(dashboardJS, "if(window.addEventListener)window.addEventListener('load',()=>setTimeout(go,0));}}}catch(e){}\n\n// \"Use another browser") {
+		t.Error("the step-unlock read is not closed by its catch")
+	}
+	if n := strings.Count(dashboardJS, "sessionStorage."); n != 18 {
+		t.Errorf("the page script calls storage %d times, want the 18 guarded ones", n)
 	}
 }
 
