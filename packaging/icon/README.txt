@@ -31,3 +31,9 @@ To change the icon, on a Mac with Chromium or Google Chrome:
 
 CI and the release build only copy these files; a test (MA-1077) fails if any of
 them is not what pack makes from the masters.
+
+When Go is upgraded: pack writes PNGs with Go's own image/png and compress
+packages, and MA-1077 compares bytes. A newer Go that compresses differently turns
+MA-1077 red with "is not what pack makes from the masters". If only the
+compression changed, the pixels are the same, and step 3 above (go run ./packaging/icon/pack), then steps 4 and 5, settle it.
+Add this to the toolchain bump beside the other regenerated files.

@@ -108,8 +108,9 @@ cp "$DIST/mailarchivew.exe" "$PAY/mailarchive-desktop.exe"   # former-name copy 
 cp "$DIST/mailarchivew.exe" "$PAY/mailarchive-gui.exe"       # former-name copy of mailarchivew.exe (§7.1)
 printf '%s\n' "$PRODUCT_VERSION" > "$PAY/PRODUCT-VERSION.txt"
 cp "$ROOT/packaging/mailarchive-desktop/README-payload.txt" "$PAY/READ ME.txt"
-# Branding art is optional until a real .ico exists (branding/README.txt names the
-# expected files); copy whatever is present without failing the release.
+# Branding art: branding/mailarchive.ico is MailArchive's icon, made by
+# packaging/icon/pack (MA-1077) and committed. Build-MSI.ps1 refuses a payload
+# without it, so a missing file stops the MSI build there, not here.
 cp -a "$ROOT/packaging/mailarchive-desktop/branding/." "$PAY/branding/" 2>/dev/null || true
 cp "$ROOT/LICENSE"                    "$PAY/docs/LICENSE.txt"
 cp "$ROOT/packaging/release-notes.md" "$PAY/docs/release-notes.md"
