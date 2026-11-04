@@ -327,6 +327,17 @@ const scenarios = {
     check(!tb.hidden && lastScroll().el === tb && doc.activeElement === doc.getElementById('encTypedKey') && doc.getElementById('encNewKey').textContent === '',
       'after I have saved the recovery key, the box to type it back is in view with the keyboard in it, the key hidden');
     check(statusOf('encTypeBack') === stepWords.typeBack, 'its status line wants the recovery key, not the recovery file', statusOf('encTypeBack'));
+    // The key typed back: a refusal is said under the box, in view, nothing moved; once it takes
+    // effect the box goes, and what happened is brought into view. The earlier step's line is gone.
+    const s1 = scrolled.length;
+    replies['api/encryption/new-recovery-key/confirm'] = { ok: false, error: 'That has a typing mistake.' };
+    doc.getElementById('encUseKeyBtn').click(); await wait(40);
+    const refusedStill = scrolled.length === s1;
+    replies['api/encryption/new-recovery-key/confirm'] = { ok: true, lines: ['The encrypted archive was made in D:\\Mail\\Enc.'], running: true };
+    doc.getElementById('encUseKeyBtn').click(); await wait(40);
+    const note = doc.getElementById('encNote');
+    check(refusedStill && statusOf('encNewKeyBox') === '' && box.hidden && lastScroll().el === note && note.textContent === 'The encrypted archive was made in D:\\Mail\\Enc.',
+      'once the key takes effect what happened is in view; a refusal moves nothing, and one step is said at a time', JSON.stringify({ refusedStill, s: statusOf('encNewKeyBox'), id: lastScroll().el && lastScroll().el.id }));
     // A new recovery key on an unlocked archive's card.
     doc.body.children.slice().forEach(c => c.remove()); doc.activeElement = null;
     page([['E:\\Cur', 'current']], 'E:\\Cur'); encSteps();

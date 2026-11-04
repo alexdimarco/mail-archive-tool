@@ -31,10 +31,12 @@ func TestTheNewArchivesPasswordStepComesIntoView(t *testing.T) {
 // back after the recovery file's window), its box is in view with the keyboard on its first button;
 // after I have saved the recovery key, the box to type it back is in view with the keyboard in it,
 // its status line wanting the recovery key's groups of letters and digits, not the recovery file.
-// Positive twin first: a key that could not be made moves nothing.
+// Once the key typed back takes effect, its box goes and what happened is brought into view; only
+// the current step's line is said. Positive twins first: a key that could not be made, and a key
+// typed back that is refused, move nothing.
 func TestTheRecoveryKeyStepsComeIntoView(t *testing.T) {
-	if passed := runPageScenario(t, "keySteps", true); len(passed) != 6 {
-		t.Errorf("the keySteps scenario passed %d of its 6 checks: %v", len(passed), passed)
+	if passed := runPageScenario(t, "keySteps", true); len(passed) != 7 {
+		t.Errorf("the keySteps scenario passed %d of its 7 checks: %v", len(passed), passed)
 	}
 }
 

@@ -23,7 +23,7 @@ const recoveryFileSavedNote = "MailArchive opens it, with your recovery key, if 
 
 // recoveryFileTypedBack answers the recovery file's contents typed back where the new recovery key
 // is asked, quoting none of it.
-const recoveryFileTypedBack = "That is the recovery file's contents, not the recovery key. Type the recovery key you saved: the groups of letters and digits, like ABCD-EFGH-…. Show it again brings it back."
+const recoveryFileTypedBack = "That is the recovery file's contents, not the recovery key. Type the recovery key you saved: the groups of letters and digits (like ABCD-EFGH-…). Show it again brings it back."
 
 // recoveryFileInKeyBox answers the recovery file's contents typed in the recovery key box of Put
 // back the key file, quoting none of it.

@@ -216,6 +216,8 @@ if(uk)uk.addEventListener('click',async()=>{
   try{const d=await send('api/encryption/new-recovery-key/confirm',{token:token,typed:t?t.value:''});
     if(d.ok){if(t)t.value='';newKey='';token='';showKey(false);const box=$('encNewKeyBox');if(box)box.hidden=true;}
     say(lines(d,'The new recovery key is in effect.'));
+    // The key's box is gone, so what happened is brought into view (MA-1070): the card shrank above it.
+    if(d.ok){const n=$('encNote');if(n&&n.scrollIntoView)n.scrollIntoView({block:'center'});}
     if(d.ok&&(restoring||creating))setTimeout(()=>reloadPage(),8000);}
   catch(e){say('Could not reach MailArchive Desktop — reload the page.');}
   finally{done();}

@@ -2367,7 +2367,9 @@ function busy(b,label,note,text){
 function showStep(step,field,text){
   if(!step)return;
   const still=!window.matchMedia||window.matchMedia('(prefers-reduced-motion: reduce)').matches;
-  const st=step.querySelector('[data-step-status]');
+  const st=step.querySelector('[data-step-status]'),card=step.closest?step.closest('.card'):null;
+  // An earlier step's line in the same card is done with: only this step's is said.
+  if(card)card.querySelectorAll('[data-step-status]').forEach(x=>{if(x!==st)x.hidden=true;});
   if(st&&text){st.hidden=false;st.textContent=text;}
   if(step.scrollIntoView)step.scrollIntoView({block:'start',behavior:still?'auto':'smooth'});
   const f=field||step;
