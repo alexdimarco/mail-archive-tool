@@ -375,6 +375,7 @@ const scenarios = {
     const card = doc.getElementById('sec-encryption');
     check(marked && scrolled.slice(s0).includes(card) && doc.activeElement === doc.getElementById('encSecret') && statusOf('sec-encryption') === stepWords.unlock && !(key in store),
       'the page drawn for the encrypted archive opened is at its Unlock box, the keyboard in it, once', JSON.stringify({ marked, a: doc.activeElement && doc.activeElement.id, s: statusOf('sec-encryption'), store }));
+    check(!reduceMotion && lastScroll().opts.behavior === 'auto', 'a page just drawn moves at once, never smoothly (the browser would cancel it)', JSON.stringify(lastScroll().opts));
     loadListeners.forEach(f => f()); await wait(10);
     check(scrolled[scrolled.length - 1] === card, 'and again once the browser has put back its scroll');
     s0 = fresh('locked'); await wait(30);

@@ -43,11 +43,13 @@ func TestTheRecoveryKeyStepsComeIntoView(t *testing.T) {
 // covers: MA-1070, R39, S41
 // The sweep's same-kind flow: Open an archive folder… on an encrypted archive draws the page for it,
 // which is then at its Encryption card with the keyboard in the Unlock box (or the recovery key box,
-// for missing key files), once, and again after the browser puts back its scroll. Positive twins
-// first: a page drawn with nothing asked, and an archive that needs no unlock, are not moved.
+// for missing key files), once, and again after the browser puts back its scroll — at once, never
+// smoothly, since the browser's scroll restoration cancelled a smooth move on the Windows VM in
+// Edge. Positive twins first: a page drawn with nothing asked, and an archive that needs no unlock,
+// are not moved.
 func TestAnEncryptedArchiveOpenedFromAFolderAsksToUnlockInView(t *testing.T) {
-	if passed := runPageScenario(t, "openThenUnlock", true); len(passed) != 6 {
-		t.Errorf("the openThenUnlock scenario passed %d of its 6 checks: %v", len(passed), passed)
+	if passed := runPageScenario(t, "openThenUnlock", true); len(passed) != 7 {
+		t.Errorf("the openThenUnlock scenario passed %d of its 7 checks: %v", len(passed), passed)
 	}
 }
 

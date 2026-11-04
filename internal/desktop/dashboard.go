@@ -2363,10 +2363,11 @@ function busy(b,label,note,text){
 // owner's report of 2026-11-03: the new archive's password waited far down the page, unseen). The
 // step is scrolled to — at once when the person asked for reduced motion, smoothly otherwise — the
 // keyboard goes to its first field (or button), and the step's own status line (role=status) says
-// in plain words what is needed next. It reads no field's value and writes only text.
-function showStep(step,field,text){
+// in plain words what is needed next. It reads no field's value and writes only text. now: a page
+// just drawn moves at once, never smoothly, or the browser's own scroll restoration cancels the move.
+function showStep(step,field,text,now){
   if(!step)return;
-  const still=!window.matchMedia||window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+  const still=now||!window.matchMedia||window.matchMedia('(prefers-reduced-motion: reduce)').matches;
   const st=step.querySelector('[data-step-status]'),card=step.closest?step.closest('.card'):null;
   // An earlier step's line in the same card is done with: only this step's is said.
   if(card)card.querySelectorAll('[data-step-status]').forEach(x=>{if(x!==st)x.hidden=true;});
@@ -2382,7 +2383,7 @@ function showStep(step,field,text){
 const stepUnlockKey='mailarchive-step-unlock';
 try{if(sessionStorage.getItem(stepUnlockKey)){sessionStorage.removeItem(stepUnlockKey);
   const card=$('sec-encryption'),s=$('encSecret'),k=$('encRestoreKey');
-  if(card&&(s||k)){const go=()=>showStep(card,s||k,s?'This archive is encrypted and locked. Next, type its password or recovery key below and click Unlock.':"This archive's key files are missing. Next, type its recovery key below and choose a new password, then click ` + app.RestoreKeyWords + `.");go();
+  if(card&&(s||k)){const go=()=>showStep(card,s||k,s?'This archive is encrypted and locked. Next, type its password or recovery key below and click Unlock.':"This archive's key files are missing. Next, type its recovery key below and choose a new password, then click ` + app.RestoreKeyWords + `.",true);go();
     if(window.addEventListener)window.addEventListener('load',()=>setTimeout(go,0));}}}catch(e){}
 
 // "Use another browser…": a fresh one-time link to copy into a browser that is not
