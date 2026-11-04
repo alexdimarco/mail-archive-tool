@@ -284,6 +284,28 @@ covering test red):
   - The keyboard falling to the page after the key takes effect: **fixed (MA-1076).** It goes to the
     line saying what happened.
 
+**Walked on the Windows VM (Edge InPrivate, keyboard only, the program built from cd657bd as
+build-release.sh builds mailarchivew.exe, own settings folders under the lab's own folder,
+2026-11-04 01:14 to 01:20):**
+- A folder that is not empty: the refusal was said right under the button, in view (291 px from the
+  top of a 706 px window). The keyboard was back on the button, and the steps card stayed hidden.
+- An empty folder: the password box was in view (116 px), with the keyboard in it, and the line said
+  what to do next.
+- The key appeared with the keyboard on the key itself. I have saved the recovery key put the
+  keyboard in the type-back box. Typing the key and pressing Enter used it.
+- About 1.5 seconds later the page was drawn again at the new archive's row in Your archives, with
+  the keyboard on the row. The row said "Its first backup finished: Backup complete: 2 message(s)
+  added or updated. …".
+- Screenshots: `.claude/pwsettle-shots/` in the main checkout.
+- Not walked: Switch to this archive at the Unlock box. The lab archive's key was remembered (the
+  default), so a switch opens it without asking. Its Node scenario covers it.
+- Clean-up: the lab Desktop and Edge were stopped, and the lab's folders removed. The lab archive's
+  remembered-key entry in the VM user's Credential Manager (`mailarchive:archive:1cae54db…`, matched
+  by the archive id in its key file) was deleted. Two other `mailarchive:archive:` entries were
+  there too (c0a1e069…, db6fb3a2…). They are not this walk's archive, and were left alone: they may
+  be the VM user's own, or left by an earlier lab run, which only the owner can tell. No scheduled task was made.
+  The installed MailArchive Desktop (process 8664) was not touched.
+
 Also noted in the lab notes above, and not changed here: the wording "made at the command line" for
 a settings folder that others can change. It is a lab cause on Windows, and a separate question.
 
