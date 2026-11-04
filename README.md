@@ -34,6 +34,7 @@ it makes — that page needs no software to read.
 | **Windows, without administrator rights** | `mailarchive-windows-amd64.zip` | unzip, then double-click **`mailarchivew.exe`** (SmartScreen → *More info → Run anyway*) |
 | **macOS** | `MailArchive-macos.zip` | unzip to **`Mail Archive.app`**, drag it into Applications, then **right-click → Open → Open** once (it is unsigned) |
 | **Linux** | `mailarchive-linux-amd64` | needs `zenity` and a desktop session; run **`mailarchive wizard`** (or `mailarchive desktop`) |
+| **Linux app menu** (optional) | `mailarchive-linux-desktop-entry.tar.gz` | unpack it, put the program in the folder it makes, and follow its `READ ME.txt`: three lines add **MailArchive Desktop**, with its icon, to your app menu |
 
 On macOS the double-click app is **`MailArchive-macos.zip`** (it unzips to
 `Mail Archive.app`). The command-line tool is a separate download,
