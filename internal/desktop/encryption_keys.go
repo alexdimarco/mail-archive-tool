@@ -166,9 +166,10 @@ func notWaiting(w http.ResponseWriter) {
 	writeJSON(w, map[string]any{"ok": false, "error": "That new recovery key is no longer waiting — make a new one."})
 }
 
-// recoveryFileName is the recovery file's name in the folder the person picks.
+// recoveryFileName is the recovery file's name in the folder the person picks: named for what it is
+// not, since that is the moment of confusion (MA-1075; the owner's pick Q3 of 2026-11-04).
 func recoveryFileName(out string) string {
-	return "MailArchive recovery file — " + filepath.Base(out) + ".txt"
+	return "MailArchive recovery file — " + filepath.Base(out) + " (not the recovery key).txt"
 }
 
 // saveRecoveryFileAction saves the new recovery key's recovery file in a folder the
@@ -245,9 +246,10 @@ func (d *dashboard) confirmRecoveryAction(w http.ResponseWriter, r *http.Request
 		writeJSON(w, map[string]any{"ok": false, "error": "Type your new password first; its recovery key is shown next."})
 		return
 	}
-	// The recovery file's contents typed back are told as such, quoting none of it (MA-1071).
+	// The recovery file's contents typed back are told as such, quoting none of it (MA-1071), and the
+	// page takes them out of the box: nothing in them is worth keeping there (MA-1075).
 	if keyring.LooksLikeRecoveryFile(in.Typed) {
-		writeJSON(w, map[string]any{"ok": false, "error": recoveryFileTypedBack})
+		writeJSON(w, map[string]any{"ok": false, "error": recoveryFileTypedBack, "clear": true})
 		return
 	}
 	if err := keyring.CheckRecoveryKey(shown, in.Typed); err != nil {
@@ -286,7 +288,7 @@ func (d *dashboard) confirmRecoveryAction(w http.ResponseWriter, r *http.Request
 	}
 	lines := []string{"The new recovery key is in effect."}
 	if it.file != "" {
-		lines = append(lines, keyring.EarlierKeyWarning, keyring.RecoveryFileNote)
+		lines = append(lines, keyring.EarlierKeyWarning, recoveryFileLastNote) // the Desktop's words (MA-1075)
 	} else {
 		lines = append(lines, keyring.NoRecoveryFileWarning("New recovery key on this card, saving its recovery file"))
 	}

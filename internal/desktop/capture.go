@@ -8,6 +8,7 @@ import (
 	"log"
 	"net/http"
 	"os"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -387,7 +388,10 @@ func (d *dashboard) activity(w http.ResponseWriter, r *http.Request) {
 		c.forgetLocked()
 	}
 	out := map[string]any{"running": c.running, "log": append([]string(nil), c.lines...), "result": c.result, "error": c.errMsg,
-		"cancellable": c.cancel != nil, "skippable": c.waiting && !c.skipped}
+		"cancellable": c.cancel != nil, "skippable": c.waiting && !c.skipped,
+		// The job in the slot, by its id: a new archive's first backup is followed on its row by
+		// this id, so a later task's result is never said as its (MA-1072).
+		"job": strconv.FormatUint(c.slot, 10)}
 	if c.device != nil {
 		out["device"] = map[string]any{"code": c.device.UserCode, "url": c.device.VerificationURI}
 	}

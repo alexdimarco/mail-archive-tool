@@ -123,25 +123,39 @@ if(cp)cp.addEventListener('click',async()=>{
 });
 let newKey='',token='',restoring=false,creating=false;
 function showKey(on){const k=$('encNewKey');if(k)k.textContent=on?newKey:'';}
-// startKey shows a new recovery key and brings its box into view, the keyboard on its first button,
-// its status line saying what happened and what to save (text; MA-1070).
+// startKey shows a new recovery key and brings its box into view, the keyboard on the key itself (not
+// on Save the recovery file, where Enter began the owner's second report's confusion: MA-1076, the
+// review's LOW-4), its status line saying what happened and what to save (text; MA-1070).
 function startKey(d,text){
   newKey=d.recoveryKey;token=d.token;showKey(true);
   const w=$('encNewKeyWarn');if(w)w.textContent=d.warning||'';
   const box=$('encNewKeyBox');if(box)box.hidden=false;steps();
-  showStep(box,$('encSaveFileBtn'),text);
+  showStep(box,$('encNewKey'),text);
+}
+// sayBeside says t on the line beside b, made the first time (role=status), or hides it when t is
+// empty (MA-1073): what a button that opens the wizard's windows says before any step needs the
+// person belongs where the person is, not in the steps card far below.
+function sayBeside(b,t){
+  let n=b.nextElementSibling;
+  if(!n||!n.hasAttribute('data-beside-note')){n=document.createElement('p');n.className='card-sub';n.setAttribute('role','status');n.setAttribute('data-beside-note','');b.after(n);}
+  n.hidden=!t;n.textContent=t||'';
 }
 // Make a new encrypted archive: the wizard's windows choose what and where, then the
 // password is typed here and the recovery key shown and typed back before anything
 // is written. When the windows answer, the password step is brought into view with the
-// keyboard in its first box (MA-1070): it is far down the page from the button.
+// keyboard in its first box (MA-1070): it is far down the page from the button. Until then —
+// the hint while the windows are open, a refusal, Cancel — the button's own line says it, the
+// keyboard left on the button (MA-1073; the review's MED-1: a folder refused was said 2,553
+// pixels below the window).
 document.querySelectorAll('[data-create-encrypted]').forEach(b=>b.addEventListener('click',async()=>{
-  const done=busy(b,'Waiting for the wizard…','Answer the questions in the windows that open on your computer. They may be behind this browser window: if they are not in view, move or minimize this window.');
+  const done=busy(b,'Waiting for the wizard…','');
+  sayBeside(b,'Answer the questions in the windows that open on your computer. They may be behind this browser window: if they are not in view, move or minimize this window.');
   let d;
   try{d=await send('api/encryption/create',{});}catch(e){d={ok:false,error:'Could not reach MailArchive Desktop — reload the page.'};}
   done();
-  if(d.canceled){say('Nothing was made.');return;}
-  if(!d.ok){say(d.error||'Could not make an encrypted archive.');return;}
+  if(d.canceled){sayBeside(b,'Nothing was made.');return;}
+  if(!d.ok){sayBeside(b,d.error||'Could not make an encrypted archive.');return;}
+  sayBeside(b,'');
   token=d.token;creating=true;
   const p=$('encCreatePath'),h=$('encCreateHint'),f=$('encCreateForm');
   if(p)p.textContent='The new encrypted archive goes in '+d.path+'. Choose its password.';
@@ -189,6 +203,8 @@ for(const [id,from] of [['encRestoreFileBtn','file'],['encRestoreRememberedBtn',
     body.recoveryKey='';body.newPassword='';body.again='';
     done();
     if(d&&d.canceled){say('Nothing was changed.');return;}
+    // The recovery file's contents refused in the key box are taken out of it (MA-1075).
+    if(d&&d.clear&&k)k.value='';
     if(!d||!d.ok){say((d&&d.error)||'Could not put back the key file.');return;}
     if(k)k.value='';if(a)a.value='';if(c)c.value='';
     restoring=true;startKey(d,'The new password is set. Next, save the new recovery key shown below (groups of letters and digits) somewhere safe, such as a password manager, then click I have saved the recovery key.');say('');const f=$('encRestoreForm');if(f)f.hidden=true;
@@ -215,13 +231,27 @@ if(uk)uk.addEventListener('click',async()=>{
   const done=busy(uk,'Checking…','Checking the recovery key you typed…');
   try{const d=await send('api/encryption/new-recovery-key/confirm',{token:token,typed:t?t.value:''});
     if(d.ok){if(t)t.value='';newKey='';token='';showKey(false);const box=$('encNewKeyBox');if(box)box.hidden=true;}
+    // The recovery file's contents refused are taken out of the box; a typing mistake is left to fix (MA-1075).
+    else if(d.clear&&t)t.value='';
     say(lines(d,'The new recovery key is in effect.'));
     // The key's box is gone, so what happened is brought into view (MA-1070): the card shrank above it.
-    if(d.ok){const n=$('encNote');if(n&&n.scrollIntoView)n.scrollIntoView({block:'center'});}
-    if(d.ok&&(restoring||creating))setTimeout(()=>reloadPage(),8000);}
+    // The keyboard goes there too, not to the page itself (MA-1076; the review's LOW-6).
+    const n=$('encNote');
+    if(d.ok&&n){if(n.scrollIntoView)n.scrollIntoView({block:'center'});n.setAttribute('tabindex','-1');if(n.focus)n.focus({preventScroll:true});}
+    let later=d.ok&&restoring?8000:0;
+    if(d.ok&&creating){creating=false;
+      // Archive made: the page drawn next lands at Your archives on its row and follows its first
+      // backup there (MA-1072); where the browser keeps nothing for the tab, it is followed here.
+      if(keepMade({path:d.path||'',said:lines(d,''),job:d.running&&d.job?String(d.job):''}))later=1500;
+      else if(d.running&&d.job&&n){const l=document.createElement('span');l.hidden=true;n.appendChild(document.createElement('br'));n.appendChild(l);followFirstBackup(l,d.job);}}
+    if(later)setTimeout(()=>reloadPage(),later);}
   catch(e){say('Could not reach MailArchive Desktop — reload the page.');}
   finally{done();}
 });
+// Enter in the box the recovery key is typed back in uses it, as Use this recovery key does
+// (MA-1076; the owner's pick Q4 of 2026-11-04).
+const tk=$('encTypedKey');
+if(tk)tk.addEventListener('keydown',ev=>{if(ev.key==='Enter'&&!ev.isComposing){ev.preventDefault();if(uk&&!uk.disabled)uk.click();}});
 const ck=$('encCancelKeyBtn');
 if(ck)ck.addEventListener('click',async()=>{
   const done=busy(ck,'Cancelling…','Cancelling…');

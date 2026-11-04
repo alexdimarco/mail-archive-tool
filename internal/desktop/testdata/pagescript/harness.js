@@ -71,6 +71,8 @@ class El {
   addEventListener(ev, f) { (this.listeners[ev] = this.listeners[ev] || []).push(f); }
   click() { if (this.disabled) return; (this.listeners.click || []).forEach(f => f({ preventDefault() {} })); if (this.onclick) this.onclick(); }
   fire(ev) { (this.listeners[ev] || []).forEach(f => f({})); }
+  // press is a key pressed while this element has the keyboard (keydown), as a browser sends it.
+  press(key) { let stopped = false; (this.listeners.keydown || []).forEach(f => f({ key, isComposing: false, preventDefault() { stopped = true; } })); return stopped; }
   focus() { doc.activeElement = this; }
   scrollIntoView(o) { scrolled.push(this); scrollOpts.push(o); }
   all() { const r = []; const walk = n => n.children.forEach(c => { if (c.tagName !== '#TEXT') { r.push(c); walk(c); } }); walk(this); return r; }
@@ -178,7 +180,7 @@ function encSteps() {
       input('encCreateRemember', 'checkbox'), input('encCreateProgram', 'checkbox'),
       el('button', { class: 'btn', type: 'button', id: 'encCreateKeyBtn' }, 'Continue — show the recovery key')),
     el('div', { id: 'encNewKeyBox', hidden: '' }, el('p', { class: 'card-sub', role: 'status', 'data-step-status': '', hidden: '' }),
-      el('p', { class: 'mono', id: 'encNewKey' }), el('p', { class: 'card-sub warn', id: 'encNewKeyWarn' }),
+      el('p', { class: 'mono', id: 'encNewKey', tabindex: '-1' }), el('p', { class: 'card-sub warn', id: 'encNewKeyWarn' }),
       el('button', { class: 'btn secondary', type: 'button', id: 'encSaveFileBtn' }, 'Save the recovery file (for lost key files)…'),
       el('button', { class: 'btn secondary', type: 'button', id: 'encSavedBtn' }, 'I have saved the recovery key'),
       el('div', { id: 'encTypeBack', hidden: '' }, el('p', { class: 'card-sub', role: 'status', 'data-step-status': '', hidden: '' }),
@@ -205,7 +207,7 @@ const statusOf = id => { const s = doc.getElementById(id).querySelector('[data-s
 
 // ---- the browser around it -------------------------------------------------------------
 const posts = [], gets = [], scrolled = [], scrolledTop = [], scrollOpts = [];
-let reloads = 0, reduceMotion = false;
+let reloads = 0, reduceMotion = false, storageOff = false;
 const loadListeners = [];
 const replies = {}, delays = {};
 const store = {};
@@ -225,7 +227,10 @@ function boot() {
     Uint8Array, Blob, JSON, Array, Promise, Object, String, Number, Error, Proxy,
     URL: { createObjectURL: () => 'blob:1', revokeObjectURL() {} },
     location: { reload() { reloads++; }, hash: '' },
-    sessionStorage: { getItem: k => (k in store ? store[k] : null), setItem: (k, v) => { store[k] = String(v); }, removeItem: k => { delete store[k]; } },
+    // storageOff: a browser that keeps nothing for the tab (a private window, blocked site data):
+    // every call throws, as such a browser's does.
+    sessionStorage: { getItem: k => { if (storageOff) throw new Error('no storage'); return k in store ? store[k] : null; },
+      setItem: (k, v) => { if (storageOff) throw new Error('no storage'); store[k] = String(v); }, removeItem: k => { if (storageOff) throw new Error('no storage'); delete store[k]; } },
     setTimeout: (f, ms) => setTimeout(f, Math.min(ms, 20)), setInterval: () => 0, clearTimeout, console,
     scrollTo: (x, y) => { scrolledTop.push([x, y]); },
     confirm: () => { throw new Error('the page asked through confirm()'); },
@@ -304,8 +309,9 @@ const scenarios = {
     check(rs.el === doc.getElementById('encCreateForm') && rs.opts.behavior === 'auto' && doc.activeElement === doc.getElementById('encCreatePw'), 'for reduced motion it is brought into view at once', JSON.stringify(rs.opts));
   },
   // The recovery key's steps (MA-1070, MA-1071): once the key is made — for a new archive, a new
-  // recovery key or a key file put back — its box is brought into view with the keyboard on its first
-  // button and says what to save; after I have saved the recovery key, the box to type it back is in
+  // recovery key or a key file put back — its box is brought into view with the keyboard on the key
+  // itself (amended 2026-11-04, the review's LOW-4: it was on Save the recovery file, so Enter there
+  // began the owner's second report's confusion) and says what to save; after I have saved the recovery key, the box to type it back is in
   // view, the keyboard in it, and its status line says it wants the recovery key's groups of letters
   // and digits, not the recovery file. Positive twin first: a key that could not be made moves nothing.
   async keySteps() {
@@ -320,8 +326,8 @@ const scenarios = {
     replies['api/encryption/create/key'] = { ok: true, token: 'T1', recoveryKey: 'ABCD-EFGH-IJKL-MNOP-QRST-UVWX-YZ2', warning: 'Save this recovery key.' };
     kb.click(); await wait(40);
     const box = doc.getElementById('encNewKeyBox');
-    check(!box.hidden && lastScroll().el === box && doc.activeElement === doc.getElementById('encSaveFileBtn') && statusOf('encNewKeyBox') === stepWords.keyCreate,
-      "the new archive's recovery key is brought into view, the keyboard on its first button", JSON.stringify({ id: lastScroll().el && lastScroll().el.id, a: doc.activeElement && doc.activeElement.id, s: statusOf('encNewKeyBox') }));
+    check(!box.hidden && lastScroll().el === box && doc.activeElement === doc.getElementById('encNewKey') && statusOf('encNewKeyBox') === stepWords.keyCreate,
+      "the new archive's recovery key is brought into view, the keyboard on the key itself", JSON.stringify({ id: lastScroll().el && lastScroll().el.id, a: doc.activeElement && doc.activeElement.id, s: statusOf('encNewKeyBox') }));
     doc.getElementById('encSavedBtn').click(); await wait(20);
     const tb = doc.getElementById('encTypeBack');
     check(!tb.hidden && lastScroll().el === tb && doc.activeElement === doc.getElementById('encTypedKey') && doc.getElementById('encNewKey').textContent === '',
@@ -345,8 +351,8 @@ const scenarios = {
     boot(); await wait(30);
     replies['api/encryption/new-recovery-key'] = { ok: true, token: 'T2', recoveryKey: 'ABCD-EFGH-IJKL-MNOP-QRST-UVWX-YZ2', warning: '' };
     doc.getElementById('encNewKeyBtn').click(); await wait(40);
-    check(lastScroll().el === doc.getElementById('encNewKeyBox') && doc.activeElement === doc.getElementById('encSaveFileBtn') && statusOf('encNewKeyBox') === stepWords.keyNew,
-      'a new recovery key is brought into view, the keyboard on its first button', statusOf('encNewKeyBox'));
+    check(lastScroll().el === doc.getElementById('encNewKeyBox') && doc.activeElement === doc.getElementById('encNewKey') && statusOf('encNewKeyBox') === stepWords.keyNew,
+      'a new recovery key is brought into view, the keyboard on the key itself', statusOf('encNewKeyBox'));
     // A key file put back, from the recovery file chosen in its window.
     doc.body.children.slice().forEach(c => c.remove()); doc.activeElement = null;
     page([['E:\\Cur', 'current']], 'E:\\Cur'); encSteps(); encLocked('missing');
@@ -354,8 +360,8 @@ const scenarios = {
     boot(); await wait(30);
     replies['api/encryption/restore'] = { ok: true, token: 'T3', recoveryKey: 'ABCD-EFGH-IJKL-MNOP-QRST-UVWX-YZ2', warning: '' };
     doc.getElementById('encRestoreFileBtn').click(); await wait(40);
-    check(lastScroll().el === doc.getElementById('encNewKeyBox') && doc.activeElement === doc.getElementById('encSaveFileBtn') && statusOf('encNewKeyBox') === stepWords.keyRestore,
-      "after the recovery file's window, the new recovery key is brought into view, the keyboard on its first button", statusOf('encNewKeyBox'));
+    check(lastScroll().el === doc.getElementById('encNewKeyBox') && doc.activeElement === doc.getElementById('encNewKey') && statusOf('encNewKeyBox') === stepWords.keyRestore,
+      "after the recovery file's window, the new recovery key is brought into view, the keyboard on the key itself", statusOf('encNewKeyBox'));
   },
   // Open an archive folder… on an encrypted archive (MA-1070's sweep): the page drawn for it after the
   // folder picker is at its Encryption card, the keyboard in the Unlock box (or, when its key files are
@@ -385,6 +391,172 @@ const scenarios = {
     store[key] = '1'; s0 = fresh('missing'); await wait(30);
     check(scrolled.slice(s0).includes(doc.getElementById('sec-encryption')) && doc.activeElement === doc.getElementById('encRestoreKey') && statusOf('sec-encryption') === stepWords.missing,
       'one whose key files are missing is at its recovery key box', statusOf('sec-encryption'));
+  },
+  // After "archive made" (MA-1072; the owner's pick Q5 of 2026-11-04 and the review's MED-3: the page
+  // reloaded after eight seconds and nothing showed the first backup): what it said is kept for the
+  // page drawn next, which lands at Your archives on the new archive's row, says it there with the
+  // keyboard on the row, and follows the first backup there until it ends — running, then finished or
+  // failed. A browser that keeps nothing for the tab is not reloaded: the backup is followed in place.
+  // Positive twin first: a page drawn with nothing kept is not moved and says nothing.
+  async madeLanding() {
+    const key = 'mailarchive-made-archive', enc = 'D:\\Mail\\Enc';
+    const made = ['The encrypted archive was made in D:\\Mail\\Enc.', 'Its first backup is running now: its row in Your archives says how it goes. Switch to it to read the archive.'];
+    const until = async (f, ms) => { for (let i = 0; i < (ms || 400) / 5 && !f(); i++) await wait(5); return f(); };
+    const toTypeBack = async () => {
+      replies['api/encryption/create'] = { ok: true, token: 'T1', path: enc, hint: '' };
+      doc.querySelector('[data-create-encrypted]').click(); await wait(40);
+      replies['api/encryption/create/key'] = { ok: true, token: 'T1', recoveryKey: 'ABCD-EFGH-IJKL-MNOP-QRST-UVWX-YZ2', warning: '' };
+      doc.getElementById('encCreateKeyBtn').click(); await wait(40);
+      doc.getElementById('encSavedBtn').click(); await wait(20);
+    };
+    const fresh = () => { doc.body.children.slice().forEach(c => c.remove()); doc.activeElement = null; page([['E:\\Cur', 'current'], [enc, 'other']], 'E:\\Cur'); encSteps(); const s0 = scrolled.length; boot(); return s0; };
+    page([['E:\\Cur', 'current'], [enc, 'other']], 'E:\\Cur'); encSteps();
+    boot(); await wait(30);
+    check(scrolled.length === 0 && doc.activeElement === null && !doc.querySelector('[data-made-note]'), 'a page drawn with nothing kept is not moved and says nothing');
+    await toTypeBack();
+    replies['api/encryption/new-recovery-key/confirm'] = { ok: true, lines: made, running: true, path: enc, job: '7' };
+    const r0 = reloads;
+    doc.getElementById('encUseKeyBtn').click(); await until(() => reloads > r0);
+    let kept = null; try { kept = JSON.parse(store[key]); } catch (e) {}
+    check(reloads === r0 + 1 && !!kept && kept.path === enc && kept.said === made.join('\n') && kept.job === '7', 'archive made: what it said is kept for the page drawn next, which is drawn', JSON.stringify({ reloads, kept }));
+    // The page drawn next: the first backup runs, then finishes.
+    let n = 0;
+    replies['api/activity'] = () => (++n < 4 ? { running: true, job: '7', log: ['Reading Inbox…'] } : { running: false, job: '7', result: 'Archived — 3 message(s) exported, 3 indexed.', error: '' });
+    let s0 = fresh(); await wait(5);
+    let li = doc.querySelectorAll('.archive-row')[1], note = li.querySelector('[data-made-note]');
+    check(!!note && note.getAttribute('role') === 'status' && note.textContent.startsWith(made.join('\n')) && scrolled.slice(s0).includes(li) && doc.activeElement === li && !(key in store),
+      "the page drawn next is at Your archives, on the new archive's row, saying what was made, the keyboard on the row, once", JSON.stringify({ note: note && note.textContent, a: doc.activeElement && doc.activeElement.tagName, store }));
+    const running = await until(() => note.textContent.endsWith('Its first backup is running: Reading Inbox…'));
+    const finished = await until(() => note.textContent.endsWith('Its first backup finished: Archived — 3 message(s) exported, 3 indexed.'));
+    check(running && finished, 'its first backup is followed on its row: running, then finished', note.textContent);
+    // A first backup that failed is said as failed; one whose slot another task took since is said as unseen.
+    store[key] = JSON.stringify({ path: enc, said: made[0], job: '8' });
+    replies['api/activity'] = { running: false, job: '8', result: '', error: 'The backup could not read its mail source.' };
+    fresh(); await wait(5);
+    note = doc.querySelectorAll('.archive-row')[1].querySelector('[data-made-note]');
+    const failed = await until(() => note.textContent.endsWith('Its first backup did not finish: The backup could not read its mail source.'));
+    store[key] = JSON.stringify({ path: enc, said: made[0], job: '9' });
+    replies['api/activity'] = { running: false, job: '10', result: 'Archived — 1 message(s) exported, 1 indexed.', error: '' };
+    fresh(); await wait(5);
+    note = doc.querySelectorAll('.archive-row')[1].querySelector('[data-made-note]');
+    const unseen = await until(() => note.textContent.endsWith('Its first backup has ended, but another task ran after it, so how it ended is not shown here.'));
+    check(failed && unseen, "a failed first backup is said as failed; another task's result is never said as its own", note.textContent);
+    // A browser that keeps nothing for the tab: no reload, the first backup followed in place.
+    storageOff = true; n = 0;
+    replies['api/activity'] = () => (++n < 3 ? { running: true, job: '11', log: ['Reading Inbox…'] } : { running: false, job: '11', result: 'Archived — 2 message(s) exported, 2 indexed.', error: '' });
+    doc.body.children.slice().forEach(c => c.remove()); doc.activeElement = null;
+    page([['E:\\Cur', 'current']], 'E:\\Cur'); encSteps(); boot(); await wait(30);
+    await toTypeBack();
+    replies['api/encryption/new-recovery-key/confirm'] = { ok: true, lines: made, running: true, path: enc, job: '11' };
+    const r1 = reloads;
+    doc.getElementById('encUseKeyBtn').click();
+    const inPlace = await until(() => doc.getElementById('encNote').textContent.endsWith('Its first backup finished: Archived — 2 message(s) exported, 2 indexed.'));
+    await wait(40);
+    storageOff = false;
+    check(inPlace && reloads === r1 && doc.getElementById('encNote').textContent.startsWith(made.join('\n')), 'where the browser keeps nothing, the page is not drawn again and the first backup is followed in place', doc.getElementById('encNote').textContent);
+  },
+  // What Make a new encrypted archive… says before any step needs the person (MA-1073; the review's
+  // MED-1: a folder refused after the wizard's windows was said 2,553 pixels below the window, so the
+  // page again seemed to stop): the hint while the windows are open, a refusal, an add already in
+  // progress and Cancel are said on a line beside the button, the keyboard left on it, nothing moved,
+  // the steps card far below left hidden. Positive twin first: windows that answer take the line away
+  // and the password step takes over.
+  async createBeside() {
+    const hint = 'Answer the questions in the windows that open on your computer. They may be behind this browser window: if they are not in view, move or minimize this window.';
+    const fresh = () => { doc.body.children.slice().forEach(c => c.remove()); doc.activeElement = null; page([['E:\\Cur', 'current']], 'E:\\Cur'); encSteps(); boot(); };
+    fresh(); await wait(30);
+    let b = doc.querySelector('[data-create-encrypted]');
+    const beside = () => { const x = b.nextElementSibling; return x && x.hasAttribute('data-beside-note') && !x.hidden ? x.textContent : ''; };
+    const farHidden = () => doc.getElementById('sec-encsteps').hidden && doc.getElementById('encNote').hidden;
+    replies['api/encryption/create'] = { ok: true, token: 'T1', path: 'D:\\Mail\\Enc', hint: '' };
+    delays['api/encryption/create'] = 40;
+    b.focus(); b.click(); await wait(10);
+    const during = beside() === hint && b.nextElementSibling.getAttribute('role') === 'status' && farHidden();
+    await wait(80);
+    check(during && beside() === '' && !doc.getElementById('encCreateForm').hidden && doc.activeElement === doc.getElementById('encCreatePw'),
+      'while the windows are open the hint is said beside the button; once they answer it goes and the password step takes over', JSON.stringify({ during, beside: beside() }));
+    delete delays['api/encryption/create'];
+    for (const [reply, said, name] of [
+      [{ ok: false, error: 'Could not make an encrypted archive: an encrypted archive is made in a new or empty folder: D:\\Docs holds files; choose a new or empty folder.' },
+        'Could not make an encrypted archive: an encrypted archive is made in a new or empty folder: D:\\Docs holds files; choose a new or empty folder.', 'a folder refused'],
+      [{ ok: false, error: 'An add is already in progress — finish the steps on your computer, then try again.' }, 'An add is already in progress — finish the steps on your computer, then try again.', 'an add already in progress'],
+      [{ ok: true, canceled: true }, 'Nothing was made.', 'Cancel in the windows']]) {
+      fresh(); await wait(30);
+      b = doc.querySelector('[data-create-encrypted]');
+      replies['api/encryption/create'] = reply;
+      b.focus(); const s0 = scrolled.length; b.click(); await wait(40);
+      check(beside() === said && doc.activeElement === b && scrolled.length === s0 && farHidden(), name + ' is said beside the button, the keyboard still on it, nothing moved', JSON.stringify({ beside: beside(), s: scrolled.length - s0 }));
+    }
+  },
+  // Switch to this archive, and Use this archive, on a locked encrypted archive (MA-1074; the review's
+  // MED-2: the Unlock box was 1,200 to 2,070 pixels down, 32 to 34 Tab presses away): the page drawn
+  // for it is at its Unlock box with the keyboard in it, once, as after Open an archive folder….
+  // Positive twin first: a switch refused asks nothing of the page drawn next.
+  async switchThenUnlock() {
+    const key = 'mailarchive-step-unlock';
+    const fresh = kind => { doc.body.children.slice().forEach(c => c.remove()); doc.activeElement = null; page([['F:\\Enc', 'current']], 'F:\\Enc'); encLocked(kind); const s0 = scrolled.length; boot(); return s0; };
+    const atUnlock = s0 => { const card = doc.getElementById('sec-encryption'); return scrolled.slice(s0).includes(card) && doc.activeElement === doc.getElementById('encSecret') && statusOf('sec-encryption') === stepWords.unlock && !(key in store); };
+    page([['E:\\Cur', 'current'], ['F:\\Enc', 'other']], 'E:\\Cur');
+    boot(); await wait(30);
+    const sw = () => doc.querySelectorAll('.archive-row')[1].querySelector('[data-switch-archive]');
+    replies['api/settings'] = { ok: false, error: 'That folder cannot be used.' };
+    sw().click(); await wait(80);
+    check(!(key in store) && reloads === 0, 'a switch refused asks nothing of the page drawn next, and draws none', JSON.stringify({ store, reloads }));
+    replies['api/settings'] = { ok: true };
+    sw().click(); await wait(80);
+    const marked = store[key] === '1' && reloads >= 1;
+    let s0 = fresh('locked'); await wait(30);
+    check(marked && atUnlock(s0), 'after Switch to this archive, the page drawn for the locked archive is at its Unlock box, the keyboard in it, once', JSON.stringify({ marked, a: doc.activeElement && doc.activeElement.id, s: statusOf('sec-encryption') }));
+    // Use this archive (the empty page's offer of the archive used last).
+    doc.body.children.slice().forEach(c => c.remove()); doc.activeElement = null;
+    page([], '');
+    doc.body.append(el('div', { class: 'card', id: 'noArchive' }, el('button', { class: 'btn', type: 'button', id: 'useOffer', 'data-path': 'F:\\Enc' }, 'Use this archive')));
+    boot(); await wait(30);
+    const r0 = reloads;
+    doc.getElementById('useOffer').click(); await wait(80);
+    const marked2 = store[key] === '1' && reloads > r0;
+    s0 = fresh('locked'); await wait(30);
+    check(marked2 && atUnlock(s0), 'after Use this archive, the same', JSON.stringify({ marked2, a: doc.activeElement && doc.activeElement.id }));
+  },
+  // The recovery key and the keyboard (MA-1076): when a key appears the keyboard is on the key itself,
+  // not on Save the recovery file (the review's LOW-4); Enter in the box it is typed back in uses it,
+  // as Use this recovery key does (the owner's pick Q4); the recovery file's contents refused there
+  // are taken out of the box, a typing mistake is left to fix (LOW-6); once a new recovery key takes
+  // effect the keyboard is on the line saying so (LOW-6), the page not drawn again. Positive twin
+  // first: the button still uses the key.
+  async keyKeyboard() {
+    const confirmPath = 'api/encryption/new-recovery-key/confirm', sent = () => posts.filter(p => p.path === confirmPath);
+    page([['E:\\Cur', 'current']], 'E:\\Cur'); encSteps();
+    doc.getElementById('sec-encryption').append(el('button', { class: 'btn secondary', type: 'button', id: 'encNewKeyBtn' }, 'Make a new recovery key'));
+    boot(); await wait(30);
+    replies['api/encryption/new-recovery-key'] = { ok: true, token: 'T2', recoveryKey: 'ABCD-EFGH-IJKL-MNOP-QRST-UVWX-YZ2', warning: '' };
+    doc.getElementById('encNewKeyBtn').click(); await wait(40);
+    const k = doc.getElementById('encNewKey');
+    check(doc.activeElement === k && k.textContent === 'ABCD-EFGH-IJKL-MNOP-QRST-UVWX-YZ2', 'when the key appears the keyboard is on the key itself, not on Save the recovery file', doc.activeElement && doc.activeElement.id);
+    doc.getElementById('encSavedBtn').click(); await wait(20);
+    const box = doc.getElementById('encTypedKey');
+    replies[confirmPath] = { ok: false, error: 'That has a typing mistake.' };
+    box.value = 'ABCX-EFGH-IJKL-MNOP-QRST-UVWX-YZ2';
+    let n0 = sent().length;
+    doc.getElementById('encUseKeyBtn').click(); await wait(40);
+    const byButton = sent().length === n0 + 1 && sent()[n0].body.typed === 'ABCX-EFGH-IJKL-MNOP-QRST-UVWX-YZ2' && box.value === 'ABCX-EFGH-IJKL-MNOP-QRST-UVWX-YZ2';
+    n0 = sent().length;
+    const otherKey = box.press('a'); await wait(30);
+    const quiet = sent().length === n0 && !otherKey;
+    const stopped = box.press('Enter'); await wait(40);
+    check(byButton && quiet && stopped && sent().length === n0 + 1 && sent()[n0].body.typed === 'ABCX-EFGH-IJKL-MNOP-QRST-UVWX-YZ2',
+      'Enter in the type-back box uses the key, as the button does; other keys do not; a typing mistake is left in the box to fix', JSON.stringify({ byButton, quiet, stopped, n: sent().length - n0 }));
+    replies[confirmPath] = { ok: false, error: "That is the recovery file's contents, not the recovery key.", clear: true };
+    box.value = '{ "kind": "mailarchive-recovery-file" }';
+    box.press('Enter'); await wait(40);
+    check(box.value === '', "the recovery file's contents refused are taken out of the box", box.value);
+    replies[confirmPath] = { ok: true, lines: ['The new recovery key is in effect.'] };
+    box.value = 'ABCD-EFGH-IJKL-MNOP-QRST-UVWX-YZ2';
+    const r0 = reloads;
+    box.press('Enter'); await wait(60);
+    const note = doc.getElementById('encNote');
+    check(doc.activeElement === note && lastScroll().el === note && note.textContent === 'The new recovery key is in effect.' && reloads === r0,
+      'once the key takes effect the keyboard is on the line saying so, the page not drawn again', JSON.stringify({ a: doc.activeElement && doc.activeElement.id, reloads: reloads - r0 }));
   },
   // Two Delete… clicks, the first one's plan slower: only the last one's panel opens, and each
   // panel's label is its own box's (del-s3b-A1-01).

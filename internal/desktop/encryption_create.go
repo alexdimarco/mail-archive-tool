@@ -5,6 +5,7 @@ import (
 	"errors"
 	"log"
 	"net/http"
+	"strconv"
 	"strings"
 
 	"mail-archive-tool/internal/app"
@@ -145,7 +146,7 @@ func (d *dashboard) commitCreate(w http.ResponseWriter, it *pendingItem) {
 	_ = d.cfg.registerArchive(out, d.now())
 	lines := []string{"The encrypted archive was made in " + out + "."}
 	if it.file != "" {
-		lines = append(lines, keyring.RecoveryFileNote)
+		lines = append(lines, recoveryFileLastNote) // the Desktop's words (MA-1075)
 	}
 	// The run job Run now repeats is written at once, so an archive whose first backup
 	// cannot start is still finished by Run now (the P3-3 follow-up pass, MAKE-01).
@@ -168,8 +169,11 @@ func (d *dashboard) commitCreate(w http.ResponseWriter, it *pendingItem) {
 		return
 	}
 	// The job is the new archive's own: its failure is worded for it, not for the
-	// archive open here (MAKE-02).
-	if rerr := d.runKeyedJobOn(out, func(j keyedJob, logger *log.Logger) (string, error) {
+	// archive open here (MAKE-02). Its slot's id, taken as it takes the slot, is answered
+	// with the folder, so the page drawn next follows this backup on the archive's row and
+	// never another task's (MA-1072).
+	var slot uint64
+	if rerr := d.runCancellableJobOnClaiming(out, func() { slot = d.cap.slot }, func(j keyedJob, logger *log.Logger) (string, error) {
 		defer u.Destroy() // the first backup's key goes when it ends
 		return withProgramLine(logger, func(logger *log.Logger) (string, error) {
 			// Attended, but inert: the first backup's job never carries the sync
@@ -182,9 +186,9 @@ func (d *dashboard) commitCreate(w http.ResponseWriter, it *pendingItem) {
 	}); rerr != nil {
 		u.Destroy()
 		lines = append(lines, "Its first backup could not start now ("+rerr.Error()+"): switch to it, unlock it, and click Run now to finish setting it up.")
-		writeJSON(w, map[string]any{"ok": true, "lines": lines})
+		writeJSON(w, map[string]any{"ok": true, "lines": lines, "path": out})
 		return
 	}
-	lines = append(lines, "Its first backup is running now — it shows here as it goes. The archive is in Your archives; switch to it to read it.")
-	writeJSON(w, map[string]any{"ok": true, "lines": lines, "running": true})
+	lines = append(lines, firstBackupRowLine)
+	writeJSON(w, map[string]any{"ok": true, "lines": lines, "running": true, "path": out, "job": strconv.FormatUint(slot, 10)})
 }

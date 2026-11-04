@@ -95,9 +95,15 @@ func (d *dashboard) unlockAction(w http.ResponseWriter, r *http.Request) {
 			askedReRecord = !in.ReRecord
 			return in.ReRecord, nil
 		}}
+	// The recovery file's contents pasted in this box are told as such once they did not open the
+	// archive (MA-1075; the review's LOW-2): asked after, never before, so a password that merely
+	// looks like the file is never refused for it.
+	fileLike := keyring.LooksLikeRecoveryFile(in.Secret)
 	_, err := d.cfg.Keys.unlock(out, in.Secret, o)
 	in.Secret = ""
 	switch {
+	case fileLike && errors.Is(err, vault.ErrWrongSecret):
+		writeJSON(w, map[string]any{"ok": false, "error": recoveryFileInUnlockBox})
 	case err == nil:
 		writeJSON(w, map[string]any{"ok": true})
 	case askedCost != nil && errors.Is(err, keyring.ErrCostRefused):

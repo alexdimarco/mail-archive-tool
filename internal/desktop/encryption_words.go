@@ -29,5 +29,19 @@ const recoveryFileTypedBack = "That is the recovery file's contents, not the rec
 // back the key file, quoting none of it.
 const recoveryFileInKeyBox = "That is the recovery file's contents, not the recovery key. Type the recovery key in this box (the groups of letters and digits, like ABCD-EFGH-…); MailArchive asks for the recovery file itself, in a window, when you click " + app.RestoreKeyWords + "."
 
+// recoveryFileInUnlockBox answers the recovery file's contents typed in the Unlock box ("Password or
+// recovery key") once they did not open the archive, quoting none of it (MA-1075; the review's LOW-2).
+const recoveryFileInUnlockBox = "That is the recovery file's contents, not the password or the recovery key, so nothing was opened. Type the password, or the recovery key you saved (the groups of letters and digits, like ABCD-EFGH-…). MailArchive opens the recovery file itself, only to put back lost key files."
+
+// recoveryFileLastNote is the last line about the recovery file once a key saved with one takes effect
+// on the Desktop (MA-1075; the review's LOW-3): the Desktop's words, as the key's box and the saved line
+// say them, never the command line's (keyring.RecoveryFileNote, with its command and "Keep it with your
+// backups").
+const recoveryFileLastNote = "The recovery file you saved is opened by MailArchive, with your recovery key, if this archive's key files are ever lost; you never type or paste it. Keep the recovery file and the recovery key apart from each other."
+
+// firstBackupRowLine ends "archive made" when the new archive's first backup runs (MA-1072): the page
+// drawn next lands on its row in Your archives and follows the backup there.
+const firstBackupRowLine = "Its first backup is running now: its row in Your archives says how it goes. Switch to it to read the archive."
+
 // restoreHowLine is said in Put back the key file, under the recovery key box's label.
 const restoreHowLine = "Type the recovery key in the box. When you click " + app.RestoreKeyWords + ", a window opens for you to choose the recovery file: you never open or paste the file yourself."

@@ -129,8 +129,26 @@ func TestAFirstInstallKeepsItsNoteAcrossTheRedraw(t *testing.T) {
 	if !strings.Contains(dashboardJS, "if(window.addEventListener)window.addEventListener('load',()=>setTimeout(go,0));}}}catch(e){}\n\n// \"Use another browser") {
 		t.Error("the step-unlock read is not closed by its catch")
 	}
-	if n := strings.Count(dashboardJS, "sessionStorage."); n != 18 {
-		t.Errorf("the page script calls storage %d times, want the 18 guarded ones", n)
+	// Amended 2026-11-04 (MA-1074): the step-unlock mark is set in one guarded helper, which Open an
+	// archive folder…, Switch to this archive and Use this archive call — no new storage call.
+	if !strings.Contains(dashboardJS, "function markUnlockStep(){try{sessionStorage.setItem(stepUnlockKey,'1');}catch(e){}}") {
+		t.Error("the step-unlock mark is not set through its one guarded helper")
+	}
+	// Amended 2026-11-04 (MA-1072, the owner's pick Q5): what "archive made" said is kept for the page
+	// drawn next, which lands at Your archives — three more calls (its set, its read and its removal),
+	// each named here and guarded; the set answers whether it was kept, so a browser that keeps
+	// nothing is not reloaded.
+	for _, guarded := range []string{"function keepMade(v){try{sessionStorage.setItem(madeKey,JSON.stringify(v));return true;}catch(e){return false;}}",
+		"try{const kept=sessionStorage.getItem(madeKey);if(kept){sessionStorage.removeItem(madeKey);"} {
+		if !strings.Contains(dashboardJS, guarded) {
+			t.Errorf("the page script's kept archive-made note is not guarded: %q missing", guarded)
+		}
+	}
+	if !strings.Contains(dashboardJS, "if(v&&typeof v.said==='string')landMade(v);}}catch(e){}") {
+		t.Error("the kept archive-made note's read is not closed by its catch")
+	}
+	if n := strings.Count(dashboardJS, "sessionStorage."); n != 21 {
+		t.Errorf("the page script calls storage %d times, want the 21 guarded ones", n)
 	}
 }
 

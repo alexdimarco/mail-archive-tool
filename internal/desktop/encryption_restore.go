@@ -99,7 +99,7 @@ func (d *dashboard) restoreAction(w http.ResponseWriter, r *http.Request) {
 		// none of what was typed (HTTP-01); the recovery file's contents typed here are
 		// told as such (MA-1071).
 		if keyring.LooksLikeRecoveryFile(in.RecoveryKey) {
-			writeJSON(w, map[string]any{"ok": false, "error": recoveryFileInKeyBox})
+			writeJSON(w, map[string]any{"ok": false, "error": recoveryFileInKeyBox, "clear": true}) // the page empties the box (MA-1075)
 			return
 		}
 		if perr := keyring.RecoveryKeyProblem(in.RecoveryKey); perr != nil {
@@ -198,7 +198,7 @@ func (d *dashboard) commitRestore(w http.ResponseWriter, it *pendingItem) {
 		lines = append(lines, err.Error())
 	}
 	if it.file != "" {
-		lines = append(lines, keyring.EarlierKeyWarning, keyring.RecoveryFileNote)
+		lines = append(lines, keyring.EarlierKeyWarning, recoveryFileLastNote) // the Desktop's words (MA-1075)
 	} else {
 		lines = append(lines, keyring.NoRecoveryFileWarning("New recovery key on this card once it is unlocked, saving its recovery file"))
 	}

@@ -230,6 +230,63 @@ These were not built in this branch:
 5. **Where to land after "archive made":** on Your archives, at the new archive's row, showing its
    first backup (MED-3).
 
+## Settled (2026-11-04, the fix round after this review)
+
+The owner answered the five questions on 4 November 2026 ("ok" to the lead's recommended picks):
+Q1 apart (already built, kept), Q2 no label inside the file (not built), Q3 yes, Q4 yes, Q5 yes.
+Nothing else was approved by that answer, and it does not authorise a release.
+
+Each finding, and what became of it (test-first; the commit records each mutation that turned a
+covering test red):
+
+- **MED-1, fixed (MA-1073).** Everything **Make a new encrypted archive…** says before a step needs
+  the person (the hint while the windows are open, a folder refused, the Outlook app refused, an add
+  already in progress, Cancel) is said on a line beside the button. The keyboard stays on the
+  button, nothing moves, and the steps card far below stays hidden.
+- **MED-2, fixed (MA-1074).** **Switch to this archive** and **Use this archive** set the same
+  one-time mark as **Open an archive folder…**, through one guarded helper. The page drawn for a
+  locked encrypted archive is at its Unlock box with the keyboard in it.
+- **MED-3 and Q5, fixed (MA-1072).** "Archive made" answers the new folder and the job its first
+  backup runs as. The page keeps what it said and draws the page again after 1.5 seconds (it was 8).
+  The page drawn next is at the new archive's row in Your archives, with the keyboard on the row.
+  That row follows the first backup: running, then finished or failed. If another task ran since,
+  it says so instead, and never shows that task's result as the first backup's. If the browser
+  keeps nothing for the tab, the page is not drawn again and the backup is followed in place.
+- **Q3, built (MA-1075).** The saved file is named "MailArchive recovery file — NAME (not the
+  recovery key).txt". Its contents and format are unchanged.
+- **Q4, built (MA-1076).** Enter in the type-back box uses the key, as the button does.
+- **LOW-1, fixed (MA-1075).** A colon alone, or quotes alone, no longer mark the recovery file. The
+  file's kind, its braces, or one of its fields (a quoted name followed by a colon) still do. Each
+  line of a real file still reads as the file's. "Recovery key: ABCD-…" and "ABCD-…" in quotes no
+  longer do.
+- **LOW-2, fixed (MA-1075).** The Unlock box tells the recovery file's contents, in words of its
+  own. It checks only after trying them, so a password that looks like the file (braces, quotes,
+  colons) still opens its archive. The review suggested checking before the slow key work. That
+  would refuse such a password, so the check comes after.
+- **LOW-3, fixed (MA-1075).** After a key saved with a recovery file takes effect (a new archive, a
+  new recovery key, a key file put back), the Desktop's last line uses its own words and says
+  "apart". The command line keeps its own sentence, which it alone uses.
+- **LOW-4, fixed (MA-1076).** When a key appears, the keyboard is on the key itself, not on Save the
+  recovery file. MA-1070's three keySteps checks and its served-page pin moved with it, to the new
+  place, as strong as before.
+- **LOW-5, not fixed: recorded.** It cannot be checked without a screen reader, and neither the
+  builder nor the review ran one. The suggested shorter type-back label would drop the words that
+  tell the key from the file, the very words of MA-1071, at the place of the owner's second report.
+  It should be settled on a real screen reader (Narrator with Edge first, then VoiceOver) before
+  either line is changed.
+- **LOW-6:**
+  - The recovery file's folder window opening inside the archive folder: **not fixed, recorded.**
+    The system folder picker MailArchive uses takes no starting folder, so changing it is a change
+    to the dialogs on three platforms. The refusal there is clear and in view.
+  - Pasted file contents left in the box: **fixed (MA-1075).** They are taken out of the box, at the
+    type-back box and in Put back the key file. A typing mistake is left to fix.
+  - Enter in the type-back box: **built** (Q4, MA-1076).
+  - The keyboard falling to the page after the key takes effect: **fixed (MA-1076).** It goes to the
+    line saying what happened.
+
+Also noted in the lab notes above, and not changed here: the wording "made at the command line" for
+a settings folder that others can change. It is a lab cause on Windows, and a separate question.
+
 ---
 Date worked: 2026-11-04, from the session clock and the VM clock (00:10 to 00:40, UTC−5). Register: a
 review finding. Drawn on: the code at bc84ca5, my own test runs, and my own walk on the Windows VM;

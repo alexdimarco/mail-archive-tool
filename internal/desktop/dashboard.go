@@ -2152,7 +2152,7 @@ pre{white-space:pre-wrap;overflow-wrap:anywhere;background:var(--bg);border:1px 
       <div id="encNewKeyBox" hidden>
         <p class="card-sub" role="status" data-step-status hidden></p>
         <p class="card-sub">Your new recovery key: the groups of letters and digits below. This is what you type back.</p>
-        <p class="mono" id="encNewKey"></p>
+        <p class="mono" id="encNewKey" tabindex="-1"></p>
         <p class="card-sub warn" id="encNewKeyWarn"></p>
         <p class="card-sub" id="encFileWhat">` + recoveryFileWhat + `</p>
         <button class="btn secondary" type="button" id="encSaveFileBtn" title="` + recoveryFileButtonTitle + `">Save the recovery file (for lost key files)…</button>
@@ -2377,6 +2377,48 @@ function showStep(step,field,text,now){
   if(f===step&&!step.hasAttribute('tabindex'))step.setAttribute('tabindex','-1');
   if(f.focus)f.focus({preventScroll:true});
 }
+// madeKey keeps, for this tab only, what "archive made" said across the reload that follows it: the
+// page drawn next lands at Your archives on the new archive's row, says it there with the keyboard on
+// the row, and follows its first backup there until it ends (MA-1072; the owner's pick Q5 of
+// 2026-11-04, the review's MED-3: the page said the first backup "shows here as it goes", reloaded,
+// and never showed it). keepMade answers whether it was kept: a browser that keeps nothing for the tab
+// is not reloaded, and the backup is followed where the person is.
+const madeKey='mailarchive-made-archive';
+function keepMade(v){try{sessionStorage.setItem(madeKey,JSON.stringify(v));return true;}catch(e){return false;}}
+// followFirstBackup says on line how the backup that took the job slot as job goes (api/activity
+// names the slot's job): its last log line while it runs, then how it ended. Another job in the slot
+// means it ended unseen, which is said as such, never with that job's result.
+function followFirstBackup(line,job){
+  const say=t=>{line.hidden=false;line.textContent=t;};
+  const ask=()=>fetch('api/activity').then(r=>r.json()).then(d=>{
+    if(String(d.job||'')!==String(job)){say('Its first backup has ended, but another task ran after it, so how it ended is not shown here.');return;}
+    if(d.running){const l=d.log||[];say('Its first backup is running: '+(l.length?l[l.length-1]:'starting.'));setTimeout(ask,1500);return;}
+    say(d.error?('Its first backup did not finish: '+d.error):('Its first backup finished: '+(d.result||'done.')));
+  }).catch(()=>setTimeout(ask,5000));
+  ask();
+}
+// landMade puts what "archive made" said on the new archive's row of Your archives (else at the top
+// of the card, else of the page), brings it into view with the keyboard on it, and follows the first
+// backup there — at once, and again once the browser has put back its scroll.
+function landMade(v){
+  const row=typeof v.path==='string'?delRowOf(v.path):null,card=$('sec-archives')||$('sec-this-archive');
+  const note=document.createElement('div');note.className='note';note.setAttribute('role','status');note.setAttribute('data-made-note','');
+  const said=document.createElement('p');said.textContent=v.said;
+  const line=document.createElement('p');line.hidden=true;note.append(said,line);
+  if(row)row.append(note);
+  else if(card){const h2=card.querySelector('h2');if(h2)h2.after(note);else card.prepend(note);}
+  else{const top=$('heldDeletes');if(top)top.before(note);}
+  const at=row||card||note,go=()=>showStep(at,null,'',true);go();
+  if(window.addEventListener)window.addEventListener('load',()=>setTimeout(go,0));
+  if(v.job)followFirstBackup(line,v.job);
+}
+try{const kept=sessionStorage.getItem(madeKey);if(kept){sessionStorage.removeItem(madeKey);
+  let v=null;try{v=JSON.parse(kept);}catch(e){}
+  if(v&&typeof v.said==='string')landMade(v);}}catch(e){}
+// markUnlockStep asks the page drawn next to bring in an encrypted archive's Unlock box (or its
+// recovery key box), once: Open an archive folder… (MA-1070), Switch to this archive and Use this
+// archive (MA-1074; the review's MED-2) call it once the switch is saved.
+function markUnlockStep(){try{sessionStorage.setItem(stepUnlockKey,'1');}catch(e){}}
 // stepUnlockKey: Open an archive folder… asks the page drawn next to bring in what the archive needs
 // first, if it is an encrypted one that is locked (its Unlock box) or has lost its key files (its
 // recovery key box) — once (MA-1070).
@@ -2578,7 +2620,8 @@ if(useOffer)useOffer.addEventListener('click',async()=>{
   const done=busy(useOffer,'Opening…',$('settingsNote'),'Opening this archive…');
   $('outDir').value=useOffer.dataset.path;
   const ok=await doSave('');done(ok);
-  if(ok)setTimeout(()=>reloadPage(),500);
+  // A locked encrypted archive asks for its password next: the page drawn for it brings its Unlock box in (MA-1074).
+  if(ok){markUnlockStep();setTimeout(()=>reloadPage(),500);}
 });
 // "Switch to this archive": the per-row button on the Your-archives list. Same save
 // as typing the folder and clicking Save settings (same checks, same weekly-backup
@@ -2588,7 +2631,8 @@ document.querySelectorAll('[data-switch-archive]').forEach(b=>b.addEventListener
   const done=busy(b,'Switching…',$('settingsNote'),'Switching to this archive…');
   $('outDir').value=b.dataset.path;
   const ok=await doSave('');done(ok);
-  if(ok)setTimeout(()=>reloadPage(),500);
+  // A locked encrypted archive asks for its password next: the page drawn for it brings its Unlock box in (MA-1074).
+  if(ok){markUnlockStep();setTimeout(()=>reloadPage(),500);}
 }));
 // Open an archive folder…: the system's folder picker, then a switch to the folder
 // chosen through the same settings save (an encrypted one then unlocks on its card).
@@ -2605,7 +2649,7 @@ document.querySelectorAll('[data-open-archive]').forEach(b=>b.addEventListener('
     if(d.added!==undefined){keep=true;if(n){n.hidden=false;n.textContent=d.note;}try{sessionStorage.setItem(keptNoteKey,d.note);}catch(e){}setTimeout(()=>reloadPage(),600);return;}
     $('outDir').value=d.path;
     // An encrypted archive opened asks for its password next: the page drawn for it brings its Unlock box in (MA-1070).
-    if(await doSave('')){keep=true;try{sessionStorage.setItem(stepUnlockKey,'1');}catch(e){}setTimeout(()=>reloadPage(),500);}
+    if(await doSave('')){keep=true;markUnlockStep();setTimeout(()=>reloadPage(),500);}
   }catch(e){if(n){n.hidden=false;n.textContent='Error: '+e;}}
   finally{done(keep);}
 }));

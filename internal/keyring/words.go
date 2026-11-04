@@ -3,6 +3,7 @@ package keyring
 import (
 	"errors"
 	"fmt"
+	"regexp"
 	"strings"
 
 	"golang.org/x/text/unicode/norm"
@@ -67,12 +68,18 @@ func RecoveryKeyRetry(err error) string {
 }
 
 // LooksLikeRecoveryFile reports that text typed where a recovery key is asked is (part of) a
-// recovery file's contents (MA-1071): the file's kind, or the braces, quotes and colons of its
-// JSON, none of which a recovery key has however it is typed (letters, digits, dashes, spaces). It
-// only tells which words to answer with; the text is never quoted or kept.
+// recovery file's contents (MA-1071): the file's kind, its JSON's braces, or one of its fields — a
+// quoted name followed by a colon. A recovery key has none of them however it is typed (letters,
+// digits, dashes, spaces), nor when it is pasted with a label or in quotes, as a note or a password
+// manager often holds it ("Recovery key: ABCD-…", "ABCD-…"; MA-1075, the review's LOW-1: a colon
+// alone was read as the file's). It only tells which words to answer with; the text is never quoted
+// or kept.
 func LooksLikeRecoveryFile(text string) bool {
-	return strings.Contains(text, recoveryFileKind) || strings.ContainsAny(text, "{}\":")
+	return strings.Contains(text, recoveryFileKind) || strings.ContainsAny(text, "{}") || recoveryFileField.MatchString(text)
 }
+
+// recoveryFileField is one field of a recovery file's JSON: a quoted name, then a colon.
+var recoveryFileField = regexp.MustCompile(`"[^"\n]*"\s*:`)
 
 // recoveryFileKind is the kind every recovery file names (the vault's own, which keeps its API as
 // frozen; the MA-1071 test reads it from a real recovery file).

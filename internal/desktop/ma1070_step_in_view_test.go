@@ -82,7 +82,9 @@ func TestTheServedPageBringsEachStepInThroughOneHelper(t *testing.T) {
 	if strings.Contains(helper, ".value") || strings.Contains(helper, "innerHTML") {
 		t.Errorf("showStep reads a field's value or writes markup:\n%s", helper)
 	}
-	for _, call := range []string{"showStep(f,$('encCreatePw'),", "showStep(box,$('encSaveFileBtn'),", "showStep(t,$('encTypedKey'),"} {
+	// Amended 2026-11-04 (MA-1076, the review's LOW-4): the key's step puts the keyboard on the key
+	// itself, no longer on Save the recovery file.
+	for _, call := range []string{"showStep(f,$('encCreatePw'),", "showStep(box,$('encNewKey'),", "showStep(t,$('encTypedKey'),"} {
 		if !strings.Contains(encryptionJS, call) {
 			t.Errorf("encryption.js does not bring a step in through showStep: %q missing", call)
 		}
