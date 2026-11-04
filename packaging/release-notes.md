@@ -75,6 +75,10 @@ MailArchive is one program with verbs; there is no separate GUI download.
 |---|---|---|
 | Linux x86-64 | `mailarchive-linux-amd64` | `mailarchive wizard` or `mailarchive desktop` (the wizard needs `zenity` and a desktop session) |
 | Linux arm64 | `mailarchive-linux-arm64` | the same verbs (compiled, not lab-run) |
+| Linux app menu (optional) | `mailarchive-linux-desktop-entry.tar.gz` | adds **MailArchive Desktop**, with its icon, to your app menu: unpack it and follow its `READ ME.txt` |
+
+### New in the next release
+- **MailArchive has an icon.** The same icon — a letter dropping into an archive box — now shows for the Mac app in the Finder and the Dock (where the app is also filed under Productivity), for `mailarchive.exe`, `mailarchivew.exe` and the installer's shortcuts on Windows, and in the browser tab of MailArchive Desktop. On Linux, the new download `mailarchive-linux-desktop-entry.tar.gz` adds MailArchive Desktop to your app menu with the icon; the Linux programs themselves are unchanged.
 
 ### Fixed in 1.5.7 — making an encrypted archive shows each step, and the recovery key is told apart from the recovery file
 - **Making an encrypted archive no longer seems to stop after you choose its folder.** MailArchive Desktop now moves the page to the password boxes and puts the cursor in the first one, with a line saying what to do next (it did not move, so the page looked stuck while it waited for a password far down the page). The same happens at each later step, and after **Open an archive folder…** opens a locked encrypted archive. The page also says plainly that the **recovery key** (short groups of letters and digits) is what you type back, and that the **recovery file** is a different thing that MailArchive opens itself: if you paste the recovery file's contents where the key is asked, it now says so.

@@ -63,6 +63,9 @@ var sweptDocs = []string{
 	"packaging/mailarchive-desktop/BUNDLE-CONTENTS.txt",
 	"packaging/mailarchive-desktop/SOURCE-NOTICE.txt",
 	"packaging/macos/README-macOS.txt",
+	// The Linux desktop-entry asset's READ ME.txt and menu entry since 2026-11-04 (MA-1080).
+	"packaging/linux/README-desktop-entry.txt",
+	"packaging/linux/mailarchive.desktop",
 }
 
 // sweptWxs is parsed as XML; only Shortcut Name and Description are swept (the

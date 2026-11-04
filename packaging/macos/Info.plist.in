@@ -6,6 +6,8 @@
   <key>CFBundleExecutable</key><string>mailarchive-gui</string>
   <key>CFBundleIdentifier</key><string>com.dimarcotech.mailarchive</string>
   <key>CFBundlePackageType</key><string>APPL</string>
+  <key>CFBundleIconFile</key><string>mailarchive</string>
+  <key>LSApplicationCategoryType</key><string>public.app-category.productivity</string>
   <key>CFBundleVersion</key><string>@VERSION@</string>
   <key>CFBundleShortVersionString</key><string>@VERSION@</string>
   <key>CFBundleInfoDictionaryVersion</key><string>6.0</string>

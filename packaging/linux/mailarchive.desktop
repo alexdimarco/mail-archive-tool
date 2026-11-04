@@ -1,0 +1,11 @@
+[Desktop Entry]
+Type=Application
+Version=1.0
+Name=MailArchive Desktop
+GenericName=Mail archive
+Comment=Your mail archives, backups and alerts, in your browser
+Exec=mailarchive desktop
+Icon=mailarchive
+Terminal=false
+Categories=Office;Email;
+Keywords=mail;archive;backup;Thunderbird;Outlook;

@@ -28,6 +28,11 @@ echo "==> Linux binaries (the one program; run as 'mailarchive wizard' / 'mailar
 GOOS=linux   GOARCH=amd64 go build -o "$DIST/mailarchive-linux-amd64" $ONE
 GOOS=linux   GOARCH=arm64 go build -o "$DIST/mailarchive-linux-arm64" $ONE
 
+# The bare programs above stay as they are; the icon and an app-menu entry for them
+# are one more asset beside them (MA-1080).
+echo "==> Linux desktop entry (icon + app-menu entry)"
+bash "$ROOT/packaging/linux/build-desktop-entry.sh" "$DIST"
+
 # The Windows pair — the SAME program built two ways. MA-614 and MA-628 pin that
 # these two GOOS=windows lines of ./cmd/mailarchive differ only in -o and in
 # -ldflags -H=windowsgui on the mailarchivew line.

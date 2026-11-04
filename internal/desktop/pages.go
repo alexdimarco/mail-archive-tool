@@ -107,6 +107,7 @@ var pageTmpl = template.Must(template.New("pages").Funcs(pageFuncs).Parse(`
 <meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
 <meta name="csrf" content="{{.CSRF}}"><meta name="epoch" content="{{.Epoch}}">
 <title>{{.Title}}</title>
+` + faviconLink + `
 <style>` + "{{.CSS}}" + `</style></head>{{end}}
 
 {{define "sidebar"}}<aside class="sidebar">

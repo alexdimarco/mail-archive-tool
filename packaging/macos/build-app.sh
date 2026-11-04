@@ -44,6 +44,11 @@ chmod +x "$OUT/mailarchive-macos-universal"
 
 sed "s/@VERSION@/$VERSION/g" "$ROOT/packaging/macos/Info.plist.in" > "$app/Contents/Info.plist"
 
+# The app's icon (Info.plist's CFBundleIconFile names it), made by packaging/icon/pack
+# and committed, so this only copies it.
+mkdir -p "$app/Contents/Resources"
+cp "$ROOT/packaging/icon/mailarchive.icns" "$app/Contents/Resources/mailarchive.icns"
+
 # Ship the open-me instructions beside the app so an unzip shows both, and a
 # user who hits the unsigned-app warning (or opens the wrong file) has the fix
 # in hand without the web page.
