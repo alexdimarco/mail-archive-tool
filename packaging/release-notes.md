@@ -77,6 +77,9 @@ MailArchive is one program with verbs; there is no separate GUI download.
 | Linux arm64 | `mailarchive-linux-arm64` | the same verbs (compiled, not lab-run) |
 | Linux app menu (optional) | `mailarchive-linux-desktop-entry.tar.gz` | adds **MailArchive Desktop**, with its icon, to your app menu: unpack it and follow its `READ ME.txt` |
 
+### Fixed in the next release
+- **Backups no longer fail on an old message whose inline picture has an unusual name.** Some older mail programs (for example a Korean one from around 2013) named a picture inside an email in their own character set. MailArchive stopped on such a message with "export-panic", so every backup of that mailbox said **Failed**, even though everything else was saved. Those messages are now archived with their pictures, and the backup finishes normally.
+
 ### New in 1.5.8 — MailArchive has its own icon on Mac, Windows and Linux
 - **MailArchive has an icon.** The same icon — a letter dropping into an archive box — now shows for the Mac app in the Finder and the Dock (where the app is also filed under Productivity), for `mailarchive.exe`, `mailarchivew.exe` and the installer's shortcuts on Windows, and in the browser tab of MailArchive Desktop. On Linux, the new download `mailarchive-linux-desktop-entry.tar.gz` adds MailArchive Desktop to your app menu with the icon; the Linux programs themselves are unchanged.
 

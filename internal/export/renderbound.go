@@ -5,7 +5,6 @@ import (
 	"io"
 	"mime"
 	"path/filepath"
-	"regexp"
 	"strings"
 
 	"mail-archive-tool/internal/model"
@@ -37,7 +36,7 @@ func PredictedRenderSize(m *model.Message) int64 {
 		if cid == "" || a.WriteTo == nil {
 			continue
 		}
-		refs := int64(len(regexp.MustCompile(`(?i)cid:`+regexp.QuoteMeta(cid)).FindAllStringIndex(body, -1)))
+		refs := int64(len(cidRefs(body, cid)))
 		if refs == 0 {
 			continue
 		}

@@ -2481,8 +2481,8 @@ func embedInlineImages(body string, atts []model.Attachment, consumed map[int]bo
 		if cid == "" {
 			continue
 		}
-		ref := regexp.MustCompile(`(?i)cid:` + regexp.QuoteMeta(cid))
-		if !ref.MatchString(body) {
+		refs := cidRefs(body, cid)
+		if len(refs) == 0 {
 			continue
 		}
 		data, err := drain(atts[i])
@@ -2497,10 +2497,61 @@ func embedInlineImages(body string, atts []model.Attachment, consumed map[int]bo
 			mt = "application/octet-stream"
 		}
 		dataURI := "data:" + mt + ";base64," + base64.StdEncoding.EncodeToString(data)
-		body = ref.ReplaceAllString(body, dataURI)
+		body = replaceSpans(body, refs, dataURI)
 		consumed[i] = true
 	}
 	return body
+}
+
+// cidRefs returns where "cid:"+cid appears in body, in any case and as a prefix, as
+// [start, end) pairs. A valid id is matched by a case-insensitive regular expression; an
+// id that is not valid UTF-8 (an old mailer's file name in its own encoding, MA-1082),
+// which a regular expression refuses, is matched byte for byte with ASCII letters folded.
+func cidRefs(body, cid string) [][]int {
+	if utf8.ValidString(cid) {
+		return regexp.MustCompile(`(?i)cid:`+regexp.QuoteMeta(cid)).FindAllStringIndex(body, -1)
+	}
+	needle := "cid:" + cid
+	var refs [][]int
+	for i := 0; i+len(needle) <= len(body); i++ {
+		if asciiFoldEqual(body[i:i+len(needle)], needle) {
+			refs = append(refs, []int{i, i + len(needle)})
+			i += len(needle) - 1
+		}
+	}
+	return refs
+}
+
+// asciiFoldEqual reports whether a and b, of equal length, are the same bytes with ASCII
+// letters compared without case.
+func asciiFoldEqual(a, b string) bool {
+	for i := 0; i < len(a); i++ {
+		x, y := a[i], b[i]
+		if 'A' <= x && x <= 'Z' {
+			x += 'a' - 'A'
+		}
+		if 'A' <= y && y <= 'Z' {
+			y += 'a' - 'A'
+		}
+		if x != y {
+			return false
+		}
+	}
+	return true
+}
+
+// replaceSpans replaces each [start, end) span of s, in order and not overlapping, with
+// repl, taken literally.
+func replaceSpans(s string, spans [][]int, repl string) string {
+	var b strings.Builder
+	last := 0
+	for _, sp := range spans {
+		b.WriteString(s[last:sp[0]])
+		b.WriteString(repl)
+		last = sp[1]
+	}
+	b.WriteString(s[last:])
+	return b.String()
 }
 
 func drain(a model.Attachment) ([]byte, error) {
