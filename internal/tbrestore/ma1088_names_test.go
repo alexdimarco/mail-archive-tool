@@ -36,8 +36,10 @@ func TestRestoreSafeNames(t *testing.T) {
 			t.Errorf("%q → %q: Thunderbird would skip it", h, n)
 		}
 	}
+	// "#draft" was "_#draft" until the MA-1095 lab (settled 2026-11-07): Thunderbird hashes
+	// any name holding "#" (it showed "_#hash" empty), so "#" now becomes "_" anywhere.
 	for h, want := range map[string]string{
-		"#draft": "_#draft", "backup~": "backup~_", "x.msf": "x.msf_", "Inbox.sbd": "Inbox.sbd_", "z.TOC": "z.TOC_",
+		"#draft": "_draft", "backup~": "backup~_", "x.msf": "x.msf_", "Inbox.sbd": "Inbox.sbd_", "z.TOC": "z.TOC_",
 		"msgFilterRules.dat": "msgFilterRules.dat_", "feeditems_error.log": "_feeditems_error.log",
 		"COM0": "_COM0", "LPT¹": "_LPT¹", "CONIN$": "_CONIN$", "CON .txt": "_CON .txt", "con": "_con",
 		"a‎b": "ab", "‮.x": "x",

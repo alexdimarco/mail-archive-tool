@@ -246,8 +246,8 @@ func MakePlan(req Request) (*Plan, error) {
 	if tbrestore.RestoreLockHeld(p.Profile.Dir) {
 		return nil, tbrestore.RestoringRefusal()
 	}
-	if tbrestore.CheckRunning(p.Profile.Dir).Running() {
-		return nil, refusal("W-RUNNING", tbrestore.RunningWords(), nil)
+	if s := tbrestore.CheckRunning(p.Profile.Dir); s.Running() {
+		return nil, tbrestore.RunningRefusal(p.Profile.Dir, s) // MA-1095 lab BUG-2
 	}
 	prefs, err := tbrestore.ReadPrefs(p.Profile.Dir)
 	if err != nil {
@@ -461,8 +461,8 @@ func sharingProfiles(c ProfileChoice, chosen tbrestore.Profile, lf tbrestore.Loc
 		if err != nil || !olf.Identity.Same(lf.Identity) {
 			continue
 		}
-		if tbrestore.CheckRunning(o.Dir).Running() {
-			return nil, refusal("W-RUNNING", tbrestore.RunningWords(), nil)
+		if s := tbrestore.CheckRunning(o.Dir); s.Running() {
+			return nil, tbrestore.RunningRefusal(o.Dir, s)
 		}
 		out = append(out, o)
 	}

@@ -977,6 +977,17 @@ tag, the Status line (§4.7) and the WARN reason (§5.4):
 No "(see Status)" anywhere. Encrypted rows: no tag, judged by the archive kind, not by the field.
 MA-905 asserts every name in `allOutcomes` is in the map or deliberately has no tag.
 
+> Settled 2026-11-07 [restore-thunderbird R8 lab, wording note L3] (lead's words, owner-delegated): a
+> new outcome `restore-running` (note class), for a session that finds a MailArchive restore into
+> Thunderbird writing into its profile (it holds the restore lock, `design-restore-thunderbird.md` §5.2
+> note item 3). Its phrase is "Thunderbird not synced: a restore into it was running"; its status
+> line "Thunderbird was not synced: MailArchive was restoring mail into this Thunderbird profile, so
+> Thunderbird was not started …". Until now that case was `already-running`, so status said
+> "Thunderbird was already open" for the restore. It is decided before any other running signal (the
+> restore also holds Thunderbird's own lock), and counts **neither** synced nor missed in the streaks,
+> like `cancelled` (MailArchive's own restore held the profile; Thunderbird did not fail to sync).
+> Test: `internal/presync/ma1140_restore_words_test.go` (MA-1140).
+
 ### 4.6 The Run now note: phases, then the outcome [C-19, C-22, C-23, C-24, C-30]
 
 - **Phases.** `Config.Phase` reports `starting` (S5-S6), `waiting` (S7; `since` = the start of the

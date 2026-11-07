@@ -20,6 +20,17 @@ type runningSignal struct {
 	byRestore bool
 }
 
+// runningOutcome is the outcome for a profile detectRunning found in use: a MailArchive
+// restore writing into it is said as that restore (restore-running), whatever else it
+// holds (it holds Thunderbird's own lock too); anything else is already-running (the
+// restore-thunderbird R8 lab's wording note L3, settled 2026-11-07).
+func runningOutcome(s runningSignal) Outcome {
+	if s.byRestore {
+		return OutcomeRestoreRunning
+	}
+	return OutcomeAlreadyRunning
+}
+
 // detectRunning evaluates signals A and B (design 4.4.1), and first the MailArchive
 // restore lock (design-restore-thunderbird §5.2 note item 3, slice R3): a restore
 // writing into the profile counts as Thunderbird in use, so the pre-sync never

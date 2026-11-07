@@ -159,6 +159,12 @@ func (w *writer) run() *WriteResult {
 		msgs += in.Layout.Folders[i].Messages
 		bytesN += in.Layout.Folders[i].Bytes
 	}
+	// Settled 2026-11-07 [MA-1095 lab]: every name is one Thunderbird reads as written,
+	// checked again here before anything is made, so no result says "restored" over a
+	// folder Thunderbird would show empty.
+	if err := in.Layout.ThunderbirdReadsAll(in.Top); err != nil {
+		return w.fail(OutFailed, err) // nothing was created
+	}
 	id := in.Local.Identity
 	if err := w.logLine(EvStarted, func(l *LogLine) {
 		l.Profile, l.ProfileDir = ProfileKeyOf(in.ProfileDir), in.ProfileDir

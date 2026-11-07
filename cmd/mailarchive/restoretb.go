@@ -200,8 +200,11 @@ func restoreTBWith(a asker, o *restoreTBOpts, k *keyFlags, fs *flag.FlagSet, std
 	})
 	defer stopWatch()
 
-	fmt.Fprintln(stderr, tbrestore.WaitWords())
-	start.Checking = func() { fmt.Fprintln(stderr, "Checking what was written: every message is read back before Thunderbird can show the folder…") }
+	// W-WAIT is the plan's last line, printed above; it is not printed again here (the
+	// MA-1095 lab's wording note L1, settled 2026-11-07: it was said twice in a row).
+	start.Checking = func() {
+		fmt.Fprintln(stderr, "Checking what was written: every message is read back before Thunderbird can show the folder…")
+	}
 	var last time.Time
 	writing.Store(true)
 	start.Progress = func(g tbengine.Progress) {

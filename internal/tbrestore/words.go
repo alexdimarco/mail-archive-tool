@@ -9,6 +9,10 @@ const (
 	wNames       = "Local Folders already holds 'Restored — NAME' and 98 more like it, so nothing was restored. Delete or rename the restored folders you no longer need in Thunderbird, then try again."
 	wLongPath    = "N folders are nested too deep for Windows to hold under this profile, so they are not restored: FOLDERS."
 	wLongPathAll = "Thunderbird's Local Folders (PATH) is so deep in its drive that Windows cannot hold a restored folder under it, so nothing was restored. Choose a profile whose Local Folders is nearer the top of its drive."
+	// W-TBNAME (settled 2026-11-07 [MA-1095 lab], lead's words, owner-delegated): the
+	// defence in depth's refusal, for a name Thunderbird would keep under another file
+	// name. It names no folder (an encrypted archive's names stay out of the words).
+	wTBName = "MailArchive could not give every restored folder a name Thunderbird reads as it is written: Thunderbird would show such a folder empty. So nothing was restored. This is a fault in MailArchive; please report it. Until then, leave out the folders whose names are very long or hold unusual characters, then click Check again."
 
 	wDone      = "Restored N into Thunderbird as the folder 'TOP' under Local Folders. Open Thunderbird to see it; the first time, it may take a minute to show every message. MailArchive checked every message it wrote."
 	wCheckFail = "After writing, MailArchive checked every message, and FILE (the folder FOLDER) was missing or changed — often antivirus moving a file it flagged. Nothing was added to Thunderbird. Look in your antivirus's quarantine, or leave that folder out, then try again."

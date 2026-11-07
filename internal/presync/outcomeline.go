@@ -136,6 +136,7 @@ var outcomeHeads = map[Outcome]head{
 	OutcomeOwnerActive:         {text: fixed("Thunderbird synced, but you seemed to be using it, so it was not closed."), subject: "It"},
 	OutcomeIdentityUnavailable: {text: fixed("Thunderbird synced, but the copy that was started could not be identified for certain, so it was not closed."), subject: "It"},
 	OutcomeAlreadyRunning:      {text: fixed("Thunderbird was already open, so it was not started or closed" + readHere), subject: "It"},
+	OutcomeRestoreRunning:      {text: fixed("Thunderbird was not synced: MailArchive was restoring mail into this Thunderbird profile, so Thunderbird was not started" + readHere), subject: "It"},
 	OutcomeOtherProfileRunning: {text: fixed("Thunderbird was not synced: it was open with another profile" + readHere), subject: "It"},
 	OutcomeProfileBusy:         {text: fixed("Thunderbird was not synced: another backup was syncing it" + readHere), subject: "It"},
 	OutcomeOwnerActiveSkipped:  {text: fixed("Thunderbird was not started because you were using the computer" + readHere), subject: "It"},

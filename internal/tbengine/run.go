@@ -285,8 +285,8 @@ func (p *Plan) Confirmed(s Start) error {
 // network checks and the ask-twice reasons as planned. Any difference is W-CHANGED;
 // nothing is written.
 func (p *Plan) recheck() error {
-	if tbrestore.CheckRunning(p.Profile.Dir).Running() {
-		return refusal("W-RUNNING", tbrestore.RunningWords(), nil)
+	if s := tbrestore.CheckRunning(p.Profile.Dir); s.Running() {
+		return tbrestore.RunningRefusal(p.Profile.Dir, s)
 	}
 	now, err := p.profileNow()
 	if tbrestore.RefusalCode(err) == "W-PROFCHANGED" {
@@ -403,7 +403,7 @@ func (p *Plan) resultWords(r *Result) string {
 			w += "; the plan said why for the rest."
 		}
 		if r.DeletedInTB > 0 {
-			w += " " + fill(wDeletedInTB, "N", commas(r.DeletedInTB))
+			w += " " + deletedInTBWords(r.DeletedInTB)
 		}
 		if p.m365 {
 			w += " " + wM365Unread

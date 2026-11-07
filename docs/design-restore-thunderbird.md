@@ -697,6 +697,52 @@ The result names how many folder names changed.
 > words" as "caught at plan time, named in the plan's words"; a refusal instead is one condition in
 > `FinalNames`). Built: `notShortAlias` in `names.go`; MA-1088's ADV-05 tests, and on the Windows VM
 > both siblings restored.
+>
+> Settled 2026-11-07 [MA-1095 lab] (lab BUG-1, high; the lead's call): **Thunderbird's own name rule
+> is far tighter than step 5.** Read in Thunderbird's source, not recalled: `NS_MsgHashIfNecessary`
+> in comm-central `mailnews/base/src/nsMsgUtils.cpp` (releases-comm-central
+> `9ff8c8b16fba2d9f9668b416eb6f2d708494fe78`, 2026-11-04), with `FILE_PATH_SEPARATOR` and
+> `FILE_ILLEGAL_CHARACTERS` from `xpcom/base/nsCRTGlue.h` (mozilla-firefox/firefox
+> `6149f492996791576ff4791f57bcbd47a4da27c0`, 2026-03-16). Thunderbird finds each local folder's
+> mbox at the name this function returns, path piece by path piece
+> (`NS_MsgCreatePathStringFromFolderURI`), so a name it changes is kept under the changed file and the
+> restored file is never read: the folder shows empty (on the VM: `mid3085bdd1` for `mid#dle`). The
+> rule, quoted:
+> - `#define ILLEGAL_FOLDER_CHARS ";#"`, `ILLEGAL_FOLDER_CHARS_AS_FIRST_LETTER "."`,
+>   `ILLEGAL_FOLDER_CHARS_AS_LAST_LETTER ".~ "`, and `const static uint32_t MAX_LEN = 55;`
+> - `name.FindCharInSet(u"" FILE_PATH_SEPARATOR FILE_ILLEGAL_CHARACTERS ILLEGAL_FOLDER_CHARS, 0)`,
+>   where `FILE_PATH_SEPARATOR` is `"\\"` on Windows and `"/"` elsewhere, and
+>   `FILE_ILLEGAL_CHARACTERS` is `CONTROL_CHARACTERS` (`\001`–`\037`, `\177`, `\200`–`\237`, each one
+>   UTF-16 unit in that `u""` literal) plus `OS_FILE_ILLEGAL_CHARACTERS` `"/:*?\"<>|"`.
+> - Hashed when such a character is found, when the first unit is `.`, when the last is `.`, `~` or a
+>   space, or when `name.Length() > MAX_LEN` — the length in **UTF-16 units**. The hashed name keeps
+>   at most `MAX_LEN - 8` = 47 units (fewer if that would split a surrogate pair) and appends 8 hex of
+>   `StringHash`.
+>
+> What the restore now does (in the plan, so every name is final there): step 2 also turns `;` and `#`
+> anywhere into `_` (so a leading `#` is now `_x`, not `_#x`); the rest of the character list step 1
+> and step 2 already remove, and step 1's trims and step 4's trailing-`~` rule cover the first and last
+> letters. Step 5's budget is **55 UTF-16 units** for a folder name (still within 246 bytes: 55 units
+> are at most 165 bytes): a longer one is cut to 46 units plus the hash suffix of its original (55).
+> Step 6's ` (n)` is added after cutting the name so the whole stays within 55, so a name of up to 55
+> units is kept whole until a sibling spells the same; past ` (99)` the hash suffix as before, within
+> 55. The ADV-05 rename is held to 55 too. The **top name** keeps room for its ` (99)`: "Restored — "
+> (11 units) + NAME ≤ 50, so a NAME over 39 units is cut to 30 plus the hash suffix of the archive's
+> name; a changed NAME is now counted among the plan's changed names (the existing "N folder names had
+> to be changed" line). The Windows budget's shortening (§4.5) counts in UTF-16 units too.
+>
+> **Defence in depth.** `tbrestore.ThunderbirdReads` is the product's own reading of the rule (both
+> platforms' separators). `PlanLayout` holds every name to it — the top name in its ` (99)` form and
+> every part of every restored folder — and so does the write, before anything is made, with the top
+> name actually chosen; a name that fails is refused, **W-TBNAME** (§7.5 note), never written and
+> reported "restored". The name steps make such a name impossible, so W-TBNAME is not expected to
+> show. Tests: `internal/tbrestore/ma1095_tbhash_test.go` (MA-1088): a line-for-line Go port of
+> `NS_MsgHashIfNecessary` as the test's oracle, which reproduces the six hashed names Thunderbird
+> 153.6.0 made on the VM exactly; every chosen name (the lab's `;`, `#`, 54/55/56/60/120 characters,
+> CJK and emoji within and over 55 units, the 60-character archive name, the MA-1088 hostile names,
+> 102 siblings of one 55-unit name) equals what the oracle returns for it on both platforms. MA-1088's
+> `#draft` expectation changed from `_#draft` (which Thunderbird hashes, as the lab saw with `_#hash`)
+> to `_draft`. Lab row MA-1095 re-runs it on Thunderbird.
 
 ### 4.5 Path length on Windows
 
@@ -2148,6 +2194,42 @@ the copy (`pending.go:15-21`).
 >   clean up is named once, in the row that applies (W-VISIBLE, W-LEFT, made-list unreadable,
 >   W-ELSEWHERE, or the antivirus words when a removal was blocked, then "MailArchive tries again at
 >   your next restore.").
+
+> Settled 2026-11-07 [MA-1095 lab] (the R8 Windows lab's BUG-2 and wording notes L1, L2; the lead's
+> words, owner-delegated). New rows:
+> - **W-TBNAME** (the §4.4 note's defence in depth; names no folder): "MailArchive could not give every
+>   restored folder a name Thunderbird reads as it is written: Thunderbird would show such a folder
+>   empty. So nothing was restored. This is a fault in MailArchive; please report it. Until then, leave
+>   out the folders whose names are very long or hold unusual characters, then click Check again."
+> - **W-LOCKPERM**, **W-LOCKRO**, **W-LOCKFAIL** (BUG-2: every failure to make or open Thunderbird's
+>   lock file said W-RUNNING, so on the lab's read-only share "Check again" looped). Now W-RUNNING is
+>   kept only when the lock is held: open by another program with no sharing (Windows' sharing or lock
+>   violation), this process's own, a link at `.parentlock` (Mozilla's fallback lock), or, at the
+>   take, a conflicting lock (`F_SETLK`'s `EAGAIN` or `EACCES`). Otherwise: a read-only medium
+>   (`EROFS`, `ERROR_WRITE_PROTECT`) is W-LOCKRO — "This profile's folder (PATH) is on a read-only
+>   drive, so MailArchive could not make Thunderbird's lock file there and nothing was restored: the
+>   restore holds that lock to keep Thunderbird closed while it writes. Choose a profile on a drive
+>   this computer can write to, then click Check again."; not allowed (`EACCES`/`EPERM` at the open,
+>   Windows' "access denied", which a read-only network share answers) is W-LOCKPERM — "MailArchive
+>   is not allowed to make or open Thunderbird's lock file (FILE) in this profile's folder, so nothing
+>   was restored: the restore holds that lock to keep Thunderbird closed while it writes. This happens
+>   when the profile is on a read-only network share, or its folder belongs to another account. Choose
+>   a profile on this computer's own drive that your account can change, then click Check again.";
+>   anything else W-LOCKFAIL — "MailArchive could not take Thunderbird's lock on this profile (FILE:
+>   WHY), so nothing was restored. If Thunderbird is open, close it. Otherwise choose a profile on this
+>   computer's own drive, then click Check again." The plan's running check (§5.1 check A) still counts
+>   a lock file it cannot open or ask as running (the safe direction is unchanged: every one of these
+>   refuses, nothing is written), but when that is the only signal — no hold seen, no Thunderbird
+>   process — it is worded by the same rule (`tbrestore.RunningRefusal`). Tests:
+>   `internal/tbrestore/ma1127_lockwords_test.go` (MA-1127).
+> - **W-WAIT at a terminal** (L1): printed once, as the plan's last line; the second print as the run
+>   started is gone. Test: `cmd/mailarchive/ma1129_waitonce_test.go` (MA-1129).
+> - **Done's deleted-in-Thunderbird note** (L2), for one message: "1 of them was deleted in Thunderbird
+>   before it was backed up, so Thunderbird keeps it hidden, and may remove it from the restored folder
+>   the next time it compacts it. The archive keeps it." Test:
+>   `internal/tbengine/ma1124_deletedwords_test.go` (MA-1124).
+> - L3, the pre-sync's status words while a restore holds the profile, is settled in
+>   `design-presync-attended.md` §4.5 (a new outcome, `restore-running`).
 
 ## 8. Failures and crashes
 

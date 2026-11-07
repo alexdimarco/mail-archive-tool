@@ -265,7 +265,7 @@ func runSession(ctx context.Context, d deps) (out sessionResult) {
 		}
 	}
 	if sig := detectRunning(e, d.profile); sig.running {
-		res.outcome = OutcomeAlreadyRunning // not started, not quit
+		res.outcome = runningOutcome(sig) // not started, not quit
 		return res
 	}
 
@@ -288,7 +288,7 @@ func runSession(ctx context.Context, d deps) (out sessionResult) {
 	// never start a second instance beside theirs — and take the pre-launch snapshot as
 	// LATE as possible, so any Thunderbird that appears after it is provably ours.
 	if sig := detectRunning(e, d.profile); sig.running {
-		res.outcome = OutcomeAlreadyRunning
+		res.outcome = runningOutcome(sig)
 		return res
 	}
 	snapshot := pidSet(e.thunderbirdProcs())

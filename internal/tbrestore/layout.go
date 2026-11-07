@@ -78,7 +78,11 @@ func (l *Layout) Restored() []int {
 // platform has no such limit at these lengths, but the rule is the same code, run with
 // goos "windows" by the tests on every leg (MA-1126).
 func PlanLayout(archiveName string, in []FolderIn, localDir, goos string) (*Layout, error) {
-	l := &Layout{Top: TopName(archiveName)}
+	top, topChanged := topName(archiveName)
+	l := &Layout{Top: top}
+	if topChanged {
+		l.Changed++ // the top folder's own name is a changed name too (MA-1095 lab)
+	}
 	index := map[string]int{}
 	children := map[int][]int{} // parent index (-1 top) -> child indexes, archive order
 	for _, f := range in {
@@ -122,7 +126,29 @@ func PlanLayout(archiveName string, in []FolderIn, localDir, goos string) (*Layo
 			return nil, err
 		}
 	}
+	if err := l.ThunderbirdReadsAll(withNumber(l.Top, 99)); err != nil {
+		return nil, err
+	}
 	return l, nil
+}
+
+// ThunderbirdReadsAll is the defence in depth of the MA-1095 lab fix (settled
+// 2026-11-07): every name the restore would write — top, the top's " (n)" form, and each
+// restored folder's every part — is one Thunderbird reads as written (ThunderbirdReads).
+// The name steps already make every name so; if one ever did not, the restore is refused
+// in words before anything is written, never left to say "restored" over a folder
+// Thunderbird shows empty.
+func (l *Layout) ThunderbirdReadsAll(top string) error {
+	names := []string{l.Top, top}
+	for _, i := range l.Restored() {
+		names = append(names, l.Folders[i].Parts...)
+	}
+	for _, n := range names {
+		if !ThunderbirdReads(n) {
+			return refuse("W-TBNAME", wTBName, nil)
+		}
+	}
+	return nil
 }
 
 // rebuildParts sets each folder's Parts to its ancestors' last parts and its own.
@@ -191,10 +217,12 @@ func (l *Layout) windowsBudget(localDir string, children map[int][]int) error {
 			}
 			f := &l.Folders[j]
 			own := f.Parts[len(f.Parts)-1]
-			if utf8RuneCount(own) <= shortRunes+hashSuffixLen {
+			// Counted in UTF-16 units (the same as characters but for those outside the
+			// BMP), so a cut name is always within Thunderbird's 55 (MA-1095 lab).
+			if utf16Len(own) <= shortRunes+hashSuffixLen {
 				continue
 			}
-			f.Parts[len(f.Parts)-1] = string([]rune(own)[:shortRunes]) + hashOf(f.Names[len(f.Names)-1])
+			f.Parts[len(f.Parts)-1] = cutUnits(own, shortRunes) + hashOf(f.Names[len(f.Names)-1])
 			shortened[j] = true
 			l.rebuildParts()
 		}
@@ -230,8 +258,6 @@ func (l *Layout) windowsBudget(localDir string, children map[int][]int) error {
 	}
 	return nil
 }
-
-func utf8RuneCount(s string) int { return len([]rune(s)) }
 
 // FreeTopName is the first of "Restored — NAME", "Restored — NAME (2)" … " (99)" for
 // which neither the name nor its ".sbd" is in Local Folders, compared after NFC and

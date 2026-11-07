@@ -25,6 +25,10 @@ type RunningSignal struct {
 	// SelfHeld: this process itself holds the profile's Thunderbird lock (a restore of
 	// this process is writing into it). Counted under ByLock.
 	SelfHeld bool
+	// LockErr: ByLock came only from a lock file that could not be opened or asked (no
+	// hold was seen), and why; nil otherwise. Still counted as running; RunningRefusal
+	// words it by its cause (settled 2026-11-07 [MA-1095 lab BUG-2]).
+	LockErr error
 }
 
 // Running reports whether any signal fired.
@@ -41,13 +45,17 @@ var processProbe = thunderbirdProcessCount
 // locked answers from the lock's own record (see ProfileLock).
 func CheckRunning(profile string) RunningSignal {
 	var s RunningSignal
-	if symlinkLockHeld(profile) {
+	sym := symlinkLockHeld(profile)
+	if sym {
 		s.ByLock = true
 	}
-	held, self := parentLockProbe(profile)
+	held, self, err := parentLockProbe(profile)
 	if held {
 		s.ByLock = true
 		s.SelfHeld = self
+		if err != nil && !sym {
+			s.LockErr = err
+		}
 	}
 	if n, known := processProbe(); !known || n > 0 {
 		s.ByProcess = true

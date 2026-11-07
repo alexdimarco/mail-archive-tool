@@ -106,14 +106,28 @@ func openProfileLock(profile string) (*ProfileLock, error) {
 
 // heldElsewhere asks, through the lock's own handle and taking nothing, whether
 // another process holds a lock on .parentlock (F_GETLK; F_OFD_GETLK on Linux). An
-// answer that cannot be read counts as held.
-func (l *ProfileLock) heldElsewhere() bool {
+// answer that cannot be read counts as held, with err why (no hold was seen).
+func (l *ProfileLock) heldElsewhere() (bool, error) {
 	fl := wholeFile(unix.F_WRLCK)
 	if err := unix.FcntlFlock(l.f.Fd(), getLockCmd, &fl); err != nil {
-		return true
+		return true, err
 	}
-	return fl.Type != unix.F_UNLCK
+	return fl.Type != unix.F_UNLCK, nil
 }
+
+// lockHeldErr reports an open error that means the lock is held: this process's own
+// (errHeldHere), or a link at .parentlock (O_NOFOLLOW's ELOOP), which is Mozilla's
+// fallback lock (MA-1095 lab BUG-2).
+func lockHeldErr(err error) bool { return errors.Is(err, errHeldHere) || errors.Is(err, unix.ELOOP) }
+
+// lockConflictErr reports a take refused because another process holds a conflicting
+// lock: F_SETLK's EAGAIN or EACCES (POSIX allows either), or this process's own.
+func lockConflictErr(err error) bool {
+	return errors.Is(err, unix.EAGAIN) || errors.Is(err, unix.EACCES) || errors.Is(err, errHeldHere)
+}
+
+// readOnlyErr reports a write refused because the file system is read-only.
+func readOnlyErr(err error) bool { return errors.Is(err, unix.EROFS) }
 
 // take takes the lock, non-blocking. Held by another process is an error.
 func (l *ProfileLock) take() error {
@@ -150,32 +164,33 @@ func wholeFile(typ int16) unix.Flock_t {
 // probeLockFile is the plan's probe of a lock file this process does not hold (held's
 // mutex is held by the caller, and heldHere found no lock on it): .parentlock opened
 // read-only and never created (the plan writes nothing), F_GETLK asked, the handle
-// closed. No file: not held. A file that cannot be opened or asked counts as held. If
-// the open landed on a file this process holds after all (the name swapped in between),
-// the descriptor is kept with that lock, never closed, and the answer is self.
-func probeLockFile(profile string) (held_, self bool) {
+// closed. No file: not held. A file that cannot be opened or asked counts as held, with
+// err why (no hold was seen; MA-1095 lab BUG-2). If the open landed on a file this
+// process holds after all (the name swapped in between), the descriptor is kept with
+// that lock, never closed, and the answer is self.
+func probeLockFileErr(profile string) (held_, self bool, _ error) {
 	p := filepath.Join(profile, ParentLockName)
 	fi, err := os.Lstat(p)
 	if errors.Is(err, os.ErrNotExist) {
-		return false, false
+		return false, false, nil
 	}
 	if err != nil {
-		return true, false
+		return true, false, err
 	}
 	if !fi.Mode().IsRegular() {
-		return false, false // a link is symlinkLockHeld's to judge
+		return false, false, nil // a link is symlinkLockHeld's to judge
 	}
 	f, err := os.OpenFile(p, os.O_RDONLY|syscall.O_NOFOLLOW, 0)
 	if err != nil {
-		return true, false
+		return true, false, err
 	}
 	if keepIfHeld(f) != nil {
-		return true, true
+		return true, true, nil
 	}
 	defer f.Close()
 	fl := wholeFile(unix.F_WRLCK)
 	if err := unix.FcntlFlock(f.Fd(), getLockCmd, &fl); err != nil {
-		return true, false
+		return true, false, err
 	}
-	return fl.Type != unix.F_UNLCK, false
+	return fl.Type != unix.F_UNLCK, false, nil
 }

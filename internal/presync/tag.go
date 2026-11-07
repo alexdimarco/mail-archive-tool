@@ -27,6 +27,7 @@ var tagPhrases = map[string]string{
 	OutcomeOwnerActive.Name:              phraseLeftOpen,
 	OutcomeIdentityUnavailable.Name:      phraseLeftOpen,
 	OutcomeAlreadyRunning.Name:           "Thunderbird was already open",
+	OutcomeRestoreRunning.Name:           "Thunderbird not synced: a restore into it was running", // R8 lab L3
 	OutcomeOwnerActiveSkipped.Name:       "Thunderbird not synced: you were using the computer",
 	OutcomeOtherProfileRunning.Name:      "Thunderbird not synced: open with another profile",
 	OutcomeProfileBusy.Name:              "Thunderbird not synced: another backup was syncing it",

@@ -46,9 +46,14 @@ type Outcome struct {
 // The outcomes, one per section-4.9.3 row. Package vars so each has a name a
 // caller refers to; allOutcomes lists them for the completeness check.
 var (
-	OutcomeOK                  = Outcome{"ok", "", ClassNone}
-	OutcomeNoActivity          = Outcome{"ok-noactivity", "presync_no_activity", ClassNote}
-	OutcomeAlreadyRunning      = Outcome{"already-running", "presync_already_running", ClassNote}
+	OutcomeOK             = Outcome{"ok", "", ClassNone}
+	OutcomeNoActivity     = Outcome{"ok-noactivity", "presync_no_activity", ClassNote}
+	OutcomeAlreadyRunning = Outcome{"already-running", "presync_already_running", ClassNote}
+	// OutcomeRestoreRunning: a MailArchive restore into Thunderbird was writing into this
+	// profile (it held the restore lock), so Thunderbird was not started. Said as the
+	// restore, never as "Thunderbird was already open" (the restore-thunderbird R8 lab's
+	// wording note L3, settled 2026-11-07). Counts neither synced nor missed.
+	OutcomeRestoreRunning      = Outcome{"restore-running", "presync_restore_running", ClassNote}
 	OutcomeOtherProfileRunning = Outcome{"other-profile-running", "presync_other_profile_running", ClassNote}
 	OutcomeProfileBusy         = Outcome{"profile-busy", "presync_profile_busy", ClassNote}
 	OutcomeCannotStart         = Outcome{"cannot-start", "presync_cannot_start", ClassWarn}
@@ -99,7 +104,7 @@ var (
 // allOutcomes is every outcome section 4.9.3 defines, in table order. The
 // completeness test (landing with MA-560) asserts the set and the class of each.
 var allOutcomes = []Outcome{
-	OutcomeOK, OutcomeNoActivity, OutcomeAlreadyRunning, OutcomeOtherProfileRunning,
+	OutcomeOK, OutcomeNoActivity, OutcomeAlreadyRunning, OutcomeRestoreRunning, OutcomeOtherProfileRunning,
 	OutcomeProfileBusy, OutcomeCannotStart, OutcomeStartBlocked, OutcomeNoDesktopSession, OutcomeDidNotStart,
 	OutcomeIdentityUnavailable, OutcomeNotQuiet, OutcomeExitedEarly, OutcomeQuitNotPermitted,
 	OutcomeQuitTimeout, OutcomeQuitSkippedOthers, OutcomeQuitNoWindow, OutcomeStateUnsaved,

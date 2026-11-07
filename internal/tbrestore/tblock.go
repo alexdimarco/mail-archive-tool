@@ -1,6 +1,8 @@
 package tbrestore
 
 import (
+	"errors"
+	"io/fs"
 	"path/filepath"
 	"sync"
 )
@@ -61,14 +63,75 @@ func heldHere(profile string) *ProfileLock {
 }
 
 // parentLockProbe is check A's lock-file part (CheckRunning): held is true when
-// someone holds the profile's Thunderbird lock; self when that is this process.
-func parentLockProbe(profile string) (held_, self bool) {
+// someone holds the profile's Thunderbird lock, or when the lock file cannot be opened or
+// asked (the safe direction); self when the holder is this process; err, for that last
+// case only, why the file could not be opened or asked (no hold was seen), so the words
+// can say so (settled 2026-11-07 [MA-1095 lab BUG-2]).
+func parentLockProbe(profile string) (held_, self bool, err error) {
 	held.Lock()
 	defer held.Unlock()
 	if heldHere(profile) != nil {
-		return true, true
+		return true, true, nil
 	}
-	return probeLockFile(profile)
+	return probeLockFileErr(profile)
+}
+
+// probeLockFile is probeLockFileErr without the reason.
+func probeLockFile(profile string) (held_, self bool) {
+	h, s, _ := probeLockFileErr(profile)
+	return h, s
+}
+
+// The words for a lock file that cannot be made, opened or asked although no one was
+// seen holding it (settled 2026-11-07 [MA-1095 lab BUG-2]; the lead's words,
+// owner-delegated). Until then every such failure said W-RUNNING, "Thunderbird is open",
+// and Check again looped (the lab's read-only network share). Each still refuses, and
+// nothing is written; only "Thunderbird is open" is kept for a lock actually held.
+const (
+	wLockPerm = "MailArchive is not allowed to make or open Thunderbird's lock file (FILE) in this profile's folder, so nothing was restored: the restore holds that lock to keep Thunderbird closed while it writes. This happens when the profile is on a read-only network share, or its folder belongs to another account. Choose a profile on this computer's own drive that your account can change, then click Check again."
+	wLockRO   = "This profile's folder (PATH) is on a read-only drive, so MailArchive could not make Thunderbird's lock file there and nothing was restored: the restore holds that lock to keep Thunderbird closed while it writes. Choose a profile on a drive this computer can write to, then click Check again."
+	wLockFail = "MailArchive could not take Thunderbird's lock on this profile (FILE: WHY), so nothing was restored. If Thunderbird is open, close it. Otherwise choose a profile on this computer's own drive, then click Check again."
+)
+
+// lockOpenRefusal is the refusal for err from making, opening or asking the profile's
+// lock file: W-RUNNING only when err means the lock is held (lockHeldErr); otherwise the
+// cause in words — read-only (W-LOCKRO), not allowed (W-LOCKPERM), or any other
+// (W-LOCKFAIL, naming the error).
+func lockOpenRefusal(profile string, err error) error {
+	file := filepath.Join(profile, ParentLockName)
+	switch {
+	case lockHeldErr(err):
+		return refuse("W-RUNNING", RunningWords(), err)
+	case readOnlyErr(err):
+		return refuse("W-LOCKRO", fill(wLockRO, "PATH", profile), err)
+	case errors.Is(err, fs.ErrPermission):
+		return refuse("W-LOCKPERM", fill(wLockPerm, "FILE", file), err)
+	}
+	cause := err
+	var pe *fs.PathError
+	if errors.As(err, &pe) {
+		cause = pe.Err // the file is named already
+	}
+	return refuse("W-LOCKFAIL", fill(wLockFail, "FILE", file, "WHY", why(cause)), err)
+}
+
+// lockTakeRefusal is the refusal for err from taking the lock: a conflict with another
+// holder is W-RUNNING (lockConflictErr); anything else is worded as lockOpenRefusal does.
+func lockTakeRefusal(profile string, err error) error {
+	if lockConflictErr(err) {
+		return refuse("W-RUNNING", RunningWords(), err)
+	}
+	return lockOpenRefusal(profile, err)
+}
+
+// RunningRefusal is the refusal for a profile CheckRunning found in use (s.Running()):
+// W-RUNNING, except when the only signal was a lock file that could not be opened or asked
+// (no hold seen, no Thunderbird process), which is worded by its cause (MA-1095 lab BUG-2).
+func RunningRefusal(profile string, s RunningSignal) error {
+	if !s.ByProcess && s.LockErr != nil {
+		return lockOpenRefusal(profile, s.LockErr)
+	}
+	return refuse("W-RUNNING", RunningWords(), nil)
 }
 
 // Binds reports whether the lock is on the lock file of the profile folder the plan
@@ -97,22 +160,31 @@ func (l *ProfileLock) Binds(profile string, id Identity) bool {
 // once (created only when absent, never written to) and ask A again through that very
 // handle; take the lock; then check B once more. Any signal, or a failed take, is
 // W-RUNNING and the lock is released. A signal before the open leaves no lock file
-// made.
+// made. Settled 2026-11-07 [MA-1095 lab BUG-2]: a lock file that cannot be made, opened,
+// asked or locked for another reason than a holder (read-only, not allowed, other) is
+// refused in words naming that cause, never "Thunderbird is open".
 func TakeProfileLock(profile string) (*ProfileLock, error) {
-	if CheckRunning(profile).Running() {
-		return nil, refuse("W-RUNNING", RunningWords(), nil)
+	if s := CheckRunning(profile); s.Running() {
+		return nil, RunningRefusal(profile, s)
 	}
 	l, err := openProfileLock(profile)
 	if err != nil {
-		return nil, refuse("W-RUNNING", RunningWords(), err)
+		return nil, lockOpenRefusal(profile, err)
 	}
-	if symlinkLockHeld(profile) || l.heldElsewhere() || ProcessRunning() {
+	if symlinkLockHeld(profile) || ProcessRunning() {
 		l.Release()
+		return nil, refuse("W-RUNNING", RunningWords(), nil)
+	}
+	if held, herr := l.heldElsewhere(); held {
+		l.Release()
+		if herr != nil {
+			return nil, lockOpenRefusal(profile, herr)
+		}
 		return nil, refuse("W-RUNNING", RunningWords(), nil)
 	}
 	if err := l.take(); err != nil {
 		l.Release()
-		return nil, refuse("W-RUNNING", RunningWords(), err)
+		return nil, lockTakeRefusal(profile, err)
 	}
 	if ProcessRunning() {
 		l.Release()

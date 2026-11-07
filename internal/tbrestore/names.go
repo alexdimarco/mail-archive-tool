@@ -14,13 +14,26 @@ import (
 // TopPrefix begins the new top folder's name (owner question Q1's recommended answer).
 const TopPrefix = "Restored — "
 
-// The name budgets, in the units the file systems count (§4.4 note step 5): 255 minus 4
-// for Thunderbird's ".msf" (or ".sbd") minus 5 for a " (99)" suffix; and the cut-again
-// budget when the hash suffix replaces " (n)" (N6): 255 minus 4.
+// The name budgets. The file systems' (§4.4 note step 5): 255 minus 4 for Thunderbird's
+// ".msf" (or ".sbd") minus 5 for a " (99)" suffix, in UTF-8 bytes and UTF-16 units.
+//
+// Settled 2026-11-07 [MA-1095 lab]: Thunderbird's own is far tighter. A folder whose name
+// NS_MsgHashIfNecessary would change is kept by Thunderbird under that changed (hashed)
+// file name, so it never reads the file the restore wrote and shows the folder empty
+// (lab BUG-1). Its rule, read in comm-central mailnews/base/src/nsMsgUtils.cpp
+// (releases-comm-central 9ff8c8b16fba, 2026-11-04) with FILE_ILLEGAL_CHARACTERS from
+// xpcom/base/nsCRTGlue.h (firefox 6149f492996, 2026-03-16): a name is hashed when it holds
+// the path separator, a control character (U+0001–U+001F, U+007F–U+009F), any of
+// `/:*?"<>|`, or `;` or `#`; when it starts with "."; when it ends with ".", "~" or a
+// space; or when it is longer than MAX_LEN, 55 UTF-16 units. tbNameMax is that limit;
+// every name the restore writes is held to it (and so to the byte budget too: 55 units
+// are at most 165 UTF-8 bytes).
 const (
-	nameBudget     = 246
-	nameBudgetHash = 251
-	hashSuffixLen  = 9 // "~" + 8 hex
+	nameBudget    = 246
+	tbNameMax     = 55
+	hashSuffixLen = 9 // "~" + 8 hex
+	// topNameMax is the top name's limit without its " (n)": room is kept for " (99)".
+	topNameMax = tbNameMax - len(" (99)")
 )
 
 // SafeName is §4.4 note steps 1–4 for one name from the archive (untrusted): file-safe
@@ -31,10 +44,16 @@ func SafeName(s string) (name string, changed bool) {
 	// Step 2: what SanitizeSegment keeps: bidirectional controls, U+200E and U+200F,
 	// DEL and the C1 controls; then the trims SanitizeSegment did, again, since a
 	// removed character may have uncovered a leading dot or a trailing space.
+	// Settled 2026-11-07 [MA-1095 lab]: ";" and "#" anywhere become "_", since Thunderbird
+	// hashes a name that holds either (the rest of its list SanitizeSegment and this step
+	// already remove).
 	out = util.StripBidi(out)
 	out = strings.Map(func(r rune) rune {
 		if r == 0x200e || r == 0x200f || r == 0x7f || (r >= 0x80 && r <= 0x9f) {
 			return -1
+		}
+		if r == ';' || r == '#' {
+			return '_'
 		}
 		return r
 	}, out)
@@ -135,9 +154,11 @@ func utf16Len(s string) int {
 // fits reports s within max UTF-8 bytes and max UTF-16 units.
 func fits(s string, max int) bool { return len(s) <= max && utf16Len(s) <= max }
 
-// cutTo cuts s at a character boundary until it fits max bytes and units.
-func cutTo(s string, max int) string {
-	for !fits(s, max) {
+// cutUnits cuts s at a character boundary until it is at most max UTF-16 units: the
+// unit Thunderbird's MAX_LEN counts. (A character is never split, so no surrogate half
+// is left, as Thunderbird's own cut also avoids.)
+func cutUnits(s string, max int) string {
+	for utf16Len(s) > max {
 		_, size := utf8.DecodeLastRuneInString(s)
 		if size == 0 {
 			break
@@ -147,17 +168,39 @@ func cutTo(s string, max int) string {
 	return s
 }
 
+// fitsTB reports s within units UTF-16 units (at most tbNameMax) and the byte budget.
+func fitsTB(s string, units int) bool { return utf16Len(s) <= units && len(s) <= nameBudget }
+
 // hashOf is the 8-hex suffix of a name's original bytes.
 func hashOf(original string) string { return "~" + util.HashHex(original, 8) }
 
-// budgeted is §4.4 note step 5: s within budget, else cut keeping room for the hash
-// suffix of the original, so two cut names stay distinct. prefix (the top folder's
-// "Restored — ") counts against the budget.
-func budgeted(s, original, prefix string, budget int) string {
-	if fits(prefix+s, budget) {
+// budgeted is §4.4 note step 5 as settled 2026-11-07 [MA-1095 lab]: s within units
+// (Thunderbird's 55, or the top name's 50), else cut keeping room for the hash suffix of
+// the original, so two cut names stay distinct. prefix (the top folder's "Restored — ")
+// counts against the budget.
+func budgeted(s, original, prefix string, units int) string {
+	if fitsTB(prefix+s, units) {
 		return s
 	}
-	return strings.TrimPrefix(cutTo(prefix+s, budget-hashSuffixLen), prefix) + hashOf(original)
+	return strings.TrimPrefix(cutUnits(prefix+s, units-hashSuffixLen), prefix) + hashOf(original)
+}
+
+// ThunderbirdReads reports whether Thunderbird keeps a folder of this name under this
+// very file name: NS_MsgHashIfNecessary would return it unchanged (the rule above, with
+// both platforms' separators, since a profile can be copied between them). A name it
+// would hash, Thunderbird shows empty. The plan and the write hold every name to it
+// (defence in depth: the name steps already make every name so).
+func ThunderbirdReads(name string) bool {
+	if name == "" || utf16Len(name) > tbNameMax {
+		return false
+	}
+	for _, r := range name {
+		if r < 0x20 || (r >= 0x7f && r <= 0x9f) || strings.ContainsRune(`/\:*?"<>|;#`, r) {
+			return false
+		}
+	}
+	last, _ := utf8.DecodeLastRuneInString(name)
+	return name[0] != '.' && last != '.' && last != '~' && last != ' '
 }
 
 // FinalNames is §4.4 note steps 1–6 for one folder's children, in archive order:
@@ -172,7 +215,7 @@ func FinalNames(originals []string) (names []string, changed []bool) {
 	changed = make([]bool, len(originals))
 	for i, o := range originals {
 		n, ch := SafeName(o)
-		n = notShortAlias(budgeted(n, o, "", nameBudget), o)
+		n = notShortAlias(budgeted(n, o, "", tbNameMax), o)
 		names[i], changed[i] = n, ch || n != o
 	}
 	dedupe(names, originals, changed)
@@ -189,11 +232,13 @@ func notShortAlias(n, original string) string {
 	if !util.IsShortNameAlias(n) {
 		return n
 	}
-	return cutTo(n, nameBudgetHash-hashSuffixLen) + hashOf(original)
+	return cutUnits(n, tbNameMax-hashSuffixLen) + hashOf(original)
 }
 
 // dedupe gives later siblings that spell the same as an earlier one a free " (n)"
-// suffix (or the hash suffix past " (99)"), in place.
+// suffix (or the hash suffix past " (99)"), in place. Settled 2026-11-07 [MA-1095 lab]:
+// the name is cut first where the suffix would take it past Thunderbird's 55 units, so a
+// name kept whole up to 55 still gets a " (n)" Thunderbird reads.
 func dedupe(names, originals []string, changed []bool) {
 	seen := map[string]bool{}
 	for i, n := range names {
@@ -203,14 +248,15 @@ func dedupe(names, originals []string, changed []bool) {
 		}
 		found := false
 		for k := 2; k <= 99; k++ {
-			c := n + " (" + itoa(k) + ")"
+			sfx := " (" + itoa(k) + ")"
+			c := cutUnits(n, tbNameMax-len(sfx)) + sfx
 			if !seen[util.FoldKey(c)] {
 				names[i], found = c, true
 				break
 			}
 		}
 		if !found {
-			c := cutTo(n, nameBudgetHash-hashSuffixLen) + hashOf(originals[i]+"\x00"+itoa(i))
+			c := cutUnits(n, tbNameMax-hashSuffixLen) + hashOf(originals[i]+"\x00"+itoa(i))
 			names[i] = notShortAlias(c, originals[i]+"\x00"+itoa(i)+"\x00alias")
 		}
 		changed[i] = true
@@ -219,10 +265,20 @@ func dedupe(names, originals []string, changed []bool) {
 }
 
 // TopName is the new top folder's name for the archive folder's own name, without its
-// " (n)": "Restored — " + the name made safe, the prefix counted in the budget.
+// " (n)": "Restored — " + the name made safe, the prefix counted in the budget. Settled
+// 2026-11-07 [MA-1095 lab]: with " (99)" it is at most Thunderbird's 55 units, so NAME
+// is at most 39 and a longer one is cut to 30 plus the hash suffix of the archive's name
+// (lab BUG-1: a NAME over 44 hid the whole restore).
 func TopName(archiveName string) string {
+	top, _ := topName(archiveName)
+	return top
+}
+
+// topName is TopName and whether NAME is not the archive's own spelling.
+func topName(archiveName string) (string, bool) {
 	n, _ := SafeName(archiveName)
-	return TopPrefix + budgeted(n, archiveName, TopPrefix, nameBudget)
+	n = budgeted(n, archiveName, TopPrefix, topNameMax)
+	return TopPrefix + n, n != archiveName
 }
 
 // withNumber is the top name with its " (n)" (n 1: none).

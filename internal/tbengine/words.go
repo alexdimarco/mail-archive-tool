@@ -75,7 +75,18 @@ const (
 	wClosed       = "Thunderbird is closed."
 	wM365Unread   = "Messages restored from Microsoft 365 show as unread. To mark them read, right-click the folder in Thunderbird and choose Mark Folder Read."
 	wDeletedInTB  = "N of them were deleted in Thunderbird before they were backed up, so Thunderbird keeps them hidden, and may remove them from the restored folder the next time it compacts it. The archive keeps them."
+	// wDeletedInTBOne is wDeletedInTB for one message (MA-1095 lab note L2, settled
+	// 2026-11-07: "1 of them were deleted" read wrong).
+	wDeletedInTBOne = "1 of them was deleted in Thunderbird before it was backed up, so Thunderbird keeps it hidden, and may remove it from the restored folder the next time it compacts it. The archive keeps it."
 )
+
+// deletedInTBWords are the result's words for n messages Thunderbird had marked deleted.
+func deletedInTBWords(n int) string {
+	if n == 1 {
+		return wDeletedInTBOne
+	}
+	return fill(wDeletedInTB, "N", commas(n))
+}
 
 // leaveWords words a reason the Local Folders may leave this computer, for the restore.
 func leaveWords(code, service, path string) string {

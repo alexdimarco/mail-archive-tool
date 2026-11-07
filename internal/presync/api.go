@@ -261,6 +261,7 @@ func SummaryLine(o Outcome) string {
 var noteText = map[string]string{
 	OutcomeNoActivity.Code:          "Thunderbird sync: done — Thunderbird was started and closed; nothing new had arrived.",
 	OutcomeAlreadyRunning.Code:      "Thunderbird sync: Thunderbird was already open, so it was not started or closed. Archiving what is on disk.",
+	OutcomeRestoreRunning.Code:      "Thunderbird sync: MailArchive is restoring mail into this Thunderbird profile, so Thunderbird was not started. Archiving what is on disk.",
 	OutcomeOtherProfileRunning.Code: "Thunderbird sync: Thunderbird is open with a different profile, so this profile was not synced. Archiving what is on disk.",
 	OutcomeProfileBusy.Code:         "Thunderbird sync: another backup is syncing this Thunderbird profile, so this run skipped it. Archiving what is on disk.",
 	OutcomeOwnerActiveSkipped.Code:  "Thunderbird sync: you were using the computer, so Thunderbird was not started. Archiving what is on disk.",
