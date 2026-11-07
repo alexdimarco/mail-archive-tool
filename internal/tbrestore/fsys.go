@@ -6,7 +6,10 @@ import (
 	"io"
 	"io/fs"
 	"os"
+	"strings"
 	"time"
+
+	"golang.org/x/text/unicode/norm"
 )
 
 // FS is everything the writer and the cleanup do to Local Folders, each through the
@@ -25,8 +28,15 @@ type FS interface {
 	Lstat(name string) (fs.FileInfo, error)
 	// ReadDir gives a folder's entries in batches; fn returning false stops the read.
 	ReadDir(name string, fn func([]fs.DirEntry) bool) error
-	// Remove removes one file or one empty folder, never following a link.
-	Remove(name string) error
+	// RemoveSeen removes one file or one empty folder, and only the very entry the
+	// cleanup's scan saw (ADV-02, settled 2026-11-07): it walks from the root one folder
+	// at a time by handle, following no link, and requires each folder on the way and
+	// the entry itself to be what seen recorded for its path (keys NFC, "/"-joined: the
+	// same identity and kind, never a link, junction or reparse point); then it removes
+	// the entry relative to its checked parent, never through a link. Any difference is
+	// errChanged and nothing is removed; an entry already gone satisfies
+	// errors.Is(err, fs.ErrNotExist).
+	RemoveSeen(name string, seen map[string]fs.FileInfo) error
 	// SyncDir flushes a folder's entries (a no-op where the OS has no such call).
 	SyncDir(name string) error
 }
@@ -97,7 +107,49 @@ func (r *rootFS) ReadDir(name string, fn func([]fs.DirEntry) bool) error {
 	}
 }
 
-func (r *rootFS) Remove(name string) error { return r.root.Remove(name) }
+func (r *rootFS) RemoveSeen(name string, seen map[string]fs.FileInfo) error {
+	parts := strings.Split(name, "/")
+	for _, p := range parts {
+		if p == "" || p == "." || p == ".." {
+			return errChanged
+		}
+	}
+	want := make([]fs.FileInfo, len(parts))
+	for i := range parts {
+		fi, ok := seen[norm.NFC.String(strings.Join(parts[:i+1], "/"))]
+		if !ok || fi.Mode()&fs.ModeSymlink != 0 || (i < len(parts)-1 && !fi.IsDir()) {
+			if _, err := r.root.Lstat(name); errors.Is(err, fs.ErrNotExist) {
+				return err // gone: nothing to remove, whatever the scan saw
+			}
+			return errChanged
+		}
+		want[i] = fi
+	}
+	top, err := r.root.Open(".")
+	if err != nil {
+		return err
+	}
+	defer top.Close()
+	return removeSeenAt(top, parts, want)
+}
+
+// errChanged is an entry, or a folder on the way to it, that is not what the cleanup's
+// scan saw: removal stops there (W-LEFT's step-4 form).
+var errChanged = errors.New("it changed since MailArchive looked at it")
+
+// beforeUnlinkSeam runs between removeSeenAt's last check of an entry and its removal;
+// a test swaps the entry there (ADV-02's narrowest window). It does nothing in
+// production.
+var beforeUnlinkSeam = func(name string) {}
+
+// sameEntry reports a fresh look at an entry is the scan's: the same file, the same kind,
+// not a link.
+func sameEntry(want, got fs.FileInfo) bool {
+	if got.Mode()&(fs.ModeSymlink|fs.ModeIrregular) != 0 || got.IsDir() != want.IsDir() || got.Mode().IsRegular() != want.Mode().IsRegular() {
+		return false
+	}
+	return os.SameFile(want, got)
+}
 
 func (r *rootFS) SyncDir(name string) error {
 	f, err := r.root.Open(name)

@@ -115,6 +115,22 @@ type writer struct {
 	done     int
 	started  bool
 	madeTree bool // the container exists (made by this restore)
+	// notMine are the container-relative names whose exclusive create failed because
+	// something already stood there: never this restore's, so its cleanup never
+	// removes them (ADV-03).
+	notMine map[string]bool
+}
+
+// created notes a create of the container-relative name rel that failed because the
+// name was already there, and returns err.
+func (w *writer) created(rel string, err error) error {
+	if err != nil && errors.Is(err, fs.ErrExist) {
+		if w.notMine == nil {
+			w.notMine = map[string]bool{}
+		}
+		w.notMine[rel] = true
+	}
+	return err
 }
 
 func (w *writer) logLine(ev string, set func(*LogLine)) error {
@@ -170,13 +186,13 @@ func (w *writer) run() *WriteResult {
 	w.res.Top, w.madeTree = top, true
 	container := top + ".sbd"
 	// 3. the marker.
-	if err := w.writeSmall(container+"/"+MarkerName, markerLine(in.ID, ProfileKeyOf(in.ProfileDir), time.Now())); err != nil {
+	if err := w.writeSmall(container, MarkerName, markerLine(in.ID, ProfileKeyOf(in.ProfileDir), time.Now())); err != nil {
 		return w.stop(err)
 	}
 	// 4. the made-list, on disk before any entry is made.
 	list, err := w.f.Create(container + "/" + MadeListName)
 	if err != nil {
-		return w.stop(err)
+		return w.stop(w.created(MadeListName, err))
 	}
 	w.list = list
 	defer func() {
@@ -204,7 +220,7 @@ func (w *writer) run() *WriteResult {
 				return w.stop(err)
 			}
 			if err := w.f.Mkdir(container + "/" + fo.Dir()); err != nil {
-				return w.stop(err)
+				return w.stop(w.created(fo.Dir(), err))
 			}
 			w.dirs = append(w.dirs, container+"/"+fo.Dir())
 		}
@@ -255,10 +271,10 @@ func (w *writer) made(kind, path string) error {
 	return w.list.Sync()
 }
 
-func (w *writer) writeSmall(name string, data []byte) error {
-	f, err := w.f.Create(name)
+func (w *writer) writeSmall(container, rel string, data []byte) error {
+	f, err := w.f.Create(container + "/" + rel)
 	if err != nil {
-		return err
+		return w.created(rel, err)
 	}
 	if _, err := f.Write(data); err != nil {
 		f.Close()
@@ -291,7 +307,7 @@ func (w *writer) writeFolder(container string, i int, fo Folder) error {
 	}
 	file, err := w.f.Create(name)
 	if err != nil {
-		return err
+		return w.created(fo.File(), err)
 	}
 	bw := bufio.NewWriterSize(file, 256<<10)
 	cw := &countWriter{w: bw}
@@ -425,7 +441,7 @@ func (w *writer) commit(top string) *WriteResult {
 				w.res.Words = fill(wTaken, "TOP", top, "SHOWS", showsWord(kind, "shows"))
 				return w.res
 			}
-			c := cleanupContainer(w.f, top, in.ID, true)
+			c := cleanupContainer(w.f, top, in.ID, true, w.notMine)
 			w.res.Clean = &c
 			_ = w.logLine(EvAbandoned, func(l *LogLine) { l.Result, l.Detail = string(OutTaken), err.Error() })
 			w.res.Outcome, w.res.Err = OutTaken, err
@@ -525,7 +541,7 @@ func (w *writer) cleanAfter(o Outcome, err error, head, tail string) *WriteResul
 	}
 	w.res.Outcome, w.res.Err = o, err
 	top := w.res.Top
-	c := cleanupContainer(w.f, top, w.in.ID, false)
+	c := cleanupContainer(w.f, top, w.in.ID, false, w.notMine)
 	w.res.Clean = &c
 	detail := why(err)
 	switch c.Kind {

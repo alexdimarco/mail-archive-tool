@@ -253,3 +253,30 @@ archive once.
 The fixes above are not made here (this pass writes docs only). Each fix needs its probe as the
 tombstone test, shown red then green, and a fresh look at the patch. ADV-07 is a product rule
 change and needs the lead's (or owner's) ruling before it is built.
+
+## Settled 2026-11-07
+
+Each finding's probe became a real test with a `covers:` marker in the worktree (no `zz_` files),
+each fix proven by a mutation that turned its test red, then reverted. The design's dated
+"Settled 2026-11-07 [ADV-0n]" notes stand beside the text they amend; the catalog rows carry
+"Amended 2026-11-07" notes. Fix blobs (a later change to one of these files makes the line stale):
+`write.go` e2aa332, `cleanup.go` d81ac3b, `fsys.go` c08314a, `fsys_unix.go` d56258f, `fsys_windows.go`
+a66d9ab, `tblock.go` 5e3fc43, `tblock_unix.go` 1169876, `tblock_windows.go` debd364, `rlog.go`
+f4f8b5e, `names.go` b0d01a4, `skipset.go` a897970, `source/restoreskip.go` b753283.
+
+| ID | Settled by | Test (row) | Mutation that turned it red | Design note |
+|---|---|---|---|---|
+| ADV-01 | Registry keyed by the lock file's identity (device+inode; Windows volume+file index, read with attribute-only access); a probe or open that lands on the held file by a race keeps its descriptor until Release | `tbrestore/ma1127_adv01_identity_test.go` (MA-1127): hard link everywhere, `/System/Volumes/Data` on macOS; macOS and Windows green (Windows: hard link; firmlink skipped off macOS) | M1 registry answering only for the spelling it was taken under (3 second handles opened); M1b race guard off (probe answers not-self and drops the lock) | §5.2, after the Mac-lab note |
+| ADV-02 | Scan records what it saw; `FS.RemoveSeen` walks by handle with no link followed (`openat` `O_NOFOLLOW`; `NtCreateFile` + `FILE_OPEN_REPARSE_POINT`), compares identity and kind at every level, removes relative to the checked parent (`unlinkat`; Windows by handle, POSIX-semantics disposition) | `tbrestore/ma1122_adv02_swap_test.go` (MA-1122): swap at the Lstat (P2), at the removal call, and after the removal's check (`beforeUnlinkSeam`); macOS green; Windows junction cases green, symlink cases skipped (no privilege) | M2 removal by path through the root (person's file removed); M2b the walk without `O_NOFOLLOW` and the identity compare (removed) | §8 cleanup step 6 note; §9 ADV-02 note (the window left: `fstatat`→`unlinkat`, inside the container only, Unix) |
+| ADV-03 | Writer keeps names whose exclusive create met `ErrExist`; its cleanup's scan never takes them for the list's (W-LEFT, remove nothing) | `tbrestore/ma1122_adv03_notmine_test.go` (MA-1122): file at a listed file's name, folder at a listed folder's name; macOS and Windows green | M3 the writer not keeping the names (the other program's entry removed) | §8 cleanup step 6 note (the crash-between-line-and-create case left, named) |
+| ADV-04 | `Log.Read` reads a zero-holding line as what precedes its trailing zeros: torn, or a whole line | `tbrestore/ma1142_adv04_zeros_test.go` (MA-1142); macOS and Windows green | M4 the zero rule off (W-LOGBAD) | §7.4 ADV-04 note (archdelete's reader checked: passes over any unparsable line) |
+| ADV-05 | `FinalNames` gives an 8.3-alias-shaped name (`util.IsShortNameAlias`) the hash suffix, counted as changed; the dedupe's hash suffix too. **Rename, not refusal** — the builder's reading of the lead's "refuse at plan time with words" (see the §4.4 note; a refusal is one condition) | `tbrestore/ma1088_adv05_shortname_test.go`, `ma1088_adv05_shortname_windows_test.go` (MA-1088); macOS green; Windows VM (8.3 on) both siblings restored | M5 alias-shaped names kept | §4.4 ADV-05 note |
+| ADV-06 | `SkipSet.Lookup(id, profileKey, holder)`: known only when the folder the walk met the container in is, by identity, the started line's Local Folders | `source/ma1138_adv06_adv07_test.go`, `tbrestore/ma1138_skipset_test.go` (MA-1138); macOS and Windows green | M6 the Local Folders not compared (copy left out) | §7.2 ADV-06 note; §9 ADV-06 note; §13 R5 note corrected |
+| ADV-07 | Lead's call: a restore closed "abandoned" is never left out; leftovers with no parent left out only while open or committed; committed excludes "abandoned" | the same two files (MA-1138); macOS and Windows green | M7 every parentless leftover left out; M7b committed ignoring "abandoned" | §7.2 ADV-07 note; §11 R41 note; catalog R41 amended |
+
+Not reproduced N1 (the walk's marker check and its descent not one step) is unchanged and still
+open. Refuted items need nothing. Platforms: macOS (darwin/arm64) package runs and the full suite,
+Windows 11 VM (`internal/tbrestore` PASS; `internal/source` only its known baseline
+`TestFrozenReplayPinsTheCharsetTableAndItsSources`, no `go` on the VM), Linux in Docker — as the
+commit records. These fixes have not had their own fresh adversarial look; R6's pass should include
+`RemoveSeen` on Windows with a privileged symlink (not run: the VM user cannot make symlinks).

@@ -172,11 +172,24 @@ func FinalNames(originals []string) (names []string, changed []bool) {
 	changed = make([]bool, len(originals))
 	for i, o := range originals {
 		n, ch := SafeName(o)
-		n = budgeted(n, o, "", nameBudget)
+		n = notShortAlias(budgeted(n, o, "", nameBudget), o)
 		names[i], changed[i] = n, ch || n != o
 	}
 	dedupe(names, originals, changed)
 	return names, changed
+}
+
+// notShortAlias is a name that does not look like a Windows 8.3 short-name alias
+// ("LONGFO~1", "REPORT~2.PDF"): Windows may give that alias to a long-named sibling, so
+// the exclusive create of a folder named like one could find the sibling and fail at
+// Start. Such a name gets the hash suffix of its original, as extract's names do (XC13,
+// util.IsShortNameAlias), on every platform since a profile can be copied to Windows
+// (ADV-05, settled 2026-11-07). The result has two tildes, so it is never an alias.
+func notShortAlias(n, original string) string {
+	if !util.IsShortNameAlias(n) {
+		return n
+	}
+	return cutTo(n, nameBudgetHash-hashSuffixLen) + hashOf(original)
 }
 
 // dedupe gives later siblings that spell the same as an earlier one a free " (n)"
@@ -198,7 +211,7 @@ func dedupe(names, originals []string, changed []bool) {
 		}
 		if !found {
 			c := cutTo(n, nameBudgetHash-hashSuffixLen) + hashOf(originals[i]+"\x00"+itoa(i))
-			names[i] = c
+			names[i] = notShortAlias(c, originals[i]+"\x00"+itoa(i)+"\x00alias")
 		}
 		changed[i] = true
 		seen[util.FoldKey(names[i])] = true

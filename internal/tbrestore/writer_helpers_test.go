@@ -200,11 +200,11 @@ func (f *faultFS) ReadDir(n string, fn func([]fs.DirEntry) bool) error {
 	return f.inner.ReadDir(n, fn)
 }
 
-func (f *faultFS) Remove(n string) error {
+func (f *faultFS) RemoveSeen(n string, seen map[string]fs.FileInfo) error {
 	if err := f.at("remove", n); err != nil {
 		return err
 	}
-	return f.inner.Remove(n)
+	return f.inner.RemoveSeen(n, seen)
 }
 
 func (f *faultFS) SyncDir(n string) error {

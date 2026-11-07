@@ -600,6 +600,20 @@ The result names how many folder names changed.
 > suffix, the name is cut again at a character boundary until the name with its suffix is at most
 > 251 UTF-8 bytes and 251 UTF-16 units (255 − 4 for `.msf` or `.sbd`), and the Windows path budget
 > (§4.5 note) is computed again for that name. This still happens in the plan.
+>
+> Settled 2026-11-07 [ADV-05] (the R3–R5 adversarial pass): a step between 5 and 6. Windows gives a
+> long name an 8.3 short alias ("Long folder name one" → `LONGFO~1`), and an exclusive create of a
+> sibling named like that alias finds the long-named folder and fails, so a plan that said OK failed at
+> Start. A name that looks like a short alias (`util.IsShortNameAlias`, extract's XC13 rule: up to six
+> characters, `~`, digits, an optional extension of up to three) gets the hash suffix of its original,
+> on every platform (a profile can be copied to Windows), and counts as changed, so the plan names it
+> among the changed names; step 6's own hash suffix is held to the same rule. The result has two
+> tildes and is never an alias, so no name can fail part way through. This is a rename in the plan,
+> not a refusal: the person cannot rename an archive's folders, and the design's way with every other
+> unsafe name is to change it and say so (the builder's reading of the lead's "refuse at plan time with
+> words" as "caught at plan time, named in the plan's words"; a refusal instead is one condition in
+> `FinalNames`). Built: `notShortAlias` in `names.go`; MA-1088's ADV-05 tests, and on the Windows VM
+> both siblings restored.
 
 ### 4.5 Path length on Windows
 
@@ -830,6 +844,20 @@ seeing a half folder, and this subsection is dropped.
 >   never the restore's. R40's "only adds" is a claim about what MailArchive writes, so it is
 >   untouched; any test or lab row that holds the profile byte-identical across a refused
 >   Thunderbird allows this one file and no other (`tbrestore.ThunderbirdRefusalFile`).
+
+> Settled 2026-11-07 [ADV-01] (the R3–R5 adversarial pass, `docs/review-restore-thunderbird-adversarial-r3r5.md`):
+> (a)'s registry "records each profile this process has a `ProfileLock` on" by **the lock file's
+> identity**, not by the profile path's spelling: device and inode on macOS and Linux (`Lstat` of
+> `.parentlock`, then `fstat` of the one handle), volume serial number and file index on Windows
+> (from a handle opened for its attributes only, which no sharing mode refuses). The same lock file
+> reached by another spelling (macOS's `/System/Volumes/Data` firmlink) or through another profile
+> whose `.parentlock` is a hard link to it is answered from the registry and never opened. The one
+> race left — the name swapped for the held file between that identity check and a probe's open —
+> is closed too: a probe or second open that finds, by `fstat`, that it opened a held file keeps
+> that descriptor with the lock, never closing it before `Release`, and answers "held by this
+> process". Built: `tblock.go` (`lockKey`, `heldHere`), `tblock_unix.go` (`keepIfHeld`),
+> `tblock_windows.go` (`lockFileKey`). MA-1127's ADV-01 test
+> (`ma1127_adv01_identity_test.go`) proves it with a hard link everywhere and the firmlink on macOS.
 
 ### 5.3 Checked again right before writing
 
@@ -1370,6 +1398,36 @@ backup captures. Owner question Q7.
 >   counts as this profile's only when that lookup gives the same path and the same identity, and as
 >   reachable only when the recorded path's identity is the recorded one.
 
+> Settled 2026-11-07 [ADV-06, ADV-07] (the R3–R5 adversarial pass; ADV-07 is the lead's call of
+> 2026-11-07). These amend the foldcheck2 P3 note's two cases above; where they disagree, this note
+> wins.
+> - **[ADV-06] The skip is tied to where the restore wrote.** "ID in the skip set" now also means: the
+>   folder the walk met the container in is, by identity, the Local Folders the restore's started line
+>   records (its recorded path is still that folder — `DirIdentity` equal to the recorded identity —
+>   and the walk's folder is the same folder, `os.SameFile`), and the marker's profile key is the
+>   started line's, as before. Anything else — a committed restore's folder copied with its marker into
+>   another profile, a copy on a USB disk the person backs up, the mail later filed into either, a
+>   copied leftover — is an ordinary folder and is backed up. The §13 R5 builder's note "a marker
+>   copied into another profile does nothing" was not what the code did; it is now. A Local Folders on
+>   an external drive that comes back with a new device number is then backed up in full, the safe
+>   direction. Built: `SkipSet.Lookup(id, profileKey, holder)`, `source.RestoreSkip`.
+> - **[ADV-07] "Abandoned" leftovers are backed up like ordinary folders** (lead's call 2026-11-07:
+>   never skip a folder that may hold the person's mail). Case 1 above ("no entry named
+>   `Restored — NAME` beside it: an unfinished or abandoned leftover") is narrowed: the container is
+>   skipped only when its restore is still **open** (no closing line: being written now, or cut off by a
+>   crash, so Thunderbird has never shown it) or **committed**. A restore closed "abandoned" — the
+>   cleanup kept it whole because something not MailArchive's is in it (W-LEFT: typically Thunderbird's
+>   `.msf` beside mail the person moved in while Thunderbird showed it), its made-list could not be
+>   read, its commit could not be confirmed (W-COMMITERR), or a taken name — is never skipped, with or
+>   without its parent name. "Committed" itself now also excludes a restore closed "abandoned" (so an
+>   abandoned W-COMMITERR's parent file is backed up too). **The accepted cost:** an abandoned leftover
+>   of a failed restore may hold a cut-off last message, which is copied into the archive once. The S5
+>   words' promise ("Until then MailArchive backs them up like your other mail") now holds whether or
+>   not the parent name stays. With an unreadable log, the RT-5 fallback is unchanged (containers with
+>   no entry of the parent name are skipped, open or abandoned alike, since the log cannot tell them
+>   apart); every restore is refused meanwhile (W-LOGBAD), and its words say backups then copy those
+>   folders once the file is moved away.
+
 ### 7.3 The Desktop flow
 
 Where: a "Restore to Thunderbird…" button on the current archive's card (beside
@@ -1531,6 +1589,17 @@ the copy (`pending.go:15-21`).
 >   the parent name beside it. For each, the plan names the folder `Restored — NAME.sbd` and its
 >   path, and says that nothing will clean it up after MailArchive is removed. (The M4 note's
 >   "when `restores.log` holds an unfinished restore" is narrowed to this rule.)
+
+> Settled 2026-11-07 [ADV-04] (the R3–R5 adversarial pass): "a torn last line … is kept apart" covered
+> only a line cut short. A power cut can also leave the file longer than what reached the disk, its
+> tail zero bytes (NTFS and XFS can; APFS not checked). Such a line made every later read W-LOGBAD for
+> good, refusing every restore. Now `Log.Read` reads a line holding a zero byte as what precedes its
+> trailing zeros (and spaces): nothing, a cut-off object — both torn, passed over wherever they sit —
+> or a whole line whose line break alone was lost, which is read. A zero byte with anything after it
+> on its line is not such a tail and stays W-LOGBAD. The deletion log's reader (`archdelete.readLog`)
+> passes over every line it cannot parse, so it was never affected; the made-list's reader passes over
+> its torn last line, and nothing appends to a made-list after a crash (decision 11). Built:
+> `rlog.go`; MA-1142's ADV-04 test.
 
 ### 7.5 Words (the owner-delegated rule: say what happened first, then the remedy)
 
@@ -1919,6 +1988,21 @@ restore is on disk could not be told (Delete's rule, `archivedelete.go:659-680`)
 >   5. **A removal blocked** (rule 5, unchanged): the cleanup stops, no line is written, and the next
 >      Start tries again from step 0. [N-g] At Start, this does not stop the new restore.
 >   6. Rule 7 stands: the parent name is never removed, nor anything outside the container.
+>
+>   > Settled 2026-11-07 [ADV-02, ADV-03] (the R3–R5 adversarial pass):
+>   > - [ADV-02] Step 3's scan now also records what it saw of the container and of each entry it
+>   >   matched, and step 4's "each `Lstat` again for its kind" becomes: each removed only when it,
+>   >   and every folder on the way to it, is still exactly the entry the scan saw — walked down from
+>   >   Local Folders one folder at a time by handle, following no link, and removed relative to its
+>   >   checked parent (§9 ADV-02 note). Any difference stops removal, as a changed kind always did.
+>   > - [ADV-03] A listed name whose exclusive create failed because something already stood there
+>   >   is not the restore's: the line was fsynced first (M1), so the list names it, but the run
+>   >   knows it did not make it. The writer keeps those names and hands them to its own cleanup, whose
+>   >   scan never takes them for the list's: finding one there removes nothing (W-LEFT, "abandoned").
+>   >   **What is left:** a crash between a list line and its create, when another program made that
+>   >   name in that instant, cannot be told apart at a later Start from the restore's own entry, and
+>   >   that Start's cleanup would remove it. It needs another program writing inside the restore's new
+>   >   hidden folder within milliseconds of a crash; accepted, as the pass recommended.
 > - **What the scan cannot see.** A listed file changed in place, by hand, outside Thunderbird, in a
 >   folder Thunderbird does not show. Thunderbird itself can change a listed file only once it shows
 >   the tree, which needs the parent name, which step 1 catches. The hand-edit case is in the R3–R5
@@ -2168,6 +2252,35 @@ This design owes the adversarial pass on the writer and the profile lock (§13).
 > - **The scan and the parent-name check** (§8 foldcheck2 note, cleanup steps 1 and 3) join the made-list
 >   in the R3–R5 adversarial pass: a planted entry can only make the cleanup remove less, never more,
 >   and the scan is bounded by the list's size.
+>
+> Settled 2026-11-07 [ADV-02] (the R3–R5 adversarial pass): the bullet just above held only without a
+> race. A listed folder swapped for a link to Local Folders between the scan and the removals walked
+> the removal (through `os.Root`, which follows a link inside its root) onto the person's file of a
+> listed name. Now the scan records what it saw of the container and of every entry it matched, and
+> each removal (`FS.RemoveSeen`) walks down from Local Folders **one folder at a time by handle,
+> following no link** — `openat(O_DIRECTORY|O_NOFOLLOW)` on macOS and Linux, `NtCreateFile` relative to
+> the parent handle with `FILE_OPEN_REPARSE_POINT` on Windows — and requires each folder on the way, and
+> the entry itself, to be the very one the scan saw (the same identity and kind; never a link, junction
+> or reparse point). Any difference stops removal (W-LEFT's step-4 form, "abandoned"). The entry is
+> then removed relative to its checked parent: `unlinkat` on macOS and Linux, which never follows a
+> link; on Windows by its own handle (opened with `DELETE`, its disposition set), so exactly the
+> checked object is removed. **The window left**, on macOS and Linux only: between the entry's last
+> `fstatat` and its `unlinkat`, another program of the same user could put something else at that
+> name inside the checked folder — the restore's own hidden folder, which Thunderbird is held out of —
+> and that thing (a link itself, never its target) would be removed. It cannot reach anything outside
+> the container. MA-1122's ADV-02 test makes the swap at three instants (the removal loop's `Lstat`,
+> the removal's call, and inside it after its check, through `beforeUnlinkSeam`).
+>
+> Settled 2026-11-07 [ADV-06] (the R3–R5 adversarial pass): the RT-5 bullet above ("a marker copied or
+> planted elsewhere does nothing, because a container is skipped or cleaned only when its marker's ID
+> is in this computer's `restores.log` for this profile") did not hold for the backup skip: the walk
+> compared the marker's profile key with the log's started line, both written by the same restore, and
+> nothing with the profile being backed up. Now a backup leaves a marked folder out only when the
+> folder it met the container in is, **by identity, the Local Folders the restore's started line
+> records** (the recorded path still that folder, and the walk's folder that same folder), as well as
+> the profile key matching (§7.2 ADV-06 note). A copied profile, or a copy on a disk the person backs
+> up, is backed up like any other mail. The cleanup's side was already bound this way (Start compares
+> the recorded Local Folders, §8 step 0).
 
 ## 10. The command line
 
@@ -2287,6 +2400,16 @@ mailarchive restore-thunderbird -list-profiles
 >   is a regular file, and the log has that ID's 'checked' line and no 'taken' line), with that parent
 >   file. Any other marked folder with an entry of its parent name beside it is backed up like any
 >   other folder."
+>
+> Settled 2026-11-07 [ADV-06, ADV-07] (the R3–R5 adversarial pass; ADV-07 the lead's call): R41's
+> wording above gains two narrowings, written beside it in the catalog
+> (`docs/scenario-catalog.md` R41, "Amended 2026-11-07"): "for that profile" means for that profile
+> **and that Local Folders** — the folder the backup meets the marked folder in must be, by identity,
+> the Local Folders the restore's started line records (§7.2 ADV-06 note); and a leftover with no
+> entry of its parent name is left out only while its restore is **open or committed** — one closed
+> "abandoned" is backed up like any other folder, since it may hold the person's mail, accepting that
+> a cut-off last message of a failed restore may be copied into the archive once (§7.2 ADV-07 note);
+> "committed" excludes a restore closed "abandoned".
 
 > Folded 2026-11-06 [foldcheck3 S1, S3] (lead's call): R40's cleanup clause, as the foldcheck2 note
 > above words it, is false about the design's own cleanup, which also removes the made-list, the
@@ -2740,6 +2863,14 @@ Build order is sound: nothing on a surface (R4, R5) before its engine (R1–R3).
 >   (`uninstall.Report.RestoreLeftovers`, the command line and Desktop's Uninstall panel) names them.
 > - **Uninstall's targets:** `restores.log` (an exact name beside `deletions.log`) and the lock files
 >   by `thunderbird.IsRestoreLockName` — the very function that names them, so the two cannot drift.
+>
+> Settled 2026-11-07 [ADV-06, ADV-07] (the R3–R5 adversarial pass): in the first bullet, "A restore is
+> this record's only when the marker's profile key matches its started line's (a marker copied into
+> another profile does nothing)" was not what the code did — the walk compared the marker with the
+> record, both the restore's own, and nothing with the folder being backed up. It is now: the record
+> also requires the folder the walk met the container in to be, by identity, the Local Folders the
+> started line records (§7.2 ADV-06 note). And O1 (b)'s skip, and the leftover skip, never apply to a
+> restore closed "abandoned" (§7.2 ADV-07 note, the lead's call).
 
 ## 14. Decisions this design makes, for the review to test
 

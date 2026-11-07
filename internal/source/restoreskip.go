@@ -17,25 +17,34 @@ import (
 // names the restore. Before the walk enters a container it reads the marker (a regular
 // file, at most 4 KiB, through the walk's own root) and leaves the container out when:
 //   - the marker is well-formed and the caller's record knows its restore for the
-//     marker's profile, and there is no entry of the parent name beside it (an
-//     unfinished or abandoned leftover: Thunderbird does not show it); or
-//   - the same, and the restore committed (the record has its "checked" line and no
-//     "taken" line) and the parent name beside it is a regular file: then the parent
-//     file is left out too (the finished restored folder, owner question O1's
-//     recommended answer (b));
+//     marker's profile and for this very Local Folders (the folder the walk met the
+//     container in is, by identity, the one the restore's started line records:
+//     ADV-06, settled 2026-11-07), there is no entry of the parent name beside it, and
+//     the restore is still open (no closing line: being written, or cut off) or
+//     committed — never one closed "abandoned", which may hold the person's mail
+//     (ADV-07, the lead's call 2026-11-07); or
+//   - the same, and the restore committed (the record has its "checked" line, no
+//     "taken" line, and no "abandoned" closing line) and the parent name beside it is a
+//     regular file: then the parent file is left out too (the finished restored folder,
+//     owner question O1's recommended answer (b));
 //   - or the record could not be read, and a well-formed marker has no entry of the
 //     parent name beside it.
 //
-// Any other marked container — an unknown restore, an entry of the parent name that is
-// a folder or a link, a restore that did not commit — is walked as an ordinary folder,
-// the marker and the made-list inside it never read as mailboxes (they are dot-named).
+// Any other marked container — an unknown restore, one met in another Local Folders (a
+// copied profile, a copy on a USB disk), an abandoned leftover, an entry of the parent
+// name that is a folder or a link, a restore that did not commit — is walked as an
+// ordinary folder, the marker and the made-list inside it never read as mailboxes (they
+// are dot-named).
 
 // RestoreSkip is the caller's record of its restores (tbrestore.SkipSet).
 type RestoreSkip interface {
 	// Lookup reports whether the record knows the restore id for the profile key the
-	// marker names, and whether it committed. An unknown id may make the record re-read
-	// its log once (foldcheck M3).
-	Lookup(id, profileKey string) (known, committed bool)
+	// marker names and for holder, the folder the walk met the container in (it must be,
+	// by identity, the Local Folders the restore wrote into: ADV-06); then whether the
+	// restore is open (no closing line) and whether it committed (and was not closed
+	// "abandoned": ADV-07). An unknown id may make the record re-read its log once
+	// (foldcheck M3).
+	Lookup(id, profileKey string, holder fs.FileInfo) (known, open, committed bool)
 	// LogUnreadable reports that the record could not be read.
 	LogUnreadable() bool
 }
@@ -75,16 +84,30 @@ func (w *localWalk) leaveOutRestore(sc *scope, dir, name string) (container, par
 	if rs.LogUnreadable() {
 		return noParent, false
 	}
-	known, committed := rs.Lookup(m.ID, m.Profile)
+	holder, err := sc.lstat(holderRel(dir))
+	if err != nil {
+		holder = nil
+	}
+	known, open, committed := rs.Lookup(m.ID, m.Profile, holder)
 	switch {
 	case !known:
 		return false, false
-	case noParent:
+	case noParent && (open || committed):
+		// still being written or cut off (Thunderbird does not show it), or committed:
+		// never an abandoned leftover, which may hold the person's mail (ADV-07)
 		return true, false
 	case perr == nil && pfi.Mode().IsRegular() && committed:
 		return true, true
 	}
 	return false, false
+}
+
+// holderRel is the scope-relative name of the folder dir itself ("." for the root).
+func holderRel(dir string) string {
+	if dir == "" {
+		return "."
+	}
+	return dir
 }
 
 // readRestoreMarker reads a marker: a regular file of at most 4 KiB, never through a

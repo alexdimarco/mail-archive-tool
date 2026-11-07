@@ -1,9 +1,8 @@
 package tbrestore
 
 import (
+	"path/filepath"
 	"sync"
-
-	"mail-archive-tool/internal/thunderbird"
 )
 
 // Thunderbird's own profile lock, as the restore holds it while it writes (design
@@ -37,16 +36,28 @@ import (
 // 2026-11-07).
 const ThunderbirdRefusalFile = "Telemetry.FailedProfileLocks.txt"
 
+// lockKey is a lock file's identity: device and inode on macOS and Linux, volume serial
+// number and file index on Windows. The registry is keyed by it, not by the profile's
+// path, so the same lock file reached by another spelling (macOS's /System/Volumes/Data
+// firmlink) or through another profile folder whose lock file is a hard link to it is
+// still known as held here (ADV-01, settled 2026-11-07).
+type lockKey struct{ volume, file uint64 }
+
 var held = struct {
 	sync.Mutex
-	m map[string]*ProfileLock
-}{m: map[string]*ProfileLock{}}
+	m map[lockKey]*ProfileLock
+}{m: map[lockKey]*ProfileLock{}}
 
-// heldHere reports whether this process has a ProfileLock on the profile. The caller
+// heldHere is the ProfileLock this process has on the lock file at the profile's lock
+// name, judged by that file's identity read without opening it for reading or writing
+// (a link at the name is judged as itself, never followed); nil when none. The caller
 // holds held's mutex.
-func heldHere(profile string) bool {
-	_, ok := held.m[thunderbird.ProfileKey(profile)]
-	return ok
+func heldHere(profile string) *ProfileLock {
+	k, ok := lockFileKey(filepath.Join(profile, ParentLockName))
+	if !ok {
+		return nil
+	}
+	return held.m[k]
 }
 
 // parentLockProbe is check A's lock-file part (CheckRunning): held is true when
@@ -54,10 +65,10 @@ func heldHere(profile string) bool {
 func parentLockProbe(profile string) (held_, self bool) {
 	held.Lock()
 	defer held.Unlock()
-	if heldHere(profile) {
+	if heldHere(profile) != nil {
 		return true, true
 	}
-	return probeLockFile(profile), false
+	return probeLockFile(profile)
 }
 
 // TakeProfileLock is the Start sequence of §5.1 and §5.3 (as folded): checks A and B

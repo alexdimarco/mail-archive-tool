@@ -153,7 +153,7 @@ func settleOne(in SettleInput, r *Restore) Settled {
 		}
 		return s
 	}
-	c := cleanupContainer(f, top, r.Started.ID, false)
+	c := cleanupContainer(f, top, r.Started.ID, false, nil)
 	s.Clean = &c
 	switch c.Kind {
 	case CleanRemoved:
@@ -185,7 +185,7 @@ func predictCleanup(f FS, top string) CleanResult {
 	if err != nil {
 		return CleanResult{Kind: CleanListBad, Err: err}
 	}
-	if r, clean := scanContainer(f, container, list); !clean {
+	if _, r, clean := scanContainer(f, container, list, nil); !clean {
 		return r
 	}
 	return CleanResult{Kind: CleanRemoved}

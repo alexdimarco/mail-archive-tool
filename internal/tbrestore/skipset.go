@@ -1,6 +1,7 @@
 package tbrestore
 
 import (
+	"io/fs"
 	"os"
 	"sync"
 	"time"
@@ -16,7 +17,7 @@ import (
 type SkipSet struct {
 	mu         sync.Mutex
 	path       string
-	known      map[string]skipEntry
+	known      map[string]*skipEntry
 	unreadable bool
 	size       int64
 	mod        time.Time
@@ -26,6 +27,34 @@ type SkipSet struct {
 type skipEntry struct {
 	profile   string
 	committed bool
+	open      bool
+	// local and localID are where the restore wrote (its started line): a marker met
+	// anywhere else is not this record's restore (ADV-06).
+	local   string
+	localID *Identity
+	// here is that Local Folders as it is now, read once per load when first asked
+	// (nil: not read yet; hereOK false: gone, moved or not the recorded folder).
+	here   os.FileInfo
+	asked  bool
+	hereOK bool
+}
+
+// at reports whether holder (the folder a walk met the restore's container in) is the
+// Local Folders the restore wrote into: the recorded path is still the recorded folder
+// by identity, and holder is that same folder. The caller holds the set's mutex.
+func (e *skipEntry) at(holder fs.FileInfo) bool {
+	if holder == nil || e.local == "" || e.localID == nil {
+		return false
+	}
+	if !e.asked {
+		e.asked = true
+		if id, err := DirIdentity(e.local); err == nil && id.Same(*e.localID) {
+			if fi, err := os.Stat(e.local); err == nil && fi.IsDir() {
+				e.here, e.hereOK = fi, true
+			}
+		}
+	}
+	return e.hereOK && os.SameFile(e.here, holder)
 }
 
 // LoadSkipSet reads restores.log at path into a skip set. It never fails: an absent
@@ -39,7 +68,7 @@ func LoadSkipSet(path string) *SkipSet {
 }
 
 func (s *SkipSet) load() {
-	s.known = map[string]skipEntry{}
+	s.known = map[string]*skipEntry{}
 	s.unreadable = false
 	if fi, err := os.Stat(s.path); err == nil {
 		s.size, s.mod, s.stated = fi.Size(), fi.ModTime(), true
@@ -52,7 +81,13 @@ func (s *SkipSet) load() {
 		return
 	}
 	for _, r := range Restores(lines) {
-		s.known[r.Started.ID] = skipEntry{profile: r.Started.Profile, committed: r.Checked && !r.Taken}
+		s.known[r.Started.ID] = &skipEntry{
+			profile: r.Started.Profile,
+			// ADV-07: an abandoned restore is never committed, whatever lines it has.
+			committed: r.Checked && !r.Taken && r.Closed != EvAbandoned,
+			open:      r.Closed == "",
+			local:     r.Started.Local, localID: r.Started.LocalID,
+		}
 	}
 }
 
@@ -68,13 +103,17 @@ func (s *SkipSet) changed() bool {
 }
 
 // Lookup reports whether restores.log knows the restore id for the profile whose key a
-// marker names, and whether it committed. An id the set does not know makes it re-read
-// the log once, unless the log is as it was when the set was built: a restore's started
-// line is fsynced before its folder is made, so a re-read always finds a real restore
-// that began after the set was built (foldcheck M3).
-func (s *SkipSet) Lookup(id, profileKey string) (known, committed bool) {
+// marker names and for the folder holder the walk met its container in — by identity
+// the Local Folders the restore's started line records (ADV-06: a restore's folder
+// copied into another profile, or onto a disk the person backs up, is not this
+// record's) — and then whether it is open (no closing line) and whether it committed (a
+// "checked" line, no "taken" line, not closed "abandoned": ADV-07). An id the set does
+// not know makes it re-read the log once, unless the log is as it was when the set was
+// built: a restore's started line is fsynced before its folder is made, so a re-read
+// always finds a real restore that began after the set was built (foldcheck M3).
+func (s *SkipSet) Lookup(id, profileKey string, holder fs.FileInfo) (known, open, committed bool) {
 	if s == nil {
-		return false, false
+		return false, false, false
 	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -83,10 +122,10 @@ func (s *SkipSet) Lookup(id, profileKey string) (known, committed bool) {
 		s.load()
 		e, ok = s.known[id]
 	}
-	if !ok || e.profile != profileKey {
-		return false, false
+	if !ok || e.profile != profileKey || !e.at(holder) {
+		return false, false, false
 	}
-	return true, e.committed
+	return true, e.open, e.committed
 }
 
 // LogUnreadable reports that restores.log could not be read when the set was (last)

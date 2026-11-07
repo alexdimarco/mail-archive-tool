@@ -439,7 +439,7 @@ func TestRestoreScanMatchesNamesAsTheFileSystemDoes(t *testing.T) {
 
 	scanned := []madeEntry{{K: "f", P: "Café"}}
 	twin := &twinFS{names: []string{"Café", norm.NFD.String("Café")}}
-	if _, clean := scanContainer(twin, "c", scanned); clean {
+	if _, _, clean := scanContainer(twin, "c", scanned, nil); clean {
 		t.Fatal("a second entry spelling the same name is not the list's")
 	}
 }
@@ -452,8 +452,10 @@ func (n *nfdFS) Mkdir(p string) error                 { return n.inner.Mkdir(nor
 func (n *nfdFS) Create(p string) (wfile, error)       { return n.inner.Create(norm.NFC.String(p)) }
 func (n *nfdFS) Open(p string) (io.ReadCloser, error) { return n.inner.Open(norm.NFC.String(p)) }
 func (n *nfdFS) Lstat(p string) (fs.FileInfo, error)  { return n.inner.Lstat(norm.NFC.String(p)) }
-func (n *nfdFS) Remove(p string) error                { return n.inner.Remove(norm.NFC.String(p)) }
-func (n *nfdFS) SyncDir(p string) error               { return n.inner.SyncDir(norm.NFC.String(p)) }
+func (n *nfdFS) RemoveSeen(p string, seen map[string]fs.FileInfo) error {
+	return n.inner.RemoveSeen(norm.NFC.String(p), seen)
+}
+func (n *nfdFS) SyncDir(p string) error { return n.inner.SyncDir(norm.NFC.String(p)) }
 func (n *nfdFS) ReadDir(p string, fn func([]fs.DirEntry) bool) error {
 	return n.inner.ReadDir(norm.NFC.String(p), func(b []fs.DirEntry) bool {
 		out := make([]fs.DirEntry, len(b))
@@ -486,7 +488,23 @@ func (t *twinFS) ReadDir(_ string, fn func([]fs.DirEntry) bool) error {
 	return nil
 }
 
-func (t *twinFS) Lstat(p string) (fs.FileInfo, error) { return fakeInfo(path.Base(p)), nil }
+// Lstat: the container itself is a folder (so the scan reaches its names), every name
+// in it a regular file.
+func (t *twinFS) Lstat(p string) (fs.FileInfo, error) {
+	if !strings.Contains(p, "/") {
+		return fakeDir(p), nil
+	}
+	return fakeInfo(path.Base(p)), nil
+}
+
+type fakeDir string
+
+func (d fakeDir) Name() string       { return string(d) }
+func (d fakeDir) Size() int64        { return 0 }
+func (d fakeDir) Mode() fs.FileMode  { return fs.ModeDir | 0o700 }
+func (d fakeDir) ModTime() time.Time { return time.Time{} }
+func (d fakeDir) IsDir() bool        { return true }
+func (d fakeDir) Sys() any           { return nil }
 
 type fakeEntry string
 

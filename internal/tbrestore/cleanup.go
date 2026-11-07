@@ -71,8 +71,13 @@ type CleanResult struct {
 
 // cleanupContainer cleans up the restore whose container is top+".sbd" in Local
 // Folders, by the decision order above. id is the restore's own ID (its marker must
-// name it); taken is whether the log has a "taken" line for it.
-func cleanupContainer(f FS, top, id string, taken bool) CleanResult {
+// name it); taken is whether the log has a "taken" line for it. notMine are the
+// container-relative names ("/"-joined) whose exclusive create failed in this run
+// because something already stood there (ADV-03): the run did not make them, so the
+// scan never takes them for the list's, and finding one removes nothing (W-LEFT). A
+// later Start passes none: a crash between a list line and its create cannot be told
+// apart from the restore's own entry (design §8 ADV-03 note).
+func cleanupContainer(f FS, top, id string, taken bool, notMine map[string]bool) CleanResult {
 	container := top + ".sbd"
 	if taken {
 		return CleanResult{Kind: CleanTaken, ParentKind: entryKind(f, top)}
@@ -84,7 +89,8 @@ func cleanupContainer(f FS, top, id string, taken bool) CleanResult {
 	if err != nil {
 		return CleanResult{Kind: CleanListBad, Err: err}
 	}
-	if r, clean := scanContainer(f, container, list); !clean {
+	seen, r, clean := scanContainer(f, container, list, notMine)
+	if !clean {
 		return r
 	}
 	for i := len(list) - 1; i >= 0; i-- {
@@ -97,7 +103,10 @@ func cleanupContainer(f FS, top, id string, taken bool) CleanResult {
 		if err != nil || !kindMatches(e.K, fi) {
 			return CleanResult{Kind: CleanLeftPart, Foreign: []string{e.P}, ForeignN: 1, Err: err}
 		}
-		if r, ok := removeOne(f, p, e.K == "d"); !ok {
+		if r, ok := removeOne(f, p, e.K == "d", seen); !ok {
+			if r.Kind == CleanLeftPart && len(r.Foreign) == 1 && r.Foreign[0] == path.Base(p) {
+				r.Foreign = []string{e.P}
+			}
 			return r
 		}
 	}
@@ -114,27 +123,28 @@ func cleanupContainer(f FS, top, id string, taken bool) CleanResult {
 	}); err != nil || len(extra) > 0 {
 		return CleanResult{Kind: CleanLeftPart, Foreign: extra, ForeignN: len(extra), Err: err}
 	}
-	if r, ok := removeOne(f, container+"/"+MadeListName, false); !ok {
+	if r, ok := removeOne(f, container+"/"+MadeListName, false, seen); !ok {
 		return r
 	}
 	if m, ok := readMarker(f, container); ok && m.ID != id {
 		return CleanResult{Kind: CleanLeftPart, Foreign: []string{MarkerName}, ForeignN: 1}
 	}
-	if r, ok := removeOne(f, container+"/"+MarkerName, false); !ok {
+	if r, ok := removeOne(f, container+"/"+MarkerName, false, seen); !ok {
 		return r
 	}
-	if r, ok := removeOne(f, container, true); !ok {
+	if r, ok := removeOne(f, container, true, seen); !ok {
 		return r
 	}
 	_ = f.SyncDir(".")
 	return CleanResult{Kind: CleanRemoved}
 }
 
-// removeOne removes one entry (absent: passed over). A folder that is not empty, or one
-// that changed kind, is CleanLeftPart; a removal refused otherwise is CleanBlocked.
-func removeOne(f FS, p string, dir bool) (CleanResult, bool) {
+// removeOne removes one entry, only the one the scan saw (absent: passed over). A folder
+// that is not empty, or an entry that is no longer what the scan saw (ADV-02), is
+// CleanLeftPart; a removal refused otherwise is CleanBlocked.
+func removeOne(f FS, p string, dir bool, seen map[string]fs.FileInfo) (CleanResult, bool) {
 	err := withRetry(func() error {
-		err := f.Remove(p)
+		err := f.RemoveSeen(p, seen)
 		if errors.Is(err, fs.ErrNotExist) {
 			return nil
 		}
@@ -142,6 +152,9 @@ func removeOne(f FS, p string, dir bool) (CleanResult, bool) {
 	})
 	if err == nil {
 		return CleanResult{}, true
+	}
+	if errors.Is(err, errChanged) {
+		return CleanResult{Kind: CleanLeftPart, Foreign: []string{path.Base(p)}, ForeignN: 1, Err: err}, false
 	}
 	if dir {
 		if fi, lerr := f.Lstat(p); lerr == nil && fi.IsDir() {
@@ -159,10 +172,20 @@ func removeOne(f FS, p string, dir bool) (CleanResult, bool) {
 // second entry that spells the same (a decomposed twin on a volume that keeps both) is
 // not the list's. The scan reads each folder in batches and stops at the batch that
 // holds the first entry not on the list, so it does no more work than the list allows.
-func scanContainer(f FS, container string, list []madeEntry) (CleanResult, bool) {
+// A name in notMine is never the list's (ADV-03). It returns what it saw of the
+// container and of each entry it matched (keys container-rooted, NFC), which removal
+// holds every entry to (ADV-02).
+func scanContainer(f FS, container string, list []madeEntry, notMine map[string]bool) (map[string]fs.FileInfo, CleanResult, bool) {
 	listed := map[string]string{}
 	for _, e := range list {
 		listed[norm.NFC.String(e.P)] = e.K
+	}
+	mine := func(rel string) bool { return !notMine[rel] && !notMine[norm.NFC.String(rel)] }
+	seen := map[string]fs.FileInfo{}
+	if cfi, err := f.Lstat(container); err == nil && kindMatches("d", cfi) {
+		seen[norm.NFC.String(container)] = cfi
+	} else if !errors.Is(err, fs.ErrNotExist) {
+		return nil, CleanResult{Kind: CleanLeft, Foreign: []string{container}, ForeignN: 1, Err: err}, false
 	}
 	matched := map[string]bool{}
 	var foreign []string
@@ -182,12 +205,15 @@ func scanContainer(f FS, container string, list []madeEntry) (CleanResult, bool)
 					rel = dir + "/" + rel
 				}
 				fi, err := f.Lstat(full + "/" + e.Name())
+				key := norm.NFC.String(container + "/" + rel)
 				if dir == "" && (e.Name() == MarkerName || e.Name() == MadeListName) {
-					if err == nil && fi.Mode().IsRegular() {
+					if err == nil && fi.Mode().IsRegular() && mine(e.Name()) {
+						seen[key] = fi
 						continue
 					}
-				} else if k, ok := listed[norm.NFC.String(rel)]; ok && err == nil && kindMatches(k, fi) && !matched[norm.NFC.String(rel)] {
+				} else if k, ok := listed[norm.NFC.String(rel)]; ok && err == nil && kindMatches(k, fi) && !matched[norm.NFC.String(rel)] && mine(rel) {
 					matched[norm.NFC.String(rel)] = true
+					seen[key] = fi
 					if k == "d" {
 						dirs = append(dirs, rel)
 					}
@@ -201,13 +227,13 @@ func scanContainer(f FS, container string, list []madeEntry) (CleanResult, bool)
 			return n == 0
 		})
 		if err != nil && !errors.Is(err, fs.ErrNotExist) {
-			return CleanResult{Kind: CleanLeft, Foreign: []string{dir}, ForeignN: 1, Err: err}, false
+			return nil, CleanResult{Kind: CleanLeft, Foreign: []string{dir}, ForeignN: 1, Err: err}, false
 		}
 	}
 	if n > 0 {
-		return CleanResult{Kind: CleanLeft, Foreign: foreign, ForeignN: n}, false
+		return nil, CleanResult{Kind: CleanLeft, Foreign: foreign, ForeignN: n}, false
 	}
-	return CleanResult{}, true
+	return seen, CleanResult{}, true
 }
 
 // kindMatches: "f" a regular file, "d" a folder; never a link.

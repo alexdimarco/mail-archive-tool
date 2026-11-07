@@ -122,6 +122,16 @@ func (l *Log) Read() ([]LogLine, error) {
 		if len(bytes.TrimSpace(b)) == 0 {
 			continue
 		}
+		if bytes.IndexByte(b, 0) >= 0 {
+			// ADV-04: a power cut can leave the tail zero bytes. A line of zeros, or one
+			// whose bytes end in zeros, is read as what came before them: nothing (torn),
+			// a cut-off object (torn), or a whole line whose line break was lost. A zero
+			// byte with anything after it is not such a tail and stays unreadable.
+			b = bytes.TrimRight(b, "\x00\t\r ")
+			if len(bytes.TrimSpace(b)) == 0 {
+				continue
+			}
+		}
 		var ln LogLine
 		if err := json.Unmarshal(b, &ln); err != nil {
 			if torn(b, err) {
