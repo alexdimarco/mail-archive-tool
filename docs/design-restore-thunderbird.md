@@ -1,5 +1,31 @@
 # Design: Restore to Thunderbird…
 
+Status (2026-11-06, revision 2): REVIEWED, FOLDED, NOT BUILT. Nothing in this document
+exists in the code yet.
+- Reviewed by the 10-lens pre-code design review, filed as
+  `docs/review-restore-thunderbird-10lens.md` (verdict GO WITH CONDITIONS, commit bd9a8ac).
+  That file, not the `…-predesign.md` name below, is the review of record [RT-24].
+- Its gate RT-3 ran on the Windows VM: `docs/lab/restore-thunderbird-windows-2026-11-06.md`
+  (commit 28c19a4, Thunderbird 153.6.0). Verdict there: RT-3 holds, no NO GO.
+- Folded 2026-11-06: all 24 conditions RT-1 to RT-24 (HIGH and MED folded in full; every LOW
+  folded too, none deferred) and the lab's four findings, each as a dated note beside the text it
+  amends ("Folded 2026-11-06 [RT-n]: …"). The lead's technical calls are labelled "lead's call
+  2026-11-06". The reviewed text of revision 1 is kept unchanged under the notes; where a note and
+  the text it sits beside disagree, the note wins.
+- Still owed before slice R0: a re-verify of this fold (that each note answers its condition), and
+  the owner's answers to §15 (Q1–Q6, Q8, Q9, O1, O2). The design is written so each recommended
+  answer is what gets built if the owner agrees, and each alternative is a small change, named
+  beside its question.
+- Index of the folds (condition → where): RT-1 §5.4, §3.5, §8, §14; RT-2 §5.1–§5.3, §14; RT-3 §3.4,
+  §5.2; RT-4 §5.4, §8; RT-5 §7.2, §8; RT-6 §4.4, §4.5; RT-7 §6.5, §9; RT-8 §6.2, §7.3, §7.5, §10; RT-9 §6.4;
+  RT-10 §3.1, §6.4, §7.2; RT-11 §3.1, §3.2, §7.5; RT-12 §5.4, §6.1; RT-13 §7.3; RT-14 §2, §5.1;
+  RT-15 §3.1, §3.2; RT-16 §7.4, §8; RT-17 §7.5; RT-18 §6.2, §7.1; RT-19 §1, §2, §4.6, §6.1, §9, §11;
+  RT-20 §3.3, §4.7; RT-21 §12.3, §13; RT-22 §6.3; RT-23 §13; RT-24 this line, §12.2, §12.3. Lab
+  findings: no Local Folders §3.2; Save As is not the check §12.3 (MA-1093); the lock dialog's
+  words §5.2, §7.5.
+
+Revision 1 status, as reviewed (kept):
+
 Status: PROPOSED, revision 1 (2026-11-06). Not reviewed, not built. Nothing in this
 document exists in the code yet.
 - Owes, before any code: the 10-lens pre-code design review
@@ -32,6 +58,18 @@ directory, and never starts or quits Thunderbird. The same engine runs from the
 command line as `mailarchive restore-thunderbird` (R33, "One program",
 `docs/scenario-catalog.md:275`).
 
+> Folded 2026-11-06 [RT-19, RT-1, RT-2]: where each claim in this paragraph stands.
+> - "Writes one new folder": built without any folder rename (§5.4 as folded): the folder's
+>   `.sbd` directory is made first, the empty parent file last, and Thunderbird shows nothing until
+>   that last file exists (lab A3 and A5, Windows; macOS and Linux are lab row MA-1091).
+> - "Nowhere else": besides Local Folders, the restore touches two things. (1) Thunderbird's own
+>   profile lock file, held as Thunderbird holds it (`parent.lock` on Windows, `.parentlock` on
+>   macOS and Linux; opened, and created only if absent; never written to). (2) MailArchive's own
+>   settings folder: `restores.log` and a restore lock file (§5.2, §7.4).
+> - "The archive's preserved original bytes": for a message from an mbox source these are the
+>   bytes the archive kept, which are go-mbox's output (CRLF lines, one `>` taken off a `>From `
+>   line), not the source mbox's exact bytes (§16 side finding 4, review side finding A).
+
 ## 2. What exists today, and what this reuses
 
 | Need | What exists (read, not assumed) | Reuse or change |
@@ -53,6 +91,39 @@ command line as `mailarchive restore-thunderbird` (R33, "One program",
 | A long task with progress and Cancel | `runJob`: one task at a time in the shared slot, refused while a delete runs, log lines and result shown through `/api/activity` (`internal/desktop/maintenance.go:19-84`, `internal/desktop/capture.go:379-404`); the unencrypted copy is the closest pattern — plan, token, confirm, a read lease on the key, progress every 3 seconds (`internal/desktop/encryption_copy.go:26-59`, `:87-143`, `:166-168`) | Reuse the copy's shape step for step. |
 | Bringing a step into view | `showStep` (MA-1070, v1.5.7): scrolls the step into view, keyboard to its first field, a status line says what is needed (`internal/desktop/dashboard.go:2362-2380`); `noteBeside` for a note beside a row (MA-955, `dashboard.go:2610`) | Reuse. |
 
+> Folded 2026-11-06 [RT-14, RT-1, RT-13, RT-8, RT-19, RT-23]: corrections to the table above.
+> - "Thunderbird profiles" and "Is Thunderbird running": the **Linux** pieces are NEW code, not
+>   reuse. Presync has no `resolve_linux.go`, so the Linux profile ownership and mode checks are
+>   new; the Run-now profile lookup returns false on Linux (`runnow_sync.go:130`), so the Linux
+>   default-profile step is new; and there is no Linux process probe today. All three go in slice
+>   R3 with their own test rows (MA-1084, MA-1087). On **macOS** the process check refuses on the
+>   raw count of Thunderbird processes (`rawThunderbirdCount`, `env_darwin.go:373`), not on the
+>   filtered list (`:351`), which drops any process it cannot fully read.
+> - "Thunderbird profiles": moving presync onto the shared parser is its own commit in slice R2,
+>   with presync's existing rows unchanged and green before and after, and presync not using the
+>   new outputs (names, default) [RT-23].
+> - "Writing without following links or replacing": the no-replace *rename* helper is NOT used for
+>   the commit any more (§5.4 as folded: no folder rename). It is used only to place each mbox
+>   *file* from its hidden working name to its final name; it opens its source with
+>   `FILE_NON_DIRECTORY_FILE` on Windows (`copyexport_place_windows.go:100-102`), which is right for
+>   a file. On FAT/exFAT under macOS and Linux that helper falls back to a look-up-then-rename with a
+>   stated race window (`copyexport_place_unix.go:27-60`), so "cannot replace" holds there only
+>   because Thunderbird is closed and held out by the lock (§9.2 as folded).
+> - "A plan held for a second step": `pendingSecrets.put` discards every item with the same key
+>   (`pending.go:144-150`), so the restore plan gets its own key (§7.3 as folded) [RT-13].
+> - "A long task with progress and Cancel": two more things carried over from the unencrypted copy:
+>   ask twice, checked on the server, for a destination that may leave the computer
+>   (`encryption_copy.go:98`, `DecryptPlan.AskTwice`, `decryptplan.go:61`); and progress lines that
+>   are counts only for an encrypted archive (`encryption_copy.go:170-180`) [RT-8].
+> - "Safe file names": SanitizeSegment does NOT always keep two names apart. Its hash suffix is
+>   added only when a character was replaced or the name was cut (`paths.go:53-80`), so ".Inbox",
+>   "Inbox." and "Inbox" all become "Inbox"; its cap is 120 runes, not bytes (§4.4 as folded)
+>   [RT-6, RT-19].
+> - Citations corrected [RT-19]: the message's Raw is kept at `localwalk.go:488-494`,
+>   `source/mbox.go:112`, `:208` (not `rawstub.go:63-67`, which is `isPanicStub`); the workspace's
+>   plaintext-only manifest load is `copyexport_archive.go:358-364`; a store's label is
+>   `token — mailbox`; the pending discard paths are `pending.go:63-70`, `:209-227`.
+
 ## 3. Where it writes
 
 ### 3.1 The profile
@@ -73,10 +144,29 @@ command line as `mailarchive restore-thunderbird` (R33, "One program",
      (Windows redirects a Store app's writes to its own folder). If so, a restore
      written to `%APPDATA%\Thunderbird` would never be seen by it. Lab row MA-1097
      settles whether that is real; until then the plan says nothing about Store installs.
+
+   > Folded 2026-11-06 [RT-11], lead's call 2026-11-06: **warn, do not refuse**, until lab row
+   > MA-1097 has run (owner question O3 therefore does not arise; it would arise only if the lead
+   > chose to refuse). Detection: any folder directly under `%LOCALAPPDATA%\Packages` whose name
+   > contains "Thunderbird" (case-blind), `%LOCALAPPDATA%` from `FOLDERID_LocalAppData`, never the
+   > environment variable. When one is found, the plan shows W-STORE (§7.5) as its first warning,
+   > and the Done words add the same sentence, so a restore never claims success to a Store
+   > Thunderbird that cannot see it. The 2026-11-06 lab VM had no Store package
+   > (`Get-AppxPackage *thunderbird*` empty), so MA-1097 is still open; when it runs and shows
+   > where the Store version keeps its profiles, that location joins step 1's list and W-STORE is
+   > removed (or, if a Store Thunderbird cannot see an ordinary profile, the warning becomes a
+   > refusal for that case — a one-line change).
 2. **List them.** Each `[ProfileN]` section gives a name (`Name=`) and a folder
    (`Path=`, relative when `IsRelative=1`). Each `[Install…]` section's `Default=` names
    the profile that Thunderbird opens (`resolve.go:96-101`). The new parser returns
    name, canonical folder and "opens by default" per profile.
+
+   > Folded 2026-11-06 [RT-15]: for the restore (a write path) a `profiles.ini` over the 256 KiB cap
+   > is **refused** (W-PROFINI, §7.5), never cut short as presync's reader does today
+   > (`presync/resolve.go:50-52`); presync keeps its own behaviour (RT-23). An `[Install…] Default=`
+   > may be an absolute path and is read as one when it is (today it is always joined as relative,
+   > `resolve.go:99-100`). Each `Name=` is shown with bidirectional and control characters removed
+   > (`util.StripBidi`), as names in the archive are.
 3. **Keep only usable profiles.** A listed folder is offered only if it passes presync's
    profile check: it exists, is a folder, holds `prefs.js` as a regular file; on macOS
    and Linux it is owned by this user and not group- or world-writable
@@ -84,6 +174,10 @@ command line as `mailarchive restore-thunderbird` (R33, "One program",
    `resolve_windows.go:116-121`). Presync's macOS refusal of a path with a space
    (`resolve_darwin.go:121-127`) is about matching process arguments and does NOT apply
    to restore.
+
+   > Folded 2026-11-06 [RT-14, RT-17]: the macOS and Linux checks (owned by this user, not group-
+   > or world-writable) are new code on Linux (§2 note). A profile that fails them is not dropped
+   > silently: it is listed as not usable, with W-PROFMODE (§7.5) beside it.
 4. **Pick the default.** In order:
    1. the profile the archive's own Thunderbird source came from: the job Run now
       would run (`runnow_sync.go:108-122`), its first input that sits in a listed
@@ -91,12 +185,30 @@ command line as `mailarchive restore-thunderbird` (R33, "One program",
    2. the profile Thunderbird opens by default (`[Install…] Default=`);
    3. the profile marked `Default=1`;
    4. none: the person chooses.
+
+   > Folded 2026-11-06 [RT-10]: the order above is replaced by this one.
+   > 1. When there are several usable profiles: the first, in the order 2 → 3 → listed order,
+   >    that the archive does NOT back up (no input of any job for this archive lies inside it).
+   > 2. Otherwise (one profile, or every profile is backed up by it): the order above, unchanged.
+   > 3. When the chosen profile is one this archive backs up, the plan says so in its FIRST line
+   >    (W-RECAPTURE, §6.4, §7.2), above every other line.
+   > Most people have one profile, so (1) rarely applies; what keeps the default path from
+   > copying the restored mail back into the archive is the backup-side skip of §7.2 (owner
+   > question O1). The Linux leg of "does the archive back up this profile" is new code (§2 note).
 5. **One profile:** shown, not asked. **Several:** the person chooses from the list
    ("NAME — FOLDER"), the default pre-selected. **None:** refused (§10, words W-NOPROF).
 6. The page sends the chosen profile's position in the list the server made, never a
    path. The command line takes `-profile FOLDER` (typed by the person, so it is
    accepted without being listed, as presync accepts a named profile,
    `resolve_windows.go:137-139`) or `-profile-name NAME`; either still has to pass step 3.
+
+   > Folded 2026-11-06 [RT-15]: the position is bound to the list the server made. The server keeps
+   > the list it sent (each entry's canonical folder and its identity, volume and file id) beside a
+   > list id; the page sends the list id with the position. A request whose list id is not the
+   > current one is refused ("The list of Thunderbird profiles changed. Choose the profile again.");
+   > at Plan and again at Start the server re-reads `profiles.ini` and refuses if the entry at that
+   > position no longer names the same folder with the same identity. So a `profiles.ini` rewritten
+   > between two clicks cannot point the position at another folder.
 
 ### 3.2 The Local Folders directory
 
@@ -106,16 +218,43 @@ profile"). String values are decoded as JavaScript string literals (`\\`, `\"`,
 (`internal/thunderbird/thunderbird.go:60-77`) and a Windows path in prefs.js reads
 `"C:\\Users\\…"`.
 
+> Folded 2026-11-06 [RT-15]: the decoder takes `\\`, `\"`, `\'`, `\n`, `\r`, `\t` and `\uXXXX`
+> (a surrogate pair joined, a lone surrogate refused), and **refuses** any other escape rather than
+> guessing (the value is then unreadable and the profile is refused with W-PREFS, §7.5). A
+> `prefs.js` over 16 MiB is refused with W-PREFS too (its own words, not W-NOLOCAL). A `user.js` in
+> the profile can also set the Local Folders server or directory; version 1 reads `user.js` after
+> `prefs.js` with the same decoder (Thunderbird applies `user.js` last), and the lab checks that
+> order (lab row MA-1095).
+
 1. The Local Folders account is the server named by
    `mail.accountmanager.localfoldersserver` (for example `server1`). If that is absent,
    the one server whose `mail.server.serverN.type` is `"none"`. Zero or several → refused
    (W-NOLOCAL).
+
+   > Folded 2026-11-06 [lab finding 1], lead's call 2026-11-06: a profile with **no Local
+   > Folders** is a real, ordinary case, not an edge. In the lab, Thunderbird 153 on a profile with
+   > no mail account made no `Mail\Local Folders` and no Local Folders server at all. MailArchive
+   > **refuses in plain words and never edits `prefs.js` or `user.js`** (the lab added the keys to
+   > its own throwaway profile's `user.js`; MailArchive never does that to a person's profile). The
+   > words (W-NOLOCAL, replaced in §7.5) say how to get Local Folders in Thunderbird. **Lab-check
+   > item (lab row MA-1133):** the exact menu path in Thunderbird 153 that makes Local Folders.
+   > Candidate, not run: setting up a mail account (≡ menu → Account Settings → Account Actions →
+   > Add Mail Account…), since Thunderbird is understood to make Local Folders with the first
+   > account; the lab did not check whether an IMAP account makes it. The words are not shipped
+   > until MA-1133 names the path that worked.
 2. Its folder is `mail.server.serverN.directory-rel` when that begins with `[ProfD]`
    (joined under the profile), else `mail.server.serverN.directory` (an absolute path:
    some people move Local Folders to another drive, and Thunderbird honours it). This
    order — the relative setting first — is what I understand Thunderbird to use; not
    checked in Thunderbird's source; lab row MA-1095 includes a profile whose two settings
    disagree.
+
+   > Folded 2026-11-06 [RT-15, lab]: `directory-rel` is resolved as Mozilla resolves a
+   > `[ProfD]` relative path: the text after `[ProfD]` is joined to the profile folder and `..`
+   > parts are allowed (not refused, not "joined under the profile"); the result then goes through
+   > every check of step 3, which is what keeps it safe. Lab, 2026-11-06: Thunderbird 153 wrote both
+   > settings itself (`directory` and `directory-rel` = `[ProfD]Mail/Local Folders`), so the names
+   > are right; which one wins when they disagree is still lab row MA-1095.
 3. Checks on that folder, refused with words when any fails (§10):
    - it exists and is a directory, after resolving links once (`EvalSymlinks`); the
      resolved path is what the plan shows and what is opened;
@@ -130,6 +269,17 @@ profile"). String values are decoded as JavaScript string literals (`\\`, `\"`,
 4. Its identity (volume and file id, the copy export's `readIdentity`,
    `copyexport_place_windows.go:140-142`) is recorded in the plan and compared again at
    start (§5.3).
+
+   > Folded 2026-11-06 [RT-11, RT-17]: on Windows `readIdentity` **fails** when the volume reports
+   > no file identity ("the volume reported no file identity", `copyexport_place_windows.go:164-166`),
+   > which a network share can do (an AppData redirected by company policy). That is refused with
+   > words of its own (W-NOIDENT, §7.5), not a bare error. A Local Folders on a network path (a UNC
+   > path `\\server\…`, or a drive whose `GetDriveTypeW` is `DRIVE_REMOTE`) whose identity CAN be
+   > read gets the warning W-NETWORK in the plan and goes ahead: refusing would shut out every
+   > person whose company redirects AppData, and Thunderbird itself already runs from that share.
+   > (Warn rather than refuse is the folding agent's proposal, not a lead's call; for the lead to
+   > confirm at re-verify.) Lab row MA-1097 gains the redirected-AppData case. Overlap with the archive or
+   > with another account's directory has its own words too (W-OVERLAP, §7.5).
 
 ### 3.3 The storage kind: mbox or maildir
 
@@ -150,6 +300,16 @@ signals disagree, is refused before anything is written (W-MAILDIR). Why: mbox i
 Thunderbird's default; a maildir writer is a second writer to review and lab-test; and
 nobody has reported a maildir profile. Owner question Q5 (§15).
 
+> Folded 2026-11-06 [RT-20, lab]: the second signal is widened. A folder directory directly in
+> Local Folders that holds `cur` OR `new` OR `tmp` (the archive's own reader tests `cur` or `new`,
+> `localstore.go:129`; Thunderbird's maildir may not make `new`), OR an `Inbox` or `Trash` that is a
+> directory, counts as maildir. Needed because a store setting locked by policy may not appear in
+> `prefs.js`. Lab, 2026-11-06: Thunderbird 153 wrote
+> `storeContractID "@mozilla.org/msgstore/berkeleystore;1"` explicitly for Local Folders, so the
+> setting's name and mbox value are as above; the maildir value is still lab row MA-1096.
+> Q5's recommended answer (refuse) is what is built; the alternative (a maildir writer) is a new
+> slice of its own, not a small change, which is why refusing is recommended.
+
 ### 3.4 What it creates
 
 Inside the Local Folders directory, and nowhere else:
@@ -164,6 +324,24 @@ Local Folders/
     Sent
     (no folder)                   (records whose Folder is empty)
 ```
+
+> Folded 2026-11-06 [RT-3, RT-1], lead's call 2026-11-06: **RT-3 holds on Windows** (Thunderbird
+> 153.6.0, the ordinary Program Files install; `docs/lab/restore-thunderbird-windows-2026-11-06.md`).
+> With Thunderbird closed, a bare mbox file placed in Local Folders was found and counted (lab A1),
+> `P` (empty) + `P.sbd/C` showed as P › C (A2), and Thunderbird made each `.msf` itself (at start for
+> a parent, when opened for the rest). So the layout above stands. macOS and Linux remain lab rows
+> MA-1098 and MA-1099.
+>
+> One entry is added to the layout: the **restore marker**, a file named `.mailarchive-restore`
+> directly inside `Restored — NAME.sbd/`. It is created first, exclusively, right after that
+> directory (§5.4 as folded), 0o600, holding one JSON line: `{"mailarchive":"restore","id":ID,
+> "started":RFC3339 time,"profile":hash of the profile's canonical path}`, where ID is 128 random
+> bits in hex, the same ID as the `restores.log` lines. It is what lets a later attempt (§8) and a
+> backup (§7.2) recognise a folder MailArchive's restore made: a folder is "carrying the marker" only
+> when its marker's ID matches a `restores.log` line for this profile on this computer, so a marker
+> copied or planted elsewhere does nothing. Thunderbird ignores it: lab A4 showed dot-named entries
+> are ignored in Local Folders (Windows); that this holds inside a `.sbd` too is added to lab row
+> MA-1091.
 
 - **One mbox file per archive folder.** A folder with subfolders gets its file (empty
   when it holds no messages) and a sibling `NAME.sbd` directory. This is Thunderbird's
@@ -203,6 +381,19 @@ Local Folders/
 - The name is chosen in the plan, shown to the person, and checked again at the final
   rename, which cannot replace anything (§5.4).
 
+> Folded 2026-11-06 [RT-1, RT-6], lead's call 2026-11-06: there is no final rename any more. The
+> name is taken by an **exclusive create**, twice: `Restored — NAME.sbd` by `os.Root.Mkdir` at the
+> start (fails if any entry of that name exists → the next ` (n)` is tried, up to 99), and the
+> empty parent file `Restored — NAME` by `OpenFile(O_CREATE|O_EXCL)` last. Lab C (Windows, NTFS):
+> an exclusive file create fails on an existing name, on a name that differs only in case, and where
+> a folder has the name; making a folder fails where a folder or file has the name. .NET's
+> `Directory.CreateDirectory` is NOT exclusive (it succeeds on an existing folder); Go's `os.Mkdir`
+> calls `CreateDirectoryW` and is expected to fail, which MA-1120's Windows leg proves rather than
+> assumes. The free name is chosen in the plan on BOTH counts (no `NAME` and no `NAME.sbd`, NFC- and
+> case-blind), so the `Mkdir` normally succeeds first time. The ` (n)` suffix is part of the name
+> budget (§4.4 as folded). Q1's recommended answer ("Restored — ARCHIVE NAME", then " (2)") is what
+> is built; a date in the name instead is a change to one format string and to the budget.
+
 ## 4. What exactly is written into each mbox file
 
 ### 4.1 Flavour: mboxrd
@@ -226,6 +417,10 @@ leading ">" (the older reader did not unquote, bug 1134690: "historically mboxo"
 profile's `compatibility.ini` names the Thunderbird version that last opened it
 (`LastVersion=`; not checked in source). When it reads below 122 the plan says so
 (W-OLDTB) and lets the person go on. Lab row MA-1094.
+
+> Folded 2026-11-06 [lab A1]: Thunderbird 153.6.0 un-quotes mboxrd as the source says: a body
+> line stored `>From here…` showed as `From here…`, and `>>From there…` showed as `>From there…`.
+> The 115-and-older half is still lab row MA-1094.
 
 ### 4.2 The separator line
 
@@ -254,6 +449,9 @@ sender as the text to the next space (any text, "eg MAILER-DAEMON"), accepts a d
   (`SniffEOLAtStart`, same source file). Lab row MA-1093 checks a CRLF and an LF message
   side by side on Windows.
 
+> Folded 2026-11-06 [lab A1 controls]: on Thunderbird 153.6.0 a CRLF mbox (R3) and an LF-only mbox
+> (R4) both showed with their counts and content. MA-1093 still runs the restore's own output.
+
 ### 4.4 Folder and file names
 
 Each folder name from the archive (untrusted, §9) goes through, in order:
@@ -276,6 +474,35 @@ Thunderbird shows a folder by its file name when no summary says otherwise, so a
 that had to change shows changed (for example "Q1 Reports~3fa2b1c0" for "Q1: Reports").
 The result names how many folder names changed.
 
+> Folded 2026-11-06 [RT-6]: the steps above are replaced by this restore-specific name step
+> (`tbrestore.SafeName`, slice R4), run on every component, in this order:
+> 1. `util.SanitizeSegment` (unchanged; its known gaps are closed by the steps below, not by
+>    changing it, since backups use it — review side finding B).
+> 2. Remove what SanitizeSegment keeps: bidirectional controls (`util.StripBidi`), U+200E and
+>    U+200F, DEL (U+007F) and the C1 controls (U+0080–U+009F).
+> 3. The device names SanitizeSegment misses, matched case-blind on the part before the first dot
+>    with trailing spaces ignored: `COM0`, `LPT0`, `COM¹`, `COM²`, `COM³`, `LPT¹`, `LPT²`, `LPT³`,
+>    `CONIN$`, `CONOUT$`, `CLOCK$`, and any device name followed by spaces and an extension
+>    ("CON .txt") — each gets a leading `_`.
+> 4. Thunderbird's skip rules: the full list is taken from Thunderbird's own source
+>    (`nsShouldIgnoreFile`) when slice R4 is written, and each rule is tried in lab row MA-1095.
+>    Until then the list is the design's endings above plus the review's recollection (a leading
+>    `#`, a trailing `~`, and the names `msgFilterRules.dat`, `filterlog.html`, `junklog.html`,
+>    `popstate.dat`, `sort.dat`, `mailfilt.log`, `filters.js`, `feeds.json`, `feeditems.json`): a
+>    name that would be skipped gets `_` appended (or, for a leading `#`, `_` put first).
+> 5. Length, in the units the file systems count: at most 246 **UTF-8 bytes** (ext4, APFS) and at
+>    most 246 **UTF-16 units** (NTFS). 246 = 255 − 4 (Thunderbird's `.msf`, or `.sbd`) − 5 (a
+>    ` (99)` suffix). Over either: cut at a character boundary, keeping room for the hash suffix
+>    (`~` + 8 hex of the component's original bytes), so two cut names stay distinct. The top
+>    folder's budget also counts "Restored — " (13 bytes, 11 UTF-16 units).
+> 6. **Last**, on the exact names that will be written: siblings that now spell the same — after
+>    NFC and case-blind on every platform (a profile can be copied to Windows) — get ` (2)`,
+>    ` (3)` … in archive order, up to ` (99)`; past that, the hash suffix instead. This step is
+>    what closes SanitizeSegment's merges (".Inbox" / "Inbox." / "Inbox", "CON" / "_CON",
+>    "." / ".." / "untitled").
+> All of this runs in the **plan**, not during the write: the plan holds every final name, so no
+> name can fail part way through a restore. MA-1088 gains each case above.
+
 ### 4.5 Path length on Windows
 
 A Windows program that does not opt into long paths cannot open a path of 260 characters
@@ -286,6 +513,15 @@ branch are shortened (each cut to 30 characters plus the hash suffix), deepest f
 still over, that folder is not restored and is named in the plan with why (W-LONGPATH).
 macOS and Linux have no such limit at these lengths. Lab row MA-1092 (a deep tree under a
 long Windows user name).
+
+> Folded 2026-11-06 [RT-6]: the Windows budget, exactly. Counted in UTF-16 units from the resolved
+> Local Folders path, for each entry the restore makes, using the longer of its hidden working name
+> (§5.4 as folded) and its final name: a **file** path, plus Thunderbird's own `.msf` beside it
+> (4 more), is at most **259**; a **directory** path is at most **247** (`CreateDirectoryW`'s limit
+> of 248 with its terminator). Over budget: the shortening above, then W-LONGPATH. The restore
+> marker and the parent file are counted too. Computed in the plan (§4.4 note), so nothing fails
+> mid-write for a path. MA-1126 tests the exact boundaries (247/248, 259/260, with and without
+> `.msf`).
 
 ### 4.6 Read and unread, X-Mozilla-Status
 
@@ -306,6 +542,18 @@ would change the message's bytes.
   deleted in Thunderbird before they were backed up, so Thunderbird keeps them hidden."
   (See §16 side finding 2.)
 
+> Folded 2026-11-06 [RT-19, lab A1, Q2]: lab, Thunderbird 153.6.0: a message carrying
+> `X-Mozilla-Status: 0001` showed as read and two with none showed unread, as above. Deleting a
+> message did not rewrite the mbox at once (the folder cache recorded `expungedBytes`), so removal
+> waits for compaction. The deleted-flag sentence therefore becomes: "N of them were deleted in
+> Thunderbird before they were backed up, so Thunderbird keeps them hidden, and may remove them
+> from the restored folder the next time it compacts it. The archive keeps them." (Whether
+> Thunderbird hides a placed message with the deleted bit is not yet run; lab row MA-1093 adds one.)
+> Q2's recommended answer (add nothing; tell the person how to mark a folder read) is what is
+> built; marking everything read instead would add a header to each message, which breaks "the
+> preserved original bytes" and the post-write check (§5.4 note), so it is not a small change and
+> would need its own design note.
+
 ### 4.7 Large folders
 
 - Messages are streamed one at a time; a message larger than extract's 2 GiB cap is not
@@ -316,6 +564,12 @@ would change the message's bytes.
   FAT32 (the volume's file system name, `readIdentity`) and a folder's planned size
   reaches 4 GiB − 1 MiB, the folder is split into `NAME`, `NAME (part 2)` … at message
   boundaries, and the plan says so.
+
+> Folded 2026-11-06 [RT-20], lead's call 2026-11-06: **no splitting.** On a FAT32 Local Folders
+> volume (the file system name `readIdentity` reports), a folder whose planned mbox reaches
+> 4 GiB − 1 MiB is **refused in the plan** with W-FAT32 (§7.5), naming the folder and its size;
+> the other folders may still be chosen. The split bullet above is dropped. (exFAT has no such
+> limit and is not refused.)
 
 ## 5. Thunderbird must be closed, and stays closed
 
@@ -335,6 +589,23 @@ only refuses):
 
 Refused with W-RUNNING (§10). MailArchive never starts, quits, signals or kills
 Thunderbird for a restore.
+
+> Folded 2026-11-06 [RT-2, RT-14, RT-17], lead's call 2026-11-06 (RT-2):
+> - **Order.** Checks A and B, and every other check of §5.3, run BEFORE the restore takes
+>   Thunderbird's profile lock (§5.2). After the take, only B (the process list) is checked again,
+>   because A would now see the restore's own lock. A failed take counts as running.
+> - **Another MailArchive restore first.** Before A and B, the restore checks its own MailArchive
+>   restore lock for this profile (§5.2 note). Held → W-RESTORING ("Another restore into this
+>   Thunderbird profile is running…", §7.5), so a terminal and Desktop restoring at once are not
+>   told to close a Thunderbird that is not open.
+> - **macOS:** B refuses on `rawThunderbirdCount` (`env_darwin.go:373`), the count before the
+>   filter that drops processes it cannot fully read. **Linux:** B is new code (`/proc/*/exe`, as
+>   above), in slice R3, with its own leg in MA-1087.
+> - **Windows:** B matches `thunderbird.exe` for every user on the machine
+>   (`env_windows.go:268-292`). That stays (safe direction); W-RUNNING gains a sentence for when no
+>   Thunderbird window shows (§7.5). Thunderbird's background update task may match too; lab row
+>   MA-1090 notes whether it does.
+> - Error words come from §7.5, not §10 (the "(§10)" above is an off-by reference).
 
 ### 5.2 Keeping it closed while writing
 
@@ -358,6 +629,51 @@ mid-restore on Windows and checks it says the profile is in use and opens normal
 afterwards. If the lab shows otherwise, the belt in §5.4 still keeps Thunderbird from ever
 seeing a half folder, and this subsection is dropped.
 
+> Folded 2026-11-06 [RT-2, RT-3], lead's call 2026-11-06. This subsection is replaced by:
+> 1. **Windows: hold `parent.lock` exactly as Thunderbird does.** `CreateFileW` on the profile's
+>    `parent.lock`, read/write access, share mode 0 (no sharing), `OPEN_ALWAYS` (made if absent,
+>    as Thunderbird makes it; never written to; left in place afterwards, as Thunderbird leaves
+>    it). The handle is closed on every exit path and by Windows when the process ends.
+>    **Lab B, 2026-11-06 (Thunderbird 153.6.0, holder `powershell.exe`):** with the file held,
+>    a Thunderbird started did not open the profile; it showed a dialog titled "Close Thunderbird":
+>    "Thunderbird is already running, but is not responding. The old Thunderbird process must be
+>    closed to open a new window." with **Close Thunderbird** (default) and **Cancel**. Pressing
+>    Close Thunderbird closed only the new Thunderbird, not the holder. On release, and when the
+>    holder was killed, Thunderbird opened normally at once: nothing stale. Not yet run with
+>    `mailarchive.exe` as the holder: lab row MA-1090.
+> 2. **macOS and Linux: Thunderbird's own lock type only, and no `lock` symlink.** Open
+>    `.parentlock` (create if absent, never written to) and take a POSIX write record lock on the
+>    whole file, non-blocking: on Linux the per-handle kind `F_OFD_SETLK` (it conflicts with
+>    Mozilla's `F_SETLK` and is not dropped when some other descriptor of the file closes); on
+>    macOS `F_SETLK`, the only kind there, with one owner type in `tbrestore` that is the sole
+>    opener of `.parentlock` in the process and a test that nothing else opens it while held.
+>    Before writing this code, slice R3 reads Mozilla's `nsProfileLock.cpp` and records what lock
+>    Thunderbird takes and what its symlink check does when no symlink exists. Never the `lockfile`
+>    package on Thunderbird's files (it is `flock`, which Linux keeps apart from `fcntl` locks, and
+>    it writes a holder line). Whether this keeps a starting Thunderbird out is **not yet run** on
+>    either platform: lab row MA-1134 (macOS and Linux). If MA-1134 shows it does not, the
+>    restore still never shows a half folder (the parent file comes last, §5.4 as folded) and
+>    the subsection says so; the lock is then kept only as the in-use signal for presync.
+> 3. **A MailArchive restore lock.** Before Thunderbird's lock, the restore takes
+>    `restore-<first 16 hex of SHA-256 of the profile's canonical path>.lock` in MailArchive's
+>    settings folder with `lockfile.Acquire` (an OS lock, released when the process ends, so never
+>    stale). Presync's `detectRunning` (`presync/running.go:23`) treats `lockfile.Held` on it as
+>    "Thunderbird is in use" and so never starts Thunderbird on that profile during a restore; a
+>    second restore into the profile is refused with W-RESTORING; and the backup-side skip (§7.2
+>    note) reads it. This is a change to shipped presync code: in slice R3, with a presync row
+>    (MA-1140) and inside the R3–R5 adversarial pass.
+> 4. **Lock order and release.** Take: archive lock (§7.1) → MailArchive restore lock →
+>    Thunderbird's profile lock. Release in reverse, on success, error, Cancel, Shut down and a
+>    panic recovered by the job runner (a long-lived Desktop must not keep a lock after a failed
+>    restore). MA-1127 proves each path by a child process taking each lock afterwards.
+> 5. **Words for a person who opens Thunderbird during a restore** [lab finding 3], lead's words,
+>    owner-delegated 2026-11-02: since Thunderbird's own dialog offers "Close Thunderbird" first, the
+>    Desktop panel and the terminal say, for the whole time the restore runs: "While this runs,
+>    leave Thunderbird closed. If you open it and it says Thunderbird is already running, choose
+>    Cancel and wait for the restore to finish." (W-WAIT, §7.5.) MailArchive is not a Thunderbird
+>    process, so choosing Close Thunderbird would not stop the restore (lab B), but the person cannot
+>    know that, and Cancel is the safe answer.
+
 ### 5.3 Checked again right before writing
 
 At "Restore", under the archive's lock and the profile lock, before the first byte:
@@ -366,6 +682,14 @@ step 4), the chosen name still free (§3.5), free space still enough (§6.3), th
 manifest unchanged since the plan (size, modification time, SHA-256, as Delete's plan does,
 `docs/design-archive-delete.md` §3.1). Any difference: "This changed since you clicked
 Check: WHAT. Click Check again." and nothing is written.
+
+> Folded 2026-11-06 [RT-2, RT-15]: "under … the profile lock" is replaced. The re-check runs under
+> the archive lock and the MailArchive restore lock, and BEFORE Thunderbird's profile lock is taken
+> (§5.1 note): Thunderbird not running (A and B), the profile list entry still the same folder and
+> identity (§3.1 step 6 note), Local Folders the same (identity), the chosen name free on both counts,
+> free space, the manifest unchanged, the Store-install and network checks as in the plan. Then
+> Thunderbird's lock is taken (a failed take = W-RUNNING, nothing written), then B is checked once
+> more. Only then is the first byte written.
 
 ### 5.4 Thunderbird never sees a half folder
 
@@ -386,6 +710,56 @@ moves to the profile folder (or, for a Local Folders on another drive, beside it
 rename helper is widened to two directory handles (`renameat2`, `renameatx_np` and
 `FILE_RENAME_INFORMATION` all take a target directory; a modest change to the existing
 helper).
+
+> Folded 2026-11-06 [RT-1, RT-4, RT-12], lead's call 2026-11-06. **The two renames above are
+> dropped: no folder is ever renamed.** Why: on Windows the reused helper refuses a directory
+> (`FILE_NON_DIRECTORY_FILE`, `copyexport_place_windows.go:100-102`), and lab C showed NTFS refuses
+> a folder rename while any process holds a file inside open, even one that allows delete (as
+> virus scanners do). The **lone-`.sbd` fallback** in RT-1 is dropped too: lab A3 showed
+> Thunderbird 153 ignores a `Q.sbd` with no `Q` file (not shown, no `.msf`, no `folderCache.json`
+> entry, left as placed), and lab A5 showed a tree built in this order appears whole once the parent
+> file exists. A crash before the last step therefore leaves a folder Thunderbird does not show;
+> the next attempt cleans it, or finishes it, only when it carries this restore's marker (§3.4
+> note, §8 note). The hidden-name questions (T3) now concern files only, and lab A4 answered them
+> for Windows.
+>
+> The sequence, every step through the `*os.Root` opened on Local Folders, every name created
+> exclusively (numbers in brackets are RT-4's fsync points):
+> 1. **[1]** Append the "started" line to `restores.log` and fsync it: restore ID, date, archive
+>    folder, profile, Local Folders path and identity, the final name chosen, the working-name
+>    prefix `.mailarchive-part-ID-`, planned counts. (No folder names for an encrypted archive.)
+> 2. `Root.Mkdir("Restored — NAME.sbd", 0o700)`. It fails if any entry of that name exists; then the
+>    next free ` (n)` is tried, and a "name" line naming it is appended and fsynced before going on.
+> 3. Create `.mailarchive-restore` (the marker, §3.4 note) inside it, write its line, fsync it.
+> 4. For each folder in plan order, parents before children: `Mkdir` its `NAME.sbd` when it has
+>    subfolders; write its messages into `.mailarchive-part-ID-N` (created exclusively in the
+>    folder's directory), keeping in memory, per message, the SHA-256 and length of the original
+>    bytes handed to the writer; **[2]** fsync and close the file; then place it at its final name
+>    with the existing no-replace *file* helper (`copyexport_place_*.go`), retried for about 5
+>    seconds on a Windows sharing violation, as §8's antivirus row. A folder with no messages of its
+>    own gets an empty file created exclusively under its final name.
+> 5. **[3]** fsync every directory made (a no-op on Windows, as `copyexport_fs.go:139-141` states).
+> 6. **Post-write check** [RT-12], lead's call: a full re-read of every written mbox, by its final
+>    name, through the root: it exists, its size is the bytes written, and re-parsed with the same
+>    reader MA-1089 ports from Thunderbird's read rules (separator, mboxrd un-quoting, LF/CRLF) it
+>    yields exactly the planned messages in order, each with the SHA-256 and length recorded in
+>    step 4 — that is, the archive's originals, which were themselves checked against their recorded
+>    fixity as they were read (§6.1). Any file missing, short or different (antivirus quarantine,
+>    a failing disk): the restore stops here, nothing is made visible, the tree is removed (§8
+>    note), and the result names the file with the remedy (W-CHECKFAIL, §7.5). Cost: one more read
+>    of the restored data, stated in the plan ("then checks every message it wrote").
+> 7. Append a "checked" line and fsync it.
+> 8. **The commit:** create the empty parent file `Restored — NAME` with
+>    `OpenFile(O_CREATE|O_EXCL)`, then fsync it. Lab C: this fails on an existing name, a
+>    case variant, and a folder of that name. If it fails because the name now exists (made by
+>    someone else during the restore), the tree that the started line names is removed and the
+>    restore refuses (W-TAKEN, §7.5); it never attaches the tree to someone else's folder.
+> 9. **[5]** fsync the Local Folders directory.
+> 10. **[6]** Append the "ended" line (result, counts, final name) and fsync it.
+>
+> Thunderbird is closed and held out by the lock throughout (§5.2), so it reads nothing while this
+> runs; the parent file is what makes the folder appear, in one step. RT-4's fsync point [4] is
+> step 8.
 
 ## 6. What can be restored, and the plan
 
@@ -416,6 +790,14 @@ predicate `emlPresent`, `internal/app/extractable.go:9-31`, the same one `status
 `verify` use), and a look at `rec.Sealed.EML` for an encrypted one
 (`internal/keyring/extract.go:39-41`). No message is read to plan.
 
+> Folded 2026-11-06 [RT-19, RT-12]: because planning reads no message, the plan CANNOT count
+> damaged originals or fixity mismatches in advance; "said before starting, with the counts" above
+> holds only for Outlook stores, `-raw` off, missing originals, the 2 GiB cap and the path budget.
+> The plan says instead: "Originals that turn out to be damaged are found while restoring and
+> named in the result." A message whose fixity fails while being read is left out of its mbox and
+> counted; it never reaches the post-write check's list, so that check compares only what was
+> meant to be written (§5.4 note, step 6).
+
 ### 6.2 Encrypted archives
 
 - Restore is offered only while the archive is unlocked on this computer; the start takes a
@@ -433,6 +815,40 @@ predicate `emlPresent`, `internal/app/extractable.go:9-31`, the same one `status
 - The restore record (§7.4) for an encrypted archive keeps counts, the destination and the
   date, but no folder names.
 
+> Folded 2026-11-06 [RT-8, RT-18, Q8, O2, Q6]:
+> - **The tick is enforced on the server.** `POST /api/restore-tb/start` refuses an encrypted plan
+>   whose request lacks `notEncryptedOK: true` (W-TICK, nothing written); the page's tick is only
+>   how the person says it. Command line: at a terminal it asks "The restored mail will not be
+>   encrypted. Restore it? [y/N]"; without a terminal it needs `-yes -not-encrypted-ok`.
+> - **Ask twice, checked on the server, when the Local Folders may leave this computer** (owner
+>   question O2, recommended answer, what is built): the copy's own test,
+>   `CopyExportEnv.copyLeaves` (`internal/app/decryptplan.go:123-147`: synced by a cloud service,
+>   possibly iCloud Desktop/Documents, removable or external drive, network share), run on the
+>   resolved Local Folders path. Any reason → the plan lists the reasons, and Start needs both
+>   `notEncryptedOK` and `confirmAgain: true` (the copy's rule, `encryption_copy.go:98`). Command
+>   line: refused without a terminal; at a terminal, after the yes, the person types the Local
+>   Folders path exactly as shown (as `decrypt` does, `cmd/mailarchive/decrypt.go:58-86`). The
+>   alternative (refuse such a destination) is a one-line change: return W-LEAVES from the plan
+>   instead of setting ask-twice.
+> - **Removal does not erase.** The not-encrypted line adds: "If you stop the restore or it fails,
+>   MailArchive removes what it wrote, but that cannot undo a copy already uploaded by a sync
+>   service, kept in a backup or snapshot, or left on the disk." The Stopped words change to match
+>   (§7.5).
+> - **Counts only** for an encrypted archive: the progress line is "Restoring: 1,200 of 4,310
+>   messages" with no folder name, and Activity lines likewise (`encryption_copy.go:170-180`). The
+>   result's damaged-record list gives counts, not names, and **Save this record** says beside its
+>   button that the record names the restored folders (it is saved only where the person chooses).
+> - **The lease, not `ExtractSealed`.** The encrypted path reads each original through the read
+>   lease taken at start, not through `ExtractSealed`, which stops when the archive is locked
+>   (`extract.go:418-419`). So Q6's recommended answer is what is built: a Lock after the start
+>   does not stop the restore, and the Lock reply says so as the copy's does (`copyGoesOnText`,
+>   `encryption_copy.go:190`): "Locked. The restore into Thunderbird already started goes on until
+>   it finishes — Shut down stops it, and nothing is added to Thunderbird." The alternative (Lock
+>   stops it) is a small change: the restore's progress loop checks the lock state between
+>   messages and ends as Cancel does.
+> - Q8's recommended answer (allowed while unlocked, with the tick) is what is built; refusing
+>   encrypted archives instead is a one-line refusal in the plan.
+
 ### 6.3 Size and free space
 
 Needed space = the originals' sizes (recorded fixity size, else the file size; sealed size
@@ -440,6 +856,14 @@ for an encrypted archive, which slightly overstates) + 120 bytes per message for
 Refused when free space on the Local Folders volume (`util.FreeBytes`) is less than needed
 × 1.05 + 256 MiB, room left for Thunderbird's own summaries and for the system (W-SPACE).
 These margins are the lead's choice.
+
+> Folded 2026-11-06 [RT-22], lead's call 2026-11-06 (margin includes Thunderbird's indexes): the
+> margin is raised to **needed × 1.30 + 512 MiB**. The extra 25 % stands for what Thunderbird adds
+> on the same drive after the restore — a summary (`.msf`) per folder and its search index of every
+> restored message — and is a stated choice, not a measurement: lab row MA-1093 records how much the
+> fixture's profile grew once Thunderbird had indexed it, and the number is revisited from that. The
+> plan says: "Thunderbird will use more space as it indexes the restored mail; about X is kept free
+> for that." The post-write check (§5.4 note) needs no extra space.
 
 ### 6.4 The plan the person sees
 
@@ -461,6 +885,27 @@ These margins are the lead's choice.
 
 The command line prints the same plan with `-plan` and stops.
 
+> Folded 2026-11-06 [RT-9, RT-10, RT-8, RT-11, RT-22, O1, Q3]:
+> - **The deleted-after-backup count** [RT-9] uses the workspace's own rule, a record counts as gone
+>   when `!(rec.Present || rec.LastSeen.IsZero())` (`copyexport_archive.go:857`), not "not present".
+>   `Present` is kept only for mailbox-wide archives (Microsoft 365), so for a Thunderbird or local
+>   archive `LastSeen` is zero and nothing is counted. The line is shown only when the archive keeps
+>   that timeline; for any other archive the plan says nothing about it (rather than a false "0").
+>   Q3's recommended answer (restore such mail too, and say how many) is what is built; leaving it
+>   out instead is a filter on the same rule.
+> - **Order of the plan** [RT-10]: when this archive backs up the chosen profile, W-RECAPTURE is the
+>   plan's FIRST line, above the destination. With O1's recommended answer it reads: "This archive
+>   backs up this Thunderbird profile. Its backups will leave the restored folder out, so the
+>   restored mail is not copied into the archive again. Mail you later move into that folder in
+>   Thunderbird is not backed up while it is there." With O1's alternative (warn only) it is the
+>   design's original W-RECAPTURE words (§7.2).
+> - **Warnings added**: W-STORE first when a Store Thunderbird is found [RT-11]; W-NETWORK (§3.2
+>   note); the ask-twice reasons for an encrypted archive [RT-8]; the space line of §6.3's note
+>   [RT-22]; W-WAIT, always (§5.2 note); and, when the archive holds Outlook, no-original or
+>   damaged-later records, the §6.1 note's sentence.
+> - W-CLOUD stays for an unencrypted archive (a warning only); for an encrypted one it is replaced by
+>   the ask-twice reasons.
+
 ### 6.5 Choosing folders, and Gmail's duplicates
 
 - Whole archive (default), or chosen folders from the tree (§2, workspace's tree rules),
@@ -479,6 +924,17 @@ The command line prints the same plan with `-plan` and stops.
   folders. Restoring it too puts those messages in Thunderbird twice. Untick it if you only
   want your folders." Owner question Q4.
 
+> Folded 2026-11-06 [Q4, RT-7]: Q4's recommended answer (All Mail ticked like every other folder,
+> with the note) is what is built; unticking it by default instead is one default in the tree's
+> initial selection. **The restore's own caps** [RT-7]: at most **10,000 folders** and **300
+> levels** in one restore (the tree's own numbers; the review left the number to the lead and the
+> lead named none, so these are the folding agent's proposal, for the lead to confirm at
+> re-verify), applied to what the restore will create, whatever the tree builder allows — because
+> that builder skips its node and id caps for the current archive (`copyexport_archive.go:508-511`),
+> and "Open an archive folder…" can make any folder current, including one someone else wrote. Over
+> a cap: refused in the plan with W-TOOMANY (§7.5), nothing written; choosing fewer folders is the
+> remedy. MA-1088 gains the 10,001-folder case.
+
 ## 7. Locks, backups, Desktop flow, words
 
 ### 7.1 The archive's lock and scheduled backups
@@ -492,6 +948,15 @@ The command line prints the same plan with `-plan` and stops.
 - Desktop: one task at a time in the shared slot, refused while a delete runs
   (`maintenance.go:49-57`).
 
+> Folded 2026-11-06 [RT-18]: for an UNencrypted archive the restore takes the archive lock with a
+> verb of its own, `restore-thunderbird`, and `holderWords` (`internal/app/busy.go:72-91`) gains it:
+> "a restore of this archive into Thunderbird". So a skipped scheduled backup's line names the
+> restore rather than "another MailArchive task". (An encrypted archive's lock still names no verb,
+> as extract's does.) A scheduled backup meeting the lock skips **quietly** for a holder under 24
+> hours old (`ScheduledLockSkip`, `busy.go:54`): no failure, alert, streak or history entry. The
+> plan's line matches that: "A backup scheduled while this runs is skipped without an error and
+> runs at its next time."
+
 ### 7.2 When the archive backs up this same profile (W-RECAPTURE)
 
 A backup from Thunderbird reads every account folder under `Mail/`, Local Folders included
@@ -504,6 +969,47 @@ again, so each restored message will then be in the archive twice. To avoid that
 restored folder in Thunderbird once you have what you need, or restore into another
 profile." Version 1 warns only; teaching backups to skip restored folders would change what a
 backup captures. Owner question Q7.
+
+> Folded 2026-11-06 [RT-5, RT-10, O1]. Q7 is replaced by owner question O1 (review §5.1).
+>
+> **Leftovers are never backed up** [RT-5], lead's call 2026-11-06 (not an owner ruling: it skips
+> only MailArchive's own entries, not the person's mail). The review found the backup walk reads
+> what Thunderbird ignores: a dot-named *file* is skipped (`isMailboxCandidate`,
+> `source/source.go:149-155`), but the loop for a container with no folder file of its own
+> (`source/localwalk.go:582-595`) walks any `NAME.sbd`, so a half-written `Restored — NAME.sbd`
+> would be copied in, torn last message included. The fix, a folder-scan skip in slice R5:
+> - The working files `.mailarchive-part-ID-N` are dot-named files, already skipped by
+>   `isMailboxCandidate`; a test pins that (MA-1138).
+> - Before the walk enters any `.sbd` container (`localWalk.sbd`, `localwalk.go:601-612`, and the
+>   orphan loop that calls it), it looks for `.mailarchive-restore` directly inside (one bounded
+>   `lstat` + read of at most 4 KiB through the walk's scope, a regular file only). A container
+>   "carries the marker" when the marker parses and its ID is in the skip set. The walk then skips
+>   that container and the parent file beside it, and the run log says "Left out N folders that
+>   MailArchive is restoring into Thunderbird" (not a fault, no alert).
+> - The skip set is built by the backup's caller (`RunHeadless`, and Desktop's own runs) from
+>   `restores.log` and passed to the source as an option, so `internal/source` does not read
+>   MailArchive's settings. If `restores.log` cannot be read, every container with a well-formed
+>   marker and no parent file is skipped, and the run log says the log could not be read.
+> - The backup does not clean up leftovers (that stays with the next restore attempt, §8 note):
+>   cleaning would need Thunderbird's lock inside a backup run.
+> - A backup of a *different* archive that reads the same profile during a restore is covered the
+>   same way; the one instant it can meet is after step 2 of §5.4's note (the `.sbd` exists, empty)
+>   and before step 3 (the marker): an empty container, which yields no mail.
+>
+> **Finished restored folders** (owner question O1). Built as the recommended answer (b): the skip
+> above covers a finished restore too — a marked container whose ID is in `restores.log`, parent
+> file present — so the next backup does not copy the restored mail into the archive again, and the
+> plan's first line says so (§6.4 note). Cost, said in that line: mail the person later moves into
+> the restored folder is not backed up while it is there. If the owner chooses (a), warn only, the
+> change is one condition: the skip applies only when the parent file is absent (unfinished), and
+> W-RECAPTURE keeps the original words above, first in the plan. Whether Thunderbird carries the
+> marker along when the person renames or moves the restored folder is lab row MA-1091's last
+> step.
+>
+> Surfacing an unfinished restore without waiting for a new Check [RT-5 (2)]: Desktop's start and
+> the headless `status` read `restores.log`; a started line with no ended line shows as "An earlier
+> restore into Thunderbird did not finish (DATE). Thunderbird does not show it. Click Restore to
+> Thunderbird and Check to clean it up." (W-UNFINISHED, §7.5). MA-1141.
 
 ### 7.3 The Desktop flow
 
@@ -538,6 +1044,22 @@ Origin, CSRF token, body cap, recover; plus the session cookie (`localweb/sessio
 A switch of the current archive, a Lock (before start), and Shut down discard the plan, as for
 the copy (`pending.go:15-21`).
 
+> Folded 2026-11-06 [RT-13, RT-8, RT-15, lab finding 3]:
+> - **Its own key** [RT-13]: the restore plan is kept under a key of its own (as delete's is,
+>   `pending.go:39-42`), not the archive's key, because `pendingSecrets.put` discards every item
+>   with the same key (`pending.go:144-150`) and would cancel a pending unencrypted-copy plan or key
+>   change. The kind is added to `ofCurrentArchive` (`pending.go:68`), so a switch of the current
+>   archive still discards it. (The discard paths are `pending.go:63-70`, `:209-227`.)
+> - **Start's body** becomes `{token, notEncryptedOK, confirmAgain}`; the server refuses an
+>   encrypted plan without `notEncryptedOK`, and a plan whose ask-twice list is not empty without
+>   `confirmAgain` (§6.2 note) [RT-8]. The page draws the second question only when the plan says
+>   ask-twice, as the copy's page does.
+> - **Profiles** carry the list id (§3.1 step 6 note) [RT-15]; `/folders` and `/plan` take
+>   `{listID, position}`.
+> - **Step 4's progress line** is counts only for an encrypted archive (§6.2 note); for an
+>   unencrypted one it may name the folder as written. Under the progress line, for the whole run,
+>   W-WAIT (§5.2 note, lab finding 3).
+
 ### 7.4 The restore record
 
 - `restores.log` in MailArchive's settings folder (beside `deletions.log`,
@@ -548,6 +1070,19 @@ the copy (`pending.go:15-21`).
 - **Save this record** saves the plan and result as a text file where the person chooses, as
   Delete's record does (`archivedelete.go:63`).
 - The command line prints the record and takes `-record-out FILE`.
+
+> Folded 2026-11-06 [RT-16, RT-4]:
+> - **The writer** is the delete log's append discipline, reused, not re-written
+>   (`internal/archdelete/dellog.go:180-219`): a torn last line (a power cut mid-append) is kept
+>   apart and does not make the log unreadable, a size cap (`errLogFull`), fsync after every
+>   append, 0o600. Only a log that cannot be parsed apart from a torn tail refuses (W-LOGBAD); a full
+>   log refuses with W-LOGFULL. Both words in §7.5, each with a remedy.
+> - **Lines** per restore, all keyed by the restore ID: "started" (before the first create), "name"
+>   (only if the first name was taken at `Mkdir`), "checked" (after the post-write check), "ended"
+>   (result, counts, final name); and "abandoned" or "cleaned" written by a later attempt (§8 note).
+> - The command line and Desktop use the same `restores.log` (one settings folder), so either finds
+>   the other's unfinished restore.
+> - Save this record says beside its button that the record names the restored folders (§6.2 note).
 
 ### 7.5 Words (the owner-delegated rule: say what happened first, then the remedy)
 
@@ -567,6 +1102,74 @@ the copy (`pending.go:15-21`).
 | W-ELEVATED | "MailArchive is running as administrator, so the restore did not start: files it wrote could not be changed by Thunderbird afterwards. Start MailArchive normally and try again." (presync refuses an elevated start for the same reason, `resolve_windows.go:41-46`) |
 | Done | "Restored N messages into Thunderbird as the folder 'Restored — NAME' under Local Folders. Open Thunderbird to see it; the first time, it may take a minute to show every message." plus the skipped counts and the notes of §4.6. |
 | Stopped | "The restore was stopped, so nothing was added to Thunderbird. The part already written was removed." |
+
+> Folded 2026-11-06 [RT-17, RT-8, RT-11, RT-12, RT-16, RT-20, RT-1, RT-5, RT-7, lab findings 1
+> and 3]. Same rule: what happened first, then the remedy. Placeholders in capitals are filled by
+> the server. Changed rows (the original rows above stay as reviewed):
+> - **W-RUNNING**, add on Windows: "If you don't see Thunderbird, look for its icon by the clock;
+>   someone else signed in to this computer may also have it open."
+> - **W-NOLOCAL**, replaced (lab finding 1, lead's call): "This Thunderbird profile has no Local
+>   Folders yet, so there is nowhere to restore to and nothing was written. In Thunderbird, MENU
+>   PATH, then close Thunderbird and click Check again. MailArchive does not change Thunderbird's
+>   settings itself." MENU PATH is filled from lab row MA-1133 before this ships.
+> - **Stopped**, for every archive, adds: "That cannot undo a copy already uploaded by a sync
+>   service, kept in a backup or snapshot, or left on the disk." [RT-8]
+> - **Done** adds W-STORE's sentence when it applied, and "MailArchive checked every message it
+>   wrote." [RT-11, RT-12]
+>
+> New rows:
+> - **W-WAIT** (lead's words, owner-delegated 2026-11-02; shown for the whole run, Desktop and
+>   terminal): "While this runs, leave Thunderbird closed. If you open it and it says Thunderbird is
+>   already running, choose Cancel and wait for the restore to finish."
+> - **W-RESTORING**: "Another restore into this Thunderbird profile is running (in MailArchive or at
+>   a terminal), so this one did not start. Wait for it to finish, then click Check again."
+> - **W-STORE** (warning): "If you use Thunderbird from the Microsoft Store, this restore may not
+>   show in it: that version may keep its mail in another place. If you installed Thunderbird from
+>   thunderbird.net, ignore this."
+> - **W-NOIDENT**: "Windows could not identify the drive that holds Thunderbird's Local Folders
+>   (PATH), so nothing was restored. This happens on some network drives. Choose a profile on this
+>   computer's own drive."
+> - **W-NETWORK** (warning): "Thunderbird's Local Folders (PATH) is on a network drive. The restore
+>   writes there over the network, so it may be slow."
+> - **W-OVERLAP**: "Thunderbird's Local Folders (PATH) overlaps WHAT (the archive folder, or the
+>   folder of the mail account ACCOUNT), so nothing was restored. Choose another profile."
+> - **W-PREFS**: "MailArchive could not read this profile's settings file (prefs.js: WHY), so nothing
+>   was restored. Open Thunderbird once with this profile and close it, then try again; if it
+>   repeats, choose another profile."
+> - **W-PROFINI**: "Thunderbird's list of profiles (profiles.ini) is larger than MailArchive will
+>   read, so nothing was restored. Remove profiles you no longer use in Thunderbird's Profile
+>   Manager, then try again."
+> - **W-PROFMODE** (macOS, Linux): "This profile's folder (PATH) can be changed by other accounts on
+>   this computer, or belongs to another account, so MailArchive will not write into it. Make it
+>   yours only (for example `chmod go-w PATH`), or choose another profile."
+> - **W-LOGBAD**: "MailArchive's restore record (restores.log in FOLDER) can't be read, so it can't
+>   tell whether an earlier restore left anything behind, and nothing was restored. Move that file
+>   somewhere you keep records, then try again."
+> - **W-LOGFULL**: "MailArchive's restore record (restores.log in FOLDER) is full, so nothing was
+>   restored. Copy it somewhere you keep records, delete it, then try again."
+> - **W-LEFT**: "MailArchive removed what it wrote, but left N entries it did not make in
+>   'Restored — NAME.sbd' (FIRST NAMES). Thunderbird does not show that folder; delete it yourself
+>   when you no longer need those files."
+> - **W-TAKEN**: "Something made a folder named 'Restored — NAME' in Local Folders while the restore
+>   ran, so MailArchive removed what it wrote and added nothing. Click Check again to restore under
+>   a new name."
+> - **W-CHECKFAIL**: "After writing, MailArchive checked every message, and FILE (the folder FOLDER)
+>   was missing or changed — often antivirus moving a file it flagged. Nothing was added to
+>   Thunderbird. Look in your antivirus's quarantine, or leave that folder out, then try again."
+>   (For an encrypted archive, FOLDER is left out: "one of the folders".)
+> - **W-TICK**: "The restored mail will not be encrypted, and the box saying you understand was not
+>   ticked, so nothing was restored. Tick it and click Restore again."
+> - **W-FAT32**: "FOLDER is SIZE, too big for the drive that holds Local Folders: that drive uses
+>   the FAT32 format, which cannot hold a file of 4 GB or more. It is not restored. Choose fewer
+>   folders, or move Local Folders to a drive formatted another way."
+> - **W-TOOMANY**: "This restore would make N folders in Thunderbird, more than MailArchive makes in
+>   one restore (10,000), so nothing was restored. Choose fewer folders."
+> - **W-UNFINISHED** (Desktop start, `status`, and the next plan): "An earlier restore into
+>   Thunderbird did not finish (DATE). Thunderbird does not show it. Click Restore to Thunderbird,
+>   then Check, to clean it up."
+> - **W-LEAVES** (only if the owner picks O2's alternative): "Thunderbird's Local Folders may leave
+>   this computer (REASONS), and the restored mail would not be encrypted, so nothing was
+>   restored. Choose a profile on this computer's own drive."
 
 ## 8. Failures and crashes
 
@@ -589,6 +1192,60 @@ next Check or Restore for that profile, which reads `restores.log` first.
 
 A plain `restores.log` that cannot be read refuses the restore, because whether a partial
 restore is on disk could not be told (Delete's rule, `archivedelete.go:659-680`).
+
+> Folded 2026-11-06 [RT-1, RT-4, RT-5, RT-16, RT-17], lead's call 2026-11-06 (RT-1). The table
+> above assumed the hidden staging pair and two renames; with §5.4's folded sequence there is no
+> staging pair, so its "Create staging", "Commit" and "crash or power cut" rows are replaced by the
+> states below. "Next attempt" is still the next Check or Restore for the profile, which reads
+> `restores.log` first; every state below is also surfaced at Desktop start and in `status`
+> (W-UNFINISHED, §7.2 note), and backups skip it meanwhile (§7.2 note). In every state Thunderbird
+> shows nothing that is not finished, because the parent file is the last thing made.
+> - **Crash after the started line, before `Mkdir`.** On disk: nothing. Next attempt: finds no
+>   container of the recorded name (or one without this ID's marker), appends "abandoned", runs
+>   normally.
+> - **Crash while writing** (container and marker present, no parent file, no "checked" line). On
+>   disk: a container Thunderbird does not show, finished mbox files under final names, perhaps one
+>   working file. Next attempt: the plan's first line says "An earlier restore into this profile did
+>   not finish (DATE). Its partial folder, which Thunderbird does not show, will be removed first.";
+>   at Start (under all three locks) it removes it (cleanup rules below), appends "cleaned", then
+>   restores.
+> - **Crash after "checked", before the parent file.** On disk: a complete, fsynced tree, not shown.
+>   Next attempt (lead's "reuses"): re-runs the full post-write check on that tree against the
+>   archive (the fingerprints are recomputed from the archive's originals); if it passes, it creates
+>   the parent file, appends "ended", and the plan says "An earlier restore (DATE) had written
+>   everything; MailArchive finished it: 'Restored — NAME' is now in Thunderbird." If it fails, the
+>   tree is removed as above. The new restore then goes on under its own name.
+> - **Crash after the parent file, before "ended"** [RT-4]. On disk: the finished folder, its data
+>   fsynced before the parent file was made. Next attempt: the final name present and its marker
+>   matching → treated as finished: appends "ended", removes nothing.
+> - **Crash during cleanup** (after Cancel, a failure, or W-TAKEN) [RT-4]. The marker is removed last,
+>   just before the container itself, so a cleanup cut short leaves a container still carrying the
+>   marker. Next attempt: finishes the cleanup.
+> - **Thunderbird opened between a crash and the next attempt** [RT-4]. It ignores a container with no
+>   parent file (lab A3: no `.msf` made, no cache entry), so normally nothing was added inside. If
+>   the cleanup meets entries it did not make, it leaves them and says W-LEFT.
+> - **The Local Folders drive missing at the next attempt** [RT-4]. The plan for that profile says
+>   "An earlier restore into this profile did not finish (DATE); its folder is on DRIVE, which isn't
+>   connected. Connect it and click Check again." The restore into that profile cannot run anyway
+>   (its Local Folders is missing); other profiles are not affected.
+> - **The person never tries again** [RT-4, RT-5]. The leftover is never shown by Thunderbird, never
+>   backed up (§7.2 note), and is named at every Desktop start and in `status` until a Check cleans it.
+> - **The parent file's name taken at the commit.** W-TAKEN: the tree removed, nothing added
+>   (§5.4 note, step 8).
+> - **Antivirus during placement or the commit** [RT-24]: a placement meeting a sharing violation is
+>   retried for about 5 seconds; then the restore stops, removes what it wrote, and says the
+>   antivirus words of the table above. A quarantine after placement is caught by the post-write
+>   check (W-CHECKFAIL).
+>
+> **Cleanup rules** [RT-16]: it runs through the Local Folders root and follows no link; it removes
+> only (a) working files named `.mailarchive-part-<this restore's ID>-N`, (b) the entries the plan
+> recorded for this restore, each checked to be a regular file or directory, (c) the marker, last,
+> and only when its ID is this restore's, then the container. It never removes a `Restored — ` name
+> whose container does not carry this restore's marker, and never anything outside the container.
+> Anything else found inside is left, and named (W-LEFT).
+>
+> `restores.log`: an unreadable log refuses (W-LOGBAD), a full one refuses (W-LOGFULL); a torn last
+> line does neither (§7.4 note).
 
 ## 9. Security
 
@@ -625,6 +1282,28 @@ protects the files; the archive and the profile files are read as untrusted text
 
 This design owes the adversarial pass on the writer and the profile lock (§13).
 
+> Folded 2026-11-06 [RT-7, RT-19, RT-2, RT-8, RT-5]:
+> - **§9.1** [RT-7]: as written, the tree's bounds do NOT apply to the current archive (the builder
+>   skips its node and id caps then, `copyexport_archive.go:508-511`). The restore applies its own
+>   caps to what it creates (§6.5 note, W-TOOMANY), whoever wrote the manifest.
+> - **§9.2** [RT-19, RT-2]: "nothing existing is opened for writing" excludes Thunderbird's lock file
+>   (`parent.lock` / `.parentlock`), which is opened (created if absent) and locked but never written
+>   to. "Every created name is new" holds by exclusive create (§5.4 note); "cannot replace" also rests
+>   on the file-placement helper, which on FAT/exFAT under macOS and Linux falls back to a
+>   look-up-then-rename with a stated race window (`copyexport_place_unix.go:27-33`); that window is
+>   inside a folder that Thunderbird does not show and nothing else writes to.
+> - **§9.7** [RT-8]: "removed on cancel or failure" means deleted from the folder, not erased: a sync
+>   upload, a backup or snapshot, or the disk itself may still hold it. Said in the words (§6.2 note,
+>   §7.5 Stopped).
+> - **Lock files** [RT-2]: the restore never makes a `lock` symlink, and never uses the `lockfile`
+>   package on Thunderbird's files.
+> - **The marker** [RT-5]: a marker copied or planted elsewhere does nothing, because a container is
+>   skipped or cleaned only when its marker's ID is in this computer's `restores.log` for this
+>   profile (§3.4 note). The one weaker case is an unreadable `restores.log`, when backups skip every
+>   marked container that has no parent file (§7.2 note); that fallback is in the adversarial pass's
+>   scope.
+> - The adversarial passes owed are now named per slice in §13's note.
+
 ## 10. The command line
 
 ```
@@ -646,6 +1325,19 @@ mailarchive restore-thunderbird -list-profiles
 - Desktop and the command line call one engine (a new package, `internal/tbrestore`:
   `Profiles`, `Plan`, `Run`), as delete's two surfaces do.
 
+> Folded 2026-11-06 [RT-8, RT-2, RT-12, lab finding 3]:
+> - New flag `-not-encrypted-ok`: needed with `-yes` for an encrypted archive without a terminal.
+>   When the Local Folders may leave the computer (§6.2 note), an encrypted restore is refused without
+>   a terminal, whatever the flags, and at a terminal asks for the Local Folders path to be typed,
+>   as `decrypt` does (`cmd/mailarchive/decrypt.go:58-86`).
+> - The plan goes to stderr and the result to stdout, as `decrypt` does (X8). W-WAIT is printed with
+>   the plan and again when writing starts.
+> - Exit codes unchanged in shape: W-CHECKFAIL, W-TAKEN, W-RESTORING and a failed lock take are `1`
+>   (nothing added); a restore finished by a later attempt (§8 note) is reported in that attempt's
+>   output, and its own exit code is that attempt's.
+> - `-plan` reads `restores.log` and reports an unfinished restore, but writes nothing (cleanup happens
+>   only at Start, under the locks).
+
 ## 11. New invariant and scenarios (provisional ids)
 
 - **R40 — A restore adds, and only adds.** A restore to Thunderbird writes only new entries
@@ -657,6 +1349,27 @@ mailarchive restore-thunderbird -list-profiles
   crash part way; S69 a hostile folder name in the archive; S70 restoring into the profile
   the archive backs up.
 
+> Folded 2026-11-06 [RT-19, RT-1, RT-2, RT-5, O1]: R40's wording, as it goes into the catalog in R0:
+> **R40 — A restore adds, and only adds.** A restore to Thunderbird creates only new entries, each
+> by exclusive create, inside one new folder of the chosen profile's Local Folders directory; it
+> never changes, renames, replaces or removes anything it did not create; it never writes under
+> another account's directory; it writes only while Thunderbird is closed and held out by
+> Thunderbird's own profile lock, which it opens but never writes; it writes only preserved originals
+> (for an mbox source, the bytes the archive kept), each checked after writing; and the folder
+> becomes visible to Thunderbird in one step, by the creation of its parent file, last. (What it
+> rests on: lab A3 and A5 on Windows; macOS and Linux lab rows MA-1091, MA-1098, MA-1099. "Cannot
+> replace" on FAT/exFAT under macOS and Linux: §9 note.)
+> **R41 (new) — MailArchive never backs up its own restore leftovers.** A backup leaves out every
+> folder carrying a marker whose ID is in `restores.log` for that profile and has no parent file,
+> and every `.mailarchive-part-` working file; with O1's recommended answer, also the finished
+> restored folders it lists.
+> New scenarios: **S71** a scheduled backup with pre-sync fires during a restore (pre-sync does not
+> start Thunderbird; the backup skips quietly); **S72** an encrypted archive restored into a synced
+> or removable Local Folders (asked twice); **S73** a profile with no Local Folders (refused, nothing
+> changed); **S74** antivirus quarantines a restored file before the commit (caught by the check,
+> nothing shown). Ids R40, R41 and S66–S74 are free on main and `cloud-sync-note` (checked
+> 2026-11-06); provisional until R0.
+
 ## 12. Tests
 
 ### 12.1 Ids
@@ -665,6 +1378,11 @@ On main the catalog's last rows are MA-1082 (`docs/scenario-catalog.md:1450`) an
 MA-1118 (`:1431-1444`); MA-1083 is taken on branch `cloud-sync-note` (not merged). So this
 design takes **MA-1084..MA-1099**, then **MA-1119** on. Provisional until slice R0 writes them
 into the catalog (structural id allocation, which the owner lets the lead assume).
+
+> Folded 2026-11-06 [RT-24]: the fold adds **MA-1133..MA-1143** (free on main, `cloud-sync-note`,
+> `switch-keeps-runjob` and this branch, checked 2026-11-06). The review's statement stands that
+> MA-1084..1099 and MA-1119..1132 are free on main and nine branches. MA-1083 is on branch
+> `cloud-sync-note`. All provisional until R0.
 
 ### 12.2 Unit and integration rows (U/S, fake profile in a temp folder, real files)
 
@@ -690,6 +1408,57 @@ into the catalog (structural id allocation, which the owner lets the lead assume
 | MA-1131 | Desktop flow: the words of §7.5; each step's `showStep` focus; progress in Activity; Cancel removes the staging pair; the result and Save this record |
 | MA-1132 | elevated or root refused (W-ELEVATED) |
 
+> Folded 2026-11-06 [RT-24, and the conditions named]: changes to the rows above, then new rows.
+> - MA-1084 adds: an oversized `profiles.ini` refused for the restore (presync's cut unchanged), an
+>   absolute `[Install…] Default=`, bidi characters stripped from `Name=`, and the Linux ownership
+>   and mode checks [RT-14, RT-15].
+> - MA-1085 adds: `\n`, `\r`, `\t`, `\'`, surrogate pairs, an unknown escape refused (W-PREFS),
+>   `directory-rel` with `..`, `user.js` read after `prefs.js`, and a profile with no Local Folders
+>   refused with W-NOLOCAL with `prefs.js` and `user.js` byte-identical before and after
+>   [RT-15, lab finding 1].
+> - MA-1086 adds: `tmp` alone, and `Inbox` or `Trash` as directories [RT-20].
+> - MA-1089, labelled where it stands [RT-19]: it proves the writer against a port of Thunderbird's
+>   read rules (a model, taken from the source), not against Thunderbird; MA-1093 is the row that
+>   proves it against Thunderbird. "Byte for byte" there means the archive's preserved bytes.
+> - MA-1087 adds: the Linux `/proc` probe leg; the macOS raw count; checks run before the lock and
+>   only B after it [RT-2, RT-14].
+> - MA-1088 adds: every name case of §4.4's note (".Inbox"/"Inbox."/"Inbox", "CON"/"_CON",
+>   "."/".."/"untitled", COM0, LPT¹, CONIN$, "CON .txt", DEL, C1, U+200E, a leading `#`, a trailing
+>   `~`, each named Thunderbird file), the byte and UTF-16 budgets with 120 CJK characters and 120
+>   emoji, and a 10,001-folder archive refused with W-TOOMANY [RT-6, RT-7].
+> - MA-1119 adds: the marker inside the container, 0o600, its line.
+> - MA-1120 adds: `os.Root.Mkdir` and `O_EXCL` proven exclusive on Windows, including a case
+>   variant (the Windows leg runs on the VM, RT-21) [RT-1, lab C].
+> - MA-1122 is re-scoped to §5.4's folded sequence: fault injection (the ceFS seam) at every create,
+>   write, fsync and placement; each leaves no parent file, and the next attempt's action is the one
+>   §8's note gives for that state. MA-1123 is re-scoped to "crash after checked, before the parent
+>   file: the next attempt re-checks and finishes; a failed re-check removes" [RT-1, RT-4].
+> - MA-1124 adds: the deleted count on a local archive (none counted) and a Microsoft 365 archive;
+>   W-RECAPTURE first; W-FAT32 [RT-9, RT-10, RT-20].
+> - MA-1125 adds: the profile list rewritten between Plan and Start (refused) [RT-15].
+> - MA-1126 adds: the exact 247/248 and 259/260 boundaries with `.msf` and working names [RT-6].
+> - MA-1127 adds: the Unix lock is a POSIX record lock that a child process sees with `F_GETLK`, and
+>   on Linux stays held after the process opens and closes another descriptor of `.parentlock`; no
+>   `lock` symlink is made; each lock released on success, error, Cancel, Shut down and a recovered
+>   panic, proven by a child taking it afterwards [RT-2].
+> - MA-1128 adds: Start refused without `notEncryptedOK`; ask-twice for synced, removable and
+>   network Local Folders, refused without `confirmAgain`; progress and Activity lines carry no
+>   folder name; the Lock reply [RT-8, RT-18].
+> - MA-1129 adds: `-not-encrypted-ok`; the typed-path question; refused without a terminal when the
+>   destination may leave the computer [RT-8].
+> - MA-1130 adds: the restore plan's own key (a pending copy plan survives a restore plan), its kind
+>   discarded by a switch [RT-13].
+> - MA-1131 adds: W-WAIT shown for the whole run; W-UNFINISHED [lab finding 3, RT-5].
+>
+> | Id | Proves |
+> |---|---|
+> | MA-1138 | backups skip a marked container whose ID is in `restores.log` and its parent file, and every `.mailarchive-part-` file; the run log line; positive twin: a marker with an unknown ID is backed up like any folder; unreadable log → only marked containers without a parent file skipped; O1's finished-folder skip and its one-condition alternative [RT-5, O1] |
+> | MA-1139 | post-write check: a file truncated, removed, one byte changed, a message added or missing → W-CHECKFAIL, no parent file, tree removed; positive twin: an untouched tree passes and the parent file is made [RT-12] |
+> | MA-1140 | the MailArchive restore lock: held → presync's `detectRunning` reports in use and starts nothing; a second restore gets W-RESTORING; presync's existing rows unchanged [RT-2, RT-17] |
+> | MA-1141 | an unfinished restore shown at Desktop start and in `status` (W-UNFINISHED); `-plan` writes nothing [RT-5] |
+> | MA-1142 | `restores.log`: torn last line tolerated, full log W-LOGFULL, unparsable W-LOGBAD, fsync before the first create, the line sequence of §7.4's note [RT-16, RT-4] |
+> | MA-1143 | Windows legs: a `Packages\*Thunderbird*` folder gives W-STORE in the plan and the Done words; an identity-less volume gives W-NOIDENT; a remote drive gives W-NETWORK (run on the VM, RT-21) [RT-11] |
+
 ### 12.3 Lab rows (real Thunderbird; all pending until run)
 
 The lab: Windows on the Parallels VM "Windows 11" (ARM64, Thunderbird installed and seen at
@@ -712,6 +1481,41 @@ Windows first.
 | MA-1099 | Linux | MA-1093 on Linux, with the plain, Snap and Flatpak profile locations |
 | MA-1121 | Windows | a folder over 4 GiB on NTFS opens; Defender real-time scanning on during a 2 GiB restore (the retry of §8) |
 
+> Folded 2026-11-06 [RT-3, RT-21, RT-24, lab findings 1–3]: what the 2026-11-06 Windows spike
+> settled, what changes, and new rows.
+> - **Ran (hand-placed files, holder `powershell.exe`; not yet with `mailarchive.exe`):** MA-1090's
+>   lock behaviour (lab B), MA-1091's Windows half (lab A3, A4), and the discovery part of MA-1093
+>   (lab A1, A2, A5). Each row still runs in full with MailArchive's own output in slice R8.
+> - **MA-1093, method changed** (lab finding 2, lead's call): Thunderbird 153.6.0's Save As drops the
+>   first header line of every local-folder message, even one Thunderbird wrote itself, and rewrites
+>   line endings to CRLF, so **Save As is never the check**. The row checks instead: (1) the restored
+>   mbox's own bytes, re-parsed, against the archive's originals (the post-write check's comparison,
+>   run by hand); and (2) "Thunderbird read it faithfully" by having Thunderbird copy each message to
+>   another local folder (lab: a delete into Trash wrote exactly the message's bytes after its own
+>   separator line) and comparing the copy's bytes, after its separator, with the original. It also
+>   records the profile's growth after indexing (§6.3 note), and a placed message with the deleted
+>   bit (§4.6 note).
+> - **MA-1091** becomes: Windows (done for hand-placed entries), macOS and Linux, each with a
+>   Thunderbird 115 ESR and the current release; plus a dot-named file inside a `.sbd`, and what
+>   happens to the marker when the person renames or moves the restored folder in Thunderbird.
+> - **MA-1097** adds a redirected (network) AppData.
+> - **MA-1099** adds: a Flatpak Thunderbird's lock read correctly after that Thunderbird crashes (its
+>   pid is from another pid namespace — review side finding C).
+> - **Every lab row records the Thunderbird version it ran** [RT-21]. Re-check trigger, written into
+>   the catalog rows in R0: each new Thunderbird ESR, or any Thunderbird change to its mbox store,
+>   folder discovery or profile lock, re-runs MA-1090, MA-1091, MA-1093 and MA-1134 on Windows first.
+> - **Windows-only unit legs** (the `parent.lock` hold, the exclusive-create proofs in MA-1120, the
+>   Windows leg of MA-1087, MA-1143) are not gated by CI, whose test gate is Linux-only; slice R8
+>   runs them on the Windows VM and the release notes say so [RT-21].
+>
+> | Id | Platform | What is checked |
+> |---|---|---|
+> | MA-1133 | Windows first | the exact Thunderbird 153 menu path that makes Local Folders on a profile with no account, and whether setting up an IMAP account makes it; the path goes into W-NOLOCAL (lab finding 1) |
+> | MA-1134 | macOS, Linux | a Thunderbird started while the restore holds its POSIX lock on `.parentlock` does not open the profile, and says what; after release, and after the holder is killed, it opens normally (RT-2; not yet run) |
+> | MA-1135 | Windows, macOS, Linux | MailArchive killed mid-write (Task Manager; `kill -9`), then Thunderbird started: it opens normally and shows nothing of the restore; a non-crash failure while Desktop keeps running, then Thunderbird started: it opens normally (RT-24) |
+> | MA-1136 | Windows | Defender real-time scanning on and OneDrive syncing Local Folders during the file placements and the parent-file create: the retry, W-CHECKFAIL when a file is taken, and a clean result otherwise (RT-24) |
+> | MA-1137 | Windows first | a scheduled backup with pre-sync fires during a restore: pre-sync does not start Thunderbird on that profile, and the backup skips quietly (RT-24, S71) |
+
 ## 13. Build slices, and the gates each owes
 
 Each slice is small, test-first, with prove-fail → prove-pass recorded in its commit, and runs
@@ -729,6 +1533,55 @@ the unfiltered `go test ./...` before it is pushed.
 
 Build order is sound: nothing on a surface (R4, R5) before its engine (R1–R3).
 
+> Folded 2026-11-06 [RT-3, RT-21, RT-23, and the slices the folds add]. The slices above are
+> re-numbered to absorb the folds; this list replaces the table. Every slice, as before: small,
+> test-first, prove-fail → prove-pass recorded in its commit, the unfiltered `go test ./...` before
+> it is pushed. The RT-3 gate ran before R0 (lab note, 2026-11-06). Catalog ids stay provisional
+> until R0 writes them.
+> - **R0 — Catalog first.** R40 (folded wording), R41, S66–S74, and every row of §12 (MA-1084..1099,
+>   MA-1119..1143) as pending encoders, lab rows marked pending with their lab story. Gate: this
+>   fold re-verified (each HIGH and MED condition answered) and the owner's answers to §15 written
+>   in, before R0 starts.
+> - **R1 — Read side.** The shared "faithful bytes or skip reason" step (extract's output unchanged;
+>   MA-181..MA-185 green), restorable counting, the tree from any loaded manifest, the deleted count
+>   by the workspace's rule (RT-9), the restore's own folder caps (RT-7). Gate: none beyond the
+>   slice discipline (no new surface).
+> - **R2 — Shared `profiles.ini` parser, presync moved onto it, as its own commit** (RT-23): presync's
+>   existing rows unchanged and green before and after; presync does not use the new outputs. Gate:
+>   none beyond that, since presync's behaviour must not change (a changed presync row is a stop).
+> - **R3 — Thunderbird side.** The restore's use of the parser (names, default, refusal over the
+>   cap, list binding), prefs.js and user.js decoding, Local Folders (incl. none, W-NOLOCAL), store
+>   kind, version, Store-install and network detection, running detection (Linux probe, macOS raw
+>   count), Thunderbird's profile lock per platform (after reading `nsProfileLock.cpp`), the
+>   MailArchive restore lock and presync honouring it. Gate: **adversarial pass, shared with R4 and
+>   R5 — the profile/lock/writer pass** (it writes Thunderbird's lock files and changes shipped
+>   presync).
+> - **R4 — The writer.** `SafeName` and the budgets, the marker, exclusive `Mkdir`, working files and
+>   placement with retry, the fsync order, the post-write check, the parent file last, cleanup rules,
+>   `restores.log` on the delete log's writer, the crash states of §8's note. Gate: **the same
+>   profile/lock/writer adversarial pass.**
+> - **R5 — Backup side.** The folder-scan skip (marker + working files, skip set from `restores.log`,
+>   the unreadable-log fallback), O1's finished-folder skip as the owner rules, the backup run-log
+>   line, W-UNFINISHED at Desktop start and in `status`. Gate: **the same profile/lock/writer
+>   adversarial pass** (it changes what a backup reads); and the owner's O1 answer before the
+>   finished-folder part is merged.
+> - **R6 — Engine, encrypted path and command line.** `tbrestore.Plan`/`Run`, the encrypted adapter
+>   on the read lease (not `ExtractSealed`), the server-checked tick and ask-twice, counts-only
+>   progress, the `restore-thunderbird` verb and its flags, the archive-lock verb in `holderWords`,
+>   X1's line. Gate: **adversarial pass on the encrypted path and the command line.**
+> - **R7 — Desktop.** Routes (own plan key, list binding), token, panel, steps, progress, W-WAIT,
+>   Cancel, result, Save this record, help-page text. Gate: **friction review of the Desktop flow,
+>   Windows first** (Edge on the Windows VM, then macOS, then Linux), and the UX contract (X-series)
+>   walk.
+> - **R8 — Lab and release.** Windows rows first (MA-1090, MA-1091, MA-1092, MA-1093, MA-1095,
+>   MA-1097, MA-1121, MA-1133, MA-1135, MA-1136, MA-1137), with the Windows-only unit legs run on
+>   the VM (RT-21); then macOS (MA-1091, MA-1098, MA-1134, MA-1135); Linux (MA-1099, MA-1134,
+>   MA-1135); MA-1094, MA-1096. Each row records its Thunderbird version. Release notes say which
+>   rows ran where. Gate: **owner sign-off to release** (Q9's recommended answer: 1.6.0, after the
+>   Windows lab rows pass; a patch number instead changes only the release notes and the tag).
+> - Build order: no surface (R6, R7) before its engine (R1–R5); the backup skip (R5) ships in the
+>   same release as the writer, so no release can write a restore that its own backups would copy.
+
 ## 14. Decisions this design makes, for the review to test
 
 1. mboxrd, unchanged writer, framing line endings matching the message (§4.1–4.3).
@@ -740,6 +1593,20 @@ Build order is sound: nothing on a surface (R4, R5) before its engine (R1–R3).
 6. Hold the archive lock for the whole run, like extract (§7.1).
 7. Warn, do not prevent, the re-capture of restored mail (§7.2).
 8. Refuse when any Thunderbird runs, not only on this profile (§5.1).
+
+> Folded 2026-11-06 [RT-1, RT-2, RT-10, RT-5, RT-12], as the review tested them:
+> - Decision 3 stands on Windows (lab B) and changes on macOS and Linux: Thunderbird's POSIX record
+>   lock only, no symlink, checks before the take, plus a MailArchive restore lock (§5.2 note);
+>   lead's call 2026-11-06.
+> - Decision 4 is replaced: no staging pair and no rename; the final `.sbd` made exclusively first,
+>   hidden working files placed one by one, the empty parent file made exclusively last (§5.4
+>   note); lead's call 2026-11-06.
+> - Decision 7 is replaced: backups leave out MailArchive's own restore leftovers (lead's call), and
+>   with O1's recommended answer the finished restored folders too (§7.2 note).
+> - New decision 9: a full re-read check of every written mbox before the parent file is made (§5.4
+>   note, step 6); lead's call 2026-11-06.
+> - New decision 10: the default profile prefers one the archive does not back up, and W-RECAPTURE
+>   leads the plan (§3.1 step 4 note).
 
 ## 15. Owner questions (product choices only), each with the lead's recommendation
 
@@ -764,6 +1631,37 @@ Build order is sound: nothing on a surface (R4, R5) before its engine (R1–R3).
   understand the restored mail will not be encrypted".
 - **Q9 — Release.** Recommended: its own version, 1.6.0, after the Windows lab rows pass.
 
+> Folded 2026-11-06 [owner questions; review §5.1]. Still OPEN — not decided by this fold. The
+> owner has the lead's recommendations. For each, what is built if the owner agrees, and the small
+> change if not:
+> - **Q1 folder name**: built as recommended ("Restored — ARCHIVE NAME", then " (2)"). Alternative
+>   (a date in the name): one format string and the name budget (§3.5 note).
+> - **Q2 read state**: built as recommended (bytes as kept; the Mark Folder Read hint). Alternative
+>   (mark all read): NOT small — it adds a header to every message and breaks the post-write check's
+>   byte comparison; it would need its own design note (§4.6 note).
+> - **Q3 deleted after backup**: built as recommended (restored and counted, by the workspace's rule,
+>   §6.4 note). Alternative (leave it out): a filter on that same rule.
+> - **Q4 Gmail All Mail**: built as recommended (ticked, with the note). Alternative (unticked by
+>   default): one default in the tree's initial selection (§6.5 note).
+> - **Q5 maildir**: built as recommended (refused, W-MAILDIR). Alternative (a maildir writer): a new
+>   slice with its own adversarial pass and lab rows — not small, which is why refusing is
+>   recommended (§3.3 note).
+> - **Q6 Lock mid-restore**: built as recommended (the restore goes on; Shut down stops it; the Lock
+>   reply says so). Alternative (Lock stops it): the progress loop checks the lock state between
+>   messages and ends as Cancel does (§6.2 note).
+> - **Q7** is replaced by **O1 — backups skip restored folders**: built as the review's
+>   recommendation (b), backups leave out the finished restored folders too. Alternative (a), warn
+>   only: one condition in the skip, and W-RECAPTURE keeps its original words, first in the plan
+>   (§7.2 note). Either way, MailArchive's own unfinished leftovers are always skipped (lead's call,
+>   RT-5).
+> - **Q8 / O2 — encrypted archives**: built as recommended: allowed while unlocked, with the
+>   server-checked tick; when the Local Folders is synced, removable or on a network share, asked a
+>   second time, checked on the server (§6.2 note). Alternatives: refuse encrypted archives (one
+>   refusal in the plan), or refuse such destinations (W-LEAVES instead of ask-twice).
+> - **Q9 release**: built toward 1.6.0 after the Windows lab rows (R8). Alternative: a patch number;
+>   only the notes and tag change.
+> - **O3** (Store Thunderbird) does not arise: the lead chose warn, not refuse (§3.1 note).
+
 ## 16. Side findings (existing code, outside this design's scope)
 
 1. `extract -format mbox` writes LF framing lines around CRLF messages (`mbox.go:52`, `:79`), so
@@ -779,3 +1677,14 @@ Build order is sound: nothing on a surface (R4, R5) before its engine (R1–R3).
    `>From ` lines (go-mbox `reader.go:59-69`), so a "preserved original" from an mbox source is not
    the mbox's exact bytes. This design keeps what the archive kept; whether that matters for
    fidelity claims elsewhere is for the owner of those claims.
+
+> Folded 2026-11-06 [review §6]: the review adds four side findings, recorded here and not acted on
+> by this design: (A) go-mbox removes only one `>` and only from `>From `, so a Thunderbird 122+
+> mbox line `>From ` is archived as `>>From ` — every export carries it, restore included (extends
+> finding 4); (B) SanitizeSegment can merge names, so every caller relying on "two names never
+> merge" should be checked, backups' folder paths included (`localwalk.go:86-88`); (C) a Flatpak or
+> Snap Thunderbird's lock pid may be from another pid namespace (lab row MA-1099 checks it); (D)
+> `run.go:1860-1881` reads the `APPDATA` environment variable while presync uses the known-folder
+> lookup. Lab side observations, 2026-11-06: Thunderbird 153's Save As drops a message's first
+> header line (a Thunderbird behaviour, not MailArchive's); and Thunderbird 153 still discovers
+> folders by scanning files (no new folder database was seen).
