@@ -1760,8 +1760,9 @@ the copy (`pending.go:15-21`).
 >   tried or to choose it by its path (F14, `Refusal.Listed`).
 > - **[P2]** When MailArchive Desktop stops answering during a run, three missed asks in a row put
 >   "MailArchive Desktop is not answering — the restore may have stopped. Restart MailArchive
->   Desktop to see what happened." in place of the progress line and on the step's status line; the
->   page keeps asking and says the progress again if it answers.
+>   Desktop to see what happened." on the step's status line, and the progress line is marked
+>   "Last seen: …" (the Edge re-walk: the same words twice read as a stutter); the page keeps
+>   asking and says the progress again if it answers.
 > - **[P3]** Shut down's first press, while a restore into Thunderbird runs (asked of
 >   `api/activity`), says first "A restore into Thunderbird is running: shutting down stops it, and
 >   nothing is added to Thunderbird." A restore that ends while the keyboard is elsewhere on the

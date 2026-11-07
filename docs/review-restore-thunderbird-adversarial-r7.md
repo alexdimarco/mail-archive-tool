@@ -233,6 +233,18 @@ pass asks for on R7-01's patch has **not** been done by an independent finder (s
 | R7-02 | Keep the archive-lock decision held for the whole restore; test the bind case on Linux | On a read-only path the archive's lock is held through a read-only handle (`lockfile.HoldReadOnly`) from Start until `Run` returns; the read-only check and the record are re-checked under it; an archive with no lock file reads without one, and the plan says which | `tbengine/ma1127_r702_readonly_lock_test.go`: the seam everywhere; a real bind mount on Linux in Docker (`MA_RO_BIND`) — MA-1127 | the lock released right after it is taken: red (seam, macOS), red (real bind mount, Linux) | 0a6b346 |
 | R7-03 | For encrypted archives, ignore the folder's plaintext schedule and last-run files | `ArchiveSources(out, encrypted)`: for an encrypted archive only this computer's Desktop job files are read; the plan reads an encrypted archive's sources itself whatever its caller passed. The plain-archive suggestion (bind a descriptor to this archive and host) was not in the call and is not done | `tbengine/ma1124_r703_planted_sources_test.go` — MA-1124 | the files read for an encrypted archive: red; the plan trusting the caller's sources: red | 0c24ed4 |
 
+Runs of the settle (2026-11-07): macOS, the unfiltered `go test -count=1 -p 4 -timeout 60m ./...`
+— exit 0. Windows VM (`winrun-at.sh`), `internal/tbrestore` and `internal/tbengine` PASS;
+`internal/desktop` only the known baselines (`TestTheRecoveryFileIsReadBounded`,
+`TestAWedgedRunIsFinishedAsPartialAfterARestart`, `TestReconciliationIsOffTheRequestPath`). Linux
+in Docker (`golang:1.26`, the worktree mounted read-write): `tbrestore`, `tbengine`, `assureblock`
+ok; `desktop` with `/tmp` as a tmpfs (the container's own `/tmp` now reads as a FUSE mount to the
+folder-identity guard, at the starting commit too) fails only
+`TestScheduledBackupCardSaysNotInstalledOnlyForAnArchive` (the baseline),
+`TestTheCardNamesAFailedCopysFolder` and `TestARepliesSayWhatThePageCanStillDo` — the same three
+at the starting commit 9572721 in the same container (it runs as root, so a permission-based fault
+does not bite). The page-script scenarios need Node: they ran on macOS only.
+
 Still owed: an independent finder's look at the R7-01 patch (`create_windows.go`,
 `create_darwin.go`), as this pass asked; a macOS run with a second account; R7-02 on macOS and
 Windows (a read-only share another account writes). The macOS bind check after

@@ -186,7 +186,9 @@ function rtbFollow(job){
     if(r.running){if(w&&r.wait)w.textContent=r.wait;if(p)p.textContent=r.checking?(r.checkingLine||r.line):(r.line||'Starting…');rtbStatus('rtbRunStep',rtbRunWords);setTimeout(ask,1000);return;}
     rtbFollowing=false;rtbEnded(r.result||{words:r.error||'The restore ended.'});
   }).catch(()=>{
-    if(++missed>=3){const p=$('rtbProgress');if(p)p.textContent=rtbNotAnswering;rtbStatus('rtbRunStep',rtbNotAnswering);}
+    // The status line says it once; the progress line keeps what was last seen, marked as such
+    // (the Edge re-walk, 2026-11-07: the same words twice read as a stutter).
+    if(++missed>=3){const p=$('rtbProgress');if(p&&p.textContent&&p.textContent.indexOf('Last seen: ')!==0)p.textContent='Last seen: '+p.textContent;rtbStatus('rtbRunStep',rtbNotAnswering);}
     setTimeout(ask,3000);
   });
   ask();

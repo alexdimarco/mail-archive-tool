@@ -1464,7 +1464,7 @@ const scenarios = {
 
     const notAnswering = 'MailArchive Desktop is not answering — the restore may have stopped. Restart MailArchive Desktop to see what happened.';
     phase = 'down';
-    const said = await untilTrue(() => doc.getElementById('rtbProgress').textContent === notAnswering && statusOf('rtbRunStep') === notAnswering, 2000);
+    const said = await untilTrue(() => doc.getElementById('rtbProgress').textContent === 'Last seen: Restoring: 1 of 15,001 messages (Projects)' && statusOf('rtbRunStep') === notAnswering, 2000);
     check(said && !doc.getElementById('rtbRunStep').hidden, 'P2: when MailArchive Desktop stops answering, the run step says so instead of a frozen counter', doc.getElementById('rtbProgress').textContent);
     phase = 'run';
     const back2 = await untilTrue(() => doc.getElementById('rtbProgress').textContent === 'Restoring: 1 of 15,001 messages (Projects)' && statusOf('rtbRunStep') === rtbWords.run, 2000);

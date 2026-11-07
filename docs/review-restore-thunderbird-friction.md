@@ -155,7 +155,7 @@ here, P2 is P3, P3 is P4, P4 is P5 (made cheaper). The table uses the numbering 
 |---|---|---|---|
 | P1 / F1 (MED) | **Done.** Each listed profile's Local Folders and store kind are judged when the list is made (read-only, as the plan does); one that cannot take a restore is listed not offered, with its reason in the list's own words, and never pre-selected (`Default` chooses among the ready ones; Desktop sends no default otherwise). It keeps its binding, so the command line still gets W-NOLOCAL / W-MAILDIR at the plan | `tbrestore/profiles.go`, `refusal.go`; `desktop/restoretb.go` | `tbrestore/ma1084_friction_ready_test.go` (MA-1084); `desktop/ma1131_friction_settle_test.go` (MA-1131) |
 | P2 / F2 (MED) | **Done.** "Change profile" on the What step when there was a choice: back to the list, the chosen profile ticked, the keyboard on it | `dashboard.go` card, `restoretbscript.go` | page scenario `restoreFriction` (MA-1131) |
-| P3 / F3 (MED) | **Done.** Three missed asks: "MailArchive Desktop is not answering — the restore may have stopped. Restart MailArchive Desktop to see what happened." in place of the counter and on the status line; the progress comes back if it answers | `restoretbscript.go` | `restoreFriction` |
+| P3 / F3 (MED) | **Done.** Three missed asks: "MailArchive Desktop is not answering — the restore may have stopped. Restart MailArchive Desktop to see what happened." on the status line, the counter marked "Last seen: …"; the progress comes back if it answers | `restoretbscript.go` | `restoreFriction` |
 | P4 / F4 (MED) | **Done.** Shut down's first press names a running restore: "A restore into Thunderbird is running: shutting down stops it, and nothing is added to Thunderbird." (asked of `api/activity`, so a tab not following the run still says it); a restore that ends while the keyboard is elsewhere leaves it there | `dashboard.go` shut down script; `restoretbscript.go` | `restoreFriction` (with the no-restore twin) |
 | P5 / F7 (MED) | **Done as the lead's cheaper P4.** An archive whose every recorded store is an Outlook data file shows the button disabled with "This archive's mail came from Outlook data files, which keep no original messages, so none of it can go back into Thunderbird." From the archive list's own walk of the manifest's stores, no record read. A no-originals archive (W-NORAW) still learns it at Check: telling it needs the per-record reads the lead ruled out at page load | `archindex/index.go`, `recognise.go`; `dashboard.go` | `archindex/ma1131_outlookonly_test.go`; `ma1131_friction_settle_test.go` (a real backup of `testdata/support.pst`) |
 | F5, F6, F9, F12 | Fixed in the review's own commit (503eab1) | — | as listed above |
@@ -176,6 +176,26 @@ Prove-fail → prove-pass (each red, then green restored): the default ignoring 
 profiles route offering a not-ready profile; the Outlook-only verdict off; Change profile never
 shown; the not-answering threshold never reached; the subfolder sync a no-op; the tree's counts
 ungrouped; the end of a run always taking the keyboard; Shut down not asking whether a restore runs.
+
+### Edge re-walk of P1–P5 (Windows VM, 7 November 2026)
+
+The build of the settle commit, the same throwaway walk environment as above (walkhome, the walk-*
+profiles, the walk archives, its own Edge profile, the `rundll32` stand-in), driven through Edge's
+DevTools port by real mouse and key events. Screenshots in `.claude/restore-lab-r8/r8-0*.png` (not
+committed).
+
+| # | Seen | Result |
+|---|---|---|
+| R1 | Walk Plain, Restore to Thunderbird…: four profiles. walk-nolocal greyed with "This profile has no Local Folders yet, so mail cannot go back into it. …"; walk-junction with the new listed words; **walk-synced pre-selected** (ready, not backed up), not walk-nolocal; the card heading in view above the step (P8) | P1 holds |
+| R2 | Next, then Tab twice: the keyboard on **Change profile**; Enter: back on the list, walk-synced still ticked with the keyboard on it, "Choose the Thunderbird profile to restore into, then click Next." | P2 holds |
+| R3 | Switch to Walk Outlook: the button disabled, "This archive's mail came from Outlook data files, which keep no original messages, so none of it can go back into Thunderbird." beside it | P5 (lead's P4) holds |
+| R4 | Walk Big into walk-good, Restore, then Shut down pressed once mid-run: "A restore into Thunderbird is running: shutting down stops it, and nothing is added to Thunderbird. Click again to stop MailArchive Desktop. …" | P4 holds |
+| R5 | Left on Confirm shut down until the run ended: the result step shown with its status line, **the keyboard still on Confirm shut down** | P4 holds |
+| R6 | A second run, the walk Desktop killed 1.5 s in: looked at 15 s later, the status line said "MailArchive Desktop is not answering — the restore may have stopped. Restart MailArchive Desktop to see what happened." First build showed the same words on the progress line too; changed to "Last seen: …" on the progress line (page test updated), not re-walked after that change | P3 holds; one wording change after the walk |
+
+Not re-walked: macOS, Linux, reduced motion, the tree's subfolder ticks (P6) and grouped counts
+in Edge (page test only). The kill left a hidden partial container in walk-good's Local Folders,
+which the next restore removes (§8), as in the first walk.
 
 ## X-series walk
 
