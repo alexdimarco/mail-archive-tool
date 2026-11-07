@@ -632,9 +632,10 @@ func assessContents(r *Report, in Input, now time.Time) {
 // location, the last run, verify, the schedule and the program.
 func assessKeyless(r *Report, in Input, now time.Time) {
 	// The archive's own location. A cloud-sync folder re-uploads every change
-	// and can conflict with the sync (P3).
+	// and can conflict with the sync (P3). The person chose the folder, so it is
+	// said as information, not a warning (MA-1083, owner's ruling of 2026-11-05).
 	if in.OutUnderSync != "" {
-		r.warn("cloud_sync", fmt.Sprintf("the archive is inside %s's synced folder — a backup here re-uploads on every change and can corrupt during a sync; use a local, non-synced folder, or exclude it from sync / keep it always on this device", in.OutUnderSync))
+		r.note("cloud_sync", fmt.Sprintf("Location: the archive is in %s's synced folder, so %s uploads each backup's changes again. That is fine; a local, non-synced folder makes backups faster and avoids sync conflicts. If %s ever reports a conflict on the archive's files, run mailarchive verify on it.", in.OutUnderSync, in.OutUnderSync, in.OutUnderSync))
 	}
 
 	// The desktop's former address: never silent when another program holds it, or

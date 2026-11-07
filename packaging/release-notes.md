@@ -77,6 +77,9 @@ MailArchive is one program with verbs; there is no separate GUI download.
 | Linux arm64 | `mailarchive-linux-arm64` | the same verbs (compiled, not lab-run) |
 | Linux app menu (optional) | `mailarchive-linux-desktop-entry.tar.gz` | adds **MailArchive Desktop**, with its icon, to your app menu: unpack it and follow its `READ ME.txt` |
 
+### Changed in the next release
+- **An archive in a cloud-sync folder (OneDrive, Dropbox, Google Drive, iCloud Drive, Nextcloud and others) is no longer a warning.** You chose that folder, so **Status & health** and `mailarchive status` now show it as an information line: it still says the folder is synced and what a local, non-synced folder would change, but the archive's status stays green.
+
 ### Fixed in 1.5.9 — backups no longer fail on old mail with oddly named pictures
 - **Backups no longer fail on an old message whose inline picture has an unusual name.** Some older mail programs (for example a Korean one from around 2013) named a picture inside an email in their own character set. MailArchive stopped on such a message with "export-panic", so every backup of that mailbox said **Failed**, even though everything else was saved. Those messages are now archived with their pictures, and the backup finishes normally.
 

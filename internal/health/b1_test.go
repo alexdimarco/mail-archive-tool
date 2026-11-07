@@ -253,7 +253,9 @@ func TestScheduleTargetAndCloudSync(t *testing.T) {
 		t.Errorf("matching target wrongly warned:\n%s", r)
 	}
 
-	// Cloud-sync WARN names the service and the remedy, staying WARN.
+	// The cloud-sync line names the service and the alternative. Since MA-1083 (owner's
+	// ruling of 2026-11-05) it is information, not a WARN: the posture of this otherwise
+	// healthy archive stays OK.
 	in = healthyInput(now)
 	in.OutUnderSync = "OneDrive"
 	rep := Assess(in, now)
@@ -264,7 +266,7 @@ func TestScheduleTargetAndCloudSync(t *testing.T) {
 	if !strings.Contains(r, "non-synced folder") {
 		t.Errorf("cloud-sync WARN missing the remedy:\n%s", r)
 	}
-	if rep.Posture != "WARN" {
-		t.Errorf("cloud-sync should be WARN, got %s", rep.Posture)
+	if rep.Posture != "GREEN" {
+		t.Errorf("cloud-sync is information since MA-1083, so the posture should stay GREEN, got %s", rep.Posture)
 	}
 }
