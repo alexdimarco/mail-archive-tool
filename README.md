@@ -456,6 +456,14 @@ backups leave the restored folder out. A restore that did not finish leaves a
 folder Thunderbird does not show; MailArchive Desktop says so at the top of its
 page, and the next restore into that profile removes it.
 
+A folder name Thunderbird would not read back, or Windows does not allow (for
+example one holding `#` or `;`, or longer than 55 characters), is changed to a
+safe one; the plan says how many were changed. A profile with no Local Folders (a
+Thunderbird with no account yet) cannot be restored into: in Thunderbird, click
+**≡** → **Add Account** → **Newsgroup**, type any name, email address and server
+name (for example `news.example.invalid`) and click **Next** until **Finish**;
+you may delete that newsgroup account afterwards and Local Folders stays.
+
 At the command line: `mailarchive restore-thunderbird -out DIR` shows the same plan
 and asks before it restores; `-plan` only shows the plan, `-list-profiles` lists
 the profiles, `-folder PATH` (repeatable) restores some folders, and
