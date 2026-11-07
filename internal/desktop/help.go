@@ -5,6 +5,7 @@ import (
 	"strings"
 
 	"mail-archive-tool/internal/presync"
+	"mail-archive-tool/internal/tbrestore"
 )
 
 // The "How to use MailArchive" guide (MA-945; owner request of 2026-10-31, shipped in
@@ -76,6 +77,12 @@ type helpData struct {
 	// CLIWhere is where the command-line program is here ("" on Linux, where it is the one
 	// program). The 1.5.3 friction review's B16.
 	LogPath, CLIWhere string
+	// RestoreWait is W-WAIT as this platform says it (tbrestore.WaitWordsOn): the guide's Restore to
+	// Thunderbird part says what the restore's own panel says (slice R7).
+	RestoreWait string
+	// RestoreCard: the page draws the Restore to Thunderbird card (#sec-restore-tb: a current
+	// archive is chosen), so the guide links to it.
+	RestoreCard bool
 }
 
 // helpMissedOnWake is Missed where the scheduler catches up a time slept through.
@@ -85,7 +92,8 @@ const helpMissedOnWake = "A time when the computer is switched off is skipped. I
 func helpDataFor(goos string, open bool) helpData {
 	w := runNowWordsFor(goos)
 	d := helpData{Open: open, RunNowSyncs: runNowSyncs(goos), Hidden: w.hidden, Place: w.place, Wait: syncWaitWords, Hourly: presync.HourlySyncNote,
-		DoesNotReach: doesNotReachOn(goos)} // this platform's items only (B4, MA-1019)
+		DoesNotReach: doesNotReachOn(goos), // this platform's items only (B4, MA-1019)
+		RestoreWait:  tbrestore.WaitWordsOn(goos)}
 	switch goos {
 	case "windows":
 		// The causes §9 names for a file Windows will not let go of; §8 (a)'s remedies.
@@ -153,10 +161,10 @@ func helpDataFor(goos string, open bool) helpData {
 
 // helpCard is the guide's card, drawn for goos; open opens Getting started, and alerts says
 // the page has a Backup alerts card to link to.
-func helpCard(goos string, open, alerts bool) template.HTML {
+func helpCard(goos string, open, alerts, restoreCard bool) template.HTML {
 	var b strings.Builder
 	d := helpDataFor(goos, open)
-	d.Alerts = alerts
+	d.Alerts, d.RestoreCard = alerts, restoreCard
 	if err := helpTmpl.Execute(&b, d); err != nil {
 		return template.HTML(`<div class="card help" id="sec-help"><h2>How to use MailArchive</h2><p class="card-sub">The guide could not be shown.</p></div>`)
 	}
@@ -272,5 +280,20 @@ var helpTmpl = template.Must(template.New("help").Funcs(template.FuncMap{"upper"
           <li>For an encrypted archive, Remove from list keeps this computer's record of it and the key it remembers. To forget those too, click <b>Forget this encrypted archive here</b> on its row first, then <b>Remove from list</b>: once the row is gone, that button is gone with it.</li>
           <li>To use the archive again later, click <b>Open an archive folder…</b> and choose its folder.</li>
         </ul>
+      </details>
+      <details id="helpRestoreTB"><summary>Putting mail back into Thunderbird</summary>
+        <p><b>Restore to Thunderbird…</b>, on the {{if .RestoreCard}}<a href="#sec-restore-tb">Restore to Thunderbird</a>{{else}}<b>Restore to Thunderbird</b>{{end}} card (shown once an archive is chosen), puts this archive's mail back into Thunderbird: all of it, or the folders you choose. It goes into one new folder under <b>Local Folders</b>, named <b>Restored — </b> and the archive folder's name. It never changes anything already in Thunderbird, and it never starts or closes Thunderbird.</p>
+        <ol>
+          <li>Close Thunderbird.</li>
+          <li>Click <b>Restore to Thunderbird…</b>. If this computer has more than one Thunderbird profile, choose the one to restore into, then click <b>Next</b>. MailArchive picks one this archive does not back up when it can.</li>
+          <li>Choose <b>The whole archive</b>, or <b>Choose folders</b> and tick the folders you want. A folder brings its subfolders, and the number beside each is how many of its messages can go back. Click <b>Check</b>: MailArchive shows what the restore will do, and writes nothing yet.</li>
+          <li>Click <b>Restore</b>. {{.RestoreWait}} <b>Cancel the restore</b> stops it and removes what it wrote, so nothing is added to Thunderbird.</li>
+          <li>The result says how many messages went back. Click <b>Save this record</b> to keep the plan and the result as a text file. Then open Thunderbird: the first time, the new folder may take a minute to show every message.</li>
+        </ol>
+        <p><b>What can go back:</b> only messages whose original the archive kept. An archive made from Outlook data files (.pst) keeps none, and an archive made without keeping originals has nothing to put back. The plan says how many messages cannot go back, and why.</p>
+        <p><b>An encrypted archive</b> is restored only while it is unlocked here. The restored mail in Thunderbird is not encrypted, so tick <b>I understand the restored mail will not be encrypted</b> before you click Restore. If Thunderbird's Local Folders may leave this computer (a folder a sync service uploads, a removable drive or a network share), MailArchive asks a second time. Locking the archive once the restore has started does not stop it; Shut down does, and then nothing is added to Thunderbird.</p>
+        <p><b>Backups of the same profile:</b> when this archive backs up the Thunderbird profile you restore into, its backups leave the restored folder out, so the restored mail is not copied into the archive again. Mail you later move into that folder stays out of those backups while it is there.</p>
+        <p><b>A restore that did not finish</b> (for example because the computer was switched off) leaves a folder that Thunderbird does not show. The top of this page says so, and MailArchive removes it at the start of your next restore into that profile.</p>
+        <p><b>At the command line:</b> <span class="mono">mailarchive restore-thunderbird -out FOLDER</span> does the same; add <span class="mono">-plan</span> to see the plan only, and <span class="mono">-list-profiles</span> to list this computer's Thunderbird profiles.</p>
       </details>
     </div>`))

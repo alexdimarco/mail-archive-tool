@@ -69,7 +69,12 @@ class El {
   after(...ns) { const p = this.parent; let i = p.children.indexOf(this) + 1; ns.forEach(n => { this.detach(n); n.parent = p; p.children.splice(i++, 0, n); }); }
   before(...ns) { const p = this.parent; let i = p.children.indexOf(this); ns.forEach(n => { this.detach(n); n.parent = p; p.children.splice(i++, 0, n); }); }
   addEventListener(ev, f) { (this.listeners[ev] = this.listeners[ev] || []).push(f); }
-  click() { if (this.disabled) return; (this.listeners.click || []).forEach(f => f({ preventDefault() {} })); if (this.onclick) this.onclick(); }
+  click() {
+    if (this.disabled) return;
+    // A link with a download name clicked is a file the browser saves (MA-1131's Save this record).
+    if (this.tagName === 'A' && 'download' in this.attrs) downloads.push(this.attrs.download);
+    (this.listeners.click || []).forEach(f => f({ preventDefault() {} })); if (this.onclick) this.onclick();
+  }
   fire(ev) { (this.listeners[ev] || []).forEach(f => f({})); }
   // press is a key pressed while this element has the keyboard (keydown), as a browser sends it.
   press(key) { let stopped = false; (this.listeners.keydown || []).forEach(f => f({ key, isComposing: false, preventDefault() { stopped = true; } })); return stopped; }
@@ -205,8 +210,47 @@ function encLocked(kind) {
 // statusOf is the step's own status line's words ('' when it is hidden).
 const statusOf = id => { const s = doc.getElementById(id).querySelector('[data-step-status]'); return s && !s.hidden ? s.textContent : ''; };
 
+// restoreCard draws the Restore to Thunderbird card as dashboard.go draws it (MA-1131;
+// ma1131_restore_flow_test.go pins the served markup's step ids and status lines): its button, and
+// the panel's five steps, each opening with its own status line.
+function restoreCard() {
+  const st = () => el('p', { class: 'card-sub', role: 'status', 'data-step-status': '', hidden: '' });
+  const radio = (id, value, on) => { const r = el('input', { type: 'radio', name: 'rtbWhat', id, value }); r.checked = on; return r; };
+  doc.body.append(el('div', { class: 'card', id: 'sec-restore-tb' }, el('h2', {}, 'Restore to Thunderbird'),
+    el('button', { class: 'btn secondary', id: 'rtbBtn', type: 'button' }, 'Restore to Thunderbird…'),
+    el('div', { id: 'rtbPanel', hidden: '' },
+      el('div', { id: 'rtbProfileStep', hidden: '' }, st(), el('div', { id: 'rtbProfiles' })),
+      el('div', { id: 'rtbWhatStep', hidden: '' }, st(), radio('rtbWhole', 'whole', true), radio('rtbChoose', 'choose', false), el('div', { id: 'rtbTree', hidden: '' }),
+        el('button', { class: 'btn', id: 'rtbCheck', type: 'button' }, 'Check'), el('button', { class: 'btn secondary', id: 'rtbClose', type: 'button' }, 'Cancel')),
+      el('div', { id: 'rtbPlanStep', hidden: '' }, st(), el('ul', { id: 'rtbPlan' }), el('div', { id: 'rtbTickBox', hidden: '' }, el('input', { type: 'checkbox', id: 'rtbTick' })),
+        el('div', { id: 'rtbAgainBox', hidden: '' }, el('p', { id: 'rtbAgainWhy' }), el('input', { type: 'checkbox', id: 'rtbAgain' })),
+        el('button', { class: 'btn', id: 'rtbGo', type: 'button' }, 'Restore'), el('button', { class: 'btn secondary', id: 'rtbPlanCancel', type: 'button' }, 'Cancel')),
+      el('div', { id: 'rtbRunStep', hidden: '' }, st(), el('p', { id: 'rtbProgress' }), el('p', { id: 'rtbWait' }),
+        el('button', { class: 'btn secondary', id: 'rtbStop', type: 'button' }, 'Cancel the restore')),
+      el('div', { id: 'rtbResultStep', hidden: '' }, st(), el('p', { id: 'rtbResult' }),
+        el('button', { class: 'btn secondary', id: 'rtbSave', type: 'button', hidden: '' }, 'Save this record'), el('span', { id: 'rtbRecordNote', hidden: '' }),
+        el('button', { class: 'btn secondary', id: 'rtbDone', type: 'button' }, 'Close'))),
+    el('div', { class: 'note', id: 'rtbNote', role: 'status', hidden: '' })));
+}
+// The words each restore step says when it is brought into view (MA-1131; the builder's, under the
+// owner-delegated rule), W-WAIT as macOS and Linux say it, and the check's line (R6-10).
+const rtbWords = {
+  profile: 'This computer has more than one Thunderbird profile. Choose the one to restore into, then click Next.',
+  what: 'Next, choose what to restore: the whole archive, or the folders you tick. Then click Check: nothing is written until you click Restore.',
+  tree: 'Tick the folders to restore; a folder brings its subfolders. The number beside each is how many of its messages can go back. Then click Check.',
+  plan: 'This is what the restore will do; nothing is written yet. Click Restore to go ahead, or Cancel.',
+  planEnc: 'This is what the restore will do; nothing is written yet. The restored mail will not be encrypted: tick the box below if you understand, and the second one, then click Restore.',
+  run: 'The restore is running. Leave Thunderbird closed until it finishes. Cancel the restore stops it, and nothing is added to Thunderbird.',
+  done: 'The restore has finished. What happened is said below. Save this record keeps a copy as a text file.',
+  stopped: 'The restore was stopped. What happened is said below. Save this record keeps a copy as a text file.',
+  wait: 'While this runs, leave Thunderbird closed. If Thunderbird says it is already open or running, close that message and wait for the restore to finish.',
+  checking: 'Checking what was written: every message is read back before Thunderbird can show the folder…',
+};
+const untilTrue = async (f, ms) => { for (let i = 0; i < (ms || 600) / 5 && !f(); i++) await wait(5); return f(); };
+const reset = () => { doc.body.children.slice().forEach(c => c.remove()); doc.activeElement = null; Object.keys(replies).forEach(k => delete replies[k]); };
+
 // ---- the browser around it -------------------------------------------------------------
-const posts = [], gets = [], scrolled = [], scrolledTop = [], scrollOpts = [];
+const posts = [], gets = [], scrolled = [], scrolledTop = [], scrollOpts = [], blobs = [], downloads = [];
 let reloads = 0, reduceMotion = false, storageOff = false;
 const loadListeners = [];
 const replies = {}, delays = {};
@@ -225,7 +269,7 @@ function boot() {
   ctx = {
     document: doc, fetch: fetchStub, atob: s => Buffer.from(s, 'base64').toString('latin1'),
     Uint8Array, Blob, JSON, Array, Promise, Object, String, Number, Error, Proxy,
-    URL: { createObjectURL: () => 'blob:1', revokeObjectURL() {} },
+    URL: { createObjectURL: b => { blobs.push(b); return 'blob:1'; }, revokeObjectURL() {} },
     location: { reload() { reloads++; }, hash: '' },
     // storageOff: a browser that keeps nothing for the tab (a private window, blocked site data):
     // every call throws, as such a browser's does.
@@ -1205,6 +1249,155 @@ const scenarios = {
     replies['api/uninstall'] = planReply({});
     open.click(); await wait(40);
     check(!go.disabled && note.hidden, 'a plan with nothing waiting gives Remove back');
+  },
+  // Restore to Thunderbird on a plain archive (MA-1131; design-restore-thunderbird §7.3): each step
+  // brought into view with showStep, the keyboard on its first control, its status line saying what
+  // is needed: the profiles (the pre-selected one ticked, one that cannot be used shown with why and
+  // not offered); what to restore, and the tree asked for by the list ID and position, never a path;
+  // a refusal said in place; the plan's lines in the engine's order; the run with W-WAIT for the
+  // whole of it, its progress and "Checking what was written…"; the result in the engine's words
+  // and Save this record. Positive twin first: a page with no restore running opens nothing.
+  async restoreFlow() {
+    page([['E:\\Cur', 'current']], 'E:\\Cur'); restoreCard();
+    replies['api/activity'] = { running: false, job: '0' };
+    boot(); await wait(30);
+    check(scrolled.length === 0 && doc.getElementById('rtbPanel').hidden, 'a page with no restore running opens nothing');
+    replies['api/restore-tb/profiles'] = { ok: true, listID: 'L1', default: 1, profiles: [
+      { position: 0, name: 'work', dir: 'C:\\TB\\work', usable: true, unusable: '', opensByDefault: true, backedUp: true },
+      { position: 1, name: 'home', dir: 'C:\\TB\\home', usable: true, unusable: '', opensByDefault: false, backedUp: false },
+      { position: 2, name: 'odd', dir: 'C:\\TB\\odd', usable: false, unusable: 'This profile cannot be used.', opensByDefault: false, backedUp: false }] };
+    doc.getElementById('rtbBtn').click(); await wait(40);
+    const ps = doc.getElementById('rtbProfileStep'), p1 = doc.getElementById('rtbProfile1');
+    check(!ps.hidden && lastScroll().el === ps && doc.activeElement === p1 && p1.checked && doc.getElementById('rtbProfile2').disabled && statusOf('rtbProfileStep') === rtbWords.profile,
+      'step 1: the profiles, the pre-selected one ticked with the keyboard on it, one that cannot be used not offered', JSON.stringify({ a: doc.activeElement && doc.activeElement.id, s: statusOf('rtbProfileStep') }));
+    check(ps.textContent.includes('This profile cannot be used.') && ps.textContent.includes('work — C:\\TB\\work (Thunderbird opens it by default) (this archive backs it up)'),
+      'why one cannot be used, and which one the archive backs up, are said', ps.textContent);
+    doc.getElementById('rtbNext').click(); await wait(10);
+    const ws = doc.getElementById('rtbWhatStep');
+    check(!ws.hidden && ps.hidden && lastScroll().el === ws && doc.activeElement === doc.getElementById('rtbWhole') && statusOf('rtbWhatStep') === rtbWords.what,
+      'step 2: what to restore, the keyboard on The whole archive', statusOf('rtbWhatStep'));
+    replies['api/restore-tb/folders'] = { ok: true, total: 4, folders: [{ id: 'm', parent: '', name: 'Mail', store: true, count: 0, total: 4 },
+      { id: 'm/Z', parent: 'm', name: 'Zebrafolder', store: false, count: 2, total: 3 }, { id: 'm/Z/Q', parent: 'm/Z', name: 'Quokkasub', store: false, count: 1, total: 1 },
+      { id: 'm/S', parent: 'm', name: 'Sentbox', store: false, count: 1, total: 1 }] };
+    const ch = doc.getElementById('rtbChoose'); ch.checked = true; ch.fire('change'); await wait(40);
+    const boxes = doc.querySelectorAll('[data-rtb-folder]'), fp = posts.filter(p => p.path === 'api/restore-tb/folders');
+    check(boxes.length === 4 && doc.activeElement === boxes[0] && fp.length === 1 && fp[0].body.listID === 'L1' && fp[0].body.position === 1 &&
+      doc.getElementById('rtbTree').textContent.includes('Zebrafolder (3)') && statusOf('rtbWhatStep') === rtbWords.tree,
+      "choose folders: the tree with each folder's count, asked by the list ID and position, the keyboard on its first box", JSON.stringify(fp.map(p => p.body)));
+    boxes[1].checked = true;
+    const refusal = 'Thunderbird is open, so nothing was restored. Close Thunderbird (on Windows: File → Exit; on a Mac: Thunderbird → Quit Thunderbird), then click Check again.';
+    replies['api/restore-tb/plan'] = { ok: false, error: refusal };
+    const ck = doc.getElementById('rtbCheck'); ck.click(); await wait(40);
+    check(doc.activeElement === ck && statusOf('rtbWhatStep') === refusal && doc.getElementById('rtbPlanStep').hidden, 'a refusal is said in place, the keyboard on Check');
+    replies['api/restore-tb/plan'] = { ok: true, token: 'T1', encrypted: false, askTwice: false, lines: [
+      { code: 'W-RECAPTURE', words: 'This archive backs up this Thunderbird profile.' }, { code: 'DEST', words: "Restore into the Thunderbird profile 'home'." }, { code: 'W-WAIT', words: rtbWords.wait }] };
+    ck.click(); await wait(40);
+    const pp = posts.filter(p => p.path === 'api/restore-tb/plan').pop(), lis = doc.getElementById('rtbPlan').querySelectorAll('li');
+    check(pp.body.whole === false && pp.body.folders.join() === 'm/Z' && pp.body.position === 1 && lis.length === 3 && lis[0].getAttribute('data-code') === 'W-RECAPTURE' && lis[2].textContent === rtbWords.wait &&
+      lastScroll().el === doc.getElementById('rtbPlanStep') && doc.activeElement === doc.getElementById('rtbGo') && doc.getElementById('rtbTickBox').hidden && statusOf('rtbPlanStep') === rtbWords.plan,
+      'step 3: the plan, every line in its order (W-RECAPTURE first, W-WAIT last), the keyboard on Restore, no tick for a plain archive', JSON.stringify(pp.body));
+    let n = 0;
+    const record = 'MailArchive — Restore to Thunderbird record\nThe plan:\n…';
+    replies['api/restore-tb/start'] = { ok: true, job: '9', wait: rtbWords.wait, encrypted: false };
+    replies['api/activity'] = () => {
+      n++;
+      if (n < 4) return { running: true, job: '9', restore: { running: true, wait: rtbWords.wait, line: 'Restoring: 1 of 3 messages (Zebrafolder)', checking: false } };
+      if (n < 8) return { running: true, job: '9', restore: { running: true, wait: rtbWords.wait, line: 'Restoring: 3 of 3 messages (Zebrafolder)', checking: true, checkingLine: rtbWords.checking } };
+      return { running: false, job: '9', restore: { running: false, result: { words: "Restored 3 messages into Thunderbird as the folder 'Restored — Work mail' under Local Folders.", done: true, stopped: false, record, recordName: 'MailArchive restore record - Work mail - 2026-11-07.txt' } } };
+    };
+    doc.getElementById('rtbGo').click(); await wait(10);
+    const rs = doc.getElementById('rtbRunStep'), sp = posts.filter(p => p.path === 'api/restore-tb/start').pop();
+    check(!rs.hidden && sp.body.token === 'T1' && sp.body.notEncryptedOK === false && sp.body.confirmAgain === false && doc.getElementById('rtbWait').textContent === rtbWords.wait &&
+      doc.activeElement === doc.getElementById('rtbStop') && statusOf('rtbRunStep') === rtbWords.run, 'step 4: running, W-WAIT shown, the keyboard on Cancel the restore', JSON.stringify(sp.body));
+    const progressed = await untilTrue(() => doc.getElementById('rtbProgress').textContent === 'Restoring: 1 of 3 messages (Zebrafolder)');
+    const checking = await untilTrue(() => doc.getElementById('rtbProgress').textContent === rtbWords.checking);
+    const waitWhole = doc.getElementById('rtbWait').textContent === rtbWords.wait && !rs.hidden;
+    const ended = await untilTrue(() => !doc.getElementById('rtbResultStep').hidden, 2000);
+    check(progressed && checking && waitWhole && ended, 'the progress follows the task, then the check, W-WAIT shown for the whole run', JSON.stringify({ progressed, checking, waitWhole, ended }));
+    const sv = doc.getElementById('rtbSave');
+    check(doc.getElementById('rtbResult').textContent.startsWith('Restored 3 messages') && !sv.hidden && doc.activeElement === sv && doc.getElementById('rtbRecordNote').hidden &&
+      statusOf('rtbResultStep') === rtbWords.done && !doc.getElementById('rtbBtn').disabled, "step 5: the result in the engine's words, the keyboard on Save this record", statusOf('rtbResultStep'));
+    const b0 = blobs.length, d0 = downloads.length;
+    sv.click(); await wait(5);
+    check(blobs.length === b0 + 1 && blobs[b0].size === Buffer.byteLength(record) && downloads[d0] === 'MailArchive restore record - Work mail - 2026-11-07.txt',
+      'Save this record saves the record, as text, under its name', JSON.stringify(downloads));
+  },
+  // Restore to Thunderbird on an encrypted archive (MA-1131, MA-1128; §6.2): one profile, so its step
+  // is skipped; the plan with the "will not be encrypted" tick and, when it asks twice, the second
+  // question with its reasons; a Restore the server refuses for a missing tick or second yes brings
+  // the keyboard back to that box, saying why, nothing started; with both, the run's progress is the
+  // counts the server sends; Save this record says beside it that the record names the folders.
+  async restoreEncrypted() {
+    page([['E:\\Enc', 'current']], 'E:\\Enc'); restoreCard();
+    replies['api/activity'] = { running: false, job: '0' };
+    boot(); await wait(30);
+    replies['api/restore-tb/profiles'] = { ok: true, listID: 'L2', default: 0, profiles: [{ position: 0, name: 'default', dir: 'C:\\TB\\d', usable: true, unusable: '', opensByDefault: true, backedUp: false }] };
+    doc.getElementById('rtbBtn').click(); await wait(40);
+    check(doc.getElementById('rtbProfileStep').hidden && !doc.getElementById('rtbWhatStep').hidden && doc.activeElement === doc.getElementById('rtbWhole'), 'one profile: its step is skipped');
+    const again = 'Asked a second time: C:\\Users\\a\\Dropbox\\TB is synced to Dropbox: the restored mail will be uploaded there.';
+    replies['api/restore-tb/plan'] = { ok: true, token: 'T2', encrypted: true, askTwice: true, againLine: again, tickLine: 'I understand the restored mail will not be encrypted',
+      lines: [{ code: 'DEST', words: 'Restore into…' }, { code: 'NOT-ENCRYPTED', words: 'The restored mail in Thunderbird is NOT encrypted.' }, { code: 'W-WAIT', words: rtbWords.wait }] };
+    doc.getElementById('rtbCheck').click(); await wait(40);
+    const tk = doc.getElementById('rtbTick'), ag = doc.getElementById('rtbAgain');
+    check(!doc.getElementById('rtbTickBox').hidden && !doc.getElementById('rtbAgainBox').hidden && doc.getElementById('rtbAgainWhy').textContent === again && doc.activeElement === tk && statusOf('rtbPlanStep') === rtbWords.planEnc,
+      'the plan asks for the tick, and a second yes with its reasons, the keyboard on the tick', statusOf('rtbPlanStep'));
+    const tickWords = 'The restored mail will not be encrypted, and the box saying you understand was not ticked, so nothing was restored. Tick it and click Restore again.';
+    replies['api/restore-tb/start'] = b => (!b.notEncryptedOK ? { ok: false, need: 'tick', error: tickWords } : (!b.confirmAgain ? { ok: false, need: 'again', error: 'That was not confirmed a second time, so nothing was restored.' } : { ok: true, job: '5', wait: rtbWords.wait, encrypted: true }));
+    const go = doc.getElementById('rtbGo');
+    go.click(); await wait(30);
+    const s1 = posts.filter(p => p.path === 'api/restore-tb/start').pop();
+    check(s1.body.notEncryptedOK === false && doc.activeElement === tk && statusOf('rtbPlanStep') === tickWords && doc.getElementById('rtbRunStep').hidden, 'Restore without the tick: the server refuses, said at the tick, nothing started');
+    tk.checked = true; go.click(); await wait(30);
+    check(doc.activeElement === ag && statusOf('rtbPlanStep') === 'That was not confirmed a second time, so nothing was restored.' && doc.getElementById('rtbRunStep').hidden, 'without the second yes: said at that box, nothing started');
+    let n = 0;
+    replies['api/activity'] = () => (++n < 4 ? { running: true, job: '5', restore: { running: true, encrypted: true, wait: rtbWords.wait, line: 'Restoring: 1 of 2 messages' } }
+      : { running: false, job: '5', restore: { running: false, result: { words: 'Restored 2 messages into Thunderbird.', done: true, stopped: false, record: 'r', recordName: 'rec.txt', recordNote: 'The record names the restored folders and is not encrypted: it is saved only where you choose.' } } });
+    ag.checked = true; go.click(); await wait(10);
+    const s3 = posts.filter(p => p.path === 'api/restore-tb/start').pop();
+    const counts = await untilTrue(() => doc.getElementById('rtbProgress').textContent === 'Restoring: 1 of 2 messages');
+    check(s3.body.notEncryptedOK === true && s3.body.confirmAgain === true && counts, 'with both, it runs; its progress is the counts the server sends', JSON.stringify(s3.body));
+    await untilTrue(() => !doc.getElementById('rtbResultStep').hidden, 2000);
+    const note = doc.getElementById('rtbRecordNote');
+    check(!note.hidden && note.textContent === 'The record names the restored folders and is not encrypted: it is saved only where you choose.' && !doc.getElementById('rtbSave').hidden,
+      'Save this record says beside it that the record names the restored folders');
+  },
+  // Cancel, Close, a spent plan, a refusal before the steps, and a page drawn while a restore runs
+  // (MA-1131): a page drawn while one runs follows it in its panel; Cancel the restore asks the job
+  // slot to stop and stays disabled, and the stopped result is said; Close shuts the panel with the
+  // keyboard back on Restore to Thunderbird…; a plan the server no longer holds goes back to Check;
+  // a refusal before any step (no profile) is said beside the button, no panel opened.
+  async restoreCancel() {
+    page([['E:\\Cur', 'current']], 'E:\\Cur'); restoreCard();
+    // The page's own activity poll asks too, so the run ends when the test says, not by a count.
+    let over = false;
+    replies['api/activity'] = () => (!over ? { running: true, job: '4', restore: { running: true, wait: rtbWords.wait, line: 'Restoring: 2 of 9 messages (Inbox)' } }
+      : { running: false, job: '4', restore: { running: false, result: { words: 'The restore was stopped, so nothing was added to Thunderbird. The part already written was removed.', done: false, stopped: true, record: 'r', recordName: 'rec.txt' } } });
+    boot(); await wait(5);
+    const rs = doc.getElementById('rtbRunStep');
+    const followed = await untilTrue(() => !rs.hidden && doc.getElementById('rtbProgress').textContent === 'Restoring: 2 of 9 messages (Inbox)' && doc.getElementById('rtbWait').textContent === rtbWords.wait);
+    check(followed && doc.getElementById('rtbBtn').disabled, 'a page drawn while a restore runs follows it in its panel');
+    const stop = doc.getElementById('rtbStop');
+    replies['api/job/cancel'] = { ok: true };
+    stop.click(); await wait(10);
+    check(posts.some(p => p.path === 'api/job/cancel') && stop.disabled, 'Cancel the restore asks the job slot to stop, and stays disabled');
+    over = true;
+    const stopped = await untilTrue(() => !doc.getElementById('rtbResultStep').hidden, 2000);
+    check(stopped && doc.getElementById('rtbResult').textContent.startsWith('The restore was stopped') && statusOf('rtbResultStep') === rtbWords.stopped, 'the stopped result is said', statusOf('rtbResultStep'));
+    doc.getElementById('rtbDone').click(); await wait(5);
+    const btn = doc.getElementById('rtbBtn');
+    check(doc.getElementById('rtbPanel').hidden && doc.activeElement === btn && !btn.disabled, 'Close shuts the panel, the keyboard back on Restore to Thunderbird…');
+    replies['api/activity'] = { running: false, job: '4' };
+    replies['api/restore-tb/profiles'] = { ok: true, listID: 'L3', default: 0, profiles: [{ position: 0, name: 'default', dir: 'C:\\TB\\d', usable: true, unusable: '', opensByDefault: true, backedUp: false }] };
+    replies['api/restore-tb/plan'] = { ok: true, token: 'T3', encrypted: false, askTwice: false, lines: [{ code: 'W-WAIT', words: rtbWords.wait }] };
+    replies['api/restore-tb/start'] = { ok: false, planUsed: true, error: 'That restore is no longer planned, so nothing was restored. Click Check again.' };
+    btn.click(); await wait(40); doc.getElementById('rtbCheck').click(); await wait(40); doc.getElementById('rtbGo').click(); await wait(40);
+    check(!doc.getElementById('rtbWhatStep').hidden && doc.getElementById('rtbPlanStep').hidden && doc.activeElement === doc.getElementById('rtbCheck') &&
+      statusOf('rtbWhatStep') === 'That restore is no longer planned, so nothing was restored. Click Check again.', 'a plan the server no longer holds goes back to Check');
+    doc.getElementById('rtbClose').click(); await wait(5);
+    const nop = 'No Thunderbird profile was found on this computer, so there is nowhere to restore to. Open Thunderbird once to make one, close it, then click Restore to Thunderbird again.';
+    replies['api/restore-tb/profiles'] = { ok: false, error: nop };
+    btn.click(); await wait(40);
+    check(doc.getElementById('rtbPanel').hidden && doc.getElementById('rtbNote').textContent === nop && !doc.getElementById('rtbNote').hidden && !btn.disabled, 'a refusal before any step is said beside the button, no panel opened');
   },
 };
 

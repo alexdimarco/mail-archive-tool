@@ -177,7 +177,15 @@ var optionalJSIDs = map[string]bool{"clearSignin": true, "editM365": true, "canc
 	// the Encryption card (ShowEncryption) with its Unlock box (locked) or recovery key box (key files
 	// missing), which the page drawn after Open an archive folder… brings into view (MA-1070); the
 	// lookups are null-checked (if(card&&(s||k)))
-	"sec-encryption": true, "encSecret": true, "encRestoreKey": true}
+	"sec-encryption": true, "encSecret": true, "encRestoreKey": true,
+	// the Restore to Thunderbird card (design-restore-thunderbird §7.3, slice R7) is drawn only with a
+	// current archive (OutDir); every lookup of its ids is null-checked, and
+	// TestTheRestoreCardIsServedWithItsSteps (MA-1131) requires each of them on an archive's page
+	"rtbAgain": true, "rtbAgainBox": true, "rtbAgainWhy": true, "rtbBtn": true, "rtbCheck": true, "rtbChoose": true,
+	"rtbDone": true, "rtbGo": true, "rtbNote": true, "rtbPanel": true, "rtbPlan": true, "rtbPlanStep": true,
+	"rtbProfiles": true, "rtbProfileStep": true, "rtbProgress": true, "rtbRecordNote": true, "rtbResult": true,
+	"rtbResultStep": true, "rtbRunStep": true, "rtbSave": true, "rtbStop": true, "rtbTick": true, "rtbTickBox": true,
+	"rtbTree": true, "rtbWait": true, "rtbWhatStep": true, "rtbWhole": true}
 
 // jsBoundIDs lists every $('id') lookup in dashboard.js.
 func jsBoundIDs() []string {

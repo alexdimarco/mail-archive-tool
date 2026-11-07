@@ -94,14 +94,8 @@ const maxDamagedNames = 10
 // A refusal before anything is written is the error (a *tbrestore.Refusal); once the
 // write has begun the result says how it ended.
 func Run(ctx context.Context, p *Plan, s Start) (*Result, error) {
-	if p.Encrypted && !s.NotEncryptedOK {
-		return nil, refusal("W-TICK", wTick, nil)
-	}
-	if p.AskTwice() && !s.ConfirmAgain {
-		if len(p.Readers) == 0 {
-			return nil, refusal("W-NOTAGAIN", fill(wNotAgain, "REASONS", strings.Join(p.Leaves, "; ")), nil)
-		}
-		return nil, refusal("W-NOTAGAIN", fill(wNotAgainReaders, "REASONS", strings.Join(p.AskReasons(), "; ")), nil)
+	if err := p.Confirmed(s); err != nil {
+		return nil, err
 	}
 	if elevatedProbe() {
 		return nil, refusal("W-ELEVATED", elevatedWords, nil)
@@ -251,6 +245,24 @@ func Run(ctx context.Context, p *Plan, s Start) (*Result, error) {
 	res.NotRestored = p.notRestored + res.Damaged
 	res.Words = p.resultWords(res)
 	return res, nil
+}
+
+// Confirmed is Start's own first check, on the server (design §6.2 notes, §7.3 RT-8): an
+// encrypted plan needs the "will not be encrypted" tick (W-TICK), and a plan that asks twice
+// the second yes (W-NOTAGAIN); nil when s says both as the plan needs them. Run makes it
+// first; MailArchive Desktop also makes it before it spends the plan's one-use token, so a
+// missing tick leaves the plan waiting for it (slice R7). It reads and writes nothing.
+func (p *Plan) Confirmed(s Start) error {
+	if p.Encrypted && !s.NotEncryptedOK {
+		return refusal("W-TICK", wTick, nil)
+	}
+	if p.AskTwice() && !s.ConfirmAgain {
+		if len(p.Readers) == 0 {
+			return refusal("W-NOTAGAIN", fill(wNotAgain, "REASONS", strings.Join(p.Leaves, "; ")), nil)
+		}
+		return refusal("W-NOTAGAIN", fill(wNotAgainReaders, "REASONS", strings.Join(p.AskReasons(), "; ")), nil)
+	}
+	return nil
 }
 
 // recheck is §5.3 as folded, under the archive lock and the restore lock and before

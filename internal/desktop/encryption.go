@@ -147,6 +147,11 @@ func (d *dashboard) lockAction(w http.ResponseWriter, r *http.Request) {
 	if note == "" && d.copyRunning(out) {
 		note = copyGoesOnText
 	}
+	// A restore into Thunderbird of it reads through its own read lease, so it goes on too
+	// (design-restore-thunderbird §6.2, Q6; MA-1128): said as the copy's is.
+	if note == "" && d.rtb.runningOn(out) {
+		note = restoreGoesOnText
+	}
 	if note != "" {
 		writeJSON(w, map[string]any{"ok": true, "note": note})
 		return

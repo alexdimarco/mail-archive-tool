@@ -400,6 +400,41 @@ func SelectForRestore(out string, tree *ArchiveTree, nodeIDs []string, sealed bo
 	return sel, nil
 }
 
+// RestorableCounts are, per node id of the tree, how many records filed directly in it
+// SelectForRestore would restore (slice R7: Desktop's folder tree shows each folder with
+// its restorable count). Records are judged as SelectForRestore judges them, each once,
+// in the same node order, so the counts add up to what a whole-archive plan restores.
+// out and sealed are SelectForRestore's.
+func (t *ArchiveTree) RestorableCounts(out string, sealed bool) map[string]int {
+	ids := make([]string, 0, len(t.a.byNode))
+	for id := range t.a.byNode {
+		ids = append(ids, id)
+	}
+	sort.Strings(ids)
+	counts := map[string]int{}
+	seen := map[string]bool{}
+	for _, id := range ids {
+		tok, _, ok := t.Locate(id)
+		if !ok {
+			continue
+		}
+		for _, key := range t.Keys(id) {
+			if seen[key] {
+				continue
+			}
+			seen[key] = true
+			rec, ok := t.man.Get(key)
+			if !ok {
+				continue
+			}
+			if _, verdict := restorable(out, rec, t.a.pst[tok], sealed); verdict == restoreOK {
+				counts[id]++
+			}
+		}
+	}
+	return counts
+}
+
 type restoreVerdict int
 
 const (

@@ -159,7 +159,9 @@ func TestHowToUseMailArchiveIsOnEveryPage(t *testing.T) {
 	// a part of its own, closed, so Getting started opens short.
 	// Amended 2026-11-01 (design-archive-delete §10, slice 5, MA-1004): two parts after Microsoft
 	// 365, on Delete and Remove from list, closed like the others.
-	wantParts := []string{"Getting started", "The parts of this page", "Thunderbird", "Microsoft 365", "Deleting an archive", "Removing an archive from the list"}
+	// Amended 2026-11-07 (design-restore-thunderbird §13 slice R7, MA-1131): a part after them on
+	// Restore to Thunderbird, closed like the others.
+	wantParts := []string{"Getting started", "The parts of this page", "Thunderbird", "Microsoft 365", "Deleting an archive", "Removing an archive from the list", "Putting mail back into Thunderbird"}
 	for _, goos := range []string{"darwin", "windows", "linux"} {
 		for name, cfg := range helpPageStates(t) {
 			cfg.GOOS = goos

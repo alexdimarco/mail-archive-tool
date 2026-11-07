@@ -4,7 +4,7 @@ package desktop
 // (dashboardBaseJS, dashboard.go) and, after them, Delete and Remove from list (archiveDeleteJS).
 // One script, so the page's own busy, noteBeside and csrf serve both, and every page test that
 // reads dashboardJS reads the delete's buttons too.
-const dashboardJS = dashboardBaseJS + archiveDeleteJS
+const dashboardJS = dashboardBaseJS + archiveDeleteJS + restoreTBJS
 
 // archiveDeleteJS is the page's half of Delete and Remove from list (docs/design-archive-delete.md
 // §3.1, §3.2, §8, §8.1, §10; slice 3b, MA-982..MA-986), on slice 3a's four routes. Every panel,
@@ -23,7 +23,7 @@ const delPageText={unfinished:delUnfinishedText,deleted:'This archive was delete
 // step 4 (it is no longer the archive in use) they are greyed and do nothing (inert) until its
 // result is dismissed and the page is drawn again. Your archives, This archive, Add another
 // archive, the guide, Security & privacy and Uninstall are not the archive's and stay.
-const delArchiveCards=['sec-m365','sec-export','sec-archive','sec-settings','sec-encsteps','sec-encryption','sec-backup','sec-alerts','sec-history','sec-health','sec-maintenance'];
+const delArchiveCards=['sec-m365','sec-export','sec-archive','sec-settings','sec-encsteps','sec-encryption','sec-backup','sec-alerts','sec-history','sec-health','sec-maintenance','sec-restore-tb'];
 // delWait: a reload the page started was held; delInFlight: deletes this page has asked for whose
 // reply has not come; delSeq: the last Delete… or Remove from list clicked (an earlier one's
 // slower reply opens nothing, MA-986).

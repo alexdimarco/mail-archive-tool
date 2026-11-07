@@ -1,7 +1,5 @@
 package thunderbird
 
-import "testing"
-
 // Restore to Thunderbird, slice R0: catalog-first pending encoders.
 //
 // Each test below encodes one U row of the restore design
@@ -43,22 +41,13 @@ import "testing"
 // proven already) with the real covering tests, each carrying the same ids:
 // internal/tbengine/ma1124_plan_test.go, ma1125_recheck_test.go, ma1127_locks_test.go,
 // integration_test.go, ma1122_crash_test.go, ma1132_ma1143_test.go and
-// cmd/mailarchive/ma1129_restore_cli_test.go. MA-1128 (MA-1128, R37, R40, S72) is built
+// cmd/mailarchive/ma1129_restore_cli_test.go. MA-1128 (MA-1128, R37, R40, S72) was built
 // except the Lock reply, which is Desktop's (slice R7): internal/tbengine/
-// ma1128_encrypted_test.go proves the rest, and its encoder below is narrowed to the
-// Lock reply.
+// ma1128_encrypted_test.go proves the rest.
 
-// covers: MA-1128, R37, R40, S72
-func TestR0EncoderEncrypted(t *testing.T) {
-	t.Skip("MA-1128 pending: the Lock reply while a restore of the archive runs (\"Locked. The restore into Thunderbird already started goes on until it finishes …\", design §6.2 note) is Desktop's and lands in slice R7 (the encrypted path through the read lease, the tick, ask-twice, no plaintext outside Local Folders and counts-only progress and log are proven since slice R6 by internal/tbengine/ma1128_encrypted_test.go)")
-}
-
-// covers: MA-1130, R23, R40
-func TestR0EncoderDesktopRoutes(t *testing.T) {
-	t.Skip("MA-1130 pending: the Desktop routes and the restore plan's own key land in slice R7")
-}
-
-// covers: MA-1131, R40
-func TestR0EncoderDesktopFlow(t *testing.T) {
-	t.Skip("MA-1131 pending: the Desktop flow and its words land in slice R7")
-}
+// Slice R7 replaced the encoders of MA-1128's Lock reply (ids MA-1128, R37, R40, S72),
+// MA-1130 (MA-1130, R23, R40) and MA-1131 (MA-1131, R40) with the real covering tests,
+// each carrying the same ids: internal/desktop/ma1128_restore_lock_reply_test.go,
+// ma1130_restore_routes_test.go, ma1131_restore_flow_test.go,
+// ma1131_restore_unfinished_test.go and ma1131_restore_page_test.go. No R0 encoder is
+// left in this file.

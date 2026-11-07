@@ -124,6 +124,7 @@ func (d *dashboard) cancelJobAction(w http.ResponseWriter, r *http.Request) {
 	c := d.cap
 	c.mu.Lock()
 	cancel := c.cancel
+	slot := c.slot
 	phase := ""
 	if c.runNow && !c.syncEnded {
 		phase = c.syncPhase
@@ -134,7 +135,11 @@ func (d *dashboard) cancelJobAction(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	cancel(presync.ErrCancelAndQuit)
-	if phase == presync.PhaseStarting || phase == presync.PhaseWaiting {
+	if d.rtb.isSlot(slot) {
+		// A restore into Thunderbird in the slot (design-restore-thunderbird §7.3 step 4): its
+		// own words, never a backup's.
+		c.appendLine(restoreCancelLine)
+	} else if phase == presync.PhaseStarting || phase == presync.PhaseWaiting {
 		c.appendLine("Cancelled from MailArchive Desktop: the whole backup is skipped; the Thunderbird it started is left open.")
 	} else {
 		c.appendLine("Cancelled from MailArchive Desktop: the backup stops at its next safe point; the next backup finishes what it left.")

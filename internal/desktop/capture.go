@@ -396,7 +396,14 @@ func (d *dashboard) activity(w http.ResponseWriter, r *http.Request) {
 		out["device"] = map[string]any{"code": c.device.UserCode, "url": c.device.VerificationURI}
 	}
 	c.runNowActivity(out, d.cfg.goos(), time.Now(), cur)
+	slot := c.slot
 	c.mu.Unlock()
+	// A restore into Thunderbird in the slot (design-restore-thunderbird §7.3, slice R7): its
+	// panel follows it here — W-WAIT for the whole run, the check, the last progress line, then
+	// its result and record — only the engine's words and fixed words (INS-07).
+	if v := d.rtb.view(slot); v != nil {
+		out["restore"] = v
+	}
 	// A delete under way (MA-979): a page drawn while it ran asks here until it ends, then is
 	// drawn again with its result (del-s3b-A2-03).
 	out["deleting"] = d.running != nil && d.running.any() != nil

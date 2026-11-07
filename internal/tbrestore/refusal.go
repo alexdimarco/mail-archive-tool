@@ -105,6 +105,10 @@ func runningWords(goos string) string {
 // a message.
 func WaitWords() string { return waitWords(runtime.GOOS) }
 
+// WaitWordsOn is W-WAIT as the platform goos says it: MailArchive Desktop's guide is drawn for the
+// platform it describes (slice R7).
+func WaitWordsOn(goos string) string { return waitWords(goos) }
+
 func waitWords(goos string) string {
 	const lead = "While this runs, leave Thunderbird closed. "
 	if goos == "windows" {

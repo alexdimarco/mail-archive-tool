@@ -254,6 +254,7 @@ type dashboard struct {
 	deletes *heldDeletes     // each delete's result and deletion record, held until dismissed (MA-972)
 	running *deletesUnderWay // the deletes running now (MA-979)
 	copying atomic.Value     // the archive (a key from keyOf) an unencrypted copy is being made of, or ""
+	rtb     *restoreState    // the restore into Thunderbird in the job slot, and its result (slice R7)
 
 	boot  string // this process's epoch: a page that carries another one was made before a restart (R-y)
 	life  *Lifecycle
@@ -306,6 +307,10 @@ func newDashboard(cfg Config) *dashboard {
 	d.life.OnDrain(func(ctx context.Context) error { return d.running.wait(ctx) })
 	d.deletes = newHeldDeletes()
 	d.life.OnDrain(func(context.Context) error { d.deletes.clear(); return nil })
+	// A restore into Thunderbird running at Shut down is stopped by the Desktop's own context and
+	// waited for, within the drain's budget, while it removes what it wrote (§8; slice R7).
+	d.rtb = &restoreState{}
+	d.life.OnDrain(func(ctx context.Context) error { return d.rtb.wait(ctx) })
 	d.cfg.rowBusy = d.planBusy
 	d.cfg.rowDeleting = func(folder string) bool { return d.running.of(folder) != nil }
 	d.life.OnDrain(d.drain)
@@ -409,6 +414,12 @@ func (d *dashboard) router() localweb.Router {
 	mux.HandleFunc("/api/archive/delete", d.api(d.deleteAction))
 	mux.HandleFunc("/api/archive/delete/dismiss", d.api(d.deleteDismissAction))
 	mux.HandleFunc("/api/archive/unlist", d.api(d.unlistAction))
+	// Restore to Thunderbird (design-restore-thunderbird §7.3, slice R7): four guarded POSTs
+	// through d.api; the start only through its plan's one-use token of its own kind.
+	mux.HandleFunc("/api/restore-tb/profiles", d.api(d.restoreProfilesAction))
+	mux.HandleFunc("/api/restore-tb/folders", d.api(d.restoreFoldersAction))
+	mux.HandleFunc("/api/restore-tb/plan", d.api(d.restorePlanAction))
+	mux.HandleFunc("/api/restore-tb/start", d.api(d.restoreStartAction))
 	mux.HandleFunc("/api/browser-link", d.browserLink)
 	if !d.cfg.WorkspaceOff {
 		d.registerWorkspace(mux)
@@ -689,6 +700,10 @@ func (d *dashboard) saveSettings(w http.ResponseWriter, r *http.Request) {
 	// current; a save that leaves the location as it is ends none (del-s3a-A3-06).
 	if !samePath(wasCurrent, d.cfg.effectiveOut()) {
 		d.pending.discardWhere(isDeletePlan)
+		// A restore planned on the current archive's card ends at a switch too, beside delete
+		// plans (design-restore-thunderbird §7.3 foldcheck RT-13): its key is its own, so
+		// discardExcept above passes it by, and a save that keeps the location keeps it.
+		d.pending.discardWhere(isRestorePlan)
 	}
 	writeJSON(w, map[string]any{"ok": true})
 }
@@ -708,6 +723,7 @@ func (d *dashboard) afterSwitch() {
 	_, current := keyOf(now)
 	d.pending.discardExcept(current)
 	d.pending.discardWhere(isDeletePlan)
+	d.pending.discardWhere(isRestorePlan) // RT-13: a restore plan ends at a switch, beside delete plans
 }
 
 // clearSignin removes the saved delegated sign-in (loopback-only, CSRF-guarded), so
@@ -1422,6 +1438,10 @@ func (cfg Config) overviewWith(csrf, epoch string, held []heldView) string {
 		NoticeLine       string
 		// Encrypted: the current archive is encrypted, so it is never scheduled (O5).
 		Encrypted bool
+		// RestoreTBWhy is why Restore to Thunderbird… cannot be used on the current archive now
+		// (design-restore-thunderbird §7.3: an encrypted archive that is locked here), "" when it
+		// can; the button is then disabled with this reason beside it (slice R7).
+		RestoreTBWhy string
 		// The Encryption card (phase3 §7.1; the P3-3 plan, 3c), for an encrypted current
 		// archive the Desktop can open here: whether it is open, whether this computer
 		// remembers its key, and what its open found (a key-file copy owed a heal, a
@@ -1570,7 +1590,7 @@ func (cfg Config) overviewWith(csrf, epoch string, held []heldView) string {
 	// The guide opens at Getting started only for someone with no archive at all: with archives
 	// listed it would push Your archives, which the empty page points to, a screen and a half down
 	// (the 1.5.3 re-walk's N12).
-	data.Help = helpCard(cfg.goos(), data.OutDir == "" && !data.ShowArchives, archiveKind(data.OutDir) != kindEncrypted)
+	data.Help = helpCard(cfg.goos(), data.OutDir == "" && !data.ShowArchives, archiveKind(data.OutDir) != kindEncrypted, data.OutDir != "")
 	// The Scheduled backup card and the Settings card (§4.6.3/MA-617, Q18(b);
 	// design-desktop-settings-card 3.2, 3.3, section 5; slices A3, A5): both follow the
 	// archive's record kind (backupKind, never the tenant) against what owner-side evidence
@@ -1797,6 +1817,9 @@ func (cfg Config) overviewWith(csrf, epoch string, held []heldView) string {
 			encLastSync = e.lastSyncPhrase()
 			data.EncWarnings = append(data.EncWarnings, e.u.Warnings()...)
 		}
+	}
+	if data.Encrypted && !data.EncUnlocked && !data.EncRemembered {
+		data.RestoreTBWhy = restoreLockedWhy
 	}
 	if data.Encrypted {
 		// The encrypted Settings card: the location, and the sync-only box with its own
@@ -2286,6 +2309,40 @@ pre{white-space:pre-wrap;overflow-wrap:anywhere;background:var(--bg);border:1px 
       <button class="btn secondary" id="verifyBtn">Check integrity</button>
       <button class="btn secondary" id="rebuildBtn">Rebuild search index</button>
     </div>
+
+    {{if .OutDir}}<div class="card" id="sec-restore-tb">
+      <h2>Restore to Thunderbird</h2>
+      <p class="card-sub">Put this archive's mail, or some of its folders, back into Thunderbird as one new folder under Local Folders. Nothing already in Thunderbird is changed. Close Thunderbird first.</p>
+      <button class="btn secondary" id="rtbBtn" type="button" title="{{if .RestoreTBWhy}}{{.RestoreTBWhy}}{{else}}Choose the Thunderbird profile and what to restore. You see what the restore will do before anything is written.{{end}}"{{if .RestoreTBWhy}} disabled{{end}}>Restore to Thunderbird…</button>{{if .RestoreTBWhy}} <span class="card-sub" id="rtbWhy">{{.RestoreTBWhy}}</span>{{end}}
+      <div id="rtbPanel" hidden>
+        <div id="rtbProfileStep" hidden><p class="card-sub" role="status" data-step-status hidden></p>
+          <p><b>Into which Thunderbird profile</b></p><div id="rtbProfiles"></div></div>
+        <div id="rtbWhatStep" hidden><p class="card-sub" role="status" data-step-status hidden></p>
+          <p><b>What to restore</b></p>
+          <div><label><input type="radio" name="rtbWhat" id="rtbWhole" value="whole" checked> The whole archive</label></div>
+          <div><label><input type="radio" name="rtbWhat" id="rtbChoose" value="choose"> Choose folders</label></div>
+          <div id="rtbTree" hidden></div>
+          <div style="margin-top:10px"><button class="btn" id="rtbCheck" type="button">Check</button> <button class="btn secondary" id="rtbClose" type="button">Cancel</button></div>
+        </div>
+        <div id="rtbPlanStep" hidden><p class="card-sub" role="status" data-step-status hidden></p>
+          <ul id="rtbPlan"></ul>
+          <div id="rtbTickBox" hidden><label><input type="checkbox" id="rtbTick"> I understand the restored mail will not be encrypted</label></div>
+          <div id="rtbAgainBox" hidden><p class="card-sub warn" id="rtbAgainWhy"></p><label><input type="checkbox" id="rtbAgain"> Restore it there anyway</label></div>
+          <div style="margin-top:10px"><button class="btn" id="rtbGo" type="button">Restore</button> <button class="btn secondary" id="rtbPlanCancel" type="button">Cancel</button></div>
+        </div>
+        <div id="rtbRunStep" hidden><p class="card-sub" role="status" data-step-status hidden></p>
+          <p id="rtbProgress"></p>
+          <p class="card-sub warn" id="rtbWait"></p>
+          <button class="btn secondary" id="rtbStop" type="button" title="Stop the restore. What it wrote is removed, so nothing is added to Thunderbird.">Cancel the restore</button>
+        </div>
+        <div id="rtbResultStep" hidden><p class="card-sub" role="status" data-step-status hidden></p>
+          <p id="rtbResult"></p>
+          <div><button class="btn secondary" id="rtbSave" type="button" hidden>Save this record</button> <span class="card-sub" id="rtbRecordNote" hidden></span></div>
+          <div style="margin-top:10px"><button class="btn secondary" id="rtbDone" type="button">Close</button></div>
+        </div>
+      </div>
+      <div class="note" id="rtbNote" role="status" hidden></div>
+    </div>{{end}}
 
     {{if .OutDir}}{{.Help}}{{end}}
 

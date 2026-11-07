@@ -3133,6 +3133,54 @@ Build order is sound: nothing on a surface (R4, R5) before its engine (R1–R3).
 > - **Pending to R7:** the Lock reply while a restore runs (§6.2 note, `copyGoesOnText`'s pattern) is
 >   Desktop's; MA-1128's encoder is narrowed to it.
 
+> Built 2026-11-07, slice R7 (the builder's notes; where a call was the builder's, it says so; the
+> lead's calls of 2026-11-07, "ok to your picks", are followed as written):
+> - **Where it lives.** `internal/desktop/restoretb.go` (the four routes, the plan's pending kind, the
+>   job, the Activity view, the record) and `restoretbscript.go` (the page, the last part of
+>   `dashboard.js`). The card is its own, **Restore to Thunderbird**, drawn right after Maintenance on
+>   the current archive's page (§7.3's "beside Maintenance"; the builder's reading: a card of its own,
+>   so `showStep`'s one-step-said-at-a-time rule holds within it); a delete of the page's own archive
+>   greys it with the archive's other cards. Its button is disabled with its reason beside it on a
+>   locked encrypted archive that this computer does not remember the key of. "Nothing restorable"
+>   (W-PST / W-NORAW) is said at Check, in place, not beside the button: knowing it means judging every
+>   record, which the page load does not do (the builder's call).
+> - **The routes** are §7.3's, through `d.api`, with bodies capped at 64 KiB as delete's. `/profiles`
+>   answers the server's list (`tbrestore.ReadProfiles` over the bases, its ID, each profile by
+>   position, with its name, folder, why it cannot be used, and whether the archive backs it up) and
+>   the pre-selected one (`ProfileList.Default` with the archive's sources, §3.1 step 4). `/folders`
+>   and `/plan` take `{listID, position}`; `/folders` re-resolves the binding and answers the tree with
+>   restorable counts (`tbengine.Folders`, on `app`'s new `(*ArchiveTree).RestorableCounts`, which
+>   judges records as `SelectForRestore` does); `/plan` checks every folder id against the archive's
+>   own tree before `MakePlan`. The profile bases are a Desktop seam (`restoreTBBases`), so tests use
+>   fake profiles in temp folders only.
+> - **The start.** `tbengine` gains `(*Plan).Confirmed(Start)`, the first check `Run` makes (W-TICK,
+>   W-NOTAGAIN); Desktop calls it before it takes the token, so a missing tick or second yes keeps the
+>   plan and the reply names the box (`need`), and `Run` checks again. The run is
+>   `runCancellableJobOnClaiming` (Cancel and Shut down through its context); Shut down's drain waits
+>   for it to end. `Run` is never handed a raw error to show: a non-refusal error is fixed words, a
+>   panic is recovered inside the job into fixed words (INS-07).
+> - **Lock.** A restore plan holds the registry's open of an encrypted archive by reference, never a
+>   lease of its own, so a Lock leaves the plan and Start is refused W-LOCKED by the engine (RT-13); a
+>   remembered key opens the archive at the routes as a job would (O3). While a restore runs, a Lock
+>   answers `restoreGoesOnText` (§6.2 note's words), beside the copy's.
+> - **Progress.** Activity's log has the progress line at most every 3 seconds and at the last
+>   message, the folder named only for a plain archive, and the CLI's "Checking what was written…"
+>   line when `Start.Checking` fires; `/api/activity` adds a `restore` view for the slot's job:
+>   W-WAIT (`tbrestore.WaitWords`, which names Windows' Cancel) for the whole run, the last line, the
+>   check, then the result (`Result.Words`, done or stopped) and the record. Cancel the restore is the
+>   panel's own button on `/api/job/cancel`, which now says a restore's own line in Activity.
+> - **Save this record** saves, through the browser as Delete's record does, the plan's text and the
+>   result's words with the date, computer, account and version; for an encrypted archive the panel
+>   says beside the button that the record names the restored folders and is not encrypted.
+> - **Words, the builder's:** the step lines (what is needed next), the button's reason on a locked
+>   archive, "That restore is no longer planned…", a folder no longer in the tree, no folder ticked,
+>   the fixed words for an error that is not a refusal (which point to `restore-thunderbird -plan` at
+>   a terminal for the reason), the crash words, and Cancel's Activity line.
+> - **Still pending:** W-NOLOCAL's MENU PATH stays the literal placeholder until lab row MA-1133 runs
+>   (§13 foldcheck note; the R3 note). Gate owed: the friction review of this Desktop flow, Windows
+>   first on Edge, then macOS, then Linux, and the X-series walk; and R6's pass asked that R7's pass
+>   include INS-07, the Lock reply and `FS.Private` on Windows with a second account and on exFAT.
+
 ## 14. Decisions this design makes, for the review to test
 
 1. mboxrd, unchanged writer, framing line endings matching the message (§4.1–4.3).

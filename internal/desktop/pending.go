@@ -40,7 +40,13 @@ type pendingItem struct {
 	// (design-archive-delete §3.1, MA-972): its key is deletePlanKey's, never an archive's own,
 	// so it neither replaces nor is replaced by a key change of that archive.
 	deletePlan *heldPlan
-	lease      *keyring.Unlocked
+	// restorePlan is a Restore to Thunderbird planned on the current archive's card and
+	// awaiting Restore (docs/design-restore-thunderbird.md §7.3, RT-13): its key is
+	// restorePlanKey's, never an archive's own, exactly as a delete plan's — so a settings
+	// save that keeps the location and a Lock leave it, a key change or a copy plan of the
+	// archive is never replaced by it, and a switch ends it by its own kind.
+	restorePlan *heldRestore
+	lease       *keyring.Unlocked
 	// file is the recovery file saved for it, "" while none: written only while the
 	// item is in the store, under its lock, so a discard always sees it.
 	file  string
@@ -49,11 +55,12 @@ type pendingItem struct {
 
 // Kinds of item, so an endpoint takes only its own (a token of another kind is
 // left where it is).
-func isKeyChange(it *pendingItem) bool  { return it.rec != nil || it.res != nil || it.make != nil }
-func isForgetPlan(it *pendingItem) bool { return it.plan != nil }
-func isCopyPlan(it *pendingItem) bool   { return it.copyPlan != nil }
-func isDeletePlan(it *pendingItem) bool { return it.deletePlan != nil }
-func anyKind(*pendingItem) bool         { return true } // its ten minutes are up, whatever it is
+func isKeyChange(it *pendingItem) bool   { return it.rec != nil || it.res != nil || it.make != nil }
+func isForgetPlan(it *pendingItem) bool  { return it.plan != nil }
+func isCopyPlan(it *pendingItem) bool    { return it.copyPlan != nil }
+func isDeletePlan(it *pendingItem) bool  { return it.deletePlan != nil }
+func isRestorePlan(it *pendingItem) bool { return it.restorePlan != nil }
+func anyKind(*pendingItem) bool          { return true } // its ten minutes are up, whatever it is
 
 // isKeyCancel is what the new recovery key's Cancel ends: a key change, or a new encrypted
 // archive whose questions were answered and whose key is being made (the create flow shares that
@@ -114,7 +121,10 @@ func (it *pendingItem) discard() {
 		_ = keyring.VoidFile(it.file)
 	}
 	// A delete plan (deletePlan) holds no secret and changed nothing: dropping the item from
-	// the store, which every path to here has done, is its whole discard.
+	// the store, which every path to here has done, is its whole discard. A restore plan
+	// (restorePlan) likewise: it wrote nothing, and holds the registry's open of an encrypted
+	// archive only by reference — never a lease of its own, so it never keeps an archive open
+	// that the person locked (Start then takes its own lease, and is refused, W-LOCKED).
 }
 
 // pendingSecrets holds the prepared key changes.

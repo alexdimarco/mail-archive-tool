@@ -422,6 +422,45 @@ checked against. It is in MailArchive's settings folder:
 A MailArchive Desktop started with `-config FILE` keeps it beside that file.
 Uninstalling MailArchive removes it, so copy it first, somewhere you keep records.
 
+## Restoring to Thunderbird
+
+**Restore to Thunderbird…**, on MailArchive Desktop's Restore to Thunderbird card,
+puts an archive's mail (all of it, or the folders you tick) back into Thunderbird
+as one new folder, `Restored — ` and the archive folder's name, under Local
+Folders. It only adds that folder: nothing already in Thunderbird is changed, and
+it never starts or closes Thunderbird, so close Thunderbird first.
+
+1. Click **Restore to Thunderbird…**. With more than one Thunderbird profile,
+   choose the one to restore into (MailArchive picks one the archive does not
+   back up when it can) and click **Next**.
+2. Choose **The whole archive**, or **Choose folders** and tick them (a folder
+   brings its subfolders; each shows how many of its messages can go back).
+3. Click **Check**. The plan says where the mail goes, how much, what cannot go
+   back and why, and the free space. Nothing is written yet.
+4. Click **Restore**. While it runs, leave Thunderbird closed. **Cancel the
+   restore** stops it and removes what it wrote. Before Thunderbird can show the
+   folder, MailArchive reads back every message it wrote and checks it against
+   the archive's original.
+5. The result says how many messages went back. **Save this record** keeps the
+   plan and the result as a text file.
+
+Only messages whose original the archive kept can go back: an archive made from
+Outlook `.pst` files keeps none. An **encrypted archive** is restored only while
+it is unlocked, and only after you tick **I understand the restored mail will not
+be encrypted**; when Thunderbird's Local Folders may leave the computer (a synced
+folder, a removable drive, a network share) it asks a second time. Locking the
+archive after the restore has started does not stop it; Shut down does, and
+nothing is added. When the archive backs up the profile you restore into, its
+backups leave the restored folder out. A restore that did not finish leaves a
+folder Thunderbird does not show; MailArchive Desktop says so at the top of its
+page, and the next restore into that profile removes it.
+
+At the command line: `mailarchive restore-thunderbird -out DIR` shows the same plan
+and asks before it restores; `-plan` only shows the plan, `-list-profiles` lists
+the profiles, `-folder PATH` (repeatable) restores some folders, and
+`-record-out FILE` saves the record. Without a terminal it needs `-yes` (and, for
+an encrypted archive, `-not-encrypted-ok`).
+
 ## Encrypted archives
 
 An encrypted archive keeps its messages, its search index and what it was made
