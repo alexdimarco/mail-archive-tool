@@ -262,6 +262,30 @@ func HoldFile(path string) (*os.File, error) {
 	return f, nil
 }
 
+// HoldReadOnly is HoldFile through a read-only handle, for an archive reached by a path
+// that cannot be written (design-restore-thunderbird §7.1, settled 2026-11-07 [R7-02]):
+// flock and LockFileEx both lock a read-only handle, and a bind mount or another
+// spelling of the same folder shares the lock, so a backup through a writable route is
+// refused (ErrHeld) until Release. Nothing is created or written (so the holder line is
+// the last writer's, and StillHeld does not apply); an absent file satisfies
+// errors.Is(err, os.ErrNotExist).
+func HoldReadOnly(path string) (*Lock, error) {
+	if fi, err := os.Lstat(path); err != nil {
+		return nil, err
+	} else if !fi.Mode().IsRegular() {
+		return nil, fmt.Errorf("lockfile: %s is not a regular file", path)
+	}
+	f, err := os.OpenFile(path, os.O_RDONLY|noFollow, 0)
+	if err != nil {
+		return nil, err
+	}
+	if err := tryLockFor(f, acquireGrace); err != nil {
+		f.Close()
+		return nil, fmt.Errorf("%w: %s", ErrHeld, path)
+	}
+	return &Lock{f: f, path: path}, nil
+}
+
 // Holder returns the pid/started/host line written by the current holder, or
 // "" when the file is absent or unreadable. The content is untrusted (any
 // writer of the archive directory can change it): control characters are

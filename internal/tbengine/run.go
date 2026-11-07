@@ -118,14 +118,27 @@ func Run(ctx context.Context, p *Plan, s Start) (*Result, error) {
 	}
 	lp := filepath.Join(p.Out, lockfile.Name)
 	if p.ReadOnly {
-		// R6-13: a read-only medium, read without the archive's lock — nothing can write
-		// it there, a backup included — unless that is no longer so, or another computer's
-		// backup holds the lock.
+		// R6-13: a read-only path, read without writing the archive's lock. Settled
+		// 2026-11-07 [R7-02]: the path being read-only does not make the folder so (a bind
+		// mount, a container, a share another computer writes), so the lock is held through
+		// the read-only handle for the whole run, not probed for an instant: a backup by any
+		// other route is refused until the restore ends. The read-only check is repeated
+		// under it (the re-check). An archive with no lock file (no backup has ever run
+		// there) has none to hold, as the plan said.
 		if !readOnlyVolume(p.Out) {
 			return nil, tbrestore.Changed("the archive's drive (" + p.Out + ") is no longer read-only")
 		}
-		if lockfile.HeldReadOnly(lp) {
-			return nil, refusal("W-BUSY", wBusy, lockfile.ErrHeld)
+		rol, err := lockfile.HoldReadOnly(lp)
+		switch {
+		case errors.Is(err, lockfile.ErrHeld):
+			return nil, refusal("W-BUSY", wBusy, err)
+		case errors.Is(err, os.ErrNotExist) && !p.roLock:
+		case errors.Is(err, os.ErrNotExist):
+			return nil, tbrestore.Changed("the archive's lock file (" + lp + ") is gone")
+		case err != nil:
+			return nil, refusal("W-ARCHLOCK", fill(wArchLock, "OUT", p.Out), err)
+		default:
+			defer rol.Release()
 		}
 	} else {
 		alock, err := lockfile.AcquireAs(lp, verb)

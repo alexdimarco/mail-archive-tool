@@ -160,6 +160,7 @@ type Plan struct {
 	sources     Sources
 	extraInputs []string
 	unknownSrc  bool // nothing names what backs the archive up (R6-02)
+	roLock      bool // a read-only archive has a lock file, held for the run (R7-02)
 }
 
 // AskTwice reports whether Start needs ConfirmAgain (design §6.2 note, O2; R6-01).
@@ -225,6 +226,10 @@ func MakePlan(req Request) (*Plan, error) {
 		return nil, err
 	}
 	p := &Plan{Out: out, Encrypted: enc, keys: req.Keys, choice: req.Profile, ReadOnly: ro, extraInputs: req.Inputs}
+	if ro {
+		_, lerr := os.Lstat(filepath.Join(out, lockfile.Name))
+		p.roLock = lerr == nil // R7-02: a read-only archive's lock is held for the run when there is one
+	}
 	if req.Sources != nil {
 		p.sources = *req.Sources
 	} else {
@@ -533,8 +538,10 @@ func (p *Plan) lines(longNames []string) []Line {
 		who += " '" + p.Profile.Name + "'"
 	}
 	add("DEST", fmt.Sprintf("Restore into %s (%s): its Local Folders, %s, gets the new folder '%s'.", who, p.Profile.Dir, p.Local.Dir, p.Top))
-	if p.ReadOnly {
+	if p.ReadOnly && p.roLock {
 		add("READONLY", wReadOnly)
+	} else if p.ReadOnly {
+		add("READONLY", wReadOnlyNoLock)
 	}
 	folders := len(p.Layout.Restored())
 	add("WHAT", fmt.Sprintf("%s in %s, about %s, go back as the archive kept them.", plural(p.Messages, "message"), plural(folders, "folder"), thunderbird.HumanBytes(p.NeedBytes)))

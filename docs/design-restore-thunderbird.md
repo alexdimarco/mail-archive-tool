@@ -1423,6 +1423,24 @@ The command line prints the same plan with `-plan` and stops.
 > Test: `tbengine/ma1127_r605_r606_r613_test.go` (MA-1127; the read-only medium through its seam,
 > since none can be made in a test).
 
+> Settled 2026-11-07 [R7-02] (the R7 adversarial pass; the lead's call): "nothing can write it
+> there" is true of a read-only medium, not of a read-only *path*: a bind mount, a container or a
+> share another computer writes can show a writable folder read-only at a second place, and a
+> backup through the writable spelling ran while the restore read (Linux, Docker, confirmed). Now
+> the lock decision is held for the whole restore: on a read-only path the archive's lock is taken
+> through a read-only handle (`lockfile.HoldReadOnly`; `flock` and `LockFileEx` both lock one, and
+> a bind mount shares the lock) at Start and kept until `Run` returns, so a backup by any route is
+> refused (a scheduled one skips) until the restore ends; held at Start is W-BUSY as before; the
+> read-only check and the archive's record are re-checked under it (§5.3). The plan says so: "The
+> archive is on a drive that cannot be written from here (read-only). MailArchive still holds the
+> archive's lock while it reads, so a backup that reaches this archive another way is held off
+> until the restore finishes." An archive with no lock file at all (no backup has run there) has
+> none to hold, and the plan says it reads without one; a lock file gone between the plan and Start
+> is W-CHANGED. Tests (MA-1127): `tbengine/ma1127_r702_readonly_lock_test.go` — the seam case on
+> every platform, and the real bind mount on Linux in Docker (`MA_RO_BIND`, one folder mounted
+> read-write and read-only): a backup's lock taken through the writable spelling while the
+> restore runs is refused as held.
+
 ### 7.2 When the archive backs up this same profile (W-RECAPTURE)
 
 A backup from Thunderbird reads every account folder under `Mail/`, Local Folders included

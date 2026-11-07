@@ -55,8 +55,11 @@ const (
 	wNotAgainReaders = "The restored mail will not be encrypted, and REASONS. That was not confirmed a second time, so nothing was restored. Confirm it again, or choose a profile on this computer's own drive."
 	// wRecaptureUnknown (R6-02): nothing names what backs the archive up.
 	wRecaptureUnknown = "MailArchive cannot tell whether this archive backs up this Thunderbird profile. If it does, its backups leave the restored folder out, and mail you later move into that folder in Thunderbird is not backed up while it is there."
-	// wReadOnly (R6-13): an archive on a read-only drive, read without its lock.
-	wReadOnly = "The archive is on a drive that cannot be written (read-only), so MailArchive reads it without taking its lock: no backup can write it there while the restore reads it."
+	// wReadOnly (R6-13; settled 2026-11-07 [R7-02], the lead's words, owner-delegated): an
+	// archive reached by a read-only path, its lock held through a read-only handle for the
+	// whole run; wReadOnlyNoLock: one with no lock file to hold.
+	wReadOnly       = "The archive is on a drive that cannot be written from here (read-only). MailArchive still holds the archive's lock while it reads, so a backup that reaches this archive another way is held off until the restore finishes."
+	wReadOnlyNoLock = "The archive is on a drive that cannot be written from here (read-only), and it has no lock file (no backup has run there), so MailArchive reads it without one."
 	// wArchLock (R6-13): the archive's lock cannot be taken, and the drive is not read-only.
 	wArchLock = "MailArchive cannot take this archive's lock, so nothing was restored: the archive folder (OUT) or its lock file cannot be changed by your account, which a backup needs too. Check that the folder is yours and not read-only, then click Check again."
 	// wShared (R6-06): another profile uses the same Local Folders.
