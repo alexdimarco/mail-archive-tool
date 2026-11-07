@@ -40,6 +40,23 @@ exists in the code yet.
 >   N8 §6.4; N9 §5.2, §13; N10 §5.4; N11 §3.2, §7.5; N12 §6.2; the RT-15 and RT-16 minor notes
 >   §3.1, §7.4; every changed test row §12.2.
 
+> Folded 2026-11-06 [foldcheck2] (lead's calls): the second fold check
+> `docs/review-restore-thunderbird-foldcheck2.md` (commit 547b00f, verdict FAIL, narrowly) named
+> three must-fix items P1–P3, one residual case owing two sentences, and seven smaller notes
+> N-a..N-g. Each is folded as a dated note beside the text it amends, tagged "[foldcheck2 P1]" and
+> so on; text it replaces is kept and marked "superseded by [foldcheck2 …]". Every item is a lead's
+> call except where a note says "(folding agent's answer)". Where a foldcheck2 note and an earlier
+> note disagree, the foldcheck2 note wins. In the paragraph above, "the two it could only propose
+> are labelled 'for the lead to confirm'" is superseded by [foldcheck2 N-e]: both (N2's words-only
+> answer and uninstall naming leftovers) are now the lead's calls.
+> Still owed before slice R0: a re-check of P1–P3 and these notes only (the check's §1 says that is
+> enough), and the owner's answers to §15.
+> - Index (item → where): P1 §3.4, §5.4, §7.4, §7.5, §8, §9, §10, §11, §12.2, §12.3, §13, §14; P2
+>   §7.2, §7.4, §7.5, §12.2; P3 §7.2, §11, §12.2, §14; the residual case §7.2, §8, §11, §12.2; N-a §8,
+>   §12.2; N-b §7.4, §12.2, §13; N-c §5.4, §7.5, §8, §10, §12.2; N-d §8, §13; N-e this note, §7.4,
+>   §7.5; N-f §7.5, §8, §12.2; N-g §7.5, §8, §10, §12.2; P1's lab check §12.3, §13. RT-12's check
+>   failure §5.4.
+
 Revision 1 status, as reviewed (kept):
 
 Status: PROPOSED, revision 1 (2026-11-06). Not reviewed, not built. Nothing in this
@@ -403,6 +420,11 @@ Local Folders/
 >
 > Both hidden files stay after a restore finishes, as the marker always did. MA-1091's last step
 > (the person renames or moves the restored folder in Thunderbird) watches the made-list too.
+>
+> Folded 2026-11-06 [foldcheck2 P1] (lead's call): "Crash cleanup … removes exactly what the list
+> names and nothing else" above is narrowed by [foldcheck2 P1]: it removes **at most** what the list
+> names. It removes nothing at all when an entry named `Restored — NAME` is beside the container, or
+> when the container holds anything the list does not name (§8 foldcheck2 note).
 >
 > Folded 2026-11-06 [foldcheck N3] (folding agent's answer): the marker's `profile` field is the same
 > value as the restore lock's name (§5.2 note, item 3): the first 16 hex characters of the SHA-256 of
@@ -903,6 +925,38 @@ helper).
 >   from Thunderbird's read rules and as the writer's round trip; lab row MA-1093 is what proves both
 >   against Thunderbird.
 
+> Folded 2026-11-06 [foldcheck2 P1, N-c] (lead's calls). This note amends the foldcheck sequence
+> above; where the two disagree, this note wins.
+> - **Step 9, a taken name [P1].** "then clean up (§8 foldcheck note) and refuse with W-TAKEN" is
+>   superseded by [foldcheck2 P1]: an entry named `Restored — NAME` is now there, so the one cleanup
+>   removes nothing (§8 foldcheck2 note, case 3a). The run appends "taken", then "abandoned", keeps
+>   the marker and the made-list, and gives W-TAKEN's new words (§7.5 foldcheck2 note): the restored
+>   tree, complete and checked, stays, and Thunderbird can show it inside that other folder. The
+>   older sentence in step 8 above, "the tree that the started line names is removed … it never
+>   attaches the tree to someone else's folder", is superseded by [foldcheck2 P1] for the same
+>   reason. Why accept the untidy result: whatever made that name may also have written into the
+>   container, so removing nothing is the only choice that can never delete mail that is not
+>   MailArchive's.
+> - **Step 9, the parent file's fsync fails after a successful create [N-c].** Not covered before.
+>   The run re-checks once: an `Lstat` through the root must show `Restored — NAME` as a regular,
+>   empty file. If it does, the restore counts as committed: it goes on to step 10 ([5], then "ended"
+>   [6]), and the result says the restore finished and names the fsync error, as step 10 does for
+>   an error at [5] or [6]. If the re-check fails (the file is absent, not a regular file, or cannot
+>   be checked), the run appends "abandoned", removes nothing (the parent file is never removed,
+>   §8 rule 7, and the tree passed its check), and gives W-COMMITERR (§7.5 foldcheck2 note). A crash
+>   in that instant, before either line, is settled at the next Start like any other (§8 foldcheck2
+>   note): a regular parent file there is case 2, none is case 3b.
+> - **Step 10's "nothing is removed"** stands, and is now the general rule: no step after the
+>   parent file's create removes anything.
+> - **The post-write check's failure [RT-12].** Step 6 of the RT-1 sequence, "the restore stops here,
+>   nothing is made visible, the tree is removed (§8 note)", now means: the run's one cleanup, in §8
+>   foldcheck2's decision order. When its scan is clean (the usual case, including a file antivirus
+>   took away, which is simply absent), the tree is removed and the result is W-CHECKFAIL as
+>   written. When the scan finds an entry the list does not name (for example a file antivirus left
+>   in place of the one it took), nothing is removed and W-CHECKFAIL's result gives W-LEFT's words in
+>   place of "the tree removed" (§7.5 foldcheck2 note). "Nothing is made visible" stands: the parent
+>   file is not made.
+
 ## 6. What can be restored, and the plan
 
 ### 6.1 Faithful only
@@ -1195,6 +1249,51 @@ backup captures. Owner question Q7.
 > note, case 3; a read, nothing is written). So a person who deletes the leftover by hand is not
 > told about it again, and a restore that committed but crashed before its "ended" line (which
 > Thunderbird does show) is never called unfinished; the next Start just records its "ended".
+>
+> Folded 2026-11-06 [foldcheck2 P3, P2, the residual case] (lead's calls). Amends the notes above;
+> where they disagree, this note wins.
+> - **[P3] The skip's "finished" is Start's "committed".** In the O1 paragraph above, "a marked
+>   container whose ID is in `restores.log`, parent file present" is superseded by [foldcheck2 P3].
+>   A backup skips a marked container (marker well-formed, ID in the skip set) in exactly two cases:
+>   1. no entry named `Restored — NAME` is beside it (an unfinished or abandoned leftover): the
+>      container is skipped, as before; or
+>   2. (O1's answer (b) only) the restore **committed**, by the same three-part rule Start uses (§8
+>      foldcheck note, case 2, with foldcheck2's regular-file check): `Restored — NAME` beside it is
+>      a regular file (`Lstat`), and the log has this ID's "checked" line and no "taken" line. Then the
+>      container and that parent file are both skipped.
+>   Otherwise (an entry of the parent name is there, but the restore did not commit: no "checked"
+>   line, a "taken" line, or the entry is a folder or a link) the container and the entry beside it
+>   are **an ordinary folder and are backed up**, the hidden marker and made-list inside it still
+>   never read as mailboxes. That is the case where Thunderbird can show the tree and the person may
+>   have moved mail into it (§8 foldcheck2 note, case 3a), so it must be backed up.
+> - **How the skip set carries it.** The caller builds the skip set from `restores.log` as before,
+>   and for each ID records one flag, "committed" = a "checked" line and no "taken" line. The refresh
+>   function of the M3 note returns the same flag. The parent file's kind is read by the walk itself
+>   (`Lstat` through its scope), never taken from the log. With an unreadable log, only containers
+>   with no entry of the parent name are skipped (as the third bullet of the RT-5 note already says),
+>   since "committed" cannot be told.
+> - **[Residual case] its cost under O1 (b).** In the residual case (§8 foldcheck note: a crash
+>   between a failed parent-file create and the fsynced "taken" line), the state looks committed, so
+>   the parent file beside the restored tree is skipped too. Here that file is the other program's
+>   folder, so its own mail is not backed up while the restored tree sits beside it. P3 does not
+>   remove this cost; it is the price of the case, and it ends when the person deletes the restored
+>   folder in Thunderbird.
+> - **[P2] When W-UNFINISHED shows.** The previous note's "only while the recorded container still
+>   exists and carries that restore's marker, and the restore had not committed" is superseded by
+>   [foldcheck2 P2]. Desktop start, `status` and the plan show W-UNFINISHED for a restore only when
+>   all of these hold: its started line has **no closing line** ("ended", "cleaned" or "abandoned");
+>   its recorded Local Folders is this profile's and reachable (§8 foldcheck2 note, step 0); the
+>   recorded container exists and carries its marker; and **no entry named `Restored — NAME`** is
+>   beside it. So W-UNFINISHED's "Thunderbird does not show it" is true whenever it is shown (lab A3
+>   on Windows; macOS and Linux lab row MA-1091), and a restore that Start already settled as
+>   "abandoned" is never shown as unfinished again.
+> - **An abandoned leftover that is still there** (folding agent's answer, per the check's P2): a
+>   restore whose closing line is "abandoned", whose container still exists with its marker, and
+>   with no entry of the parent name beside it (W-LEFT, made-list unreadable, or W-COMMITERR) is
+>   shown at Desktop start and in `status` with that row's words (§7.5 foldcheck2 note), never with
+>   a promise to remove it. One with an entry of the parent name beside it is shown nothing: it is
+>   an ordinary folder of the person's now, said once in the result that abandoned it (W-VISIBLE or
+>   W-TAKEN). All of this is a read; nothing is written. MA-1141.
 
 ### 7.3 The Desktop flow
 
@@ -1314,7 +1413,8 @@ the copy (`pending.go:15-21`).
 > - Uninstall: `restores.log` and the `restore-*.lock` files are added to uninstall's settings files
 >   (`fixedConfigNames`, `internal/uninstall/config.go:29-38`), so uninstalling MailArchive removes
 >   them from `job.Dir()`. A Desktop started with `-config` plans its uninstall in its own folder, so
->   it does not remove them. (For the lead to confirm, the folding agent's proposal: when
+>   it does not remove them. (For the lead to confirm [superseded by [foldcheck2 N-e]: now the
+>   lead's call; which leftovers, §7.4 foldcheck2 note], the folding agent's proposal: when
 >   `restores.log` holds an unfinished restore, uninstall's plan names that leftover folder, since
 >   nothing will clean it up afterwards.)
 > - MA-1140 gains: a restore from a Desktop started with `-config` is seen by a scheduled backup's
@@ -1330,6 +1430,32 @@ the copy (`pending.go:15-21`).
 > case 2). A **"taken"** line is added, appended and fsynced before a W-TAKEN cleanup starts (§5.4
 > foldcheck sequence, step 9). A later attempt appends "abandoned", "cleaned" or "ended" **only at
 > Start**, never at Check or `-plan` (§8 foldcheck note).
+>
+> Folded 2026-11-06 [foldcheck2 P1, P2, N-b, N-e] (lead's calls):
+> - **Closing lines.** A restore's record is closed by exactly one of "ended", "cleaned" or
+>   "abandoned"; a started line without one is open. The run itself writes "ended" when it finishes,
+>   or when its own cleanup (Cancel, Shut down, a failure, W-CHECKFAIL) removed everything, with the
+>   result. It writes **"abandoned"** instead when its cleanup removed nothing (W-TAKEN, W-LEFT, the
+>   made-list unreadable, W-COMMITERR; §8 foldcheck2 note), and writes nothing when a removal was
+>   blocked, so the next Start tries again. A later attempt still writes its lines only at Start.
+>   So the M2 note's "A later attempt appends … only at Start" stands; the run's own "abandoned" is
+>   new.
+> - **[N-b] Uninstall's rule for the lock files.** `fixedConfigNames` holds exact names
+>   (`internal/uninstall/config.go:27-38`), so the M4 note's "the `restore-*.lock` files are added to
+>   … `fixedConfigNames`" is superseded by [foldcheck2 N-b] for the lock files. `restores.log` goes
+>   into `fixedConfigNames` (an exact name, as `deletions.log` is, `:35-37`). The lock files get a
+>   pattern case in `deletableConfigName` (`:114-130`), beside the `.jobfail.log` and `.alert-streak`
+>   cases: a name that is `restore-`, then exactly 16 lowercase hex characters, then `.lock`. Its
+>   constants come from `tbrestore` (the lock-name function of §5.2 note, item 3), and a test keeps
+>   the two in step by behaviour, as MA-965 does for `deletions.log` and MA-910 for `.sync-alert`
+>   (MA-1140).
+> - **[N-e] Confirmed.** "(For the lead to confirm, the folding agent's proposal: …)" in the M4 note
+>   above is superseded by [foldcheck2 N-e]: uninstall's plan naming leftovers is the lead's call.
+> - **[P2] Which leftovers uninstall names.** The same rule as Desktop start (§7.2 foldcheck2 note):
+>   every restore W-UNFINISHED would show, and every abandoned leftover still there with no entry of
+>   the parent name beside it. For each, the plan names the folder `Restored — NAME.sbd` and its
+>   path, and says that nothing will clean it up after MailArchive is removed. (The M4 note's
+>   "when `restores.log` holds an unfinished restore" is narrowed to this rule.)
 
 ### 7.5 Words (the owner-delegated rule: say what happened first, then the remedy)
 
@@ -1430,7 +1556,8 @@ the copy (`pending.go:15-21`).
 >   left out, as FOLDER already is ("one of the restored files"), and W-LEFT's FIRST NAMES are left
 >   out ("left N entries it did not make"). The antivirus words of §8's table also leave out FILE
 >   for an encrypted archive.
-> - **W-LOGBAD** and **W-LOGFULL** [N2] (for the lead to confirm, the folding agent's proposal; the
+> - **W-LOGBAD** and **W-LOGFULL** [N2] (for the lead to confirm [superseded by [foldcheck2 N-e]:
+>   now the lead's call, words only], the folding agent's proposal; the
 >   other choice, MailArchive trimming the log itself and keeping the IDs whose folders still exist,
 >   is a slice R5 change): moving or deleting the log also forgets which folders MailArchive put into
 >   Thunderbird. So each adds, after its remedy: "After that, MailArchive's backups no longer know
@@ -1448,6 +1575,76 @@ the copy (`pending.go:15-21`).
 > - **Made-list unreadable** [M1] (§8 foldcheck note, rule 6): "MailArchive could not read its list of
 >   what an earlier restore wrote, so it removed nothing. Thunderbird does not show that folder
 >   ('Restored — NAME.sbd' in PATH); close Thunderbird and delete it yourself when you are ready."
+
+> Folded 2026-11-06 [foldcheck2 P1, P2, N-c, N-f, N-g] (lead's calls; the exact wording of each row
+> is the folding agent's, under the owner-delegated rule). Each row below is shown only in the state
+> it names, so none says something false. "Thunderbird does not show it" is used only when no entry
+> named `Restored — NAME` is beside the container (lab A3 on Windows; macOS and Linux lab row
+> MA-1091). Changed rows (the rows above stay as written):
+> - **W-UNFINISHED**, its trigger narrowed [P2]: shown only as §7.2's foldcheck2 note says (no
+>   closing line, reachable, marker present, no entry of the parent name). Its sentence "MailArchive
+>   removes it at the start of your next restore into that Thunderbird profile" is superseded by
+>   [foldcheck2 P1], since the cleanup may now leave it: "At the start of your next restore into that
+>   Thunderbird profile, MailArchive removes what it wrote there; if anything else has been put in
+>   that folder, it leaves the whole folder and tells you." The rest of the replaced row stands.
+> - **W-LEFT**, replaced [P1, N-a]: the cleanup now removes nothing when it finds an entry it did not
+>   make, so "MailArchive removed what it wrote, but left N entries" is superseded by [foldcheck2
+>   P1]. New words: "MailArchive found N entries it did not make in the folder 'Restored — NAME.sbd'
+>   (FIRST NAMES), in PATH, so it removed nothing there. Thunderbird does not show that folder. Close
+>   Thunderbird and delete it yourself when you no longer need those files." For an encrypted
+>   archive FIRST NAMES are left out, as before. Shown in the result that abandoned it, and at
+>   Desktop start and in `status` while the folder is still there (§7.2 foldcheck2 note).
+> - **W-TAKEN**, replaced [P1]: the old words "MailArchive removed what it wrote and added nothing"
+>   are superseded by [foldcheck2 P1]. New words: "Something made a folder named 'Restored — NAME'
+>   in Local Folders while the restore ran. MailArchive had already written and checked every
+>   message, so it removed nothing: Thunderbird will show the restored folders inside that
+>   'Restored — NAME'. They are yours to keep, or to delete in Thunderbird. MailArchive backs them up
+>   like your other mail. To restore under a new name as well, click Check again." When the entry of
+>   that name is a folder or a link, not a file, "Thunderbird will show" becomes "Thunderbird may
+>   show".
+> - **Made-list unreadable**: its words stand; they are reached only after the cleanup has found no
+>   entry of the parent name (§8 foldcheck2 note, step 2), so "Thunderbird does not show that folder"
+>   is true. Also shown at Desktop start while the folder is there.
+> - **Stopped** and **W-CHECKFAIL**: when the run's own cleanup removed nothing (W-LEFT, made-list
+>   unreadable) or was blocked (the antivirus words), their sentences "The part already written was
+>   removed." and "the tree removed" do not apply; the result gives that row's words in their place.
+>
+> New rows:
+> - **W-VISIBLE** [P1], at Start, for an earlier restore settled by case 3a (an entry named
+>   `Restored — NAME` beside its container, and it had not committed). Two forms:
+>   - when it had a "checked" line (then either a "taken" line, or the entry is a folder or a link):
+>     "An earlier restore into Thunderbird
+>     (DATE) wrote and checked every message, but a folder named 'Restored — NAME' that MailArchive
+>     did not make is now in Local Folders, so MailArchive removed nothing. Thunderbird shows the
+>     restored folders inside 'Restored — NAME'. They are yours to keep, or to delete in
+>     Thunderbird. MailArchive backs them up like your other mail."
+>   - when it had no "checked" line: "An earlier restore into Thunderbird (DATE) stopped before it
+>     finished writing, and a folder named 'Restored — NAME' that MailArchive did not make is now in
+>     Local Folders, so MailArchive removed nothing. Thunderbird shows those folders inside
+>     'Restored — NAME', and some messages in them may be missing or cut short. They are yours: if
+>     you moved mail into them, move it out first, then delete them in Thunderbird and restore
+>     again. Until then MailArchive backs them up like your other mail."
+>   When the entry is a folder or a link, "Thunderbird shows" becomes "Thunderbird may show".
+>   Both forms rest on P1's lab check (§12.3 foldcheck2 note); if Thunderbird is found not to show a
+>   tree under a parent file another program made, "shows" becomes "may show" before slice R7.
+> - **W-COMMITERR** [N-c]: "MailArchive wrote and checked every message, but could not make sure the
+>   file that makes the folder show in Thunderbird was saved (WHY), so it stopped there and removed
+>   nothing. The restored mail is complete, but Thunderbird may or may not show it as 'Restored —
+>   NAME'. If it does not, close Thunderbird, delete the folder 'Restored — NAME.sbd' in PATH, and
+>   restore again." Also shown at Desktop start while that folder is there with no file of the parent
+>   name beside it.
+> - **W-ELSEWHERE** [N-f], in the plan and in Start's result: "An earlier restore into this
+>   Thunderbird profile did not finish (DATE). It wrote into PATH, which REASON, so MailArchive left
+>   it alone." REASON is "is on a drive that isn't connected" (then: "Connect that drive, and
+>   MailArchive deals with it at your next restore into this profile.") or "is no longer this
+>   profile's Local Folders" (then: "If you no longer need it, delete the folder 'Restored —
+>   NAME.sbd' there yourself."). In Start's result it adds "Your new restore went ahead." [N-g]; the
+>   plan says "Your restore will go ahead." The RT-4 note's "Connect it and click Check again" words
+>   for the drive-missing state are superseded by this row.
+> - **[N-g] At Start, after the new restore's own result**, each earlier restore that Start could not
+>   clean up is named once, in the row that applies (W-VISIBLE, W-LEFT, made-list unreadable,
+>   W-ELSEWHERE, or the antivirus words when a removal was blocked, then "MailArchive tries again at
+>   your next restore.").
 
 ## 8. Failures and crashes
 
@@ -1507,7 +1704,9 @@ restore is on disk could not be told (Delete's rule, `archivedelete.go:659-680`)
 >   connected. Connect it and click Check again." The restore into that profile cannot run anyway
 >   (its Local Folders is missing); other profiles are not affected.
 > - **The person never tries again** [RT-4, RT-5]. The leftover is never shown by Thunderbird, never
->   backed up (§7.2 note), and is named at every Desktop start and in `status` until a Check cleans it.
+>   backed up (§7.2 note), and is named at every Desktop start and in `status` until a Check cleans it
+>   [superseded by [foldcheck2 N-d]: until a Start settles it, and while it shows as §7.2's
+>   foldcheck2 note says].
 > - **The parent file's name taken at the commit.** W-TAKEN: the tree removed, nothing added
 >   (§5.4 note, step 8).
 > - **Antivirus during placement or the commit** [RT-24]: a placement meeting a sharing violation is
@@ -1591,6 +1790,124 @@ restore is on disk could not be told (Delete's rule, `archivedelete.go:659-680`)
 >   [foldcheck M5]; nothing is placed. The 5-second retry is now on the post-write check's reopen
 >   (§5.4 foldcheck sequence, step 7) and on cleanup removals (rule 5).
 
+> Folded 2026-11-06 [foldcheck2 P1, N-a, N-c, N-d, N-f, N-g, the residual case] (lead's calls). This
+> note amends the foldcheck note above and the RT-4 states before it; where they disagree, this
+> note wins. The one idea: **if Thunderbird could have shown the tree, or anything not MailArchive's
+> is in it, remove nothing.**
+> - **Which restores Start settles.** Each started line for this profile with no closing line
+>   ("ended", "cleaned" or "abandoned"), in the order of the foldcheck note's first bullet (all locks
+>   held). Each is settled by the first of these that applies:
+>   0. **[N-f] Is its Local Folders this one?** The started line recorded the Local Folders path and
+>      identity. If the profile's Local Folders now has another path or identity, or the recorded
+>      one cannot be reached (its drive is not connected), the restore is **elsewhere**: nothing is
+>      removed, no line is written (so it stays open and is looked at again at every Start), and the
+>      result says W-ELSEWHERE. Only after this passes can case 1 decide that a container is absent.
+>      This replaces the RT-4 note's "Local Folders drive missing" state, whose words are superseded
+>      by W-ELSEWHERE (§7.5 foldcheck2 note).
+>   1. Case 1 as the foldcheck note says (container absent, or without this ID's marker → "abandoned",
+>      nothing removed), now reached only after step 0.
+>   2. Case 2 as the foldcheck note says, with one more condition [residual case]: `Restored — NAME`
+>      must be a **regular file** by `Lstat` through the root, not a folder or a link. Then "ended",
+>      nothing removed.
+>   3. Case 3 of the foldcheck note is superseded by [foldcheck2 P1] and split in two:
+>      - **3a. An entry named `Restored — NAME` is beside the container** (a file, folder or link,
+>        made by any program), and the restore did not commit: **remove nothing.** The marker and the
+>        made-list stay, "abandoned" is appended, and the result gives W-VISIBLE. From then on it is
+>        the person's folder: backups take it as ordinary mail (§7.2 foldcheck2 note, P3), and Desktop
+>        start names it no more.
+>      - **3b. No entry of that name** → the cleanup below, then "cleaned" (or "abandoned" when the
+>        cleanup removes nothing).
+> - **The cleanup, in decision order** [P1, N-a]. Every cleanup (at Start, and the run's own after
+>   Cancel, Shut down, a failure, W-CHECKFAIL or W-TAKEN) goes through these steps in this order, and
+>   nothing is removed before step 4. It replaces the order of the foldcheck note's rules 1–4; those
+>   rules' checks stand where this list cites them.
+>   1. **The parent name.** `Lstat` `Restored — NAME` through the root. Any entry there → case 3a:
+>      remove nothing. (In a live W-TAKEN this is always so; §5.4 foldcheck2 note.)
+>   2. **The made-list**, read as rule 1 says. A list that cannot be parsed → rule 6: remove nothing,
+>      "abandoned", the made-list-unreadable words.
+>   3. **Scan the whole container before removing anything.** Through the root, following no link,
+>      starting at the container and going down only into entries the list names "d" that `Lstat`
+>      shows as directories. Each entry found must be the marker, the made-list, or an entry the list
+>      names, of the kind it names ("f" a regular file, "d" a directory). Anything else (a name not on
+>      the list, such as a Thunderbird `.msf` file, the usual sign that Thunderbird has shown a
+>      folder, or a file the person put there; a link; a kind that does not match) → **remove
+>      nothing**: the marker and the list stay, "abandoned" is appended, the result says W-LEFT. The
+>      scan reads each directory in batches and stops at the first entry not on the list, so it does
+>      no more work than the list's own size (at most 16 MiB) allows. Rule 4's "is **left**. Then the
+>      made-list and the marker are kept too" is superseded by [foldcheck2 N-a]: nothing is removed,
+>      not only the unlisted entries.
+>   4. **Only now, remove**, as rules 2 and 3 say: the listed entries in reverse order, each `Lstat`
+>      again for its kind, absent ones passed over, a directory only when empty; then the made-list,
+>      the marker, the container. If a directory is not empty at its turn, or a kind has changed
+>      (something was added after the scan), removal stops: what is left stays, the list and marker
+>      with it, "abandoned" is appended, and the result says W-LEFT.
+>   5. **A removal blocked** (rule 5, unchanged): the cleanup stops, no line is written, and the next
+>      Start tries again from step 0. [N-g] At Start, this does not stop the new restore.
+>   6. Rule 7 stands: the parent name is never removed, nor anything outside the container.
+> - **What the scan cannot see.** A listed file changed in place, by hand, outside Thunderbird, in a
+>   folder Thunderbird does not show. Thunderbird itself can change a listed file only once it shows
+>   the tree, which needs the parent name, which step 1 catches. The hand-edit case is in the R3–R5
+>   adversarial pass's scope.
+> - **[N-c] The parent file's fsync fails after a successful create**: §5.4 foldcheck2 note (a
+>   regular, empty parent file on re-check → committed; otherwise "abandoned", nothing removed,
+>   W-COMMITERR).
+> - **[N-g] Start always goes on.** Whatever settling each earlier restore came to (cleaned, ended,
+>   abandoned, blocked or elsewhere), the new restore then runs under the name the plan chose. That
+>   name was chosen free of every leftover (a " (n)" name when a leftover holds the first), and the
+>   re-check (§5.3) confirmed it. After its own result, the result names each earlier restore that
+>   was not cleaned up, in its row's words (§7.5 foldcheck2 note). The one exception is the RT-4 note's
+>   point that a profile whose own Local Folders is on a missing drive cannot be restored into at all;
+>   that refusal is the plan's, as before.
+> - **The plan predicts, Start decides.** Check and `-plan` still write nothing. They run steps 0 to
+>   3 read-only and say, per open restore, what Start will do: W-UNFINISHED's "will be removed first"
+>   (3b, scan clean), W-VISIBLE, W-LEFT, made-list unreadable, or W-ELSEWHERE. Start decides again
+>   under its locks and reports what it did.
+> - **[Residual case] the two owed sentences.** In the foldcheck note's bullet "A crash during a
+>   W-TAKEN cleanup …", the one case left (a crash between a failed parent-file create and the fsynced
+>   "taken" line) stays as written, with these two sentences: Under O1's answer (b), backups skip the
+>   parent file beside the restored tree too, so the other program's folder, and its own mail, is not
+>   backed up while the restored tree sits beside it (§7.2 foldcheck2 note). And case 2 requires that
+>   parent to be a regular file (`Lstat`): lab C showed a folder of that name also fails the create,
+>   and a folder would not show the tree, so that state is case 3a and is never recorded as ended.
+>   (The same bullet's "it is case 3, not case 2" now means case 3a: nothing is removed.)
+> - **Superseded in the RT-4 states above** [foldcheck2]:
+>   - The intro's "In every state Thunderbird shows nothing that is not finished, because the parent
+>     file is the last thing made" holds for every state MailArchive itself makes. It is superseded
+>     by [foldcheck2 P1] where another program makes the parent name: then Thunderbird can show an
+>     unfinished tree, which is why case 3a removes nothing and W-VISIBLE says so. The same intro's
+>     "backups skip it meanwhile" is narrowed by [foldcheck2 P3] (§7.2 foldcheck2 note).
+>   - "Crash after the parent file, before 'ended' … the final name present and its marker matching
+>     → treated as finished" is superseded by case 2 (foldcheck M2's three-part rule, plus the
+>     regular-file check).
+>   - "Crash during cleanup … Next attempt: finishes the cleanup." now means: runs the decision
+>     order again from step 0 (absent entries passed over).
+>   - "Thunderbird opened between a crash and the next attempt … If the cleanup meets entries it
+>     did not make, it leaves them and says W-LEFT" is superseded by [foldcheck2 P1]: it removes
+>     nothing at all (step 3), and if the parent name is there, step 1 already stopped it.
+>   - "The parent file's name taken at the commit. W-TAKEN: the tree removed, nothing added" is
+>     superseded by [foldcheck2 P1]: nothing is removed; W-TAKEN's new words.
+> - **R40 in every crash case** (re-stated, §11 foldcheck2 note). What the next Start does after a
+>   crash at each point, and what it removes:
+>
+>   | Crash at | Start settles it as | Removes |
+>   |---|---|---|
+>   | after "started", before `Mkdir` | case 1, "abandoned" (after step 0) | nothing |
+>   | after `Mkdir`, before the marker | case 1, left; the next restore takes " (2)" | nothing |
+>   | after the marker, before or while making the made-list | 3b: no list, so it lists nothing; the scan finds only the marker | the marker and the empty container, both made by this restore |
+>   | while writing, or after "checked" before the parent file; no parent name, nothing unlisted | 3b: scan clean, then remove | only listed entries: made by this restore, never shown by Thunderbird (no parent file; lab A3) |
+>   | the same, but another program has since made `Restored — NAME` | 3a, "abandoned", W-VISIBLE | nothing |
+>   | the same, but something unlisted is inside (a `.msf`, a person's file) | 3b, step 3: "abandoned", W-LEFT | nothing |
+>   | the parent create failed on a taken name, before "taken" (residual) | case 2 if that entry is a regular file, else 3a | nothing |
+>   | after "taken" | 3a, "abandoned" | nothing |
+>   | after the parent file, before "ended" | case 2, "ended" | nothing |
+>   | the parent file's fsync failed, then a crash | a regular parent file: case 2; none: 3b | as the rows above |
+>   | during a cleanup's removals | 3b again (the parent name was absent, or removal would not have begun) | only listed entries still there |
+>   | any of these, with Local Folders since moved or its drive not connected | step 0, elsewhere, no line | nothing |
+>
+>   So in every case Start removes only entries this restore's made-list names, and only when no
+>   entry of the parent name is beside the container and nothing unlisted is in it: only what
+>   MailArchive made, and only what Thunderbird could not have shown. R40 holds.
+
 ## 9. Security
 
 The threat model is the repo's: another local account is out of scope only where the OS
@@ -1658,6 +1975,18 @@ This design owes the adversarial pass on the writer and the profile lock (§13).
 >   root, never followed through a link, and act only inside a container whose marker's ID is in
 >   this computer's `restores.log` for this profile (§8 foldcheck note). The R3–R5 adversarial pass
 >   covers it.
+>
+> Folded 2026-11-06 [foldcheck2 P1, N-c] (lead's calls):
+> - **§9.7, "removed on cancel or failure"**, is narrowed by [foldcheck2 P1]: a cleanup that finds
+>   the parent name, or anything unlisted, or cannot read its list, removes nothing (§8 foldcheck2
+>   note), and so does W-COMMITERR. For an encrypted archive that leftover is plaintext mail inside
+>   Local Folders until the person deletes it. Each of those results names the folder and its path,
+>   and Desktop start keeps naming it while it is there and Thunderbird does not show it (§7.2
+>   foldcheck2 note). The choice is deliberate: deleting it could delete mail that is not
+>   MailArchive's.
+> - **The scan and the parent-name check** (§8 foldcheck2 note, cleanup steps 1 and 3) join the made-list
+>   in the R3–R5 adversarial pass: a planted entry can only make the cleanup remove less, never more,
+>   and the scan is bounded by the list's size.
 
 ## 10. The command line
 
@@ -1698,6 +2027,20 @@ mailarchive restore-thunderbird -list-profiles
 > an earlier one. A cleanup at Start, or an "ended" recorded for a restore that had committed, is
 > reported in that attempt's output, and its exit code is that attempt's own. `-plan` writes nothing,
 > as the bullet above says, and neither does Desktop's Check.
+>
+> Folded 2026-11-06 [foldcheck2 P1, N-c, N-g] (lead's calls; the exit codes are the folding agent's
+> answer):
+> - "W-CHECKFAIL, W-TAKEN, W-RESTORING and a failed lock take are `1` (nothing added)" is
+>   superseded by [foldcheck2 P1] for W-TAKEN: the restored tree stays and Thunderbird can show it.
+>   W-TAKEN, W-COMMITERR's "abandoned" outcome, and a W-CHECKFAIL whose cleanup removed nothing
+>   still exit `1` (the restore did not finish); a stop by Ctrl-C or terminate whose cleanup removed
+>   nothing still exits `130`/`143`. In each, the words printed say what was left and where. X1's
+>   line for this verb (R6) reads "`1` not restored, `130`/`143` stopped; the words name anything
+>   left behind", not "nothing written" or "nothing added".
+> - [N-c] A parent-file fsync error whose re-check passes is a finished restore: `0` (or `3`), with
+>   the error named, as step 10's errors are.
+> - [N-g] The exit code is the new restore's own; an earlier restore that Start could not clean up
+>   does not change it, and is named after the result.
 
 ## 11. New invariant and scenarios (provisional ids)
 
@@ -1743,6 +2086,26 @@ mailarchive restore-thunderbird -list-profiles
 >   marker whose ID is in `restores.log` for that profile (re-reading the log once for a marker it
 >   does not know) and has no parent file, the hidden marker and made-list inside it included; with
 >   O1's recommended answer, also the finished restored folders it lists."
+>
+> Folded 2026-11-06 [foldcheck2 P1, P3, the residual case] (lead's calls):
+> - **R40, re-stated** [P1]. The folded R40 (with N5's lock-file words) gains one clause after "it
+>   never changes, renames, replaces or removes anything it did not create;": "its cleanup, after a
+>   cancel, a failure or a crash, removes only entries this restore's made-list names, and only when
+>   no entry named `Restored — NAME` is beside the restore's folder and nothing the list does not name
+>   is inside it; otherwise it removes nothing;". The clause "the folder becomes visible to
+>   Thunderbird in one step, by the creation of its parent file, last" stands for what MailArchive
+>   makes; when another program makes that name, nothing is removed and the person is told (§8
+>   foldcheck2 note, case 3a). §8's foldcheck2 table shows R40 holding at every crash point.
+> - **R41, reworded** [P3, residual case]. The foldcheck wording's "and has no parent file, the hidden
+>   marker and made-list inside it included; with O1's recommended answer, also the finished restored
+>   folders it lists" is superseded by [foldcheck2 P3]. R41 reads: "**R41 — MailArchive never backs up
+>   its own restore leftovers.** A backup leaves out every folder carrying a marker whose ID is in
+>   `restores.log` for that profile (re-reading the log once for a marker it does not know) and with
+>   no entry of its parent name beside it, the hidden marker and made-list inside it included. With
+>   O1's recommended answer it also leaves out a restored folder whose restore committed (its parent
+>   is a regular file, and the log has that ID's 'checked' line and no 'taken' line), with that parent
+>   file. Any other marked folder with an entry of its parent name beside it is backed up like any
+>   other folder."
 
 ## 12. Tests
 
@@ -1864,6 +2227,49 @@ into the catalog (structural id allocation, which the owner lets the lead assume
 > - **MA-1141** [M2]: W-UNFINISHED with its new words, shown only while the leftover still carries
 >   its marker and had not committed; not shown for a committed restore missing only its "ended".
 
+> Folded 2026-11-06 [foldcheck2 P1–P3, N-b, N-c, N-f, N-g, the residual case]: changes to the rows
+> above. No new ids. Each refusal-to-remove case asserts, with `assure`, that the side effect is
+> absent: the file listing and every file's bytes in the container and beside it are the same before
+> and after.
+> - **MA-1122** [P1, N-a, N-c]: the foldcheck bullet's "Left, with W-LEFT and the marker and list
+>   kept: a foreign entry, a link …, a kind that does not match, a listed directory not empty" now
+>   means **nothing removed** in each, the scan running before any removal (prove-fail: a cleanup
+>   that removes listed entries first must go red). Adds: a Thunderbird-style `.msf` inside the
+>   container → nothing removed; an entry added between the scan and the removals (fault seam) →
+>   removal stops, "abandoned"; an entry named `Restored — NAME` (a file, a folder, a link) beside
+>   the container on every live cleanup path (Cancel, failure, W-CHECKFAIL) → nothing removed, W-VISIBLE
+>   or W-TAKEN words; fault injection at the parent file's fsync: re-check passes → "ended" with the
+>   error named, re-check fails → "abandoned", nothing removed, W-COMMITERR; positive twin for each:
+>   the same state without the foreign entry is cleaned and logged "cleaned".
+> - **MA-1123** [P1, N-f, N-g, residual case]: the foldcheck bullet's "a parent file present with no
+>   'checked' line, or with a 'taken' line, leads to cleanup of the container" is superseded by
+>   [foldcheck2 P1]: it leads to **nothing removed**, "abandoned" and W-VISIBLE (both forms). Adds:
+>   case 2 with a *folder* (and a link) named `Restored — NAME` → case 3a, never "ended"; a crash
+>   between the failed create and "taken" with a regular file there → "ended", nothing removed;
+>   the recorded Local Folders path or identity different, or its drive missing → no line, nothing
+>   removed, W-ELSEWHERE, and the restore stays open for the next Start; a blocked removal, an
+>   abandon and an elsewhere at Start each followed by the new restore running to "ended" under its
+>   " (n)" name, with the earlier restore named after the result; every row of §8's foldcheck2
+>   table, each removing only what that table says.
+> - **MA-1138** [P3, residual case]: a marked container with an entry of its parent name beside it
+>   is skipped (with that entry) only when the entry is a regular file and the ID has "checked" and no
+>   "taken"; with no "checked", with "taken", or with a folder of that name, the container and the
+>   entry are backed up as ordinary mail; the refresh function carries the flag; an unreadable log
+>   skips only containers with no entry of the parent name; the residual state's parent file is
+>   skipped (pinning the cost the design states).
+> - **MA-1139** [P1]: "tree removed" after W-CHECKFAIL holds when the cleanup's scan is clean; with a
+>   foreign entry the W-CHECKFAIL result gives W-LEFT's words instead and nothing is removed.
+> - **MA-1140** [N-b]: uninstall's targets include `restores.log` and a `restore-` + 16 hex +
+>   `.lock` file in `job.Dir()`, and not `restore-x.lock`, `restore-<16 hex>.lock.bak` or a directory
+>   of that name; the lock-name constants match `tbrestore`'s by behaviour (a lock `tbrestore` makes is
+>   a target).
+> - **MA-1141** [P2]: W-UNFINISHED shown only with no closing line, a reachable Local Folders, the
+>   marker present and no entry of the parent name; not shown after "abandoned"; an abandoned
+>   leftover still there with no entry of the parent name shown with W-LEFT's, the made-list-unreadable
+>   or W-COMMITERR's words; nothing shown when an entry of the parent name is there; uninstall's plan
+>   names exactly the restores Desktop start names; every check a read (the bytes of `restores.log`
+>   and the listing unchanged).
+
 ### 12.3 Lab rows (real Thunderbird; all pending until run)
 
 The lab: Windows on the Parallels VM "Windows 11" (ARM64, Thunderbird installed and seen at
@@ -1926,6 +2332,19 @@ Windows first.
 > reopen, the parent-file create and a cleanup. MA-1134 runs before slice R3 (lead's call, N9), and
 > MA-1133 before slice R7 (N4); §13's foldcheck note says how.
 
+> Folded 2026-11-06 [foldcheck2 P1] (lead's call): **P1's assumption becomes a lab check**, added to
+> **MA-1091**'s Windows leg, so it sits in the existing Windows lab list (R8). With Thunderbird
+> closed: place a `Restored — X.sbd` tree with the marker and made-list, *without* its parent file;
+> then make the empty parent file `Restored — X` with another program (PowerShell `New-Item`, as lab
+> B used PowerShell); start Thunderbird. Record (1) whether it shows the tree inside `Restored — X`
+> (the premise of W-VISIBLE's and W-TAKEN's "shows"); (2) whether a message moved into a shown
+> subfolder is appended to that subfolder's mbox file (the hazard P1 guards against); (3) which
+> `.msf` files it makes, inside the container and beside it (the scan's usual sign). Also with a
+> *folder* named `Restored — X` instead of a file: what Thunderbird shows. Nothing in the cleanup
+> rule rests on the answer (removing nothing is safe either way); only the words do. So it runs
+> with MA-1133, any time after R0 and before slice R7, and if (1) is "no", W-VISIBLE and W-TAKEN say
+> "may show" (§7.5 foldcheck2 note).
+
 ## 13. Build slices, and the gates each owes
 
 Each slice is small, test-first, with prove-fail → prove-pass recorded in its commit, and runs
@@ -1970,7 +2389,8 @@ Build order is sound: nothing on a surface (R4, R5) before its engine (R1–R3).
 >   placement with retry, the fsync order, the post-write check, the parent file last, cleanup rules,
 >   `restores.log` on the delete log's writer, the crash states of §8's note. Gate: **the same
 >   profile/lock/writer adversarial pass.**
-> - **R5 — Backup side.** The folder-scan skip (marker + working files, skip set from `restores.log`,
+> - **R5 — Backup side.** The folder-scan skip (marker + working files [superseded by [foldcheck2
+>   N-d]: marker and made-list; there are no working files, foldcheck M5], skip set from `restores.log`,
 >   the unreadable-log fallback), O1's finished-folder skip as the owner rules, the backup run-log
 >   line, W-UNFINISHED at Desktop start and in `status`. Gate: **the same profile/lock/writer
 >   adversarial pass** (it changes what a backup reads); and the owner's O1 answer before the
@@ -2009,6 +2429,21 @@ Build order is sound: nothing on a surface (R4, R5) before its engine (R1–R3).
 >   set from `tbrestore.LogPath()` in `job.Dir()`.
 > - **R7** [RT-13]: the restore plan's own key and kind, ended at a switch beside delete plans, kept
 >   across a settings save and a Lock.
+>
+> Folded 2026-11-06 [foldcheck2 P1–P3, N-a..N-g] (lead's calls):
+> - **R0** writes R40 and R41 in their foldcheck2 wording (§11 foldcheck2 note) and the changed
+>   MA-1122, MA-1123, MA-1138, MA-1139, MA-1140 and MA-1141 rows. Gate before R0: a re-check of
+>   foldcheck2's P1–P3 and these notes only.
+> - **R4** builds the cleanup in the decision order of §8's foldcheck2 note (parent name, list, scan,
+>   then removal), the run's own "abandoned", the N-c re-check, step 0's Local Folders comparison and
+>   N-g's "Start always goes on". W-VISIBLE, W-COMMITERR and W-ELSEWHERE are its words. Its gate
+>   stays the profile/lock/writer adversarial pass, whose scope adds the scan and the hand-edit case
+>   (§8, §9 foldcheck2 notes).
+> - **R5** builds P3's committed flag in the skip set and its refresh, and P2's display rule for
+>   Desktop start, `status` and uninstall's plan. Uninstall's `restores.log` name and `restore-*.lock`
+>   pattern (N-b) go in R5 too, beside the rest of the settings-file work.
+> - **P1's lab check** (MA-1091's new Windows step, §12.3 foldcheck2 note) runs with MA-1133, after R0
+>   and before R7, on the Windows VM.
 
 ## 14. Decisions this design makes, for the review to test
 
@@ -2042,6 +2477,17 @@ Build order is sound: nothing on a surface (R4, R5) before its engine (R1–R3).
 >   made-list (§5.4 foldcheck note).
 > - New decision 11 [M2]: an unfinished restore is never finished by a later attempt. It is cleaned
 >   up at the next Start, by the made-list, and the person restores again (§8 foldcheck note).
+>
+> Folded 2026-11-06 [foldcheck2 P1, P3] (lead's calls):
+> - Decision 11 is narrowed by [foldcheck2 P1]: an unfinished restore is cleaned up only when no
+>   entry of its parent name is beside it and nothing unlisted is in it. Otherwise it is left
+>   whole, recorded "abandoned", and the person is told where it is and whether Thunderbird shows it.
+> - New decision 12 [P1]: when Thunderbird could have shown the tree, or anything not MailArchive's
+>   is in it, MailArchive removes nothing, in every cleanup, including a live W-TAKEN. It accepts a
+>   restored tree left visible inside another program's folder over any chance of deleting mail
+>   that is not its own (§8 foldcheck2 note).
+> - New decision 13 [P3]: a backup skips a restored folder that has a parent file only under Start's
+>   committed rule; otherwise that folder is the person's and is backed up (§7.2 foldcheck2 note).
 
 ## 15. Owner questions (product choices only), each with the lead's recommendation
 
