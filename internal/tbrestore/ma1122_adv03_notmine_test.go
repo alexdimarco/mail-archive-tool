@@ -19,8 +19,10 @@ func TestRestoreCleanupKeepsANameItFailedToCreate(t *testing.T) {
 	in := []FolderIn{{Names: []string{"A"}, Messages: 1}, {Names: []string{"A", "C"}, Messages: 1}, {Names: []string{"B"}, Messages: 1}}
 	msgs := [][][]byte{{[]byte("Subject: a\n\nx\n")}, {[]byte("Subject: c\n\nz\n")}, {[]byte("Subject: b\n\ny\n")}}
 	for _, tc := range []struct{ name, op, rel, words string }{
-		{"a file at a listed file's name", "create", "B", "(B)"},
-		{"a folder at a listed folder's name", "mkdir", "A.sbd", "(A.sbd)"},
+		// The entry quoted as the plan's NAMES list quotes it (settled 2026-11-07, the
+		// lead's call after PCT-1/PCT-2; it was named bare before).
+		{"a file at a listed file's name", "create", "B", `("B")`},
+		{"a folder at a listed folder's name", "mkdir", "A.sbd", `("A.sbd")`},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			fx := newFixture(t, in, msgs)

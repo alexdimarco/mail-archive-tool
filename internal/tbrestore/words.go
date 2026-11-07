@@ -6,8 +6,9 @@ package tbrestore
 // name as in "Restored — NAME", PATH the Local Folders folder, DATE the earlier
 // restore's start.
 const (
-	wNames       = "Local Folders already holds 'Restored — NAME' and 98 more like it, so nothing was restored. Delete or rename the restored folders you no longer need in Thunderbird, then try again."
-	wLongPath    = "N folders are nested too deep for Windows to hold under this profile, so they are not restored: FOLDERS."
+	wNames = "Local Folders already holds 'Restored — NAME' and 98 more like it, so nothing was restored. Delete or rename the restored folders you no longer need in Thunderbird, then try again."
+	// W-LONGPATH's per-folder line is the plan's (internal/tbengine longPathWords); its old
+	// copy here, never used, was removed 2026-11-07 (the lead's call).
 	wLongPathAll = "Thunderbird's Local Folders (PATH) is so deep in its drive that Windows cannot hold a restored folder under it, so nothing was restored. Choose a profile whose Local Folders is nearer the top of its drive."
 	// W-TBNAME (settled 2026-11-07 [MA-1095 lab], lead's words, owner-delegated): the
 	// defence in depth's refusal, for a name Thunderbird would keep under another file

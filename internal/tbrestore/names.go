@@ -261,19 +261,21 @@ func notShortAlias(n, original string) string {
 // dedupe gives later siblings that spell the same as an earlier one a free " (n)"
 // suffix (or the hash suffix past " (99)"), in place. Settled 2026-11-07 [MA-1095 lab]:
 // the name is cut first where the suffix would take it past Thunderbird's 55 units, so a
-// name kept whole up to 55 still gets a " (n)" Thunderbird reads.
+// name kept whole up to 55 still gets a " (n)" Thunderbird reads. Settled 2026-11-07
+// [PCT-1]: "spell the same" is the restore's siblingKey (every pair Thunderbird's own
+// compare calls one folder, and every pair util.FoldKey joins), no longer FoldKey alone.
 func dedupe(names, originals []string, changed []bool) {
 	seen := map[string]bool{}
 	for i, n := range names {
-		if !seen[util.FoldKey(n)] {
-			seen[util.FoldKey(n)] = true
+		if !seen[siblingKey(n)] {
+			seen[siblingKey(n)] = true
 			continue
 		}
 		found := false
 		for k := 2; k <= 99; k++ {
 			sfx := " (" + itoa(k) + ")"
 			c := cutUnits(n, tbNameMax-len(sfx)) + sfx
-			if !seen[util.FoldKey(c)] {
+			if !seen[siblingKey(c)] {
 				names[i], found = c, true
 				break
 			}
@@ -283,7 +285,7 @@ func dedupe(names, originals []string, changed []bool) {
 			names[i] = notShortAlias(c, originals[i]+"\x00"+itoa(i)+"\x00alias")
 		}
 		changed[i] = true
-		seen[util.FoldKey(names[i])] = true
+		seen[siblingKey(names[i])] = true
 	}
 }
 

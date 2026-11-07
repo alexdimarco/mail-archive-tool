@@ -1,6 +1,7 @@
 package tbrestore
 
 import (
+	"net"
 	"os"
 	"path/filepath"
 	"strconv"
@@ -35,6 +36,12 @@ type RunningSignal struct {
 	// refuse it in words that say so (W-LOCKFAIL, wLockStale), never "closed" at Check and
 	// "Thunderbird is open" at Start. Nothing follows the link.
 	StaleLink bool
+	// RemoteLink: a lock link (`lock` or `.parentlock`) names another computer's address,
+	// so it is held whatever its pid (counted under ByLock). Settled 2026-11-07 [PCT-2]:
+	// Mozilla's IsSymlinkStaleLock gives up on such a lock ("Remote lock: give up even if
+	// stuck"); the restore refuses it in words that say Thunderbird may be open on that
+	// computer (wLockRemote), never "quit it once" and never judged by a pid here.
+	RemoteLink bool
 }
 
 // Running reports whether any signal fired (a stale lock link included: it refuses).
@@ -51,9 +58,10 @@ var processProbe = thunderbirdProcessCount
 // locked answers from the lock's own record (see ProfileLock).
 func CheckRunning(profile string) RunningSignal {
 	var s RunningSignal
-	sym := symlinkLockHeld(profile)
+	sym, remote := symlinkLockHeld(profile)
 	if sym {
 		s.ByLock = true
+		s.RemoteLink = remote
 	}
 	held, self, err := parentLockProbe(profile)
 	if held {
@@ -72,22 +80,37 @@ func CheckRunning(profile string) RunningSignal {
 
 // staleParentLink reports a `.parentlock` link (macOS and Linux only, where that is the
 // lock's name) whose target names a pid that is not alive: Mozilla's fallback lock left
-// behind (ADV-L1). Read with Lstat and Readlink only; the link is never followed.
+// behind (ADV-L1). Read with Lstat and Readlink only; the link is never followed. A link
+// naming another computer is never stale here, whatever its pid (PCT-2): remoteParentLink.
 func staleParentLink(profile string) bool {
-	if ParentLockName != ".parentlock" {
-		return false
-	}
-	p := filepath.Join(profile, ParentLockName)
-	fi, err := os.Lstat(p)
-	if err != nil || fi.Mode()&os.ModeSymlink == 0 {
-		return false
-	}
-	target, err := os.Readlink(p)
-	if err != nil {
+	target, ok := parentLinkTarget(profile)
+	if !ok || lockLinkRemote(target) {
 		return false
 	}
 	pid := lockTargetPID(target)
 	return pid > 0 && !procs.Alive(pid)
+}
+
+// remoteParentLink reports a `.parentlock` link (macOS and Linux only) naming another
+// computer (PCT-2): held, worded as possibly open there.
+func remoteParentLink(profile string) bool {
+	target, ok := parentLinkTarget(profile)
+	return ok && lockLinkRemote(target)
+}
+
+// parentLinkTarget is the target of a `.parentlock` link (macOS and Linux only, where that
+// is the lock's name); ok false when it is not a link or cannot be read.
+func parentLinkTarget(profile string) (string, bool) {
+	if ParentLockName != ".parentlock" {
+		return "", false
+	}
+	p := filepath.Join(profile, ParentLockName)
+	fi, err := os.Lstat(p)
+	if err != nil || fi.Mode()&os.ModeSymlink == 0 {
+		return "", false
+	}
+	target, err := os.Readlink(p)
+	return target, err == nil
 }
 
 // ProcessRunning is check B alone: what is checked again after the restore takes
@@ -100,8 +123,11 @@ func ProcessRunning() bool {
 // symlinkLockHeld is the `lock` symlink of Linux Thunderbird (and the .parentlock
 // symlink Mozilla falls back to when fcntl locking fails): held when it names a live
 // pid, or a pid that cannot be read (as Mozilla treats it); a dead pid is stale. A pid
-// reused by another program still counts, as presync does.
-func symlinkLockHeld(profile string) bool {
+// reused by another program still counts, as presync does. Settled 2026-11-07 [PCT-2]: a
+// link naming another computer's address is held whatever its pid (remote true), as
+// Mozilla's IsSymlinkStaleLock holds it ("Remote lock: give up even if stuck"); its pid is
+// never asked about here.
+func symlinkLockHeld(profile string) (held, remote bool) {
 	for _, name := range []string{"lock", ".parentlock"} {
 		p := filepath.Join(profile, name)
 		fi, err := os.Lstat(p)
@@ -110,10 +136,55 @@ func symlinkLockHeld(profile string) bool {
 		}
 		target, err := os.Readlink(p)
 		if err != nil {
-			return true
+			held = true
+			continue
 		}
-		pid := lockTargetPID(target)
-		if pid <= 0 || procs.Alive(pid) {
+		if lockLinkRemote(target) {
+			return true, true
+		}
+		if pid := lockTargetPID(target); pid <= 0 || procs.Alive(pid) {
+			held = true
+		}
+	}
+	return held, false
+}
+
+// lockLinkRemote reports a Mozilla lock link target ("ADDRESS:PID" or "ADDRESS:+PID",
+// toolkit/profile/nsProfileLock.cpp LockWithSymlink) whose address is not this computer's
+// (PCT-2). The address is what comes before the first ":", as IsSymlinkStaleLock reads it.
+// This computer's are a loopback address (127.0.0.0/8, where Mozilla's own falls back) and
+// the addresses of its network interfaces; an address that is not a number is this
+// computer's only when it is this computer's host name. Anything else is another
+// computer's, the refusing side when in doubt (an interface list that cannot be read
+// included). A target with no address is judged by its pid, as before.
+func lockLinkRemote(target string) bool {
+	i := strings.IndexByte(target, ':')
+	if i < 0 {
+		return false
+	}
+	addr := strings.TrimSpace(target[:i])
+	if addr == "" {
+		return false
+	}
+	return !isThisComputer(addr)
+}
+
+// isThisComputer reports whether addr names this computer (lockLinkRemote's rule).
+func isThisComputer(addr string) bool {
+	ip := net.ParseIP(addr)
+	if ip == nil {
+		h, err := os.Hostname()
+		return err == nil && strings.EqualFold(strings.TrimSuffix(h, "."), strings.TrimSuffix(addr, "."))
+	}
+	if ip.IsLoopback() {
+		return true
+	}
+	addrs, err := net.InterfaceAddrs()
+	if err != nil {
+		return false
+	}
+	for _, a := range addrs {
+		if n, ok := a.(*net.IPNet); ok && n.IP.Equal(ip) {
 			return true
 		}
 	}

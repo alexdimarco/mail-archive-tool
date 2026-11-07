@@ -4,8 +4,6 @@ import (
 	"io/fs"
 	"path/filepath"
 	"strings"
-
-	"mail-archive-tool/internal/util"
 )
 
 // FolderIn is one folder the archive side asks the restore to create (internal/app's
@@ -291,15 +289,17 @@ func (l *Layout) windowsBudget(localDir string, children map[int][]int) error {
 
 // FreeTopName is the first of "Restored — NAME", "Restored — NAME (2)" … " (99)" for
 // which neither the name nor its ".sbd" is in Local Folders, compared after NFC and
-// case-blind (§3.5): entries are what the folder holds now. Past 99: W-NAMES.
+// case-blind (§3.5): entries are what the folder holds now. Past 99: W-NAMES. Settled
+// 2026-11-07 [PCT-1]: compared by the restore's siblingKey, so a name Thunderbird's own
+// compare calls the same as an entry there is never chosen.
 func FreeTopName(top string, entries []fs.DirEntry) (string, int, error) {
 	have := map[string]bool{}
 	for _, e := range entries {
-		have[util.FoldKey(e.Name())] = true
+		have[siblingKey(e.Name())] = true
 	}
 	for n := 1; n <= 99; n++ {
 		c := withNumber(top, n)
-		if !have[util.FoldKey(c)] && !have[util.FoldKey(c+".sbd")] {
+		if !have[siblingKey(c)] && !have[siblingKey(c+".sbd")] {
 			return c, n, nil
 		}
 	}

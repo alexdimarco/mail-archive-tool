@@ -423,11 +423,14 @@ func ownerOnlyUnenforceable(fsType string) bool { return tbrestore.FormatCannotL
 
 // fat32Words are W-FAT32's words. An encrypted archive's give a count, never a folder's
 // name (R6-12, settled 2026-11-07: the plan goes to a terminal's log and -record-out).
+// Settled 2026-11-07 (the lead's call after PCT-1/PCT-2): the folder is quoted as the NAMES
+// list and W-LONGPATH quote it (strconv.Quote), so a control character or line break in a
+// name shows escaped and "100%" reads as a name.
 func fat32Words(names []string, size int64, enc bool) string {
 	if enc {
 		return fill(wFAT32Enc, "N", commas(len(names)), "IS", verb(len(names), "is", "are"))
 	}
-	return fill(wFAT32, "FOLDER", names[0], "SIZE", thunderbird.HumanBytes(size))
+	return fill(wFAT32, "FOLDER", strconv.Quote(names[0]), "SIZE", thunderbird.HumanBytes(size))
 }
 
 // longPathWords are W-LONGPATH's line: the folders named, or for an encrypted archive

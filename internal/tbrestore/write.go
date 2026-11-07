@@ -10,6 +10,7 @@ import (
 	"hash"
 	"io"
 	"io/fs"
+	"strconv"
 	"strings"
 	"syscall"
 	"time"
@@ -731,19 +732,26 @@ func (w *writer) blockedWords(c CleanResult) string {
 }
 
 // leftoverWords are the words of a cleanup that left the container whole (or part of
-// it): W-LEFT's two forms and the made-list's.
+// it): W-LEFT's two forms and the made-list's. Settled 2026-11-07 (the lead's call after
+// PCT-1/PCT-2): each entry named is quoted as the plan's NAMES list quotes it
+// (strconv.Quote), so a control character or line break in a name shows escaped; an
+// encrypted archive's words name none.
 func leftoverWords(c CleanResult, top, local string, encrypted bool) string {
+	quoted := make([]string, len(c.Foreign))
+	for i, n := range c.Foreign {
+		quoted[i] = strconv.Quote(n)
+	}
 	switch c.Kind {
 	case CleanLeft:
 		if encrypted {
 			return strings.Replace(fill(wLeftEnc, "N", itoa(c.ForeignN), "TOP", top, "PATH", local), " 1 entries", " 1 entry", 1)
 		}
-		return strings.Replace(fill(wLeft, "N", itoa(c.ForeignN), "FIRST NAMES", strings.Join(c.Foreign, ", "), "TOP", top, "PATH", local), " 1 entries", " 1 entry", 1)
+		return strings.Replace(fill(wLeft, "N", itoa(c.ForeignN), "FIRST NAMES", strings.Join(quoted, ", "), "TOP", top, "PATH", local), " 1 entries", " 1 entry", 1)
 	case CleanLeftPart:
 		if encrypted {
 			return fill(wLeftPartEnc, "TOP", top, "PATH", local)
 		}
-		return fill(wLeftPart, "FIRST NAMES", strings.Join(c.Foreign, ", "), "TOP", top, "PATH", local)
+		return fill(wLeftPart, "FIRST NAMES", strings.Join(quoted, ", "), "TOP", top, "PATH", local)
 	case CleanListBad:
 		return fill(wListBad, "TOP", top, "PATH", local)
 	}

@@ -794,6 +794,34 @@ The result names how many folder names changed.
 > budget after a rename was counted twice) and only of folders that are restored. Tests:
 > `internal/tbengine/ma1124_nameslist_test.go`, `cmd/mailarchive/ma1129_nameslist_test.go`,
 > `internal/desktop/ma1131_nameslist_test.go`.
+>
+> Settled 2026-11-07 [PCT-1] (the fresh review `review-restore-thunderbird-pct-fresh.md`; the lead's
+> call). Thunderbird drops a second sibling folder whose name it calls the same as an earlier one:
+> `PopulateFolderHierarchy` (comm-central `mailnews/protocols/common/src/FolderPopulation.cpp`) adds a
+> discovered child only when `parent->GetChildNamed(name)` finds none, and `nsMsgDBFolder::GetChildNamed`
+> (`mailnews/base/src/nsMsgDBFolder.cpp`; both read at releases-comm-central `d1da2f0b`) compares with
+> `nsCaseInsensitiveUTF8StringComparator` ("case-insensitive compare is probably LCD across OS
+> filesystems"). That comparator (firefox `intl/unicharutil/util/nsUnicharUtils.cpp`,
+> `CaseInsensitiveCompare` over `GetLowerUTF8Codepoint_inline`; the same logic at main `ac7b5e4b` and
+> at `esr153` `4bd98d39`) lowers each code point on its own, ASCII by a table and anything else by
+> `intl::UnicodeProperties::ToLower`, which is ICU's `u_tolower` (`intl/components/src/UnicodeProperties.h`
+> at `esr153`), the simple lowercase mapping; ICU there is 78.3 (`uvernum.h`), Unicode 17. Two names are
+> one folder when they have as many code points and each pair lowers alike. `util.FoldKey` (x/text's
+> full case folding, v0.43.0) swaps Cherokee case instead of joining it, so `ᎠᎡ` and `ꭰꭱ` were both
+> written and Thunderbird 153.6.0 showed one (on an APFS volume the second create failed part way). The
+> restore now has its own key, `tbrestore.siblingKey`: `util.FoldKey`, then `i` + U+0307 to `i`, then
+> each code point to the smallest member of its simple case-fold orbit (after the Unicode 16 and 17
+> lowercase pairs Go 1.26's Unicode 15 tables lack, `newerLower`, from Unicode 17.0.0's UnicodeData.txt),
+> NFC, and the orbit step again. It starts from FoldKey's output, so every pair FoldKey joins it joins
+> (nothing that clashed before stops clashing); it is used for every sibling clash the restore checks
+> (`dedupe`, so `FinalNames` and the Windows re-dedupe) and for the free top name (`FreeTopName`).
+> Clashing names get the existing ` (2)` … ` (99)`, then the hash suffix, so every folder shows. Merging
+> more than Thunderbird does costs only an unneeded ` (2)`. Not changed: `util.FoldKey` and the export
+> and extract paths that use it (owed: whether the weaker key matters there). A later Thunderbird on a
+> newer Unicode can add pairs `newerLower` does not know; the test names the file to re-read. Tests:
+> `internal/tbrestore/ma1088_pct1_siblingkey_test.go` (every code point against Thunderbird's lowercase,
+> as written and decomposed; every pair FoldKey joins; Cherokee, `Abc`/`aBC` and the free top name end
+> to end, the encrypted twin; all four restored on APFS too).
 
 ### 4.5 Path length on Windows
 
@@ -2320,6 +2348,39 @@ the copy (`pending.go:15-21`).
 >   plan's line for some messages without an original says "Whether an archive keeps each message's
 >   original is set by how it was made (its Settings card shows this)". The W-NORAW row of the table
 >   above keeps its first words; this note supersedes its remedy.
+
+> Settled 2026-11-07 [PCT-2] (the fresh review `review-restore-thunderbird-pct-fresh.md`; the lead's
+> call). Mozilla writes a lock link's target as `ADDRESS:PID` or `ADDRESS:+PID` (`LockWithSymlink`,
+> toolkit/profile/nsProfileLock.cpp, the address this computer's host name resolves to, or 127.0.0.1),
+> and `IsSymlinkStaleLock` treats a link whose address is not its own as held: "Remote lock: give up
+> even if stuck". The restore read only the pid and asked whether it was alive here, so on Linux a
+> `lock` link from another computer with a pid not alive here (and an ordinary `.parentlock` no one
+> holds here, as on a network share whose record locks do not reach between the two computers) let the
+> restore through; on macOS a `.parentlock` link from another computer was refused, but in the words for
+> a lock left behind ("Open Thunderbird with this profile and quit it once"), which does not clear
+> another computer's lock. Now a lock link, `lock` or `.parentlock`, whose address is not this
+> computer's is held whatever its pid, on every platform (Mozilla makes neither link on Windows, so
+> there it can only refuse more), at the plan's check, at Start and in the race (`ELOOP`) alike.
+> This computer's addresses: a loopback address (127.0.0.0/8) and its network interfaces' addresses;
+> an address that is not a number is this computer's only when it is its host name; anything else
+> (an interface list that cannot be read included) is another computer's, the refusing side. It is
+> W-RUNNING with its own words (the builder's, under the lead's owner-delegated authority):
+> "Thunderbird's lock on this profile (FILE) was made by another computer, so nothing was restored.
+> Thunderbird may be open on another computer that uses this profile: close it there, then click Check
+> again." A Thunderbird process here is still the plain W-RUNNING. Not done: Mozilla also takes over a
+> remote `+PID` link when it holds the record lock itself; the restore does not, since on the share
+> where this matters the record lock may not reach the other computer. Tests:
+> `internal/tbrestore/ma1127_remotelink_unix_test.go` (both names, a dead, a `+`, a live-here pid and a
+> name not a number; the plan and Start the same words; the race; positive twins: loopback and this
+> computer's own interface address judged by the pid), and `ma1087_running_test.go`'s table (its two
+> `host:` rows now a loopback address, which keeps their pid cases, plus two another-computer rows).
+>
+> Settled 2026-11-07 (the lead's call after PCT-1/PCT-2): W-FAT32 quotes the folder it names, and W-LEFT's
+> two forms quote each entry they name, as the NAMES list does (`strconv.Quote`: a control character
+> or line break shows escaped inside the quotes); an encrypted archive's words still name none. Tests:
+> `internal/tbengine/ma1124_quotednames_test.go` `TestTheFAT32RefusalQuotesTheFolder` (MA-1124),
+> `internal/tbrestore/ma1122_quotedleft_test.go` (MA-1122). The old unused copy of W-LONGPATH's line in
+> `internal/tbrestore/words.go` was removed (the plan's `longPathWords` is the one in use).
 
 ## 8. Failures and crashes
 

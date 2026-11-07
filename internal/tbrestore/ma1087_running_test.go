@@ -25,9 +25,14 @@ func TestRestoreRunningCheckA(t *testing.T) {
 		}{
 			"live pid (this test)":   {"127.0.0.1:+" + strconv.Itoa(os.Getpid()), true},
 			"unparseable target":     {"garbage", true},
-			"dead pid (stale)":       {"host:+" + strconv.Itoa(deadPID(t)), false},
+			"dead pid (stale)":       {"127.0.0.1:+" + strconv.Itoa(deadPID(t)), false},
 			"bare plus pid, live":    {"+" + strconv.Itoa(os.Getpid()), true},
-			"reused pid, not TB yet": {"host:" + strconv.Itoa(os.Getppid()), true},
+			"reused pid, not TB yet": {"127.0.0.1:" + strconv.Itoa(os.Getppid()), true},
+			// Settled 2026-11-07 [PCT-2]: an address not this computer's ("host" is not its
+			// name) is another computer's lock, held whatever its pid; these two were
+			// "host:…" before, judged by the pid here, and keep their pid cases above.
+			"another computer, dead pid": {"host:+" + strconv.Itoa(deadPID(t)), true},
+			"another computer, live pid": {"192.0.2.1:" + strconv.Itoa(os.Getppid()), true},
 		}
 		for name, c := range cases {
 			t.Run(name, func(t *testing.T) {

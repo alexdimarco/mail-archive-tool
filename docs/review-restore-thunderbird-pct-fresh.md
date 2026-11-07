@@ -237,6 +237,23 @@ probe there. No probe was made.
 - Why the port of Thunderbird's compare is wrong for U+0130 (PCT-R1), if the builder ports that
   compare into an oracle.
 
+## Settled 2026-11-07 (the builder, under the lead's calls of 2026-11-07)
+
+Each finding was fixed test-first: the tombstone test was written and seen red on the code of
+`9ba2ea9`, then the fix made it green, then each fix was mutated back and the test went red again
+(the mutations are listed in the fix commit's message). The fix commit is the one that adds this
+table. Design notes: `design-restore-thunderbird.md` §4.4 "Settled 2026-11-07 [PCT-1]", §7.5
+"Settled 2026-11-07 [PCT-2]" and the quoting note after it.
+
+| ID | Lead's call | What was done | Tombstone test |
+|---|---|---|---|
+| PCT-1 (medium) | the restore gets its own sibling key, a superset of `util.FoldKey`, matching every pair Thunderbird's compare joins (read and cited); used for every sibling clash and the plan's names; clashing names get the short-code suffix; an exhaustive test over every code point plus Cherokee; on macOS no half-written restore | Done: `tbrestore.siblingKey` (built on `FoldKey`'s output, so a superset by construction and by test), used in `dedupe` (FinalNames, the Windows re-dedupe) and `FreeTopName`. Thunderbird's compare read again for this fix: `GetChildNamed` → `nsCaseInsensitiveUTF8StringComparator` → `CaseInsensitiveCompare` over `GetLowerUTF8Codepoint_inline`, `u_tolower` per code point (comm-central `d1da2f0b`; firefox main and `esr153` `4bd98d39`, ICU 78.3, Unicode 17). One more gap found while fixing: Go 1.26's tables are Unicode 15, so 57 lowercase pairs of Unicode 16 and 17 (Garay, Beria Erfe, eight Latin and Cyrillic letters) were unknown to both keys; they are in `newerLower`. The second of each pair gets " (2)" (then the hash suffix past 99), so every folder shows; the APFS failure cannot happen, since the two files no longer share a name the volume folds. | `internal/tbrestore/ma1088_pct1_siblingkey_test.go` (`TestTheSiblingKeyJoinsWhatThunderbirdJoins`, `TestTheSiblingKeyJoinsEverythingFoldKeyJoins`, `TestCaseSiblingsThunderbirdJoinsAreEachRestored`) |
+| PCT-2 (low) | a lock link naming another host is held (refuse) on Linux and macOS, never judged by the local pid; the Mac words must not say opening and quitting Thunderbird once clears it, but that it may be open on another computer that uses this profile, and to close it there | Done, for both link names, at the plan, at Start and in the race; W-RUNNING with its own words. This computer's addresses are loopback, its interface addresses and its host name; anything else, an address that is not a number included, refuses. Applied on every platform (Mozilla makes neither link on Windows, so it can only refuse more). The old table's `host:` rows now use a loopback address (their pid cases kept). | `internal/tbrestore/ma1127_remotelink_unix_test.go` `TestALockLinkFromAnotherComputerIsHeld` |
+| PCT-R1 | refuted by the running program | Nothing to fix. The new key joins `İ` and `i` anyway (Thunderbird's source says it should; merging more costs only a " (2)"). Why 153.6.0 showed both is still not traced. | — |
+| PCT-S1 (lead) | not in the calls | Not done; still a lead. | — |
+| Quoting (the lead's call) | quote the folder name in W-FAT32 and the entries in W-LEFT as the plan list does; encrypted archives name none; remove the unused "too deep" words | Done (`strconv.Quote`); `wLongPath` removed from `internal/tbrestore/words.go` (nothing referenced it; the plan's `longPathWords` is in use). | `internal/tbengine/ma1124_quotednames_test.go` `TestTheFAT32RefusalQuotesTheFolder`; `internal/tbrestore/ma1122_quotedleft_test.go` |
+| Follow-up (owed) | record it | **Export and extract use the weaker `util.FoldKey`; check whether it matters.** The same Cherokee swap and the Unicode 16/17 gap reach the export's and extract's sibling names (XC13) and `thunderbird.ProfileKey`'s path fold on macOS and Windows; there the clash is with the file system's own fold (NTFS's upcase table, APFS), not Thunderbird's, so it may not matter. Not checked. | — |
+
 ## Counters
 
 Register: finding. Borrowed lines: the Thunderbird and Firefox source lines quoted above, each named

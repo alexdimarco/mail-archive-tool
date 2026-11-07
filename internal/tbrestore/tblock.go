@@ -94,11 +94,26 @@ const (
 	// wLockStale (W-LOCKFAIL), settled 2026-11-07 [ADV-L1]; the lead's call, these words
 	// the builder's under the lead's owner-delegated wording authority.
 	wLockStale = "Thunderbird's lock on this profile (FILE) is a link left behind when Thunderbird last closed without quitting normally, so nothing was restored. Open Thunderbird with this profile and quit it once, which clears the old lock, then click Check again. If this profile is also used from another computer, Thunderbird may be open there: close it there first."
+	// wLockRemote (W-RUNNING), settled 2026-11-07 [PCT-2]; the lead's call, these words the
+	// builder's under the lead's owner-delegated wording authority. A lock link made by
+	// another computer: Thunderbird may be open there. Never "quit it once" (opening and
+	// quitting Thunderbird here does not clear another computer's lock).
+	wLockRemote = "Thunderbird's lock on this profile (FILE) was made by another computer, so nothing was restored. Thunderbird may be open on another computer that uses this profile: close it there, then click Check again."
 )
 
 // staleLinkRefusal is the refusal for a `.parentlock` link left behind (ADV-L1).
 func staleLinkRefusal(profile string) error {
 	return refuse("W-LOCKFAIL", fill(wLockStale, "FILE", filepath.Join(profile, ParentLockName)), nil)
+}
+
+// remoteLinkRefusal is the refusal for a lock link naming another computer (PCT-2): the
+// link found, `.parentlock` when both names are links.
+func remoteLinkRefusal(profile string) error {
+	file := filepath.Join(profile, ParentLockName)
+	if !remoteParentLink(profile) {
+		file = filepath.Join(profile, "lock")
+	}
+	return refuse("W-RUNNING", fill(wLockRemote, "FILE", file), nil)
 }
 
 // errNotOrdinary is why a lock name that holds a folder, or a link that is not
@@ -113,6 +128,8 @@ var errNotOrdinary = errors.New("it is a folder or a link, not an ordinary file"
 func lockOpenRefusal(profile string, err error) error {
 	file := filepath.Join(profile, ParentLockName)
 	switch {
+	case lockHeldErr(err) && remoteParentLink(profile):
+		return remoteLinkRefusal(profile) // the link appeared after the check (PCT-2)
 	case lockHeldErr(err) && staleParentLink(profile):
 		return staleLinkRefusal(profile) // the link appeared after the check (ADV-L1)
 	case lockHeldErr(err):
@@ -143,9 +160,13 @@ func lockTakeRefusal(profile string, err error) error {
 // W-RUNNING, except when the only signal was a lock file that could not be opened or asked
 // (no hold seen, no Thunderbird process), which is worded by its cause (MA-1095 lab BUG-2),
 // or a `.parentlock` link left behind (ADV-L1, settled 2026-11-07), worded as that. A
-// Thunderbird process, or a hold seen, is W-RUNNING whatever else was found.
+// Thunderbird process, or a hold seen, is W-RUNNING whatever else was found. Settled
+// 2026-11-07 [PCT-2]: a lock link naming another computer, with no Thunderbird process
+// here, is W-RUNNING in its own words (wLockRemote): it may be open on that computer.
 func RunningRefusal(profile string, s RunningSignal) error {
 	switch {
+	case s.RemoteLink && !s.ByProcess:
+		return remoteLinkRefusal(profile)
 	case s.ByProcess || (s.ByLock && s.LockErr == nil):
 		return refuse("W-RUNNING", RunningWords(), nil)
 	case s.StaleLink:
@@ -193,9 +214,9 @@ func TakeProfileLock(profile string) (*ProfileLock, error) {
 	if err != nil {
 		return nil, lockOpenRefusal(profile, err)
 	}
-	if symlinkLockHeld(profile) || ProcessRunning() {
+	if sym, remote := symlinkLockHeld(profile); sym || ProcessRunning() {
 		l.Release()
-		return nil, refuse("W-RUNNING", RunningWords(), nil)
+		return nil, RunningRefusal(profile, RunningSignal{ByLock: sym, RemoteLink: remote, ByProcess: ProcessRunning()})
 	}
 	if held, herr := l.heldElsewhere(); held {
 		l.Release()
