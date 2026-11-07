@@ -37,7 +37,7 @@ func TestR0EncoderThunderbirdRunning(t *testing.T) {
 
 // covers: MA-1088, R40, S69
 func TestR0EncoderSafeNames(t *testing.T) {
-	t.Skip("MA-1088 pending: SafeName and the name budgets land in slice R4; the restore's own folder caps (W-TOOMANY) land in slice R1")
+	t.Skip("MA-1088 pending: SafeName and the name budgets land in slice R4 (the restore's own folder caps, W-TOOMANY, are proven since slice R1 by internal/app TestRestoreFolderCaps)")
 }
 
 // covers: MA-1089, R40
@@ -67,7 +67,7 @@ func TestR0EncoderCrashStates(t *testing.T) {
 
 // covers: MA-1124, R40, S70
 func TestR0EncoderPlan(t *testing.T) {
-	t.Skip("MA-1124 pending: the read side lands in slice R1; the plan's words, free space and refusals land in slice R6")
+	t.Skip("MA-1124 pending: the plan's words, free space (W-SPACE), W-PST, W-NORAW, W-RECAPTURE, W-FAT32 and the All Mail note land in slice R6 (the read side is proven since slice R1 by internal/app/ma1124_restore_read_test.go)")
 }
 
 // covers: MA-1125, R40, S66, S67

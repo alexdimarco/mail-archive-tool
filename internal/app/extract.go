@@ -272,8 +272,8 @@ type walkItem struct {
 // empty dirKey (it sorts first and is skipped without opening any folder).
 func newWalkItem(key string, rec state.Record) walkItem {
 	it := walkItem{key: key, rec: rec}
-	segs, ok := validRelPath(rec.Path)
-	if !ok || len(segs) < 2 || !strings.HasSuffix(rec.Path, verifyHTMLSuffix) {
+	segs, ok := recordHTMLSegs(rec.Path)
+	if !ok {
 		return it
 	}
 	san := make([]string, len(segs))
@@ -326,69 +326,22 @@ func (x *extractor) advanceFolder(dirKey string) error {
 // and never written (R20). A returned error is a hard failure (ENOSPC, rename)
 // that aborts the run.
 func (x *extractor) processRecord(it walkItem) error {
-	if !it.valid {
-		x.skip(rawPath(it.rec.Path), "recorded path is not a safe in-archive .html path", &x.rep.SkippedGate)
-		return nil
-	}
-	if x.sealed != nil {
-		return x.processSealed(it)
-	}
-	// The `.eml` sibling shares the record's stem.
-	emlRel := strings.TrimSuffix(it.rec.Path, verifyHTMLSuffix) + verifyEMLSuffix
-	segs, ok := validRelPath(emlRel)
-	if !ok {
-		x.skip(rawPath(emlRel), "the .eml path is not a safe in-archive path", &x.rep.SkippedGate)
-		return nil
-	}
-	kind, size, full := extractInspect(x.out, segs)
-	switch kind {
-	case "missing":
-		x.skip(emlRel, "no preserved original (.eml) — this record has no bytes to extract", &x.rep.SkippedNoEML)
-		return nil
-	case "symlink":
-		x.skip(emlRel, "a symlink stands where the .eml should be (not followed)", &x.rep.SkippedGate)
-		return nil
-	case "irregular":
-		x.skip(emlRel, "the .eml is not a regular file", &x.rep.SkippedGate)
-		return nil
-	}
-
-	var recorded *state.FileDigest
-	if it.rec.Fixity != nil {
-		recorded = it.rec.Fixity.EML
-	}
-	// The expected byte count (the recorded size when we have fixity, else the
-	// on-disk size), capped so an oversized blob is skipped not slurped (PC8).
-	expected := size
-	if recorded != nil {
-		expected = recorded.Size
-	}
-	if expected > maxExtractEMLBytes {
-		x.skip(emlRel, fmt.Sprintf("the .eml is %d bytes, larger than the %d-byte extract cap", expected, maxExtractEMLBytes), &x.rep.SkippedGate)
-		return nil
-	}
-	// With fixity, read one byte PAST the recorded size (like verify) so a file
-	// longer than recorded — a correct prefix with appended bytes — fails on the
-	// length instead of passing on a prefix hash (PC13).
-	bound := expected
-	if recorded != nil {
-		bound = recorded.Size + 1
-	}
-	data, sum, err := readBounded(full, bound)
+	// The faithful bytes or the reason, through the one step restore shares
+	// (FaithfulOriginal: the gate, the bounded read, the fixity check; for an
+	// encrypted archive the sealed original, decrypted and checked — a locked key
+	// ends the run).
+	orig, skip, err := FaithfulOriginal(x.out, it.rec, x.sealed)
 	if err != nil {
-		x.skip(emlRel, "the .eml could not be read", &x.rep.SkippedGate)
+		return err
+	}
+	if skip != nil {
+		x.skip(skip.Path, skip.Reason, x.skipCounter(skip.Kind))
 		return nil
 	}
-	if recorded != nil {
-		if int64(len(data)) != recorded.Size || sum != recorded.SHA256 {
-			x.skip(emlRel, "the .eml does not match its recorded fixity (modified or truncated) — run `mailarchive verify` first", &x.rep.SkippedFixity)
-			return nil
-		}
-	} else {
+	if orig.NoFixity {
 		x.rep.EmittedNoFixity++
 	}
-
-	if err := x.emit(it, data); err != nil {
+	if err := x.emit(it, orig.Data); err != nil {
 		if errors.Is(err, errDestUnsafe) {
 			return nil // already counted+reported as a skip; keep extracting
 		}
@@ -398,46 +351,16 @@ func (x *extractor) processRecord(it walkItem) error {
 	return nil
 }
 
-// processSealed emits a record of an encrypted archive: its sealed original,
-// decrypted — its ciphertext checked against the record's digest and sealed with
-// the archive's key, so a planted or swapped unit never reads — then checked
-// against its recorded fixity when there is one (PC13). A record with no original,
-// one over the size cap, and one whose unit cannot be read are counted and
-// skipped, as their plaintext twins are; a locked key ends the run.
-func (x *extractor) processSealed(it walkItem) error {
-	emlRel := strings.TrimSuffix(it.rec.Path, verifyHTMLSuffix) + verifyEMLSuffix
-	if it.rec.Sealed != nil && it.rec.Sealed.EML != nil && it.rec.Sealed.EML.Size > maxExtractEMLBytes {
-		x.skip(emlRel, fmt.Sprintf("the original is %d bytes sealed, larger than the %d-byte extract cap", it.rec.Sealed.EML.Size, maxExtractEMLBytes), &x.rep.SkippedGate)
-		return nil
+// skipCounter is the report's counter for a skip of kind k.
+func (x *extractor) skipCounter(k OriginalSkipKind) *int {
+	switch k {
+	case SkipNoOriginal:
+		return &x.rep.SkippedNoEML
+	case SkipFixity:
+		return &x.rep.SkippedFixity
+	default:
+		return &x.rep.SkippedGate
 	}
-	data, err := x.sealed.Original(it.rec)
-	switch {
-	case errors.Is(err, ErrNoOriginal):
-		x.skip(emlRel, "no preserved original — this record has no bytes to extract", &x.rep.SkippedNoEML)
-		return nil
-	case errors.Is(err, ErrEncryptedNeedsKey):
-		return err
-	case err != nil:
-		x.skip(emlRel, "the original could not be read from the archive (missing or damaged) — run `mailarchive verify`", &x.rep.SkippedFixity)
-		return nil
-	}
-	if it.rec.Fixity != nil && it.rec.Fixity.EML != nil {
-		sum := sha256.Sum256(data)
-		if int64(len(data)) != it.rec.Fixity.EML.Size || hex.EncodeToString(sum[:]) != it.rec.Fixity.EML.SHA256 {
-			x.skip(emlRel, "the original does not match its recorded fixity — run `mailarchive verify` first", &x.rep.SkippedFixity)
-			return nil
-		}
-	} else {
-		x.rep.EmittedNoFixity++
-	}
-	if err := x.emit(it, data); err != nil {
-		if errors.Is(err, errDestUnsafe) {
-			return nil
-		}
-		return err
-	}
-	x.rep.Emitted++
-	return nil
 }
 
 // errDestUnsafe marks a record skipped because a symlink stands in its -dest
