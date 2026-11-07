@@ -506,3 +506,77 @@ On the Mac:
     `%LOCALAPPDATA%\rl4`; on the share, nothing.
   - Persona: none.
   - Source reached: Thunderbird source — yes; the VM — yes; macOS and Linux Thunderbird — no.
+
+## Addendum 2, 7 November 2026 (VM clock 12:20–12:21, UTC−5): MA-1095 — names with `%` (ADV-N1) — **PASS (Windows)**
+
+The names adversarial pass (`docs/review-restore-thunderbird-adversarial-names.md`, ADV-N1, high)
+found from Thunderbird's source that it percent-decodes each file name before it works out the
+folder's file, so a folder written as `a%41b` would be read from `aAb` and shown empty. The fix,
+commit **bc29f75**, writes every `%` as `_`. This run checks it on a running Thunderbird.
+
+**Set-up.** A new throwaway world, `C:\Users\Public\tb-restore-lab5\`, with `USERPROFILE`,
+`APPDATA` and `LOCALAPPDATA` pointed at its `home`, as before.
+- Profile `p-pct` is a copy of MA-1133's `fresh-news` (Local Folders made through a made-up
+  newsgroup account; no real account). The VM user's own profiles were not opened.
+- `mailarchive.exe` was built from bc29f75 as `packaging/build-release.sh` builds it
+  (`GOOS=windows GOARCH=amd64 go build ./cmd/mailarchive`; SHA-256 `a6f600b7…86ea`).
+- The source is a folder of four mbox files, written by the lab script with exact bytes:
+  `a%41b` (2 messages), `Budget%2026`, `100%` and `Normal` (1 each). The archive, named
+  **`Mail%20backup`**, was made from it by that program with `-raw` (originals kept): 5 records.
+
+**The plan** (command line, `-plan -record-out`; `rt-plan.txt`, `record-plan.txt`). Its NAMES line,
+word for word:
+
+```
+4 folder names had to be changed to be safe as file names; Thunderbird shows the changed names:
+"Restored — Mail%20backup" → "Restored — Mail_20backup"
+"100%" → "100_"
+"Budget%2026" → "Budget_2026"
+"a%41b" → "a_41b"
+```
+
+The saved record holds the same lines. `Normal` is not listed (not changed).
+
+**The restore** (`-yes`): "Restored 5 messages into Thunderbird as the folder 'Restored —
+Mail_20backup' under Local Folders. … MailArchive checked every message it wrote.", exit 0.
+
+**Thunderbird 153.6.0** (`thunderbird.exe -no-remote -profile …\p-pct`, pid 9496).
+- It showed `Restored — Mail_20backup` (0 messages, as designed) with `100_`, `a_41b`,
+  `Budget_2026` and `Normal` under it (`r9-02-tree`).
+- Each was opened in turn: `100_` **1 Message** ("pct hundred"), `a_41b` **2 Messages** ("pct
+  a41b one", "pct a41b two"), `Budget_2026` **1 Message** ("pct budget"), `Normal` **1 Message**
+  ("pct normal") (`r9-03` to `r9-06`).
+- After a graceful close (pid 9496 exited), each restored file had Thunderbird's summary under
+  its own name, and there was **no other `.msf` or folder** (no `aAb.msf`, no `Budget 26.msf`: the
+  ADV-N1 sign; `check.ps1`). `folderCache.json`: `100_` 1, `a_41b` 2, `Budget_2026` 1, `Normal` 1,
+  and 0 for the top folder's own file.
+- No Thunderbird or MailArchive process was left on the VM.
+
+**Noticed, not a failure:** the progress line names the folder as the archive spells it, so a
+folder named `100%` reads "Restoring: 1 of 5 messages (100%)", which looks like a percentage.
+For the lead (a wording question, not changed here).
+
+**Not run here:** the same names before the fix (the old build was not run; ADV-N1's red is the
+unit test against Thunderbird's decode, seen red on bb93bf4's code). macOS and Linux legs, and a
+Mac OS Extended (HFS+) Local Folders for ADV-N5, were not run.
+
+**Where things are.** The lab5 world is `C:\Users\Public\tb-restore-lab5\` (profile `p-pct`, `home`,
+`Archives\Mail%20backup`, `src\mbox`). Programs and outputs are in `%LOCALAPPDATA%\rl5\`. On the
+Mac, the scripts are in `/Users/alex.dimarco/repositories/.winlab/restorelab5/`; the screenshots
+are `r9-01` to `r9-06` in `/Users/alex.dimarco/repositories/mail-archive-tool/.claude/restore-lab-r8/`
+(not committed; they show the VM's desktop only through Thunderbird's window and the taskbar).
+
+**For addendum 2:**
+- Date worked on: 7 November 2026 (the VM clock, UTC−5, and this session's date agree).
+- **Drawn on:** the program built from bc29f75; what Thunderbird 153.6.0 showed and wrote (`.msf`
+  files, `folderCache.json`); Thunderbird's source as cited in design §4.4 "Settled 2026-11-07
+  [ADV-N1]".
+- Register: a report of a lab run (findings).
+- **Smallest check for a reader:** on the VM, start Thunderbird with `-no-remote -profile
+  C:\Users\Public\tb-restore-lab5\p-pct` and click `a_41b` under "Restored — Mail_20backup". It
+  shows 2 messages.
+- **Counters.** Register: report. Borrowed lines: MailArchive's words, quoted. Drift: the first
+  two clicks missed because the lab's bring-to-front script pressed Alt and showed the menu bar;
+  the folder was then opened by keyboard. Touched: this file and the MA-1095 catalog row; on the VM,
+  only `tb-restore-lab5` and `%LOCALAPPDATA%\rl5`. Persona: none. Source reached: the VM — yes;
+  macOS and Linux Thunderbird — no.
