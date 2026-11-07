@@ -18,8 +18,9 @@ import (
 
 // grantOthersRead gives Local Folders an inheritable entry letting other accounts read
 // what is made in it: macOS "everyone allow read … file_inherit,directory_inherit";
-// Windows BUILTIN\Users (OI)(CI)R, as a folder on a second drive gets by default.
-// Linux: none (mode 0600 masks a default access list there).
+// Windows BUILTIN\Users (OI)(CI)R and Authenticated Users (OI)(CI)M, as a folder on a
+// second drive gets by default (R7-01 independent F5). Linux: none (mode 0600 masks a
+// default access list there).
 func grantOthersRead(t *testing.T, dir string) bool {
 	t.Helper()
 	switch runtime.GOOS {
@@ -29,17 +30,20 @@ func grantOthersRead(t *testing.T, dir string) bool {
 		}
 		return true
 	case "windows":
-		if b, err := exec.Command("icacls", dir, "/grant", "*S-1-5-32-545:(OI)(CI)R").CombinedOutput(); err != nil {
-			t.Skipf("icacls: %v %s", err, b)
+		for _, g := range []string{"*S-1-5-32-545:(OI)(CI)R", "*S-1-5-11:(OI)(CI)M"} {
+			if b, err := exec.Command("icacls", dir, "/grant", g).CombinedOutput(); err != nil {
+				t.Skipf("icacls: %v %s", err, b)
+			}
 		}
 		return true
 	}
 	return false
 }
 
-// othersMayRead is what the OS's own tool says of path: macOS `ls -led` names an
-// "everyone" entry, Windows `icacls` names BUILTIN\Users; anywhere, a group or other
-// mode bit.
+// othersMayRead is what the OS says of path: macOS `ls -led` shows any access-list entry
+// at all (a restored entry has none; R7-01 independent F5); Windows, read by SID, not by
+// name, any entry allowing Everyone, Authenticated Users, Users or Guests (othersOnWindows);
+// anywhere, a group or other mode bit.
 func othersMayRead(t *testing.T, path string) string {
 	t.Helper()
 	fi, err := os.Lstat(path)
@@ -49,15 +53,14 @@ func othersMayRead(t *testing.T, path string) string {
 	switch runtime.GOOS {
 	case "darwin":
 		b, _ := exec.Command("ls", "-led", path).CombinedOutput()
-		if strings.Contains(string(b), "everyone") {
-			return string(b)
+		lines := strings.Split(strings.TrimSpace(string(b)), "\n")
+		for _, l := range lines[1:] {
+			if f := strings.Fields(l); len(f) > 0 && strings.HasSuffix(f[0], ":") {
+				return string(b)
+			}
 		}
 	case "windows":
-		b, _ := exec.Command("icacls", path).CombinedOutput()
-		if strings.Contains(string(b), "BUILTIN\\Users") || strings.Contains(string(b), "Everyone") {
-			return string(b)
-		}
-		return ""
+		return othersOnWindows(t, path)
 	}
 	if fi.Mode().Perm()&0o077 != 0 {
 		return fi.Mode().String()

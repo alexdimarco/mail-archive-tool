@@ -1296,6 +1296,68 @@ predicate `emlPresent`, `internal/app/extractable.go:9-31`, the same one `status
 > the same race against the old create won **19 of 20**. macOS with a second account was not run
 > (no admin rights here).
 >
+> Settled 2026-11-07 [R7-01 independent F1] (the independent review,
+> `docs/review-restore-thunderbird-r701-independent.md`; the lead's call): on macOS a volume that
+> holds no access list (FAT32, exFAT) refuses `mkdir_extended` / `open_extended` ("invalid
+> argument"), so after R7-01 every restore there failed, plain archives too. The call is now chosen
+> by asking the volume, not by trying: `pathconf _PC_EXTENDED_SECURITY_NP` on the root's own open
+> folder (`unix.Fpathconf`, no new module). Where the volume holds no access list there is nothing
+> to inherit, so the plain exclusive create through the root (0700 / 0600) is used; the plan
+> already treats such a drive as not private (W-READERS, asked twice for an encrypted archive). If
+> the volume cannot be asked, the plain create is used only when the volume is also detected as
+> not private (its format on the W-READERS list, now one list, `tbrestore.FormatCannotLimitReaders`,
+> or ownership ignored); on any other volume nothing is made and the words say so (**W-NOTPRIVATE**:
+> "MailArchive could not make the restored mail readable only by your account on the drive that
+> holds Thunderbird's Local Folders (PATH, formatted FORMAT): the drive did not accept the setting
+> that keeps other accounts out, so nothing was added to Thunderbird. Choose a profile whose Local
+> Folders is on this computer's own drive."). The same words, never "invalid argument", when a
+> volume says it holds access lists and then refuses the call. Windows is unchanged
+> (`NtCreateFile` takes the descriptor on FAT and ignores it; by reasoning, not run). Tests:
+> `tbengine/ma1128_r701_volumes_darwin_test.go` (whole restores on real FAT32 and exFAT disk
+> images, plain and encrypted-confirmed; the APFS and HFS+ twin still born owner-only with no
+> access list), `tbrestore/ma1128_r701_independent_darwin_test.go` (the query, its failure, a
+> refused call).
+>
+> Settled 2026-11-07 [R7-01 independent F2]: on Windows the last part of a name goes to
+> `NtCreateFile` raw, past `os.Root`'s checks, and NT reads `\` as a separator and `:` as a stream.
+> `createAt` now refuses a last part holding `\`, `/`, `:` or NUL, or one `filepath.IsLocal`
+> refuses, before anything is made (`ERROR_INVALID_NAME`), so FS's promise ("no name, link or '..'
+> reaches outside it") holds in the FS layer itself, not only through `SafeName`. Test:
+> `tbrestore/ma1128_r701_leaf_windows_test.go` (through a junction, a stream on Thunderbird's
+> Trash), on the VM.
+>
+> Settled 2026-11-07 [R7-01 independent F3, F6]: the macOS bind after a create by path also
+> requires the entry the root finds to be this user's own (`Stat_t.Uid`), a folder or file as made,
+> not a link: a folder planted by another account at the name, reached by swapping an ancestor
+> away for the create and back, can no longer pass. (On a volume that ignores ownership every
+> entry reads as the mount owner's, so the owner says nothing there and is not required; the plan
+> asks twice there.) A create that cannot be bound is **W-CHANGED** in plain words — "a folder on
+> the way to Thunderbird's Local Folders (PATH) changed while the restore was writing … The empty
+> folder (file) MailArchive had just made may have gone to another place; MailArchive left it there
+> and removed nothing, since it cannot be sure it is its own" — never a raw `statat … no such
+> file`. Nothing is removed: the create took no handle on the folder it was made in, so what it
+> made cannot be shown to be the entry a path now names, and what stands under the name in Local
+> Folders is not this restore's. At the commit such a failure is no longer reported as W-TAKEN: the
+> W-CHANGED words come first, then, when something stands under the name, what the person finds
+> there (the cleanup removes nothing). Tests: `tbrestore/ma1128_r701_independent_darwin_test.go`
+> (a real root-owned folder, `/private/var`, found through a re-pointed link, through
+> `afterPathCreateSeam`), `tbrestore/ma1128_r701_commitbind_test.go`.
+>
+> Settled 2026-11-07 [R7-01 independent F4]: the parent file made at the commit is read back by
+> `FS.Private` like every other entry. Where that fails and the restore must be private
+> (MustBePrivate), the write stops as for any other entry: the parent file — made exclusively by
+> this restore an instant before, Thunderbird held out — is removed, only as the very file its own
+> open handle names (`RemoveSeen`), then the one cleanup (`wNotPrivateHead`, nothing left). If it
+> cannot be named so, it stays and the cleanup, finding it, removes nothing (W-KEPT's words). This
+> is the one removal after the parent file's create, and only before the commit is complete. A
+> plain archive passes the failure over. Test: `tbengine/ma1128_r701_parentfile_test.go`.
+>
+> Settled 2026-11-07 [R7-01 independent F5]: the tests' "other accounts may read" is now read by
+> SID on Windows — Everyone, Authenticated Users, Users, Guests (`othersread_windows_test.go`) — and
+> Local Folders is given both a second drive's defaults (Users read, Authenticated Users modify);
+> on macOS any access-list entry at all counts, not only "everyone". The old name search let a
+> create that also gave Authenticated Users read pass (shown on the VM).
+>
 > Settled 2026-11-07 [R6-12] (the R6 adversarial pass): "counts only" now reaches the plan's and
 > the refusal's words too: W-FAT32 says how many folders are 4 GB or more, and W-LONGPATH how many
 > are nested too deep, never their names, for an encrypted archive (they go to a terminal's log and

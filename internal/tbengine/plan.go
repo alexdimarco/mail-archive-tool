@@ -416,15 +416,9 @@ func readerReasons(lf tbrestore.LocalFolders) []string {
 
 // ownerOnlyUnenforceable is a file system that cannot limit who reads a file: FAT,
 // exFAT, and the network file systems whose server decides (the copy export's list,
-// design-local-confidentiality §4.7).
-func ownerOnlyUnenforceable(fsType string) bool {
-	switch strings.ToLower(fsType) {
-	case "vfat", "msdos", "msdosfs", "exfat", "fat", "fat32", "fat16", "fat12",
-		"smbfs", "smb", "smb2", "cifs", "afpfs", "webdav":
-		return true
-	}
-	return false
-}
+// design-local-confidentiality §4.7), kept in tbrestore so the macOS create uses the same
+// list (R7-01 independent F1).
+func ownerOnlyUnenforceable(fsType string) bool { return tbrestore.FormatCannotLimitReaders(fsType) }
 
 // fat32Words are W-FAT32's words. An encrypted archive's give a count, never a folder's
 // name (R6-12, settled 2026-11-07: the plan goes to a terminal's log and -record-out).

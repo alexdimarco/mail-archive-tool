@@ -170,6 +170,20 @@ func (r *rootFS) Private(name string, dir bool) error { return makePrivate(r.roo
 // errNotPrivate is an entry that, read back, others could still read.
 var errNotPrivate = errors.New("it can still be read by other accounts")
 
+// FormatCannotLimitReaders is a file system that cannot limit who reads a file: FAT,
+// exFAT, and the network file systems whose server decides (the copy export's list,
+// design-local-confidentiality §4.7). The plan asks twice there (W-READERS), and the
+// macOS create falls back to the plain create there when the volume cannot be asked
+// (settled 2026-11-07 [R7-01 independent F1]): one list for both.
+func FormatCannotLimitReaders(fsType string) bool {
+	switch strings.ToLower(fsType) {
+	case "vfat", "msdos", "msdosfs", "exfat", "fat", "fat32", "fat16", "fat12",
+		"smbfs", "smb", "smb2", "cifs", "afpfs", "webdav":
+		return true
+	}
+	return false
+}
+
 func (r *rootFS) SyncDir(name string) error {
 	f, err := r.root.Open(name)
 	if err != nil {

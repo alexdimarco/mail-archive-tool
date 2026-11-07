@@ -147,3 +147,22 @@ Kept out of the tree (a throwaway clone, deleted after): `internal/r701probe`
 probe that skipped), `internal/tbengine/zz_r701probe_darwin_test.go` (P-M3, and its
 baseline with the old create calls), `internal/tbrestore/zz_r701probe_darwin_test.go` with a
 seam in `create_darwin.go` (P-M5). No product code changed.
+
+## Settled 2026-11-07
+
+Fixed by a model (Claude, the fixer, not this review's author), on the lead's calls of
+2026-11-07. Each finding's test was red on the code reviewed and is green after; the design
+notes are `docs/design-restore-thunderbird.md` §6.2, "Settled 2026-11-07 [R7-01 independent Fn]".
+
+| ID | Outcome | Covering test (MA-1128) |
+|---|---|---|
+| F1 | Fixed. macOS asks the volume (`pathconf _PC_EXTENDED_SECURITY_NP` on the root's open folder) before choosing the create: no access lists → the plain exclusive create (0700 / 0600). Query failure → plain create only on a volume also detected as not private, else W-NOTPRIVATE in plain words (the drive's format and what to do); the same words when a volume refuses the call. Real disk images: FAT32 and exFAT whole restores finish (plain; encrypted refused without the second yes, finished with it); APFS and HFS+ still born owner-only, no access list. | `tbengine/ma1128_r701_volumes_darwin_test.go`, `tbrestore/ma1128_r701_independent_darwin_test.go` |
+| F2 | Fixed. `createAt` refuses a last part holding `\`, `/`, `:` or NUL, or one `filepath.IsLocal` refuses; through a junction and as a stream on the VM, nothing made. | `tbrestore/ma1128_r701_leaf_windows_test.go` |
+| F3 | Fixed. The bind also requires this user's own entry (not where ownership is ignored: there it says nothing, and the plan asks twice). Proven with a real root-owned folder (`/private/var`) found through a re-pointed link. | `tbrestore/ma1128_r701_independent_darwin_test.go` |
+| F4 | Fixed. The parent file is read back by `FS.Private`; on failure with MustBePrivate it is removed only as the very file its handle names, then the one cleanup; if it cannot be named so, it stays and nothing is removed. | `tbengine/ma1128_r701_parentfile_test.go` |
+| F5 | Fixed. Windows: entries allowing Everyone, Authenticated Users, Users or Guests, by SID; Local Folders given Users read and Authenticated Users modify. macOS: any access-list entry. On the VM the old name search let a create granting Authenticated Users read pass; the new one is red. | `tbengine/othersread_windows_test.go` (helper), the R6-01 and R7-01 tests |
+| F6 | Fixed. A failed bind is W-CHANGED in plain words (what changed, that what was made may be elsewhere and was left, Click Check again), never a raw `statat`; at the commit it is no longer W-TAKEN. Nothing is removed: what the path made cannot be shown to be the entry a path now names. | `tbrestore/ma1128_r701_independent_darwin_test.go`, `tbrestore/ma1128_r701_commitbind_test.go` |
+
+Not settled here: macOS SMB, AFP, WebDAV, NTFS and macFUSE volumes were not run (by the
+code, the query decides there too); Windows on FAT32 or exFAT and a second macOS account,
+as before.

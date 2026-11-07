@@ -284,6 +284,8 @@ type faultFS struct {
 	inner      tbrestore.FS
 	hook       func(op, name string) error
 	privateErr error
+	// privateFor, when set, is asked of each Private call; its error is the call's.
+	privateFor func(name string) error
 }
 
 func (f *faultFS) at(op, name string) error {
@@ -340,6 +342,11 @@ func (f *faultFS) Private(n string, dir bool) error {
 	if f.privateErr != nil {
 		return f.privateErr
 	}
+	if f.privateFor != nil {
+		if err := f.privateFor(n); err != nil {
+			return err
+		}
+	}
 	return f.inner.Private(n, dir)
 }
 
@@ -371,6 +378,14 @@ func (w *faultFile) Sync() error {
 }
 
 func (w *faultFile) Close() error { return w.w.Close() }
+
+// Stat is the wrapped file's own, so the writer can still name the very file it made.
+func (w *faultFile) Stat() (fs.FileInfo, error) {
+	if s, ok := w.w.(interface{ Stat() (fs.FileInfo, error) }); ok {
+		return s.Stat()
+	}
+	return nil, fs.ErrInvalid
+}
 
 // withFS makes every run of the test write through hook (nil: the real root only).
 func withFS(t *testing.T, hook func(op, name string) error) {

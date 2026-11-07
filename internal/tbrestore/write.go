@@ -523,6 +523,12 @@ func (w *writer) commit(top string) *WriteResult {
 	in := w.in
 	pf, err := w.f.Create(top)
 	if err != nil {
+		// Settled 2026-11-07 [R7-01 independent F6]: a create the root could not bind
+		// (W-CHANGED: a folder on the way changed) is said as that, never as W-TAKEN,
+		// though something may stand under the name.
+		if RefusalCode(err) != "" {
+			return w.stop(err)
+		}
 		if kind := entryKind(w.f, top); kind != "" || errors.Is(err, fs.ErrExist) {
 			// The name was taken while the restore ran: "taken" first, then the one
 			// cleanup, which removes nothing (step 0b), then "abandoned" (foldcheck2 P1).
@@ -544,6 +550,16 @@ func (w *writer) commit(top string) *WriteResult {
 			return w.res
 		}
 		return w.stop(err)
+	}
+	// Settled 2026-11-07 [R7-01 independent F4]: the parent file is read back by
+	// FS.Private like every other entry. Where that fails and MustBePrivate, the write
+	// stops as for any other entry: the parent file, made exclusively by this restore an
+	// instant ago with Thunderbird held out, is removed (only the very file its own handle
+	// names), then the one cleanup. If it cannot be shown to be that file, it stays, and the
+	// cleanup, finding it, removes nothing.
+	if perr := w.private(top, false); perr != nil {
+		w.unmakeParent(pf, top)
+		return w.stop(perr)
 	}
 	syncErr := pf.Sync()
 	pf.Close()
@@ -575,6 +591,23 @@ func (w *writer) commit(top string) *WriteResult {
 		w.res.Words += " (MailArchive met an error after the folder was complete: " + w.why(w.res.AfterErr) + ".)"
 	}
 	return w.res
+}
+
+// unmakeParent closes the parent file just made and removes it, only as the very file its
+// open handle names (RemoveSeen, which walks by handle and follows no link); a file that
+// cannot be named so is left (R7-01 independent F4).
+func (w *writer) unmakeParent(pf wfile, top string) {
+	st, ok := pf.(interface{ Stat() (fs.FileInfo, error) })
+	var fi fs.FileInfo
+	var err error
+	if ok {
+		fi, err = st.Stat()
+	}
+	pf.Close()
+	if !ok || err != nil || !fi.Mode().IsRegular() {
+		return
+	}
+	_ = w.f.RemoveSeen(top, map[string]fs.FileInfo{norm.NFC.String(top): fi})
 }
 
 // doneWords are W-DONE for n messages restored as top: the count grouped ("15,000") and
@@ -634,6 +667,10 @@ func (w *writer) stop(err error) *WriteResult {
 		head = wStoppedHead
 	case errors.As(err, &np):
 		head = fill(wNotPrivateHead, "PATH", w.in.Local.Dir)
+	case RefusalCode(err) != "":
+		// A create's own plain words (W-NOTPRIVATE, W-CHANGED; R7-01 independent F1, F6),
+		// which name Local Folders and the drive, never a restored folder.
+		head = err.Error()
 	}
 	return w.cleanAfter(o, err, head, removedTail)
 }
@@ -667,6 +704,10 @@ func (w *writer) cleanAfter(o Outcome, err error, head, tail string) *WriteResul
 	case CleanParent:
 		_ = w.logLine(EvAbandoned, func(l *LogLine) { l.Result, l.Detail = string(o), detail })
 		w.res.Words = fill(wNameAppeared, "TOP", top)
+		if RefusalCode(err) == "W-CHANGED" {
+			// R7-01 independent F6: what changed first, then what the person finds.
+			w.res.Words = head + " " + w.res.Words
+		}
 	case CleanBlocked:
 		w.res.Words = strings.TrimSuffix(head, " The part already written was removed.") + " " + w.blockedWords(c) + wTriesAgain
 	default:

@@ -25,6 +25,8 @@ import (
 // folder). Nothing inherited from Local Folders applies to it. A volume with no access
 // lists (FAT32, exFAT) ignores the descriptor; FS.Private's read-back then fails, which
 // stops an encrypted archive's restore whose plan did not ask a second time (R6-01).
+// (macOS needs a different call on such a volume; Windows does not: NtCreateFile there
+// takes the descriptor and ignores it, R7-01 independent F1, by reasoning, not run.)
 func mkdirPrivate(root *os.Root, name string) error {
 	h, err := createAt(root, name, true)
 	if err != nil {
@@ -47,7 +49,11 @@ func createAt(root *os.Root, name string, dir bool) (windows.Handle, error) {
 	if parent == "" {
 		parent = "."
 	}
-	if leaf == "" || leaf == "." || leaf == ".." {
+	// Settled 2026-11-07 [R7-01 independent F2]: the last part goes to NtCreateFile raw,
+	// past os.Root's checks, and NT reads '\' (and '/') as a folder separator and ':' as a
+	// file's stream: such a part, or one filepath.IsLocal refuses (a device name, a
+	// volume), is refused before anything is made, so FS's promise holds for it too.
+	if leaf == "" || leaf == "." || leaf == ".." || strings.ContainsAny(leaf, `\/:`+"\x00") || !filepath.IsLocal(leaf) {
 		return 0, &os.PathError{Op: "create", Path: name, Err: windows.ERROR_INVALID_NAME}
 	}
 	pf, err := root.Open(parent)
