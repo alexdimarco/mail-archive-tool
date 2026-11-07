@@ -24,6 +24,22 @@ exists in the code yet.
   findings: no Local Folders §3.2; Save As is not the check §12.3 (MA-1093); the lock dialog's
   words §5.2, §7.5.
 
+> Folded 2026-11-06 [foldcheck]: the fold check `docs/review-restore-thunderbird-foldcheck.md`
+> (commit f4411a9, verdict FAIL, narrowly) named five must-fix items M1–M5, the lead's two
+> confirmations L1 and L2, the RT-13 pending-key trap, and twelve smaller notes N1–N12. Each is
+> folded as a dated note beside the text it amends, tagged "[foldcheck M1]" and so on. Earlier fold
+> notes these replace are kept, and a note beside each says "superseded by [foldcheck …]". The
+> lead's calls are labelled "(lead's call)"; answers the folding agent chose for the smaller notes
+> are labelled "(folding agent's answer)", and the two it could only propose are labelled "for the
+> lead to confirm". Where a foldcheck note and an earlier note disagree, the foldcheck note wins.
+> Still owed before slice R0: a re-check of these notes only (the fold check's §3 says a full
+> re-verify is not needed), and the owner's answers to §15.
+> - Index (item → where): M1 §3.4, §5.4, §8, §9; M2 §5.4, §7.2, §7.4, §7.5, §8, §10, §14; M3 §7.2,
+>   §11; M4 §1, §5.2, §7.4; M5 §2, §4.5, §5.4, §7.2, §8, §9, §11, §12.3, §13, §14; L1 §6.5, §7.5;
+>   L2 §3.2; RT-13 §7.3, §7.5; N1 §8; N2 §7.5; N3 §3.4; N4 §12.3, §13; N5 §11; N6 §4.4; N7 §7.5;
+>   N8 §6.4; N9 §5.2, §13; N10 §5.4; N11 §3.2, §7.5; N12 §6.2; the RT-15 and RT-16 minor notes
+>   §3.1, §7.4; every changed test row §12.2.
+
 Revision 1 status, as reviewed (kept):
 
 Status: PROPOSED, revision 1 (2026-11-06). Not reviewed, not built. Nothing in this
@@ -69,6 +85,11 @@ command line as `mailarchive restore-thunderbird` (R33, "One program",
 > - "The archive's preserved original bytes": for a message from an mbox source these are the
 >   bytes the archive kept, which are go-mbox's output (CRLF lines, one `>` taken off a `>From `
 >   line), not the source mbox's exact bytes (§16 side finding 4, review side finding A).
+>
+> Folded 2026-11-06 [foldcheck M4, N5] (lead's call for M4): "MailArchive's own settings folder"
+> above is always MailArchive's default settings folder, `job.Dir()`, never the folder of a
+> `-config` file (§7.4 foldcheck note). The lock file "created only if absent" is now said in R40
+> as well (§11 foldcheck note).
 
 ## 2. What exists today, and what this reuses
 
@@ -109,6 +130,10 @@ command line as `mailarchive restore-thunderbird` (R33, "One program",
 >   a file. On FAT/exFAT under macOS and Linux that helper falls back to a look-up-then-rename with a
 >   stated race window (`copyexport_place_unix.go:27-60`), so "cannot replace" holds there only
 >   because Thunderbird is closed and held out by the lock (§9.2 as folded).
+>   - Folded 2026-11-06 [foldcheck M5] (lead's call): this bullet is superseded by [foldcheck M5].
+>     The restore uses no rename helper at all: every entry is created under its final name by an
+>     exclusive create (§5.4 foldcheck note). So the FAT/exFAT look-up-then-rename window does not
+>     arise for the restore.
 > - "A plan held for a second step": `pendingSecrets.put` discards every item with the same key
 >   (`pending.go:144-150`), so the restore plan gets its own key (§7.3 as folded) [RT-13].
 > - "A long task with progress and Cancel": two more things carried over from the unencrypted copy:
@@ -167,6 +192,10 @@ command line as `mailarchive restore-thunderbird` (R33, "One program",
    > may be an absolute path and is read as one when it is (today it is always joined as relative,
    > `resolve.go:99-100`). Each `Name=` is shown with bidirectional and control characters removed
    > (`util.StripBidi`), as names in the archive are.
+   >
+   > Folded 2026-11-06 [foldcheck RT-15 minor] (folding agent's answer): `StripBidi` removes
+   > bidirectional characters but not control characters (`paths.go:177-181`). So each `Name=` shown
+   > also has C0 controls, DEL and the C1 controls removed, as `SafeName` step 2 does (§4.4 note).
 3. **Keep only usable profiles.** A listed folder is offered only if it passes presync's
    profile check: it exists, is a folder, holds `prefs.js` as a regular file; on macOS
    and Linux it is owned by this user and not group- or world-writable
@@ -225,6 +254,10 @@ profile"). String values are decoded as JavaScript string literals (`\\`, `\"`,
 > the profile can also set the Local Folders server or directory; version 1 reads `user.js` after
 > `prefs.js` with the same decoder (Thunderbird applies `user.js` last), and the lab checks that
 > order (lab row MA-1095).
+>
+> Folded 2026-11-06 [foldcheck N11] (folding agent's answer): `user.js` has the same cap as
+> `prefs.js`, 16 MiB. Over it, the profile is refused with W-PREFS, whose words then name `user.js`
+> instead of `prefs.js` (§7.5 foldcheck note).
 
 1. The Local Folders account is the server named by
    `mail.accountmanager.localfoldersserver` (for example `server1`). If that is absent,
@@ -280,6 +313,11 @@ profile"). String values are decoded as JavaScript string literals (`\\`, `\"`,
    > (Warn rather than refuse is the folding agent's proposal, not a lead's call; for the lead to
    > confirm at re-verify.) Lab row MA-1097 gains the redirected-AppData case. Overlap with the archive or
    > with another account's directory has its own words too (W-OVERLAP, §7.5).
+   >
+   > Folded 2026-11-06 [foldcheck L2] (lead's call): confirmed. A Local Folders on a network drive
+   > whose identity can be read gets W-NETWORK, a warning, and the restore may go ahead; one whose
+   > identity cannot be read is refused with W-NOIDENT. This answers the "for the lead to confirm at
+   > re-verify" sentence above.
 
 ### 3.3 The storage kind: mbox or maildir
 
@@ -342,6 +380,38 @@ Local Folders/
 > copied or planted elsewhere does nothing. Thunderbird ignores it: lab A4 showed dot-named entries
 > are ignored in Local Folders (Windows); that this holds inside a `.sbd` too is added to lab row
 > MA-1091.
+>
+> Folded 2026-11-06 [foldcheck M1] (lead's call): a second hidden file joins the marker: the
+> **made-list**, `.mailarchive-restore-made`, directly inside `Restored — NAME.sbd/`, created
+> exclusively right after the marker, 0o600. Before the restore creates each entry inside the
+> container (a folder's mbox file, or a `NAME.sbd` directory), it appends one JSON line naming that
+> entry, `{"k":"f","p":"Inbox.sbd/Receipts"}` ("f" a file, "d" a directory; the path relative to the
+> container, parts joined by "/"), and fsyncs the list. Only then is the entry created. So after any
+> crash the list names every entry the restore made, and nothing it did not try to make. Crash
+> cleanup (§8 foldcheck note) removes exactly what the list names and nothing else, never following
+> a link. The names in it already sit in that same folder as plain file names, so `restores.log`
+> stays free of folder names for an encrypted archive (§6.2). The marker stays one short line, so
+> the backup's 4 KiB read still parses it (§7.2 note). The layout above gains:
+>
+> ```
+>   Restored — Work mail.sbd/
+>     .mailarchive-restore          (the marker: one line)
+>     .mailarchive-restore-made     (the made-list: one line per entry made)
+>     Inbox
+>     …
+> ```
+>
+> Both hidden files stay after a restore finishes, as the marker always did. MA-1091's last step
+> (the person renames or moves the restored folder in Thunderbird) watches the made-list too.
+>
+> Folded 2026-11-06 [foldcheck N3] (folding agent's answer): the marker's `profile` field is the same
+> value as the restore lock's name (§5.2 note, item 3): the first 16 hex characters of the SHA-256 of
+> the profile's canonical path. One function computes it, `thunderbird.ProfileKey(dir)`, and the
+> restore, presync and the backup skip all call it, so they cannot disagree. It resolves links
+> (`EvalSymlinks`), makes the path absolute and clean, and on Windows and macOS folds case (their
+> usual file systems ignore case; folding can only make two profiles share one lock, the safe
+> direction). MA-1140 tests that presync and the restore get the same key for one profile spelled
+> two ways.
 
 - **One mbox file per archive folder.** A folder with subfolders gets its file (empty
   when it holds no messages) and a sibling `NAME.sbd` directory. This is Thunderbird's
@@ -502,6 +572,12 @@ The result names how many folder names changed.
 >    "." / ".." / "untitled").
 > All of this runs in the **plan**, not during the write: the plan holds every final name, so no
 > name can fail part way through a restore. MA-1088 gains each case above.
+>
+> Folded 2026-11-06 [foldcheck N6] (folding agent's answer): step 5 keeps 5 units for ` (99)`, but
+> past ` (99)` step 6 adds the hash suffix, which is 9 (`~` and 8 hex). So when step 6 uses the hash
+> suffix, the name is cut again at a character boundary until the name with its suffix is at most
+> 251 UTF-8 bytes and 251 UTF-16 units (255 − 4 for `.msf` or `.sbd`), and the Windows path budget
+> (§4.5 note) is computed again for that name. This still happens in the plan.
 
 ### 4.5 Path length on Windows
 
@@ -522,6 +598,11 @@ long Windows user name).
 > marker and the parent file are counted too. Computed in the plan (§4.4 note), so nothing fails
 > mid-write for a path. MA-1126 tests the exact boundaries (247/248, 259/260, with and without
 > `.msf`).
+>
+> Folded 2026-11-06 [foldcheck M5] (lead's call): "using the longer of its hidden working name (§5.4
+> as folded) and its final name" above is superseded by [foldcheck M5]. There are no working names,
+> so each entry is counted under its final name only. The marker and the made-list
+> (`.mailarchive-restore-made`, §3.4 foldcheck note) are counted like any other file.
 
 ### 4.6 Read and unread, X-Mozilla-Status
 
@@ -673,6 +754,16 @@ seeing a half folder, and this subsection is dropped.
 >    Cancel and wait for the restore to finish." (W-WAIT, §7.5.) MailArchive is not a Thunderbird
 >    process, so choosing Close Thunderbird would not stop the restore (lab B), but the person cannot
 >    know that, and Cancel is the safe answer.
+>
+> Folded 2026-11-06 [foldcheck M4, N9] (lead's calls):
+> - [M4] Item 3's "MailArchive's settings folder" means MailArchive's default settings folder,
+>   `job.Dir()` (`internal/job/job.go:61-67`), always, never the folder of a `-config` file. Presync
+>   and scheduled backups never take `-config` (`cmd/mailarchive/main.go:1296`), so they always find
+>   the lock this way (§7.4 foldcheck note). The lock's name uses `thunderbird.ProfileKey`
+>   (§3.4 foldcheck note).
+> - [N9] Lab row MA-1134 (item 2's macOS and Linux lock) runs **before slice R3**, not at R8
+>   (§13 foldcheck note). If it shows the lock does not keep Thunderbird out, item 2's fallback is
+>   written into this design before any R3 code.
 
 ### 5.3 Checked again right before writing
 
@@ -761,6 +852,57 @@ helper).
 > runs; the parent file is what makes the folder appear, in one step. RT-4's fsync point [4] is
 > step 8.
 
+> Folded 2026-11-06 [foldcheck M5, M1, M2, N10] (lead's calls for M5, M1 and M2). This note amends
+> the folded sequence above; where the two disagree, this note wins.
+> - **Superseded by [foldcheck M5]:** step 4's hidden working files `.mailarchive-part-ID-N`, their
+>   placement by the no-replace file helper and its retry, and step 1's "working-name prefix". Each
+>   mbox file is now created **directly under its final name** with `OpenFile(O_CREATE|O_EXCL)`
+>   through the root. Why that is enough: the whole container stays invisible to Thunderbird until
+>   the parent file is made, last (lab A3 on Windows; macOS and Linux lab row MA-1091), so no name
+>   inside it needs hiding. It also removes every per-file rename, which antivirus can block on
+>   Windows, and the FAT/exFAT rename window (§9 foldcheck note). The sentence above that the
+>   lone-`.sbd` fallback "is dropped too" now holds: nothing in the sequence builds it.
+> - **Superseded by [foldcheck M2]:** "the next attempt cleans it, or finishes it". An unfinished
+>   restore is **never finished** by a later attempt. It is always cleaned up, and the person
+>   restores again (§8 foldcheck note).
+> - **The sequence as it now stands.** Every step goes through the `*os.Root` opened on Local
+>   Folders; every name is created exclusively. Bracketed numbers are RT-4's fsync points.
+>   1. **[1]** Append "started" to `restores.log` and fsync it (as step 1 above, without a
+>      working-name prefix).
+>   2. `Root.Mkdir("Restored — NAME.sbd", 0o700)`; a taken name gives the next ` (n)` and a fsynced
+>      "name" line, as step 2 above.
+>   3. Create the marker, write its one line, fsync it.
+>   4. Create the made-list `.mailarchive-restore-made` (§3.4 foldcheck note), fsync it, and fsync
+>      the container directory, so the list itself is on disk before any entry is made.
+>   5. For each folder in plan order, parents before children, and for each entry it needs (its mbox
+>      file `NAME`; its `NAME.sbd` directory when it has subfolders): append the entry to the
+>      made-list and fsync the list **[M1]**; then create the entry (`Root.Mkdir`, or
+>      `OpenFile(O_CREATE|O_EXCL)`). Write the folder's messages straight into its file, keeping in
+>      memory, per message, the SHA-256 and length of the bytes handed to the writer; **[2]** fsync
+>      and close the file. A folder with no messages of its own gets its empty file the same way.
+>   6. **[3]** fsync every directory made (a no-op on Windows).
+>   7. The post-write check [RT-12], as step 6 above, reopening each file by its final name. A
+>      Windows sharing violation on that reopen (antivirus scanning the new file) is retried for
+>      about 5 seconds, then W-CHECKFAIL.
+>   8. Append "checked" and fsync it. It records that the check passed. A later attempt uses it only
+>      to tell a committed restore from an unfinished one (§8 foldcheck note, case 2), never to finish
+>      one (M2).
+>   9. **[4] The commit:** create the empty parent file `Restored — NAME` with
+>      `OpenFile(O_CREATE|O_EXCL)` and fsync it, as step 8 above. If that fails because the name
+>      exists, first append a **"taken"** line and fsync it, then clean up (§8 foldcheck note) and
+>      refuse with W-TAKEN. The "taken" line is what tells a later attempt that a parent file of that
+>      name is not this restore's.
+>   10. **[5]** fsync the Local Folders directory, then **[6]** append "ended" and fsync it. An error
+>      (not a crash) at [5] or [6] comes after the folder is visible and complete: the result says the
+>      restore finished and names the error, and nothing is removed.
+> - **Cancel, Shut down, a failure and W-CHECKFAIL** clean up with the same code as a crash, from the
+>   made-list (§8 foldcheck note). There is one cleanup rule.
+> - **[N10]** (folding agent's answer): the reader the post-write check uses is product code in
+>   `internal/interchange`, beside `WriteMessage`, since that package owns the mbox format (for
+>   example `interchange.ReadMboxrd`). It is not a test helper. MA-1089 tests it against cases taken
+>   from Thunderbird's read rules and as the writer's round trip; lab row MA-1093 is what proves both
+>   against Thunderbird.
+
 ## 6. What can be restored, and the plan
 
 ### 6.1 Faithful only
@@ -848,6 +990,13 @@ predicate `emlPresent`, `internal/app/extractable.go:9-31`, the same one `status
 >   messages and ends as Cancel does.
 > - Q8's recommended answer (allowed while unlocked, with the tick) is what is built; refusing
 >   encrypted archives instead is a one-line refusal in the plan.
+>
+> Folded 2026-11-06 [foldcheck N12] (folding agent's answer): `copyLeaves` is an unexported method of
+> `CopyExportEnv` and carries the copy's own words ("the readable copy"). Slice R6 lifts its test into
+> one exported function in `internal/app` that returns reason codes only (synced by a named service,
+> possibly iCloud Desktop/Documents, removable or external drive, network share). The copy and the
+> restore each turn those codes into their own words. The copy's existing rows stay green before and
+> after the lift, as with the delete log's writer (§7.4 foldcheck note).
 
 ### 6.3 Size and free space
 
@@ -905,6 +1054,10 @@ The command line prints the same plan with `-plan` and stops.
 >   damaged-later records, the §6.1 note's sentence.
 > - W-CLOUD stays for an unencrypted archive (a warning only); for an encrypted one it is replaced by
 >   the ask-twice reasons.
+>
+> Folded 2026-11-06 [foldcheck N8] (folding agent's answer): "the archive keeps that timeline" means
+> at least one record in the archive's manifest has a non-zero `LastSeen`. When none has, the
+> deleted-after-backup line is not shown at all. MA-1124 tests both.
 
 ### 6.5 Choosing folders, and Gmail's duplicates
 
@@ -934,6 +1087,10 @@ The command line prints the same plan with `-plan` and stops.
 > and "Open an archive folder…" can make any folder current, including one someone else wrote. Over
 > a cap: refused in the plan with W-TOOMANY (§7.5), nothing written; choosing fewer folders is the
 > remedy. MA-1088 gains the 10,001-folder case.
+>
+> Folded 2026-11-06 [foldcheck L1] (lead's call): confirmed: at most **10,000 folders** and **300
+> levels** in one restore. This answers the "for the lead to confirm at re-verify" sentence above.
+> Over the level cap, W-TOOMANY's words name the depth instead of the count (§7.5 foldcheck note).
 
 ## 7. Locks, backups, Desktop flow, words
 
@@ -996,6 +1153,25 @@ backup captures. Owner question Q7.
 >   same way; the one instant it can meet is after step 2 of §5.4's note (the `.sbd` exists, empty)
 >   and before step 3 (the marker): an empty container, which yields no mail.
 >
+> Folded 2026-11-06 [foldcheck M5, M3] (lead's calls):
+> - The first bullet above (the working files `.mailarchive-part-ID-N`) is **superseded by
+>   [foldcheck M5]**: there are no working files. What MA-1138 pins instead: the marker and the
+>   made-list are dot-named files, so `isMailboxCandidate` never takes them for mailboxes, even in a
+>   container that is walked.
+> - The last bullet above ("the one instant it can meet") is **superseded by [foldcheck M3]**. It
+>   was wrong: a backup of another archive builds its skip set before a restore starts, then can walk
+>   into that restore's marked container, whose ID it does not know, and back it up. The fix: when
+>   the walk meets a well-formed marker whose ID is not in the skip set, it **re-reads `restores.log`
+>   once** for that marker before treating the folder as ordinary. The re-read always finds a real
+>   restore, because a restore's started line is fsynced before its `Mkdir` (§5.4, step 1). To keep a
+>   planted marker cheap, the re-read is skipped when the log's size and modification time are the
+>   same as when the skip set was last built (one stat instead of a read). The caller passes the
+>   skip set with a refresh function it supplies, so `internal/source` still does not read
+>   MailArchive's settings. A re-read that fails is the unreadable-log case of the third bullet.
+>   Only an ID still unknown after the re-read is walked as an ordinary folder. The empty-container
+>   instant (after `Mkdir`, before the marker) remains, and still yields no mail. `restores.log` is
+>   always the one in `job.Dir()` (§7.4 foldcheck note, M4). MA-1138 gains the case.
+>
 > **Finished restored folders** (owner question O1). Built as the recommended answer (b): the skip
 > above covers a finished restore too — a marked container whose ID is in `restores.log`, parent
 > file present — so the next backup does not copy the restored mail into the archive again, and the
@@ -1010,6 +1186,15 @@ backup captures. Owner question Q7.
 > the headless `status` read `restores.log`; a started line with no ended line shows as "An earlier
 > restore into Thunderbird did not finish (DATE). Thunderbird does not show it. Click Restore to
 > Thunderbird and Check to clean it up." (W-UNFINISHED, §7.5). MA-1141.
+>
+> Folded 2026-11-06 [foldcheck M2] (lead's call): Check and `-plan` write nothing, so "Click Restore
+> to Thunderbird and Check to clean it up" above is superseded by [foldcheck M2]: the cleanup happens
+> at the next **Restore** (Start) into that profile, under its locks. The new words are in §7.5's
+> foldcheck note. Desktop start and `status` show W-UNFINISHED only while the recorded container
+> still exists and carries that restore's marker, and the restore had not committed (§8 foldcheck
+> note, case 3; a read, nothing is written). So a person who deletes the leftover by hand is not
+> told about it again, and a restore that committed but crashed before its "ended" line (which
+> Thunderbird does show) is never called unfinished; the next Start just records its "ended".
 
 ### 7.3 The Desktop flow
 
@@ -1059,6 +1244,35 @@ the copy (`pending.go:15-21`).
 > - **Step 4's progress line** is counts only for an encrypted archive (§6.2 note); for an
 >   unencrypted one it may name the folder as written. Under the progress line, for the whole run,
 >   W-WAIT (§5.2 note, lab finding 3).
+>
+> Folded 2026-11-06 [foldcheck RT-13] (lead's call): the first bullet above is **superseded by
+> [foldcheck RT-13]** where it adds the kind to `ofCurrentArchive`. That is a trap: `discardExcept`
+> ends every `ofCurrentArchive` item whose key is not the current archive's (`pending.go:215-219`),
+> and it runs after **every** settings save (`dashboard.go:686-687`), so a plan under a key of its own
+> would be dropped at every save. `pending.go:63-67` says exactly this about delete plans. The
+> restore plan copies the delete plan's pattern exactly:
+> - **Its own key and kind.** A key of its own, `restorePlanKey(profileKey)`, made as
+>   `deletePlanKey(row)` is (`internal/desktop/archivedelete.go:73-75`) and never an archive's key;
+>   its own field on `pendingItem`; its own kind `isRestorePlan` beside `isDeletePlan`
+>   (`pending.go:55`). It is **not** added to `ofCurrentArchive` (`pending.go:68-70`).
+> - **How it survives a settings save.** A save that leaves the current archive where it was keeps
+>   it: `discardExcept` passes it by (`dashboard.go:687`, since it is not `ofCurrentArchive`), and the
+>   save ends restore plans only at a switch, in the same `if` as delete plans:
+>   `if !samePath(wasCurrent, d.cfg.effectiveOut()) { discardWhere(isDeletePlan); discardWhere(isRestorePlan) }`
+>   (`dashboard.go:690-692`). `afterSwitch` ends it beside delete plans too (`dashboard.go:710`).
+>   Shut down ends it (`close`, `pending.go:222-227`), and so do its ten minutes (`put`'s timer,
+>   `pending.go:151`).
+> - **A Lock no longer discards it.** A Lock calls `discardFor` with the archive's own key
+>   (`dashboard.go:300`, `pending.go:211-213`), which a plan under its own key does not match, as for
+>   a delete plan. So "a Lock (before start) … discard[s] the plan" above is replaced: after a Lock
+>   the plan stays, and Start refuses it, because an encrypted archive's restore needs the read lease
+>   (§6.2), which a locked archive cannot give. The words are W-LOCKED (§7.5 foldcheck note); nothing
+>   is written.
+> - Because the key is per profile, a second plan for the same profile replaces the first (`put`,
+>   `pending.go:144-150`), and a pending copy plan or key change is never touched.
+> - MA-1130 gains: a restore plan survives a settings save that keeps the location; a switch, by a
+>   save and by `afterSwitch`, ends it; a Lock leaves it and Start then refuses with W-LOCKED; a
+>   pending copy plan survives a restore plan.
 
 ### 7.4 The restore record
 
@@ -1083,6 +1297,39 @@ the copy (`pending.go:15-21`).
 > - The command line and Desktop use the same `restores.log` (one settings folder), so either finds
 >   the other's unfinished restore.
 > - Save this record says beside its button that the record names the restored folders (§6.2 note).
+>
+> Folded 2026-11-06 [foldcheck M4] (lead's call): **where `restores.log` and the restore lock live.**
+> Always in MailArchive's default settings folder, `job.Dir()` (`internal/job/job.go:61-67`), whatever
+> `-config` says, and never beside a `-config` file. Why: a Desktop started with `-config` keeps its
+> `deletions.log` beside that config file (`deletionsLogPath`,
+> `internal/desktop/archivedelete.go:267-293`), but a scheduled job "does not take" `-config`
+> (`cmd/mailarchive/main.go:1296`). A restore logged beside a `-config` file would therefore be
+> invisible to scheduled backups (no skip) and to their pre-sync (no restore lock). So:
+> - The restore's two paths are never derived from `ConfigPath`. One function, `tbrestore.LogPath()`
+>   (`job.Dir()` joined with `restores.log`), gives the log, and the restore lock sits beside it
+>   (§5.2 note, item 3). A Desktop started with `-config` finds them through that function, exactly
+>   as the command line does. Scheduled backups (`RunHeadless`), Desktop's own runs, presync,
+>   `status` and `restore-thunderbird` all call it. `restore-thunderbird` takes no `-config`.
+> - So the earlier note's "one settings folder" now holds for every caller.
+> - Uninstall: `restores.log` and the `restore-*.lock` files are added to uninstall's settings files
+>   (`fixedConfigNames`, `internal/uninstall/config.go:29-38`), so uninstalling MailArchive removes
+>   them from `job.Dir()`. A Desktop started with `-config` plans its uninstall in its own folder, so
+>   it does not remove them. (For the lead to confirm, the folding agent's proposal: when
+>   `restores.log` holds an unfinished restore, uninstall's plan names that leftover folder, since
+>   nothing will clean it up afterwards.)
+> - MA-1140 gains: a restore from a Desktop started with `-config` is seen by a scheduled backup's
+>   skip and by presync's `detectRunning`.
+>
+> Folded 2026-11-06 [foldcheck RT-16 minor] (folding agent's answer): "reused, not re-written" above
+> means lifted. The delete log's `appendLog` is unexported and typed to delete lines
+> (`internal/archdelete/dellog.go:151`), so slice R4 moves its append discipline into one shared
+> helper that both logs call, with delete's rows green before and after.
+>
+> Folded 2026-11-06 [foldcheck M2] (lead's call): **lines.** "checked" stays; a later attempt uses it
+> only to tell a committed restore from an unfinished one, never to finish one (§8 foldcheck note,
+> case 2). A **"taken"** line is added, appended and fsynced before a W-TAKEN cleanup starts (§5.4
+> foldcheck sequence, step 9). A later attempt appends "abandoned", "cleaned" or "ended" **only at
+> Start**, never at Check or `-plan` (§8 foldcheck note).
 
 ### 7.5 Words (the owner-delegated rule: say what happened first, then the remedy)
 
@@ -1170,6 +1417,37 @@ the copy (`pending.go:15-21`).
 > - **W-LEAVES** (only if the owner picks O2's alternative): "Thunderbird's Local Folders may leave
 >   this computer (REASONS), and the restored mail would not be encrypted, so nothing was
 >   restored. Choose a profile on this computer's own drive."
+>
+> Folded 2026-11-06 [foldcheck M2, N2, N7, N11, L1, RT-13]. Same rule. Changed rows (the rows above
+> stay as written):
+> - **W-UNFINISHED**, replaced [M2] (lead's call; Check writes nothing): "An earlier restore into
+>   Thunderbird did not finish (DATE). Thunderbird does not show it. MailArchive removes it at the
+>   start of your next restore into that Thunderbird profile. To remove it yourself instead, close
+>   Thunderbird and delete the folder 'Restored — NAME.sbd' in PATH." Shown only while that folder
+>   still carries the restore's marker and the restore had not committed (§7.2 foldcheck note). NAME is the archive folder's name,
+>   which the started line keeps for an encrypted archive too (§5.4, step 1).
+> - **W-CHECKFAIL** and **W-LEFT** [N7] (folding agent's answer): for an encrypted archive FILE is
+>   left out, as FOLDER already is ("one of the restored files"), and W-LEFT's FIRST NAMES are left
+>   out ("left N entries it did not make"). The antivirus words of §8's table also leave out FILE
+>   for an encrypted archive.
+> - **W-LOGBAD** and **W-LOGFULL** [N2] (for the lead to confirm, the folding agent's proposal; the
+>   other choice, MailArchive trimming the log itself and keeping the IDs whose folders still exist,
+>   is a slice R5 change): moving or deleting the log also forgets which folders MailArchive put into
+>   Thunderbird. So each adds, after its remedy: "After that, MailArchive's backups no longer know
+>   which folders it restored into Thunderbird, and back them up like your other mail, together with
+>   any hidden folder an unfinished restore left. Before you move the file, delete in Thunderbird the
+>   restored folders you no longer need."
+> - **W-PREFS** [N11]: names `user.js` instead of `prefs.js` when that is the file it could not read.
+> - **W-TOOMANY** [L1], over the level cap: "This restore would make folders N levels deep, more than
+>   MailArchive makes in one restore (300), so nothing was restored. Leave out the most deeply nested
+>   folders."
+>
+> New rows:
+> - **W-LOCKED** [RT-13]: "This archive is locked, so the restore did not start. Unlock it, then
+>   click Check again."
+> - **Made-list unreadable** [M1] (§8 foldcheck note, rule 6): "MailArchive could not read its list of
+>   what an earlier restore wrote, so it removed nothing. Thunderbird does not show that folder
+>   ('Restored — NAME.sbd' in PATH); close Thunderbird and delete it yourself when you are ready."
 
 ## 8. Failures and crashes
 
@@ -1247,6 +1525,72 @@ restore is on disk could not be told (Delete's rule, `archivedelete.go:659-680`)
 > `restores.log`: an unreadable log refuses (W-LOGBAD), a full one refuses (W-LOGFULL); a torn last
 > line does neither (§7.4 note).
 
+> Folded 2026-11-06 [foldcheck M1, M2, M5, N1] (lead's calls for M1, M2 and M5). This note amends the
+> crash states and cleanup rules above; where they disagree, this note wins.
+> - **Check (the plan) and `-plan` write nothing.** They read `restores.log` and the disk and report.
+>   Every action of a "next attempt", the cleanup and every "abandoned", "cleaned" or "ended" line,
+>   happens at **Start**, in this order: archive lock → MailArchive restore lock → the re-check
+>   (§5.3 note) → Thunderbird's profile lock → B checked again → the cleanup of each unfinished
+>   restore into this profile → the new restore. Cleanup only removes, so it cannot spoil the
+>   re-check: the new name was chosen free of the leftover, and free space only grows.
+> - **At Start, each started line for this profile with no "ended", "cleaned" or "abandoned" line
+>   is settled by the first case that applies:**
+>   1. The recorded container (named by the latest "name" line, else the started line) is absent, or
+>      does not carry this ID's marker → append "abandoned"; remove nothing. [N1] (folding agent's
+>      answer) A container with no marker (a crash between `Mkdir` and the marker) cannot be proven
+>      MailArchive's, so it is left. It is empty, Thunderbird does not show it, a backup finds no
+>      mail in it, and it keeps its name, so the next restore takes " (2)".
+>   2. The container carries this ID's marker, the parent file `Restored — NAME` exists, the log has
+>      this ID's "checked" line, and it has no "taken" line → the restore had committed (the parent
+>      file is made only after "checked"): append "ended"; remove nothing. Requiring "checked" means
+>      a parent file made by someone else after a crash mid-write (for example the person making a
+>      folder of exactly that name in Thunderbird) never makes an unchecked tree count as committed.
+>   3. Otherwise (no parent file, no "checked" line, or a "taken" line) → **clean up** by the rules
+>      below, then append "cleaned" (or "abandoned" with W-LEFT, rule 4). A parent file that is
+>      present is never touched (rule 7).
+> - **Superseded by [foldcheck M2]:** the state "Crash after 'checked', before the parent file" above.
+>   It is now case 3: cleaned up, never finished, and the person's new restore writes everything
+>   again. Nothing re-checks the old tree against the archive, and the plan never says "MailArchive
+>   finished it".
+> - **Superseded by [foldcheck M5]:** "perhaps one working file" in "Crash while writing". There are
+>   none. Instead there may be one mbox file under its final name whose last message is torn. The
+>   made-list names it, so it is removed like the rest.
+> - **A crash during a W-TAKEN cleanup** now finds the "taken" line, so it is case 3, not case 2: a
+>   parent file someone else made is never taken as this restore's commit. One case is left: a crash
+>   in the instant between a failed parent-file create and the fsynced "taken" line looks like case 2
+>   and is recorded as ended. Nothing is removed (the safe direction), and the restored tree then
+>   shows under the other folder of that name. It needs another program to make that exact name in
+>   Local Folders while Thunderbird is closed and held out; it is in the R3–R5 adversarial pass's
+>   scope.
+> - **Cleanup rules, replaced** [M1] (rules (a) and (b) above are superseded by [foldcheck M1]). The
+>   cleanup runs through the Local Folders root and never follows a link:
+>   1. Read the made-list, bounded at 16 MiB. A torn last line is ignored, since its entry was never
+>      created (the create comes after the fsync). A missing made-list (a crash between the marker
+>      and the list) lists nothing. Each line's path must be relative, with no empty, `.` or `..`
+>      part, or the list counts as unreadable (rule 6).
+>   2. Remove the listed entries in reverse order, so children go before parents. Each is removed only
+>      after an `Lstat` through the root shows the kind the list names: a regular file for "f", a
+>      directory for "d", never a link. An entry that is absent is passed over. A directory is removed
+>      only when it is empty.
+>   3. Then remove the made-list, then the marker (only when its ID is this restore's), then the
+>      container.
+>   4. Anything not listed, a kind that does not match, or a directory still not empty after its
+>      listed children are gone, is **left**. Then the made-list and the marker are kept too, so
+>      backups keep leaving the folder out; the log gets "abandoned"; and the result says W-LEFT once.
+>   5. A listed entry that cannot be removed (a Windows sharing violation, retried for about 5
+>      seconds; a permission error) stops the cleanup with the antivirus words of the table above. No
+>      line is appended, so the next Start tries again.
+>   6. A made-list that cannot be parsed, apart from a torn last line: nothing is removed, the marker
+>      and the list are kept, "abandoned" is appended, and the result gives the made-list-unreadable
+>      words (§7.5 foldcheck note).
+>   7. It never removes the parent file `Restored — NAME` (it is outside the container), and never
+>      anything else outside the container.
+> - **One cleanup.** Cancel, Shut down, a failure, W-CHECKFAIL and W-TAKEN use these same rules (§5.4
+>   foldcheck note).
+> - **Antivirus** (the last state above): "a placement meeting a sharing violation" is superseded by
+>   [foldcheck M5]; nothing is placed. The 5-second retry is now on the post-write check's reopen
+>   (§5.4 foldcheck sequence, step 7) and on cleanup removals (rule 5).
+
 ## 9. Security
 
 The threat model is the repo's: another local account is out of scope only where the OS
@@ -1303,6 +1647,17 @@ This design owes the adversarial pass on the writer and the profile lock (§13).
 >   marked container that has no parent file (§7.2 note); that fallback is in the adversarial pass's
 >   scope.
 > - The adversarial passes owed are now named per slice in §13's note.
+>
+> Folded 2026-11-06 [foldcheck M5, M1] (lead's calls):
+> - In the §9.2 bullet above, "also rests on the file-placement helper, which on FAT/exFAT … falls
+>   back to a look-up-then-rename with a stated race window" is **superseded by [foldcheck M5]**.
+>   Nothing is placed or renamed, so "cannot replace" rests on exclusive create alone (`O_EXCL` and
+>   `Root.Mkdir`).
+> - **The made-list** [M1] is read back by a later attempt from a folder that another program could
+>   write into. Its paths are checked (relative, no empty, `.` or `..` part), used only through the
+>   root, never followed through a link, and act only inside a container whose marker's ID is in
+>   this computer's `restores.log` for this profile (§8 foldcheck note). The R3–R5 adversarial pass
+>   covers it.
 
 ## 10. The command line
 
@@ -1337,6 +1692,12 @@ mailarchive restore-thunderbird -list-profiles
 >   output, and its own exit code is that attempt's.
 > - `-plan` reads `restores.log` and reports an unfinished restore, but writes nothing (cleanup happens
 >   only at Start, under the locks).
+>
+> Folded 2026-11-06 [foldcheck M2] (lead's call): "a restore finished by a later attempt (§8 note) is
+> reported in that attempt's output" above is **superseded by [foldcheck M2]**: no attempt finishes
+> an earlier one. A cleanup at Start, or an "ended" recorded for a restore that had committed, is
+> reported in that attempt's output, and its exit code is that attempt's own. `-plan` writes nothing,
+> as the bullet above says, and neither does Desktop's Check.
 
 ## 11. New invariant and scenarios (provisional ids)
 
@@ -1369,6 +1730,19 @@ mailarchive restore-thunderbird -list-profiles
 > changed); **S74** antivirus quarantines a restored file before the commit (caught by the check,
 > nothing shown). Ids R40, R41 and S66–S74 are free on main and `cloud-sync-note` (checked
 > 2026-11-06); provisional until R0.
+>
+> Folded 2026-11-06 [foldcheck N5, M5, M3]:
+> - [N5] (folding agent's answer): R40's folded wording says the restore opens Thunderbird's lock
+>   "but never writes" it, yet the restore also creates that file when it is absent. So R40, as it
+>   goes into the catalog, reads "… held out by Thunderbird's own profile lock file, which it opens,
+>   creating it only when absent, and never writes to; …".
+> - [M5] (lead's call): R40's clause "'Cannot replace' on FAT/exFAT under macOS and Linux: §9 note" is
+>   **superseded by [foldcheck M5]**: nothing is renamed, so the clause is dropped.
+> - [M5, M3] (lead's calls): R41's "and every `.mailarchive-part-` working file" is **superseded by
+>   [foldcheck M5]**: there are none. R41 instead reads: "A backup leaves out every folder carrying a
+>   marker whose ID is in `restores.log` for that profile (re-reading the log once for a marker it
+>   does not know) and has no parent file, the hidden marker and made-list inside it included; with
+>   O1's recommended answer, also the finished restored folders it lists."
 
 ## 12. Tests
 
@@ -1459,6 +1833,37 @@ into the catalog (structural id allocation, which the owner lets the lead assume
 > | MA-1142 | `restores.log`: torn last line tolerated, full log W-LOGFULL, unparsable W-LOGBAD, fsync before the first create, the line sequence of §7.4's note [RT-16, RT-4] |
 > | MA-1143 | Windows legs: a `Packages\*Thunderbird*` folder gives W-STORE in the plan and the Done words; an identity-less volume gives W-NOIDENT; a remote drive gives W-NETWORK (run on the VM, RT-21) [RT-11] |
 
+> Folded 2026-11-06 [foldcheck M1–M5, RT-13, N1, N3, N6, N8, N10]: changes to the rows above. No new
+> ids.
+> - **MA-1122** [M1, M5, N1]: fault injection also at every made-list append; there is no placement.
+>   After a crash at each point, the made-list names every entry on disk that the restore made, and
+>   the cleanup removes exactly those. Left, with W-LEFT and the marker and list kept: a foreign entry,
+>   a link where a listed entry was, a kind that does not match, a listed directory not empty. Also: a
+>   torn last list line; an unreadable list removes nothing; a container without a marker is left and
+>   the next restore takes " (2)".
+> - **MA-1123**, re-scoped again [M2]: a crash after "checked", before the parent file, is cleaned up
+>   at the next Start and never finished; a parent file present with a "checked" line and no "taken"
+>   line is recorded as ended with nothing removed; a parent file present with no "checked" line, or
+>   with a "taken" line, leads to cleanup of the container, never to "ended", and the parent file is
+>   left untouched; Check and `-plan` write nothing in every case (the file listing and the bytes of
+>   `restores.log` the same before and after).
+> - **MA-1126** [M5]: the working-name cases are dropped; the marker and the made-list are counted.
+> - **MA-1088** [N6]: a name past ` (99)` gets the hash suffix and is cut again to fit.
+> - **MA-1089** [N10]: tests the product reader in `internal/interchange`.
+> - **MA-1124** [N8]: the deleted-after-backup line hidden when no record has a non-zero `LastSeen`,
+>   shown when one has.
+> - **MA-1130** [RT-13]: the cases listed in §7.3's foldcheck note.
+> - **MA-1138** [M3, M5]: a skip set built before a restore starts, then that restore's marked
+>   container met mid-walk: skipped after one re-read; an unknown ID with the log unchanged (a stat,
+>   no re-read) walked as ordinary; the marker and the made-list never taken as mailboxes. The
+>   `.mailarchive-part-` case is dropped.
+> - **MA-1139** [M1]: after W-CHECKFAIL the cleanup goes by the made-list.
+> - **MA-1140** [M4, N3]: `restores.log` and the restore lock in `job.Dir()` whatever `-config` says;
+>   a `-config` Desktop's restore seen by a scheduled backup's skip and by presync;
+>   `thunderbird.ProfileKey` the same for one profile spelled two ways.
+> - **MA-1141** [M2]: W-UNFINISHED with its new words, shown only while the leftover still carries
+>   its marker and had not committed; not shown for a committed restore missing only its "ended".
+
 ### 12.3 Lab rows (real Thunderbird; all pending until run)
 
 The lab: Windows on the Parallels VM "Windows 11" (ARM64, Thunderbird installed and seen at
@@ -1515,6 +1920,11 @@ Windows first.
 > | MA-1135 | Windows, macOS, Linux | MailArchive killed mid-write (Task Manager; `kill -9`), then Thunderbird started: it opens normally and shows nothing of the restore; a non-crash failure while Desktop keeps running, then Thunderbird started: it opens normally (RT-24) |
 > | MA-1136 | Windows | Defender real-time scanning on and OneDrive syncing Local Folders during the file placements and the parent-file create: the retry, W-CHECKFAIL when a file is taken, and a clean result otherwise (RT-24) |
 > | MA-1137 | Windows first | a scheduled backup with pre-sync fires during a restore: pre-sync does not start Thunderbird on that profile, and the backup skips quietly (RT-24, S71) |
+
+> Folded 2026-11-06 [foldcheck M5, N4, N9]: MA-1136's "file placements" are **superseded by
+> [foldcheck M5]**; it runs Defender and OneDrive during the file creates, the post-write check's
+> reopen, the parent-file create and a cleanup. MA-1134 runs before slice R3 (lead's call, N9), and
+> MA-1133 before slice R7 (N4); §13's foldcheck note says how.
 
 ## 13. Build slices, and the gates each owes
 
@@ -1581,6 +1991,24 @@ Build order is sound: nothing on a surface (R4, R5) before its engine (R1–R3).
 >   Windows lab rows pass; a patch number instead changes only the release notes and the tag).
 > - Build order: no surface (R6, R7) before its engine (R1–R5); the backup skip (R5) ships in the
 >   same release as the writer, so no release can write a restore that its own backups would copy.
+>
+> Folded 2026-11-06 [foldcheck N9, N4, M5, M1, M3, M4, RT-13]:
+> - **MA-1134 runs before slice R3** (lead's call, N9), not at R8: the macOS leg on this Mac, and the
+>   Linux leg in a desktop VM (or Thunderbird `--headless` in the Docker lab, if that shows the
+>   profile-in-use refusal; the row records which). The holder is a small script taking the same
+>   POSIX lock on `.parentlock`, as lab B used PowerShell. R3's Unix lock code is not written until
+>   it has run; if it fails, §5.2 note item 2's fallback goes into this design first. R8 re-runs it
+>   with `mailarchive` as the holder, as for MA-1090, so R8's lists keep it for that re-run only.
+> - **MA-1133 runs before slice R7** (folding agent's answer, N4), so R7's friction review sees
+>   W-NOLOCAL with its real menu path. It needs only the Windows VM and Thunderbird, so it can run
+>   any time after R0.
+> - **R4** [M5, M1]: "working files and placement with retry" is superseded by [foldcheck M5]. R4
+>   builds instead: the made-list, every entry by exclusive create under its final name, the retry on
+>   the check's reopen and on cleanup removals, the "taken" line, and the single cleanup.
+> - **R5** [M3, M4]: adds the re-read of `restores.log` for an unknown marker, and every caller's skip
+>   set from `tbrestore.LogPath()` in `job.Dir()`.
+> - **R7** [RT-13]: the restore plan's own key and kind, ended at a switch beside delete plans, kept
+>   across a settings save and a Lock.
 
 ## 14. Decisions this design makes, for the review to test
 
@@ -1607,6 +2035,13 @@ Build order is sound: nothing on a surface (R4, R5) before its engine (R1–R3).
 >   note, step 6); lead's call 2026-11-06.
 > - New decision 10: the default profile prefers one the archive does not back up, and W-RECAPTURE
 >   leads the plan (§3.1 step 4 note).
+>
+> Folded 2026-11-06 [foldcheck M5, M1, M2] (lead's calls):
+> - Decision 4's "hidden working files placed one by one" is **superseded by [foldcheck M5]**: every
+>   entry is created under its final name by exclusive create, after being written into the
+>   made-list (§5.4 foldcheck note).
+> - New decision 11 [M2]: an unfinished restore is never finished by a later attempt. It is cleaned
+>   up at the next Start, by the made-list, and the person restores again (§8 foldcheck note).
 
 ## 15. Owner questions (product choices only), each with the lead's recommendation
 
