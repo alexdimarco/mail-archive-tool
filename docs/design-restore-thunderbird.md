@@ -1339,6 +1339,37 @@ backup captures. Owner question Q7.
 >   an ordinary folder of the person's now, said once in the result that abandoned it (W-VISIBLE or
 >   W-TAKEN). All of this is a read; nothing is written. MA-1141.
 
+> Folded 2026-11-07 [foldcheck3 S7, S10] (lead's calls, owed to slice R5; built there; the words
+> are the builder's, under the owner-delegated rule):
+> - **[S7] The display rule, made whole.** W-COMMITERR at Desktop start uses §7.2's "no **entry** of
+>   the parent name", like every other row (not "no file"). An abandoned leftover is shown, while its
+>   container is there with its marker and no entry of its parent name beside it, in the words of why
+>   it was left: the made-list's words when the list cannot be read; W-COMMITERR's (Desktop form:
+>   "An earlier restore into Thunderbird (DATE) wrote and checked every message, but could not make
+>   sure the file that makes the folder show in Thunderbird was saved, so it removed nothing.
+>   Thunderbird does not show it now. Close Thunderbird, delete the folder 'Restored — NAME.sbd' in
+>   PATH, and restore again.") when its abandon was a commit error; the taken name's (§8's
+>   foldcheck3 S5 note) when the log has a "taken" line; W-LEFT's sense when something not
+>   MailArchive's is in it ("… left the folder 'Restored — NAME.sbd' in PATH: it holds something
+>   MailArchive did not make, so MailArchive removed nothing there. Thunderbird does not show that
+>   folder. Close Thunderbird and delete it yourself …"); and — S7's case, a 3a-abandoned leftover
+>   whose parent entry has since gone — "… left the folder 'Restored — NAME.sbd' in PATH whole,
+>   because a folder of its name that MailArchive did not make was in Local Folders. That folder has
+>   gone, so Thunderbird does not show the restored one now. Close Thunderbird and delete
+>   'Restored — NAME.sbd' yourself when you no longer need it." The reason is read from the disk and
+>   the log at display time, so no reason code is added to the log. Uninstall's plan names every one
+>   of these and also, S7's third bullet, each open restore whose Local Folders cannot be checked now
+>   (not reachable, or no longer its profile's), by its recorded path: "An earlier restore into
+>   Thunderbird (DATE) may not have finished. It wrote into PATH, which MailArchive cannot check now. If
+>   the folder 'Restored — NAME.sbd' is there, close Thunderbird and delete it yourself." — skipped
+>   when that path is reachable and the container is gone. Each uninstall line adds "Nothing will
+>   clean it up after MailArchive is removed."
+> - **[S10] The function it reuses.** "Reachable and still this profile's Local Folders" re-reads the
+>   recorded profile's settings with §3.2's own lookup: `tbrestore.LocalFoldersOf(profileDir)`, which
+>   is `ReadPrefs` then `FindLocalFolders` — the same code the plan uses. The recorded Local Folders
+>   counts as this profile's only when that lookup gives the same path and the same identity, and as
+>   reachable only when the recorded path's identity is the recorded one.
+
 ### 7.3 The Desktop flow
 
 Where: a "Restore to Thunderbird…" button on the current archive's card (beside
@@ -2686,6 +2717,29 @@ Build order is sound: nothing on a surface (R4, R5) before its engine (R1–R3).
 >   name the file (not for an encrypted archive) and end "MailArchive tries again at your next
 >   restore."; the plan's prediction for a clean leftover: "An earlier restore into this profile did
 >   not finish (DATE). Its partial folder, which Thunderbird does not show, will be removed first."
+
+> Built 2026-11-07, slice R5 (the builder's notes):
+> - **The skip** is in `internal/source` (`restoreskip.go`, `WalkOptions.RestoreSkip` and
+>   `RestoreSkipped`): before the mbox walk enters a `.sbd` container (through a folder's entry or the
+>   loop for containers with none), and before it reads a folder file whose container is a finished
+>   restore's, it reads the marker (a regular file, at most 4 KiB, through the walk's root) and
+>   applies §7.2's foldcheck2 rule. The record it asks is `tbrestore.SkipSet` (built from
+>   `tbrestore.LogPath()` once per run by `internal/app`'s `localRun`, so every backup — scheduled,
+>   Desktop's own, the command line — uses the one record; `internal/source` reads no settings), whose
+>   `Lookup(id, profileKey)` re-reads the log once for an unknown ID unless its size and modification
+>   time are unchanged (M3). A restore is this record's only when the marker's profile key matches its
+>   started line's (a marker copied into another profile does nothing). Owner question O1's
+>   recommended answer (b) is what is built (the finished-folder skip); the design's rule that it is
+>   not merged before the owner's O1 answer stands.
+> - **The run log line**, the builder's words (it covers the finished folders O1 (b) leaves out
+>   too): "Left out N folder(s) that MailArchive is restoring, or has restored, into Thunderbird (not
+>   backed up; not a fault)." No alert, streak or fault.
+> - **Where it is shown:** Desktop start renders `tbrestore.Leftovers` in the page header beside the
+>   other notices (read at each page load); `status` prints each as "Restore to Thunderbird: …" after
+>   its report, whatever archive it reports on (the JSON document is unchanged); uninstall's plan
+>   (`uninstall.Report.RestoreLeftovers`, the command line and Desktop's Uninstall panel) names them.
+> - **Uninstall's targets:** `restores.log` (an exact name beside `deletions.log`) and the lock files
+>   by `thunderbird.IsRestoreLockName` — the very function that names them, so the two cannot drift.
 
 ## 14. Decisions this design makes, for the review to test
 

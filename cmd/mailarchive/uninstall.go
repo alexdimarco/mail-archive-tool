@@ -148,6 +148,14 @@ func printUninstallPlan(w io.Writer, rep *uninstall.Report, logNote string) {
 	if rep.ClearedSignIn {
 		fmt.Fprintln(w, "  - the saved Microsoft sign-in (token and app secret)")
 	}
+	// Restore to Thunderbird's leftovers (design-restore-thunderbird §7.4 foldcheck2 note P2):
+	// uninstall removes none, so each is named with what to do.
+	if len(rep.RestoreLeftovers) > 0 {
+		fmt.Fprintf(w, "It does NOT remove what an earlier Restore to Thunderbird left (%d):\n", len(rep.RestoreLeftovers))
+		for _, l := range rep.RestoreLeftovers {
+			fmt.Fprintf(w, "      %s\n", l)
+		}
+	}
 	if len(rep.KeptArchives) == 0 {
 		fmt.Fprintln(w, "It will KEEP your archives — uninstalling never deletes your mail. No archives are listed.")
 		return

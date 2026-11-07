@@ -15,6 +15,7 @@ import (
 	"mail-archive-tool/internal/delmark"
 	"mail-archive-tool/internal/health"
 	"mail-archive-tool/internal/state"
+	"mail-archive-tool/internal/tbrestore"
 )
 
 // runStatus is the legibility surface (X6): the archive's completeness, last
@@ -94,7 +95,30 @@ func runStatus(args []string) error {
 	for _, line := range health.Summary(in, rep) {
 		fmt.Println(line)
 	}
+	// Earlier restores into Thunderbird that left a folder Thunderbird does not show
+	// (design-restore-thunderbird §7.2 foldcheck2 note P2), whatever archive this is: a
+	// read of restores.log, nothing written. The JSON document is unchanged.
+	for _, l := range restoreLines() {
+		fmt.Println("Restore to Thunderbird: " + l)
+	}
 	return nil
+}
+
+// restoreLines are the words for each such leftover; a seam only for a test.
+var restoreLines = func() []string {
+	p, err := tbrestore.LogPath()
+	if err != nil {
+		return nil
+	}
+	los, err := tbrestore.Leftovers(tbrestore.NewLog(p), false)
+	if err != nil {
+		return nil
+	}
+	var out []string
+	for _, lo := range los {
+		out = append(out, lo.Words)
+	}
+	return out
 }
 
 func statusUsage(fs *flag.FlagSet) func() {

@@ -1208,6 +1208,9 @@ func uninstallPlanReply(rep *uninstall.Report, done bool) map[string]any {
 	if len(rep.Scratch) > 0 { // only when there is any: an encrypted archive's leftover working copies
 		plan["scratchFiles"] = rep.Scratch
 	}
+	if len(rep.RestoreLeftovers) > 0 { // what an earlier Restore to Thunderbird left, which uninstall keeps
+		plan["restoreLeftovers"] = rep.RestoreLeftovers
+	}
 	if rep.ProgramCache != "" { // only when there is one: downloaded release copies (program design §5)
 		plan["programCache"] = rep.ProgramCache
 	}
@@ -1345,8 +1348,9 @@ func (cfg Config) overviewWith(csrf, epoch string, held []heldView) string {
 		Account          string
 		SessionsLine     string
 		FormerNotice     string
-		ResidualOS       string // "macOS" or "Linux": where another account can read a just-opened link's argv
-		KindLine         string // what the archive was made from, in plain words ("" when unknown)
+		RestoreNotices   []string // earlier restores into Thunderbird left not shown: named at Desktop start (P2; a read)
+		ResidualOS       string   // "macOS" or "Linux": where another account can read a just-opened link's argv
+		KindLine         string   // what the archive was made from, in plain words ("" when unknown)
 		// IsM365: the current archive was made from a Microsoft 365 mailbox only, so the
 		// top line may call it one (MA-937); no archive, a local or mixed one is not.
 		IsM365 bool
@@ -1512,7 +1516,7 @@ func (cfg Config) overviewWith(csrf, epoch string, held []heldView) string {
 		EncSyncLabel: encSyncLabel, EncSyncLine: encSyncLine,
 		HistoryMax: state.RunHistoryMax, Export: !cfg.WorkspaceOff, Epoch: epoch, CSRF: csrf, Cards: cfg.cards(), Vault: vaultPhrase(), OutDir: cfg.effectiveOut(), ReaderURL: cfg.ReaderURL, SignedIn: signedIn, UPN: upn,
 		KeepRaw: s.KeepRaw, IncludeDeleted: s.IncludeDeleted, IncludeJunk: s.IncludeJunk,
-		Account: cfg.account(), SessionsLine: cfg.sessionsLine(), FormerNotice: cfg.formerNotice(), ResidualOS: residualOS(cfg.goos()),
+		Account: cfg.account(), SessionsLine: cfg.sessionsLine(), FormerNotice: cfg.formerNotice(), RestoreNotices: restoreNotices(), ResidualOS: residualOS(cfg.goos()),
 		AlertEnabled: s.AlertEnabled, AlertOnFailure: s.AlertOnFailure, AlertOnSuccess: s.AlertOnSuccess, AlertOnPause: s.AlertOnPause,
 		AlertProvider: orElse(s.AlertProvider, "office365"), AlertHost: s.AlertHost, AlertPort: s.AlertPort,
 		AlertSecurity: orElse(s.AlertSecurity, "starttls"), AlertFrom: s.AlertFrom, AlertTo: s.AlertTo, AlertUsername: s.AlertUsername}
@@ -1963,6 +1967,7 @@ pre{white-space:pre-wrap;overflow-wrap:anywhere;background:var(--bg);border:1px 
     </div>
     <div class="note" id="shutdownNote" hidden></div>
     {{if .FormerNotice}}<div class="note warnbox" id="formerNotice" role="alert">{{.FormerNotice}}</div>{{end}}
+    {{range .RestoreNotices}}<div class="note warnbox" data-restore-leftover role="status">{{.}}</div>{{end}}
     <h1>Overview</h1>
     <div id="heldDeletes" data-held-deletes="{{.HeldDeletes}}" hidden></div>
     <p class="lede">{{if and (not .OutDir) .ShowArchives}}MailArchive keeps a copy of your mail on this computer. Choose an archive under Your archives below.{{else if not .OutDir}}MailArchive keeps a copy of your mail on this computer. Open or make an archive below to begin.{{else if .Encrypted}}Your encrypted mail archive, kept on this computer.{{else if .IsM365}}Your Microsoft 365 mail archive, kept on this computer.{{else}}Your mail archive, kept on this computer.{{end}}</p>
@@ -2734,6 +2739,8 @@ function uninstallPlanText(d){
   if(kept.length){lines.push('It will KEEP your '+kept.length+' archive(s) — uninstalling never deletes your mail:');kept.forEach(a=>lines.push('   '+a));}
   else lines.push('It will KEEP your archives — uninstalling never deletes your mail. No archives are listed.');
   if(d.encryptedRecordKept)lines.push("It also keeps this computer's record of its encrypted archives and the keys it remembers for them, so a new install opens them as before.");
+  const left=d.restoreLeftovers||[];
+  if(left.length){lines.push('');lines.push('It does NOT remove what an earlier Restore to Thunderbird left ('+left.length+'):');left.forEach(l=>lines.push('   '+l));}
   return lines.join('\n');
 }
 const unBtn=$('uninstallBtn');

@@ -16,6 +16,7 @@ import (
 	"mail-archive-tool/internal/model"
 	"mail-archive-tool/internal/source"
 	"mail-archive-tool/internal/state"
+	"mail-archive-tool/internal/tbrestore"
 	"mail-archive-tool/internal/util"
 )
 
@@ -132,6 +133,28 @@ type localRun struct {
 	// onLockLost runs when the probe finds the archive lock removed or replaced; Run
 	// then ends without writing shared state.
 	onLockLost func(error)
+
+	// restoreSkip is restores.log read once per run (restoreSkipSet), so a backup leaves
+	// MailArchive's own restore folders out (R41); restoreSkipRead says it was read.
+	restoreSkip     *tbrestore.SkipSet
+	restoreSkipRead bool
+}
+
+// restoreSkipLogPath is where restores.log is (tbrestore.LogPath, MailArchive's default
+// settings folder whatever -config says); a seam only for a test.
+var restoreSkipLogPath = tbrestore.LogPath
+
+// restoreSkipSet is the run's record of MailArchive's restores into Thunderbird, read
+// once: nil when the settings folder cannot be found (no restore can have been logged
+// there either).
+func (lr *localRun) restoreSkipSet() *tbrestore.SkipSet {
+	if !lr.restoreSkipRead {
+		lr.restoreSkipRead = true
+		if p, err := restoreSkipLogPath(); err == nil {
+			lr.restoreSkip = tbrestore.LoadSkipSet(p)
+		}
+	}
+	return lr.restoreSkip
 }
 
 func (lr *localRun) noteFault() {

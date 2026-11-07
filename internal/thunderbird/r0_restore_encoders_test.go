@@ -29,6 +29,14 @@ import "testing"
 // ma1126_pathbudget_test.go, ma1139_check_test.go, ma1142_log_test.go, and
 // internal/interchange/ma1089_restore_mbox_test.go.
 
+// Slice R5 replaced the encoders of MA-1138 (ids MA-1138, R41, S70), MA-1140 (MA-1140,
+// R40, R31, S71; its R3 part was proven already) and MA-1141 (MA-1141, R41, S68) with
+// the real covering tests, each carrying the same ids:
+// internal/source/ma1138_restore_skip_test.go, internal/app/ma1138_backup_skip_test.go,
+// internal/tbrestore/ma1138_skipset_test.go, internal/uninstall/ma1140_restore_targets_test.go,
+// internal/tbrestore/ma1141_leftovers_test.go, internal/desktop/ma1141_restore_notice_test.go
+// and cmd/mailarchive/ma1141_restore_status_test.go.
+
 // covers: MA-1124, R40, S70
 func TestR0EncoderPlan(t *testing.T) {
 	t.Skip("MA-1124 pending: the plan's words, free space (W-SPACE), W-PST, W-NORAW, W-RECAPTURE, W-FAT32 and the All Mail note land in slice R6 (the read side is proven since slice R1 by internal/app/ma1124_restore_read_test.go)")
@@ -67,21 +75,6 @@ func TestR0EncoderDesktopFlow(t *testing.T) {
 // covers: MA-1132, R40
 func TestR0EncoderElevatedRefused(t *testing.T) {
 	t.Skip("MA-1132 pending: the elevated or root refusal (W-ELEVATED) lands in slice R6")
-}
-
-// covers: MA-1138, R41, S70
-func TestR0EncoderBackupSkip(t *testing.T) {
-	t.Skip("MA-1138 pending: the backup-side skip lands in slice R5 (the finished-folder part waits for the owner's O1 answer)")
-}
-
-// covers: MA-1140, R40, R31, S71
-func TestR0EncoderRestoreLock(t *testing.T) {
-	t.Skip("MA-1140 pending: uninstall's targets and a -config Desktop's restore seen by a scheduled backup's skip land in slice R5 (the restore lock, presync honouring it and ProfileKey are proven since slice R3 by internal/presync/ma1140_restore_lock_test.go and internal/thunderbird/ma1140_profilekey_test.go)")
-}
-
-// covers: MA-1141, R41, S68
-func TestR0EncoderUnfinishedShown(t *testing.T) {
-	t.Skip("MA-1141 pending: W-UNFINISHED at Desktop start, in status and in uninstall's plan lands in slice R5")
 }
 
 // covers: MA-1143, R40

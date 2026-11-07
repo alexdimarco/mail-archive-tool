@@ -50,7 +50,7 @@ type SettleInput struct {
 	// Local is the profile's Local Folders now, and FS its writer root (nil for a
 	// read-only prediction too: a root is opened only to read).
 	Local LocalFolders
-	FS    fsys
+	FS    FS
 	// ProfileDir names the profile whose restores are settled.
 	ProfileDir string
 	// ReadOnly: Check and -plan, which write nothing (foldcheck M2).
@@ -176,7 +176,7 @@ func settleOne(in SettleInput, r *Restore) Settled {
 }
 
 // predictCleanup is the cleanup's steps 1 to 3, writing nothing: what Start would do.
-func predictCleanup(f fsys, top string) CleanResult {
+func predictCleanup(f FS, top string) CleanResult {
 	container := top + ".sbd"
 	if k := entryKind(f, top); k != "" {
 		return CleanResult{Kind: CleanParent, ParentKind: k}

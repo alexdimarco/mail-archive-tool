@@ -152,6 +152,8 @@ type Restore struct {
 	Taken   bool
 	// Closed is its closing line's event ("ended", "cleaned", "abandoned"), "" while open.
 	Closed string
+	// closingResult is the closing line's Result.
+	closingResult string
 }
 
 // Container is the restore's container name, "Restored — X.sbd".
@@ -187,7 +189,7 @@ func Restores(lines []LogLine) []*Restore {
 			r.Taken = true
 		case EvEnded, EvCleaned, EvAbandoned:
 			if r.Closed == "" {
-				r.Closed = ln.Event
+				r.Closed, r.closingResult = ln.Event, ln.Result
 			}
 		}
 	}

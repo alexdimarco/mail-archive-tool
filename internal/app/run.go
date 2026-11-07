@@ -1686,12 +1686,25 @@ func runFile(ctx context.Context, lr *localRun, path string, copyFirst, followLi
 		src.reportsFaults = true
 		_, isPST := reader.(*source.Reader)
 		src.local = !isPST
-		return src.finish(fw.WalkWithFaults(handler, source.WalkOptions{
+		opts := source.WalkOptions{
 			Faults:     src.onReaderFault,
 			Abort:      func() error { return src.stop(ctx, abort) },
 			NoStoreUID: noStoreUID(path),
 			Folder:     src.noteFolder,
-		}))
+		}
+		// MailArchive's own restores into Thunderbird are left out (R41,
+		// design-restore-thunderbird §7.2): the record is restores.log in MailArchive's
+		// default settings folder, whatever -config says (tbrestore.LogPath).
+		skipped := 0
+		if rs := lr.restoreSkipSet(); rs != nil {
+			opts.RestoreSkip = rs
+			opts.RestoreSkipped = func([]string) { skipped++ }
+		}
+		err := src.finish(fw.WalkWithFaults(handler, opts))
+		if skipped > 0 {
+			logger.Printf("Left out %d %s that MailArchive is restoring, or has restored, into Thunderbird (not backed up; not a fault).", skipped, plural(skipped, "folder", "folders"))
+		}
+		return err
 	}
 	return src.finish(reader.Walk(handler))
 }

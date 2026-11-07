@@ -14,6 +14,7 @@ import (
 	"mail-archive-tool/internal/graphconfig"
 	"mail-archive-tool/internal/progcache"
 	"mail-archive-tool/internal/schedule"
+	"mail-archive-tool/internal/tbrestore"
 	"mail-archive-tool/internal/util"
 )
 
@@ -39,6 +40,31 @@ type Report struct {
 	// the plan names it and says DeletionsLogNote; "" when there is none
 	// (docs/design-archive-delete.md §8.1, O2-07).
 	DeletionsLog string
+	// RestoreLeftovers names, one sentence each, the folders an earlier Restore to
+	// Thunderbird left in a Local Folders that Thunderbird does not show, by the same rule
+	// as Desktop start (docs/design-restore-thunderbird.md §7.4 foldcheck2 note P2), and
+	// any whose Local Folders cannot be checked now (foldcheck3 S7): uninstall removes
+	// none of them, and nothing will clean them up afterwards.
+	RestoreLeftovers []string
+}
+
+// restoreLeftovers is the plan's read of restores.log (tbrestore.Leftovers, in
+// MailArchive's default settings folder); a seam only for a test. A log that cannot be
+// read names nothing here.
+var restoreLeftovers = func() []string {
+	p, err := tbrestore.LogPath()
+	if err != nil {
+		return nil
+	}
+	los, err := tbrestore.Leftovers(tbrestore.NewLog(p), true)
+	if err != nil {
+		return nil
+	}
+	var out []string
+	for _, lo := range los {
+		out = append(out, lo.Words)
+	}
+	return out
 }
 
 // DeletionsLogNote is what uninstall's plan says under the deletion log (design-archive-delete
@@ -392,6 +418,7 @@ func run(configDir string, knownArchives []string, exe string, dryRun, logCopied
 		rep.ProgramCache = cache[len(cache)-1]
 	}
 	rep.DeletionsLog = deletionsLog
+	rep.RestoreLeftovers = restoreLeftovers()
 	for _, e := range entries {
 		rep.Schedules = append(rep.Schedules, e.Name)
 	}

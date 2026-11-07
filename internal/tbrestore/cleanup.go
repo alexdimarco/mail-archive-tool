@@ -72,7 +72,7 @@ type CleanResult struct {
 // cleanupContainer cleans up the restore whose container is top+".sbd" in Local
 // Folders, by the decision order above. id is the restore's own ID (its marker must
 // name it); taken is whether the log has a "taken" line for it.
-func cleanupContainer(f fsys, top, id string, taken bool) CleanResult {
+func cleanupContainer(f FS, top, id string, taken bool) CleanResult {
 	container := top + ".sbd"
 	if taken {
 		return CleanResult{Kind: CleanTaken, ParentKind: entryKind(f, top)}
@@ -132,7 +132,7 @@ func cleanupContainer(f fsys, top, id string, taken bool) CleanResult {
 
 // removeOne removes one entry (absent: passed over). A folder that is not empty, or one
 // that changed kind, is CleanLeftPart; a removal refused otherwise is CleanBlocked.
-func removeOne(f fsys, p string, dir bool) (CleanResult, bool) {
+func removeOne(f FS, p string, dir bool) (CleanResult, bool) {
 	err := withRetry(func() error {
 		err := f.Remove(p)
 		if errors.Is(err, fs.ErrNotExist) {
@@ -159,7 +159,7 @@ func removeOne(f fsys, p string, dir bool) (CleanResult, bool) {
 // second entry that spells the same (a decomposed twin on a volume that keeps both) is
 // not the list's. The scan reads each folder in batches and stops at the batch that
 // holds the first entry not on the list, so it does no more work than the list allows.
-func scanContainer(f fsys, container string, list []madeEntry) (CleanResult, bool) {
+func scanContainer(f FS, container string, list []madeEntry) (CleanResult, bool) {
 	listed := map[string]string{}
 	for _, e := range list {
 		listed[norm.NFC.String(e.P)] = e.K
@@ -222,7 +222,7 @@ func kindMatches(k string, fi fs.FileInfo) bool {
 }
 
 // entryKind is what is at name in Local Folders: "" for nothing.
-func entryKind(f fsys, name string) string {
+func entryKind(f FS, name string) string {
 	fi, err := f.Lstat(name)
 	if err != nil {
 		if errors.Is(err, fs.ErrNotExist) {

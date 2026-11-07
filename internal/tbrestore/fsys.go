@@ -9,12 +9,12 @@ import (
 	"time"
 )
 
-// fsys is everything the writer and the cleanup do to Local Folders, each through the
+// FS is everything the writer and the cleanup do to Local Folders, each through the
 // *os.Root opened on it, so no name, link or ".." can reach outside it (design §9.2).
 // Every name is created exclusively; nothing existing is opened for writing. rootFS is
 // the one production implementation; a test wraps it to inject a fault at any step (the
 // ceFS seam's shape, internal/app/copyexport_fs.go).
-type fsys interface {
+type FS interface {
 	// Mkdir creates one folder, exclusively, at 0700: an existing entry of the name is
 	// an error satisfying errors.Is(err, fs.ErrExist).
 	Mkdir(name string) error
@@ -40,7 +40,9 @@ type wfile interface {
 type rootFS struct{ root *os.Root }
 
 // NewRootFS is the writer's file system on a root opened on Local Folders.
-func newRootFS(root *os.Root) fsys { return &rootFS{root: root} }
+func NewRootFS(root *os.Root) FS { return &rootFS{root: root} }
+
+func newRootFS(root *os.Root) FS { return NewRootFS(root) }
 
 func (r *rootFS) Mkdir(name string) error { return r.root.Mkdir(name, 0o700) }
 

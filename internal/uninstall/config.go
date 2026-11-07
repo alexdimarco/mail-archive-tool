@@ -18,6 +18,7 @@ import (
 	"path/filepath"
 	"strings"
 
+	"mail-archive-tool/internal/thunderbird"
 	"mail-archive-tool/internal/util"
 )
 
@@ -35,7 +36,14 @@ var fixedConfigNames = map[string]bool{
 	// The delete's journal (archdelete.LogName; docs/design-archive-delete.md §5.4):
 	// uninstall removes it with the other settings files, and its plan names it (§8.1).
 	deletionsLogName: true,
+	// Restore to Thunderbird's record (tbrestore.LogName; docs/design-restore-thunderbird.md
+	// §7.4 foldcheck2 note N-b): removed with the settings files; MA-1140's test keeps the
+	// two in step by behaviour.
+	restoresLogName: true,
 }
+
+// restoresLogName is the restore record's name, tbrestore.LogName.
+const restoresLogName = "restores.log"
 
 // deletionsLogName is the delete's journal, archdelete.LogName (MA-965's test keeps the two
 // in step).
@@ -124,6 +132,8 @@ func deletableConfigName(name string) bool {
 	case strings.HasSuffix(name, syncAlertSuffix): // its Thunderbird-not-synced told-file
 		return true
 	case strings.HasSuffix(name, deleteRefusedSuffix): // its count of runs refused for an unfinished delete
+		return true
+	case thunderbird.IsRestoreLockName(name): // a restore's lock, restore-<16 lowercase hex>.lock (N-b)
 		return true
 	}
 	return false

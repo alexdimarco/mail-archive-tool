@@ -98,14 +98,14 @@ type msgRecord struct {
 //
 // Anything that stops it before step 9 goes to the one cleanup. Nothing after the
 // parent file's create removes anything.
-func Write(ctx context.Context, f fsys, in WriteInput) *WriteResult {
+func Write(ctx context.Context, f FS, in WriteInput) *WriteResult {
 	w := &writer{ctx: ctx, f: f, in: in, res: &WriteResult{Top: in.Top, Written: make([]int, len(in.Layout.Folders))}}
 	return w.run()
 }
 
 type writer struct {
 	ctx      context.Context
-	f        fsys
+	f        FS
 	in       WriteInput
 	res      *WriteResult
 	list     wfile

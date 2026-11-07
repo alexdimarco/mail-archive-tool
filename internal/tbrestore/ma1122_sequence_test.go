@@ -446,7 +446,7 @@ func TestRestoreScanMatchesNamesAsTheFileSystemDoes(t *testing.T) {
 
 // nfdFS stands for an HFS+ volume: it returns every name decomposed from ReadDir and
 // finds a name whatever its normalisation.
-type nfdFS struct{ inner fsys }
+type nfdFS struct{ inner FS }
 
 func (n *nfdFS) Mkdir(p string) error                 { return n.inner.Mkdir(norm.NFC.String(p)) }
 func (n *nfdFS) Create(p string) (wfile, error)       { return n.inner.Create(norm.NFC.String(p)) }
@@ -473,7 +473,7 @@ func (r renamed) Name() string { return r.name }
 
 // twinFS lists its names in one folder, every one a regular file.
 type twinFS struct {
-	fsys
+	FS
 	names []string
 }
 

@@ -520,6 +520,12 @@ func (w *localWalk) mboxDir(sc *scope, rel string, prefix []string, top bool) er
 	sbdDone := map[string]bool{}
 	sub := func(name string, folderPath []string) error {
 		sbdDone[name+".sbd"] = true
+		// A restore's leftover container, with no entry of its parent name beside it, is
+		// left out (R41; restoreskip.go).
+		if c, _ := w.leaveOutRestore(sc, rel, name); c {
+			w.noteRestoreSkipped(folderPath)
+			return nil
+		}
 		return w.sbd(sc, rel, name, folderPath)
 	}
 	for _, e := range entries {
@@ -530,6 +536,12 @@ func (w *localWalk) mboxDir(sc *scope, rel string, prefix []string, top bool) er
 		erel := relJoin(rel, name)
 		if strings.HasSuffix(name, ".sbd") {
 			continue // subfolder container, reached through its parent folder
+		}
+		// A finished restore's folder, its parent file with it (R41, O1's answer (b)).
+		if c, p := w.leaveOutRestore(sc, rel, name); c && p {
+			sbdDone[name+".sbd"] = true
+			w.noteRestoreSkipped(withFolder(prefix, name))
+			continue
 		}
 		v := w.judge(sc, erel, e.Type(), posEither)
 		folderPath := withFolder(prefix, name)

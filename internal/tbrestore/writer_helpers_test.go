@@ -102,7 +102,7 @@ func (fx *fixture) input(id string) WriteInput {
 	}
 }
 
-func (fx *fixture) write(ctx context.Context, f fsys) (*WriteResult, string) {
+func (fx *fixture) write(ctx context.Context, f FS) (*WriteResult, string) {
 	fx.t.Helper()
 	id, err := NewID()
 	if err != nil {
@@ -153,7 +153,7 @@ func (fx *fixture) logBytes() string {
 // operation with its name and path; an error it returns is the operation's, and a
 // crash it panics with stops the write as a power cut would.
 type faultFS struct {
-	inner fsys
+	inner FS
 	hook  func(op, name string) error
 }
 

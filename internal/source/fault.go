@@ -75,6 +75,13 @@ type WalkOptions struct {
 	// -outlook export that skipped a folder is carried by this file only if the file has
 	// the folder (S2A-AI4).
 	Folder func(path []string)
+	// RestoreSkip, if set, is MailArchive's record of its own restores into Thunderbird
+	// (docs/design-restore-thunderbird.md §7.2, invariant R41), built by the caller from
+	// restores.log so this package never reads MailArchive's settings: the walk leaves
+	// out a restore's folder that carries its marker (restoreskip.go). RestoreSkipped,
+	// if set, is told the folder path of each one left out.
+	RestoreSkip    RestoreSkip
+	RestoreSkipped func(path []string)
 }
 
 // FaultWalker is a Source that reports what it could not read as it goes. The PST

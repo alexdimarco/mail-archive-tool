@@ -40,7 +40,7 @@ func markerLine(id, profileKey string, started time.Time) []byte {
 
 // readMarker reads the marker in container: ok only for a regular file of at most 4 KiB
 // that parses as a restore's marker. Never through a link.
-func readMarker(f fsys, container string) (Marker, bool) {
+func readMarker(f FS, container string) (Marker, bool) {
 	p := container + "/" + MarkerName
 	fi, err := f.Lstat(p)
 	if err != nil || !fi.Mode().IsRegular() || fi.Size() > markerMax {
@@ -82,7 +82,7 @@ var errListUnreadable = errors.New("the list of what the restore wrote cannot be
 // over (its entry was never created: the create comes after the fsync); every path must
 // be relative with no empty, ".", ".." part and no "\" or ":", and every kind "f" or
 // "d", or the whole list is unreadable.
-func readMadeList(f fsys, container string) ([]madeEntry, error) {
+func readMadeList(f FS, container string) ([]madeEntry, error) {
 	p := container + "/" + MadeListName
 	fi, err := f.Lstat(p)
 	if errors.Is(err, fs.ErrNotExist) {
