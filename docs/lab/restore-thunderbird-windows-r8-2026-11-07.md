@@ -21,6 +21,9 @@ answers, but it still waits on macOS, Linux and 115 ESR. MA-1097 and MA-1136 ran
 One more bug was found while running MA-1097 (BUG-2, medium): a profile folder that cannot take
 the lock file is refused with "Thunderbird is open".
 
+*Addendum, same day:* both bugs are fixed in 2b229ad, and **MA-1095 re-ran and passes on Windows**.
+See "Addendum … MA-1095 re-run after the fix" below.
+
 ## Set-up
 
 - Throwaway world only, under `C:\Users\Public\tb-restore-lab3\`. The lab's programs ran with
@@ -351,6 +354,80 @@ running, so Check again loops.
 - L3: after a pre-sync stopped by a restore, `status` says "Thunderbird was already open"
   (`already-running`), but it was MailArchive's restore holding the profile.
 
+## Addendum, 7 November 2026 (VM clock 11:00–11:03, UTC−5): MA-1095 re-run after the fix — **PASS (Windows)**
+
+BUG-1, BUG-2 and the wording notes L1–L3 were fixed in commit **2b229ad** (design §4.4 and §7.5
+notes "Settled 2026-11-07 [MA-1095 lab]"). Thunderbird's rule was read in its source this time:
+`NS_MsgHashIfNecessary` in comm-central `mailnews/base/src/nsMsgUtils.cpp` at releases-comm-central
+`9ff8c8b16fba2d9f9668b416eb6f2d708494fe78`. It hashes a name holding `;`, `#`, `/:*?"<>|`, the path
+separator or a control character, a name that starts with `.` or ends with `.`, `~` or a space, and
+a name longer than `MAX_LEN = 55` UTF-16 units. That matches the run above.
+
+**Set-up.** A new throwaway world, `C:\Users\Public\tb-restore-lab4\`, with `USERPROFILE`,
+`APPDATA` and `LOCALAPPDATA` pointed at its `home`, as before.
+- Profile `p-names3` is a copy of MA-1133's `fresh-news` (Local Folders made through a made-up
+  newsgroup account; no real account). The VM user's own profiles were not opened.
+- `mailarchive.exe` was built from 2b229ad as `packaging/build-release.sh` builds it
+  (`GOOS=windows GOARCH=amd64 go build ./cmd/mailarchive`; SHA-256 `5097c500…37b9`).
+- The archive was made by lab tool `r8graph4` (real `app.RunGraph`, fake Graph server). Its own
+  folder name is **80 characters**: "R8 Names3 - an archive whose own folder name is far longer than
+  sixty characters". It holds 20 folders, one message each:
+  - `semi;colon`, `#hash`, `mid#dle`, `a;b#c`;
+  - names of 54, 55 and 56 `a`/`b`/`c`, a 60-character and a 120-character name, and two
+    60-character `y` names that differ only in the last character;
+  - `Входящие`, `受信トレイ`, `Déjà vu`, 56 × `漢`, 27 × 📨 (54 units) and 28 × 📨 (56 units),
+    `plain control`;
+  - `#parent;one` with a 70-character child.
+
+**The plan and the restore** (command line, `rt-plan.txt`, `rt-yes.txt`).
+- The new folder is **'Restored — R8 Names3 - an archive whose o~eb6f9369'** (50 units, so 55 with
+  " (99)").
+- The plan said "14 folder names had to be changed to be safe as file names". That is the 13
+  changed folders plus the top name.
+- The result was "Restored 20 messages … MailArchive checked every message it wrote", exit 0.
+- On disk, every name is at most 55 units and none holds `;` or `#`. For example: `_hash`,
+  `semi_colon`, `mid_dle`, `a_b_c`, `cccc…c~ee59278c` (55), `Sixty character folder name for the
+  MA-1095 re~279b48d1` (55), the two `y` names `…~1d01c1b7` and `…~1ee3e0c2`, `漢…~ee132b2f` (55),
+  28 × 📨 as 23 × 📨`~f0f56c22` (55), `_parent_one` / `kkk…k~93d56084`. The 54- and 55-unit names
+  and the Unicode ones under 55 were kept as they were.
+
+**Thunderbird 153.6.0** (`thunderbird.exe -no-remote -profile …\p-names3`, pid 15280).
+- It showed the top folder, which itself holds no mail ("0 Messages", as designed), and all 20
+  folders under it.
+- Each folder was opened in turn, by keyboard in the folder pane. **Every one showed "1 Message"**
+  with its own message, including `_hash`, `semi_colon`, `mid_dle`, the 56-, 60-, 70- and
+  120-character ones, CJK and both emoji names (`r8l4-03` to `r8l4-07`).
+- After a graceful close (pid 15280 exited), each restored file had Thunderbird's summary **under
+  its own name** (`NAME.msf` beside `NAME`). There was **no hashed-name `.msf` or folder anywhere**
+  (the BUG-1 sign; `check.ps1` found no extra entry).
+- `folderCache.json` gives `total=1 unread=1` for all 20, and `total=0` for the top folder's
+  own file.
+- So no restored folder is shown empty, and the whole restore is not hidden.
+
+**BUG-2, the read-only share's lock words** (the Parallels share, read-only to the VM user).
+- **No `parent.lock` in the profile** (`P:\restorelab4\netprof`). The plan went ahead ("Thunderbird
+  is closed.", W-NETWORK). The restore then refused with W-LOCKPERM, exit 1: "MailArchive is not
+  allowed to make or open Thunderbird's lock file (P:\restorelab4\netprof\parent.lock) in this
+  profile's folder, so nothing was restored: … This happens when the profile is on a read-only
+  network share, or its folder belongs to another account. Choose a profile on this computer's own
+  drive that your account can change, then click Check again." Before the fix this was W-RUNNING.
+- **A `parent.lock` left in the profile**, as a real profile has it (`netprof-lock`). The **plan**
+  refused with the same W-LOCKPERM words. Before the fix, the plan's check counted any failure to
+  open an existing `parent.lock` as held, so by the old code it would have said "Thunderbird is
+  open". That is read from the code; the old build was not run on this case.
+- Nothing was written in either profile. No Thunderbird or MailArchive process was left on the VM.
+
+**Not re-run here:** L1–L3 have unit tests (MA-1129, MA-1124, MA-1140) and were not walked on the
+VM. The macOS and Linux legs of MA-1095 were not run.
+
+**Where things are.** The lab4 world is `C:\Users\Public\tb-restore-lab4\` (profiles `p-names3`,
+`p-names3b` (unused), `home`, `Archives`, `src`). Programs and outputs are in `%LOCALAPPDATA%\rl4\`.
+On the Mac:
+- the scripts and the tool's source are in `/Users/alex.dimarco/repositories/.winlab/restorelab4/`;
+- the screenshots are `r8l4-01` to `r8l4-07` in
+  `/Users/alex.dimarco/repositories/mail-archive-tool/.claude/restore-lab-r8/` (not committed;
+  `r8l4-01` shows the VM user's desktop, so keep it private).
+
 ## Not done here
 
 - **Other platforms.** The macOS legs (MA-1091, MA-1098, MA-1134's re-run, MA-1135) wait,
@@ -408,3 +485,24 @@ running, so Check again loops.
   - Persona: none.
   - Source reached: design, catalog and code — yes; the VM — yes; Thunderbird source — no; macOS
     and Linux — no.
+
+**For the addendum (MA-1095 re-run):**
+- Date worked on: 7 November 2026 (the VM clock, UTC−5, and this session's date agree).
+- **Drawn on:**
+  - Thunderbird's source: `nsMsgUtils.cpp` at releases-comm-central 9ff8c8b16fba, and
+    `nsCRTGlue.h` at mozilla-firefox/firefox 6149f492996. These were read; earlier the rule was
+    only recalled.
+  - The program built from 2b229ad.
+  - What Thunderbird 153.6.0 showed, and what it wrote: `.msf` files and `folderCache.json`.
+- Register: a report of a lab run (findings).
+- **Smallest check for a reader:** on the VM, start Thunderbird with `-no-remote -profile
+  C:\Users\Public\tb-restore-lab4\p-names3` and click `semi_colon` under "Restored — R8 Names3 …".
+  It shows 1 message.
+- **Counters.**
+  - Register: report.
+  - Borrowed lines: MailArchive's words and Thunderbird's source, quoted.
+  - Drift: none noticed.
+  - Touched: this file and the MA-1095 catalog row; on the VM, only `tb-restore-lab4` and
+    `%LOCALAPPDATA%\rl4`; on the share, nothing.
+  - Persona: none.
+  - Source reached: Thunderbird source — yes; the VM — yes; macOS and Linux Thunderbird — no.
