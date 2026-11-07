@@ -126,6 +126,9 @@ func deliver(cfg alert.Config, store graphconfig.SecretStore, out, result string
 		ev.Error = runErr.Error()
 		// A partial run saved everything else it found: its email says so (MA-1146).
 		ev.Partial = result == ResultFailed && errors.Is(runErr, app.ErrPartial)
+		// A backup another run's lock kept out was skipped: its email says so (MA-1147).
+		_, skipped := app.BusySkipped(runErr)
+		ev.Busy = result == ResultFailed && skipped
 	}
 	// An encrypted archive's alert says which archive and the failure kind's fixed
 	// words: never the error's text, nor how many messages a run archived (P2a-C16).

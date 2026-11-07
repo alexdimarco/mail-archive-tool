@@ -417,7 +417,12 @@ func GapOriginal(reason, sourceKind string) string {
 	switch reason {
 	case "vanished-at-fetch", "vanished-during-read", "not-a-message-file", "refresh-failed":
 		return ""
-	case "export-failed", "export-panic", "folder-unwritable":
+	case "export-panic":
+		// Its remedy, MistakeRemedy, already says the mail is fine and the original is
+		// untouched: said here too, every line said it twice (friction review of
+		// plain-failure-words, 2026-11-07).
+		return ""
+	case "export-failed", "folder-unwritable":
 		return "the original is untouched"
 	}
 	switch sourceKind {

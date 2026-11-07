@@ -7,11 +7,23 @@ import (
 	"io/fs"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"time"
 
 	"mail-archive-tool/internal/util"
 )
+
+// typedPath is path as a person types it on goos's command line in the notice's command: on
+// Windows in double quotes as it is (a Windows path holds no double quote), elsewhere in single
+// quotes, an embedded single quote closed and reopened. Never Go's %q, which doubled every
+// Windows backslash (friction review of plain-failure-words, 2026-11-07).
+func typedPath(path, goos string) string {
+	if goos == "windows" {
+		return `"` + path + `"`
+	}
+	return "'" + strings.ReplaceAll(path, "'", `'\''`) + "'"
+}
 
 // LastRunName is the archive-local record of the most recent run (R18).
 const LastRunName = ".mailarchive-lastrun.json"
@@ -251,12 +263,12 @@ func updateAttentionSidecar(out string, r LastRun) {
 			"only: it means new mail may not have been added, not that the archive is\n"+
 			"damaged.\n\n"+
 			"What to do: open MailArchive Desktop and look at Status & health, or run\n"+
-			"  mailarchive status -out %q\n"+
+			"  mailarchive status -out %s\n"+
 			"It says what went wrong and how to fix it. If this computer no longer has\n"+
 			"MailArchive, download it from its official page:\n"+
 			"  https://github.com/alexdimarco/mail-archive-tool/releases\n"+
 			"This file is removed automatically after the next backup that succeeds.\n",
-			out, r.Finished.UTC().Format(time.RFC3339), reason, out)
+			out, r.Finished.UTC().Format(time.RFC3339), reason, typedPath(out, runtime.GOOS))
 		_ = writeSidecarAtomic(path, []byte(body))
 	case RunOK:
 		_ = os.Remove(path)
@@ -279,11 +291,11 @@ func partialAttention(out string, r LastRun) string {
 	}
 	fmt.Fprintf(&b, "\n%s\n\n"+
 		"MailArchive Desktop's Status & health, or\n"+
-		"  mailarchive status -out %q\n"+
+		"  mailarchive status -out %s\n"+
 		"says the same with each message named. If this computer no longer has\n"+
 		"MailArchive, download it from its official page:\n"+
 		"  https://github.com/alexdimarco/mail-archive-tool/releases\n"+
-		"This file is removed automatically after the next backup that succeeds.\n", PartialDetails, out)
+		"This file is removed automatically after the next backup that succeeds.\n", PartialDetails, typedPath(out, runtime.GOOS))
 	return b.String()
 }
 

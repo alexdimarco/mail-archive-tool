@@ -80,7 +80,12 @@ type Event struct {
 	// Partial marks a failed run that ended partial — it saved everything else it found — so the
 	// email says it did not save everything, never "FAILED" (design-plain-failure-words,
 	// MA-1146). When an email is sent is unchanged.
-	Partial  bool
+	Partial bool
+	// Busy marks a failed run that was a backup skipped because another run still holds the
+	// archive (one that started a day or more ago, so it may be stuck): the email says it was
+	// skipped, never "FAILED" over a reason that says so (friction review of
+	// plain-failure-words, 2026-11-07). When an email is sent is unchanged.
+	Busy     bool
 	Messages int
 	Host     string // the machine the backup ran on
 	When     time.Time
@@ -158,6 +163,8 @@ func (c Config) subjectAndBody(ev Event) (subject, body string) {
 	switch {
 	case ev.Result == ResultFailed && ev.Partial:
 		subject, word = "MailArchive backup did not save everything: "+name, "DID NOT SAVE EVERYTHING"
+	case ev.Result == ResultFailed && ev.Busy:
+		subject, word = "MailArchive backup skipped, the archive is still in use: "+name, "SKIPPED (THE ARCHIVE IS STILL IN USE)"
 	case ev.Result == ResultFailed:
 		subject = "MailArchive backup FAILED: " + name
 	case ev.Result == ResultPaused:
