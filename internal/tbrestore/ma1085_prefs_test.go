@@ -153,7 +153,10 @@ func TestRestoreLocalFoldersLookup(t *testing.T) {
 			// no account, and stayed after that account was deleted; Email (an IMAP
 			// account) made it too; Feed did not.
 			refusedAs(t, err, "W-NOLOCAL", func() bool { return snapshot(t, profile) == before },
-				"has no Local Folders yet", "nothing was written", "menu button (≡, top right)",
+				// The R7 friction review: with two profiles, the one with no Local Folders can be
+				// the pre-selected one; the words first point to choosing another.
+				"has no Local Folders yet", "nothing was written", "If you have another Thunderbird profile, choose that one instead",
+				"menu button (≡, top right)",
 				"Add Account", "Email", "Newsgroup", "Finish", "Local Folders stays",
 				"click Check again", "does not change Thunderbird's settings")
 			if strings.Contains(err.Error(), "MENU PATH") {

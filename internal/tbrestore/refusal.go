@@ -41,8 +41,10 @@ func fill(words string, kv ...string) string {
 // The words of the Thunderbird side (design §7.5 and its folded rows), as the slice
 // that refuses with each builds it. Placeholders in capitals are filled by the caller.
 const (
-	// W-RUNNING; on Windows wRunningWindows is added.
-	wRunning        = "Thunderbird is open, so nothing was restored. Close Thunderbird (on Windows: File → Exit; on a Mac: Thunderbird → Quit Thunderbird), then click Check again."
+	// W-RUNNING; on Windows wRunningWindows is added. The Windows way to quit is the menu
+	// button's Exit (R7 friction review, 2026-11-07: Thunderbird 153 hides the File menu bar
+	// by default; lead's words).
+	wRunning        = "Thunderbird is open, so nothing was restored. Close Thunderbird (on Windows: the menu button ≡, then Exit; on a Mac: Thunderbird → Quit Thunderbird), then click Check again."
 	wRunningWindows = " If you don't see Thunderbird, look for its icon by the clock; someone else signed in to this computer may also have it open."
 
 	wRestoring = "Another restore into this Thunderbird profile is running (in MailArchive or at a terminal), so this one did not start. Wait for it to finish, then click Check again."
@@ -59,8 +61,10 @@ const (
 	// W-NOLOCAL, as replaced by lab finding 1, with lab row MA-1133's menu path (lead's
 	// words, owner-delegated; Thunderbird 153.6.0 on Windows, 2026-11-07): Thunderbird
 	// makes Local Folders when an email or newsgroup account is added, and keeps it when
-	// that account is deleted; a feed account does not make it.
-	wNoLocal   = "This Thunderbird profile has no Local Folders yet, so there is nowhere to restore to and nothing was written. Thunderbird makes Local Folders when you add an account. In Thunderbird, click the menu button (≡, top right), then Add Account, then Email to add your mail account; or, if you have none to add, Newsgroup: type any name, email address and server name (for example news.example.invalid) and click Next until Finish. You may delete that newsgroup account afterwards in Account Settings; Local Folders stays. Then close Thunderbird and click Check again. MailArchive does not change Thunderbird's settings itself."
+	// that account is deleted; a feed account does not make it. The R7 friction review
+	// (2026-11-07) put choosing another profile first: with two profiles, the one with no
+	// Local Folders can be the pre-selected one.
+	wNoLocal   = "This Thunderbird profile has no Local Folders yet, so there is nowhere to restore to and nothing was written. If you have another Thunderbird profile, choose that one instead. Otherwise: Thunderbird makes Local Folders when you add an account. In Thunderbird, click the menu button (≡, top right), then Add Account, then Email to add your mail account; or, if you have none to add, Newsgroup: type any name, email address and server name (for example news.example.invalid) and click Next until Finish. You may delete that newsgroup account afterwards in Account Settings; Local Folders stays. Then close Thunderbird and click Check again. MailArchive does not change Thunderbird's settings itself."
 	wMaildir   = "This Thunderbird profile keeps each message in its own file (the 'maildir' setting). MailArchive can restore only into the usual one-file-per-folder kind, so nothing was written. Choose another profile."
 	wOverlap   = "Thunderbird's Local Folders (PATH) overlaps WHAT, so nothing was restored. Choose another profile."
 	wNoIdent   = "Windows could not identify the drive that holds Thunderbird's Local Folders (PATH), so nothing was restored. This happens on some network drives. Choose a profile on this computer's own drive."

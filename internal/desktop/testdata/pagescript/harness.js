@@ -237,7 +237,7 @@ function restoreCard() {
 const rtbWords = {
   profile: 'This computer has more than one Thunderbird profile. Choose the one to restore into, then click Next.',
   what: 'Next, choose what to restore: the whole archive, or the folders you tick. Then click Check: nothing is written until you click Restore.',
-  tree: 'Tick the folders to restore; a folder brings its subfolders. The number beside each is how many of its messages can go back. Then click Check.',
+  tree: 'Tick the folders to restore; a folder brings its subfolders. The number beside each is how many messages in it and its subfolders can go back. Then click Check.',
   plan: 'This is what the restore will do; nothing is written yet. Click Restore to go ahead, or Cancel.',
   planEnc: 'This is what the restore will do; nothing is written yet. The restored mail will not be encrypted: tick the box below if you understand, and the second one, then click Restore.',
   run: 'The restore is running. Leave Thunderbird closed until it finishes. Cancel the restore stops it, and nothing is added to Thunderbird.',

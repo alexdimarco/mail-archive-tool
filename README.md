@@ -434,7 +434,8 @@ it never starts or closes Thunderbird, so close Thunderbird first.
    choose the one to restore into (MailArchive picks one the archive does not
    back up when it can) and click **Next**.
 2. Choose **The whole archive**, or **Choose folders** and tick them (a folder
-   brings its subfolders; each shows how many of its messages can go back).
+   brings its subfolders; each shows how many messages in it and its
+   subfolders can go back).
 3. Click **Check**. The plan says where the mail goes, how much, what cannot go
    back and why, and the free space. Nothing is written yet.
 4. Click **Restore**. While it runs, leave Thunderbird closed. **Cancel the
@@ -442,7 +443,7 @@ it never starts or closes Thunderbird, so close Thunderbird first.
    folder, MailArchive reads back every message it wrote and checks it against
    the archive's original.
 5. The result says how many messages went back. **Save this record** keeps the
-   plan and the result as a text file.
+   plan and the result as a text file; your browser saves it with your downloads.
 
 Only messages whose original the archive kept can go back: an archive made from
 Outlook `.pst` files keeps none. An **encrypted archive** is restored only while

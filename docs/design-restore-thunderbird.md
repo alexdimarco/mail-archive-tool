@@ -1811,6 +1811,17 @@ the copy (`pending.go:15-21`).
 >   afterwards in Account Settings; Local Folders stays. Then close Thunderbird and click Check
 >   again. MailArchive does not change Thunderbird's settings itself." Pinned by MA-1085's
 >   "no Local Folders" case.
+>   *Changed 2026-11-07 (the R7 friction review, `docs/review-restore-thunderbird-friction.md`,
+>   lead's words):* after "nothing was written." it now says "If you have another Thunderbird
+>   profile, choose that one instead. Otherwise:" and goes on "Thunderbird makes Local Folders when
+>   you add an account. …", because with two profiles the one with no Local Folders can be the
+>   pre-selected one. The same review changed **W-RUNNING**'s Windows way to quit from "File → Exit"
+>   to "the menu button ≡, then Exit" (Thunderbird 153 hides the File menu bar by default; MA-1127's
+>   words test), and Desktop's own words: the locked button's reason ("…unlock it on its Encryption
+>   card first."), the encrypted record's note (the browser saves it with the downloads, usually
+>   the Downloads folder), the tree's step line and the guide (a folder's number counts its
+>   subfolders' messages too), and the guide's new line for a profile with no Local Folders
+>   (MA-1131's friction words test).
 > - **Stopped**, for every archive, adds: "That cannot undo a copy already uploaded by a sync
 >   service, kept in a backup or snapshot, or left on the disk." [RT-8]
 > - **Done** adds W-STORE's sentence when it applied, and "MailArchive checked every message it
@@ -3201,6 +3212,11 @@ Build order is sound: nothing on a surface (R4, R5) before its engine (R1–R3).
 > Lab 2026-11-07: **MA-1133 ran on Windows** (`docs/lab/restore-thunderbird-windows-MA-1133.md`);
 > W-NOLOCAL's MENU PATH is filled (§3.2 step 1 note, §7.5 note), so the "Still pending" line's
 > first item is done.
+>
+> 2026-11-07: **the R7 friction review ran** (`docs/review-restore-thunderbird-friction.md`),
+> Windows first on Edge on the VM, then a shorter macOS pass in Chrome on this Mac; Linux not walked.
+> Its wording fixes are in (§7.5 note of the same date); its behaviour proposals wait for the lead.
+> The X-series walk it records is the one the R7 gate owes.
 
 ## 14. Decisions this design makes, for the review to test
 

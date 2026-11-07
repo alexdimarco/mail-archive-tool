@@ -29,6 +29,16 @@ func TestRestoreWaitAndRunningWords(t *testing.T) {
 	if !strings.Contains(runningWords("windows"), "icon by the clock") {
 		t.Error("windows W-RUNNING has its extra sentence")
 	}
+	// The R7 friction review (2026-11-07, Thunderbird 153.6.0 on Windows): the menu bar with
+	// File is hidden by default, so the way to quit named for Windows is the menu button's
+	// Exit, which the lab saw (the ≡ menu, "Exit Ctrl+Shift+Q").
+	for _, goos := range []string{"windows", "darwin", "linux"} {
+		w := runningWords(goos)
+		if !strings.Contains(w, "on Windows: the menu button ≡, then Exit") || strings.Contains(w, "File → Exit") ||
+			!strings.Contains(w, "on a Mac: Thunderbird → Quit Thunderbird") {
+			t.Errorf("%s W-RUNNING names the way to quit that Thunderbird 153 shows: %q", goos, w)
+		}
+	}
 }
 
 // covers: MA-1124, R40

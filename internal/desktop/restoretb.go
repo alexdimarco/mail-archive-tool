@@ -52,7 +52,7 @@ const (
 	restoreGoesOnText = "Locked. The restore into Thunderbird already started goes on until it finishes — Shut down stops it, and nothing is added to Thunderbird."
 	// restoreLockedWhy: the button's reason on a locked encrypted archive (§7.3 "disabled with a
 	// reason when the archive is locked").
-	restoreLockedWhy  = "This archive is encrypted and locked: unlock it on its Encryption card, then click Restore to Thunderbird…."
+	restoreLockedWhy  = "This archive is encrypted and locked: unlock it on its Encryption card first."
 	restoreNotWaiting = "That restore is no longer planned, so nothing was restored. Click Check again."
 	restoreNoFolders  = "No folder is ticked, so nothing was planned. Tick the folders to restore, or choose The whole archive, then click Check."
 	restoreFolderGone = "A folder you ticked is no longer in this archive, so nothing was planned. Click Cancel, then Restore to Thunderbird… again to load its folders."
@@ -67,7 +67,9 @@ const (
 	restoreCheckingText = "Checking what was written: every message is read back before Thunderbird can show the folder…"
 	restoreCancelLine   = "Cancelled from MailArchive Desktop: the restore stops at its next safe point and removes what it wrote, so nothing is added to Thunderbird."
 	// restoreRecordNote is said beside Save this record for an encrypted archive (§6.2 note, §7.4 RT-4).
-	restoreRecordNote = "The record names the restored folders and is not encrypted: it is saved only where you choose."
+	// The R7 friction review (2026-11-07): the browser saves it with its downloads, by default
+	// without asking, so the note says where it lands (lead's words).
+	restoreRecordNote = "The record names the restored folders and is not encrypted. Your browser saves it with your downloads (usually your Downloads folder): move it somewhere private, or delete it when you no longer need it."
 	restoreTickLine   = "I understand the restored mail will not be encrypted"
 	restoreAgainHead  = "Asked a second time: "
 )

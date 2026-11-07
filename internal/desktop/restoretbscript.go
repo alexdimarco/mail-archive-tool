@@ -83,7 +83,7 @@ if(rtbChooseR)rtbChooseR.addEventListener('change',async()=>{
     c.type='checkbox';c.value=f.id;c.setAttribute('data-rtb-folder','');
     lab.append(c,' '+f.name+' ('+f.total+')');row.append(lab);t.append(row);
   });
-  showStep($('rtbWhatStep'),t.querySelector('[data-rtb-folder]')||rtbWholeR,'Tick the folders to restore; a folder brings its subfolders. The number beside each is how many of its messages can go back. Then click Check.');
+  showStep($('rtbWhatStep'),t.querySelector('[data-rtb-folder]')||rtbWholeR,'Tick the folders to restore; a folder brings its subfolders. The number beside each is how many messages in it and its subfolders can go back. Then click Check.');
 });
 const rtbCheck=$('rtbCheck');
 if(rtbCheck)rtbCheck.addEventListener('click',async()=>{
