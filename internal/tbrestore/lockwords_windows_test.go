@@ -21,9 +21,22 @@ func otherTakeErr() error  { return windows.ERROR_NOT_SUPPORTED }
 
 // unmakeableLocks: a parent.lock with the read-only attribute cannot be opened for
 // writing ("access denied"), as on the lab's read-only share; the plan's probe sees that
-// too, so both the plan and Start word it.
+// too, so both the plan and Start word it. A folder named parent.lock is never
+// Thunderbird's lock (ADV-L2, settled 2026-11-07): the "could not take the lock" words,
+// W-LOCKFAIL, at the plan and at Start, never "Thunderbird is open".
 func unmakeableLocks(t *testing.T) []lockLeg {
 	return []lockLeg{{
+		what: "a folder named parent.lock", code: "W-LOCKFAIL",
+		names: func(p string) []string {
+			return []string{filepath.Join(p, ParentLockName), "could not take Thunderbird's lock", "not an ordinary file"}
+		},
+		set: func(t *testing.T, p string) func() {
+			if err := os.MkdirAll(filepath.Join(p, ParentLockName), 0o700); err != nil {
+				t.Fatal(err)
+			}
+			return func() {}
+		},
+	}, {
 		what: "a read-only parent.lock", code: "W-LOCKPERM",
 		names: func(p string) []string { return []string{filepath.Join(p, ParentLockName), "read-only network share"} },
 		set: func(t *testing.T, p string) func() {

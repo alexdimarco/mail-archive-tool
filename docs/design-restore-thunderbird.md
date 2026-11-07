@@ -743,6 +743,57 @@ The result names how many folder names changed.
 > 102 siblings of one 55-unit name) equals what the oracle returns for it on both platforms. MA-1088's
 > `#draft` expectation changed from `_#draft` (which Thunderbird hashes, as the lab saw with `_#hash`)
 > to `_draft`. Lab row MA-1095 re-runs it on Thunderbird.
+>
+> Settled 2026-11-07 [ADV-N1] (the names adversarial pass, `review-restore-thunderbird-adversarial-names.md`,
+> high; the lead's call). The note above is incomplete: "Thunderbird finds each local folder's mbox at
+> the name this function returns" should read "at `NS_MsgHashIfNecessary` of the name it **decoded**
+> from the file name". Read in Thunderbird's source (not recalled), comm-central
+> `mailnews/local/src/nsMsgBrkMBoxStore.cpp` `DiscoverChildFolders` at releases-comm-central
+> `9ff8c8b16fba2d9f9668b416eb6f2d708494fe78` (and unchanged at the mirror's tip of 2026-11-07,
+> `9666d60b3b29dac27e651a157ca7e18f9c5bf418`): `children.AppendElement(DecodeFilename(fileName));`.
+> `DecodeFilename` (`mailnews/base/src/nsMsgUtils.cpp`, same revision):
+> `nsCString out = NS_ConvertUTF16toUTF8(filename);` then `NS_UnescapeURL(out);` ("does generic
+> percent-decoding, not just for URLs"). `NS_UnescapeURL(nsACString&)` (`xpcom/io/nsEscape.h`,
+> mozilla-firefox/firefox `6149f492996791576ff4791f57bcbd47a4da27c0`) is
+> `aStr.SetLength(nsUnescapeCount(aStr.BeginWriting()));`, and `nsUnescapeCount`
+> (`xpcom/io/nsEscape.cpp`, same revision) copies every byte except a `%` whose next two bytes are both
+> in `"0123456789ABCDEFabcdef"`, which three become the one byte `UNHEX(c1) << 4` + `UNHEX(c2)`; any
+> other `%` is copied. So `a%41b` is read from `aAb`, `Budget%2026` from `Budget 26`, and an archive
+> named `Mail%20backup` hid the whole restore behind `Restored — Mail backup`. The same file's
+> `EncodeFilename`, which Thunderbird's newer folder store uses for the names it makes, escapes every
+> `%` ("Also escape '%' to simplify decoding rules"). The 153 release branch is not on the mirror
+> (only trunk), so it was not read; lab row MA-1095's addendum ran it on Thunderbird 153.6.0.
+>
+> What the restore now does: step 2 turns **every** `%` into `_` (not only one before two hex digits,
+> so a name is read as written by both stores); `ThunderbirdReads` refuses any `%` (W-TBNAME, the
+> defence in depth). Each such name counts as changed. The test's oracle is now
+> `NS_MsgHashIfNecessary(DecodeFilename(name)) == name` (`tbDecodeFilename`, a port of
+> `nsUnescapeCount`, in `ma1095_tbhash_test.go`). Tests: `ma1088_adv_names_test.go` (MA-1088),
+> `TestAPercentNameIsReadByThunderbirdFromItsOwnFile`: `Budget%2026`, `a%41b`, `%`, `100%`,
+> `%7Etilde`, `x%2Fy`, `50% off`, and `Mail%20backup` as the archive's name, through `FinalNames`,
+> `TopName`, `PlanLayout` and the real write, each message in the very file Thunderbird reads.
+>
+> Settled 2026-11-07 [ADV-N5] (the same pass, a lead; the lead's call). A Local Folders on a volume
+> that stores names decomposed (Mac OS Extended, HFS+) gives Thunderbird the NFD spelling, where `é`
+> is two UTF-16 units; whether Mozilla's macOS file layer normalises was not read. The restore now
+> counts every name's length as the longer of its NFC and NFD forms (`tbrestore`'s `tbUnits`), on every
+> platform (a profile can be copied), and cuts so both are within 55: the folder budget, ` (n)`, the
+> hash suffix, the top name's room and `ThunderbirdReads`. HFS+ decomposes by an older fixed table that
+> leaves some ranges as written; Go's NFD decomposes at least as much for every character either
+> knows, so the longer form bounds it. Test: `TestANameIsWithinThunderbirdsLimitDecomposedToo`
+> (27 `é` kept, 28 cut, an NFD-spelt input, Hangul, siblings, the top NAME).
+>
+> Settled 2026-11-07 [plan list] (the lead's call, owner-delegated words). The plan's NAMES line now
+> lists the changed names for a plain archive: the count, then one `"old name" → "new name"` per line
+> (each quoted, so a name cannot pass for a line of the plan; a folder as its path below the top, parts
+> joined with `/`), the top folder first when its NAME changed (with the free name the plan chose), up
+> to 50, then "and N more.". An encrypted archive's NAMES line is the count only (R6-12: its folder
+> names never reach the plan, the terminal or a record). The terminal's `-plan`, `-record-out` and
+> Desktop's Save this record carry the same text; Desktop shows the line's breaks (`#rtbPlan li`
+> `white-space: pre-line`). The count is now each changed name once (a folder shortened by the Windows
+> budget after a rename was counted twice) and only of folders that are restored. Tests:
+> `internal/tbengine/ma1124_nameslist_test.go`, `cmd/mailarchive/ma1129_nameslist_test.go`,
+> `internal/desktop/ma1131_nameslist_test.go`.
 
 ### 4.5 Path length on Windows
 
@@ -2230,6 +2281,43 @@ the copy (`pending.go:15-21`).
 >   `internal/tbengine/ma1124_deletedwords_test.go` (MA-1124).
 > - L3, the pre-sync's status words while a restore holds the profile, is settled in
 >   `design-presync-attended.md` §4.5 (a new outcome, `restore-running`).
+
+> Settled 2026-11-07 [ADV-L1, ADV-L2] (the names adversarial pass; the lead's call). The lock words
+> above judged two cases differently at the plan's check and at Start, so Check passed and Start
+> refused, every time:
+> - **ADV-L1** (macOS, Linux): a `.parentlock` **link** naming a pid that is gone — Mozilla's fallback
+>   lock left by a Thunderbird that crashed — was "closed" at the plan (`symlinkLockHeld`: a dead pid is
+>   stale) and W-RUNNING at Start (`O_NOFOLLOW`'s `ELOOP`). Now both judge it the same: a link naming
+>   a live pid, or one that cannot be read, is W-RUNNING at both; one naming a dead pid is W-LOCKFAIL
+>   at both, with its own words (the builder's, under the lead's owner-delegated authority): "Thunderbird's
+>   lock on this profile (FILE) is a link left behind when Thunderbird last closed without quitting
+>   normally, so nothing was restored. Open Thunderbird with this profile and quit it once, which
+>   clears the old lock, then click Check again. If this profile is also used from another computer,
+>   Thunderbird may be open there: close it there first." (The last sentence because the pid check
+>   reads only this computer's processes, and the fallback lock is used on file systems with no record
+>   locks, such as some network shares.) The link is never followed and never removed by the restore.
+>   The lead's "if the lock call succeeds on the real file, proceed" is the ordinary case: an ordinary
+>   `.parentlock` file is opened and locked as before; a link is never opened through.
+> - A **folder** (or other non-file) at `.parentlock` was likewise "closed" at the plan and W-LOCKFAIL
+>   at Start; the plan's probe now words it W-LOCKFAIL too ("…(FILE: it is a folder or a link, not an
+>   ordinary file)…").
+> - **ADV-L2** (Windows): a folder or link named `parent.lock` was W-RUNNING at both; Thunderbird never
+>   makes either on Windows, so it is now W-LOCKFAIL at both, naming the file once.
+> Tests: `internal/tbrestore/ma1127_stalelink_unix_test.go`, `lockwords_unix_test.go` (the folder leg
+> now refused at the plan too), `lockwords_windows_test.go` (a folder named parent.lock),
+> `ma1127_lockwords_test.go` (the table) — MA-1127.
+> - **W-NORAW's remedy** (the lead's correction of 2026-11-07, owner-delegated words): keeping each
+>   message's original is set when a local archive is made (its Settings card shows "Keep each
+>   message's original .eml too: Yes/No (set by how this archive was made)"; it cannot be changed
+>   there); only a Microsoft 365 archive has a Settings box for it. "Turn on keeping originals in
+>   Settings" was not true for a local archive. W-NORAW now: "This archive was made without keeping the
+>   original messages, so none of it can go back into Thunderbird. Whether an archive keeps each
+>   message's original is set when it is made (its Settings card shows this): to be able to restore
+>   later, make the archive with keeping originals on. For a Microsoft 365 archive, ticking “Keep each
+>   message's original .eml too” in Settings keeps the originals of mail backed up from then on." The
+>   plan's line for some messages without an original says "Whether an archive keeps each message's
+>   original is set by how it was made (its Settings card shows this)". The W-NORAW row of the table
+>   above keeps its first words; this note supersedes its remedy.
 
 ## 8. Failures and crashes
 

@@ -412,3 +412,55 @@ func TestTheSyncFoldUsesTheRunsTime(t *testing.T) {
 		t.Error("a miss that is not a scheduled sync job's moved the streak")
 	}
 }
+
+// covers: MA-1140, MA-908, R32
+// ADV-S1 (settled 2026-11-07, the lead's call): a scheduled sync stopped because a
+// MailArchive restore held the profile (restore-running) counts like profile-busy: three
+// in a row count one miss, so a restore lock that stays held night after night cannot
+// hide the 3-day "not synced" warning. Positive twin first: the same 30 nights of
+// profile-busy go stale. Then 30 nights of restore-running after two real misses go
+// stale too, with restore-running as the latest miss's name; one restore-running night
+// between two misses still moves no miss; restore-running and profile-busy share the
+// one in-a-row count; and a restore-running Run now (not scheduled) moves nothing. Then
+// three in a row through a real app.Run count one miss.
+func TestARestoreThatStaysHeldCannotHideTheStaleWarning(t *testing.T) {
+	t0 := time.Date(2026, 11, 1, 2, 0, 0, 0, time.UTC)
+	night := func(i int) time.Time { return t0.Add(time.Duration(i) * 24 * time.Hour) }
+	thirty := func(name string) state.SyncStreak {
+		s, _ := foldSyncStreak(state.SyncStreak{}, *outcome("owner-active-skipped", false, ""), true, false, night(0))
+		s, _ = foldSyncStreak(s, *outcome("owner-active-skipped", false, ""), true, false, night(1))
+		for i := 2; i < 32; i++ {
+			s, _ = foldSyncStreak(s, *outcome(name, false, ""), true, false, night(i))
+		}
+		return s
+	}
+	if s := thirty("profile-busy"); !s.Stale() || s.Missed != 12 {
+		t.Fatalf("positive twin: 30 nights of profile-busy after two misses: %+v stale %v", s, s.Stale())
+	}
+	s := thirty("restore-running")
+	if !s.Stale() || s.Missed != 12 || s.LastName != "restore-running" || s.Busy != 0 {
+		t.Fatalf("30 nights of restore-running after two misses: missed %d, busy %d, last %q, stale %v; want 12 misses, stale", s.Missed, s.Busy, s.LastName, s.Stale())
+	}
+
+	one, _ := foldSyncStreak(state.SyncStreak{}, *outcome("owner-active-skipped", false, ""), true, false, night(0))
+	one, _ = foldSyncStreak(one, *outcome("restore-running", false, ""), true, false, night(1))
+	if one.Missed != 1 || one.Busy != 1 {
+		t.Errorf("one restore-running night: missed %d busy %d, want 1 and 1", one.Missed, one.Busy)
+	}
+	one, _ = foldSyncStreak(one, *outcome("profile-busy", false, ""), true, false, night(2))
+	one, _ = foldSyncStreak(one, *outcome("restore-running", false, ""), true, false, night(3))
+	if one.Missed != 2 || one.Busy != 0 {
+		t.Errorf("restore-running, profile-busy, restore-running in a row: missed %d busy %d, want 2 and 0", one.Missed, one.Busy)
+	}
+	if _, moved := foldSyncStreak(state.SyncStreak{Busy: 2}, *outcome("restore-running", false, ""), false, true, night(4)); moved {
+		t.Error("a restore-running Run now (attended, not scheduled) moved the streak")
+	}
+
+	out, in := tmpDir(t), completeMaildir(t)
+	for i := 0; i < 3; i++ {
+		syncRun(t, out, in, kindScheduled, true, outcome("restore-running", false, ""))
+	}
+	if st, ok := streakOnDisk(t, out); !ok || st.Missed != 1 || st.Busy != 0 || st.LastName != "restore-running" {
+		t.Fatalf("three scheduled restore-running runs: %+v (file %v), want one miss", st, ok)
+	}
+}

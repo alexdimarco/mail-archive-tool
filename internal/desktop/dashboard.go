@@ -1906,6 +1906,7 @@ h1{font-size:1.8rem;letter-spacing:-.02em;margin:0 0 4px}.lede{color:var(--muted
 .sec li{margin:8px 0;line-height:1.45}.sec b{color:var(--text)}
 .steps{white-space:pre-wrap;overflow-wrap:anywhere}
 #uninstallNote{white-space:pre-line;overflow-wrap:anywhere}
+#rtbPlan li{white-space:pre-line;overflow-wrap:anywhere}
 .mono{font-family:ui-monospace,SFMono-Regular,Consolas,monospace}
 .btn-link{background:none;border:0;color:var(--accent);font:inherit;font-weight:700;cursor:pointer;padding:0;text-decoration:underline}
 .note{margin-top:12px;padding:10px 12px;border-radius:9px;font-size:.9rem;background:var(--accent-soft);border:1px solid color-mix(in srgb,var(--accent) 30%,var(--line))}

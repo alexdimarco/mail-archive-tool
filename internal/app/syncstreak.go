@@ -71,17 +71,18 @@ func updateSyncStreak(opts Options, out *PresyncOutcome, encrypted bool, now tim
 func foldSyncStreak(s state.SyncStreak, o PresyncOutcome, extend, attended bool, now time.Time) (state.SyncStreak, bool) {
 	moved := false
 	switch o.Name {
-	case presync.OutcomeCancelled.Name, presync.OutcomeWaitEnded.Name, presync.OutcomeStateUnreadable.Name,
-		presync.OutcomeRestoreRunning.Name, "":
+	case presync.OutcomeCancelled.Name, presync.OutcomeWaitEnded.Name, presync.OutcomeStateUnreadable.Name, "":
 		// neither (C-72, OQ-6, C-45): nothing is known about whether Thunderbird could sync.
-		// restore-running too (R8 lab L3, settled 2026-11-07): MailArchive's own restore held
-		// the profile for a while; that is not Thunderbird failing to sync.
 		// But a scheduled one is "any other scheduled outcome", so it ends a run of
 		// profile-busy results (C-86d): three counts one miss only when they are in a row.
 		if extend && s.Busy > 0 {
 			s.Busy, moved = 0, true
 		}
-	case presync.OutcomeProfileBusy.Name:
+	case presync.OutcomeProfileBusy.Name, presync.OutcomeRestoreRunning.Name:
+		// restore-running (R8 lab L3): MailArchive's own restore held the profile. Settled
+		// 2026-11-07 [ADV-S1]: it counts like profile-busy, in the same in-a-row count —
+		// SyncBusyRuns in a row are one miss — so a restore lock that stays held night after
+		// night cannot hide the 3-day "not synced" warning (as "neither" it froze the streak).
 		if extend {
 			s, moved = s.ProfileBusy(o.Name, now), true
 		}

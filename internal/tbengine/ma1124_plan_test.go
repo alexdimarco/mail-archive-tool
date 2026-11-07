@@ -165,7 +165,7 @@ func TestThePlanRefusesBeforeWritingAnything(t *testing.T) {
 		refusedAs(t, err, code, func() bool { return snapshot(t, pr.dir, out) == before }, names...)
 	}
 
-	check("no originals", Request{Out: plainArchive(t, false), Profile: pr.choice()}, "W-NORAW", "without keeping the original messages", "Turn on keeping originals")
+	check("no originals", Request{Out: plainArchive(t, false), Profile: pr.choice()}, "W-NORAW", "without keeping the original messages", "its Settings card shows this", "make the archive with keeping originals on")
 	pst := filepath.Join(t.TempDir(), "Outlook")
 	if _, err := app.Run(context.Background(), app.Options{Inputs: []string{"../../testdata/support.pst"}, Out: pst, Mode: export.Incremental, KeepRaw: true}, quiet, nil); err != nil {
 		t.Fatal(err)

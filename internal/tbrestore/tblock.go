@@ -91,7 +91,20 @@ const (
 	wLockPerm = "MailArchive is not allowed to make or open Thunderbird's lock file (FILE) in this profile's folder, so nothing was restored: the restore holds that lock to keep Thunderbird closed while it writes. This happens when the profile is on a read-only network share, or its folder belongs to another account. Choose a profile on this computer's own drive that your account can change, then click Check again."
 	wLockRO   = "This profile's folder (PATH) is on a read-only drive, so MailArchive could not make Thunderbird's lock file there and nothing was restored: the restore holds that lock to keep Thunderbird closed while it writes. Choose a profile on a drive this computer can write to, then click Check again."
 	wLockFail = "MailArchive could not take Thunderbird's lock on this profile (FILE: WHY), so nothing was restored. If Thunderbird is open, close it. Otherwise choose a profile on this computer's own drive, then click Check again."
+	// wLockStale (W-LOCKFAIL), settled 2026-11-07 [ADV-L1]; the lead's call, these words
+	// the builder's under the lead's owner-delegated wording authority.
+	wLockStale = "Thunderbird's lock on this profile (FILE) is a link left behind when Thunderbird last closed without quitting normally, so nothing was restored. Open Thunderbird with this profile and quit it once, which clears the old lock, then click Check again. If this profile is also used from another computer, Thunderbird may be open there: close it there first."
 )
+
+// staleLinkRefusal is the refusal for a `.parentlock` link left behind (ADV-L1).
+func staleLinkRefusal(profile string) error {
+	return refuse("W-LOCKFAIL", fill(wLockStale, "FILE", filepath.Join(profile, ParentLockName)), nil)
+}
+
+// errNotOrdinary is why a lock name that holds a folder, or a link that is not
+// Mozilla's, cannot be Thunderbird's lock (settled 2026-11-07 [ADV-L1, ADV-L2]): worded
+// W-LOCKFAIL at the plan's check and at Start alike, never "Thunderbird is open".
+var errNotOrdinary = errors.New("it is a folder or a link, not an ordinary file")
 
 // lockOpenRefusal is the refusal for err from making, opening or asking the profile's
 // lock file: W-RUNNING only when err means the lock is held (lockHeldErr); otherwise the
@@ -100,6 +113,8 @@ const (
 func lockOpenRefusal(profile string, err error) error {
 	file := filepath.Join(profile, ParentLockName)
 	switch {
+	case lockHeldErr(err) && staleParentLink(profile):
+		return staleLinkRefusal(profile) // the link appeared after the check (ADV-L1)
 	case lockHeldErr(err):
 		return refuse("W-RUNNING", RunningWords(), err)
 	case readOnlyErr(err):
@@ -126,9 +141,16 @@ func lockTakeRefusal(profile string, err error) error {
 
 // RunningRefusal is the refusal for a profile CheckRunning found in use (s.Running()):
 // W-RUNNING, except when the only signal was a lock file that could not be opened or asked
-// (no hold seen, no Thunderbird process), which is worded by its cause (MA-1095 lab BUG-2).
+// (no hold seen, no Thunderbird process), which is worded by its cause (MA-1095 lab BUG-2),
+// or a `.parentlock` link left behind (ADV-L1, settled 2026-11-07), worded as that. A
+// Thunderbird process, or a hold seen, is W-RUNNING whatever else was found.
 func RunningRefusal(profile string, s RunningSignal) error {
-	if !s.ByProcess && s.LockErr != nil {
+	switch {
+	case s.ByProcess || (s.ByLock && s.LockErr == nil):
+		return refuse("W-RUNNING", RunningWords(), nil)
+	case s.StaleLink:
+		return staleLinkRefusal(profile)
+	case s.LockErr != nil:
 		return lockOpenRefusal(profile, s.LockErr)
 	}
 	return refuse("W-RUNNING", RunningWords(), nil)

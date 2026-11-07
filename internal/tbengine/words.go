@@ -21,8 +21,11 @@ const (
 	// wNotAgain: ask-twice was owed and not given (the builder's).
 	wNotAgain = "Thunderbird's Local Folders may leave this computer (REASONS), and the restored mail will not be encrypted. That was not confirmed a second time, so nothing was restored. Confirm it again, or choose a profile on this computer's own drive."
 	wPST      = "This archive was made from Outlook data files, which keep no original messages, so none of it can go back into Thunderbird."
-	wNoRaw    = "This archive was made without keeping the original messages, so none of it can go back into Thunderbird. Turn on keeping originals in Settings so that future backups can be restored."
-	wSpace    = "There is not enough free space on DRIVE for this restore: it needs about X and DRIVE has Y free. Free some space, or choose fewer folders, then click Check again."
+	// wNoRaw: settled 2026-11-07 (the lead's correction, owner-delegated words): keeping
+	// originals is set by how a local archive was made (its Settings card shows it, Yes or
+	// No, and cannot change it); only a Microsoft 365 archive has a Settings box for it.
+	wNoRaw = "This archive was made without keeping the original messages, so none of it can go back into Thunderbird. Whether an archive keeps each message's original is set when it is made (its Settings card shows this): to be able to restore later, make the archive with keeping originals on. For a Microsoft 365 archive, ticking “Keep each message's original .eml too” in Settings keeps the originals of mail backed up from then on."
+	wSpace = "There is not enough free space on DRIVE for this restore: it needs about X and DRIVE has Y free. Free some space, or choose fewer folders, then click Check again."
 	// wSpaceUnknown: the free space could not be read (the builder's, the refusing direction).
 	wSpaceUnknown = "MailArchive could not read how much free space DRIVE has (WHY), so nothing was restored. Check that the drive is connected, then click Check again."
 	wFAT32        = "FOLDER is SIZE, too big for the drive that holds Local Folders: that drive uses the FAT32 format, which cannot hold a file of 4 GB or more. It is not restored. Choose fewer folders, or move Local Folders to a drive formatted another way."

@@ -5,6 +5,7 @@ package tbrestore
 import (
 	"errors"
 	"fmt"
+	"io/fs"
 	"os"
 	"path/filepath"
 	"syscall"
@@ -92,7 +93,7 @@ func openProfileLock(profile string) (*ProfileLock, error) {
 	fi, err := f.Stat()
 	if err != nil || !fi.Mode().IsRegular() {
 		f.Close()
-		return nil, fmt.Errorf("%s is not an ordinary file", p)
+		return nil, &fs.PathError{Op: "open", Path: p, Err: errNotOrdinary}
 	}
 	key, ok := infoKey(fi)
 	if !ok {
@@ -177,8 +178,13 @@ func probeLockFileErr(profile string) (held_, self bool, _ error) {
 	if err != nil {
 		return true, false, err
 	}
+	if fi.Mode()&os.ModeSymlink != 0 {
+		return false, false, nil // a link is symlinkLockHeld's and staleParentLink's to judge
+	}
 	if !fi.Mode().IsRegular() {
-		return false, false, nil // a link is symlinkLockHeld's to judge
+		// A folder (or other non-file) at the lock name: worded at the plan as at Start,
+		// W-LOCKFAIL (settled 2026-11-07 [ADV-L1, ADV-L2]; it was "closed" here before).
+		return true, false, &fs.PathError{Op: "open", Path: p, Err: errNotOrdinary}
 	}
 	f, err := os.OpenFile(p, os.O_RDONLY|syscall.O_NOFOLLOW, 0)
 	if err != nil {

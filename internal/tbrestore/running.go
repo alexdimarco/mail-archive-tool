@@ -29,10 +29,16 @@ type RunningSignal struct {
 	// hold was seen), and why; nil otherwise. Still counted as running; RunningRefusal
 	// words it by its cause (settled 2026-11-07 [MA-1095 lab BUG-2]).
 	LockErr error
+	// StaleLink: on macOS and Linux, `.parentlock` is a link naming a pid that is gone —
+	// Mozilla's fallback lock left behind by a Thunderbird that did not close normally.
+	// Settled 2026-11-07 [ADV-L1]: the plan's check and Start judge it the same way and
+	// refuse it in words that say so (W-LOCKFAIL, wLockStale), never "closed" at Check and
+	// "Thunderbird is open" at Start. Nothing follows the link.
+	StaleLink bool
 }
 
-// Running reports whether any signal fired.
-func (s RunningSignal) Running() bool { return s.ByLock || s.ByProcess }
+// Running reports whether any signal fired (a stale lock link included: it refuses).
+func (s RunningSignal) Running() bool { return s.ByLock || s.ByProcess || s.StaleLink }
 
 // processProbe lists Thunderbird processes: n is how many, known is false when the
 // list could not be read (counted as running). The real probes are per platform; a
@@ -60,7 +66,28 @@ func CheckRunning(profile string) RunningSignal {
 	if n, known := processProbe(); !known || n > 0 {
 		s.ByProcess = true
 	}
+	s.StaleLink = !sym && staleParentLink(profile)
 	return s
+}
+
+// staleParentLink reports a `.parentlock` link (macOS and Linux only, where that is the
+// lock's name) whose target names a pid that is not alive: Mozilla's fallback lock left
+// behind (ADV-L1). Read with Lstat and Readlink only; the link is never followed.
+func staleParentLink(profile string) bool {
+	if ParentLockName != ".parentlock" {
+		return false
+	}
+	p := filepath.Join(profile, ParentLockName)
+	fi, err := os.Lstat(p)
+	if err != nil || fi.Mode()&os.ModeSymlink == 0 {
+		return false
+	}
+	target, err := os.Readlink(p)
+	if err != nil {
+		return false
+	}
+	pid := lockTargetPID(target)
+	return pid > 0 && !procs.Alive(pid)
 }
 
 // ProcessRunning is check B alone: what is checked again after the restore takes

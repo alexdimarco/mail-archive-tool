@@ -5,6 +5,7 @@ package tbrestore
 import (
 	"errors"
 	"fmt"
+	"io/fs"
 	"os"
 	"path/filepath"
 
@@ -107,7 +108,7 @@ func (l *ProfileLock) take() error {
 	}
 	if info.FileAttributes&(windows.FILE_ATTRIBUTE_REPARSE_POINT|windows.FILE_ATTRIBUTE_DIRECTORY) != 0 {
 		windows.CloseHandle(h)
-		return fmt.Errorf("%s is not an ordinary file", l.path)
+		return &fs.PathError{Op: "open", Path: l.path, Err: errNotOrdinary}
 	}
 	key, ok := handleKey(h)
 	if !ok {
@@ -164,7 +165,10 @@ func windowsLockProbe(p string) (bool, error) {
 		return true, err
 	}
 	if !fi.Mode().IsRegular() {
-		return true, nil
+		// Settled 2026-11-07 [ADV-L2]: a folder or a link at parent.lock is never
+		// Thunderbird's lock (it makes neither on Windows), so it is the "could not take
+		// the lock" words, W-LOCKFAIL, at the plan and at Start, never "Thunderbird is open".
+		return true, &fs.PathError{Op: "open", Path: p, Err: errNotOrdinary}
 	}
 	f, err := os.OpenFile(p, os.O_RDWR, 0)
 	if err != nil {

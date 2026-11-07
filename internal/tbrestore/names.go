@@ -5,6 +5,8 @@ import (
 	"unicode/utf16"
 	"unicode/utf8"
 
+	"golang.org/x/text/unicode/norm"
+
 	"mail-archive-tool/internal/util"
 )
 
@@ -47,12 +49,18 @@ func SafeName(s string) (name string, changed bool) {
 	// Settled 2026-11-07 [MA-1095 lab]: ";" and "#" anywhere become "_", since Thunderbird
 	// hashes a name that holds either (the rest of its list SanitizeSegment and this step
 	// already remove).
+	// Settled 2026-11-07 [ADV-N1]: "%" anywhere becomes "_" too. Thunderbird percent-decodes
+	// each file name it finds (DecodeFilename: every "%" and two hex digits become one
+	// byte) and reads the folder from the decoded name's file, so "a%41b" was read from
+	// "aAb" and shown empty. Every "%", not only one before two hex digits: Thunderbird's
+	// newer folder store names files with EncodeFilename, which escapes every "%", so only
+	// a name with none at all is read as written by both.
 	out = util.StripBidi(out)
 	out = strings.Map(func(r rune) rune {
 		if r == 0x200e || r == 0x200f || r == 0x7f || (r >= 0x80 && r <= 0x9f) {
 			return -1
 		}
-		if r == ';' || r == '#' {
+		if r == ';' || r == '#' || r == '%' {
 			return '_'
 		}
 		return r
@@ -154,11 +162,23 @@ func utf16Len(s string) int {
 // fits reports s within max UTF-8 bytes and max UTF-16 units.
 func fits(s string, max int) bool { return len(s) <= max && utf16Len(s) <= max }
 
-// cutUnits cuts s at a character boundary until it is at most max UTF-16 units: the
-// unit Thunderbird's MAX_LEN counts. (A character is never split, so no surrogate half
-// is left, as Thunderbird's own cut also avoids.)
+// tbUnits is a name's length as Thunderbird's MAX_LEN may count it: the longer of its
+// UTF-16 units as written (NFC, the restore's own form) and decomposed (NFD). Settled
+// 2026-11-07 [ADV-N5]: a Local Folders on a volume that stores names decomposed (Mac OS
+// Extended, HFS+) hands Thunderbird the NFD spelling, where "é" is two units, so a name
+// of 55 NFC units could be over 55 there and be hashed. Counted on every platform, since
+// a profile can be copied to such a volume. (HFS+ decomposes by a fixed older Unicode
+// table that leaves some ranges as written; Go's NFD decomposes at least as much for
+// every character either knows, so the longer form bounds it.)
+func tbUnits(s string) int {
+	return max(utf16Len(s), utf16Len(norm.NFD.String(s)))
+}
+
+// cutUnits cuts s at a character boundary until it is at most max units by tbUnits: the
+// unit Thunderbird's MAX_LEN counts, in both forms (ADV-N5). (A character is never split,
+// so no surrogate half is left, as Thunderbird's own cut also avoids.)
 func cutUnits(s string, max int) string {
-	for utf16Len(s) > max {
+	for tbUnits(s) > max {
 		_, size := utf8.DecodeLastRuneInString(s)
 		if size == 0 {
 			break
@@ -168,8 +188,9 @@ func cutUnits(s string, max int) string {
 	return s
 }
 
-// fitsTB reports s within units UTF-16 units (at most tbNameMax) and the byte budget.
-func fitsTB(s string, units int) bool { return utf16Len(s) <= units && len(s) <= nameBudget }
+// fitsTB reports s within units by tbUnits (at most tbNameMax; NFC and NFD, ADV-N5) and
+// the byte budget.
+func fitsTB(s string, units int) bool { return tbUnits(s) <= units && len(s) <= nameBudget }
 
 // hashOf is the 8-hex suffix of a name's original bytes.
 func hashOf(original string) string { return "~" + util.HashHex(original, 8) }
@@ -189,13 +210,15 @@ func budgeted(s, original, prefix string, units int) string {
 // very file name: NS_MsgHashIfNecessary would return it unchanged (the rule above, with
 // both platforms' separators, since a profile can be copied between them). A name it
 // would hash, Thunderbird shows empty. The plan and the write hold every name to it
-// (defence in depth: the name steps already make every name so).
+// (defence in depth: the name steps already make every name so). Settled 2026-11-07
+// [ADV-N1, ADV-N5]: a name holding "%" is refused (Thunderbird decodes it first and
+// reads another file), and the length is held in NFC and NFD alike (tbUnits).
 func ThunderbirdReads(name string) bool {
-	if name == "" || utf16Len(name) > tbNameMax {
+	if name == "" || tbUnits(name) > tbNameMax {
 		return false
 	}
 	for _, r := range name {
-		if r < 0x20 || (r >= 0x7f && r <= 0x9f) || strings.ContainsRune(`/\:*?"<>|;#`, r) {
+		if r < 0x20 || (r >= 0x7f && r <= 0x9f) || strings.ContainsRune(`/\:*?"<>|;#%`, r) {
 			return false
 		}
 	}

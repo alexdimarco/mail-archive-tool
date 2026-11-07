@@ -276,3 +276,26 @@ the probes lived in a throwaway clone that was deleted. Persona: none. Source re
 `nsEscape.cpp` reached (via a summarising fetch, short quotes); `nsMsgDBFolder.cpp` reached for its
 first half only (`AddSubfolder` and `GetFilePath` not seen); the 153 release branch not reached
 (trunk read instead); Mozilla's macOS file layer not reached (ADV-N5).
+
+## Settled 2026-11-07 (the builder, under the lead's calls of 2026-11-07)
+
+Each finding was fixed test-first: the tombstone test was written and seen red on the code of
+`bb93bf4`, then the fix made it green, then each fix was mutated back and the test went red again
+(the mutations are listed in the fix commit's message). The fix commit is the one that adds this
+table. Design notes: `design-restore-thunderbird.md` §4.4 "Settled 2026-11-07 [ADV-N1]", "[ADV-N5]",
+"[plan list]", §7.5 "Settled 2026-11-07 [ADV-L1, ADV-L2]"; `design-presync-attended.md` §4.5
+"Settled 2026-11-07 [ADV-S1]".
+
+| ID | Lead's call | What was done | Tombstone test |
+|---|---|---|---|
+| ADV-N1 (high) | `%` becomes `_` everywhere; `ThunderbirdReads` refuses any `%`; the oracle gains Thunderbird's decode, read in comm-central and cited | Done. The decode read again for this fix, verbatim, at releases-comm-central `9ff8c8b16fba` (and the call unchanged at the tip `9666d60b3b29`, 2026-11-07): `DiscoverChildFolders` → `DecodeFilename` → `NS_UnescapeURL(nsACString&)` → `nsUnescapeCount` (firefox `6149f492996`): a `%` whose next two bytes are both in `0123456789ABCDEFabcdef` becomes one byte; any other `%` is copied. Ported as `tbDecodeFilename`; the oracle is `hash(decode(name)) == name` for every existing name test too. | `internal/tbrestore/ma1088_adv_names_test.go` `TestAPercentNameIsReadByThunderbirdFromItsOwnFile` (`Budget%2026`, `a%41b`, `%`, `100%`, `Mail%20backup` as the archive's name, and more; the real write) |
+| ADV-N5 (lead) | measure NFD as well as NFC; cut so both are within 55 | Done, on every platform (`tbUnits`: the longer of the two), for the folder budget, ` (n)`, the hash suffix, the top name and `ThunderbirdReads`. Still not seen on a real HFS+ volume. | `TestANameIsWithinThunderbirdsLimitDecomposedToo` |
+| ADV-S1 (low) | restore-running counts like profile-busy (3 in a row = a miss); test 30 nights | Done: the same in-a-row count as profile-busy. | `internal/app/syncstreak_test.go` `TestARestoreThatStaysHeldCannotHideTheStaleWarning` |
+| ADV-L1 (low) | a stale `.parentlock` link judged the same at Check and Start; plain words for a link left from a crash | Done: dead pid → W-LOCKFAIL with its own words at both (and on the race's `ELOOP`); live or unreadable → W-RUNNING at both; never followed. Also found while fixing: a **folder** at `.parentlock` had the same alternation (closed at the plan, W-LOCKFAIL at Start); now W-LOCKFAIL at both, its existing test leg strengthened. The words add one hedge the lead did not ask for: the pid check sees only this computer, so they say Thunderbird may be open on another computer that uses the profile. | `internal/tbrestore/ma1127_stalelink_unix_test.go`; `lockwords_unix_test.go` folder leg |
+| ADV-L2 (low, Windows) | a folder named parent.lock → W-LOCKFAIL, not "Thunderbird is open" | Done, the file named once ("it is a folder or a link, not an ordinary file"). | `lockwords_windows_test.go` leg "a folder named parent.lock"; `ma1127_lockwords_test.go` table row |
+| Plan list (the lead's call) | the plan lists "old → new", one per line, up to 50 then "and N more"; count only for an encrypted archive; the same at `-plan` and in the saved record; release note updated | Done. Each name is quoted (so a folder name cannot pass for a line of the plan); a folder shows as its path below the top. The count is now each name once and only of restored folders (a name the Windows budget shortened after another change was counted twice). | `internal/tbengine/ma1124_nameslist_test.go`, `cmd/mailarchive/ma1129_nameslist_test.go`, `internal/desktop/ma1131_nameslist_test.go` |
+
+Not changed, noticed while fixing (for the lead): the W-LONGPATH plan line (`longPathWords`) still
+joins the archive's raw folder names with ", ", so a hostile name with a line break could look like
+another plan line there; the new NAMES list quotes its names. A fresh look at this patch by another
+reader is still owed (a fix can bring its own finding).

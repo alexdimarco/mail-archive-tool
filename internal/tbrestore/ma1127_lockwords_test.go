@@ -37,6 +37,8 @@ func TestLockFailuresAreWordedByTheirCause(t *testing.T) {
 		{"read-only (take)", wrap(readOnlyErrno()), true, "W-LOCKRO", []string{"read-only drive"}},
 		{"other", wrap(errors.New("the share went away")), false, "W-LOCKFAIL", []string{file, "the share went away", "nothing was restored"}},
 		{"other (take)", wrap(otherTakeErr()), true, "W-LOCKFAIL", []string{file, "nothing was restored"}},
+		// ADV-L1, ADV-L2 (settled 2026-11-07): a folder or other non-file at the lock name.
+		{"not an ordinary file", wrap(errNotOrdinary), false, "W-LOCKFAIL", []string{file, "not an ordinary file", "nothing was restored"}},
 	} {
 		var err error
 		if c.take {

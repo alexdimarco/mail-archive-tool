@@ -19,6 +19,7 @@ import (
 	"os"
 	"path/filepath"
 	"runtime"
+	"strconv"
 	"strings"
 	"time"
 
@@ -545,7 +546,7 @@ func (p *Plan) lines(longNames []string) []Line {
 		add("W-PST", fmt.Sprintf("%s came from Outlook data files, which keep no original messages, so %s cannot go back into Thunderbird.", plural(sel.PST, "message"), verb(sel.PST, "it", "they")))
 	}
 	if sel.NoOriginal > 0 {
-		add("W-NORAW", fmt.Sprintf("%s %s no original message kept in the archive, so %s cannot go back into Thunderbird. Turn on keeping originals in Settings so that future backups can be restored; if the originals should be there, run Maintenance → Check integrity.", plural(sel.NoOriginal, "message"), verb(sel.NoOriginal, "has", "have"), verb(sel.NoOriginal, "it", "they")))
+		add("W-NORAW", fmt.Sprintf("%s %s no original message kept in the archive, so %s cannot go back into Thunderbird. Whether an archive keeps each message's original is set by how it was made (its Settings card shows this); if the originals should be there, run Maintenance → Check integrity.", plural(sel.NoOriginal, "message"), verb(sel.NoOriginal, "has", "have"), verb(sel.NoOriginal, "it", "they")))
 	}
 	if sel.TooBig > 0 {
 		add("W-TOOBIG", fmt.Sprintf("%s %s larger than 2 GB, so %s not restored.", plural(sel.TooBig, "message"), verb(sel.TooBig, "is", "are"), verb(sel.TooBig, "it is", "they are")))
@@ -557,9 +558,7 @@ func (p *Plan) lines(longNames []string) []Line {
 		add("NOFIXITY", fmt.Sprintf("%s %s no recorded checksum in the archive, so %s restored as stored.", plural(sel.NoFixity, "message"), verb(sel.NoFixity, "has", "have"), verb(sel.NoFixity, "it is", "they are")))
 	}
 	add("DAMAGED-LATER", wDamagedLater)
-	if p.Layout.Changed > 0 {
-		add("NAMES", fmt.Sprintf("%s had to be changed to be safe as file names; Thunderbird shows the changed names.", plural(p.Layout.Changed, "folder name")))
-	}
+	add("NAMES", p.namesWords())
 	for _, s := range p.Earlier {
 		if s.Words == "" {
 			continue
@@ -606,6 +605,38 @@ func (p *Plan) lines(longNames []string) []Line {
 	add("CHECKS", wChecks)
 	add("W-WAIT", tbrestore.WaitWords())
 	return ls
+}
+
+// namesShown is how many changed names the plan lists before "and N more.".
+const namesShown = 50
+
+// namesWords is the NAMES line ("" when no name changed). Settled 2026-11-07 (the lead's
+// call after ADV-N1, owner-delegated words): a plain archive's plan lists the changed
+// names, "old name → new name" one per line, each quoted so a name cannot pass for a line
+// of the plan, the top first, up to namesShown then "and N more."; the terminal's -plan,
+// -record-out and Desktop's saved record carry the same text. An encrypted archive's
+// gives the count only: its folder names never reach the plan (R6-12).
+func (p *Plan) namesWords() string {
+	cn := p.Layout.ChangedNames()
+	if len(cn) == 0 {
+		return ""
+	}
+	head := plural(len(cn), "folder name") + " had to be changed to be safe as file names; Thunderbird shows the changed names"
+	if p.Encrypted {
+		return head + "."
+	}
+	lines := []string{head + ":"}
+	for i, c := range cn {
+		if i == namesShown {
+			lines = append(lines, "and "+commas(len(cn)-namesShown)+" more.")
+			break
+		}
+		if c.New == p.Layout.Top && c.Old == p.Layout.TopAsAsked && p.Top != "" {
+			c.New = p.Top // the free top name the plan chose, " (n)" and all
+		}
+		lines = append(lines, strconv.Quote(c.Old)+" → "+strconv.Quote(c.New))
+	}
+	return strings.Join(lines, "\n")
 }
 
 // selectRefusal words the read side's refusal: over a cap is W-TOOMANY (§6.5 RT-7, L1),

@@ -101,13 +101,58 @@ func tbHashIfNecessary(name string, windows bool) string {
 	return string(utf16.Decode(u))
 }
 
-// readByThunderbird fails the test unless Thunderbird keeps n under n itself, on both
-// platforms' builds; what names the name's role.
+// tbDecodeFilename is Thunderbird's DecodeFilename, the step before the hash (ADV-N1,
+// settled 2026-11-07). Folder discovery, nsMsgBrkMBoxStore::DiscoverChildFolders in
+// comm-central mailnews/local/src/nsMsgBrkMBoxStore.cpp (releases-comm-central
+// 9ff8c8b16fba2d9f9668b416eb6f2d708494fe78, 2026-11-04; the call is the same at the
+// mirror's tip 9666d60b3b29dac27e651a157ca7e18f9c5bf418, 2026-11-07), names each child
+// folder `children.AppendElement(DecodeFilename(fileName));`. DecodeFilename
+// (mailnews/base/src/nsMsgUtils.cpp, same revision) is
+// `nsCString out = NS_ConvertUTF16toUTF8(filename); NS_UnescapeURL(out);`, and
+// NS_UnescapeURL(nsACString&) (xpcom/io/nsEscape.h, mozilla-firefox/firefox
+// 6149f492996791576ff4791f57bcbd47a4da27c0) is
+// `aStr.SetLength(nsUnescapeCount(aStr.BeginWriting()));`. nsUnescapeCount
+// (xpcom/io/nsEscape.cpp, same revision) copies every byte except a "%" whose next two
+// bytes are both in "0123456789ABCDEFabcdef": those three bytes become the one byte
+// UNHEX(c1)<<4 + UNHEX(c2). The folder is then kept under NS_MsgHashIfNecessary of that
+// decoded name. Ported over the UTF-8 bytes, as Thunderbird decodes them.
+func tbDecodeFilename(name string) string {
+	const hex = "0123456789ABCDEFabcdef"
+	unhex := func(c byte) byte {
+		switch {
+		case c >= '0' && c <= '9':
+			return c - '0'
+		case c >= 'A' && c <= 'F':
+			return c - 'A' + 10
+		}
+		return c - 'a' + 10
+	}
+	var b []byte
+	for i := 0; i < len(name); i++ {
+		if name[i] == '%' && i+2 < len(name) && strings.IndexByte(hex, name[i+1]) >= 0 && strings.IndexByte(hex, name[i+2]) >= 0 {
+			b = append(b, unhex(name[i+1])<<4+unhex(name[i+2]))
+			i += 2
+			continue
+		}
+		b = append(b, name[i])
+	}
+	return string(b)
+}
+
+// tbFileFor is the file Thunderbird 153 reads for a restored folder whose file is named
+// leaf: NS_MsgHashIfNecessary(DecodeFilename(leaf)).
+func tbFileFor(leaf string, windows bool) string {
+	return tbHashIfNecessary(tbDecodeFilename(leaf), windows)
+}
+
+// readByThunderbird fails the test unless Thunderbird reads n from the file n itself
+// (decoded, then hashed, it is unchanged), on both platforms' builds; what names the
+// name's role.
 func readByThunderbird(t *testing.T, n, what string) {
 	t.Helper()
 	for _, win := range []bool{true, false} {
-		if got := tbHashIfNecessary(n, win); got != n {
-			t.Errorf("%s: Thunderbird (windows=%v) keeps %q as %q, so it would show it empty", what, win, n, got)
+		if got := tbFileFor(n, win); got != n {
+			t.Errorf("%s: Thunderbird (windows=%v) reads the folder %q from the file %q, so it would show it empty", what, win, n, got)
 		}
 	}
 	if !ThunderbirdReads(n) {

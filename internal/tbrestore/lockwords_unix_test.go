@@ -23,8 +23,10 @@ func otherTakeErr() error  { return unix.ENOLCK }
 // opened. Root may open anything, so the permission legs need an ordinary account.
 func unmakeableLocks(t *testing.T) []lockLeg {
 	lockFile := func(p string) []string { return []string{filepath.Join(p, ParentLockName)} }
+	// A folder at the lock name is worded at the plan's check as at Start (settled
+	// 2026-11-07 [ADV-L1, ADV-L2]: never "closed" at Check and refused at Start).
 	legs := []lockLeg{{
-		what: "a folder at the lock name", code: "W-LOCKFAIL", atStartOnly: true, names: lockFile,
+		what: "a folder at the lock name", code: "W-LOCKFAIL", names: func(p string) []string { return []string{filepath.Join(p, ParentLockName), "not an ordinary file"} },
 		set: func(t *testing.T, p string) func() {
 			if err := os.MkdirAll(filepath.Join(p, ParentLockName), 0o700); err != nil {
 				t.Fatal(err)

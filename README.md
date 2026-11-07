@@ -457,8 +457,9 @@ folder Thunderbird does not show; MailArchive Desktop says so at the top of its
 page, and the next restore into that profile removes it.
 
 A folder name Thunderbird would not read back, or Windows does not allow (for
-example one holding `#` or `;`, or longer than 55 characters), is changed to a
-safe one; the plan says how many were changed. A profile with no Local Folders (a
+example one holding `#`, `;` or `%`, or longer than 55 characters), is changed to
+a safe one; the plan lists each changed name, old name → new name (up to 50, then
+how many more), or for an encrypted archive only how many. A profile with no Local Folders (a
 Thunderbird with no account yet) cannot be restored into: in Thunderbird, click
 **≡** → **Add Account** → **Newsgroup**, type any name, email address and server
 name (for example `news.example.invalid`) and click **Next** until **Finish**;

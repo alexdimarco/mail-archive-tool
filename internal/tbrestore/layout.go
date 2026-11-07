@@ -31,6 +31,8 @@ type Folder struct {
 	// LongPath: on Windows the folder (or one above it) would not fit the path budget
 	// even shortened, so it is not restored (W-LONGPATH, §4.5).
 	LongPath bool
+	// Renamed: its own name (the last part) is not the archive's spelling.
+	Renamed bool
 }
 
 // File is the folder's mbox file, relative to the container ("A.sbd/B"); Dir its
@@ -57,9 +59,39 @@ func sbdJoin(parts []string) []string {
 type Layout struct {
 	Top     string
 	Folders []Folder
-	// Changed is how many folder names had to change from the archive's own.
+	// Changed is how many folder names had to change from the archive's own: the top's
+	// NAME when it changed, and each restored folder whose own name changed, once each
+	// (ChangedNames lists them).
 	Changed int
+	// TopAsAsked is the top name as it would be with NAME as given ("Restored — " + it),
+	// kept so the plan can say what it became.
+	TopAsAsked string
+	topChanged bool
 }
+
+// NameChange is one changed name, as the plan lists it: the archive's spelling (a folder's
+// path below the top, parts joined with "/") and the name written.
+type NameChange struct{ Old, New string }
+
+// ChangedNames are the changed names in the plan's order (settled 2026-11-07, the lead's
+// call after ADV-N1): the top first when its NAME changed (New is the layout's top, before
+// any " (n)"; the plan puts in the free name it chose), then each restored folder whose
+// own name changed, parents first. len is Changed.
+func (l *Layout) ChangedNames() []NameChange {
+	var out []NameChange
+	if l.topChanged {
+		out = append(out, NameChange{l.TopAsAsked, l.Top})
+	}
+	for _, i := range l.Restored() {
+		if f := l.Folders[i]; f.Renamed {
+			out = append(out, NameChange{strings.Join(f.Names, "/"), strings.Join(f.Parts, "/")})
+		}
+	}
+	return out
+}
+
+// count sets Changed from the top and the folders' Renamed (once each, restored only).
+func (l *Layout) count() { l.Changed = len(l.ChangedNames()) }
 
 // Restored are the folders that will be written (not LongPath).
 func (l *Layout) Restored() []int {
@@ -79,10 +111,8 @@ func (l *Layout) Restored() []int {
 // goos "windows" by the tests on every leg (MA-1126).
 func PlanLayout(archiveName string, in []FolderIn, localDir, goos string) (*Layout, error) {
 	top, topChanged := topName(archiveName)
-	l := &Layout{Top: top}
-	if topChanged {
-		l.Changed++ // the top folder's own name is a changed name too (MA-1095 lab)
-	}
+	// The top folder's own name is a changed name too (MA-1095 lab).
+	l := &Layout{Top: top, TopAsAsked: TopPrefix + archiveName, topChanged: topChanged}
 	index := map[string]int{}
 	children := map[int][]int{} // parent index (-1 top) -> child indexes, archive order
 	for _, f := range in {
@@ -115,9 +145,7 @@ func PlanLayout(archiveName string, in []FolderIn, localDir, goos string) (*Layo
 		names, changed := FinalNames(orig)
 		for i, k := range kids {
 			l.Folders[k].Parts = []string{names[i]}
-			if changed[i] {
-				l.Changed++
-			}
+			l.Folders[k].Renamed = changed[i]
 		}
 	}
 	l.rebuildParts()
@@ -126,6 +154,7 @@ func PlanLayout(archiveName string, in []FolderIn, localDir, goos string) (*Layo
 			return nil, err
 		}
 	}
+	l.count()
 	if err := l.ThunderbirdReadsAll(withNumber(l.Top, 99)); err != nil {
 		return nil, err
 	}
@@ -239,6 +268,9 @@ func (l *Layout) windowsBudget(localDir string, children map[int][]int) error {
 		dedupe(names, orig, ch)
 		for i, k := range kids {
 			l.Folders[k].Parts[len(l.Folders[k].Parts)-1] = names[i]
+			if ch[i] {
+				l.Folders[k].Renamed = true
+			}
 		}
 	}
 	l.rebuildParts()
@@ -252,9 +284,7 @@ func (l *Layout) windowsBudget(localDir string, children map[int][]int) error {
 		}
 	}
 	for j := range shortened {
-		if !l.Folders[j].LongPath {
-			l.Changed++
-		}
+		l.Folders[j].Renamed = true // counted once, and only when restored (count)
 	}
 	return nil
 }

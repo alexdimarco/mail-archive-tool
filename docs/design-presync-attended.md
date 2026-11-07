@@ -987,6 +987,16 @@ MA-905 asserts every name in `allOutcomes` is in the map or deliberately has no 
 > restore also holds Thunderbird's own lock), and counts **neither** synced nor missed in the streaks,
 > like `cancelled` (MailArchive's own restore held the profile; Thunderbird did not fail to sync).
 > Test: `internal/presync/ma1140_restore_words_test.go` (MA-1140).
+>
+> Settled 2026-11-07 [ADV-S1] (the names adversarial pass, `review-restore-thunderbird-adversarial-names.md`;
+> the lead's call): "neither" above is superseded for the missed streak. As neither, a restore lock that
+> read as held night after night froze the streak and hid the 3-day warning forever (the pass's probe:
+> 30 nights, never stale). `restore-running` now counts like `profile-busy` (§5.2, C-4), in the same
+> in-a-row count: `SyncBusyRuns` (3) scheduled ones in a row count one miss, any other scheduled
+> outcome ends the count, and an attended Run now moves nothing. It is still never "synced". Test:
+> `internal/app/syncstreak_test.go` `TestARestoreThatStaysHeldCannotHideTheStaleWarning` (MA-1140):
+> 30 nights go stale; one restore-running night between misses moves no miss; three in a row through
+> a real `app.Run` count one.
 
 ### 4.6 The Run now note: phases, then the outcome [C-19, C-22, C-23, C-24, C-30]
 
