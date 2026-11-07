@@ -19,6 +19,33 @@ func Extract(u *Unlocked, format app.ExtractFormat, dest string, overwrite bool,
 	return app.ExtractSealed(u.Out(), format, dest, overwrite, logger, onProgress, &sealedOriginals{r: &Reader{u: u, out: u.Out()}})
 }
 
+// LeasedOriginals is app.SealedOriginals over a read lease of its own: the restore to
+// Thunderbird's encrypted side (design-restore-thunderbird §6.2 RT-8, Q6; slice R6).
+// Unlike Extract, which reads through u itself and so stops at a Lock, it reads through
+// a lease taken when it is made: a Lock after that does not stop it, only the caller's
+// context and Destroy do. Each original is decrypted in memory and handed over; nothing
+// is written anywhere. The caller destroys it when its run ends.
+type LeasedOriginals struct {
+	sealedOriginals
+	lease *Unlocked
+}
+
+// LeaseOriginals takes a read lease on u and reads the archive through it. An archive
+// already locked is ErrLocked.
+func LeaseOriginals(u *Unlocked) (*LeasedOriginals, error) {
+	l, err := u.Lease()
+	if err != nil {
+		return nil, err
+	}
+	return &LeasedOriginals{sealedOriginals: sealedOriginals{r: &Reader{u: l, out: l.Out()}}, lease: l}, nil
+}
+
+// Out is the archive folder the lease reads.
+func (l *LeasedOriginals) Out() string { return l.lease.Out() }
+
+// Destroy ends the lease; its key is zeroed once nothing uses it.
+func (l *LeasedOriginals) Destroy() { l.lease.Destroy() }
+
 // sealedOriginals is app.SealedOriginals over the archive u opened.
 type sealedOriginals struct{ r *Reader }
 

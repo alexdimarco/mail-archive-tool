@@ -443,7 +443,7 @@ func (w *writer) commit(top string) *WriteResult {
 			}
 			c := cleanupContainer(w.f, top, in.ID, true, w.notMine)
 			w.res.Clean = &c
-			_ = w.logLine(EvAbandoned, func(l *LogLine) { l.Result, l.Detail = string(OutTaken), err.Error() })
+			_ = w.logLine(EvAbandoned, func(l *LogLine) { l.Result, l.Detail = string(OutTaken), w.why(err) })
 			w.res.Outcome, w.res.Err = OutTaken, err
 			kind = entryKind(w.f, top)
 			if kind == "" {
@@ -463,9 +463,9 @@ func (w *writer) commit(top string) *WriteResult {
 		// out); anything else is abandoned, nothing removed.
 		fi, lerr := w.f.Lstat(top)
 		if lerr != nil || !fi.Mode().IsRegular() || fi.Size() != 0 {
-			_ = w.logLine(EvAbandoned, func(l *LogLine) { l.Result, l.Detail = string(OutCommitErr), syncErr.Error() })
+			_ = w.logLine(EvAbandoned, func(l *LogLine) { l.Result, l.Detail = string(OutCommitErr), w.why(syncErr) })
 			w.res.Outcome, w.res.Err = OutCommitErr, syncErr
-			w.res.Words = fill(wCommitErr, "TOP", top, "PATH", in.Local.Dir, "WHY", syncErr.Error())
+			w.res.Words = fill(wCommitErr, "TOP", top, "PATH", in.Local.Dir, "WHY", w.why(syncErr))
 			return w.res
 		}
 		w.res.AfterErr = syncErr
@@ -482,7 +482,7 @@ func (w *writer) commit(top string) *WriteResult {
 	w.res.Outcome = OutDone
 	w.res.Words = fill(wDone, "N", itoa(w.res.Restored), "TOP", top)
 	if w.res.AfterErr != nil {
-		w.res.Words += " (MailArchive met an error after the folder was complete: " + w.res.AfterErr.Error() + ".)"
+		w.res.Words += " (MailArchive met an error after the folder was complete: " + w.why(w.res.AfterErr) + ".)"
 	}
 	return w.res
 }
@@ -498,12 +498,12 @@ func showsWord(kind, shows string) string {
 func (w *writer) fail(o Outcome, err error) *WriteResult {
 	w.res.Outcome, w.res.Err = o, err
 	if w.started {
-		_ = w.logLine(EvEnded, func(l *LogLine) { l.Result, l.Detail = string(o), err.Error() })
+		_ = w.logLine(EvEnded, func(l *LogLine) { l.Result, l.Detail = string(o), w.why(err) })
 	}
 	if c := RefusalCode(err); c != "" {
 		w.res.Words = err.Error()
 	} else {
-		w.res.Words = fill(wFailedHead, "WHY", why(err))
+		w.res.Words = fill(wFailedHead, "WHY", w.why(err))
 	}
 	return w.res
 }
@@ -515,7 +515,7 @@ func (w *writer) stop(err error) *WriteResult {
 	if errors.Is(err, errStopped) || w.ctx.Err() != nil {
 		o = OutStopped
 	}
-	head := fill(wFailedHead, "WHY", why(err))
+	head := fill(wFailedHead, "WHY", w.why(err))
 	if o == OutStopped {
 		head = wStoppedHead
 	}
@@ -543,7 +543,7 @@ func (w *writer) cleanAfter(o Outcome, err error, head, tail string) *WriteResul
 	top := w.res.Top
 	c := cleanupContainer(w.f, top, w.in.ID, false, w.notMine)
 	w.res.Clean = &c
-	detail := why(err)
+	detail := w.why(err)
 	switch c.Kind {
 	case CleanRemoved:
 		_ = w.logLine(EvEnded, func(l *LogLine) { l.Result, l.Detail = string(o), detail })
@@ -585,6 +585,23 @@ func leftoverWords(c CleanResult, top, local string, encrypted bool) string {
 		return fill(wListBad, "TOP", top, "PATH", local)
 	}
 	return ""
+}
+
+// why is an error as the writer words it and logs it. For an encrypted archive only its
+// kind is said, never its text, which can name a restored folder's file: restores.log,
+// the progress and the result carry no folder names for an encrypted archive (design
+// §6.2, MA-1128; slice R6).
+func (w *writer) why(err error) string {
+	if err == nil || !w.in.Encrypted {
+		return why(err)
+	}
+	switch {
+	case errors.Is(err, syscall.ENOSPC):
+		return "the disk is full"
+	case errors.Is(err, errStopped):
+		return "stopped"
+	}
+	return "a file error, not named for an encrypted archive, since it could name a folder"
 }
 
 // why is an error in words: a full disk said so.

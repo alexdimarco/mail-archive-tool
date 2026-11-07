@@ -102,11 +102,16 @@ func sanitizeVerb(verb string) string {
 			return -1
 		}
 	}, verb)
-	if len(verb) > 16 {
-		verb = verb[:16]
+	if len(verb) > maxVerbLen {
+		verb = verb[:maxVerbLen]
 	}
 	return verb
 }
+
+// maxVerbLen bounds a holder's verb. 24, not 16, so "restore-thunderbird" (19, the
+// restore into Thunderbird's verb, design-restore-thunderbird §7.1 RT-18) is kept whole
+// and a skipped backup names it (MA-1127).
+const maxVerbLen = 24
 
 // Release unlocks and closes the lock file. The file itself is left in place
 // (removing it would race a concurrent Acquire); its content is stale once no

@@ -37,29 +37,20 @@ import "testing"
 // internal/tbrestore/ma1141_leftovers_test.go, internal/desktop/ma1141_restore_notice_test.go
 // and cmd/mailarchive/ma1141_restore_status_test.go.
 
-// covers: MA-1124, R40, S70
-func TestR0EncoderPlan(t *testing.T) {
-	t.Skip("MA-1124 pending: the plan's words, free space (W-SPACE), W-PST, W-NORAW, W-RECAPTURE, W-FAT32 and the All Mail note land in slice R6 (the read side is proven since slice R1 by internal/app/ma1124_restore_read_test.go)")
-}
-
-// covers: MA-1125, R40, S66, S67
-func TestR0EncoderRecheckAtStart(t *testing.T) {
-	t.Skip("MA-1125 pending: the re-check at Start lands in slice R6")
-}
-
-// covers: MA-1127, R40, S67
-func TestR0EncoderLocks(t *testing.T) {
-	t.Skip("MA-1127 pending: the archive lock held for the run (a backup refused meanwhile, no verb for an encrypted archive) and each lock released on success, error, Cancel, Shut down and a recovered panic land in slice R6 (Thunderbird's profile lock is proven since slice R3 by internal/tbrestore/ma1127_profilelock_test.go)")
-}
+// Slice R6 replaced the encoders of MA-1124 (ids MA-1124, R40, S70), MA-1125 (MA-1125,
+// R40, S66, S67), MA-1127 (MA-1127, R40, S67; its R3 part was proven already), MA-1129
+// (MA-1129, R40, R33), MA-1132 (MA-1132, R40) and MA-1143 (MA-1143, R40; its R3 part was
+// proven already) with the real covering tests, each carrying the same ids:
+// internal/tbengine/ma1124_plan_test.go, ma1125_recheck_test.go, ma1127_locks_test.go,
+// integration_test.go, ma1122_crash_test.go, ma1132_ma1143_test.go and
+// cmd/mailarchive/ma1129_restore_cli_test.go. MA-1128 (MA-1128, R37, R40, S72) is built
+// except the Lock reply, which is Desktop's (slice R7): internal/tbengine/
+// ma1128_encrypted_test.go proves the rest, and its encoder below is narrowed to the
+// Lock reply.
 
 // covers: MA-1128, R37, R40, S72
 func TestR0EncoderEncrypted(t *testing.T) {
-	t.Skip("MA-1128 pending: the encrypted path, the tick and ask-twice land in slice R6")
-}
-
-// covers: MA-1129, R40, R33
-func TestR0EncoderCommandLine(t *testing.T) {
-	t.Skip("MA-1129 pending: the restore-thunderbird verb lands in slice R6")
+	t.Skip("MA-1128 pending: the Lock reply while a restore of the archive runs (\"Locked. The restore into Thunderbird already started goes on until it finishes …\", design §6.2 note) is Desktop's and lands in slice R7 (the encrypted path through the read lease, the tick, ask-twice, no plaintext outside Local Folders and counts-only progress and log are proven since slice R6 by internal/tbengine/ma1128_encrypted_test.go)")
 }
 
 // covers: MA-1130, R23, R40
@@ -70,14 +61,4 @@ func TestR0EncoderDesktopRoutes(t *testing.T) {
 // covers: MA-1131, R40
 func TestR0EncoderDesktopFlow(t *testing.T) {
 	t.Skip("MA-1131 pending: the Desktop flow and its words land in slice R7")
-}
-
-// covers: MA-1132, R40
-func TestR0EncoderElevatedRefused(t *testing.T) {
-	t.Skip("MA-1132 pending: the elevated or root refusal (W-ELEVATED) lands in slice R6")
-}
-
-// covers: MA-1143, R40
-func TestR0EncoderWindowsLegs(t *testing.T) {
-	t.Skip("MA-1143 pending: W-STORE first in the plan and repeated in the Done words lands in slice R6 (the detection of a Store package, an identity-less volume and a remote drive is proven since slice R3 by internal/tbrestore/ma1143_winlegs_test.go and, on the Windows VM, ma1143_winlegs_windows_test.go)")
 }

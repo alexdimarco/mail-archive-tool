@@ -67,6 +67,10 @@ func ScheduledLockSkip(out string, err error, now time.Time) (line string, quiet
 		started.Local().Format("15:04 on 2006-01-02") + " and is still using this archive. The next scheduled backup runs as usual.", true
 }
 
+// RestoreThunderbirdVerb is the verb a restore into Thunderbird names in an unencrypted
+// archive's lock (design-restore-thunderbird §7.1 RT-18); an encrypted archive's names none.
+const RestoreThunderbirdVerb = "restore-thunderbird"
+
 // holderWords names what holds the archive's lock, from the verb its holder line records, in
 // plain words. An encrypted archive's lock names no verb (A18), so it reads as another task.
 func holderWords(verb string) string {
@@ -86,6 +90,10 @@ func holderWords(verb string) string {
 	case "delete":
 		// A scheduled backup that meets a running delete (MA-1045, the G2 settle pass's LOW-1).
 		return "a delete of this archive"
+	case RestoreThunderbirdVerb:
+		// A scheduled backup that meets a restore of an unencrypted archive into
+		// Thunderbird (design-restore-thunderbird §7.1 RT-18, MA-1127).
+		return "a restore of this archive into Thunderbird"
 	}
 	return "another MailArchive task"
 }

@@ -117,13 +117,50 @@ func (e *CopyExportEnv) folderKey(dir string) (ceDirKey, bool) {
 	return dirKeyOf(ids[0]), true
 }
 
-// copyLeaves says why parent may leave this computer (K5): each reason asks twice. It
-// judges the folder as spelled and where its links lead, so a link into a synced
-// folder or onto a removable drive asks twice too.
+// copyLeaves says why parent may leave this computer (K5), in the copy's own words:
+// each reason asks twice. The test itself is LeaveReasons, which the restore to
+// Thunderbird shares (design-restore-thunderbird §6.2 foldcheck N12).
 func (e *CopyExportEnv) copyLeaves(parent string) []string {
 	var why []string
-	spellings := []string{parent}
-	if rp := util.ResolveExisting(parent); rp != parent {
+	for _, r := range e.LeaveReasons(parent) {
+		switch r.Code {
+		case LeavesSynced:
+			why = append(why, fmt.Sprintf("%s is synced to %s: the readable copy will be uploaded there", parent, r.Service))
+		case LeavesMayICloud:
+			why = append(why, fmt.Sprintf("%s may be synced to iCloud (when iCloud keeps your Desktop and Documents folders): the readable copy may be uploaded there", parent))
+		case LeavesRemovable:
+			why = append(why, fmt.Sprintf("%s is on a removable or external drive: the readable copy leaves this computer with it", parent))
+		case LeavesShare:
+			why = append(why, fmt.Sprintf("%s is on a network share: the readable copy is written to another computer", parent))
+		}
+	}
+	return why
+}
+
+// The reasons a folder may leave this computer (K5), as codes: each caller words them.
+const (
+	LeavesSynced    = "synced"    // a cloud service keeps it in sync (Service names it)
+	LeavesMayICloud = "icloud"    // possibly iCloud Desktop and Documents (macOS)
+	LeavesRemovable = "removable" // a removable or external drive
+	LeavesShare     = "share"     // a network share
+)
+
+// LeaveReason is one reason a folder may leave this computer.
+type LeaveReason struct {
+	Code    string
+	Service string // for LeavesSynced: the service, as util.UnderCloudSync names it
+}
+
+// LeaveReasons says why dir may leave this computer: synced by a named service,
+// possibly iCloud Desktop/Documents, on a removable or external drive, on a network
+// share — in that order, each at most once. It judges the folder as spelled and where
+// its links lead, so a link into a synced folder or onto a removable drive counts too.
+// It is the test the unencrypted copy's ask-twice uses (copyLeaves), lifted so the
+// restore to Thunderbird asks twice on the same rule (design-restore-thunderbird §6.2).
+func (e *CopyExportEnv) LeaveReasons(dir string) []LeaveReason {
+	var why []LeaveReason
+	spellings := []string{dir}
+	if rp := util.ResolveExisting(dir); rp != dir {
 		spellings = append(spellings, rp)
 	}
 	svc, synced := "", false
@@ -133,18 +170,23 @@ func (e *CopyExportEnv) copyLeaves(parent string) []string {
 		}
 	}
 	if synced {
-		why = append(why, fmt.Sprintf("%s is synced to %s: the readable copy will be uploaded there", parent, svc))
+		why = append(why, LeaveReason{Code: LeavesSynced, Service: svc})
 	} else if mayICloud(spellings) {
-		why = append(why, fmt.Sprintf("%s may be synced to iCloud (when iCloud keeps your Desktop and Documents folders): the readable copy may be uploaded there", parent))
+		why = append(why, LeaveReason{Code: LeavesMayICloud})
 	}
-	if e.removable(parent) || (len(spellings) > 1 && e.removable(spellings[1])) {
-		why = append(why, fmt.Sprintf("%s is on a removable or external drive: the readable copy leaves this computer with it", parent))
+	if e.removable(dir) || (len(spellings) > 1 && e.removable(spellings[1])) {
+		why = append(why, LeaveReason{Code: LeavesRemovable})
 	}
-	if e.viewFor(parent).Kind == viewShare {
-		why = append(why, fmt.Sprintf("%s is on a network share: the readable copy is written to another computer", parent))
+	if e.viewFor(dir).Kind == viewShare {
+		why = append(why, LeaveReason{Code: LeavesShare})
 	}
 	return why
 }
+
+// SetRemovableForTest makes the removable-drive probe answer by fn (nil restores the
+// real one) — for a package outside app whose tests need a removable destination
+// (the restore to Thunderbird's ask-twice, MA-1128). It is a test seam only.
+func (e *CopyExportEnv) SetRemovableForTest(fn func(dir string) bool) { e.removableSeam = fn }
 
 // mayICloud says one of the spellings is in the Desktop or Documents folder, which
 // macOS may keep in iCloud — by path, or by identity for a link or another spelling

@@ -69,6 +69,13 @@ const (
 	wLocalGone = "Thunderbird's Local Folders for this profile (PATH) is not there or is not a folder, so nothing was restored. Open Thunderbird once with this profile and close it, then click Check again."
 )
 
+// RestoringRefusal is W-RESTORING, for the plan that finds the restore lock held
+// (RestoreLockHeld) before it takes anything (slice R6's engine).
+func RestoringRefusal() error { return refuse("W-RESTORING", wRestoring, nil) }
+
+// NoProfileRefusal is W-NOPROF: no Thunderbird profile on this computer.
+func NoProfileRefusal() error { return refuse("W-NOPROF", wNoProf, nil) }
+
 // RunningWords is W-RUNNING as this platform shows it.
 func RunningWords() string { return runningWords(runtime.GOOS) }
 

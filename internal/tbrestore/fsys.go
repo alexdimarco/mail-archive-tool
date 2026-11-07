@@ -47,6 +47,10 @@ type wfile interface {
 	Close() error
 }
 
+// WFile is the file FS.Create gives, named so a package above this one (the engine,
+// internal/tbengine) can wrap an FS for fault injection in its tests (slice R6).
+type WFile = wfile
+
 type rootFS struct{ root *os.Root }
 
 // NewRootFS is the writer's file system on a root opened on Local Folders.
@@ -200,3 +204,7 @@ func OpenLocalRoot(lf LocalFolders) (*os.Root, error) {
 }
 
 const wChanged = "This changed since you clicked Check: WHAT. Click Check again."
+
+// Changed is the re-check's refusal at Start (design §5.3): W-CHANGED, naming what
+// changed since the plan; nothing has been written.
+func Changed(what string) error { return refuse("W-CHANGED", fill(wChanged, "WHAT", what), nil) }

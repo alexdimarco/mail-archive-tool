@@ -2872,6 +2872,75 @@ Build order is sound: nothing on a surface (R4, R5) before its engine (R1–R3).
 > started line records (§7.2 ADV-06 note). And O1 (b)'s skip, and the leftover skip, never apply to a
 > restore closed "abandoned" (§7.2 ADV-07 note, the lead's call).
 
+> Built 2026-11-07, slice R6 (the builder's notes; where a call was the builder's, it says so, each the
+> refusing direction):
+> - **Where it lives.** The engine is a package of its own, `internal/tbengine`, above `internal/app`
+>   and `internal/tbrestore` (tbrestore cannot import app; the R3 note above). `tbengine.MakePlan`
+>   (named so beside the type `Plan`) writes nothing and settles earlier restores read-only;
+>   `tbengine.Run` takes the archive lock (verb `restore-thunderbird`, none for an encrypted archive)
+>   → the MailArchive restore lock → the §5.3 re-check → Thunderbird's lock (`TakeProfileLock`, check
+>   B again) → `OpenLocalRoot` → `Settle` → `Write`, released in reverse by deferred releases on every
+>   path. It does not recover a panic (Desktop's job runner does); the releases unwind with it. The
+>   command line (`cmd/mailarchive/restoretb.go`) and Desktop (R7) call it. `ArchiveInputs` reads
+>   every job file of `job.Dir()` whose `out` is the archive, for W-RECAPTURE and the default profile.
+> - **The encrypted side** is `keyring.LeaseOriginals`: a read lease taken at Start, read through
+>   `app.FaithfulOriginal` with that lease as its `SealedOriginals` (never `ExtractSealed`), so a Lock
+>   after Start does not stop it (Q6). The plan loads the sealed manifest through a lease of its own,
+>   destroyed at once. The §5.3 manifest pin of an encrypted archive is its record pointer
+>   (`.mailarchive-manifest.ptr`), which every backup rewrites.
+> - **No folder names, encrypted** (§6.2): the writer (`tbrestore.Write`) now says only an error's kind
+>   for an encrypted archive, in `restores.log`'s detail and in the words ("the disk is full",
+>   "stopped", else "a file error, not named …"), since an error's text can name a restored file; a
+>   change to slice R4's writer, found by MA-1128's check-failure case.
+> - **The lock's verb.** `lockfile`'s holder-verb cap rose from 16 to 24 characters, so
+>   `restore-thunderbird` (19) is kept whole and `holderWords` names it; an older program reading the
+>   line cuts it and says "another MailArchive task", the safe direction.
+> - **Ask twice** uses the copy's test, lifted as `app.(*CopyExportEnv).LeaveReasons` (reason codes;
+>   foldcheck N12), each worded by its caller; the copy's rows unchanged. A missing second yes is
+>   **W-NOTAGAIN** (the builder's words: "Thunderbird's Local Folders may leave this computer
+>   (REASONS), and the restored mail will not be encrypted. That was not confirmed a second time, so
+>   nothing was restored. …").
+> - **The plan's order** (§6.4 as folded): W-RECAPTURE, then W-STORE, then the destination, what goes
+>   back, what cannot (W-PST, W-NORAW and too-big counts, W-LONGPATH, records with no fixity, "found
+>   while restoring", changed names), earlier restores' predictions (W-UNFINISHED's "will be removed
+>   first", W-VISIBLE, W-LEFT, W-ELSEWHERE + "Your restore will go ahead."), the space line,
+>   "Thunderbird is closed.", W-NETWORK, the not-encrypted line and ask-twice reasons (encrypted) or
+>   W-CLOUD (unencrypted), W-OLDTB, the All Mail note, the deleted-after-backup line, the
+>   scheduled-backup line, the check, and W-WAIT last. The builder's reading of the two "first"s
+>   (RT-10's W-RECAPTURE "above every other line", RT-11's W-STORE "first warning"): W-RECAPTURE leads
+>   every plan it is in; W-STORE is the first line otherwise, else the second.
+> - **Refusals the design names without words, or not at all** (the builder's): W-BUSY is refused at
+>   the plan too, not only at Start; a free space that cannot be read is W-SPACE ("MailArchive could
+>   not read how much free space DRIVE has (WHY) …"); W-FAT32 refuses the plan (the person chooses
+>   fewer folders); nothing restorable is W-PST when every record is an Outlook one, else W-NORAW;
+>   root on macOS and Linux is W-ELEVATED with its own words ("running as root … without sudo");
+>   Windows' elevation probe fails closed; a context ended before Run takes its locks is **W-STOPPED**
+>   ("The restore was stopped before it began, so nothing was written."); a Local Folders inside an
+>   encrypted archive is **W-INSIDEENC**; `-profile-name` naming none or several is **W-NOPROFNAME** /
+>   **W-PROFNAMES**; `-folder` naming none, or one in two stores without `-store`, is **W-NOFOLDER** /
+>   **W-TWOSTORES**; several usable profiles with no default is **W-CHOOSE** (not reachable with
+>   today's default order, kept for safety).
+> - **The deleted-after-backup line**, when the archive keeps the timeline and none was deleted, says
+>   "None of these messages were deleted from the mailbox after they were backed up." (a true line,
+>   not a "0").
+> - **Done words** add, after the writer's: the chosen messages that did not go back (originals found
+>   damaged named by their archive file, none named for an encrypted archive), §4.6's count of messages
+>   Thunderbird had marked deleted (X-Mozilla-Status 0x0008), the Microsoft 365 unread hint when a
+>   store is a mailbox, W-STORE when it applied, then each earlier restore not cleaned up (N-g; an
+>   elsewhere one adds "Your new restore went ahead."). Exit 3 counts every chosen record that did not
+>   go back, whatever the reason.
+> - **The command line.** Without a terminal and without `-plan` or `-yes` it is refused before
+>   anything is read. At a terminal, one question serves as the confirmation and, for an encrypted
+>   archive, the tick ("The restored mail will not be encrypted. Restore it? [y/N]"); `-yes` at a
+>   terminal skips it, so an encrypted archive then needs `-not-encrypted-ok` too (else W-TICK).
+>   `-not-encrypted-ok` on a plain archive is refused. The typed-back path must equal the resolved
+>   Local Folders path the plan showed. `-record-out` saves the plan (with `-plan`) or the plan and the
+>   result as a NEW file only; a record that cannot be saved after a restore is a warning on stderr,
+>   the exit code the restore's. `-list-profiles` with no profile is W-NOPROF (exit 1). Progress is said
+>   on stderr at most every 3 seconds, and at the last message.
+> - **Pending to R7:** the Lock reply while a restore runs (§6.2 note, `copyGoesOnText`'s pattern) is
+>   Desktop's; MA-1128's encoder is narrowed to it.
+
 ## 14. Decisions this design makes, for the review to test
 
 1. mboxrd, unchanged writer, framing line endings matching the message (§4.1–4.3).

@@ -85,6 +85,8 @@ func main() {
 		err = runExtract(args[1:])
 	case len(args) > 0 && args[0] == "decrypt":
 		err = runDecrypt(args[1:])
+	case len(args) > 0 && args[0] == "restore-thunderbird":
+		err = runRestoreThunderbird(args[1:])
 	case len(args) > 0 && args[0] == "pause":
 		err = runPause(args[1:])
 	case len(args) > 0 && args[0] == "resume":
@@ -173,7 +175,7 @@ func runExport(args []string) error {
 	inputs := append(o.inputs, fs.Args()...)
 
 	if *o.out == "" {
-		return errors.New("-out is required (or use a subcommand: desktop, wizard, run-job, setup, serve, search, reindex, schedule, graph, status, verify, extract, decrypt, pause, resume, uninstall, delete-archive, unlist-archive, add-archive, change-password, new-recovery-key, restore-key-file, forget-key, forget-archive, repair-record, encrypt)")
+		return errors.New("-out is required (or use a subcommand: desktop, wizard, run-job, setup, serve, search, reindex, schedule, graph, status, verify, extract, decrypt, restore-thunderbird, pause, resume, uninstall, delete-archive, unlist-archive, add-archive, change-password, new-recovery-key, restore-key-file, forget-key, forget-archive, repair-record, encrypt)")
 	}
 	if err := refuseEncryptWith(*kf.encrypt, *o.unattended, *o.manifest != "", *o.list); err != nil {
 		return err
@@ -2028,6 +2030,7 @@ Usage:
   mailarchive forget-archive   -out DIR                  stop treating a folder as one of this computer's encrypted archives
   mailarchive repair-record                              rebuild this computer's damaged record of encrypted archives
   mailarchive decrypt  -out DIR -dest PARENT             make an UNENCRYPTED copy of an encrypted archive
+  mailarchive restore-thunderbird -out DIR [-profile FOLDER] [-folder PATH]...   put the archive's mail back into Thunderbird, as a new folder (-plan: only show the plan; -list-profiles)
   mailarchive pause    -out DIR [-reason TEXT]           stop backups and make the archive read-only
   mailarchive resume   -out DIR                          make a paused archive writable and restore its schedule
   mailarchive uninstall -dry-run | -yes [-log-copied]    remove MailArchive's schedules, settings and sign-in (archives are kept; -log-copied: you copied deletions.log)
