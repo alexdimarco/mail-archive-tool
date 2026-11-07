@@ -1908,6 +1908,57 @@ restore is on disk could not be told (Delete's rule, `archivedelete.go:659-680`)
 >   entry of the parent name is beside the container and nothing unlisted is in it: only what
 >   MailArchive made, and only what Thunderbird could not have shown. R40 holds.
 
+> Folded 2026-11-06 [foldcheck3 S1, S2, S3] (lead's call). The third fold check
+> (`docs/review-restore-thunderbird-foldcheck3.md`, commit b37694e, PASS_WITH_NOTES) named three
+> notes for slice R0. This note amends the foldcheck2 note above; where they disagree, this note wins.
+> - **[S1] What the cleanup removes, said truly.** The table's closing sentence above ("Start removes
+>   only entries this restore's made-list names") leaves out that steps 3 and 4 also remove the
+>   made-list itself, the marker and the emptied container, none of which is on the list. It now
+>   reads: Start removes only the entries this restore's made-list names, then that made-list, its
+>   marker and the emptied container (all made by this restore, by exclusive create); it removes
+>   nothing while any entry named `Restored — NAME` is beside the container, nothing when the log has
+>   a "taken" line for the restore (S3 below), nothing when anything the list does not name is inside
+>   it, and so nothing Thunderbird can show. R40's cleanup clause is re-worded to match (§11
+>   foldcheck3 note).
+> - **[S2] Row 5 of the table, split.** The row "the same, but another program has since made
+>   `Restored — NAME`" (settled as 3a) is true only before "checked", or when that entry is a folder
+>   or a link. It is replaced by two rows:
+>
+>   | Crash at | Start settles it as | Removes |
+>   |---|---|---|
+>   | while writing (no "checked" line), then another program makes `Restored — NAME` (any kind); or after "checked", and the entry another program made is a folder or a link | 3a, "abandoned", W-VISIBLE | nothing |
+>   | after "checked", before the parent file, then another program makes a **regular file** `Restored — NAME` | case 2, "committed (case 2, ended)" | nothing |
+>
+>   The second row is a second instance of the residual case's cost (the residual bullet above): the
+>   restore is recorded as finished although MailArchive did not make the parent file, and under O1's
+>   answer (b) backups skip that other program's file beside the restored tree. It removes nothing
+>   (the safe direction) and is as rare as the residual case: a crash in the commit's instant, then
+>   another program making that exact name while Thunderbird is closed. It is in the R3–R5
+>   adversarial pass's scope with the residual case. MA-1123 ("every row of §8's foldcheck2 table")
+>   tests this table as split here.
+> - **[S3] A "taken" line always means remove nothing.** The table's row "after 'taken' → 3a,
+>   'abandoned'" was unconditional, but the cleanup's step 1 looks only at what is beside the
+>   container *now*. After a crash after "taken", Thunderbird is no longer held out and can show the
+>   tree under the other entry; if a program other than Thunderbird then removes only that entry,
+>   step 1 finds nothing and the cleanup would go on to 3b, with only the scan's `.msf` check left
+>   before the person's mail. So, lead's call: **a "taken" line for the restore in `restores.log`
+>   always settles it as 3a: nothing is removed, "abandoned" is appended, whatever exists beside the
+>   container now.** The log already proves a parent name existed at the commit. The cleanup's
+>   decision order gains a step before step 1: **0b. A "taken" line?** Then 3a, remove nothing. The
+>   live W-TAKEN cleanup (the run's own, after its failed create) is the same: the "taken" line is
+>   fsynced before the cleanup, so it removes nothing, whatever the parent name's state at step 1.
+>   Two sentences are corrected:
+>   - In "What the scan cannot see" above, "Thunderbird itself can change a listed file only once it
+>     shows the tree, which needs the parent name, which step 1 catches" is superseded by [foldcheck3
+>     S3]: step 1 catches a parent name that is there *now*. One that was there earlier is caught by
+>     the "taken" line when MailArchive's own create met it (step 0b). When another program made it
+>     and removed it again with no "taken" line (a crash before the commit, row 5's path), only the
+>     scan's sign stands: the `.msf` files Thunderbird makes inside a folder it shows. That path stays
+>     in the R3–R5 adversarial pass's scope.
+>   - §12.3's foldcheck2 note's "Nothing in the cleanup rule rests on the answer (removing nothing is
+>     safe either way); only the words do" is corrected beside it (§12.3 foldcheck3 note): reading (3)
+>     of that lab step is what the scan's backstop rests on.
+
 ## 9. Security
 
 The threat model is the repo's: another local account is out of scope only where the OS
@@ -2107,6 +2158,17 @@ mailarchive restore-thunderbird -list-profiles
 >   file. Any other marked folder with an entry of its parent name beside it is backed up like any
 >   other folder."
 
+> Folded 2026-11-06 [foldcheck3 S1, S3] (lead's call): R40's cleanup clause, as the foldcheck2 note
+> above words it, is false about the design's own cleanup, which also removes the made-list, the
+> marker and the emptied folder (none of them on the list). It is superseded by [foldcheck3 S1]. The
+> clause after "it never changes, renames, replaces or removes anything it did not create;" reads:
+> "its cleanup, after a cancel, a failure or a crash, removes only the entries its made-list names,
+> then its own made-list, its marker and the emptied folder; it removes nothing while any entry named
+> `Restored — NAME` is beside the folder, nothing for a restore whose `restores.log` has a 'taken'
+> line, nothing when the folder holds anything the list does not name, and so nothing Thunderbird can
+> show;". The "taken" words are [foldcheck3 S3] (§8 foldcheck3 note). R40 goes into the catalog in
+> R0 with this clause.
+
 ## 12. Tests
 
 ### 12.1 Ids
@@ -2270,6 +2332,16 @@ into the catalog (structural id allocation, which the owner lets the lead assume
 >   names exactly the restores Desktop start names; every check a read (the bytes of `restores.log`
 >   and the listing unchanged).
 
+> Folded 2026-11-06 [foldcheck3 S2, S3] (lead's call): changes to the rows above. No new ids.
+> - **MA-1123** [S2, S3]: "every row of §8's foldcheck2 table" means that table as split by §8's
+>   foldcheck3 note: a crash after "checked" and then a regular file `Restored — NAME` made by
+>   another program → "ended", nothing removed (the residual cost pinned, as MA-1138 pins it for
+>   backups); the same with a folder or a link → 3a. Adds: a "taken" line in `restores.log` with no
+>   entry of the parent name beside the container now → 3a, "abandoned", nothing removed (prove-fail:
+>   a settle that looks only at the parent name now must go red), and the same with the entry there.
+> - **MA-1122** [S3]: a live W-TAKEN whose parent entry has gone again by the cleanup's step 1 →
+>   nothing removed (the "taken" line was fsynced first).
+
 ### 12.3 Lab rows (real Thunderbird; all pending until run)
 
 The lab: Windows on the Parallels VM "Windows 11" (ARM64, Thunderbird installed and seen at
@@ -2344,6 +2416,16 @@ Windows first.
 > rule rests on the answer (removing nothing is safe either way); only the words do. So it runs
 > with MA-1133, any time after R0 and before slice R7, and if (1) is "no", W-VISIBLE and W-TAKEN say
 > "may show" (§7.5 foldcheck2 note).
+
+> Folded 2026-11-06 [foldcheck3 S3] (lead's call): the note above's "Nothing in the cleanup rule
+> rests on the answer (removing nothing is safe either way); only the words do" is superseded by
+> [foldcheck3 S3]. With a "taken" line now always meaning remove nothing (§8 foldcheck3 note), one
+> path is left where a parent name another program made has since gone with no "taken" line (a crash
+> before the commit, §8's table, row 5). There the cleanup's only backstop is the scan's sign that
+> Thunderbird has shown the tree: the `.msf` files it makes inside it. So reading (3) of this step
+> (which `.msf` files Thunderbird makes, inside the container and beside it) is load-bearing: if
+> Thunderbird made none inside the container, that path goes to the R3–R5 adversarial pass as an
+> open hazard before slice R4 is built. Readings (1) and (2) still decide only the words.
 
 ## 13. Build slices, and the gates each owes
 
@@ -2444,6 +2526,13 @@ Build order is sound: nothing on a surface (R4, R5) before its engine (R1–R3).
 >   pattern (N-b) go in R5 too, beside the rest of the settings-file work.
 > - **P1's lab check** (MA-1091's new Windows step, §12.3 foldcheck2 note) runs with MA-1133, after R0
 >   and before R7, on the Windows VM.
+>
+> Folded 2026-11-06 [foldcheck3 S1–S10] (lead's calls): **R0** writes R40 with the foldcheck3 cleanup
+> clause (§11 foldcheck3 note) and MA-1122 and MA-1123 as §12.2's foldcheck3 note changes them; S1,
+> S2 and S3 are folded in the design at R0. The other notes are owed to their slices, unfolded until
+> then: S4, S5, S6, S8 and S9 to **R4** (the writer's words and the scan's name match); S7 and S10 to
+> **R5** (the display rule and the Local Folders read it reuses). **R4** builds step 0b (a "taken"
+> line → remove nothing) in the cleanup's decision order.
 
 ## 14. Decisions this design makes, for the review to test
 
