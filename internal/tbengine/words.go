@@ -40,7 +40,26 @@ const (
 	wStopEarly    = "The restore was stopped before it began, so nothing was written."
 	wWentAhead    = " Your new restore went ahead."
 	wWillGoAhead  = " Your restore will go ahead."
-	wNotEncrypted = "The restored mail in Thunderbird is NOT encrypted: anyone who can open this Thunderbird profile can read it. If you stop the restore or it fails, MailArchive removes what it wrote, but that cannot undo a copy already uploaded by a sync service, kept in a backup or snapshot, or left on the disk."
+	// wNotEncrypted, as settled 2026-11-07 [R6-01]: it said "anyone who can open this
+	// Thunderbird profile", not who that is; the restore now makes its files readable by
+	// this account alone, and says so.
+	wNotEncrypted = "The restored mail in Thunderbird is NOT encrypted. MailArchive makes its files readable only by your account on this computer, so anyone who can sign in as you, or open this Thunderbird profile, can read it. If you stop the restore or it fails, MailArchive removes what it wrote, but that cannot undo a copy already uploaded by a sync service, kept in a backup or snapshot, or left on the disk."
+	// wNotEncryptedShared: the same, where the drive cannot limit who reads a file (R6-01).
+	wNotEncryptedShared = "The restored mail in Thunderbird is NOT encrypted, and this drive cannot limit who reads it: other accounts can read it as well as yours. If you stop the restore or it fails, MailArchive removes what it wrote, but that cannot undo a copy already uploaded by a sync service, kept in a backup or snapshot, or left on the disk."
+	// The lead's words (owner-delegated), settled 2026-11-07:
+	// wReaders (R6-01) is a reason to ask twice; wNotAgainReaders is W-NOTAGAIN with one.
+	wReaders         = "PATH is on a drive whose format (FSTYPE) cannot limit who reads a file, so other accounts on this computer, and on any computer the drive is connected to, can read the restored mail"
+	wNotAgainReaders = "The restored mail will not be encrypted, and REASONS. That was not confirmed a second time, so nothing was restored. Confirm it again, or choose a profile on this computer's own drive."
+	// wRecaptureUnknown (R6-02): nothing names what backs the archive up.
+	wRecaptureUnknown = "MailArchive cannot tell whether this archive backs up this Thunderbird profile. If it does, its backups leave the restored folder out, and mail you later move into that folder in Thunderbird is not backed up while it is there."
+	// wReadOnly (R6-13): an archive on a read-only drive, read without its lock.
+	wReadOnly = "The archive is on a drive that cannot be written (read-only), so MailArchive reads it without taking its lock: no backup can write it there while the restore reads it."
+	// wArchLock (R6-13): the archive's lock cannot be taken, and the drive is not read-only.
+	wArchLock = "MailArchive cannot take this archive's lock, so nothing was restored: the archive folder (OUT) or its lock file cannot be changed by your account, which a backup needs too. Check that the folder is yours and not read-only, then click Check again."
+	// wShared (R6-06): another profile uses the same Local Folders.
+	wShared = "Another Thunderbird profile, 'NAME' (DIR), uses this same Local Folders. MailArchive keeps Thunderbird out of it too while the restore writes."
+	// wFAT32Enc (R6-12): W-FAT32 for an encrypted archive, a count only.
+	wFAT32Enc = "Of the folders chosen, N IS 4 GB or more, too big for the drive that holds Local Folders: that drive uses the FAT32 format, which cannot hold a file of 4 GB or more, so nothing was restored. Choose fewer folders, or move Local Folders to a drive formatted another way."
 	wCloud        = "This Thunderbird profile is in a folder SERVICE keeps in sync, so the restored mail will be uploaded there too."
 	wAllMail      = "Gmail's All Mail folder holds another copy of every message in your other Gmail folders. Restoring it too puts those messages in Thunderbird twice. Untick it if you only want your folders."
 	wRecapture    = "This archive backs up this Thunderbird profile. Its backups will leave the restored folder out, so the restored mail is not copied into the archive again. Mail you later move into that folder in Thunderbird is not backed up while it is there."

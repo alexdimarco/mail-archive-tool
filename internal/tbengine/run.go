@@ -27,6 +27,9 @@ type Start struct {
 	ConfirmAgain bool
 	// Progress is told how far the write is, at every message (optional).
 	Progress func(Progress)
+	// Checking is told once when the post-write check begins, every message then read
+	// back (optional; R6-10): the command line says "Checking what was written…".
+	Checking func()
 }
 
 // Progress is how far a run is. Folder is "" for an encrypted archive: counts only
@@ -95,7 +98,10 @@ func Run(ctx context.Context, p *Plan, s Start) (*Result, error) {
 		return nil, refusal("W-TICK", wTick, nil)
 	}
 	if p.AskTwice() && !s.ConfirmAgain {
-		return nil, refusal("W-NOTAGAIN", fill(wNotAgain, "REASONS", strings.Join(p.Leaves, "; ")), nil)
+		if len(p.Readers) == 0 {
+			return nil, refusal("W-NOTAGAIN", fill(wNotAgain, "REASONS", strings.Join(p.Leaves, "; ")), nil)
+		}
+		return nil, refusal("W-NOTAGAIN", fill(wNotAgainReaders, "REASONS", strings.Join(p.AskReasons(), "; ")), nil)
 	}
 	if elevatedProbe() {
 		return nil, refusal("W-ELEVATED", elevatedWords, nil)
@@ -116,14 +122,27 @@ func Run(ctx context.Context, p *Plan, s Start) (*Result, error) {
 	if p.Encrypted {
 		verb = "" // a verb beside an encrypted archive would say readable mail was copied out
 	}
-	alock, err := lockfile.AcquireAs(filepath.Join(p.Out, lockfile.Name), verb)
-	if err != nil {
-		if errors.Is(err, lockfile.ErrHeld) {
-			return nil, refusal("W-BUSY", wBusy, err)
+	lp := filepath.Join(p.Out, lockfile.Name)
+	if p.ReadOnly {
+		// R6-13: a read-only medium, read without the archive's lock — nothing can write
+		// it there, a backup included — unless that is no longer so, or another computer's
+		// backup holds the lock.
+		if !readOnlyVolume(p.Out) {
+			return nil, tbrestore.Changed("the archive's drive (" + p.Out + ") is no longer read-only")
 		}
-		return nil, err
+		if lockfile.HeldReadOnly(lp) {
+			return nil, refusal("W-BUSY", wBusy, lockfile.ErrHeld)
+		}
+	} else {
+		alock, err := lockfile.AcquireAs(lp, verb)
+		if err != nil {
+			if errors.Is(err, lockfile.ErrHeld) {
+				return nil, refusal("W-BUSY", wBusy, err)
+			}
+			return nil, refusal("W-ARCHLOCK", fill(wArchLock, "OUT", p.Out), err) // R6-13: words, never the raw error
+		}
+		defer alock.Release()
 	}
-	defer alock.Release()
 	rlock, err := tbrestore.AcquireRestoreLock(p.Profile.Dir)
 	if err != nil {
 		return nil, err
@@ -137,6 +156,21 @@ func Run(ctx context.Context, p *Plan, s Start) (*Result, error) {
 		return nil, err
 	}
 	defer plock.Release()
+	// R6-05: the lock taken is the pinned profile's own, not a decoy's at its path.
+	if !plock.Binds(p.Profile.Dir, p.Profile.Identity) {
+		return nil, tbrestore.Changed("the Thunderbird profile (" + p.Profile.Dir + ") is not the folder it was")
+	}
+	// R6-06: every other profile that uses this Local Folders is held out too.
+	for _, o := range p.Sharing {
+		ol, err := tbrestore.TakeProfileLock(o.Dir)
+		if err != nil {
+			return nil, err
+		}
+		defer ol.Release()
+		if !ol.Binds(o.Dir, o.Identity) {
+			return nil, tbrestore.Changed("the Thunderbird profile (" + o.Dir + ") is not the folder it was")
+		}
+	}
 	root, err := tbrestore.OpenLocalRoot(p.Local)
 	if err != nil {
 		return nil, err
@@ -168,6 +202,10 @@ func Run(ctx context.Context, p *Plan, s Start) (*Result, error) {
 	in := tbrestore.WriteInput{
 		ID: id, ProfileDir: p.Profile.Dir, Local: p.Local, Archive: p.Out, Encrypted: p.Encrypted,
 		Layout: p.Layout, Top: p.Top, Log: log,
+		// R6-01: an encrypted archive's files must be shown readable by this account
+		// alone, unless the person confirmed a second time that this drive cannot.
+		MustBePrivate: p.Encrypted && len(p.Readers) == 0,
+		Checking:      s.Checking,
 		Messages: func(i int, emit func([]byte) error) error {
 			fo := p.Layout.Folders[i]
 			if !p.Encrypted {
@@ -232,9 +270,29 @@ func (p *Plan) recheck() error {
 	if err != nil || now.Dir != p.Profile.Dir || !now.Identity.Same(p.Profile.Identity) {
 		return tbrestore.Changed("the Thunderbird profile (" + p.Profile.Dir + ") is not the folder it was")
 	}
-	lf, err := tbrestore.LocalFoldersOf(p.Profile.Dir)
+	prefs, err := tbrestore.ReadPrefs(p.Profile.Dir)
+	if err != nil {
+		return tbrestore.Changed("this profile's settings file (prefs.js) cannot be read")
+	}
+	lf, err := tbrestore.FindLocalFolders(p.Profile.Dir, prefs)
 	if err != nil || lf.Dir != p.Local.Dir || !lf.Identity.Same(p.Local.Identity) {
 		return tbrestore.Changed("Thunderbird's Local Folders (" + p.Local.Dir + ") is not the folder it was")
+	}
+	// R6-11: the store kind and the inside-an-encrypted-archive test, as the plan made them.
+	if tbrestore.CheckStoreKind(prefs, lf) != nil {
+		return tbrestore.Changed("Thunderbird's Local Folders (" + p.Local.Dir + ") now keeps each message in its own file (the 'maildir' setting)")
+	}
+	if app.RefuseKeyless("restore into it", "", p.Local.Dir) != nil {
+		return tbrestore.Changed("Thunderbird's Local Folders (" + p.Local.Dir + ") is now inside an encrypted archive")
+	}
+	// R6-06: the profiles that share this Local Folders are the ones the plan named.
+	if sh, err := sharingProfiles(p.choice, p.Profile, p.Local); err != nil {
+		return err
+	} else if !sameProfiles(sh, p.Sharing) {
+		return tbrestore.Changed("which other Thunderbird profiles use this Local Folders")
+	}
+	if readOnlyVolume(p.Out) != p.ReadOnly {
+		return tbrestore.Changed("whether the archive's drive (" + p.Out + ") is read-only")
 	}
 	entries, err := os.ReadDir(p.Local.Dir)
 	if err != nil {
@@ -261,8 +319,26 @@ func (p *Plan) recheck() error {
 				return tbrestore.Changed(leaveWords(r.Code, r.Service, p.Local.Dir))
 			}
 		}
+		for _, r := range readerReasons(lf) {
+			if !contains(p.Readers, r) {
+				return tbrestore.Changed(r)
+			}
+		}
 	}
 	return nil
+}
+
+// sameProfiles reports two lists of the same profile folders, by path and identity.
+func sameProfiles(a, b []tbrestore.Profile) bool {
+	if len(a) != len(b) {
+		return false
+	}
+	for i := range a {
+		if a[i].Dir != b[i].Dir || !a[i].Identity.Same(b[i].Identity) {
+			return false
+		}
+	}
+	return true
 }
 
 // profileNow is the profile the plan chose, as profiles.ini (or the typed folder) says
@@ -275,7 +351,7 @@ func (p *Plan) profileNow() (tbrestore.Profile, error) {
 	case c.ListID != "":
 		bases := c.Bases
 		if bases == nil {
-			bases = tbrestore.ProfileBases()
+			bases = profileBases()
 		}
 		list, err := tbrestore.ReadProfiles(bases)
 		if err != nil {

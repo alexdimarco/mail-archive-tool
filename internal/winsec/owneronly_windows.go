@@ -13,12 +13,19 @@ import (
 // MailArchive's own secret file is one CheckSecretFile refuses, as not theirs (P3-8's
 // CI run on windows-latest; T2-16). Where the owner cannot be set, the access list
 // alone is, as before. Verified on a real Windows box in the Phase 3 Windows lab.
-func RestrictToOwner(path string) error {
+func RestrictToOwner(path string) error { return restrictToOwner(path, "") }
+
+// RestrictFolderToOwner is RestrictToOwner for a folder whose new files and folders
+// inherit the same owner-only entry (OICI), so what Thunderbird later makes in a folder
+// a restore made is the user's alone too (design-restore-thunderbird §9.6, R6-01).
+func RestrictFolderToOwner(path string) error { return restrictToOwner(path, "OICI") }
+
+func restrictToOwner(path, inherit string) error {
 	tu, err := windows.GetCurrentProcessToken().GetTokenUser()
 	if err != nil {
 		return err
 	}
-	sd, err := windows.SecurityDescriptorFromString("D:P(A;;FA;;;" + tu.User.Sid.String() + ")")
+	sd, err := windows.SecurityDescriptorFromString("D:P(A;" + inherit + ";FA;;;" + tu.User.Sid.String() + ")")
 	if err != nil {
 		return err
 	}

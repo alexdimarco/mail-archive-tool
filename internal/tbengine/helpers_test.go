@@ -281,8 +281,9 @@ func events(t *testing.T, profileDir string) []string {
 // faultFS wraps the writer's file system: hook runs before every operation with its
 // name and path; its error is the operation's; a panic in it stops the run as a crash.
 type faultFS struct {
-	inner tbrestore.FS
-	hook  func(op, name string) error
+	inner      tbrestore.FS
+	hook       func(op, name string) error
+	privateErr error
 }
 
 func (f *faultFS) at(op, name string) error {
@@ -331,6 +332,15 @@ func (f *faultFS) RemoveSeen(n string, seen map[string]fs.FileInfo) error {
 		return err
 	}
 	return f.inner.RemoveSeen(n, seen)
+}
+
+// Private passes through without the hook unless privateErr is set: making an entry
+// owner-only is not one of the write's crash or fault steps (R6-01's own tests fail it).
+func (f *faultFS) Private(n string, dir bool) error {
+	if f.privateErr != nil {
+		return f.privateErr
+	}
+	return f.inner.Private(n, dir)
 }
 
 func (f *faultFS) SyncDir(n string) error {

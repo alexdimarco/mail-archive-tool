@@ -67,6 +67,40 @@ var restoreLeftovers = func() []string {
 	return out
 }
 
+// restoreRunning reports a restore into Thunderbird running now (its restore lock held,
+// tbrestore.AnyRestoreRunning); a seam only for a test.
+var restoreRunning = tbrestore.AnyRestoreRunning
+
+// Waiting is a refusal uninstall gives until something running finishes — a delete not
+// finished (DeleteNotFinishedError) or a restore into Thunderbird running
+// (RestoreRunningError): a dry run still returns its plan with it, and the caller says
+// Until under the plan and Waits as Remove's reason.
+type Waiting interface {
+	error
+	Until() string
+	Waits() string
+}
+
+// RestoreRunningError refuses an uninstall, nothing removed, while a restore into
+// Thunderbird is running (R6-03, settled 2026-11-07; the lead's words, owner-delegated):
+// uninstall would remove restores.log, MailArchive's record of restores, while that
+// restore appends to it.
+type RestoreRunningError struct{}
+
+func (e *RestoreRunningError) Error() string {
+	return "A restore into Thunderbird is running, so uninstall removed nothing: it would remove MailArchive's record of restores (restores.log) while that restore writes to it. Wait until the restore finishes, then run uninstall again."
+}
+
+// Until is what a dry run says after the plan.
+func (e *RestoreRunningError) Until() string {
+	return "Uninstall will refuse until the restore into Thunderbird that is running now finishes: uninstalling would remove MailArchive's record of restores (restores.log) while that restore writes to it."
+}
+
+// Waits is Remove's reason while it waits.
+func (e *RestoreRunningError) Waits() string {
+	return "A restore into Thunderbird is running. Wait until it finishes."
+}
+
 // DeletionsLogNote is what uninstall's plan says under the deletion log (design-archive-delete
 // §8.1): the log is the cross-check for a saved deletion record's digest, and uninstall
 // removes it. It says where to put the copy (the 1.5.3 friction review's B11).
@@ -380,6 +414,16 @@ func run(configDir string, knownArchives []string, exe string, dryRun, logCopied
 			pending = err
 		}
 	}
+	// R6-03 (settled 2026-11-07): a restore into Thunderbird that is running keeps
+	// restores.log, which it appends to: nothing is touched. A dry run still gives the plan.
+	if restoreRunning() {
+		if !dryRun {
+			return nil, &RestoreRunningError{}
+		}
+		if pending == nil {
+			pending = &RestoreRunningError{}
+		}
+	}
 	var scratch []string
 	if root, rerr := scratchRoot(); rerr == nil {
 		if scratch, err = ScratchTargets(root, knownArchives); err != nil {
@@ -482,6 +526,11 @@ func run(configDir string, knownArchives []string, exe string, dryRun, logCopied
 		if err != nil {
 			return rep, fmt.Errorf("stopping before the settings files were removed (the scheduled tasks, the sign-in and the working copies listed above were already removed): %w", err)
 		}
+	}
+	// A restore that began since the check above is asked for again right before
+	// restores.log would go (R6-03).
+	if restoreRunning() {
+		return rep, fmt.Errorf("stopping before the settings files were removed (the scheduled tasks, the sign-in and the working copies listed above were already removed): %w", &RestoreRunningError{})
 	}
 	for _, f := range cfgTargets {
 		if derr := os.Remove(f); derr != nil && !errors.Is(derr, fs.ErrNotExist) {

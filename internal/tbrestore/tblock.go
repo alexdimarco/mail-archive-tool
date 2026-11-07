@@ -71,6 +71,27 @@ func parentLockProbe(profile string) (held_, self bool) {
 	return probeLockFile(profile)
 }
 
+// Binds reports whether the lock is on the lock file of the profile folder the plan
+// pinned (R6-05, settled 2026-11-07): the folder at profile is still, by identity, id,
+// and the lock file at its lock name is the very file this lock holds; read twice around
+// the lock file's look, so a folder swapped in between is caught. A profile folder moved
+// aside after the re-check, with a decoy at its path, gets the decoy's lock taken and is
+// refused here, the lock released by the caller.
+func (l *ProfileLock) Binds(profile string, id Identity) bool {
+	if l == nil {
+		return false
+	}
+	if now, err := DirIdentity(profile); err != nil || !now.Same(id) {
+		return false
+	}
+	k, ok := lockFileKey(filepath.Join(profile, ParentLockName))
+	if !ok || k != l.key {
+		return false
+	}
+	now, err := DirIdentity(profile)
+	return err == nil && now.Same(id)
+}
+
 // TakeProfileLock is the Start sequence of §5.1 and §5.3 (as folded): checks A and B
 // (CheckRunning, which creates nothing); then open the profile's Thunderbird lock file
 // once (created only when absent, never written to) and ask A again through that very

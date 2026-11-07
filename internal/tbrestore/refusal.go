@@ -67,7 +67,18 @@ const (
 	wStore     = "If you use Thunderbird from the Microsoft Store, this restore may not show in it: that version may keep its mail in another place. If you installed Thunderbird from thunderbird.net, ignore this."
 	wOldTB     = "This profile was last opened by Thunderbird VERSION. That version shows a '>' at the start of any message line beginning with 'From '. Update Thunderbird first to see those lines exactly, or go ahead."
 	wLocalGone = "Thunderbird's Local Folders for this profile (PATH) is not there or is not a folder, so nothing was restored. Open Thunderbird once with this profile and close it, then click Check again."
+	// W-LOCALMODE (R6-07; the lead's words, owner-delegated): Local Folders held to the
+	// profile's own rule on macOS and Linux.
+	wLocalMode = "Thunderbird's Local Folders for this profile (PATH) can be changed by other accounts on this computer, or belongs to another account, so MailArchive will not write into it. Make it yours only (for example `chmod go-w PATH`), or choose another profile."
+	// W-JUNCTION (R6-14; the lead's words): a folder link (a junction) on the way to the
+	// profile or its Local Folders that leads outside the user's own folder.
+	wJunction = "PATH is reached through a folder link (a junction) that leads to REAL, outside your own user folder (HOME), so nothing was restored: MailArchive writes only into a Thunderbird folder it reaches directly or inside your own user folder. If REAL is the folder you mean, choose it by that path, then click Check again."
 )
+
+// junctionRefusal is W-JUNCTION for spelled, which resolves to real outside home.
+func junctionRefusal(spelled, real, home string) error {
+	return refuse("W-JUNCTION", fill(wJunction, "PATH", spelled, "REAL", real, "HOME", home), nil)
+}
 
 // RestoringRefusal is W-RESTORING, for the plan that finds the restore lock held
 // (RestoreLockHeld) before it takes anything (slice R6's engine).

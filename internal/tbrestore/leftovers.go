@@ -61,6 +61,13 @@ func Leftovers(log *Log, forUninstall bool) ([]Leftover, error) {
 		if r.Closed == EvEnded || r.Closed == EvCleaned {
 			continue
 		}
+		// Settled 2026-11-07 [R6-03]: a restore with no closing line whose profile's
+		// restore lock is held is running now, never "did not finish" (whose words say to
+		// delete the very folder being written).
+		if r.Closed == "" && restoreRunningSeam(r.Started.ProfileDir) {
+			out = append(out, runningLeftover(r))
+			continue
+		}
 		if lo, ok := leftoverOf(r, forUninstall); ok {
 			if forUninstall {
 				lo.Words += " " + wNothingAfterUninstall
@@ -71,11 +78,24 @@ func Leftovers(log *Log, forUninstall bool) ([]Leftover, error) {
 	return out, nil
 }
 
-func leftoverOf(r *Restore, forUninstall bool) (Leftover, bool) {
-	date := r.Started.At
+// restoreRunningSeam is RestoreLockHeld; a test may stand in for it.
+var restoreRunningSeam = RestoreLockHeld
+
+// runningLeftover is a restore running now (Kind "running", R6-03).
+func runningLeftover(r *Restore) Leftover {
+	return Leftover{Restore: r, Kind: "running", Container: filepath.Join(r.Started.Local, r.Container()),
+		Words: fill(wRunningNow, "DATE", startedDate(r), "TOP", r.Name, "PATH", r.Started.Local)}
+}
+
+func startedDate(r *Restore) string {
 	if t, err := time.Parse(time.RFC3339Nano, r.Started.At); err == nil {
-		date = t.Local().Format("2 January 2006, 15:04")
+		return t.Local().Format("2 January 2006, 15:04")
 	}
+	return r.Started.At
+}
+
+func leftoverOf(r *Restore, forUninstall bool) (Leftover, bool) {
+	date := startedDate(r)
 	local, top := r.Started.Local, r.Name
 	container := filepath.Join(local, r.Container())
 	lo := Leftover{Restore: r, Container: container}
@@ -147,6 +167,8 @@ func leftoverOf(r *Restore, forUninstall bool) (Leftover, bool) {
 func abandonedResult(r *Restore) string { return r.closingResult }
 
 const (
+	// wRunningNow (R6-03; the lead's words, owner-delegated).
+	wRunningNow            = "A restore into Thunderbird is running now (it began DATE): it is writing the new folder 'TOP' into PATH. Keep Thunderbird closed until it finishes; Thunderbird shows the folder once it is done."
 	wNothingAfterUninstall = "Nothing will clean it up after MailArchive is removed."
 	wElsewhereUninstall    = "An earlier restore into Thunderbird (DATE) may not have finished. It wrote into PATH, which MailArchive cannot check now. If the folder 'TOP.sbd' is there, close Thunderbird and delete it yourself."
 	wLeftShown             = "An earlier restore into Thunderbird (DATE) left the folder 'TOP.sbd' in PATH: it holds something MailArchive did not make, so MailArchive removed nothing there. Thunderbird does not show that folder. Close Thunderbird and delete it yourself when you no longer need those files."

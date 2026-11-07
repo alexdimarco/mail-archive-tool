@@ -41,7 +41,7 @@ func restoreTBFlags(fs *flag.FlagSet) *restoreTBOpts {
 	o.name = fs.String("name", "", "the name after \"Restored — \" (default: the archive folder's name)")
 	o.plan = fs.Bool("plan", false, "print the plan and stop; nothing is written")
 	o.yes = fs.Bool("yes", false, "restore without asking (needed without a terminal)")
-	o.recordOut = fs.String("record-out", "", "also save the plan and the result in this new FILE")
+	o.recordOut = fs.String("record-out", "", "also save the plan and the result in this new FILE, readable only by you (never inside an archive)")
 	o.notEncryptedOK = fs.Bool("not-encrypted-ok", false, "for an encrypted archive without a terminal: you understand the restored mail will NOT be encrypted (with -yes)")
 	o.listProfiles = fs.Bool("list-profiles", false, "list this computer's Thunderbird profiles and stop")
 	return o
@@ -116,8 +116,16 @@ func restoreTBWith(a asker, o *restoreTBOpts, k *keyFlags, fs *flag.FlagSet, std
 			return errors.New("-not-encrypted-ok: for an encrypted archive only, and this archive is not encrypted")
 		}
 	}
+	// R6-08: -record-out is checked as every other saved file is, before anything is
+	// read or asked: never inside the archive or any encrypted archive, never over a file.
+	if *o.recordOut != "" {
+		if _, err := keyring.CheckNewFileOut("-record-out", "the record", *o.recordOut, out); err != nil {
+			return err
+		}
+	}
+	src := tbengine.ArchiveSources(out)
 	req := tbengine.Request{Out: out, Keys: keys, Profile: tbengine.ProfileChoice{Name: *o.profileName},
-		FolderPaths: o.folders, Store: *o.store, Name: *o.name, Inputs: tbengine.ArchiveInputs(out)}
+		FolderPaths: o.folders, Store: *o.store, Name: *o.name, Sources: &src}
 	if *o.profile != "" {
 		req.Profile.Dir = abspath(*o.profile)
 	}
@@ -128,13 +136,16 @@ func restoreTBWith(a asker, o *restoreTBOpts, k *keyFlags, fs *flag.FlagSet, std
 	fmt.Fprintln(stderr, plan.Text())
 	if *o.plan {
 		if *o.recordOut != "" {
-			if err := saveTBRecord(*o.recordOut, plan.Text()); err != nil {
+			if err := saveTBRecord(*o.recordOut, out, plan.Text()); err != nil {
 				return err
 			}
 		}
 		return nil
 	}
 	if plan.AskTwice() && !attended {
+		if len(plan.Readers) > 0 {
+			return fmt.Errorf("the restored mail will not be encrypted, and %s; that is asked at a terminal only, so nothing was restored. Run it at a terminal, or choose a profile on this computer's own drive", strings.Join(plan.AskReasons(), "; "))
+		}
 		return fmt.Errorf("Thunderbird's Local Folders may leave this computer (%s), and the restored mail will not be encrypted; that is asked at a terminal only, so nothing was restored. Run it at a terminal, or choose a profile on this computer's own drive", strings.Join(plan.Leaves, "; "))
 	}
 	start := tbengine.Start{NotEncryptedOK: !plan.Encrypted || *o.notEncryptedOK}
@@ -153,7 +164,14 @@ func restoreTBWith(a asker, o *restoreTBOpts, k *keyFlags, fs *flag.FlagSet, std
 		start.NotEncryptedOK = true
 	}
 	if plan.AskTwice() {
-		typed, err := a.line("The restored mail may leave this computer. To restore anyway, type the Local Folders path exactly as shown above: ")
+		head := "The restored mail may leave this computer."
+		if len(plan.Readers) > 0 {
+			head = "Other accounts could read the restored mail."
+			if len(plan.Leaves) > 0 {
+				head = "The restored mail may leave this computer, and other accounts could read it."
+			}
+		}
+		typed, err := a.line(head + " To restore anyway, type the Local Folders path exactly as shown above: ")
 		if err != nil {
 			return interrupted(err, stderr)
 		}
@@ -171,11 +189,21 @@ func restoreTBWith(a asker, o *restoreTBOpts, k *keyFlags, fs *flag.FlagSet, std
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 	var stopCode atomic.Int32
-	stopWatch := watchVerifyStop(sigs, cancel, &stopCode, os.Exit)
+	// R6-09: a second Ctrl-C exits at once, before the restore's own cleanup, so it first
+	// says what may be left and where (exit 130 or 143 as before).
+	var writing atomic.Bool
+	stopWatch := watchVerifyStop(sigs, cancel, &stopCode, func(code int) {
+		if writing.Load() {
+			fmt.Fprintln(stderr, stoppedAtOnceWords(plan))
+		}
+		restoreTBExit(code)
+	})
 	defer stopWatch()
 
 	fmt.Fprintln(stderr, tbrestore.WaitWords())
+	start.Checking = func() { fmt.Fprintln(stderr, "Checking what was written: every message is read back before Thunderbird can show the folder…") }
 	var last time.Time
+	writing.Store(true)
 	start.Progress = func(g tbengine.Progress) {
 		if now := time.Now(); last.IsZero() || now.Sub(last) >= restoreTBEvery || g.Done == g.Total {
 			last = now
@@ -196,7 +224,7 @@ func restoreTBWith(a asker, o *restoreTBOpts, k *keyFlags, fs *flag.FlagSet, std
 	}
 	fmt.Fprintln(stdout, res.Words)
 	if *o.recordOut != "" {
-		if err := saveTBRecord(*o.recordOut, plan.Text()+"\n\n"+res.Words); err != nil {
+		if err := saveTBRecord(*o.recordOut, out, plan.Text()+"\n\n"+res.Words); err != nil {
 			fmt.Fprintln(stderr, "mailarchive: the record was not saved: "+err.Error())
 		}
 	}
@@ -235,17 +263,25 @@ func listTBProfiles(stdout io.Writer) error {
 	return nil
 }
 
-// saveTBRecord saves the record in a new file only (never over one), readable by its owner.
-func saveTBRecord(path, text string) error {
-	f, err := os.OpenFile(abspath(path), os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0o600)
-	if err != nil {
-		return fmt.Errorf("-record-out %s: %w (it is saved only as a new file)", path, err)
+// saveTBRecord saves the record in a new file only (never over one), readable by its owner
+// alone (on Windows too), and never inside the archive out or any encrypted archive
+// (R6-08, settled 2026-11-07: keyring.WriteNewFile, the saved recovery key's rules).
+func saveTBRecord(path, out, text string) error {
+	_, err := keyring.WriteNewFile("-record-out", "the record", path, out, []byte(text+"\n"))
+	return err
+}
+
+// restoreTBExit is how a second Ctrl-C ends the process; a test stands in for it.
+var restoreTBExit = os.Exit
+
+// stoppedAtOnceWords are said when a second Ctrl-C ends the restore before its own
+// cleanup (R6-09; the lead's words, owner-delegated): what may be left, and where.
+func stoppedAtOnceWords(p *tbengine.Plan) string {
+	w := "mailarchive: stopped at once, before the restore could remove what it wrote: its unfinished folder '" + p.Top + ".sbd' (or one numbered after it) may be left in " + p.Local.Dir + ". Thunderbird does not show it; the next restore into this profile removes it, or close Thunderbird and delete it yourself."
+	if p.Encrypted {
+		w += " It may hold decrypted mail."
 	}
-	if _, err := f.WriteString(text + "\n"); err != nil {
-		f.Close()
-		return err
-	}
-	return f.Close()
+	return w
 }
 
 // commas is n with thousands separators.

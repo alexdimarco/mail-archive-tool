@@ -9,6 +9,7 @@ import (
 	"io/fs"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strconv"
 	"strings"
 
@@ -82,13 +83,18 @@ func ReadProfiles(bases []string) (*ProfileList, error) {
 			if s.IsInstall() || s.Path == "" || !strings.HasPrefix(s.Header, "Profile") {
 				continue
 			}
-			dir := canonical(iniPath(base, s.Path, s.IsRelative))
+			spelled := iniPath(base, s.Path, s.IsRelative)
+			dir := canonical(spelled)
+			_, jerr := resolveFolder(spelled)
 			if seen[dir] {
 				continue
 			}
 			p, ok := checkProfile(dir)
 			if !ok {
 				continue // not there, or no prefs.js: not a profile, not offered
+			}
+			if RefusalCode(jerr) == "W-JUNCTION" {
+				p.Usable, p.Unusable = false, jerr.Error() // R6-14: listed, never written into
 			}
 			seen[dir] = true
 			p.Name = shownName(s.Name)
@@ -112,10 +118,38 @@ func iniPath(base, v string, rel bool) string {
 
 // canonical resolves links when it can, else cleans.
 func canonical(p string) string {
-	if r, err := filepath.EvalSymlinks(p); err == nil {
+	if r, err := resolveFolder(p); err == nil {
 		return r
 	}
 	return filepath.Clean(p)
+}
+
+// resolveFolder is an existing folder's path with its links resolved (R6-14, settled
+// 2026-11-07). On Windows filepath.EvalSymlinks fails on a junction in the middle of a
+// path (Go 1.23 and later), which refused every profile moved with `mklink /J` in the
+// words of a missing profile; so there the repository's own resolver (util.ResolveExisting,
+// through junctions and links alike) is used, and a path reached through a link or a
+// junction is allowed only when it leads inside the user's own folder — else W-JUNCTION,
+// naming where it leads. Elsewhere links are resolved as before.
+func resolveFolder(p string) (string, error) {
+	if runtime.GOOS != "windows" {
+		return filepath.EvalSymlinks(p)
+	}
+	abs, err := filepath.Abs(p)
+	if err != nil {
+		return "", err
+	}
+	if _, err := os.Stat(abs); err != nil {
+		return "", err
+	}
+	real := util.ResolveExisting(abs)
+	if util.ThroughLink(abs) {
+		home, herr := os.UserHomeDir()
+		if herr != nil || home == "" || !util.Within(util.ResolveExisting(home), real) {
+			return "", junctionRefusal(abs, real, home)
+		}
+	}
+	return real, nil
 }
 
 // readProfilesINI reads profiles.ini bounded: nil when there is none (or it is not an
@@ -186,7 +220,10 @@ func checkProfile(dir string) (Profile, bool) {
 // -profile FOLDER) must pass: accepted without being listed, as presync accepts a
 // named profile, but only through §3.1 step 3.
 func CheckProfile(dir string) (Profile, error) {
-	cdir, err := filepath.EvalSymlinks(dir)
+	cdir, err := resolveFolder(dir)
+	if RefusalCode(err) != "" {
+		return Profile{}, err
+	}
 	if err != nil {
 		return Profile{}, refuse("W-NOTPROFILE", fill(wNotProfile, "PATH", dir), err)
 	}

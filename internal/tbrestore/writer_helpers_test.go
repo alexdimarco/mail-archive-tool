@@ -207,6 +207,11 @@ func (f *faultFS) RemoveSeen(n string, seen map[string]fs.FileInfo) error {
 	return f.inner.RemoveSeen(n, seen)
 }
 
+// Private passes through without the hook: making an entry owner-only is not one of the
+// write's steps a fault there is meant to stop (a plain restore passes such a failure
+// over; R6-01's own tests fail it on purpose).
+func (f *faultFS) Private(n string, dir bool) error { return f.inner.Private(n, dir) }
+
 func (f *faultFS) SyncDir(n string) error {
 	if err := f.at("syncdir", n); err != nil {
 		return err

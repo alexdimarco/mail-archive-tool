@@ -22,6 +22,32 @@ import (
 // maxLinks links (a loop) — and the caller keeps what EvalSymlinks gives.
 func resolveLinks(abs string) (string, bool) { return walkLinks(abs, os.Lstat, os.Readlink) }
 
+// ThroughLink reports whether the absolute path abs is reached through a symbolic link or
+// a junction on its way (a volume mounted in a folder is not one, as resolveLinks keeps
+// it): the names are looked at one at a time from the drive's root, each with Lstat, as
+// resolveLinks walks them. A path not on a drive letter is not judged (false).
+// Restore to Thunderbird asks it of a profile and its Local Folders (R6-14).
+func ThroughLink(abs string) bool {
+	cur, rest, ok := splitDrive(filepath.Clean(abs))
+	if !ok {
+		return false
+	}
+	for _, n := range rest {
+		cur += `\` + n
+		fi, err := os.Lstat(cur)
+		if err != nil {
+			return false
+		}
+		if fi.Mode()&(os.ModeSymlink|os.ModeIrregular) == 0 {
+			continue
+		}
+		if target, err := os.Readlink(cur); err == nil && !namesVolume(target) {
+			return true
+		}
+	}
+	return false
+}
+
 // maxLinks bounds the links one walk follows, against a loop of links.
 const maxLinks = 255
 

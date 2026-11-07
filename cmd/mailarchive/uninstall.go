@@ -41,7 +41,7 @@ func runUninstall(args []string) error {
 	// Always preview first — the owner sees what goes and what stays before anything moves.
 	// A delete not finished still gives the plan, then says uninstall will refuse until it is.
 	rep, err := uninstall.Uninstall(configDir, known, exe, true)
-	var pending *uninstall.DeleteNotFinishedError
+	var pending uninstall.Waiting // a delete not finished, or a restore into Thunderbird running (R6-03)
 	if err != nil && (rep == nil || !errors.As(err, &pending)) {
 		return err
 	}

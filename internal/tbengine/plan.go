@@ -46,6 +46,12 @@ var (
 	// stands in a FAT32 drive, and lowers fat32Limit, since neither can be made here.
 	fsTypeOf   = func(lf tbrestore.LocalFolders) string { return lf.Identity.FSType }
 	fat32Limit = int64(fat32Max)
+	// readOnlyVolume reports an archive on a medium that cannot be written (R6-13); a
+	// test stands in one, since none can be made here.
+	readOnlyVolume = isReadOnlyVolume
+	// profileBases are the folders this computer's profiles.ini are read from when the
+	// choice names none; a test points them at its own fake profiles' folders.
+	profileBases = tbrestore.ProfileBases
 )
 
 // The reason codes app.LeaveReasons gives.
@@ -97,9 +103,12 @@ type Request struct {
 	Store       string
 	// Name replaces the archive folder's name after "Restored — " (-name).
 	Name string
-	// Inputs are the archive's job inputs: whether one lies in the profile decides
-	// W-RECAPTURE and the default profile (ArchiveInputs gives them).
+	// Inputs are inputs that back the archive up, beyond what ArchiveSources finds:
+	// whether one lies in the profile decides W-RECAPTURE and the default profile.
 	Inputs []string
+	// Sources are the archive's sources as the caller read them; nil: the plan reads
+	// ArchiveSources(Out) itself (R6-02).
+	Sources *Sources
 }
 
 // Line is one line of the plan: its words and the id of what it says ("W-RECAPTURE",
@@ -127,6 +136,14 @@ type Plan struct {
 	// Leaves are why the Local Folders may leave this computer (an encrypted archive's
 	// ask-twice reasons, worded).
 	Leaves []string
+	// Readers are why other accounts could read the restored mail (an encrypted archive
+	// on a drive that cannot limit who reads a file; ask-twice reasons too, R6-01).
+	Readers []string
+	// ReadOnly: the archive is on a read-only medium and is read without its lock (R6-13).
+	ReadOnly bool
+	// Sharing are the other profiles whose Local Folders is this one, by identity: their
+	// Thunderbird locks are held too while the restore writes (R6-06).
+	Sharing []tbrestore.Profile
 	// Earlier is what Start will do with each earlier restore into the profile, predicted.
 	Earlier []tbrestore.Settled
 	// Store and Network are W-STORE and W-NETWORK as planned ("" when they do not apply).
@@ -140,10 +157,22 @@ type Plan struct {
 	stamp       manifestStamp
 	leaveCodes  []string
 	notRestored int // chosen records the plan already knows will not go back
+	sources     Sources
+	extraInputs []string
+	unknownSrc  bool // nothing names what backs the archive up (R6-02)
 }
 
-// AskTwice reports whether Start needs ConfirmAgain (design §6.2 note, O2).
-func (p *Plan) AskTwice() bool { return len(p.Leaves) > 0 }
+// AskTwice reports whether Start needs ConfirmAgain (design §6.2 note, O2; R6-01).
+func (p *Plan) AskTwice() bool { return len(p.Leaves)+len(p.Readers) > 0 }
+
+// AskReasons are every reason the plan asks a second time, worded.
+func (p *Plan) AskReasons() []string { return append(append([]string(nil), p.Leaves...), p.Readers...) }
+
+// backsUp reports whether the archive's sources reach the folder dir: -auto (every
+// Thunderbird profile it finds), or an input at or inside dir (R6-02).
+func (p *Plan) backsUp(dir string) bool {
+	return p.sources.Auto || tbrestore.BacksUp(append(append([]string(nil), p.extraInputs...), p.sources.Paths...), dir)
+}
 
 // Text is the plan as the person reads it, one line each.
 func (p *Plan) Text() string {
@@ -191,13 +220,20 @@ func MakePlan(req Request) (*Plan, error) {
 		}
 		return nil, kerr
 	}
-	if lockfile.Held(filepath.Join(out, lockfile.Name)) {
-		return nil, refusal("W-BUSY", wBusy, lockfile.ErrHeld)
+	ro, err := archiveLockState(out)
+	if err != nil {
+		return nil, err
 	}
-	p := &Plan{Out: out, Encrypted: enc, keys: req.Keys, choice: req.Profile}
+	p := &Plan{Out: out, Encrypted: enc, keys: req.Keys, choice: req.Profile, ReadOnly: ro, extraInputs: req.Inputs}
+	if req.Sources != nil {
+		p.sources = *req.Sources
+	} else {
+		p.sources = ArchiveSources(out)
+	}
+	p.unknownSrc = !p.sources.Known && len(req.Inputs) == 0
 
 	// The Thunderbird side (§3.1–§3.3, §5.1).
-	if p.Profile, err = resolveProfile(req.Profile, req.Inputs); err != nil {
+	if p.Profile, err = resolveProfile(req.Profile, p.backsUp); err != nil {
 		return nil, err
 	}
 	if tbrestore.RestoreLockHeld(p.Profile.Dir) {
@@ -223,6 +259,9 @@ func MakePlan(req Request) (*Plan, error) {
 		return nil, err
 	}
 	p.Store, p.Network = storeWarning(), networkWarning(p.Local)
+	if p.Sharing, err = sharingProfiles(p.choice, p.Profile, p.Local); err != nil {
+		return nil, err
+	}
 
 	// Earlier restores into the profile, predicted (W-LOGBAD refuses here).
 	log, err := restoresLog()
@@ -268,10 +307,16 @@ func MakePlan(req Request) (*Plan, error) {
 		}
 		return nil, refusal("W-NORAW", wNoRaw, nil)
 	}
+	allM365 := len(tree.Stores()) > 0
 	for _, s := range tree.Stores() {
 		if s.Mailbox != "" {
 			p.m365 = true
+		} else {
+			allM365 = false
 		}
+	}
+	if allM365 {
+		p.unknownSrc = false // a Microsoft 365 archive backs up no Thunderbird profile
 	}
 
 	// The layout, every name final (§4.4, §4.5), and the free top name (§3.5).
@@ -295,7 +340,8 @@ func MakePlan(req Request) (*Plan, error) {
 	if p.Top, _, err = tbrestore.FreeTopName(p.Layout.Top, entries); err != nil {
 		return nil, err
 	}
-	var longNames []string
+	var longNames, fatNames []string
+	var fatSize int64
 	for _, f := range p.Layout.Folders {
 		if f.LongPath {
 			longNames = append(longNames, strings.Join(f.Names, "/"))
@@ -306,8 +352,14 @@ func MakePlan(req Request) (*Plan, error) {
 		size := f.Bytes + int64(f.Messages)*framingPerMessage
 		p.NeedBytes += size
 		if isFAT32(fsTypeOf(p.Local)) && size >= fat32Limit {
-			return nil, refusal("W-FAT32", fill(wFAT32, "FOLDER", strings.Join(f.Names, "/"), "SIZE", thunderbird.HumanBytes(size)), nil)
+			if fatNames == nil {
+				fatSize = size
+			}
+			fatNames = append(fatNames, strings.Join(f.Names, "/"))
 		}
+	}
+	if len(fatNames) > 0 {
+		return nil, refusal("W-FAT32", fat32Words(fatNames, fatSize, enc), nil)
 	}
 	p.notRestored += sel.Records - sel.Restorable
 
@@ -322,15 +374,130 @@ func MakePlan(req Request) (*Plan, error) {
 		return nil, refusal("W-SPACE", fill(wSpace, "DRIVE", p.Local.Dir, "X", thunderbird.HumanBytes(p.KeepFree), "Y", thunderbird.HumanBytes(int64(free))), nil)
 	}
 
-	// Ask twice (an encrypted archive) when the Local Folders may leave this computer.
+	// Ask twice (an encrypted archive) when the Local Folders may leave this computer, or
+	// when its drive cannot keep other accounts from reading the files made there.
 	if enc {
 		for _, r := range leaveEnv.LeaveReasons(p.Local.Dir) {
 			p.leaveCodes = append(p.leaveCodes, r.Code)
 			p.Leaves = append(p.Leaves, leaveWords(r.Code, r.Service, p.Local.Dir))
 		}
+		p.Readers = readerReasons(p.Local)
 	}
-	p.Lines = p.lines(req.Inputs, longNames)
+	p.Lines = p.lines(longNames)
 	return p, nil
+}
+
+// readerReasons are why other accounts could read what is made in the Local Folders
+// lf (R6-01, settled 2026-11-07): the restore makes every file and folder it writes
+// readable by this account alone, which a drive formatted FAT32 or exFAT, or a network
+// share whose server decides, cannot hold. Worded for the plan; none when it can.
+func readerReasons(lf tbrestore.LocalFolders) []string {
+	fsType := fsTypeOf(lf)
+	if !ownerOnlyUnenforceable(fsType) {
+		return nil
+	}
+	return []string{fill(wReaders, "PATH", lf.Dir, "FSTYPE", fsType)}
+}
+
+// ownerOnlyUnenforceable is a file system that cannot limit who reads a file: FAT,
+// exFAT, and the network file systems whose server decides (the copy export's list,
+// design-local-confidentiality §4.7).
+func ownerOnlyUnenforceable(fsType string) bool {
+	switch strings.ToLower(fsType) {
+	case "vfat", "msdos", "msdosfs", "exfat", "fat", "fat32", "fat16", "fat12",
+		"smbfs", "smb", "smb2", "cifs", "afpfs", "webdav":
+		return true
+	}
+	return false
+}
+
+// fat32Words are W-FAT32's words. An encrypted archive's give a count, never a folder's
+// name (R6-12, settled 2026-11-07: the plan goes to a terminal's log and -record-out).
+func fat32Words(names []string, size int64, enc bool) string {
+	if enc {
+		return fill(wFAT32Enc, "N", commas(len(names)), "IS", verb(len(names), "is", "are"))
+	}
+	return fill(wFAT32, "FOLDER", names[0], "SIZE", thunderbird.HumanBytes(size))
+}
+
+// longPathWords are W-LONGPATH's line: the folders named, or for an encrypted archive
+// their count only (R6-12).
+func longPathWords(names []string, enc bool) string {
+	if enc {
+		return fill("N nested too deep for Windows to hold under this profile, so they are not restored.", "N", plural(len(names), "folder")+" "+verb(len(names), "is", "are"))
+	}
+	return fill("N folders are nested too deep for Windows to hold under this profile, so they are not restored: FOLDERS.", "N", itoa(len(names)), "FOLDERS", strings.Join(names, ", "))
+}
+
+// sharingProfiles are the other listed profiles whose Local Folders is lf by identity
+// (R6-06, settled 2026-11-07): their Thunderbird locks are held too while the restore
+// writes, so no Thunderbird opens that folder through them. A list that cannot be read
+// is passed over (the chosen profile's own checks still hold); one of them open is
+// W-RUNNING.
+func sharingProfiles(c ProfileChoice, chosen tbrestore.Profile, lf tbrestore.LocalFolders) ([]tbrestore.Profile, error) {
+	bases := c.Bases
+	if bases == nil {
+		bases = profileBases()
+	}
+	list, err := tbrestore.ReadProfiles(bases)
+	if err != nil {
+		return nil, nil
+	}
+	var out []tbrestore.Profile
+	for _, o := range list.Profiles {
+		if o.Dir == chosen.Dir || o.Identity.Same(chosen.Identity) {
+			continue
+		}
+		olf, err := tbrestore.LocalFoldersOf(o.Dir)
+		if err != nil || !olf.Identity.Same(lf.Identity) {
+			continue
+		}
+		if tbrestore.CheckRunning(o.Dir).Running() {
+			return nil, refusal("W-RUNNING", tbrestore.RunningWords(), nil)
+		}
+		out = append(out, o)
+	}
+	return out, nil
+}
+
+// archiveLockState is the plan's look at the archive's lock (R6-13, settled 2026-11-07):
+// held is W-BUSY; on a medium that cannot be written (a backup drive mounted read-only)
+// the restore reads the archive without its lock — nothing can write it there, a backup
+// included — unless another computer's backup holds it (W-BUSY); otherwise a lock this
+// account cannot take is W-ARCHLOCK, in words, never Start's raw error.
+func archiveLockState(out string) (readOnly bool, err error) {
+	lp := filepath.Join(out, lockfile.Name)
+	if readOnlyVolume(out) {
+		if lockfile.HeldReadOnly(lp) {
+			return false, refusal("W-BUSY", wBusy, lockfile.ErrHeld)
+		}
+		return true, nil
+	}
+	held, perr := lockfile.Probe(lp)
+	if held {
+		return false, refusal("W-BUSY", wBusy, lockfile.ErrHeld)
+	}
+	if perr == nil {
+		perr = lockOpenable(lp, out)
+	}
+	if perr != nil {
+		return false, refusal("W-ARCHLOCK", fill(wArchLock, "OUT", out), perr)
+	}
+	return false, nil
+}
+
+// lockOpenable is whether this account can take the lock at lp without writing it: an
+// existing lock file opens for writing (opened and closed, nothing written); an absent
+// one can be made in out (lockDirWritable).
+func lockOpenable(lp, out string) error {
+	if _, err := os.Lstat(lp); err == nil {
+		f, err := os.OpenFile(lp, os.O_RDWR, 0)
+		if err != nil {
+			return err
+		}
+		return f.Close()
+	}
+	return lockDirWritable(out)
 }
 
 // lines are the plan in the order the person reads it (§6.4 as folded): W-RECAPTURE
@@ -338,7 +505,7 @@ func MakePlan(req Request) (*Plan, error) {
 // warning; the plan's first line when there is no W-RECAPTURE), the destination, what
 // goes back, what does not, earlier restores, the space, Thunderbird, the warnings that
 // apply, the scheduled-backup line, the check, and W-WAIT always.
-func (p *Plan) lines(inputs, longNames []string) []Line {
+func (p *Plan) lines(longNames []string) []Line {
 	var ls []Line
 	add := func(code, words string) {
 		if words != "" {
@@ -346,8 +513,11 @@ func (p *Plan) lines(inputs, longNames []string) []Line {
 		}
 	}
 	sel := p.Selection
-	if tbrestore.BacksUp(inputs, p.Profile.Dir) {
+	switch {
+	case p.backsUp(p.Profile.Dir) || p.backsUp(p.Local.Dir):
 		add("W-RECAPTURE", wRecapture)
+	case p.unknownSrc:
+		add("W-RECAPTURE", wRecaptureUnknown) // R6-02: said, not left out
 	}
 	add("W-STORE", p.Store)
 	who := "the Thunderbird profile"
@@ -355,6 +525,9 @@ func (p *Plan) lines(inputs, longNames []string) []Line {
 		who += " '" + p.Profile.Name + "'"
 	}
 	add("DEST", fmt.Sprintf("Restore into %s (%s): its Local Folders, %s, gets the new folder '%s'.", who, p.Profile.Dir, p.Local.Dir, p.Top))
+	if p.ReadOnly {
+		add("READONLY", wReadOnly)
+	}
 	folders := len(p.Layout.Restored())
 	add("WHAT", fmt.Sprintf("%s in %s, about %s, go back as the archive kept them.", plural(p.Messages, "message"), plural(folders, "folder"), thunderbird.HumanBytes(p.NeedBytes)))
 	if sel.PST > 0 {
@@ -367,7 +540,7 @@ func (p *Plan) lines(inputs, longNames []string) []Line {
 		add("W-TOOBIG", fmt.Sprintf("%s %s larger than 2 GB, so %s not restored.", plural(sel.TooBig, "message"), verb(sel.TooBig, "is", "are"), verb(sel.TooBig, "it is", "they are")))
 	}
 	if len(longNames) > 0 {
-		add("W-LONGPATH", fill("N folders are nested too deep for Windows to hold under this profile, so they are not restored: FOLDERS.", "N", itoa(len(longNames)), "FOLDERS", strings.Join(longNames, ", ")))
+		add("W-LONGPATH", longPathWords(longNames, p.Encrypted))
 	}
 	if sel.NoFixity > 0 {
 		add("NOFIXITY", fmt.Sprintf("%s %s no recorded checksum in the archive, so %s restored as stored.", plural(sel.NoFixity, "message"), verb(sel.NoFixity, "has", "have"), verb(sel.NoFixity, "it is", "they are")))
@@ -388,11 +561,21 @@ func (p *Plan) lines(inputs, longNames []string) []Line {
 	}
 	add("SPACE", fmt.Sprintf("Space: about %s is written to %s, which has %s free. Thunderbird will use more space as it indexes the restored mail; about %s is kept free for that.", thunderbird.HumanBytes(p.NeedBytes), p.Local.Dir, thunderbird.HumanBytes(int64(p.FreeBytes)), thunderbird.HumanBytes(p.KeepFree-p.NeedBytes)))
 	add("CLOSED", wClosed)
+	for _, o := range p.Sharing {
+		add("SHARED", fill(wShared, "NAME", o.Name, "DIR", o.Dir))
+	}
 	add("W-NETWORK", p.Network)
 	if p.Encrypted {
-		add("NOT-ENCRYPTED", wNotEncrypted)
+		if len(p.Readers) > 0 {
+			add("NOT-ENCRYPTED", wNotEncryptedShared)
+		} else {
+			add("NOT-ENCRYPTED", wNotEncrypted)
+		}
 		for _, l := range p.Leaves {
 			add("W-LEAVES", "It may leave this computer: "+l+". You are asked a second time before it starts.")
+		}
+		for _, r := range p.Readers {
+			add("W-READERS", "Other accounts could read it: "+r+". You are asked a second time before it starts.")
 		}
 	} else if svc, ok := util.UnderCloudSync(p.Local.Dir); ok {
 		add("W-CLOUD", fill(wCloud, "SERVICE", svc))
@@ -463,13 +646,13 @@ func isFAT32(fsType string) bool {
 
 // resolveProfile is §3.1: a typed folder through the profile check, a name, a list
 // position, or the default.
-func resolveProfile(c ProfileChoice, inputs []string) (tbrestore.Profile, error) {
+func resolveProfile(c ProfileChoice, backsUp func(dir string) bool) (tbrestore.Profile, error) {
 	if c.Dir != "" {
 		return tbrestore.CheckProfile(c.Dir)
 	}
 	bases := c.Bases
 	if bases == nil {
-		bases = tbrestore.ProfileBases()
+		bases = profileBases()
 	}
 	list, err := tbrestore.ReadProfiles(bases)
 	if err != nil {
@@ -500,11 +683,11 @@ func resolveProfile(c ProfileChoice, inputs []string) (tbrestore.Profile, error)
 	}
 	source := ""
 	for _, p := range list.Profiles {
-		if source == "" && tbrestore.BacksUp(inputs, p.Dir) {
+		if source == "" && backsUp(p.Dir) {
 			source = p.Dir
 		}
 	}
-	pos, ok := list.Default(func(dir string) bool { return tbrestore.BacksUp(inputs, dir) }, source)
+	pos, ok := list.Default(backsUp, source)
 	if !ok {
 		if len(list.Usable()) == 0 {
 			return tbrestore.Profile{}, refusal("W-PROFMODE", list.Profiles[0].Unusable, nil)

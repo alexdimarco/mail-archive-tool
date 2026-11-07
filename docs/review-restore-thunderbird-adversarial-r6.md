@@ -424,3 +424,51 @@ a real test with a `covers:` marker, shown red against this commit and green aft
 fresh look at the patch. R6-01 (refuse, or ask twice) and R6-13 (restore from a read-only archive)
 carry owner questions; R6-02 changes §3.1 step 4's rule and R6-12 §6.2's reach, which want the
 lead's call. Slice R7 (Desktop) owes its own pass, with INS-07 and the Lock reply in it.
+
+## Settled 2026-11-07
+
+The lead's calls of 2026-11-07 answered the owner questions (R6-01: owner-only files, ask twice
+where they cannot be had; R6-13: a genuinely read-only medium is read without the lock) and the
+rule changes (R6-02, R6-03, R6-04, R6-12 and the LOWs: the safe direction, the lead's words,
+owner-delegated 2026-11-02). Each finding's probe became a real test with a `covers:` marker in the
+worktree (no `zz_` files); each fix was shown by a mutation that turned its test red, then reverted
+(`.claude/r6mut/spec.json` run by `mutate.py`, every file restored byte for byte; M1 and M14 also
+on the Windows VM). The design's dated "Settled 2026-11-07 [R6-nn]" notes stand beside the text they
+amend; the catalog rows carry "Amended 2026-11-07 (R6 settle)" notes. Fix blobs (a later change to
+one of these files makes its line stale): `tbrestore/write.go` 4b4856b, `fsys.go` e3c0e7e,
+`leftovers.go` 3e7deb9, `skipset.go` 49fe365, `tblock.go` badd2cd, `localfolders.go` d3f20af,
+`profiles.go` 2a1ac9c, `tbengine/plan.go` f95492f, `run.go` 12ece94, `inputs.go` 3595cf4,
+`thunderbird/restorekey.go` 10450e9, `cmd/mailarchive/restoretb.go` 5379de2,
+`uninstall/uninstall.go` e9ed707; new: `tbrestore/private_{darwin,windows,unix,other}.go`,
+`thunderbird/folderid_{unix,windows}.go`, `tbengine/rovolume_*.go`, `util.ThroughLink`,
+`winsec.RestrictFolderToOwner`.
+
+| ID | Settled by | Test (row) | Mutation that turned it red | Design note |
+|---|---|---|---|---|
+| R6-01 | Every folder and file a restore makes is made owner-only and read back (`FS.Private`: 0600/0700 and the ACL removed on macOS, `fchmod_extended`; a protected owner-only DACL on Windows, `winsec.RestrictToOwner`/`RestrictFolderToOwner`, checked with `winsec.CheckSecretFile`). The plan says whose the files are; a drive that cannot hold it (FAT32, exFAT, a share) makes an encrypted plan say who else can read and ask twice (W-READERS → W-NOTAGAIN); an unexpected failure stops an encrypted restore with the one cleanup; plain archives owner-only where possible, nothing more asked | `tbengine/ma1128_r601_r612_test.go` (MA-1128): `chmod +a everyone…inherit` (macOS), `icacls … (OI)(CI)R` (Windows), every made entry read back with `ls -le`/`icacls`; the FAT seam; the step failing | M1 `FS.Private` a no-op (macOS `everyone` entry; Windows VM `BUILTIN\Users` on the restored files); M1b the readers reason off; M1c MustBePrivate off | §6.2 R6-01 note; §9 item 6 note |
+| R6-02 | "Backs up" read from the archive's own last-run job and its installed schedule's descriptor as well as job files (`tbengine.ArchiveSources`); `-auto` warns for every profile; the Local Folders path counts; nothing naming the sources → the "cannot tell" line in W-RECAPTURE's place | `tbengine/ma1124_r602_sources_test.go` (MA-1124) | M2 last-run not read; M2b descriptor not read; M2c the cannot-tell line off | §3.1 step 4 R6-02 note; §7.2 R6 note |
+| R6-03 | A restore with no closing line whose restore lock is held is "running now" (Desktop, `status`, uninstall's plan), never the delete advice; uninstall refuses while any restore lock is held (`RestoreRunningError`, a `Waiting` like a delete not finished) and asks again before the settings go | `tbengine/ma1122_r603_r610_r611_r616_test.go`, `uninstall/ma1141_r603_restore_running_test.go` (MA-1141) | M3 the running check off in `Leftovers`; M3b uninstall's check off | §7.2 R6 note |
+| R6-04 | `SkipSet.Lookup` re-reads a changed log for a known open or uncommitted restore too | `source/ma1138_r604_staleskip_test.go` (MA-1138) | M4 re-read only for an unknown id (committed folder backed up) | §7.2 R6 note |
+| R6-05 | `ProfileLock.Binds`: after the take, the profile folder's identity and the locked file's identity at its lock name, read twice; a decoy is W-CHANGED | `tbengine/ma1127_r605_r606_r613_test.go` (MA-1127) | M5 Binds off (the decoy's lock taken, run went ahead) | §5.3 R6 note |
+| R6-06 | Other listed profiles sharing the Local Folders by identity are named in the plan (W-RUNNING if open), their Thunderbird locks taken and bound too, the list re-checked | same file (MA-1127) | M6 the sharing locks not taken (B's lock "took" mid-write) | §5.3 R6 note |
+| R6-07 | Local Folders held to the profile's owner-and-mode rule on macOS and Linux (W-LOCALMODE) | `tbrestore/ma1085_r607_r615_test.go` (MA-1085) | M7 the check off | §3.2 R6-07 note |
+| R6-08 | `-record-out` checked with `keyring.CheckNewFileOut` before anything, saved with `keyring.WriteNewFile` (never inside an archive or any encrypted archive, owner-only on Windows too) | `cmd/mailarchive/ma1129_r608_r609_r610_test.go` (MA-1129) | M8 both checks off (a plaintext record in the archive) | §10 R6 note |
+| R6-09 | A second Ctrl-C mid-write says what may be left and where (and "It may hold decrypted mail."), then exits 130/143 | same file (MA-1129; the exit through a seam) | M9 the words off | §10 R6 note |
+| R6-10 | The post-write check hears a stop between files and messages and before the commit: a stop with the one cleanup; `Checking` told, "Checking what was written…" printed | `tbengine/ma1122_r603_r610_r611_r616_test.go` (MA-1122); the CLI words in the R6-09 test | M10 the check's context tests removed (finished); M10b `Checking` not told | §5.4 step 7 note; §10 R6 note |
+| R6-11 | The re-check re-reads prefs.js and repeats the store-kind and inside-encrypted-archive checks | `tbengine/ma1122_r603_r610_r611_r616_test.go` (MA-1125) | M11 the store-kind re-check off (written into a maildir store) | §5.3 R6 note |
+| R6-12 | W-FAT32 and W-LONGPATH give counts for an encrypted archive | `tbengine/ma1128_r601_r612_test.go` (MA-1128) | M12 W-FAT32 names; M12b W-LONGPATH names | §6.2 R6-12 note |
+| R6-13 | The plan looks at the lock as Start takes it: a genuinely read-only medium is read without it (the plan says so; W-BUSY if another computer's backup holds it); otherwise a lock this account cannot take is W-ARCHLOCK in words at the plan, and at Start too, never the raw error | `tbengine/ma1127_r605_r606_r613_test.go` (MA-1127; the read-only medium through its seam) | M13 the openable check off (plan yes, raw "permission denied"); M13b the read-only branch off | §7.1 R6-13 note |
+| R6-14 | Windows: profile and Local Folders resolved with `util.ResolveExisting`; a link or junction on the way (`util.ThroughLink`) allowed when it leads inside the user's own folder, else W-JUNCTION naming where it leads (a listed one not usable) | `tbrestore/ma1084_r614_junction_windows_test.go` (MA-1084, MA-1143; Windows VM) | M14 the resolve back to `EvalSymlinks` (Windows VM: the junction into the user's folder refused) | §3.1 step 3 note; §3.2 note |
+| R6-15 | `thunderbird.ProfileKey` keys an existing folder by identity; the path key only when identity cannot be read | `thunderbird/ma1140_r615_identitykey_test.go` (firmlink on macOS, junction on Windows), `tbrestore/ma1085_r607_r615_test.go` (one restore lock) (MA-1140) | M15 / M15b the identity key off | §3.4 N3 R6-15 note |
+| R6-16 | The writer looks at the parent name before its `Mkdir` and right after it; taken → the next " (n)" (the empty container just made removed as seen) before anything is written | `tbengine/ma1122_r603_r610_r611_r616_test.go` (MA-1120) | M16 both looks off (W-TAKEN after the whole write); M16b the after-Mkdir look off | §3.5 R6-16 note |
+
+Runs (2026-11-07): macOS (go1.26.0 darwin/arm64) — the touched packages and `assureblock` green,
+and the full suite (see the commit); Windows 11 VM — `internal/tbrestore`, `tbengine`,
+`thunderbird`, `winsec`, `util`, `uninstall` PASS, `internal/source` only its known baseline
+`TestFrozenReplayPinsTheCharsetTableAndItsSources`; the R6 tests re-run verbose there (R6-01's
+`icacls` leg and R6-14's junction leg ran; the restore-lock alias test skips by design, its junction
+case is `thunderbird`'s); Linux (Docker golang:1.26, -p 2) — see the commit. INS-07 (latent, R7)
+is carried into slice R7: Desktop never serialises or logs a raw error or the raw result. These
+fixes have not had a fresh adversarial look of their own; R7's pass should include `FS.Private`
+on Windows with a real second account and on a real exFAT stick (the plan's prediction reads the
+file system's name only).

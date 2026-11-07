@@ -55,6 +55,10 @@ func TestMain(m *testing.M) {
 	elevatedProbe = func() bool { return false }
 	storeWarning = func() string { return "" }
 	networkWarning = func(tbrestore.LocalFolders) string { return "" }
+	// This computer's profiles.ini (Windows reads %APPDATA% from the system, not the
+	// environment) is never read: the engine's own look for profiles sharing a Local
+	// Folders (R6-06) reads a throwaway folder unless a test names its own.
+	profileBases = func() []string { return []string{filepath.Join(root, "thunderbird-profiles")} }
 	code := m.Run()
 	restoreProbe()
 	restoreRecord()

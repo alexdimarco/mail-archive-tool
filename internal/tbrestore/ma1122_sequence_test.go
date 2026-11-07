@@ -456,6 +456,9 @@ func (n *nfdFS) RemoveSeen(p string, seen map[string]fs.FileInfo) error {
 	return n.inner.RemoveSeen(norm.NFC.String(p), seen)
 }
 func (n *nfdFS) SyncDir(p string) error { return n.inner.SyncDir(norm.NFC.String(p)) }
+func (n *nfdFS) Private(p string, dir bool) error {
+	return n.inner.Private(norm.NFC.String(p), dir)
+}
 func (n *nfdFS) ReadDir(p string, fn func([]fs.DirEntry) bool) error {
 	return n.inner.ReadDir(norm.NFC.String(p), func(b []fs.DirEntry) bool {
 		out := make([]fs.DirEntry, len(b))

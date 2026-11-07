@@ -14,6 +14,8 @@ import (
 	"syscall"
 	"time"
 
+	"golang.org/x/text/unicode/norm"
+
 	"mail-archive-tool/internal/interchange"
 )
 
@@ -36,7 +38,15 @@ type WriteInput struct {
 	Messages func(folder int, emit func(raw []byte) error) error
 	// Progress is told the count of messages written so far (optional).
 	Progress func(done int)
-	Log      *Log
+	// Checking is told once when the post-write check begins, so a pause while every
+	// message is read back can be explained (optional; R6-10).
+	Checking func()
+	// MustBePrivate: every folder and file the restore makes must be shown readable by
+	// this account alone (FS.Private), or the write stops with the one cleanup (an
+	// encrypted archive whose plan did not ask a second time about other readers; R6-01).
+	// Otherwise each is made owner-only where it can be and a failure is passed over.
+	MustBePrivate bool
+	Log           *Log
 }
 
 // Outcome is how a write ended.
@@ -159,14 +169,31 @@ func (w *writer) run() *WriteResult {
 		return w.fail(OutFailed, err) // nothing was created
 	}
 	w.started = true
-	// 2. the container, exclusively.
+	// 2. the container, exclusively. Settled 2026-11-07 [R6-16]: the parent file's name
+	// is looked at too, before the Mkdir and right after it, so a name another program
+	// took since the re-check moves the restore to the next " (n)" before anything is
+	// written, never to W-TAKEN after the whole write. (A name taken after this is still
+	// met at the commit, W-TAKEN.)
 	top := in.Top
 	for {
-		err := w.f.Mkdir(top + ".sbd")
-		if err == nil {
-			break
+		taken := entryKind(w.f, top) != ""
+		var err error
+		if !taken {
+			if err = w.f.Mkdir(top + ".sbd"); err == nil {
+				if entryKind(w.f, top) == "" {
+					break
+				}
+				// The parent name appeared between the look and the Mkdir: the empty
+				// container just made is this restore's, removed as seen, and the next
+				// name tried.
+				if rerr := w.removeEmptyContainer(top + ".sbd"); rerr != nil {
+					w.res.Top, w.madeTree = top, true
+					return w.stop(rerr)
+				}
+				taken = true
+			}
 		}
-		if !errors.Is(err, fs.ErrExist) {
+		if !taken && !errors.Is(err, fs.ErrExist) {
 			return w.fail(OutFailed, err)
 		}
 		next, ok := nextTop(in.Layout.Top, top)
@@ -185,6 +212,9 @@ func (w *writer) run() *WriteResult {
 	}
 	w.res.Top, w.madeTree = top, true
 	container := top + ".sbd"
+	if err := w.private(container, true); err != nil {
+		return w.stop(err)
+	}
 	// 3. the marker.
 	if err := w.writeSmall(container, MarkerName, markerLine(in.ID, ProfileKeyOf(in.ProfileDir), time.Now())); err != nil {
 		return w.stop(err)
@@ -200,6 +230,9 @@ func (w *writer) run() *WriteResult {
 			w.list.Close()
 		}
 	}()
+	if err := w.private(container+"/"+MadeListName, false); err != nil {
+		return w.stop(err)
+	}
 	if err := list.Sync(); err != nil {
 		return w.stop(err)
 	}
@@ -223,6 +256,9 @@ func (w *writer) run() *WriteResult {
 				return w.stop(w.created(fo.Dir(), err))
 			}
 			w.dirs = append(w.dirs, container+"/"+fo.Dir())
+			if err := w.private(container+"/"+fo.Dir(), true); err != nil {
+				return w.stop(err)
+			}
 		}
 		if err := w.writeFolder(container, i, fo); err != nil {
 			return w.stop(err)
@@ -239,9 +275,21 @@ func (w *writer) run() *WriteResult {
 			return w.stop(err)
 		}
 	}
-	// 7. the post-write check.
+	// 7. the post-write check. Settled 2026-11-07 [R6-10]: Cancel, Ctrl-C and Shut down
+	// are heard here too — between files and between messages of the check, and once more
+	// before the commit — and are a stop with the one cleanup, as before step 8; Checking
+	// is told when the check begins, so the pause is explained.
+	if w.in.Checking != nil {
+		w.in.Checking()
+	}
 	if file, folder, err := w.check(container, restored); err != nil {
+		if errors.Is(err, errStopped) {
+			return w.stop(errStopped)
+		}
 		return w.checkFailed(file, folder, err)
+	}
+	if w.ctx.Err() != nil {
+		return w.stop(errStopped)
 	}
 	// 8. "checked".
 	if err := w.logLine(EvChecked, nil); err != nil {
@@ -263,6 +311,31 @@ func nextTop(base, cur string) (string, bool) {
 	return "", false
 }
 
+// removeEmptyContainer removes the empty container this restore just made, as the
+// cleanup removes: only the very folder seen, never through a link (R6-16).
+func (w *writer) removeEmptyContainer(name string) error {
+	fi, err := w.f.Lstat(name)
+	if err != nil {
+		return err
+	}
+	return w.f.RemoveSeen(name, map[string]fs.FileInfo{norm.NFC.String(name): fi})
+}
+
+// errNotPrivateHere wraps an entry MustBePrivate needed owner-only and could not have.
+type errNotPrivateHere struct{ err error }
+
+func (e *errNotPrivateHere) Error() string { return "not readable only by you: " + e.err.Error() }
+func (e *errNotPrivateHere) Unwrap() error { return e.err }
+
+// private makes one entry the restore created owner-only (FS.Private); a failure stops
+// the write only when MustBePrivate (R6-01).
+func (w *writer) private(name string, dir bool) error {
+	if err := w.f.Private(name, dir); err != nil && w.in.MustBePrivate {
+		return &errNotPrivateHere{err: err}
+	}
+	return nil
+}
+
 // made appends one made-list line and fsyncs it, before the entry is created (M1).
 func (w *writer) made(kind, path string) error {
 	if _, err := w.list.Write(madeLine(kind, path)); err != nil {
@@ -275,6 +348,10 @@ func (w *writer) writeSmall(container, rel string, data []byte) error {
 	f, err := w.f.Create(container + "/" + rel)
 	if err != nil {
 		return w.created(rel, err)
+	}
+	if err := w.private(container+"/"+rel, false); err != nil {
+		f.Close()
+		return err
 	}
 	if _, err := f.Write(data); err != nil {
 		f.Close()
@@ -308,6 +385,10 @@ func (w *writer) writeFolder(container string, i int, fo Folder) error {
 	file, err := w.f.Create(name)
 	if err != nil {
 		return w.created(fo.File(), err)
+	}
+	if err := w.private(name, false); err != nil {
+		file.Close()
+		return err
 	}
 	bw := bufio.NewWriterSize(file, 256<<10)
 	cw := &countWriter{w: bw}
@@ -348,6 +429,9 @@ func (w *writer) writeFolder(container string, i int, fo Folder) error {
 // recorded, in order, each the original bytes (the added line ending taken off).
 func (w *writer) check(container string, restored []int) (file, folder string, err error) {
 	for _, i := range restored {
+		if w.ctx.Err() != nil {
+			return "", "", errStopped
+		}
 		fo := w.in.Layout.Folders[i]
 		name := container + "/" + fo.File()
 		var k int
@@ -364,9 +448,12 @@ func (w *writer) check(container string, restored []int) (file, folder string, e
 			if fi.Size() != w.sizes[i] {
 				return fmt.Errorf("%s is %d bytes, %d were written", name, fi.Size(), w.sizes[i])
 			}
-			k, err = checkMessages(r, w.records[i])
+			k, err = checkMessages(w.ctx, r, w.records[i])
 			return err
 		})
+		if errors.Is(err, errStopped) {
+			return "", "", errStopped
+		}
 		if err != nil {
 			return name, strings.Join(fo.Names, "/"), err
 		}
@@ -379,13 +466,16 @@ func (w *writer) check(container string, restored []int) (file, folder string, e
 // what was written: its length and SHA-256, the line ending the writer added to a final
 // line that had none taken off (and checked to be that line ending). It returns how
 // many messages matched.
-func checkMessages(r io.Reader, want []msgRecord) (int, error) {
+func checkMessages(ctx context.Context, r io.Reader, want []msgRecord) (int, error) {
 	k := 0
 	var h hash.Hash
 	var n int
 	var tail []byte // the last two bytes, held back: they may be an added line ending
 	err := interchange.ScanMboxrd(bufio.NewReaderSize(r, 256<<10), interchange.MboxrdHandler{
 		Start: func() error {
+			if ctx.Err() != nil {
+				return errStopped
+			}
 			if k >= len(want) {
 				return errors.New("a message more than was written")
 			}
@@ -516,8 +606,12 @@ func (w *writer) stop(err error) *WriteResult {
 		o = OutStopped
 	}
 	head := fill(wFailedHead, "WHY", w.why(err))
-	if o == OutStopped {
+	var np *errNotPrivateHere
+	switch {
+	case o == OutStopped:
 		head = wStoppedHead
+	case errors.As(err, &np):
+		head = fill(wNotPrivateHead, "PATH", w.in.Local.Dir)
 	}
 	return w.cleanAfter(o, err, head, removedTail)
 }
@@ -621,5 +715,8 @@ func why(err error) string {
 const (
 	wStoppedHead = "The restore was stopped, so nothing was added to Thunderbird."
 	wFailedHead  = "The restore could not finish (WHY), so nothing was added to Thunderbird."
+	// wNotPrivateHead (R6-01; the lead's words, owner-delegated): an encrypted archive's
+	// restore that could not make its files readable only by this account.
+	wNotPrivateHead = "MailArchive could not make the restored files readable only by your account in PATH, so nothing was added to Thunderbird: other accounts on this computer might have read the decrypted mail. Choose a profile whose Local Folders is on this computer's own drive."
 	removedTail  = " The part already written was removed. That cannot undo a copy already uploaded by a sync service, kept in a backup or snapshot, or left on the disk."
 )

@@ -3,6 +3,7 @@ package thunderbird
 import (
 	"crypto/sha256"
 	"encoding/hex"
+	"fmt"
 	"path/filepath"
 	"runtime"
 	"strings"
@@ -25,7 +26,20 @@ import (
 // case and, on macOS, normalisation), so one profile spelled two ways has one key.
 // Folding can only make two profiles share one key, the safe direction: a restore
 // lock then keeps out a little more than it must.
-func ProfileKey(dir string) string { return profileKey(dir, runtime.GOOS) }
+//
+// Settled 2026-11-07 [R6-15]: a spelling no link resolves — macOS's /System/Volumes/Data
+// firmlink, a Windows junction or subst drive — reached one profile by two keys (two
+// restore locks, two settle scopes, presync blind to one). So a profile folder that exists
+// is keyed by its identity (device and inode; on Windows volume serial number and file
+// index), whatever path reaches it; the path's key above is kept only for a folder whose
+// identity cannot be read (gone, or a volume that reports none).
+func ProfileKey(dir string) string {
+	if vol, file, ok := folderIdentity(dir); ok {
+		sum := sha256.Sum256([]byte(fmt.Sprintf("identity\x00%d\x00%d", vol, file)))
+		return hex.EncodeToString(sum[:])[:16]
+	}
+	return profileKey(dir, runtime.GOOS)
+}
 
 func profileKey(dir, goos string) string {
 	p := dir

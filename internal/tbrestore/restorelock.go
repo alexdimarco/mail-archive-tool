@@ -68,6 +68,27 @@ func (r *RestoreLock) Release() {
 	}
 }
 
+// AnyRestoreRunning reports whether any restore into Thunderbird holds its restore lock
+// now: a restore-<key>.lock in SettingsDir that is held (a probe each, nothing created or
+// written). Uninstall refuses while one is (R6-03, settled 2026-11-07): it would remove
+// restores.log while that restore appends to it.
+func AnyRestoreRunning() bool {
+	d, err := SettingsDir()
+	if err != nil {
+		return false
+	}
+	entries, err := os.ReadDir(d)
+	if err != nil {
+		return false
+	}
+	for _, e := range entries {
+		if thunderbird.IsRestoreLockName(e.Name()) && lockfile.Held(filepath.Join(d, e.Name())) {
+			return true
+		}
+	}
+	return false
+}
+
 // RestoreLockHeld reports whether a restore into the profile holds its restore lock
 // now (a probe: the file is never created or written). The plan asks it first, so a
 // terminal and Desktop restoring at once are told W-RESTORING rather than to close a

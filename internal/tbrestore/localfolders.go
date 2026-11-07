@@ -53,13 +53,22 @@ func FindLocalFolders(profileDir string, p *Prefs) (LocalFolders, error) {
 	if dir == "" {
 		return LocalFolders{}, refuse("W-NOLOCAL", wNoLocal, nil)
 	}
-	resolved, err := filepath.EvalSymlinks(dir)
+	resolved, err := resolveFolder(dir)
+	if RefusalCode(err) != "" {
+		return LocalFolders{}, err // W-JUNCTION (R6-14)
+	}
 	if err != nil {
 		return LocalFolders{}, refuse("W-LOCALGONE", fill(wLocalGone, "PATH", dir), err)
 	}
 	fi, err := os.Stat(resolved)
 	if err != nil || !fi.IsDir() {
 		return LocalFolders{}, refuse("W-LOCALGONE", fill(wLocalGone, "PATH", resolved), err)
+	}
+	// Settled 2026-11-07 [R6-07]: the folder actually written is held to the profile's
+	// own rule (§3.1 step 3) — this user's, neither group- nor world-writable — on macOS
+	// and Linux, when prefs point it elsewhere as when it is inside the profile.
+	if !profileModeOK(fi) {
+		return LocalFolders{}, refuse("W-LOCALMODE", fill(wLocalMode, "PATH", resolved), nil)
 	}
 	// No part of the folder below the profile is ImapMail (thunderbird.IsImapStore's rule).
 	cprof := canonical(profileDir)

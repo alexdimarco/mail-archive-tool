@@ -224,6 +224,20 @@ command line as `mailarchive restore-thunderbird` (R33, "One program",
    > Folded 2026-11-06 [RT-14, RT-17]: the macOS and Linux checks (owned by this user, not group-
    > or world-writable) are new code on Linux (§2 note). A profile that fails them is not dropped
    > silently: it is listed as not usable, with W-PROFMODE (§7.5) beside it.
+
+   > Settled 2026-11-07 [R6-14] (the R6 adversarial pass; the lead's call; Windows): the folder's
+   > links were resolved with `filepath.EvalSymlinks`, which since Go 1.23 fails on a junction in
+   > the middle of a path, so a profile moved with `mklink /J` (`%APPDATA%\Thunderbird` → `D:\TB`)
+   > was refused in the words of a folder that is not a profile. On Windows the profile and its
+   > Local Folders are now resolved with the repository's own resolver (`util.ResolveExisting`,
+   > through junctions and links alike, as the overlap checks are), and a path reached through a
+   > link or junction (`util.ThroughLink`) is allowed when it leads inside the user's own folder
+   > (`%USERPROFILE%`), and is then shown and pinned by where it really leads; one that leads
+   > outside it is refused W-JUNCTION, naming where it leads and that choosing that folder by its
+   > own path works (a listed profile so reached is listed as not usable with those words). macOS
+   > and Linux are unchanged (EvalSymlinks follows every link there, and the folder it leads to is
+   > held to this step's checks). Test: `tbrestore/ma1084_r614_junction_windows_test.go`
+   > (MA-1084, MA-1143).
 4. **Pick the default.** In order:
    1. the profile the archive's own Thunderbird source came from: the job Run now
       would run (`runnow_sync.go:108-122`), its first input that sits in a listed
@@ -241,6 +255,21 @@ command line as `mailarchive restore-thunderbird` (R33, "One program",
    > Most people have one profile, so (1) rarely applies; what keeps the default path from
    > copying the restored mail back into the archive is the backup-side skip of §7.2 (owner
    > question O1). The Linux leg of "does the archive back up this profile" is new code (§2 note).
+
+   > Settled 2026-11-07 [R6-02] (the R6 adversarial pass, `docs/review-restore-thunderbird-adversarial-r6.md`;
+   > the lead's call): "no input of any job for this archive lies inside it" read only Desktop job
+   > files, so an archive backed up at the command line (by hand, or with `mailarchive schedule`,
+   > whose job lives in the system scheduler) never warned, and mail later filed into the restored
+   > folder was silently left out of its backups. "Backs up" is now decided from what the archive
+   > itself records as its sources — its last run's job (`-input`, `-auto`), which a plain
+   > archive's last-run record keeps — and the descriptor of a schedule installed for it (its job,
+   > and its pre-sync profile), as well as every Desktop job file that backs up into it
+   > (`tbengine.ArchiveSources`). Any source path at or inside the profile, or at or inside its
+   > Local Folders when that lies elsewhere, warns; `-auto` (which finds every profile itself)
+   > warns for every profile. When nothing names the archive's sources (an encrypted archive,
+   > whose record keeps no inputs; an archive older than its record), the plan's first line says
+   > MailArchive cannot tell, in W-RECAPTURE's place — never nothing. A Microsoft 365-only archive
+   > backs up no profile and says nothing. Test: `tbengine/ma1124_r602_sources_test.go` (MA-1124).
 5. **One profile:** shown, not asked. **Several:** the person chooses from the list
    ("NAME — FOLDER"), the default pre-selected. **None:** refused (§10, words W-NOPROF).
 6. The page sends the chosen profile's position in the list the server made, never a
@@ -335,6 +364,17 @@ profile"). String values are decoded as JavaScript string literals (`\\`, `\"`,
    > whose identity can be read gets W-NETWORK, a warning, and the restore may go ahead; one whose
    > identity cannot be read is refused with W-NOIDENT. This answers the "for the lead to confirm at
    > re-verify" sentence above.
+
+   > Settled 2026-11-07 [R6-07] (the R6 adversarial pass): step 3 checked the profile's owner and
+   > mode (§3.1 step 3) but never the folder actually written, when prefs point Local Folders
+   > outside the profile. On macOS and Linux the resolved Local Folders is now held to the same
+   > rule — this user's, neither group- nor world-writable — else W-LOCALMODE, naming it and the
+   > remedy (`chmod go-w`), nothing restored. Windows has no owner check (§9 item 4); there the
+   > restored files' own owner-only access lists (§9 item 6, R6-01) cover who can read them.
+   > Test: `tbrestore/ma1085_r607_r615_test.go` (MA-1085).
+   >
+   > Settled 2026-11-07 [R6-14]: the "resolving links once" of step 3 is, on Windows, the
+   > junction-aware resolve and rule of the §3.1 step 3 note.
 
 ### 3.3 The storage kind: mbox or maildir
 
@@ -434,6 +474,18 @@ Local Folders/
 > usual file systems ignore case; folding can only make two profiles share one lock, the safe
 > direction). MA-1140 tests that presync and the restore get the same key for one profile spelled
 > two ways.
+>
+> Settled 2026-11-07 [R6-15] (the R6 adversarial pass; the lead's call, "key by identity"): the key
+> above resolved links but not macOS's `/System/Volumes/Data` firmlink, a Windows junction or a
+> `subst` drive, so one profile spelled two ways had two restore locks, two settle scopes, and a
+> presync blind to one. `thunderbird.ProfileKey` now keys a profile folder that exists by its
+> identity — device and inode (Windows: volume serial number and file index, from a handle) —
+> whatever path reaches it: the first 16 hex characters of the SHA-256 of "identity", the volume
+> and the file id. The path's key above is kept only for a folder whose identity cannot be read
+> (gone, or a volume that reports none), so a gone profile is still named as before. The restore,
+> presync, the marker, restores.log and the backup skip all still call the one function.
+> Tests: `thunderbird/ma1140_r615_identitykey_test.go`, `tbrestore/ma1085_r607_r615_test.go`
+> (MA-1140).
 
 - **One mbox file per archive folder.** A folder with subfolders gets its file (empty
   when it holds no messages) and a sibling `NAME.sbd` directory. This is Thunderbird's
@@ -485,6 +537,18 @@ Local Folders/
 > case-blind), so the `Mkdir` normally succeeds first time. The ` (n)` suffix is part of the name
 > budget (§4.4 as folded). Q1's recommended answer ("Restored — ARCHIVE NAME", then " (2)") is what
 > is built; a date in the name instead is a change to one format string and to the budget.
+>
+> Settled 2026-11-07 [R6-16] (the R6 adversarial pass): the `Mkdir` above moved to the next " (n)"
+> only when `NAME.sbd` was taken; a parent name `NAME` another program made after the re-check was
+> met only at the commit, after the whole write and check (W-TAKEN, the tree left "abandoned").
+> The writer now looks at the parent name too, before the `Mkdir` and again right after it: taken
+> before, it goes to the next " (n)"; taken between the look and the `Mkdir`, the empty container
+> it just made is removed as the cleanup removes (only the very folder seen, never through a link)
+> and it goes to the next " (n)" — each with its fsynced "name" line, before anything is written.
+> A name taken after that is still met at the commit (W-TAKEN). Left: a crash between that
+> `Mkdir` and its removal leaves an empty, unmarked container, which Start settles as not
+> MailArchive's (case 1, left; the next restore takes " (n+1)"). Test:
+> `tbengine/ma1122_r603_r610_r611_r616_test.go` (MA-1120).
 
 ## 4. What exactly is written into each mbox file
 
@@ -876,6 +940,28 @@ Check: WHAT. Click Check again." and nothing is written.
 > Thunderbird's lock is taken (a failed take = W-RUNNING, nothing written), then B is checked once
 > more. Only then is the first byte written.
 
+> Settled 2026-11-07 [R6-05, R6-06, R6-11, R6-13] (the R6 adversarial pass):
+> - **[R6-05]** Thunderbird's lock is taken by path, and only Local Folders was pinned again after
+>   it; a profile folder moved aside in that window, with a decoy at its path (Local Folders
+>   elsewhere), got the decoy locked and left the real profile open to Thunderbird. After the take,
+>   `ProfileLock.Binds` reads the profile folder's identity, the lock file's identity at its lock
+>   name (it must be the very file the lock holds), and the folder's identity again; any difference
+>   is W-CHANGED, the lock released, nothing written. Left: the window between those reads and the
+>   writes is a same-user program's, closed on Windows (a folder holding an open file cannot be
+>   renamed) and narrow elsewhere.
+> - **[R6-06]** Only the chosen profile's lock was taken, so a second listed profile whose prefs
+>   name the same Local Folders could be opened by Thunderbird during the write. The plan now lists
+>   every other profile whose Local Folders is this one by identity (W-RUNNING when one is open) and
+>   says so ("Another Thunderbird profile, 'NAME' (DIR), uses this same Local Folders…"); Start
+>   takes each one's Thunderbird lock too, bound as above, and the re-check compares the list.
+>   (Profiles found through profiles.ini only: one typed with -profile and not listed is not known.)
+> - **[R6-11]** The re-check reads prefs.js again and repeats the store-kind check (§3.3) and the
+>   inside-an-encrypted-archive test (§3.2 step 3); a difference is W-CHANGED, naming it.
+> - **[R6-13]** See §7.1's note: an archive whose lock cannot be taken is refused at the plan in
+>   words, or — on a read-only medium — read without it; the re-check compares which.
+> Tests: `tbengine/ma1127_r605_r606_r613_test.go` (MA-1127), `ma1122_r603_r610_r611_r616_test.go`
+> (MA-1125).
+
 ### 5.4 Thunderbird never sees a half folder
 
 All writing happens under two hidden names in Local Folders:
@@ -978,6 +1064,16 @@ helper).
 >   7. The post-write check [RT-12], as step 6 above, reopening each file by its final name. A
 >      Windows sharing violation on that reopen (antivirus scanning the new file) is retried for
 >      about 5 seconds, then W-CHECKFAIL.
+>
+>      > Settled 2026-11-07 [R6-10] (the R6 adversarial pass): Cancel, Ctrl-C and Shut down were
+>      > heard only before each folder and each message of step 5, so a stop during this check,
+>      > which re-reads every byte, was ignored and the restore finished (honestly, but the person
+>      > who pressed Ctrl-C saw nothing happen and pressed it again, R6-09). The check now stops
+>      > between files and between messages, and once more before step 8; a stop there is a stop
+>      > with the one cleanup, as before step 8 (outcome "stopped", exit 130/143). The caller is
+>      > told when the check begins (`WriteInput.Checking`; the command line says "Checking what
+>      > was written…"), so the pause is explained. Test: `tbengine/ma1122_r603_r610_r611_r616_test.go`
+>      > (MA-1122).
 >   8. Append "checked" and fsync it. It records that the check passed. A later attempt uses it only
 >      to tell a committed restore from an unfinished one (§8 foldcheck note, case 2), never to finish
 >      one (M2).
@@ -1124,6 +1220,32 @@ predicate `emlPresent`, `internal/app/extractable.go:9-31`, the same one `status
 > restore each turn those codes into their own words. The copy's existing rows stay green before and
 > after the lift, as with the delete log's writer (§7.4 foldcheck note).
 
+> Settled 2026-11-07 [R6-01] (the R6 adversarial pass; the lead's call): decrypted mail took Local
+> Folders' inherited permissions (a folder on a second Windows drive lets every signed-in account
+> read; a macOS "everyone may read" inheritable entry applies whatever the mode says), and the plan
+> said only "anyone who can open this Thunderbird profile". Now every folder and file a restore makes
+> is made readable by this account alone as it is made (`FS.Private`): 0600/0700 with no access-list
+> entry on macOS (`fchmod_extended` with the ACL removed, as `chmod -N`) and Linux; on Windows the
+> recovery-key file's explicit, protected owner-only list (`winsec.RestrictToOwner`; a folder's
+> inherited by what is made in it) — each read back (macOS `fgetattrlist`; Windows the recovery-key
+> file's own check, `winsec.CheckSecretFile`). For an encrypted archive the plan says so ("readable
+> only by your account on this computer"). When it cannot be done — the plan predicts it from the
+> drive's file system: FAT32, exFAT, or a network share whose server decides (the copy export's
+> list) — the plan says plainly who else can read it ("other accounts on this computer, and on any
+> computer the drive is connected to") and that is a reason to ask twice (W-READERS, the same
+> second confirmation as O2's; W-NOTAGAIN names it); a restore so confirmed passes an owner-only
+> failure over. One the plan expected to hold but that fails while writing stops with the one
+> cleanup, in words (`wNotPrivateHead`), nothing added. A plain archive's restore is made owner-only
+> too where it can be; a failure is passed over and nothing more is asked. Tests:
+> `tbengine/ma1128_r601_r612_test.go` (MA-1128): an inherited "others may read" entry on Local
+> Folders (macOS `chmod +a`, Windows `icacls … (OI)(CI)R`), every made entry read back with the
+> OS's own tool; the FAT seam; the owner-only step failing.
+>
+> Settled 2026-11-07 [R6-12] (the R6 adversarial pass): "counts only" now reaches the plan's and
+> the refusal's words too: W-FAT32 says how many folders are 4 GB or more, and W-LONGPATH how many
+> are nested too deep, never their names, for an encrypted archive (they go to a terminal's log and
+> to `-record-out`). A plain archive's keep naming them. Test: `tbengine/ma1128_r601_r612_test.go`.
+
 ### 6.3 Size and free space
 
 Needed space = the originals' sizes (recorded fixity size, else the file size; sealed size
@@ -1239,6 +1361,23 @@ The command line prints the same plan with `-plan` and stops.
 > hours old (`ScheduledLockSkip`, `busy.go:54`): no failure, alert, streak or history entry. The
 > plan's line matches that: "A backup scheduled while this runs is skipped without an error and
 > runs at its next time."
+
+> Settled 2026-11-07 [R6-13] (the R6 adversarial pass; the lead's call): the plan's busy check
+> answered "not held" when the lock file could not be opened, and Start then failed with the raw
+> "open lock …: permission denied". Now the plan looks at the lock as Start will take it:
+> - On a medium that is genuinely read-only (the volume is mounted read-only: `statfs` MNT_RDONLY
+>   on macOS, ST_RDONLY on Linux; Windows FILE_READ_ONLY_VOLUME) the restore is **allowed** without
+>   the archive's lock — nothing can write the archive there, a backup included — and the plan
+>   says so ("The archive is on a drive that cannot be written (read-only), so MailArchive reads it
+>   without taking its lock…"). It is W-BUSY if another computer's backup holds the lock (read
+>   through a read-only handle, as verify does, `lockfile.HeldReadOnly`), and W-CHANGED at Start
+>   if the drive is no longer read-only.
+> - Otherwise a lock this account cannot take (a read-only lock file, another account's archive, a
+>   folder it cannot write) is refused at the plan, W-ARCHLOCK, in words that name the folder and
+>   say to check it is the person's own and not read-only; Start's own failure, should it come, is
+>   W-ARCHLOCK too, never the raw error.
+> Test: `tbengine/ma1127_r605_r606_r613_test.go` (MA-1127; the read-only medium through its seam,
+> since none can be made in a test).
 
 ### 7.2 When the archive backs up this same profile (W-RECAPTURE)
 
@@ -1427,6 +1566,32 @@ backup captures. Owner question Q7.
 >   no entry of the parent name are skipped, open or abandoned alike, since the log cannot tell them
 >   apart); every restore is refused meanwhile (W-LOGBAD), and its words say backups then copy those
 >   folders once the file is moved away.
+
+> Settled 2026-11-07 [R6-02, R6-03, R6-04] (the R6 adversarial pass; R6-02, R6-03 and R6-04 are the
+> lead's calls). These amend the notes above.
+> - **[R6-02]** Whether "this archive backs up this profile" is now read from the archive's own
+>   record and its installed schedule as well as Desktop's job files, and the plan says when it
+>   cannot tell (§3.1 step 4's R6-02 note). W-RECAPTURE's words are unchanged.
+> - **[R6-03] A restore still running is never "did not finish".** `Leftovers` named every restore
+>   with no closing line W-UNFINISHED, so while a terminal restore was writing, Desktop and `status`
+>   told the person to delete the very folder being written, and uninstall's plan said nothing
+>   would clean it up — and uninstall went ahead, removing restores.log under it. Now a restore with
+>   no closing line whose profile's restore lock is held is named "running now": "A restore into
+>   Thunderbird is running now (it began DATE): it is writing the new folder 'TOP' into PATH. Keep
+>   Thunderbird closed until it finishes; Thunderbird shows the folder once it is done." — the same
+>   words in Desktop, `status` and uninstall's plan, never the delete advice. Uninstall refuses while
+>   any restore lock is held (`uninstall.RestoreRunningError`; a dry run still gives its plan with
+>   "Uninstall will refuse until the restore into Thunderbird that is running now finishes…"), and
+>   asks again right before the settings files would go, so it never removes restores.log mid-run.
+>   Tests: `tbengine/ma1122_r603_r610_r611_r616_test.go`, `uninstall/ma1141_r603_restore_running_test.go`
+>   (MA-1141).
+> - **[R6-04] The skip holds for a backup that began before the restore finished.** A backup loads
+>   its skip set once; the M3 refresh re-read the log only for an ID it had never seen, so a restore
+>   it saw open stayed "open, not committed" for the rest of that backup, and once the restore
+>   committed (its parent file beside its folder) neither rule applied and the restored mail was
+>   copied into that other archive. `Lookup` now reads the log again, when it has changed, for a
+>   known restore that is open or not committed too, as for an unknown one (one stat; a committed
+>   restore cannot go back). Test: `source/ma1138_r604_staleskip_test.go` (MA-1138).
 
 ### 7.3 The Desktop flow
 
@@ -2201,6 +2366,14 @@ protects the files; the archive and the profile files are read as untrusted text
 6. **Permissions.** New files 0o600, new folders 0o700 on macOS and Linux
    (`copyexport_fs.go:78`, `:83`); on Windows they take Local Folders' own permissions. Refused when
    running elevated or as root (W-ELEVATED), so Thunderbird can always change them later.
+
+   > Settled 2026-11-07 [R6-01] (the R6 adversarial pass; the lead's call): this item was written
+   > before the encrypted path. "On Windows they take Local Folders' own permissions" is replaced:
+   > every folder and file a restore makes is made readable by this account alone and read back
+   > (Windows: an explicit, protected owner-only access list; macOS: the inherited access list
+   > removed too), for a plain archive where it can be and for an encrypted one always — or, where
+   > the drive cannot hold it, only after the second confirmation, with the plan saying who else can
+   > read (§6.2's R6-01 note). Thunderbird, running as this user, can still change them.
 7. **Encrypted archives.** Plaintext only inside the destination, under the staging names
    until the end, and removed on cancel or failure (§6.2, §8). Memory is not wiped beyond
    what the vault already does.
@@ -2335,6 +2508,25 @@ mailarchive restore-thunderbird -list-profiles
 >   the error named, as step 10's errors are.
 > - [N-g] The exit code is the new restore's own; an earlier restore that Start could not clean up
 >   does not change it, and is named after the result.
+
+> Settled 2026-11-07 [R6-08, R6-09, R6-10] (the R6 adversarial pass):
+> - **[R6-08] `-record-out`** only refused an existing file, so `-plan -record-out` could put a
+>   plaintext record (profile, Local Folders, the restored folder's name, the counts) inside the
+>   encrypted archive. It now follows the saved file's rules, as `delete-archive`'s does
+>   (`keyring.CheckNewFileOut`, checked before anything is read or asked, then `keyring.WriteNewFile`):
+>   never inside the archive folder or any encrypted archive, never over a file, made owner-only
+>   (on Windows too) before it is written. Test: `cmd/mailarchive/ma1129_r608_r609_r610_test.go`.
+> - **[R6-09] A second Ctrl-C** exits at once, as before (130, or 143), before the restore's own
+>   cleanup — but once writing has begun it first says what may be left and where: "stopped at once,
+>   before the restore could remove what it wrote: its unfinished folder 'Restored — NAME.sbd' (or
+>   one numbered after it) may be left in PATH. Thunderbird does not show it; the next restore into
+>   this profile removes it, or close Thunderbird and delete it yourself." and, for an encrypted
+>   archive, "It may hold decrypted mail." (§10's "the words name anything left behind" now holds
+>   for this exit too.)
+> - **[R6-10]** "Checking what was written: every message is read back before Thunderbird can show
+>   the folder…" is printed when the post-write check begins, and Ctrl-C is heard during it (§5.4
+>   step 7 note).
+> (All MA-1129.)
 
 ## 11. New invariant and scenarios (provisional ids)
 

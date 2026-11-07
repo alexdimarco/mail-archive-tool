@@ -1124,7 +1124,7 @@ func (d *dashboard) uninstallAction(w http.ResponseWriter, r *http.Request) {
 	// waits ("Uninstall will refuse until…", refuseUntil), and Remove is disabled — never the real
 	// run's "removed nothing" (MA-1030 amended; the uninstall-docs group's adversarial pass,
 	// finding 2).
-	var pendingDelete *uninstall.DeleteNotFinishedError
+	var pendingDelete uninstall.Waiting // a delete not finished, or a restore running (R6-03)
 	if err != nil && !in.Confirm && rep != nil && errors.As(err, &pendingDelete) {
 		reply := uninstallPlanReply(rep, false)
 		reply["refuseUntil"] = pendingDelete.Until()

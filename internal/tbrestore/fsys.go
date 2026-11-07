@@ -39,6 +39,12 @@ type FS interface {
 	RemoveSeen(name string, seen map[string]fs.FileInfo) error
 	// SyncDir flushes a folder's entries (a no-op where the OS has no such call).
 	SyncDir(name string) error
+	// Private makes one entry this restore just created readable by this account alone
+	// and reads that back (R6-01, settled 2026-11-07): mode 0600 (a file) or 0700 (a
+	// folder) with no access-list entry on macOS and Linux; on Windows an explicit,
+	// protected owner-only access list (a folder's inherited by what is made in it). An
+	// error says it could not be set or could not be shown to hold.
+	Private(name string, dir bool) error
 }
 
 type wfile interface {
@@ -154,6 +160,11 @@ func sameEntry(want, got fs.FileInfo) bool {
 	}
 	return os.SameFile(want, got)
 }
+
+func (r *rootFS) Private(name string, dir bool) error { return makePrivate(r.root, name, dir) }
+
+// errNotPrivate is an entry that, read back, others could still read.
+var errNotPrivate = errors.New("it can still be read by other accounts")
 
 func (r *rootFS) SyncDir(name string) error {
 	f, err := r.root.Open(name)

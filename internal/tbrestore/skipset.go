@@ -118,7 +118,10 @@ func (s *SkipSet) Lookup(id, profileKey string, holder fs.FileInfo) (known, open
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	e, ok := s.known[id]
-	if !ok && s.changed() {
+	// Settled 2026-11-07 [R6-04]: a restore the set knew as open or not committed may
+	// have committed since (a backup that began before or during it), so the log is read
+	// again when it has changed, as for an id never seen; a committed one cannot go back.
+	if (!ok || e.open || !e.committed) && s.changed() {
 		s.load()
 		e, ok = s.known[id]
 	}
