@@ -3,6 +3,8 @@ package presync
 import (
 	"path/filepath"
 	"strings"
+
+	"mail-archive-tool/internal/thunderbird"
 )
 
 // This file holds the build-tag-free parts of S1 resolution shared by every
@@ -46,6 +48,12 @@ func deriveProfile(inputs, listed []string) (string, bool) {
 // Install* section's Default= (always relative). It is read capped and as
 // untrusted text — values are control-stripped and used only to compare with a
 // derived profile, never as a path to open or execute (PC3).
+//
+// The parsing is the shared thunderbird.ParseProfilesINI (design-restore-thunderbird
+// §3.1, slice R2); presync keeps its own cap (a longer file is cut, not refused) and
+// its own meaning of each value, and does not use the parser's other outputs (names,
+// the Default=1 flag). Within a section, each naming Default= comes first, in file
+// order, then the section's Path=, as presync has always listed them.
 func parseProfilesINI(data []byte, appSupport string) []string {
 	if len(data) > profilesINIMaxBytes {
 		data = data[:profilesINIMaxBytes]
@@ -64,49 +72,21 @@ func parseProfilesINI(data []byte, appSupport string) []string {
 			profiles = append(profiles, filepath.Clean(p))
 		}
 	}
-
-	var curPath string
-	var curRel, inSection bool
-	flush := func() {
-		if inSection {
-			add(curPath, curRel)
+	for _, s := range thunderbird.ParseProfilesINI(data) {
+		// An Install* section's Default is a relative path to a profile; a Profile
+		// section's Default=0/1 is a flag, not a path (the parser keeps only the former).
+		for _, d := range s.Defaults {
+			add(d, true)
 		}
-		curPath, curRel = "", false
+		add(s.Path, s.IsRelative)
 	}
-	for _, raw := range strings.Split(string(data), "\n") {
-		line := strings.TrimSpace(stripControl(raw))
-		if strings.HasPrefix(line, "[") {
-			flush()
-			inSection = true
-			continue
-		}
-		if !inSection {
-			continue
-		}
-		k, v, ok := strings.Cut(line, "=")
-		if !ok {
-			continue
-		}
-		k, v = strings.TrimSpace(k), strings.TrimSpace(v)
-		switch k {
-		case "Path":
-			curPath = v
-		case "IsRelative":
-			curRel = v == "1"
-		case "Default":
-			// An Install* section's Default is a relative path to a profile; a
-			// Profile section's Default=0/1 is a flag, not a path.
-			if v != "" && v != "0" && v != "1" {
-				add(v, true)
-			}
-		}
-	}
-	flush()
 	return profiles
 }
 
 // stripControl removes ASCII and C1 control characters, so untrusted
-// profiles.ini bytes cannot forge a path or a log line.
+// profiles.ini bytes cannot forge a path or a log line. Presync's own parser used
+// it; it is kept, unchanged, as the oracle the shared parser is held to
+// (ma1084_shared_parser_test.go).
 func stripControl(s string) string {
 	return strings.Map(func(r rune) rune {
 		if r < 0x20 || r == 0x7f || (r >= 0x80 && r < 0xa0) {

@@ -17,7 +17,7 @@ import "testing"
 
 // covers: MA-1084, R40
 func TestR0EncoderProfilesINIRestoreUse(t *testing.T) {
-	t.Skip("MA-1084 pending: the shared parser lands in slice R2; the restore's use of it (W-PROFINI over 256 KiB, an absolute [Install] Default=, bidi and controls stripped from Name=, Linux ownership and mode checks, the list id binding) lands in slice R3")
+	t.Skip("MA-1084 pending: the restore's use of the shared parser (reading profiles.ini, a missing file, W-PROFINI over 256 KiB, an absolute [Install] Default=, bidi and controls stripped from Name=, Linux ownership and mode checks, the list id binding) lands in slice R3 (the parser and presync's sameness are proven since slice R2 by internal/thunderbird/ma1084_profiles_ini_test.go and internal/presync/ma1084_shared_parser_test.go)")
 }
 
 // covers: MA-1085, R40, S73
