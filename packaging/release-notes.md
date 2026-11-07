@@ -77,7 +77,7 @@ MailArchive is one program with verbs; there is no separate GUI download.
 | Linux arm64 | `mailarchive-linux-arm64` | the same verbs (compiled, not lab-run) |
 | Linux app menu (optional) | `mailarchive-linux-desktop-entry.tar.gz` | adds **MailArchive Desktop**, with its icon, to your app menu: unpack it and follow its `READ ME.txt` |
 
-### Changed in the next release
+### Changed in 1.6.1 — backups that could not save everything say why and what to do
 - **A backup that could not save everything now says why and what to do.** Instead of "Failed — partial: 4 item(s) not captured — see attachments-report.tsv", Recent backups says **Incomplete** and, in plain words, what was not saved and what to do — for example "4 messages could not be saved because of a mistake in MailArchive — your mail is fine (the original is untouched); please report it at https://github.com/alexdimarco/mail-archive-tool/issues". The same words are on the Scheduled backup card, in Status & health, in `mailarchive status`, in the alert email and in the BACKUP-NEEDS-ATTENTION.txt file. The attachments-report.tsv file is still there, named as the details.
 - **A backup that meets another one still running is no longer called "failed".** Clicking **Run now** while a scheduled backup is still running now says "Another backup of this archive is already running (started 20:00 …) — this backup was skipped; nothing is wrong. Try again when it finishes." If the backup that is running started more than a day ago, the words say it may be stuck and how to end it.
 - **Mail Thunderbird has not downloaded yet is said as that.** Recent backups and Run now say how many messages are not on this computer in full yet, and that later backups add them once Thunderbird has downloaded them.
