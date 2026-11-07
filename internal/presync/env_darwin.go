@@ -315,6 +315,9 @@ func (e *macEnv) lockPID(profile string) (int, bool) {
 	return parseMozLockPID(target), true
 }
 
+// restoreLockHeld reports a MailArchive restore into the profile (restorelock.go).
+func (e *macEnv) restoreLockHeld(profile string) bool { return realRestoreLockHeld(profile) }
+
 // pidAlive reports whether pid is a live process — via `ps -p`, which sends no
 // signal (so §5.4 rule 1 holds even for a liveness probe).
 func (e *macEnv) pidAlive(pid int) bool {

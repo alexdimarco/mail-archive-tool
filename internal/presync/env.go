@@ -70,6 +70,11 @@ type env interface {
 	// procExe resolves a live pid's executable path, to tell a stale lock whose
 	// pid was reused by a non-Thunderbird process.
 	procExe(pid int) (exe string, ok bool)
+	// restoreLockHeld reports whether a MailArchive restore into this profile holds
+	// its restore lock right now (docs/design-restore-thunderbird.md §5.2 note item 3):
+	// Thunderbird's profile is then in use, so the pre-sync starts nothing on it. The
+	// real seam is realRestoreLockHeld.
+	restoreLockHeld(profile string) bool
 
 	// sleep waits for d, returning early when ctx or stop ends (either may be nil).
 	// The real seam is sleepCtx; the fake advances its clock (and does not move it

@@ -18,6 +18,9 @@ type fakeEnv struct {
 	lockOn map[string]bool
 	alive  map[int]bool
 	exeOf  map[int]string
+	// the MailArchive restore lock (MA-1140): scripted per profile, or the real one
+	restoreHeld map[string]bool
+	realRestore bool
 
 	// session config + timeline (state-machine test)
 	sm              bool
@@ -129,6 +132,15 @@ func (f *fakeEnv) procsNow() []proc {
 func (f *fakeEnv) rawThunderbirdCount() (int, bool) {
 	f.probe("raw")
 	return len(f.procsNow()) + f.unreadable, true
+}
+
+// restoreLockHeld is the scripted MailArchive restore lock (restoreHeld), or, when
+// realRestore is set, the real seam (MA-1140 drives a real lock through it).
+func (f *fakeEnv) restoreLockHeld(profile string) bool {
+	if f.realRestore {
+		return realRestoreLockHeld(profile)
+	}
+	return f.restoreHeld[profile]
 }
 
 func (f *fakeEnv) lockPID(profile string) (int, bool) {

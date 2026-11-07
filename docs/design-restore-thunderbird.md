@@ -787,6 +787,50 @@ seeing a half folder, and this subsection is dropped.
 >   (§13 foldcheck note). If it shows the lock does not keep Thunderbird out, item 2's fallback is
 >   written into this design before any R3 code.
 
+> Folded 2026-11-07 [Mac lab of 2026-11-06, `docs/lab/restore-thunderbird-macos-2026-11-06.md`]
+> (lead's calls 2026-11-07, built in slice R3). MA-1134 held on macOS (Thunderbird 159.0) and on
+> Linux (153.6.0esr, Docker `--headless`), so item 2 stands. Three changes around it:
+> - **(a) Check A gains a non-taking lock probe** (§5.1). Mac Thunderbird 159 makes no `lock`
+>   symlink, so the symlink check alone is blind there. On macOS and Linux check A also asks who
+>   holds `.parentlock` (`F_GETLK`; `F_OFD_GETLK` on Linux), taking nothing. At the plan the probe
+>   opens `.parentlock` read-only, never creating it, and closes it. At Start the restore's one
+>   `ProfileLock` opens `.parentlock` **once** (created only when absent, never written to), asks
+>   `F_GETLK` through that handle, takes the lock on that same handle, and holds it to the end.
+>   **The restoring process never opens `.parentlock` twice**: on macOS closing any second handle
+>   silently drops the lock (the lab saw Thunderbird get in). A process-wide registry in
+>   `tbrestore` records each profile this process has a `ProfileLock` on; every probe of such a
+>   profile answers from the registry ("held by this process") and opens nothing, and the
+>   registry's mutex covers each probe's own open and close. MA-1127 proves the lock survives the
+>   restore's own probe (another process still sees it held). Built: `tbrestore.CheckRunning`,
+>   `tbrestore.TakeProfileLock`, `tblock_*.go`.
+>   - Read before the code, as item 2 asks (Mozilla's `toolkit/profile/nsProfileLock.cpp`, gecko-dev
+>     mirror, read 2026-11-07, not run): on macOS and Linux Thunderbird opens `.parentlock`
+>     `O_WRONLY|O_CREAT|O_TRUNC` and takes a whole-file `F_WRLCK` with `F_SETLK` after an
+>     `F_GETLK`; on macOS it falls back to a symlink *at `.parentlock`* only when that fcntl fails for
+>     a reason other than access-denied (so a working Mac has no `lock` symlink, as the lab saw); on
+>     Linux, after the fcntl succeeds, it also makes the old `lock` symlink. On Windows it opens
+>     `parent.lock` with `CreateFileW(GENERIC_READ|GENERIC_WRITE, share 0, CREATE_ALWAYS)`. A held
+>     fcntl lock is access-denied, so no fallback is tried and Thunderbird refuses. The restore's
+>     symlink check therefore reads both `lock` and a symlink at `.parentlock`.
+>   - **Follow-up, not changed in this slice:** presync's macOS running check (`macEnv.lockPID`,
+>     `env_darwin.go`) and `thunderbird.Running` (used before `prefs.js` is edited) look only for the
+>     `lock` symlink (and Windows' `parent.lock`), so they have the same blind spot on Mac
+>     Thunderbird 159. Presync is mitigated by its process-list check (signal B), which fires for any
+>     running Thunderbird of this user; `thunderbird.Running`'s comment ("on Unix/macOS Mozilla
+>     writes a `lock` symlink") is wrong for macOS. Recorded as a follow-up for presync's owner; the
+>     restore does not depend on either.
+> - **(b) W-WAIT's words are platform-neutral on macOS and Linux** (lead's words, owner-delegated
+>   2026-11-02): the Mac dialog's words and buttons are not yet seen (MA-1134 pending item), and
+>   Linux showed a message, not a Cancel. So on macOS and Linux W-WAIT reads: "While this runs,
+>   leave Thunderbird closed. If Thunderbird says it is already open or running, close that message
+>   and wait for the restore to finish." Windows keeps naming Cancel (lab B). §7.5's W-WAIT row is
+>   the Windows form. Built: `tbrestore.WaitWords`.
+> - **(c) A refused Thunderbird writes one file into the profile** on macOS and Linux:
+>   `Telemetry.FailedProfileLocks.txt` (a counter). It is Thunderbird's, outside Local Folders, and
+>   never the restore's. R40's "only adds" is a claim about what MailArchive writes, so it is
+>   untouched; any test or lab row that holds the profile byte-identical across a refused
+>   Thunderbird allows this one file and no other (`tbrestore.ThunderbirdRefusalFile`).
+
 ### 5.3 Checked again right before writing
 
 At "Restore", under the archive's lock and the profile lock, before the first byte:
@@ -2533,6 +2577,30 @@ Build order is sound: nothing on a surface (R4, R5) before its engine (R1–R3).
 > then: S4, S5, S6, S8 and S9 to **R4** (the writer's words and the scan's name match); S7 and S10 to
 > **R5** (the display rule and the Local Folders read it reuses). **R4** builds step 0b (a "taken"
 > line → remove nothing) in the cleanup's decision order.
+
+> Built 2026-11-07, slice R3 (the builder's notes; where a call was the builder's, it says so):
+> - **Where it lives.** `internal/tbrestore` holds the Thunderbird side and imports nothing of
+>   `internal/app`, so the backup skip (R5, in `internal/app`) can import it. `ProfileKey`,
+>   `RestoreLockName`, `IsRestoreLockName` and `RestoreLockPath` are in `internal/thunderbird`, so
+>   presync, which `tbrestore` does not import, uses the same names. R6's `Plan`/`Run`, which read
+>   an archive through `internal/app`, therefore cannot live in `tbrestore` itself: R6 places them
+>   (in `internal/app`, or a package above both) and says so.
+> - **`directory-rel` with `..`.** The catalog row MA-1085 (R0) says "`directory-rel` with `..`
+>   refused"; §3.2's RT-15 note (and the review's RT-15) say `..` is allowed, resolved as Mozilla
+>   resolves it, and then checked. The note wins (it is the later, reviewed text): built as allowed
+>   and checked, and refused (W-OVERLAP) when it lands on another account's folder; the catalog row
+>   is amended beside its text to say so.
+> - **Builder's answers** where the design is silent, each the refusing direction: a Local Folders
+>   server with neither `directory-rel` nor `directory` is W-NOLOCAL; a store contract id that is
+>   neither mbox nor maildir is W-MAILDIR; any unreadable setting of the Local Folders account
+>   refuses (W-PREFS naming the file that set it), even one the lookup would not use; a Local Folders
+>   that is missing or not a folder has words of its own, W-LOCALGONE ("Thunderbird's Local Folders
+>   for this profile (PATH) is not there or is not a folder, so nothing was restored. Open
+>   Thunderbird once with this profile and close it, then click Check again."); a `-profile FOLDER`
+>   that is not a profile is W-NOTPROFILE; on a Unix other than macOS and Linux there is no process
+>   probe, so Thunderbird counts as running there.
+> - **W-NOLOCAL's MENU PATH** stays a literal placeholder in the code until lab row MA-1133 names the
+>   path that worked, so no slice can ship a guessed path (§3.2 step 1 note).
 
 ## 14. Decisions this design makes, for the review to test
 

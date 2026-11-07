@@ -15,25 +15,10 @@ import "testing"
 // testing discipline). The lab rows (MA-1090..MA-1099, MA-1121, MA-1133..MA-1137)
 // are tier L and pending, and carry no encoder.
 
-// covers: MA-1084, R40
-func TestR0EncoderProfilesINIRestoreUse(t *testing.T) {
-	t.Skip("MA-1084 pending: the restore's use of the shared parser (reading profiles.ini, a missing file, W-PROFINI over 256 KiB, an absolute [Install] Default=, bidi and controls stripped from Name=, Linux ownership and mode checks, the list id binding) lands in slice R3 (the parser and presync's sameness are proven since slice R2 by internal/thunderbird/ma1084_profiles_ini_test.go and internal/presync/ma1084_shared_parser_test.go)")
-}
-
-// covers: MA-1085, R40, S73
-func TestR0EncoderPrefsJSLocalFolders(t *testing.T) {
-	t.Skip("MA-1085 pending: prefs.js and user.js decoding and the Local Folders lookup (W-PREFS, W-NOLOCAL) land in slice R3")
-}
-
-// covers: MA-1086, R40
-func TestR0EncoderStoreKind(t *testing.T) {
-	t.Skip("MA-1086 pending: the store-kind check (W-MAILDIR) lands in slice R3")
-}
-
-// covers: MA-1087, R40, S66, S67
-func TestR0EncoderThunderbirdRunning(t *testing.T) {
-	t.Skip("MA-1087 pending: running detection (lock pid, parent.lock, the Linux /proc probe, the macOS raw count) lands in slice R3")
-}
+// Slice R3 replaced the encoders of MA-1084 (covers: MA-1084, R40), MA-1085 (MA-1085,
+// R40, S73), MA-1086 (MA-1086, R40) and MA-1087 (MA-1087, R40, S66, S67) with the real
+// covering tests, each carrying the same ids: internal/tbrestore/ma1084_profiles_test.go,
+// ma1085_prefs_test.go, ma1086_storekind_test.go and ma1087_running_test.go.
 
 // covers: MA-1088, R40, S69
 func TestR0EncoderSafeNames(t *testing.T) {
@@ -82,7 +67,7 @@ func TestR0EncoderPathBudget(t *testing.T) {
 
 // covers: MA-1127, R40, S67
 func TestR0EncoderLocks(t *testing.T) {
-	t.Skip("MA-1127 pending: Thunderbird's profile lock lands in slice R3 (its Unix code after lab row MA-1134); the archive lock for the run lands in slice R6")
+	t.Skip("MA-1127 pending: the archive lock held for the run (a backup refused meanwhile, no verb for an encrypted archive) and each lock released on success, error, Cancel, Shut down and a recovered panic land in slice R6 (Thunderbird's profile lock is proven since slice R3 by internal/tbrestore/ma1127_profilelock_test.go)")
 }
 
 // covers: MA-1128, R37, R40, S72
@@ -122,7 +107,7 @@ func TestR0EncoderPostWriteCheck(t *testing.T) {
 
 // covers: MA-1140, R40, R31, S71
 func TestR0EncoderRestoreLock(t *testing.T) {
-	t.Skip("MA-1140 pending: the MailArchive restore lock and presync honouring it land in slice R3; uninstall's targets land in slice R5")
+	t.Skip("MA-1140 pending: uninstall's targets and a -config Desktop's restore seen by a scheduled backup's skip land in slice R5 (the restore lock, presync honouring it and ProfileKey are proven since slice R3 by internal/presync/ma1140_restore_lock_test.go and internal/thunderbird/ma1140_profilekey_test.go)")
 }
 
 // covers: MA-1141, R41, S68
@@ -137,5 +122,5 @@ func TestR0EncoderRestoresLog(t *testing.T) {
 
 // covers: MA-1143, R40
 func TestR0EncoderWindowsLegs(t *testing.T) {
-	t.Skip("MA-1143 pending: W-STORE, W-NOIDENT and W-NETWORK land in slice R3 (run on the Windows VM)")
+	t.Skip("MA-1143 pending: W-STORE first in the plan and repeated in the Done words lands in slice R6 (the detection of a Store package, an identity-less volume and a remote drive is proven since slice R3 by internal/tbrestore/ma1143_winlegs_test.go and, on the Windows VM, ma1143_winlegs_windows_test.go)")
 }

@@ -158,6 +158,9 @@ func decodeArgv(cmdline string) []string {
 // running (there is no pid in it, unlike the macOS symlink), so a successful
 // held-probe is "present" with pid 0, which detectRunning treats as running
 // (signal A). A lock that opens for writing is not held (stale/absent).
+// restoreLockHeld reports a MailArchive restore into the profile (restorelock.go).
+func (e *winEnv) restoreLockHeld(profile string) bool { return realRestoreLockHeld(profile) }
+
 func (e *winEnv) lockPID(profile string) (int, bool) {
 	p := filepath.Join(profile, "parent.lock")
 	// O_RDWR fails with a sharing violation while Thunderbird holds parent.lock

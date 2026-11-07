@@ -15,13 +15,22 @@ type runningSignal struct {
 	byLock    bool
 	byProcess bool
 	lockNotTB bool
+	// byRestore: a MailArchive restore into this profile holds its restore lock
+	// (docs/design-restore-thunderbird.md §5.2 note item 3): the profile is in use.
+	byRestore bool
 }
 
-// detectRunning evaluates signals A and B (design 4.4.1). Thunderbird is started
-// only when neither fires. A false positive fails safe (no sync this run, the
-// owner is told); a false negative costs at most the max wait.
+// detectRunning evaluates signals A and B (design 4.4.1), and first the MailArchive
+// restore lock (design-restore-thunderbird §5.2 note item 3, slice R3): a restore
+// writing into the profile counts as Thunderbird in use, so the pre-sync never
+// starts Thunderbird on it meanwhile. Thunderbird is started only when none fires.
+// A false positive fails safe (no sync this run, the owner is told); a false
+// negative costs at most the max wait.
 func detectRunning(e env, profile string) runningSignal {
 	var s runningSignal
+	if e.restoreLockHeld(profile) {
+		s.byRestore, s.running = true, true
+	}
 	if pid, present := e.lockPID(profile); present {
 		switch {
 		case pid > 0 && e.pidAlive(pid):
