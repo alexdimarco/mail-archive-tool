@@ -72,7 +72,18 @@ const (
 	restoreRecordNote = "The record names the restored folders and is not encrypted. Your browser saves it with your downloads (usually your Downloads folder): move it somewhere private, or delete it when you no longer need it."
 	restoreTickLine   = "I understand the restored mail will not be encrypted"
 	restoreAgainHead  = "Asked a second time: "
+	// The R7 friction review, settled 2026-11-07 (the lead's words, owner-delegated):
+	// restoreOutlookWhy is the card's reason on an archive whose every store is an Outlook data
+	// file (P4); restoreAgainRemedy names the page's own box in W-NOTAGAIN (F15).
+	restoreOutlookWhy  = "This archive's mail came from Outlook data files, which keep no original messages, so none of it can go back into Thunderbird."
+	restoreAgainRemedy = "Tick “Restore it there anyway” and click Restore again,"
 )
+
+// restoreAgainWords is W-NOTAGAIN as the page says it: the engine's "Confirm it again,"
+// (the command line's) becomes the page's own box (F15).
+func restoreAgainWords(msg string) string {
+	return strings.Replace(msg, "Confirm it again,", restoreAgainRemedy, 1)
+}
 
 // heldRestore is a restore planned on the current archive's card, awaiting Restore.
 type heldRestore struct {
@@ -183,13 +194,19 @@ func (d *dashboard) restoreProfilesAction(w http.ResponseWriter, r *http.Request
 		}
 	}
 	def, hasDef := list.Default(backsUp, source)
-	if !hasDef {
+	// Friction P1 (settled 2026-11-07): a profile a restore cannot go into now (no Local
+	// Folders, the maildir store) is listed with its reason, not offered, never pre-selected.
+	if !hasDef || list.Profiles[def].NotReady != "" {
 		def = -1
 	}
 	profiles := make([]map[string]any, 0, len(list.Profiles))
 	for i, p := range list.Profiles {
-		profiles = append(profiles, map[string]any{"position": i, "name": p.Name, "dir": p.Dir, "usable": p.Usable,
-			"unusable": p.Unusable, "opensByDefault": p.OpensByDefault, "backedUp": backsUp(p.Dir)})
+		why := p.Unusable
+		if p.Usable {
+			why = p.NotReady
+		}
+		profiles = append(profiles, map[string]any{"position": i, "name": p.Name, "dir": p.Dir, "usable": p.Usable && p.NotReady == "",
+			"unusable": why, "opensByDefault": p.OpensByDefault, "backedUp": backsUp(p.Dir)})
 	}
 	writeJSON(w, map[string]any{"ok": true, "listID": list.ID, "profiles": profiles, "default": def})
 }
@@ -316,11 +333,11 @@ func (d *dashboard) restoreStartAction(w http.ResponseWriter, r *http.Request) {
 	p := it.restorePlan.plan
 	start := tbengine.Start{NotEncryptedOK: in.NotEncryptedOK, ConfirmAgain: in.ConfirmAgain}
 	if err := p.Confirmed(start); err != nil {
-		need := "again"
+		need, msg := "again", restoreAgainWords(restoreWords(err, restoreStartFailText))
 		if tbrestore.RefusalCode(err) == "W-TICK" {
-			need = "tick"
+			need, msg = "tick", restoreWords(err, restoreStartFailText)
 		}
-		writeJSON(w, map[string]any{"ok": false, "error": restoreWords(err, restoreStartFailText), "need": need})
+		writeJSON(w, map[string]any{"ok": false, "error": msg, "need": need})
 		return
 	}
 	if it = d.pending.take(in.Token, isRestorePlan); it == nil {

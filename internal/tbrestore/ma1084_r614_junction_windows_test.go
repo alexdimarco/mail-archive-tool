@@ -5,6 +5,7 @@ package tbrestore
 import (
 	"os/exec"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"mail-archive-tool/internal/assure"
@@ -47,4 +48,9 @@ func TestAJunctionOnTheWayToAProfile(t *testing.T) {
 	writeFile(t, filepath.Join(base, ProfilesININame), "[Profile0]\nName=Moved\nIsRelative=0\nPath="+filepath.Join(j2, "p.default")+"\n")
 	list, err := ReadProfiles([]string{base})
 	assure.Reached(t, err == nil && len(list.Profiles) == 1 && !list.Profiles[0].Usable, "a listed profile through such a junction is listed, not usable")
+	// Friction F14 (settled 2026-11-07): the list's words say why, and not that a restore was
+	// tried or that a path can be given (Desktop has no way to give one).
+	why := list.Profiles[0].Unusable
+	assure.Reached(t, strings.Contains(why, "folder link (a junction)") && !strings.Contains(why, "nothing was restored") && !strings.Contains(why, "Check again") && !strings.Contains(why, "choose it by that path"),
+		"the listed junction's words: "+why)
 }

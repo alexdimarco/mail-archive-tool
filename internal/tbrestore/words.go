@@ -10,7 +10,7 @@ const (
 	wLongPath    = "N folders are nested too deep for Windows to hold under this profile, so they are not restored: FOLDERS."
 	wLongPathAll = "Thunderbird's Local Folders (PATH) is so deep in its drive that Windows cannot hold a restored folder under it, so nothing was restored. Choose a profile whose Local Folders is nearer the top of its drive."
 
-	wDone      = "Restored N messages into Thunderbird as the folder 'TOP' under Local Folders. Open Thunderbird to see it; the first time, it may take a minute to show every message. MailArchive checked every message it wrote."
+	wDone      = "Restored N into Thunderbird as the folder 'TOP' under Local Folders. Open Thunderbird to see it; the first time, it may take a minute to show every message. MailArchive checked every message it wrote."
 	wCheckFail = "After writing, MailArchive checked every message, and FILE (the folder FOLDER) was missing or changed — often antivirus moving a file it flagged. Nothing was added to Thunderbird. Look in your antivirus's quarantine, or leave that folder out, then try again."
 	// wCheckFailEnc is W-CHECKFAIL for an encrypted archive: no file or folder named (N7).
 	wCheckFailEnc = "After writing, MailArchive checked every message, and one of the restored files (in one of the folders) was missing or changed — often antivirus moving a file it flagged. Nothing was added to Thunderbird. Look in your antivirus's quarantine, or leave that folder out, then try again."

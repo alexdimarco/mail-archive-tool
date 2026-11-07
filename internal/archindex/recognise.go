@@ -387,45 +387,72 @@ func (s *scanner) hold(c byte, depth, max int) (held []byte, over bool, err erro
 // kind, as a LoadFrom of the same bytes would give it (kindFrom over its stores), or why it is not
 // a manifest this build reads.
 func scanManifest(r io.Reader) (string, error) {
+	_, kind, err := scanStores(r)
+	return kind, err
+}
+
+// scanStores is scanManifest with the stores it kept (nil when it is not a manifest this
+// build reads), so the Outlook-only verdict is drawn from the same walk.
+func scanStores(r io.Reader) (map[string]string, string, error) {
 	src := &capReader{r: r}
 	s := &scanner{r: bufio.NewReaderSize(src, 64<<10)}
 	c, err := s.wsOrEOF()
 	switch {
 	case err == io.EOF && src.n == 0:
-		return kindFrom(nil), nil // a zero-byte manifest: LoadFrom reads an empty one
+		return nil, kindFrom(nil), nil // a zero-byte manifest: LoadFrom reads an empty one
 	case err == io.EOF:
-		return "", errManifestShape // white space only does not parse
+		return nil, "", errManifestShape // white space only does not parse
 	case err != nil:
-		return "", err
+		return nil, "", err
 	}
 	var stores map[string]string
 	version := 0
 	switch c {
 	case 'n': // null: LoadFrom reads an empty manifest
 		if err := s.lit("ull"); err != nil {
-			return "", err
+			return nil, "", err
 		}
 	case '{':
 		if stores, version, err = s.manifest(); err != nil {
-			return "", err
+			return nil, "", err
 		}
 	default:
-		return "", errManifestShape
+		return nil, "", errManifestShape
 	}
 	// Nothing but white space may follow (json.Unmarshal's rule).
 	if _, err := s.wsOrEOF(); err != io.EOF {
 		if err == nil {
 			err = errManifestShape
 		}
-		return "", err
+		return nil, "", err
 	}
 	if src.n > manifestCap {
-		return "", errManifestTooLarge
+		return nil, "", errManifestTooLarge
 	}
 	if version > state.ManifestVersion {
-		return "", &state.NewerFormatError{Name: manifestName, Version: version, Understood: state.ManifestVersion}
+		return nil, "", &state.NewerFormatError{Name: manifestName, Version: version, Understood: state.ManifestVersion}
 	}
-	return kindFrom(stores), nil
+	return stores, kindFrom(stores), nil
+}
+
+// outlookFrom reports an archive every one of whose stores, read as kindFrom reads them, is
+// an Outlook data file (a .pst or .ost, or -outlook's own export): none of its mail has an
+// original message to go back into Thunderbird (Restore to Thunderbird's W-PST; friction
+// P4, settled 2026-11-07). No store at all is not Outlook-only.
+func outlookFrom(stores map[string]string) bool {
+	n := 0
+	for id, tok := range stores {
+		if !state.SafeToken(tok) {
+			continue
+		}
+		switch state.SourceKind(state.SnapshotStoreID(id)) {
+		case state.SourcePST, state.SourceOutlookScratch:
+			n++
+		default:
+			return false
+		}
+	}
+	return n > 0
 }
 
 // manifest walks the manifest object's members after its "{", through its "}". Names match as
@@ -618,6 +645,7 @@ type recognised struct {
 	dir, man os.FileInfo
 	kind     string
 	ok       bool
+	outlook  bool // every store an Outlook data file (outlookFrom)
 }
 
 // recognisedMax bounds what is kept: far more archives than a person keeps.

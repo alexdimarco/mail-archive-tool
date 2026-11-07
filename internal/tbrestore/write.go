@@ -570,11 +570,33 @@ func (w *writer) commit(top string) *WriteResult {
 		w.res.AfterErr = err
 	}
 	w.res.Outcome = OutDone
-	w.res.Words = fill(wDone, "N", itoa(w.res.Restored), "TOP", top)
+	w.res.Words = doneWords(w.res.Restored, top)
 	if w.res.AfterErr != nil {
 		w.res.Words += " (MailArchive met an error after the folder was complete: " + w.why(w.res.AfterErr) + ".)"
 	}
 	return w.res
+}
+
+// doneWords are W-DONE for n messages restored as top: the count grouped ("15,000") and
+// "1 message" for one (friction F13, settled 2026-11-07: the plan and the progress group
+// digits, so the result does too).
+func doneWords(n int, top string) string {
+	return fill(wDone, "N", Count(n, "message"), "TOP", top)
+}
+
+// Count is n with thousands separators and its noun, singular for one ("1 message",
+// "15,000 messages").
+func Count(n int, noun string) string {
+	s := itoa(n)
+	if n >= 0 {
+		for i := len(s) - 3; i > 0; i -= 3 {
+			s = s[:i] + "," + s[i:]
+		}
+	}
+	if n == 1 {
+		return s + " " + noun
+	}
+	return s + " " + noun + "s"
 }
 
 func showsWord(kind, shows string) string {

@@ -181,7 +181,7 @@ var optionalJSIDs = map[string]bool{"clearSignin": true, "editM365": true, "canc
 	// the Restore to Thunderbird card (design-restore-thunderbird §7.3, slice R7) is drawn only with a
 	// current archive (OutDir); every lookup of its ids is null-checked, and
 	// TestTheRestoreCardIsServedWithItsSteps (MA-1131) requires each of them on an archive's page
-	"rtbAgain": true, "rtbAgainBox": true, "rtbAgainWhy": true, "rtbBtn": true, "rtbCheck": true, "rtbChoose": true,
+	"rtbAgain": true, "rtbAgainBox": true, "rtbAgainWhy": true, "rtbBack": true, "rtbBtn": true, "rtbCheck": true, "rtbChoose": true,
 	"rtbDone": true, "rtbGo": true, "rtbNote": true, "rtbPanel": true, "rtbPlan": true, "rtbPlanStep": true,
 	"rtbProfiles": true, "rtbProfileStep": true, "rtbProgress": true, "rtbRecordNote": true, "rtbResult": true,
 	"rtbResultStep": true, "rtbRunStep": true, "rtbSave": true, "rtbStop": true, "rtbTick": true, "rtbTickBox": true,

@@ -221,7 +221,8 @@ function restoreCard() {
     el('div', { id: 'rtbPanel', hidden: '' },
       el('div', { id: 'rtbProfileStep', hidden: '' }, st(), el('div', { id: 'rtbProfiles' })),
       el('div', { id: 'rtbWhatStep', hidden: '' }, st(), radio('rtbWhole', 'whole', true), radio('rtbChoose', 'choose', false), el('div', { id: 'rtbTree', hidden: '' }),
-        el('button', { class: 'btn', id: 'rtbCheck', type: 'button' }, 'Check'), el('button', { class: 'btn secondary', id: 'rtbClose', type: 'button' }, 'Cancel')),
+        el('button', { class: 'btn', id: 'rtbCheck', type: 'button' }, 'Check'), el('button', { class: 'btn secondary', id: 'rtbBack', type: 'button', hidden: '' }, 'Change profile'),
+        el('button', { class: 'btn secondary', id: 'rtbClose', type: 'button' }, 'Cancel')),
       el('div', { id: 'rtbPlanStep', hidden: '' }, st(), el('ul', { id: 'rtbPlan' }), el('div', { id: 'rtbTickBox', hidden: '' }, el('input', { type: 'checkbox', id: 'rtbTick' })),
         el('div', { id: 'rtbAgainBox', hidden: '' }, el('p', { id: 'rtbAgainWhy' }), el('input', { type: 'checkbox', id: 'rtbAgain' })),
         el('button', { class: 'btn', id: 'rtbGo', type: 'button' }, 'Restore'), el('button', { class: 'btn secondary', id: 'rtbPlanCancel', type: 'button' }, 'Cancel')),
@@ -254,12 +255,15 @@ const posts = [], gets = [], scrolled = [], scrolledTop = [], scrollOpts = [], b
 let reloads = 0, reduceMotion = false, storageOff = false;
 const loadListeners = [];
 const replies = {}, delays = {};
+const NOANSWER = Symbol('no answer');
 const store = {};
 function fetchStub(path, opts) {
   const body = opts && opts.body ? JSON.parse(opts.body) : null;
   if (opts && opts.method === 'POST') posts.push({ path, body }); else gets.push(path);
   const r = typeof replies[path] === 'function' ? replies[path](body) : (replies[path] || { ok: true });
   const ms = typeof delays[path] === 'function' ? delays[path](body) : (delays[path] || 0);
+  // NOANSWER: the server is gone (killed, crashed): the fetch fails, as a browser's does.
+  if (r === NOANSWER) return new Promise((res, rej) => setTimeout(() => rej(new TypeError('Failed to fetch')), ms));
   return new Promise(res => setTimeout(() => res({ json: () => Promise.resolve(r), status: 200 }), ms));
 }
 // boot runs the page script on the page as drawn, as a tab loading it would (a reload is a new
@@ -1398,6 +1402,84 @@ const scenarios = {
     replies['api/restore-tb/profiles'] = { ok: false, error: nop };
     btn.click(); await wait(40);
     check(doc.getElementById('rtbPanel').hidden && doc.getElementById('rtbNote').textContent === nop && !doc.getElementById('rtbNote').hidden && !btn.disabled, 'a refusal before any step is said beside the button, no panel opened');
+  },
+  // The R7 friction review's proposals, settled 2026-11-07 (MA-1131; the lead's calls and words):
+  // P1 Change profile from what to restore back to the list, the profile chosen still ticked and
+  // the keyboard on it, offered only when there was a choice; P6 a ticked folder ticks its
+  // subfolders and they cannot be unticked alone, and only the folder is sent; F13 the tree groups
+  // its counts; P3 Shut down's confirmation names a running restore (and not when none runs), and
+  // a restore that ends while the keyboard is on Confirm shut down leaves it there; P2 when
+  // MailArchive Desktop stops answering, the run step says so instead of a frozen counter, and
+  // says the progress again when it answers.
+  async restoreFriction() {
+    page([['E:\\Cur', 'current']], 'E:\\Cur'); restoreCard();
+    doc.body.append(el('button', { class: 'btn secondary', id: 'shutdownBtn', type: 'button' }, 'Shut down'), el('div', { class: 'note', id: 'shutdownNote', hidden: '' }));
+    replies['api/activity'] = { running: false, job: '0' };
+    boot(); await wait(30);
+    const sd = doc.getElementById('shutdownBtn'), sn = doc.getElementById('shutdownNote');
+    sd.click(); await wait(20);
+    const plainShut = sn.textContent;
+    check(plainShut.startsWith('Click again to stop MailArchive Desktop.'), 'twin: with no restore running, Shut down says nothing of one', plainShut);
+    sd.dataset.armed = ''; sd.textContent = 'Shut down'; sn.hidden = true;
+
+    replies['api/restore-tb/profiles'] = { ok: true, listID: 'L9', default: 1, profiles: [
+      { position: 0, name: 'work', dir: 'C:\\TB\\work', usable: false, unusable: 'This profile has no Local Folders yet, so mail cannot go back into it.', opensByDefault: true, backedUp: false },
+      { position: 1, name: 'home', dir: 'C:\\TB\\home', usable: true, unusable: '', opensByDefault: false, backedUp: false }] };
+    doc.getElementById('rtbBtn').click(); await wait(40);
+    doc.getElementById('rtbNext').click(); await wait(10);
+    const back = doc.getElementById('rtbBack');
+    check(!back.hidden && doc.getElementById('rtbProfile0').disabled, 'P1: Change profile is offered on what to restore when there was a choice');
+    back.click(); await wait(10);
+    const p1 = doc.getElementById('rtbProfile1');
+    check(!doc.getElementById('rtbProfileStep').hidden && doc.getElementById('rtbWhatStep').hidden && doc.activeElement === p1 && p1.checked &&
+      statusOf('rtbProfileStep') === 'Choose the Thunderbird profile to restore into, then click Next.', 'P1: Change profile goes back to the list, the profile chosen ticked with the keyboard on it', statusOf('rtbProfileStep'));
+    doc.getElementById('rtbNext').click(); await wait(10);
+
+    replies['api/restore-tb/folders'] = { ok: true, total: 15001, folders: [{ id: 'm', parent: '', name: 'Mail', store: true, count: 0, total: 15001 },
+      { id: 'm/P', parent: 'm', name: 'Projects', store: false, count: 15000, total: 15001 }, { id: 'm/P/Q', parent: 'm/P', name: 'Plans', store: false, count: 1, total: 1 }] };
+    const ch = doc.getElementById('rtbChoose'); ch.checked = true; ch.fire('change'); await wait(40);
+    const boxes = doc.querySelectorAll('[data-rtb-folder]');
+    check(doc.getElementById('rtbTree').textContent.includes('Projects (15,001)') && doc.getElementById('rtbTree').textContent.includes('Mail (15,001)'), 'F13: the tree groups its counts', doc.getElementById('rtbTree').textContent);
+    boxes[1].checked = true; boxes[1].fire('change');
+    const ticked = boxes[2].checked && boxes[2].disabled;
+    replies['api/restore-tb/plan'] = { ok: false, error: 'stop here' };
+    doc.getElementById('rtbCheck').click(); await wait(30);
+    const sent = posts.filter(p => p.path === 'api/restore-tb/plan').pop();
+    boxes[1].checked = false; boxes[1].fire('change');
+    check(ticked && sent.body.folders.join() === 'm/P' && !boxes[2].checked && !boxes[2].disabled,
+      'P6: a ticked folder ticks its subfolder, which cannot be unticked alone; only the folder is sent; unticking gives it back', JSON.stringify(sent.body));
+    boxes[1].checked = true; boxes[1].fire('change');
+
+    let phase = 'run';
+    replies['api/restore-tb/plan'] = { ok: true, token: 'T9', encrypted: false, askTwice: false, lines: [{ code: 'W-WAIT', words: rtbWords.wait }] };
+    replies['api/restore-tb/start'] = { ok: true, job: '7', wait: rtbWords.wait, encrypted: false };
+    replies['api/activity'] = () => phase === 'down' ? NOANSWER : (phase === 'run' ? { running: true, job: '7', restore: { running: true, wait: rtbWords.wait, line: 'Restoring: 1 of 15,001 messages (Projects)' } }
+      : { running: false, job: '7', restore: { running: false, result: { words: 'Restored 15,001 messages into Thunderbird.', done: true, stopped: false, record: 'r', recordName: 'rec.txt' } } });
+    doc.getElementById('rtbCheck').click(); await wait(40);
+    doc.getElementById('rtbGo').click(); await wait(10);
+    await untilTrue(() => doc.getElementById('rtbProgress').textContent === 'Restoring: 1 of 15,001 messages (Projects)');
+    sd.click(); await wait(20);
+    check(sn.textContent.startsWith('A restore into Thunderbird is running: shutting down stops it, and nothing is added to Thunderbird. Click again to stop MailArchive Desktop.'),
+      'P3: Shut down\'s confirmation names the running restore and what Shut down does to it', sn.textContent);
+
+    const notAnswering = 'MailArchive Desktop is not answering — the restore may have stopped. Restart MailArchive Desktop to see what happened.';
+    phase = 'down';
+    const said = await untilTrue(() => doc.getElementById('rtbProgress').textContent === notAnswering && statusOf('rtbRunStep') === notAnswering, 2000);
+    check(said && !doc.getElementById('rtbRunStep').hidden, 'P2: when MailArchive Desktop stops answering, the run step says so instead of a frozen counter', doc.getElementById('rtbProgress').textContent);
+    phase = 'run';
+    const back2 = await untilTrue(() => doc.getElementById('rtbProgress').textContent === 'Restoring: 1 of 15,001 messages (Projects)' && statusOf('rtbRunStep') === rtbWords.run, 2000);
+    check(back2, 'P2: when it answers again, the progress is said again');
+
+    sd.focus(); phase = 'done';
+    const ended = await untilTrue(() => !doc.getElementById('rtbResultStep').hidden, 2000);
+    check(ended && doc.activeElement === sd && statusOf('rtbResultStep') === rtbWords.done, 'P3: a restore that ends while the keyboard is on Confirm shut down leaves it there, its result said', JSON.stringify({ a: doc.activeElement && doc.activeElement.id }));
+
+    reset(); page([['E:\\Cur', 'current']], 'E:\\Cur'); restoreCard();
+    replies['api/activity'] = { running: false, job: '0' };
+    boot(); await wait(30);
+    replies['api/restore-tb/profiles'] = { ok: true, listID: 'L10', default: 0, profiles: [{ position: 0, name: 'only', dir: 'C:\\TB\\o', usable: true, unusable: '', opensByDefault: true, backedUp: false }] };
+    doc.getElementById('rtbBtn').click(); await wait(40);
+    check(!doc.getElementById('rtbWhatStep').hidden && doc.getElementById('rtbBack').hidden, 'P1 twin: one profile, no Change profile');
   },
 };
 

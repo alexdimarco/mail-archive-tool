@@ -13,7 +13,17 @@ const restoreTBJS = `
 // ---- Restore to Thunderbird (design-restore-thunderbird §7.3, slice R7).
 const rtbBtn=$('rtbBtn');
 // The list the server sent (its ID) and the position chosen in it: never a path (RT-15).
-let rtbList='',rtbPos=-1,rtbToken='',rtbFollowing=false,rtbRecord=null;
+let rtbList='',rtbPos=-1,rtbToken='',rtbFollowing=false,rtbRecord=null,rtbChoice=false,rtbFirstProfile=null;
+// rtbStatus says words on a step's own status line without moving the keyboard or the page
+// (a step that changes while the person is elsewhere on the page; friction P2, P3).
+function rtbStatus(id,t){const s=$(id),st=s&&s.querySelector('[data-step-status]');if(st){st.hidden=!t;st.textContent=t||'';}}
+// rtbHere: the keyboard is in the card, or nowhere in particular, so a step may take it.
+function rtbHere(){const a=document.activeElement;return !a||a===document.body||!!(a.closest&&a.closest('#sec-restore-tb'));}
+// The R7 friction review, settled 2026-11-07 (the lead's words, owner-delegated).
+const rtbNotAnswering='MailArchive Desktop is not answering — the restore may have stopped. Restart MailArchive Desktop to see what happened.';
+const rtbChangeProfile='Choose the Thunderbird profile to restore into, then click Next.';
+// rtbGroup groups a count's digits ("15,000"), as the plan and the progress do (F13).
+function rtbGroup(n){return String(n).replace(/\B(?=(\d{3})+(?!\d))/g,',');}
 function rtbPost(path,body){return fetch(path,{method:'POST',headers:{'Content-Type':'application/json','X-CSRF-Token':csrf},body:JSON.stringify(body||{})}).then(r=>r.json());}
 function rtbSay(t){const n=$('rtbNote');if(n){n.hidden=!t;n.textContent=t||'';}}
 const rtbSteps=['rtbProfileStep','rtbWhatStep','rtbPlanStep','rtbRunStep','rtbResultStep'];
@@ -34,8 +44,9 @@ if(rtbBtn)rtbBtn.addEventListener('click',async()=>{
 // ticked, one that cannot be used shown with why and not offered.
 function rtbProfiles(d){
   const ps=d.profiles||[],usable=ps.filter(p=>p.usable);
-  rtbPos=d.default;
+  rtbPos=d.default;rtbChoice=false;
   if(ps.length===1&&usable.length===1){rtbPos=usable[0].position;rtbWhat();return;}
+  rtbChoice=true;
   const box=$('rtbProfiles');box.textContent='';
   let first=null;
   ps.forEach(p=>{
@@ -50,6 +61,7 @@ function rtbProfiles(d){
     if(!p.usable&&p.unusable)row.append(delEl('p',p.unusable,'card-sub'));
     box.append(row);
   });
+  rtbFirstProfile=first;
   const nx=delButton('Next','btn');nx.id='rtbNext';
   nx.addEventListener('click',()=>{if(rtbPos<0){showStep($('rtbProfileStep'),first,'Choose a profile first, then click Next.');return;}rtbWhat();});
   const cn=delButton('Cancel','btn secondary');cn.addEventListener('click',()=>rtbClose('Nothing was restored.'));
@@ -61,9 +73,18 @@ function rtbProfiles(d){
 // Step 2 (§6.5): the whole archive, or the folders ticked in the tree, loaded when asked for.
 function rtbWhat(){
   const t=$('rtbTree');if(t){t.hidden=!($('rtbChoose')&&$('rtbChoose').checked);}
+  const bk=$('rtbBack');if(bk)bk.hidden=!rtbChoice;
   rtbOnly(['rtbWhatStep']);
   showStep($('rtbWhatStep'),$('rtbWhole'),'Next, choose what to restore: the whole archive, or the folders you tick. Then click Check: nothing is written until you click Restore.');
 }
+// Change profile (friction P1): back from what to restore to the profile list, the profile
+// chosen still ticked and the keyboard on it.
+const rtbBack=$('rtbBack');
+if(rtbBack)rtbBack.addEventListener('click',()=>{
+  rtbToken='';rtbOnly(['rtbProfileStep']);
+  const on=rtbPos>=0?document.querySelector('[data-rtb-profile][value="'+rtbPos+'"]'):null;
+  showStep($('rtbProfileStep'),on||rtbFirstProfile,rtbChangeProfile);
+});
 const rtbChooseR=$('rtbChoose'),rtbWholeR=$('rtbWhole');
 if(rtbWholeR)rtbWholeR.addEventListener('change',()=>{const t=$('rtbTree');if(t)t.hidden=true;});
 if(rtbChooseR)rtbChooseR.addEventListener('change',async()=>{
@@ -80,15 +101,26 @@ if(rtbChooseR)rtbChooseR.addEventListener('change',async()=>{
     depth[f.id]=f.parent&&depth[f.parent]!==undefined?depth[f.parent]+1:0;
     const row=delEl('div'),lab=delEl('label'),c=document.createElement('input');
     row.style.paddingLeft=(depth[f.id]*1.4)+'em';
-    c.type='checkbox';c.value=f.id;c.setAttribute('data-rtb-folder','');
-    lab.append(c,' '+f.name+' ('+f.total+')');row.append(lab);t.append(row);
+    c.type='checkbox';c.value=f.id;c.setAttribute('data-rtb-folder','');if(f.parent)c.setAttribute('data-rtb-parent',f.parent);
+    c.addEventListener('change',rtbTreeSync);
+    lab.append(c,' '+f.name+' ('+rtbGroup(f.total)+')');row.append(lab);t.append(row);
   });
   showStep($('rtbWhatStep'),t.querySelector('[data-rtb-folder]')||rtbWholeR,'Tick the folders to restore; a folder brings its subfolders. The number beside each is how many messages in it and its subfolders can go back. Then click Check.');
 });
+// A ticked folder brings its subfolders (friction P6): they are shown ticked and cannot be
+// unticked on their own; unticking the folder gives them back. The tree comes parents first.
+function rtbTreeSync(){
+  const on={};
+  document.querySelectorAll('[data-rtb-folder]').forEach(c=>{
+    const p=c.getAttribute('data-rtb-parent'),under=!!(p&&on[p]);
+    if(under){c.checked=true;c.disabled=true;}else{if(c.disabled)c.checked=false;c.disabled=false;}
+    on[c.value]=under||c.checked;
+  });
+}
 const rtbCheck=$('rtbCheck');
 if(rtbCheck)rtbCheck.addEventListener('click',async()=>{
   const whole=!(rtbChooseR&&rtbChooseR.checked),folders=[];
-  document.querySelectorAll('[data-rtb-folder]').forEach(c=>{if(c.checked)folders.push(c.value);});
+  document.querySelectorAll('[data-rtb-folder]').forEach(c=>{if(c.checked&&!c.disabled)folders.push(c.value);});
   const done=busy(rtbCheck,'Checking…',null,'Checking what the restore would do; nothing is written…');
   let d=null;
   try{d=await rtbPost('api/restore-tb/plan',{listID:rtbList,position:rtbPos,whole:whole,folders:whole?[]:folders});}catch(e){d={ok:false,error:rtbUnreachable};}
@@ -137,17 +169,26 @@ function rtbRun(job,wait){
   const p=$('rtbProgress');if(p)p.textContent='Starting…';
   const st=$('rtbStop');if(st){st.hidden=false;st.disabled=false;}
   if(rtbBtn)rtbBtn.disabled=true;
-  showStep($('rtbRunStep'),st,'The restore is running. Leave Thunderbird closed until it finishes. Cancel the restore stops it, and nothing is added to Thunderbird.');
+  showStep($('rtbRunStep'),st,rtbRunWords);
   rtbFollow(job);
 }
+const rtbRunWords='The restore is running. Leave Thunderbird closed until it finishes. Cancel the restore stops it, and nothing is added to Thunderbird.';
+// Friction P2 (settled 2026-11-07): when MailArchive Desktop stops answering (killed, crashed,
+// the computer asleep), three missed asks in a row say so in place of a frozen progress line;
+// the page keeps asking, and says the progress again if it answers.
 function rtbFollow(job){
   if(rtbFollowing)return;rtbFollowing=true;
+  let missed=0;
   const ask=()=>fetch('api/activity').then(r=>r.json()).then(d=>{
+    missed=0;
     if(String(d.job||'')!==String(job)||!d.restore){rtbFollowing=false;rtbEnded({words:'The restore has ended, but another task ran after it, so how it ended is not shown here.'});return;}
     const r=d.restore,p=$('rtbProgress'),w=$('rtbWait');
-    if(r.running){if(w&&r.wait)w.textContent=r.wait;if(p)p.textContent=r.checking?(r.checkingLine||r.line):(r.line||'Starting…');setTimeout(ask,1000);return;}
+    if(r.running){if(w&&r.wait)w.textContent=r.wait;if(p)p.textContent=r.checking?(r.checkingLine||r.line):(r.line||'Starting…');rtbStatus('rtbRunStep',rtbRunWords);setTimeout(ask,1000);return;}
     rtbFollowing=false;rtbEnded(r.result||{words:r.error||'The restore ended.'});
-  }).catch(()=>setTimeout(ask,3000));
+  }).catch(()=>{
+    if(++missed>=3){const p=$('rtbProgress');if(p)p.textContent=rtbNotAnswering;rtbStatus('rtbRunStep',rtbNotAnswering);}
+    setTimeout(ask,3000);
+  });
   ask();
 }
 const rtbStop=$('rtbStop');
@@ -168,7 +209,11 @@ function rtbEnded(v){
   if(note){note.hidden=!(v.record&&v.recordNote);note.textContent=v.recordNote||'';}
   if(rtbBtn)rtbBtn.disabled=false;
   const lead=v.done?'The restore has finished.':(v.stopped?'The restore was stopped.':'The restore did not finish.');
-  showStep($('rtbResultStep'),v.record?sv:$('rtbDone'),lead+' What happened is said below.'+(v.record?' Save this record keeps a copy as a text file.':''));
+  const said=lead+' What happened is said below.'+(v.record?' Save this record keeps a copy as a text file.':'');
+  // Friction P3: a restore that ends while the keyboard is elsewhere on the page (Confirm shut
+  // down, another card) says its result in place and leaves the keyboard where it is.
+  if(rtbHere())showStep($('rtbResultStep'),v.record?sv:$('rtbDone'),said);
+  else rtbStatus('rtbResultStep',said);
 }
 const rtbSave=$('rtbSave');
 if(rtbSave)rtbSave.addEventListener('click',()=>{if(rtbRecord)delSaveFile(rtbRecord.recordName,rtbRecord.record);});

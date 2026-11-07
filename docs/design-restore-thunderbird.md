@@ -1744,6 +1744,44 @@ the copy (`pending.go:15-21`).
 >   save and by `afterSwitch`, ends it; a Lock leaves it and Start then refuses with W-LOCKED; a
 >   pending copy plan survives a restore plan.
 
+> Settled 2026-11-07 [friction P1–P9] (the R7 friction review, `docs/review-restore-thunderbird-friction.md`;
+> the lead's calls and words, owner-delegated 2026-11-02). P1–P4 are numbered as the lead's calls:
+> the review's P1+P2, P3, P4 and P5; P6–P9 are the review's own:
+> - **[P1]** The profile list says, for each profile, whether a restore can go into it now: its
+>   Local Folders and store kind are judged when the list is made, read-only, as the plan judges
+>   them (`tbrestore.ReadProfiles` → `Profile.NotReady`, `NotReadyCode`). One that cannot (no
+>   Local Folders, the maildir store, settings that cannot be read) is listed, not offered, with
+>   its reason in the list's own words (never "nothing was restored" or "click Check"), and is
+>   never pre-selected: `ProfileList.Default` chooses among the ready ones when there is one, and
+>   Desktop sends no default when the one it would give is not ready. It keeps its place and its
+>   binding, so the command line's plan still refuses it with W-NOLOCAL or W-MAILDIR. When there
+>   was a choice, the What step has **Change profile**, back to the list with the profile chosen
+>   still ticked and the keyboard on it. A listed junction's words no longer say a restore was
+>   tried or to choose it by its path (F14, `Refusal.Listed`).
+> - **[P2]** When MailArchive Desktop stops answering during a run, three missed asks in a row put
+>   "MailArchive Desktop is not answering — the restore may have stopped. Restart MailArchive
+>   Desktop to see what happened." in place of the progress line and on the step's status line; the
+>   page keeps asking and says the progress again if it answers.
+> - **[P3]** Shut down's first press, while a restore into Thunderbird runs (asked of
+>   `api/activity`), says first "A restore into Thunderbird is running: shutting down stops it, and
+>   nothing is added to Thunderbird." A restore that ends while the keyboard is elsewhere on the
+>   page says its result in place and leaves the keyboard where it is.
+> - **[P4]** An archive whose every recorded store is an Outlook data file (`archindex.OutlookOnly`,
+>   from the same walk of the manifest's stores the archive list already makes; no record read)
+>   shows the button disabled with "This archive's mail came from Outlook data files, which keep no
+>   original messages, so none of it can go back into Thunderbird." Anything else keeps the
+>   Check-time answer (W-PST, W-NORAW).
+> - **[P6]** A ticked folder ticks its subfolders, which cannot be unticked on their own; only the
+>   folder is sent. **[P8]** Each step keeps the card's heading in view (`scroll-margin-top`).
+>   **[P9 / F13]** The tree and the result group their digits ("15,000"); the result says
+>   "1 message". **[F15]** W-NOTAGAIN on the page names its own box ("Tick “Restore it there
+>   anyway” and click Restore again"); the command line keeps "Confirm it again".
+> - Not done, with the reasons, in the review's settled table: P5 as written (P4 replaces it), P7
+>   (sidebar entries), F16–F20.
+> Tests (MA-1131, MA-1084, MA-1122): `tbrestore/ma1084_friction_ready_test.go`,
+> `desktop/ma1131_friction_settle_test.go`, `archindex/ma1131_outlookonly_test.go`, the page
+> scenario `restoreFriction` (`ma1131_restore_page_test.go`).
+
 ### 7.4 The restore record
 
 - `restores.log` in MailArchive's settings folder (beside `deletions.log`,

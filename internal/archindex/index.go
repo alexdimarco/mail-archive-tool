@@ -255,14 +255,29 @@ func Kind(folder string) string {
 // and modification time (recognised), so a page load does not read a large manifest
 // again; reads of the same folder at once walk it once (walkAlone).
 func inspect(folder string) (kind string, ok bool) {
+	r := inspectAll(folder)
+	return r.kind, r.ok
+}
+
+// OutlookOnly reports a plain archive whose every store is an Outlook data file (a .pst or
+// .ost): none of its mail can go back into Thunderbird (W-PST), so Restore to Thunderbird
+// says so on its card (friction P4, settled 2026-11-07). It is the verdict inspect keeps,
+// drawn from the same walk of the manifest's stores — no record is read — and false for an
+// encrypted archive (its stores are sealed) or a folder that is not a readable archive.
+func OutlookOnly(folder string) bool {
+	r := inspectAll(folder)
+	return r.ok && r.outlook
+}
+
+func inspectAll(folder string) recognised {
 	folder = strings.TrimSpace(folder)
 	if folder == "" {
-		return "", false
+		return recognised{}
 	}
 	// An encrypted archive is an archive: listed, labelled, never greyed out as
 	// broken because its manifest is not a plaintext one (C10, phase2a §5).
 	if enc, _, _ := encmark.Here(folder); enc {
-		return KindEncrypted, true
+		return recognised{kind: KindEncrypted, ok: true}
 	}
 	key := filepath.Clean(folder)
 	// Reads of the same folder at once walk it once: a later one waits, holding no file open,
@@ -270,35 +285,37 @@ func inspect(folder string) (kind string, ok bool) {
 	defer walkAlone(key)()
 	root, err := os.OpenRoot(folder)
 	if err != nil {
-		return "", false
+		return recognised{}
 	}
 	defer root.Close()
 	f, err := util.OpenRegularFileIn(root, manifestName)
 	if err != nil {
-		return "", false
+		return recognised{}
 	}
 	defer f.Close()
 	man, err := f.Stat()
 	if err != nil {
-		return "", false
+		return recognised{}
 	}
 	dir, err := statOpen(root)
 	if err != nil {
-		return "", false
+		return recognised{}
 	}
 	if r, ok := remembered(key, dir, man); ok {
-		return r.kind, r.ok
+		return r
 	}
 	if man.Size() > manifestCap {
-		remember(key, recognised{dir: dir, man: man})
-		return "", false
+		r := recognised{dir: dir, man: man}
+		remember(key, r)
+		return r
 	}
-	kind, err = scanManifest(manifestReader(f))
+	stores, kind, err := scanStores(manifestReader(f))
 	if err != nil && readError(err) {
-		return "", false // a read that failed may pass next time: not kept
+		return recognised{} // a read that failed may pass next time: not kept
 	}
-	remember(key, recognised{dir: dir, man: man, kind: kind, ok: err == nil})
-	return kind, err == nil
+	r := recognised{dir: dir, man: man, kind: kind, ok: err == nil, outlook: err == nil && outlookFrom(stores)}
+	remember(key, r)
+	return r
 }
 
 // manifestReader is the open manifest as the walk reads it: the file itself. A var only so a test

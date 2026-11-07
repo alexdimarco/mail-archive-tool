@@ -29,6 +29,7 @@ import (
 
 	"mail-archive-tool/internal/app"
 	"mail-archive-tool/internal/archdelete"
+	"mail-archive-tool/internal/archindex"
 	"mail-archive-tool/internal/backupalert"
 	"mail-archive-tool/internal/encmark"
 	"mail-archive-tool/internal/encrecord"
@@ -1820,6 +1821,10 @@ func (cfg Config) overviewWith(csrf, epoch string, held []heldView) string {
 	}
 	if data.Encrypted && !data.EncUnlocked && !data.EncRemembered {
 		data.RestoreTBWhy = restoreLockedWhy
+	} else if !data.Encrypted && data.OutDir != "" && archindex.OutlookOnly(data.OutDir) {
+		// Friction P4 (settled 2026-11-07): an archive known from its recorded stores to be
+		// Outlook-only says so on the card, not two steps later at Check (W-PST).
+		data.RestoreTBWhy = restoreOutlookWhy
 	}
 	if data.Encrypted {
 		// The encrypted Settings card: the location, and the sync-only box with its own
@@ -1895,7 +1900,7 @@ h1{font-size:1.8rem;letter-spacing:-.02em;margin:0 0 4px}.lede{color:var(--muted
 .status-card .label{color:var(--muted);font-size:.8rem}.status-card .value{font-size:1.08rem;font-weight:800;margin-top:6px;overflow-wrap:anywhere}
 .good{color:var(--good)}.warn{color:var(--warn)}
 .card{background:var(--panel);border:1px solid var(--line);border-radius:14px;padding:19px;margin-bottom:16px}
-.card h2{font-size:1.05rem;margin:0 0 12px}.card[id],.anchor{scroll-margin-top:16px}
+.card h2{font-size:1.05rem;margin:0 0 12px}.card[id],.anchor{scroll-margin-top:16px}#rtbPanel>div{scroll-margin-top:8rem}
 .row{display:grid;grid-template-columns:180px minmax(0,1fr);gap:12px;padding:8px 0;border-bottom:1px solid var(--line)}
 .row:last-child{border-bottom:0}.row .k{color:var(--muted);font-size:.85rem}.row .v{font-weight:650;overflow-wrap:anywhere}
 .sec li{margin:8px 0;line-height:1.45}.sec b{color:var(--text)}
@@ -2322,7 +2327,7 @@ pre{white-space:pre-wrap;overflow-wrap:anywhere;background:var(--bg);border:1px 
           <div><label><input type="radio" name="rtbWhat" id="rtbWhole" value="whole" checked> The whole archive</label></div>
           <div><label><input type="radio" name="rtbWhat" id="rtbChoose" value="choose"> Choose folders</label></div>
           <div id="rtbTree" hidden></div>
-          <div style="margin-top:10px"><button class="btn" id="rtbCheck" type="button">Check</button> <button class="btn secondary" id="rtbClose" type="button">Cancel</button></div>
+          <div style="margin-top:10px"><button class="btn" id="rtbCheck" type="button">Check</button> <button class="btn secondary" id="rtbBack" type="button" hidden>Change profile</button> <button class="btn secondary" id="rtbClose" type="button">Cancel</button></div>
         </div>
         <div id="rtbPlanStep" hidden><p class="card-sub" role="status" data-step-status hidden></p>
           <ul id="rtbPlan"></ul>
@@ -2508,7 +2513,11 @@ if(ab)ab.addEventListener('click',async()=>{
 const sd=$('shutdownBtn');
 if(sd)sd.addEventListener('click',async()=>{
   const n=$('shutdownNote');
-  if(sd.dataset.armed!=='1'){sd.dataset.armed='1';sd.textContent='Confirm shut down';if(n){n.hidden=false;n.textContent='Click again to stop MailArchive Desktop. You can reopen it any time; your archives and schedules are untouched.';}return;}
+  if(sd.dataset.armed!=='1'){sd.dataset.armed='1';sd.textContent='Confirm shut down';
+    // Friction P3 (settled 2026-11-07): a running restore into Thunderbird is named, with what
+    // Shut down does to it (the Lock reply's words).
+    let rtb=false;try{const a=await(await fetch('api/activity')).json();rtb=!!(a&&a.restore&&a.restore.running);}catch(e){}
+    if(n){n.hidden=false;n.textContent=(rtb?'A restore into Thunderbird is running: shutting down stops it, and nothing is added to Thunderbird. ':'')+'Click again to stop MailArchive Desktop. You can reopen it any time; your archives and schedules are untouched.';}return;}
   const done=busy(sd,'Shutting down…',n,'Stopping MailArchive Desktop…');
   const stopped=()=>{document.body.innerHTML='<div style="max-width:40rem;margin:4rem auto;text-align:center"><h1>MailArchive Desktop has stopped.</h1><p>You can close this tab. Your archives and schedules are untouched — reopen MailArchive any time.</p></div>';};
   try{const d=await(await post('api/shutdown')).json();

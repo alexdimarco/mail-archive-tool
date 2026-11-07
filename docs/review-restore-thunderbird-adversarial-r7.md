@@ -220,3 +220,21 @@ shown red against `82d2852` and green after the fix, then a fresh look at the pa
 R6-01's settle and has a choice in it (make the folder owner-only at birth, or ask twice when
 Local Folders lets others in): the lead's call. The friction review of the Desktop flow and the
 X-series walk are still owed, separately.
+
+## Settled 2026-11-07 (the lead's calls)
+
+Settled by one agent (Claude, Opus 5.5), the same model that ran this pass; the fresh look this
+pass asks for on R7-01's patch has **not** been done by an independent finder (see Still owed).
+
+| ID | Lead's call | What was done | Test (covers) | Prove-fail | Commit |
+|---|---|---|---|---|---|
+| R7-01 | Private from creation; verify after; ask twice where it cannot be guaranteed; prove with a second account, 0 of 20 | Windows: one `NtCreateFile` per entry, relative to its parent through the root, `FILE_CREATE`, a protected owner-only descriptor in the call. macOS: `mkdir_extended` / `open_extended` with an empty access list flagged `KAUTH_ACL_NO_INHERIT` for what is made in Local Folders itself, then bound to the root; the rest through the root inside the non-inheriting container. Linux unchanged (0700/0600 masks a default ACL). `FS.Private` still reads each back. New ask-twice reason: a macOS drive set to ignore ownership (`OwnersIgnored`, `wReadersOwners`) | `tbengine/ma1128_r701_born_private_test.go` (each entry read the instant its create returns, others granted read, umask 0); `ma1128_r701_owners_darwin_test.go` (a real `-owners off` image) — MA-1128 | old folder create: red macOS, red Windows; no-inherit flag off: red macOS; ignore-ownership reason off: red. Survived: the descriptor without "P" (equivalent at creation; `FS.Private` sets it) | 475b0d6 |
+| R7-01 lab | — | Windows VM, temporary standard account `r8probe` (made with `net user /add`, deleted after, no profile folder left), 20 encrypted restores raced, about 5,000 opens each: **0 of 20** handles, 0 fresh reads, Thunderbird's own Trash readable 20 of 20 (twin). Against the old create: **19 of 20** won. macOS with a second account: not run (no admin rights) | lab test kept outside the tree (`.claude/r8-lab-src/`) | — | 475b0d6 (message) |
+| R7-02 | Keep the archive-lock decision held for the whole restore; test the bind case on Linux | On a read-only path the archive's lock is held through a read-only handle (`lockfile.HoldReadOnly`) from Start until `Run` returns; the read-only check and the record are re-checked under it; an archive with no lock file reads without one, and the plan says which | `tbengine/ma1127_r702_readonly_lock_test.go`: the seam everywhere; a real bind mount on Linux in Docker (`MA_RO_BIND`) — MA-1127 | the lock released right after it is taken: red (seam, macOS), red (real bind mount, Linux) | 0a6b346 |
+| R7-03 | For encrypted archives, ignore the folder's plaintext schedule and last-run files | `ArchiveSources(out, encrypted)`: for an encrypted archive only this computer's Desktop job files are read; the plan reads an encrypted archive's sources itself whatever its caller passed. The plain-archive suggestion (bind a descriptor to this archive and host) was not in the call and is not done | `tbengine/ma1124_r703_planted_sources_test.go` — MA-1124 | the files read for an encrypted archive: red; the plan trusting the caller's sources: red | 0c24ed4 |
+
+Still owed: an independent finder's look at the R7-01 patch (`create_windows.go`,
+`create_darwin.go`), as this pass asked; a macOS run with a second account; R7-02 on macOS and
+Windows (a read-only share another account writes). The macOS bind check after
+`mkdir_extended` (a folder swapped between the path create and the root's look) has no test: no
+seam reaches that window.

@@ -14,6 +14,9 @@ type Refusal struct {
 	Code  string
 	Words string
 	Err   error
+	// Listed are the words a listed profile shows for it, where they differ: the list is
+	// not a restore that was tried (friction F14, settled 2026-11-07).
+	Listed string
 }
 
 func (r *Refusal) Error() string { return r.Words }
@@ -82,8 +85,19 @@ const (
 
 // junctionRefusal is W-JUNCTION for spelled, which resolves to real outside home.
 func junctionRefusal(spelled, real, home string) error {
-	return refuse("W-JUNCTION", fill(wJunction, "PATH", spelled, "REAL", real, "HOME", home), nil)
+	return &Refusal{Code: "W-JUNCTION", Words: fill(wJunction, "PATH", spelled, "REAL", real, "HOME", home),
+		Listed: fill(wJunctionListed, "PATH", spelled, "REAL", real, "HOME", home)}
 }
+
+// The words a listed profile shows when a restore cannot go into it (friction P1 and F14,
+// settled 2026-11-07; the lead's words, owner-delegated): what is so and what to do, never
+// "nothing was restored" or "click Check", since nothing was tried.
+const (
+	wNoLocalListed  = "This profile has no Local Folders yet, so mail cannot go back into it. Thunderbird makes Local Folders when you add an account: open Thunderbird with this profile, click the menu button (≡, top right), then Add Account. Then close Thunderbird and click Restore to Thunderbird… again."
+	wMaildirListed  = "This profile keeps each message in its own file (the 'maildir' setting), and MailArchive can restore only into the usual one-file-per-folder kind."
+	wNotReadyListed = "MailArchive could not read this profile's settings, so it cannot restore into it. Open Thunderbird once with this profile and close it, then click Restore to Thunderbird… again."
+	wJunctionListed = "PATH is reached through a folder link (a junction) that leads to REAL, outside your own user folder (HOME). MailArchive writes only into a Thunderbird folder it reaches directly or inside your own user folder, so it does not restore into this profile."
+)
 
 // RestoringRefusal is W-RESTORING, for the plan that finds the restore lock held
 // (RestoreLockHeld) before it takes anything (slice R6's engine).

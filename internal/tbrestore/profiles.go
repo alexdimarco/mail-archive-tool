@@ -32,6 +32,13 @@ type Profile struct {
 	// (W-PROFMODE, §3.1 step 3 note): it is shown, never written into.
 	Usable   bool
 	Unusable string
+	// NotReady says, in the list's own words, why a usable profile cannot take a restore
+	// now (NotReadyCode: W-NOLOCAL, W-MAILDIR, …): its Local Folders and store kind,
+	// judged read-only when the list is made (settled 2026-11-07 [friction P1]). "" when it
+	// can. Such a profile keeps its place and binding; the default never picks it while
+	// another can, and the plan still refuses it with its own words.
+	NotReady     string
+	NotReadyCode string
 	// Identity pins Dir between the plan and the start.
 	Identity Identity
 }
@@ -94,7 +101,10 @@ func ReadProfiles(bases []string) (*ProfileList, error) {
 				continue // not there, or no prefs.js: not a profile, not offered
 			}
 			if RefusalCode(jerr) == "W-JUNCTION" {
-				p.Usable, p.Unusable = false, jerr.Error() // R6-14: listed, never written into
+				p.Usable, p.Unusable = false, listedWords(jerr) // R6-14: listed, never written into
+			}
+			if p.Usable {
+				p.NotReadyCode, p.NotReady = readiness(dir)
 			}
 			seen[dir] = true
 			p.Name = shownName(s.Name)
@@ -105,6 +115,41 @@ func ReadProfiles(bases []string) (*ProfileList, error) {
 	}
 	l.ID = listID(l.Profiles)
 	return l, nil
+}
+
+// readiness is whether a restore can go into the profile at dir now, judged read-only as
+// the plan judges it (ReadPrefs, FindLocalFolders, CheckStoreKind): "" when it can, else
+// the refusal's code and the words the list shows (friction P1).
+func readiness(dir string) (code, words string) {
+	prefs, err := ReadPrefs(dir)
+	if err == nil {
+		var lf LocalFolders
+		if lf, err = FindLocalFolders(dir, prefs); err == nil {
+			err = CheckStoreKind(prefs, lf)
+		}
+	}
+	if err == nil {
+		return "", ""
+	}
+	switch code = RefusalCode(err); code {
+	case "W-NOLOCAL":
+		return code, wNoLocalListed
+	case "W-MAILDIR":
+		return code, wMaildirListed
+	case "":
+		return "W-PREFS", wNotReadyListed
+	}
+	return code, err.Error()
+}
+
+// listedWords are a refusal's words as a listed profile shows them (Refusal.Listed when
+// it has its own, F14), else its words.
+func listedWords(err error) string {
+	var r *Refusal
+	if errors.As(err, &r) && r.Listed != "" {
+		return r.Listed
+	}
+	return err.Error()
 }
 
 // iniPath is a profiles.ini path value as a folder: relative values are joined to the
@@ -278,6 +323,17 @@ func (l *ProfileList) Usable() []int {
 	return out
 }
 
+// Ready are the positions of the usable profiles that can take a restore now (NotReady "").
+func (l *ProfileList) Ready() []int {
+	var out []int
+	for i, p := range l.Profiles {
+		if p.Usable && p.NotReady == "" {
+			out = append(out, i)
+		}
+	}
+	return out
+}
+
 // Default picks the profile pre-selected for the person (§3.1 step 4 as folded,
 // RT-10). backsUp reports whether the archive backs up a profile folder (an input of
 // one of its jobs lies inside it); source is the profile the archive's own Thunderbird
@@ -287,7 +343,12 @@ func (l *ProfileList) Usable() []int {
 // one Thunderbird opens, then Default=1, then — when there is only one usable — that
 // one. ok is false when the person must choose (or none is usable).
 func (l *ProfileList) Default(backsUp func(dir string) bool, source string) (pos int, ok bool) {
-	usable := l.Usable()
+	// Friction P1: only the profiles that can take a restore now are chosen from, when
+	// there is one; with none, the usable ones as before (the plan then says why).
+	usable := l.Ready()
+	if len(usable) == 0 {
+		usable = l.Usable()
+	}
 	if len(usable) == 0 {
 		return -1, false
 	}

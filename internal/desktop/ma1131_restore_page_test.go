@@ -33,6 +33,20 @@ func TestTheRestorePageAsksForTheTickAndTheSecondYes(t *testing.T) {
 }
 
 // covers: MA-1131, R40
+// The R7 friction review's proposals as settled 2026-11-07 (the lead's calls): Change profile
+// from what to restore back to the list (P1; only when there was a choice); a ticked folder
+// ticks its subfolders (P6) and the tree groups its counts (F13); Shut down's confirmation names
+// a running restore, and a restore that ends while the keyboard is on Confirm shut down leaves
+// it there (P3); MailArchive Desktop not answering is said in place of a frozen counter (P2).
+// Positive twins: Shut down with no restore running says nothing of one; one profile offers no
+// Change profile.
+func TestTheRestorePageSettlesTheFrictionReview(t *testing.T) {
+	if passed := runPageScenario(t, "restoreFriction"); len(passed) != 10 {
+		t.Errorf("the restoreFriction scenario passed %d of its 10 checks: %v", len(passed), passed)
+	}
+}
+
+// covers: MA-1131, R40
 // A page drawn while a restore runs follows it; Cancel the restore asks the job slot to stop and
 // the stopped result is said; Close gives the keyboard back to Restore to Thunderbird…; a plan the
 // server no longer holds goes back to Check; a refusal before any step is said beside the button.

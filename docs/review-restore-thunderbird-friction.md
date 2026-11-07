@@ -146,6 +146,37 @@ not take the keyboard · P5 say "nothing restorable" at the button · P6 a ticke
 subfolders · P7 sidebar entries · P8 keep the card heading in view · P9 group digits everywhere.
 P1, P3 and P4 matter most.
 
+## Settled 2026-11-07 (the lead's calls; words the lead's, owner-delegated 2026-11-02)
+
+The lead's calls number P1–P4 differently from the proposals above: the lead's P1 is P1 + P2
+here, P2 is P3, P3 is P4, P4 is P5 (made cheaper). The table uses the numbering above.
+
+| Item | Outcome | Where | Test (covers) |
+|---|---|---|---|
+| P1 / F1 (MED) | **Done.** Each listed profile's Local Folders and store kind are judged when the list is made (read-only, as the plan does); one that cannot take a restore is listed not offered, with its reason in the list's own words, and never pre-selected (`Default` chooses among the ready ones; Desktop sends no default otherwise). It keeps its binding, so the command line still gets W-NOLOCAL / W-MAILDIR at the plan | `tbrestore/profiles.go`, `refusal.go`; `desktop/restoretb.go` | `tbrestore/ma1084_friction_ready_test.go` (MA-1084); `desktop/ma1131_friction_settle_test.go` (MA-1131) |
+| P2 / F2 (MED) | **Done.** "Change profile" on the What step when there was a choice: back to the list, the chosen profile ticked, the keyboard on it | `dashboard.go` card, `restoretbscript.go` | page scenario `restoreFriction` (MA-1131) |
+| P3 / F3 (MED) | **Done.** Three missed asks: "MailArchive Desktop is not answering — the restore may have stopped. Restart MailArchive Desktop to see what happened." in place of the counter and on the status line; the progress comes back if it answers | `restoretbscript.go` | `restoreFriction` |
+| P4 / F4 (MED) | **Done.** Shut down's first press names a running restore: "A restore into Thunderbird is running: shutting down stops it, and nothing is added to Thunderbird." (asked of `api/activity`, so a tab not following the run still says it); a restore that ends while the keyboard is elsewhere leaves it there | `dashboard.go` shut down script; `restoretbscript.go` | `restoreFriction` (with the no-restore twin) |
+| P5 / F7 (MED) | **Done as the lead's cheaper P4.** An archive whose every recorded store is an Outlook data file shows the button disabled with "This archive's mail came from Outlook data files, which keep no original messages, so none of it can go back into Thunderbird." From the archive list's own walk of the manifest's stores, no record read. A no-originals archive (W-NORAW) still learns it at Check: telling it needs the per-record reads the lead ruled out at page load | `archindex/index.go`, `recognise.go`; `dashboard.go` | `archindex/ma1131_outlookonly_test.go`; `ma1131_friction_settle_test.go` (a real backup of `testdata/support.pst`) |
+| F5, F6, F9, F12 | Fixed in the review's own commit (503eab1) | — | as listed above |
+| P6 / F8 (L) | **Done.** A ticked folder ticks and disables its subfolders; only the folder is sent | `restoretbscript.go` | `restoreFriction` |
+| P7 / F10 (L) | **Recorded, not done.** A sidebar entry touches the sidebar for every card (and its nav tests); no cheap change. The card stays reachable from the page | — | — |
+| P8 / F11 (L) | **Done.** `scroll-margin-top: 8rem` on the steps keeps the card's heading in view. Not walked on Edge again for the exact offset | `dashboard.go` style | not pinned by a test (a style) |
+| P9 / F13 (L) | **Done.** The tree and the result group digits; the result says "1 message" | `tbrestore/write.go`, `words.go`; `restoretbscript.go` | `TestTheResultGroupsItsCount` (MA-1122); `restoreFriction` |
+| F14 (L) | **Done.** A listed junction's words say what is so, not that a restore was tried or to choose it by its path (`Refusal.Listed`) | `tbrestore/refusal.go`, `profiles.go` | `ma1084_r614_junction_windows_test.go` (Windows) |
+| F15 (L) | **Done.** On the page W-NOTAGAIN says "Tick “Restore it there anyway” and click Restore again"; the command line keeps "Confirm it again" (it asks there) | `desktop/restoretb.go` | `ma1131_friction_settle_test.go` |
+| F16 (L) | **Recorded, not done.** The W-UNFINISHED notice is per profile; hiding it after a restore would hide another profile's too. The Restore button after a Lock is refused at Start (W-LOCKED) in place | — | — |
+| F17 (L) | **Recorded.** The plan of chosen folders gives counts; naming them for a plain archive is a plan-words change for its own pass | — | — |
+| F18 (L) | **Recorded.** The next name is chosen before the earlier leftover is removed; harmless, and the plan says which name | — | — |
+| F19 (L) | **Recorded.** W-NOPROF's "click Restore to Thunderbird again" at a terminal: one shared word; rare at a terminal | — | — |
+| F20 (L) | **Recorded.** KiB/MiB come from the shared size formatter used by every card; a change there is its own pass | — | — |
+| F21 (L, Type I) | No change (§5.1's safe direction) | — | — |
+
+Prove-fail → prove-pass (each red, then green restored): the default ignoring readiness; the
+profiles route offering a not-ready profile; the Outlook-only verdict off; Change profile never
+shown; the not-answering threshold never reached; the subfolder sync a no-op; the tree's counts
+ungrouped; the end of a run always taking the keyboard; Shut down not asking whether a restore runs.
+
 ## X-series walk
 
 | X | Seen | Note |
