@@ -17,18 +17,26 @@ func dirIdentity(path string) (Identity, error) {
 		return Identity{}, err
 	}
 	defer f.Close()
-	h := windows.Handle(f.Fd())
+	id, err := openIdentity(f)
+	if err != nil {
+		return id, err
+	}
+	fsName := make([]uint16, 64)
+	if windows.GetVolumeInformationByHandle(windows.Handle(f.Fd()), nil, 0, nil, nil, nil, &fsName[0], uint32(len(fsName))) == nil {
+		id.FSType = windows.UTF16ToString(fsName)
+	}
+	return id, nil
+}
+
+// openIdentity is the identity of an open file or folder, from its handle.
+func openIdentity(f *os.File) (Identity, error) {
 	var info windows.ByHandleFileInformation
-	if err := windows.GetFileInformationByHandle(h, &info); err != nil {
+	if err := windows.GetFileInformationByHandle(windows.Handle(f.Fd()), &info); err != nil {
 		return Identity{}, err
 	}
 	id := Identity{Volume: uint64(info.VolumeSerialNumber), FileID: uint64(info.FileIndexHigh)<<32 | uint64(info.FileIndexLow)}
 	if id.Volume == 0 && id.FileID == 0 {
 		return id, errNoIdentity
-	}
-	fsName := make([]uint16, 64)
-	if windows.GetVolumeInformationByHandle(h, nil, 0, nil, nil, nil, &fsName[0], uint32(len(fsName))) == nil {
-		id.FSType = windows.UTF16ToString(fsName)
 	}
 	return id, nil
 }

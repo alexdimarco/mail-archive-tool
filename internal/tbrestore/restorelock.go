@@ -29,6 +29,10 @@ func LogPath() (string, error) {
 	return filepath.Join(d, LogName), nil
 }
 
+// ProfileKeyOf is thunderbird.ProfileKey: the key restores.log, the marker and the
+// restore lock all name a profile by.
+func ProfileKeyOf(profileDir string) string { return thunderbird.ProfileKey(profileDir) }
+
 // RestoreLock is the MailArchive restore lock of one profile (design §5.2 note item 3).
 type RestoreLock struct{ l *lockfile.Lock }
 

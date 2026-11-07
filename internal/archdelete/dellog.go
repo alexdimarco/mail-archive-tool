@@ -7,7 +7,6 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"io/fs"
 	"os"
 	"path/filepath"
 	"runtime"
@@ -147,78 +146,23 @@ var errLogFull = errors.New("the deletion log is as large as MailArchive reads")
 // appendLog appends one line to the log at path and flushes it to disk before
 // returning (§5.3 step 0 "append and fsync"): owner-only (0600, as util's secure
 // files are, an existing file made so), never through a link, never a file other
-// than a regular one.
+// than a regular one, a torn last line kept apart (del-s1b-A2-05). The discipline is
+// util.AppendLogLine, shared with the restore record (design-restore-thunderbird §7.4
+// foldcheck note, slice R4); this log's own rule is its cap.
 func appendLog(path string, l logLine) error {
 	data, err := json.Marshal(l)
 	if err != nil {
 		return err
 	}
-	data = append(data, '\n')
-	dir := filepath.Dir(path)
-	if err := os.MkdirAll(dir, 0o700); err != nil {
-		return err
-	}
-	_, statErr := os.Lstat(path)
-	if statErr == nil {
-		if fi, _ := os.Lstat(path); !fi.Mode().IsRegular() {
-			return fmt.Errorf("%s is not a regular file", path)
-		}
-	} else if !errors.Is(statErr, fs.ErrNotExist) {
-		return statErr
-	}
-	f, err := os.OpenFile(path, os.O_RDWR|os.O_APPEND|os.O_CREATE|logNoFollow, 0o600)
-	if err != nil {
-		return err
-	}
-	fi, err := f.Stat()
-	if err != nil {
-		f.Close()
-		return err
-	}
-	if !fi.Mode().IsRegular() {
-		f.Close()
-		return fmt.Errorf("%s is not a regular file", path)
-	}
 	// A new delete starts only while the log keeps room for its lines under what readLog
 	// reads; past that, every read of the log — a row's, the plan's, uninstall's — would fail
 	// and lose the unfinished deletes it holds (core-plan-record finding 4).
-	if l.Event == evStarted && fi.Size()+int64(len(data))+1+logReserve > logCap {
-		f.Close()
-		return errLogFull
-	}
-	if runtime.GOOS != "windows" && fi.Mode().Perm()&0o077 != 0 {
-		if err := f.Chmod(0o600); err != nil {
-			f.Close()
-			return err
+	return util.AppendLogLine(path, data, func(size, n int64) error {
+		if l.Event == evStarted && size+n+1+logReserve > logCap {
+			return errLogFull
 		}
-	}
-	// A line torn by a power cut has no line break: this line starts on a line of its
-	// own, so it is not joined to the fragment and lost with it (del-s1b-A2-05).
-	if n := fi.Size(); n > 0 {
-		last := make([]byte, 1)
-		if _, err := f.ReadAt(last, n-1); err != nil {
-			f.Close()
-			return err
-		}
-		if last[0] != '\n' {
-			data = append([]byte{'\n'}, data...)
-		}
-	}
-	if _, err := f.Write(data); err != nil {
-		f.Close()
-		return err
-	}
-	if err := f.Sync(); err != nil {
-		f.Close()
-		return err
-	}
-	if err := f.Close(); err != nil {
-		return err
-	}
-	if statErr != nil {
-		util.SyncDir(dir) // a new file: its name in the folder survives power loss too
-	}
-	return nil
+		return nil
+	})
 }
 
 // Why a deletion log could not be read, beside util.ErrReadableByOthers and fs.ErrPermission, so

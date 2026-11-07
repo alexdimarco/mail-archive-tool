@@ -12,7 +12,9 @@
 package interchange
 
 import (
+	"bufio"
 	"bytes"
+	"errors"
 	"fmt"
 	"io"
 	"strings"
@@ -78,6 +80,179 @@ func WriteMessage(w io.Writer, raw []byte) error {
 	// The blank line that separates this message from the next postmark.
 	_, err := io.WriteString(w, "\n")
 	return err
+}
+
+// WriteMessageMatched is WriteMessage for Restore to Thunderbird
+// (docs/design-restore-thunderbird.md §4.3): the two lines it adds — the "From "
+// line's ending and the blank line after the message — and the line ending it adds
+// to a final line that has none use the message's own line ending (CRLF when its
+// first line ends in CRLF, else LF), so a file never mixes them. WriteMessage, which
+// extract uses, is unchanged. added is how many bytes of line ending it put after a
+// final line that had none (0, 1 or 2), so a check can recover the original exactly.
+func WriteMessageMatched(w io.Writer, raw []byte) (added int, err error) {
+	eol := "\n"
+	if i := bytes.IndexByte(raw, '\n'); i > 0 && raw[i-1] == '\r' {
+		eol = "\r\n"
+	}
+	if _, err := io.WriteString(w, Postmark(raw)+eol); err != nil {
+		return 0, err
+	}
+	i := 0
+	for i < len(raw) {
+		j := bytes.IndexByte(raw[i:], '\n')
+		var line []byte
+		end := "\n"
+		if j < 0 {
+			line = raw[i:]
+			i = len(raw)
+			end, added = eol, len(eol)
+		} else {
+			line = raw[i : i+j]
+			i += j + 1
+		}
+		if isFromQuoteLine(line) {
+			if _, err := io.WriteString(w, ">"); err != nil {
+				return 0, err
+			}
+		}
+		if _, err := w.Write(line); err != nil {
+			return 0, err
+		}
+		if _, err := io.WriteString(w, end); err != nil {
+			return 0, err
+		}
+	}
+	_, err = io.WriteString(w, eol)
+	return added, err
+}
+
+// ReadMboxrd reads an mbox written by WriteMessageMatched (or WriteMessage) back
+// into its messages, by the read rules Thunderbird's own reader follows
+// (MboxMsgInputStream, design §4.1–§4.3; a port of those rules, not Thunderbird): a
+// line beginning "From " at column 0 starts a message (no blank line is required
+// before it); within a message one '>' is removed from a line that is a run of '>'
+// followed by "From " (mboxrd's unquoting); the one blank line — LF or CRLF — before
+// the next "From " line or the end of the file is the separator, not the message's.
+// Lines before the first "From " line are not a message. fn gets each message's bytes
+// in file order; an error from fn stops the read and is returned.
+func ReadMboxrd(r io.Reader, fn func(msg []byte) error) error {
+	var cur []byte
+	return ScanMboxrd(r, MboxrdHandler{
+		Start: func() error { cur = cur[:0]; return nil },
+		Data:  func(p []byte) error { cur = append(cur, p...); return nil },
+		End:   func() error { return fn(cur) },
+	})
+}
+
+// MboxrdHandler receives ScanMboxrd's messages: Start at each "From " line, Data with
+// the message's bytes in order (unquoted, the separator's blank line held back and not
+// given), End when the message ends. Any error stops the scan.
+type MboxrdHandler struct {
+	Start func() error
+	Data  func([]byte) error
+	End   func() error
+}
+
+// ScanMboxrd is ReadMboxrd streamed, for files of any size: it holds at most one line
+// back (the line that may be the separator's blank line). A line longer than its
+// buffer is passed through in pieces; only its start is looked at, for "From " and
+// mboxrd's quoting.
+func ScanMboxrd(r io.Reader, h MboxrdHandler) error {
+	br := bufio.NewReaderSize(r, 64<<10)
+	in := false
+	var pending []byte // the last whole short line, held back: it may be the separator
+	hasPending := false
+	emitPending := func() error {
+		if hasPending {
+			hasPending = false
+			return h.Data(pending)
+		}
+		return nil
+	}
+	end := func() error {
+		if !in {
+			return nil
+		}
+		if hasPending {
+			b := bytes.TrimSuffix(bytes.TrimSuffix(pending, []byte("\n")), []byte("\r"))
+			isBlank := len(b) == 0 && bytes.HasSuffix(pending, []byte("\n"))
+			if !isBlank {
+				if err := emitPending(); err != nil {
+					return err
+				}
+			}
+			hasPending = false
+		}
+		return h.End()
+	}
+	midLine := false // the previous read ended inside a long line
+	for {
+		chunk, err := br.ReadSlice('\n')
+		if len(chunk) > 0 {
+			if midLine {
+				if e := emitPending(); e != nil {
+					return e
+				}
+				if in {
+					if e := h.Data(chunk); e != nil {
+						return e
+					}
+				}
+			} else {
+				line := chunk
+				body := bytes.TrimSuffix(line, []byte("\n"))
+				switch {
+				case bytes.HasPrefix(body, []byte(fromPrefix)):
+					if e := end(); e != nil {
+						return e
+					}
+					in = true
+					if e := h.Start(); e != nil {
+						return e
+					}
+					if errors.Is(err, bufio.ErrBufferFull) {
+						// a "From " line longer than the buffer: the rest of it is not the message's
+						for errors.Is(err, bufio.ErrBufferFull) {
+							_, err = br.ReadSlice('\n')
+						}
+						if err != nil && !errors.Is(err, io.EOF) {
+							return err
+						}
+						if errors.Is(err, io.EOF) {
+							return end()
+						}
+						continue
+					}
+				case !in:
+				default:
+					if len(body) > 0 && body[0] == '>' && isFromQuoteLine(body) {
+						line = line[1:]
+					}
+					if e := emitPending(); e != nil {
+						return e
+					}
+					if errors.Is(err, bufio.ErrBufferFull) {
+						if e := h.Data(line); e != nil {
+							return e
+						}
+					} else {
+						pending = append(pending[:0], line...)
+						hasPending = true
+					}
+				}
+			}
+		}
+		switch {
+		case errors.Is(err, bufio.ErrBufferFull):
+			midLine = true
+		case err == nil:
+			midLine = false
+		case errors.Is(err, io.EOF):
+			return end()
+		default:
+			return err
+		}
+	}
 }
 
 // Postmark synthesizes the "From " postmark line for a message from its own

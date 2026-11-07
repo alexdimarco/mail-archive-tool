@@ -12,9 +12,27 @@ func dirIdentity(path string) (Identity, error) {
 	if err != nil {
 		return Identity{}, err
 	}
+	id, err := infoIdentity(fi)
+	if err != nil {
+		return Identity{}, err
+	}
+	id.FSType = fsType(path)
+	return id, nil
+}
+
+// openIdentity is the identity of an open file or folder.
+func openIdentity(f *os.File) (Identity, error) {
+	fi, err := f.Stat()
+	if err != nil {
+		return Identity{}, err
+	}
+	return infoIdentity(fi)
+}
+
+func infoIdentity(fi os.FileInfo) (Identity, error) {
 	st, ok := fi.Sys().(*syscall.Stat_t)
 	if !ok {
 		return Identity{}, errNoIdentity
 	}
-	return Identity{Volume: uint64(st.Dev), FileID: uint64(st.Ino), FSType: fsType(path)}, nil //nolint:unconvert // the types differ by OS
+	return Identity{Volume: uint64(st.Dev), FileID: uint64(st.Ino)}, nil //nolint:unconvert // the types differ by OS
 }

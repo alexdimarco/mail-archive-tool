@@ -76,7 +76,10 @@ func snapshot(t *testing.T, root string, skip ...string) string {
 		}
 		rel, _ := filepath.Rel(root, p)
 		for _, s := range skip {
-			if d.Name() == s {
+			if d.Name() == s && p != root {
+				if d.IsDir() {
+					return fs.SkipDir
+				}
 				return nil
 			}
 		}

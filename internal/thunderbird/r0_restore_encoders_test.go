@@ -20,35 +20,14 @@ import "testing"
 // covering tests, each carrying the same ids: internal/tbrestore/ma1084_profiles_test.go,
 // ma1085_prefs_test.go, ma1086_storekind_test.go and ma1087_running_test.go.
 
-// covers: MA-1088, R40, S69
-func TestR0EncoderSafeNames(t *testing.T) {
-	t.Skip("MA-1088 pending: SafeName and the name budgets land in slice R4 (the restore's own folder caps, W-TOOMANY, are proven since slice R1 by internal/app TestRestoreFolderCaps)")
-}
-
-// covers: MA-1089, R40
-func TestR0EncoderMboxBytes(t *testing.T) {
-	t.Skip("MA-1089 pending: the mbox writer's matching line endings and the read-rule port land in slice R4")
-}
-
-// covers: MA-1119, R40
-func TestR0EncoderLayout(t *testing.T) {
-	t.Skip("MA-1119 pending: the layout (NAME + NAME.sbd, the marker, the made-list) lands in slice R4")
-}
-
-// covers: MA-1120, R40
-func TestR0EncoderCollisions(t *testing.T) {
-	t.Skip("MA-1120 pending: the free name and the exclusive creates (W-NAMES) land in slice R4")
-}
-
-// covers: MA-1122, R40, S68, S74
-func TestR0EncoderWriteSequenceAndCleanup(t *testing.T) {
-	t.Skip("MA-1122 pending: the write sequence, fault seams and the one cleanup in decision order land in slice R4")
-}
-
-// covers: MA-1123, R40, S68
-func TestR0EncoderCrashStates(t *testing.T) {
-	t.Skip("MA-1123 pending: settling open restores at Start (cases 0, 1, 2, 3a, 3b, the taken line) lands in slice R4")
-}
+// Slice R4 replaced the encoders of MA-1088 (ids MA-1088, R40, S69), MA-1089 (MA-1089,
+// R40), MA-1119 (MA-1119, R40), MA-1120 (MA-1120, R40), MA-1122 (MA-1122, R40, S68,
+// S74), MA-1123 (MA-1123, R40, S68), MA-1126 (MA-1126, R40), MA-1139 (MA-1139, R40,
+// S74) and MA-1142 (MA-1142, R40, S68) with the real covering tests, each carrying the
+// same ids: internal/tbrestore/ma1088_names_test.go, ma1119_layout_test.go,
+// ma1120_collisions_test.go, ma1122_sequence_test.go, ma1123_settle_test.go,
+// ma1126_pathbudget_test.go, ma1139_check_test.go, ma1142_log_test.go, and
+// internal/interchange/ma1089_restore_mbox_test.go.
 
 // covers: MA-1124, R40, S70
 func TestR0EncoderPlan(t *testing.T) {
@@ -58,11 +37,6 @@ func TestR0EncoderPlan(t *testing.T) {
 // covers: MA-1125, R40, S66, S67
 func TestR0EncoderRecheckAtStart(t *testing.T) {
 	t.Skip("MA-1125 pending: the re-check at Start lands in slice R6")
-}
-
-// covers: MA-1126, R40
-func TestR0EncoderPathBudget(t *testing.T) {
-	t.Skip("MA-1126 pending: the path budget (W-LONGPATH) lands in slice R4")
 }
 
 // covers: MA-1127, R40, S67
@@ -100,11 +74,6 @@ func TestR0EncoderBackupSkip(t *testing.T) {
 	t.Skip("MA-1138 pending: the backup-side skip lands in slice R5 (the finished-folder part waits for the owner's O1 answer)")
 }
 
-// covers: MA-1139, R40, S74
-func TestR0EncoderPostWriteCheck(t *testing.T) {
-	t.Skip("MA-1139 pending: the post-write check (W-CHECKFAIL) lands in slice R4")
-}
-
 // covers: MA-1140, R40, R31, S71
 func TestR0EncoderRestoreLock(t *testing.T) {
 	t.Skip("MA-1140 pending: uninstall's targets and a -config Desktop's restore seen by a scheduled backup's skip land in slice R5 (the restore lock, presync honouring it and ProfileKey are proven since slice R3 by internal/presync/ma1140_restore_lock_test.go and internal/thunderbird/ma1140_profilekey_test.go)")
@@ -113,11 +82,6 @@ func TestR0EncoderRestoreLock(t *testing.T) {
 // covers: MA-1141, R41, S68
 func TestR0EncoderUnfinishedShown(t *testing.T) {
 	t.Skip("MA-1141 pending: W-UNFINISHED at Desktop start, in status and in uninstall's plan lands in slice R5")
-}
-
-// covers: MA-1142, R40, S68
-func TestR0EncoderRestoresLog(t *testing.T) {
-	t.Skip("MA-1142 pending: restores.log on the delete log's writer lands in slice R4")
 }
 
 // covers: MA-1143, R40

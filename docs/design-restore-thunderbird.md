@@ -2003,6 +2003,61 @@ restore is on disk could not be told (Delete's rule, `archivedelete.go:659-680`)
 >     safe either way); only the words do" is corrected beside it (§12.3 foldcheck3 note): reading (3)
 >     of that lab step is what the scan's backstop rests on.
 
+> Folded 2026-11-07 [foldcheck3 S4, S5, S6, S8, S9] (lead's calls, owed to slice R4; built there;
+> the exact wording of each row is the builder's, under the owner-delegated rule). Each row is shown
+> only in the state it names.
+> - **[S4] W-LEFT's step-4 form.** When removal began and then met something new (cleanup step 4),
+>   the words are: "MailArchive removed part of what it wrote in the folder 'Restored — NAME.sbd', in
+>   PATH, then found something there it did not make (FIRST NAMES), so it removed nothing more.
+>   Thunderbird does not show that folder. Close Thunderbird and delete it yourself when you no
+>   longer need those files." (FIRST NAMES left out for an encrypted archive.) The step-3 form (nothing
+>   removed) keeps W-LEFT's foldcheck2 words. Both are "abandoned". One more rule, the builder's: the
+>   made-list and the marker are removed only once the container holds nothing else (it is read once
+>   more just before), so a cleanup stopped by something new always keeps them and backups keep leaving
+>   the folder out.
+> - **[S5] The live states that had no exact row.**
+>   - A live Cancel, failure or W-CHECKFAIL whose cleanup meets an entry of the parent name (no
+>     "taken" line: MailArchive never tried to make it): "While the restore ran, something made an
+>     entry named 'Restored — NAME' in Local Folders, so MailArchive stopped and removed nothing.
+>     Thunderbird may show the folders MailArchive had written inside it, and some messages in them may
+>     be missing or cut short. They are yours: if you moved mail into them, move it out first, then
+>     delete them in Thunderbird and restore again. Until then MailArchive backs them up like your other
+>     mail." ("abandoned".)
+>   - A live W-TAKEN whose entry has gone again by the cleanup's step 1: the "taken" line still means
+>     remove nothing (S3), so the old "removed what it wrote" words do not fit either. New words:
+>     "Something made, then removed again, a folder named 'Restored — NAME' in Local Folders while the
+>     restore ran. MailArchive had already written and checked every message, and removed nothing: the
+>     restored folders are in 'Restored — NAME.sbd' in PATH, which Thunderbird does not show. Close
+>     Thunderbird and delete that folder yourself when you no longer need it, then click Check again to
+>     restore." The same state found by a later Start has its own form ("An earlier restore into
+>     Thunderbird (DATE) wrote and checked every message, but its folder's name was taken by something
+>     else while it ran, so MailArchive removed nothing: …").
+>   - A parent create that fails for a reason other than "exists" but leaves an entry, and the case
+>     variant lab C showed failing the create on a volume that ignores case: both are treated as a
+>     taken name (an entry of the name is there by `Lstat`, or the create said it exists): "taken",
+>     then W-TAKEN. A create that fails with no entry there is a failure: the one cleanup, then the
+>     failure words ("The restore could not finish (WHY), so nothing was added to Thunderbird. The part
+>     already written was removed. …", W-FAILED).
+> - **[S6]** W-VISIBLE's unchecked form says "stopped before it finished" (the crash may have come
+>   during the post-write check); both W-ELSEWHERE forms say "may not have finished" (with the drive
+>   gone a committed restore cannot be told from an unfinished one).
+> - **[S8] The scan matches names as the file system does.** Each made-list path and each name the
+>   directory read returns are compared NFC-normalised, so a name an HFS+ volume stored decomposed is
+>   still the list's (no false W-LEFT on every cleanup of an accented folder); each listed name is
+>   matched once, so a second entry that spells the same (a decomposed twin on a volume that keeps both)
+>   is not the list's and the cleanup removes nothing. Removal uses the list's own spelling, which such
+>   a volume finds whatever its normalisation. Case is not folded (the volume returns the name as
+>   MailArchive made it), which can only make the scan stricter.
+> - **[S9]**
+>   - An "elsewhere" restore whose recorded Local Folders is reachable, with its recorded identity, and
+>     no longer holds the container (the person deleted it) is closed "abandoned" at the next Start and
+>     not named again; one whose drive is not connected, or whose container is still there, stays open
+>     and is named at each Start (it can still be dealt with when the drive comes back).
+>   - Which "regular file" applies where: Start's case 2 wants a **regular file of any size**
+>     (Thunderbird may since have filed mail in "Restored — NAME", the top folder); the live run's own
+>     re-check after a failed fsync (N-c) wants a **regular empty file** (right after its create nothing
+>     else can have written into it, Thunderbird being held out).
+
 ## 9. Security
 
 The threat model is the repo's: another local account is out of scope only where the OS
@@ -2601,6 +2656,36 @@ Build order is sound: nothing on a surface (R4, R5) before its engine (R1–R3).
 >   probe, so Thunderbird counts as running there.
 > - **W-NOLOCAL's MENU PATH** stays a literal placeholder in the code until lab row MA-1133 names the
 >   path that worked, so no slice can ship a guessed path (§3.2 step 1 note).
+
+> Built 2026-11-07, slice R4 (the builder's notes):
+> - **Thunderbird's skip rules, from its source.** `nsMsgLocalStoreUtils::nsShouldIgnoreFile`
+>   (comm-central `mailnews/local/src/nsMsgLocalStoreUtils.cpp`, read 2026-11-07 on the
+>   releases-comm-central mirror, not run) skips: a leading "." or "#", a trailing "~", the exact
+>   names msgFilterRules.dat, rules.dat, filterlog.html, junklog.html, rulesbackup.dat, popstate.dat,
+>   sort.dat, mailfilt.log, filters.js, feeds.json (and .tmp, .backup, .corrupt), feeditems.json (the
+>   same three), feeds.rdf, feeditems.rdf (case-blind), the endings .snm, .toc, .mozmsgs, .sbd, .msf,
+>   the prefix feeditems_error, and hidden or special files. `SafeName` uses exactly this list,
+>   case-blind (the safe direction); §4.4's provisional .dat, .json, .html and .htm endings are not in
+>   the source and are dropped. Lab row MA-1095 still tries each.
+> - **The writer** is `tbrestore.Write` over an `fsys` seam on the `*os.Root` (the ceFS seam's
+>   shape), `PlanLayout`/`FinalNames`/`SafeName`/`FreeTopName` for every name in the plan, the
+>   cleanup `cleanupContainer` in the decision order, `Settle` (and its read-only prediction for
+>   Check and `-plan`), and `restores.log` (`tbrestore.Log`) on `util.AppendLogLine`, the deletion
+>   log's append discipline lifted out of `archdelete` (delete's rows green before and after). The
+>   post-write check streams each file through `interchange.ScanMboxrd` (the read-rule port beside
+>   `WriteMessageMatched`), so a folder of any size is checked without holding it in memory.
+> - **A final line with no newline.** The writer adds the message's own line ending to it (as
+>   Thunderbird's writer does) and records how many bytes it added; the post-write check takes exactly
+>   those off before comparing, so the check holds the archive's original byte for byte.
+> - **A torn marker** (a crash after the marker's create, before its line) cannot prove the container
+>   MailArchive's, so Start settles it as case 1 and leaves it (N1); the next restore takes " (2)".
+> - **Words, the builder's:** W-LONGPATH for a Local Folders so deep that even the container's own
+>   entries do not fit ("Thunderbird's Local Folders (PATH) is so deep in its drive that Windows cannot
+>   hold a restored folder under it, so nothing was restored. Choose a profile whose Local Folders is
+>   nearer the top of its drive."); "1 entry" in W-LEFT when there is one; a blocked removal's words
+>   name the file (not for an encrypted archive) and end "MailArchive tries again at your next
+>   restore."; the plan's prediction for a clean leftover: "An earlier restore into this profile did
+>   not finish (DATE). Its partial folder, which Thunderbird does not show, will be removed first."
 
 ## 14. Decisions this design makes, for the review to test
 
