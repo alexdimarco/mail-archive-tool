@@ -379,7 +379,9 @@ func (d *dashboard) restoreJob(ctx context.Context, slot uint64, p *tbengine.Pla
 			last = now
 			line := fmt.Sprintf("Restoring: %s of %s messages", restoreCommas(g.Done), restoreCommas(g.Total))
 			if g.Folder != "" && !p.Encrypted {
-				line += " (" + g.Folder + ")"
+				// Quoted as the plan's names are (settled 2026-11-07): "100%" is a name, and
+				// a line break in one shows as \n.
+				line += " (" + strconv.Quote(g.Folder) + ")"
 			}
 			logger.Print(line)
 			d.rtb.progress(slot, line)

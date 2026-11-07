@@ -8,6 +8,7 @@ import (
 	"io"
 	"os"
 	"os/signal"
+	"strconv"
 	"strings"
 	"sync/atomic"
 	"syscall"
@@ -212,7 +213,9 @@ func restoreTBWith(a asker, o *restoreTBOpts, k *keyFlags, fs *flag.FlagSet, std
 			last = now
 			line := fmt.Sprintf("Restoring: %s of %s messages", commas(g.Done), commas(g.Total))
 			if g.Folder != "" {
-				line += " (" + g.Folder + ")"
+				// Quoted as the plan's names are (settled 2026-11-07): "100%" is a name, and
+				// a line break in one shows as \n.
+				line += " (" + strconv.Quote(g.Folder) + ")"
 			}
 			fmt.Fprintln(stderr, line)
 		}

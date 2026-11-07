@@ -1839,7 +1839,9 @@ its first control, its status line saying what is needed:
 2. **What**: "The whole archive" (selected) or "Choose folders" (the tree, with counts).
 3. **Check** → the plan (§6.4), in a panel on the card. Refusals are said there, in place.
 4. **Restore** (and the not-encrypted tick for an encrypted archive). The panel then follows
-   the task: "Restoring: 1,200 of 4,310 messages (Inbox)", every 3 seconds at most
+   the task: "Restoring: 1,200 of 4,310 messages ("Inbox")" (the folder quoted as the plan's
+   names are, settled 2026-11-07: a folder "100%" is not read as a percentage, a line break
+   in a name shows as \n; the terminal's line the same), every 3 seconds at most
    (`encryption_copy.go:166-168`), with **Cancel** (`/api/job/cancel`,
    `dashboard.go:402`).
 5. **Result**, in the panel, with **Save this record** (§7.4).
@@ -2051,7 +2053,7 @@ the copy (`pending.go:15-21`).
 | W-BUSY | "A backup of this archive is running, so the restore did not start. Wait until it finishes (its row in Your archives says when), then click Restore again." |
 | W-NAMES | "Local Folders already holds 'Restored — NAME' and 98 more like it, so nothing was restored. Delete or rename the restored folders you no longer need in Thunderbird, then try again." |
 | W-OLDTB | "This profile was last opened by Thunderbird VERSION. That version shows a '>' at the start of any message line beginning with 'From '. Update Thunderbird first to see those lines exactly, or go ahead." |
-| W-LONGPATH | "N folders are nested too deep for Windows to hold under this profile, so they are not restored: FOLDERS." |
+| W-LONGPATH | "N folders are nested too deep for Windows to hold under this profile, so they are not restored: FOLDERS." (settled 2026-11-07: each folder in FOLDERS quoted as the NAMES list quotes it, control characters escaped; an encrypted archive's line the count only) |
 | W-ELEVATED | "MailArchive is running as administrator, so the restore did not start: files it wrote could not be changed by Thunderbird afterwards. Start MailArchive normally and try again." (presync refuses an elevated start for the same reason, `resolve_windows.go:41-46`) |
 | Done | "Restored N messages into Thunderbird as the folder 'Restored — NAME' under Local Folders. Open Thunderbird to see it; the first time, it may take a minute to show every message." plus the skipped counts and the notes of §4.6. |
 | Stopped | "The restore was stopped, so nothing was added to Thunderbird. The part already written was removed." |

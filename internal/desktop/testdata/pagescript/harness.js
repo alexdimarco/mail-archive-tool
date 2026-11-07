@@ -1305,15 +1305,15 @@ const scenarios = {
     replies['api/restore-tb/start'] = { ok: true, job: '9', wait: rtbWords.wait, encrypted: false };
     replies['api/activity'] = () => {
       n++;
-      if (n < 4) return { running: true, job: '9', restore: { running: true, wait: rtbWords.wait, line: 'Restoring: 1 of 3 messages (Zebrafolder)', checking: false } };
-      if (n < 8) return { running: true, job: '9', restore: { running: true, wait: rtbWords.wait, line: 'Restoring: 3 of 3 messages (Zebrafolder)', checking: true, checkingLine: rtbWords.checking } };
+      if (n < 4) return { running: true, job: '9', restore: { running: true, wait: rtbWords.wait, line: 'Restoring: 1 of 3 messages ("Zebrafolder")', checking: false } };
+      if (n < 8) return { running: true, job: '9', restore: { running: true, wait: rtbWords.wait, line: 'Restoring: 3 of 3 messages ("Zebrafolder")', checking: true, checkingLine: rtbWords.checking } };
       return { running: false, job: '9', restore: { running: false, result: { words: "Restored 3 messages into Thunderbird as the folder 'Restored — Work mail' under Local Folders.", done: true, stopped: false, record, recordName: 'MailArchive restore record - Work mail - 2026-11-07.txt' } } };
     };
     doc.getElementById('rtbGo').click(); await wait(10);
     const rs = doc.getElementById('rtbRunStep'), sp = posts.filter(p => p.path === 'api/restore-tb/start').pop();
     check(!rs.hidden && sp.body.token === 'T1' && sp.body.notEncryptedOK === false && sp.body.confirmAgain === false && doc.getElementById('rtbWait').textContent === rtbWords.wait &&
       doc.activeElement === doc.getElementById('rtbStop') && statusOf('rtbRunStep') === rtbWords.run, 'step 4: running, W-WAIT shown, the keyboard on Cancel the restore', JSON.stringify(sp.body));
-    const progressed = await untilTrue(() => doc.getElementById('rtbProgress').textContent === 'Restoring: 1 of 3 messages (Zebrafolder)');
+    const progressed = await untilTrue(() => doc.getElementById('rtbProgress').textContent === 'Restoring: 1 of 3 messages ("Zebrafolder")');
     const checking = await untilTrue(() => doc.getElementById('rtbProgress').textContent === rtbWords.checking);
     const waitWhole = doc.getElementById('rtbWait').textContent === rtbWords.wait && !rs.hidden;
     const ended = await untilTrue(() => !doc.getElementById('rtbResultStep').hidden, 2000);
@@ -1374,11 +1374,11 @@ const scenarios = {
     page([['E:\\Cur', 'current']], 'E:\\Cur'); restoreCard();
     // The page's own activity poll asks too, so the run ends when the test says, not by a count.
     let over = false;
-    replies['api/activity'] = () => (!over ? { running: true, job: '4', restore: { running: true, wait: rtbWords.wait, line: 'Restoring: 2 of 9 messages (Inbox)' } }
+    replies['api/activity'] = () => (!over ? { running: true, job: '4', restore: { running: true, wait: rtbWords.wait, line: 'Restoring: 2 of 9 messages ("Inbox")' } }
       : { running: false, job: '4', restore: { running: false, result: { words: 'The restore was stopped, so nothing was added to Thunderbird. The part already written was removed.', done: false, stopped: true, record: 'r', recordName: 'rec.txt' } } });
     boot(); await wait(5);
     const rs = doc.getElementById('rtbRunStep');
-    const followed = await untilTrue(() => !rs.hidden && doc.getElementById('rtbProgress').textContent === 'Restoring: 2 of 9 messages (Inbox)' && doc.getElementById('rtbWait').textContent === rtbWords.wait);
+    const followed = await untilTrue(() => !rs.hidden && doc.getElementById('rtbProgress').textContent === 'Restoring: 2 of 9 messages ("Inbox")' && doc.getElementById('rtbWait').textContent === rtbWords.wait);
     check(followed && doc.getElementById('rtbBtn').disabled, 'a page drawn while a restore runs follows it in its panel');
     const stop = doc.getElementById('rtbStop');
     replies['api/job/cancel'] = { ok: true };
@@ -1453,21 +1453,21 @@ const scenarios = {
     let phase = 'run';
     replies['api/restore-tb/plan'] = { ok: true, token: 'T9', encrypted: false, askTwice: false, lines: [{ code: 'W-WAIT', words: rtbWords.wait }] };
     replies['api/restore-tb/start'] = { ok: true, job: '7', wait: rtbWords.wait, encrypted: false };
-    replies['api/activity'] = () => phase === 'down' ? NOANSWER : (phase === 'run' ? { running: true, job: '7', restore: { running: true, wait: rtbWords.wait, line: 'Restoring: 1 of 15,001 messages (Projects)' } }
+    replies['api/activity'] = () => phase === 'down' ? NOANSWER : (phase === 'run' ? { running: true, job: '7', restore: { running: true, wait: rtbWords.wait, line: 'Restoring: 1 of 15,001 messages ("Projects")' } }
       : { running: false, job: '7', restore: { running: false, result: { words: 'Restored 15,001 messages into Thunderbird.', done: true, stopped: false, record: 'r', recordName: 'rec.txt' } } });
     doc.getElementById('rtbCheck').click(); await wait(40);
     doc.getElementById('rtbGo').click(); await wait(10);
-    await untilTrue(() => doc.getElementById('rtbProgress').textContent === 'Restoring: 1 of 15,001 messages (Projects)');
+    await untilTrue(() => doc.getElementById('rtbProgress').textContent === 'Restoring: 1 of 15,001 messages ("Projects")');
     sd.click(); await wait(20);
     check(sn.textContent.startsWith('A restore into Thunderbird is running: shutting down stops it, and nothing is added to Thunderbird. Click again to stop MailArchive Desktop.'),
       'P3: Shut down\'s confirmation names the running restore and what Shut down does to it', sn.textContent);
 
     const notAnswering = 'MailArchive Desktop is not answering — the restore may have stopped. Restart MailArchive Desktop to see what happened.';
     phase = 'down';
-    const said = await untilTrue(() => doc.getElementById('rtbProgress').textContent === 'Last seen: Restoring: 1 of 15,001 messages (Projects)' && statusOf('rtbRunStep') === notAnswering, 2000);
+    const said = await untilTrue(() => doc.getElementById('rtbProgress').textContent === 'Last seen: Restoring: 1 of 15,001 messages ("Projects")' && statusOf('rtbRunStep') === notAnswering, 2000);
     check(said && !doc.getElementById('rtbRunStep').hidden, 'P2: when MailArchive Desktop stops answering, the run step says so instead of a frozen counter', doc.getElementById('rtbProgress').textContent);
     phase = 'run';
-    const back2 = await untilTrue(() => doc.getElementById('rtbProgress').textContent === 'Restoring: 1 of 15,001 messages (Projects)' && statusOf('rtbRunStep') === rtbWords.run, 2000);
+    const back2 = await untilTrue(() => doc.getElementById('rtbProgress').textContent === 'Restoring: 1 of 15,001 messages ("Projects")' && statusOf('rtbRunStep') === rtbWords.run, 2000);
     check(back2, 'P2: when it answers again, the progress is said again');
 
     sd.focus(); phase = 'done';

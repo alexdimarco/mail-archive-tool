@@ -70,7 +70,7 @@ func TestTheRestoreFlowRunsAsTheDesktopsTask(t *testing.T) {
 	act := e.activity()
 	r, _ := act["restore"].(map[string]any)
 	assure.Reached(t, act["running"] == true && act["cancellable"] == true && r["running"] == true && r["wait"] == tbrestore.WaitWords() &&
-		r["line"] == "Restoring: 1 of 3 messages ("+rtbFolderA+")" && act["job"] == s["job"],
+		r["line"] == `Restoring: 1 of 3 messages ("`+rtbFolderA+`")` && act["job"] == s["job"],
 		"while it runs: W-WAIT, the progress line naming the folder, and Cancel")
 	close(release)
 	act = e.waitDone()

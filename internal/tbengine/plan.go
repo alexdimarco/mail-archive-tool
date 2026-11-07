@@ -431,12 +431,18 @@ func fat32Words(names []string, size int64, enc bool) string {
 }
 
 // longPathWords are W-LONGPATH's line: the folders named, or for an encrypted archive
-// their count only (R6-12).
+// their count only (R6-12). Settled 2026-11-07 (the lead's call, owner-delegated words):
+// each name is quoted as the NAMES list quotes it, so a line break or control character
+// in a name shows escaped and cannot pass for a line of the plan.
 func longPathWords(names []string, enc bool) string {
 	if enc {
 		return fill("N nested too deep for Windows to hold under this profile, so they are not restored.", "N", plural(len(names), "folder")+" "+verb(len(names), "is", "are"))
 	}
-	return fill("N folders are nested too deep for Windows to hold under this profile, so they are not restored: FOLDERS.", "N", itoa(len(names)), "FOLDERS", strings.Join(names, ", "))
+	quoted := make([]string, len(names))
+	for i, n := range names {
+		quoted[i] = strconv.Quote(n)
+	}
+	return fill("N folders are nested too deep for Windows to hold under this profile, so they are not restored: FOLDERS.", "N", itoa(len(names)), "FOLDERS", strings.Join(quoted, ", "))
 }
 
 // sharingProfiles are the other listed profiles whose Local Folders is lf by identity
