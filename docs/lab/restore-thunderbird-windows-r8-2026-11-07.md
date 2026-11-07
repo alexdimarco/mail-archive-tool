@@ -580,3 +580,83 @@ are `r9-01` to `r9-06` in `/Users/alex.dimarco/repositories/mail-archive-tool/.c
   the folder was then opened by keyboard. Touched: this file and the MA-1095 catalog row; on the VM,
   only `tb-restore-lab5` and `%LOCALAPPDATA%\rl5`. Persona: none. Source reached: the VM — yes;
   macOS and Linux Thunderbird — no.
+
+## Addendum 3, 7 November 2026 (VM clock 13:59–14:03, UTC−5): MA-1088 — siblings Thunderbird calls one folder (PCT-1) — **PASS (Windows)**
+
+The fresh review (`docs/review-restore-thunderbird-pct-fresh.md`, PCT-1, medium) saw Thunderbird
+153.6.0 hide one of two restored sibling folders `ᎠᎡ` and `ꭰꭱ` (Cherokee, one word in upper and
+lower case): Thunderbird's `GetChildNamed` calls them one folder, and the restore's old key did not.
+The fix, commit **f9312cd**, compares siblings by the restore's own key (`tbrestore.siblingKey`), so
+the second of such a pair gets " (2)". This run checks it on a running Thunderbird.
+
+**Set-up.** A new throwaway world, `C:\Users\Public\tb-restore-lab7\`, with `USERPROFILE`,
+`APPDATA` and `LOCALAPPDATA` pointed at its `home`, as before.
+- Profile `p-case` is a copy of MA-1133's `fresh-news` (Local Folders made through a made-up
+  newsgroup account; no real account). The VM user's own profiles were not opened.
+- `mailarchive.exe` was built from f9312cd as `packaging/build-release.sh` builds it
+  (`GOOS=windows GOARCH=amd64 go build ./cmd/mailarchive`; SHA-256 `7290b170…2971`).
+- The archive **`PCT1 Case Siblings`** was made by lab tool `r8graph7` (the real `app.RunGraph`
+  against a fake Graph server; a Microsoft 365-kind archive, since no NTFS folder can hold `Abc`
+  and `aBC` side by side as a file source). It holds four sibling folders, one message each, in
+  this order: `ᎠᎡ` (U+13A0 U+13A1), `ꭰꭱ` (U+AB70 U+AB71), `Abc`, `aBC`.
+
+**The plan** (command line, `-plan -record-out`; `rt-plan.txt`). Its NAMES line, word for word:
+
+```
+2 folder names had to be changed to be safe as file names; Thunderbird shows the changed names:
+"aBC" → "aBC (2)"
+"ꭰꭱ" → "ꭰꭱ (2)"
+```
+
+The saved record holds the same lines.
+
+**The restore** (`-yes`): "Restored 4 messages into Thunderbird as the folder 'Restored — PCT1 Case
+Siblings' under Local Folders. … MailArchive checked every message it wrote. …", exit 0. On disk,
+`Restored — PCT1 Case Siblings.sbd` holds `Abc`, `aBC (2)`, `ᎠᎡ` and `ꭰꭱ (2)`.
+
+**Thunderbird 153.6.0** (`thunderbird.exe -no-remote -profile …\p-case`, pid 12696).
+- It showed `Restored — PCT1 Case Siblings` with **all four folders** under it: `Abc`, `aBC (2)`,
+  `ᎠᎡ` and `ꭰꭱ (2)` (`r10-02-tree`; the window's font draws the Cherokee letters like "DR").
+- Each was opened in turn by a click: `Abc` **1 Message** ("pct1 Abc"), `aBC (2)` **1 Message**
+  ("pct1 aBC"), `ᎠᎡ` **1 Message** ("pct1 cherokee upper"), `ꭰꭱ (2)` **1 Message** ("pct1 cherokee
+  lower") (`r10-03` to `r10-06`).
+- After a graceful close (pid 12696 exited, "exited gracefully"), each restored file had
+  Thunderbird's summary under its own name and there was **no other `.msf` or folder** (`check.ps1`).
+  `folderCache.json`: `Abc`, `aBC (2)`, `ᎠᎡ` and `ꭰꭱ (2)` each `total=1`, and 0 for the top folder's
+  own file. Before the fix the review saw `ꭰꭱ` missing from both the folder pane and
+  `folderCache.json`.
+- No Thunderbird or MailArchive process was left on the VM.
+
+**Not run here:** the old build on these names (the review's run on bc29f75 is the before); macOS
+(where the old code failed part way on APFS: covered by the unit test
+`TestCaseSiblingsThunderbirdJoinsAreEachRestored`, run on the Mac) and Linux Thunderbird; PCT-2,
+which needs a lock link from another computer (unit-tested on macOS and Linux only; Mozilla makes
+no such link on Windows).
+
+**Where things are.** The lab7 world is `C:\Users\Public\tb-restore-lab7\` (profile `p-case`,
+`home`, `Archives\PCT1 Case Siblings`, `mime`). Programs and outputs are in `%LOCALAPPDATA%\rl7\`.
+On the Mac, the scripts and both programs are in `/Users/alex.dimarco/repositories/.winlab/restorelab7/`;
+the lab tool's source is `.labtool/r8graph7/main.go` in the branch worktree (not committed); the
+screenshots are `r10-01` to `r10-06` in
+`/Users/alex.dimarco/repositories/mail-archive-tool/.claude/restore-lab-r8/` (not committed; they show
+the VM's desktop only through Thunderbird's window and the taskbar; `r10-x-notepad` shows the slip
+below and should stay private).
+
+**For addendum 3:**
+- Date worked on: 7 November 2026 (the VM clock, UTC−5, and this session's date agree).
+- **Drawn on:** the program built from f9312cd; what Thunderbird 153.6.0 showed and wrote (`.msf`
+  files, `folderCache.json`); Thunderbird's source as cited in design §4.4 "Settled 2026-11-07
+  [PCT-1]".
+- Register: a report of a lab run (findings).
+- **Smallest check for a reader:** on the VM, start Thunderbird with `-no-remote -profile
+  C:\Users\Public\tb-restore-lab7\p-case` and open `Restored — PCT1 Case Siblings`: four folders,
+  one message each.
+- **Counters.** Register: report. Borrowed lines: MailArchive's words, quoted. Drift: one slip. A
+  wait-and-bring-to-front command was written with a bare `&` inside `cmd /c`, so cmd opened the
+  lab's `front.ps1` in the VM user's Notepad, which also showed "The system cannot find the path
+  specified." Clicking OK on that message also dropped a `README.txt` tab whose file Notepad could
+  not find; that tab showed no unsaved mark, and its file was not touched. The `front.ps1` tab was
+  then closed by its own X. The other Notepad tabs, one with unsaved changes, were left as they
+  were. Touched: this file and the MA-1088 catalog row; on the VM, `tb-restore-lab7`,
+  `%LOCALAPPDATA%\rl7`, and Notepad's tab list as above. Persona: none. Source reached: the VM —
+  yes; macOS and Linux Thunderbird — no.
