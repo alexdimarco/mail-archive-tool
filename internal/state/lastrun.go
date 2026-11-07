@@ -7,6 +7,7 @@ import (
 	"io/fs"
 	"os"
 	"path/filepath"
+	"strings"
 	"time"
 
 	"mail-archive-tool/internal/util"
@@ -101,6 +102,12 @@ type LastRun struct {
 	GapsTerminal  int `json:"gaps_terminal,omitempty"`
 	GapsStuck     int `json:"gaps_stuck,omitempty"`
 	Unreadable    int `json:"unreadable,omitempty"`
+
+	// Partial is what a partial run could not save, by kind (design-plain-failure-words,
+	// MA-1145; additive): set only on a plaintext run that ended partial, so every surface
+	// tells it in the kinds' words. Status stays "failed" (the S1a mapping), and an encrypted
+	// archive's record never carries it (its allow-list, encryptedLastRun).
+	Partial *PartialCounts `json:"partial,omitempty"`
 
 	// Undecodable and FidelityFallback (design-mime-fidelity §4.9, MC19; additive,
 	// omitted when zero) are how many records, at the end of this run, carry a part this
@@ -229,6 +236,12 @@ func updateAttentionSidecar(out string, r LastRun) {
 		if reason == "" {
 			reason = "the run failed (no error text was recorded)"
 		}
+		if r.Partial != nil && !r.Partial.Empty() {
+			// A partial run saved everything else it found: say what happened first, then the
+			// kinds' words with their remedies (design-plain-failure-words, MA-1146).
+			_ = writeSidecarAtomic(path, []byte(partialAttention(out, r)))
+			return
+		}
 		body := fmt.Sprintf("This email backup FAILED and needs your attention.\n\n"+
 			"Archive: %s\n"+
 			"When:    %s\n"+
@@ -248,6 +261,30 @@ func updateAttentionSidecar(out string, r LastRun) {
 	case RunOK:
 		_ = os.Remove(path)
 	}
+}
+
+// partialAttention is BACKUP-NEEDS-ATTENTION.txt after a partial plaintext run: what happened
+// first (the backup did not save everything, and the rest was saved), then what it could not
+// save, by kind, each with its remedy, the report named as the details.
+func partialAttention(out string, r LastRun) string {
+	var b strings.Builder
+	fmt.Fprintf(&b, "This email backup did not save everything.\n\n"+
+		"Archive: %s\n"+
+		"When:    %s\n\n"+
+		"Everything else it found was saved, and the messages already in this folder\n"+
+		"are unaffected — open index.html in a web browser to read them. What it could\n"+
+		"not save, and what to do:\n\n", out, r.Finished.UTC().Format(time.RFC3339))
+	for _, s := range PartialSentences(*r.Partial) {
+		b.WriteString("  - " + s + "\n")
+	}
+	fmt.Fprintf(&b, "\n%s\n\n"+
+		"MailArchive Desktop's Status & health, or\n"+
+		"  mailarchive status -out %q\n"+
+		"says the same with each message named. If this computer no longer has\n"+
+		"MailArchive, download it from its official page:\n"+
+		"  https://github.com/alexdimarco/mail-archive-tool/releases\n"+
+		"This file is removed automatically after the next backup that succeeds.\n", PartialDetails, out)
+	return b.String()
 }
 
 // writeSidecarAtomic writes data to path via a temp file and rename, so a torn
@@ -301,6 +338,8 @@ func ReadLastRun(out string) (LastRun, LastRunState, error) {
 	for i := range r.Warnings {
 		r.Warnings[i].Code, r.Warnings[i].Message = util.StripControl(r.Warnings[i].Code), util.StripControl(r.Warnings[i].Message)
 	}
+	// A planted record's kinds are said only when they are counts (design-plain-failure-words).
+	r.Partial = r.Partial.sane()
 	// The sync's strings too (design-presync-attended §4.2, C-37): every surface shows
 	// its name only through a closed map, and none of them is echoed raw.
 	if p := r.Presync; p != nil {

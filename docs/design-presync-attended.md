@@ -959,7 +959,7 @@ tag, the Status line (§4.7) and the WARN reason (§5.4):
 | `not-quiet` | "Thunderbird synced (still fetching at 20 min)" |
 | `wait-ended` [OQ-6] | "Thunderbird sync stopped early, as you asked" |
 | `quit-*` (including the new `quit-no-window` [C-60]), `owner-active`, `identity-unavailable` | "Thunderbird synced, but was left open" |
-| `already-running` | "Thunderbird was already open" |
+| `already-running` | "Thunderbird was already open" *(amended 2026-11-07, docs/design-plain-failure-words.md, MA-1150, the lead's words: "Thunderbird was already open, so the backup left it alone" — the owner's row read as if the open Thunderbird made the backup fail)* |
 | `owner-active-skipped` | "Thunderbird not synced: you were using the computer" |
 | `other-profile-running` | "Thunderbird not synced: open with another profile" |
 | `profile-busy` | "Thunderbird not synced: another backup was syncing it" |

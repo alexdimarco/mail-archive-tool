@@ -2462,7 +2462,8 @@ function followFirstBackup(line,job){
   const ask=()=>fetch('api/activity').then(r=>r.json()).then(d=>{
     if(String(d.job||'')!==String(job)){say('Its first backup has ended, but another task ran after it, so how it ended is not shown here.');return;}
     if(d.running){const l=d.log||[];say('Its first backup is running: '+(l.length?l[l.length-1]:'starting.'));setTimeout(ask,1500);return;}
-    say(d.error?('Its first backup did not finish: '+d.error):('Its first backup finished: '+(d.result||'done.')));
+    // a backup another one's lock kept out is a skip, told in its own words (MA-1148)
+    say(d.busy||(d.error?('Its first backup did not finish: '+d.error):('Its first backup finished: '+(d.result||'done.'))));
   }).catch(()=>setTimeout(ask,5000));
   ask();
 }
@@ -2892,7 +2893,8 @@ function render(d){
   // A Run now of another archive (a switch while it ran) is only named here, never told
   // as this archive's (gate-2 pass 1, as4web-2).
   if(d.otherNote&&res){res.hidden=false;res.textContent=d.otherNote;}
-  else if(!d.running&&res){res.hidden=false;res.textContent=d.error?("It didn't finish: "+d.error):(d.result||'Done.');}
+  // A backup another one's lock kept out is a skip, never "It didn't finish" (MA-1148).
+  else if(!d.running&&res){res.hidden=false;res.textContent=d.busy||(d.error?("It didn't finish: "+d.error):(d.result||'Done.'));}
 }
 // jobButtons shows the running job's Cancel and Skip, next to at when given — the
 // note of the control that started the job — so they are where the person looks.
@@ -2998,7 +3000,7 @@ async function pollBackup(){
     else if(n&&d.log&&d.log.length)n.textContent=d.log[d.log.length-1];
     jobButtons(d,n); // Cancel (and Skip) beside Run now's own note (P3-8, B7)
     if(d.running){setTimeout(pollBackup,1500);return;}
-    if(n){n.hidden=false;n.textContent=d.note||d.otherNote||(d.error?('Backup failed: '+d.error):(d.result||'Backup finished.'));}
+    if(n){n.hidden=false;n.textContent=d.note||d.otherNote||d.busy||(d.error?('Backup failed: '+d.error):(d.result||'Backup finished.'));}
   }catch(e){}
   if(b)b.disabled=false;
 }

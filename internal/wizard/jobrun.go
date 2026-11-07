@@ -16,6 +16,7 @@ import (
 	"mail-archive-tool/internal/presync"
 	"mail-archive-tool/internal/presyncjob"
 	"mail-archive-tool/internal/seal"
+	"mail-archive-tool/internal/state"
 	"mail-archive-tool/internal/util"
 )
 
@@ -127,7 +128,8 @@ func runNowSummary(r app.Result) string {
 		lines = append(lines, messages(r.Fillable)+" "+guiVerb(r.Fillable, "is", "are")+" cut short in the mail files, or "+guiVerb(r.Fillable, "has", "have")+
 			" parts that could not be told apart, so "+guiVerb(r.Fillable, "it", "they")+" could not be read in full. To add them, replace that mail file with a complete export from your mail app, then click Run now again. A message that was already damaged when it was sent stays listed.")
 	case notDone > 0:
-		line := messages(notDone) + " in the archive " + guiVerb(notDone, "is", "are") + " not fully downloaded yet: open them in your mail app (such as Thunderbird) so it downloads them, then click Run now again."
+		// The one sentence Recent backups says too (design-plain-failure-words, MA-1149).
+		line := state.NotDownloadedSentence(notDone)
 		if r.Unknown > 0 {
 			line += fmt.Sprintf(" %d of them %s from an older archive and %s checked again by each backup.", r.Unknown, guiVerb(r.Unknown, "is", "are"), guiVerb(r.Unknown, "is", "are"))
 		}

@@ -9,6 +9,7 @@ package backupalert
 
 import (
 	"encoding/json"
+	"errors"
 	"log"
 	"os"
 	"path/filepath"
@@ -123,6 +124,8 @@ func deliver(cfg alert.Config, store graphconfig.SecretStore, out, result string
 	ev := alert.Event{Result: result, Archive: out, Messages: messages, Host: host, When: time.Now()}
 	if runErr != nil {
 		ev.Error = runErr.Error()
+		// A partial run saved everything else it found: its email says so (MA-1146).
+		ev.Partial = result == ResultFailed && errors.Is(runErr, app.ErrPartial)
 	}
 	// An encrypted archive's alert says which archive and the failure kind's fixed
 	// words: never the error's text, nor how many messages a run archived (P2a-C16).

@@ -237,7 +237,7 @@ func (c *captureState) resetSyncLocked() {
 // fields, and, while it still runs, mutes it so its later lines are not kept; c.mu is
 // held.
 func (c *captureState) forgetLocked() {
-	c.lines, c.result, c.errMsg = nil, "", ""
+	c.lines, c.result, c.errMsg, c.busy = nil, "", "", ""
 	runNow, endWait := c.runNow, c.endWait
 	c.endWait = nil // resetSyncLocked must not end a running Run now's wait
 	c.resetSyncLocked()
@@ -325,7 +325,7 @@ func (c *captureState) runNowActivity(out map[string]any, goos string, now time.
 	here := c.slotOut != "" && cur != "" && samePath(c.slotOut, cur)
 	out["runNowHere"] = here
 	if !here {
-		out["log"], out["result"], out["error"] = []string{}, "", ""
+		out["log"], out["result"], out["error"], out["busy"] = []string{}, "", "", ""
 		out["cancellable"], out["skippable"] = false, false
 		out["otherNote"] = runNowElsewhereEnded
 		if c.running {
@@ -354,6 +354,11 @@ func (c *captureState) runNowActivity(out map[string]any, goos string, now time.
 		return
 	}
 	out["syncLine"] = c.syncLine
+	if c.busy != "" {
+		// Skipped before anything ran, its sync included: the skip's words alone (MA-1147).
+		out["note"] = c.busy
+		return
+	}
 	out["note"] = runNowEndNote(c.syncLine, c.syncName, c.result, c.errMsg)
 }
 

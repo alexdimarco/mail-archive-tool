@@ -1405,6 +1405,14 @@ func recordRun(opts Options, lr state.LastRun, result *Result, err *error, logge
 		lr.Status = state.RunFailed
 		lr.Error = (*err).Error()
 		lr.ErrorKind = errorKindOf(*err)
+		// A partial run's kinds, so every surface tells it in their words (design-plain-
+		// failure-words, MA-1145); additive, and never beside an encrypted archive.
+		var pe *PartialError
+		if errors.As(*err, &pe) && !lr.Encrypted {
+			if p := pe.Counts(); !p.Empty() {
+				lr.Partial = &p
+			}
+		}
 		if lr.Encrypted {
 			// An encrypted archive records the failure kind, never its text (P2a-C16).
 			lr.Error, lr.ErrorKind = "", FailureKind(*err)

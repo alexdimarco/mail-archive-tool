@@ -264,6 +264,9 @@ type captureState struct {
 	lines   []string
 	result  string
 	errMsg  string
+	// busy is the words of a backup skipped because another run holds the archive: a skip,
+	// never a failure, so it is neither result nor errMsg (design-plain-failure-words, MA-1147).
+	busy string
 	// A Run now's or a keyed backup's own cancel (with its cause: the Cancel button's is
 	// presync.ErrCancelAndQuit, design-presync-attended §3.1) and skip, nil for any other
 	// job (jobcontrol.go).
@@ -340,12 +343,18 @@ func (c *captureState) setDevice(d graph.DeviceAuth) {
 	c.mu.Unlock()
 }
 
-func (c *captureState) finish(result, errMsg string) {
+func (c *captureState) finish(result, errMsg string) { c.finishAs(result, errMsg, "") }
+
+// finishSkipped ends a backup that was skipped because another run holds the archive, with the
+// skip's words (MA-1147).
+func (c *captureState) finishSkipped(words string) { c.finishAs("", "", words) }
+
+func (c *captureState) finishAs(result, errMsg, busy string) {
 	c.mu.Lock()
 	if c.muted { // C-15: nothing of a locked or switched-away encrypted job is kept
-		result, errMsg = "", ""
+		result, errMsg, busy = "", "", ""
 	}
-	c.running, c.device, c.result, c.errMsg = false, nil, result, errMsg
+	c.running, c.device, c.result, c.errMsg, c.busy = false, nil, result, errMsg, busy
 	c.cancel, c.skip, c.skipped, c.waiting = nil, nil, false, false
 	// The sync's phase ends with the job, whatever became of the session (C-11).
 	if c.endWait != nil {
@@ -387,7 +396,7 @@ func (d *dashboard) activity(w http.ResponseWriter, r *http.Request) {
 	if c.runNow && c.encrypted && c.onCurrent && c.jobOut != "" && !samePath(c.jobOut, cur) {
 		c.forgetLocked()
 	}
-	out := map[string]any{"running": c.running, "log": append([]string(nil), c.lines...), "result": c.result, "error": c.errMsg,
+	out := map[string]any{"running": c.running, "log": append([]string(nil), c.lines...), "result": c.result, "error": c.errMsg, "busy": c.busy,
 		"cancellable": c.cancel != nil, "skippable": c.waiting && !c.skipped,
 		// The job in the slot, by its id: a new archive's first backup is followed on its row by
 		// this id, so a later task's result is never said as its (MA-1072).

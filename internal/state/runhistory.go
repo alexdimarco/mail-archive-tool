@@ -50,6 +50,11 @@ type RunHistoryEntry struct {
 	// closed map. Absent when the run had no sync, on an older entry, and always on an
 	// encrypted archive's (minimal never copies it, §4.4).
 	Presync string `json:"presync,omitempty"`
+	// Partial is a partial run's kinds (design-plain-failure-words, MA-1145), and Fillable how
+	// many messages the archive held, at the run's end, that the mail app had not downloaded in
+	// full (MA-1149): plaintext entries only, absent when none and on an older entry.
+	Partial  *PartialCounts `json:"partial,omitempty"`
+	Fillable int            `json:"fillable,omitempty"`
 }
 
 // minimal is e as an encrypted archive keeps it: when, the outcome and the kind.
@@ -83,6 +88,10 @@ func ReadRunHistory(out string) ([]RunHistoryEntry, error) {
 		e := &h[i]
 		e.Status, e.Mode, e.Error = util.StripControl(e.Status), util.StripControl(e.Mode), util.StripControl(e.Error)
 		e.ErrorKind, e.Presync = util.StripControl(e.ErrorKind), util.StripControl(e.Presync)
+		e.Partial = e.Partial.sane()
+		if e.Fillable < 0 {
+			e.Fillable = 0
+		}
 	}
 	return h, nil
 }
@@ -120,7 +129,8 @@ func RunHistoryEntryFrom(lr LastRun) RunHistoryEntry {
 	if lr.Encrypted {
 		return RunHistoryEntry{When: lr.Finished, Status: lr.Status, ErrorKind: lr.ErrorKind}.minimal()
 	}
-	e := RunHistoryEntry{When: lr.Finished, Status: lr.Status, Exported: lr.Exported, Filled: lr.Filled, Mode: lr.Mode, Error: lr.Error}
+	e := RunHistoryEntry{When: lr.Finished, Status: lr.Status, Exported: lr.Exported, Filled: lr.Filled, Mode: lr.Mode, Error: lr.Error,
+		Partial: lr.Partial, Fillable: lr.Fillable}
 	if lr.Presync != nil {
 		e.Presync = lr.Presync.Name // the sync's outcome name (design-presync-attended §4.3)
 	}

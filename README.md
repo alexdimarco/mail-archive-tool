@@ -1117,7 +1117,12 @@ unaffected and the version is not bumped.)
   observed in the ledger (`gaps_new` is what a monitor alerts on, so a known,
   unfixable gap does not hide a new loss). They are `0` in a record an older
   build wrote. A run that finished but could not capture something is recorded
-  `failed` (exit 1) for now, with `error` starting `partial:`.
+  `failed` (exit 1) for now, with `error` starting `Not everything was saved.` (a build
+  before the next release wrote `partial:`) and with `partial`: what it could not save,
+  by kind — `mailarchive_mistake`, `archive_write`, `source_unreadable`, `retried` and
+  `other`, each `{messages, folders}`, and `partly_read` — omitted when none
+  (docs/design-plain-failure-words.md). Key on `partial` or the gap counts, not on the
+  text of `error`.
 - **Older builds** know none of this: their `status` and `verify` show no gap
   line for an archive that has a ledger, so a mixed-version fleet should key on
   the presence of `capture_gaps`, not on its absence meaning "no gaps".

@@ -23,18 +23,76 @@ func (e *busyError) Unwrap() error { return e.err }
 
 // busyRefusal words err, a refused lock at lockPath, for a person when another run
 // holds it; any other lock error is kept as it is. The CLI refuses a busy archive
-// before it asks anything; this covers a run that starts in between.
+// before it asks anything; this covers a run that starts in between. Only a backup
+// (Run, RunGraph) is refused through it.
 func busyRefusal(lockPath string, err error) error {
 	if !errors.Is(err, lockfile.ErrHeld) {
 		return err
 	}
-	since := ""
+	return &busyError{msg: busyWords(lockPath, time.Now()), err: err}
+}
+
+// busyWords is a backup refused because another run holds the archive, told as the skip it is
+// (design-plain-failure-words, MA-1147; the owner's report of 2026-11-05): what is running and
+// since when, that this backup was skipped and nothing is wrong, and what to do — never
+// "failed", and none of the lock's diagnostics. A holder that started QuietSkipWindow or more
+// ago may be stuck (a scheduled backup then counts the start as a failure, R3C-12), so the words
+// say so and how to end it instead of "nothing is wrong".
+func busyWords(lockPath string, now time.Time) string {
+	verb := lockfile.HolderVerb(lockPath)
+	since, stuck := "", false
 	if t, ok := lockStarted(lockPath); ok {
 		since = " (started " + t.Local().Format("15:04 on 2006-01-02") + ")"
+		stuck = now.Sub(t) >= QuietSkipWindow
 	}
-	// The lock file is named (R5's refusal names it), so a person who finds it knows
-	// what it is; the holder's own line is not.
-	return &busyError{msg: "another backup or check is using this archive" + since + " — it is in use until that finishes, holding its lock file " + lockfile.Name + "; try again when it finishes", err: err}
+	// The lock file is named (S25, R5: the refusal names it and the holder), so a person who
+	// finds it knows what it is; the holder's own line is not.
+	lock := "(its lock file, " + lockfile.Name + ")"
+	lead := busyLead(verb) + since + " — this backup was skipped"
+	if stuck {
+		return lead + ". It started more than a day ago and still keeps this archive in use " + lock + ", so it may be stuck: if it should have finished by now, restart the computer to end it; the next backup then runs as usual."
+	}
+	switch verb {
+	case "delete":
+		return lead + "; nothing is wrong. Until it finishes, it keeps this archive in use " + lock + "."
+	case "pause":
+		return lead + "; nothing is wrong. Until it finishes, it keeps this archive in use " + lock + "; a paused archive takes no backups until it is resumed."
+	}
+	return lead + "; nothing is wrong. Try again when it finishes: until then it keeps this archive in use " + lock + "."
+}
+
+// busyLead names what holds the archive's lock to the person whose backup it skipped, from the
+// verb its holder line records; an encrypted archive's lock names no verb (A18).
+func busyLead(verb string) string {
+	switch verb {
+	case "export":
+		return "Another backup of this archive is already running"
+	case "graph":
+		return "A Microsoft 365 backup into this archive is already running"
+	case "verify":
+		return "A check of this archive (verify) is running"
+	case "reindex", "rebuild":
+		return "A rebuild of this archive's search index is running"
+	case "pause":
+		return "This archive is being paused"
+	case "programcopies":
+		return "A change to the copies of MailArchive kept in this archive is running"
+	case "delete":
+		return "A delete of this archive is running"
+	case RestoreThunderbirdVerb:
+		return "A restore of this archive into Thunderbird is running"
+	}
+	return "Another MailArchive task is using this archive"
+}
+
+// BusySkipped reports whether err is a backup skipped because another run holds the archive,
+// with the words to tell it by: a surface says these, never as a failure (MA-1147).
+func BusySkipped(err error) (string, bool) {
+	var b *busyError
+	if err == nil || !errors.As(err, &b) {
+		return "", false
+	}
+	return b.msg, true
 }
 
 // QuietSkipWindow is how long a scheduled backup that finds another holder of the archive's

@@ -2,6 +2,7 @@ package desktop
 
 import (
 	"fmt"
+	"strings"
 
 	"mail-archive-tool/internal/encmark"
 	"mail-archive-tool/internal/presync"
@@ -11,7 +12,7 @@ import (
 // runRow is one line of the Recent backups card (MA-701).
 type runRow struct {
 	When   string
-	Status string // "OK" | "Failed" | "Cancelled"
+	Status string // "OK" | "Incomplete" | "Failed" | "Cancelled"
 	Failed bool
 	Detail string
 	// Sync is the run's Thunderbird sync tag (design-presync-attended §4.5), in the
@@ -56,10 +57,22 @@ func recentRunRows(out string) []runRow {
 			default:
 				r.Detail = "no new mail"
 			}
+			// Messages the mail app has not downloaded in full yet, in the sentence Run now says
+			// too (design-plain-failure-words, MA-1149).
+			if !e.Encrypted && e.Fillable > 0 {
+				r.Detail += " · " + state.NotDownloadedSentence(e.Fillable)
+			}
 		case state.RunFailed:
 			r.Status, r.Detail = "Failed", e.Error
-			if e.ErrorKind != "" { // an encrypted archive's entry: the kind's fixed words
+			switch {
+			case e.ErrorKind != "": // an encrypted archive's entry: the kind's fixed words
 				r.Detail = state.FailureText(e.ErrorKind)
+			case e.Partial != nil:
+				// A partial run saved everything else it found: "Incomplete", in its kinds'
+				// words, the report named only as the details (design-plain-failure-words,
+				// MA-1146; one truth with status's "incomplete", X10).
+				r.Status = "Incomplete"
+				r.Detail = strings.Join(state.PartialSentences(*e.Partial), " ") + " " + state.PartialDetails
 			}
 		case state.RunCancelled:
 			r.Status, r.Detail = "Cancelled", "stopped before it finished"

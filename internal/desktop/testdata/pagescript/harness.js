@@ -503,6 +503,42 @@ const scenarios = {
     storageOff = false;
     check(inPlace && reloads === r1 && doc.getElementById('encNote').textContent.startsWith(made.join('\n')), 'where the browser keeps nothing, the page is not drawn again and the first backup is followed in place', doc.getElementById('encNote').textContent);
   },
+  // A backup met by a running one is a skip, not a failure (MA-1148; the owner's report of
+  // 2026-11-05: the Scheduled backup card said "Backup failed: another backup or check is using this
+  // archive …" while the 20:00 backup was simply still running). When /api/activity carries the
+  // skip's words as "busy", Archive now, Run now and a new archive's first backup each say those
+  // words, never "It didn't finish", "Backup failed:", "did not finish" or "Backup finished.".
+  // Positive twin first: a failed Archive now is still said as failed.
+  async busyNotFailed() {
+    const BUSY = 'Another backup of this archive is already running (started 20:00 on 2026-11-05) — this backup was skipped; nothing is wrong. Try again when it finishes.';
+    page([['E:\\Cur', 'current']], 'E:\\Cur');
+    doc.body.append(el('div', { id: 'device', hidden: '' }, el('span', { id: 'deviceCode' }), el('a', { id: 'deviceUrl' })), el('pre', { id: 'activity', hidden: '' }));
+    boot(); await wait(30);
+    const res = doc.getElementById('captureResult'), ab = doc.getElementById('archiveBtn');
+    replies['api/capture'] = { ok: true };
+    replies['api/activity'] = { running: false, job: '2', result: '', error: 'the archive drive is full' };
+    ab.click();
+    const failed = await untilTrue(() => !res.hidden && res.textContent === "It didn't finish: the archive drive is full");
+    check(failed, 'the positive twin: a failed Archive now is said as failed', res.textContent);
+    await untilTrue(() => !ab.disabled);
+    replies['api/activity'] = { running: false, job: '3', result: '', error: '', busy: BUSY };
+    ab.click();
+    const skipped = await untilTrue(() => !res.hidden && res.textContent === BUSY);
+    check(skipped, "Archive now met by a running backup says the skip, never \"It didn't finish\"", res.textContent);
+    replies['api/run-backup'] = { ok: true };
+    replies['api/activity'] = { running: false, job: '4', result: '', error: '', busy: BUSY };
+    doc.getElementById('runBackupBtn').click();
+    const n = doc.getElementById('runBackupNote');
+    const rn = await untilTrue(() => !n.hidden && n.textContent === BUSY);
+    check(rn, 'Run now met by a running backup says the skip, never "Backup failed:" or "Backup finished."', n.textContent);
+    // A new archive's first backup met by a running one: its row says the skip.
+    reset(); store['mailarchive-made-archive'] = JSON.stringify({ path: 'D:\\Mail\\Enc', said: 'The encrypted archive was made in D:\\Mail\\Enc.', job: '8' });
+    replies['api/activity'] = { running: false, job: '8', result: '', error: '', busy: BUSY };
+    page([['E:\\Cur', 'current'], ['D:\\Mail\\Enc', 'other']], 'E:\\Cur'); encSteps(); boot();
+    const note = () => doc.querySelectorAll('.archive-row')[1].querySelector('[data-made-note]');
+    const first = await untilTrue(() => !!note() && note().textContent.endsWith(BUSY));
+    check(first && !note().textContent.includes('did not finish'), "a new archive's first backup met by a running one says the skip", note() && note().textContent);
+  },
   // What Make a new encrypted archive… says before any step needs the person (MA-1073; the review's
   // MED-1: a folder refused after the wizard's windows was said 2,553 pixels below the window, so the
   // page again seemed to stop): the hint while the windows are open, a refusal, an add already in

@@ -681,6 +681,13 @@ func assessKeyless(r *Report, in Input, now time.Time) {
 		lr := in.LastRun
 		switch lr.Status {
 		case state.RunFailed:
+			if p := lr.Partial; p != nil && !lr.Encrypted {
+				// A partial run did not save everything; the rest was saved. The code and the
+				// posture stay (run_failed, RED: the S1a mapping), the words say what happened
+				// (design-plain-failure-words, MA-1146).
+				r.red("run_failed", fmt.Sprintf("the last backup (%s) did not save everything: %s", lr.Started.Local().Format(localStamp), strings.Join(state.PartialSentences(*p), " ")))
+				break
+			}
 			r.red("run_failed", fmt.Sprintf("the last run (%s) FAILED: %s", lr.Started.Local().Format(localStamp), runErrorText(in, lr)))
 			// A breaker trip is recorded by kind as an outage; its text (the server's
 			// last words, the mailbox's name) is not read for needles (S3-AC5).
@@ -2348,6 +2355,10 @@ func Summary(in Input, rep Report) []string {
 		if lr.Status == state.RunRunning && !runRunning(in) {
 			how = "never finished"
 		}
+		partial := lr.Status == state.RunFailed && lr.Partial != nil && !lr.Encrypted
+		if partial {
+			how = "incomplete" // one truth with Recent backups' "Incomplete" (X10)
+		}
 		// Local time, with its zone named: the verify lines below are UTC (F9).
 		line := fmt.Sprintf("Last run:   %s → %s", lr.Started.Local().Format("2006-01-02 15:04 MST"), how)
 		if lr.Status == state.RunCancelled {
@@ -2359,6 +2370,8 @@ func Summary(in Input, rep Report) []string {
 			line += fmt.Sprintf(" · took %s · its counts are sealed", lr.Finished.Sub(lr.Started).Round(time.Second))
 		} else if lr.Status == state.RunOK {
 			line += fmt.Sprintf(" · exported %d · filled %d · took %s", lr.Exported, lr.Filled, lr.Finished.Sub(lr.Started).Round(time.Second))
+		} else if partial {
+			line += ": " + strings.Join(state.PartialSentences(*lr.Partial), " ")
 		} else if lr.Error != "" || lr.Encrypted {
 			line += ": " + runErrorText(in, lr)
 		}
@@ -2624,6 +2637,11 @@ type JSONLastRun struct {
 	// carries them). Additive; version stays 2.
 	Undecodable      int `json:"undecodable,omitempty"`
 	FidelityFallback int `json:"fidelity_fallback,omitempty"`
+
+	// Partial is a partial run's kinds, as its record holds them (design-plain-failure-words,
+	// MA-1145), omitted when none. Additive; version stays 2, and status and the reason codes
+	// are unchanged.
+	Partial *state.PartialCounts `json:"partial,omitempty"`
 }
 
 // JSONLastVerify is verify's integrity verdict, from its separate record; null
@@ -2787,6 +2805,7 @@ func JSON(in Input, rep Report) JSONReport {
 			Unreadable: lr.Unreadable,
 
 			Undecodable: lr.Undecodable, FidelityFallback: lr.FidelityFallback,
+			Partial: lr.Partial,
 		}
 		// Finished stays null while a run is in progress (UJ-A5).
 		if lr.Status != state.RunRunning && !lr.Finished.IsZero() {

@@ -74,7 +74,7 @@ func GapWhy(reason string) string {
 	case "export-failed":
 		return "the message could not be written to the archive"
 	case "export-panic":
-		return "mailarchive failed while archiving this message"
+		return "a mistake in MailArchive stopped it from saving this message"
 	case "folder-unwritable":
 		return "the folder could not be written to the archive"
 	case "folder-unreadable":
@@ -142,7 +142,8 @@ func GapRemedy(reason, sourceKind, errnoClass string) string {
 		}
 		return "check that the archive location is writable and has space, then run again"
 	case "export-panic":
-		return "this is a mistake in mailarchive, not in your mail: the original is untouched — please report it"
+		// The words every surface says for a mistake in MailArchive (design-plain-failure-words).
+		return MistakeRemedy
 	case "folder-unwritable":
 		switch errnoClass {
 		case ErrnoTooLong:

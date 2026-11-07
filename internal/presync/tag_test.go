@@ -22,8 +22,8 @@ var wantTag = map[string]string{
 	"quit-no-window":             "Thunderbird synced, but was left open",
 	"owner-active":               "Thunderbird synced, but was left open",
 	"identity-unavailable":       "Thunderbird synced, but was left open",
-	"already-running":            "Thunderbird was already open",
-	"restore-running":            "Thunderbird not synced: a restore into it was running", // restore-thunderbird R8 lab L3, 2026-11-07
+	"already-running":            "Thunderbird was already open, so the backup left it alone", // design-plain-failure-words, MA-1150, 2026-11-07
+	"restore-running":            "Thunderbird not synced: a restore into it was running",     // restore-thunderbird R8 lab L3, 2026-11-07
 	"owner-active-skipped":       "Thunderbird not synced: you were using the computer",
 	"other-profile-running":      "Thunderbird not synced: open with another profile",
 	"profile-busy":               "Thunderbird not synced: another backup was syncing it",

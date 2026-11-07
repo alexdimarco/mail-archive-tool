@@ -26,21 +26,23 @@ var tagPhrases = map[string]string{
 	OutcomeQuitNoWindow.Name:             phraseLeftOpen, // C-60
 	OutcomeOwnerActive.Name:              phraseLeftOpen,
 	OutcomeIdentityUnavailable.Name:      phraseLeftOpen,
-	OutcomeAlreadyRunning.Name:           "Thunderbird was already open",
-	OutcomeRestoreRunning.Name:           "Thunderbird not synced: a restore into it was running", // R8 lab L3
-	OutcomeOwnerActiveSkipped.Name:       "Thunderbird not synced: you were using the computer",
-	OutcomeOtherProfileRunning.Name:      "Thunderbird not synced: open with another profile",
-	OutcomeProfileBusy.Name:              "Thunderbird not synced: another backup was syncing it",
-	OutcomeLeftoverFound.Name:            "Thunderbird not synced: an earlier copy is still open",
-	OutcomeAppNotFound.Name:              "Thunderbird not synced: it was not found", // friction review O6, 2026-10-31
-	OutcomeRefusedElevated.Name:          "Thunderbird not synced: the backup ran as administrator",
-	OutcomeProfileUnusable.Name:          "Thunderbird not synced: its profile could not be used",
-	OutcomeCannotStart.Name:              phraseCannotStart,
-	OutcomeDidNotStart.Name:              phraseCannotStart,
-	OutcomeExitedEarly.Name:              "Thunderbird not synced: it closed before its mail stopped arriving", // it did start (MA-939)
-	OutcomeSuccessorFound.Name:           "Thunderbird not synced: the copy that was started went away",        // it did start (MA-939)
-	OutcomeStartBlocked.Name:             phraseCannotStart,                                                    // C-65
-	OutcomeNoDesktopSession.Name:         "Thunderbird not synced: no one was logged in",
+	// What the backup did with it, so the row never reads as if an open Thunderbird made the
+	// backup fail (design-plain-failure-words, MA-1150).
+	OutcomeAlreadyRunning.Name:      "Thunderbird was already open, so the backup left it alone",
+	OutcomeRestoreRunning.Name:      "Thunderbird not synced: a restore into it was running", // R8 lab L3
+	OutcomeOwnerActiveSkipped.Name:  "Thunderbird not synced: you were using the computer",
+	OutcomeOtherProfileRunning.Name: "Thunderbird not synced: open with another profile",
+	OutcomeProfileBusy.Name:         "Thunderbird not synced: another backup was syncing it",
+	OutcomeLeftoverFound.Name:       "Thunderbird not synced: an earlier copy is still open",
+	OutcomeAppNotFound.Name:         "Thunderbird not synced: it was not found", // friction review O6, 2026-10-31
+	OutcomeRefusedElevated.Name:     "Thunderbird not synced: the backup ran as administrator",
+	OutcomeProfileUnusable.Name:     "Thunderbird not synced: its profile could not be used",
+	OutcomeCannotStart.Name:         phraseCannotStart,
+	OutcomeDidNotStart.Name:         phraseCannotStart,
+	OutcomeExitedEarly.Name:         "Thunderbird not synced: it closed before its mail stopped arriving", // it did start (MA-939)
+	OutcomeSuccessorFound.Name:      "Thunderbird not synced: the copy that was started went away",        // it did start (MA-939)
+	OutcomeStartBlocked.Name:        phraseCannotStart,                                                    // C-65
+	OutcomeNoDesktopSession.Name:    "Thunderbird not synced: no one was logged in",
 	// not-set-up: the sync hook could not be prepared for a sync job (C-34, slice AS5).
 	OutcomeNotSetUp.Name:      "Thunderbird not synced: the sync could not be prepared",
 	OutcomeInternalError.Name: phraseNotSynced,

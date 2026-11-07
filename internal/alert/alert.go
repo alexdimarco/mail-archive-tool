@@ -74,9 +74,13 @@ type Config struct {
 
 // Event is one completed run's outcome.
 type Event struct {
-	Result   string // ResultOK | ResultFailed | ResultPaused
-	Archive  string
-	Error    string // the failure reason, for a failed run
+	Result  string // ResultOK | ResultFailed | ResultPaused
+	Archive string
+	Error   string // the failure reason, for a failed run
+	// Partial marks a failed run that ended partial — it saved everything else it found — so the
+	// email says it did not save everything, never "FAILED" (design-plain-failure-words,
+	// MA-1146). When an email is sent is unchanged.
+	Partial  bool
 	Messages int
 	Host     string // the machine the backup ran on
 	When     time.Time
@@ -150,18 +154,21 @@ func (c Config) subjectAndBody(ev Event) (subject, body string) {
 	if ev.Result == ResultSyncStale {
 		return syncStaleSubjectAndBody(name, ev)
 	}
-	switch ev.Result {
-	case ResultFailed:
+	word := strings.ToUpper(resultWord(ev.Result))
+	switch {
+	case ev.Result == ResultFailed && ev.Partial:
+		subject, word = "MailArchive backup did not save everything: "+name, "DID NOT SAVE EVERYTHING"
+	case ev.Result == ResultFailed:
 		subject = "MailArchive backup FAILED: " + name
-	case ResultPaused:
+	case ev.Result == ResultPaused:
 		subject = "MailArchive backup PAUSED after repeated failures: " + name
-	case ResultRecovered:
+	case ev.Result == ResultRecovered:
 		subject = "MailArchive backups are working again: " + name
 	default:
 		subject = "MailArchive backup ok: " + name
 	}
 	var b strings.Builder
-	fmt.Fprintf(&b, "MailArchive backup result: %s\r\n", strings.ToUpper(resultWord(ev.Result)))
+	fmt.Fprintf(&b, "MailArchive backup result: %s\r\n", word)
 	fmt.Fprintf(&b, "Archive: %s\r\n", name)
 	if ev.Host != "" {
 		fmt.Fprintf(&b, "Computer: %s\r\n", ev.Host)

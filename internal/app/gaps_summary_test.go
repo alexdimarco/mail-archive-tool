@@ -128,7 +128,8 @@ func TestPartialRunIsATypedFailure(t *testing.T) {
 	if !errors.Is(err, ErrPartial) || !errors.As(err, &pe) || errors.Is(err, context.Canceled) {
 		t.Fatalf("partialOutcome = %v; want a *PartialError matching ErrPartial and not context.Canceled", err)
 	}
-	if got, want := err.Error(), "partial: 3 item(s) and 1 folder(s) not captured — see attachments-report.tsv"; got != want {
+	// The words since design-plain-failure-words (MA-1144): a summary counted under no kind.
+	if got, want := err.Error(), state.PartialText(state.PartialCounts{Other: state.PartialKind{Messages: 3, Folders: 1}}, true); got != want {
 		t.Errorf("error text %q, want %q", got, want)
 	}
 	if pe.ReportPath != "/a/attachments-report.tsv" || pe.Summary.New != 2 {
@@ -137,7 +138,7 @@ func TestPartialRunIsATypedFailure(t *testing.T) {
 	if partialOutcome(Result{Gaps: GapSummary{Info: 1}}) != nil {
 		t.Error("a run with nothing missing returned a partial error")
 	}
-	if got := partialOutcome(Result{Partial: true, Stats: export.Stats{Unreadable: 2}}).Error(); got != "partial: 2 message(s) only partly read — see attachments-report.tsv" {
+	if got := partialOutcome(Result{Partial: true, Stats: export.Stats{Unreadable: 2}}).Error(); got != state.PartialText(state.PartialCounts{PartlyRead: 2}, true) {
 		t.Errorf("partly-read-only error text %q", got)
 	}
 
@@ -153,7 +154,7 @@ func TestPartialRunIsATypedFailure(t *testing.T) {
 	if rerr != nil || st != state.LastRunPresent {
 		t.Fatalf("no last-run record: %v", rerr)
 	}
-	if rec.Status != state.RunFailed || !strings.HasPrefix(rec.Error, "partial: 3 item(s) and 1 folder(s) not captured") {
+	if rec.Status != state.RunFailed || !strings.HasPrefix(rec.Error, "Not everything was saved. 3 messages and 1 folder could not be saved") {
 		t.Errorf("a partial run recorded %q %q; want failed with the one-line summary (S1a maps partial to failure)", rec.Status, rec.Error)
 	}
 	if rec.GapsObserved != 4 || rec.GapsNew != 2 || rec.GapsFillable != 3 || rec.GapsTerminal != 1 || rec.Unreadable != 1 {

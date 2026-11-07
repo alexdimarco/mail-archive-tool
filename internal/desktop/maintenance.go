@@ -55,7 +55,7 @@ func (d *dashboard) runJobOnClaiming(out string, claimed func(), fn func(*log.Lo
 		c.mu.Unlock()
 		return errors.New(deletingRefusal)
 	}
-	c.running, c.device, c.lines, c.result, c.errMsg = true, nil, nil, "", ""
+	c.running, c.device, c.lines, c.result, c.errMsg, c.busy = true, nil, nil, "", "", ""
 	// A new job in the slot (design-presync-attended §4.6, C-15, C-71): its own id, its
 	// archive, and the sync fields reset together with the lines and the result.
 	c.slot++
@@ -74,6 +74,19 @@ func (d *dashboard) runJobOnClaiming(out string, claimed func(), fn func(*log.Lo
 			}
 		}()
 		result, err := fn(log.New(c, "", 0))
+		// A backup another run's lock kept out is a skip, told in its words, never a failure
+		// (design-plain-failure-words, MA-1147).
+		if words, ok := app.BusySkipped(err); ok {
+			c.finishSkipped(words)
+			return
+		}
+		// A partial backup saved everything else it found: its words, which lead with what
+		// happened, are its result, never "Backup failed:" or "It didn't finish:" (owner question
+		// Q3, the recommendation built).
+		if errors.Is(err, app.ErrPartial) {
+			c.finish(jobErrorText(out, err), "")
+			return
+		}
 		if err != nil {
 			c.finish("", jobErrorText(out, err))
 			return

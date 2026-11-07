@@ -90,13 +90,14 @@ func TestABusyArchiveIsRefusedInPlainWords(t *testing.T) {
 	}
 	msg := err.Error()
 	assure.Refused(t, 1, msg, assure.Code(1),
-		assure.Names("another backup or check is using this archive", "(started ", "try again when it finishes"),
+		// The words since design-plain-failure-words (MA-1147): a skip, not a failure.
+		assure.Names("Another backup of this archive is already running", "(started ", "Try again when it finishes"),
 		assure.Forbid("pid=", "host=", "nonce", "held by", out),
 		assure.NoSideEffect(func() bool {
 			_, serr := os.Stat(filepath.Join(out, ".mailarchive-manifest.json"))
 			return errors.Is(serr, os.ErrNotExist)
 		}))
-	if strings.Count(msg, "try again") != 1 {
+	if strings.Count(strings.ToLower(msg), "try again") != 1 {
 		t.Fatalf("said once: %q", msg)
 	}
 	held.Release()

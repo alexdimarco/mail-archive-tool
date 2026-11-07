@@ -368,6 +368,11 @@ func RunHeadless(path string) int {
 		if errors.As(runErr, &ie) {
 			logger.Printf("FAILED: %s", ie.ForOwner(headlessRebuildAction))
 			logger.Printf("detail: %v", runErr)
+		} else if errors.Is(runErr, app.ErrPartial) {
+			// A partial run saved everything else: its own words, which lead with what
+			// happened, and no "FAILED:" (design-plain-failure-words; the command line's
+			// logFailure does the same).
+			logger.Printf("%v", runErr)
 		} else {
 			logger.Printf("FAILED: %v", runErr)
 		}

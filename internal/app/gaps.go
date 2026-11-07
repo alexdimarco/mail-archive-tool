@@ -46,6 +46,9 @@ const maxSummaryGapLines = 20
 type GapSummary struct {
 	Observed, New, Recovered, ClosedGone, Fillable, Terminal, Info, Stuck, NotAttempted, ItemGaps, FolderGaps int
 	Lines                                                                                                     []string
+	// Kinds is what this run observed, by kind (design-plain-failure-words): the words a partial
+	// run says, and its record.
+	Kinds state.PartialCounts
 }
 
 // summarizeGaps reads this run's observations out of the manifest: an entry whose
@@ -87,6 +90,7 @@ func summarizeGaps(m *state.Manifest, out string, runAt, now time.Time, period t
 			sources[g.Token] = src
 		}
 		obs = append(obs, row{src, kinds[g.Token], g})
+		s.Kinds.Add(g)
 		if g.Scope == state.GapScopeFolder {
 			s.FolderGaps++
 		} else {
@@ -238,28 +242,32 @@ type PartialError struct {
 	Encrypted bool
 }
 
+// Error is the run's words (design-plain-failure-words, MA-1144): what happened first, then
+// what it could not save by kind, each with its remedy, the report named only as the details.
+// The last-run record, the run history, the alert email, BACKUP-NEEDS-ATTENTION.txt and the
+// command line carry these words.
 func (e *PartialError) Error() string {
-	var what []string
-	if e.Summary.ItemGaps > 0 {
-		what = append(what, fmt.Sprintf("%d item(s)", e.Summary.ItemGaps))
-	}
-	if e.Summary.FolderGaps > 0 {
-		what = append(what, fmt.Sprintf("%d folder(s)", e.Summary.FolderGaps))
-	}
-	text := "partial:"
-	if len(what) > 0 {
-		text += " " + strings.Join(what, " and ") + " not captured"
-	}
-	if e.Unreadable > 0 {
-		if len(what) > 0 {
-			text += ";"
-		}
-		text += fmt.Sprintf(" %d message(s) only partly read", e.Unreadable)
-	}
 	if e.Encrypted {
-		return text + " — open the archive in MailArchive to see which"
+		// An encrypted archive keeps no report: MailArchive shows which.
+		return strings.Join(append([]string{state.PartialLead}, state.PartialSentences(e.Counts())...), " ") + " Open the archive in MailArchive to see which."
 	}
-	return text + " — see attachments-report.tsv"
+	return state.PartialText(e.Counts(), true)
+}
+
+// Counts is what the run could not save, by kind: the summary's kinds, what it counted under
+// no kind (a summary built elsewhere), and the partly-read messages.
+func (e *PartialError) Counts() state.PartialCounts {
+	p := e.Summary.Kinds
+	msgs := p.Mistake.Messages + p.ArchiveWrite.Messages + p.Source.Messages + p.Retried.Messages
+	folders := p.Mistake.Folders + p.ArchiveWrite.Folders + p.Source.Folders + p.Retried.Folders
+	if rest := e.Summary.ItemGaps - msgs; rest > 0 {
+		p.Other.Messages += rest
+	}
+	if rest := e.Summary.FolderGaps - folders; rest > 0 {
+		p.Other.Folders += rest
+	}
+	p.PartlyRead = e.Unreadable
+	return p
 }
 
 // Is makes errors.Is(err, ErrPartial) true for a PartialError.
