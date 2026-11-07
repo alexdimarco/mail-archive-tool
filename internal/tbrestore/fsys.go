@@ -18,10 +18,13 @@ import (
 // the one production implementation; a test wraps it to inject a fault at any step (the
 // ceFS seam's shape, internal/app/copyexport_fs.go).
 type FS interface {
-	// Mkdir creates one folder, exclusively, at 0700: an existing entry of the name is
-	// an error satisfying errors.Is(err, fs.ErrExist).
+	// Mkdir creates one folder, exclusively, readable by this account alone from its
+	// creation (0700 and no inherited access-list entry; on Windows a protected owner-only
+	// access list given in the create call; R7-01): an existing entry of the name is an
+	// error satisfying errors.Is(err, fs.ErrExist).
 	Mkdir(name string) error
-	// Create creates one file, exclusively, at 0600, for writing.
+	// Create creates one file, exclusively, for writing, owner-only from its creation as
+	// Mkdir (0600).
 	Create(name string) (wfile, error)
 	// Open opens a regular file for reading; a link or anything else is refused.
 	Open(name string) (io.ReadCloser, error)
@@ -64,11 +67,12 @@ func NewRootFS(root *os.Root) FS { return &rootFS{root: root} }
 
 func newRootFS(root *os.Root) FS { return NewRootFS(root) }
 
-func (r *rootFS) Mkdir(name string) error { return r.root.Mkdir(name, 0o700) }
+// Mkdir and Create make each entry owner-only in the create itself (mkdirPrivate,
+// createPrivate; settled 2026-11-07 [R7-01]), never create-then-restrict: a handle
+// another account opened in between would keep its rights.
+func (r *rootFS) Mkdir(name string) error { return mkdirPrivate(r.root, name) }
 
-func (r *rootFS) Create(name string) (wfile, error) {
-	return r.root.OpenFile(name, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0o600)
-}
+func (r *rootFS) Create(name string) (wfile, error) { return createPrivate(r.root, name) }
 
 func (r *rootFS) Open(name string) (io.ReadCloser, error) {
 	before, err := r.root.Lstat(name)

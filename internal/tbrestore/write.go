@@ -718,5 +718,5 @@ const (
 	// wNotPrivateHead (R6-01; the lead's words, owner-delegated): an encrypted archive's
 	// restore that could not make its files readable only by this account.
 	wNotPrivateHead = "MailArchive could not make the restored files readable only by your account in PATH, so nothing was added to Thunderbird: other accounts on this computer might have read the decrypted mail. Choose a profile whose Local Folders is on this computer's own drive."
-	removedTail  = " The part already written was removed. That cannot undo a copy already uploaded by a sync service, kept in a backup or snapshot, or left on the disk."
+	removedTail     = " The part already written was removed. That cannot undo a copy already uploaded by a sync service, kept in a backup or snapshot, or left on the disk."
 )

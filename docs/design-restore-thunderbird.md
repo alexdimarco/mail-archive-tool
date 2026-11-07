@@ -1249,6 +1249,42 @@ predicate `emlPresent`, `internal/app/extractable.go:9-31`, the same one `status
 > Folders (macOS `chmod +a`, Windows `icacls … (OI)(CI)R`), every made entry read back with the
 > OS's own tool; the FAT seam; the owner-only step failing.
 >
+> Settled 2026-11-07 [R7-01] (the R7 adversarial pass, `docs/review-restore-thunderbird-adversarial-r7.md`;
+> the lead's call): R6-01 made each entry owner-only just *after* it was made, and for that instant
+> the container still carried Local Folders' "others may read" entry. A handle another account
+> opened in that instant kept its rights, so it went on listing the container: an encrypted
+> archive's top-level folder names (on the Windows VM a second account won 5 of 5). Now every folder
+> and file a restore makes is owner-only **from its creation**, never create-then-restrict:
+> - **Windows**: each entry is made by one `NtCreateFile`, relative to its parent folder opened
+>   through the root, exclusively, with its security descriptor in the create call itself: this
+>   user the owner and a protected access list of one entry, this user's full control (inherited by
+>   what is made in a folder). Nothing inherited from Local Folders applies to it
+>   (`tbrestore/create_windows.go`).
+> - **macOS**: an entry made straight in Local Folders (the container, the parent file) is made with
+>   `mkdir_extended` / `open_extended` at 0700 / 0600 and an empty access list flagged
+>   `KAUTH_ACL_NO_INHERIT` ("inherit nothing"); those calls take a path, so the new entry is then
+>   bound to the root (the root's look and the path's must be the same entry). Everything else is
+>   made inside the container, which then has no inheritable entry, by `mkdirat` 0700 / `openat`
+>   0600 through the root (`create_darwin.go`).
+> - **Linux**: `mkdirat` 0700 / `openat` 0600 through the root, as before: a default POSIX access
+>   list is masked by those modes (`create_other.go`).
+> - The umask can only narrow those modes; `FS.Private` still reads every entry back after it is
+>   made (R6-01's check), so a drive that ignores the descriptor (FAT32, exFAT) fails closed.
+> - Where private-at-creation cannot be guaranteed, an encrypted archive's plan says who else could
+>   read it and asks twice (W-READERS, R6-01's mechanism): FAT32, exFAT, a share whose server
+>   decides, and now also a macOS drive set to "Ignore ownership on this volume" (every account acts
+>   as the owner there, though the mode reads back as owner-only; `tbrestore.OwnersIgnored`, words
+>   `wReadersOwners`). The re-check at Start repeats it.
+> Tests (MA-1128): `tbengine/ma1128_r701_born_private_test.go` looks at each entry with the OS's
+> own tool the instant its create returns, with Local Folders granting others read and the umask
+> 0 (red before on macOS and Windows: the container and the parent file were born with the
+> inherited entry); `ma1128_r701_owners_darwin_test.go` attaches a real disk image with `-owners
+> off`. Lab, 2026-11-07, the Windows VM with a temporary second standard account (made for the run,
+> deleted after): an encrypted restore raced 20 times, ~5,000 opens by the other account per run —
+> **0 of 20** handles, 0 fresh reads after, Thunderbird's own Trash readable 20 of 20 (the twin);
+> the same race against the old create won **19 of 20**. macOS with a second account was not run
+> (no admin rights here).
+>
 > Settled 2026-11-07 [R6-12] (the R6 adversarial pass): "counts only" now reaches the plan's and
 > the refusal's words too: W-FAT32 says how many folders are 4 GB or more, and W-LONGPATH how many
 > are nested too deep, never their names, for an encrypted archive (they go to a terminal's log and

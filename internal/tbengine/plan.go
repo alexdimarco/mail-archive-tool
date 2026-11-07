@@ -391,12 +391,20 @@ func MakePlan(req Request) (*Plan, error) {
 // lf (R6-01, settled 2026-11-07): the restore makes every file and folder it writes
 // readable by this account alone, which a drive formatted FAT32 or exFAT, or a network
 // share whose server decides, cannot hold. Worded for the plan; none when it can.
+//
+// Settled 2026-11-07 [R7-01]: what the restore makes is owner-only from its creation
+// (tbrestore's mkdirPrivate and createPrivate), and where that cannot be guaranteed the
+// plan says who else could read it and asks twice: those formats, and a macOS drive set to
+// ignore ownership (every account acts as the owner there).
 func readerReasons(lf tbrestore.LocalFolders) []string {
 	fsType := fsTypeOf(lf)
-	if !ownerOnlyUnenforceable(fsType) {
-		return nil
+	if ownerOnlyUnenforceable(fsType) {
+		return []string{fill(wReaders, "PATH", lf.Dir, "FSTYPE", fsType)}
 	}
-	return []string{fill(wReaders, "PATH", lf.Dir, "FSTYPE", fsType)}
+	if tbrestore.OwnersIgnored(lf.Dir) {
+		return []string{fill(wReadersOwners, "PATH", lf.Dir)}
+	}
+	return nil
 }
 
 // ownerOnlyUnenforceable is a file system that cannot limit who reads a file: FAT,

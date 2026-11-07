@@ -31,15 +31,15 @@ const (
 	// The builder's: an archive folder that is not there or holds no archive.
 	wNoArchive = "There is no archive at OUT (WHY), so nothing was restored. Check the folder's path."
 	// The builder's: a -profile-name that names no usable profile, or several.
-	wNoProfName   = "No Thunderbird profile on this computer is named 'NAME', so nothing was restored. Run `mailarchive restore-thunderbird -list-profiles` to see the names, or name the profile's folder with -profile."
-	wProfNames    = "More than one Thunderbird profile on this computer is named 'NAME', so nothing was restored. Name the profile's folder with -profile instead (`mailarchive restore-thunderbird -list-profiles` lists them)."
-	wChooseProf   = "This computer has more than one Thunderbird profile (NAMES), so MailArchive did not pick one. Choose one with -profile-name NAME or -profile FOLDER."
-	wNoFolder     = "The archive has no folder 'FOLDER' (as its tree spells it), so nothing was restored. Leave out -folder to restore the whole archive, or check the folder's name."
-	wTwoStores    = "More than one part of this archive has a folder 'FOLDER' (STORES), so nothing was restored. Add -store with one of those names."
-	wInsideEnc    = "Thunderbird's Local Folders (PATH) is inside an encrypted archive, so nothing was restored: the restored mail would not be encrypted there. Choose another profile."
-	wStopEarly    = "The restore was stopped before it began, so nothing was written."
-	wWentAhead    = " Your new restore went ahead."
-	wWillGoAhead  = " Your restore will go ahead."
+	wNoProfName  = "No Thunderbird profile on this computer is named 'NAME', so nothing was restored. Run `mailarchive restore-thunderbird -list-profiles` to see the names, or name the profile's folder with -profile."
+	wProfNames   = "More than one Thunderbird profile on this computer is named 'NAME', so nothing was restored. Name the profile's folder with -profile instead (`mailarchive restore-thunderbird -list-profiles` lists them)."
+	wChooseProf  = "This computer has more than one Thunderbird profile (NAMES), so MailArchive did not pick one. Choose one with -profile-name NAME or -profile FOLDER."
+	wNoFolder    = "The archive has no folder 'FOLDER' (as its tree spells it), so nothing was restored. Leave out -folder to restore the whole archive, or check the folder's name."
+	wTwoStores   = "More than one part of this archive has a folder 'FOLDER' (STORES), so nothing was restored. Add -store with one of those names."
+	wInsideEnc   = "Thunderbird's Local Folders (PATH) is inside an encrypted archive, so nothing was restored: the restored mail would not be encrypted there. Choose another profile."
+	wStopEarly   = "The restore was stopped before it began, so nothing was written."
+	wWentAhead   = " Your new restore went ahead."
+	wWillGoAhead = " Your restore will go ahead."
 	// wNotEncrypted, as settled 2026-11-07 [R6-01]: it said "anyone who can open this
 	// Thunderbird profile", not who that is; the restore now makes its files readable by
 	// this account alone, and says so.
@@ -48,7 +48,10 @@ const (
 	wNotEncryptedShared = "The restored mail in Thunderbird is NOT encrypted, and this drive cannot limit who reads it: other accounts can read it as well as yours. If you stop the restore or it fails, MailArchive removes what it wrote, but that cannot undo a copy already uploaded by a sync service, kept in a backup or snapshot, or left on the disk."
 	// The lead's words (owner-delegated), settled 2026-11-07:
 	// wReaders (R6-01) is a reason to ask twice; wNotAgainReaders is W-NOTAGAIN with one.
-	wReaders         = "PATH is on a drive whose format (FSTYPE) cannot limit who reads a file, so other accounts on this computer, and on any computer the drive is connected to, can read the restored mail"
+	wReaders = "PATH is on a drive whose format (FSTYPE) cannot limit who reads a file, so other accounts on this computer, and on any computer the drive is connected to, can read the restored mail"
+	// wReadersOwners (R7-01; the lead's words, owner-delegated): a macOS drive set to
+	// ignore ownership.
+	wReadersOwners   = "PATH is on a drive set to ignore ownership, so every account on this computer, and on any computer the drive is connected to, can read the restored mail"
 	wNotAgainReaders = "The restored mail will not be encrypted, and REASONS. That was not confirmed a second time, so nothing was restored. Confirm it again, or choose a profile on this computer's own drive."
 	// wRecaptureUnknown (R6-02): nothing names what backs the archive up.
 	wRecaptureUnknown = "MailArchive cannot tell whether this archive backs up this Thunderbird profile. If it does, its backups leave the restored folder out, and mail you later move into that folder in Thunderbird is not backed up while it is there."
@@ -59,7 +62,7 @@ const (
 	// wShared (R6-06): another profile uses the same Local Folders.
 	wShared = "Another Thunderbird profile, 'NAME' (DIR), uses this same Local Folders. MailArchive keeps Thunderbird out of it too while the restore writes."
 	// wFAT32Enc (R6-12): W-FAT32 for an encrypted archive, a count only.
-	wFAT32Enc = "Of the folders chosen, N IS 4 GB or more, too big for the drive that holds Local Folders: that drive uses the FAT32 format, which cannot hold a file of 4 GB or more, so nothing was restored. Choose fewer folders, or move Local Folders to a drive formatted another way."
+	wFAT32Enc     = "Of the folders chosen, N IS 4 GB or more, too big for the drive that holds Local Folders: that drive uses the FAT32 format, which cannot hold a file of 4 GB or more, so nothing was restored. Choose fewer folders, or move Local Folders to a drive formatted another way."
 	wCloud        = "This Thunderbird profile is in a folder SERVICE keeps in sync, so the restored mail will be uploaded there too."
 	wAllMail      = "Gmail's All Mail folder holds another copy of every message in your other Gmail folders. Restoring it too puts those messages in Thunderbird twice. Untick it if you only want your folders."
 	wRecapture    = "This archive backs up this Thunderbird profile. Its backups will leave the restored folder out, so the restored mail is not copied into the archive again. Mail you later move into that folder in Thunderbird is not backed up while it is there."
