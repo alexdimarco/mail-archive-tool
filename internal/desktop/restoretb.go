@@ -174,7 +174,7 @@ func (d *dashboard) restoreProfilesAction(w http.ResponseWriter, r *http.Request
 		refuseRestore(w, restoreWords(tbrestore.NoProfileRefusal(), restoreListFailText))
 		return
 	}
-	src := tbengine.ArchiveSources(out)
+	src := tbengine.ArchiveSources(out, app.ArchiveEncrypted(out))
 	backsUp := func(dir string) bool { return src.Auto || tbrestore.BacksUp(src.Paths, dir) }
 	source := ""
 	for _, p := range list.Profiles {
@@ -268,7 +268,7 @@ func (d *dashboard) restorePlanAction(w http.ResponseWriter, r *http.Request) {
 		}
 		req.Folders = in.Folders
 	}
-	src := tbengine.ArchiveSources(out)
+	src := tbengine.ArchiveSources(out, keys != nil || app.ArchiveEncrypted(out))
 	req.Sources = &src
 	plan, err := tbengine.MakePlan(req)
 	if err != nil {

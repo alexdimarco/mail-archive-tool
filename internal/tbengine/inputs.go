@@ -28,8 +28,9 @@ type Sources struct {
 // computer that backs up into it. Before R6-02 only job files were read, so an archive
 // backed up without one never warned. A file that cannot be read is passed over: what it
 // would decide is a warning and a default, and backups skip the restored folder anyway
-// (§7.2); when nothing names the sources the plan says it cannot tell.
-func ArchiveSources(out string) Sources {
+// (§7.2); when nothing names the sources the plan says it cannot tell. For an encrypted
+// archive (encrypted true) only the job files are read (R7-03).
+func ArchiveSources(out string, encrypted bool) Sources {
 	var s Sources
 	abs, _ := filepath.Abs(out)
 	if dir, err := job.Dir(); err == nil {
@@ -49,6 +50,13 @@ func ArchiveSources(out string) Sources {
 				}
 			}
 		}
+	}
+	if encrypted {
+		// Settled 2026-11-07 [R7-03]: an encrypted archive keeps no inputs in its record and
+		// is never scheduled (O5), so a job in its plaintext last-run file or a schedule
+		// descriptor in its folder was put there by someone else — the party its storage is
+		// kept from. Only this computer's own job files (above) are read for it.
+		return s
 	}
 	if lr, st, err := state.ReadLastRun(abs); err == nil && st == state.LastRunPresent && len(lr.Job) > 0 {
 		s.add(lr.Job)
@@ -87,7 +95,7 @@ func (s *Sources) add(flags []string) {
 }
 
 // ArchiveInputs are ArchiveSources' paths (kept for the callers that need only those).
-func ArchiveInputs(out string) []string { return ArchiveSources(out).Paths }
+func ArchiveInputs(out string, encrypted bool) []string { return ArchiveSources(out, encrypted).Paths }
 
 func samePath(a, b string) bool {
 	if a == b {

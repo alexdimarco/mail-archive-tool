@@ -123,7 +123,7 @@ func restoreTBWith(a asker, o *restoreTBOpts, k *keyFlags, fs *flag.FlagSet, std
 			return err
 		}
 	}
-	src := tbengine.ArchiveSources(out)
+	src := tbengine.ArchiveSources(out, keys != nil)
 	req := tbengine.Request{Out: out, Keys: keys, Profile: tbengine.ProfileChoice{Name: *o.profileName},
 		FolderPaths: o.folders, Store: *o.store, Name: *o.name, Sources: &src}
 	if *o.profile != "" {

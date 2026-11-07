@@ -270,6 +270,17 @@ command line as `mailarchive restore-thunderbird` (R33, "One program",
    > whose record keeps no inputs; an archive older than its record), the plan's first line says
    > MailArchive cannot tell, in W-RECAPTURE's place — never nothing. A Microsoft 365-only archive
    > backs up no profile and says nothing. Test: `tbengine/ma1124_r602_sources_test.go` (MA-1124).
+
+   > Settled 2026-11-07 [R7-03] (the R7 adversarial pass; the lead's call): the last-run record and
+   > the schedule descriptor are plain files in the archive folder. An encrypted archive's record
+   > keeps no inputs and it is never scheduled (O5), so a job or a descriptor there was put there by
+   > someone else — the party an encrypted archive's storage is kept from — and it could hide the
+   > "cannot tell" line or add W-RECAPTURE for every profile. For an encrypted archive neither file
+   > is read now: only this computer's own Desktop job files (owner-only, in its settings folder)
+   > decide W-RECAPTURE and the default profile (`ArchiveSources(out, encrypted)`; the plan reads an
+   > encrypted archive's sources itself, whatever its caller passed). There is no installed schedule
+   > or sealed record of inputs to read for one. A plain archive's own record is read as R6-02
+   > settled. Test: `tbengine/ma1124_r703_planted_sources_test.go` (MA-1124).
 5. **One profile:** shown, not asked. **Several:** the person chooses from the list
    ("NAME — FOLDER"), the default pre-selected. **None:** refused (§10, words W-NOPROF).
 6. The page sends the chosen profile's position in the list the server made, never a

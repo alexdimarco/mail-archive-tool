@@ -230,10 +230,12 @@ func MakePlan(req Request) (*Plan, error) {
 		_, lerr := os.Lstat(filepath.Join(out, lockfile.Name))
 		p.roLock = lerr == nil // R7-02: a read-only archive's lock is held for the run when there is one
 	}
-	if req.Sources != nil {
+	// R7-03: an encrypted archive's sources are read here, whatever the caller read, so a
+	// plaintext file planted in its folder never decides them.
+	if req.Sources != nil && !enc {
 		p.sources = *req.Sources
 	} else {
-		p.sources = ArchiveSources(out)
+		p.sources = ArchiveSources(out, enc)
 	}
 	p.unknownSrc = !p.sources.Known && len(req.Inputs) == 0
 
