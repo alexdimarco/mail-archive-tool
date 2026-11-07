@@ -91,6 +91,9 @@ Things seen on the way:
 - **macOS and Linux.** The words name the ≡ button, which Thunderbird 153 shows on every
   platform, but the path was walked on Windows only in this row (the R7 friction review's macOS
   pass records whether it walked it there).
+  *Added later the same day:* it did not — the owner's own Thunderbird was open on the Mac, and
+  driving a second Thunderbird window on the owner's screen was left out
+  (`docs/review-restore-thunderbird-friction.md`, cell 20). The macOS leg stays pending.
 - **MA-1091's foldcheck2 P1 step**, which the design says "runs with MA-1133": not run in this
   session (outside its brief); it stays pending in MA-1091.
 - A real mail account through the ordinary (verified) path; a Thunderbird other than 153.6.0.
