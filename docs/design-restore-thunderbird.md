@@ -321,6 +321,14 @@ profile"). String values are decoded as JavaScript string literals (`\\`, `\"`,
    > Add Mail Account…), since Thunderbird is understood to make Local Folders with the first
    > account; the lab did not check whether an IMAP account makes it. The words are not shipped
    > until MA-1133 names the path that worked.
+   >
+   > Lab 2026-11-07, row MA-1133 run on Windows (`docs/lab/restore-thunderbird-windows-MA-1133.md`):
+   > the candidate above does not exist in Thunderbird 153.6.0 (Account Settings has no Account
+   > Actions menu). No item adds Local Folders by itself; adding an **email** account (an IMAP one,
+   > made through ADVANCED CONFIG) or a **newsgroup** account makes it, and it stays when that
+   > newsgroup account is deleted; a **feed** account does not. The path with no real account:
+   > ≡ → Add Account → Newsgroup → any name, address and server → Next until Finish. W-NOLOCAL's
+   > words now name it (§7.5 note of the same date).
 2. Its folder is `mail.server.serverN.directory-rel` when that begins with `[ProfD]`
    (joined under the profile), else `mail.server.serverN.directory` (an absolute path:
    some people move Local Folders to another drive, and Thunderbird honours it). This
@@ -1794,6 +1802,15 @@ the copy (`pending.go:15-21`).
 >   Folders yet, so there is nowhere to restore to and nothing was written. In Thunderbird, MENU
 >   PATH, then close Thunderbird and click Check again. MailArchive does not change Thunderbird's
 >   settings itself." MENU PATH is filled from lab row MA-1133 before this ships.
+>   *Filled 2026-11-07 (lab row MA-1133, lead's words, owner-delegated):* "This Thunderbird
+>   profile has no Local Folders yet, so there is nowhere to restore to and nothing was written.
+>   Thunderbird makes Local Folders when you add an account. In Thunderbird, click the menu button
+>   (≡, top right), then Add Account, then Email to add your mail account; or, if you have none to
+>   add, Newsgroup: type any name, email address and server name (for example
+>   news.example.invalid) and click Next until Finish. You may delete that newsgroup account
+>   afterwards in Account Settings; Local Folders stays. Then close Thunderbird and click Check
+>   again. MailArchive does not change Thunderbird's settings itself." Pinned by MA-1085's
+>   "no Local Folders" case.
 > - **Stopped**, for every archive, adds: "That cannot undo a copy already uploaded by a sync
 >   service, kept in a backup or snapshot, or left on the disk." [RT-8]
 > - **Done** adds W-STORE's sentence when it applied, and "MailArchive checked every message it
@@ -3180,6 +3197,10 @@ Build order is sound: nothing on a surface (R4, R5) before its engine (R1–R3).
 >   (§13 foldcheck note; the R3 note). Gate owed: the friction review of this Desktop flow, Windows
 >   first on Edge, then macOS, then Linux, and the X-series walk; and R6's pass asked that R7's pass
 >   include INS-07, the Lock reply and `FS.Private` on Windows with a second account and on exFAT.
+>
+> Lab 2026-11-07: **MA-1133 ran on Windows** (`docs/lab/restore-thunderbird-windows-MA-1133.md`);
+> W-NOLOCAL's MENU PATH is filled (§3.2 step 1 note, §7.5 note), so the "Still pending" line's
+> first item is done.
 
 ## 14. Decisions this design makes, for the review to test
 

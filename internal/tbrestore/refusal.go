@@ -56,10 +56,11 @@ const (
 	wNotProfile  = "PATH is not a Thunderbird profile (it holds no prefs.js), so nothing was restored. Choose a Thunderbird profile folder."
 
 	wPrefs = "MailArchive could not read this profile's settings file (FILE: WHY), so nothing was restored. Open Thunderbird once with this profile and close it, then try again; if it repeats, choose another profile."
-	// W-NOLOCAL, as replaced by lab finding 1. MENU PATH is lab row MA-1133's, and these
-	// words do not ship before it has run (design §3.2 step 1 note); until then the
-	// placeholder stays in the text so no slice can ship a guessed path.
-	wNoLocal   = "This Thunderbird profile has no Local Folders yet, so there is nowhere to restore to and nothing was written. In Thunderbird, MENU PATH, then close Thunderbird and click Check again. MailArchive does not change Thunderbird's settings itself."
+	// W-NOLOCAL, as replaced by lab finding 1, with lab row MA-1133's menu path (lead's
+	// words, owner-delegated; Thunderbird 153.6.0 on Windows, 2026-11-07): Thunderbird
+	// makes Local Folders when an email or newsgroup account is added, and keeps it when
+	// that account is deleted; a feed account does not make it.
+	wNoLocal   = "This Thunderbird profile has no Local Folders yet, so there is nowhere to restore to and nothing was written. Thunderbird makes Local Folders when you add an account. In Thunderbird, click the menu button (≡, top right), then Add Account, then Email to add your mail account; or, if you have none to add, Newsgroup: type any name, email address and server name (for example news.example.invalid) and click Next until Finish. You may delete that newsgroup account afterwards in Account Settings; Local Folders stays. Then close Thunderbird and click Check again. MailArchive does not change Thunderbird's settings itself."
 	wMaildir   = "This Thunderbird profile keeps each message in its own file (the 'maildir' setting). MailArchive can restore only into the usual one-file-per-folder kind, so nothing was written. Choose another profile."
 	wOverlap   = "Thunderbird's Local Folders (PATH) overlaps WHAT, so nothing was restored. Choose another profile."
 	wNoIdent   = "Windows could not identify the drive that holds Thunderbird's Local Folders (PATH), so nothing was restored. This happens on some network drives. Choose a profile on this computer's own drive."

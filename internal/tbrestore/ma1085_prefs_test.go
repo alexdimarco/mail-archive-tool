@@ -148,9 +148,17 @@ func TestRestoreLocalFoldersLookup(t *testing.T) {
 				t.Fatal(err)
 			}
 			_, err = FindLocalFolders(profile, p)
+			// The remedy is lab row MA-1133's menu path (Thunderbird 153.6.0 on Windows,
+			// 2026-11-07): ≡ → Add Account → Newsgroup made Local Folders on a profile with
+			// no account, and stayed after that account was deleted; Email (an IMAP
+			// account) made it too; Feed did not.
 			refusedAs(t, err, "W-NOLOCAL", func() bool { return snapshot(t, profile) == before },
-				"has no Local Folders yet", "nothing was written", "does not change Thunderbird's settings")
-			_ = name
+				"has no Local Folders yet", "nothing was written", "menu button (≡, top right)",
+				"Add Account", "Email", "Newsgroup", "Finish", "Local Folders stays",
+				"click Check again", "does not change Thunderbird's settings")
+			if strings.Contains(err.Error(), "MENU PATH") {
+				t.Fatalf("%s: the placeholder is still in W-NOLOCAL: %s", name, err)
+			}
 		}
 	})
 	t.Run("under ImapMail, or the archive folder", func(t *testing.T) {
