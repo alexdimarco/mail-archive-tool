@@ -48,6 +48,8 @@ func (g Gmail) String() string {
 //     allow-list of the lines Thunderbird writes, user.js over prefs.js). A file that cannot be
 //     read, or read with certainty, anywhere in it, is GmailCantTell; so is an is_gmail that is not
 //     true or false (wrongType, MA-1270), since Thunderbird drops such a value;
+//   - an account whose type is not imap is GmailNo whatever its is_gmail: Thunderbird keeps one copy
+//     across folders only for IMAP (nsImapMailFolder.cpp), so the Gmail rule never applies to POP;
 //   - mail.server.<key>.is_gmail true is GmailYes, false GmailNo. With no line of its own the
 //     account takes mail.server.default.is_gmail, as Thunderbird's GetBoolValue falls back to the
 //     default branch, and with neither the built-in default, false (mailnews.js): a profile that
@@ -65,6 +67,9 @@ func GmailForStore(profileDir, storeDir string) (Gmail, error) {
 	acct, s, err := findAccount(profileDir, storeDir)
 	if err != nil {
 		return GmailCantTell, &gmailUnknown{store: StripControl(filepath.Base(storeDir)), why: err}
+	}
+	if acct.Type != "imap" {
+		return GmailNo, nil // Thunderbird's single-copy rule is IMAP's (lead's call, 2026-11-08)
 	}
 	v, own := s.vals["mail.server."+acct.ServerKey+".is_gmail"]
 	if !own {
