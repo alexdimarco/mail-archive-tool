@@ -1624,7 +1624,7 @@ func noticeClosed(choice error) error {
 }
 
 // prepFailWords are the wizard's plain words for err, a refusal of the offline change: its own
-// plain words when it has them (MA-1210), else a sentence that names no file and no raw error,
+// plain words when it has them (MA-1260), else a sentence that names no file and no raw error,
 // with the steps to make sure by hand.
 func prepFailWords(err error, profile, host string) string {
 	if words, ok := thunderbird.PlainWords(err); ok {
@@ -1635,7 +1635,7 @@ func prepFailWords(err error, profile, host string) string {
 }
 
 // imapPrepAccount is the profile and account Yes, prepare would change for store, or the
-// refusal the person is shown when it cannot change one, in plain words (MA-1210): no profile
+// refusal the person is shown when it cannot change one, in plain words (MA-1260): no profile
 // found (W8), no account it can tell (MA-1204), user.js keeping the setting off (MA-1205), or,
 // for an account to turn on, any refusal EnableOffline would give (a hand-edited line, a backup
 // path refused; MA-1207), checked here before the person is asked to quit Thunderbird. On a

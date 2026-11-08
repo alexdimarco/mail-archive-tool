@@ -1,7 +1,7 @@
 package thunderbird
 
 // The refusals of the offline preparation (the wizard's Yes, prepare and the command line's
-// -enable-offline), each with two sets of words (the C0c friction review's W0 to W8, MA-1210):
+// -enable-offline), each with two sets of words (the C0c friction review's W0 to W8, MA-1260):
 // Error is the command line's, which says nothing was changed or exported, may keep the
 // technical detail after its plain sentence, and ends with the way out; Plain is the wizard's,
 // with no prefs.js, no server key and no raw error (the wizard adds its own W0 tail).
@@ -138,7 +138,7 @@ const (
 )
 
 // NoAccountError is what the person is told when MailArchive cannot tell which account a store
-// belongs to, so it changes nothing (the C0c pass's OUT-01, MA-1204; words MA-1210). Host is the
+// belongs to, so it changes nothing (the C0c pass's OUT-01, MA-1204; words MA-1260). Host is the
 // store folder's name, Why FindAccountForStore's technical reason (naming prefs.js).
 type NoAccountError struct {
 	Kind  NoAccountKind

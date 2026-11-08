@@ -867,7 +867,7 @@ is a label-membership question, not completeness (§14 Q6).
 >
 > **Folded 2026-11-08 [C0c adversarial pass round 2 + friction W0 to W8] (the lead's calls,
 > `docs/review-thunderbird-completeness-c0c-adversarial-r2.md` and
-> `docs/review-thunderbird-completeness-c0c-friction.md`; built and tested, MA-1206 to MA-1210):**
+> `docs/review-thunderbird-completeness-c0c-friction.md`; built and tested, MA-1206 to MA-1260):**
 >
 > - **The profile, by its own files (R2-03, R2-04, R2-06; MA-1206). Supersedes the INS-01 bullet
 >   above ("the structure rule is what keeps a store out").** A folder is a Thunderbird profile only
@@ -913,7 +913,7 @@ is a label-membership question, not completeness (§14 Q6).
 >   a change that failed after the quit, read OK and a window closed with its close button alike
 >   (`noticeClosed`), as after the Full-mode information dialog; the export goes ahead, as the words
 >   say.
-> - **The words (friction W0 to W8, plus the lead's sentence; MA-1210; MA-1204 and MA-1205 amended).**
+> - **The words (friction W0 to W8, plus the lead's sentence; MA-1260; MA-1204 and MA-1205 amended).**
 >   Each refusal has the command line's words (`Error`: "-enable-offline changed nothing, and
 >   nothing was exported: …", the technical reason kept after the plain sentence, what to make sure
 >   of for each account on the server and where, "Then run the same command again without

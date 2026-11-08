@@ -28,7 +28,7 @@ func prepRefusal(t *testing.T, store string) string {
 	return assure.Reached(t, refusal, "the Yes, prepare refusal")
 }
 
-// covers: MA-1210
+// covers: MA-1260
 // Every Yes, prepare refusal in the wizard is in plain words (the C0c friction review's W0 to W4,
 // W8, F2 to F8, F11): what happened and that no Thunderbird setting was changed; where the setting
 // is, by the version that last opened the profile (below 160 "Synchronization & Storage", 160 and

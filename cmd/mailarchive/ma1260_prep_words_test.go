@@ -10,7 +10,7 @@ import (
 	"mail-archive-tool/internal/assure"
 )
 
-// covers: MA-1210, R12
+// covers: MA-1260, R12
 // Every -enable-offline refusal says that nothing was changed and nothing was exported, why (the
 // technical detail may stay here, after the plain sentence), what to make sure of in Thunderbird,
 // and to run again without -enable-offline (the C0c friction review's W5, F1, F13): an account
