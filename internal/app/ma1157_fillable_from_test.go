@@ -49,6 +49,12 @@ func TestARunRecordsWhereItReadItsMail(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(profile, "prefs.js"), []byte("// prefs\n"), 0o600); err != nil {
 		t.Fatal(err)
 	}
+	// Amended 2026-11-08 (the merge of main into tb-completeness): on this branch a profile is known
+	// by its own files, compatibility.ini beside prefs.js (MA-1206), as Thunderbird writes them at
+	// every start; a prefs.js alone no longer makes a folder Thunderbird's.
+	if err := os.WriteFile(filepath.Join(profile, "compatibility.ini"), []byte("[Compatibility]\nLastVersion=153.6.0\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
 	store := filepath.Join(profile, "Mail", "Local Folders", "Inbox")
 	headersOnly(t, store)
 	tbOut := tmpDir(t)
