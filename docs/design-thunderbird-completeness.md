@@ -87,6 +87,14 @@ and renumbers on merge if any are taken.
 
 ## 0. Rulings folded on 2026-11-07
 
+**Owner ruling, 7 November 2026 (late): "ok to pics".** The owner accepted the recommended answers
+below (O1–O3 and Q1–Q8 as recorded in this section); they are now the owner's rulings, not defaults.
+Lead's calls on the C0c build and its folds (same date): an absolute or `.`/`..` key tail makes the
+account "can't tell" (`invalid_entry`), accepted; C0c's stricter server-name fallback (the account's own
+folder setting, when it has one, must name a folder of that name) is accepted as built; for C3, a
+not-kept Spam or Trash folder, and a not-kept Gmail label folder, give a note only and do not block
+"complete" (they are outside Y by §3), while any other not-kept folder blocks it.
+
 **Owner defaults.** The owner has the review's recommendations. These are what gets built, and each
 alternative must stay a small change:
 
