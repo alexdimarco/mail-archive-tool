@@ -2,6 +2,7 @@ package wizard
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"log"
 	"path/filepath"
@@ -89,6 +90,13 @@ func RunJobInProcess(ctx, stop context.Context, jobPath string, logger *log.Logg
 	logger.Printf("Running the scheduled backup now for %s", j.Out)
 	result, runErr := app.Run(ctx, opts, logger, nil)
 	if runErr != nil {
+		// A partial backup's note says what is not downloaded in full yet too, as a finished
+		// one's does (the 1.6.1 friction review's P6, MA-1156).
+		if errors.Is(runErr, app.ErrPartial) {
+			if nd := notDownloadedLines(result); len(nd) > 0 {
+				return "", &partialNote{err: runErr, lines: nd}
+			}
+		}
 		return "", runErr
 	}
 	return runNowSummary(result), nil
@@ -121,24 +129,9 @@ func runNowSummary(r app.Result) string {
 		// duplicate is made (friction review O4; TestSavedAgainMakesNoCopies).
 		lines = append(lines, messages(again)+" already in the archive "+guiVerb(again, "was", "were")+" saved again (no copies are made).")
 	}
-	notDone := r.Fillable + r.Unknown
-	onlyGaps := r.Fillable > 0 && r.FillableOnlyParseGap >= r.Fillable
-	switch {
-	case onlyGaps:
-		lines = append(lines, messages(r.Fillable)+" "+guiVerb(r.Fillable, "is", "are")+" cut short in the mail files, or "+guiVerb(r.Fillable, "has", "have")+
-			" parts that could not be told apart, so "+guiVerb(r.Fillable, "it", "they")+" could not be read in full. To add them, replace that mail file with a complete export from your mail app, then click Run now again. A message that was already damaged when it was sent stays listed.")
-	case notDone > 0:
-		// The one sentence Recent backups says too (design-plain-failure-words, MA-1149).
-		line := state.NotDownloadedSentence(notDone)
-		if r.Unknown > 0 {
-			line += fmt.Sprintf(" %d of them %s from an older archive and %s checked again by each backup.", r.Unknown, guiVerb(r.Unknown, "is", "are"), guiVerb(r.Unknown, "is", "are"))
-		}
-		lines = append(lines, line)
-		if r.FillableParseGap > 0 {
-			lines = append(lines, fmt.Sprintf("%d of them %s cut short in the mail file: replace that file with a complete export from your mail app.", r.FillableParseGap, guiVerb(r.FillableParseGap, "is", "are")))
-		}
-	}
-	if (onlyGaps || notDone > 0) && r.ReportPath != "" {
+	nd := notDownloadedLines(r)
+	lines = append(lines, nd...)
+	if len(nd) > 0 && r.ReportPath != "" {
 		// The report is always in the archive's folder (app.writeReport): name the file and
 		// where it is, not a full path the page cannot open (friction review L6).
 		lines = append(lines, "Which ones: the file "+filepath.Base(r.ReportPath)+" in the archive's folder (it opens in a spreadsheet program).")
@@ -151,6 +144,42 @@ func runNowSummary(r app.Result) string {
 	}
 	return strings.Join(lines, "\n")
 }
+
+// notDownloadedLines says what of the archive is not in it in full yet after r, one line each:
+// messages cut short in the mail files, or not downloaded in full (in the one sentence Recent
+// backups says too, worded by where the run read its mail; design-plain-failure-words MA-1149,
+// MA-1157), with those from an older archive and those cut short among them. None when all is
+// there. Run now's result says these after a finished backup and after a partial one (MA-1156).
+func notDownloadedLines(r app.Result) []string {
+	var lines []string
+	notDone := r.Fillable + r.Unknown
+	switch {
+	case r.Fillable > 0 && r.FillableOnlyParseGap >= r.Fillable:
+		lines = append(lines, messages(r.Fillable)+" "+guiVerb(r.Fillable, "is", "are")+" cut short in the mail files, or "+guiVerb(r.Fillable, "has", "have")+
+			" parts that could not be told apart, so "+guiVerb(r.Fillable, "it", "they")+" could not be read in full. To add them, replace that mail file with a complete export from your mail app, then click Run now again. A message that was already damaged when it was sent stays listed.")
+	case notDone > 0:
+		line := state.NotDownloadedSentence(notDone, r.FillableFrom)
+		if r.Unknown > 0 {
+			line += fmt.Sprintf(" %d of them %s from an older archive and %s checked again by each backup.", r.Unknown, guiVerb(r.Unknown, "is", "are"), guiVerb(r.Unknown, "is", "are"))
+		}
+		lines = append(lines, line)
+		if r.FillableParseGap > 0 {
+			lines = append(lines, fmt.Sprintf("%d of them %s cut short in the mail file: replace that file with a complete export from your mail app.", r.FillableParseGap, guiVerb(r.FillableParseGap, "is", "are")))
+		}
+	}
+	return lines
+}
+
+// partialNote is a partial backup's words (its *app.PartialError, unchanged for every code that
+// matches it) with the lines Run now says of what is not downloaded in full yet after them, one
+// per line (MA-1156): the record, the history and the email carry the error's own words.
+type partialNote struct {
+	err   error
+	lines []string
+}
+
+func (e *partialNote) Error() string { return e.err.Error() + "\n" + strings.Join(e.lines, "\n") }
+func (e *partialNote) Unwrap() error { return e.err }
 
 // messages is a count of messages in words: "1 message", "20,351 messages".
 func messages(n int) string {

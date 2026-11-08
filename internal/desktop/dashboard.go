@@ -2297,7 +2297,7 @@ pre{white-space:pre-wrap;overflow-wrap:anywhere;background:var(--bg);border:1px 
       <h2>Recent backups</h2>
       {{if .RecentRuns}}<p class="card-sub">The last backup runs for this archive, newest first. MailArchive keeps the last {{.HistoryMax}}, which is about two days of hourly backups.</p>
       <ul class="run-history">
-        {{range .RecentRuns}}<li>{{.When}} — {{if .Failed}}<span class="warn">{{.Status}}</span>{{else}}<span class="good">{{.Status}}</span>{{end}}{{if .Detail}} — {{.Detail}}{{end}}{{if .Sync}} — {{.Sync}}{{end}}</li>{{end}}
+        {{range .RecentRuns}}<li>{{.When}} — {{if .Failed}}<span class="warn">{{.Status}}</span>{{else}}<span class="good">{{.Status}}</span>{{end}}{{if .Repeat}} ({{.Repeat}}){{end}}{{if .Detail}} — {{range .DetailParts}}{{if .Link}}<a href="` + state.ReportAddress + `" rel="noopener noreferrer" target="_blank">` + state.ReportAddress + `</a>{{else}}{{.Text}}{{end}}{{end}}{{end}}{{if .Sync}} — {{.Sync}}{{end}}</li>{{end}}
       </ul>{{else}}<p class="card-sub">No backups have run yet. When a backup finishes (scheduled, Run now or Archive now), its result appears here.</p>{{end}}
     </div>
 
@@ -2406,6 +2406,20 @@ const dashboardBaseJS = `const csrf=document.querySelector('meta[name=csrf]').co
 // left open from another archive changes nothing (C-12).
 const drawnFor=(document.querySelector('meta[name=drawn-for]')||{}).content||'';
 const $=id=>document.getElementById(id);
+// sayText puts t in el as words only, except that the one address where a mistake in MailArchive
+// is reported (state.ReportAddress, fixed in this script) becomes a real link, made through DOM
+// properties, never markup, opening apart from this page (MA-1151). No other text is ever a link.
+const reportAddress='` + state.ReportAddress + `';
+function sayText(el,t){
+  // Direction-changing characters in words anyone who can write the archive folder can write never
+  // sit beside the link (the polish-161 adversarial pass, L2, MA-1167).
+  const parts=String(t).replace(/[‪-‮⁦-⁩]/g,'').split(reportAddress);
+  el.textContent=parts[0];
+  for(let i=1;i<parts.length;i++){
+    const a=document.createElement('a');a.href=reportAddress;a.textContent=reportAddress;a.rel='noopener noreferrer';a.target='_blank';
+    el.append(a,parts[i]);
+  }
+}
 const post=path=>fetch(path,{method:'POST',headers:{'X-CSRF-Token':csrf}});
 // postDrawn posts the archive this page was drawn for: Archive now and Run now act on the current
 // archive, so a page left drawn for another one is refused, not run on it (MA-987).
@@ -2458,7 +2472,7 @@ function keepMade(v){try{sessionStorage.setItem(madeKey,JSON.stringify(v));retur
 // names the slot's job): its last log line while it runs, then how it ended. Another job in the slot
 // means it ended unseen, which is said as such, never with that job's result.
 function followFirstBackup(line,job){
-  const say=t=>{line.hidden=false;line.textContent=t;};
+  const say=t=>{line.hidden=false;sayText(line,t);};
   const ask=()=>fetch('api/activity').then(r=>r.json()).then(d=>{
     if(String(d.job||'')!==String(job)){say('Its first backup has ended, but another task ran after it, so how it ended is not shown here.');return;}
     if(d.running){const l=d.log||[];say('Its first backup is running: '+(l.length?l[l.length-1]:'starting.'));setTimeout(ask,1500);return;}
@@ -2894,7 +2908,7 @@ function render(d){
   // as this archive's (gate-2 pass 1, as4web-2).
   if(d.otherNote&&res){res.hidden=false;res.textContent=d.otherNote;}
   // A backup another one's lock kept out is a skip, never "It didn't finish" (MA-1148).
-  else if(!d.running&&res){res.hidden=false;res.textContent=d.busy||(d.error?("It didn't finish: "+d.error):(d.result||'Done.'));}
+  else if(!d.running&&res){res.hidden=false;sayText(res,d.busy||(d.error?("It didn't finish: "+d.error):(d.result||'Done.')));}
 }
 // jobButtons shows the running job's Cancel and Skip, next to at when given — the
 // note of the control that started the job — so they are where the person looks.
@@ -3000,7 +3014,7 @@ async function pollBackup(){
     else if(n&&d.log&&d.log.length)n.textContent=d.log[d.log.length-1];
     jobButtons(d,n); // Cancel (and Skip) beside Run now's own note (P3-8, B7)
     if(d.running){setTimeout(pollBackup,1500);return;}
-    if(n){n.hidden=false;n.textContent=d.note||d.otherNote||d.busy||(d.error?('Backup failed: '+d.error):(d.result||'Backup finished.'));}
+    if(n){n.hidden=false;n.textContent=d.note||d.otherNote||d.busy||(d.error?('Backup failed: '+d.error):(d.result||'Backup finished.'));sayText(n,n.textContent);}
   }catch(e){}
   if(b)b.disabled=false;
 }
@@ -3010,7 +3024,7 @@ async function health(){
   const p=$('healthPosture'),b=$('healthBody');if(!b)return;
   try{const d=await(await fetch('api/health')).json();
     if(p)p.textContent=d.posture?('Posture: '+d.posture):'';
-    b.textContent=(d.summary||[]).join('\n')||'No archive yet.';
+    sayText(b,(d.summary||[]).join('\n')||'No archive yet.');
     healthActions(d.actions||[]);
   }catch(e){b.textContent='Could not read status.';}
 }

@@ -98,7 +98,7 @@ func TestStatusSaysMessagesAreShownAsSourceInPlainWords(t *testing.T) {
 	if line == "" {
 		t.Fatalf("no Shown as source line:\n%s", text)
 	}
-	for _, want := range []string{"3 message(s)", "plain text", "nested too deeply", "could not be read", "(too-deeply-nested)", "the original is kept", "Nothing to do"} {
+	for _, want := range []string{"3 messages are shown", "plain text", "nested too deeply", "could not be read", "(too-deeply-nested)", "the original is kept", "Nothing to do"} {
 		if !strings.Contains(line, want) {
 			t.Errorf("line lacks %q: %s", want, line)
 		}

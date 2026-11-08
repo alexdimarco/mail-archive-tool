@@ -40,7 +40,7 @@ func TestPosture(t *testing.T) {
 		needle string
 	}{
 		{"healthy", func(in *Input) {}, "GREEN", ""},
-		{"fillable", func(in *Input) { in.Fillable = 3 }, "WARN", "missing content"},
+		{"fillable", func(in *Input) { in.Fillable = 3 }, "WARN", "not in the archive in full"}, // MA-1160's words
 		{"unknown", func(in *Input) { in.Unknown = 5 }, "WARN", "completeness tracking"},
 		{"index behind", func(in *Input) { in.Indexed = 90 }, "WARN", "reindex"},
 		{"no schedule", func(in *Input) { in.HasDescriptor = false; in.DescErr = os.ErrNotExist }, "WARN", "no schedule"},
