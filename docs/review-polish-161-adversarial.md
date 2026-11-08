@@ -72,6 +72,27 @@ clone; none is built into this branch (this commit is docs only).
   computer name with an accent) needs the VM renamed, which this pass did not do.
 - No full unfiltered run: no product code changed in this commit.
 
+## Settled (2026-11-07)
+
+The lead's calls (words owner-delegated 2026-11-02): take H2 and H3 as proposed; word H4 so the
+name is not stated as fact; strip direction-changing characters for L2. Built test-first in the
+commit that adds this table; each fix mutated alone turns its covering test red (the commit message
+lists the mutations). The probes left the throwaway clone as real tests with covers markers.
+
+| ID | Settled as | Row | Test (red before the fix or its mutation, green after) |
+|---|---|---|---|
+| H2 | **Fixed.** `lockfile.SameHost` cleans both names as `HolderHost` keeps one, then compares: `JOSÉ-PC` matches itself. | MA-1164 | `internal/app/ma1164_holder_name_test.go` `TestThisComputersOwnAccentedNameIsThisComputer` |
+| H3 | **Fixed.** `busyWords` says only the part of the name before its first dot: `your-bank.com` → `your-bank`, `Alexs-MacBook-Pro.local` → `Alexs-MacBook-Pro`. The email's headers are checked in the same test (E1's guard). | MA-1165 | `TestAnotherComputerIsNamedWithoutItsDomain` |
+| H4 | **Fixed (the lead's words).** "…on another computer, which calls itself OFFICE-PC, and still keeps this archive in use (its lock file, .mailarchive.lock), so it may be stuck. If that computer is yours and the backup should have finished by now, restart it to end the backup (restarting this one does not); if you don't recognise it, check who else uses this folder before restarting anything. The next backup then runs as usual." The name is said once. One producer, so Desktop, `status`, the email and the notice say the same. | MA-1166 | `TestAStuckHolderElsewhereIsNamedAsItCallsItself` |
+| L2 | **Fixed.** Recent backups removes U+202A–U+202E and U+2066–U+2069 from a history entry's words (`util.StripBidi`) before showing them; the page script's `sayText` removes the same characters wherever it shows words beside the link (Archive now, Run now, Status & health). Not removed, as `util.StripBidi`: zero-width characters and the marks U+200E/U+200F. Still not checked in a real browser. | MA-1167 | `internal/desktop/ma1167_planted_link_words_test.go` `TestRecentBackupsDropsDirectionChangingCharacters` (with the page-script scenario `plantedReportLink`) |
+| L1 | Refuted; the probe kept as a guard. | MA-1151 | `TestPlantedWordsNeverMakeAnotherLink` |
+| L3 | Refuted; the probe kept as a guard, in the `plantedReportLink` scenario (which also checks L2). | MA-1151, MA-1167 | `TestRecentBackupsDropsDirectionChangingCharacters` |
+| H1 | Refuted; the probe kept as a guard (15 planted spellings; a dot is no longer kept, per H3). | MA-1153 | `TestAPlantedHolderNameKeepsOnlyAComputerNamesCharacters` |
+| E1 | Refuted; kept as a guard inside H3's test. | MA-1165 | `TestAnotherComputerIsNamedWithoutItsDomain` |
+
+Still open: whether these fixes owe a second reader (the finder and the skeptic were one model);
+the other lock refusals' raw holder line (noted above, out of scope).
+
 ## What the lead should decide
 
 1. H2 and H3: take the two one-line fixes, each with a covering test (an MA row each), in the

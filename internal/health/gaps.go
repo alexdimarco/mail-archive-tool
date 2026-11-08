@@ -170,16 +170,21 @@ func remedyFor(in Input, gaps []state.CaptureGap, stuck, withOriginal, dropRetry
 				others++
 			}
 		}
+		// What the remedy adds is said in one bracket, never two in a row (MA-1161).
 		text := first.text
+		var notes []string
 		if first.original != "" {
 			if text != "" {
-				text += " (" + first.original + ")"
+				notes = append(notes, first.original)
 			} else {
 				text = first.original
 			}
 		}
 		if others > 0 {
-			text += fmt.Sprintf(" (+%d other cause(s): see the list below)", others)
+			notes = append(notes, "+"+state.Count(others, "other cause", "other causes")+": see the list below")
+		}
+		if len(notes) > 0 {
+			text += " (" + strings.Join(notes, "; ") + ")"
 		}
 		if text == "" {
 			continue
@@ -371,25 +376,38 @@ func assessCaptureGaps(r *Report, in Input, now time.Time) {
 // (unreadable_messages, WARN) and for unparsed stubs (unparsed_messages, a note).
 func assessPartlyRead(r *Report, in Input) {
 	if in.Unreadable > 0 {
-		r.warn("unreadable_messages", fmt.Sprintf("%d message(s) could only be partly read from the source — %s",
-			in.Unreadable, "repair the data file in place with Outlook's Inbox Repair Tool (scanpst.exe, Windows), then re-run"))
+		r.warn("unreadable_messages", fmt.Sprintf("%s could only be partly read from the source — %s",
+			state.Count(in.Unreadable, "message", "messages"), "repair the data file in place with Outlook's Inbox Repair Tool (scanpst.exe, Windows), then re-run"))
 	}
 	if in.Unparsed > 0 {
-		r.note("unparsed_messages", fmt.Sprintf("%d message(s) could not be parsed and are kept as raw text — the original bytes are in the .eml when the archive is made with -raw; after upgrading, the next run re-examines them once", in.Unparsed))
+		r.note("unparsed_messages", fmt.Sprintf("%s could not be parsed and %s kept as raw text — the original bytes are in the .eml when the archive is made with -raw; after upgrading, the next run re-examines %s once",
+			state.Count(in.Unparsed, "message", "messages"), plural(in.Unparsed, "is", "are"), plural(in.Unparsed, "it", "them")))
 	}
 	// Informational, as terminal is: a part this version cannot decode is kept as
 	// received, and a fallback message is the earlier parser's content, so nothing is
 	// lost and nothing the operator can do changes it (design-mime-fidelity §4.9).
 	if in.Undecodable > 0 {
-		msg := fmt.Sprintf("%d message(s) have parts this version cannot decode — each is kept as received in the attachments zip", in.Undecodable)
+		msg := fmt.Sprintf("%s %s parts this version cannot decode — each is kept as received in the attachments zip", state.Count(in.Undecodable, "message", "messages"), plural(in.Undecodable, "has", "have"))
 		if in.ReportExists {
 			msg += fmt.Sprintf(" (see %s)", in.ReportPath)
 		}
 		r.note("undecodable_messages", msg)
 	}
 	if in.FidelityFallback > 0 {
-		r.note("fidelity_fallback", fmt.Sprintf("%d message(s) are kept as an earlier version read them, because this version could not decode them in full — nothing is lost", in.FidelityFallback))
+		r.note("fidelity_fallback", fallbackWords(in.FidelityFallback)+" — nothing is lost")
 	}
+}
+
+// fallbackWords says n messages are kept as an earlier version read them, the verb and pronouns
+// agreeing with n (MA-1161).
+func fallbackWords(n int) string {
+	return fmt.Sprintf("%s %s kept as an earlier version read %s, because this version could not decode %s in full",
+		state.Count(n, "message", "messages"), plural(n, "is", "are"), plural(n, "it", "them"), plural(n, "it", "them"))
+}
+
+// historyCounts is the go-back history's runs and events in words: "1 run, 3 events" (MA-1161).
+func historyCounts(h state.HistoryStat) string {
+	return state.Count(h.Runs, "run", "runs") + ", " + state.Count(h.Events, "event", "events")
 }
 
 // gapLine is one line of Summary's gap list: source, folder, subject, date,
@@ -406,17 +424,23 @@ func gapLine(in Input, g state.CaptureGap, now time.Time) string {
 	if stuck {
 		why = state.GapStuckWhy(g.Reason, in.gapSourceKind(g))
 	}
+	// Whether the original still exists, and for a folder how many of its messages were not read:
+	// one bracket, never two in a row (the polish-161 friction walk's N3, MA-1161).
+	var notes []string
 	if o := state.GapOriginal(g.Reason, in.gapSourceKind(g)); o != "" {
-		why += " (" + o + ")"
+		notes = append(notes, o)
+	}
+	if g.Scope == state.GapScopeFolder && g.Skipped > 0 {
+		notes = append(notes, state.Count(g.Skipped, "message", "messages")+" not read")
+	}
+	if len(notes) > 0 {
+		why += " (" + strings.Join(notes, "; ") + ")"
 	}
 	var b strings.Builder
 	b.WriteString("  " + where + ": ")
 	switch {
 	case g.Scope == state.GapScopeFolder:
 		b.WriteString(why)
-		if g.Skipped > 0 {
-			fmt.Fprintf(&b, " (%s not read)", state.Count(g.Skipped, "message", "messages"))
-		}
 	case g.Scope == state.GapScopeOverflow:
 		fmt.Fprintf(&b, "%s more: %s", state.Count(g.Skipped, "message", "messages"), why)
 	default:
@@ -490,7 +514,7 @@ func moreLine(in Input, rest []state.CaptureGap) string {
 	n := len(rest)
 	what := fmt.Sprintf("+%d more", n)
 	if counted := countGaps(rest); counted != state.Count(n, "message", "messages") {
-		what = fmt.Sprintf("+%d more entries (%s)", n, counted)
+		what = fmt.Sprintf("+%d more %s (%s)", n, plural(n, "entry", "entries"), counted)
 	}
 	line := "  " + what + " — see the report"
 	if in.ReportExists {

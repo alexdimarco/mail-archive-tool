@@ -384,6 +384,15 @@ func (r *Report) note(code, msg string) {
 	r.Codes = append(r.Codes, code)
 }
 
+// fillableFrom is where the last run read its mail (a state.From* value), "" when no last-run
+// record says (MA-1160).
+func (in Input) fillableFrom() string {
+	if in.LastRunState != state.LastRunPresent {
+		return ""
+	}
+	return state.FillableFrom(in.LastRun.FillableFrom)
+}
+
 // onlyParseGap says every one of the n messages still missing content is so only because a part is
 // cut short or its parts could not be told apart (a fillable parse gap), so the remedy of a
 // message the source has not delivered is not theirs.
@@ -563,11 +572,14 @@ func assessContents(r *Report, in Input, now time.Time) {
 	// Completeness. A partly-read record is fillable too, but it has its own
 	// reason and its own remedy below; it is left out of this count and text.
 	if n := in.Fillable - in.UnreadableOnly; n > 0 {
-		msg := fmt.Sprintf("%d message(s) still missing content — download for offline use in your mail app, then re-run; incremental fills them", n)
+		// In the sentence Run now and Recent backups say, worded by where the last run read its mail
+		// (the polish-161 friction walk's N2, MA-1160): a mail app is blamed only for its own store.
+		msg := strings.TrimSuffix(state.NotDownloadedSentence(n, in.fillableFrom()), ".")
 		if onlyParseGap(in, n) {
 			// Every one is cut short, or has parts that could not be told apart, in the file it was
 			// read from: a download returns the same bytes from a mailbox file (friction F3).
-			msg = fmt.Sprintf("%d message(s) still missing content: cut short, or with parts that could not be told apart, in the file they were read from — replace the mailbox file with a complete export from your mail app (an IMAP cache: download the messages for offline use), then re-run; incremental fills them. A message that was malformed when it was sent cannot be completed by either, and stays listed", n)
+			msg = fmt.Sprintf("%s still missing content: cut short, or with parts that could not be told apart, in the file %s read from — replace the mailbox file with a complete export from your mail app (an IMAP cache: download %s for offline use), then re-run; incremental fills %s. A message that was malformed when it was sent cannot be completed by either, and stays listed",
+				state.Count(n, "message", "messages"), plural(n, "it was", "they were"), plural(n, "the message", "the messages"), plural(n, "it", "them"))
 		} else if in.FillableParseGap > 0 {
 			// A mix: the download is for the messages a source has not delivered, and a cut one among
 			// them is not changed by it (friction F3, re-verification).
@@ -624,7 +636,7 @@ func assessContents(r *Report, in Input, now time.Time) {
 		}
 		r.red("index_unreadable", fmt.Sprintf("the search index %s cannot be read%s — search, serve and the folder pages need it; %s", idxPath, cause, remedy))
 	case !in.HasIndex && !in.HasIndexFile && in.HasManifest && in.Messages > 0 && !(in.LastRunState == state.LastRunPresent && in.LastRun.NoIndex):
-		r.warn("index_missing", fmt.Sprintf("the archive has no search index (%s) although the manifest records %d message(s) — search, serve and the folder pages need it; %s (or ignore this if the archive is deliberately kept without one, -index=false)", idxPath, in.Messages, rebuildHow(in)))
+		r.warn("index_missing", fmt.Sprintf("the archive has no search index (%s) although the manifest records %s — search, serve and the folder pages need it; %s (or ignore this if the archive is deliberately kept without one, -index=false)", idxPath, state.Count(in.Messages, "message", "messages"), rebuildHow(in)))
 	}
 }
 
@@ -824,7 +836,7 @@ func assessKeyless(r *Report, in Input, now time.Time) {
 		case lv.Modified+lv.Missing > 0:
 			r.red("not_attested", fmt.Sprintf("the last verify (%s UTC) found the archive NOT intact: %d modified, %d missing — restore the affected files from a backup or re-export them from the source, then run `mailarchive verify -out %s` again", when, lv.Modified, lv.Missing, outArg(in)))
 		case lv.Unrecorded > 0:
-			r.warn("verify_unrecorded", fmt.Sprintf("the last verify (%s UTC) left %d file(s) with no recorded fixity — run `mailarchive verify -record -out %s` to baseline them", when, lv.Unrecorded, outArg(in)))
+			r.warn("verify_unrecorded", fmt.Sprintf("the last verify (%s UTC) left %s with no recorded fixity — run `mailarchive verify -record -out %s` to baseline %s", when, state.Count(lv.Unrecorded, "file", "files"), outArg(in), plural(lv.Unrecorded, "it", "them")))
 		}
 		// Exit 1 on a produced report is an error after the check (a -record
 		// baseline whose save failed): its counts stand, but it did not finish
@@ -846,7 +858,7 @@ func assessKeyless(r *Report, in Input, now time.Time) {
 	case in.History.Exists && in.History.TornTail && in.History.BadLines <= 1:
 		r.warn("history_torn_tail", fmt.Sprintf("the go-back history log has a torn tail (a run crashed mid-line) — the next run repairs it, or run `mailarchive reindex -out %s` to compact and heal it now; past-date views may be incomplete until then", outArg(in)))
 	case in.History.Exists && (in.History.BadLines > 0 || in.History.TornTail):
-		r.warn("history_corrupt", fmt.Sprintf("the go-back history log has %d unreadable line(s) — those events are skipped, so past-date views may be incomplete; run `mailarchive reindex -out %s` to compact the log", in.History.BadLines, outArg(in)))
+		r.warn("history_corrupt", fmt.Sprintf("the go-back history log has %s — %s skipped, so past-date views may be incomplete; run `mailarchive reindex -out %s` to compact the log", state.Count(in.History.BadLines, "unreadable line", "unreadable lines"), plural(in.History.BadLines, "that event is", "those events are"), outArg(in)))
 	}
 
 	// A scheduled backup that cannot write into its archive folder fails every
@@ -1598,16 +1610,19 @@ func shellQuoteToken(s, goos string) string {
 // double quotes as it is typed, never Go's quoted form, which doubled every backslash (the 1.6.1
 // friction review's P8, MA-1158); its trailing backslashes are doubled so a drive or share root
 // keeps its closing quote (encmark.CommandPath's rule). Elsewhere it is unchanged.
-func outArg(in Input) string {
-	goos := in.GOOS
+func outArg(in Input) string { return OutArg(in.Out, in.GOOS) }
+
+// OutArg is outArg for any command that names an archive folder: the backup's own command-line
+// summary and the wizard's summary dialog say it the same way (MA-1163). goos "" is this computer's.
+func OutArg(out, goos string) string {
 	if goos == "" {
 		goos = runtime.GOOS
 	}
-	if goos == "windows" && !strings.Contains(in.Out, `"`) {
-		trail := len(in.Out) - len(strings.TrimRight(in.Out, `\`))
-		return `"` + in.Out + strings.Repeat(`\`, trail) + `"`
+	if goos == "windows" && !strings.Contains(out, `"`) {
+		trail := len(out) - len(strings.TrimRight(out, `\`))
+		return `"` + out + strings.Repeat(`\`, trail) + `"`
 	}
-	return fmt.Sprintf("%q", in.Out)
+	return fmt.Sprintf("%q", out)
 }
 
 // unsafeTokenPlaceholder stands in for a Windows token no quoting makes inert.
@@ -2274,7 +2289,7 @@ func Summary(in Input, rep Report) []string {
 				lines = append(lines, l)
 			}
 			if in.Unreadable > 0 {
-				lines = append(lines, fmt.Sprintf("Partly read: %d message(s) could only be partly read from the source (see the posture below)", in.Unreadable))
+				lines = append(lines, fmt.Sprintf("Partly read: %s could only be partly read from the source (see the posture below)", state.Count(in.Unreadable, "message", "messages")))
 				shown := in.PartlyRead
 				if len(shown) > maxPartlyReadNamed {
 					shown = shown[:maxPartlyReadNamed]
@@ -2291,10 +2306,10 @@ func Summary(in Input, rep Report) []string {
 				}
 			}
 			if in.Unparsed > 0 {
-				lines = append(lines, fmt.Sprintf("Raw text:   %d message(s) could not be parsed and are kept as raw text (see the posture below)", in.Unparsed))
+				lines = append(lines, fmt.Sprintf("Raw text:   %s could not be parsed and %s kept as raw text (see the posture below)", state.Count(in.Unparsed, "message", "messages"), plural(in.Unparsed, "is", "are")))
 			}
 			if in.FidelityFallback > 0 {
-				line := fmt.Sprintf("Fallback:   %d message(s) are kept as an earlier version read them, because this version could not decode them in full; nothing is lost", in.FidelityFallback)
+				line := "Fallback:   " + fallbackWords(in.FidelityFallback) + "; nothing is lost"
 				if in.ReportExists {
 					line += " — see " + in.ReportPath
 				}
@@ -2359,11 +2374,11 @@ func Summary(in Input, rep Report) []string {
 	case in.HistoryReadErr != nil:
 		lines = append(lines, "History:    present but unreadable — see the posture below")
 	case in.History.Clean():
-		lines = append(lines, fmt.Sprintf("History:    %d run(s), %d event(s) recorded — go-back available", in.History.Runs, in.History.Events))
+		lines = append(lines, fmt.Sprintf("History:    %s recorded — go-back available", historyCounts(in.History)))
 	case in.History.TornTail && in.History.BadLines <= 1:
-		lines = append(lines, fmt.Sprintf("History:    %d run(s), %d event(s) — torn tail, go-back partial (repairs on the next run)", in.History.Runs, in.History.Events))
+		lines = append(lines, fmt.Sprintf("History:    %s — torn tail, go-back partial (repairs on the next run)", historyCounts(in.History)))
 	default:
-		lines = append(lines, fmt.Sprintf("History:    %d run(s), %d event(s) — %d unreadable line(s), go-back partial", in.History.Runs, in.History.Events, in.History.BadLines))
+		lines = append(lines, fmt.Sprintf("History:    %s — %s, go-back partial", historyCounts(in.History), state.Count(in.History.BadLines, "unreadable line", "unreadable lines")))
 	}
 	switch in.LastRunState {
 	case state.LastRunPresent:

@@ -54,10 +54,16 @@ func busyWords(lockPath string, now time.Time) string {
 	if stuck {
 		// An archive on a shared drive may be held from another computer, which the holder line
 		// names: restarting this one would not end it (the 1.6.1 friction review's P3, MA-1153).
-		// The name is the line's own, kept to a computer name's characters (lockfile.HolderHost).
+		// The name is the line's own, kept to a computer name's characters (lockfile.HolderHost), and
+		// only the part before its first dot, what a person calls the computer: never a dotted name a
+		// mail app may underline as a web address (the polish-161 adversarial pass, H3). Anyone who can
+		// write the folder can plant it, so it is said as what the computer calls itself, never as
+		// fact, and restarting it is only for a computer that is the owner's (H4; the lead's words).
 		if host := lockfile.HolderHost(lockPath); host != "" && !lockfile.SameHost(host, thisHost()) {
-			return lead + ". It started more than a day ago on another computer, " + host + ", and still keeps this archive in use " + lock +
-				", so it may be stuck: if it should have finished by now, restart the computer " + host + " to end it (restarting this one does not); the next backup then runs as usual."
+			host, _, _ = strings.Cut(host, ".")
+			return lead + ". It started more than a day ago on another computer, which calls itself " + host + ", and still keeps this archive in use " + lock +
+				", so it may be stuck. If that computer is yours and the backup should have finished by now, restart it to end the backup (restarting this one does not); " +
+				"if you don't recognise it, check who else uses this folder before restarting anything. The next backup then runs as usual."
 		}
 		return lead + ". It started more than a day ago and still keeps this archive in use " + lock + ", so it may be stuck: if it should have finished by now, restart the computer to end it; the next backup then runs as usual."
 	}

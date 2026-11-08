@@ -2411,7 +2411,9 @@ const $=id=>document.getElementById(id);
 // properties, never markup, opening apart from this page (MA-1151). No other text is ever a link.
 const reportAddress='` + state.ReportAddress + `';
 function sayText(el,t){
-  const parts=String(t).split(reportAddress);
+  // Direction-changing characters in words anyone who can write the archive folder can write never
+  // sit beside the link (the polish-161 adversarial pass, L2, MA-1167).
+  const parts=String(t).replace(/[‪-‮⁦-⁩]/g,'').split(reportAddress);
   el.textContent=parts[0];
   for(let i=1;i<parts.length;i++){
     const a=document.createElement('a');a.href=reportAddress;a.textContent=reportAddress;a.rel='noopener noreferrer';a.target='_blank';

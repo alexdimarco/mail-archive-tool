@@ -49,7 +49,7 @@ func TestStatusGapLinesCountInPlainWords(t *testing.T) {
 		"1 message has failed on every run since 2026-08-23 (each run could not capture it;",
 		"4,005 messages could not be captured on the last run; they are retried",
 		"1 folder is NOT in this archive and will not be without action",
-		"(3 messages not read)",
+		"(the original is untouched; 3 messages not read)", // one bracket (MA-1161)
 		"4,005 messages more: ",
 	} {
 		if !strings.Contains(all, want) {

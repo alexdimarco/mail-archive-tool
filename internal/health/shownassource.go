@@ -4,6 +4,8 @@ import (
 	"fmt"
 	"sort"
 	"strings"
+
+	"mail-archive-tool/internal/state"
 )
 
 // shownAsSourceWords gives each recorded body_fallback reason in plain words
@@ -11,7 +13,7 @@ import (
 // reader who must look one up (the README lists them).
 var shownAsSourceWords = map[string]string{
 	"too-deeply-nested":    "nested too deeply to show safely",
-	"unparseable":          "could not be read as formatted mail (for example a page built from frames)",
+	"unparseable":          "could not be read as formatted mail, for example a page built from frames", // no bracket: the code follows in one (MA-1161)
 	"unsafe-after-reparse": "could not be made safe to show formatted",
 	"too-large":            "too large to show formatted safely",
 }
@@ -47,5 +49,5 @@ func shownAsSourceText(by map[string]int) string {
 		}
 		parts = append(parts, fmt.Sprintf("%d %s (%s)", by[c], why, c))
 	}
-	return fmt.Sprintf("%d message(s) are shown as plain text instead of formatted pages — %s. Nothing is lost: the original is kept and still searchable. Nothing to do.", total, strings.Join(parts, "; "))
+	return fmt.Sprintf("%s %s shown as plain text instead of formatted pages — %s. Nothing is lost: the original is kept and still searchable. Nothing to do.", state.Count(total, "message", "messages"), plural(total, "is", "are"), strings.Join(parts, "; "))
 }

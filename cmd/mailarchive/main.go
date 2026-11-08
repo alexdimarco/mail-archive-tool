@@ -41,6 +41,7 @@ import (
 	"mail-archive-tool/internal/encmark"
 	"mail-archive-tool/internal/export"
 	"mail-archive-tool/internal/graphconfig"
+	"mail-archive-tool/internal/health"
 	"mail-archive-tool/internal/index"
 	"mail-archive-tool/internal/keyring"
 	"mail-archive-tool/internal/outlookcom"
@@ -2240,7 +2241,14 @@ func summaryLead(runErr error) string {
 
 // printSummaryLed is printSummary with its first word given.
 func printSummaryLed(logger *log.Logger, r app.Result, indexed, keepRaw bool, out, lead string) {
+	printSummaryFor(logger, r, indexed, keepRaw, out, lead, runtime.GOOS)
+}
+
+// printSummaryFor is printSummaryLed for goos, which says how its commands name the archive's
+// folder (MA-1163).
+func printSummaryFor(logger *log.Logger, r app.Result, indexed, keepRaw bool, out, lead, goos string) {
 	s := r.Stats
+	outArg := health.OutArg(out, goos) // as it is typed, never Go's quoted form (MA-1163)
 	msg := fmt.Sprintf(lead+" exported=%d filled=%d skipped(seen)=%d skipped(date)=%d attachments=%d inline=%d non-html=%d no-body=%d manifest=%d",
 		s.Exported, s.Filled, s.SkippedManifest, s.SkippedDate, s.Attachments, s.AttachmentsInline, s.NonHTMLBodies, s.NoBody, r.ManifestSize)
 	if indexed {
@@ -2264,7 +2272,7 @@ func printSummaryLed(logger *log.Logger, r app.Result, indexed, keepRaw bool, ou
 	// would otherwise end in a quiet exit 0 (F4). Rows the run itself could not
 	// index have their own warning below.
 	if indexed && r.IndexErrors == 0 && r.Indexed < r.ManifestSize {
-		logger.Printf("WARNING: the search index holds %d of the archive's %d messages (search.db was missing or emptied, or earlier runs skipped indexing); search will not find the rest. Rebuild it from the archive with `mailarchive reindex -rebuild -out %q`.", r.Indexed, r.ManifestSize, out)
+		logger.Printf("WARNING: the search index holds %d of the archive's %d messages (search.db was missing or emptied, or earlier runs skipped indexing); search will not find the rest. Rebuild it from the archive with `mailarchive reindex -rebuild -out %s`.", r.Indexed, r.ManifestSize, outArg)
 	}
 
 	// One coherent Verification line: what is still missing, what the source can
@@ -2358,10 +2366,10 @@ func printSummaryLed(logger *log.Logger, r app.Result, indexed, keepRaw bool, ou
 	// Plain `reindex` only prunes; the rebuild re-adds the missing rows from the
 	// archived files (F50).
 	if r.IndexErrors > 0 {
-		logger.Printf("WARNING: %d message(s) were exported but could not be indexed; rebuild the index from the archive with `mailarchive reindex -rebuild -out %q` and re-check.", r.IndexErrors, out)
+		logger.Printf("WARNING: %d message(s) were exported but could not be indexed; rebuild the index from the archive with `mailarchive reindex -rebuild -out %s` and re-check.", r.IndexErrors, outArg)
 	}
 
 	if indexed && r.Indexed > 0 {
-		logger.Printf("Search:  mailarchive serve -out %q   (then open the printed URL)", out)
+		logger.Printf("Search:  mailarchive serve -out %s   (then open the printed URL)", outArg)
 	}
 }

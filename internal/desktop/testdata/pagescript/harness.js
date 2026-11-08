@@ -580,6 +580,38 @@ const scenarios = {
     check(hb.textContent === SUMMARY.join('\n') && links(hb).length === 2 && links(hb).every(isReport),
       'Status & health links each report address, the words unchanged, another address still words', JSON.stringify({ text: hb.textContent, n: links(hb).length }));
   },
+  // Hostile words beside the report address (the polish-161 adversarial pass, L3 refuted and kept as
+  // a guard; L2, MA-1167): through sayText on Archive now's error, Run now's busy note and Status &
+  // health, each element holds only text and links to the fixed address, nothing parsed as markup,
+  // and the direction-changing characters (U+202A to U+202E, U+2066 to U+2069) are gone.
+  async plantedReportLink() {
+    const ADDR = 'https://github.com/alexdimarco/mail-archive-tool/issues';
+    const HOSTILE = ADDR + '@evil.example/x ' + 'javascript:alert(1)//' + ADDR + ADDR + ' "><img src=x onerror=alert(1)><a href="https://evil.example/">x</a> ' +
+      'https://evil.example/?u=' + ADDR + ' \u202e' + ADDR + ' \u2066see\u2069 $' + '{reportAddress} ' + ADDR.toUpperCase();
+    const SHOWN = HOSTILE.replace(/[\u202a-\u202e\u2066-\u2069]/g, '');
+    page([['E:\\Cur', 'current']], 'E:\\Cur');
+    doc.body.append(el('div', { id: 'device', hidden: '' }, el('span', { id: 'deviceCode' }), el('a', { id: 'deviceUrl' })), el('pre', { id: 'activity', hidden: '' }));
+    doc.getElementById('sec-health').append(el('pre', { id: 'healthBody' }, 'Loading…'));
+    replies['api/health'] = { posture: 'RED', summary: [HOSTILE] };
+    boot(); await wait(30);
+    const kids = n => n.children.map(c => c.tagName);
+    const onlyReport = n => n.children.every(c => c.tagName === '#TEXT' || (c.tagName === 'A' && c.href === ADDR && c.textContent === ADDR && c.children.length === 0));
+    const res = doc.getElementById('captureResult'), ab = doc.getElementById('archiveBtn');
+    replies['api/capture'] = { ok: true };
+    replies['api/activity'] = { running: false, job: '2', result: '', error: HOSTILE };
+    ab.click();
+    const r1 = await untilTrue(() => !res.hidden && res.textContent === "It didn't finish: " + SHOWN);
+    check(r1 && onlyReport(res) && res.querySelectorAll('a').length === 5, "Archive now's error: words and the report link only, no direction-changing character", JSON.stringify({ kids: kids(res), text: res.textContent }));
+    await untilTrue(() => !ab.disabled);
+    replies['api/run-backup'] = { ok: true };
+    replies['api/activity'] = { running: false, job: '3', result: '', error: '', busy: HOSTILE };
+    doc.getElementById('runBackupBtn').click();
+    const n = doc.getElementById('runBackupNote');
+    const r2 = await untilTrue(() => !n.hidden && n.textContent === SHOWN);
+    check(r2 && onlyReport(n) && n.querySelectorAll('a').length === 5, "Run now's busy note: words and the report link only, no direction-changing character", JSON.stringify({ kids: kids(n), text: n.textContent }));
+    const hb = doc.getElementById('healthBody');
+    check(hb.textContent === SHOWN && onlyReport(hb) && hb.querySelectorAll('a').length === 5, 'Status & health: words and the report link only, no direction-changing character', JSON.stringify({ kids: kids(hb), text: hb.textContent }));
+  },
   // What Make a new encrypted archive… says before any step needs the person (MA-1073; the review's
   // MED-1: a folder refused after the wizard's windows was said 2,553 pixels below the window, so the
   // page again seemed to stop): the hint while the windows are open, a refusal, an add already in

@@ -347,7 +347,7 @@ func TestStatusUnparsedIsNotSourceEmptyAndPartlyReadIsNamed(t *testing.T) {
 	in.PartlyRead = []string{"s/a.html", "s/b.html"}
 	lines := Summary(in, Assess(in, gapNow))
 	joined := strings.Join(lines, "\n")
-	for _, want := range []string{"Partly read: 2 message(s)", "s/a.html", "s/b.html"} {
+	for _, want := range []string{"Partly read: 2 messages", "s/a.html", "s/b.html"} {
 		if !strings.Contains(joined, want) {
 			t.Errorf("the partly-read list lacks %q:\n%s", want, joined)
 		}

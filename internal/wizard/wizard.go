@@ -1888,6 +1888,12 @@ func runExport(c wizardChoice) error {
 // X6) and the choice, worded for someone who has never met the engine, so a unit
 // test can assert both the counts and the wording without a display.
 func exportSummary(out string, keepRaw bool, r app.Result) string {
+	return exportSummaryFor(out, keepRaw, r, runtime.GOOS)
+}
+
+// exportSummaryFor is exportSummary for goos, which says how its search command names the
+// archive's folder (MA-1163).
+func exportSummaryFor(out string, keepRaw bool, r app.Result, goos string) string {
 	s := r.Stats
 	b := &strings.Builder{}
 	fmt.Fprintf(b,
@@ -1947,7 +1953,7 @@ func exportSummary(out string, keepRaw bool, r app.Result) string {
 		b.WriteString("\nEach message is saved twice: an .html page to read, and an .eml file to import back into a mail program if you ever need to.\n")
 	}
 	b.WriteString("\nYour data stays on this computer: the archive is read from your own mail files, nothing is uploaded anywhere, and the saved pages run no scripts and load nothing from the internet — safe to open offline.\n")
-	fmt.Fprintf(b, "\nOutput folder:\n%s\n\nOpen index.html there to browse — no extra software needed. Each folder page has a box to filter within that folder; to search the whole archive at once, use the command-line tool: mailarchive serve -out %q", out, out)
+	fmt.Fprintf(b, "\nOutput folder:\n%s\n\nOpen index.html there to browse — no extra software needed. Each folder page has a box to filter within that folder; to search the whole archive at once, use the command-line tool: mailarchive serve -out %s", out, health.OutArg(out, goos))
 	return b.String()
 }
 

@@ -7,6 +7,7 @@ import (
 	"mail-archive-tool/internal/encmark"
 	"mail-archive-tool/internal/presync"
 	"mail-archive-tool/internal/state"
+	"mail-archive-tool/internal/util"
 )
 
 // runRow is one line of the Recent backups card (MA-701).
@@ -153,11 +154,20 @@ func runRowOf(e state.RunHistoryEntry, tagged bool) runRow {
 			// MA-1146; one truth with status's "incomplete", X10).
 			r.Status = "Incomplete"
 			r.Detail = strings.Join(state.PartialSentences(*e.Partial), " ") + " " + state.PartialDetails
+			// What of its mail is not in full yet, as an OK row and Run now's note say it (the
+			// polish-161 friction walk's N4, MA-1162).
+			if !e.Encrypted && e.Fillable > 0 {
+				r.Detail += " · " + state.NotDownloadedSentence(e.Fillable, e.FillableFrom)
+			}
 		}
 	case state.RunCancelled:
 		r.Status, r.Detail = "Cancelled", "stopped before it finished"
 	default:
 		r.Status = e.Status
 	}
+	// The history's words are anyone's who can write the archive folder: their direction-changing
+	// characters go before the card shows them beside the report link (the polish-161 adversarial
+	// pass, L2, MA-1167).
+	r.Status, r.Detail = util.StripBidi(r.Status), util.StripBidi(r.Detail)
 	return r
 }

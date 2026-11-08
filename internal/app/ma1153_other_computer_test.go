@@ -38,8 +38,10 @@ func TestAStuckHolderOnAnotherComputerNamesIt(t *testing.T) {
 		t.Fatalf("the positive twin: a stuck holder on this computer: %q", here)
 	}
 	other := words("OFFICE-PC", 30*time.Hour)
-	assure.Reached(t, strings.Contains(other, "It started more than a day ago on another computer, OFFICE-PC, and still keeps this archive in use (its lock file, "+lockfile.Name+")") &&
-		strings.Contains(other, "restart the computer OFFICE-PC to end it (restarting this one does not)") && strings.Contains(other, "so it may be stuck") &&
+	// Amended for MA-1166 (the adversarial pass, H4): the name is said as what the computer calls
+	// itself, and restarting it only if it is the owner's.
+	assure.Reached(t, strings.Contains(other, "It started more than a day ago on another computer, which calls itself OFFICE-PC, and still keeps this archive in use (its lock file, "+lockfile.Name+")") &&
+		strings.Contains(other, "If that computer is yours and the backup should have finished by now, restart it to end the backup (restarting this one does not)") && strings.Contains(other, "so it may be stuck") &&
 		!strings.Contains(other, "nothing is wrong") && !strings.Contains(other, "host="), "a stuck holder on another computer is named by it: "+other)
 
 	planted := words("<b>evil</b>`rm`$(x)\x1b[31m", 30*time.Hour)
@@ -48,7 +50,7 @@ func TestAStuckHolderOnAnotherComputerNamesIt(t *testing.T) {
 			t.Errorf("a planted host name is echoed (%q): %q", never, planted)
 		}
 	}
-	if !strings.Contains(planted, "restart the computer bevilbrmx31m to end it") {
+	if !strings.Contains(planted, "which calls itself bevilbrmx31m, and still") {
 		t.Errorf("a planted host name keeps only a computer name's characters: %q", planted)
 	}
 	if recent := words("OFFICE-PC", time.Hour); strings.Contains(recent, "OFFICE-PC") || !strings.Contains(recent, "nothing is wrong") {

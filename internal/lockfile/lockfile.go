@@ -341,8 +341,11 @@ func sanitizeHost(h string) string {
 const maxHostLen = 64
 
 // SameHost reports whether a and b name the same computer: equal ignoring case, or with the
-// same first label (a Windows name and its full DNS name, "ALEX-PC" and "alex-pc.home").
+// same first label (a Windows name and its full DNS name, "ALEX-PC" and "alex-pc.home"). Both are
+// compared as HolderHost keeps a name, so this computer's own name with a character a computer
+// name's words do not keep ("JOSÉ-PC") still matches itself (the polish-161 adversarial pass, H2).
 func SameHost(a, b string) bool {
+	a, b = sanitizeHost(a), sanitizeHost(b)
 	if a == "" || b == "" {
 		return false
 	}
