@@ -179,6 +179,9 @@ func TestEnableOfflineNeverWritesThroughALink(t *testing.T) {
 		// The moment between the Lstat and the write: the write is a rename over the name,
 		// so a link planted then is replaced, and its target never written.
 		target, before := elsewhere(t)
+		if err := os.Symlink(target, filepath.Join(t.TempDir(), "probe")); err != nil {
+			t.Skip("no links here:", err)
+		}
 		p := profileWith(t, onePrefs, "imap.gmail.com")
 		prefsPath := filepath.Join(p, "prefs.js")
 		swapped := 0
