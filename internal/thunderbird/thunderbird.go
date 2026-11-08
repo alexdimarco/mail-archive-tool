@@ -142,25 +142,34 @@ type Account struct {
 // files: a larger one is refused, never read whole.
 const prefsMaxBytes = 16 << 20
 
-// prefStmt is one setting statement Thunderbird applies: the call (user_pref, as Thunderbird
-// writes it; pref or sticky_pref, as a hand-written user.js may), the setting's name, its value
-// as written (a string with its quotes), and its line in the file (from 0).
+// prefStmt is one user_pref statement: the setting's name, its value as written (a string with
+// its quotes), and its line in the file (from 0).
 type prefStmt struct {
-	fn, key, value string
-	line           int
+	key, value string
+	line       int
 }
 
-// prefsText is a prefs.js or user.js read statement by statement, as Thunderbird's parser reads
-// it (MA-1207): a line inside a /* */ comment, or after // or # on its line, never counts (the
-// C0c pass's CON-03), a comment marker inside a quoted value is part of the value, and a line may
-// hold several statements, each of which counts (round 2's R2-02).
+// prefsText is a prefs.js or user.js read statement by statement (MA-1207): a line inside a /* */
+// comment, or after // or # on its line, never counts (the C0c pass's CON-03), a comment marker
+// inside a quoted value is part of the value, and a line may hold several statements, each of
+// which counts (round 2's R2-02).
+//
+// It is read strictly (MA-1261, the C0c pass round 3's R3-01 to R3-04): Thunderbird writes only
+// whole user_pref("name", value); statements, with no backslash in a name and no value running
+// past its line, and comments. Anything else (a NUL byte, a statement it cannot parse or missing
+// its semicolon, a string value spanning lines, a pref( or sticky_pref( statement, a name with a
+// backslash) means the file was changed outside Thunderbird, and Thunderbird's own parser reads
+// such text in ways MailArchive does not model (it ignores pref( in these files, decodes escapes in
+// names, stops at a NUL, skips ahead to the next ";" after an error, lets a string run across
+// lines). So such a file is one MailArchive cannot read with certainty: uncertainLine says where,
+// and nothing is read from it as on, nor changed.
 type prefsText struct {
 	lines []string
 	stmts []prefStmt // in file order
-	// unread are the lines (by number) whose text outside comments is not a run of whole
-	// statements: MailArchive cannot be sure what Thunderbird reads there, so a setting they
-	// name is one it cannot tell (see named).
-	unread map[int]string
+	// uncertainLine is the first line (from 0) MailArchive cannot read with certainty, or -1;
+	// uncertainWhat says what is there, for the command line's words.
+	uncertainLine int
+	uncertainWhat string
 	// alone are the lines that hold exactly one user_pref statement and nothing else but spaces
 	// and the line ending, with no comment on them: the only lines EnableOffline rewrites (R2-01).
 	alone map[int]bool
@@ -170,14 +179,27 @@ type prefsText struct {
 
 // parsePrefsText reads content (a prefs.js or user.js) as prefsText.
 func parsePrefsText(content string) *prefsText {
-	t := &prefsText{lines: strings.Split(content, "\n"), unread: map[int]string{}, alone: map[int]bool{}}
+	t := &prefsText{lines: strings.Split(content, "\n"), uncertainLine: -1, alone: map[int]bool{}}
+	unsure := func(i int, what string) {
+		if t.uncertainLine < 0 {
+			t.uncertainLine, t.uncertainWhat = i, what
+		}
+	}
 	open := false
 	for i, raw := range t.lines {
-		var code string
-		code, open = codeOf(raw, open)
-		stmts, ok := parseStatements(code)
-		if !ok {
-			t.unread[i] = code
+		if strings.IndexByte(raw, 0) >= 0 {
+			unsure(i, "a NUL (zero) byte, where Thunderbird stops reading the file")
+			continue
+		}
+		code, openNow, inQuote := codeOf(raw, open)
+		open = openNow
+		if inQuote {
+			unsure(i, "a quoted value that goes on past the end of its line")
+			continue
+		}
+		stmts, why := parseStatements(code)
+		if why != "" {
+			unsure(i, why)
 			continue
 		}
 		for _, s := range stmts {
@@ -186,22 +208,10 @@ func parsePrefsText(content string) *prefsText {
 		}
 		// code == raw: nothing on the line was a comment (a comment open from an earlier line
 		// takes at least its closing "*/" out of the code).
-		t.alone[i] = len(stmts) == 1 && stmts[0].fn == "user_pref" && code == raw
+		t.alone[i] = len(stmts) == 1 && code == raw
 	}
 	t.openAtEnd = open
 	return t
-}
-
-// named is the first line (from 0) that MailArchive cannot read as settings and that names key,
-// or -1. Such a line may set key in a way it cannot tell.
-func (t *prefsText) named(key string) int {
-	first := -1
-	for i, code := range t.unread {
-		if strings.Contains(code, key) && (first < 0 || i < first) {
-			first = i
-		}
-	}
-	return first
 }
 
 // values are the settings as Thunderbird applies them: for a name set more than once, the last
@@ -215,10 +225,11 @@ func (t *prefsText) values() map[string]string {
 }
 
 // parseStatements reads code (one line, its comments taken out) as a run of whole statements,
-// each `fn("name", value);` with spaces allowed between the parts, as Thunderbird's parser
-// accepts them: fn is user_pref, pref or sticky_pref; the name a quoted string; the value a
-// quoted string, true, false or a whole number. ok is false when anything else is there.
-func parseStatements(code string) (out []prefStmt, ok bool) {
+// each `user_pref("name", value);` with spaces allowed between the parts: the name a quoted
+// string with no backslash in it; the value a quoted string, true, false or a whole number. why
+// is "" when it reads, and otherwise what is there that MailArchive cannot read with certainty.
+func parseStatements(code string) (out []prefStmt, why string) {
+	const notWhole = `text that is not a whole user_pref("name", value); statement`
 	i := 0
 	space := func() {
 		for i < len(code) && strings.IndexByte(" \t\r\f\v", code[i]) >= 0 {
@@ -253,26 +264,33 @@ func parseStatements(code string) (out []prefStmt, ok bool) {
 	for {
 		space()
 		if i == len(code) {
-			return out, true
+			return out, ""
 		}
 		start := i
 		for i < len(code) && (code[i] == '_' || code[i] >= 'a' && code[i] <= 'z') {
 			i++
 		}
-		fn := code[start:i]
-		if fn != "user_pref" && fn != "pref" && fn != "sticky_pref" || !expect('(') {
-			return nil, false
+		switch fn := code[start:i]; {
+		case fn == "pref" || fn == "sticky_pref":
+			// Thunderbird ignores these in prefs.js and user.js (default files only).
+			return nil, "a " + fn + "( statement, which Thunderbird does not apply in prefs.js or user.js"
+		case fn != "user_pref" || !expect('('):
+			return nil, notWhole
 		}
 		key, kok := quoted()
 		if !kok || len(key) < 3 || !expect(',') {
-			return nil, false
+			return nil, notWhole
+		}
+		if strings.IndexByte(key, '\\') >= 0 {
+			// Thunderbird decodes escape codes in a name; MailArchive does not guess at them.
+			return nil, "a setting name holding a backslash (an escape code)"
 		}
 		space()
 		var value string
 		if i < len(code) && (code[i] == '"' || code[i] == '\'') {
 			v, vok := quoted()
 			if !vok {
-				return nil, false
+				return nil, notWhole
 			}
 			value = v
 		} else {
@@ -282,13 +300,13 @@ func parseStatements(code string) (out []prefStmt, ok bool) {
 			}
 			value = code[vs:i]
 			if !bareValue(value) {
-				return nil, false
+				return nil, notWhole
 			}
 		}
 		if !expect(')') || !expect(';') {
-			return nil, false
+			return nil, notWhole
 		}
-		out = append(out, prefStmt{fn: fn, key: key[1 : len(key)-1], value: value})
+		out = append(out, prefStmt{key: key[1 : len(key)-1], value: value})
 	}
 }
 
@@ -310,9 +328,10 @@ func bareValue(v string) bool {
 	return true
 }
 
-// codeOf is line with its comments taken out, and whether a /* comment is still open at its
-// end; open says one was open at its start.
-func codeOf(line string, open bool) (string, bool) {
+// codeOf is line with its comments taken out, whether a /* comment is still open at its end
+// (open says one was open at its start), and whether a quoted value is still open at its end,
+// which Thunderbird would read on into the next line (MA-1261).
+func codeOf(line string, open bool) (string, bool, bool) {
 	var b strings.Builder
 	var quote byte
 	for i := 0; i < len(line); i++ {
@@ -339,7 +358,7 @@ func codeOf(line string, open bool) (string, bool) {
 			quote = c
 			b.WriteByte(c)
 		case c == '#' || (c == '/' && next == '/'):
-			return b.String(), false
+			return b.String(), false, false
 		case c == '/' && next == '*':
 			open = true
 			i++
@@ -347,7 +366,7 @@ func codeOf(line string, open bool) (string, bool) {
 			b.WriteByte(c)
 		}
 	}
-	return b.String(), open
+	return b.String(), open, quote != 0
 }
 
 // readPrefsFile reads one settings file of the profile as a planted file may be (C0c,
@@ -373,28 +392,30 @@ func readUserJS(profileDir string) (*prefsText, error) {
 	return t, err
 }
 
-// prefSettings are a profile's settings as Thunderbird applies them, and which names it cannot
-// be sure of.
+// prefSettings are a profile's settings as Thunderbird applies them, and the two files as read.
 type prefSettings struct {
 	vals        map[string]string
 	prefs, user *prefsText // the two files as read; nil for settings given as a map
 }
 
-// unsure is where a line MailArchive cannot read as settings names key ("prefs.js", line from
-// 1), or "" when none does, in prefs.js first, then user.js.
-func (s prefSettings) unsure(key string) (string, int) {
+// uncertain is the first place MailArchive cannot read with certainty (MA-1261): its file
+// ("prefs.js", then "user.js"), its line (from 1) and what is there, or "" when both files read.
+func (s prefSettings) uncertain() (string, int, string) {
+	return firstUncertain(s.prefs, s.user)
+}
+
+// firstUncertain is the first place in prefs.js (p), then user.js (u), that MailArchive cannot
+// read with certainty, or "" when both read (a nil file reads).
+func firstUncertain(p, u *prefsText) (file string, line int, what string) {
 	for _, f := range []struct {
 		name string
 		t    *prefsText
-	}{{"prefs.js", s.prefs}, {"user.js", s.user}} {
-		if f.t == nil {
-			continue
-		}
-		if n := f.t.named(key); n >= 0 {
-			return f.name, n + 1
+	}{{"prefs.js", p}, {"user.js", u}} {
+		if f.t != nil && f.t.uncertainLine >= 0 {
+			return f.name, f.t.uncertainLine + 1, f.t.uncertainWhat
 		}
 	}
-	return "", 0
+	return "", 0, ""
 }
 
 // readPrefs is the profile's settings as Thunderbird applies them: prefs.js, then user.js
@@ -433,16 +454,17 @@ func unquote(v string) string {
 //     account's leftover mail.server lines own nothing; the C0c pass's CON-01);
 //  1. the store is matched against each server's directory-rel ([ProfD] is profileDir) and
 //     directory, compared by whole path components (samePath);
-//  2. only when no server matches that way, the hostname is compared with the store
-//     folder's name: only when exactly one server has that hostname (INS-02), and only
-//     for a server whose own folder settings, if it has any, name a folder of that name (a
-//     moved profile's stale directory still does; a server whose folder is
-//     imap.gmail.com-1 does not own a leftover imap.gmail.com);
+//  2. only when no server matches that way, and only for a store directly in
+//     <profile>/ImapMail/ (MA-1262), the hostname is compared with the store folder's name:
+//     only when exactly one server has that hostname (INS-02), and only for a server whose
+//     own folder settings, if it has any, name a folder of that name (a moved profile's
+//     stale directory still does; a server whose folder is imap.gmail.com-1 does not own a
+//     leftover imap.gmail.com);
 //  3. no match, or more than one, gives no account and an error: never a guess.
 //
-// The settings are read as Thunderbird applies them: prefs.js, then user.js over it. When a
-// setting the match reads is named on a line MailArchive cannot read as settings, it cannot be
-// sure what Thunderbird reads, so it gives no account and a HandEditedError (MA-1207).
+// The settings are read as Thunderbird applies them: prefs.js, then user.js over it. When either
+// file cannot be read with certainty (MA-1261: a line Thunderbird never writes, anywhere in it),
+// it gives no account and a HandEditedError, so nothing is ever reported on from such a file.
 func FindAccountForStore(profileDir, storeDir string) (*Account, error) {
 	s, user, err := readPrefs(profileDir)
 	if err != nil {
@@ -481,25 +503,20 @@ type matchError struct {
 
 func (e *matchError) Error() string { return e.msg }
 
-// matchAccountIn is matchAccount on s, which also says which names it cannot be sure of: the
-// first name the match reads that a line MailArchive cannot read names gives a HandEditedError,
-// whatever the match found.
+// matchAccountIn is matchAccount on s. When prefs.js or user.js cannot be read with certainty
+// (MA-1261), it gives no account, whatever the match found, and a HandEditedError naming the
+// first such place (and the offline setting of the account the match found, if any): it never
+// reports an account as on, or as one to change, from a file it cannot be sure of.
 func matchAccountIn(s prefSettings, profile, store, goos string) (*Account, error) {
-	var unsureKey, unsureFile string
-	var unsureLine int
-	get := func(key string) (string, bool) {
-		if unsureKey == "" {
-			if f, n := s.unsure(key); f != "" {
-				unsureKey, unsureFile, unsureLine = key, f, n
-			}
-		}
-		v, ok := s.vals[key]
-		return v, ok
-	}
-	val := func(key string) string { v, _ := get(key); return v }
+	get := func(key string) (string, bool) { v, ok := s.vals[key]; return v, ok }
+	val := func(key string) string { return s.vals[key] }
 	acct, err := matchWith(get, val, profile, store, goos)
-	if unsureKey != "" {
-		return nil, &HandEditedError{File: unsureFile, Line: unsureLine, Key: unsureKey, Why: whyUnread}
+	if file, line, what := s.uncertain(); file != "" {
+		key := ""
+		if acct != nil {
+			key = "mail.server." + acct.ServerKey + ".offline_download"
+		}
+		return nil, &HandEditedError{File: file, Line: line, Key: key, Why: whyUnread, What: what}
 	}
 	return acct, err
 }
@@ -507,9 +524,13 @@ func matchAccountIn(s prefSettings, profile, store, goos string) (*Account, erro
 // matchWith is the match itself, reading every setting through get (or val, its value alone).
 func matchWith(get func(string) (string, bool), val func(string) string, profile, store, goos string) (*Account, error) {
 	parts := components(store)
-	name := ""
+	name, direct := "", false
 	if len(parts) > 0 {
 		name = parts[len(parts)-1]
+		// The hostname tells an account only for a store directly in <profile>/ImapMail/, where
+		// Thunderbird makes one (MA-1262, the C0c pass round 3's R3-05): a deeper store, such as a
+		// copied profile's under Mail/ or ImapMail/, is matched by its own folder settings only.
+		direct = samePath(strings.Join(parts[:len(parts)-1], "/"), profile+"/ImapMail", goos)
 	}
 	servers := liveServers(val)
 	if len(servers) == 0 {
@@ -535,7 +556,7 @@ func matchWith(get func(string) (string, bool), val func(string) string, profile
 				ownsName = false
 			}
 		}
-		if name != "" && sameComponent(norm.NFC.String(p("hostname")), name, goos) {
+		if direct && name != "" && sameComponent(norm.NFC.String(p("hostname")), name, goos) {
 			onHost = append(onHost, key)
 			if ownsName {
 				byHost = append(byHost, key)
@@ -703,11 +724,14 @@ type OfflineChange struct {
 //     counts), and when that is not true it changes every statement for the setting, so the
 //     file says one thing (the C0c pass's CON-02, CON-03); with none it adds one. An account
 //     already on is left as it is, with nothing written.
+//   - It changes nothing, and reports nothing as already on, unless prefs.js and user.js both
+//     read with certainty (MA-1261): a line Thunderbird never writes, anywhere in either file,
+//     is a HandEditedError.
 //   - It rewrites only a line that holds that one user_pref statement and nothing else but
 //     spaces and the line ending (MA-1207, round 2's R2-01 and R2-02). When a statement for the
 //     setting shares its line with anything else (another statement, a comment, a commented
-//     copy), when a line it cannot read as settings names the setting, or when a comment left
-//     open at the end would hide an added line, it changes nothing: a HandEditedError.
+//     copy), or when a comment left open at the end would hide an added line, it changes
+//     nothing: a HandEditedError.
 //   - The file keeps its own line ending: CRLF stays CRLF (CON-05).
 //   - When user.js sets the setting, Thunderbird applies it over prefs.js at every start, so
 //     nothing is changed: on is "already on", anything else a UserJSError (CON-06).
@@ -758,7 +782,7 @@ func planOffline(profileDir, serverKey string) (*offlinePlan, error) {
 		return nil, err
 	}
 	key := "mail.server." + serverKey + ".offline_download"
-	hand := func(file string, line int, why handWhy) error {
+	hand := func(file string, line int, why handWhy) *HandEditedError {
 		return &HandEditedError{File: file, Line: line, Key: key, Why: why,
 			Host: unquote(pt.values()["mail.server."+serverKey+".hostname"]), Place: placeFor(profileDir)}
 	}
@@ -766,8 +790,12 @@ func planOffline(profileDir, serverKey string) (*offlinePlan, error) {
 	if err != nil {
 		return nil, err
 	}
-	if n := ut.named(key); n >= 0 {
-		return nil, hand("user.js", n+1, whyUnread)
+	// Strict reading (MA-1261): nothing is read as on, and nothing changed, unless both files
+	// read with certainty.
+	if file, line, what := firstUncertain(pt, ut); file != "" {
+		h := hand(file, line, whyUnread)
+		h.What = what
+		return nil, h
 	}
 	if v, set := ut.values()[key]; set {
 		if v == "true" {
@@ -776,10 +804,6 @@ func planOffline(profileDir, serverKey string) (*offlinePlan, error) {
 		return nil, &UserJSError{Path: filepath.Join(profileDir, "user.js"), Key: key,
 			Host: unquote(pt.values()["mail.server."+serverKey+".hostname"])}
 	}
-	if n := pt.named(key); n >= 0 {
-		return nil, hand("prefs.js", n+1, whyUnread)
-	}
-
 	content := string(data)
 	eol := "\n"
 	if i := strings.IndexByte(content, '\n'); i > 0 && content[i-1] == '\r' {

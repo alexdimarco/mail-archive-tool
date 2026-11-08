@@ -11,6 +11,7 @@ import (
 	"mail-archive-tool/internal/assure"
 	"mail-archive-tool/internal/graphconfig"
 	"mail-archive-tool/internal/presync"
+	"mail-archive-tool/internal/thunderbird"
 )
 
 // helpCardView is the "How to use MailArchive" card of an Overview page: its visible
@@ -267,7 +268,12 @@ var helpSentences = []string{
 	// Thunderbird's default, observed in the Windows lab of 2026-10-31 (Thunderbird
 	// 153.6.0esr, a Gmail IMAP account added with no settings changed: no offline_download
 	// line in prefs.js, and over 36,000 messages saved to disk in the first half hour).
-	"For an IMAP account this is the setting Keep messages for this account on this computer. Thunderbird turns it on for a new account, so usually there is nothing to change. To check it, in Thunderbird open Account Settings (from the ≡ menu at the top right), choose your account's Synchronization & Storage page, and see that the box is ticked. POP accounts and Local Folders always keep their mail on this computer.",
+	// Amended 2026-11-08 (the C0c friction re-look's R8, R1 and R4): the box by the names the
+	// wizard gives it, both, labelled by version, since the guide cannot know which Thunderbird
+	// is installed (TestTheGuideNamesTheOfflineBoxAsTheWizardDoes ties them to the wizard's own);
+	// Account Settings from the menu button, as the wizard and the Restore words say it; 160's
+	// page not named, since no source read or lab reached it.
+	"For an IMAP account this is the setting Keep messages in all folders for this account on this computer (in Thunderbird 160 and later it is called Save copies of all folders and messages on this computer for offline use). Thunderbird turns it on for a new account, so usually there is nothing to change. To check it, in Thunderbird click the menu button (≡, top right), then Account Settings, choose your account's Synchronization & Storage page (in Thunderbird 160 and later, look through its pages for Offline message storage), and see that the box is ticked. POP accounts and Local Folders always keep their mail on this computer.",
 	// What the mbox walk can and cannot hold (gapclass GapKindCorruptPart; an empty part is
 	// a fillable gap).
 	"Downloading takes time: Thunderbird saves your messages to this computer over time, and only while it is open. A message Thunderbird has not downloaded is not in the archive yet; a later backup adds it once Thunderbird has downloaded it. A message Thunderbird saved only in part (for example without a large attachment) is archived with what is there, and a later backup fills in the rest.",
@@ -353,6 +359,29 @@ var helpGone = []string{
 	// The 1.5.2 friction review, finding 2: a fresh page offers Use this archive at the top.
 	"click Switch to this archive to use it",
 	"Then come back to this page and reload it",
+	// The C0c friction re-look's R8 (2026-11-08): a label found in no Thunderbird version read.
+	"Keep messages for this account on this computer",
+}
+
+// covers: MA-945, X11
+// The guide names Thunderbird's offline box exactly as the wizard does when it cannot read the
+// version (the C0c friction re-look's R8): both labels, the one before 160 first and the 160 one
+// marked "in Thunderbird 160 and later", taken from thunderbird.OfflineSettingLabel for a profile
+// with no compatibility.ini, so the guide and the wizard cannot drift apart again. Positive twin
+// first: the wizard's both-labels form holds two quoted labels.
+func TestTheGuideNamesTheOfflineBoxAsTheWizardDoes(t *testing.T) {
+	both := thunderbird.OfflineSettingLabel(t.TempDir())
+	parts := strings.Split(both, `"`)
+	if len(parts) != 5 {
+		t.Fatalf("the positive twin: the wizard's both-labels form is %q, not two quoted labels", both)
+	}
+	before, from160 := assure.Reached(t, parts[1], "the label before 160"), assure.Reached(t, parts[3], "the 160 label")
+	for _, goos := range []string{"darwin", "windows", "linux"} {
+		h := readHelpCard(t, getOverview(t, Config{GOOS: goos, ConfigPath: filepath.Join(t.TempDir(), "none.json"), SettingsPath: filepath.Join(t.TempDir(), "s.json")}))
+		if want := "this is the setting " + before + " (in Thunderbird 160 and later it is called " + from160 + ")."; !strings.Contains(h.text, want) {
+			t.Errorf("%s: the guide does not name the box as the wizard does, %q:\n%s", goos, want, h.text)
+		}
+	}
 }
 
 var helpPlatforms = []helpPlatform{

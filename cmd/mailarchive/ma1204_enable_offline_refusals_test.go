@@ -162,8 +162,9 @@ func TestNoAccountRefusesWithTheReason(t *testing.T) {
 				assure.Names(append([]string{
 					"-enable-offline changed nothing, and nothing was exported: MailArchive could not tell which Thunderbird account the mail in imap.gmail.com belongs to",
 					"more than one account in prefs.js (server1, server2)",
-					"If you removed an account from Thunderbird, its leftover mail folder can cause this; if so, you can ignore this message.",
-					"In Thunderbird, open Account Settings and, for each account on imap.gmail.com, make sure",
+					// The lead's split of the C0c friction re-look's R2, and its R1 (2026-11-08).
+					"If you once removed an account on imap.gmail.com from Thunderbird, this may be its leftover mail folder; if so, there is nothing to turn on: just run the same command again without -enable-offline.",
+					"In Thunderbird, open Account Settings (the menu button ≡, top right) and, for each account on imap.gmail.com, make sure",
 					"Then run the same command again without -enable-offline.",
 				}, tc.want...)...),
 				assure.Forbid(tc.never...),
@@ -240,8 +241,9 @@ func TestTheKeptBackupIsReportedTruly(t *testing.T) {
 // covers: MA-1205
 // When user.js sets the account's offline setting to off, -enable-offline changes nothing
 // and says user.js controls it, naming the file (the C0c pass's CON-06), with the refusal
-// code (1). The words name the server, say nothing was exported, say to leave it if you or
-// your IT set it on purpose and run again without -enable-offline, and give the file's path
+// code (1). The words name the server, say nothing was exported, say to leave it if you, or
+// whoever looks after this computer, set it on purpose and run again without -enable-offline,
+// and give the file's path
 // last (the friction review's W6, F9). Positive twin first: an empty user.js does not stop the
 // change.
 func TestUserJSRefusalOnTheCommandLine(t *testing.T) {
@@ -270,7 +272,8 @@ func TestUserJSRefusalOnTheCommandLine(t *testing.T) {
 		assure.Names(userJS, "changed nothing", "mail.server.server1.offline_download",
 			"-enable-offline changed nothing, and nothing was exported",
 			"user.js sets mail.server.server1.offline_download (imap.gmail.com)",
-			"If you or your IT set this on purpose, leave it and run again without -enable-offline."),
+			// The C0c friction re-look's R6: no clipped "your IT".
+			"If you, or whoever looks after this computer, set this on purpose, leave it and run again without -enable-offline."),
 		assure.NoSideEffect(func() bool {
 			_, err := os.Lstat(filepath.Join(profile, "prefs.js.mailarchive-bak"))
 			return sameFiles(t, profile, before) && errors.Is(err, fs.ErrNotExist)

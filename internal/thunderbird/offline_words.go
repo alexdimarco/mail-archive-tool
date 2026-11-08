@@ -29,11 +29,28 @@ const (
 	cliNothing = "-enable-offline changed nothing, and nothing was exported: "
 	// cliAgain ends it: once the setting is made sure of by hand, the run needs no -enable-offline.
 	cliAgain = " Then run the same command again without -enable-offline."
-	// leftoverWords: a removed account's leftover folder is a likely cause (the lead's addition).
-	leftoverWords = "If you removed an account from Thunderbird, its leftover mail folder can cause this; if so, you can ignore this message."
 	// stepsIntro opens the wizard's numbered steps.
 	stepsIntro = "To make sure Thunderbird keeps all of this mail on this computer:\n"
+	// stepOne is where Account Settings is, on every platform: Thunderbird on Windows hides its
+	// menu bar, and the menu button is where the Windows lab of 7 November saw it (the C0c
+	// friction re-look's R1; the Restore words say it the same way).
+	stepOne = "1. In Thunderbird, click the menu button (≡, top right), then Account Settings.\n"
+	// serverHint tells an account by its server, since Account Settings lists accounts by name
+	// (the re-look's R5).
+	serverHint = ` (an account's "Server Settings" page shows its server name)`
 )
+
+// leftoverWizard and leftoverCLI are the leftover-folder sentence for the folder's server host (the
+// lead's addition, split by the re-look's R2 and R3): a removed account's folder is a likely
+// cause, and then there is nothing to turn on. The command line's says the way on, since nothing
+// was exported.
+func leftoverWizard(host string) string {
+	return "If you once removed " + onHost("an account", host) + " from Thunderbird, this may be its leftover mail folder; if so, there is nothing to turn on."
+}
+
+func leftoverCLI(host string) string {
+	return "If you once removed " + onHost("an account", host) + " from Thunderbird, this may be its leftover mail folder; if so, there is nothing to turn on: just run the same command again without -enable-offline."
+}
 
 // Place is which of Thunderbird's labels the words give: those of the version that last opened
 // the profile, or both when it cannot be read.
@@ -58,27 +75,33 @@ func placeFor(profileDir string) Place {
 	}
 }
 
-// steps are the wizard's numbered steps for who ("each account on imap.gmail.com").
-func (p Place) steps(who string) string {
+// steps are the wizard's numbered steps for what ("each account") on host, or for what alone
+// when host is "" ("that account"). 160's page is not named: the source read did not reach it
+// and no lab has seen the 160 screen yet (the re-look's R4).
+func (p Place) steps(what, host string) string {
+	who := onHost(what, host)
+	if StripControl(host) != "" {
+		who += serverHint
+	}
 	var two, three string
 	switch p {
 	case PlaceBefore160:
 		two = "open its " + pageBefore160 + " page."
 		three = "Make sure " + labelBefore160 + " is ticked."
 	case PlaceFrom160:
-		two = "find " + groupFrom160 + "."
+		two = "look through the pages listed under its name on the left until you see " + groupFrom160 + "."
 		three = "Make sure " + labelFrom160 + " is ticked."
 	default:
-		two = "open its " + pageBefore160 + " page (in Thunderbird 160 and later, find " + groupFrom160 + ")."
+		two = "open its " + pageBefore160 + " page (in Thunderbird 160 and later, look through its pages for " + groupFrom160 + ")."
 		three = "Make sure " + labelBefore160 + " is ticked (in Thunderbird 160 and later it is called " + labelFrom160 + ")."
 	}
-	return "1. In Thunderbird, open Account Settings.\n2. For " + who + ", " + two + "\n3. " + three
+	return stepOne + "2. For " + who + ", " + two + "\n3. " + three
 }
 
-// remedy is the command line's sentence tail for who: "open Account Settings and, for who, make
-// sure LABEL is ticked (where)."
+// remedy is the command line's sentence tail for who: "open Account Settings (the menu button ≡,
+// top right) and, for who, make sure LABEL is ticked (where)."
 func (p Place) remedy(who string) string {
-	s := "open Account Settings and, for " + who + ", make sure "
+	s := "open Account Settings (the menu button ≡, top right) and, for " + who + ", make sure "
 	switch p {
 	case PlaceBefore160:
 		return s + labelBefore160 + " is ticked (on its " + pageBefore160 + " page)."
@@ -155,10 +178,10 @@ func (e *NoAccountError) Error() string {
 	switch e.Kind {
 	case NoAccountAmbiguous:
 		return cliNothing + "MailArchive could not tell which Thunderbird account the mail in " + h + " belongs to (" + e.Why.Error() + "). " +
-			leftoverWords + " In Thunderbird, " + e.Place.remedy(onHost("each account", h)) + cliAgain
+			leftoverCLI(h) + " In Thunderbird, " + e.Place.remedy(onHost("each account", h)) + cliAgain
 	case NoAccountNone:
 		return cliNothing + "MailArchive could not find a Thunderbird account for the mail in " + h + " (" + e.Why.Error() + "). " +
-			leftoverWords + " If the account is still in Thunderbird, " + e.Place.remedy("that account") + cliAgain
+			leftoverCLI(h) + " If the account is still in Thunderbird, " + e.Place.remedy("that account") + cliAgain
 	case NoAccountNoList:
 		return cliNothing + "MailArchive could not tell which Thunderbird account the mail in " + h + " belongs to (" + e.Why.Error() + "). " +
 			"In Thunderbird, " + e.Place.remedy(onHost("the account", h)) + cliAgain
@@ -174,19 +197,19 @@ func (e *NoAccountError) Plain() string {
 	switch e.Kind {
 	case NoAccountAmbiguous:
 		return "MailArchive could not tell which of your Thunderbird accounts on " + h + " this mail belongs to, so it did not change any Thunderbird setting.\n\n" +
-			stepsIntro + e.Place.steps(onHost("each account", h)) +
-			"\n\nWhy: more than one account in Thunderbird uses " + h + ", and MailArchive does not guess. " + leftoverWords
+			stepsIntro + e.Place.steps("each account", h) +
+			"\n\nWhy: more than one account in Thunderbird uses " + h + ", and MailArchive does not guess. " + leftoverWizard(h)
 	case NoAccountNone:
 		return "MailArchive could not find a Thunderbird account for the mail in " + h + ", so it did not change any Thunderbird setting.\n\n" +
-			"Why: no account in Thunderbird uses this mail now. " + leftoverWords +
-			"\n\nIf the account is still in Thunderbird:\n" + e.Place.steps("that account")
+			"Why: no account in Thunderbird uses this mail now. " + leftoverWizard(h) +
+			"\n\nIf the account is still in Thunderbird:\n" + e.Place.steps("that account", "")
 	case NoAccountNoList:
 		return "MailArchive could not tell which of your Thunderbird accounts on " + h + " this mail belongs to, so it did not change any Thunderbird setting.\n\n" +
-			stepsIntro + e.Place.steps(onHost("the account", h)) +
+			stepsIntro + e.Place.steps("the account", h) +
 			"\n\nWhy: Thunderbird's settings list no accounts."
 	default:
 		return "MailArchive could not read Thunderbird's settings, so it did not change any of them.\n\n" +
-			stepsIntro + e.Place.steps(onHost("the account", h))
+			stepsIntro + e.Place.steps("the account", h)
 	}
 }
 
@@ -194,19 +217,22 @@ func (e *NoAccountError) Plain() string {
 type handWhy int
 
 const (
-	whyUnread    handWhy = iota // a line MailArchive cannot read as settings names the setting
+	whyUnread    handWhy = iota // a line in prefs.js or user.js Thunderbird never writes (MA-1261)
 	whyShared                   // the setting's statement shares its line with something else
 	whyOpenAtEnd                // a comment left open at the end would hide an added line
 )
 
-// HandEditedError is the refusal when prefs.js or user.js was edited by hand where the setting
-// is, so MailArchive cannot be sure what Thunderbird reads there, or would not rewrite only that
-// setting: it changes nothing (the C0c pass round 2's R2-01 and R2-02, MA-1207).
+// HandEditedError is the refusal when prefs.js or user.js was changed outside Thunderbird, so
+// MailArchive cannot be sure what Thunderbird reads in it (anywhere in the file: the strict
+// reading of MA-1261), or would not rewrite only the setting's line: it changes nothing, and
+// reports nothing as on (the C0c pass round 2's R2-01 and R2-02, MA-1207; round 3's R3-01 to
+// R3-04).
 type HandEditedError struct {
 	File  string // "prefs.js" or "user.js"
 	Line  int    // the line (from 1); 0 for the end of the file
-	Key   string // the setting
+	Key   string // the setting; "" when no account was found to name it
 	Why   handWhy
+	What  string // for whyUnread: what is on the line
 	Host  string // the account's server, for the words
 	Place Place
 }
@@ -220,15 +246,24 @@ func (e *HandEditedError) Error() string {
 	case whyOpenAtEnd:
 		what = fmt.Sprintf("a comment left open at the end of %s would hide a line added there for %s, so MailArchive does not add one.", e.File, e.Key)
 	default:
-		what = fmt.Sprintf("%s line %d names %s in a way MailArchive cannot read as a setting, so it cannot be sure what Thunderbird reads there.", e.File, e.Line, e.Key)
+		applies := ""
+		if e.Key != "" {
+			applies = " for " + e.Key
+		}
+		what = fmt.Sprintf("%s line %d holds %s. Thunderbird never writes such a line, so the file was changed outside Thunderbird (by hand or by another program), and MailArchive cannot be sure what Thunderbird applies%s.", e.File, e.Line, e.What, applies)
 	}
 	return cliNothing + what + " In Thunderbird, " + e.Place.remedy(onHost("the account", e.Host)) + cliAgain
 }
 
-// Plain is the wizard's words.
+// Plain is the wizard's words: "changed outside Thunderbird", since an add-on or an IT tool may
+// have made the change (the C0c friction re-look's R7).
 func (e *HandEditedError) Plain() string {
-	return "Thunderbird's settings file has been edited by hand where this account's setting is, so MailArchive could not be sure what it says and did not change any Thunderbird setting.\n\n" +
-		stepsIntro + e.Place.steps(onHost("the account", e.Host))
+	where := ""
+	if e.Why == whyShared {
+		where = " where this account's setting is"
+	}
+	return "Thunderbird's settings file was changed outside Thunderbird" + where + ", so MailArchive could not be sure what it says and did not change any Thunderbird setting.\n\n" +
+		stepsIntro + e.Place.steps("the account", e.Host)
 }
 
 // UserJSError is EnableOffline's refusal when the profile's user.js sets the account's
@@ -249,18 +284,21 @@ func (e *UserJSError) Error() string {
 		server = " (" + h + ")"
 	}
 	return cliNothing + "user.js sets " + e.Key + server + " to something other than true, and Thunderbird applies user.js over prefs.js at every start, so a change would be undone. " +
-		"If you or your IT set this on purpose, leave it and run again without -enable-offline. " +
+		"If you, or whoever looks after this computer, set this on purpose, leave it and run again without -enable-offline. " +
 		"Otherwise close Thunderbird, delete that line from user.js (or change its false to true), and run again. The file: " + e.Path
 }
 
-// Plain is the wizard's words (W4).
+// Plain is the wizard's words (W4; the re-look's R6: on Windows, Notepad's Open box shows only
+// .txt files unless the name is typed, and double-clicking a .js file runs it).
 func (e *UserJSError) Plain() string {
 	mail := "this account's mail"
 	if h := StripControl(e.Host); h != "" {
 		mail = "the mail of " + h
 	}
 	return "Thunderbird is set, in its file user.js, not to keep " + mail + " on this computer, and it applies that file every time it starts. So MailArchive changed nothing: a change would be undone.\n\n" +
-		"If you or your IT set this on purpose, leave it. Otherwise: close Thunderbird, open user.js in a plain text editor (Notepad on Windows), and delete the line that contains " + e.Key + " (or change its false to true).\n\n" +
+		"If you, or whoever looks after this computer, set this on purpose, leave it. " +
+		`Otherwise: close Thunderbird and open the file below in a plain text editor (on Windows: start Notepad, choose File, then Open, and type or paste the whole path into "File name"; double-clicking the file does not open it for editing). ` +
+		"Delete the line that contains " + e.Key + " (or change its false to true), and save.\n\n" +
 		"The file: " + e.Path
 }
 
@@ -276,7 +314,7 @@ func PlainWords(err error) (string, bool) {
 // SettingSteps are the wizard's numbered steps to make sure, by hand, that Thunderbird keeps the
 // mail of the account on host on this computer, labelled for the profile's version.
 func SettingSteps(profileDir, host string) string {
-	return stepsIntro + placeFor(profileDir).steps(onHost("the account", host))
+	return stepsIntro + placeFor(profileDir).steps("the account", host)
 }
 
 // AccountToEnable is the account whose offline download the wizard's Yes, prepare and the

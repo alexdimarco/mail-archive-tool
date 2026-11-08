@@ -36,8 +36,11 @@ func TestEveryPrepRefusalGivesTheWayOut(t *testing.T) {
 		assure.Refused(t, code, msg, assure.Code(1),
 			assure.Names("-enable-offline changed nothing, and nothing was exported: MailArchive could not find a Thunderbird account for the mail in mail.oldjob.com",
 				"no account in prefs.js matches the store folder mail.oldjob.com",
-				"If you removed an account from Thunderbird, its leftover mail folder can cause this; if so, you can ignore this message.",
-				"If the account is still in Thunderbird, open Account Settings and, for that account, make sure",
+				// The lead's split of the C0c friction re-look's R2 (2026-11-08): never "ignore this
+				// message" after "nothing was exported"; the way on is to run again.
+				"If you once removed an account on mail.oldjob.com from Thunderbird, this may be its leftover mail folder; if so, there is nothing to turn on: just run the same command again without -enable-offline.",
+				// The re-look's R1, its command-line form: where Account Settings is.
+				"If the account is still in Thunderbird, open Account Settings (the menu button ≡, top right) and, for that account, make sure",
 				"Then run the same command again without -enable-offline."),
 			assure.NoSideEffect(func() bool { return sameFiles(t, profile, before) }))
 	})
@@ -54,7 +57,7 @@ func TestEveryPrepRefusalGivesTheWayOut(t *testing.T) {
 		code, msg, _ := enableOfflineRun(t, store)
 		assure.Refused(t, code, msg, assure.Code(1),
 			assure.Names("-enable-offline changed nothing, and nothing was exported: prefs.js line 6 sets mail.server.server1.offline_download together with something else on that line",
-				"In Thunderbird, open Account Settings and, for the account on imap.gmail.com, make sure",
+				"In Thunderbird, open Account Settings (the menu button ≡, top right) and, for the account on imap.gmail.com, make sure",
 				"Then run the same command again without -enable-offline."),
 			assure.NoSideEffect(func() bool { return sameFiles(t, profile, before) }))
 	})

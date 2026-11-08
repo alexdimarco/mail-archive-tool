@@ -2106,9 +2106,11 @@ func prepareThunderbird(ctx context.Context, inputs []string, auto, enableOfflin
 	}
 	// Every store is checked for every refusal before any is changed (MA-1208): Thunderbird
 	// running, no account it can tell, user.js keeping the setting off, a hand-edited line, a
-	// backup path that is not a regular file. So a refusal means nothing was changed in this
-	// run. Only a write that then fails (a full disk, a file swapped in after the check) can
-	// stop the run after an earlier store was changed; the log names each change made.
+	// backup path that is not a regular file. So a refusal here means nothing was changed in
+	// this run. Only something that changes after the check (Thunderbird started, a write that
+	// fails, a file swapped in) can stop the run after an earlier store was changed: then the
+	// words say what was changed, never "changed nothing" (MA-1263), and the log names each
+	// change with its backup.
 	if enableOffline {
 		for _, store := range stores {
 			if profile, ok := thunderbird.FindProfileDir(store); ok {
@@ -2118,15 +2120,41 @@ func prepareThunderbird(ctx context.Context, inputs []string, auto, enableOfflin
 			}
 		}
 	}
+	var changed []string
 	for _, store := range stores {
-		if err := prepareStore(ctx, store, enableOffline, syncWait, logger); err != nil {
+		if err := prepareStoreNoting(ctx, store, enableOffline, syncWait, logger, &changed); err != nil {
+			if len(changed) > 0 {
+				return &stoppedAfterChange{changed: changed, err: err}
+			}
 			return err
 		}
 	}
 	return nil
 }
 
+// stoppedAfterChange is a store's refusal or failed write after an earlier store of the run was
+// changed (MA-1263): its words say what was changed and that the change stays, then why the run
+// stopped, in place of the refusal's "changed nothing". Its code is the refusal's.
+type stoppedAfterChange struct {
+	changed []string // each change, "<account> (folder <f>, <server>), in the Thunderbird profile <p>"
+	err     error
+}
+
+func (e *stoppedAfterChange) Unwrap() error { return e.err }
+
+func (e *stoppedAfterChange) Error() string {
+	why := strings.TrimPrefix(e.err.Error(), "-enable-offline changed nothing, and nothing was exported: ")
+	return "-enable-offline stopped, and nothing was exported. Before it stopped, it changed prefs.js to turn on offline download for " +
+		strings.Join(e.changed, "; and for ") + "; that change stays (the log above says where prefs.js was backed up). Why it stopped: " + why
+}
+
 func prepareStore(ctx context.Context, store string, enableOffline, syncWait bool, logger *log.Logger) error {
+	return prepareStoreNoting(ctx, store, enableOffline, syncWait, logger, nil)
+}
+
+// prepareStoreNoting is prepareStore, adding to changed (when not nil) the store's change when it
+// wrote prefs.js.
+func prepareStoreNoting(ctx context.Context, store string, enableOffline, syncWait bool, logger *log.Logger, changed *[]string) error {
 	profile, ok := thunderbird.FindProfileDir(store)
 	if !ok {
 		logger.Printf("Could not find the Thunderbird profile for %s; skipping prep.", store)
@@ -2153,6 +2181,9 @@ func prepareStore(ctx context.Context, store string, enableOffline, syncWait boo
 			if err != nil {
 				return err
 			}
+			if c.Changed && changed != nil {
+				*changed = append(*changed, who+", in the Thunderbird profile "+profile)
+			}
 			backup := filepath.Base(c.Backup)
 			saved := "; prefs.js backed up to " + backup + " in the Thunderbird profile folder."
 			if c.BackupKept {
@@ -2178,12 +2209,17 @@ func prepareStore(ctx context.Context, store string, enableOffline, syncWait boo
 	return nil
 }
 
+// tbRunning is thunderbird.Running, a variable so a test can start Thunderbird between two
+// stores of one run (fault injection, MA-1263): no temp folder can stage a running Thunderbird
+// on every OS.
+var tbRunning = thunderbird.Running
+
 // checkOfflineStore runs every -enable-offline refusal for store in profile with nothing written
 // (MA-1208): Thunderbird running for that profile, then the account (AccountToEnable), then, when
 // the account is not on, every check EnableOffline makes before it writes (CheckOffline). It
 // returns the account to change.
 func checkOfflineStore(profile, store string) (*thunderbird.Account, error) {
-	if thunderbird.Running(profile) {
+	if tbRunning(profile) {
 		return nil, fmt.Errorf("-enable-offline changed nothing, and nothing was exported: Thunderbird looks like it is running for the profile %s. Close it, then run the same command again (prefs.js must not be edited while Thunderbird is open).", profile)
 	}
 	acct, err := thunderbird.AccountToEnable(profile, store)

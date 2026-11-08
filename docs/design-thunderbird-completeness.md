@@ -929,6 +929,37 @@ is a label-membership question, not completeness (§14 Q6).
 >   the file's path last. The log lines name the account by its folder and server and say the backup
 >   is in the Thunderbird profile folder. The words still rest on lab row MA-1191 for the labels.
 >
+> **Folded 2026-11-08 [C0c adversarial pass round 3 + the friction re-look] (the lead's calls,
+> `docs/review-thunderbird-completeness-c0c-adversarial-r3.md` and the "Re-look of the words as
+> built" section of `docs/review-thunderbird-completeness-c0c-friction.md`; built and tested,
+> MA-1261 to MA-1263, MA-1260 and MA-945 amended):**
+>
+> - **Strict reading (R3-01 to R3-04; MA-1261). Supersedes "as Thunderbird's parser reads them"
+>   and the "Not handled" sentence of the round-2 bullet above.** MailArchive does not model
+>   Thunderbird's parser. It changes prefs.js, and reports a setting as already on, only when it reads
+>   prefs.js **and** user.js with certainty. Either file holding a NUL byte anywhere, any statement it
+>   cannot parse (one missing its `;` among them), a string value spanning lines, any `pref(` or
+>   `sticky_pref(` statement, or any setting name with a backslash is refused, whichever setting the
+>   line is about: "can't tell", nothing changed, the hand-edit words. Thunderbird never writes such a
+>   file, so this refuses only files changed outside it. A refused run leaves both files byte for byte.
+> - **The hostname fallback (R3-05; MA-1262). Closes the R2-04 residual above.** The hostname gives
+>   an account only to a store directly in `<profile>/ImapMail/<dir>`; a deeper store, such as a
+>   copied profile's under `Mail/` or `ImapMail/` without its own `compatibility.ini`, gets an account
+>   only by its own folder settings.
+> - **A stop after a change (the round-3 wording note; MA-1263).** When a later store stops the run
+>   after an earlier store was changed (Thunderbird started meanwhile, a failed write), the words say
+>   what was changed and that it stays, then why the run stopped, never "changed nothing". This is
+>   the simpler of the two true options (moving the running check next to each write would still
+>   leave a failed write to word).
+> - **The words (the re-look's R1 to R8).** Step 1 is "1. In Thunderbird, click the menu button (≡,
+>   top right), then Account Settings." (the command line: "open Account Settings (the menu button ≡,
+>   top right)"); the leftover-folder sentence names the server and is split: the wizard's ends
+>   "there is nothing to turn on.", the command line's "…: just run the same command again without
+>   -enable-offline."; 160's step 2 names no page; step 2 says an account's "Server Settings" page
+>   shows its server; user.js says "If you, or whoever looks after this computer, …" and how to open
+>   the file in Notepad; the wizard says the file "was changed outside Thunderbird". The Desktop guide
+>   names the box by both labels, by version, as the wizard does when it cannot read the version.
+>
 > **Folded 2026-11-07 [foldcheck M6] (lead's call):** the bullet "No match → `unknown` if a
 > folder-cache entry exists" is **superseded by [foldcheck M6]**. No match → `unknown` whether or not
 > the cache could be read, unless no `prefs.js` is found above the input **and** no path part is

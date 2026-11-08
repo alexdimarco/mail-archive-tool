@@ -109,7 +109,10 @@ func TestYesPrepareSaysWhyAndDoesNotCarryOn(t *testing.T) {
 		assure.Refused(t, rc, refusal, assure.Code(1),
 			assure.Names(userJS, "changed nothing",
 				"Thunderbird is set, in its file user.js, not to keep the mail of imap.gmail.com on this computer",
-				"If you or your IT set this on purpose, leave it.",
+				// The C0c friction re-look's R6 (2026-11-08): no clipped "your IT", and the way to
+				// open the file on Windows, where double-clicking a .js file runs it.
+				"If you, or whoever looks after this computer, set this on purpose, leave it.",
+				`Otherwise: close Thunderbird and open the file below in a plain text editor (on Windows: start Notepad, choose File, then Open, and type or paste the whole path into "File name"; double-clicking the file does not open it for editing). Delete the line that contains mail.server.server1.offline_download (or change its false to true), and save.`,
 				"The file: "+userJS+"\n\n"+imapGoesAhead),
 			assure.Forbid("prefs.js"),
 			assure.NoSideEffect(func() bool { return filesIn(t, p) == before }))
