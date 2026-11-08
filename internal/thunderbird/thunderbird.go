@@ -195,13 +195,16 @@ const (
 	whatMixedEOL = "ends in a different way from the file's other lines (LF and CRLF mixed)"
 	whatNotWhole = `holds text that is not a whole user_pref("name", value); statement (often a missing ; at its end)`
 	whatSpanning = "holds a quoted value that goes on past the end of its line"
-	whatNameBS   = `has a setting name with an escape code Thunderbird never writes in a name (a backslash not followed by \ or ")`
-	whatNotBool  = "has a value for its setting that is not true or false, the only values Thunderbird writes for that setting"
-	whatNotText  = "has a value for its setting that is not a quoted text, the only kind of value Thunderbird writes for that setting"
-	whatEscape   = `has a quoted value with an escape code Thunderbird never writes (a backslash not followed by \, ", n or r)`
-	whatBigInt   = "holds a number too large for Thunderbird, which skips such a line"
-	whatComment  = "holds a comment Thunderbird never writes (its own comments are lines that start with //)"
-	whatMore     = "holds more after its user_pref statement (another statement or a comment)"
+	// The fragments below speak of Thunderbird's settings format, never of what Thunderbird
+	// "writes": the same fragment follows "user.js is a file people or add-ons write by hand"
+	// (the C0c pass round 6's N3, settled in slice C3).
+	whatNameBS  = `has a setting name with an escape code that is not part of Thunderbird's settings format (a backslash not followed by \ or ")`
+	whatNotBool = "has a value for its setting that is not true or false, the only values Thunderbird uses for that setting"
+	whatNotText = "has a value for its setting that is not a quoted text, the only kind of value Thunderbird uses for that setting"
+	whatEscape  = `has a quoted value with an escape code that is not part of Thunderbird's settings format (a backslash not followed by \, ", n or r)`
+	whatBigInt  = "holds a number too large for Thunderbird, which skips such a line"
+	whatComment = "holds a comment that is not part of Thunderbird's settings format (its comments are lines that start with //)"
+	whatMore    = "holds more after its user_pref statement (another statement or a comment)"
 )
 
 // parsePrefsText reads content (a prefs.js or user.js) as prefsText.

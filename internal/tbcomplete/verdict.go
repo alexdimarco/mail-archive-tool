@@ -13,6 +13,7 @@ import (
 	"math/big"
 	"time"
 
+	"mail-archive-tool/internal/state"
 	"mail-archive-tool/internal/thunderbird"
 )
 
@@ -264,6 +265,9 @@ type Result struct {
 	// gap by it. Behind is told only when MissingLeast is above the tolerance.
 	OnDiskMost   int64
 	MissingLeast int64
+	// Version is the major version of the Thunderbird that last opened the profile, when
+	// ReadProfile could tell it (0 otherwise), for the fix-it words' labels (§6's L5 fold, C3).
+	Version int
 }
 
 // StaleAfter is §2.3's 3 days, the same as state.SyncStaleAfter.
@@ -318,7 +322,7 @@ const (
 	LeadComplete             // "Export complete." (an encrypted archive's Run now note: "Backup complete:")
 )
 
-// String is the lead's name in a log; the words are C3's.
+// String is the lead's name in a log; the words are Sentence's.
 func (l Lead) String() string {
 	switch l {
 	case LeadSoFar:
@@ -327,6 +331,40 @@ func (l Lead) String() string {
 		return "complete"
 	}
 	return "finished"
+}
+
+// Sentence is the lead's words (slice C3), the same on every surface: "Export complete.",
+// "Backed up what Thunderbird has so far." or "Backup finished." (any value not defined).
+func (l Lead) Sentence() string {
+	switch l {
+	case LeadSoFar:
+		return state.TBLeadSoFar
+	case LeadComplete:
+		return state.TBLeadComplete
+	}
+	return state.TBLeadFinished
+}
+
+// RecordLead is RunLeadWith over a last-run record's accounts and its thunderbird_more (the C2
+// pass round 2's R2-06): each account is behind or limited by its verdict, may say complete only
+// by state.TBAccount.MaySayComplete (its complete flag and its own numbers), and is unknown for
+// any other verdict, a record never holding not_applicable. A lead built from a record anyone can
+// write is never "complete" over an account the record does not show complete.
+func RecordLead(accounts []state.TBAccount, more int) Lead {
+	rs := make([]Result, 0, len(accounts))
+	for _, a := range accounts {
+		var r Result
+		switch {
+		case a.Verdict == "behind":
+			r.Verdict = Behind
+		case a.Verdict == "limited":
+			r.Verdict = Limited
+		case a.MaySayComplete():
+			r.Verdict = CaughtUp
+		}
+		rs = append(rs, r)
+	}
+	return RunLeadWith(rs, more)
 }
 
 // RunLead is the lead of a run whose Thunderbird stores gave rs: LeadSoFar if any is behind or
@@ -363,6 +401,9 @@ func Assess(in Input) Result {
 		UnkeyedMailboxes: in.OnDisk.UnkeyedMailboxes, UnkeyedMessages: in.OnDisk.UnkeyedMessages,
 		SplitMailboxes: in.OnDisk.SplitMailboxes, GluedMailboxes: in.OnDisk.GluedMailboxes, NoStatus: in.OnDisk.NoStatus,
 		MisalignedMailboxes: in.OnDisk.MisalignedMailboxes}
+	if in.Profile.VersionKnown && in.Profile.VersionMajor > 0 {
+		r.Version = in.Profile.VersionMajor
+	}
 	unknown := func(why Reason) Result {
 		r.Verdict, r.Reason = Unknown, why
 		return r

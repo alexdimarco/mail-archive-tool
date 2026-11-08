@@ -68,7 +68,8 @@ func TestTheFinalLookWordsOnTheCommandLine(t *testing.T) {
 			`prefs.js line 7 holds text that is not a whole user_pref("name", value); statement (often a missing ; at its end). Thunderbird never writes such a line`},
 		"Q5: a name with a backslash": {`user_pref("mail.z\x7a", 1);`,
 			// MA-1269: \\ and \" are names Thunderbird writes; \x is not.
-			`prefs.js line 7 has a setting name with an escape code Thunderbird never writes in a name (a backslash not followed by \ or "). Thunderbird never writes such a line`},
+			// Amended 2026-11-08 (slice C3, the C0c pass round 6's N3): the format's words for the fragment.
+			`prefs.js line 7 has a setting name with an escape code that is not part of Thunderbird's settings format (a backslash not followed by \ or "). Thunderbird never writes such a line`},
 	} {
 		t.Run(name, func(t *testing.T) {
 			profile, store := offlineProfile(t, setOffOwnFolder+tc.line+"\n")

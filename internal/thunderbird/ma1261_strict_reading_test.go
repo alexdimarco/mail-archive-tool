@@ -21,7 +21,8 @@ func uncertainFiles() map[string]struct{ file, body, what string } {
 		nul      = "holds a NUL (zero) byte, where Thunderbird stops reading the file"
 		notWhole = `holds text that is not a whole user_pref("name", value); statement (often a missing ; at its end)`
 		spanning = "holds a quoted value that goes on past the end of its line"
-		slash    = `has a setting name with an escape code Thunderbird never writes in a name (a backslash not followed by \ or ")`
+		// Amended 2026-11-08 (slice C3, the C0c pass round 6's N3): the format's words, not "Thunderbird never writes".
+		slash = `has a setting name with an escape code that is not part of Thunderbird's settings format (a backslash not followed by \ or ")`
 	)
 	ignored := func(fn string) string {
 		return "holds a " + fn + "( statement, which Thunderbird does not apply in prefs.js or user.js"

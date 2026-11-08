@@ -2769,6 +2769,101 @@ C4 must land with or before C3 if encrypted archives get any words beyond today'
 >   `misaligned_mailboxes`; streak fields `last_run_at`, `seen_at`.
 > - **Gate owed:** the pass's own rerun (round 4: round 3's clone files against the fixed commit).
 >   Not self-certified here.
+>
+> **Folded 2026-11-08 [C2 pass round 4] (the lead's call on
+> `docs/review-thunderbird-completeness-c2-adversarial-r4.md`, NOT CLEAN at `6afd74d`, 2 LOW).**
+> Neither finding is fixed in C2. Both are about the behind-streak record, which only slice C5's
+> notices and email read, so both are **carried to slice C5**, which owns the streak's email and
+> its own adversarial pass. C5 must do both of these before it merges:
+>
+> - **R4-01 (a planted run counter at its cap):** treat an implausible counter as a damaged record.
+>   A record whose run counter is at or near its cap, or that is otherwise impossible for the runs
+>   the archive has had, is not trusted: the streak **starts fresh** from that run, and the run
+>   records a **WARN** (as `tbstreak_unreadable` does for a record other users can read), so it is
+>   never silent. Fresh is the fail-safe reading for R42 (a later notice, never a false one).
+> - **R4-02 (257 or more behind accounts evicting a weekly-only store silently):** **every
+>   eviction raises `tbstreak_full`**, not only a new behind store that finds no room. A store
+>   whose streak is dropped to make room for another is named in that WARN, so `status` shows it.
+>
+> C3 does not change the streak record. Until C5 lands, a planted counter can only delay or stop a
+> "still downloading" notice that C5 has not built yet; no surface of C3 reads the streak.
+>
+> **Built 2026-11-08 [C3] (the builder's notes, for the lead and for C3's friction review).** C3
+> words the verdicts on every surface, from one producer: `internal/state/tbwords.go` (beside
+> `NotDownloadedSentence`, as §7 says), over the record's shape (`state.TBAccount`). The run's
+> lead is `tbcomplete.RunLead(results)` in memory and `tbcomplete.RecordLead(accounts,
+> thunderbird_more)` from a record, which goes through `RunLeadWith` (R2-06), so a lead built from a
+> record is never "complete" over an account left out. In-memory verdicts reach the screen through
+> `app.TBAccounts(result)` (the record's shape, names cleaned and capped, never written). Rows:
+> MA-1182, MA-1183, MA-1185, MA-1186 and MA-1198 new; MA-1181, MA-1180, MA-1205, MA-1261, MA-1268
+> and MA-1271 amended. No id above MA-1283.
+>
+> - **Surfaces built:** the wizard's end summary (`exportSummary`: the lead, then each account's
+>   lines, then today's counts) and its wait (`syncPausedText`); Run now's note, plaintext
+>   (`runNowSummaryFor`: "Backup finished: …" or "Backed up what Thunderbird has so far: …", then the
+>   lines) and encrypted (`encryptedSummaryFor`, M8 and MF1: "Backup complete:" only when every
+>   account may say complete or the run read none); the command line's summary ("Thunderbird: LEAD",
+>   then the lines); Recent backups ("OK — Thunderbird still downloading" for a behind run, the
+>   compact words in the detail); the archive card's one line (`TBBanner`); `status` and Status &
+>   health (WARN `thunderbird_behind`; `thunderbird_limited` and `thunderbird_not_kept` WARN once,
+>   then a note, by TC-19; notes `thunderbird_caught_up`, `thunderbird_unknown`,
+>   `thunderbird_default_not_kept`, `thunderbird_labels_not_kept`, `thunderbird_gmail_cap`,
+>   `thunderbird_more`; the Last run line ends with the lead); `status -json`
+>   (`thunderbird_completeness`, `thunderbird_more`, `thunderbird_lead`).
+> - **"Complete" words:** "everything" is said only when the account may say complete, read from
+>   the record by `TBAccount.MaySayComplete()` (its complete flag **and** its own numbers), so a
+>   planted record never gets it. Every other caught-up case says both numbers and, in one sentence,
+>   why not (missing within the tolerance, stale by M9's words, deleted copies, messages not told
+>   apart, a not-kept folder, the cap note). Every `unknown` reason has its own sentence, from §4.4's
+>   table and the C1b and C2 codes: `invalid_entry`, `duplicate_key` and `cache_unreadable` share
+>   "could not read Thunderbird's list of folders"; `not_counted_yet` says "Thunderbird has not
+>   counted all of its folders yet"; `old_path_only`, `count_uncertain`, `split_differently`,
+>   `other_reader`, `walk_failed`, `expunged_unsized`, `partial_input`, `no_match` and
+>   `account_type`, `panorama`, `never_checked` and `gmail_floor` (O3, with its All Mail clause) each
+>   their own. A reason this version does not know reads as "could not read".
+> - **L4's open item:** settled by §0's lead's call (Spam, Trash and Gmail labels not kept are notes
+>   and do not block "complete"; any other not-kept folder that lists mail does). Built so.
+> - **L5 (version-chosen labels):** the record now carries `thunderbird_version`
+>   (`compatibility.ini`'s major, 0 when it cannot be told). Below 160 the older labels, 160 and
+>   above the newer ones, and both quoted when it cannot be told; the age limit stays neutral at 160
+>   and above. **Lab row MA-1191 is still owed** before these labels ship (L5's own note); the
+>   labels are the M4 re-read's, from source.
+> - **TC-17:** "later backups add the rest" only when a schedule other than "only when I click Run
+>   now" runs the archive (`app.TBScheduled`, read from the archive's schedule record); a one-off
+>   wizard export always asks for the backup to be run again.
+> - **TC-19 (WARN once):** a chosen setting WARNs when its first-seen time in the record equals that
+>   record's run end (C2 sets it to the run's end when the hash is new) or is missing; otherwise a
+>   note.
+> - **Record fields changed (additive):** `stale` is always written, as `complete` is (M9:
+>   both booleans in every `-json` entry); `thunderbird_version` (above); the history's `tb`
+>   entries carry `floor`, so Recent backups says "at least" (R43). `-json` keeps the record's
+>   names: `floor`, not §7's `listed_floor`.
+> - **The C0c follow-ups:** N2 (user.js's "Delete the line that contains" names the setting in
+>   Thunderbird's escaped form, `\"` and `\\`), N3 (the five "what" fragments that said "Thunderbird
+>   never writes" or "writes" now speak of Thunderbird's settings format or what it uses; prefs.js
+>   keeps "Thunderbird never writes such a line"), and the pre-existing note (a server key's control
+>   characters are stripped in the command line's log and in `HandEditedError`'s "for KEY"). Two
+>   C0c word pins were moved to the new fragment, nothing dropped.
+> - **The streak's two WARNs:** `tbstreak_unreadable`'s three sentences are reworded plainly (they
+>   still name the file, which `status` may do); `tbstreak_full`'s are unchanged (R4-02's wider
+>   use is C5's).
+> - **Not built, by the design or the builder's reading:** BACKUP-NEEDS-ATTENTION.txt is unchanged
+>   (the design does not name it for completeness: a behind run is a success, and the notice is for
+>   failures). `-json`'s `behind_since` is not added: it comes from the streak record, which C5
+>   surfaces. An encrypted archive's card shows no completeness line: its completeness is in Run
+>   now's note, which the Desktop already clears at Lock or a switch (C-15); the card's own "last
+>   result while unlocked" (§7's TC-6 fold) is not built here. Local Folders and POP accounts never
+>   get a line (C2 gives them no result).
+> - **For the friction review:** the Gmail cap note avoids the word "IMAP" by naming Gmail's setting
+>   "Folder size limits"; the page Gmail shows it on is called "Forwarding and POP/IMAP" (not
+>   checked live, and TC-22 is unverified: MA-1201). The Recent backups words for `limited` and
+>   `unknown` ("Thunderbird's own settings keep only part of ACCOUNT's mail on this computer",
+>   "MailArchive could not tell how much of ACCOUNT Thunderbird has downloaded") are the builder's.
+> - **Gate before C3 (L6):** the independent narrow check of the M6-residual note and of foldcheck2
+>   is not filed in `docs/` on this branch as far as the builder could find. The lead should say
+>   whether it was done elsewhere.
+> - **Gate owed: the friction review** (§13's C3 row: Windows on Edge first, then the Mac), with the
+>   X-series walk. MA-904's checks are unchanged and green. Not self-certified here.
 
 ## 14. Owner questions (each with a recommendation)
 

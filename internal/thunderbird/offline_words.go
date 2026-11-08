@@ -239,8 +239,8 @@ const userJSHand = "user.js has a line MailArchive cannot read with certainty (u
 // write, the words say so instead (MA-1271).
 func (e *HandEditedError) Error() string {
 	applies := ""
-	if e.Key != "" {
-		applies = " for " + e.Key
+	if k := StripControl(e.Key); k != "" { // a hand-made key may hold anything (round 6's note)
+		applies = " for " + k
 	}
 	what := fmt.Sprintf("%s line %d %s. Thunderbird never writes such a line, so the file was changed outside Thunderbird (by hand or by another program), and MailArchive cannot be sure what Thunderbird applies%s.", e.File, e.Line, e.What, applies)
 	if e.File == "user.js" {
@@ -279,7 +279,7 @@ func (e *UserJSError) Error() string {
 	if h := StripControl(e.Host); h != "" {
 		server = " (" + h + ")"
 	}
-	return cliNothing + "user.js sets " + e.Key + server + " to something other than true, and Thunderbird applies user.js over prefs.js at every start, so a change would be undone. " +
+	return cliNothing + "user.js sets " + asWritten(e.Key) + server + " to something other than true, and Thunderbird applies user.js over prefs.js at every start, so a change would be undone. " +
 		"If you, or whoever looks after this computer, set this on purpose, leave it and run again without -enable-offline. " +
 		"Otherwise close Thunderbird, delete that line from user.js (or change its false to true), and run again. The file: " + e.Path
 }
@@ -295,8 +295,16 @@ func (e *UserJSError) Plain() string {
 	return "Thunderbird is set, in its file user.js, not to keep " + mail + " on this computer, and it applies that file every time it starts. So MailArchive changed nothing: a change would be undone.\n\n" +
 		"If you, or whoever looks after this computer, set this on purpose, leave it. " +
 		`Otherwise: close Thunderbird and open the file below in a plain text editor (on Windows: start Notepad, choose File, then Open, and type the whole path below into "File name" (or press Ctrl+C on this message, paste it into Notepad, and copy the path from there); double-clicking the file does not open it for editing). ` +
-		"Delete the line that contains " + e.Key + " (or change its false to true), and save.\n\n" +
+		"Delete the line that contains " + asWritten(e.Key) + " (or change its false to true), and save.\n\n" +
 		"The file: " + e.Path
+}
+
+// asWritten is a setting's name as user.js holds it inside its quotes: a quote as \" and a
+// backslash as \\, Thunderbird's own escapes, so a search for the words finds the line (the C0c
+// pass round 6's N2, settled in slice C3), with no control character (a hand-made key may hold
+// one). Thunderbird's own names (mail.server.serverN.…) hold neither and are said as they are.
+func asWritten(key string) string {
+	return strings.NewReplacer(`\`, `\\`, `"`, `\"`).Replace(StripControl(key))
 }
 
 // PlainWords is err's words for the wizard when err is one of these refusals.

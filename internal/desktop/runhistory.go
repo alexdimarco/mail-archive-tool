@@ -143,6 +143,21 @@ func runRowOf(e state.RunHistoryEntry, tagged bool) runRow {
 		if !e.Encrypted && e.Fillable > 0 {
 			r.Detail += " · " + state.NotDownloadedSentence(e.Fillable, e.FillableFrom)
 		}
+		// How much of each Thunderbird account Thunderbird had downloaded (completeness design §7,
+		// slice C3), from the entry's verdict and two numbers only (§9.1); never on an encrypted
+		// archive's entry (minimal never copies it, O1). A run with an account behind is still a
+		// success: "OK — Thunderbird still downloading" (§5, Q2).
+		if !e.Encrypted && e.TB != nil {
+			for _, c := range *e.TB {
+				s, behind := state.TBCompactSentence(c)
+				if s != "" {
+					r.Detail += " · " + s
+				}
+				if behind {
+					r.Status = "OK — Thunderbird still downloading"
+				}
+			}
+		}
 	case state.RunFailed:
 		r.Status, r.Detail = "Failed", e.Error
 		switch {

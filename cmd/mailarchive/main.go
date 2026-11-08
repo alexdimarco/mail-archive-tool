@@ -51,6 +51,7 @@ import (
 	"mail-archive-tool/internal/seal"
 	"mail-archive-tool/internal/source"
 	"mail-archive-tool/internal/state"
+	"mail-archive-tool/internal/tbcomplete"
 	"mail-archive-tool/internal/thunderbird"
 	"mail-archive-tool/internal/util"
 )
@@ -2218,7 +2219,9 @@ func enableStoreNoting(store string, logger *log.Logger, changed *[]string) erro
 		}
 		// The account by its folder and server, so two accounts on one server are told apart
 		// (the C0c friction review's W7).
-		who := fmt.Sprintf("%s (folder %s, %s)", thunderbird.StripControl(acct.Hostname), thunderbird.StripControl(filepath.Base(store)), acct.ServerKey)
+		// Every part is cleaned: a hand-made server key may hold a control character (the C0c pass
+		// round 6's note, settled in slice C3).
+		who := fmt.Sprintf("%s (folder %s, %s)", thunderbird.StripControl(acct.Hostname), thunderbird.StripControl(filepath.Base(store)), thunderbird.StripControl(acct.ServerKey))
 		switch {
 		case acct.OfflineDownload && acct.OfflineInUserJS:
 			logger.Printf("Offline download already enabled for %s (user.js turns it on).", who)
@@ -2396,6 +2399,15 @@ func printSummaryFor(logger *log.Logger, r app.Result, indexed, keepRaw bool, ou
 	newMsgs := r.ManifestSize - r.ManifestBefore
 	if replaced := s.Exported - newMsgs; newMsgs >= 0 && replaced > s.Filled {
 		logger.Printf("Note:   %d exports made %d new message(s); %d replaced an earlier copy of the same message, so exported is above the growth in manifest and indexed.", s.Exported, newMsgs, replaced-s.Filled)
+	}
+	// How much of each Thunderbird account Thunderbird had downloaded (completeness design §7's
+	// command-line row, slice C3): the run's lead, then each account's lines, from its verdicts in
+	// memory, in the words every surface says; names cleaned (TC-7). The exit code is unchanged.
+	if accts, more := app.TBAccounts(r); len(accts) > 0 || more > 0 {
+		logger.Printf("Thunderbird: %s", tbcomplete.RunLead(r.Thunderbird).Sentence())
+		for _, l := range state.TBLines(accts, more, state.TBSay{Scheduled: app.TBScheduled(out)}) {
+			logger.Printf("  %s", l)
+		}
 	}
 	printNotCaptured(logger, r)
 	// An index that holds fewer messages than the manifest (search.db lost or

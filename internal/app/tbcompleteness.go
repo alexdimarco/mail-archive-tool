@@ -21,6 +21,7 @@ import (
 	"strings"
 	"time"
 
+	"mail-archive-tool/internal/schedule"
 	"mail-archive-tool/internal/source"
 	"mail-archive-tool/internal/state"
 	"mail-archive-tool/internal/tbcomplete"
@@ -295,6 +296,7 @@ func tbRecords(results []tbcomplete.Result, prev []state.TBAccount, now time.Tim
 			CantTellFolders: r.CantTellFolders, SkippedEntries: r.SkippedEntries, IgnoredOldKeys: r.IgnoredOldKeys,
 			UnkeyedMailboxes: r.UnkeyedMailboxes, UnkeyedMessages: r.UnkeyedMessages,
 			GluedMailboxes: r.GluedMailboxes, NoStatus: r.NoStatus, MisalignedMailboxes: r.MisalignedMailboxes,
+			ThunderbirdVersion: r.Version,
 		}
 		if r.AsOf > 0 {
 			a.AsOf = time.Unix(r.AsOf, 0).UTC()
@@ -350,6 +352,28 @@ func tbRecords(results []tbcomplete.Result, prev []state.TBAccount, now time.Tim
 // tbRecordsMore is how many of the run's results the record leaves out (tbRecords).
 func tbRecordsMore(results []tbcomplete.Result) int {
 	return max(0, len(results)-state.TBAccountsMax)
+}
+
+// TBAccounts is r's Thunderbird verdicts in the shape the last-run record keeps them, names
+// cleaned and capped (TC-7), and how many it leaves out past state.TBAccountsMax: what the
+// wizard's end summary, Run now's note and the command line say them from (state.TBLines), so
+// a run's words on screen and its record's words in `status` are one producer's (slice C3). For
+// the screen only: nothing here is written, and for an encrypted archive it is the only form the
+// verdicts take (O1). The run's lead is tbcomplete.RunLead(r.Thunderbird).
+func TBAccounts(r Result) ([]state.TBAccount, int) {
+	if len(r.Thunderbird) == 0 {
+		return nil, 0
+	}
+	return tbRecords(r.Thunderbird, nil, time.Now().UTC()), tbRecordsMore(r.Thunderbird)
+}
+
+// TBScheduled reports whether a schedule other than "only when I click Run now" will run the
+// archive at out's later backups, so the words may say "later backups add the rest" (§7's
+// TC-17 fold). A descriptor that cannot be read is no schedule: the words then ask for the
+// backup to be run again, which is true either way.
+func TBScheduled(out string) bool {
+	d, err := schedule.ReadDescriptor(out)
+	return err == nil && !d.IsManual()
 }
 
 // weakness orders results for a record that cannot keep them all: the lower, the weaker (kept
@@ -449,14 +473,14 @@ func updateTBStreak(opts Options, results []tbcomplete.Result, encrypted, ok boo
 	case err == nil:
 	case errors.Is(err, util.ErrReadableByOthers):
 		logf("warning: MailArchive's record of how long Thunderbird has been downloading (%s) could be read by other users, so it was not trusted; it starts again from this backup and is now readable only by you", path)
-		warns = append(warns, state.RunWarning{Code: tbStreakUnreadable, Message: fmt.Sprintf("MailArchive's record of how long Thunderbird has been downloading (%s) could be read by other users, so it started again from the last backup. Nothing is needed unless this shows after every backup: then the archive is on a drive that cannot keep files private (such as exFAT), and the \"still downloading\" notice cannot count days there.", path)})
+		warns = append(warns, state.RunWarning{Code: tbStreakUnreadable, Message: tbStreakOthersMessage(path)})
 		prev = state.TBStreak{}
 	case errors.Is(err, state.ErrTBStreakNewer):
 		logf("warning: %v; it was left as it is, so how long Thunderbird has been downloading is not counted by this version", err)
-		return []state.RunWarning{{Code: tbStreakUnreadable, Message: fmt.Sprintf("A newer MailArchive keeps its record of how long Thunderbird has been downloading in %s, so this version leaves it as it is and does not count. Use the newer MailArchive for this archive.", path)}}
+		return []state.RunWarning{{Code: tbStreakUnreadable, Message: tbStreakNewerMessage(path)}}
 	default:
 		logf("warning: could not read MailArchive's record of how long Thunderbird has been downloading (%v); it was left as it is", err)
-		return []state.RunWarning{{Code: tbStreakUnreadable, Message: fmt.Sprintf("MailArchive could not read its record of how long Thunderbird has been downloading (%s), so it was left as it is and not counted. Remove the file if it is not a regular file of yours; the next backup starts it again.", path)}}
+		return []state.RunWarning{{Code: tbStreakUnreadable, Message: tbStreakOtherMessage(path)}}
 	}
 	// The run's own count and time, and every store it reached is seen, whatever its verdict
 	// (the C2 pass round 2's R2-08): an entry whose store no run has reached for
@@ -523,6 +547,22 @@ const (
 	tbStreakUnreadable = "tbstreak_unreadable"
 	tbStreakFull       = "tbstreak_full"
 )
+
+// The tbstreak_unreadable sentences (slice C3's words; `status` and Status & health show the
+// recorded one, and may name the file): a record other users could read, so not trusted and
+// started again (ADV-C2-05); one a newer MailArchive wrote, left alone (ADV-C2-10); and any other
+// refusal (a link, a pipe, too large, a read error), left alone.
+func tbStreakOthersMessage(path string) string {
+	return "MailArchive did not trust its record of how long Thunderbird has been downloading (" + path + "), because other people on this computer could read it, so it started that count again at the last backup and made the file private. Nothing is needed unless this shows after every backup: then the archive is on a drive that cannot keep files private (such as a USB drive formatted as exFAT), and the \"still downloading\" notice cannot count days there."
+}
+
+func tbStreakNewerMessage(path string) string {
+	return "A newer version of MailArchive keeps its record of how long Thunderbird has been downloading in " + path + ", so this version left it alone and did not count the last backup. Use the newer MailArchive for this archive."
+}
+
+func tbStreakOtherMessage(path string) string {
+	return "MailArchive could not read its record of how long Thunderbird has been downloading (" + path + "), so it left the file alone and did not count the last backup. If that file is not one MailArchive made (for example a shortcut, or a folder of that name), remove it; the next backup starts the record again."
+}
 
 // tbStreakFullNames is how many of the waiting accounts tbstreak_full's sentence names.
 const tbStreakFullNames = 3

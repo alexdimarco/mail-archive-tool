@@ -754,6 +754,9 @@ func assessKeyless(r *Report, in Input, now time.Time) {
 				r.warn(w.Code, w.Message)
 			}
 		}
+		// How much of each Thunderbird account Thunderbird had downloaded (the completeness
+		// design §5, §7; slice C3): a plaintext record of a backup that ended ok only.
+		assessThunderbird(r, in)
 	}
 
 	// Last verify: the archive's integrity verdict, from verify's own record.
@@ -2411,6 +2414,7 @@ func Summary(in Input, rep Report) []string {
 			line += fmt.Sprintf(" · took %s · its counts are sealed", lr.Finished.Sub(lr.Started).Round(time.Second))
 		} else if lr.Status == state.RunOK {
 			line += fmt.Sprintf(" · exported %d · filled %d · took %s", lr.Exported, lr.Filled, lr.Finished.Sub(lr.Started).Round(time.Second))
+			line += tbLeadSuffix(in) // the run's lead when it read Thunderbird accounts (slice C3)
 		} else if partial {
 			line += ": " + strings.Join(state.PartialSentences(*lr.Partial), " ")
 		} else if lr.Error != "" || lr.Encrypted {
@@ -2613,6 +2617,16 @@ type JSONReport struct {
 	// last backup's sync result (design-presync-attended §4.7, slice AS5, C-55): an
 	// additive key at version 2, omitted when the sync is off and nothing is recorded.
 	ThunderbirdSync *JSONThunderbirdSync `json:"thunderbird_sync,omitempty"`
+
+	// ThunderbirdCompleteness is how much of each Thunderbird account Thunderbird had downloaded
+	// at the last backup, as its plaintext record keeps it (docs/design-thunderbird-completeness.md
+	// §7's -json folds, slice C3): additive keys at version 2, each entry carrying complete and
+	// stale (M9). ThunderbirdMore is how many accounts the record left out (R2-06), and
+	// ThunderbirdLead the run's lead by name (complete, so_far or finished). Omitted for a record
+	// without them, a backup that did not end ok, and always for an encrypted archive (O1).
+	ThunderbirdCompleteness []state.TBAccount `json:"thunderbird_completeness,omitempty"`
+	ThunderbirdMore         int               `json:"thunderbird_more,omitempty"`
+	ThunderbirdLead         string            `json:"thunderbird_lead,omitempty"`
 }
 
 // JSONShownAsSource is the shown-as-source facet: the total and a count per
@@ -2856,6 +2870,7 @@ func JSON(in Input, rep Report) JSONReport {
 			jlr.Finished = &f
 		}
 		doc.LastRun = jlr
+		tbJSON(&doc, in)
 	}
 	if in.LastVerifyState == state.LastVerifyPresent {
 		doc.LastVerify = jsonLastVerify(in.LastVerify)

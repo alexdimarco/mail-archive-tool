@@ -47,6 +47,8 @@ import (
 	"mail-archive-tool/internal/schedule"
 	"mail-archive-tool/internal/seal"
 	"mail-archive-tool/internal/source"
+	"mail-archive-tool/internal/state"
+	"mail-archive-tool/internal/tbcomplete"
 	"mail-archive-tool/internal/thunderbird"
 	"mail-archive-tool/internal/util"
 )
@@ -1730,7 +1732,7 @@ func guiWaitForSync(store string) error {
 			"Downloaded %s so far (+%s).\nWaiting for the sync to finish…\n\nIn Thunderbird: right-click the account → Download / Sync Now.",
 			thunderbird.HumanBytes(size), thunderbird.HumanBytes(size-start)))
 		if stable {
-			_ = dlg.Text("Download complete — starting export…")
+			_ = dlg.Text(syncPausedText)
 			_ = dlg.Complete()
 			return nil
 		}
@@ -1992,9 +1994,19 @@ func exportSummary(out string, keepRaw bool, r app.Result) string {
 func exportSummaryFor(out string, keepRaw bool, r app.Result, goos string) string {
 	s := r.Stats
 	b := &strings.Builder{}
+	// The lead follows the run's weakest Thunderbird account (completeness design §4.2's fold, §7's
+	// wizard-lead fold; slice C3): "Export complete." only when every one may say complete, or the
+	// run read none; then each account's lines. A one-off wizard export has no schedule yet, so
+	// the words ask for the backup to be run again (TC-17).
+	b.WriteString(tbcomplete.RunLead(r.Thunderbird).Sentence() + "\n\n")
+	if accts, more := app.TBAccounts(r); len(accts) > 0 || more > 0 {
+		for _, l := range state.TBLines(accts, more, state.TBSay{}) {
+			b.WriteString(l + "\n")
+		}
+		b.WriteString("\n")
+	}
 	fmt.Fprintf(b,
-		"Export complete.\n\n"+
-			"Newly downloaded this run: %d\n"+
+		"Newly downloaded this run: %d\n"+
 			"Exported:                  %d\n"+
 			"Skipped (already done):    %d\n"+
 			"Skipped (date filter):     %d\n"+

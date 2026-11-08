@@ -18,6 +18,7 @@ import (
 	"mail-archive-tool/internal/presyncjob"
 	"mail-archive-tool/internal/seal"
 	"mail-archive-tool/internal/state"
+	"mail-archive-tool/internal/tbcomplete"
 	"mail-archive-tool/internal/util"
 )
 
@@ -99,7 +100,7 @@ func RunJobInProcess(ctx, stop context.Context, jobPath string, logger *log.Logg
 		}
 		return "", runErr
 	}
-	return runNowSummary(result), nil
+	return runNowSummaryFor(result, app.TBScheduled(j.Out)), nil
 }
 
 // runNowSummary is what the Desktop's Run now says when its backup finished (MA-943): one
@@ -107,20 +108,42 @@ func RunJobInProcess(ctx, stop context.Context, jobPath string, logger *log.Logg
 // now and the command line count it (F13) — then only what explains that count when it is
 // not zero, and what a person must act on, one line each. The Desktop puts the Thunderbird
 // sync's line after the first line. The wizard's own dialog keeps exportSummary.
-func runNowSummary(r app.Result) string {
+func runNowSummary(r app.Result) string { return runNowSummaryFor(r, false) }
+
+// runNowLead is Run now's first words for the run's lead (completeness design §7, slice C3): a
+// plaintext Run now never said "complete", so a run that may say so keeps "Backup finished:";
+// one with a Thunderbird account behind or limited says "Backed up what Thunderbird has so far:".
+func runNowLead(l tbcomplete.Lead) string {
+	if l == tbcomplete.LeadSoFar {
+		return "Backed up what Thunderbird has so far: "
+	}
+	return "Backup finished: "
+}
+
+// tbNoteLines are the run's Thunderbird lines for Run now's note, from its in-memory verdicts
+// (never a record, O1): scheduled says a schedule runs this archive's later backups (TC-17).
+func tbNoteLines(r app.Result, scheduled bool) []string {
+	accts, more := app.TBAccounts(r)
+	return state.TBLines(accts, more, state.TBSay{Scheduled: scheduled})
+}
+
+// runNowSummaryFor is runNowSummary for an archive whose later backups a schedule runs, or not.
+func runNowSummaryFor(r app.Result, scheduled bool) string {
 	s := r.Stats
 	added := r.ManifestSize - r.ManifestBefore
+	lead := runNowLead(tbcomplete.RunLead(r.Thunderbird))
 	var lines []string
 	switch {
 	case added < 0 || added > s.Exported:
 		// The record shrank or grew by more than this run wrote: say what was written.
-		lines = append(lines, "Backup finished: "+messages(s.Exported)+" added or updated in the archive.")
+		lines = append(lines, lead+messages(s.Exported)+" added or updated in the archive.")
 		added = s.Exported
 	case added == 0:
-		lines = append(lines, "Backup finished: no new messages.")
+		lines = append(lines, lead+"no new messages.")
 	default:
-		lines = append(lines, "Backup finished: "+messagesNew(added)+" archived.")
+		lines = append(lines, lead+messagesNew(added)+" archived.")
 	}
+	lines = append(lines, tbNoteLines(r, scheduled)...)
 	if s.Filled > 0 {
 		lines = append(lines, messages(s.Filled)+" an earlier backup could not fully download "+guiVerb(s.Filled, "is", "are")+" now complete.")
 	}
@@ -252,15 +275,44 @@ func RunJobInProcessKeyed(ctx, stop context.Context, jobPath string, logger *log
 	if runErr != nil {
 		return "", runErr
 	}
-	return encryptedSummary(result), nil
+	return encryptedSummaryFor(result, app.TBScheduled(j.Out)), nil
 }
 
 // encryptedSummary is what a keyed run says: no counts kept anywhere, no file of the
 // archive named — its pages, report and index are sealed (U16).
-func encryptedSummary(result app.Result) string {
-	s := fmt.Sprintf("Backup complete: %d message(s) added or updated. They are sealed in the encrypted archive; open it in MailArchive Desktop to read them.", result.Stats.Exported)
+func encryptedSummary(result app.Result) string { return encryptedSummaryFor(result, false) }
+
+// syncPausedText is the wizard's wait when Thunderbird's files stop growing (completeness design
+// §7's surfaces table, slice C3): Thunderbird pauses for long stretches, so a pause is never said
+// to be the end of the download; the end summary then says how much there is.
+const syncPausedText = "The download has paused — starting the backup of what Thunderbird has so far…"
+
+// encryptedSummaryFor is encryptedSummary for an archive whose later backups a schedule runs, or
+// not. Its lead obeys R42 (completeness design §7's foldcheck M8 and foldcheck2 MF1 folds): "Backup
+// complete:" only when every Thunderbird account of the run may say complete, or the run read
+// none; "Backed up what Thunderbird has so far:" when one is behind or limited; "Backup
+// finished:" otherwise. The Thunderbird lines follow the sealed sentence, from the run's result
+// in memory only (O1): the Desktop clears the whole note at Lock or a switch (C-15), and nothing
+// of it is written beside the archive.
+func encryptedSummaryFor(result app.Result, scheduled bool) string {
+	lead := "Backup finished: "
+	switch tbcomplete.RunLead(result.Thunderbird) {
+	case tbcomplete.LeadComplete:
+		lead = "Backup complete: "
+	case tbcomplete.LeadSoFar:
+		lead = "Backed up what Thunderbird has so far: "
+	}
+	s := fmt.Sprintf(lead+"%d message(s) added or updated. They are sealed in the encrypted archive; open it in MailArchive Desktop to read them.", result.Stats.Exported)
+	tb := tbNoteLines(result, scheduled)
+	if len(tb) > 0 {
+		s += "\n" + strings.Join(tb, "\n")
+	}
 	if result.IndexBehind {
-		s += " The search index is missing some messages; the next backup, or Rebuild search index, brings it up to date."
+		sep := " "
+		if len(tb) > 0 {
+			sep = "\n"
+		}
+		s += sep + "The search index is missing some messages; the next backup, or Rebuild search index, brings it up to date."
 	}
 	return s
 }

@@ -38,9 +38,15 @@ type TBAccount struct {
 	ExpungedEstimate int64     `json:"expunged_estimate,omitempty"`
 	DeletedCopies    bool      `json:"deleted_copies,omitempty"`
 	AsOf             time.Time `json:"as_of,omitzero"` // the oldest count time (TC-12)
-	Stale            bool      `json:"stale,omitempty"`
-	CapNote          int64     `json:"cap_note,omitempty"`
-	ListsNoMail      bool      `json:"lists_no_mail,omitempty"`
+	// Stale is always written, as complete is, so `status -json` carries both booleans in every
+	// entry (§7's foldcheck M9 fold; slice C3).
+	Stale       bool  `json:"stale"`
+	CapNote     int64 `json:"cap_note,omitempty"`
+	ListsNoMail bool  `json:"lists_no_mail,omitempty"`
+	// ThunderbirdVersion is the major version of the Thunderbird that last opened the profile
+	// (compatibility.ini's LastVersion), so the fix-it words name that version's labels (§6's L5
+	// fold; slice C3); 0 when it cannot be told, and the words then quote both sets.
+	ThunderbirdVersion int `json:"thunderbird_version,omitempty"`
 
 	// Limit is the account's limits when one is on (§4.1 step 4, TC-9); LimitHash and
 	// LimitSince are TC-19's fingerprint of them and when it was first seen.
@@ -108,6 +114,9 @@ type TBCompact struct {
 	Verdict string `json:"verdict"`
 	X       int64  `json:"x"`
 	Y       int64  `json:"y"`
+	// Floor says Y is "at least" (§3's TC-1 fold), so Recent backups never words a floor as the
+	// whole count (R43; slice C3). Not a name and not a count.
+	Floor bool `json:"floor,omitempty"`
 }
 
 // The record's bounds: TBFolderMax kept folders, TBNotKeptMax not-kept folders per list (§6's
@@ -187,8 +196,14 @@ func saneTB(in []TBAccount) (out []TBAccount, cut int) {
 		for _, n := range []*int64{&a.OnDisk, &a.Listed, &a.Missing, &a.Tolerance, &a.ExpungedEstimate, &a.CapNote, &a.UnkeyedMessages, &a.NoIdentity, &a.NoStatus} {
 			*n = max(0, *n)
 		}
-		for _, n := range []*int{&a.FoldersMore, &a.NotKeptMore, &a.DefaultNotKeptMore, &a.LabelsNotKept, &a.CantTellFolders, &a.SkippedEntries, &a.IgnoredOldKeys, &a.UnkeyedMailboxes, &a.SplitMailboxes, &a.GluedMailboxes, &a.MisalignedMailboxes} {
+		for _, n := range []*int{&a.FoldersMore, &a.NotKeptMore, &a.DefaultNotKeptMore, &a.LabelsNotKept, &a.CantTellFolders, &a.SkippedEntries, &a.IgnoredOldKeys, &a.UnkeyedMailboxes, &a.SplitMailboxes, &a.GluedMailboxes, &a.MisalignedMailboxes, &a.ThunderbirdVersion} {
 			*n = max(0, *n)
+		}
+		if a.ThunderbirdVersion > 9999 { // planted: no Thunderbird has such a version
+			a.ThunderbirdVersion = 0
+		}
+		if l := a.Limit; l != nil {
+			l.MaxAgeDays, l.MaxSizeKB = max(0, l.MaxAgeDays), max(0, l.MaxSizeKB)
 		}
 		a.Folders = saneFolders(a.Folders, TBFolderMax)
 		a.NotKept = saneFolders(a.NotKept, TBNotKeptMax)
@@ -227,7 +242,7 @@ func TBCompactOf(accounts []TBAccount) *[]TBCompact {
 	}
 	out := make([]TBCompact, 0, len(accounts))
 	for _, a := range accounts {
-		out = append(out, TBCompact{Account: a.Account, Verdict: a.Verdict, X: a.OnDisk, Y: a.Listed})
+		out = append(out, TBCompact{Account: a.Account, Verdict: a.Verdict, X: a.OnDisk, Y: a.Listed, Floor: a.Floor})
 	}
 	return &out
 }
