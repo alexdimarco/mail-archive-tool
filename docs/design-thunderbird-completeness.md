@@ -43,6 +43,11 @@ each slice's own gate (§13 fold). No owner ruling is open for C0c, C1a or C1b.
 >
 > **Still owed:** the fold checker's re-check of M1 to M10 only (not the whole file), and the
 > M4 re-read itself, which is a C0 task the lead owns.
+>
+> **Folded 2026-11-07 [foldcheck M6 residual] (lead's call):** the one case §17's closing note left
+> open is closed. An IMAP-looking store outside every profile and every `ImapMail` folder, with no
+> profile found, is `unknown` ("can't tell") when it holds any `.msf` summary file. Folded in §2.2,
+> §4.2, §4.4, §12 (MA-1196's custom-folder case) and §17. Gate: before C1b, with M6.
 
 **Ids are provisional.** Main's last test-spec row is MA-1150; another agent is adding polish rows
 from MA-1151 now. This design takes **MA-1170 to MA-1194**, **R42 to R44** and **S75 to S77**,
@@ -317,6 +322,43 @@ this build; §14 Q8 keeps it open as a later precision step.
 > cannot be read or is refused by the opener (M1); an old `panacea.dat` profile; a cache refused as a
 > link, a pipe or over 16 MB; and a copied `ImapMail/<host>` with no profile above it. Each is
 > `unknown`, never "Export complete.". MA-1196 gains these cases (§12 fold).
+>
+> **Folded 2026-11-07 [foldcheck M6 residual] (lead's call):** the M6 table's second row is
+> **narrowed by [foldcheck M6 residual]**. As written, an IMAP store outside every profile and
+> outside every `ImapMail` folder had no `prefs.js` above it and no `ImapMail` path part. Examples:
+> an `-input` of an IMAP account's custom local folder kept outside its profile, or a copy of
+> `ImapMail/<host>` renamed into another folder. So it reached `not_applicable` and kept "Export
+> complete." (the case left open in §17's closing note). The second row is replaced by these two:
+>
+> | Case | Treated as |
+> |---|---|
+> | no profile is found above the store (`FindProfileDir` finds no `prefs.js`), **and** no part of the store's path is `ImapMail`, **and** the store holds **no** `.msf` summary file | `not_applicable` (a plain mail folder) |
+> | no profile is found and no part of the store's path is `ImapMail`, but the store holds **any** `.msf` summary file | **`unknown`** ("can't tell"), never `not_applicable` |
+>
+> - **Why a `.msf` file is the sign.** Thunderbird finds an IMAP account's folders at start-up by
+>   listing the store's `.msf` files, not its mailbox files (`nsImapMailFolder::CreateSubFolders`,
+>   `nsImapMailFolder.cpp:404-508` at ESR 153.6.0esr, read in the M4 re-read,
+>   `docs/lab/thunderbird-completeness-source-esr153.md` claim 9). So every folder Thunderbird knows
+>   in an IMAP store has one, even a folder with no mailbox file yet (the owner's two label folders,
+>   §1). A store with none is not one Thunderbird could be keeping.
+> - **"Holds any `.msf`", precisely.** The store folder, or any `.sbd` folder the walk enters under
+>   it, has a directory entry whose name ends in `.msf` in any letter case. Thunderbird compares the
+>   ending case-blind (`:430-432`). The entry counts whatever kind it is (file, link or other). It is
+>   seen by name only, from the listing the walk already makes, and is never opened or followed.
+> - **"The store's path"** means the folder the walk treats as one store, not only the `-input`.
+>   An `-input` of a parent folder can hold a store whose own path has the `ImapMail` part. M6's
+>   "the input's path" is read the same way. (The folder's reading.)
+> - **Words and reason.** The M6 row's words: "…because MailArchive does not yet know how this kind
+>   of Thunderbird account keeps its mail". The reason is `no_match`, because no account was matched.
+>   Words that name the missing profile instead would be a wording change only, for C3's friction
+>   review.
+> - **Cost.** A Local Folders or POP3 copy kept outside its profile also holds `.msf` files. It now
+>   leads with "Backup finished." instead of "Export complete.", which fails safe. A folder of mbox
+>   files with no `.msf`, no profile and no `ImapMail` part keeps today's words.
+> - **Limit, stated.** An IMAP folder copied without its `.msf` files, and outside any `ImapMail`
+>   folder, cannot be told from a plain mail folder, so it stays `not_applicable`. Nothing on disk
+>   then says it came from Thunderbird.
+> - Rows: MA-1196 (§12 fold).
 
 ### 2.3 How fresh `folderCache.json` is
 
@@ -949,6 +991,11 @@ unfinished forever.
 >   folder that is no Thunderbird store") is **superseded by [foldcheck M6]**: `not_applicable` only
 >   for a **matched** account of type `pop3`, `none` or `rss`, or when no `prefs.js` is found above the
 >   input **and** no path part is `ImapMail` (§2.2 fold). Every other case is `unknown`.
+>
+> **Folded 2026-11-07 [foldcheck M6 residual] (lead's call):** the second half of the
+> `not_applicable` bullet above also needs the store to hold **no** `.msf` summary file (§2.2
+> fold). With no profile found and no `ImapMail` part, a store that holds any `.msf` is `unknown`,
+> never `not_applicable`.
 
 ### 4.3 Tolerance
 
@@ -1036,6 +1083,12 @@ A kept folder never checked gets:
 > tail mode; an old-path key beside an exact key is ignored (M2). The TC-5 row above ("no matched
 > account; `prefs.js` unreadable") now covers the unreadable-cache case too (M6). M7 is **not** an `unknown` path: an account with `expungedBytes` > 0 keeps its
 > verdict, but its lead is "Backup finished." and its words show both numbers (§2.4 fold).
+>
+> **Folded 2026-11-07 [foldcheck M6 residual] (lead's call): one more row.**
+>
+> | Path | Words |
+> |---|---|
+> | no profile found above the store, no `ImapMail` part in the store's path, and the store holds any `.msf` summary file (§2.2 fold) | the M6 row's "…does not yet know how this kind of Thunderbird account keeps its mail"; reason `no_match` |
 
 ## 5. Outcomes, alerts and the streak
 
@@ -1675,6 +1728,24 @@ fixture repeats only the numbers' *shape*, with invented folder names.
 > | MA-1195 | a pipe and a link at `prefs.js`: no hang, no account; `parsePrefs` uses `util.ReadRegularFile` | M1 |
 > | MA-1196 | ambiguous account plus no cache; `prefs.js` unreadable plus no cache; a copied `ImapMail/<host>` with no profile above it: each → `unknown`, never "Export complete."; a plain folder with no profile and no `ImapMail` part → `not_applicable` (positive twin) | M6 |
 > | MA-1200 | the moved profile also records whether every loaded folder gets a current-path key at the next save, and whether a folder deleted after the move leaves its old key | M2 |
+>
+> **Folded 2026-11-07 [foldcheck M6 residual] (lead's call): MA-1196's custom-folder case.** The
+> original MA-1196 case "an `imap` account with a custom folder outside `ImapMail/` → checked" is
+> **superseded by [foldcheck M6 residual]**. It holds only when the folder sits inside its profile,
+> because the profile is found by walking up at most six levels to `prefs.js` (`FindProfileDir`,
+> `thunderbird.go:29-42`, §10). The case is replaced by three:
+>
+> - an `imap` account whose custom folder lies outside `ImapMail/` but **inside its profile**
+>   (`prefs.js` found within the six levels) and matched by `directory` → checked;
+> - the **same folder outside every profile** (or more than six levels below it), with its `.msf`
+>   files → `unknown`, reason `no_match`, never "Export complete." (and in an encrypted archive's
+>   Run now note, never "Backup complete:");
+> - a folder of mbox files with **no `.msf`**, no profile and no `ImapMail` path part →
+>   `not_applicable`. This replaces M6's positive twin above ("a plain folder with no profile and no
+>   `ImapMail` part").
+>
+> MA-1196 also gains a Local Folders copy kept outside its profile (it has `.msf` files) →
+> `unknown`, lead "Backup finished.", and an `.MSF` name in capitals counted the same as `.msf`.
 
 **Process:**
 
@@ -2003,3 +2074,11 @@ folds.
 >
 > **Still owed:** the fold checker's re-check of M1 to M10 only. This note was written by the agent
 > that folded them.
+>
+> **Folded 2026-11-07 [foldcheck M6 residual] (lead's call):** the first bullet of "What this
+> re-read did not close" is **closed by the lead's call**. An IMAP-looking store outside every
+> profile and every `ImapMail` folder is `unknown` ("can't tell") when no profile is found and the
+> store holds any `.msf` summary file. Only a store with no `.msf` stays `not_applicable` (§2.2,
+> §4.2 and §4.4 folds; MA-1196's custom-folder case is reworded in §12's fold). The headline rule
+> above then admits no `not_applicable` for any store Thunderbird keeps as IMAP. The N5 bullet is
+> unchanged.
