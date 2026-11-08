@@ -55,6 +55,23 @@ each slice's own gate (§13 fold). No owner ruling is open for C0c, C1a or C1b.
 > claim holds except the account-settings labels: the design's words were wrong at both versions,
 > and the new labels arrive in 160. Notes beside §4.1 steps 2 and 3, §6 and §16. The source half
 > of C1a's gate is met; the lab rows are still owed.
+>
+> **Folded 2026-11-07 [completeness foldcheck2] (lead's call):** fold check 2 is filed as
+> `docs/review-thunderbird-completeness-foldcheck2.md` (commit edf9e0b, verdict FAIL (narrow), one
+> must-fix). The lead accepted its must-fix MF1 and its notes A to D, and added two calls of its own.
+> Each is a dated note tagged `[completeness foldcheck2 …]` beside the text it amends. Reviewed text
+> is kept; a sentence a note replaces is marked superseded. The tags L1 to L6 below are this fold's
+> own; they are not the lead's calls L1 to L5 of §0.
+>
+> | Tag | What | Folded in | Gate |
+> |---|---|---|---|
+> | MF1 | the encrypted Run now note's "no Thunderbird IMAP store" escape; MA-1181's "non-IMAP" | §7, §12, §17 | before C3 |
+> | L1 (note A) | `EnableOffline`'s own read and write of `prefs.js` | §4.1 step 1, §12, §13 | C0c |
+> | L2 (note B) | refuse `.`, `..` and absolute key tails before M2's file check | §4.1 step 2, §12 | C1a (and its adversarial pass) |
+> | L3 (note C) | a walked mailbox with no cache key never adds to Gmail's X | §4.1 step 2, §12 | C1b |
+> | L4 (note D) | an account with a not-kept WARN may not say complete; the note-only cases stay open for C3 | §4.2, §12 | C3 |
+> | L5 | the §6 labels follow the detected Thunderbird version, or quote both sets | §6 | C3 (MA-1191 still settles them) |
+> | L6 | an independent narrow check of the M6-residual note and of this fold, before C3 | §13 | before C3 |
 
 **Ids are provisional.** Main's last test-spec row is MA-1150; another agent is adding polish rows
 from MA-1151 now. This design takes **MA-1170 to MA-1194**, **R42 to R44** and **S75 to S77**,
@@ -769,6 +786,21 @@ is a label-membership question, not completeness (§14 Q6).
 >   (§2.2 fold), never `not_applicable`.
 > - MA-1195 gains a pipe and a link at `prefs.js`: no hang, no account (§12 fold).
 >
+> **Folded 2026-11-07 [completeness foldcheck2 L1] (lead's call): `EnableOffline` too.** The M1
+> bullet "in `parsePrefs` and so for every caller" does not reach `EnableOffline`. It does its own
+> `os.ReadFile` of `prefs.js` (`thunderbird.go:172`) and its own `os.WriteFile` of the backup and of
+> `prefs.js` (`:195`, `:198`), and never calls `parsePrefs`. Both are in C0c's scope:
+>
+> - **The read** goes through `util.ReadRegularFile(path, 16 MB)` as well. A link, a pipe, a device
+>   or a file over the cap is refused, and nothing is written.
+> - **The writes** (the backup `prefs.js.mailarchive-bak` and `prefs.js` itself) never follow a link
+>   and never replace a file that is not a regular file. They use the repo's atomic writer
+>   (`util.WriteFileAtomic0600Temp`: a temporary file beside the target, then a rename, which
+>   replaces the name and never writes through a link), after a fresh `Lstat` shows the target is a
+>   regular file or, for the backup only, absent.
+> - `EnableOffline` runs attended only (the wizard, `-enable-offline`), so this is no "complete"
+>   path. MA-1195 gains the cases (§12 fold).
+>
 > **Folded 2026-11-07 [foldcheck M6] (lead's call):** the bullet "No match → `unknown` if a
 > folder-cache entry exists" is **superseded by [foldcheck M6]**. No match → `unknown` whether or not
 > the cache could be read, unless no `prefs.js` is found above the input **and** no path part is
@@ -867,6 +899,31 @@ is a label-membership question, not completeness (§14 Q6).
 >   or totals update. That is still never `caught_up`, so it fails safe. A folder first created
 >   during a session was not traced.
 > - MA-1200 still confirms all of this on a real moved profile.
+>
+> **Folded 2026-11-07 [completeness foldcheck2 L2] (lead's call): a key's tail is checked before
+> the `Lstat`.** The "can't tell" check above builds its path from the store folder and the key's
+> tail, and the key is untrusted. Before that `Lstat` is made:
+>
+> - a tail with any `.` or `..` part, or an absolute tail (a leading `/` or `\`, a drive letter, or
+>   a UNC prefix), is **refused**: no `Lstat` is made for it;
+> - the refused key is treated as an invalid entry, so the account is `unknown` (reason
+>   `invalid_entry`, as M3). That is the cautious reading, since Thunderbird never writes such a key
+>   (the folder's reading; C1a's adversarial pass may narrow it to "ignored and counted").
+> - MA-1170 gains the cases (§12 fold).
+>
+> **Folded 2026-11-07 [completeness foldcheck2 L3] (lead's call): a mailbox with no cache key.** M2
+> did not say what happens to a mailbox the walk read that has **no** key at all, in either mode
+> (for example a folder left on disk after it was unsubscribed, §11).
+>
+> - Its messages are still archived, as today.
+> - It **never adds to X** for a Gmail account (§3). Otherwise its messages could cover a gap in
+>   All Mail, as N5's extra separators can.
+> - It is **counted instead** as one number in the run's plaintext record: the walked mailboxes with
+>   no cache key, and the messages in them. No folder names, and nothing beside an encrypted archive
+>   (R44). It changes no verdict.
+> - For an account that is not Gmail it changes nothing: only kept folders listed in the cache are
+>   summed, so it was never in X.
+> - MA-1175 gains the case (§12 fold).
 >
 > **Fixtures for MA-1170** (replacing "an old-path and a current-path key for one folder → `unknown`"
 > in §12's fold):
@@ -1026,6 +1083,24 @@ unfinished forever.
 > `not_applicable` bullet above also needs the store to hold **no** `.msf` summary file (§2.2
 > fold). With no profile found and no `ImapMail` part, a store that holds any `.msf` is `unknown`,
 > never `not_applicable`.
+>
+> **Folded 2026-11-07 [completeness foldcheck2 L4] (lead's call): not-kept folders and "complete".**
+> As written, a `caught_up` account with not-kept folders still leads "Export complete.", beside a
+> not-kept WARN (and, after TC-19, beside a note). The sentence above ("'Not kept' folders are
+> reported **alongside** any verdict … never folded into 'behind'") stands for the **verdict**. For
+> the **words**, the lead's call is:
+>
+> - an account that gets the `thunderbird_not_kept` WARN (a not-kept folder that lists mail, §6), or
+>   that WARN's TC-19 follow-up note for the same folders, **may not say complete**. Its lead is
+>   "Backup finished." at most, and `-json` `complete` is false for it. R42 says never "complete"
+>   while Thunderbird's counts show mail not yet downloaded, and a not-kept folder's mail is not
+>   downloaded.
+> - **Open item for C3:** the cases that get a **note only** (Spam and Trash not kept by default;
+>   Gmail labels not kept while All Mail is kept, whose mail is backed up through All Mail). Whether
+>   they too block "complete" is not decided here. C3's builder brings it to the lead before C3's
+>   friction review. (A note for the lead: Trash usually lists mail, so if default-not-kept blocks,
+>   few accounts would ever say complete.)
+> - MA-1181 and MA-1183 gain the WARN case (§12 fold).
 
 ### 4.3 Tolerance
 
@@ -1368,6 +1443,27 @@ Spam and Trash (by default), shown as a note only:
 >   half (153.6.0esr on the Windows VM, 159.0 on the Mac) before version-chosen words ship.
 > - **Not read:** the wizard's "right-click the account → Download / Sync Now", and Thunderbird's
 >   download-now command for TC-9. Both stay with MA-1191.
+>
+> **Folded 2026-11-07 [completeness foldcheck2 L5] (lead's call): the words follow the version.**
+>
+> - **The labels, by version** (from the M4 re-read above):
+>   - **ESR 153 and Release 159** (and so every version below 160): "Keep messages in all folders
+>     for this account on this computer", and "Don't download messages larger than … KB".
+>   - **160 and above:** "Save copies of all folders and messages on this computer for offline
+>     use", and "Skip downloading messages larger than:".
+> - **The rule for MailArchive's words:** they follow the version detected from
+>   `compatibility.ini` `LastVersion` (the TC-13 fold), or, where no version is detected or it
+>   cannot be read, they **quote both sets** ("…'Keep messages in all folders for this account on
+>   this computer' (in Thunderbird 160 and later: 'Save copies of all folders and messages on this
+>   computer for offline use')"). The age limit has no 160 label (above), so its words quote the
+>   older label below 160 and stay neutral at 160 and above.
+> - **Superseded by [completeness foldcheck2 L5]:** the TC-13 fold's "until both have recorded it
+>   here, every version gets the neutral words", which the M4 re-read note above kept standing, and
+>   the TC-13 fold's neutral words for an unknown or unparsable version (account level and size
+>   limit). Those neutral words remain only for the age limit at 160 and above.
+> - **Still owed:** lab row MA-1191 settles the labels on real installs (153.6.0esr on the Windows
+>   VM, 159.0 on the Mac) before C3's words ship. If it finds a label differs, the lab's reading wins
+>   and is recorded here. MA-1185 is read with this rule (§12).
 
 ## 7. Surfaces and words
 
@@ -1502,6 +1598,21 @@ account is named by its server (`imap.gmail.com`), never by its email address.
 >     cap note.
 > - `verdict: "caught_up"` stays as it is; nothing is renamed. Plaintext only, as the rest of the
 >   object. MA-1183 gains both fields (§12 fold).
+>
+> **Folded 2026-11-07 [completeness foldcheck2 MF1] (lead's call): no escape by "IMAP store".**
+>
+> - In the M8 row above, "or the run had no Thunderbird IMAP store" is **superseded by
+>   [completeness foldcheck2 MF1]**. Read instead: "or every Thunderbird store of the run is
+>   `not_applicable` (a run with no Thunderbird store keeps today's words). This is decided by the
+>   accounts' verdicts (§2.2 fold), never by `IsImapStore` or the path."
+> - Why: the design never defined "IMAP store" by verdict, and the only code test for it,
+>   `IsImapStore`, is a path check the TC-5 fold retired. Read that way, an encrypted run of a store
+>   with no matched account, or of an Exchange (`ews`) store, would lead "Backup complete:" above a
+>   "can't tell" line.
+> - The surfaces table's "Export complete." "only for `caught_up` or non-IMAP" (GUI wizard end
+>   summary row) is already narrowed by the wizard-lead fold above to `not_applicable` as typed in
+>   §2.2's fold; it is read the same way.
+> - MA-1181 and MA-1186 gain the cases (§12 fold).
 
 ## 8. Pre-backup sync (presync)
 
@@ -1812,6 +1923,20 @@ fixture repeats only the numbers' *shape*, with invented folder names.
 >
 > MA-1196 also gains a Local Folders copy kept outside its profile (it has `.msf` files) →
 > `unknown`, lead "Backup finished.", and an `.MSF` name in capitals counted the same as `.msf`.
+>
+> **Folded 2026-11-07 [completeness foldcheck2 MF1, L1 to L4] (lead's call): rows amended again.**
+> No new ids. MA-1181's original "they do for `caught_up` and non-IMAP" is **superseded by
+> [completeness foldcheck2 MF1]**: read "…and for `not_applicable`" (§2.2 fold), never decided by the
+> path.
+>
+> | Row | Gains | Item |
+> |---|---|---|
+> | MA-1170 | key tails with a `.` part, a `..` part, and an absolute tail (POSIX, drive letter, UNC): no `Lstat` is made outside the store, and the account is `unknown` (`invalid_entry`) | L2 |
+> | MA-1175 | a Gmail store with a walked mailbox that has no cache key: its messages are archived, never added to X (a gap in All Mail stays a gap), and counted in the record | L3 |
+> | MA-1181 | an encrypted run of a store with no matched account, and of an `ews` store: the `encryptedSummary` note never begins "Backup complete:"; a `caught_up` account with a not-kept WARN → never "Export complete." | MF1, L4 |
+> | MA-1183 | `complete` false for an account with a not-kept WARN | L4 |
+> | MA-1186 | the same two encrypted runs as MA-1181's MF1 gain | MF1 |
+> | MA-1195 | `EnableOffline`: a link, a pipe and an over-cap file at `prefs.js` are refused with nothing written; a link at `prefs.js.mailarchive-bak` is not written through (its target unchanged); the account's setting written for the matched account only | L1 |
 
 **Process:**
 
@@ -1873,6 +1998,21 @@ C4 must land with or before C3 if encrypted archives get any words beyond today'
 > - The fold check's low items fold with their slice, as it says: TC-7's single bidi helper and the
 >   cleaned account name (C3); TC-19's read-before-the-start-write and carry-forward (C2); X4 (C3);
 >   N4 (C1b); N5 (MA-1190); N7 (C3). They are **not** folded in this pass.
+>
+> **Folded 2026-11-07 [completeness foldcheck2 L1, L6] (lead's call): the slice table, as amended
+> again.**
+>
+> - **C0c** also moves `EnableOffline`'s own read of `prefs.js` onto `util.ReadRegularFile`, and its
+>   two writes (the backup and `prefs.js`) onto the atomic writer after a fresh `Lstat`, so neither
+>   follows a link nor replaces a file that is not a regular file (L1, §4.1 step 1 fold).
+> - **C3's gate gains (L6):** before C3 starts, an **independent narrow check** of two things fold
+>   check 2 could not check independently: the M6-residual note (Job 1, commit 7126111, including
+>   MA-1196's rewording in §12's fold) and this foldcheck2 fold (MF1, L1 to L5). Fold check 2's
+>   checker wrote the residual note, so its §2 row R is self-checked. The check is narrow: those
+>   notes only, read against §2.2, §4.2, §4.4, §7, §12 and §17. It is run by an agent that wrote
+>   none of them.
+> - **C1a** carries L2 (to its adversarial pass as well); **C1b** carries L3; **C3** carries MF1, L4
+>   and L5.
 
 ## 14. Owner questions (each with a recommendation)
 
@@ -2182,3 +2322,12 @@ folds.
 > §4.2 and §4.4 folds; MA-1196's custom-folder case is reworded in §12's fold). The headline rule
 > above then admits no `not_applicable` for any store Thunderbird keeps as IMAP. The N5 bullet is
 > unchanged.
+>
+> **Folded 2026-11-07 [completeness foldcheck2 MF1, L4] (lead's call):** fold check 2 found one
+> more escape from the headline rule above: the encrypted Run now note could say "Backup complete:"
+> when "the run had no Thunderbird IMAP store", read by path (its §2, paths 1, 4 and R). MF1 closes
+> it: that clause now reads "every Thunderbird store of the run is `not_applicable`", decided by the
+> accounts' verdicts (§7 fold). The headline rule also gains L4: an account with a not-kept WARN may
+> not say complete (§4.2 fold). Re-read against fold check 2's §2 table, every path, R included,
+> now gives "Backup finished." or weaker on every surface. **Still owed:** the independent narrow
+> check of L6 (§13 fold); this note was written by the agent that folded MF1.
