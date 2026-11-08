@@ -20,6 +20,30 @@ to its own later design (TC-18). Still owed before code is merged: an independen
 file (the lead arranges it); the TC-14 source re-read at the Thunderbird ESR (slice C0, §13 fold); and
 each slice's own gate (§13 fold). No owner ruling is open for C0c, C1a or C1b.
 
+> **Folded 2026-11-07 [foldcheck M1 to M10] (lead's call):** the independent fold check is filed as
+> `docs/review-thunderbird-completeness-foldcheck.md` (commit 92b80f8, verdict FAIL (narrow): six
+> paths could still print "complete"). The lead accepted its must-fix list M1 to M10 as proposed, and
+> each is folded below as a dated note tagged `[foldcheck Mn]` beside the text it amends. Reviewed
+> text is kept; sentences it replaces are marked "superseded by [foldcheck Mn]". Also folded: Gmail
+> is told by `is_gmail` only, for this design and gmail-dedup alike (lead's call, §3), and the §2.3
+> citation slip. §17 has a closing note that re-reads the headline rule against the six paths.
+>
+> | Item | Folded in | Gate |
+> |---|---|---|
+> | M1 `prefs.js` through `util.ReadRegularFile` | §4.1 step 1, §12, §13 | before C0c |
+> | M2 one key-matching rule | §4.1 step 2, §4.4, §11, §12 | before C1a |
+> | M3 a broken `flags` counts as kept | §4.1 step 3, §4.4, §12 | before C1a |
+> | M4 the source re-read at ESR 153, plus Release 159 | §0, §4.1 step 3, §6, §12, §13, §16 | before C1a merges |
+> | M5 All Mail is the one folder with 0x8000 | §3, §12 | before C1b |
+> | M6 `not_applicable` narrowed | §2.2, §4.1 step 1, §4.2, §4.4, §12 | before C1b |
+> | M7 "complete" words need zero deleted-copy bytes | §2.4, §4.2, §11, §12, §17 | before C1b |
+> | M8 the encrypted Run now note | §7, §12 | before C3 |
+> | M9 no "everything" when stale; `stale` and `complete` in `-json` | §2.3, §7, §12 | before C3 |
+> | M10 the behind streak's own record | §5, §12 | before C5 |
+>
+> **Still owed:** the fold checker's re-check of M1 to M10 only (not the whole file), and the
+> M4 re-read itself, which is a C0 task the lead owns.
+
 **Ids are provisional.** Main's last test-spec row is MA-1150; another agent is adding polish rows
 from MA-1151 now. This design takes **MA-1170 to MA-1194**, **R42 to R44** and **S75 to S77**,
 and renumbers on merge if any are taken.
@@ -68,6 +92,11 @@ alternative must stay a small change:
 - **C0c:** the existing `FindAccountForStore` bug (`thunderbird.go:97-104`: two accounts on one
   server can give the wrong account) is fixed first, as its own small slice with its own test
   (MA-1195).
+
+> **Folded 2026-11-07 [foldcheck M4] (lead's call):** the TC-14 bullet's "at ESR 140" is
+> superseded by [foldcheck M4]. The re-read is at **ESR 153**, the ESR this repo's labs actually ran
+> (153.6.0esr, §16 fold), and it also names the current Release seen in the lab (159.0 on the Mac).
+> The owner of the re-check is **the lead**, and it is done before C1a merges.
 
 **Where each condition is folded:**
 
@@ -272,6 +301,22 @@ this build; §14 Q8 keeps it open as a later precision step.
 > everything under `Mail/` "is always fully local" (`:19-21`, review side finding B) is wrong for
 > Exchange accounts. C0c corrects the comment and leaves the function's other callers as they are.
 > Rows: MA-1196 (U) and MA-1197 (lab, a real EWS profile's fields).
+>
+> **Folded 2026-11-07 [foldcheck M6] (lead's call):** the table's last two rows are **superseded by
+> [foldcheck M6]**. As written, an IMAP store whose account could not be matched, and whose cache
+> was missing or unreadable, reached `not_applicable` and kept "Export complete.". Whether a store
+> "has a folder-cache entry" cannot be known when the cache cannot be read. The rule is now:
+>
+> | Case | Treated as |
+> |---|---|
+> | a **matched** account whose `type` is `pop3`, `none` (Local Folders) or `rss` | `not_applicable` |
+> | no `prefs.js` is found above the input (`FindProfileDir` finds no profile) **and** no part of the input's path is `ImapMail` (compared as in §4.1 step 2's fold) | `not_applicable` (a plain mail folder, not a Thunderbird store) |
+> | everything else that is not a matched `imap` account | `unknown`, with the words "MailArchive does not yet know how this kind of Thunderbird account keeps its mail", whether or not the cache could be read |
+>
+> "Everything else" includes: an ambiguous account (C0c returns none); a `prefs.js` that exists but
+> cannot be read or is refused by the opener (M1); an old `panacea.dat` profile; a cache refused as a
+> link, a pipe or over 16 MB; and a copied `ImapMail/<host>` with no profile above it. Each is
+> `unknown`, never "Export complete.". MA-1196 gains these cases (§12 fold).
 
 ### 2.3 How fresh `folderCache.json` is
 
@@ -289,6 +334,9 @@ this build; §14 Q8 keeps it open as a later precision step.
 When Thunderbird's last check is more than 3 days old (the same 3 days as
 `SyncStaleAfter`, `internal/state/syncstreak.go:32`), the words add: "These numbers are from
 Thunderbird's last check of the server on DATE; open Thunderbird so it can check again."
+
+> **Folded 2026-11-07 [foldcheck §6 slip] (citation):** `SyncStaleAfter` is defined at
+> `internal/state/syncstreak.go:33`, not `:32` (`:31-32` is its comment).
 
 The verdict still stands. A server that listed Y messages then still had them, unless the person
 has since deleted mail on the server, and the tolerance and the word "about" cover that.
@@ -316,6 +364,17 @@ three known causes:
 >   account reads "As of DATE, Thunderbird had downloaded everything it listed for ACCOUNT". The
 >   paragraph above ("the verdict still stands") stays true for the verdict, but not for the lead.
 >   Row: MA-1179.
+>
+> **Folded 2026-11-07 [foldcheck M9] (lead's call):** the sentence "As of DATE, Thunderbird had
+> downloaded everything it listed for ACCOUNT" is **superseded by [foldcheck M9]**. It broke R42 as
+> amended, which allows "everything" only when the count is not stale. A stale `caught_up` account
+> with missing = 0 now reads:
+>
+> > As of DATE, Thunderbird's count matched what is on this computer for ACCOUNT (N messages). It has
+> > not counted since, so newer mail may not be here yet.
+>
+> R42 is **not** amended to allow a dated "everything"; the word is simply not used when stale. The
+> lead stays "Backup finished.". `status -json` gains `stale` and `complete` per account (§7 fold).
 >
 > **Folded 2026-11-07 [TC-3] (lead's call L4 + review condition):** a profile that uses Panorama
 > keeps its last `folderCache.json`. Thunderbird stops writing that file, but nothing removes it
@@ -378,6 +437,27 @@ Two adjustments:
 > **Release notes** must not claim the count is exact until MA-1199 has run.
 >
 > MA-1173 gains a fixture: `expungedBytes` > 0 plus extra unflagged copies → not `caught_up`.
+>
+> **Folded 2026-11-07 [foldcheck M7] (lead's call):** the estimate is not an upper bound.
+>
+> - **Why.** It divides by the folder's **average** message size, so deleted copies smaller than
+>   average beat it. Example: 100 listed, about 1 MB each on average, 50 deleted copies of 10 KB
+>   each (500 KB `expungedBytes`). The estimate is 1, the real figure 50; with 49 messages never
+>   downloaded, X = 51 + 50 − 1 = 100 and missing = 0. Also, `expungedBytes` counts offline (on-disk)
+>   bytes (`nsImapMailFolder.cpp:1388-1395`), while `folderSize` counts server bytes.
+> - **The rule.** "Complete" words ("Export complete.", "everything it lists", and the missing = 0
+>   claim) also need **`expungedBytes` = 0 on every kept folder of the account**, until lab row
+>   MA-1199 proves that the deleted copies carry 0x0008 and the walk leaves them out. The verdict may
+>   still use the estimate. With `expungedBytes` > 0 on any kept folder, the lead is "Backup
+>   finished." and the words show both numbers ("about X of the Y messages it lists"), never
+>   "everything".
+> - **Item 5 above is corrected.** Its "both together can only lower X, so they fail toward
+>   'behind'" is **superseded by [foldcheck M7]**: it is true only of the 0x0008 half. The
+>   subtraction can undercount, so it can fail toward "complete"; the rule above is what stops the
+>   words from doing so.
+> - **Item 6 above** (drop the subtraction once MA-1199 passes) also lifts this rule, by amending this
+>   note.
+> - MA-1173 gains the skewed-size fixture above → never complete words (§12 fold).
 >
 > **Folded 2026-11-07 [TC-24] (review condition):** `mozillaReadFlag` is at `mbox.go:283`; `:280` is
 > its comment.
@@ -487,6 +567,22 @@ Trash only if they are kept (they sit outside All Mail).
 > both. If more than one folder of the account carries either flag, All Mail is treated as absent,
 > so Y is a floor.
 >
+> **Folded 2026-11-07 [foldcheck M5] (lead's call):** the paragraph above is **superseded by
+> [foldcheck M5]**. Thunderbird gives Gmail's All Mail **both** flags, AllMail 0x8000 and Archive
+> 0x4000 (`nsImapMailFolder.cpp:1230-1231`). Archive alone comes from a server `\Archive` folder or
+> the identity's archive folder (`:1232`; `nsMsgAccountManager.cpp:1541-1542`), so with All Mail
+> hidden, Thunderbird's own "Archives" label could stand in for it and reach "Export complete.".
+>
+> - **All Mail is the one folder of the account carrying 0x8000.** A folder carrying only 0x4000
+>   never stands in for it.
+> - If no folder carries 0x8000, or more than one does, All Mail is treated as absent and Y is a
+>   floor (never `caught_up`).
+> - The shared Gmail function (below) owns this "which folder is All Mail" rule as well as the
+>   detection.
+> - MA-1176 gains the fixture: All Mail hidden, an "Archives" label with 0x4000 only and all its
+>   mail on disk, Sent with nothing on disk → never `caught_up` (§12 fold).
+> - [proven at trunk, ab60cc5e; re-read at ESR 153 under M4, §16 fold]
+>
 > **Otherwise Y is a floor.** The floor is the largest single kept, checked folder other than Spam
 > and Trash, plus Spam and Trash if they are kept. Spam and Trash are never the "largest folder", so
 > they cannot be counted twice. With a floor:
@@ -507,6 +603,17 @@ Trash only if they are kept (they sit outside All Mail).
 > **Not resolved here.** Its review should adopt `is_gmail` only, or the two must agree on one rule.
 > Both designs say one shared detection function in `internal/thunderbird`, owned by whichever lands
 > first.
+>
+> **Folded 2026-11-07 [Gmail detection] (lead's call, after foldcheck §5):** "Not resolved here" is
+> **superseded**. **Gmail is told by `is_gmail` only**, in this design and in gmail-dedup; the lead is
+> telling the gmail-dedup design the same. Why (the fold check's reasoning): the single-copy rule runs
+> only when `GetIsGMailServer` is true (`nsImapMailFolder.cpp:8928-8935`), so a non-Gmail server's
+> `\All` folder still gets one copy per folder, and calling it Gmail would let one full folder hide
+> gaps in the others. The cost: a profile that has never connected has no `is_gmail` yet
+> (`nsImapIncomingServer.cpp:2173`), so it gets the per-folder rule and a false "behind" for Sent,
+> which fails safe. The original detection sentence at the top of §3 ("**or** any folder of the
+> account carries the AllMail flag") stays superseded, as the TC-1 fold above already says. The one
+> shared function in `internal/thunderbird` owns both detection and "which folder is All Mail" (M5).
 >
 > **Folded 2026-11-07 [TC-22] (review condition, lab):** Gmail may have an IMAP setting that limits
 > each folder to the newest 1,000, 2,000, 5,000 or 10,000 messages **(recollection, unverified)**.
@@ -601,6 +708,23 @@ is a label-membership question, not completeness (§14 Q6).
 > - No match → `unknown` if a folder-cache entry exists (§2.2 fold).
 > - Completeness is computed only when the walk covered the whole store (§2.4 fold, TC-11).
 >
+> **Folded 2026-11-07 [foldcheck M1] (lead's call): C0c also reads `prefs.js` safely.** Today
+> `parsePrefs` reads it with `os.ReadFile` (`thunderbird.go:63-64`), and `EnableOffline` the same way
+> (`:172`). With this design every IMAP store's backup reads it, so a pipe planted at `prefs.js`
+> would hang a scheduled backup (the hang TC-15 closed for `folderCache.json`).
+>
+> - C0c reads `prefs.js` through `util.ReadRegularFile(path, 16 MB)` (`openregular.go:67`), in
+>   `parsePrefs` and so for every caller: a link is refused, a pipe or device is not waited on, and a
+>   file over the cap is not read.
+> - A refusal is treated like an unreadable `prefs.js`: no account, which M6 turns into `unknown`
+>   (§2.2 fold), never `not_applicable`.
+> - MA-1195 gains a pipe and a link at `prefs.js`: no hang, no account (§12 fold).
+>
+> **Folded 2026-11-07 [foldcheck M6] (lead's call):** the bullet "No match → `unknown` if a
+> folder-cache entry exists" is **superseded by [foldcheck M6]**. No match → `unknown` whether or not
+> the cache could be read, unless no `prefs.js` is found above the input **and** no path part is
+> `ImapMail` (§2.2 fold's M6 table).
+>
 > *The account's name.* An account is named by its **store folder name** (`imap.gmail.com`,
 > `imap.gmail.com-1`), so two accounts on one server are told apart. That name is no more personal
 > than the host. §7's "named by its server" is read as "named by its store folder".
@@ -639,6 +763,57 @@ is a label-membership question, not completeness (§14 Q6).
 >
 > MA-1170 gains a fixture with an old-path and a current-path key for one folder.
 >
+> **Folded 2026-11-07 [foldcheck M2] (lead's call): one key-matching rule.** Items 3 and 4 above are
+> **superseded by [foldcheck M2]**; they contradicted each other. If item 4 won, every moved or copied
+> profile was `unknown` for good, because Thunderbird removes old-path keys only when a folder is
+> deleted. If item 3 won, a kept folder with only an old-path key was invisible and its gap hidden.
+> Items 1, 2 and 5 stay. The rule, per store:
+>
+> 1. **Exact mode** applies when **any** key of the store matches the store's current path exactly
+>    (after item 1's normalising). In exact mode:
+>    - an old-path key for a folder that **also** has an exact key is **ignored** (left behind by the
+>      move, bug 1726660);
+>    - two exact keys for one folder → `unknown`;
+>    - an old-path key for a folder with **no** exact key: that **folder** is "can't tell" (next
+>      paragraph).
+> 2. **Tail mode** applies only when **no** key of the store matches exactly (a moved or restored
+>    profile Thunderbird has not opened since). Keys are matched by their tail under the store; two
+>    tail keys for one folder → `unknown`.
+>
+> **A "can't tell" folder, precisely.** It applies only to a folder that has no current-path entry
+> but is still in the current store, meaning the walk read its mailbox file, or its `.msf` exists at
+> the current path. That is checked with `Lstat` on a path built from the store folder and the key's
+> tail, never the key's own path, and nothing is opened.
+>
+> - Such a folder is left out of X and Y. The account may not be `caught_up` while it has one:
+>   - it is `behind` if the account's other folders already show missing above the tolerance (a gap
+>     elsewhere is certain, and the tolerance is then taken from the smaller Y, which fails toward
+>     "behind");
+>   - otherwise it is `unknown`, reason `old_path_only`, with the "could not read Thunderbird's list
+>     of folders" words and the number of such folders.
+>   - for Gmail, if All Mail is the "can't tell" folder, All Mail is treated as absent and Y is a
+>     floor (§3 fold, M5), so the account is `behind` or `unknown`, never `caught_up`.
+> - **It is never forever for the whole account.** It clears for a folder as soon as Thunderbird
+>   writes that folder's current-path entry, which it does at its next save once it has the folder
+>   loaded, at the latest when it closes (`Flush`, §2.3).
+> - **A folder that is no longer in the current store** (no mailbox file read and no `.msf` at the
+>   current path) has an old-path key left over from before a move or delete. That key is ignored and
+>   counted in the record, so a deleted folder cannot hold the account at `unknown`.
+> - [conditional: that Thunderbird writes a current-path entry for every folder it has loaded, and
+>   that a folder it knows always has a `.msf` in the store. Both are read at trunk only in outline.
+>   They are added to the M4 re-read (§16 fold) and to lab row MA-1200's moved profile.]
+>
+> **Fixtures for MA-1170** (replacing "an old-path and a current-path key for one folder → `unknown`"
+> in §12's fold):
+>
+> - a copied profile with old and new keys for every folder → checked, not `unknown`;
+> - one folder with an old key only, its mailbox file on disk, the rest caught up → `unknown`
+>   (`old_path_only`);
+> - the same, with the other folders behind → `behind`;
+> - an old key only for a folder gone from the current store → ignored, the account checked;
+> - two exact keys for one folder → `unknown`;
+> - tail mode with two tail keys for one folder → `unknown`.
+>
 > *Folder names for the words (TC-7).* A folder's human name is the matched key's path under the
 > store, with `.msf` removed and each `.sbd` level shown as "/" (for example `[Gmail]/Sent Mail`).
 > That is the same file-safe name the walk and the archive use. It is used even for a folder with no
@@ -670,6 +845,21 @@ is a label-membership question, not completeness (§14 Q6).
 > - **A walk that found messages where every folder lists 0 → `unknown`.**
 > - MA-1171 gains: a missing `totalMsgs`, a string `totalMsgs`, an out-of-range number, and a
 >   negative count on a non-root entry, each → `unknown`.
+>
+> **Folded 2026-11-07 [foldcheck M3] (lead's call): a broken `flags` counts as kept.** When `flags`
+> is the field that fails (missing, a string, out of range, not an integer), "kept or not" cannot be
+> told. As written, "a not-kept entry that fails is skipped" let a never-downloaded folder with a
+> broken `flags` drop out unseen, and since nothing is on disk the walk never sees it either.
+>
+> - An entry whose `flags` fails validation is **treated as kept**, so the account is `unknown`
+>   (reason `invalid_entry`).
+> - A failure in any **other** field of an entry whose `flags` is valid and says not kept (or
+>   ignored) may still be skipped and counted, as above.
+> - MA-1171 gains a non-root entry with a broken `flags` and nothing on disk → `unknown` (§12 fold).
+>
+> **Folded 2026-11-07 [foldcheck M4] (lead's call):** "confirms it for ESR 140. If ESR 140 does not
+> write it" above is **superseded by [foldcheck M4]**: read "ESR 153" for "ESR 140". Until the re-read
+> has recorded it in §16, an absent `expungedBytes` → `unknown`, as written.
 >
 > **Step 3, Gmail labels [TC-8] (review condition).** For a Gmail account whose All Mail sets Y
 > (§3 fold), a label folder that is not kept is **not** a "not kept" WARN. Its mail is backed up
@@ -744,6 +934,21 @@ unfinished forever.
 >
 > One account's "complete" never speaks for another. MA-1181 gains a two-account run, one caught up
 > and one unknown → "Backup finished.".
+>
+> **Folded 2026-11-07 [foldcheck M2, M3, M5, M6, M7] (lead's call): the verdict rules, as amended
+> again.**
+>
+> - **`caught_up` also needs** (adding to the list above): no "can't tell" folder (M2, §4.1 step 2
+>   fold); and for Gmail, All Mail is the one folder carrying 0x8000 (M5, §3 fold). Condition 5
+>   "every kept entry validates" now includes every entry whose `flags` is broken (M3).
+> - **"Complete" words also need** `expungedBytes` = 0 on every kept folder of the account, until
+>   MA-1199 has run (M7, §2.4 fold). The full test for "this account may say complete" is therefore:
+>   `caught_up`, missing = 0, not stale, no TC-22 cap note, and `expungedBytes` = 0 on every kept
+>   folder. The run's lead rule above uses this test unchanged.
+> - **`not_applicable`:** the bullet above ("only `type` `pop3`, `none` or `rss`, or a plain mail
+>   folder that is no Thunderbird store") is **superseded by [foldcheck M6]**: `not_applicable` only
+>   for a **matched** account of type `pop3`, `none` or `rss`, or when no `prefs.js` is found above the
+>   input **and** no path part is `ImapMail` (§2.2 fold). Every other case is `unknown`.
 
 ### 4.3 Tolerance
 
@@ -818,6 +1023,19 @@ A kept folder never checked gets:
 >
 > **Wording note.** The existing "could not read" sentence above names the account by its store
 > folder name (§4.1 step 1 fold). It reads "this account" when the store folder name is not known.
+>
+> **Folded 2026-11-07 [foldcheck M1, M2, M3, M6, M7] (lead's call): rows for the table above.**
+>
+> | Path | Words |
+> |---|---|
+> | a folder with only an old-path key that is still in the current store, the rest not behind (M2) | "…because it could not read Thunderbird's list of folders", plus the number of such folders; reason `old_path_only` |
+> | an entry whose `flags` fails validation, kept or not (M3) | the same "could not read" words; reason `invalid_entry` |
+> | no matched account (ambiguous, `prefs.js` unreadable or refused by the opener, M1), or a copied `ImapMail/<host>` with no profile above it, **whether or not the cache could be read** (M6) | "…because MailArchive does not yet know how this kind of Thunderbird account keeps its mail"; reason `no_match` or `account_type` |
+>
+> The TC-3 row above ("two keys match one folder") now means two exact keys, or two tail keys in
+> tail mode; an old-path key beside an exact key is ignored (M2). The TC-5 row above ("no matched
+> account; `prefs.js` unreadable") now covers the unreadable-cache case too (M6). M7 is **not** an `unknown` path: an account with `expungedBytes` > 0 keeps its
+> verdict, but its lead is "Backup finished." and its words show both numbers (§2.4 fold).
 
 ## 5. Outcomes, alerts and the streak
 
@@ -902,6 +1120,34 @@ plaintext archives; encrypted archives use §9.2.
 >
 > **Folded 2026-11-07 [L2] (lead's call):** the notices and their email (slice C5) ship **right
 > after C3's friction review**, so the email words are walked once the screen words exist.
+>
+> **Folded 2026-11-07 [foldcheck M10] (lead's call): the behind streak gets its own small record.**
+> "It is computed from the run history's compact per-account `{verdict, x, y}` (§9.1). It needs no
+> new streak file for plaintext archives" (above) is **superseded by [foldcheck M10]**. The run
+> history keeps 50 entries (`RunHistoryMax`, `internal/state/runhistory.go:26`), which is about 50
+> hours on an hourly schedule, so a 3-day notice could never fire. Nothing would record "this
+> streak's email was sent" once the streak's first run had dropped out of the history either.
+>
+> - **Where.** A per-archive dotfile, `.mailarchive-tbstreak.json` (the name is provisional), built
+>   like the presync streak file `.mailarchive-syncstreak.json` (`internal/state/syncstreak.go:15-60`):
+>   a version, a size cap, a `Serial` that rises only when a new streak starts, and a `RecordID`
+>   chosen at random when the record is first written. The once-per-streak emails key on both, as
+>   presync's do.
+> - **What it holds, per account** (by store folder name): the first behind run's time and X then;
+>   the latest behind run's time; the latest time X grew, and X then; the number of behind runs; and
+>   two flags, "still-downloading email sent" and "stopped email sent". No folder names and no Y
+>   history.
+> - **How it is used.** The §5 rules stay as written: only `behind` runs start or extend a streak; a
+>   `limited` run ends it silently; an `unknown` or `not_applicable` run neither extends nor ends it;
+>   a `caught_up` run ends it with no email. The 3 days are measured **between runs**, never against
+>   the clock. A clock that went back restarts the first time and keeps the serial, as presync does.
+>   Still-downloading fires at 3 days or more with at least 2 runs; stopped fires when X has not
+>   grown across behind runs spanning 3 days; each at most once per streak (TC-20).
+> - **Plaintext only.** An encrypted archive keeps no streak (O1). A keyed run removes a stray
+>   `.mailarchive-tbstreak.json`, as it does the presync one, so MA-904's checks still pass unchanged.
+> - The run history's compact `tb` field stays, for Recent backups only.
+> - MA-1184 gains an hourly schedule run for 4 days: the still-downloading email fires once, after
+>   the history has wrapped (§12 fold).
 
 ## 6. Folders not kept on this computer
 
@@ -997,6 +1243,12 @@ Spam and Trash (by default), shown as a note only:
 > - **Rows.** MA-1185 gains a version-chosen case and an unknown-version case (neutral words).
 >   MA-1191 covers ESR 140 and the current Release, plus the wizard's existing "right-click the
 >   account → Download / Sync Now" (`wizard.go:1622`, `:1634`), which is unverified too.
+>
+> **Folded 2026-11-07 [foldcheck M4] (lead's call):** every "ESR 140" in the TC-13 fold above ("ESR
+> 140 probably still shows the older page", "MA-1191 covers ESR 140") is **superseded by [foldcheck
+> M4]**: read **ESR 153** (153.6.0esr, the ESR the repo's labs ran) and the current **Release, 159.0**
+> as seen on the Mac lab of 2026-11-06. Both version numbers are confirmed on Thunderbird's release
+> page at the re-read (§16 fold).
 
 ## 7. Surfaces and words
 
@@ -1096,6 +1348,41 @@ account is named by its server (`imap.gmail.com`), never by its email address.
 >   - `account_type`, `never_checked`, `gmail_floor`, `expunged_unsized`, `partial_input`.
 >
 > Nothing is renamed. Plaintext only.
+>
+> **Folded 2026-11-07 [foldcheck M8] (lead's call): the encrypted Run now note obeys R42.** The
+> surfaces table above names `runNowSummary` only. An encrypted archive's Run now note comes from
+> `encryptedSummary` (`internal/wizard/jobrun.go:229-237`), which always begins "Backup complete:".
+> Under O1 this is exactly the screen where an encrypted archive's completeness shows, so as written
+> its lead would say "complete" above a "behind" or "can't tell" line. Add this row to the table:
+>
+> | Surface | Code today | Change |
+> |---|---|---|
+> | Desktop Run now note, encrypted archive | `encryptedSummary`, `internal/wizard/jobrun.go:231-237` ("Backup complete: N message(s) added or updated…") | the lead follows the run's weakest-account rule (§4.2 fold): "Backup complete:" only when every account of the run may say complete, or the run had no Thunderbird IMAP store; "Backed up what Thunderbird has so far:" when any account is `behind` or `limited`; "Backup finished:" otherwise. Then today's count and "sealed" sentence, then the completeness lines (headline, not-kept list with cleaned names), then today's index-behind sentence |
+>
+> - **Where the verdict comes from.** The run's in-memory result (`app.Result`), never a record.
+>   Nothing new is written beside the archive (O1, R44).
+> - **What lasts.** The whole note, lead included, is held in memory and cleared by Lock or a switch,
+>   with the rest of the on-screen completeness (C-15). After a restart nothing about completeness
+>   shows, and no record-based surface says "complete" (the fold check's sweep, its §2).
+> - **The wizard's end summary** for an encrypted archive (`exportSummary`, in the table above)
+>   follows the same rule.
+> - Rows: MA-1181 and MA-1186 gain an encrypted behind run and an encrypted can't-tell run: the note
+>   never begins "Backup complete:"; a caught-up, missing = 0 encrypted run still may (§12 fold).
+>
+> **Folded 2026-11-07 [foldcheck M9] (lead's call): staleness in the words and in `-json`.**
+>
+> - "**caught up, missing = 0:** as written, plus 'as of DATE' when stale" (the headline fold above)
+>   is **superseded by [foldcheck M9]**. When stale, the headline is the dated sentence of §2.3's M9
+>   fold, with no "everything", and the lead is "Backup finished.".
+> - `status -json` gains two **additive** booleans in each `thunderbird_completeness` entry:
+>   - `stale`: the oldest count time is more than 3 days old or later than now (§2.3 fold);
+>   - `complete`: this account lets the run say complete, by the exact test of §4.2's fold (`caught_up`,
+>     missing = 0, not stale, no cap note, `expungedBytes` = 0 on every kept folder). It is `true` for a
+>     `not_applicable` account, so a script that requires every entry's `complete` to be true applies
+>     the same rule as the words, without rebuilding it from `verdict`, `missing`, `as_of` and the
+>     cap note.
+> - `verdict: "caught_up"` stays as it is; nothing is renamed. Plaintext only, as the rest of the
+>   object. MA-1183 gains both fields (§12 fold).
 
 ## 8. Pre-backup sync (presync)
 
@@ -1253,6 +1540,18 @@ file format. It is pinned by fixtures and re-checked in the lab at each Thunderb
 >
 > **Row 6 of the table above** ("re-checked at each Thunderbird ESR") has an owner and a trigger in
 > §16's TC-14 fold.
+>
+> **Folded 2026-11-07 [foldcheck M2, M7] (lead's call):**
+>
+> - **Row 2 of the first table, and its note just above,** are **superseded by [foldcheck M2]**: exact
+>   mode when any key matches exactly (old-path keys ignored where an exact key exists; a folder with
+>   only an old-path key that is still in the store → "can't tell", which clears at Thunderbird's next
+>   save); tail mode only with no exact key (§4.1 step 2 fold). Fails toward: never "complete", and
+>   never `unknown` for good.
+> - **The row "deleted copies not marked Expunged … toward 'behind'"** is **superseded by [foldcheck
+>   M7]**. The estimate can undercount, so it can fail toward "complete"; the words are kept from
+>   doing so by requiring `expungedBytes` = 0 for "complete" words (§2.4 fold). Fails toward: "Backup
+>   finished." with both numbers.
 
 ## 12. Tests, catalog rows, lab rows (provisional ids)
 
@@ -1357,6 +1656,25 @@ fixture repeats only the numbers' *shape*, with invented folder names.
 > Lab story for MA-1197, MA-1199, MA-1200 and MA-1201: the repo has no lab tier, so they stay
 > "pending" in the catalog. They run on the Parallels VM (`.claude/winrun.sh`) and the Mac, with
 > throwaway profiles and accounts only, never the owner's or the VM user's own.
+>
+> **Folded 2026-11-07 [foldcheck M1 to M10] (lead's call): rows amended again.** No new ids; each row
+> above stands, plus these. Where a gain contradicts an earlier one, the earlier one is superseded as
+> named.
+>
+> | Row | Gains | Item |
+> |---|---|---|
+> | MA-1170 | the six fixtures of §4.1 step 2's M2 fold. The earlier gain "an old-path and a current-path key for one folder → `unknown`" is **superseded by [foldcheck M2]**: that case is now checked, not `unknown` | M2 |
+> | MA-1171 | a non-root entry with a broken `flags` and nothing on disk → `unknown` | M3 |
+> | MA-1173 | the skewed-size fixture (100 listed, 1 MB average, 50 deleted copies of 10 KB, 49 never downloaded) → never complete words; `expungedBytes` > 0 on one kept folder with missing = 0 → lead "Backup finished." and both numbers | M7 |
+> | MA-1176 | All Mail hidden, an "Archives" label with 0x4000 only and all its mail on disk, Sent with nothing on disk → never `caught_up`; two folders with 0x8000 → floor | M5 |
+> | MA-1181 | an encrypted behind run and an encrypted can't-tell run: the `encryptedSummary` note never begins "Backup complete:"; a caught-up, missing = 0 encrypted run may; a stale caught-up run's words carry no "everything"; `expungedBytes` > 0 → "Backup finished." | M7, M8, M9 |
+> | MA-1183 | `-json` per-account `stale` and `complete`, `complete` matching the words' rule on every fixture of MA-1174 to MA-1179; `complete` true for `not_applicable` | M9 |
+> | MA-1184 | an hourly schedule run for 4 days (history wrapped past 50 entries): the still-downloading email fires once; the streak lives in `.mailarchive-tbstreak.json`; an encrypted archive has none, and a keyed run removes a stray one | M10 |
+> | MA-1186 | the encrypted Run now note's lead follows the weakest-account rule, and the note is cleared by Lock; MA-904 still passes unchanged | M8, M10 |
+> | MA-1191 | **ESR 153** and **Release 159** (or the Releases current at the lab run), replacing "ESR 140" (superseded by [foldcheck M4]) | M4 |
+> | MA-1195 | a pipe and a link at `prefs.js`: no hang, no account; `parsePrefs` uses `util.ReadRegularFile` | M1 |
+> | MA-1196 | ambiguous account plus no cache; `prefs.js` unreadable plus no cache; a copied `ImapMail/<host>` with no profile above it: each → `unknown`, never "Export complete."; a plain folder with no profile and no `ImapMail` part → `not_applicable` (positive twin) | M6 |
+> | MA-1200 | the moved profile also records whether every loaded folder gets a current-path key at the next save, and whether a folder deleted after the move leaves its old key | M2 |
 
 **Process:**
 
@@ -1406,6 +1724,18 @@ C4 must land with or before C3 if encrypted archives get any words beyond today'
 >
 > **Gates this design does not self-certify:** the adversarial pass on C1a and the friction reviews
 > on C3 and C5. Each is run by a reviewer other than the builder, as the kit's process says.
+>
+> **Folded 2026-11-07 [foldcheck M1, M4, M10] (lead's call): the slice table, as amended.**
+>
+> - **C0:** "the TC-14 source re-read at ESR 140" is **superseded by [foldcheck M4]**: the re-read is
+>   at ESR 153, names Release 159, and is owned by the lead. It gates C1a's merge (§16 fold).
+> - **C0c** also moves `parsePrefs` onto `util.ReadRegularFile` (M1), with MA-1195's pipe and link
+>   cases. C0c may start now (the fold check's verdict).
+> - **C1a** waits for M2 to M4 (folded here) and for the fold checker's re-check of them. **C1b**
+>   waits for M5 to M7 the same way. **C3** carries M8 and M9, and **C5** carries M10's streak record.
+> - The fold check's low items fold with their slice, as it says: TC-7's single bidi helper and the
+>   cleaned account name (C3); TC-19's read-before-the-start-write and carry-forward (C2); X4 (C3);
+>   N4 (C1b); N5 (MA-1190); N7 (C3). They are **not** folded in this pass.
 
 ## 14. Owner questions (each with a recommendation)
 
@@ -1548,6 +1878,29 @@ Specific claims to try to break:
 > `.claude/tbsrc-review/`, which the folder did not fetch fresh. The folder also read
 > `internal/util/openregular.go:44-79` at 22330a8. Of the gmail-dedup design at 9203aae, it read
 > only the id lines, §6's detection rule and §13 to §16.
+>
+> **Folded 2026-11-07 [foldcheck M4] (lead's call): the re-read targets the ESR the labs ran.** Every
+> "ESR 140" in the TC-14 fold above (the branch, the relabelling "[proven at ESR 140]", the lab rows,
+> "an ESR newer than 140") is **superseded by [foldcheck M4]**:
+>
+> - **Target: ESR 153.** This repo's labs ran **Thunderbird 153.6.0esr** on Windows
+>   (`docs/lab/presync-attended-start-windows-run1-2026-10-31.md:13`; `thunderbird.go:51`) and on Linux
+>   (`docs/lab/restore-thunderbird-macos-2026-11-06.md:81`). The branch is expected to be named
+>   `comm-esr153`; that name is **not checked** here. Claims are relabelled "[proven at ESR 153]".
+> - **Also named: the current Release, 159.0**, which the Mac lab ran
+>   (`docs/lab/restore-thunderbird-macos-2026-11-06.md:12`, `:23`). Where trunk and ESR 153 differ, the
+>   re-read says which one Release 159 follows, where its source makes that plain.
+> - **Confirmed at the re-read** on Thunderbird's release page: that 153 is the newest ESR and 159
+>   (or later) the current Release. Neither is confirmed by this fold.
+> - **Added to the list of claims re-read** (items 1 to 7 above stand): 8. the All Mail and Archive
+>   flags (`nsImapMailFolder.cpp:1230-1232`; `nsMsgAccountManager.cpp:1541-1542`), for M5; 9. that
+>   Thunderbird writes a current-path cache entry for every folder it has loaded, and that a folder it
+>   knows always has a `.msf` in the store, for M2; 10. that `expungedBytes` counts offline bytes
+>   (`nsImapMailFolder.cpp:1388-1395`), for M7.
+> - **Who and when:** the lead (the agent running this build) does it as a C0 task, **before C1a
+>   merges**; the operator (Alex) sees the dated note before the release call. Lab rows MA-1189,
+>   MA-1191 and MA-1192 run on ESR 153 and the current Release.
+> - **When again:** at each new Thunderbird ESR, as written above.
 
 ## 17. The folds re-read for contradictions (2026-11-07)
 
@@ -1600,3 +1953,53 @@ record, and its failure words win (§11, unchanged). A record without the field 
 
 **Still owed:** an independent fold-verify. This re-read was done by the same agent that wrote the
 folds.
+
+> **Folded 2026-11-07 [foldcheck M1 to M10] (lead's call): the re-read after the fold check.**
+>
+> The independent fold check (92b80f8) found the closing claim above ("none prints 'complete'")
+> **not yet true** on six paths. That sentence is **superseded by this note**. Two items in the list
+> above change:
+>
+> - **Item 7** ("Accepted: it can only lower X, so it fails toward 'behind'") is **superseded by
+>   [foldcheck M7]**: true only of the 0x0008 half; the estimate can undercount, so the "complete"
+>   words now also need `expungedBytes` = 0.
+> - **Item 16** ("Not resolved here; flagged") is **superseded**: Gmail is told by `is_gmail` only in
+>   both designs (lead's call, §3 fold).
+>
+> **The headline rule, as it now stands:** a run says "Export complete." (or, for an encrypted
+> archive's Run now note, "Backup complete:") only when every account may say complete: `caught_up`,
+> no "can't tell" folder, missing = 0, not stale, no cap note, and `expungedBytes` = 0 on every kept
+> folder; or the account is `not_applicable` as M6 narrows it. Re-read against each of the six paths:
+>
+> | # | Path (fold check) | Now | Can it print "complete", "Export complete." or "caught up"? |
+> |---|---|---|---|
+> | 1 | no matched account and no readable cache → `not_applicable` | M6: `unknown` unless a matched account is `pop3`/`none`/`rss`, or there is no profile above the input and no `ImapMail` path part | **No**, for every case the fold check named (ambiguous account, `prefs.js` missing above an `ImapMail` path or unreadable or refused, `panacea.dat`, a refused cache, a copied `ImapMail/<host>`). One case outside them remains (below) |
+> | 2 | an Archive-only label stands in for a hidden All Mail | M5: All Mail is the one folder with 0x8000; none or several → floor | **No**: a floor is `behind` or `unknown` |
+> | 3 | deleted copies smaller than average beat the estimate | M7: complete words need `expungedBytes` = 0 | **No**: with any `expungedBytes` the lead is "Backup finished." with both numbers |
+> | 4 | `encryptedSummary` always says "Backup complete:" | M8: its lead follows the weakest-account rule | **No** |
+> | 5 | a stale `caught_up` says "everything" | M9: dated words without "everything"; lead "Backup finished."; `-json` `stale` true, `complete` false | **No** |
+> | 6 | a broken `flags` lets a folder drop out | M3: treated as kept → `unknown` | **No** |
+>
+> M2's new "can't tell" folder is `behind` or `unknown`, never complete. No user-facing sentence says
+> "caught up"; `-json` keeps `verdict: "caught_up"`, now beside `complete: false` wherever the words
+> may not say complete.
+>
+> **What this re-read did not close (for the lead):**
+>
+> - **An IMAP store outside every profile and every `ImapMail` folder** (an `-input` of an IMAP
+>   account's custom local folder that is not inside its profile, or a copy of `ImapMail/<host>`
+>   renamed into another folder) has no `prefs.js` above it and no `ImapMail` part, so M6's rule gives
+>   `not_applicable` and today's "Export complete.". From the path alone, MailArchive cannot tell it
+>   from a plain mail folder. It is not a new regression: today's words are the same. A one-condition
+>   narrowing would close it: a store holding any `.msf` file with no profile found → `unknown`. That
+>   costs a Local Folders copy outside its profile "Export complete.", which fails safe. **Not
+>   folded**: M6 is the lead's call as written. A related point: MA-1196's "an `imap` account with a
+>   custom folder outside `ImapMail/` → checked" holds only when that folder is inside the profile,
+>   because the profile is found by walking up (§10).
+> - **N5, unexplained extra separators** (the owner's +6 in INBOX with `expungedBytes` = 0) can still
+>   cover the same number of never-downloaded messages in one non-Gmail folder, so "missing = 0" can
+>   be wrong by that excess. It is a low item owned by MA-1190 and the release-notes rule (§2.4 fold),
+>   as the fold check placed it, not one of its six paths.
+>
+> **Still owed:** the fold checker's re-check of M1 to M10 only. This note was written by the agent
+> that folded them.
