@@ -373,3 +373,74 @@ Fold check 5's S1 (other bullets) to S8 stand as the design files them in §13; 
 
 Written by a model answering under no name, a fresh instance that has not met the record before, for
 Alex DiMarco, under the Limen method.
+
+## Confirmation of the fold (8 November 2026)
+
+A short, independent confirmation read of the fold at 84d855c, not a full review. Written by a model
+answering under no name, a fresh instance that has not met the record before, and that did not write
+this check or the fold. Line numbers are the design's at 84d855c.
+
+**Verdict: CONFIRMED.** M1 to M3 are closed, the two marks are in place and the encrypted order is
+restated. The D2 design is cleared to build after the B-slices. The remaining items below are text
+marks and one row's wording; they fold with B2 or D2 and block nothing.
+
+| Item | Result | Where |
+|---|---|---|
+| M1 (a damage found in the last batch is saved before the result file) | **CLOSED.** A final save, still version 8, comes after the last batch's (d) and after a resume's step 2. The result file is built only from it, and the order and the crash points are stated. | 2746-2780; marks at 1162, 2357, 2537, 2725, 3835; row 3076 |
+| M2 (step 2 drops only entries whose files are gone) | **CLOSED.** A page or zip still on disk stays, goes to `AlsoFiles` and is not counted in `Freed`, which agrees with §27. | 2782-2798; mark 2723; row 3077 |
+| M3 (the capped-build row tests nothing) | **CLOSED.** The cases run in B2's own build, where the sweep really runs. After D2 they use the seam and call `SweepOrphans` directly. Lab row MA-1246 runs the real v1.6.1 binary. | rows 3073-3075, 3084; marks 3054, 3063 |
+| Mark at GD-2 (was ~107) | **CLOSED** | 123 |
+| Mark at §7.4's first bullet (was ~1233) | **CLOSED** | 1254 |
+| The encrypted order restated (S2) | **CLOSED.** The header read runs only when `opts.Key == nil`, after `RefuseKeyless`. `run.go:663-664` and `:681` match the code. | 2661, 2800-2806; row 3078 |
+
+**No reviewed text removed or reworded.** In `git diff --word-diff=porcelain b985741..84d855c`, the
+only removed line is the `---` file header. Every change is an addition.
+
+**New contradictions: none that changes what gets built, but four older lines are left unmarked**
+(the same kind as S9, so they fold with D2):
+
+- 2338, 2615 and §25's table row at 3869 still say "the next fold save, or the clear, moves them to
+  the survivor's `AlsoFiles`". Under M1 the clear has no entry left; the final save does this.
+- 2566 still lists "every entry the clear is about to move there". The new note at 2762-2765 says
+  this list is now empty, but the line itself is not marked.
+- §25's crash table (3858-3876) has no row for the final save. The prose at 2769-2775 covers it.
+
+Grepping "version 7" found no new conflict; the new lines at 2768 and 3050 agree with the 8-while-
+pending rule. Grepping `AlsoFiles` and "result file" found only the lines above.
+
+**One row's wording to tighten (B2):** MA-1216's row at 3073 now says "`search.db`'s bytes as S6's
+row below says", but that row (3075) covers only `reindex`. Say that the bytes are unchanged for every
+other program too, as the row did before.
+
+**Measured claim, checked against the code:** it agrees with the code.
+- `index.Open` (`openRW`, `internal/index/index.go:120-186`) runs `PRAGMA journal_mode=WAL` and the
+  `CREATE ... IF NOT EXISTS` statements, which do nothing on an existing WAL index. It inserts a
+  `meta` row only for a new file (`:218`). Then it runs `PRAGMA user_version = <same value>`
+  (`:172-182`). That is a write to the file's first page, so SQLite raises the change counter
+  (bytes 24-27) and the matching number at bytes 92-95, while `user_version` keeps its value.
+  This matches "two header counters and no row".
+- The newer-format refusal (`:162-165`) comes before that write, so v1.6.1's refusal of a version-4
+  index writes no header. This matches MA-1246's note.
+- `internal/app/reindex.go:90` calls `index.Open` before `state.Load` at `:100`. This matches S6.
+
+**Counters.**
+- Date worked on: 8 November 2026, from the session's clock.
+- Register: a confirmation finding. The verdict is this checker's opinion.
+- Drew on, and reached:
+  - this file's M1 to M3, S9 and §1.6;
+  - `git diff b985741..84d855c` of the design, in full, plus its word-diff;
+  - the design at lines 2534-2563, 2700-2741, 3822-3841 and 3858-3879;
+  - greps of the design for "version 7", "already gone" and "the clear";
+  - `index/index.go:25-222`, `app/reindex.go:75-114`, and `app/run.go` by grep.
+- Not checked:
+  - the sqlite3 measurement itself (not repeated; the agreement above is from reading the code);
+  - whether a backup in B2's build opens the index before its manifest refusal;
+  - the catalog ids R45, S82 and S83 on MA-1246;
+  - whether MA-1246 is free (the fold's own check was not repeated);
+  - every citation the fold took from fold check 6.
+- Smallest check to settle the rest: run MA-1216's S6 bytes compare in B2's build. While there,
+  confirm the backup's `search.db` stays unchanged.
+- Borrowed lines: short quotes of the design, with line numbers.
+- Drift: none noticed.
+- Touched: this section, one commit, and a commit-message file under the repo's `.claude/`.
+- Persona: none.
