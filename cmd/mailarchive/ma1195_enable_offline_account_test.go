@@ -20,7 +20,10 @@ func twoAccountProfile(t *testing.T) string {
 			t.Fatal(err)
 		}
 	}
-	prefs := "user_pref(\"mail.server.server1.hostname\", \"imap.gmail.com\");\n" +
+	prefs := "user_pref(\"mail.accountmanager.accounts\", \"account1,account2\");\n" +
+		"user_pref(\"mail.account.account1.server\", \"server1\");\n" +
+		"user_pref(\"mail.account.account2.server\", \"server2\");\n" +
+		"user_pref(\"mail.server.server1.hostname\", \"imap.gmail.com\");\n" +
 		"user_pref(\"mail.server.server1.type\", \"imap\");\n" +
 		"user_pref(\"mail.server.server1.directory-rel\", \"[ProfD]ImapMail/imap.gmail.com\");\n" +
 		"user_pref(\"mail.server.server1.offline_download\", false);\n" +

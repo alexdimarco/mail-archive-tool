@@ -36,21 +36,56 @@ func IsImapStore(dir string) bool {
 	return strings.Contains(slash, "/ImapMail/")
 }
 
-// FindProfileDir ascends from a store path to the Thunderbird profile directory
-// (the one containing prefs.js).
+// FindProfileDir ascends from a store path to the Thunderbird profile directory. A folder
+// is the profile only when it holds prefs.js as a regular file (a link or a folder there is
+// not one, as the restore's and the pre-sync's profile checks read it) and the path sits
+// under its own ImapMail/ or Mail/, or is the profile itself. So a mail store is never taken
+// for a profile: a Thunderbird folder named "prefs.js" is the mbox file
+// ImapMail/<host>/prefs.js, which the old walk, checking the store first, took for the
+// profile's settings and wrote into (the C0c pass's INS-01, MA-1203).
 func FindProfileDir(storePath string) (string, bool) {
 	d := storePath
+	var below []string // the path's components under d, nearest first
 	for i := 0; i < 6; i++ {
-		if _, err := os.Stat(filepath.Join(d, "prefs.js")); err == nil {
+		if isProfileFor(d, below) {
 			return d, true
 		}
 		parent := filepath.Dir(d)
 		if parent == d {
 			break
 		}
+		below = append([]string{filepath.Base(d)}, below...)
 		d = parent
 	}
 	return "", false
+}
+
+// isProfileFor reports whether d is the profile of the path whose components under d are
+// below: d holds prefs.js as a regular file, and the path is under d's ImapMail/ or Mail/,
+// or is d itself holding an ImapMail/ or Mail/ folder and not inside a store (its own name
+// or its parent's is not ImapMail or Mail, and it is no ".sbd" subfolder container).
+func isProfileFor(d string, below []string) bool {
+	if fi, err := os.Lstat(filepath.Join(d, "prefs.js")); err != nil || !fi.Mode().IsRegular() {
+		return false
+	}
+	if len(below) > 0 {
+		return isMailRoot(below[0])
+	}
+	if isMailRoot(filepath.Base(d)) || isMailRoot(filepath.Base(filepath.Dir(d))) || strings.HasSuffix(d, ".sbd") {
+		return false
+	}
+	for _, root := range []string{"ImapMail", "Mail"} {
+		if fi, err := os.Lstat(filepath.Join(d, root)); err == nil && fi.IsDir() {
+			return true
+		}
+	}
+	return false
+}
+
+// isMailRoot reports whether name is one of the profile's two mail folders, ImapMail or Mail,
+// compared as the OS compares names.
+func isMailRoot(name string) bool {
+	return sameComponent(name, "ImapMail", runtime.GOOS) || sameComponent(name, "Mail", runtime.GOOS)
 }
 
 // Account describes one mail account from prefs.js.
@@ -67,30 +102,126 @@ type Account struct {
 	// turn the default off for every account (mail.server.default.offline_download), so
 	// Thunderbird's default applies and it keeps the messages on this computer already.
 	OnByDefault bool
+	// OfflineInUserJS: user.js sets the account's offline_download. Thunderbird applies user.js
+	// over prefs.js at every start, so OfflineDownload is user.js's value, and EnableOffline
+	// changes nothing (MA-1205).
+	OfflineInUserJS bool
 }
 
-var rePref = regexp.MustCompile(`^user_pref\("([^"]+)",\s*(.+)\);\s*$`)
+// rePref is one setting line as Thunderbird writes it (user_pref), or as a hand-written
+// user.js may (pref, sticky_pref), once its comments are taken out.
+var rePref = regexp.MustCompile(`^(?:user_|sticky_)?pref\("([^"]+)",\s*(.+)\);$`)
 
-// prefsMaxBytes bounds prefs.js, as tbrestore.PrefsMaxBytes bounds the same file: a larger
-// one is refused, never read whole.
+// prefsMaxBytes bounds prefs.js and user.js, as tbrestore.PrefsMaxBytes bounds the same
+// files: a larger one is refused, never read whole.
 const prefsMaxBytes = 16 << 20
 
-// parsePrefs reads prefs.js into a key→raw-value map. It is read as a planted file may be
-// (C0c, completeness foldcheck M1): every backup of an IMAP store reads it, unattended
-// when scheduled, so a link is refused, not followed; a pipe or device is neither waited
-// on nor read; and a file over prefsMaxBytes is refused.
-func parsePrefs(path string) (map[string]string, error) {
-	data, err := util.ReadRegularFile(path, prefsMaxBytes)
-	if err != nil {
-		return nil, err
-	}
-	out := map[string]string{}
-	for _, line := range strings.Split(string(data), "\n") {
-		if m := rePref.FindStringSubmatch(strings.TrimSpace(line)); m != nil {
-			out[m[1]] = strings.TrimSpace(m[2])
+// livePref is one setting line Thunderbird applies: its line number in the file (from 0),
+// the setting's name and its value as written, and the line's text outside comments.
+type livePref struct {
+	line       int
+	key, value string
+	code       string
+}
+
+// livePrefs are the setting lines of lines (a prefs.js or user.js split on "\n") that
+// Thunderbird applies, in file order. A line inside a /* */ comment, or after // or # on its
+// line, never counts (the C0c pass's CON-03); a comment marker inside a quoted value is
+// part of the value.
+func livePrefs(lines []string) []livePref {
+	var out []livePref
+	open := false
+	for i, raw := range lines {
+		var code string
+		code, open = codeOf(raw, open)
+		code = strings.TrimSpace(code)
+		if m := rePref.FindStringSubmatch(code); m != nil {
+			out = append(out, livePref{line: i, key: m[1], value: strings.TrimSpace(m[2]), code: code})
 		}
 	}
-	return out, nil
+	return out
+}
+
+// codeOf is line with its comments taken out, and whether a /* comment is still open at its
+// end; open says one was open at its start.
+func codeOf(line string, open bool) (string, bool) {
+	var b strings.Builder
+	var quote byte
+	for i := 0; i < len(line); i++ {
+		c := line[i]
+		next := byte(0)
+		if i+1 < len(line) {
+			next = line[i+1]
+		}
+		switch {
+		case open:
+			if c == '*' && next == '/' {
+				open = false
+				i++
+			}
+		case quote != 0:
+			b.WriteByte(c)
+			if c == '\\' && next != 0 {
+				b.WriteByte(next)
+				i++
+			} else if c == quote {
+				quote = 0
+			}
+		case c == '"' || c == '\'':
+			quote = c
+			b.WriteByte(c)
+		case c == '#' || (c == '/' && next == '/'):
+			return b.String(), false
+		case c == '/' && next == '*':
+			open = true
+			i++
+		default:
+			b.WriteByte(c)
+		}
+	}
+	return b.String(), open
+}
+
+// readPrefsFile reads one settings file of the profile as a planted file may be (C0c,
+// completeness foldcheck M1): every backup of an IMAP store reads it, unattended when
+// scheduled, so a link is refused, not followed; a pipe or device is neither waited on nor
+// read; and a file over prefsMaxBytes is refused. It returns the file's bytes and its live
+// settings, the last line for a name winning, as Thunderbird applies them.
+func readPrefsFile(path string) ([]byte, map[string]string, error) {
+	data, err := util.ReadRegularFile(path, prefsMaxBytes)
+	if err != nil {
+		return nil, nil, err
+	}
+	out := map[string]string{}
+	for _, p := range livePrefs(strings.Split(string(data), "\n")) {
+		out[p.key] = p.value
+	}
+	return data, out, nil
+}
+
+// readUserJS is user.js's live settings, or none when the profile has no user.js.
+func readUserJS(profileDir string) (map[string]string, error) {
+	_, vals, err := readPrefsFile(filepath.Join(profileDir, "user.js"))
+	if errors.Is(err, fs.ErrNotExist) {
+		return map[string]string{}, nil
+	}
+	return vals, err
+}
+
+// readPrefs is the profile's settings as Thunderbird applies them: prefs.js, then user.js
+// over it (as tbrestore.ReadPrefs reads them; the C0c pass's CON-06), plus user.js's own.
+func readPrefs(profileDir string) (prefs, user map[string]string, err error) {
+	_, prefs, err = readPrefsFile(filepath.Join(profileDir, "prefs.js"))
+	if err != nil {
+		return nil, nil, err
+	}
+	if user, err = readUserJS(profileDir); err != nil {
+		return nil, nil, err
+	}
+	for k, v := range user {
+		prefs[k] = v
+	}
+	return prefs, user, nil
 }
 
 func unquote(v string) string { return strings.Trim(v, `"`) }
@@ -100,15 +231,21 @@ func unquote(v string) string { return strings.Trim(v, `"`) }
 // (ImapMail/imap.gmail.com and ImapMail/imap.gmail.com-1) the hostname alone cannot tell
 // them apart, so:
 //
+//  0. only a live account's server is a candidate: the accounts listed in
+//     mail.accountmanager.accounts, each by its mail.account.<id>.server (a removed
+//     account's leftover mail.server lines own nothing; the C0c pass's CON-01);
 //  1. the store is matched against each server's directory-rel ([ProfD] is profileDir) and
 //     directory, compared by whole path components (samePath);
 //  2. only when no server matches that way, the hostname is compared with the store
-//     folder's name, and only for a server whose own folder settings, if it has any, name
-//     a folder of that name (a moved profile's stale directory still does; a server whose
-//     folder is imap.gmail.com-1 does not own a leftover imap.gmail.com);
+//     folder's name: only when exactly one server has that hostname (INS-02), and only
+//     for a server whose own folder settings, if it has any, name a folder of that name (a
+//     moved profile's stale directory still does; a server whose folder is
+//     imap.gmail.com-1 does not own a leftover imap.gmail.com);
 //  3. no match, or more than one, gives no account and an error: never a guess.
+//
+// The settings are read as Thunderbird applies them: prefs.js, then user.js over it.
 func FindAccountForStore(profileDir, storeDir string) (*Account, error) {
-	prefs, err := parsePrefs(filepath.Join(profileDir, "prefs.js"))
+	prefs, user, err := readPrefs(profileDir)
 	if err != nil {
 		return nil, err
 	}
@@ -120,7 +257,11 @@ func FindAccountForStore(profileDir, storeDir string) (*Account, error) {
 	if err != nil {
 		return nil, err
 	}
-	return matchAccount(prefs, profile, store, runtime.GOOS)
+	acct, err := matchAccount(prefs, profile, store, runtime.GOOS)
+	if acct != nil {
+		_, acct.OfflineInUserJS = user["mail.server."+acct.ServerKey+".offline_download"]
+	}
+	return acct, err
 }
 
 // matchAccount is FindAccountForStore's rule on parsed prefs, for goos.
@@ -130,8 +271,12 @@ func matchAccount(prefs map[string]string, profile, store, goos string) (*Accoun
 	if len(parts) > 0 {
 		name = parts[len(parts)-1]
 	}
-	var byFolder, byHost []string
-	for _, key := range serverKeys(prefs) {
+	servers := liveServers(prefs)
+	if len(servers) == 0 {
+		return nil, fmt.Errorf("prefs.js lists no account (mail.accountmanager.accounts), so no account owns the store folder %s", name)
+	}
+	var byFolder, onHost, byHost []string
+	for _, key := range servers {
 		p := func(field string) string { return unquote(prefs["mail.server."+key+"."+field]) }
 		var folders []string
 		if rel, ok := strings.CutPrefix(p("directory-rel"), "[ProfD]"); ok {
@@ -150,12 +295,19 @@ func matchAccount(prefs map[string]string, profile, store, goos string) (*Accoun
 				ownsName = false
 			}
 		}
-		if name != "" && ownsName && sameComponent(norm.NFC.String(p("hostname")), name, goos) {
-			byHost = append(byHost, key)
+		if name != "" && sameComponent(norm.NFC.String(p("hostname")), name, goos) {
+			onHost = append(onHost, key)
+			if ownsName {
+				byHost = append(byHost, key)
+			}
 		}
 	}
 	pick := byFolder
-	if len(pick) == 0 {
+	switch {
+	case len(pick) > 0:
+	case len(onHost) > 1:
+		pick = onHost // the hostname tells nothing when two servers have it
+	default:
 		pick = byHost
 	}
 	switch len(pick) {
@@ -176,13 +328,19 @@ func matchAccount(prefs map[string]string, profile, store, goos string) (*Accoun
 	}
 }
 
-// serverKeys are prefs' mail.server.serverN keys, sorted, so the match never depends on
-// map order.
-func serverKeys(prefs map[string]string) []string {
+// liveServers are the server keys of the live accounts, sorted, so the match never depends
+// on map order: each account listed in mail.accountmanager.accounts (its last line, as
+// Thunderbird applies it) gives the server its mail.account.<id>.server names. No list gives
+// none.
+func liveServers(prefs map[string]string) []string {
 	seen := map[string]bool{}
-	for k := range prefs {
-		if rest, ok := strings.CutPrefix(k, "mail.server.server"); ok && rest != "" {
-			seen["server"+strings.SplitN(rest, ".", 2)[0]] = true
+	for _, id := range strings.Split(unquote(prefs["mail.accountmanager.accounts"]), ",") {
+		id = strings.TrimSpace(id)
+		if id == "" {
+			continue
+		}
+		if key := unquote(prefs["mail.account."+id+".server"]); key != "" && !strings.Contains(key, ".") {
+			seen[key] = true
 		}
 	}
 	keys := make([]string, 0, len(seen))
@@ -284,63 +442,218 @@ func windowsLockHeld(profileDir string) bool {
 	return false
 }
 
-// EnableOffline turns on "keep messages on this computer" (offline_download) for
-// the account in prefs.js, after backing the file up. It returns whether a
-// change was made and the backup path. Thunderbird must be closed.
+// OfflineChange is what EnableOffline did.
+type OfflineChange struct {
+	// Changed: prefs.js now turns the account's offline download on, where it did not.
+	Changed bool
+	// Backup is prefs.js.mailarchive-bak's path when Changed: prefs.js as it was before
+	// MailArchive first changed it.
+	Backup string
+	// BackupKept: the backup was already there (an earlier change made it) and was kept as it
+	// was, never overwritten (the C0c pass's CON-04), so it holds an older prefs.js than the
+	// one just changed.
+	BackupKept bool
+}
+
+// EnableOffline turns on "keep messages on this computer" (offline_download) for the
+// account in prefs.js, after backing the file up. Thunderbird must be closed.
 //
-// prefs.js is read as parsePrefs reads it, and neither write (the backup, then prefs.js)
-// follows a link or replaces anything but a regular file (C0c, completeness foldcheck2
-// L1): see writeOverRegular.
-func EnableOffline(profileDir, serverKey string) (changed bool, backup string, err error) {
+//   - It acts on the line Thunderbird applies, the last live one (a commented line never
+//     counts), and when that is not true it changes every live line for the setting, so the
+//     file says one thing (the C0c pass's CON-02, CON-03); with none it adds one. An account
+//     already on is left as it is, with nothing written.
+//   - The file keeps its own line ending: CRLF stays CRLF (CON-05).
+//   - When user.js sets the setting, Thunderbird applies it over prefs.js at every start, so
+//     nothing is changed: on is "already on", anything else a UserJSError (CON-06).
+//   - The backup prefs.js.mailarchive-bak is written once and then kept: a later change
+//     never overwrites it, so it keeps prefs.js from before MailArchive's first change
+//     (CON-04).
+//
+// prefs.js and user.js are read as readPrefsFile reads them, and neither write (the backup,
+// then prefs.js) follows a link or replaces anything but a regular file (C0c, completeness
+// foldcheck2 L1): see backupOnce and writeOverRegular.
+func EnableOffline(profileDir, serverKey string) (OfflineChange, error) {
 	prefsPath := filepath.Join(profileDir, "prefs.js")
 	data, err := util.ReadRegularFile(prefsPath, prefsMaxBytes)
 	if err != nil {
-		return false, "", err
+		return OfflineChange{}, err
 	}
-	content := string(data)
 	key := "mail.server." + serverKey + ".offline_download"
-
-	trueLine := fmt.Sprintf(`user_pref("%s", true);`, key)
-	falseLine := fmt.Sprintf(`user_pref("%s", false);`, key)
-
-	switch {
-	case strings.Contains(content, trueLine):
-		return false, "", nil // already enabled
-	case strings.Contains(content, falseLine):
-		content = strings.Replace(content, falseLine, trueLine, 1)
-	default:
-		if !strings.HasSuffix(content, "\n") {
-			content += "\n"
+	user, err := readUserJS(profileDir)
+	if err != nil {
+		return OfflineChange{}, err
+	}
+	if v, set := user[key]; set {
+		if v == "true" {
+			return OfflineChange{}, nil // user.js turns it on already
 		}
-		content += trueLine + "\n"
+		return OfflineChange{}, &UserJSError{Path: filepath.Join(profileDir, "user.js"), Key: key}
 	}
 
-	backup = prefsPath + ".mailarchive-bak"
-	if err := writeOverRegular(backup, data, true); err != nil {
-		return false, "", fmt.Errorf("back up prefs.js: %w", err)
+	content := string(data)
+	eol := "\n"
+	if i := strings.IndexByte(content, '\n'); i > 0 && content[i-1] == '\r' {
+		eol = "\r\n"
 	}
-	if err := writeOverRegular(prefsPath, []byte(content), false); err != nil {
-		return false, backup, fmt.Errorf("write prefs.js: %w", err)
+	trueLine := fmt.Sprintf(`user_pref("%s", true);`, key)
+	lines := strings.Split(content, "\n")
+	var mine []livePref
+	for _, p := range livePrefs(lines) {
+		if p.key == key {
+			mine = append(mine, p)
+		}
 	}
-	return true, backup, nil
+	switch {
+	case len(mine) > 0 && mine[len(mine)-1].value == "true":
+		return OfflineChange{}, nil // already enabled
+	case len(mine) > 0:
+		for _, p := range mine {
+			if !strings.Contains(lines[p.line], p.code) {
+				// A comment inside the setting's own text: no rewrite keeps the rest of the line.
+				return OfflineChange{}, fmt.Errorf("prefs.js line %d sets %s with a comment inside it, which MailArchive does not rewrite, so it changed nothing", p.line+1, key)
+			}
+			lines[p.line] = strings.Replace(lines[p.line], p.code, trueLine, 1)
+		}
+		content = strings.Join(lines, "\n")
+	default:
+		if content != "" && !strings.HasSuffix(content, "\n") {
+			content += eol
+		}
+		content += trueLine + eol
+	}
+
+	c := OfflineChange{Backup: prefsPath + ".mailarchive-bak"}
+	if c.BackupKept, err = backupOnce(c.Backup, data); err != nil {
+		return OfflineChange{}, fmt.Errorf("back up prefs.js: %w", err)
+	}
+	if err := writeOverRegular(prefsPath, []byte(content)); err != nil {
+		return OfflineChange{}, fmt.Errorf("write prefs.js: %w", err)
+	}
+	c.Changed = true
+	return c, nil
+}
+
+// backupOnce writes data to path, a backup that is written once and then kept: when path is
+// already a regular file it is left as it is and kept is true. Nothing there, it is written
+// through the repo's atomic writer. A link, a pipe, a device or a folder there is refused and
+// left as it is (the same rule util.ReadRegularFile applies).
+func backupOnce(path string, data []byte) (kept bool, err error) {
+	fi, err := os.Lstat(path)
+	switch {
+	case errors.Is(err, fs.ErrNotExist):
+		return false, util.WriteFileAtomic0600Temp(path, data, ".mailarchive-prefs-*.tmp")
+	case err != nil:
+		return false, err
+	case fi.Mode()&fs.ModeSymlink != 0 || !util.DescriptorReadable(runtime.GOOS, fi.Mode()):
+		return false, &util.NotRegularError{Path: path, Mode: fi.Mode()}
+	}
+	return true, nil
 }
 
 // writeOverRegular writes data to path through the repo's atomic writer (a temporary file
 // beside it, then a rename, which replaces the name and never writes through a link), once
-// a fresh Lstat shows path is a regular file, or nothing at all when mayBeAbsent. A link, a
-// pipe, a device or a folder there is refused and left as it is (the same rule
-// util.ReadRegularFile applies). Something swapped in between the Lstat and the rename is
-// replaced by the rename, never written through or waited on.
-func writeOverRegular(path string, data []byte, mayBeAbsent bool) error {
+// a fresh Lstat shows path is a regular file. A link, a pipe, a device, a folder or nothing
+// there is refused and left as it is (the same rule util.ReadRegularFile applies).
+// Something swapped in between the Lstat and the rename is replaced by the rename, never
+// written through or waited on.
+func writeOverRegular(path string, data []byte) error {
 	fi, err := os.Lstat(path)
 	switch {
-	case errors.Is(err, fs.ErrNotExist) && mayBeAbsent:
 	case err != nil:
 		return err
 	case fi.Mode()&fs.ModeSymlink != 0 || !util.DescriptorReadable(runtime.GOOS, fi.Mode()):
 		return &util.NotRegularError{Path: path, Mode: fi.Mode()}
 	}
 	return util.WriteFileAtomic0600Temp(path, data, ".mailarchive-prefs-*.tmp")
+}
+
+// UserJSError is EnableOffline's refusal when the profile's user.js sets the account's
+// offline setting to something other than on: Thunderbird applies user.js over prefs.js at
+// every start, so a change to prefs.js would be undone, and nothing is changed (the C0c
+// pass's CON-06, MA-1205). Its words name user.js and say what to do.
+type UserJSError struct {
+	Path string // the profile's user.js
+	Key  string // the setting, mail.server.<key>.offline_download
+}
+
+func (e *UserJSError) Error() string {
+	return fmt.Sprintf("%s sets this account's offline setting (%s), and Thunderbird applies user.js over prefs.js every time it starts, so MailArchive changed nothing. To keep this account's messages on this computer, close Thunderbird, then change that line in user.js to true or remove it", e.Path, e.Key)
+}
+
+// NoAccountError is what the person is told when MailArchive cannot tell which account a
+// store belongs to, so it changes nothing (the C0c pass's OUT-01, MA-1204). Why is
+// FindAccountForStore's reason, naming prefs.js; Label is the setting to turn on by hand,
+// as OfflineSettingLabel names it.
+type NoAccountError struct {
+	Folder, Label string
+	Why           error
+}
+
+func (e *NoAccountError) Error() string {
+	return fmt.Sprintf("MailArchive could not tell which Thunderbird account the folder %s belongs to, so it changed nothing; in Thunderbird, open that account's settings and turn on %s yourself. Why: %v", e.Folder, e.Label, e.Why)
+}
+
+func (e *NoAccountError) Unwrap() error { return e.Why }
+
+// AccountToEnable is the account whose offline download the wizard's Yes, prepare and the
+// command line's -enable-offline would turn on for store. When no account can be told, the
+// error is a NoAccountError; when user.js keeps the setting off, a UserJSError. Either way
+// nothing has been, or may be, changed.
+func AccountToEnable(profileDir, store string) (*Account, error) {
+	acct, err := FindAccountForStore(profileDir, store)
+	if err != nil {
+		return nil, &NoAccountError{Folder: StripControl(filepath.Base(store)), Label: OfflineSettingLabel(profileDir), Why: err}
+	}
+	if acct.OfflineInUserJS && !acct.OfflineDownload {
+		return nil, &UserJSError{Path: filepath.Join(profileDir, "user.js"), Key: "mail.server." + acct.ServerKey + ".offline_download"}
+	}
+	return acct, nil
+}
+
+// The account-level offline checkbox's label in Thunderbird, by version (completeness design
+// §6, the M4 re-read and foldcheck2 L5: the label changes at 160).
+const (
+	offlineLabelBefore160 = `"Keep messages in all folders for this account on this computer"`
+	offlineLabelFrom160   = `"Save copies of all folders and messages on this computer for offline use"`
+)
+
+// OfflineSettingLabel is the offline checkbox's label for the Thunderbird that last opened the
+// profile (compatibility.ini's LastVersion): the older label below 160, the newer from 160,
+// and both when the version cannot be read (§6 fold L5).
+func OfflineSettingLabel(profileDir string) string {
+	major, ok := lastVersionMajor(profileDir)
+	switch {
+	case !ok:
+		return offlineLabelBefore160 + " (in Thunderbird 160 and later: " + offlineLabelFrom160 + ")"
+	case major < 160:
+		return offlineLabelBefore160
+	default:
+		return offlineLabelFrom160
+	}
+}
+
+// lastVersionMajor is the major number of compatibility.ini's LastVersion
+// ("153.6.0_20251212000000/…"), read as tbrestore.LastVersion reads it; ok is false when it
+// cannot be read.
+func lastVersionMajor(profileDir string) (int, bool) {
+	data, err := util.ReadRegularFile(filepath.Join(profileDir, "compatibility.ini"), 64<<10)
+	if err != nil {
+		return 0, false
+	}
+	for _, line := range strings.Split(string(data), "\n") {
+		k, v, found := strings.Cut(strings.TrimSpace(line), "=")
+		if !found || strings.TrimSpace(k) != "LastVersion" {
+			continue
+		}
+		v = strings.TrimSpace(v)
+		if i := strings.IndexAny(v, "_/"); i >= 0 {
+			v = v[:i]
+		}
+		head, _, _ := strings.Cut(v, ".")
+		n, err := strconv.Atoi(head)
+		return n, err == nil
+	}
+	return 0, false
 }
 
 // MboxFiles returns the mbox files under a store directory (the things that grow

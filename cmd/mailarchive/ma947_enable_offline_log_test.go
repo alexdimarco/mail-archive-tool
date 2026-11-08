@@ -13,7 +13,9 @@ import (
 )
 
 // offlineProfile makes a Thunderbird profile whose prefs.js holds an IMAP account for
-// imap.gmail.com plus extra, and returns the account's store folder.
+// imap.gmail.com (server1, listed as a live account) plus extra, and returns the account's
+// store folder. A mail.accountmanager.accounts line in extra comes later, so it wins, as in
+// Thunderbird.
 func offlineProfile(t *testing.T, extra string) (profile, store string) {
 	t.Helper()
 	profile = t.TempDir()
@@ -21,7 +23,9 @@ func offlineProfile(t *testing.T, extra string) (profile, store string) {
 	if err := os.MkdirAll(store, 0o755); err != nil {
 		t.Fatal(err)
 	}
-	prefs := "user_pref(\"mail.server.server1.hostname\", \"imap.gmail.com\");\n" +
+	prefs := "user_pref(\"mail.accountmanager.accounts\", \"account1\");\n" +
+		"user_pref(\"mail.account.account1.server\", \"server1\");\n" +
+		"user_pref(\"mail.server.server1.hostname\", \"imap.gmail.com\");\n" +
 		"user_pref(\"mail.server.server1.type\", \"imap\");\n" + extra
 	if err := os.WriteFile(filepath.Join(profile, "prefs.js"), []byte(prefs), 0o600); err != nil {
 		t.Fatal(err)

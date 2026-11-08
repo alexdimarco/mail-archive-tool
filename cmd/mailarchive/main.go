@@ -2104,6 +2104,17 @@ func prepareThunderbird(ctx context.Context, inputs []string, auto, enableOfflin
 		}
 		return nil
 	}
+	// Every store's account is told before any is changed, so a refusal (MA-1204, MA-1205)
+	// means nothing was changed in this run.
+	if enableOffline {
+		for _, store := range stores {
+			if profile, ok := thunderbird.FindProfileDir(store); ok {
+				if _, err := thunderbird.AccountToEnable(profile, store); err != nil {
+					return err
+				}
+			}
+		}
+	}
 	for _, store := range stores {
 		if err := prepareStore(ctx, store, enableOffline, syncWait, logger); err != nil {
 			return err
@@ -2118,29 +2129,39 @@ func prepareStore(ctx context.Context, store string, enableOffline, syncWait boo
 		logger.Printf("Could not find the Thunderbird profile for %s; skipping prep.", store)
 		return nil
 	}
-	acct, _ := thunderbird.FindAccountForStore(profile, store)
-
 	if enableOffline {
 		if thunderbird.Running(profile) {
 			return fmt.Errorf("Thunderbird looks like it is running — close it, then re-run with -enable-offline (prefs.js must not be edited while it is open)")
 		}
+		// No account it can tell, or user.js keeps the setting off: a refusal with the words,
+		// nothing changed (MA-1204, MA-1205; the code stays the command line's refusal code, 1).
+		acct, err := thunderbird.AccountToEnable(profile, store)
+		if err != nil {
+			return err
+		}
 		switch {
-		case acct == nil:
-			logger.Printf("Skipping -enable-offline: could not match an account to %s.", filepath.Base(store))
+		case acct.OfflineDownload && acct.OfflineInUserJS:
+			logger.Printf("Offline download already enabled for %s (user.js turns it on).", acct.Hostname)
 		case acct.OfflineDownload:
 			logger.Printf("Offline download already enabled for %s.", acct.Hostname)
 		default:
-			changed, backup, err := thunderbird.EnableOffline(profile, acct.ServerKey)
+			c, err := thunderbird.EnableOffline(profile, acct.ServerKey)
 			if err != nil {
 				return err
 			}
+			backup := filepath.Base(c.Backup)
+			saved := "prefs backed up to " + backup
+			if c.BackupKept {
+				// The first backup is never overwritten (CON-04): say what it holds.
+				saved = "the backup " + backup + " was kept as it was, from before MailArchive first changed prefs.js"
+			}
 			switch {
-			case changed && acct.OnByDefault:
+			case c.Changed && acct.OnByDefault:
 				// No line of its own: Thunderbird's default had it on (MA-947), so writing it out
 				// changed nothing Thunderbird does.
-				logger.Printf("Offline download was already on for %s: Thunderbird keeps a new account's messages on this computer by default. The setting was written into prefs.js to make sure (prefs backed up to %s).", acct.Hostname, filepath.Base(backup))
-			case changed:
-				logger.Printf("Enabled offline download for %s (prefs backed up to %s).", acct.Hostname, filepath.Base(backup))
+				logger.Printf("Offline download was already on for %s: Thunderbird keeps a new account's messages on this computer by default. The setting was written into prefs.js to make sure (%s).", acct.Hostname, saved)
+			case c.Changed:
+				logger.Printf("Enabled offline download for %s (%s).", acct.Hostname, saved)
 			}
 		}
 		logger.Printf("Next: START Thunderbird, then right-click the account -> Download/Sync Now.")

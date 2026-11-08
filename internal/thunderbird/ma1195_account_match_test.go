@@ -16,6 +16,27 @@ func prefLine(key, value string) string {
 	return fmt.Sprintf("user_pref(%q, \"%s\");\n", key, strings.ReplaceAll(value, `\`, `\\`))
 }
 
+// accountsLine is mail.accountmanager.accounts plus each account's server, as Thunderbird
+// writes them, from (account id, server key) pairs: only these servers are live accounts.
+func accountsLine(pairs ...string) string {
+	var ids []string
+	s := ""
+	for i := 0; i+1 < len(pairs); i += 2 {
+		ids = append(ids, pairs[i])
+		s += prefLine("mail.account."+pairs[i]+".server", pairs[i+1])
+	}
+	return prefLine("mail.accountmanager.accounts", strings.Join(ids, ",")) + s
+}
+
+// live is accountsLine for servers "serverN", each the server of account "accountN".
+func live(servers ...string) string {
+	var pairs []string
+	for _, s := range servers {
+		pairs = append(pairs, "account"+strings.TrimPrefix(s, "server"), s)
+	}
+	return accountsLine(pairs...)
+}
+
 // imapServer is the prefs.js lines of one IMAP server. rel and dir are left out when empty.
 func imapServer(key, host, rel, dir string) string {
 	s := prefLine("mail.server."+key+".hostname", host) + prefLine("mail.server."+key+".type", "imap")
@@ -64,13 +85,13 @@ func accountKey(t *testing.T, profile, store string) string {
 // Each lookup is repeated, since the old bug showed only in some map orders. Positive twin
 // first: one account on one host with no folder setting is found by its hostname, as today.
 func TestEachStoreOfOneServerFindsItsOwnAccount(t *testing.T) {
-	one := profileWith(t, imapServer("server3", "mail.example.com", "", ""), "mail.example.com")
+	one := profileWith(t, live("server3")+imapServer("server3", "mail.example.com", "", ""), "mail.example.com")
 	if got := accountKey(t, one, "mail.example.com"); got != "server3" {
 		t.Fatalf("the positive twin: one account by hostname = %s, want server3", got)
 	}
 
 	t.Run("by directory-rel", func(t *testing.T) {
-		p := profileWith(t, imapServer("server1", "imap.gmail.com", "[ProfD]ImapMail/imap.gmail.com", "")+
+		p := profileWith(t, live("server1", "server2")+imapServer("server1", "imap.gmail.com", "[ProfD]ImapMail/imap.gmail.com", "")+
 			imapServer("server2", "imap.gmail.com", "[ProfD]ImapMail/imap.gmail.com-1", ""),
 			"imap.gmail.com", "imap.gmail.com-1")
 		for i := 0; i < 50; i++ {
@@ -85,7 +106,7 @@ func TestEachStoreOfOneServerFindsItsOwnAccount(t *testing.T) {
 
 	t.Run("by directory", func(t *testing.T) {
 		base := t.TempDir()
-		pre := imapServer("server1", "imap.gmail.com", "", filepath.Join(base, "ImapMail", "imap.gmail.com")) +
+		pre := live("server1", "server2") + imapServer("server1", "imap.gmail.com", "", filepath.Join(base, "ImapMail", "imap.gmail.com")) +
 			imapServer("server2", "imap.gmail.com", "", filepath.Join(base, "ImapMail", "imap.gmail.com-1"))
 		if err := os.WriteFile(filepath.Join(base, "prefs.js"), []byte(pre), 0o600); err != nil {
 			t.Fatal(err)
@@ -108,7 +129,7 @@ func TestEachStoreOfOneServerFindsItsOwnAccount(t *testing.T) {
 	t.Run("a name that ends the same", func(t *testing.T) {
 		// The old directory-rel test was a string suffix, so xmail.example.com's folder
 		// matched the store mail.example.com.
-		p := profileWith(t, imapServer("server1", "xmail.example.com", "[ProfD]ImapMail/xmail.example.com", "")+
+		p := profileWith(t, live("server1", "server2")+imapServer("server1", "xmail.example.com", "[ProfD]ImapMail/xmail.example.com", "")+
 			imapServer("server2", "mail.example.com", "[ProfD]ImapMail/mail.example.com", ""),
 			"xmail.example.com", "mail.example.com")
 		for i := 0; i < 50; i++ {
@@ -126,7 +147,7 @@ func TestEachStoreOfOneServerFindsItsOwnAccount(t *testing.T) {
 // twin first: a moved profile whose directory still names the old place, with no
 // directory-rel, is found by its one hostname.
 func TestAnAccountIsNeverGuessed(t *testing.T) {
-	moved := profileWith(t, imapServer("server4", "mail.example.com", "", "/old/place/ImapMail/mail.example.com"), "mail.example.com")
+	moved := profileWith(t, live("server4")+imapServer("server4", "mail.example.com", "", "/old/place/ImapMail/mail.example.com"), "mail.example.com")
 	if got := accountKey(t, moved, "mail.example.com"); got != "server4" {
 		t.Fatalf("the positive twin: a moved profile = %s, want server4", got)
 	}
@@ -150,7 +171,7 @@ func TestAnAccountIsNeverGuessed(t *testing.T) {
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			p := profileWith(t, tc.prefs, tc.store)
+			p := profileWith(t, live("server1", "server2")+tc.prefs, tc.store)
 			for i := 0; i < 50; i++ {
 				acct, err := FindAccountForStore(p, filepath.Join(p, "ImapMail", tc.store))
 				if acct != nil {

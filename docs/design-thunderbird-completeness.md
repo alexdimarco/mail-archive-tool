@@ -833,6 +833,38 @@ is a label-membership question, not completeness (§14 Q6).
 >   changes get the adversarial pass), C0c stops at that pass before merge. It is not self-certified
 >   here.
 >
+> **Folded 2026-11-07 [C0c adversarial pass] (the lead's calls on all nine findings,
+> `docs/review-thunderbird-completeness-c0c-adversarial.md`; built and tested, MA-1195, MA-1203 to
+> MA-1205):**
+>
+> - **Live accounts only (CON-01).** A server is a candidate only when it is named by
+>   `mail.account.<id>.server` for an id in `mail.accountmanager.accounts` (its last line wins). No
+>   list → no account.
+> - **The hostname fallback (INS-02).** Item 2 above is now read as written: two live servers with
+>   the hostname → no account, even if only one passes the builder's stricter folder rule.
+> - **What a setting is (CON-02, CON-03, CON-06).** prefs.js, then user.js over it, as Thunderbird
+>   applies them; a line in a `/* */` comment or after `//` or `#` never counts; the last line wins.
+>   `EnableOffline` changes every live line when it changes the setting, and changes nothing when
+>   user.js sets it (on → already on; otherwise a refusal naming user.js, MA-1205).
+> - **The backup (CON-04): written once, then kept.** The lead offered "keep the first original" or
+>   a dated name; the build keeps the first: `prefs.js.mailarchive-bak` is never overwritten, and the
+>   command line says when it kept an older one instead of "backed up". Between the check and the
+>   rename a file put there would be replaced; `EnableOffline` runs attended only.
+> - **Line endings (CON-05).** The file's own ending (CRLF if its first line has one) is kept.
+> - **The profile (INS-01, MA-1203).** `FindProfileDir` takes a folder for the profile only when it
+>   holds prefs.js as a regular file and the input is under its own `ImapMail/` or `Mail/` (or is
+>   the profile itself, holding one of them and not inside a store). The marker is prefs.js alone,
+>   as the restore's and the pre-sync's profile checks accept; the structure rule is what keeps a
+>   store out.
+> - **The reason reaches the person (OUT-01, MA-1204).** The words: "MailArchive could not tell
+>   which Thunderbird account the folder <name> belongs to, so it changed nothing; in Thunderbird,
+>   open that account's settings and turn on <label> yourself. Why: <reason>." The label follows §6's
+>   version rule (L5). The command line refuses with its refusal code (1) after checking every
+>   store first; the wizard shows the words and returns "not prepared", so the export runs on what
+>   is on this computer, in its usual mode.
+> - **Gate owed:** the wizard's new words owe a light friction look (the friction review this
+>   feature owes already). Not self-certified here.
+>
 > **Folded 2026-11-07 [foldcheck M6] (lead's call):** the bullet "No match → `unknown` if a
 > folder-cache entry exists" is **superseded by [foldcheck M6]**. No match → `unknown` whether or not
 > the cache could be read, unless no `prefs.js` is found above the input **and** no path part is

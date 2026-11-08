@@ -1568,11 +1568,12 @@ func prepareThunderbirdGUI(store string) (bool, error) {
 		return false, choice
 	}
 
-	profile, ok := thunderbird.FindProfileDir(store)
-	if !ok {
-		return false, zenity.Warning("Couldn't find the Thunderbird profile; exporting whatever is cached.", zenity.Title(appTitle))
+	profile, acct, refusal := imapPrepAccount(store)
+	if refusal != "" {
+		// Nothing was changed, so the export is not prepared: it goes ahead with what is on
+		// this computer, in its usual mode, and says so (MA-1204).
+		return false, zenity.Warning(refusal, zenity.Title(appTitle))
 	}
-	acct, _ := thunderbird.FindAccountForStore(profile, store)
 
 	// prefs.js must not be edited while Thunderbird is running.
 	for acct != nil && thunderbird.Running(profile) {
@@ -1592,7 +1593,7 @@ func prepareThunderbirdGUI(store string) (bool, error) {
 	}
 
 	if acct != nil && !acct.OfflineDownload {
-		if _, _, e := thunderbird.EnableOffline(profile, acct.ServerKey); e != nil {
+		if _, e := thunderbird.EnableOffline(profile, acct.ServerKey); e != nil {
 			return false, zenity.Error("Couldn't enable offline download:\n"+e.Error(), zenity.Title(appTitle))
 		}
 	}
@@ -1602,6 +1603,25 @@ func prepareThunderbirdGUI(store string) (bool, error) {
 		return false, e
 	}
 	return true, nil
+}
+
+// imapNotPrepared ends every Yes, prepare refusal: the export still runs, on what is here.
+const imapNotPrepared = "\n\nThis export goes ahead with the mail already on this computer."
+
+// imapPrepAccount is the profile and account Yes, prepare would change for store, or the
+// refusal the person is shown when it cannot change one: no profile found, no account it
+// can tell (the reason and what to turn on by hand, MA-1204), or user.js keeping the setting
+// off (MA-1205). On a refusal nothing has been changed.
+func imapPrepAccount(store string) (string, *thunderbird.Account, string) {
+	profile, ok := thunderbird.FindProfileDir(store)
+	if !ok {
+		return "", nil, "Couldn't find the Thunderbird profile, so nothing was changed." + imapNotPrepared
+	}
+	acct, err := thunderbird.AccountToEnable(profile, store)
+	if err != nil {
+		return "", nil, err.Error() + "." + imapNotPrepared
+	}
+	return profile, acct, ""
 }
 
 // guiWaitForSync shows a live progress dialog while the user runs Download/Sync

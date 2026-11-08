@@ -334,3 +334,12 @@ read from its source. The cheapest way to settle all three is one look at Mozill
 Severity is my own judgement. The lead decides which findings block the merge. My
 recommendation: CON-01, INS-01 and OUT-01 before merge (each is a small change), and the LOW
 items as notes.
+
+## 5. Resolution (added 2026-11-07 by the fixing agent; the findings above are unchanged)
+
+The lead called all nine fixed before merge. Each attack test was brought into the repo (adapted
+to the new `EnableOffline` result and to fixtures that list their live accounts), watched red on
+the code before the fixes, then green; 20 mutations of the fixes each turned a covering test red.
+Rows: CON-01 to CON-05 and INS-02 under MA-1195; INS-01 is MA-1203; OUT-01 is MA-1204; CON-06 is
+MA-1205. What was built, and the one choice the lead left open (the backup is kept, not dated), is
+in the design's §4.1 step 1 fold "[C0c adversarial pass]". The three held checks are kept as guards.

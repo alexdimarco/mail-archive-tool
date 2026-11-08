@@ -15,7 +15,7 @@ import (
 const offLine = `user_pref("mail.server.server1.offline_download", false);` + "\n"
 
 // onePrefs is a prefs.js with one IMAP account, imap.gmail.com, set to off.
-var onePrefs = imapServer("server1", "imap.gmail.com", "[ProfD]ImapMail/imap.gmail.com", "") + offLine
+var onePrefs = live("server1") + imapServer("server1", "imap.gmail.com", "[ProfD]ImapMail/imap.gmail.com", "") + offLine
 
 // refusedNaming asserts a clean refusal (an error, not a crash) naming each of names, that
 // left untouched what it must.
@@ -122,11 +122,11 @@ func TestFindAccountReadsPrefsJsAsAPlantedFileMayBe(t *testing.T) {
 // and turned on, and both files are plain files.
 func TestEnableOfflineNeverWritesThroughALink(t *testing.T) {
 	healthy := profileWith(t, onePrefs, "imap.gmail.com")
-	changed, backup, err := EnableOffline(healthy, "server1")
-	if err != nil || !changed {
-		t.Fatalf("the positive twin: changed %v, err %v", changed, err)
+	c, err := EnableOffline(healthy, "server1")
+	if err != nil || !c.Changed {
+		t.Fatalf("the positive twin: changed %v, err %v", c.Changed, err)
 	}
-	if b, err := os.ReadFile(assure.Reached(t, backup, "the backup path")); err != nil || string(b) != onePrefs {
+	if b, err := os.ReadFile(assure.Reached(t, c.Backup, "the backup path")); err != nil || string(b) != onePrefs {
 		t.Fatalf("the positive twin's backup is not the old prefs.js (%v):\n%s", err, b)
 	}
 	now, _ := os.ReadFile(filepath.Join(healthy, "prefs.js"))
@@ -146,7 +146,7 @@ func TestEnableOfflineNeverWritesThroughALink(t *testing.T) {
 		if err := os.Symlink(target, link); err != nil {
 			t.Skip("no links here:", err)
 		}
-		_, _, err := EnableOffline(p, "server1")
+		_, err := EnableOffline(p, "server1")
 		refusedNaming(t, err, func() bool {
 			fi, lerr := os.Lstat(link)
 			return bytesStill(target, before)() && absent(link+".mailarchive-bak") &&
@@ -160,7 +160,7 @@ func TestEnableOfflineNeverWritesThroughALink(t *testing.T) {
 		if err := os.Symlink(target, filepath.Join(p, "prefs.js.mailarchive-bak")); err != nil {
 			t.Skip("no links here:", err)
 		}
-		_, _, err := EnableOffline(p, "server1")
+		_, err := EnableOffline(p, "server1")
 		refusedNaming(t, err, func() bool {
 			return bytesStill(target, before)() && bytesStill(filepath.Join(p, "prefs.js"), []byte(onePrefs))()
 		}, "prefs.js.mailarchive-bak", "a link")
@@ -171,7 +171,7 @@ func TestEnableOfflineNeverWritesThroughALink(t *testing.T) {
 		if err := os.Mkdir(filepath.Join(p, "prefs.js.mailarchive-bak"), 0o700); err != nil {
 			t.Fatal(err)
 		}
-		_, _, err := EnableOffline(p, "server1")
+		_, err := EnableOffline(p, "server1")
 		refusedNaming(t, err, bytesStill(filepath.Join(p, "prefs.js"), []byte(onePrefs)), "prefs.js.mailarchive-bak")
 	})
 
@@ -195,7 +195,7 @@ func TestEnableOfflineNeverWritesThroughALink(t *testing.T) {
 			}
 		}
 		t.Cleanup(func() { util.BeforeAtomicRename = func(string) {} })
-		if _, _, err := EnableOffline(p, "server1"); err != nil {
+		if _, err := EnableOffline(p, "server1"); err != nil {
 			t.Fatalf("EnableOffline: %v", err)
 		}
 		if assure.Reached(t, swapped, "the swap in the moment before the rename") > 0 && !bytesStill(target, before)() {
@@ -209,7 +209,7 @@ func TestEnableOfflineNeverWritesThroughALink(t *testing.T) {
 	t.Run("over its bound", func(t *testing.T) {
 		p := t.TempDir()
 		overCap(t, filepath.Join(p, "prefs.js"))
-		_, _, err := EnableOffline(p, "server1")
+		_, err := EnableOffline(p, "server1")
 		refusedNaming(t, err, func() bool {
 			fi, serr := os.Stat(filepath.Join(p, "prefs.js"))
 			return serr == nil && fi.Size() == prefsMaxBytes+1 && absent(filepath.Join(p, "prefs.js.mailarchive-bak"))

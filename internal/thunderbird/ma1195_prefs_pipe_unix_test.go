@@ -84,7 +84,7 @@ func TestAPipeAtPrefsJsIsNeverWaitedOn(t *testing.T) {
 		p := t.TempDir()
 		pipe := filepath.Join(p, "prefs.js")
 		mkPipe(t, pipe)
-		err := noHang(t, "EnableOffline", func() error { _, _, err := EnableOffline(p, "server1"); return err })
+		err := noHang(t, "EnableOffline", func() error { _, err := EnableOffline(p, "server1"); return err })
 		refusedNaming(t, err, func() bool { return stillPipe(pipe) && absent(pipe+".mailarchive-bak") }, "prefs.js", "a pipe")
 	})
 
@@ -92,7 +92,7 @@ func TestAPipeAtPrefsJsIsNeverWaitedOn(t *testing.T) {
 		p := profileWith(t, onePrefs, "imap.gmail.com")
 		pipe := filepath.Join(p, "prefs.js.mailarchive-bak")
 		mkPipe(t, pipe)
-		err := noHang(t, "EnableOffline", func() error { _, _, err := EnableOffline(p, "server1"); return err })
+		err := noHang(t, "EnableOffline", func() error { _, err := EnableOffline(p, "server1"); return err })
 		refusedNaming(t, err, func() bool {
 			return stillPipe(pipe) && bytesStill(filepath.Join(p, "prefs.js"), []byte(onePrefs))()
 		}, "prefs.js.mailarchive-bak", "a pipe")
