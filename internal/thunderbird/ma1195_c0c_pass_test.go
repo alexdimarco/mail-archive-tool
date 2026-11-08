@@ -5,6 +5,7 @@ package thunderbird
 
 import (
 	"bytes"
+	"errors"
 	"os"
 	"path/filepath"
 	"runtime"
@@ -164,47 +165,68 @@ func TestEnableOfflineActsOnTheLastLine(t *testing.T) {
 	})
 }
 
-// covers: MA-1195, R9
-// A commented-out line never counts (CON-03): //, # and /* */ (on one line or across lines),
-// for EnableOffline and for FindAccountForStore. Positive twin first: a live true line is
-// "already on".
+// covers: MA-1195, MA-1264, R9
+// A commented-out line never counts (CON-03), for EnableOffline and for FindAccountForStore. A //
+// comment, the one kind Thunderbird writes, is skipped and the account turned on. A #, /* */ (on
+// one line or across lines) comment is one Thunderbird never writes, so since the allow-list
+// (MA-1264) the file is one MailArchive cannot be sure of: it is refused, with prefs.js byte for
+// byte, and the commented line is never read as on either. Positive twin first: a live true line
+// is "already on".
 func TestACommentedLineNeverCounts(t *testing.T) {
 	p, _ := offProfile(t, on1+"\n")
 	if c, err := EnableOffline(p, "server1"); err != nil || c.Changed {
 		t.Fatalf("the positive twin: %+v, %v", c, err)
 	}
 
+	t.Run("//", func(t *testing.T) {
+		comment := "// " + on1 + "\n  //" + on1 + "\n"
+		p, store := offProfile(t, comment+off1+"\n")
+		c, err := EnableOffline(p, "server1")
+		if err != nil || !c.Changed {
+			t.Fatalf("changed %v, err %v", c.Changed, err)
+		}
+		if !accountOn(t, p, store) {
+			t.Fatal("after EnableOffline the account is still off (a comment was taken for the setting)")
+		}
+		b, _ := os.ReadFile(filepath.Join(p, "prefs.js"))
+		if !strings.Contains(string(b), comment) {
+			t.Fatalf("the comment was changed:\n%s", b)
+		}
+	})
 	for name, comment := range map[string]string{
-		"//":             "// " + on1 + "\n",
 		"#":              "# " + on1 + "\n",
 		"/* */ one line": "/* " + on1 + " */\n",
 		"/* */ across":   "/*\n" + on1 + "\n*/\n",
 	} {
 		t.Run(name, func(t *testing.T) {
 			p, store := offProfile(t, comment+off1+"\n")
+			prefsPath := filepath.Join(p, "prefs.js")
+			before, _ := os.ReadFile(prefsPath)
+			acct, err := FindAccountForStore(p, store)
+			var h *HandEditedError
+			if !errors.As(err, &h) || acct != nil {
+				t.Fatalf("FindAccountForStore: %+v, %v; want a HandEditedError (never on)", acct, err)
+			}
 			c, err := EnableOffline(p, "server1")
-			if err != nil || !c.Changed {
-				t.Fatalf("changed %v, err %v", c.Changed, err)
-			}
-			if !accountOn(t, p, store) {
-				t.Fatal("after EnableOffline the account is still off (a comment was taken for the setting)")
-			}
-			b, _ := os.ReadFile(filepath.Join(p, "prefs.js"))
-			if !strings.Contains(string(b), comment) {
-				t.Fatalf("the comment was changed:\n%s", b)
-			}
+			refusedNaming(t, err, func() bool {
+				return !c.Changed && bytesStill(prefsPath, before)() && absent(prefsPath+".mailarchive-bak")
+			}, "prefs.js", "changed nothing", "Thunderbird never writes")
 		})
 	}
 
 	t.Run("a commented folder setting", func(t *testing.T) {
 		// Counted, server2's commented line would make the store ambiguous.
+		folder := prefLine("mail.server.server2.directory-rel", "[ProfD]ImapMail/imap.gmail.com")
 		prefs := live("server1", "server2") +
 			imapServer("server1", "imap.gmail.com", "[ProfD]ImapMail/imap.gmail.com", "") +
-			imapServer("server2", "other.example.com", "", "") +
-			"/*\n" + prefLine("mail.server.server2.directory-rel", "[ProfD]ImapMail/imap.gmail.com") + "*/\n"
-		p := profileWith(t, prefs, "imap.gmail.com")
+			imapServer("server2", "other.example.com", "", "")
+		p := profileWith(t, prefs+"// "+folder, "imap.gmail.com")
 		if got := accountKey(t, p, "imap.gmail.com"); got != "server1" {
 			t.Fatalf("a commented directory-rel counted: %s", got)
+		}
+		p = profileWith(t, prefs+"/*\n"+folder+"*/\n", "imap.gmail.com")
+		if acct, err := FindAccountForStore(p, filepath.Join(p, "ImapMail", "imap.gmail.com")); acct != nil || err == nil {
+			t.Fatalf("a /* */ comment was read: %+v, %v", acct, err)
 		}
 	})
 }

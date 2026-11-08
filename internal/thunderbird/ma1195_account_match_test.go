@@ -187,11 +187,13 @@ func TestAnAccountIsNeverGuessed(t *testing.T) {
 	}
 }
 
-// covers: MA-1195
-// Store paths compare by whole path components after one normalising: Unicode NFC, "\" and
-// "/" alike (prefs.js doubles a Windows path's backslashes), and case-folded on Windows and
-// macOS only (§4.1 step 2's fold, used by C0c's match). Positive twin first: a path equals
-// itself on every OS.
+// covers: MA-1195, MA-1265
+// Store paths compare by whole path components after one normalising: Unicode NFC, on Windows "\"
+// and "/" alike (a doubled "\\" is one separator), and case-folded on Windows and macOS only (§4.1
+// step 2's fold, used by C0c's match). On macOS and Linux "\" is part of a name, so a Windows path
+// there is one odd name, equal to no path with slashes (MA-1265, the C0c pass round 4's R4-03;
+// before it these two rows read true on every OS). Positive twin first: a path equals itself on
+// every OS.
 func TestStorePathsCompareByWholeComponents(t *testing.T) {
 	all := []string{"linux", "darwin", "windows"}
 	for _, goos := range all {
@@ -206,8 +208,10 @@ func TestStorePathsCompareByWholeComponents(t *testing.T) {
 		{"/p/ImapMail/imap.gmail.com", "/p/ImapMail/imap.gmail.com-1", map[string]bool{"linux": false, "darwin": false, "windows": false}},
 		{"/p/ImapMail/mail.example.com", "/p/ImapMail/xmail.example.com", map[string]bool{"linux": false, "darwin": false, "windows": false}},
 		{"/p/ImapMail/imap.gmail.com/", "/p/ImapMail/imap.gmail.com", map[string]bool{"linux": true, "darwin": true, "windows": true}},
-		{`C:\\Users\\a\\ImapMail\\x`, `C:\Users\a\ImapMail\x`, map[string]bool{"linux": true, "darwin": true, "windows": true}},
-		{`C:\Users\a\ImapMail\x`, "C:/Users/a/ImapMail/x", map[string]bool{"linux": true, "darwin": true, "windows": true}},
+		{`C:\\Users\\a\\ImapMail\\x`, `C:\Users\a\ImapMail\x`, map[string]bool{"linux": false, "darwin": false, "windows": true}},
+		{`C:\Users\a\ImapMail\x`, "C:/Users/a/ImapMail/x", map[string]bool{"linux": false, "darwin": false, "windows": true}},
+		{`/p/ImapMail\x`, "/p/ImapMail/x", map[string]bool{"linux": false, "darwin": false, "windows": true}},
+		{`/p/ImapMail\x`, `/p/ImapMail\x`, map[string]bool{"linux": true, "darwin": true, "windows": true}},
 		{"/P/imapmail/IMAP.gmail.com", "/p/ImapMail/imap.gmail.com", map[string]bool{"linux": false, "darwin": true, "windows": true}},
 		{"/p/Caf\u00e9", "/p/Cafe\u0301", map[string]bool{"linux": true, "darwin": true, "windows": true}},
 		{"/p/a/../ImapMail/x", "/p/ImapMail/x", map[string]bool{"linux": true, "darwin": true, "windows": true}},

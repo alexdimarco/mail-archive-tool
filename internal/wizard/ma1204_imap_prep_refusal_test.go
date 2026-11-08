@@ -70,7 +70,7 @@ const imapGoesAhead = "This export goes ahead now with the mail already on this 
 // and no refusal.
 func TestYesPrepareSaysWhyAndDoesNotCarryOn(t *testing.T) {
 	_, store := prepProfile(t, prepOne)
-	if _, acct, refusal := imapPrepAccount(store); acct == nil || refusal != "" {
+	if _, acct, refusal := imapPrepAccount(store, nil); acct == nil || refusal != "" {
 		t.Fatalf("the positive twin: account %+v, refusal %q", acct, refusal)
 	}
 
@@ -80,7 +80,7 @@ func TestYesPrepareSaysWhyAndDoesNotCarryOn(t *testing.T) {
 			`user_pref("mail.account.account2.server", "server2");`+"\n"+
 			`user_pref("mail.server.server2.hostname", "imap.gmail.com");`+"\n")
 		before := filesIn(t, p)
-		_, acct, refusal := imapPrepAccount(store)
+		_, acct, refusal := imapPrepAccount(store, nil)
 		rc := 0
 		if refusal != "" && acct == nil {
 			rc = 1
@@ -101,7 +101,7 @@ func TestYesPrepareSaysWhyAndDoesNotCarryOn(t *testing.T) {
 			t.Fatal(err)
 		}
 		before := filesIn(t, p)
-		_, acct, refusal := imapPrepAccount(store)
+		_, acct, refusal := imapPrepAccount(store, nil)
 		rc := 0
 		if refusal != "" && acct == nil {
 			rc = 1
@@ -112,7 +112,7 @@ func TestYesPrepareSaysWhyAndDoesNotCarryOn(t *testing.T) {
 				// The C0c friction re-look's R6 (2026-11-08): no clipped "your IT", and the way to
 				// open the file on Windows, where double-clicking a .js file runs it.
 				"If you, or whoever looks after this computer, set this on purpose, leave it.",
-				`Otherwise: close Thunderbird and open the file below in a plain text editor (on Windows: start Notepad, choose File, then Open, and type or paste the whole path into "File name"; double-clicking the file does not open it for editing). Delete the line that contains mail.server.server1.offline_download (or change its false to true), and save.`,
+				`Otherwise: close Thunderbird and open the file below in a plain text editor (on Windows: start Notepad, choose File, then Open, and type the whole path below into "File name" (or press Ctrl+C on this message, paste it into Notepad, and copy the path from there); double-clicking the file does not open it for editing). Delete the line that contains mail.server.server1.offline_download (or change its false to true), and save.`,
 				"The file: "+userJS+"\n\n"+imapGoesAhead),
 			assure.Forbid("prefs.js"),
 			assure.NoSideEffect(func() bool { return filesIn(t, p) == before }))
@@ -124,7 +124,7 @@ func TestYesPrepareSaysWhyAndDoesNotCarryOn(t *testing.T) {
 		t.Fatal(err)
 	}
 	for _, wired := range []string{
-		"profile, acct, refusal := imapPrepAccount(store)\n\tif refusal != \"\" {",
+		"profile, acct, refusal := imapPrepAccount(store, *changed)\n\tif refusal != \"\" {",
 		"return false, noticeClosed(zenity.Warning(refusal, zenity.Title(appTitle)))",
 	} {
 		if !strings.Contains(string(src), wired) {

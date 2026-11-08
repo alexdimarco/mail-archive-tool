@@ -62,40 +62,43 @@ func TestAHandEditedLineIsNeverRewritten(t *testing.T) {
 	}
 }
 
-// covers: MA-1207, R9
-// Reading agrees with Thunderbird on a hand-edited line (R2-02): statements are read one by one,
-// so on a line with two settings each counts, and for a setting named twice the last statement
-// wins, as Thunderbird's parser applies them. A setting named on a line MailArchive cannot read as
-// settings is one it cannot be sure of: no account is given, and the error names the file and the
-// setting, never a guess. Positive twin first: one clean line.
+// covers: MA-1207, MA-1264, R9
+// Reading never disagrees with Thunderbird on a hand-edited line (R2-02): for a setting named twice
+// on lines of their own the last statement wins, as Thunderbird applies them. A line holding two
+// statements, or a statement with a comment beside it, is one Thunderbird never writes, so since
+// the allow-list (MA-1264; before it, these were read statement by statement) it is one
+// MailArchive cannot be sure of, like a line it cannot read: no account is given, and the error
+// names the file and the setting, never a guess. Positive twin first: one clean line, and the
+// last of two lines wins.
 func TestReadingAgreesWithThunderbirdOnAHandEditedLine(t *testing.T) {
 	p, store := offProfile(t, on1+"\n")
 	if !applied(t, p, store) {
 		t.Fatal("the positive twin reads off")
 	}
-	other := `user_pref("mail.server.server1.name", "keep me");`
-	for name, tc := range map[string]struct {
-		body string
-		want bool
-	}{
-		"on, then another setting":  {on1 + " " + other + "\n", true},
-		"off, then another setting": {off1 + " " + other + "\n", false},
-		"off, then on, on one line": {off1 + " " + on1 + "\n", true},
-		"on, then off, on one line": {on1 + off1 + "\n", false},
-		"a commented copy, then on": {"/* " + off1 + " */ " + on1 + "\n", true},
-	} {
-		t.Run(name, func(t *testing.T) {
-			p, store := offProfile(t, tc.body)
-			if got := applied(t, p, store); got != tc.want {
-				t.Fatalf("read %v; Thunderbird applies %v", got, tc.want)
-			}
-		})
+	for body, want := range map[string]bool{off1 + "\n" + on1 + "\n": true, on1 + "\n" + off1 + "\n": false} {
+		if p, store := offProfile(t, body); applied(t, p, store) != want {
+			t.Fatalf("the last of two lines does not win: %q", body)
+		}
 	}
+	other := `user_pref("mail.server.server1.name", "keep me");`
 
 	for name, tc := range map[string]struct{ file, body string }{
-		"prefs.js: no semicolon":     {"prefs.js", `user_pref("mail.server.server1.offline_download", true)` + "\n"},
-		"prefs.js: an unknown value": {"prefs.js", `user_pref("mail.server.server1.offline_download", yes);` + "\n"},
-		"user.js: no closing quote":  {"user.js", `user_pref("mail.server.server1.offline_download, true);` + "\n"},
+		"prefs.js: no semicolon":                  {"prefs.js", `user_pref("mail.server.server1.offline_download", true)` + "\n"},
+		"prefs.js: an unknown value":              {"prefs.js", `user_pref("mail.server.server1.offline_download", yes);` + "\n"},
+		"user.js: no closing quote":               {"user.js", `user_pref("mail.server.server1.offline_download, true);` + "\n"},
+		"prefs.js: on, then another setting":      {"prefs.js", on1 + " " + other + "\n"},
+		"prefs.js: off, then another setting":     {"prefs.js", off1 + " " + other + "\n"},
+		"prefs.js: off, then on, on one line":     {"prefs.js", off1 + " " + on1 + "\n"},
+		"prefs.js: on, then off, on one line":     {"prefs.js", on1 + off1 + "\n"},
+		"prefs.js: a commented copy, then on":     {"prefs.js", "/* " + off1 + " */ " + on1 + "\n"},
+		"user.js: on, with a comment after it":    {"user.js", on1 + " // set by IT\n"},
+		"user.js: two statements on a line":       {"user.js", other + " " + on1 + "\n"},
+		"user.js: a block comment around a line":  {"user.js", "/*\n" + off1 + "\n*/\n"},
+		"prefs.js: a hash comment hiding nothing": {"prefs.js", "# note\n"},
+		"prefs.js: a tab before the statement":    {"prefs.js", "\t" + on1 + "\n"},
+		"prefs.js: no space after the comma":      {"prefs.js", `user_pref("mail.server.server1.offline_download",true);` + "\n"},
+		"prefs.js: single quotes around the name": {"prefs.js", `user_pref('mail.server.server1.offline_download', true);` + "\n"},
+		"prefs.js: spaces inside the parentheses": {"prefs.js", `user_pref( "mail.server.server1.offline_download", true );` + "\n"},
 	} {
 		t.Run(name, func(t *testing.T) {
 			p, store := offProfile(t, "")

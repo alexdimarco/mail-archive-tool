@@ -2104,13 +2104,18 @@ func prepareThunderbird(ctx context.Context, inputs []string, auto, enableOfflin
 		}
 		return nil
 	}
-	// Every store is checked for every refusal before any is changed (MA-1208): Thunderbird
-	// running, no account it can tell, user.js keeping the setting off, a hand-edited line, a
-	// backup path that is not a regular file. So a refusal here means nothing was changed in
-	// this run. Only something that changes after the check (Thunderbird started, a write that
-	// fails, a file swapped in) can stop the run after an earlier store was changed: then the
-	// words say what was changed, never "changed nothing" (MA-1263), and the log names each
-	// change with its backup.
+	return prepareThunderbirdStores(ctx, stores, enableOffline, syncWait, logger)
+}
+
+// prepareThunderbirdStores is prepareThunderbird's work once the stores are found.
+//
+// Every store is checked for every refusal before any is changed (MA-1208): Thunderbird running,
+// no account it can tell, user.js keeping the setting off, a hand-edited line, a backup path that
+// is not a regular file. So a refusal here means nothing was changed in this run. Only something
+// that changes after the check (Thunderbird started, a write that fails, a file swapped in) can
+// stop the run after an earlier store was changed: then the words say what was changed, never
+// "changed nothing" (MA-1263), and the log names each change with its backup.
+func prepareThunderbirdStores(ctx context.Context, stores []string, enableOffline, syncWait bool, logger *log.Logger) error {
 	if enableOffline {
 		for _, store := range stores {
 			if profile, ok := thunderbird.FindProfileDir(store); ok {
@@ -2120,21 +2125,60 @@ func prepareThunderbird(ctx context.Context, inputs []string, auto, enableOfflin
 			}
 		}
 	}
+	// Then every change, with Thunderbird closed throughout, then one "START Thunderbird", then
+	// every wait (MA-1266, the C0c pass round 4's R4-04): with -sync-wait and two stores, a
+	// person who starts Thunderbird at the first store's wait must never find the second store
+	// refused for it.
 	var changed []string
+	stop := func(err error) error {
+		if len(changed) > 0 {
+			return &stoppedAfterChange{changed: changed, err: err}
+		}
+		return err
+	}
+	var waits []string
+	enabled := 0
 	for _, store := range stores {
-		if err := prepareStoreNoting(ctx, store, enableOffline, syncWait, logger, &changed); err != nil {
-			if len(changed) > 0 {
-				return &stoppedAfterChange{changed: changed, err: err}
+		if _, ok := thunderbird.FindProfileDir(store); !ok {
+			if enableOffline {
+				// R10's words (the friction final look): the export still goes ahead, exit 0.
+				logger.Printf("-enable-offline did nothing for %s: MailArchive could not find the Thunderbird profile this mail belongs to (the mail may have been copied out of Thunderbird), so it changed no Thunderbird setting. The export goes ahead with the mail as it is.", store)
+			} else {
+				logger.Printf("Could not find the Thunderbird profile for %s; skipping prep.", store)
 			}
-			return err
+			continue
+		}
+		waits = append(waits, store)
+		if !enableOffline {
+			continue
+		}
+		if err := enableStoreNoting(store, logger, &changed); err != nil {
+			return stop(err)
+		}
+		enabled++
+	}
+	if enabled > 0 {
+		each := "the account"
+		if enabled > 1 {
+			each = "each account"
+		}
+		logger.Printf("Next: START Thunderbird, then right-click %s -> Download/Sync Now.", each)
+		logger.Printf("Then run again — an incremental run re-examines and fills mail that had no content yet (no -mode full needed).")
+	}
+	if syncWait {
+		for _, store := range waits {
+			if err := waitForSync(ctx, store, logger); err != nil {
+				return stop(err)
+			}
 		}
 	}
 	return nil
 }
 
 // stoppedAfterChange is a store's refusal or failed write after an earlier store of the run was
-// changed (MA-1263): its words say what was changed and that the change stays, then why the run
-// stopped, in place of the refusal's "changed nothing". Its code is the refusal's.
+// changed (MA-1263): its words say what was changed and that the change is kept, then why the run
+// stopped, in place of the refusal's "changed nothing" (the friction final look's Q3). Its code is
+// the refusal's.
 type stoppedAfterChange struct {
 	changed []string // each change, "<account> (folder <f>, <server>), in the Thunderbird profile <p>"
 	err     error
@@ -2144,23 +2188,26 @@ func (e *stoppedAfterChange) Unwrap() error { return e.err }
 
 func (e *stoppedAfterChange) Error() string {
 	why := strings.TrimPrefix(e.err.Error(), "-enable-offline changed nothing, and nothing was exported: ")
-	return "-enable-offline stopped, and nothing was exported. Before it stopped, it changed prefs.js to turn on offline download for " +
-		strings.Join(e.changed, "; and for ") + "; that change stays (the log above says where prefs.js was backed up). Why it stopped: " + why
-}
-
-func prepareStore(ctx context.Context, store string, enableOffline, syncWait bool, logger *log.Logger) error {
-	return prepareStoreNoting(ctx, store, enableOffline, syncWait, logger, nil)
-}
-
-// prepareStoreNoting is prepareStore, adding to changed (when not nil) the store's change when it
-// wrote prefs.js.
-func prepareStoreNoting(ctx context.Context, store string, enableOffline, syncWait bool, logger *log.Logger, changed *[]string) error {
-	profile, ok := thunderbird.FindProfileDir(store)
-	if !ok {
-		logger.Printf("Could not find the Thunderbird profile for %s; skipping prep.", store)
-		return nil
+	kept := "That change is kept: it is what -enable-offline is for, and running the same command again leaves it as it is"
+	if len(e.changed) > 1 {
+		kept = "Those changes are kept: they are what -enable-offline is for, and running the same command again leaves them as they are"
 	}
-	if enableOffline {
+	return "-enable-offline stopped, and nothing was exported. Before it stopped, it turned on offline download for " +
+		strings.Join(e.changed, "; and for ") + ", by changing prefs.js. " + kept +
+		" (the log above says where the old prefs.js was backed up). Why it stopped: " + why
+}
+
+// prepareStore is prepareThunderbirdStores for one store.
+func prepareStore(ctx context.Context, store string, enableOffline, syncWait bool, logger *log.Logger) error {
+	return prepareThunderbirdStores(ctx, []string{store}, enableOffline, syncWait, logger)
+}
+
+// enableStoreNoting turns on offline download for store's account (store has a profile), adding
+// to changed the store's change when it wrote prefs.js. It is checked again first: Thunderbird
+// may have been started since every store was checked.
+func enableStoreNoting(store string, logger *log.Logger, changed *[]string) error {
+	profile, _ := thunderbird.FindProfileDir(store)
+	{
 		// Thunderbird running, no account it can tell, user.js keeping the setting off, a
 		// hand-edited line or a backup path refused: a refusal with the words, nothing changed
 		// (MA-1204, MA-1205, MA-1207, MA-1208; the code stays the command line's refusal code, 1).
@@ -2178,6 +2225,11 @@ func prepareStoreNoting(ctx context.Context, store string, enableOffline, syncWa
 			logger.Printf("Offline download already enabled for %s.", who)
 		default:
 			c, err := thunderbird.EnableOffline(profile, acct.ServerKey)
+			var we *thunderbird.WriteError
+			if errors.As(err, &we) {
+				// The friction final look's Q4: what failed, and the way on.
+				return fmt.Errorf("-enable-offline changed nothing, and nothing was exported: MailArchive could not write prefs.js or its backup in the Thunderbird profile %s (%w). Check that the folder is not read-only and that the disk has room, then run the same command again.", profile, err)
+			}
 			if err != nil {
 				return err
 			}
@@ -2199,12 +2251,6 @@ func prepareStoreNoting(ctx context.Context, store string, enableOffline, syncWa
 				logger.Printf("Enabled offline download for %s%s", who, saved)
 			}
 		}
-		logger.Printf("Next: START Thunderbird, then right-click the account -> Download/Sync Now.")
-		logger.Printf("Then run again — an incremental run re-examines and fills mail that had no content yet (no -mode full needed).")
-	}
-
-	if syncWait {
-		return waitForSync(ctx, store, logger)
 	}
 	return nil
 }

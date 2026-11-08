@@ -149,69 +149,200 @@ type prefStmt struct {
 	line       int
 }
 
-// prefsText is a prefs.js or user.js read statement by statement (MA-1207): a line inside a /* */
-// comment, or after // or # on its line, never counts (the C0c pass's CON-03), a comment marker
-// inside a quoted value is part of the value, and a line may hold several statements, each of
-// which counts (round 2's R2-02).
+// prefsText is a prefs.js or user.js read line by line, by an allow-list (MA-1264, the C0c pass
+// round 4's R4-01 and R4-02, which supersedes MA-1261's "refuse what it cannot parse"): the file
+// reads with certainty only when every line is one of the shapes Thunderbird itself writes
+// (Preferences.cpp's PreferencesWriter: its "//" header, then one `user_pref(NAME, VALUE);` per
+// line, NAME and string VALUEs through StrEscape):
 //
-// It is read strictly (MA-1261, the C0c pass round 3's R3-01 to R3-04): Thunderbird writes only
-// whole user_pref("name", value); statements, with no backslash in a name and no value running
-// past its line, and comments. Anything else (a NUL byte, a statement it cannot parse or missing
-// its semicolon, a string value spanning lines, a pref( or sticky_pref( statement, a name with a
-// backslash) means the file was changed outside Thunderbird, and Thunderbird's own parser reads
-// such text in ways MailArchive does not model (it ignores pref( in these files, decodes escapes in
-// names, stops at a NUL, skips ahead to the next ";" after an error, lets a string run across
-// lines). So such a file is one MailArchive cannot read with certainty: uncertainLine says where,
-// and nothing is read from it as on, nor changed.
+//   - an empty line (spaces only);
+//   - a // comment, after leading spaces only;
+//   - exactly `user_pref("NAME", VALUE);` between optional spaces, NAME holding no backslash and
+//     VALUE true, false, a whole number Thunderbird can hold (32 bits, an optional minus) or a
+//     double-quoted string whose only escapes are \\, \", \n and \r.
+//
+// The lines end all in LF or all in CRLF, with no other carriage return (CR) anywhere, no NUL
+// byte and no byte-order mark. Inside a quoted NAME or VALUE any other byte stands for itself.
+//
+// Why each shape is certain, from libpref's parser (lib.rs): a // comment runs to the line's end
+// (it ends at LF or CR, and the file holds no lone CR); in a quoted string only the quote, a
+// backslash, LF, CR and NUL are special, so with LF, CR and NUL absent and every backslash one of
+// the four escapes (each one character after the backslash, never the quote that would close the
+// string), the string ends at the same quote for both readers. \n and \r are allowed because
+// StrEscape writes them for a value holding a line break (a signature, say). Anything else
+// anywhere (a /* */ or # comment, two statements on a line, a statement with a comment after it,
+// single quotes, other spacing, a tab, \u or \x escapes, a pref( or sticky_pref( statement) is a
+// file changed outside Thunderbird: uncertainLine says where, and nothing is read from it as on,
+// nor changed.
 type prefsText struct {
+	// lines are the file split at LF, each with its CR when the file ends its lines in CRLF.
 	lines []string
 	stmts []prefStmt // in file order
 	// uncertainLine is the first line (from 0) MailArchive cannot read with certainty, or -1;
-	// uncertainWhat says what is there, for the command line's words.
+	// uncertainWhat says what is there, for the command line's words ("holds …" or "has …").
 	uncertainLine int
 	uncertainWhat string
-	// alone are the lines that hold exactly one user_pref statement and nothing else but spaces
-	// and the line ending, with no comment on them: the only lines EnableOffline rewrites (R2-01).
-	alone map[int]bool
-	// openAtEnd: a /* comment is still open at the end, so a line added there would not count.
-	openAtEnd bool
 }
+
+// The command line's naming of what is on a line MailArchive cannot read with certainty, each with
+// its verb: "prefs.js line 3 holds a NUL (zero) byte, …".
+const (
+	whatNUL      = "holds a NUL (zero) byte, where Thunderbird stops reading the file"
+	whatBOM      = "holds a byte-order mark (BOM) at the start of the file"
+	whatLoneCR   = "holds a carriage return (CR) on its own, which Thunderbird reads as the end of a line"
+	whatMixedEOL = "ends in a different way from the file's other lines (LF and CRLF mixed)"
+	whatNotWhole = `holds text that is not a whole user_pref("name", value); statement (often a missing ; at its end)`
+	whatSpanning = "holds a quoted value that goes on past the end of its line"
+	whatNameBS   = "has a setting name with a backslash (an escape code) in it"
+	whatEscape   = `has a quoted value with an escape code Thunderbird never writes (a backslash not followed by \, ", n or r)`
+	whatBigInt   = "holds a number too large for Thunderbird, which skips such a line"
+	whatComment  = "holds a comment Thunderbird never writes (its own comments are lines that start with //)"
+	whatMore     = "holds more after its user_pref statement (another statement or a comment)"
+)
 
 // parsePrefsText reads content (a prefs.js or user.js) as prefsText.
 func parsePrefsText(content string) *prefsText {
-	t := &prefsText{lines: strings.Split(content, "\n"), uncertainLine: -1, alone: map[int]bool{}}
+	t := &prefsText{lines: strings.Split(content, "\n"), uncertainLine: -1}
 	unsure := func(i int, what string) {
 		if t.uncertainLine < 0 {
 			t.uncertainLine, t.uncertainWhat = i, what
 		}
 	}
-	open := false
-	for i, raw := range t.lines {
-		if strings.IndexByte(raw, 0) >= 0 {
-			unsure(i, "a NUL (zero) byte, where Thunderbird stops reading the file")
+	if strings.HasPrefix(content, "\xef\xbb\xbf") {
+		unsure(0, whatBOM)
+	}
+	// The first line ending decides: all LF, or all CRLF.
+	crlf := false
+	if i := strings.IndexByte(content, '\n'); i > 0 && content[i-1] == '\r' {
+		crlf = true
+	}
+	for i, line := range t.lines {
+		if crlf && i < len(t.lines)-1 {
+			if !strings.HasSuffix(line, "\r") {
+				unsure(i, whatMixedEOL)
+				continue
+			}
+			line = line[:len(line)-1]
+		}
+		switch {
+		case strings.IndexByte(line, 0) >= 0:
+			unsure(i, whatNUL)
+			continue
+		case strings.IndexByte(line, '\r') >= 0:
+			unsure(i, whatLoneCR)
 			continue
 		}
-		code, openNow, inQuote := codeOf(raw, open)
-		open = openNow
-		if inQuote {
-			unsure(i, "a quoted value that goes on past the end of its line")
-			continue
-		}
-		stmts, why := parseStatements(code)
-		if why != "" {
+		s, ok, why := allowedLine(line)
+		switch {
+		case why != "":
 			unsure(i, why)
-			continue
-		}
-		for _, s := range stmts {
+		case ok:
 			s.line = i
 			t.stmts = append(t.stmts, s)
 		}
-		// code == raw: nothing on the line was a comment (a comment open from an earlier line
-		// takes at least its closing "*/" out of the code).
-		t.alone[i] = len(stmts) == 1 && code == raw
 	}
-	t.openAtEnd = open
 	return t
+}
+
+// allowedLine reads one line (no LF, CR or NUL in it) by the allow-list: ok when it is a
+// statement (s), why "" with ok false when it is empty or a // comment, and otherwise why is what
+// is there.
+func allowedLine(line string) (s prefStmt, ok bool, why string) {
+	code := strings.Trim(line, " ")
+	switch {
+	case code == "", strings.HasPrefix(code, "//"):
+		return s, false, ""
+	case strings.HasPrefix(code, "pref(") || strings.HasPrefix(code, "pref ("):
+		return s, false, "holds a pref( statement, which Thunderbird does not apply in prefs.js or user.js"
+	case strings.HasPrefix(code, "sticky_pref(") || strings.HasPrefix(code, "sticky_pref ("):
+		return s, false, "holds a sticky_pref( statement, which Thunderbird does not apply in prefs.js or user.js"
+	case strings.HasPrefix(code, "#") || strings.HasPrefix(code, "/*"):
+		return s, false, whatComment
+	}
+	rest, found := strings.CutPrefix(code, `user_pref("`)
+	if !found {
+		return s, false, whatNotWhole
+	}
+	// The name: up to the next quote, with no backslash in it (Thunderbird decodes escapes in a
+	// name; MailArchive does not guess at them).
+	end := strings.IndexByte(rest, '"')
+	if bs := strings.IndexByte(rest, '\\'); bs >= 0 && (end < 0 || bs < end) {
+		return s, false, whatNameBS
+	}
+	if end <= 0 {
+		return s, false, whatNotWhole
+	}
+	s.key, rest = rest[:end], rest[end+1:]
+	if rest, found = strings.CutPrefix(rest, ", "); !found {
+		return s, false, whatNotWhole
+	}
+	if strings.HasPrefix(rest, `"`) {
+		n, why := quotedLen(rest)
+		if why != "" {
+			return s, false, why
+		}
+		s.value, rest = rest[:n], rest[n:]
+	} else {
+		n := 0
+		for n < len(rest) && (rest[n] == '-' || rest[n] >= '0' && rest[n] <= '9' || rest[n] >= 'a' && rest[n] <= 'z') {
+			n++
+		}
+		s.value, rest = rest[:n], rest[n:]
+		if why := bareValue(s.value); why != "" {
+			return s, false, why
+		}
+	}
+	switch {
+	case rest == ");":
+		return s, true, ""
+	case strings.HasPrefix(rest, ");"):
+		return s, false, whatMore
+	default:
+		return s, false, whatNotWhole
+	}
+}
+
+// quotedLen is the length of the double-quoted string v starts with, its quotes included, when
+// every backslash in it is one of the escapes StrEscape writes (\\, \", \n, \r); why says what is
+// wrong otherwise.
+func quotedLen(v string) (int, string) {
+	for i := 1; i < len(v); i++ {
+		switch v[i] {
+		case '"':
+			return i + 1, ""
+		case '\\':
+			if i+1 >= len(v) {
+				return 0, whatSpanning
+			}
+			if strings.IndexByte(`\"nr`, v[i+1]) < 0 {
+				return 0, whatEscape
+			}
+			i++
+		}
+	}
+	return 0, whatSpanning
+}
+
+// bareValue is "" when v is an unquoted value as Thunderbird writes one: true, false, or a whole
+// number with an optional minus that a 32-bit setting holds (lib.rs drops a larger one and skips
+// to the next ";"); otherwise what is there.
+func bareValue(v string) string {
+	if v == "true" || v == "false" {
+		return ""
+	}
+	digits := strings.TrimPrefix(v, "-")
+	if digits == "" {
+		return whatNotWhole
+	}
+	for _, c := range digits {
+		if c < '0' || c > '9' {
+			return whatNotWhole
+		}
+	}
+	if n, err := strconv.ParseInt(v, 10, 64); err != nil || n < -1<<31 || n > 1<<31-1 {
+		return whatBigInt
+	}
+	return ""
 }
 
 // values are the settings as Thunderbird applies them: for a name set more than once, the last
@@ -222,151 +353,6 @@ func (t *prefsText) values() map[string]string {
 		out[s.key] = s.value
 	}
 	return out
-}
-
-// parseStatements reads code (one line, its comments taken out) as a run of whole statements,
-// each `user_pref("name", value);` with spaces allowed between the parts: the name a quoted
-// string with no backslash in it; the value a quoted string, true, false or a whole number. why
-// is "" when it reads, and otherwise what is there that MailArchive cannot read with certainty.
-func parseStatements(code string) (out []prefStmt, why string) {
-	const notWhole = `text that is not a whole user_pref("name", value); statement`
-	i := 0
-	space := func() {
-		for i < len(code) && strings.IndexByte(" \t\r\f\v", code[i]) >= 0 {
-			i++
-		}
-	}
-	expect := func(c byte) bool {
-		space()
-		if i < len(code) && code[i] == c {
-			i++
-			return true
-		}
-		return false
-	}
-	quoted := func() (string, bool) {
-		space()
-		if i >= len(code) || (code[i] != '"' && code[i] != '\'') {
-			return "", false
-		}
-		q, start := code[i], i
-		for i++; i < len(code); i++ {
-			switch code[i] {
-			case '\\':
-				i++
-			case q:
-				i++
-				return code[start:i], true
-			}
-		}
-		return "", false
-	}
-	for {
-		space()
-		if i == len(code) {
-			return out, ""
-		}
-		start := i
-		for i < len(code) && (code[i] == '_' || code[i] >= 'a' && code[i] <= 'z') {
-			i++
-		}
-		switch fn := code[start:i]; {
-		case fn == "pref" || fn == "sticky_pref":
-			// Thunderbird ignores these in prefs.js and user.js (default files only).
-			return nil, "a " + fn + "( statement, which Thunderbird does not apply in prefs.js or user.js"
-		case fn != "user_pref" || !expect('('):
-			return nil, notWhole
-		}
-		key, kok := quoted()
-		if !kok || len(key) < 3 || !expect(',') {
-			return nil, notWhole
-		}
-		if strings.IndexByte(key, '\\') >= 0 {
-			// Thunderbird decodes escape codes in a name; MailArchive does not guess at them.
-			return nil, "a setting name holding a backslash (an escape code)"
-		}
-		space()
-		var value string
-		if i < len(code) && (code[i] == '"' || code[i] == '\'') {
-			v, vok := quoted()
-			if !vok {
-				return nil, notWhole
-			}
-			value = v
-		} else {
-			vs := i
-			for i < len(code) && (code[i] == '+' || code[i] == '-' || code[i] >= '0' && code[i] <= '9' || code[i] >= 'a' && code[i] <= 'z') {
-				i++
-			}
-			value = code[vs:i]
-			if !bareValue(value) {
-				return nil, notWhole
-			}
-		}
-		if !expect(')') || !expect(';') {
-			return nil, notWhole
-		}
-		out = append(out, prefStmt{key: key[1 : len(key)-1], value: value})
-	}
-}
-
-// bareValue reports whether v is an unquoted value Thunderbird's parser accepts: true, false, or
-// a whole number with an optional sign.
-func bareValue(v string) bool {
-	if v == "true" || v == "false" {
-		return true
-	}
-	digits := strings.TrimLeft(v, "+-")
-	if digits == "" || len(v)-len(digits) > 1 {
-		return false
-	}
-	for _, c := range digits {
-		if c < '0' || c > '9' {
-			return false
-		}
-	}
-	return true
-}
-
-// codeOf is line with its comments taken out, whether a /* comment is still open at its end
-// (open says one was open at its start), and whether a quoted value is still open at its end,
-// which Thunderbird would read on into the next line (MA-1261).
-func codeOf(line string, open bool) (string, bool, bool) {
-	var b strings.Builder
-	var quote byte
-	for i := 0; i < len(line); i++ {
-		c := line[i]
-		next := byte(0)
-		if i+1 < len(line) {
-			next = line[i+1]
-		}
-		switch {
-		case open:
-			if c == '*' && next == '/' {
-				open = false
-				i++
-			}
-		case quote != 0:
-			b.WriteByte(c)
-			if c == '\\' && next != 0 {
-				b.WriteByte(next)
-				i++
-			} else if c == quote {
-				quote = 0
-			}
-		case c == '"' || c == '\'':
-			quote = c
-			b.WriteByte(c)
-		case c == '#' || (c == '/' && next == '/'):
-			return b.String(), false, false
-		case c == '/' && next == '*':
-			open = true
-			i++
-		default:
-			b.WriteByte(c)
-		}
-	}
-	return b.String(), open, quote != 0
 }
 
 // readPrefsFile reads one settings file of the profile as a planted file may be (C0c,
@@ -436,12 +422,31 @@ func readPrefs(profileDir string) (prefSettings, map[string]string, error) {
 	return prefSettings{vals: vals, prefs: pt, user: ut}, user, nil
 }
 
-// unquote is a string value without its quotes.
+// unquote is a string value without its quotes, its escapes decoded as Thunderbird decodes them:
+// \\, \", \n and \r, the only ones a file that reads with certainty holds (MA-1264). So a Windows
+// path written C:\\Users is C:\Users, and on macOS and Linux a backslash in a value is the
+// backslash it stands for (MA-1265).
 func unquote(v string) string {
 	if len(v) >= 2 && (v[0] == '"' || v[0] == '\'') && v[len(v)-1] == v[0] {
-		return v[1 : len(v)-1]
+		v = v[1 : len(v)-1]
+	} else {
+		v = strings.Trim(v, `"`)
 	}
-	return strings.Trim(v, `"`)
+	if strings.IndexByte(v, '\\') < 0 {
+		return v
+	}
+	var b strings.Builder
+	for i := 0; i < len(v); i++ {
+		if v[i] == '\\' && i+1 < len(v) {
+			if d, ok := map[byte]byte{'\\': '\\', '"': '"', 'n': '\n', 'r': '\r'}[v[i+1]]; ok {
+				b.WriteByte(d)
+				i++
+				continue
+			}
+		}
+		b.WriteByte(v[i])
+	}
+	return b.String()
 }
 
 // FindAccountForStore locates the account whose own store folder is storeDir (C0c,
@@ -516,20 +521,22 @@ func matchAccountIn(s prefSettings, profile, store, goos string) (*Account, erro
 		if acct != nil {
 			key = "mail.server." + acct.ServerKey + ".offline_download"
 		}
-		return nil, &HandEditedError{File: file, Line: line, Key: key, Why: whyUnread, What: what}
+		return nil, &HandEditedError{File: file, Line: line, Key: key, What: what}
 	}
 	return acct, err
 }
 
 // matchWith is the match itself, reading every setting through get (or val, its value alone).
 func matchWith(get func(string) (string, bool), val func(string) string, profile, store, goos string) (*Account, error) {
-	parts := components(store)
+	parts := components(store, goos)
 	name, direct := "", false
 	if len(parts) > 0 {
 		name = parts[len(parts)-1]
 		// The hostname tells an account only for a store directly in <profile>/ImapMail/, where
 		// Thunderbird makes one (MA-1262, the C0c pass round 3's R3-05): a deeper store, such as a
 		// copied profile's under Mail/ or ImapMail/, is matched by its own folder settings only.
+		// "Directly" is by goos's path rules: on macOS and Linux a folder named
+		// "ImapMail\imap.gmail.com" in the profile folder is not in ImapMail/ (MA-1265, R4-03).
 		direct = samePath(strings.Join(parts[:len(parts)-1], "/"), profile+"/ImapMail", goos)
 	}
 	servers := liveServers(val)
@@ -552,7 +559,7 @@ func matchWith(get func(string) (string, bool), val func(string) string, profile
 				byFolder = append(byFolder, key)
 				break
 			}
-			if fp := components(f); len(fp) == 0 || !sameComponent(fp[len(fp)-1], name, goos) {
+			if fp := components(f, goos); len(fp) == 0 || !sameComponent(fp[len(fp)-1], name, goos) {
 				ownsName = false
 			}
 		}
@@ -613,11 +620,12 @@ func liveServers(val func(string) string) []string {
 }
 
 // samePath reports whether a and b name the same folder, compared by whole path components
-// after one normalising (completeness design §4.1 step 2's fold): Unicode NFC; "\" and "/"
-// alike, so a prefs.js value with its backslashes doubled matches the native path; "." and
-// ".." resolved; and case-folded on Windows and macOS only. An empty path matches nothing.
+// after one normalising (completeness design §4.1 step 2's fold): Unicode NFC; on Windows "\"
+// and "/" alike (a doubled "\\" is one separator), while on macOS and Linux "\" is part of a name
+// (MA-1265, the C0c pass round 4's R4-03); "." and ".." resolved; and case-folded on Windows and
+// macOS only. An empty path matches nothing.
 func samePath(a, b, goos string) bool {
-	ca, cb := components(a), components(b)
+	ca, cb := components(a, goos), components(b, goos)
 	if len(ca) == 0 || len(ca) != len(cb) {
 		return false
 	}
@@ -629,13 +637,17 @@ func samePath(a, b, goos string) bool {
 	return true
 }
 
-// components splits p as samePath compares it. A leading "" stands for the root, so an
-// absolute path never equals a relative one.
-func components(p string) []string {
+// components splits p as samePath compares it on goos: at "/", and on Windows at "\" too. A
+// leading "" stands for the root, so an absolute path never equals a relative one.
+func components(p, goos string) []string {
 	if p == "" {
 		return nil
 	}
-	parts := strings.Split(path.Clean(strings.ReplaceAll(norm.NFC.String(p), `\`, "/")), "/")
+	p = norm.NFC.String(p)
+	if goos == "windows" {
+		p = strings.ReplaceAll(p, `\`, "/")
+	}
+	parts := strings.Split(path.Clean(p), "/")
 	out := parts[:0]
 	for i, s := range parts {
 		if s != "" || i == 0 {
@@ -725,14 +737,13 @@ type OfflineChange struct {
 //     file says one thing (the C0c pass's CON-02, CON-03); with none it adds one. An account
 //     already on is left as it is, with nothing written.
 //   - It changes nothing, and reports nothing as already on, unless prefs.js and user.js both
-//     read with certainty (MA-1261): a line Thunderbird never writes, anywhere in either file,
-//     is a HandEditedError.
-//   - It rewrites only a line that holds that one user_pref statement and nothing else but
-//     spaces and the line ending (MA-1207, round 2's R2-01 and R2-02). When a statement for the
-//     setting shares its line with anything else (another statement, a comment, a commented
-//     copy), or when a comment left open at the end would hide an added line, it changes
-//     nothing: a HandEditedError.
+//     read with certainty (MA-1261, by the allow-list of MA-1264): a line Thunderbird never
+//     writes, anywhere in either file, is a HandEditedError.
+//   - So it rewrites only a line that holds that one user_pref statement and nothing else but
+//     spaces and the line ending (MA-1207, round 2's R2-01 and R2-02): the allow-list reads no
+//     other line as a statement.
 //   - The file keeps its own line ending: CRLF stays CRLF (CON-05).
+//   - A failed write of the backup or of prefs.js is a WriteError.
 //   - When user.js sets the setting, Thunderbird applies it over prefs.js at every start, so
 //     nothing is changed: on is "already on", anything else a UserJSError (CON-06).
 //   - The backup prefs.js.mailarchive-bak is written once and then kept: a later change
@@ -749,14 +760,25 @@ func EnableOffline(profileDir, serverKey string) (OfflineChange, error) {
 	}
 	c := OfflineChange{Backup: plan.backup}
 	if c.BackupKept, err = backupOnce(c.Backup, plan.data); err != nil {
-		return OfflineChange{}, fmt.Errorf("back up prefs.js: %w", err)
+		return OfflineChange{}, &WriteError{Profile: profileDir, Err: fmt.Errorf("back up prefs.js: %w", err)}
 	}
 	if err := writeOverRegular(plan.prefsPath, []byte(plan.content)); err != nil {
-		return OfflineChange{}, fmt.Errorf("write prefs.js: %w", err)
+		return OfflineChange{}, &WriteError{Profile: profileDir, Err: fmt.Errorf("write prefs.js: %w", err)}
 	}
 	c.Changed = true
 	return c, nil
 }
+
+// WriteError is EnableOffline's failed write of prefs.js or its backup, after every check passed
+// (a read-only folder, a full disk, a file swapped in). Its Error is the raw error ("back up
+// prefs.js: …" or "write prefs.js: …"); the command line words it (the friction final look's Q4).
+type WriteError struct {
+	Profile string
+	Err     error
+}
+
+func (e *WriteError) Error() string { return e.Err.Error() }
+func (e *WriteError) Unwrap() error { return e.Err }
 
 // CheckOffline runs every check EnableOffline makes before it writes, and writes nothing: its
 // error is the refusal EnableOffline would give (a UserJSError, a HandEditedError, or prefs.js
@@ -782,20 +804,15 @@ func planOffline(profileDir, serverKey string) (*offlinePlan, error) {
 		return nil, err
 	}
 	key := "mail.server." + serverKey + ".offline_download"
-	hand := func(file string, line int, why handWhy) *HandEditedError {
-		return &HandEditedError{File: file, Line: line, Key: key, Why: why,
-			Host: unquote(pt.values()["mail.server."+serverKey+".hostname"]), Place: placeFor(profileDir)}
-	}
 	ut, err := readUserJS(profileDir)
 	if err != nil {
 		return nil, err
 	}
-	// Strict reading (MA-1261): nothing is read as on, and nothing changed, unless both files
-	// read with certainty.
+	// Strict reading (MA-1261, MA-1264): nothing is read as on, and nothing changed, unless both
+	// files read with certainty.
 	if file, line, what := firstUncertain(pt, ut); file != "" {
-		h := hand(file, line, whyUnread)
-		h.What = what
-		return nil, h
+		return nil, &HandEditedError{File: file, Line: line, Key: key, What: what,
+			Host: unquote(pt.values()["mail.server."+serverKey+".hostname"]), Place: placeFor(profileDir)}
 	}
 	if v, set := ut.values()[key]; set {
 		if v == "true" {
@@ -822,15 +839,11 @@ func planOffline(profileDir, serverKey string) (*offlinePlan, error) {
 	case len(mine) > 0:
 		lines := append([]string(nil), pt.lines...)
 		for _, s := range mine {
-			if !pt.alone[s.line] {
-				return nil, hand("prefs.js", s.line+1, whyShared)
-			}
-			// The line is that one statement between spaces: its whole text is replaced.
-			lines[s.line] = strings.Replace(lines[s.line], strings.TrimSpace(lines[s.line]), trueLine, 1)
+			// The allow-list reads a statement only on a line that holds it alone, between
+			// spaces (MA-1264): its text is replaced, the spaces and a CRLF's CR kept.
+			lines[s.line] = strings.Replace(lines[s.line], strings.Trim(lines[s.line], " \r"), trueLine, 1)
 		}
 		content = strings.Join(lines, "\n")
-	case pt.openAtEnd:
-		return nil, hand("prefs.js", 0, whyOpenAtEnd)
 	default:
 		if content != "" && !strings.HasSuffix(content, "\n") {
 			content += eol

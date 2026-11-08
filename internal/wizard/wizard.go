@@ -848,12 +848,13 @@ func localArchiveFlowHooks(chosen func(out string), finished func(), check func(
 	//     Outlook .ost gets the equivalent guidance.
 	prepared := false
 	ostNoted := false
+	var changed []string // the accounts this run's Yes, prepare changed (MA-1267)
 	for _, in := range choice.inputs {
 		fi, statErr := os.Stat(in)
 		switch {
 		case statErr != nil:
 		case fi.IsDir() && thunderbird.IsImapStore(in):
-			p, err := prepareThunderbirdGUI(in)
+			p, err := prepareThunderbirdGUI(in, &changed)
 			if err != nil {
 				return err
 			}
@@ -1549,8 +1550,10 @@ const imapPrepQuestion = "This looks like an IMAP account.\n\n" +
 // prepareThunderbirdGUI offers, for a Thunderbird IMAP account, to enable
 // offline download and guide a full sync so nothing is missed. It returns
 // whether preparation was done (in which case the export should run in Full
-// mode). Non-IMAP stores need no preparation.
-func prepareThunderbirdGUI(store string) (bool, error) {
+// mode). Non-IMAP stores need no preparation. changed holds the accounts this wizard run has
+// already changed, and gets this store's account when it changes prefs.js, so a later refusal in
+// the same run says what was changed (MA-1267).
+func prepareThunderbirdGUI(store string, changed *[]string) (bool, error) {
 	if !thunderbird.IsImapStore(store) {
 		return false, nil
 	}
@@ -1568,7 +1571,7 @@ func prepareThunderbirdGUI(store string) (bool, error) {
 		return false, choice
 	}
 
-	profile, acct, refusal := imapPrepAccount(store)
+	profile, acct, refusal := imapPrepAccount(store, *changed)
 	if refusal != "" {
 		// Nothing was changed, so the export is not prepared: it goes ahead with what is on
 		// this computer, in its usual mode, and says so (MA-1204). Closing the warning goes on
@@ -1594,11 +1597,13 @@ func prepareThunderbirdGUI(store string) (bool, error) {
 	}
 
 	if acct != nil && !acct.OfflineDownload {
-		if _, e := thunderbird.EnableOffline(profile, acct.ServerKey); e != nil {
+		c, e := thunderbird.EnableOffline(profile, acct.ServerKey)
+		if e != nil {
 			// Checked before the quit (imapPrepAccount), so only a change since then or a failed
 			// write lands here: plain words, and the export goes ahead, closed or not (MA-1209).
-			return false, noticeClosed(zenity.Error(prepFailWords(e, profile, acct.Hostname)+imapNotPrepared, zenity.Title(appTitle)))
+			return false, noticeClosed(zenity.Error(afterChange(prepFailWords(e, profile, acct.Hostname), *changed)+imapNotPrepared, zenity.Title(appTitle)))
 		}
+		noteChange(changed, acct, c)
 	}
 
 	// Guide the sync, then watch the store until the download stops growing.
@@ -1639,20 +1644,60 @@ func prepFailWords(err error, profile, host string) string {
 // found (W8), no account it can tell (MA-1204), user.js keeping the setting off (MA-1205), or,
 // for an account to turn on, any refusal EnableOffline would give (a hand-edited line, a backup
 // path refused; MA-1207), checked here before the person is asked to quit Thunderbird. On a
-// refusal nothing has been changed.
-func imapPrepAccount(store string) (string, *thunderbird.Account, string) {
+// refusal nothing has been changed for store; changed are the accounts this wizard run changed
+// before (MA-1267), which the refusal then names in place of "did not change any setting".
+func imapPrepAccount(store string, changed []string) (string, *thunderbird.Account, string) {
 	profile, ok := thunderbird.FindProfileDir(store)
 	if !ok {
-		return "", nil, "MailArchive could not find the Thunderbird profile this mail belongs to (the mail may have been copied out of Thunderbird), so it did not change any Thunderbird setting." + imapNotPrepared
+		return "", nil, afterChange("MailArchive could not find the Thunderbird profile this mail belongs to (the mail may have been copied out of Thunderbird), so it did not change any Thunderbird setting.", changed) + imapNotPrepared
 	}
 	acct, err := thunderbird.AccountToEnable(profile, store)
 	if err == nil && !acct.OfflineDownload {
 		err = thunderbird.CheckOffline(profile, acct.ServerKey)
 	}
 	if err != nil {
-		return "", nil, prepFailWords(err, profile, filepath.Base(store)) + imapNotPrepared
+		return "", nil, afterChange(prepFailWords(err, profile, filepath.Base(store)), changed) + imapNotPrepared
 	}
 	return profile, acct, ""
+}
+
+// noteChange adds acct to changed when EnableOffline wrote prefs.js for it (c.Changed).
+func noteChange(changed *[]string, acct *thunderbird.Account, c thunderbird.OfflineChange) {
+	if c.Changed {
+		*changed = append(*changed, onHostPlain(acct.Hostname))
+	}
+}
+
+// onHostPlain is "the account on HOST", or "an account" when the host is not known.
+func onHostPlain(host string) string {
+	if host = thunderbird.StripControl(host); host != "" {
+		return "the account on " + host
+	}
+	return "an account"
+}
+
+// nothingChanged are the refusals' sentences that say no Thunderbird setting was changed, each
+// with its form for a run that changed one before (MA-1267): true of this mail, not of the run.
+var nothingChanged = strings.NewReplacer(
+	"did not change any Thunderbird setting", "did not change a Thunderbird setting for this mail",
+	"did not change any of them", "did not change any of them for this mail",
+	"So MailArchive changed nothing: a change would be undone.", "So MailArchive changed nothing for this mail: a change would be undone.",
+)
+
+// afterChange is words, a refusal's plain words, for a wizard run that has changed the accounts in
+// changed before it (the C0c pass round 4's R4-05, MA-1263's rule on the wizard's surface): it
+// first says what was changed and that the change is kept, and its "did not change any setting"
+// is said of this mail. With nothing changed before, it is words as they are.
+func afterChange(words string, changed []string) string {
+	if len(changed) == 0 {
+		return words
+	}
+	kept := "That change is kept: it is what Yes, prepare is for."
+	if len(changed) > 1 {
+		kept = "Those changes are kept: they are what Yes, prepare is for."
+	}
+	return "Earlier in this run, MailArchive set Thunderbird to keep all mail on this computer for " +
+		strings.Join(changed, ", and for ") + ". " + kept + "\n\n" + nothingChanged.Replace(words)
 }
 
 // guiWaitForSync shows a live progress dialog while the user runs Download/Sync

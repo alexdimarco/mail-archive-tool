@@ -22,20 +22,20 @@ const (
 	// Step 1 says where Account Settings is (the re-look's R1: Thunderbird on Windows hides its
 	// menu bar), and step 2 how to tell the account by its server (R5).
 	step1      = "1. In Thunderbird, click the menu button (≡, top right), then Account Settings.\n"
-	serverHint = ` (an account's "Server Settings" page shows its server name)`
+	serverHint = ` (To see which server an account uses, look at its "Server Settings" page.)`
 )
 
 // prepRefusal is imapPrepAccount's refusal for store, failing when it gives an account.
 func prepRefusal(t *testing.T, store string) string {
 	t.Helper()
-	_, acct, refusal := imapPrepAccount(store)
+	_, acct, refusal := imapPrepAccount(store, nil)
 	if acct != nil {
 		t.Fatalf("an account was given: %+v", acct)
 	}
 	return assure.Reached(t, refusal, "the Yes, prepare refusal")
 }
 
-// covers: MA-1260
+// covers: MA-1260, MA-1268
 // Every Yes, prepare refusal in the wizard is in plain words (the C0c friction review's W0 to W4,
 // W8, F2 to F8, F11): what happened and that no Thunderbird setting was changed; where the setting
 // is, by the version that last opened the profile (below 160 "Synchronization & Storage", 160 and
@@ -45,7 +45,7 @@ func prepRefusal(t *testing.T, store string) string {
 // export leaves out. Nothing is written in any case. Positive twin first: a healthy profile gives
 // its account and no refusal.
 func TestYesPrepareRefusalsArePlain(t *testing.T) {
-	if _, acct, refusal := imapPrepAccount(func() string { _, s := prepProfile(t, prepOne); return s }()); acct == nil || refusal != "" {
+	if _, acct, refusal := imapPrepAccount(func() string { _, s := prepProfile(t, prepOne); return s }(), nil); acct == nil || refusal != "" {
 		t.Fatalf("the positive twin: account %+v, refusal %q", acct, refusal)
 	}
 	two := prepOne + `user_pref("mail.accountmanager.accounts", "account1,account2");` + "\n" +
@@ -58,14 +58,14 @@ func TestYesPrepareRefusalsArePlain(t *testing.T) {
 		want, never  []string
 	}{
 		{"153", "LastVersion=153.6.0", []string{
-			`2. For each account on imap.gmail.com` + serverHint + `, open its "Synchronization & Storage" page.`,
+			`2. For each account on imap.gmail.com, open its "Synchronization & Storage" page.` + serverHint,
 			"3. Make sure " + oldLabel + " is ticked."}, []string{newLabel, "Offline message storage"}},
 		// 160's page is not named: the source read did not reach it (the re-look's R4).
 		{"160", "LastVersion=160.0", []string{
-			`2. For each account on imap.gmail.com` + serverHint + `, look through the pages listed under its name on the left until you see "Offline message storage".`,
+			`2. For each account on imap.gmail.com, look through the pages listed under its name on the left until you see "Offline message storage".` + serverHint,
 			"3. Make sure " + newLabel + " is ticked."}, []string{oldLabel, "Synchronization & Storage"}},
 		{"version unknown", "LastVersion=not-a-version", []string{
-			`2. For each account on imap.gmail.com` + serverHint + `, open its "Synchronization & Storage" page (in Thunderbird 160 and later, look through its pages for "Offline message storage").`,
+			`2. For each account on imap.gmail.com, open its "Synchronization & Storage" page (in Thunderbird 160 and later, look through its pages for "Offline message storage").` + serverHint,
 			"3. Make sure " + oldLabel + " is ticked (in Thunderbird 160 and later it is called " + newLabel + ")."}, nil},
 	} {
 		t.Run("two accounts on one server, "+tc.name, func(t *testing.T) {
@@ -114,18 +114,18 @@ func TestYesPrepareRefusalsArePlain(t *testing.T) {
 			f.Close()
 			return p, store
 		}, []string{"MailArchive could not read Thunderbird's settings, so it did not change any of them.",
-			"2. For the account on imap.gmail.com" + serverHint + ", open its \"Synchronization & Storage\" page."}},
+			"2. For the account on imap.gmail.com, open its \"Synchronization & Storage\" page." + serverHint}},
 		// The re-look's R7: "changed outside Thunderbird", not "edited by hand", which reads as
 		// blame (an add-on or an IT tool may have made the change).
 		"a hand-edited line": {func(t *testing.T) (string, string) {
 			return prepProfile(t, strings.Replace(prepOne, `offline_download", false);`, `offline_download", false); // mine`, 1))
-		}, []string{"Thunderbird's settings file was changed outside Thunderbird where this account's setting is, so MailArchive could not be sure what it says and did not change any Thunderbird setting.",
-			"2. For the account on imap.gmail.com" + serverHint + ", open its \"Synchronization & Storage\" page."}},
+		}, []string{"Thunderbird's settings file was changed outside Thunderbird, so MailArchive could not be sure what it says and did not change any Thunderbird setting.",
+			"2. For the account on imap.gmail.com, open its \"Synchronization & Storage\" page." + serverHint}},
 		// The strict reading (MA-1261): a line Thunderbird never writes, anywhere in the file.
 		"a line Thunderbird never writes": {func(t *testing.T) (string, string) {
 			return prepProfile(t, prepOne+`pref("mail.zz", 1);`+"\n")
 		}, []string{"Thunderbird's settings file was changed outside Thunderbird, so MailArchive could not be sure what it says and did not change any Thunderbird setting.",
-			"2. For the account on imap.gmail.com" + serverHint + ", open its \"Synchronization & Storage\" page."}},
+			"2. For the account on imap.gmail.com, open its \"Synchronization & Storage\" page." + serverHint}},
 		"no profile": {func(t *testing.T) (string, string) {
 			q := t.TempDir()
 			store := filepath.Join(q, "ImapMail", "imap.gmail.com")

@@ -56,7 +56,10 @@ func TestEveryPrepRefusalGivesTheWayOut(t *testing.T) {
 		before := snapshot(t, profile)
 		code, msg, _ := enableOfflineRun(t, store)
 		assure.Refused(t, code, msg, assure.Code(1),
-			assure.Names("-enable-offline changed nothing, and nothing was exported: prefs.js line 6 sets mail.server.server1.offline_download together with something else on that line",
+			// Since the allow-list (MA-1264) a comment beside the statement is a line Thunderbird
+			// never writes, named as such, no longer "together with something else".
+			assure.Names("-enable-offline changed nothing, and nothing was exported: prefs.js line 6 holds more after its user_pref statement (another statement or a comment). Thunderbird never writes such a line",
+				"MailArchive cannot be sure what Thunderbird applies for mail.server.server1.offline_download",
 				"In Thunderbird, open Account Settings (the menu button ≡, top right) and, for the account on imap.gmail.com, make sure",
 				"Then run the same command again without -enable-offline."),
 			assure.NoSideEffect(func() bool { return sameFiles(t, profile, before) }))

@@ -10,7 +10,7 @@ import (
 	"mail-archive-tool/internal/assure"
 )
 
-// covers: MA-1263, R12, S10
+// covers: MA-1263, MA-1268, R12, S10
 // When a later store stops -enable-offline after an earlier store was changed, the words say
 // what was changed instead of "changed nothing" (the C0c pass round 3's wording note, the lead's
 // pick of the simpler true option). Every store is still checked before any change (MA-1208), so
@@ -67,8 +67,10 @@ func TestALaterStopSaysWhatWasChanged(t *testing.T) {
 			_ = os.Chmod(second, 0o755)
 			assure.Refused(t, code, msg, assure.Code(1),
 				assure.Names("-enable-offline stopped, and nothing was exported",
-					"Before it stopped, it changed prefs.js to turn on offline download for imap.gmail.com (folder imap.gmail.com, server1), in the Thunderbird profile "+first,
-					"that change stays", "Why it stopped: "),
+					// The friction final look's Q3 (2026-11-08): what was turned on, and that it is kept.
+					"Before it stopped, it turned on offline download for imap.gmail.com (folder imap.gmail.com, server1), in the Thunderbird profile "+first+", by changing prefs.js.",
+					"That change is kept: it is what -enable-offline is for, and running the same command again leaves it as it is (the log above says where the old prefs.js was backed up).",
+					"Why it stopped: "),
 				assure.NoSideEffect(func() bool { return sameFiles(t, second, beforeB) && turnedOn(first) }))
 			if strings.Contains(msg, "changed nothing") {
 				t.Errorf("the words say \"changed nothing\" after a change:\n%s", msg)
@@ -102,7 +104,10 @@ func TestALaterStopSaysWhatWasChanged(t *testing.T) {
 	t.Cleanup(func() { _ = os.Chmod(only, 0o755) })
 	code, msg, logText := enableOfflineRun(t, store)
 	_ = os.Chmod(only, 0o755)
-	assure.Refused(t, code, msg, assure.Code(1), assure.Names("prefs.js"),
+	// The friction final look's Q4: what failed, and the way on.
+	assure.Refused(t, code, msg, assure.Code(1), assure.Names(
+		"-enable-offline changed nothing, and nothing was exported: MailArchive could not write prefs.js or its backup in the Thunderbird profile "+only+" (",
+		"). Check that the folder is not read-only and that the disk has room, then run the same command again."),
 		assure.NoSideEffect(func() bool { return !turnedOn(only) && !strings.Contains(logText, "Enabled offline download") }))
 	if strings.Contains(msg, "Before it stopped") {
 		t.Errorf("a failed write on the first store claims a change:\n%s", msg)

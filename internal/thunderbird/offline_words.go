@@ -36,8 +36,8 @@ const (
 	// friction re-look's R1; the Restore words say it the same way).
 	stepOne = "1. In Thunderbird, click the menu button (≡, top right), then Account Settings.\n"
 	// serverHint tells an account by its server, since Account Settings lists accounts by name
-	// (the re-look's R5).
-	serverHint = ` (an account's "Server Settings" page shows its server name)`
+	// (the re-look's R5), after step 2's own words so it does not split them (the final look's Q1).
+	serverHint = ` (To see which server an account uses, look at its "Server Settings" page.)`
 )
 
 // leftoverWizard and leftoverCLI are the leftover-folder sentence for the folder's server host (the
@@ -80,9 +80,6 @@ func placeFor(profileDir string) Place {
 // and no lab has seen the 160 screen yet (the re-look's R4).
 func (p Place) steps(what, host string) string {
 	who := onHost(what, host)
-	if StripControl(host) != "" {
-		who += serverHint
-	}
 	var two, three string
 	switch p {
 	case PlaceBefore160:
@@ -94,6 +91,9 @@ func (p Place) steps(what, host string) string {
 	default:
 		two = "open its " + pageBefore160 + " page (in Thunderbird 160 and later, look through its pages for " + groupFrom160 + ")."
 		three = "Make sure " + labelBefore160 + " is ticked (in Thunderbird 160 and later it is called " + labelFrom160 + ")."
+	}
+	if StripControl(host) != "" {
+		two += serverHint
 	}
 	return stepOne + "2. For " + who + ", " + two + "\n3. " + three
 }
@@ -213,56 +213,35 @@ func (e *NoAccountError) Plain() string {
 	}
 }
 
-// handWhy is why a hand-edited settings file stops the change.
-type handWhy int
-
-const (
-	whyUnread    handWhy = iota // a line in prefs.js or user.js Thunderbird never writes (MA-1261)
-	whyShared                   // the setting's statement shares its line with something else
-	whyOpenAtEnd                // a comment left open at the end would hide an added line
-)
-
 // HandEditedError is the refusal when prefs.js or user.js was changed outside Thunderbird, so
-// MailArchive cannot be sure what Thunderbird reads in it (anywhere in the file: the strict
-// reading of MA-1261), or would not rewrite only the setting's line: it changes nothing, and
-// reports nothing as on (the C0c pass round 2's R2-01 and R2-02, MA-1207; round 3's R3-01 to
-// R3-04).
+// MailArchive cannot be sure what Thunderbird reads in it: a line anywhere in the file is not one
+// of the shapes Thunderbird writes (the allow-list of MA-1264; MA-1261's strict reading; the C0c
+// pass round 2's R2-01 and R2-02, MA-1207; round 3's R3-01 to R3-04; round 4's R4-01 and R4-02).
+// It changes nothing, and reports nothing as on. A statement for the setting sharing its line
+// with anything else, or a comment left open, is such a line, so it has no words of its own.
 type HandEditedError struct {
 	File  string // "prefs.js" or "user.js"
-	Line  int    // the line (from 1); 0 for the end of the file
+	Line  int    // the line (from 1)
 	Key   string // the setting; "" when no account was found to name it
-	Why   handWhy
-	What  string // for whyUnread: what is on the line
+	What  string // what is on the line, with its verb ("holds …", "has …")
 	Host  string // the account's server, for the words
 	Place Place
 }
 
 // Error is the command line's words.
 func (e *HandEditedError) Error() string {
-	var what string
-	switch e.Why {
-	case whyShared:
-		what = fmt.Sprintf("%s line %d sets %s together with something else on that line (another setting or a comment), and MailArchive rewrites only a line that holds that one setting alone.", e.File, e.Line, e.Key)
-	case whyOpenAtEnd:
-		what = fmt.Sprintf("a comment left open at the end of %s would hide a line added there for %s, so MailArchive does not add one.", e.File, e.Key)
-	default:
-		applies := ""
-		if e.Key != "" {
-			applies = " for " + e.Key
-		}
-		what = fmt.Sprintf("%s line %d holds %s. Thunderbird never writes such a line, so the file was changed outside Thunderbird (by hand or by another program), and MailArchive cannot be sure what Thunderbird applies%s.", e.File, e.Line, e.What, applies)
+	applies := ""
+	if e.Key != "" {
+		applies = " for " + e.Key
 	}
+	what := fmt.Sprintf("%s line %d %s. Thunderbird never writes such a line, so the file was changed outside Thunderbird (by hand or by another program), and MailArchive cannot be sure what Thunderbird applies%s.", e.File, e.Line, e.What, applies)
 	return cliNothing + what + " In Thunderbird, " + e.Place.remedy(onHost("the account", e.Host)) + cliAgain
 }
 
 // Plain is the wizard's words: "changed outside Thunderbird", since an add-on or an IT tool may
 // have made the change (the C0c friction re-look's R7).
 func (e *HandEditedError) Plain() string {
-	where := ""
-	if e.Why == whyShared {
-		where = " where this account's setting is"
-	}
-	return "Thunderbird's settings file was changed outside Thunderbird" + where + ", so MailArchive could not be sure what it says and did not change any Thunderbird setting.\n\n" +
+	return "Thunderbird's settings file was changed outside Thunderbird, so MailArchive could not be sure what it says and did not change any Thunderbird setting.\n\n" +
 		stepsIntro + e.Place.steps("the account", e.Host)
 }
 
@@ -289,7 +268,8 @@ func (e *UserJSError) Error() string {
 }
 
 // Plain is the wizard's words (W4; the re-look's R6: on Windows, Notepad's Open box shows only
-// .txt files unless the name is typed, and double-clicking a .js file runs it).
+// .txt files unless the name is typed, and double-clicking a .js file runs it; the final look's
+// Q2: text in a Windows message box cannot be selected, but Ctrl+C copies the whole message).
 func (e *UserJSError) Plain() string {
 	mail := "this account's mail"
 	if h := StripControl(e.Host); h != "" {
@@ -297,7 +277,7 @@ func (e *UserJSError) Plain() string {
 	}
 	return "Thunderbird is set, in its file user.js, not to keep " + mail + " on this computer, and it applies that file every time it starts. So MailArchive changed nothing: a change would be undone.\n\n" +
 		"If you, or whoever looks after this computer, set this on purpose, leave it. " +
-		`Otherwise: close Thunderbird and open the file below in a plain text editor (on Windows: start Notepad, choose File, then Open, and type or paste the whole path into "File name"; double-clicking the file does not open it for editing). ` +
+		`Otherwise: close Thunderbird and open the file below in a plain text editor (on Windows: start Notepad, choose File, then Open, and type the whole path below into "File name" (or press Ctrl+C on this message, paste it into Notepad, and copy the path from there); double-clicking the file does not open it for editing). ` +
 		"Delete the line that contains " + e.Key + " (or change its false to true), and save.\n\n" +
 		"The file: " + e.Path
 }

@@ -960,6 +960,25 @@ is a label-membership question, not completeness (§14 Q6).
 >   the file in Notepad; the wizard says the file "was changed outside Thunderbird". The Desktop guide
 >   names the box by both labels, by version, as the wizard does when it cannot read the version.
 >
+> **Folded 2026-11-08 [C0c adversarial pass round 4 + the friction final look] (the lead's calls,
+> `docs/review-thunderbird-completeness-c0c-adversarial-r4.md` and the "Final look after round 3"
+> section of the friction review; built and tested, MA-1264 to MA-1268):**
+>
+> - **The allow-list reader (R4-01, R4-02; MA-1264). Supersedes the strict-reading bullet above.**
+>   A file reads with certainty only when every line is a shape Thunderbird itself writes: empty, a
+>   `//` comment, or exactly `user_pref("NAME", VALUE);`, NAME with no quote or backslash, VALUE
+>   `true`, `false`, a 32-bit whole number or a double-quoted string with only the `\\`, `\"`, `\n`
+>   and `\r` escapes StrEscape writes; all LF or all CRLF, no lone CR, no NUL, no BOM. Anything else
+>   anywhere is "can't tell". The name rule is wider than the lead's `[A-Za-z0-9._-]+` on purpose:
+>   Thunderbird writes `mailnews.tags.$label1.tag` and `=20` tag keys into every profile whose tags
+>   it has set up, and the narrower rule would call those files "changed outside Thunderbird".
+> - **Paths by the OS's rules (R4-03; MA-1265).** A backslash separates folders on Windows only.
+> - **`-sync-wait` with several stores (R4-04; MA-1266).** Check every store, change every store with
+>   Thunderbird closed, say "START Thunderbird" once, then wait for every store.
+> - **The wizard after a change (R4-05; MA-1267).** A later refusal in the same run says what was
+>   changed and that it is kept, and says "nothing changed" of this mail only.
+> - **The words (Q1 to Q5, R10's words; MA-1268).** R10's exit code stays 0 (the lead's call).
+>
 > **Folded 2026-11-07 [foldcheck M6] (lead's call):** the bullet "No match → `unknown` if a
 > folder-cache entry exists" is **superseded by [foldcheck M6]**. No match → `unknown` whether or not
 > the cache could be read, unless no `prefs.js` is found above the input **and** no path part is
