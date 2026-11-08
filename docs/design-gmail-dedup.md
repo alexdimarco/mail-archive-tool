@@ -1058,6 +1058,55 @@ DedupStores map[string]string `json:"dedup_stores,omitempty"` // token -> "gmail
 >   705.7 bytes per record) is no longer written. `MergedFiles` holds at most one batch at a time (about
 >   15,000 entries, an estimated 3 MB).
 
+> **Folded 2026-11-07 [dedup foldcheck4 M1, S1, S6, S7] (lead's call): the schema after fold check 4.**
+> The fold check is `docs/review-gmail-dedup-foldcheck4.md` (commit ee8c877). The notes above stand
+> except where this one adds to them.
+>
+> - **`MergedFile.Size` and `MergedFile.SHA256` (M1).** The struct's comments above say both are
+>   "copied from the copy's Fixity at step 3". In place of that: for a file that has a recorded digest
+>   (`Fixity.EML`, `Fixity.HTML` or `Fixity.Zip`), both are copied from it; for a page or zip that has
+>   **no** recorded digest but is on disk at the check (a), `Size` is its size on disk and `SHA256` is
+>   the checksum (a) took of it. So 1.7 never writes an empty `sha256`. The load rule above that allows
+>   an empty `sha256` for the `html` and `zip` roles stays, so an older pending manifest still loads,
+>   but step (d) never deletes a file whose entry has no `sha256`: it treats it as a failed removal
+>   (kept, then moved to the survivor's `AlsoFiles`, §9 fold-check-4 note). *(The folding agent's call:
+>   the safe reading of an entry 1.7 no longer writes.)*
+> - **`MergePending` is declared right after `Version`, before `Entries` (S1).** `json.Marshal` writes
+>   a struct's fields in the order they are declared (`state/manifest.go:2162`; `Version` and `Entries`
+>   are declared at `:307-308`), so the pending field then sits near the start of the file. That is what
+>   makes the backup's **cheap header read** possible (§9 fold-check-4 note): read the opening `{`, the
+>   `version` key and its value, then the next key only; the merge is pending exactly when that key is
+>   `merge_pending`. No record is decoded, and the value itself need not be read. A manifest with no
+>   pending merge is unchanged byte for byte (the field is `omitempty`, MA-329). Slice B2 declares the
+>   field in that place when it adds it (no `MergePending` exists in code today: fold check 4, grep); if
+>   B2 has landed first, D2 moves the declaration. *(The folding agent's call, flagged for the lead: it
+>   touches B2's struct order, though not its bytes.)*
+> - **`MergePending.Started` (S6).** One more field: ``Started time.Time `json:"started"` ``, the moment
+>   of the yes, written at step 5.1 and never changed. It dates the lasting result file (§9 fold-check-4
+>   note), so a resume after a crash writes that file under the same name rather than a second one.
+>   Like the other fields it is plaintext only and `FormatVersion` counts it (7). *(The folding agent's
+>   call, flagged for the lead: the lead named a dated file, and a date read from the clock at the clear
+>   would differ between a first attempt and a resume on another day.)*
+> - **`MergePending.Freed` (S6).** One more field: ``Freed int64 `json:"freed,omitempty"` ``, the bytes
+>   removed so far. Each fold save, and the clear, adds the `size` of every entry it drops because its
+>   file is gone. So the result's "space freed" is exact after a crash and a resume, although the
+>   folded copies' records, and the entries of earlier batches, are gone by then. Plaintext only;
+>   `FormatVersion` counts it (7); load checks it is 0 or more. *(The folding agent's call, flagged.)*
+> - **Load checks gain (S7).** In addition to the check-first note's list:
+>   - **each key appears in only one group**, once, as its survivor or as one of its copies, across all
+>     of `Groups` (the lead's call);
+>   - **a copy in `Kept` is still a record** (the folding agent's call, flagged: the fold check's S7
+>     second item).
+>
+>   A failure is a damaged merge record, as the check-first note says: load writes nothing, and
+>   `merge-copies -resume` stops, changing nothing. The fold check's third load check (entries sit only
+>   on the survivors of the last folded batch) is **not** added: no batch boundary is stored (batches
+>   are formed again from `Folded` on, §9 fold-check-4 note), so it has nothing to check against.
+>   Resume step 2 works on every entry it finds on a group before `Folded`, and re-hashes each file
+>   before removing it, so an entry in an unexpected place is still never a blind delete.
+> - **Size.** `Started` adds a few dozen bytes. The `sha256` taken at (a) for a page or zip with no
+>   recorded digest adds nothing over the estimate above, which already counted one digest per entry.
+
 ### 7.2 Per-folder history
 
 `FirstSeen`, `LastSeen` and `Gone` are the per-folder history, written in place; no history log is
@@ -1737,7 +1786,11 @@ sign-off on its words (R36's "only by the person's explicit decision", in spirit
 > apart: none of their saved copies is complete." A record that is not complete may still be a **copy**
 > folded into a complete survivor when the proof holds: its original equals the survivor's byte for
 > byte, and its missing pieces are pages or attachments the survivor has. *(The folding agent's call,
-> within the lead's rule, which names targets: flagged for the lead.)*
+> within the lead's rule, which names targets: flagged for the lead.)* *[Made consistent 2026-11-07 by
+> [dedup foldcheck4 M1] (lead's call): the check-first step's (a) read literally failed every copy
+> without a zip, which contradicted this. Under M1, a copy's page or zip with **no** recorded digest
+> may be absent and the copy still folds; one **with** a recorded digest must be present and match,
+> else the copy is kept. See the fold-check-4 note at the end of §9.]*
 >
 > **S1 — the order of deletion, and a file already gone on resume.**
 >
@@ -1751,7 +1804,9 @@ sign-off on its words (R36's "only by the person's explicit decision", in spirit
 >   the fold-check-2 note below.]* *[Both readings are superseded 2026-11-07 by [dedup check-first]:
 >   all or none is decided at the batch's check, before the fold; a copy that fails is never folded and
 >   stays its own record, untouched. A mismatch found later, at a deletion, stops the whole merge; see
->   the check-first note.]* This replaces step 5's "(their own `sha256` must still match, or they
+>   the check-first note.]* *[“A mismatch found later … stops the whole merge” is narrowed 2026-11-07
+>   by [dedup foldcheck4 S11]: only a copy's `.eml` or the survivor's original; a page or zip that
+>   differs is kept as a failed removal.]* This replaces step 5's "(their own `sha256` must still match, or they
 >   are kept)", which allowed a page to go while its zip stayed. Reason: a plaintext run's orphan-zip
 >   sweep (`export.SweepOrphanZips`, called at `internal/app/run.go:770`) removes every zip whose sibling
 >   `.html` is gone, and it runs **before** the manifest is loaded (`run.go:789`), so before any
@@ -1799,7 +1854,10 @@ sign-off on its words (R36's "only by the person's explicit decision", in spirit
 > are named (the terminal's `reindex -rebuild`, the Desktop's Rebuild search index button and the
 > wizard's rebuild offer); plain `verify` (without `-record`) writes nothing and is moved to the
 > read-only list, so the stop's words can send the person to it; `verify -record` still refuses. See the
-> check-first note.]*
+> check-first note.]* *[“writes nothing” is superseded 2026-11-07 by [dedup foldcheck4 S3] (lead's
+> call): plain `verify` is allowed while a merge is pending, but it does write, under the archive lock,
+> its own last-verify record and, when it finishes, its own integrity notice. It never writes an
+> archived file, the manifest or the index. See the fold-check-4 note at the end of §9.]*
 >
 > **S4 — the deleter.** The merge step deletes through an `os.Root` opened on `-out` (Go 1.24 and later;
 > this repo pins 1.26), or, if that cannot be used on a platform, by checking every path component with
@@ -2000,7 +2058,10 @@ sign-off on its words (R36's "only by the person's explicit decision", in spirit
 > taken in order until it holds at least **5,000 copies**. A group is never split, and the largest has
 > five copies, so a batch holds 5,000 to 5,004. The owner's 73,915 copies make **15 batches** (14 of
 > about 5,000 and a last of about 3,900). The order and the 5,000 rule fix the batches, so a resume
-> finds the same ones.
+> finds the same ones. *[Superseded 2026-11-07 by [dedup foldcheck4 S5] (lead's call): "the largest has
+> five copies, so a batch holds 5,000 to 5,004" has no source (§10.2 gives counts, not group sizes)
+> and is now **unmeasured**; and "a resume finds the same ones" is replaced by "batches are formed
+> again from group `Folded` on". See the fold-check-4 note at the end of §9.]*
 >
 > **What a batch's save costs.** Each batch makes one whole-manifest save (the save writes the whole
 > file every time: encode, write, fsync, rename, `state/manifest.go:2148-2199`).
@@ -2035,12 +2096,18 @@ sign-off on its words (R36's "only by the person's explicit decision", in spirit
 > - Re-hash the survivor's archived original. It must equal its recorded `Fixity.EML`. If it does not,
 >   **the whole group is left as it was**: the survivor and every copy keep their records, folders,
 >   pages and search rows. The result says: "Kept apart: the saved original these copies would merge
->   into has changed. Run `mailarchive verify`." The group gets `SurvivorChanged`.
+>   into has changed. Run `mailarchive verify`." The group gets `SurvivorChanged`. *[Amended
+>   2026-11-07 by [dedup foldcheck4 S10] (lead's call): the survivor's page and zip are re-checked here
+>   too, and one that fails keeps the group apart the same way. See the fold-check-4 note.]*
 > - For each copy: re-hash its `.eml`. It must equal its own recorded `Fixity.EML` and the survivor's
 >   (the `proof`). Its page and zip must each be present and match their recorded digests (or have no
 >   digest recorded, S2). If any of this fails, **that copy is left as it was** (its record, folder,
 >   page and search row unchanged) and the result lists it: "kept: this copy differs". It goes in
->   `Kept`. A copy whose `.eml` is missing fails: nothing proves it.
+>   `Kept`. A copy whose `.eml` is missing fails: nothing proves it. *[“Its page and zip must each be
+>   present and match … (or have no digest recorded, S2)” is superseded 2026-11-07 by [dedup
+>   foldcheck4 M1] (lead's call): the check is per file, and a page or zip with no recorded digest may
+>   be absent. Read literally, the old sentence kept every copy without attachments, since the exporter
+>   writes no zip for those (`export/exporter.go:599-627`). See the fold-check-4 note.]*
 > - Nothing is written.
 >
 > **(b) Fold save (one save, temp file, fsync, rename).** In that one save:
@@ -2049,7 +2116,10 @@ sign-off on its words (R36's "only by the person's explicit decision", in spirit
 >   home folder (none when it is the survivor's own) and every membership the copy held; the copy's
 >   files become `MergedFiles` entries on the survivor (`path`, `role`, `size` and `sha256` copied from
 >   the copy's `Fixity`; `proof` = the survivor's `Fixity.EML` SHA-256). From here the files are owned
->   by those entries;
+>   by those entries; *[“copied from the copy's `Fixity`” is superseded 2026-11-07 by [dedup foldcheck4
+>   M1] (lead's call): one entry for **each file present at (a)**, a page or zip with no recorded
+>   digest included, with its size on disk and the checksum (a) took. Copied from `Fixity` alone, such
+>   a file got no entry and was owned by nothing from this save on. See the fold-check-4 note.]*
 > - the batch's `Kept` and `SurvivorChanged`, and `Folded` moved past the batch;
 > - the **previous** batch's entries come off: an entry whose file (d) deleted is dropped; for a copy
 >   that passed but one of whose removals failed, its remaining files' entries move to the survivor's
@@ -2061,7 +2131,10 @@ sign-off on its words (R36's "only by the person's explicit decision", in spirit
 >
 > **(d) Deletions.** Only files named by this batch's `MergedFiles` entries are deleted: never a
 > record's own `Path`, never an `AlsoFiles` file. Through the S4 deleter. For each passed copy, all or
-> none, in the order **zip, page, `.eml`** (the order of S1):
+> none, in the order **zip, page, `.eml`** (the order of S1): *[“never a record's own `Path`, never
+> an `AlsoFiles` file” is amended 2026-11-07 by [dedup foldcheck4 S8] (lead's call): the guard compares
+> file names without their endings (stems) against every record, not only the survivor. See the
+> fold-check-4 note.]*
 >
 > - just before deleting the zip and the page, each is re-hashed against its entry when a digest is
 >   recorded *(the folding agent's call: stricter than the lead's brief, which names only the `.eml`
@@ -2077,11 +2150,17 @@ sign-off on its words (R36's "only by the person's explicit decision", in spirit
 >   file." This can happen only through an outside writer (a sync client, or another computer backing
 >   up into the same folder; S8, already out of scope): the merge holds the archive lock and every
 >   MailArchive writer refuses (S3).
+>   *[“if any re-hash in (d) differs, the whole merge stops” is narrowed 2026-11-07 by [dedup
+>   foldcheck4 S11] (lead's call): a page or zip that differs is treated as a failed removal (kept,
+>   owned, reported) and the merge goes on; the merge stops only when a copy's `.eml` or the survivor's
+>   original differs. See the fold-check-4 note.]*
 >
 > **The clear (5.6), after the last batch.** One save: the last batch's entries come off as in (b),
 > `MergedFiles` is empty, and `MergePending` is cleared. The result shows the copies merged, the space
 > freed, every "kept: this copy differs" (from `Kept`) and every "kept apart" group (from
-> `SurvivorChanged`).
+> `SurvivorChanged`). *[Amended 2026-11-07 by [dedup foldcheck4 S6] (lead's call): the clear removes
+> the only saved copy of `Kept` and `SurvivorChanged`, so a lasting result file and a run-history
+> entry are written **before** the clear's save. See the fold-check-4 note.]*
 >
 > **Resume** (`mailarchive merge-copies -out DIR -resume`, or Review on the card; holding the lock):
 >
@@ -2119,12 +2198,241 @@ sign-off on its words (R36's "only by the person's explicit decision", in spirit
 > - **A local backup**'s `SweepOrphans` (`internal/app/run.go:770`) runs before its manifest load
 >   (`:789`), so before the refusal. It removes only temp files and zips with no page. With the zip
 >   deleted first and all or none per copy, the merge never leaves a zip without its page, and a kept
->   copy's files are untouched.
+>   copy's files are untouched. *[Amended 2026-11-07 by [dedup foldcheck4 S1] (lead's call): a local
+>   backup now refuses before its "running" record, its Thunderbird pre-sync and its `SweepOrphans`,
+>   from a cheap header read of the manifest; the refusal after the load at `:789` stays as a second
+>   guard. That this bullet's claim held only for a zip that had an entry is fold check 4's M1, now
+>   fixed. See the fold-check-4 note.]*
 > - **`verify`** *(the folding agent's call, flagged for the lead)*: plain `verify` writes nothing
 >   (`internal/app/verify.go:189`; it saves only with `-record`, `:340-341`). It joins the read-only list
 >   with `serve` and `search`, so the stop's words can send the person to it; `verify -record` still
->   refuses. Without this, "run `mailarchive verify`" would be refused.
+>   refuses. Without this, "run `mailarchive verify`" would be refused. *[“writes nothing” is
+>   superseded 2026-11-07 by [dedup foldcheck4 S3] (lead's call): it writes no archived file, no
+>   manifest and no index, but it does write its own last-verify record and integrity notice under the
+>   archive lock (`verify.go:218`, `:248`). See the fold-check-4 note.]*
 > - The builder's grep of every manifest save, listed in the commit, is still owed (S3).
+
+> **Folded 2026-11-07 [dedup foldcheck4 M1, S1 to S14] (lead's calls; the items marked as the folding
+> agent's are flagged for the lead): the check-first step after fold check 4.** The fold check is
+> `docs/review-gmail-dedup-foldcheck4.md` (commit ee8c877). The check-first note above stands except
+> where these points replace a sentence (each is marked where it stands). Plaintext archives only (F1).
+>
+> **M1 — the check (a) and the fold save (b), per file.** In place of (a)'s sentence on the copy's page
+> and zip, and (b)'s "copied from the copy's `Fixity`":
+>
+> - **At (a)**, each of the copy's three files is checked on its own, by its file stem (the file name
+>   without its ending, which the page, the zip and the `.eml` share):
+>   - **the `.eml`** must be present, must have a recorded digest (`Fixity.EML`), and must match it, and
+>     its digest must equal the survivor's (`proof`). A copy whose `.eml` fails any of this is kept;
+>   - **the page, and the zip**, each: **with** a recorded digest, the file must be present and match
+>     it, or the copy is kept; **without** one, if the file is present, (a) records its size on disk
+>     and takes its checksum, and it is checked again at (d); if the file is absent, there is nothing
+>     to check and nothing to delete.
+>
+>   Most emails have no attachments, and for those the exporter writes no zip at all and records no
+>   zip digest (`export/exporter.go:599-627`: a zip only when there is something to put in it,
+>   `fx.Zip` set at `:612`, otherwise `os.Remove` at `:627`). So the usual copy is an `.eml`, a page,
+>   and no zip, and it folds.
+> - **At (b)**, the copy gets **one `MergedFiles` entry for each file present at (a)**: `path`, `role`,
+>   and `size` and `sha256` from its recorded digest, or, for a page or zip with no recorded digest,
+>   from what (a) measured. A file absent at (a) gets no entry: there is nothing to own. So from this
+>   save on, every one of the copy's files still on disk is owned by an entry.
+> - **(d) re-checks every entry** against its `size` and `sha256` just before removing it, those taken
+>   at (a) included (the order and the other checks are as above).
+> - **Why it matters (the fold check's example).** A copy with a zip on disk but no recorded zip digest
+>   got no entry for the zip. Its record went at (b), so the zip was owned by nothing. Step (d) then
+>   deleted the page and left the zip, a zip with no page, which the next backup attempt's
+>   `SweepOrphans` (`app/run.go:770`) would remove. No unique byte was lost (the zip comes from the
+>   proven `.eml`), but the ownership test of §23 failed.
+>
+> **S1 — a backup refuses before the Thunderbird pre-sync.** The lead's call: a backup run reads the
+> pending-merge field with a **cheap header read** before the pre-sync (`app/run.go:715-737`), and
+> refuses without starting or quitting Thunderbird.
+>
+> - **Where.** In `app.Run`, on a plaintext archive (`opts.Key == nil`), right after the checks that
+>   run again under the lock (`run.go:650-667`) and before the "running" record (`beginRun`, `:704`).
+>   That is the place the keyed path already refuses (`openEncrypted`, `:680-686`). So the refusal also
+>   comes before `SweepOrphans` (`:770`): while a merge is pending, a 1.7 backup removes nothing at all.
+> - **How it counts.** As the keyed path does: a scheduled run that is refused writes its minimal failed
+>   run (`writeRefusedRun`, `:682-684`, which also adds a run-history entry), so it counts toward the
+>   alert streak as §24 wants; a manual run that is refused writes nothing. *(The folding agent's call:
+>   the place before `beginRun`. After it, an early return would leave the run's record "running",
+>   because the finalizer is deferred only at `:745`, after the pre-sync.)*
+> - **The read.** The manifest is opened as other planted files are (no link followed, no pipe waited
+>   on, a bounded read). It reads the opening `{`, the `version` key and its value, then the next key:
+>   the merge is pending exactly when that key is `merge_pending` (the field is declared before
+>   `Entries`, §7.1 fold-check-4 note). Nothing else is decoded. If the read fails, the run goes on as
+>   today and the full load at `:789` reports the problem.
+> - **The second guard stays.** The refusal right after the full load (`run.go:789`) still sits there.
+>   It catches a manifest whose keys are in another order (one 1.7 never writes: hand-edited). That
+>   case alone can still start Thunderbird's pre-sync before refusing; no archived byte is at risk.
+> - **Microsoft 365 (named, as the fold check asked).** `RunGraph`'s refusal sits right after its load
+>   (`app/graph.go:230`). Only `SweepTemps` (`:225`, temp files) runs before it, and the run's record is
+>   already finalized by `recordRun` (`:220`). It has no pre-sync.
+>
+> **S2 — `merge-copies` refuses three more states, before the lock and again under it.** The plan, the
+> yes and `-resume` each refuse:
+>
+> - **a paused archive** (`seal.RefuseWrite`, as `reindex` does at `app/reindex.go:43`). Pause takes
+>   no lock (`seal/seal.go:72`), so it can be set at any time;
+> - **a half-deleted archive** (`RefuseDeleteMarker`, as `reindex.go:47` and `:66` do);
+> - **an archive that became encrypted** while the command waited (`RefuseKeyless`, as `run.go:661-667`
+>   does). The encrypted refusal of F1 still comes first, from the encrypted envelope.
+>
+> The yes and `-resume` check all three before taking the archive lock and again right after taking
+> it (the pattern of `reindex.go:43-69`). The plan takes no lock and writes nothing: it checks once at
+> its start, and the yes repeats every check anyway. *(The folding agent's call, flagged: a pause set
+> while the merge runs is checked again before each batch's (a). If the archive is paused by then, the
+> merge stops there, a safe point, with `MergePending` set; resume goes on from `Folded`.)*
+>
+> **The two "Resume"s** must not be confused. `mailarchive resume` lifts a pause; `merge-copies -resume`
+> (Resume tidy-up on the card) finishes a merge. The paused refusal says both, in order: "This archive
+> is paused, so tidying up did not continue. Nothing was changed. Resume the archive first (Resume, or
+> `mailarchive resume`), then choose Resume tidy-up (`mailarchive merge-copies -resume`)." *(Words for
+> the owner's sign-off on D2's words.)* Each refusal is a typed refusal tested with `assure.Refused`,
+> after its positive twin (MA-1229, rows below).
+>
+> **S3 — plain `verify` while a merge is pending.** The lead's call: plain `verify` is **allowed** while
+> `MergePending` is set. It writes only its own records, under the archive lock: the last-verify record
+> (`verify.go:248`, written through `state.WriteLastVerify`) and, when it finishes, its integrity notice
+> (`state/lastrun.go:486-491`). It never writes an archived file, the manifest or the index. `verify
+> -record` still refuses. *(The folding agent's note: the lead's words named only the last-verify
+> record; the code also updates the integrity notice beside it in the same call, so both are named
+> here, so that the test can pass.)* Because verify takes the archive lock (`verify.go:218`, waiting a
+> short grace), it cannot run **while `merge-copies` itself runs**; it can run while a merge is
+> stopped, which is when the stop's words send the person to it.
+>
+> **S4 — "every file owned" is about message files.** The ownership test (MA-1229's (2)) counts the
+> **message files**: every `.html`, `-attachments.zip` and `.eml` under a store folder whose stem has
+> the exporter's message shape (`export.StemName`: a date, an optional subject, a hex digest; the
+> pattern archive delete already uses, `archdelete/names.go:85-87`). That leaves out the folder pages
+> (`index.html`, `index-N.html`), which are `.html` files under a store folder too. The archive's
+> other files (the lock, the manifest, the index and its `-wal` and `-shm` files, the history and
+> last-run records, the README, the reports, the pause seal, the folder pages, and the result file
+> below) are not message files and are left out. *(The folding agent's call, flagged: fold check 4's
+> S4, needed for the test to be passable.)*
+>
+> **S5 — batches are formed from group `Folded` on.** The batch size is not stored. Each run of the
+> step, the first and every resume, forms its batches from group `Folded` on, in the plan's order,
+> whole groups until at least the batch size. A later build with another batch size therefore never
+> forms batches again from group 0. Correctness does not depend on finding the same batches as before:
+> groups before `Folded` are never checked or folded again, and their leftover entries are handled by
+> resume step 2.
+>
+> - **"The largest group has five copies" is unmeasured.** No file in the design's evidence
+>   (`mail-archive-tool/.claude/gmail-dedup-probe/`: `result.json`, the probe scripts) counts group
+>   sizes; §10.2 gives totals only. A group can hold one record for each folder the email is in, plus
+>   the repeats inside one folder (§10.2 fold), and the probe saw 16 folders on the owner's account.
+>   So a batch holds **5,000 copies plus at most one group's copies less one**, and that upper end is
+>   unmeasured. It changes only the batch's upper size, not correctness. D2's builder may measure it
+>   on the owner's manifest (counts only, read-only).
+> - The batch count stands as an estimate: about 15 for the owner's 73,915 copies.
+>
+> **S6 — the result lasts after the clear.** The lead's call, plaintext archives only. Before the
+> clear's save, in this order:
+>
+> 1. **The result file.** Written at the archive's root, beside `attachments-report.tsv`
+>    (`app/report.go:22`) and `BACKUP-NEEDS-ATTENTION.txt` (`state/lastrun.go:41`), as plain text and
+>    by the same temp file, fsync, rename path, so a crash leaves either no file or the whole file
+>    (a leftover temp is a `.mailarchive-*.tmp` that the start sweep removes). Its name:
+>    **`MERGE-RESULT-YYYY-MM-DD.txt`**, the date of the yes (`MergePending.Started`, UTC day). Its
+>    first lines name the plan's digest (`PlanDigest`), so a resume knows the file as its own and
+>    replaces it whole. If a file of that name holds another digest (a second merge on the same day),
+>    the name gains `-2`, `-3` and so on. *(The folding agent's call, flagged for the owner's sign-off
+>    on D2's words: the name.)* Everything in it is read from the saved manifest, never from the
+>    run's memory, so a resume after a crash writes the same file. It lists:
+>    - the totals: copies merged (the copies of groups before `Folded`, less `Kept` and the
+>      `SurvivorChanged` groups), groups merged, and the space freed (`MergePending.Freed`, §7.1
+>      fold-check-4 note);
+>    - **each "kept: this copy differs"** (every key in any group's `Kept`), with its folder, date,
+>      subject and page path;
+>    - **each "kept apart" group** (every group with `SurvivorChanged`): the survivor's folder and page
+>      path, and each copy's folder and page path;
+>    - one line saying that `mailarchive verify` names which file of each differs. *(The folding
+>      agent's call: `Kept` and `SurvivorChanged` hold no reason, so a file written after a resume
+>      could not give one; the reason is not added to the schema.)*
+>    - **each file kept after a failed removal or a change during (d)** (below), with its path: every
+>      `AlsoFiles` file of this merge's survivors, and every entry the clear is about to move there.
+>      A file an earlier merge kept beside the same survivor is listed too, as "kept beside this
+>      email"; the file does not tell the two apart.
+> 2. **A run-history entry** (`state.AppendRunHistory`, `state/runhistory.go:104`): one entry for the
+>    merge, with its outcome and the counts of merged, kept and kept-apart copies, as new `omitempty`
+>    fields. *(The folding agent's call: the field names, for D2.)* The history keeps only the last 50
+>    entries (`RunHistoryMax`, `:26`), so after enough backups the entry rolls off; the result file is
+>    the record that lasts. A crash between this entry and the clear's save can leave two entries for
+>    one merge; both say the same.
+> 3. **The clear's save**, as above.
+>
+> The **Desktop** shows the result's summary on the archive's card: the totals and how many copies
+> were kept, with the result file's name so the person can open it. It reads the newest
+> `MERGE-RESULT-*.txt` through the bounded reader, as it reads other records in an archive
+> (`util.ReadRegularFile`). The terminal prints the same summary and the file's path. Since the file is
+> a new root name, D2 adds it (as a name pattern) to archive delete's root names
+> (`archdelete/names.go:26-35`; without it, delete keeps it as the person's own file,
+> `archdelete/lister.go:263-264`), to the list of files `serve` never serves (MA-374's list,
+> `server/files_test.go:32-67`), and to the README's list of files (`app/readme.go:132`).
+>
+> **S7 — load checks:** in the §7.1 fold-check-4 note.
+>
+> **S8 — the delete guard works by stem, against every record.** (d) refuses to delete a file whose
+> stem (its name without `.html`, `-attachments.zip` or `.eml`) is the stem of **any** record's `Path`
+> (`KeyForPath`, `state/manifest.go:1222`, or the same lookup by stem), or of any `AlsoFiles` file of
+> any record. A live record's zip and `.eml` share its page's stem, so comparing whole paths would miss
+> them. A refusal here means a merge record that does not match the records: the merge stops, as for a
+> damaged merge record, and nothing more is deleted. *(The folding agent's call: what a refusal by the
+> guard does.)*
+>
+> **S9 — a record that carries `AlsoFiles` or `MergedFiles` is never a copy.** *(The folding agent's
+> call, flagged: needed for the ownership test.)* The plan leaves such a record out of the copies, as
+> it leaves out a record with no proof. It may still be its group's survivor. Otherwise (b) would
+> remove its record, and the files its `AlsoFiles` names would be owned by nothing. Today only
+> Microsoft 365 writes `AlsoFiles` (`app/graph.go:381`, `state/manifest.go:2026`), but an earlier
+> merge's survivor that holds a failed removal's files could be picked as a copy later.
+>
+> **S10 — the survivor's page and zip are re-checked at (a).** Each, when it has a recorded digest,
+> must be present and match it; the survivor's page must be present in any case (it is the page every
+> folder now shows). If either fails, the whole group is left as it was and gets `SurvivorChanged`,
+> exactly as for a changed original, and the result file lists the group as "kept apart".
+> Without this, a damaged survivor page could have become the only page while the copies' good pages
+> were deleted.
+>
+> **S11 — a changed page or zip during (d) is a failed removal (the lead's call).** At (d), if a
+> passed copy's page or zip does not match its entry just before its removal, it is treated as a
+> failed removal:
+>
+> - that file and the copy's files after it in the order (zip, page, `.eml`) are **not removed**;
+> - they stay **owned** by their entries, and the next fold save, or the clear, moves them to the
+>   survivor's `AlsoFiles` (S1's one `AlsoFiles` case);
+> - they are **reported**, in the result file and by verify as "kept" (MA-1244);
+> - **the merge goes on.**
+>
+> These are derived files. The copy's `.eml` was proven equal to the survivor's original at (a), and
+> the survivor is shown as a mail. **The merge stops only when a copy's `.eml` or the survivor's
+> original differs** at its re-hash in (d), or at resume step 2's re-hash of the survivor. Then the stop
+> is as above: nothing more deleted, `MergePending` set, the words of §24. This supersedes the part of
+> §24's first bullet that has every changed file stop the merge (marked there). Because the zip goes
+> first, a kept zip always keeps its page, so `SweepOrphans` never finds a zip of ours without its
+> page.
+>
+> - *Left for the lead:* the fold check's second S11 case. A copy whose `.eml` an earlier attempt
+>   already deleted, after its check, whose survivor is damaged later: resume step 2 finds the survivor
+>   differing and, by the rule above, stops, though nothing of that copy is left to protect. The fold
+>   check recommended counting it as deleted and reporting the damaged survivor. Not folded: the lead's
+>   rule names the survivor's original, and stopping is the fail-safe direction.
+>
+> **S12 — what resume re-checks.** Resume does not "re-check from the start". It re-checks the
+> pending entries (step 2), then runs (a) to (d) on the groups from `Folded` on. A kept copy, and any
+> group before `Folded`, is never checked again (marked in §24).
+>
+> **S13 — three leftovers marked:** §12's two MA-1229 rows ("a crash at each of steps 5.1 to 5.6"),
+> §18's survivor bullet, and §19's "step 5.5 re-hashes". Each is marked where it stands.
+>
+> **S14 — D2's trace gains the Desktop copy export.** The Desktop copy export and its extraction
+> workspace (`app/copyexport_archive.go:369`, `:1229`) read a snapshot of the manifest (`LoadFrom`) with
+> no archive lock. D2 traces them with restore to Thunderbird and extract (§24's last bullet, marked):
+> each either refuses while `MergePending` is set, or reads only shown records. A snapshot taken during
+> a merge may name a copy whose files (d) then deletes; that must end as a plain "file not found" for
+> that one email, never a wrong file.
 
 ## 10. Evidence
 
@@ -2233,7 +2541,7 @@ multi-folder message.
 | MA-1226 | S | extract mbox and eml into every member folder; copy members byte-equal to their folder's copy; tampered `CopySHA` skipped and listed (R20) |
 | MA-1227 | S | restore writes every chosen member folder; counts match; R40 holds |
 | MA-1228 | S | verify reports a copy member whose rebuild mismatches; owns `MergedFiles` |
-| MA-1229 | S | merge step: plan writes nothing; only proven copies deleted; fixity-mismatched kept; a crash at each of steps 5.1 to 5.6 finishes forward with nothing lost |
+| MA-1229 | S | merge step: plan writes nothing; only proven copies deleted; fixity-mismatched kept; a crash at each of steps 5.1 to 5.6 finishes forward with nothing lost *[“a crash at each of steps 5.1 to 5.6” superseded 2026-11-07 by [dedup foldcheck4 S13]: there are no steps 5.2 to 5.5 now; the crash points are the check-first rows' (a) to (d) and the clear, below]* |
 | MA-1230 | S | encrypted archive: MA-1214, MA-1220 and MA-1229 through sealed units |
 | MA-1231 | S | redaction and archive delete reach `MergedFiles` and every member's folder |
 | MA-1232 | L (pending) | Windows VM: a throwaway Gmail account in Thunderbird, one message under three labels plus sent mail; archived, restored, extracted; each folder shows in Thunderbird; per-folder `.eml` SHA-256 equal for copy members |
@@ -2289,7 +2597,7 @@ throwaway account's Thunderbird, never from the owner's profile.
 > | MA-1223 | S: **re-scoped** (Q-L2): the §7.2 fold's state table: add-only; a folder read partly adds no listed member; an unreadable or changing summary adds and removes nothing; never "gone" |
 > | MA-1226 | S: extract gives every member folder the stored original; a tampered original is skipped and listed once, naming its folders (R20) |
 > | MA-1228 | S: verify owns `MergedFiles`; checks each record's files once; damaged-original words name every folder |
-> | MA-1229 | S: the §9 fold's steps; a crash at each of 5.1 to 5.6 then resume; v1.6.1 refuses at each step; a file changed between plan and deletion is kept in `AlsoFiles` *[superseded 2026-11-07 by [dedup foldcheck2 M1] and then by [dedup check-first] (fold check 3's N3): a copy that differs at the check is never folded and keeps its own record; one that differs at a deletion stops the whole merge; a mutation that puts it in `AlsoFiles` must turn the test red. See the check-first rows below]* |
+> | MA-1229 | S: the §9 fold's steps; a crash at each of 5.1 to 5.6 then resume *[superseded 2026-11-07 by [dedup foldcheck4 S13]: the crash points are the check-first rows' (a) to (d) and the clear]*; v1.6.1 refuses at each step; a file changed between plan and deletion is kept in `AlsoFiles` *[superseded 2026-11-07 by [dedup foldcheck2 M1] and then by [dedup check-first] (fold check 3's N3): a copy that differs at the check is never folded and keeps its own record; one that differs at a deletion stops the whole merge; a mutation that puts it in `AlsoFiles` must turn the test red. See the check-first rows below]* |
 > | MA-1230 | S: MA-1214, MA-1220 and MA-1229 through sealed units; no folder name or Message-ID in any plain file after each step and after a summary pass (GD-3) *[superseded 2026-11-07 by [dedup foldcheck F1]: MA-1229 is not run through sealed units; see the fold-check note below]* |
 > | MA-1232 | L (pending): gains a run with Thunderbird open (the summary read on Windows, GD-8g) and the Q-B question on Edge |
 >
@@ -2352,8 +2660,18 @@ throwaway account's Thunderbird, never from the owner's profile.
 >
 > | Row | Now asserts |
 > |---|---|
-> | MA-1229 | **(a differing copy):** a copy whose `.eml` is changed after the plan, and, as a second case, one whose page or zip fails its digest: after the merge it is still its own record, listed in its own folder and found by search; its page, zip and `.eml` are byte-equal before and after; it is in `Kept` and the result lists it as "kept: this copy differs". Positive twin first: an unchanged copy in the same group is folded and its files deleted. Mutation: fold the differing copy anyway, and the test goes red. **(a damaged survivor):** a survivor whose original is changed after the plan: its whole group is untouched (every copy listed in its own folder and found by search, every file byte-equal), the group has `SurvivorChanged`, and the result says "kept apart". **(a crash after each sub-step):** a crash after (a), after (b), after (c), after each deletion in (d) (the zip, the page, the `.eml`), and after the last batch's (d) before the clear, each in the first, a middle and the last batch, then resume. At every crash point and after the resume: (1) no archived byte is lost or changed: every survivor's and every kept copy's original, page and zip are byte-equal to before, and every file that is gone was a passed copy's; (2) no file is owned by nothing: every file under `-out` other than the manifest, the index and the folder pages is named by a record's `Path` or `AlsoFiles`, or by a `MergedFiles` entry, and after the clear by a record only. Mutation: drop the previous batch's entries in the fold save before its deletions finish, and (2) goes red. **(the stop):** a re-hash that differs in (d), planted by a test hook that changes the survivor's original between a copy's page deletion and its `.eml` deletion (standing in for an outside writer): the merge stops with its words; no later file is deleted (every later copy byte-equal); `MergePending` stays set; the copy's `.eml` is still on disk and named by its `MergedFiles` entry; a second resume stops the same way while the file still differs. **(a failed removal):** a removal made to fail: that copy's remaining files move to the survivor's `AlsoFiles` at the next save, and a backup attempt (whose `SweepOrphans` runs before its refusal) leaves them on disk. **(the rebuild refuses):** `mailarchive reindex -rebuild`, the Desktop's Rebuild search index button and the wizard's rebuild offer each refuse while `MergePending` is set (`assure.Refused`: the exact refusal, the words name the archive and `merge-copies -resume`, and the side effect is absent: the manifest's bytes and `search.db`'s bytes unchanged), each after its positive twin rebuilding a healthy archive. **(a damaged merge record):** each §7.1 check-first load check broken in turn: resume stops with its words, the manifest's bytes are unchanged and no file is removed; positive twin: a healthy pending merge resumes. **(batches):** a group that would cross a batch's boundary is not split, and a resume after a crash finds the same batches |
-> | MA-1228 | **(check-first):** plain `verify` runs while `MergePending` is set, writes nothing, and reports `MergedFiles` files as owned; `verify -record` refuses (`assure.Refused`), after its positive twin on a healthy archive |
+> | MA-1229 | **(a differing copy):** a copy whose `.eml` is changed after the plan, and, as a second case, one whose page or zip fails its digest: after the merge it is still its own record, listed in its own folder and found by search; its page, zip and `.eml` are byte-equal before and after; it is in `Kept` and the result lists it as "kept: this copy differs". Positive twin first: an unchanged copy in the same group is folded and its files deleted. Mutation: fold the differing copy anyway, and the test goes red. **(a damaged survivor):** a survivor whose original is changed after the plan: its whole group is untouched (every copy listed in its own folder and found by search, every file byte-equal), the group has `SurvivorChanged`, and the result says "kept apart". **(a crash after each sub-step):** a crash after (a), after (b), after (c), after each deletion in (d) (the zip, the page, the `.eml`), and after the last batch's (d) before the clear, each in the first, a middle and the last batch, then resume. At every crash point and after the resume: (1) no archived byte is lost or changed: every survivor's and every kept copy's original, page and zip are byte-equal to before, and every file that is gone was a passed copy's; (2) no file is owned by nothing: every file under `-out` other than the manifest, the index and the folder pages is named by a record's `Path` or `AlsoFiles`, or by a `MergedFiles` entry, and after the clear by a record only *[“every file under `-out` other than …” superseded 2026-11-07 by [dedup foldcheck4 S4]: every message file, as the §9 fold-check-4 note defines it]*. Mutation: drop the previous batch's entries in the fold save before its deletions finish, and (2) goes red. **(the stop):** a re-hash that differs in (d), planted by a test hook that changes the survivor's original between a copy's page deletion and its `.eml` deletion (standing in for an outside writer): the merge stops with its words; no later file is deleted (every later copy byte-equal); `MergePending` stays set; the copy's `.eml` is still on disk and named by its `MergedFiles` entry; a second resume stops the same way while the file still differs. **(a failed removal):** a removal made to fail: that copy's remaining files move to the survivor's `AlsoFiles` at the next save, and a backup attempt (whose `SweepOrphans` runs before its refusal) leaves them on disk *[“whose `SweepOrphans` runs before its refusal” is superseded 2026-11-07 by [dedup foldcheck4 S1]: the backup now refuses before its sweep; the case also calls `export.SweepOrphans` directly, standing in for the second-guard path, and the files stay]*. **(the rebuild refuses):** `mailarchive reindex -rebuild`, the Desktop's Rebuild search index button and the wizard's rebuild offer each refuse while `MergePending` is set (`assure.Refused`: the exact refusal, the words name the archive and `merge-copies -resume`, and the side effect is absent: the manifest's bytes and `search.db`'s bytes unchanged), each after its positive twin rebuilding a healthy archive. **(a damaged merge record):** each §7.1 check-first load check broken in turn: resume stops with its words, the manifest's bytes are unchanged and no file is removed; positive twin: a healthy pending merge resumes. **(batches):** a group that would cross a batch's boundary is not split, and a resume after a crash finds the same batches *[“finds the same batches” superseded 2026-11-07 by [dedup foldcheck4 S5]: batches are formed from `Folded` on; see the fold-check-4 rows below]* |
+> | MA-1228 | **(check-first):** plain `verify` runs while `MergePending` is set, writes nothing, and reports `MergedFiles` files as owned; `verify -record` refuses (`assure.Refused`), after its positive twin on a healthy archive *[“writes nothing” superseded 2026-11-07 by [dedup foldcheck4 S3]: as written it could not pass, since verify writes its own last-verify record; see the fold-check-4 rows below]* |
+
+> **Folded 2026-11-07 [dedup foldcheck4 M1, S1 to S12] (lead's calls): rows after fold check 4.** These
+> add to the check-first rows above, which stand except where marked. No new id. Every refusal is
+> tested with `assure.Refused` (the exact refusal, words that name the archive and the remedy, the side
+> effect absent) after its positive twin; every fix ships prove-fail then prove-pass.
+>
+> | Row | Now also asserts |
+> |---|---|
+> | MA-1229 | **(M1, a copy with no zip):** positive twin first: a copy **with** a zip folds, and its zip, page and `.eml` are deleted. Then a copy with **no** zip on disk and no recorded zip digest (the usual email without attachments) folds, and its page and `.eml` are deleted; it is not in `Kept`. Mutation: require a zip at (a), and the copy is kept, so the test goes red. **(M1, a zip with no recorded digest):** a copy whose zip is on disk but has no recorded digest: after (b) the zip is named by a `MergedFiles` entry with its size and the checksum (a) took; a crash after (b), then a backup attempt, then resume: the zip is still on disk after the backup attempt (its refusal sits before `SweepOrphans`), and after `export.SweepOrphans` is also called directly on the archive (standing in for the second-guard path, where the sweep runs before the refusal; the zip's page is still on disk, so the sweep leaves it); then resume's (d) deletes it before the page. Mutation: give that zip no entry at (b), and the ownership check (2) goes red after (b). **(M1, a recorded file gone):** a copy whose page has a recorded digest but is missing is kept ("kept: this copy differs"), its `.eml` byte-equal after. **(S1, the pre-sync):** while `MergePending` is set, a scheduled local backup with the Thunderbird pre-sync switched on refuses with the merge words; the pre-sync hook is **never called** (a test hook counts its calls: zero), no Thunderbird process is started or quit, `SweepOrphans` removes nothing (a planted old temp file is still there), and the refused run is recorded as failed in the last-run record and the run history. Positive twin first: the same run on a healthy archive calls the hook once. Mutation: move the header read after the pre-sync, and the call count goes red. **(S1, the second guard):** a manifest whose `merge_pending` key comes after `entries` (written by the test by hand) is still refused right after the full load, and nothing is written. **(S2):** `merge-copies -plan`, the yes and `-resume` each refuse a paused archive, a half-deleted archive (the delete marker present) and an archive that became encrypted; the yes and `-resume` again when the state is set **after** the first check and before the lock is taken (a test hook between the two), and nothing is written (the manifest's bytes unchanged, no file removed); the paused refusal's words name both `mailarchive resume` and `merge-copies -resume`. **(S2, pause between batches):** a pause set after the first batch's (d) stops the merge before the next (a), with `MergePending` set and `Folded` past the first batch; after the archive is resumed, Resume tidy-up finishes. **(S5):** a merge stopped after its second fold save, then resumed with a **different batch size**: no group before `Folded` is checked or folded again, and the merge finishes with the same records, files and result as the positive twin, a resume with the same batch size. **(S6, the list survives the clear):** a merge with one kept copy and one kept-apart group: after the clear, `MERGE-RESULT-<date>.txt` exists at the root and lists that copy and that group, its space freed equals the sum of the deleted files' sizes (also after a crash in a middle batch and a resume), and `MergePending` is gone; a crash just after the clear's save, then a Desktop open: the file is still there and the Desktop shows its summary; a crash just after the result file is written and before the clear's save, then resume: one file only, under the same name, with the same content. Mutation: write the result file after the clear's save (with the crash between the two), and the first case goes red. **(S6, a second merge the same day):** its file is named `-2`, and the first file is unchanged. **(S7):** a key in two groups, and a key in `Kept` that is not a record, each make resume stop as a damaged merge record, the manifest's bytes unchanged. **(S8):** an entry (made by hand) whose stem is a live record's: (d) refuses it and the merge stops; the record's page, zip and `.eml` are byte-equal after. **(S9):** a record holding `AlsoFiles` is never a copy: it is still a record after the merge and its `AlsoFiles` files are on disk. **(S10):** a survivor whose page, or whose zip, no longer matches its recorded digest: the whole group is kept apart (`SurvivorChanged`), every copy's files byte-equal after, the result file lists the group as "kept apart", and `verify` names the survivor's changed file. **(S11):** a passed copy's page changed by a test hook just before its removal (standing in for an outside writer): the page and the `.eml` stay on disk (the zip, removed first, is gone), they are in the survivor's `AlsoFiles` after the next save, the result file lists them, **the merge goes on** and finishes, and a backup attempt afterwards leaves them on disk. Positive twin: the (the stop) case above, where the survivor's original is changed, still stops. Mutation: stop the merge on a changed page, and the test goes red |
+> | MA-1228 | **(fold check 4, in place of "writes nothing" above):** plain `verify` runs while `MergePending` is set (no `merge-copies` running); it writes **only** its own last-verify record and its integrity notice: the manifest's bytes, `search.db`'s bytes and every message file's bytes are unchanged after it (each compared before and after), and no file other than those two records (and the archive lock, which it takes and releases) is created or removed; it reports the `MergedFiles` files as owned. While `merge-copies` holds the archive lock, plain `verify` is refused by the lock and writes nothing. `verify -record` refuses while `MergePending` is set (`assure.Refused`), after its positive twin on a healthy archive |
 
 ## 13. Build slices and gates
 
@@ -2424,6 +2742,19 @@ rule is shared with the completeness design; whichever lands first owns it and t
 > and the plan (Windows on Edge first, then Mac), and the owner's sign-off on its words, which now
 > include the stop's words and "kept: this copy differs". **D2 waits for an independent re-check of the
 > check-first fold.** B1 to B4, D1, M1 and M2 are not changed.
+
+> **Folded 2026-11-07 [dedup foldcheck4] (lead's calls): slice D2 after fold check 4.** Fold check 4
+> (`docs/review-gmail-dedup-foldcheck4.md`, ee8c877) found one must-fix, M1, now folded (§9 fold-check-4
+> note). D2 also builds: the backup's header read before the pre-sync (S1); `merge-copies`' refusals
+> of a paused, half-deleted or newly encrypted archive (S2); the result file and its run-history entry
+> (S6), with the result file's name added to archive delete's root names, to `serve`'s never-served
+> list and to the README; the stem guard (S8); the survivor's page and zip check (S10); a changed page
+> or zip as a failed removal (S11); and the traces of restore, extract and the Desktop copy export
+> (S14). Its rows are the fold-check-4 rows of §12. **One touch outside D2:** `MergePending`'s
+> declaration sits before `Entries` (§7.1 fold-check-4 note), which is slice B2's struct; it changes
+> no byte of a manifest without a pending merge. The words that go to the owner's sign-off now also
+> include the paused refusal and the result file's name. **D2 waits for an independent re-check of
+> these folds** (M1 first: fold check 4 said it can be re-checked on its own).
 
 ## 14. Owner questions, each with a recommendation
 
@@ -2645,7 +2976,11 @@ indexes, then deletes. §23 re-reads the new order. This section is kept as writ
   superseded 2026-11-07 by [dedup foldcheck2 M2]: a survivor that fails its re-hash un-merges every
   copy of its group, each back to its own record (its page and zip rebuilt first if gone, M3), so the
   good bytes are shown as mail in their own folders; only the damaged survivor is left for verify. See
-  the §9 fold-check-2 note and §20.]*
+  the §9 fold-check-2 note and §20.]* *[That M2 bracket is superseded in turn 2026-11-07 by [dedup
+  check-first], marked here by [dedup foldcheck4 S13]: nothing is un-merged. A survivor found changed
+  at the check (a), its original, page or zip, leaves its whole group as it was (`SurvivorChanged`);
+  one whose original is found changed at a deletion stops the merge. See the §9 check-first and
+  fold-check-4 notes.]*
 - **A fillable record (F4)** is never a survivor and never a capture-time target, so no member folder's
   copy can reach the fill retry that rewrites a home `.eml`.
 - **A page or zip with no digest (S2)** is kept by load validation and deleted only with its proven
@@ -2696,7 +3031,10 @@ folding agent left open.
   listed in its folder and found by search after the merge.
 - **A copy missing pieces may fold into a complete survivor**: accepted, because step 5.5 re-hashes the
   copy's own `.eml` against the survivor's before any delete. A copy whose `.eml` is itself missing is
-  never folded (nothing proves it).
+  never folded (nothing proves it). *[“step 5.5 re-hashes” is superseded 2026-11-07 by [dedup
+  foldcheck4 S13]: the check (a) and the deletions (d) each re-hash it. And by [dedup foldcheck4 M1]:
+  a missing page or zip lets the copy fold only when no digest was recorded for it; one with a
+  recorded digest that is missing keeps the copy. See the §9 fold-check-4 note.]*
 - **Listed folder entries are held back** while no record of that email is complete: accepted.
 - **A damaged `MergedFiles` entry is kept as an owned file** at load, not dropped: accepted (never delete
   on doubt). *[Amended 2026-11-07 by [dedup foldcheck2 M2]: when `MergePending` holds its copy's
@@ -2876,6 +3214,12 @@ runs before a refusal is a local backup's `SweepOrphans` (`run.go:770`, before t
 it removes temp files and zips with no page, and the zip-first, all-or-none order never leaves such a
 zip.
 
+*[Amended 2026-11-07 by [dedup foldcheck4 S1, S3, M1]: plain `verify` writes its own last-verify
+record and integrity notice (no archived file, manifest or index); a local backup now refuses before
+its `SweepOrphans` from a header read, so that sweep runs before a refusal only for a manifest whose
+keys 1.7 did not order; and "never leaves such a zip" held only for a zip that had an entry (M1, now
+fixed). §25 re-reads this section's table with fold check 4's folds.]*
+
 | Crash just after | (1) byte lost or changed? | (2) every file owned? | Resume does |
 |---|---|---|---|
 | The plan, or the yes with its recompute | No: nothing written | Yes: every record is its own | nothing to finish |
@@ -2898,7 +3242,9 @@ A copy's `.eml` is deleted only just after it and the survivor's original were r
 page and zip are deleted only while that `.eml` is still on disk and proven. No record is ever put
 back, so nothing is rebuilt and no export runs. **Confirmed: every file is owned at every point**: by a
 shown record or a `MergedFiles` entry while the merge is pending, and by a shown record after it
-clears.
+clears. *[This ownership confirmation is withdrawn 2026-11-07 by [dedup foldcheck4 M1]: it did not hold
+for a copy's page or zip with no recorded digest, which got no entry at (b). §25 confirms it again with
+M1 folded.]*
 
 **Exceptions, named.**
 
@@ -2916,7 +3262,9 @@ clears.
   damaged later, they are reachable only through verify. That is today's position for Microsoft 365
   collapse losers too (§20).
 - **A file a copy was already missing before the merge** fails the check, so that copy is left as it
-  was, and today's `reindex` and Rebuild treat it as they do now.
+  was, and today's `reindex` and Rebuild treat it as they do now. *[Narrowed 2026-11-07 by [dedup
+  foldcheck4 M1]: only a file with a recorded digest. A page or zip with no recorded digest that is
+  missing is nothing to check, and the copy may fold.]*
 
 **Not traced:** whether restore to Thunderbird and extract open an archive while `MergePending` is
 set. They write no archived file either way. Also not traced: the cost of `pages.Generate` on an
@@ -2934,18 +3282,143 @@ Folded 2026-11-07 [dedup check-first lead's calls] (lead's call).
   (the file's name, kept, nothing removed), the likely cause ("a sync app or another computer changed
   this archive while it was being tidied"), what to do (pause that sync app or stop backups on the other
   computer, then choose Resume tidy-up / run `mailarchive merge-copies -resume`, which re-checks from
-  the start), and, if the resume stops again, the report link. While stopped, scheduled backups of this
+  the start), and, if the resume stops again, the report link. *[Amended 2026-11-07 by [dedup
+  foldcheck4 S11, S12] (lead's call): "a changed file" now means a copy's `.eml` or the survivor's
+  original; a changed page or zip is kept as a failed removal and the merge goes on. And "re-checks
+  from the start" is superseded: resume re-checks the files still waiting to be deleted, then checks
+  the groups not yet folded; a kept copy is not checked again. The words say that. See the §9
+  fold-check-4 note.]* While stopped, scheduled backups of this
   archive are refused with these same words and count toward the alert streak, so the person is told by
   email too. A way to abandon a stopped merge (keeping every remaining file shown as mail) is a future
   design with its own review, not version 1.
 - **Plain `verify` is read-only during a merge; `verify -record` refuses**: accepted (the folding
-  agent's call, §22).
-- **The folding agent's other calls are accepted**: batches of whole groups of about 5,000 copies;
+  agent's call, §22). *[“read-only” is made exact 2026-11-07 by [dedup foldcheck4 S3] (lead's call):
+  allowed during a merge, it writes only its own last-verify record (and integrity notice) under the
+  lock, never an archived file or the manifest.]*
+- **The folding agent's other calls are accepted** *[the batches' "five copies" bound and "the same
+  batches on resume" are amended 2026-11-07 by [dedup foldcheck4 S5]]*: batches of whole groups of about 5,000 copies;
   re-hashing the zip and page before deleting them as well as the `.eml`; the fallback of rebuilding
   folder pages once at the end if per-batch rebuilds prove slow (to be measured in D2 on an owner-sized
   fake archive, not assumed); the new field names. The words go to the owner's sign-off on D2's words.
 - **Restore to Thunderbird and extract during a merge**: slice D2 traces both and adds a test row; the
-  rule is that each either refuses while `MergePending` is set or reads only shown records.
+  rule is that each either refuses while `MergePending` is set or reads only shown records. *[Amended
+  2026-11-07 by [dedup foldcheck4 S14]: the Desktop copy export and its extraction workspace
+  (`app/copyexport_archive.go:369`, `:1229`, a snapshot read with no lock) join this trace under the
+  same rule.]*
+
+## 25. The check-first step with fold check 4's folds, re-read against a crash after each sub-step and every writer (2026-11-07)
+
+Folded 2026-11-07 [dedup foldcheck4] (lead's call). The folding agent re-read the §9 check-first note,
+as amended by its fold-check-4 note, against a crash just after each sub-step, in any batch, and
+against every MailArchive program that might run then. §23's two tests, with fold check 4's S4
+definition:
+
+- **(1)** Does any path lose or alter an archived byte (a byte of a record's original, page or zip)?
+- **(2)** Is every **message file** (§9 fold-check-4 note, S4) named by a record shown as a mail
+  (its own `Path` or its `AlsoFiles`) or by a pending `MergedFiles` entry while the merge is pending,
+  and by a record shown as a mail after the clear?
+
+**The step, as it now runs.** The plan (refuses a paused, half-deleted or newly encrypted archive;
+writes nothing). The yes: the same three checks, before the lock and under it; the recompute (F2);
+5.1 saves `MergePending` with `Started`, read back as 7. Then, per batch, from group `Folded` on: the
+pause check; **(a)** the check, per file (M1), the survivor's original, page and zip included (S10);
+**(b)** the fold save: one entry for each passed copy's file present at (a), the previous batch's
+entries dropped (adding to `Freed`) or moved to the survivor's `AlsoFiles`; **(c)** index and pages;
+**(d)** deletions, zip then page then `.eml`, each re-hashed, through the stem guard (S8). A changed
+page or zip is a failed removal (S11); a changed `.eml` or survivor original stops the merge. After
+the last batch: the result file, the run-history entry, then the clear's save.
+
+**Every MailArchive program, at every point below.** v1.6.1 refuses (version 7). A 1.7 local backup
+refuses from its header read before its "running" record, its pre-sync and its `SweepOrphans`
+(S1); a scheduled one records a failed run. A Microsoft 365 backup refuses right after its load,
+having swept only temp files. Plain `reindex` and `app.Rebuild` (its three callers) refuse after
+their loads, before any sweep or drop. `verify -record`, encrypt conversion, decrypt copy, archive
+delete, Add-another-archive and the Desktop open refuse (S3). Plain `verify` writes only its own two
+records, and cannot run while `merge-copies` holds the lock. `serve` and `search` read only. Pause
+writes only its seal; the merge checks for it before each batch. Restore, extract and the Desktop copy
+export are D2's trace (S14). **The only start-of-run removal that can still run before a refusal** is
+a local backup's `SweepOrphans` on a manifest whose keys 1.7 did not order (hand-edited): it removes
+temp files and zips with no page, and no zip the merge owns is ever without its page (below).
+
+| Crash just after | (1) byte lost or changed? | (2) every message file owned? | Resume does |
+|---|---|---|---|
+| The plan, or a refusal at the yes | No: nothing written | Yes: every record is its own | nothing to finish |
+| 5.1 (`MergePending` saved) | No: the manifest only, temp file, fsync, rename | Yes: every copy is still its own record | batches from group 0 |
+| The pause check stops the merge between batches | No: nothing written by the check | Yes: as after the last batch's (d) (row below) | step 2 on the last batch's entries, then on from `Folded` |
+| (a), any batch | No: reads only; the sizes and checksums (a) took of files with no recorded digest are in memory and lost | Yes: as before (a) | that batch's (a) again, measuring again |
+| (b) half-written | No: the rename is atomic, so the old manifest stands whole | Yes: as before (b) | that batch's (a) again |
+| (b) fold save | No: no file touched | **Yes, now for every file (M1):** each passed copy's file present at (a), with or without a recorded digest, by its own entry; a file absent at (a) is not there to own; a kept copy's by its own record; a kept-apart group's by its own records; the previous batch's leftovers by the survivor's `AlsoFiles`, in this same save | (c), then (d) |
+| (c) index and pages | No: derived rows and pages | Yes: as after (b) | (c) again, then (d) |
+| (d), a copy's zip deleted | No unique byte: the zip comes from the copy's `.eml`, still on disk, proven equal to the survivor's original at (a); the survivor's own zip was checked at (a) (S10) | Yes: its page and `.eml` by their entries | step 2: the gone zip counts as deleted; the page and `.eml` re-hashed, then removed |
+| (d), its page deleted | No unique byte: as for the zip; the survivor's page was checked at (a) | Yes: its `.eml` by its entry | as above |
+| (d), its `.eml` deleted | No unique byte: deleted just after it and the survivor's original were re-hashed equal | Yes: the copy has no file left; its folder is a membership on the survivor | counts as deleted if its entry equals `proof` and the survivor re-hashes to it; else the stop |
+| (d), a page or zip differs, or a removal fails (S11) | No: that file and the copy's later files stay. The change, if any, was an outside program's | Yes: by their entries; the next fold save or the clear moves them to the survivor's `AlsoFiles`. A kept zip always keeps its page (the zip goes first), so no sweep takes it | step 2 re-hashes them: a match is removed; a mismatch is kept again |
+| (d), a copy's `.eml` or the survivor's original differs: the stop | No byte by MailArchive: nothing more is deleted | Yes, as pending: the copy's remaining files by their entries; `MergePending` stays | step 2 re-checks; a match goes on, a mismatch stops again |
+| (d), the stem guard refuses (S8) | No: the file is not deleted | Yes: by its entry and by the record it matched | stops, as for a damaged merge record |
+| (d) done, before the next fold save | No | Yes: the entries name files that are gone, or files kept | step 2 finds the gone ones and counts them deleted |
+| The result file written (temp, fsync, rename), before the history entry | No: a root file, not a message file; a half-written temp is a `.mailarchive-*.tmp` the start sweep removes | Yes: as before the clear | step 2 on the last batch, then the result file again (same name, same content, read from the saved manifest), the entry, the clear |
+| The history entry written, before the clear's save | No | Yes: as before the clear | as above; the history may then hold two entries for this merge |
+| The clear | No: the manifest only | **Yes:** every message file by a shown record: a survivor's by its own `Path` or its `AlsoFiles`; a kept copy's and a kept-apart group's by their own records | done |
+| Load finds a damaged merge record | No: nothing written | Yes, as the manifest stands: every entry kept | stops, changing nothing |
+
+**Confirmed (1): no path in the check-first merge, run by MailArchive with these folds, loses or
+alters an archived byte.** A copy's `.eml` is deleted only just after it and the survivor's original
+were re-hashed equal. Its page and zip are deleted only while that `.eml` is on disk and proven, and
+only when each matches what was recorded or measured for it. The survivor's own original, page and zip
+were checked at (a), so the email keeps a good page and zip of its own. No program writes a message
+file while the merge is pending: every 1.7 writer refuses, and the merge itself writes none.
+
+**Confirmed (2): every message file is owned at every point.** While the merge is pending, by a shown
+record or a pending `MergedFiles` entry; after the clear, by a shown record. M1 closes the one gap
+fold check 4 found: a page or zip with no recorded digest now gets its own entry at (b). S9 closes a
+second, later one: a record whose `AlsoFiles` would leave with it is never a copy.
+
+**The `AlsoFiles` case for derived files, named.** After the clear, some files are owned by a shown
+record, the survivor, without being what the survivor shows: a passed copy's page or zip that changed
+during (d) or could not be removed, and the copy's files after it in the order (zip, page, `.eml`),
+which are left with it. They sit in the survivor's `AlsoFiles`. This is acceptable, for these reasons:
+
+- **The email they belong to is shown.** The copy's `.eml` was proven byte-equal to the survivor's
+  original at (a). Its page and zip are derived from that `.eml`. The survivor's own page and zip
+  were checked at (a), so every folder shows this email with a good page and zip.
+- **They hold no archived byte the survivor lacks.** A left `.eml` equals the survivor's original. A
+  derived file that changed was changed by another program, not by MailArchive. MailArchive keeps it
+  as it is, and verify reports it as "kept" (MA-1244).
+- **Their owner is the right one.** Redaction of the survivor removes its `AlsoFiles` with it
+  (`app/reindex.go:174-179`). That is correct here, because they are the same email. The fold-check-2
+  trouble, a different email deleted with the survivor, cannot arise: a copy that differs at (a) is
+  never folded, so its files never reach `AlsoFiles`.
+- **They are told.** The result file lists them, and the Desktop shows the count.
+- **The limit is the one already named** (§20, §23): if the survivor's original is damaged later, a
+  left `.eml` becomes the only good copy and is reachable only through verify. Microsoft 365's
+  collapse losers are in the same position today.
+
+**Exceptions, named** (unchanged from §23 except where said):
+
+- **An outside writer** between the last re-hash and a delete: §18's out-of-scope limit; S8's words
+  warn the person.
+- **An outside writer that creates a page or zip** after (a) found none: no entry names it, so it is
+  owned by nothing. MailArchive writes no such file while the merge is pending. Out of scope as above.
+- **A sync client restoring an older manifest** after the merge: no content lost; verify reports the
+  copies missing.
+- **A stopped merge stays stopped** until the changed `.eml` or survivor original matches again, or
+  someone repairs the manifest by hand (§24, accepted). With S11 it now stops only for those two.
+- **A survivor with no zip while a copy has one** (on disk, with or without a recorded digest). The
+  copy's zip is removed as derivable, so the email then has no zip anywhere. No unique byte is lost:
+  the attachments are inside the survivor's original, which equals the copy's, and F4's completeness
+  means the survivor's capture left nothing unarchived. **Left for the lead:** accept this, or keep
+  such a copy ("kept: this copy differs"). Keeping it is the fail-safe choice and costs a little space.
+- **The fold check's second S11 case** (a copy's `.eml` already deleted, its survivor damaged later)
+  stops the merge with nothing left of that copy to protect. **Left for the lead** (§9 fold-check-4
+  note).
+
+**Not traced:** archive delete's order (whether its refusal can sit before its marker write); whether
+`index.Open` writes to `search.db` before `reindex`'s refusal; the Desktop copy export's file reads
+beyond `LoadFrom` (D2 traces them, S14); the cost of `pages.Generate` at the owner's size; reading
+speed on the owner's disk; the size of the owner's largest group (S5: unmeasured).
+
+This re-read is the folding agent's, not independent. An independent re-check of these folds, M1
+first, is owed before D2.
 
 ---
 
@@ -3006,4 +3479,25 @@ callers of `app.Rebuild` by grep. **Measured:** one whole-manifest save of a syn
 program under the worktree's `.claude/`, not committed). Not checked: the owner's disk speed; the cost
 of `pages.Generate` at the owner's size; whether restore and extract open while a merge is pending;
 whether `index.Open` writes to `search.db` before `reindex`'s refusal. No product code was changed; no
+test was run.
+
+Fold-check-4 folds (the notes tagged `[dedup foldcheck4 …]` and §25), 7 November 2026, from the
+session's clock: by a model answering under no name, a fresh instance that has not met the record
+before, for Alex DiMarco, under the Limen method. Register: design folds of the lead's calls on
+`docs/review-gmail-dedup-foldcheck4.md` (ee8c877), plus the folding agent's calls where marked
+(`MergePending` declared before `Entries`; the backup's refusal placed before `beginRun`; `Started`
+and `Freed`; the result file's name and its reading only from the saved manifest; no per-file reason
+in the result; an empty `sha256` treated as a failed removal; a pause re-checked before each batch;
+the paused refusal's words; S4's message-file set; S7's second load check; S8's stop; S9). Drew on,
+and reached: fold check 4 in full; this design's §7.1, §9, §10.2, §12, §13, §18, §19 and §22 to
+§24; the code at `export/exporter.go:590-634`, `app/run.go:630-800` and `:1289-1303`,
+`app/graph.go:200-239`, `app/verify.go:185-260`, `app/reindex.go` (its refusals and loads by grep,
+and `:281-370`), `state/lastrun.go:30-47` and `:465-500`, `state/runhistory.go:14-73`,
+`state/manifest.go:262-339` and `:2120-2201`, `archdelete/names.go` in full,
+`archdelete/lister.go:245-304`, `server/files_test.go:30-67`, `app/report.go:21-33` by grep, and by
+grep `KeyForPath`, `AlsoFiles`, the `seal.go` functions and the copy export's `LoadFrom` lines; the
+evidence folder `mail-archive-tool/.claude/gmail-dedup-probe/` (`result.json` read; no file in it
+counts group sizes). Not checked: archive delete's order; whether `index.Open` writes before
+`reindex`'s refusal; how the Desktop reads a file at the archive root today (the result file's
+reader is specified, not traced); the owner's largest group. No product code was changed or run; no
 test was run.
