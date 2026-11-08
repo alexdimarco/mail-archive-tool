@@ -136,7 +136,7 @@ func TestAStoreWithNoKeyHasNoFolders(t *testing.T) {
 	}
 }
 
-// covers: MA-1171
+// covers: MA-1171, MA-1272, MA-1277
 // Each field is validated as Thunderbird writes it (design §4.1 step 3, TC-2, the §2.1 fold's
 // types): flags an unsigned 32-bit integer; totalMsgs, pendingMsgs, serverTotal and
 // lastSyncTimeInSec signed 32-bit; expungedBytes and folderSize signed 64-bit; every one a JSON
@@ -176,7 +176,8 @@ func TestEachFieldIsValidated(t *testing.T) {
 		{"totalMsgs", `2147483647`, OK, 2147483647},
 		{"totalMsgs", `2147483648`, Broken, 0},
 		{"totalMsgs", `-0`, OK, 0},
-		{"totalMsgs", `-1`, Broken, 0},
+		{"totalMsgs", `-1`, NotCounted, 0}, // MA-1272: Thunderbird's own "not counted yet"
+		{"totalMsgs", `-2`, Broken, 0},
 		{"totalMsgs", `"5"`, Broken, 0},
 		{"totalMsgs", `5.0`, Broken, 0},
 		{"totalMsgs", `1.5`, Broken, 0},
@@ -193,16 +194,20 @@ func TestEachFieldIsValidated(t *testing.T) {
 		{"expungedBytes", `9223372036854775808`, Broken, 0},
 		{"expungedBytes", `-1`, Broken, 0},
 		{"folderSize", `-5`, Broken, 0},
+		{"folderSize", `-1`, Missing, 0}, // MA-1272: Thunderbird's kSizeUnknown
 		{"lastSyncTimeInSec", `2147483648`, Broken, 0},
 		{"lastSyncTimeInSec", `-2147483648`, OK, -2147483648}, // the year-2038 wrap: "never checked", for C1b
 		{"lastSyncTimeInSec", `0`, OK, 0},
 	} {
 		e := read(t, set(tc.name, tc.raw))
-		if got := field(e, tc.name); got.State != tc.want || got.State == OK && got.Value != tc.value || got.State == Broken && got.Why == "" {
-			t.Errorf("%s = %s read as %+v; want %v %d (a Broken field says why)", tc.name, tc.raw, got, tc.want, tc.value)
+		if got := field(e, tc.name); got.State != tc.want || got.State == OK && got.Value != tc.value || (got.State == Broken || got.State == NotCounted) && got.Why == "" {
+			t.Errorf("%s = %s read as %+v; want %v %d (a Broken or NotCounted field says why)", tc.name, tc.raw, got, tc.want, tc.value)
 		}
-		if tc.want == Broken && e.Valid() {
+		if (tc.want == Broken || tc.want == NotCounted) && e.Valid() {
 			t.Errorf("%s = %s: the entry is still valid", tc.name, tc.raw)
+		}
+		if (tc.want == OK || tc.want == Missing) && !e.Valid() {
+			t.Errorf("%s = %s: the entry is not valid", tc.name, tc.raw)
 		}
 	}
 
@@ -212,16 +217,18 @@ func TestEachFieldIsValidated(t *testing.T) {
 			t.Fatalf("totalMsgs named twice read as %+v", e.TotalMsgs)
 		}
 	})
-	t.Run("required: flags, totalMsgs, expungedBytes; serverTotal for an IMAP folder", func(t *testing.T) {
+	t.Run("required: flags, totalMsgs, expungedBytes, serverTotal", func(t *testing.T) {
 		for _, name := range []string{"flags", "totalMsgs", "expungedBytes", "serverTotal"} {
 			e := read(t, valueJSON(t, folder(0, 5, 5).with(name, nil)))
 			if field(e, name).State != Missing || e.Valid() {
 				t.Errorf("without %s: %+v, valid %v; want Missing and not valid", name, field(e, name), e.Valid())
 			}
 		}
+		// Changed by MA-1277 (C1a pass C1A-07): serverTotal is required without the ImapBox flag
+		// too (this case was valid before).
 		notImap := folder(0, 5, 5).with("flags", FlagOffline, "serverTotal", nil)
-		if e := read(t, valueJSON(t, notImap)); !e.Valid() {
-			t.Errorf("a folder without the ImapBox flag needs no serverTotal: %+v", e)
+		if e := read(t, valueJSON(t, notImap)); e.Valid() {
+			t.Errorf("a folder without the ImapBox flag and without serverTotal is valid: %+v", e)
 		}
 	})
 	t.Run("optional: pendingMsgs, folderSize, lastSyncTimeInSec", func(t *testing.T) {

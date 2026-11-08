@@ -1192,6 +1192,40 @@ is a label-membership question, not completeness (§14 Q6).
 > 1b). So "absent → `unknown`" stays as the rule, with nothing left to decide. An absent value means
 > the entry was not written the way ESR 153, Release 159 or trunk write it, so `unknown` is right.
 >
+> **Folded 2026-11-08 [C1a pass C1A-01] (lead's call):** the "Negative values" bullet above
+> ("allowed only on the account root") is **superseded for `folderSize` and `totalMsgs`**. Its
+> "Thunderbird starts the count at -1" is true of **every** folder, not only the root: every folder
+> starts at `mFolderSize(kSizeUnknown)` and `mNumTotalMessages(-1)` (`nsMsgDBFolder.cpp` ESR 153
+> :243 and :236; `kSizeUnknown` is -1, `MailNewsTypes.h` at the comm-central tip) and writes both as
+> they are (:1228, :1233). The owner's real profile held `folderSize` -1 on 4 of its 35 folders,
+> which the old rule called invalid, so every such account would have been `unknown`.
+>
+> - `folderSize` exactly -1 off the root → **missing** ("Thunderbird has not worked out the size
+>   yet"). It is optional, so the entry stays valid. Any other negative `folderSize` → invalid.
+> - `totalMsgs` exactly -1 off the root → the entry is **not valid** (Thunderbird has no count
+>   either), with a reason of its own, **"not counted by Thunderbird yet"**, never `invalid_entry`'s
+>   "changed outside Thunderbird". C1a gives it as the field state `NotCounted` and
+>   `Entry.NotCountedYet()` (true only when that is the entry's one failure); C1b words it. Any other
+>   negative `totalMsgs` → invalid.
+> - `pendingMsgs` and `serverTotal`: negative → invalid, as before (the pass's source reading: both
+>   start at 0 and only grow or reset to 0).
+> - `expungedBytes`: negative → invalid, kept as before. **Unsettled:** it is taken from the folder's
+>   database (:669), whose arithmetic (`nsDBFolderInfo`) was not read, so a real negative value is not
+>   ruled out. If a real profile shows one, this rule is decided again.
+> - The account root is still never validated. MA-1272 proves this.
+>
+> **Folded 2026-11-08 [C1a pass C1A-07] (lead's call, with the real-profile constraint):** the
+> "IMAP folders" bullet above ("an entry with the ImapBox flag 0x2000 also needs `serverTotal`") is
+> **superseded**: **every** non-root entry of an IMAP store needs `serverTotal`. Every folder of an
+> IMAP account's tree is an IMAP folder (`nsImapMailFolder::AddSubfolderWithPath` refuses a child that
+> is not, `nsImapMailFolder.cpp` ESR 153 :353-356), and an IMAP folder writes `serverTotal` whatever
+> its flags (:1901; Release 159 :1974). ImapBox is set in one place only, once the server has listed
+> the folder (`SetBoxFlags` :1107). So the owner's 2 real folders with no ImapBox and no
+> `lastSyncTimeInSec` keep `serverTotal` and stay valid, as does the Windows lab's never-connected
+> INBOX. An entry with no `serverTotal` is one Thunderbird did not write. **Residual:** which kind of
+> real folder lacks ImapBox (one the server has not listed yet, or a saved search) was not traced; the
+> rule does not depend on it. MA-1277 proves this.
+>
 > **Step 3, Gmail labels [TC-8] (review condition).** For a Gmail account whose All Mail sets Y
 > (§3 fold), a label folder that is not kept is **not** a "not kept" WARN. Its mail is backed up
 > through All Mail. It is at most one note for all of them (§6 fold). Only a not-kept All Mail is
@@ -2273,6 +2307,54 @@ C4 must land with or before C3 if encrypted archives get any words beyond today'
 >   5f92b89: `is_gmail` added to `wrongType`'s typed settings, and `findAccount` split out of
 >   `FindAccountForStore` so `GmailForStore` reads the files once), and this slice's two small
 >   additions to `internal/thunderbird`. Not self-certified here.
+>
+> **Fixed 2026-11-08 [C1a pass] (the lead's calls on `docs/review-thunderbird-completeness-c1a-adversarial.md`).**
+> Every finding is fixed, one catalog row each (MA-1272 to MA-1278). Two are folded into §4.1
+> step 3 above (C1A-01, C1A-07). The others change §4.1 step 2's key matching, as follows.
+>
+> - **C1A-03 (MA-1273).** A file nested deeper than jsoncpp's `stackLimit` of 256 is
+>   `CacheMalformed`, since Thunderbird does not read it either.
+> - **C1A-04 (MA-1274).** On Windows a `\\server\share` root is a root of its own. A UNC store and a
+>   key rooted on a drive never match **exactly**. Such a key may still be found by its tail, as a
+>   profile moved from a drive to a share is. That is the builder's reading of the lead's "no match".
+> - **C1A-05 (MA-1275).** Item 1's normalising now applies only when no key matches byte for byte.
+>   When one does, a key that matches only after case or Unicode folding is an old-path key, under
+>   M2's rule.
+> - **C1A-06 (MA-1276).** Item 3's tail matching now also needs the part above the store's name to
+>   carry the store's parent's name (`ImapMail`), as its own words say. Keys found that way from more
+>   than one place make the store the new mode `CantTellKeys`. C1b reads that as `unknown`, like
+>   `NoKeys`. **Known limits.** A store with no keys of its own still takes another account's keys
+>   if they sit under another `ImapMail` with the same name. A custom-folder store moved to a parent
+>   with another name has no keys until Thunderbird saves (`unknown`, never `caught_up`). Fix for the
+>   first, if wanted: C2 passes the profile's other store paths, and tail mode skips a key that is
+>   exact for one of them.
+> - **C1A-08 (MA-1278).** On Windows, `Store` also looks up the store's own long and 8.3 short
+>   spellings (`GetLongPathNameW`, `GetShortPathNameW`). It never looks up a key, because a key
+>   could name a network share. The spellings are merged part by part. If the path exists and the
+>   lookup fails, the store is `CantTellKeys`. Short names *below* the store are not expanded:
+>   Thunderbird writes a folder's key from the store's path plus the folder's long name.
+>
+> **Folded 2026-11-08 [C1a pass] notes for C1b (not findings; the pass's §4, and the C1A-07
+> fail-safe).**
+>
+> - **Keep L2's cautious reading.** Read every `Store.Refused` as `invalid_entry` (`unknown`); do
+>   not narrow it to "ignored and counted". Two things rest on it:
+>   - a refused exact key does not put the store in exact mode, so a stale old-path key can then be
+>     read as the folder's entry (the pass's `TestAdvC1a24`);
+>   - `allMail` never looks at a refused key's flags.
+> - **`AllMailOne` can name an entry that is not valid.** Check `Valid()` before using that
+>   folder's count.
+> - **The C1A-07 fail-safe.** A kept folder with **no ImapBox flag** is never counted as caught up
+>   on its `serverTotal` alone. Thunderbird has not had the server's count for it (the server has
+>   not listed it). Its `serverTotal` is the starting 0, not a count. With no `lastSyncTimeInSec`
+>   (never checked, §2.3), it is already not `caught_up`. C1b must also keep that true when
+>   `lastSyncTimeInSec` is present.
+> - **New facts to word:** `Entry.NotCountedYet()` ("not counted by Thunderbird yet", not
+>   `invalid_entry`), `Store.Mode == CantTellKeys` with `CantTellWhy`, and a `folderSize` missing as
+>   -1 (no words needed: the folder is valid).
+> - **The Panorama setting** is read from prefs.js and user.js only. A setting forced by
+>   `policies.json` or an administrator's autoconfig is not seen; `panorama.sqlite` is the second
+>   signal for that case. This was not tested on a real install.
 
 ## 14. Owner questions (each with a recommendation)
 

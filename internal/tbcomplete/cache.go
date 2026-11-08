@@ -20,6 +20,7 @@ import (
 	"path/filepath"
 	"regexp"
 	"runtime"
+	"slices"
 	"sort"
 	"strconv"
 	"strings"
@@ -36,6 +37,12 @@ const (
 	// TC-15). The owner's 19-folder-cache lab profiles and a 238,000-message Gmail account's file
 	// are far below it.
 	CacheMaxBytes = 16 << 20
+	// CacheMaxDepth is the deepest a value may sit, the top-level object being 1: Thunderbird's
+	// reader, jsoncpp's CharReaderBuilder, stops past it (setDefaults' stackLimit 256;
+	// OurReader::readValue's check, json_reader.cpp, Mozilla's bundled copy at the tip, read
+	// 2026-11-08), so Thunderbird never reads a file nested deeper, and neither does this reader
+	// (C1a pass C1A-03). Thunderbird itself writes 3 levels: the object, an entry, a number.
+	CacheMaxDepth = 256
 )
 
 // Folder flags, nsMsgFolderFlags.idl (the same values at ESR 153.6.0esr and Release 159.0, the
@@ -58,16 +65,24 @@ const (
 type State int
 
 const (
-	Missing State = iota // the entry has no such field
-	Broken               // there, but not what Thunderbird writes; Why says how
-	OK                   // a JSON integer in the field's range; Value holds it
+	// Missing: the entry has no such field, or (folderSize only) holds -1, Thunderbird's "size
+	// not known" (kSizeUnknown, MailNewsTypes.h; Why then says so).
+	Missing State = iota
+	Broken        // there, but not what Thunderbird writes; Why says how
+	OK            // a JSON integer in the field's range; Value holds it
+	// NotCounted: totalMsgs off the account root holds -1, the value every folder starts with
+	// (nsMsgDBFolder.cpp ESR 153 :236, mNumTotalMessages(-1)) until Thunderbird reads the folder's
+	// summary. Thunderbird has no count either, so the entry is not Valid, but nothing was changed
+	// by hand: Entry.NotCountedYet tells C1b to say "not counted yet", never invalid_entry's words
+	// (C1a pass C1A-01, the lead's call).
+	NotCounted
 )
 
 // Field is one numeric field of a folder-cache entry.
 type Field struct {
 	State State
 	Value int64  // when OK
-	Why   string // when Broken: "a quoted text", "not a whole number", "out of range", …
+	Why   string // when Broken ("a quoted text", "not a whole number", …), NotCounted, or a -1 Missing
 }
 
 // Entry is one folder-cache entry of a store: one key and its value.
@@ -103,27 +118,45 @@ func (e Entry) Has(flag uint32) bool {
 	return e.FlagsKnown() && flag != 0 && uint32(e.Flags.Value)&flag == flag
 }
 
-// Valid is §4.1 step 3's rule for a folder's entry (TC-2 and the M4 re-read): flags, totalMsgs
-// and expungedBytes are OK (Thunderbird writes expungedBytes for every folder at ESR 153 and
-// Release 159, so one absent is an entry it did not write); an IMAP folder (the ImapBox flag) has
-// serverTotal OK; and pendingMsgs, folderSize and lastSyncTimeInSec, which may be Missing, are
-// not Broken. The account root is never validated and is always Valid.
+// Valid is §4.1 step 3's rule for a folder's entry (TC-2 and the M4 re-read), for an IMAP store,
+// the only kind C1 reads: flags, totalMsgs, expungedBytes and serverTotal are OK; and
+// pendingMsgs, folderSize and lastSyncTimeInSec, which may be Missing, are not Broken. The
+// account root is never validated and is always Valid.
+//
+// Thunderbird writes expungedBytes for every folder at ESR 153 and Release 159, so one absent is
+// an entry it did not write. serverTotal is required of every folder, not only of one carrying
+// the ImapBox flag 0x2000 (C1a pass C1A-07, the lead's call): every folder of an IMAP account's
+// tree is an IMAP folder (nsImapMailFolder::AddSubfolderWithPath refuses a child that is not,
+// nsImapMailFolder.cpp ESR 153 :353-356), and an IMAP folder writes serverTotal unconditionally
+// (WriteToFolderCacheElem :1901; Release 159 :1974), while ImapBox is set only once the server
+// has listed the folder (SetBoxFlags :1107, the one place it is set). So a real folder without
+// ImapBox, such as one the server has not listed yet, still has serverTotal, and an entry without
+// serverTotal is one Thunderbird did not write.
 func (e Entry) Valid() bool {
 	if e.Root {
 		return true
 	}
-	if e.Flags.State != OK || e.TotalMsgs.State != OK || e.ExpungedBytes.State != OK {
+	if e.Flags.State != OK || e.TotalMsgs.State != OK || e.ExpungedBytes.State != OK || e.ServerTotal.State != OK {
 		return false
 	}
-	if e.Has(FlagImapBox) && e.ServerTotal.State != OK {
-		return false
-	}
-	for _, f := range []Field{e.PendingMsgs, e.ServerTotal, e.FolderSize, e.LastSyncTimeInSec} {
+	for _, f := range []Field{e.PendingMsgs, e.FolderSize, e.LastSyncTimeInSec} {
 		if f.State == Broken {
 			return false
 		}
 	}
 	return true
+}
+
+// NotCountedYet reports whether the entry's one failure is a totalMsgs of -1 (NotCounted): it would
+// be Valid with a count. C1b words such a folder "not counted by Thunderbird yet", never
+// invalid_entry's "changed outside Thunderbird" (C1a pass C1A-01). False for a Valid entry, for
+// one that fails for any other reason too, and for the root (whose -1 is read as a value).
+func (e Entry) NotCountedYet() bool {
+	if e.TotalMsgs.State != NotCounted {
+		return false
+	}
+	e.TotalMsgs = Field{State: OK}
+	return e.Valid()
 }
 
 // Listed is what Thunderbird lists for the folder (design §2.2): totalMsgs + pendingMsgs, or
@@ -150,11 +183,22 @@ const (
 	NoKeys Mode = iota
 	// Exact: some key matches the store's current path. Old-path keys are then ignored beside an
 	// exact key for the same folder, and otherwise make the folder "can't tell" (OldPathOnly)
-	// while it is still in the store.
+	// while it is still in the store. A key that matches the current path byte for byte wins:
+	// when one does, a key that matches only once case or Unicode form is folded is an old-path
+	// key (C1a pass C1A-05: Thunderbird looks keys up byte for byte, nsMsgFolderCache.cpp :335,
+	// so after a respelling of the profile's path it writes new keys beside the old ones).
 	Exact
 	// Tail: no key matches exactly (a moved or restored profile Thunderbird has not opened since):
-	// the keys are matched by their tail under the store's folder name.
+	// the keys are matched by their tail under the store's folder name, itself under a folder
+	// named as the store's parent (ImapMail for an ImapMail store: §4.1 step 2's "the key's path
+	// under ImapMail/<host>/", C1a pass C1A-06).
 	Tail
+	// CantTellKeys: the reader cannot tell which keys are the store's (C1b: can't tell, like
+	// NoKeys), and gives no folders; CantTellWhy says why. In tail mode, the keys found by the
+	// store's folder name come from more than one place, so they may be another account's
+	// (C1A-06, the lead's call); or, on Windows, the store's path exists but its long or 8.3
+	// short spelling could not be found (C1A-08).
+	CantTellKeys
 )
 
 // Refusal is a key of the store the reader would not use: its tail is refused before any file
@@ -194,6 +238,8 @@ type AllMail struct {
 // Store is one store's view of the cache.
 type Store struct {
 	Mode Mode
+	// CantTellWhy says why, when Mode is CantTellKeys (a log's words; C3 gives the surfaces').
+	CantTellWhy string
 	// Root is the account root's entry, when there is exactly one (exact mode: its exact key).
 	Root *Entry
 	// Folders are the folders read, one entry each, sorted by Path. An entry here may still be
@@ -283,8 +329,12 @@ func ReadCache(profileDir string) (*Cache, error) {
 
 // Parse decodes a folder cache: exactly one JSON object, nothing but white space after it, walked
 // key by key so a key that appears twice is counted (Go's plain decoding would keep the last one
-// silently). Each value is kept raw; it is read when a store asks for it.
+// silently). Each value is kept raw; it is read when a store asks for it. A file nested deeper
+// than CacheMaxDepth, which Thunderbird itself does not read, is refused.
 func Parse(data []byte) (*Cache, error) {
+	if !withinDepth(data, CacheMaxDepth) {
+		return nil, fmt.Errorf("nested deeper than Thunderbird reads (%d levels)", CacheMaxDepth)
+	}
 	dec := json.NewDecoder(bytes.NewReader(data))
 	dec.UseNumber()
 	tok, err := dec.Token()
@@ -320,9 +370,61 @@ func Parse(data []byte) (*Cache, error) {
 	return c, nil
 }
 
+// withinDepth reports whether no value of data sits deeper than limit, the top-level value being
+// at depth 1, as jsoncpp counts (OurReader::readValue refuses a value once limit nodes enclose
+// it): a list or object at depth limit may be empty, since its members would be one deeper. It
+// scans bytes outside strings only; what it lets through is then decoded as JSON, so a file that
+// is not JSON is refused there.
+func withinDepth(data []byte, limit int) bool {
+	depth, inString, escaped := 0, false, false
+	for i := 0; i < len(data); i++ {
+		c := data[i]
+		if inString {
+			switch {
+			case escaped:
+				escaped = false
+			case c == '\\':
+				escaped = true
+			case c == '"':
+				inString = false
+			}
+			continue
+		}
+		switch c {
+		case '"':
+			inString = true
+		case '{', '[':
+			depth++
+			if depth > limit {
+				return false
+			}
+			if depth == limit {
+				j := i + 1
+				for j < len(data) && (data[j] == ' ' || data[j] == '\t' || data[j] == '\n' || data[j] == '\r') {
+					j++
+				}
+				if j < len(data) && data[j] != '}' && data[j] != ']' {
+					return false
+				}
+			}
+		case '}', ']':
+			depth--
+		}
+	}
+	return true
+}
+
+// spellingsOf gives the further spellings of an absolute store path that this OS's file system
+// gives it: on Windows its long and its 8.3 short spelling (spell_windows.go), elsewhere none. An
+// error means the path exists and its spellings could not be found.
+var spellingsOf = osSpellings
+
 // Store is the view of the store folder storeDir. The store's current path is storeDir made
 // absolute, and also that path with its links resolved, when that differs (a key written by
-// Thunderbird through either spelling is exact). Keys are compared by this OS's rules.
+// Thunderbird through either spelling is exact); on Windows each part of it may also be spelled
+// as its long or its 8.3 short name (C1a pass C1A-08: Thunderbird may hold the profile's path
+// in either spelling). Keys are compared by this OS's rules. When the store's path exists and its
+// Windows spellings cannot be found, the view is CantTellKeys.
 func (c *Cache) Store(storeDir string) (Store, error) {
 	abs, err := filepath.Abs(storeDir)
 	if err != nil {
@@ -332,49 +434,122 @@ func (c *Cache) Store(storeDir string) (Store, error) {
 	if real, err := filepath.EvalSymlinks(abs); err == nil && real != abs {
 		spellings = append(spellings, real)
 	}
-	return c.storeAt(spellings, runtime.GOOS), nil
+	variants, err := spellingsOf(abs)
+	if err != nil {
+		return Store{Mode: CantTellKeys, CantTellWhy: "could not find the long and short spellings of the store's folder: " + err.Error()}, nil
+	}
+	return c.storeAt(spellings, runtime.GOOS, variants...), nil
 }
 
 // one is a key of the store, as matched.
 type one struct {
-	e     Entry
-	id    string   // the folder's identity: its tail compared as goos compares names
-	tail  []string // the tail as written, split by goos's rules
-	exact bool
+	e      Entry
+	id     string   // the folder's identity: its tail compared as goos compares names
+	tail   []string // the tail as written, split by goos's rules
+	exact  bool
+	prefix string // an old-path key's place: the key's parts before its tail, compared as goos compares names
 }
+
+// place is one spelling of the store's current path, split: each part with the spellings it may
+// take (more than one on Windows only: the part as given, long and 8.3 short).
+type place [][]string
+
+// How a key matched the store.
+const (
+	byteExact = iota + 1 // the store's path, part for part, byte for byte
+	foldExact            // the store's path once each part is compared as goos compares names
+	byName               // its tail under a part named as the store, itself under the store's parent's name
+)
 
 // storeAt is Store for the store whose current path has the given spellings (absolute; the first
 // is the one file checks are built on), comparing by goos's path rules (the design §4.1 step 2
-// fold, read with MA-1265's rule that a backslash separates folders on Windows only).
-func (c *Cache) storeAt(spellings []string, goos string) Store {
+// fold, read with MA-1265's rule that a backslash separates folders on Windows only). variants
+// are further spellings of the first (Windows' long and short names): one with as many parts is
+// merged into it part by part, so a path spelled long in one part and short in another still
+// matches; one with another number of parts is a spelling of its own.
+func (c *Cache) storeAt(spellings []string, goos string, variants ...string) Store {
 	var s Store
-	var currents [][]string
-	for _, sp := range spellings {
-		if parts := storeParts(sp, goos); len(parts) > 0 {
-			currents = append(currents, parts)
+	var places, extras []place
+	for i, sp := range spellings {
+		parts := storeParts(sp, goos)
+		if len(parts) == 0 {
+			continue
 		}
+		pl := asPlace(parts)
+		for _, v := range variants {
+			switch vp := storeParts(v, goos); {
+			case i > 0 || len(vp) == 0:
+			case len(vp) == len(parts):
+				for k, p := range vp {
+					if !slices.Contains(pl[k], p) {
+						pl[k] = append(pl[k], p)
+					}
+				}
+			default:
+				extras = append(extras, asPlace(vp))
+			}
+		}
+		places = append(places, pl)
 	}
-	if len(currents) == 0 {
+	places = append(places, extras...)
+	if len(places) == 0 {
 		return s
 	}
-	name := currents[0][len(currents[0])-1]
-	dupKeys := map[string]bool{}
-	var mine []one
+	first := places[0]
+	name, parent := first[len(first)-1], []string{""}
+	if len(first) > 1 {
+		parent = first[len(first)-2]
+	}
+	strict := func(a, b string) bool { return a == b }
+	folded := func(a, b string) bool { return same(a, goos) == same(b, goos) }
+
+	// First, how each key matches; a byte-for-byte match anywhere makes folded matches old-path
+	// keys (C1A-05).
+	type matched struct {
+		kv   keyed
+		raw  []string
+		tail []string
+		how  int
+	}
+	var keys []matched
+	anyByteExact := false
 	for _, kv := range c.pairs {
 		raw := splitPath(kv.key, goos)
-		var tail []string
-		exact := false
-		for _, cur := range currents {
-			if tail, exact = exactTail(raw, cur, goos); exact {
+		m := matched{kv: kv, raw: raw}
+		for _, pl := range places {
+			if tail, ok := exactTail(raw, pl, strict); ok {
+				m.tail, m.how = tail, byteExact
 				break
 			}
 		}
-		if !exact {
-			var ok bool
-			if tail, ok = nameTail(raw, name, goos); !ok {
-				continue // another store's key, or no store's
+		if m.how == 0 {
+			for _, pl := range places {
+				if tail, ok := exactTail(raw, pl, folded); ok {
+					m.tail, m.how = tail, foldExact
+					break
+				}
 			}
 		}
+		if m.how == 0 {
+			tail, ok := nameTail(raw, name, parent, folded)
+			if !ok {
+				continue // another store's key, or no store's
+			}
+			m.tail, m.how = tail, byName
+		}
+		if m.how == byteExact && refusedTail(m.tail, goos) == "" {
+			if _, ok := folderPath(m.tail); ok || len(m.tail) == 0 {
+				anyByteExact = true
+			}
+		}
+		keys = append(keys, m)
+	}
+
+	dupKeys := map[string]bool{}
+	var mine []one
+	for _, m := range keys {
+		kv, tail := m.kv, m.tail
+		exact := m.how == byteExact || m.how == foldExact && !anyByteExact
 		if c.count[kv.key] > 1 && !dupKeys[kv.key] {
 			dupKeys[kv.key] = true
 			s.DuplicateKeys = append(s.DuplicateKeys, kv.key)
@@ -395,7 +570,8 @@ func (c *Cache) storeAt(spellings []string, goos string) Store {
 		}
 		e := readEntry(kv.key, kv.raw, isRoot)
 		e.Path = path
-		mine = append(mine, one{e: e, id: identity(tail, goos), tail: tail, exact: exact})
+		mine = append(mine, one{e: e, id: identity(tail, goos), tail: tail, exact: exact,
+			prefix: identity(nonEmpty(m.raw[:len(m.raw)-len(tail)]), goos)})
 	}
 	sort.Strings(s.DuplicateKeys)
 
@@ -457,6 +633,17 @@ func (c *Cache) storeAt(spellings []string, goos string) Store {
 			}
 		}
 	case len(oldIDs) > 0:
+		from := map[string]bool{}
+		for _, o := range mine {
+			from[o.prefix] = true
+		}
+		if len(from) > 1 {
+			// Keys from two places named as the store: the store moved twice, or another
+			// account's folder has the store's name. Which keys are this store's cannot be told
+			// (C1A-06, the lead's call); Thunderbird's next save writes the current keys.
+			return Store{Mode: CantTellKeys, DuplicateKeys: s.DuplicateKeys, Refused: s.Refused,
+				CantTellWhy: fmt.Sprintf("no key matches the store's current path, and the keys found by its folder's name come from %d places", len(from))}
+		}
 		s.Mode = Tail
 		take(oldIDs, oldOrder)
 	}
@@ -499,11 +686,20 @@ func allMail(folders, unsure []Entry) AllMail {
 	return AllMail{Kind: AllMailOne, Entry: &e}
 }
 
+// uncRoot is the first part of a Windows path that begins with two separators (a UNC share,
+// \\server\share\…): a root of its own, so it never equals the "" root of a path rooted on the
+// current drive (\server\share\…), which is another place (C1a pass C1A-04).
+const uncRoot = `\\`
+
 // splitPath splits p at its separators by goos's rules ("/", and on Windows "\" too), keeping
-// empty parts (a doubled separator, a leading one), so nothing is resolved or hidden.
+// empty parts (a doubled separator, a leading one), so nothing is resolved or hidden. On Windows
+// a leading pair of separators is one part, uncRoot.
 func splitPath(p, goos string) []string {
 	if goos == "windows" {
 		p = strings.ReplaceAll(p, `\`, "/")
+		if rest, ok := strings.CutPrefix(p, "//"); ok {
+			return append([]string{uncRoot}, strings.Split(rest, "/")...)
+		}
 	}
 	return strings.Split(p, "/")
 }
@@ -533,10 +729,10 @@ func same(part, goos string) string {
 	return norm.NFC.String(part)
 }
 
-// exactTail matches raw (a key, split) against cur (the store's path, split): when the key starts
-// with the store's path, part for part (a doubled separator inside the store's path is one), it
-// gives the rest of the key, its tail ([] for the store folder itself).
-func exactTail(raw, cur []string, goos string) ([]string, bool) {
+// exactTail matches raw (a key, split) against cur (a spelling of the store's path, split): when
+// the key starts with the store's path, part for part by eq (a doubled separator inside the
+// store's path is one), it gives the rest of the key, its tail ([] for the store folder itself).
+func exactTail(raw []string, cur place, eq func(a, b string) bool) ([]string, bool) {
 	k := 0
 	for j, part := range raw {
 		if k == len(cur) {
@@ -545,7 +741,7 @@ func exactTail(raw, cur []string, goos string) ([]string, bool) {
 		if part == "" && j > 0 {
 			continue
 		}
-		if same(part, goos) != same(cur[k], goos) {
+		if !anyEq(part, cur[k], eq) {
 			return nil, false
 		}
 		k++
@@ -553,18 +749,52 @@ func exactTail(raw, cur []string, goos string) ([]string, bool) {
 	return nil, k == len(cur)
 }
 
-// nameTail is the tail of raw after its last part named as the store folder is (an old-path key
-// of the store, from before a move: design §4.1 step 2's "the key's path under ImapMail/<host>/…
-// or the store's own folder name"). The last such part is the one, since a folder's key below it
-// has only parts that end in .sbd or .msf.
-func nameTail(raw []string, name, goos string) ([]string, bool) {
-	want := same(name, goos)
-	for i := len(raw) - 1; i >= 0; i-- {
-		if same(raw[i], goos) == want {
+// nameTail is the tail of raw after its last part named as the store folder is, when the part
+// before it is named as the store's parent (an old-path key of the store, from before a move:
+// design §4.1 step 2's "the key's path under ImapMail/<host>/"; C1a pass C1A-06, so another
+// account's folder that only shares the store's name, elsewhere, is not the store). The last such
+// part is the one, since a folder's key below it has only parts that end in .sbd or .msf.
+func nameTail(raw []string, name, parent []string, eq func(a, b string) bool) ([]string, bool) {
+	for i := len(raw) - 1; i >= 1; i-- {
+		if anyEq(raw[i], name, eq) {
+			if !anyEq(raw[i-1], parent, eq) {
+				return nil, false
+			}
 			return raw[i+1:], true
 		}
 	}
 	return nil, false
+}
+
+// anyEq reports whether part equals, by eq, one of the spellings.
+func anyEq(part string, spellings []string, eq func(a, b string) bool) bool {
+	for _, sp := range spellings {
+		if eq(part, sp) {
+			return true
+		}
+	}
+	return false
+}
+
+// asPlace is parts as a place of one spelling each.
+func asPlace(parts []string) place {
+	pl := make(place, len(parts))
+	for k, p := range parts {
+		pl[k] = []string{p}
+	}
+	return pl
+}
+
+// nonEmpty is parts without its empty ones but the first (the root), for comparing two keys'
+// places whatever doubled separators they hold.
+func nonEmpty(parts []string) []string {
+	var out []string
+	for i, p := range parts {
+		if p != "" || i == 0 {
+			out = append(out, p)
+		}
+	}
+	return out
 }
 
 var driveLetter = regexp.MustCompile(`^[A-Za-z]:`)
@@ -676,7 +906,12 @@ const (
 // readEntry reads one entry's value: an object whose fields are read by name, each once (a field
 // named twice is Broken, since Thunderbird never writes one twice). A value that is not an object
 // is NotObject. Off the root, a negative value is Broken (§4.1 step 3), except lastSyncTimeInSec,
-// where ≤ 0 means never checked (the year-2038 wrap of Thunderbird's 32-bit seconds included).
+// where ≤ 0 means never checked (the year-2038 wrap of Thunderbird's 32-bit seconds included),
+// and -1 exactly where Thunderbird itself writes it for "not known yet" (the [C1a pass C1A-01]
+// fold): folderSize -1 is Missing (kSizeUnknown, the value every folder's size starts at,
+// nsMsgDBFolder.cpp ESR 153 :243, written as it is at :1233), and totalMsgs -1 is NotCounted
+// (mNumTotalMessages(-1), :236). expungedBytes keeps the plain rule (unsettled: its database
+// arithmetic was not read).
 func readEntry(key string, raw json.RawMessage, isRoot bool) Entry {
 	e := Entry{Key: key, Root: isRoot}
 	vals, seen, ok := objectFields(raw)
@@ -684,19 +919,22 @@ func readEntry(key string, raw json.RawMessage, isRoot bool) Entry {
 		e.NotObject = true
 		return e
 	}
+	sizeUnknown := Field{State: Missing, Why: "-1: Thunderbird has not worked out the folder's size yet"}
+	notCounted := Field{State: NotCounted, Why: "-1: Thunderbird has not counted the folder's messages yet"}
 	for _, f := range []struct {
-		name string
-		kind int
-		dst  *Field
-		neg  bool // may be negative off the root
+		name     string
+		kind     int
+		dst      *Field
+		neg      bool   // may be negative off the root
+		minusOne *Field // what -1 off the root reads as, when not Broken
 	}{
-		{"flags", kindUint32, &e.Flags, false},
-		{"totalMsgs", kindInt32, &e.TotalMsgs, false},
-		{"pendingMsgs", kindInt32, &e.PendingMsgs, false},
-		{"serverTotal", kindInt32, &e.ServerTotal, false},
-		{"expungedBytes", kindInt64, &e.ExpungedBytes, false},
-		{"folderSize", kindInt64, &e.FolderSize, false},
-		{"lastSyncTimeInSec", kindInt32, &e.LastSyncTimeInSec, true},
+		{"flags", kindUint32, &e.Flags, false, nil},
+		{"totalMsgs", kindInt32, &e.TotalMsgs, false, &notCounted},
+		{"pendingMsgs", kindInt32, &e.PendingMsgs, false, nil},
+		{"serverTotal", kindInt32, &e.ServerTotal, false, nil},
+		{"expungedBytes", kindInt64, &e.ExpungedBytes, false, nil},
+		{"folderSize", kindInt64, &e.FolderSize, false, &sizeUnknown},
+		{"lastSyncTimeInSec", kindInt32, &e.LastSyncTimeInSec, true, nil},
 	} {
 		v, present := vals[f.name]
 		switch {
@@ -705,8 +943,13 @@ func readEntry(key string, raw json.RawMessage, isRoot bool) Entry {
 			*f.dst = Field{State: Broken, Why: "named twice in one entry"}
 		default:
 			*f.dst = intField(v, f.kind)
-			if !isRoot && !f.neg && f.dst.State == OK && f.dst.Value < 0 {
-				*f.dst = Field{State: Broken, Why: "negative (allowed only on the account root)"}
+			if isRoot || f.neg || f.dst.State != OK || f.dst.Value >= 0 {
+				break
+			}
+			if f.dst.Value == -1 && f.minusOne != nil {
+				*f.dst = *f.minusOne
+			} else {
+				*f.dst = Field{State: Broken, Why: "negative (Thunderbird writes no negative value here off the account root)"}
 			}
 		}
 	}

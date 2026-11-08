@@ -10,12 +10,13 @@ import (
 	"testing"
 )
 
-// covers: MA-1170, MA-1171
+// covers: MA-1170, MA-1171, MA-1276
 // Whatever bytes folderCache.json holds, Parse either refuses them or gives a cache whose view of a
 // store keeps the reader's promises: no panic; every Lstat is made inside the store; a folder is
 // never both read and a duplicate, and appears once; every folder has a name, comes from a key of
-// the store and is shaped X.sbd/…/Y.msf; a refused key is never also a folder; and All Mail, when
-// found, is one of the folders and carries 0x8000.
+// the store and is shaped X.sbd/…/Y.msf; a refused key is never also a folder; All Mail, when
+// found, is one of the folders and carries 0x8000; and a store whose keys cannot be told
+// (CantTellKeys) gives no folder at all.
 func FuzzFolderCache(f *testing.F) {
 	for _, seed := range []string{
 		`{}`, `{"/p/ImapMail/h": {"flags": 12, "totalMsgs": -1}}`,
@@ -25,6 +26,9 @@ func FuzzFolderCache(f *testing.F) {
 		`{"/p/ImapMail/h/x.msf": {"flags": 32768, "flags": 0}, "/p/ImapMail/h/x.msf": []}`,
 		`{"/p/ImapMail/h/\u0000.msf": {}, "/p/ImapMail/h//y.msf": {}, "/p/ImapMail/h/C:z.msf": {}}`,
 		`[1]`, `{"a": {"b": {"c": [[[[]]]]}}}`, "\xef\xbb\xbf{}",
+		`{"x":` + strings.Repeat("[", 255) + strings.Repeat("]", 255) + `}`,
+		`{"/old/ImapMail/h/a.msf": {"totalMsgs": -1, "folderSize": -1}, "/older/ImapMail/h/b.msf": {}}`,
+		`{"\\\\p\\ImapMail\\h\\a.msf": {}, "\\p\\ImapMail\\h\\b.msf": {}, "/P/IMAPMAIL/h/c.msf": {}}`,
 	} {
 		f.Add([]byte(seed))
 	}
@@ -65,6 +69,9 @@ func FuzzFolderCache(f *testing.F) {
 			}
 			if s.AllMail.Kind != AllMailOne && s.AllMail.Entry != nil {
 				t.Fatalf("%s: All Mail %+v names a folder", tc.goos, s.AllMail)
+			}
+			if s.Mode == CantTellKeys && (len(s.Folders)+len(s.OldPathOnly)+len(s.Duplicates) != 0 || s.Root != nil || s.AllMail.Kind != AllMailCantTell) {
+				t.Fatalf("%s: can't tell, yet %+v", tc.goos, s)
 			}
 		}
 	})

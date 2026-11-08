@@ -29,11 +29,12 @@ func gmailShape(store string) []pair {
 		{j("Projects.msf"), folder(0, 772, 772)},
 		{j("Receipts.msf"), folder(0, 30, 31).with("pendingMsgs", 3)},
 		{j("Headers to come.msf"), folder(0, 10, 12)},
-		{j("Outlook-ish.msf"), folder(0, 5, 0)},
+		// Its size never worked out (folderSize -1, as 4 of the owner's 35 real folders: MA-1272).
+		{j("Outlook-ish.msf"), folder(0, 5, 0).with("folderSize", -1)},
 	}
 }
 
-// covers: MA-1170
+// covers: MA-1170, MA-1272
 // The positive twin of every refusal: an owner-shaped Gmail profile, with a second account on the
 // same server (ImapMail/imap.gmail.com-1) and Local Folders in the same cache, gives the store
 // exactly its own folders, each field as written: listed is totalMsgs + pendingMsgs, or
@@ -172,6 +173,18 @@ func TestKeysFollowTheOSsPathRules(t *testing.T) {
 	if s.Mode != Exact || !equal(paths(s.Folders), []string{"INBOX"}) {
 		t.Fatalf("windows: a UNC store gave mode %v, %q; want it matched exactly", s.Mode, paths(s.Folders))
 	}
+	// A doubled separator inside the store's part of a key is one separator (it names the same
+	// folder), on every OS, and on a share too.
+	for _, c := range []struct{ goos, store, key string }{
+		{"linux", "/p/ImapMail/imap.gmail.com", "/p//ImapMail///imap.gmail.com/INBOX.msf"},
+		{"darwin", "/p/ImapMail/imap.gmail.com", "/p//ImapMail/imap.gmail.com/INBOX.msf"},
+		{"windows", `C:\p\ImapMail\imap.gmail.com`, `C:\p\\ImapMail\imap.gmail.com\INBOX.msf`},
+		{"windows", unc, `\\fileserver\home\\x\Thunderbird\Profiles\p\ImapMail\imap.gmail.com\INBOX.msf`},
+	} {
+		if s := parseStore(t, cacheJSON(t, pair{c.key, folder(FlagInbox, 1, 1)}), c.store, c.goos); s.Mode != Exact || !equal(paths(s.Folders), []string{"INBOX"}) {
+			t.Fatalf("%s: the key %s gave mode %v, %q; want it exact", c.goos, c.key, s.Mode, paths(s.Folders))
+		}
+	}
 }
 
 // covers: MA-1170
@@ -205,7 +218,7 @@ func TestUnicodeAndCaseVariants(t *testing.T) {
 	}
 }
 
-// covers: MA-1170
+// covers: MA-1170, MA-1276
 // One key-matching rule (foldcheck M2, its six fixtures; the "with the other folders behind"
 // fixture is the verdict's, C1b, and reads here as the "can't tell" one does). Exact mode applies
 // when any key matches the store's current path: an old-path key beside an exact key for the same
@@ -303,11 +316,24 @@ func TestOneKeyMatchingRule(t *testing.T) {
 
 	t.Run("tail mode: two tail keys for one folder are a duplicate", func(t *testing.T) {
 		p, store := newProfile(t, "imap.gmail.com")
+		nfc, nfd := "Entwürfe.msf", "Entwürfe.msf"
+		writeCache(t, p, pair{filepath.Join(old, nfc), folder(0, 4, 4)}, pair{filepath.Join(old, nfd), folder(0, 9, 9)},
+			pair{filepath.Join(old, "Sent.msf"), folder(0, 1, 1)})
+		s := readStore(t, p, store)
+		if s.Mode != Tail || !equal(paths(s.Folders), []string{"Sent"}) || len(s.Duplicates) != 1 {
+			t.Fatalf("got folders %q, duplicates %q; want Sent, and Entwürfe a duplicate", paths(s.Folders), s.Duplicates)
+		}
+	})
+
+	// Changed by MA-1276 (C1a pass C1A-06): tail keys from two old places, which was a duplicate
+	// here, is now "can't tell" for the whole store.
+	t.Run("tail mode: keys from two old places: can't tell", func(t *testing.T) {
+		p, store := newProfile(t, "imap.gmail.com")
 		writeCache(t, p, pair{filepath.Join(old, "INBOX.msf"), folder(0, 4, 4)}, pair{filepath.Join(old2, "INBOX.msf"), folder(0, 9, 9)},
 			pair{filepath.Join(old, "Sent.msf"), folder(0, 1, 1)})
 		s := readStore(t, p, store)
-		if s.Mode != Tail || !equal(paths(s.Folders), []string{"Sent"}) || !equal(s.Duplicates, []string{"INBOX"}) {
-			t.Fatalf("got folders %q, duplicates %q; want Sent, and INBOX a duplicate", paths(s.Folders), s.Duplicates)
+		if s.Mode != CantTellKeys || len(s.Folders)+len(s.Duplicates) != 0 || s.CantTellWhy == "" {
+			t.Fatalf("got %+v; want can't tell, no folders", s)
 		}
 	})
 }
