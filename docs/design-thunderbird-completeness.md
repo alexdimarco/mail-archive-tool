@@ -2379,6 +2379,53 @@ C4 must land with or before C3 if encrypted archives get any words beyond today'
 >   - **a C2 test** shows that a Local Folders store never gets a completeness verdict other than
 >     `not_applicable` (C1b's verdict function already gives `not_applicable` for type `none`
 >     before it reads the cache; C2's test proves the run never hands it to the IMAP path).
+>
+> **Built 2026-11-08 [C1b] (the builder's notes, for the lead).** C1b is built as
+> `internal/tbcomplete/verdict.go`: pure, no file read, no disk walk, no words. `Assess(Input)
+> Result` gives one store's verdict (`caught_up`, `behind`, `limited`, `unknown` with a reason,
+> `not_applicable`; zero values are `unknown`), with X, Y, missing, the tolerance, the floor, the
+> as-of, staleness, the TC-22 cap note, the deleted-copies estimate and the not-kept lists;
+> `Result.MaySayComplete()` is §4.2's full test (`-json`'s `complete`); `RunLead` is the
+> weakest-account lead; `Tolerance` and `ExpungedEstimate` are O2's and TC-16's formulas. Rows:
+> MA-1172 to MA-1179 (MA-1173 and MA-1175 the verdict's part), MA-1181 (the lead's part, words
+> still C3's), MA-1196 (the decision, facts still C2's); MA-1170 and MA-1171 amended. No new id.
+> Where the builder read the text more strictly, or chose where it is silent (each fails toward
+> "not complete"):
+>
+> - **A time later than now.** TC-12 makes it stale, and §4.2's condition 7 says caught_up needs
+>   "none in the future". Read together: such a folder is not checked, so the account is `unknown`
+>   (`never_checked`) and stale, and for All Mail it is a floor (`AllMailNotChecked`). The lead may
+>   prefer "stale only, verdict kept"; either is never complete.
+> - **A certain gap beats a can't-tell folder.** M2 says an old-path-only folder gives `behind`
+>   when the other folders already miss more than the tolerance. The build applies the same to a
+>   never-checked folder: left out of X and Y, `behind` on a certain gap, else `never_checked`.
+> - **C1A-07, a kept folder without ImapBox, is never checked**, whatever it lists, even with
+>   `lastSyncTimeInSec` present (`never_checked`). **For the lead:** if the owner's 2 real
+>   folders with no ImapBox (§4.1 step 3's C1A-07 fold) are kept, the owner's account stays
+>   `unknown` until the server lists them. Not known from here; MA-1190 can read their flags.
+> - **Reason codes.** §7 lists ten; M2 adds `old_path_only`. No key for the store, keys that
+>   cannot be told (`NoKeys`, `CantTellKeys`), no countable kept folder, and messages on disk while
+>   every folder lists 0 share §4.4's "could not read" words, so they share `cache_unreadable`.
+>   C1A-01's "not counted by Thunderbird yet" has words and no code; the build names it
+>   `not_counted_yet` (when a broken entry is there too, `invalid_entry` wins). A Gmail answer that
+>   cannot be told is `no_match` (GmailForStore can't tell only without an account it can read).
+> - **"Lists no mail"** also needs at least one folder entry and every entry valid (a not-kept
+>   entry that fails validation, skipped and counted, ends the exception: `cache_unreadable`).
+> - **Not-kept folders.** Trash or Junk without Offline is `DefaultNotKept` whatever it lists (a
+>   note only). A not-kept folder the walk read is still not kept: its count stays out of Y. With
+>   All Mail not kept, the labels are `NotKept` (TC-8's note needs All Mail to set Y).
+> - **TC-9.** With background download off, `limited` also covers a Gmail floor whose All Mail was
+>   never checked; a hidden All Mail stays `gmail_floor`.
+> - **The Gmail floor** counts All Mail itself when it is checked but below the largest label (it
+>   is still a true lower bound); a folder never checked never raises it (R43).
+> - **For C2.** `Input.Limits`' zero value is Thunderbird's defaults, so C2 must read the account's
+>   own settings (a value it cannot read with certainty fails the account match, C0c). `OnDisk.Folders`
+>   is keyed by `Entry.Path` exactly as the reader gives it, so C2 maps each walked mailbox to that
+>   spelling. `OnDisk.Distinct` must count only mailboxes that have a cache key (L3). The M6 facts
+>   are `Input.Unmatched`, all three needed for `not_applicable`.
+> - **Gate.** §13 names test-first and a mutation sweep for C1b. Both are done: 12 test functions,
+>   all red on a stub; 143 mutants, each red (recorded in the commit). No other gate is named for
+>   C1b; C2's unfiltered run and Windows walk tests come next.
 
 ## 14. Owner questions (each with a recommendation)
 

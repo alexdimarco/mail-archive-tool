@@ -32,7 +32,7 @@ func TestTheStoresPathAsGivenWinsOverItsOtherSpellings(t *testing.T) {
 	}
 	for _, c := range []struct {
 		name, given, other, sep, goos string
-		spellings, variants         []string
+		spellings, variants           []string
 	}{
 		{"Windows, given long, keys short and long", long, short, `\`, "windows", []string{long}, []string{long, short}},
 		{"Windows, given short, keys long and short", short, long, `\`, "windows", []string{short}, []string{short, long}},
