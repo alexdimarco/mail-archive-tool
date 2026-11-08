@@ -689,6 +689,30 @@ Trash only if they are kept (they sit outside All Mail).
 > account carries the AllMail flag") stays superseded, as the TC-1 fold above already says. The one
 > shared function in `internal/thunderbird` owns both detection and "which folder is All Mail" (M5).
 >
+> **Folded 2026-11-08 [B1 split] (lead's call).** "owns both detection and 'which folder is All
+> Mail'" above, and the M5 fold's "The shared Gmail function (below) owns this 'which folder is All
+> Mail' rule as well as the detection", are **superseded in part by [B1 split]**: the two are split.
+>
+> - **Detection** is gmail-dedup's slice B1, built on this branch: `thunderbird.GmailForStore(profile,
+>   store)` answers yes, no or can't tell, decided only by the matched account's
+>   `mail.server.<key>.is_gmail` (the account from `FindAccountForStore`; prefs.js with user.js over
+>   it, through C0c's allow-list reader and `util.ReadRegularFile`; a wrong type or a file that
+>   cannot be read with certainty is can't tell; no account is can't tell). Can't tell means "do not
+>   apply the Gmail rule": here `unknown`. With no line of its own the account takes
+>   `mail.server.default.is_gmail`, then Thunderbird's built-in false, as Thunderbird does. `is_gmail`
+>   joins the settings MA-1270's type rule checks. Rows: MA-1235 (gmail-dedup's id, limited to what
+>   B1 proves) and MA-1175's detection part.
+> - **Which folder is All Mail** (the one folder of the store with 0x8000; none or more than one →
+>   none, M5) is **not** in the `internal/thunderbird` function. It is read from `folderCache.json` by
+>   slice C1a's reader, with that reader's own bounds (`util.ReadRegularFile`, 16 MB) and its own
+>   adversarial pass, and C1b's verdict uses it. MA-1235's 0x8000 cases (and the gmail-dedup design's
+>   S7 sentence, "read from a `folderCache.json` fixture through the shared function") are proven with
+>   C1a, not B1. Why: `folderCache.json` is a new untrusted file whose reader is C1a's, gated by its
+>   own pass; a second reader of it in `internal/thunderbird` would be a second parser to review.
+> - gmail-dedup's design is not changed on this branch; `docs/notes-b1-split-for-gmail-dedup.md`
+>   says what it should fold when the branches meet (it names All Mail in words only, so it needs C1a's
+>   answer only for its words).
+>
 > **Folded 2026-11-07 [TC-22] (review condition, lab):** Gmail may have an IMAP setting that limits
 > each folder to the newest 1,000, 2,000, 5,000 or 10,000 messages **(recollection, unverified)**.
 > When All Mail's listed count equals one of those exactly:

@@ -377,6 +377,12 @@ func bareValue(v string) string {
 //     its own in mailnews.js; Thunderbird reads it with mail.server.default.offline_download as its
 //     fallback, the same setting by another name, so it takes that default's type (mailnews.js line
 //     622 again; the fallback rule is the builder's reading, not checked in source this round).
+//   - mail.server.default.is_gmail and mail.server.<key>.is_gmail: true or false (slice B1, MA-1235;
+//     GmailForStore reads it). mailnews.js has pref("mail.server.default.is_gmail", false) (ESR 153
+//     line 578, Release 159 line 582, comm-central tip line 586; copies .claude/tbsrc-esr153 and
+//     .claude/mozsrc-r5b), and a server's own is read with that default as its fallback
+//     (nsMsgIncomingServer::GetBoolValue, ESR 153 lines 449-459; IsGMailServer is a server bool
+//     pref, nsImapIncomingServer.cpp ESR 153 line 302).
 //   - mail.accountmanager.accounts: a quoted string. mailnews.js line 535,
 //     pref("mail.accountmanager.accounts", "").
 //   - mail.account.<id>.server, and mail.server.<key>.hostname, .type, .directory and
@@ -398,7 +404,7 @@ func wrongType(s prefStmt) string {
 		switch {
 		case !ok || key == "" || strings.Contains(field, "."):
 			return ""
-		case field == "offline_download":
+		case field == "offline_download", field == "is_gmail":
 			if !isBool {
 				return whatNotBool
 			}
@@ -548,17 +554,25 @@ func strEscape(s string) string {
 // file cannot be read with certainty (MA-1261: a line Thunderbird never writes, anywhere in it),
 // it gives no account and a HandEditedError, so nothing is ever reported on from such a file.
 func FindAccountForStore(profileDir, storeDir string) (*Account, error) {
+	acct, _, err := findAccount(profileDir, storeDir)
+	return acct, err
+}
+
+// findAccount is FindAccountForStore, also giving the settings it matched on, so a caller that
+// reads another of the account's settings (GmailForStore) reads the files once, and reads them
+// as the match did.
+func findAccount(profileDir, storeDir string) (*Account, prefSettings, error) {
 	s, user, err := readPrefs(profileDir)
 	if err != nil {
-		return nil, err
+		return nil, s, err
 	}
 	store, err := filepath.Abs(storeDir)
 	if err != nil {
-		return nil, err
+		return nil, s, err
 	}
 	profile, err := filepath.Abs(profileDir)
 	if err != nil {
-		return nil, err
+		return nil, s, err
 	}
 	acct, err := matchAccountIn(s, profile, store, runtime.GOOS)
 	var h *HandEditedError
@@ -568,7 +582,7 @@ func FindAccountForStore(profileDir, storeDir string) (*Account, error) {
 	if acct != nil {
 		_, acct.OfflineInUserJS = user["mail.server."+acct.ServerKey+".offline_download"]
 	}
-	return acct, err
+	return acct, s, err
 }
 
 // matchAccount is FindAccountForStore's rule on parsed prefs, for goos.
