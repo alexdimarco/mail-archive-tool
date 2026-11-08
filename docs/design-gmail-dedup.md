@@ -2146,6 +2146,27 @@ owned. Two limits remain, both outside MailArchive's own writers and both alread
 
 This re-read is the folding agent's, not independent: the fold check's re-check of F1 to F4 is owed.
 
+## 19. The lead's calls on the fold-check folds (2026-11-07)
+
+Folded 2026-11-07 [dedup foldcheck lead's calls] (lead's call). These settle the four items §18 and the
+folding agent left open.
+
+- **A plaintext copy that fails its check is un-merged, not only kept.** Superseding §18's row "5.5: a
+  mismatch on any of a copy's files" in this one respect: the copy's files still all stay, and its
+  record is also put back as it was before the merge (its own folder, its own search row, its own
+  page), so the person sees it exactly where it was. Only a record that is not in `AlsoFiles` is shown
+  as a mail; a file the merge left behind must never be reachable only through a verify report. The
+  pre-merge record is saved inside `MergePending` before step 5.3 so un-merging needs no guess. The
+  merge step only targets byte-identical copies, so a mismatch means the copy changed after the plan
+  and is treated as a different email. MA-1229 gains this case: a copy changed after the plan is still
+  listed in its folder and found by search after the merge.
+- **A copy missing pieces may fold into a complete survivor**: accepted, because step 5.5 re-hashes the
+  copy's own `.eml` against the survivor's before any delete. A copy whose `.eml` is itself missing is
+  never folded (nothing proves it).
+- **Listed folder entries are held back** while no record of that email is complete: accepted.
+- **A damaged `MergedFiles` entry is kept as an owned file** at load, not dropped: accepted (never delete
+  on doubt).
+
 ---
 
 Folded by a model answering under no name, a fresh instance that has not met the record before, for
