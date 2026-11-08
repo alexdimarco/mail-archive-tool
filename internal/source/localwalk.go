@@ -518,7 +518,7 @@ func (w *localWalk) mboxFileAs(sc *scope, rel, mailbox string, folder []string) 
 		n++
 		// Counted here, before the handler's manifest skip and date filter (§2.4).
 		if seps != nil {
-			w.countPiece(mb, data, seps.separated(n))
+			w.countPiece(mb, data, seps.start(n))
 		}
 		if m := parseRaw(data); m != nil {
 			if err := w.handler(folder, m); err != nil {

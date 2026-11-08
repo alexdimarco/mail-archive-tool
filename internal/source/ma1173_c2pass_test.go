@@ -75,14 +75,16 @@ func TestADV_C2_13_HeaderShapesAreBounded(t *testing.T) {
 	}
 	big := filepath.Join(t.TempDir(), "imap.big.example")
 	var b strings.Builder
-	b.WriteString("From - Mon Mar  3 09:00:00 2025\n")
+	// Amended 2026-11-08 (round 2's R2-04): each message begins with X-Mozilla-Status, as
+	// Thunderbird writes it, so it is counted for certain.
+	b.WriteString("From - Mon Mar  3 09:00:00 2025\nX-Mozilla-Status: 0001\n")
 	for b.Len() < 4<<20 {
 		b.WriteString("X-Junk: " + strings.Repeat("a", 70) + "\n")
 	}
 	b.WriteString("Message-ID: <late@x>\n\nbody\n")
 	line := "X-H: " + strings.Repeat("b", 1000) + "\n"
 	for i := 0; i < 2000; i++ {
-		b.WriteString("\nFrom - Mon Mar  3 09:00:00 2025\n")
+		b.WriteString("\nFrom - Mon Mar  3 09:00:00 2025\nX-Mozilla-Status: 0001\n")
 		b.WriteString(strings.Repeat(line, 60))
 		fmt.Fprintf(&b, "Message-ID: <m%d@x>\n\nbody\n", i)
 	}
@@ -179,7 +181,9 @@ func TestAMessageWithNoIDIsKnownByItsContent(t *testing.T) {
 func TestOnlyThunderbirdsSeparatorsAreCounted(t *testing.T) {
 	body := func(prefix string) string {
 		var b strings.Builder
-		b.WriteString("From: a@x\nMessage-ID: <crafted@x>\nSubject: crafted\n\nfirst line\n")
+		// Amended 2026-11-08 (round 2's R2-04): the message carries X-Mozilla-Status, as every
+		// offline copy Thunderbird writes does, so it is counted for certain.
+		b.WriteString("From: a@x\nMessage-ID: <crafted@x>\nX-Mozilla-Status: 0001\nSubject: crafted\n\nfirst line\n")
 		for i := 0; i < 6; i++ {
 			fmt.Fprintf(&b, "%sFrom the desk of Bob, note %d\n", prefix, i)
 			if i%2 == 0 {
@@ -212,30 +216,38 @@ func TestOnlyThunderbirdsSeparatorsAreCounted(t *testing.T) {
 		t.Errorf("what the walk hands on changed: %d counted, %d without counts, want 11 (the archive's own split is unchanged)", n, len(plain))
 	}
 
-	// A "From " line of separator shape that does not follow an empty line is no separator.
+	// A "From " line of separator shape that does not follow an empty line is no separator: it
+	// is glued (amended 2026-11-08 for round 2's R2-05: Glued, never counted, never "behind").
 	glued := filepath.Join(t.TempDir(), "s")
-	countWrite(t, filepath.Join(glued, "Box"), "From - Mon Mar  3 09:00:00 2025\nFrom: a@x\nMessage-ID: <g@x>\n\nbody\nFrom - Tue Mar  4 09:00:00 2025\nstill body\n")
-	if g, _ := countOnly(t, glued, false); g["Box"].Messages != 1 || g["Box"].Unseparated != 1 {
+	countWrite(t, filepath.Join(glued, "Box"), "From - Mon Mar  3 09:00:00 2025\nFrom: a@x\nMessage-ID: <g@x>\nX-Mozilla-Status: 0001\n\nbody\nFrom - Tue Mar  4 09:00:00 2025\nstill body\n")
+	if g, _ := countOnly(t, glued, false); g["Box"].Messages != 1 || g["Box"].Glued != 1 || g["Box"].Unseparated != 0 {
 		t.Errorf("a separator-shaped line straight after a body line: %+v", g["Box"])
 	}
-	// The shapes accepted: Thunderbird's, the classic one, zero-padded days, a time zone, CRLF,
-	// a first separator after leading empty lines, and the last line with no newline.
+	// Amended 2026-11-08 (round 2's R2-04, the lead's call: only Thunderbird's own separator).
+	// The shapes accepted: Thunderbird's "From - " and ctime, the day space-padded or in two
+	// digits (Windows' ctime pads with a zero), CRLF, a first separator after leading empty lines,
+	// and the last line with no newline.
+	st := "X-Mozilla-Status: 0001\n"
 	shapes := filepath.Join(t.TempDir(), "s")
-	countWrite(t, filepath.Join(shapes, "Box"), "\r\n\nFrom - Mon Mar  3 09:00:00 2025\r\nSubject: a\r\n\r\nx\r\n\r\n"+
-		"From alice@example.com Mon Jan 01 00:00:00 2024\nSubject: b\n\nx\n\n"+
-		"From a@b Sat Nov  7 10:00:00 +0000 2026\nSubject: c\n\nx\n\n"+
-		"From a@b Sat Nov  7 10:00 2026 PST\nSubject: d\n\nx\n\n"+
+	countWrite(t, filepath.Join(shapes, "Box"), "\r\n\nFrom - Mon Mar  3 09:00:00 2025\r\nX-Mozilla-Status: 0001\r\nSubject: a\r\n\r\nx\r\n\r\n"+
+		"From - Mon Mar 03 09:00:00 2025\n"+st+"Subject: b\n\nx\n\n"+
+		"From - Sat Nov 17 10:00:00 2026\n"+st+"Subject: c\n\nx\n\n"+
 		"From - Sat Nov  7 10:00:00 2026")
-	if g, _ := countOnly(t, shapes, false); g["Box"].Messages != 5 || g["Box"].Unseparated != 0 {
-		t.Errorf("the accepted shapes: %+v", g["Box"])
+	if g, _ := countOnly(t, shapes, false); g["Box"].Messages != 3 || g["Box"].Loose != 1 || g["Box"].Unseparated != 0 || g["Box"].Glued != 0 {
+		t.Errorf("the accepted shapes: %+v (want 3 counted and the header-less last one loose)", g["Box"])
 	}
 	// Shapes refused: no date, a lower-case day, a trailing word, a separator too long (its first
-	// 256 bytes alone would pass).
+	// 256 bytes alone would pass); and, since round 2, every other sender word (the classic form,
+	// a git patch's first line), a time zone, a time without seconds, a trailing space, a
+	// three-digit day.
 	for _, bad := range []string{"From - x", "From x", "From - mon Mar  3 09:00:00 2025", "From - Mon Mar  3 09:00:00 2025 remote from y",
-		"From " + strings.Repeat("a", 300) + " Mon Mar  3 09:00:00 2025", "From - Mon Mar  3 09:00:00 2025" + strings.Repeat(" ", 240) + "x"} {
+		"From " + strings.Repeat("a", 300) + " Mon Mar  3 09:00:00 2025", "From - Mon Mar  3 09:00:00 2025" + strings.Repeat(" ", 240) + "x",
+		"From alice@example.com Mon Jan 01 00:00:00 2024", "From 3f2a9c0d1e5b7a8c9d0e1f2a3b4c5d6e7f8a9b0c Mon Sep 17 00:00:00 2001",
+		"From a@b Sat Nov  7 10:00:00 +0000 2026", "From - Sat Nov  7 10:00:00 +0000 2026", "From - Sat Nov  7 10:00 2026",
+		"From - Sat Nov  7 10:00:00 2026 ", "From - Sat Nov 007 10:00:00 2026", "From  - Sat Nov  7 10:00:00 2026"} {
 		d := filepath.Join(t.TempDir(), "s")
-		countWrite(t, filepath.Join(d, "Box"), "From - Mon Mar  3 09:00:00 2025\nSubject: a\n\nx\n\n"+bad+"\nSubject: b\n\nx\n")
-		if g, _ := countOnly(t, d, false); g["Box"].Messages != 1 || g["Box"].Unseparated != 1 {
+		countWrite(t, filepath.Join(d, "Box"), "From - Mon Mar  3 09:00:00 2025\n"+st+"Subject: a\n\nx\n\n"+bad+"\n"+st+"Subject: b\n\nx\n")
+		if g, _ := countOnly(t, d, false); g["Box"].Messages != 1 || g["Box"].Unseparated != 1 || g["Box"].Loose != 0 {
 			t.Errorf("%q taken as a separator: %+v", bad, g["Box"])
 		}
 	}
@@ -254,7 +266,8 @@ func TestTheSeparatorScanIsReadSizeBlind(t *testing.T) {
 			break
 		}
 	}
-	if fmt.Sprint(whole.marks) != "[true true false]" {
+	// Amended 2026-11-08 (the C2 pass round 2): a mark says how the piece begins.
+	if fmt.Sprint(whole.marks) != fmt.Sprint([]pieceStart{startSeparator, startSeparator, startBody}) {
 		t.Fatalf("positive twin: marks %v", whole.marks)
 	}
 	bytewise := newSeparatorScan(&oneByte{s: data})
@@ -267,8 +280,8 @@ func TestTheSeparatorScanIsReadSizeBlind(t *testing.T) {
 	if fmt.Sprint(bytewise.marks) != fmt.Sprint(whole.marks) {
 		t.Errorf("one byte at a time: %v, whole: %v", bytewise.marks, whole.marks)
 	}
-	if bytewise.separated(0) || bytewise.separated(4) || !bytewise.separated(2) || bytewise.separated(3) {
-		t.Error("separated(n) does not follow the marks")
+	if bytewise.start(0) != startBody || bytewise.start(4) != startBody || bytewise.start(2) != startSeparator || bytewise.start(3) != startBody {
+		t.Error("start(n) does not follow the marks")
 	}
 }
 

@@ -216,7 +216,8 @@ func assessThunderbird(stores []*tbStore, now time.Time) []tbcomplete.Result {
 				in.Store = view
 				var walked []tbcomplete.Mailbox
 				for _, mb := range t.counts.Mailboxes {
-					walked = append(walked, tbcomplete.Mailbox{Rel: mb.Rel, Messages: mb.Messages, Keys: mb.Keys, NoKey: mb.NoKey, Unseparated: mb.Unseparated})
+					walked = append(walked, tbcomplete.Mailbox{Rel: mb.Rel, Messages: mb.Messages, Keys: mb.Keys, NoKey: mb.NoKey,
+						Loose: mb.Loose, LooseKeys: mb.LooseKeys, LooseNoKey: mb.LooseNoKey, Unseparated: mb.Unseparated, Glued: mb.Glued})
 				}
 				in.OnDisk = view.OnDiskFor(walked, t.facts.Gmail == thunderbird.GmailYes)
 			}
@@ -258,12 +259,20 @@ func limitsOn(l tbcomplete.Limits) bool {
 // identity carries nothing (the chosen-setting WARN shows once more). The folders of all three
 // lists across every account stay within state.TBFoldersTotalMax: each account gets its share,
 // not-kept folders first (they carry a WARN), then kept, then Trash and Junk (ADV-C2-08).
+//
+// Past state.TBAccountsMax accounts the record keeps the weakest first (behind, limited,
+// unknown, then the caught-up ones that may not say complete, then the rest), each group in the
+// run's order, and tbRecordsMore says how many were left out (the C2 pass round 2's R2-06).
 func tbRecords(results []tbcomplete.Result, prev []state.TBAccount, now time.Time) []state.TBAccount {
 	before := map[string]state.TBAccount{}
 	for _, p := range prev {
 		if p.StoreID != "" {
 			before[p.StoreID] = p
 		}
+	}
+	if len(results) > state.TBAccountsMax {
+		results = append([]tbcomplete.Result(nil), results...)
+		sort.SliceStable(results, func(i, j int) bool { return weakness(results[i]) < weakness(results[j]) })
 	}
 	n := min(len(results), state.TBAccountsMax)
 	share := state.TBFoldersTotalMax
@@ -284,6 +293,7 @@ func tbRecords(results []tbcomplete.Result, prev []state.TBAccount, now time.Tim
 			CapNote: r.CapNote, ListsNoMail: r.ListsNoMail, LabelsNotKept: r.LabelsNotKept,
 			CantTellFolders: r.CantTellFolders, SkippedEntries: r.SkippedEntries, IgnoredOldKeys: r.IgnoredOldKeys,
 			UnkeyedMailboxes: r.UnkeyedMailboxes, UnkeyedMessages: r.UnkeyedMessages,
+			GluedMailboxes: r.GluedMailboxes, NoStatus: r.NoStatus,
 		}
 		if r.AsOf > 0 {
 			a.AsOf = time.Unix(r.AsOf, 0).UTC()
@@ -334,6 +344,27 @@ func tbRecords(results []tbcomplete.Result, prev []state.TBAccount, now time.Tim
 		out = append(out, a)
 	}
 	return out
+}
+
+// tbRecordsMore is how many of the run's results the record leaves out (tbRecords).
+func tbRecordsMore(results []tbcomplete.Result) int {
+	return max(0, len(results)-state.TBAccountsMax)
+}
+
+// weakness orders results for a record that cannot keep them all: the lower, the weaker (kept
+// first). It follows tbcomplete.RunLead's order.
+func weakness(r tbcomplete.Result) int {
+	switch {
+	case r.Verdict == tbcomplete.Behind:
+		return 0
+	case r.Verdict == tbcomplete.Limited:
+		return 1
+	case r.Verdict == tbcomplete.Unknown:
+		return 2
+	case !r.MaySayComplete():
+		return 3
+	}
+	return 4
 }
 
 // byListed is fs sorted by listed count, largest first, then by name.
@@ -422,21 +453,46 @@ func updateTBStreak(opts Options, results []tbcomplete.Result, encrypted, ok boo
 		logf("warning: could not read MailArchive's record of how long Thunderbird has been downloading (%v); it was left as it is", err)
 		return &state.RunWarning{Code: tbStreakUnreadable, Message: fmt.Sprintf("MailArchive could not read its record of how long Thunderbird has been downloading (%s), so it was left as it is and not counted. Remove the file if it is not a regular file of yours; the next backup starts it again.", path)}
 	}
-	next, moved := prev, warn != nil
+	// The run's own count, and every store it reached is seen, whatever its verdict (the C2 pass
+	// round 2's R2-08): an entry whose store no run reaches for state.TBStreakUnseenRuns runs is
+	// pruned below. Streaks already in the record are folded first, so a full record that must
+	// make room for a new one drops an entry this run did not find behind.
+	next, moved := prev.StartRun(), warn != nil
 	for _, r := range results {
-		if r.StoreID == "" {
-			continue // a store with no identity is never matched to a streak
+		if r.StoreID != "" {
+			next = next.Seen(r.StoreID)
 		}
-		_, had := next.Account(r.StoreID)
-		switch r.Verdict {
-		case tbcomplete.Behind:
-			next, moved = next.Behind(r.StoreID, state.CleanFolderName(r.Account), r.OnDisk, now), true
-		case tbcomplete.CaughtUp, tbcomplete.Limited:
-			if had {
-				next, moved = next.End(r.StoreID), true
+	}
+	for _, existing := range []bool{true, false} {
+		for _, r := range results {
+			if r.StoreID == "" {
+				continue // a store with no identity is never matched to a streak
+			}
+			if _, had := next.Account(r.StoreID); had != existing {
+				continue
+			}
+			switch r.Verdict {
+			case tbcomplete.Behind:
+				var gone state.TBStreakAccount
+				var evicted bool
+				next, gone, evicted = next.BehindEvicting(r.StoreID, state.CleanFolderName(r.Account), r.OnDisk, now)
+				moved = true
+				if evicted {
+					logf("warning: MailArchive's record of how long Thunderbird has been downloading (%s) is full (%d accounts), so it dropped the record of %s, last reached %d backup(s) ago, to start counting %s", path, state.TBAccountsMax, gone.Account, next.Run-gone.SeenRun, state.CleanFolderName(r.Account))
+				}
+			case tbcomplete.CaughtUp, tbcomplete.Limited:
+				if existing {
+					next, moved = next.End(r.StoreID), true
+				}
 			}
 		}
 	}
+	next, pruned := next.Prune()
+	for _, a := range pruned {
+		logf("note: MailArchive's record of how long Thunderbird has been downloading (%s) dropped %s: no backup has reached it in the last %d", path, a.Account, state.TBStreakUnseenRuns)
+	}
+	// With any streak kept, the run's count is recorded every run, so an entry's unseen runs add up.
+	moved = moved || len(pruned) > 0 || len(next.Accounts) > 0
 	if !moved {
 		return warn
 	}

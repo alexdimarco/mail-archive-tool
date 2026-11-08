@@ -42,8 +42,12 @@ type MailboxCount struct {
 	// that is itself one maildir folder. For a mailbox reached through a followed link it is
 	// where the link is.
 	Rel string
-	// Messages counted: every message read, but those carrying the Expunged bit, and (an
-	// mbox file) only the pieces that begin at a separator Thunderbird writes (Unseparated).
+	// Messages counted for certain (the STRICT count, the C2 pass round 2's R2-04): every
+	// message read, but those carrying the Expunged bit; in an mbox file only the pieces that
+	// begin at a separator Thunderbird writes (separatorShape) AND whose header holds
+	// X-Mozilla-Status, the line Thunderbird writes at the top of every offline copy
+	// (nsImapMailFolder.cpp's SetupMsgWriteStream). Only this count may make an account
+	// "caught up". A maildir file is one message whatever its header (no separator to mistake).
 	Messages int64
 	// Expunged is how many were left out for the Expunged bit.
 	Expunged int64
@@ -54,11 +58,29 @@ type MailboxCount struct {
 	// NoKey (when Distinct) is how many counted messages have no identity key: none is
 	// expected; each is left out of X, and the account may not say complete.
 	NoKey int64
-	// Unseparated is how many pieces the mbox reader handed on that do not begin at a
-	// separator Thunderbird writes (a body line starting "From " that the message's writer did
-	// not escape, for example). They are archived as before, never counted; a mailbox with any
-	// is "split differently" and its account can't be told complete.
+	// Loose is how many pieces of an mbox file begin at a separator Thunderbird writes but
+	// carry no X-Mozilla-Status (a body line of exactly the separator's shape after an empty
+	// line, or a real message Thunderbird wrote without the line: the owner's profile holds 2 of
+	// 318,856). They are archived as before; the LENIENT count is Messages + Loose, and an
+	// account is "behind" only if it is short even by the lenient count, so a piece without
+	// the line can neither make an account complete nor make it behind.
+	Loose int64
+	// LooseKeys and LooseNoKey (when Distinct) are the Loose pieces' identity keys and how
+	// many had none, as Keys and NoKey are the counted messages'.
+	LooseKeys  [][16]byte
+	LooseNoKey int64
+	// Unseparated is how many pieces the mbox reader handed on that begin at a "From " line of
+	// another shape (a body line that the message's writer did not escape, a git patch's first
+	// line, for example). They are archived as before, never counted; a mailbox with any is
+	// "split differently" and its account can't be told complete. Such a piece cannot hold a
+	// message Thunderbird wrote (that would begin at a line of separatorShape), so it does not
+	// stop a certain gap from being told "behind".
 	Unseparated int64
+	// Glued is how many pieces begin at a line of separatorShape with no empty line before it.
+	// Thunderbird writes an empty line before every separator (the owner's profile: every one
+	// of 318,856), so such a piece may be a message the count could not take, or a body line:
+	// its mailbox is split differently and its account is never told "behind" (R2-05).
+	Glued int64
 }
 
 // mozillaExpunged is the Expunged bit of X-Mozilla-Status (nsMsgMessageFlags.idl,
@@ -84,40 +106,57 @@ func (w *localWalk) noteEntry(name string) {
 	}
 }
 
-// count counts one message read into mb (nil: not counted).
-func (w *localWalk) count(mb *MailboxCount, raw []byte) {
+// count counts one message read into mb (nil: not counted). mbox says it is a piece of an mbox
+// file that began at a separator: it is counted for certain only when its header holds
+// X-Mozilla-Status, else it is Loose.
+func (w *localWalk) count(mb *MailboxCount, raw []byte, mbox bool) {
 	if mb == nil {
 		return
 	}
-	hb := headerSection(raw)
-	if st, ok := headerValue(hb, "X-Mozilla-Status"); ok {
+	st, status := headerValue(headerSection(raw), "X-Mozilla-Status")
+	if status {
 		if v, err := strconv.ParseUint(strings.TrimSpace(st), 16, 32); err == nil && v&mozillaExpunged != 0 {
 			mb.Expunged++
 			return
 		}
 	}
-	mb.Messages++
+	loose := mbox && !status
+	if loose {
+		mb.Loose++
+	} else {
+		mb.Messages++
+	}
 	if !w.opts.Counts.Distinct {
 		return
 	}
-	if key, ok := IdentityKey(raw); ok {
+	key, ok := IdentityKey(raw)
+	switch {
+	case loose && ok:
+		mb.LooseKeys = append(mb.LooseKeys, key)
+	case loose:
+		mb.LooseNoKey++
+	case ok:
 		mb.Keys = append(mb.Keys, key)
-		return
+	default:
+		mb.NoKey++
 	}
-	mb.NoKey++
 }
 
-// countPiece counts one piece of an mbox file: separated says it begins at a separator
-// Thunderbird writes (separatorScan); one that does not is noted, never counted.
-func (w *localWalk) countPiece(mb *MailboxCount, raw []byte, separated bool) {
+// countPiece counts one piece of an mbox file by how it begins (separatorScan): at a separator
+// Thunderbird writes it is counted; at a separator-shaped line with no empty line before it, or
+// at a "From " line of another shape, it is noted, never counted.
+func (w *localWalk) countPiece(mb *MailboxCount, raw []byte, start pieceStart) {
 	if mb == nil {
 		return
 	}
-	if !separated {
+	switch start {
+	case startSeparator:
+		w.count(mb, raw, true)
+	case startGlued:
+		mb.Glued++
+	default:
 		mb.Unseparated++
-		return
 	}
-	w.count(mb, raw)
 }
 
 // countMaildirFile counts one maildir message file named name, leaving out of the count what
@@ -129,7 +168,7 @@ func (w *localWalk) countMaildirFile(mb *MailboxCount, name string, raw []byte) 
 	if mb == nil || strings.HasPrefix(name, ".") || len(raw) == 0 {
 		return
 	}
-	w.count(mb, raw)
+	w.count(mb, raw, false)
 }
 
 // IdentityKey is a message's identity for Gmail's distinct count (the C2 pass's rule, the
@@ -138,26 +177,85 @@ func (w *localWalk) countMaildirFile(mb *MailboxCount, name string, raw []byte) 
 // space and angle brackets) when it has one; else the first 16 bytes of the SHA-256 of
 // "content", a NUL, and its bytes without the lines Thunderbird rewrites per copy
 // (X-Mozilla-Status, X-Mozilla-Status2 and X-Mozilla-Keys of its top header block, with their
-// continuation lines: the gmail-dedup design's §4.4 split). ok is false when neither can be
-// told: no Message-ID, and no header block end within the 64 KiB bound of a longer message, or
-// more of those lines than the split's bound (8 lines, 1 KiB).
+// continuation lines: the gmail-dedup design's §4.4 split), with every CRLF read as LF so an LF
+// and a CRLF copy of one email have one key (the C2 pass round 2's R2-03; for counting only: the
+// gmail-dedup design merges byte-identical copies only, and keeps its stricter identity). The
+// Message-ID is read only from a header block that ends within the 64 KiB bound (headerWithin,
+// R2-01): from a block cut at the bound a Message-ID line may be cut too, and two copies whose
+// per-copy lines differ in length would get two keys. ok is false when neither can be told: no
+// Message-ID read, and no header block end within the bound of a longer message, or more of
+// Thunderbird's per-copy lines than the split's bound (8 lines, 1 KiB).
 func IdentityKey(raw []byte) ([16]byte, bool) {
 	var key [16]byte
-	id, _ := headerValue(headerSection(raw), "Message-ID")
-	id = strings.TrimSpace(id)
-	id = strings.TrimSpace(strings.TrimSuffix(strings.TrimPrefix(id, "<"), ">"))
-	if id != "" {
-		sum := sha256.Sum256([]byte(id))
-		copy(key[:], sum[:16])
-		return key, true
+	if hb, ok := headerWithin(raw); ok {
+		id, _ := headerValue(hb, "Message-ID")
+		id = strings.TrimSpace(id)
+		id = strings.TrimSpace(strings.TrimSuffix(strings.TrimPrefix(id, "<"), ">"))
+		if id != "" {
+			sum := sha256.Sum256([]byte(id))
+			copy(key[:], sum[:16])
+			return key, true
+		}
 	}
 	h := sha256.New()
 	h.Write([]byte("content\x00"))
-	if !writeWithoutMozillaLines(h, raw) {
+	lf := &lfWriter{w: h}
+	if !writeWithoutMozillaLines(lf, raw) {
 		return key, false
 	}
+	lf.flush()
 	copy(key[:], h.Sum(nil)[:16])
 	return key, true
+}
+
+// headerWithin is raw's header block when its end lies within headerBound: the bytes before its
+// first empty line ("" when it begins with one), or the whole of a message no longer than the
+// bound that has none. ok is false otherwise: the block may run past the bound.
+func headerWithin(raw []byte) (string, bool) {
+	if bytes.HasPrefix(raw, []byte("\n")) || bytes.HasPrefix(raw, []byte("\r\n")) {
+		return "", true
+	}
+	if hb := headerBlock(raw); hb != "" {
+		return hb, true
+	}
+	if len(raw) <= headerBound {
+		return string(raw), true
+	}
+	return "", false
+}
+
+// lfWriter writes to w what it is given with every CRLF written as LF (a CR before anything else
+// is kept). flush writes a CR still held at the end.
+type lfWriter struct {
+	w  io.Writer
+	cr bool
+}
+
+func (l *lfWriter) Write(p []byte) (int, error) {
+	n := len(p)
+	for len(p) > 0 {
+		if l.cr {
+			l.cr = false
+			if p[0] != '\n' {
+				l.w.Write([]byte{'\r'})
+			}
+		}
+		i := bytes.IndexByte(p, '\r')
+		if i < 0 {
+			l.w.Write(p)
+			break
+		}
+		l.w.Write(p[:i])
+		l.cr, p = true, p[i+1:]
+	}
+	return n, nil
+}
+
+func (l *lfWriter) flush() {
+	if l.cr {
+		l.w.Write([]byte{'\r'})
+		l.cr = false
+	}
 }
 
 // The bounds of the content identity's split (the gmail-dedup design §4.4 step 1).
@@ -266,21 +364,38 @@ func headerValue(hb, field string) (string, bool) {
 	return "", false
 }
 
-// separatorShape is the "From " line Thunderbird writes ("From - " and the time as C's ctime
-// gives it, nsImapMailFolder.cpp's SetupMsgWriteStream) and the classic mbox form the repo's
-// fixtures use ("From sender Mon Mar  3 09:00:00 2025"), a time zone allowed beside the year.
-var separatorShape = regexp.MustCompile(`^From \S+ +(?:Mon|Tue|Wed|Thu|Fri|Sat|Sun) +(?:Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec) +\d{1,2} +\d{1,2}:\d{2}(?::\d{2})?(?: +(?:[A-Z]{1,5}|[+-]\d{4}))? +\d{4}(?: +(?:[A-Z]{1,5}|[+-]\d{4}))? *$`)
+// separatorShape is the "From " line Thunderbird writes and only it (the C2 pass round 2's
+// R2-04): "From - " and the time as C's ctime gives it, its newline cut
+// (nsImapMailFolder.cpp's SetupMsgWriteStream: `ct[24] = 0; result = "From - "; result += ct;`).
+// The day of the month is ctime's: space-padded ("Mar  3", glibc and macOS) or two digits
+// ("Mar 03", the Windows C library writes it zero-padded: the builder's reading, not checked on
+// a Windows store). Nothing else: no other sender word (a git patch's first line, "From <sha>
+// Mon Sep 17 00:00:00 2001", is not one), no time zone, no trailing text. A CR before the line's
+// LF is taken off before matching. The owner's real macOS profile (counts only, 2026-11-08):
+// every one of its 318,856 lines starting "From " is of this shape after an empty line or at the
+// file's start.
+var separatorShape = regexp.MustCompile(`^From - (?:Mon|Tue|Wed|Thu|Fri|Sat|Sun) (?:Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec) (?: \d|\d\d) \d\d:\d\d:\d\d \d{4}$`)
 
 // maxSeparatorLine bounds the bytes of a line the scan keeps: a separator is far shorter.
 const maxSeparatorLine = 256
 
+// pieceStart is how a piece the mbox reader split off begins.
+type pieceStart uint8
+
+const (
+	startBody      pieceStart = iota // a "From " line of another shape (or none the scan saw)
+	startSeparator                   // a separator Thunderbird writes, at the file's start or after an empty line
+	startGlued                       // a line of separatorShape with no empty line before it
+)
+
 // separatorScan watches the bytes the mbox reader reads (go-mbox, which starts a new piece at
-// every line beginning "From ") and notes, for each such line in order, whether it is a
-// separator Thunderbird writes: at the file's start or after an empty line, and of
-// separatorShape. The reader's n-th piece begins at the n-th note. It changes no byte.
+// every line beginning "From ") and notes, for each such line in order, how it begins a piece:
+// a separator Thunderbird writes (of separatorShape, at the file's start or after an empty
+// line), a glued one (of the shape, no empty line before it), or another line. The reader's n-th
+// piece begins at the n-th note. It changes no byte.
 type separatorScan struct {
 	r         io.Reader
-	marks     []bool
+	marks     []pieceStart
 	line      []byte
 	lineLen   int
 	prevBlank bool
@@ -312,14 +427,24 @@ func (s *separatorScan) endLine() {
 	content := bytes.TrimSuffix(s.line, []byte("\r"))
 	long := s.lineLen > maxSeparatorLine
 	if bytes.HasPrefix(s.line, []byte("From ")) {
-		s.marks = append(s.marks, s.prevBlank && !long && separatorShape.Match(content))
+		start := startBody
+		if !long && separatorShape.Match(content) {
+			start = startGlued
+			if s.prevBlank {
+				start = startSeparator
+			}
+		}
+		s.marks = append(s.marks, start)
 	}
 	s.prevBlank = !long && len(content) == 0
 	s.line, s.lineLen = s.line[:0], 0
 }
 
-// separated reports whether the reader's n-th piece (from 1) begins at a separator
-// Thunderbird writes; a piece the scan saw no line for is not.
-func (s *separatorScan) separated(n int) bool {
-	return n >= 1 && n <= len(s.marks) && s.marks[n-1]
+// start is how the reader's n-th piece (from 1) begins; a piece the scan saw no line for is
+// startBody, never counted.
+func (s *separatorScan) start(n int) pieceStart {
+	if n < 1 || n > len(s.marks) {
+		return startBody
+	}
+	return s.marks[n-1]
 }

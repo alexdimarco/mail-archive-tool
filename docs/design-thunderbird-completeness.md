@@ -599,6 +599,55 @@ Two adjustments:
 > `.DS_Store`, a sync tool's file) and an empty file. They are archived as before; `tmp/` is never
 > read. The maildir store's own source is not in the copies under `.claude/`, so the list is the
 > lead's, not read from Thunderbird.
+>
+> **Lab evidence, 2026-11-08: the lead's count-only scan of the owner's real macOS profile, with
+> the owner's permission (numbers only; no name, subject, address or content was read into this
+> document).** 22 mailboxes, 48.9 GB. 318,856 lines start "From ": **every one** is a Thunderbird
+> separator of the exact shape "From - " and a ctime date, after an empty line or at the file's
+> start; **no other** line starts "From " anywhere. 5,655 lines start ">From " (Thunderbird escapes
+> such body lines). Of the 318,856 messages, 318,854 carry an `X-Mozilla-Status` header; 2 lack it,
+> both in one mailbox. These are the constraints the next fold is built to.
+>
+> **Folded 2026-11-08 [C2 pass round 2, R2-04 and R2-05] (lead's call): only Thunderbird's own
+> separator, and two counts.** Supersedes the [ADV-C2-03] fold's "From_ shape" and its residual.
+>
+> - **A separator is only "From - " and Thunderbird's ctime date** (`nsImapMailFolder.cpp`'s
+>   `SetupMsgWriteStream`: `ct[24] = 0; result = "From - "; result += ct;`), at the file's start or
+>   after an empty line, a CR before the LF tolerated: `From - Www Mmm dd hh:mm:ss yyyy`, the day
+>   space-padded (`Mar  3`) or two digits (`Mar 03`). No other sender word (a git patch's first
+>   line, "From <sha> Mon Sep 17 00:00:00 2001", is a body line now), no time zone, nothing after
+>   the year. **Builder's reading, not checked:** the Windows C library's `ctime` pads the day with
+>   a zero, so both paddings are taken; no Windows store has been scanned (lab row MA-1199).
+> - **Two counts per mailbox.** STRICT: the pieces at a separator whose header holds
+>   `X-Mozilla-Status` (Thunderbird writes it at the top of every offline copy). LENIENT: every
+>   piece at a separator. "Caught up" and "complete" use only the strict count; "behind" is told
+>   only if the account is still short by the lenient count; between the two the account is
+>   `unknown`, reason `count_uncertain` (the builder's code). So a header without
+>   `X-Mozilla-Status` can neither fake complete nor fake behind. For Gmail the lenient X adds the
+>   loose pieces' identities not already counted **and every message with no identity key**
+>   (strict or loose: each may be one more email; the builder's reading, so the lenient count is
+>   never below what is on disk). A maildir file is one message whatever its header (there is no
+>   separator to mistake), so it is in both counts. The owner-shaped case: 2 of about 170 without
+>   the line is strict short by 2, within the tolerance (17): still `caught_up`, never complete
+>   (missing 2). The record keeps `no_status`.
+> - **A separator glued to the line before it** (the shape, no empty line before it) is never
+>   counted and its account is **never `behind`**: `unknown`, `split_differently` (R2-05). The
+>   owner's profile has none. A "From " body line of any other shape is still "split differently"
+>   (never complete) but a certain gap by the lenient count still says behind, as before: such a
+>   piece cannot hold a message Thunderbird wrote, which would begin at a separator. The record
+>   keeps `glued_mailboxes`.
+> - **Residual:** mail crafted to carry both a "From - <ctime>" line after an empty line and an
+>   `X-Mozilla-Status` line, in a store whose writer did not escape it. Current Thunderbird escapes
+>   (the owner's 5,655 ">From " lines and no unescaped one); release notes still wait for MA-1199.
+>
+> **Folded 2026-11-08 [C2 pass round 2, R2-01 and R2-03] (lead's calls): the identity's two
+> edges.** The Message-ID is taken only when the header block ends within the 64 KiB bound (an
+> empty line inside it, or a message no longer than the bound with none); otherwise the content
+> identity is used, which has no key either when the block runs past the bound (`no_identity`).
+> A Message-ID line cut at the bound is never hashed. For the **counting** identity only, every CRLF
+> is read as LF before the content checksum, so an LF and a CRLF copy of one ID-less email have
+> one key (a lone CR stays content). **The gmail-dedup design's stricter identity is intentional:**
+> it merges only byte-identical copies, which stays safe, and it is not changed.
 
 Maildir stores (`storeContractID` maildirstore, `internal/tbrestore/storekind.go:26-28`) count
 one file per message the same way. A `-copy-first` run counts its copy, but maps it back to the
@@ -2585,6 +2634,49 @@ C4 must land with or before C3 if encrypted archives get any words beyond today'
 >   the reasons.
 > - **Gate owed:** the pass's own rerun ("Rerun after fixes": the four attack files against the
 >   fixed commit). Not self-certified here.
+>
+> **Built 2026-11-08 [C2 pass round 2 fixes] (the builder's notes, for the lead).** Round 2
+> (`docs/review-thunderbird-completeness-c2-adversarial-r2.md`, NOT CLEAN at `1e10b7c`) is answered
+> fix by fix, its attack tests brought in as guards (rows MA-1279 to MA-1283). R2-04, R2-05, R2-01
+> and R2-03 are §2.4's two round-2 folds. The rest:
+>
+> - **Stale streak entries (R2-08).** The streak record counts its runs (`run`); each entry keeps
+>   the run that last reached its store, any verdict (`seen_run`), and the run that last found it
+>   behind (`behind_run`). An entry no run has reached for **72 runs** is pruned, with a log line.
+>   Why 72: three days of an hourly schedule, so a store any schedule reaches at least daily is
+>   never pruned, with two missed days to spare, while a store dropped from the inputs, a moved
+>   profile (a new path is a new key) or a removed account goes within three days of hourly runs.
+>   Pruning a live entry only restarts its streak (a later notice, never a false one). Only runs
+>   that end ok with Thunderbird results count. A full record (64) never refuses a new behind
+>   store: the oldest entry this run did not find behind goes (the one reached longest ago), else
+>   the oldest of all, with a log line naming both; the record's streaks are folded before new
+>   ones, so an entry extended this run is never the one dropped. With any streak kept, the record
+>   is written every such run (so the unseen runs add up). Planted counters are clamped (never
+>   ahead of the record's run, never negative, the run capped at 2^40). **For C5:** an entry is
+>   never a reason to email about a store the run did not reach.
+> - **Accounts past the record's cap (R2-06).** Past 64 the record keeps the weakest first
+>   (behind, limited, unknown, caught up but not complete, then complete; each group in the run's
+>   order) and `thunderbird_more` says how many were left out; a record read back with more than 64
+>   adds the cut ones to it. `tbcomplete.RunLeadWith(results, more)` takes each one left out as
+>   unknown, so a lead built from the record is never "complete" over them. **C3 must build the
+>   lead with it.**
+> - **Name cleaning (R2-07)** removes every Default_Ignorable_Code_Point: Cf as before, and
+>   Unicode's Other_Default_Ignorable_Code_Point and Variation_Selector (the combining grapheme
+>   joiner, the Hangul fillers U+115F, U+1160, U+3164, U+FFA0, U+17B4 and U+17B5, the variation
+>   selectors U+180B to U+180F, U+FE00 to U+FE0F, U+E0100 to U+E01EF), the fillers and selector
+>   ranges also named outright. A name of only such characters becomes "". An emoji's U+FE0F goes
+>   too (it shows the same).
+> - **Fixtures amended, by the lead's call, not weakened:** the repo's classic "From sender <date>"
+>   separators are no longer separators, so the shape test now lists them among the refused; the
+>   fixtures that stood for Thunderbird's own messages carry `X-Mozilla-Status`, as Thunderbird
+>   writes it. The adapted round-1 test `TestR1_ADV_C2_13` in the pass's clone has header-less
+>   messages, so its 2,001 pieces now count as loose (0 strict): an expected red under the new
+>   rule; this repo's copy (`TestADV_C2_13_HeaderShapesAreBounded`) gives its messages the line.
+> - **New codes and fields, the builder's names:** reason `count_uncertain`; record fields
+>   `no_status`, `glued_mailboxes`, `thunderbird_more`; streak fields `run`, `seen_run`,
+>   `behind_run`. C3 owns the words.
+> - **Gate owed:** the pass's own rerun (round 3: the clone's attack files against the fixed
+>   commit). Not self-certified here.
 
 ## 14. Owner questions (each with a recommendation)
 

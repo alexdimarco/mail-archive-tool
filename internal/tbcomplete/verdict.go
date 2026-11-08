@@ -100,11 +100,16 @@ const (
 	// ReasonWalkFailed: the walk of the store ended with an error, so its count is not whole.
 	// The code is the C2 pass fix's.
 	ReasonWalkFailed
+	// ReasonCountUncertain: the strict count (pieces carrying X-Mozilla-Status, messages with an
+	// identity) is short by more than the tolerance, but the lenient count (every piece at a
+	// separator, every message without an identity taken as one more) is not: what is missing
+	// cannot be told (the C2 pass round 2's R2-04). The code is the builder's.
+	ReasonCountUncertain
 )
 
 var reasonCodes = [...]string{"", "cache_unreadable", "no_match", "duplicate_key", "invalid_entry", "panorama",
 	"account_type", "never_checked", "gmail_floor", "expunged_unsized", "partial_input", "old_path_only", "not_counted_yet",
-	"split_differently", "other_reader", "walk_failed"}
+	"split_differently", "other_reader", "walk_failed", "count_uncertain"}
 
 // String is the reason's code, "" for NoReason or a reason nobody defined.
 func (r Reason) String() string {
@@ -147,20 +152,33 @@ type Unmatched struct {
 }
 
 // OnDisk is what the walk counted (C2), expunged copies carrying 0x0008 already left out (§2.4).
+// Two counts (the C2 pass round 2's R2-04): the STRICT one (Folders, Distinct), which alone may
+// make an account caught up, and the LENIENT one (adding Loose, LooseDistinct), which alone may
+// make it behind.
 type OnDisk struct {
-	// Folders: messages per folder, keyed by Entry.Path exactly as the reader gives it. A kept
-	// folder missing here has no mailbox file: 0. Not used for Gmail's X.
+	// Folders: messages per folder counted for certain, keyed by Entry.Path exactly as the reader
+	// gives it. A kept folder missing here has no mailbox file: 0. Not used for Gmail's X.
 	Folders map[string]int64
+	// Loose: per folder, pieces at a separator with no X-Mozilla-Status; the lenient count of a
+	// folder is Folders + Loose.
+	Loose map[string]int64
 	// Distinct: Gmail's X before the estimate: distinct messages by identity key (the Message-ID,
 	// else the content, the C2 pass's rule) across the account's mailbox files that have a cache
 	// key (L3: never one without).
 	Distinct int64
+	// LooseDistinct: for Gmail, how many more X could be: the Loose pieces' identities not in
+	// Distinct, and every message with no identity key; the lenient X is Distinct + LooseDistinct.
+	LooseDistinct int64
+	// NoStatus: Loose pieces across the kept, keyed mailboxes (the record's no_status).
+	NoStatus int64
 	// NoKey: Gmail's counted messages with no identity key, left out of Distinct (none is
 	// expected); any keeps the account from saying complete.
 	NoKey int64
 	// SplitMailboxes: keyed mailboxes the reader split into pieces that do not begin at a
-	// separator Thunderbird writes (ADV-C2-03).
+	// separator Thunderbird writes (ADV-C2-03); GluedMailboxes those of them with a piece at a
+	// separator-shaped line with no empty line before it (R2-05).
 	SplitMailboxes int
+	GluedMailboxes int
 	// UnkeyedMailboxes, UnkeyedMessages: walked mailboxes with no cache key and their messages
 	// (L3). Counted in the result; never added to X.
 	UnkeyedMailboxes int
@@ -232,6 +250,12 @@ type Result struct {
 	UnkeyedMessages  int64
 	NoIdentity       int64 // Gmail messages with no identity key, left out of X: no complete words
 	SplitMailboxes   int   // kept mailboxes split differently from Thunderbird's separators
+	GluedMailboxes   int   // of them, those with a separator glued to the line before (never behind)
+	NoStatus         int64 // pieces at a separator with no X-Mozilla-Status (in the lenient count only)
+	// OnDiskMost is X by the lenient count (R2-04), after the same estimate; MissingLeast the
+	// gap by it. Behind is told only when MissingLeast is above the tolerance.
+	OnDiskMost   int64
+	MissingLeast int64
 }
 
 // StaleAfter is §2.3's 3 days, the same as state.SyncStaleAfter.
@@ -300,8 +324,16 @@ func (l Lead) String() string {
 // RunLead is the lead of a run whose Thunderbird stores gave rs: LeadSoFar if any is behind or
 // limited; otherwise LeadFinished if any may not say complete; otherwise LeadComplete. A run with no
 // Thunderbird store keeps today's words, LeadComplete (MF1).
-func RunLead(rs []Result) Lead {
+func RunLead(rs []Result) Lead { return RunLeadWith(rs, 0) }
+
+// RunLeadWith is RunLead over rs and more accounts that are not in rs (a record's
+// thunderbird_more, the C2 pass round 2's R2-06): each of those is taken as unknown, so with any
+// the lead is never LeadComplete.
+func RunLeadWith(rs []Result, more int) Lead {
 	lead := LeadComplete
+	if more > 0 {
+		lead = LeadFinished
+	}
 	for _, r := range rs {
 		switch {
 		case r.Verdict == Behind || r.Verdict == Limited:
@@ -321,7 +353,7 @@ func RunLead(rs []Result) Lead {
 func Assess(in Input) Result {
 	r := Result{Account: in.Account, StoreID: in.StoreID, Limits: in.Limits,
 		UnkeyedMailboxes: in.OnDisk.UnkeyedMailboxes, UnkeyedMessages: in.OnDisk.UnkeyedMessages,
-		SplitMailboxes: in.OnDisk.SplitMailboxes}
+		SplitMailboxes: in.OnDisk.SplitMailboxes, GluedMailboxes: in.OnDisk.GluedMailboxes, NoStatus: in.OnDisk.NoStatus}
 	unknown := func(why Reason) Result {
 		r.Verdict, r.Reason = Unknown, why
 		return r
@@ -503,6 +535,7 @@ func Assess(in Input) Result {
 		}
 		r.ExpungedEstimate = estSum
 		r.OnDisk = max(0, in.OnDisk.Distinct-estSum)
+		r.OnDiskMost = max(0, in.OnDisk.Distinct+in.OnDisk.LooseDistinct-estSum)
 		var amListed int64
 		if am != nil {
 			amListed, _ = am.Listed()
@@ -525,14 +558,18 @@ func Assess(in Input) Result {
 		for _, e := range certain {
 			listed, _ := e.Listed()
 			disk := max(0, in.OnDisk.Folders[e.Path]-est[e.Path])
+			most := max(0, in.OnDisk.Folders[e.Path]+in.OnDisk.Loose[e.Path]-est[e.Path])
 			r.ExpungedEstimate += est[e.Path]
 			r.Listed += listed
 			r.OnDisk += disk
+			r.OnDiskMost += most
 			r.Missing += max(0, listed-disk)
+			r.MissingLeast += max(0, listed-most)
 		}
 	}
 	if r.Gmail {
 		r.Missing = max(0, r.Listed-r.OnDisk)
+		r.MissingLeast = max(0, r.Listed-r.OnDiskMost)
 	}
 	r.Tolerance = Tolerance(r.Listed)
 
@@ -551,14 +588,20 @@ func Assess(in Input) Result {
 		}
 	}
 
-	// The verdict.
+	// The verdict. Behind only by the lenient count, caught up only by the strict one (R2-04).
 	switch {
-	case r.Floor && r.OnDisk < r.Listed-r.Tolerance:
+	case r.GluedMailboxes > 0:
+		// A separator glued to the line before it may be a message the count could not take
+		// (R2-05): never behind, never caught up.
+		r.Verdict, r.Reason = Unknown, ReasonSplitDifferently
+	case r.Floor && r.OnDiskMost < r.Listed-r.Tolerance:
 		r.Verdict = Behind
 	case r.Floor:
 		r.Verdict, r.Reason = Unknown, ReasonGmailFloor
-	case r.Missing > r.Tolerance:
+	case r.MissingLeast > r.Tolerance:
 		r.Verdict = Behind
+	case r.Missing > r.Tolerance:
+		r.Verdict, r.Reason = Unknown, ReasonCountUncertain
 	case r.SplitMailboxes > 0:
 		// A mailbox split differently from Thunderbird's separators (ADV-C2-03): a certain gap
 		// above still says behind, as M2's can't-tell folders do; otherwise it can't be told.
@@ -592,7 +635,7 @@ func Assess(in Input) Result {
 // kept folder is known checked and Y is 0: the store lists at least one folder, every folder lists
 // 0, and the walk found no message.
 func listsNoMail(folders []Entry, disk OnDisk) bool {
-	if len(folders) == 0 || disk.Distinct > 0 || disk.UnkeyedMessages > 0 {
+	if len(folders) == 0 || disk.Distinct > 0 || disk.LooseDistinct > 0 || disk.UnkeyedMessages > 0 {
 		return false
 	}
 	for _, e := range folders {
@@ -601,6 +644,11 @@ func listsNoMail(folders []Entry, disk OnDisk) bool {
 		}
 	}
 	for _, n := range disk.Folders {
+		if n > 0 {
+			return false
+		}
+	}
+	for _, n := range disk.Loose {
 		if n > 0 {
 			return false
 		}

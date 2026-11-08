@@ -125,22 +125,28 @@ func TestTheWalkCountsEachMailboxLeavingOutDeletedCopies(t *testing.T) {
 	}
 	// Amended 2026-11-08 (the C2 pass's identity rule): a message with no Message-ID has a
 	// content key ("" below), never a per-copy count; NoKey is 0 for every real message.
+	// Amended 2026-11-08 (round 2's R2-04): INBOX's "plain", an mbox piece with no
+	// X-Mozilla-Status, is loose (the lenient count only), its key kept apart; a maildir file
+	// with none ("md three") is counted, as a maildir file has no separator to mistake.
 	for _, w := range []struct {
-		rel                string
-		messages, expunged int64
-		ids                []string
+		rel                       string
+		messages, expunged, loose int64
+		ids, looseIDs             []string
 	}{
-		{"INBOX", 3, 1, []string{"one@x", "two@x", "plain@x"}},
-		{"[Gmail].sbd/All Mail", 3, 1, []string{"one@x", "", ""}},
-		{"Kept", 2, 1, []string{"", "md1@x"}}, // new/ is read before cur/
+		{"INBOX", 2, 1, 1, []string{"one@x", "two@x"}, []string{"plain@x"}},
+		{"[Gmail].sbd/All Mail", 3, 1, 0, []string{"one@x", "", ""}, nil},
+		{"Kept", 2, 1, 0, []string{"", "md1@x"}, nil}, // new/ is read before cur/
 	} {
 		mb := got[w.rel]
 		if mb == nil {
 			t.Errorf("no count for %q (got %d mailboxes)", w.rel, len(c.Mailboxes))
 			continue
 		}
-		if mb.Messages != w.messages || mb.Expunged != w.expunged || mb.NoKey != 0 || mb.Unseparated != 0 {
-			t.Errorf("%s: messages %d expunged %d noKey %d unseparated %d, want %d %d 0 0", w.rel, mb.Messages, mb.Expunged, mb.NoKey, mb.Unseparated, w.messages, w.expunged)
+		if mb.Messages != w.messages || mb.Expunged != w.expunged || mb.Loose != w.loose || mb.NoKey != 0 || mb.LooseNoKey != 0 || mb.Unseparated != 0 {
+			t.Errorf("%s: messages %d expunged %d loose %d noKey %d unseparated %d, want %d %d %d 0 0", w.rel, mb.Messages, mb.Expunged, mb.Loose, mb.NoKey, mb.Unseparated, w.messages, w.expunged, w.loose)
+		}
+		if len(mb.LooseKeys) != len(w.looseIDs) || (len(w.looseIDs) == 1 && mb.LooseKeys[0] != idKey(w.looseIDs[0])) {
+			t.Errorf("%s: loose keys %d, want %q", w.rel, len(mb.LooseKeys), w.looseIDs)
 		}
 		if len(mb.Keys) != len(w.ids) {
 			t.Errorf("%s: %d keys, want %d", w.rel, len(mb.Keys), len(w.ids))
@@ -170,7 +176,7 @@ func TestTheWalkCountsEachMailboxLeavingOutDeletedCopies(t *testing.T) {
 	nd := &MailboxCounts{Count: true}
 	walkCounting(t, dir, nd)
 	for _, mb := range nd.Mailboxes {
-		if len(mb.Keys) != 0 || mb.NoKey != 0 {
+		if len(mb.Keys) != 0 || mb.NoKey != 0 || len(mb.LooseKeys) != 0 || mb.LooseNoKey != 0 {
 			t.Errorf("%s: keys kept without Distinct", mb.Rel)
 		}
 	}
@@ -196,11 +202,14 @@ func TestTheCountReadsHeaderFieldsAsFields(t *testing.T) {
 	if len(none.Mailboxes) != 1 {
 		t.Fatalf("%d mailboxes, want 1", len(none.Mailboxes))
 	}
+	// Amended 2026-11-08 (round 2's R2-04): the two with no X-Mozilla-Status (X-Mozilla-Status2
+	// is not it) are loose, in the lenient count only; the one with a status that is not hex is
+	// counted for certain.
 	mb := none.Mailboxes[0]
-	if mb.Rel != "Box" || mb.Messages != 3 || mb.Expunged != 1 || mb.NoKey != 0 {
-		t.Errorf("Box: %+v; want 3 counted, 1 expunged, every one with an id", *mb)
+	if mb.Rel != "Box" || mb.Messages != 1 || mb.Loose != 2 || mb.Expunged != 1 || mb.NoKey != 0 || mb.LooseNoKey != 0 {
+		t.Errorf("Box: %+v; want 1 counted, 2 loose, 1 expunged, every one with an id", *mb)
 	}
-	if len(mb.Keys) != 3 || mb.Keys[0] != idKey("folded@x") || mb.Keys[1] != idKey("st2@x") || mb.Keys[2] != idKey("bad@x") {
+	if len(mb.Keys) != 1 || mb.Keys[0] != idKey("bad@x") || len(mb.LooseKeys) != 2 || mb.LooseKeys[0] != idKey("folded@x") || mb.LooseKeys[1] != idKey("st2@x") {
 		t.Errorf("Box: the ids are not the unfolded folded@x, st2 and bad")
 	}
 

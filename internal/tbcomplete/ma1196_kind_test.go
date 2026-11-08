@@ -90,7 +90,8 @@ func TestTheAccountsTypeDecidesFirst(t *testing.T) {
 			ReasonPartialInput: "partial_input", ReasonOldPathOnly: "old_path_only", ReasonNotCountedYet: "not_counted_yet",
 			// The C2 pass's codes (amended 2026-11-08).
 			ReasonSplitDifferently: "split_differently", ReasonOtherReader: "other_reader", ReasonWalkFailed: "walk_failed",
-			Reason(99): "", Reason(16): "", Reason(-1): "",
+			// Round 2's code (amended 2026-11-08, R2-04).
+			ReasonCountUncertain: "count_uncertain", Reason(99): "", Reason(17): "", Reason(-1): "",
 		} {
 			if r.String() != s {
 				t.Errorf("%d: %q, want %q", int(r), r.String(), s)

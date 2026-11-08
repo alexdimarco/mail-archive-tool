@@ -140,6 +140,11 @@ type LastRun struct {
 	// ended ok only, additive, and never beside an encrypted archive (O1; encryptedLastRun
 	// has no such field).
 	Thunderbird []TBAccount `json:"thunderbird,omitempty"`
+	// ThunderbirdMore is how many of the run's accounts the record left out past TBAccountsMax
+	// (the C2 pass round 2's R2-06); the record keeps the weakest first. A reader that builds a
+	// lead from the record takes each one left out as unknown (tbcomplete.RunLeadWith), never
+	// as complete.
+	ThunderbirdMore int `json:"thunderbird_more,omitempty"`
 
 	// Program is an encrypted archive's program step outcome, one of the Program*
 	// codes (program design §4, §8). Absent when the step did not run.
@@ -366,7 +371,9 @@ func ReadLastRun(out string) (LastRun, LastRunState, error) {
 	}
 	// The completeness record's names are server text and its counts may be planted: cleaned,
 	// bounded and never negative here, at the same choke point.
-	r.Thunderbird = saneTB(r.Thunderbird)
+	var cut int
+	r.Thunderbird, cut = saneTB(r.Thunderbird)
+	r.ThunderbirdMore = min(max(0, r.ThunderbirdMore), 1<<20) + cut // planted: never negative, never wrapped
 	return r, LastRunPresent, nil
 }
 

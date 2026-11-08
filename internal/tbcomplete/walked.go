@@ -14,16 +14,25 @@ type Mailbox struct {
 	// Rel is its place under the store as on disk, slash-separated, its containers with
 	// their ".sbd" ending ("[Gmail].sbd/All Mail").
 	Rel string
-	// Messages counted (deleted copies carrying 0x0008 already left out, §2.4; only pieces that
-	// begin at a separator Thunderbird writes).
+	// Messages counted for certain, the STRICT count (deleted copies carrying 0x0008 already
+	// left out, §2.4; in an mbox file only pieces that begin at a separator Thunderbird writes
+	// and carry X-Mozilla-Status, the C2 pass round 2's R2-04).
 	Messages int64
 	// Keys are the counted messages' identity keys (source.IdentityKey: the Message-ID, else the
 	// content without Thunderbird's per-copy lines), and NoKey how many had none (Gmail's X).
 	Keys  [][16]byte
 	NoKey int64
-	// Unseparated: pieces the mbox reader split off that do not begin at a separator
-	// Thunderbird writes (the C2 pass's ADV-C2-03): the mailbox is "split differently".
+	// Loose: pieces at a separator with no X-Mozilla-Status (source.MailboxCount.Loose), with
+	// their keys and how many had none. The LENIENT count adds them.
+	Loose      int64
+	LooseKeys  [][16]byte
+	LooseNoKey int64
+	// Unseparated: pieces the mbox reader split off at a "From " line of another shape (the C2
+	// pass's ADV-C2-03): the mailbox is "split differently".
 	Unseparated int64
+	// Glued: pieces at a separator-shaped line with no empty line before it (R2-05): the mailbox
+	// is split differently and the account is never told behind.
+	Glued int64
 }
 
 // OnDiskFor is the walk's count as the verdict reads it for the store s (the C1b note: keyed by
@@ -39,7 +48,13 @@ type Mailbox struct {
 //     to X: its messages are outside Y (the builder's reading of §3, beside L3; it fails toward
 //     "behind");
 //   - a keyed mailbox with pieces that do not begin at a separator Thunderbird writes is counted
-//     in SplitMailboxes (the C2 pass's ADV-C2-03);
+//     in SplitMailboxes (the C2 pass's ADV-C2-03), and also in GluedMailboxes when some begin
+//     at a separator-shaped line with no empty line before it (R2-05);
+//   - the LENIENT count (R2-04) is kept beside the strict one: Loose holds each folder's pieces
+//     with no X-Mozilla-Status, and for Gmail LooseDistinct is how many more X could be: the
+//     Loose pieces' identities not already counted, and every message with no identity key,
+//     strict or loose (each may be one more distinct email). Strict plus lenient is never less
+//     than what is on disk, so a gap by it is certain;
 //   - a mailbox with no folder of s (no key, a container not named ".sbd", or the store's own
 //     maildir) is counted in UnkeyedMailboxes and UnkeyedMessages and never in X (L3);
 //   - two mailboxes that name one folder are both unkeyed (neither can be told to be it);
@@ -68,8 +83,9 @@ func (s Store) onDiskFor(walked []Mailbox, gmail bool, goos string) OnDisk {
 		ids[i] = id
 		byFolder[id] = append(byFolder[id], i)
 	}
-	d := OnDisk{Folders: map[string]int64{}}
+	d := OnDisk{Folders: map[string]int64{}, Loose: map[string]int64{}}
 	seen := map[[16]byte]bool{}
+	var looseKeys [][16]byte
 	for i, mb := range walked {
 		id := ids[i]
 		e, keyed := folders[id]
@@ -78,12 +94,19 @@ func (s Store) onDiskFor(walked []Mailbox, gmail bool, goos string) OnDisk {
 			continue // M2: left out of X and Y
 		case id == "" || !keyed || len(byFolder[id]) > 1:
 			d.UnkeyedMailboxes++
-			d.UnkeyedMessages += mb.Messages
+			d.UnkeyedMessages += mb.Messages + mb.Loose // its loose pieces are on disk too (TC-2's "lists no mail")
 			continue
 		}
 		d.Folders[e.Path] = mb.Messages
-		if mb.Unseparated > 0 {
+		if mb.Loose > 0 {
+			d.Loose[e.Path] = mb.Loose
+			d.NoStatus += mb.Loose
+		}
+		if mb.Unseparated > 0 || mb.Glued > 0 {
 			d.SplitMailboxes++
+		}
+		if mb.Glued > 0 {
+			d.GluedMailboxes++
 		}
 		if !gmail || !e.Has(FlagOffline) {
 			continue
@@ -95,7 +118,18 @@ func (s Store) onDiskFor(walked []Mailbox, gmail bool, goos string) OnDisk {
 			}
 		}
 		d.NoKey += mb.NoKey
+		looseKeys = append(looseKeys, mb.LooseKeys...)
+		d.LooseDistinct += mb.LooseNoKey
 	}
+	// After every strict key is seen, so a loose piece that is a copy of a counted email adds
+	// nothing.
+	for _, k := range looseKeys {
+		if !seen[k] {
+			seen[k] = true
+			d.LooseDistinct++
+		}
+	}
+	d.LooseDistinct += d.NoKey
 	return d
 }
 

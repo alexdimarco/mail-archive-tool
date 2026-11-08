@@ -1421,6 +1421,7 @@ func recordRun(opts Options, lr state.LastRun, result *Result, err *error, logge
 		// beside an encrypted archive (O1, R44); a run that failed says its failure (§11).
 		if !lr.Encrypted && opts.Key == nil && len(result.Thunderbird) > 0 {
 			lr.Thunderbird = tbRecords(result.Thunderbird, result.tbPrev, lr.Finished)
+			lr.ThunderbirdMore = tbRecordsMore(result.Thunderbird)
 		}
 		if lr.Encrypted && result.IndexBehind {
 			// The backup finished, but its search index misses messages until a later

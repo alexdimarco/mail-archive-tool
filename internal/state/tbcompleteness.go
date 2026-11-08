@@ -76,6 +76,11 @@ type TBAccount struct {
 	// differently from Thunderbird's separators (ADV-C2-03).
 	NoIdentity     int64 `json:"no_identity,omitempty"`
 	SplitMailboxes int   `json:"split_mailboxes,omitempty"`
+	// The C2 pass round 2: kept mailboxes with a separator glued to the line before it (R2-05:
+	// never behind), and pieces at a separator with no X-Mozilla-Status (R2-04: counted only
+	// toward "behind").
+	GluedMailboxes int   `json:"glued_mailboxes,omitempty"`
+	NoStatus       int64 `json:"no_status,omitempty"`
 }
 
 // TBLimit is an account's own download limits as the record keeps them.
@@ -120,11 +125,16 @@ const (
 // character removed (category Cf: the bidirectional controls the fold lists, U+202A to U+202E,
 // U+2066 to U+2069, U+200E, U+200F and U+061C, and with them the zero-width ones U+200B to U+200D
 // and U+2060, the byte-order mark U+FEFF, the soft hyphen and the tag characters, the C2 pass's
-// ADV-C2-11), the line and paragraph separators U+2028 and U+2029 removed, and capped at TBNameMax
-// characters plus "…". A folder name is text the mail server controls.
+// ADV-C2-11), every other Default_Ignorable_Code_Point removed too (Unicode's
+// Other_Default_Ignorable_Code_Point and Variation_Selector: the combining grapheme joiner
+// U+034F, the Hangul fillers U+115F, U+1160, U+3164 and U+FFA0, U+17B4 and U+17B5, the variation
+// selectors U+180B to U+180F, U+FE00 to U+FE0F and U+E0100 to U+E01EF; the C2 pass round 2's
+// R2-07), the line and paragraph separators U+2028 and U+2029 removed, and capped at TBNameMax
+// characters plus "…". A folder name is text the mail server controls; a name of only such
+// characters becomes "", which looks as empty as it is.
 func CleanFolderName(s string) string {
 	s = strings.Map(func(r rune) rune {
-		if unicode.Is(unicode.Cf, r) || r == 0x2028 || r == 0x2029 {
+		if invisible(r) || r == 0x2028 || r == 0x2029 {
 			return -1
 		}
 		return r
@@ -135,28 +145,44 @@ func CleanFolderName(s string) string {
 	return string([]rune(s)[:TBNameMax]) + "…"
 }
 
+// invisible reports whether r renders as nothing: a format character (Cf) or another
+// Default_Ignorable_Code_Point. The Hangul fillers and the variation selector ranges are also
+// named outright, so a Unicode table that lacks one still removes it.
+func invisible(r rune) bool {
+	switch {
+	case unicode.Is(unicode.Cf, r), unicode.Is(unicode.Other_Default_Ignorable_Code_Point, r), unicode.Is(unicode.Variation_Selector, r):
+		return true
+	case r == 0x115F, r == 0x1160, r == 0x3164, r == 0xFFA0:
+		return true
+	case r >= 0xFE00 && r <= 0xFE0F, r >= 0xE0100 && r <= 0xE01EF:
+		return true
+	}
+	return false
+}
+
 // saneTB is a record's accounts as read back: anyone who can write the archive folder can write
 // the record, so every string is cleaned again, counts are never negative, and the lists keep
-// their bounds (as Partial's sane does).
-func saneTB(in []TBAccount) []TBAccount {
+// their bounds (as Partial's sane does). cut is how many accounts past TBAccountsMax were left
+// out (they add to ThunderbirdMore).
+func saneTB(in []TBAccount) (out []TBAccount, cut int) {
 	if len(in) > TBAccountsMax {
-		in = in[:TBAccountsMax]
+		in, cut = in[:TBAccountsMax], len(in)-TBAccountsMax
 	}
 	for i := range in {
 		a := &in[i]
 		a.Account, a.Verdict, a.Reason, a.AllMail = CleanFolderName(a.Account), util.StripControl(a.Verdict), util.StripControl(a.Reason), util.StripControl(a.AllMail)
 		a.LimitHash, a.NotKeptHash, a.StoreID = util.StripControl(a.LimitHash), util.StripControl(a.NotKeptHash), util.StripControl(a.StoreID)
-		for _, n := range []*int64{&a.OnDisk, &a.Listed, &a.Missing, &a.Tolerance, &a.ExpungedEstimate, &a.CapNote, &a.UnkeyedMessages, &a.NoIdentity} {
+		for _, n := range []*int64{&a.OnDisk, &a.Listed, &a.Missing, &a.Tolerance, &a.ExpungedEstimate, &a.CapNote, &a.UnkeyedMessages, &a.NoIdentity, &a.NoStatus} {
 			*n = max(0, *n)
 		}
-		for _, n := range []*int{&a.FoldersMore, &a.NotKeptMore, &a.DefaultNotKeptMore, &a.LabelsNotKept, &a.CantTellFolders, &a.SkippedEntries, &a.IgnoredOldKeys, &a.UnkeyedMailboxes, &a.SplitMailboxes} {
+		for _, n := range []*int{&a.FoldersMore, &a.NotKeptMore, &a.DefaultNotKeptMore, &a.LabelsNotKept, &a.CantTellFolders, &a.SkippedEntries, &a.IgnoredOldKeys, &a.UnkeyedMailboxes, &a.SplitMailboxes, &a.GluedMailboxes} {
 			*n = max(0, *n)
 		}
 		a.Folders = saneFolders(a.Folders, TBFolderMax)
 		a.NotKept = saneFolders(a.NotKept, TBNotKeptMax)
 		a.DefaultNotKept = saneFolders(a.DefaultNotKept, TBNotKeptMax)
 	}
-	return in
+	return in, cut
 }
 
 func saneFolders(fs []TBFolder, limit int) []TBFolder {

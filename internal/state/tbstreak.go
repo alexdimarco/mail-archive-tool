@@ -32,12 +32,30 @@ const maxTBStreakBytes = 64 * 1024
 // Serial rises only when an account's streak starts, and that streak keeps its number, so the
 // once-per-streak emails can key on (RecordID, account, serial); RecordID is chosen at random
 // when the record is first written.
+//
+// Run counts the runs that folded results into the record (StartRun); each entry keeps the run
+// that last reached its store (SeenRun) and the run that last found it behind (BehindRun), so an
+// entry whose store no run reaches any more is pruned (Prune) and a full record makes room
+// (BehindEvicting), never silently (the C2 pass round 2's R2-08).
 type TBStreak struct {
 	Version  int               `json:"version"`
 	Serial   int               `json:"serial"`
+	Run      int               `json:"run,omitempty"`
 	RecordID string            `json:"record_id,omitempty"`
 	Accounts []TBStreakAccount `json:"accounts,omitempty"`
 }
+
+// TBStreakUnseenRuns is how many runs in a row may pass without reaching a store before its
+// streak entry is pruned: 72, three days of an hourly schedule. A store that any schedule of the
+// archive reaches at least once a day (a nightly job beside an hourly one on other inputs) is
+// never pruned, with two missed days to spare; a store dropped from the job's inputs, a profile
+// that moved (a new path is a new key) or an account removed goes within three days of hourly
+// runs. Pruning a live entry only restarts its streak: the "still downloading" notice comes
+// later, never falsely. Only runs that ended ok with Thunderbird results count.
+const TBStreakUnseenRuns = 72
+
+// maxTBStreakRun bounds the run counter a record may carry, so a planted value never wraps.
+const maxTBStreakRun = 1 << 40
 
 // TBStreakAccount is one account's streak (M10's list): the first behind run's time and X
 // then; the latest behind run's time; the latest time X grew, and X then; the number of behind
@@ -57,6 +75,44 @@ type TBStreakAccount struct {
 	Runs        int       `json:"runs"`
 	StillSent   bool      `json:"still_downloading_sent,omitempty"`
 	StoppedSent bool      `json:"stopped_sent,omitempty"`
+	// SeenRun is the record's Run when a run last reached the store (any verdict); BehindRun
+	// when a run last found it behind.
+	SeenRun   int `json:"seen_run,omitempty"`
+	BehindRun int `json:"behind_run,omitempty"`
+}
+
+// StartRun is the streak at the start of a run's fold: Run up by one.
+func (s TBStreak) StartRun() TBStreak {
+	s.Version = TBStreakVersion
+	s.Accounts = append([]TBStreakAccount(nil), s.Accounts...)
+	if s.Run < maxTBStreakRun {
+		s.Run++
+	}
+	return s
+}
+
+// Seen notes that this run reached the store keyed store (whatever its verdict).
+func (s TBStreak) Seen(store string) TBStreak {
+	if i := s.account(store); i >= 0 {
+		s.Accounts = append([]TBStreakAccount(nil), s.Accounts...)
+		s.Accounts[i].SeenRun = s.Run
+	}
+	return s
+}
+
+// Prune drops the entries whose store no run has reached for TBStreakUnseenRuns runs, and gives
+// them, so the caller can say so.
+func (s TBStreak) Prune() (TBStreak, []TBStreakAccount) {
+	var kept, gone []TBStreakAccount
+	for _, a := range s.Accounts {
+		if s.Run-a.SeenRun >= TBStreakUnseenRuns {
+			gone = append(gone, a)
+			continue
+		}
+		kept = append(kept, a)
+	}
+	s.Accounts = kept
+	return s, gone
 }
 
 // Named is the streak with a RecordID: its own when it has one, else a new random one.
@@ -89,26 +145,42 @@ func (s TBStreak) Account(store string) (TBStreakAccount, bool) {
 // disk at now (§5's rules, M10): a streak starts (Serial up) or is extended. The times follow
 // MA-891's rules, as the presync streak's: a time before MinPlausibleTime moves neither first nor
 // latest, though the run still counts; a clock that went back restarts the first time and keeps
-// the serial. X "grew" when it is above the X of the latest growth.
+// the serial. X "grew" when it is above the X of the latest growth. A full record makes room
+// (BehindEvicting).
 func (s TBStreak) Behind(store, name string, x int64, now time.Time) TBStreak {
+	s, _, _ = s.BehindEvicting(store, name, x, now)
+	return s
+}
+
+// BehindEvicting is Behind, and the entry it dropped to make room, if any: a new streak never
+// waits for a free place (the C2 pass round 2's R2-08). With TBAccountsMax entries, the one to go
+// is the oldest of those this run did not find behind (BehindRun before Run), else the oldest of
+// all; oldest is the one a run reached longest ago, then the one found behind longest ago, then
+// the first in the record.
+func (s TBStreak) BehindEvicting(store, name string, x int64, now time.Time) (TBStreak, TBStreakAccount, bool) {
 	s.Version = TBStreakVersion
 	s.Accounts = append([]TBStreakAccount(nil), s.Accounts...)
+	var evicted TBStreakAccount
+	dropped := false
 	i := s.account(store)
 	if i < 0 {
 		if len(s.Accounts) >= TBAccountsMax {
-			return s
+			j := s.oldest()
+			evicted, dropped = s.Accounts[j], true
+			s.Accounts = append(s.Accounts[:j], s.Accounts[j+1:]...)
 		}
 		s.Serial++
-		a := TBStreakAccount{Store: store, Account: name, Serial: s.Serial, FirstX: x, GrewX: x, Runs: 1}
+		a := TBStreakAccount{Store: store, Account: name, Serial: s.Serial, FirstX: x, GrewX: x, Runs: 1, SeenRun: s.Run, BehindRun: s.Run}
 		if !now.Before(MinPlausibleTime) {
 			a.FirstBehind, a.LastBehind, a.LastGrew = now, now, now
 		}
 		s.Accounts = append(s.Accounts, a)
-		return s
+		return s, evicted, dropped
 	}
 	a := s.Accounts[i]
 	a.Account = name
 	a.Runs++
+	a.SeenRun, a.BehindRun = s.Run, s.Run
 	restarted := a.FirstBehind
 	a.FirstBehind, a.LastBehind = spanAt(a.FirstBehind, a.LastBehind, now)
 	if !a.FirstBehind.Equal(restarted) && !restarted.IsZero() {
@@ -122,7 +194,23 @@ func (s TBStreak) Behind(store, name string, x int64, now time.Time) TBStreak {
 		}
 	}
 	s.Accounts[i] = a
-	return s
+	return s, evicted, dropped
+}
+
+// oldest is the index of the entry BehindEvicting drops (s.Accounts is not empty): the least
+// (SeenRun, BehindRun), the first on a tie. An entry this run found behind was also reached this
+// run (BehindEvicting sets both to Run, and a read clamps both to at most Run), so it sorts after
+// every entry this run did not find behind: "the oldest not behind now, else the oldest of all"
+// needs no pass of its own.
+func (s TBStreak) oldest() int {
+	best := 0
+	for i, a := range s.Accounts {
+		b := s.Accounts[best]
+		if a.SeenRun < b.SeenRun || a.SeenRun == b.SeenRun && a.BehindRun < b.BehindRun {
+			best = i
+		}
+	}
+	return best
 }
 
 // End ends the streak of the store keyed store (a caught_up run, with no email; or a limited
@@ -179,6 +267,7 @@ func ReadTBStreak(out string) (TBStreak, error) {
 	if !plausibleRecordID(s.RecordID) {
 		s.RecordID = ""
 	}
+	s.Run = min(max(0, s.Run), maxTBStreakRun)
 	kept := s.Accounts[:0]
 	for _, a := range s.Accounts {
 		a.Store = util.StripControl(a.Store)
@@ -187,6 +276,8 @@ func ReadTBStreak(out string) (TBStreak, error) {
 		}
 		a.Account = CleanFolderName(a.Account)
 		a.FirstX, a.GrewX, a.Runs = max(0, a.FirstX), max(0, a.GrewX), max(0, a.Runs)
+		// A planted run number is never ahead of the record's (it would never be pruned).
+		a.SeenRun, a.BehindRun = min(max(0, a.SeenRun), s.Run), min(max(0, a.BehindRun), s.Run)
 		kept = append(kept, a)
 	}
 	s.Accounts = kept
