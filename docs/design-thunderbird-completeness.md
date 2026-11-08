@@ -48,6 +48,13 @@ each slice's own gate (§13 fold). No owner ruling is open for C0c, C1a or C1b.
 > open is closed. An IMAP-looking store outside every profile and every `ImapMail` folder, with no
 > profile found, is `unknown` ("can't tell") when it holds any `.msf` summary file. Folded in §2.2,
 > §4.2, §4.4, §12 (MA-1196's custom-folder case) and §17. Gate: before C1b, with M6.
+>
+> **Folded 2026-11-07 [M4 re-read] (the lead's re-read, done by a delegated agent):** the M4 source
+> re-read is done, at ESR 153.6.0esr (comm-esr153 c3fd7a609257) and Release 159.0 (comm-release
+> 1e7f8bb744a4). Results: `docs/lab/thunderbird-completeness-source-esr153.md`. Every load-bearing
+> claim holds except the account-settings labels: the design's words were wrong at both versions,
+> and the new labels arrive in 160. Notes beside §4.1 steps 2 and 3, §6 and §16. The source half
+> of C1a's gate is met; the lab rows are still owed.
 
 **Ids are provisional.** Main's last test-spec row is MA-1150; another agent is adding polish rows
 from MA-1151 now. This design takes **MA-1170 to MA-1194**, **R42 to R44** and **S75 to S77**,
@@ -845,6 +852,22 @@ is a label-membership question, not completeness (§14 Q6).
 >   that a folder it knows always has a `.msf` in the store. Both are read at trunk only in outline.
 >   They are added to the M4 re-read (§16 fold) and to lab row MA-1200's moved profile.]
 >
+> **Folded 2026-11-07 [M4 re-read] (the lead's re-read, done by a delegated agent):** the
+> condition above is **[proven at ESR 153.6.0esr, in source]**, with one limit
+> (`docs/lab/thunderbird-completeness-source-esr153.md` claims 2b and 9).
+>
+> - **Entries.** At shutdown Thunderbird writes every folder of every server's tree at its current
+>   key, deep (`nsMsgAccountManager.cpp:226` → `nsMsgIncomingServer.cpp:297-309` →
+>   `nsMsgDBFolder.cpp:1186-1216`). Before that, a single folder is written whenever its totals are
+>   updated (`:3851`).
+> - **`.msf` files.** An IMAP account's folders are found at start-up by listing the store's `.msf`
+>   files (`nsImapMailFolder.cpp:404-508`), so every folder Thunderbird loads from disk has one.
+> - **The limit.** "At the latest when it closes" above means a **clean** close. A crash or forced
+>   quit skips the shutdown write, and the "can't tell" folder then lasts until a later clean close
+>   or totals update. That is still never `caught_up`, so it fails safe. A folder first created
+>   during a session was not traced.
+> - MA-1200 still confirms all of this on a real moved profile.
+>
 > **Fixtures for MA-1170** (replacing "an old-path and a current-path key for one folder → `unknown`"
 > in §12's fold):
 >
@@ -902,6 +925,13 @@ is a label-membership question, not completeness (§14 Q6).
 > **Folded 2026-11-07 [foldcheck M4] (lead's call):** "confirms it for ESR 140. If ESR 140 does not
 > write it" above is **superseded by [foldcheck M4]**: read "ESR 153" for "ESR 140". Until the re-read
 > has recorded it in §16, an absent `expungedBytes` → `unknown`, as written.
+>
+> **Folded 2026-11-07 [M4 re-read] (the lead's re-read, done by a delegated agent):** settled.
+> `expungedBytes` is written as a signed 64-bit number for **every** folder at ESR 153.6.0esr
+> (`nsMsgDBFolder.cpp:1232`) and at Release 159.0 (`:1246`). Every field name and type in §2.1's
+> fold holds at both versions (`docs/lab/thunderbird-completeness-source-esr153.md` claims 1a and
+> 1b). So "absent → `unknown`" stays as the rule, with nothing left to decide. An absent value means
+> the entry was not written the way ESR 153, Release 159 or trunk write it, so `unknown` is right.
 >
 > **Step 3, Gmail labels [TC-8] (review condition).** For a Gmail account whose All Mail sets Y
 > (§3 fold), a label folder that is not kept is **not** a "not kept" WARN. Its mail is backed up
@@ -1302,6 +1332,42 @@ Spam and Trash (by default), shown as a note only:
 > M4]**: read **ESR 153** (153.6.0esr, the ESR the repo's labs ran) and the current **Release, 159.0**
 > as seen on the Mac lab of 2026-11-06. Both version numbers are confirmed on Thunderbird's release
 > page at the re-read (§16 fold).
+>
+> **Folded 2026-11-07 [M4 re-read] (the lead's re-read, done by a delegated agent):** the labels at
+> the versions people run. Source: `docs/lab/thunderbird-completeness-source-esr153.md` claim 12,
+> read at ESR 153.6.0esr (comm-esr153 c3fd7a609257) and Release 159.0 (comm-release 1e7f8bb744a4).
+>
+> - **At ESR 153 and Release 159 the account page is identical** (`am-offline.xhtml`,
+>   `am-offline.dtd`). For an IMAP account, under Account Settings → "Synchronization & Storage"
+>   (`prefs.properties:53`), it shows:
+>   - group "Message Synchronizing": checkbox **"Keep messages in all folders for this account on
+>     this computer"** (`allFoldersOffline2.label`);
+>   - group "Disk Space": **"Synchronize all messages locally regardless of age"**
+>     (`allAutosync.label`), or "Synchronize the most recent" N Days/Weeks/Months/Years;
+>   - **"Don't download messages larger than" N "KB"** (`autosyncNotDownload.label`).
+> - **Superseded by [M4 re-read]:**
+>   - §6's "Keep messages for this account on this computer" is in no version read. Read "Keep
+>     messages in all folders for this account on this computer".
+>   - §6's "The size limit names 'Messages larger than … KB'" is wrong for IMAP. That label
+>     (`offlineNotDownload.label`) is hidden for `imap` and `ews` accounts (`am-offline.xhtml:182`).
+>     Read "Don't download messages larger than … KB".
+>   - The TC-13 fold's "ESR 140 probably still shows the older page" now reads: ESR 153 and Release
+>     159 both show the older page.
+> - **The version where the labels change is 160.** "Offline message storage", **"Save copies of
+>   all folders and messages on this computer for offline use"**, "Download limits" and **"Skip
+>   downloading messages larger than:"** (`messenger/accountSettings.ftl:69-88`) are present at
+>   160.0 beta 1 (comm-beta 22dd355df013) and in the 160.0 build 1 tag (comm-release f8677769eb91,
+>   2026-11-06). They are absent at 159.0. Thunderbird 160 was not yet released on 2026-11-07. So
+>   the rule is: `LastVersion` major below 160 → the older labels; 160 or above → the newer ones. No
+>   160 label for the age limit was found, so the age words stay neutral at 160 and above.
+> - **Folder-level words hold at both versions:** "Synchronization", "Select this folder for
+>   offline use", "Download Now". ESR 153 carries them in `chrome/messenger/folderProps.dtd:15,19,21`
+>   and Release 159 in `messenger/folderprops.ftl`, with the same text.
+> - **What does not change yet.** The TC-13 fold's "until both have recorded it here, every version
+>   gets the neutral words" stands. This note records the source half. MA-1191 still owes the lab
+>   half (153.6.0esr on the Windows VM, 159.0 on the Mac) before version-chosen words ship.
+> - **Not read:** the wizard's "right-click the account → Download / Sync Now", and Thunderbird's
+>   download-now command for TC-9. Both stay with MA-1191.
 
 ## 7. Surfaces and words
 
@@ -1972,6 +2038,40 @@ Specific claims to try to break:
 >   merges**; the operator (Alex) sees the dated note before the release call. Lab rows MA-1189,
 >   MA-1191 and MA-1192 run on ESR 153 and the current Release.
 > - **When again:** at each new Thunderbird ESR, as written above.
+>
+> **Folded 2026-11-07 [M4 re-read] (the lead's re-read, done by a delegated agent): done.** The
+> results are in `docs/lab/thunderbird-completeness-source-esr153.md`.
+>
+> - **Versions confirmed** on 2026-11-07 by Mozilla's product-details feed (the data behind the
+>   release pages): ESR **153.6.0esr** (no next ESR listed) and Release **159.0**. 160.0 had a build
+>   tag but no release.
+> - **Revisions read.**
+>   - ESR: `hg.mozilla.org/releases/comm-esr153`, tag `THUNDERBIRD_153_6_0esr_RELEASE` =
+>     c3fd7a6092572ef295fd562948356e5cea174bbb. The branch name `comm-esr153` is now checked.
+>   - Release: `hg.mozilla.org/releases/comm-release`, tag `THUNDERBIRD_159_0_RELEASE` =
+>     1e7f8bb744a4a8e407f17b79d3ff59694ef80f54.
+>   - The GitHub mirror `mozilla/releases-comm-central` carries only trunk (and 2009-2011 branches),
+>     so it cannot serve an ESR re-read.
+> - **Relabelled.** Every Thunderbird-source claim above marked "[proven]" or "[proven at trunk]"
+>   now reads **"[proven at ESR 153.6.0esr and Release 159.0]"**, with three exceptions:
+>   1. the account-settings labels, which differ (§6 fold [M4 re-read]; the switch-over is 160);
+>   2. the Exchange store layout (`ExchangeProtocolInfo.cpp`), which was not re-read;
+>   3. the Release 159 half of claims 1d, 2b, 5c and 9, where only the same code was located, not
+>      read line by line (lab file §2).
+>
+>   Items 1 to 10 of the lists above all hold: fields and types, save rules, the Gmail lookup and
+>   its `is_gmail` gate, the Panorama gate (`panorama.sqlite`; `mail.panorama.enabled`, default
+>   false, read once at start-up), the defaults, the meaning of `lastSyncTimeInSec`, the All Mail and
+>   Archive flags, M2's condition (with the clean-close limit, §4.1 step 2 fold), and `expungedBytes`
+>   counting on-disk bytes. That last one also has a second path: deleting a header whose body is
+>   on disk adds its on-disk size (`nsImapMailDatabase.cpp:49-58`). `nsShouldIgnoreFile` also holds,
+>   and matches MailArchive's port in `internal/tbrestore/names.go`.
+> - **Line numbers** move between versions. The design's citations stay trunk lines; the lab file
+>   gives the ESR 153 and Release 159 lines per claim.
+> - **The gate.** The source half of the C1a gate (field names, types and `expungedBytes`) is met.
+>   The lab rows (MA-1189, MA-1191, MA-1192, MA-1199, MA-1200) are unchanged and still owed before
+>   release.
+> - **Not re-read:** ESR 140 (no longer the listed ESR).
 
 ## 17. The folds re-read for contradictions (2026-11-07)
 
