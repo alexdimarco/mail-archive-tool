@@ -69,6 +69,21 @@ an independent fold-verify of this file (the lead arranges both). Each slice's o
 > crash trace. Slice B2 gains three small touches (§13 fold-check-5 note). **D2 waits for an
 > independent re-check of these folds.**
 
+> **Folded 2026-11-07 [dedup foldcheck6 M1, M2, M3, S1 to S9] (lead's call), after fold check 6
+> (`docs/review-gmail-dedup-foldcheck6.md`, FAIL (narrow), D2 only):** one more save (still version 8)
+> after the last batch, and after resume's re-check, so `Damaged` and the space freed are saved before
+> the result file, which is built only from that save (M1); resume's re-check counts as deleted only
+> files that are really gone, and a page or zip still on disk goes to the survivor's `AlsoFiles` (M2);
+> the "build capped at 7" rows move to slice B2, with a new lab row, **MA-1246**, running the real
+> v1.6.1 binary against a version-8 archive (M3). The folds are the fold-check-6 notes at the end of
+> §9 (M1, M2, the header read's place), §12 (rows) and §13 (the should-fix items, one line each, with
+> B2 or D2). The version cap used as a test seam is treated as fault injection **pending the
+> operator's confirmation** (the owner, at B2). Id MA-1246 checked free on 2026-11-07: no file in main's
+> `docs/` or any worktree, and no commit on any branch, uses it. Not folded, left for the lead: S2's
+> third bullet (reuse the first-key reader of `vault/claims.go:32-55` for the header read) and S9's
+> second half (close "every other `LoadedVersion` comparison is B2's to list": fold check 6 found
+> only `manifest.go:817` and `:851`). **D2 waits for an independent re-check of these folds.**
+
 **Ids are provisional.** The completeness design takes MA-1170 to MA-1194, R42 to R44 and S75
 to S77; another agent takes MA-1151 and up. This design takes **MA-1210 to MA-1234**, **R45**
 and **S78 to S84**. Whoever merges second renumbers.
@@ -105,7 +120,9 @@ and **S78 to S84**. Whoever merges second renumbers.
 - **GD-1:** the merge step proves a copy from the **archived file** (checked against its recorded
   fixity), never from the live mbox, and re-checks both files just before each deletion (§9 fold).
 - **GD-2:** the merge's first durable act is a manifest save at version 7 carrying a
-  `MergePending` field (§9 fold).
+  `MergePending` field (§9 fold). *[“at version 7” is superseded 2026-11-07 by [dedup foldcheck6 S9]
+  (lead's call): while `MergePending` is present the manifest is version 8, so that save is at 8
+  (§7.4 fold-check-5 note).]*
 - **GD-3:** no plain-text marker file. The pending list is sealed in the manifest of an encrypted
   archive (§9 fold).
 - **GD-25:** **no proof, no merge.** Records whose originals cannot prove they are copies stay
@@ -1142,6 +1159,10 @@ DedupStores map[string]string `json:"dedup_stores,omitempty"` // token -> "gmail
 >   original then failed its re-hash at resume step 2 (§26's second bullet; §9 fold-check-5 note). It
 >   is written only by the save that also drops that group's entries (the next fold save or the
 >   clear), so the two never disagree. The result file reads it. Plaintext only, like the rest.
+>   *[“the next fold save or the clear” is superseded 2026-11-07 by [dedup foldcheck6 M1] (lead's
+>   call): the clear removes `MergePending`, `Damaged` with it, after the result file is written, so
+>   a damage found in the last batch was never saved. It is now written by the next fold save or by
+>   the final save before the result file; see the §9 fold-check-6 note.]*
 > - **Load checks gain (M2):** every key in `Damaged` is the survivor of a group before `Folded`, is a
 >   record, and appears once. A failure is a damaged merge record, as the check-first note says.
 > - **No reason is stored for a kept copy (M2).** `Kept` stays a list of keys. The result file works
@@ -1230,7 +1251,10 @@ About 250 bytes per extra copy membership and about 120 per listed one. For the 
 
 ### 7.4 Version and older MailArchive versions
 
-- `manifestVersion` becomes 7. Load refuses a stored version it does not understand
+- `manifestVersion` becomes 7. *[Superseded 2026-11-07 by [dedup foldcheck6 S9] (lead's call), as
+  already replaced by the F3 note below: the constant is the highest version this build reads, and
+  `FormatVersion` decides what is written, 8 while a merge is pending (§7.4 fold-check-5 note).]*
+  Load refuses a stored version it does not understand
   (`manifest.go:779-786`), so v1.6.1 and earlier refuse a version-7 archive with `NewerFormatError`
   and change nothing. Without the bump an older binary would drop the unknown `folders` field on its
   next save and silently lose every membership.
@@ -1421,6 +1445,11 @@ About 250 bytes per extra copy membership and about 120 per listed one. For the 
 >     (§7.4 fold e). Its archive delete refuses with "This archive was written by a newer version of
 >     MailArchive (manifest format 8; this version understands 6). Update MailArchive, then delete it."
 >     (`archdelete/classify.go:133`). Its `reindex`, `verify` and Desktop card refuse at their loads.
+>     *[“`reindex` … refuse at their loads” is corrected 2026-11-07 by [dedup foldcheck6 S6] (lead's
+>     call): `reindex` opens the index (`app/reindex.go:90`) before it loads the manifest (`:100`).
+>     v1.6.1's `reindex` therefore refuses a version-4 index at its index open, in the index's words
+>     (`index/index.go:162-165`); a build that reads the index's version passes the open and writes the
+>     index header (`:172-182`) before the manifest refusal. See §13's fold-check-6 note, B2.]*
 >   - **A 1.7 build without D2** does the same at the same places, with 7 as what it understands. It
 >     has no header read (that is D2's, fold-check-4 S1), so its backup also runs its pre-sync and
 >     `SweepOrphans` before the refusal. Its words are (f)'s, "This archive needs a newer MailArchive
@@ -1429,7 +1458,11 @@ About 250 bytes per extra copy membership and about 120 per listed one. For the 
 >     pre-sync touches only Thunderbird. `SweepOrphans` removes temp files older than the run and zips
 >     whose page is gone; the merge's zip-first, all-or-none order never leaves a zip it owns without
 >     its page (§25), so the sweep removes nothing the merge owns. Its own last-run record and
->     run-history entry are not archived files.
+>     run-history entry are not archived files. *[Amended 2026-11-07 by [dedup foldcheck6 S5, S6]
+>     (lead's call): an older build's backup writes more than these two before it refuses (the lock,
+>     `mailarchive.log`, an Outlook job's PSTs, the pre-sync's records), and a `reindex` in a build
+>     that reads the index's version writes the index header before it refuses. None is a message
+>     file, the manifest or an index row. The full list is in §13's fold-check-6 note, B2.]*
 >   - **Are the words good enough?** 1.6.1's cannot change. They say "upgrade", which leads to the
 >     right place. For a 1.7 build without D2 the generic words are true, but they send the person
 >     looking for an update with no reason given, on the computer that did nothing wrong. **A 1.7 build
@@ -1440,7 +1473,9 @@ About 250 bytes per extra copy membership and about 120 per listed one. For the 
 >     newer MailArchive is part-way through tidying this archive (keeping one copy of each Gmail
 >     email). Finish it there, or install that version on this computer and choose Resume tidy-up.
 >     Until then this computer does not back up into it." Any other newer version keeps (f)'s words.
->     It is one comparison in the refusal's text.
+>     It is one comparison in the refusal's text. *[“one comparison” undercounts, by [dedup foldcheck6
+>     S7] (lead's call), 2026-11-07: the newer-format words are written in four places; see §13's
+>     fold-check-6 note, B2.]*
 > - **What the D2 build shows for 8.** Its backup's header read refuses with the merge words before
 >   anything else (§9 fold-check-5 note), and every writer refuses with "Finish the merge first" (S3).
 > - **D2's release notes** add: "While MailArchive is tidying an archive (removing extra copies), only
@@ -2318,7 +2353,10 @@ sign-off on its words (R36's "only by the person's explicit decision", in spirit
 > freed, every "kept: this copy differs" (from `Kept`) and every "kept apart" group (from
 > `SurvivorChanged`). *[Amended 2026-11-07 by [dedup foldcheck4 S6] (lead's call): the clear removes
 > the only saved copy of `Kept` and `SurvivorChanged`, so a lasting result file and a run-history
-> entry are written **before** the clear's save. See the fold-check-4 note.]*
+> entry are written **before** the clear's save. See the fold-check-4 note.]* *[“the last batch's
+> entries come off as in (b)” is superseded 2026-11-07 by [dedup foldcheck6 M1] (lead's call): a
+> final save, still version 8, takes the last batch's entries off before the result file is written,
+> so the clear has no entry left to drop and only removes `MergePending`. See the fold-check-6 note.]*
 >
 > **Resume** (`mailarchive merge-copies -out DIR -resume`, or Review on the card; holding the lock):
 >
@@ -2496,7 +2534,9 @@ sign-off on its words (R36's "only by the person's explicit decision", in spirit
 > - The batch count stands as an estimate: about 15 for the owner's 73,915 copies.
 >
 > **S6 — the result lasts after the clear.** The lead's call, plaintext archives only. Before the
-> clear's save, in this order:
+> clear's save, in this order: *[Amended 2026-11-07 by [dedup foldcheck6 M1] (lead's call): a final
+> save (still version 8) comes first, and the result file is built only from that save; see the
+> fold-check-6 note.]*
 >
 > 1. **The result file.** Written at the archive's root, beside `attachments-report.tsv`
 >    (`app/report.go:22`) and `BACKUP-NEEDS-ATTENTION.txt` (`state/lastrun.go:41`), as plain text and
@@ -2618,7 +2658,9 @@ sign-off on its words (R36's "only by the person's explicit decision", in spirit
 > - The manifest is opened as before (no link followed, no pipe waited on, a bounded read), at the
 >   manifest path the run uses (fold check 5's S1, second bullet: `opts.Manifest` when it is set; it
 >   folds with D2, §13). The read skips white space, takes the opening `{`, the key `version` and its
->   integer value, and stops.
+>   integer value, and stops. *[Restated 2026-11-07 by [dedup foldcheck6 S2] (lead's call): the read
+>   runs only on an unencrypted archive (`opts.Key == nil`), after the existing encrypted check
+>   (`RefuseKeyless`, `app/run.go:663-664`); see the fold-check-6 note.]*
 > - **Value 8:** refuse with the merge words, before the "running" record, the pre-sync and any sweep
 >   (the place fold-check-4 S1 set). **A value above 8:** refuse there too, with the newer-format words
 >   *(the folding agent's call, flagged: the same check, so a newer archive is also refused before the
@@ -2677,7 +2719,11 @@ sign-off on its words (R36's "only by the person's explicit decision", in spirit
 >     survivor's key goes into `MergePending.Damaged`, and the merge goes on with the other groups.
 >     Both are written by the next save that drops those entries (the next fold save, or the clear). A
 >     crash before that save loses nothing: the entries are still there, and the next resume finds
->     the same and does the same;
+>     the same and does the same; *[“that group's entries count as deleted” is superseded 2026-11-07
+>     by [dedup foldcheck6 M2] (lead's call): only entries whose files are gone from disk count as
+>     deleted; a page or zip still on disk goes to the survivor's `AlsoFiles`, as §27 says. And “the
+>     next fold save, or the clear” by [dedup foldcheck6 M1]: the next fold save, or the final save.
+>     See the fold-check-6 note.]*
 >   - the result file lists each `Damaged` survivor, with its folder and page path: "The saved original
 >     of this email changed after its extra copies were removed. Run `mailarchive verify`." verify
 >     reports the damage as for any damaged original (MA-1228). The terminal and the card show the
@@ -2691,6 +2737,73 @@ sign-off on its words (R36's "only by the person's explicit decision", in spirit
 > "Left for the lead" (line 2417); §25's table row "(d), its `.eml` deleted" (line 3354); §25's two
 > "Left for the lead" exceptions (lines 3409 and 3412); and §26's "any copy `.eml`" wording. (Line
 > numbers are fold check 5's, at commit 3528388; this fold moves them.)
+
+> **Folded 2026-11-07 [dedup foldcheck6 M1, M2, S2] (lead's calls; the items marked as the folding
+> agent's are flagged for the lead): the check-first step after fold check 6.** The fold check is
+> `docs/review-gmail-dedup-foldcheck6.md`. The notes above stand except where these points replace a
+> sentence (each is marked where it stands). Plaintext archives only (F1).
+>
+> **M1 — one final save before the result file.** Fold check 6 found that a damaged survivor found in
+> the **last** batch was never saved: `Damaged` was written by "the next fold save, or the clear", and
+> the clear removes `MergePending`, `Damaged` with it, after the result file has been written.
+>
+> - **After the last batch's (d)**, one more save (temp file, fsync, rename), **still version 8**,
+>   since `MergePending` is still present. It does for the last batch what a fold save does for the
+>   batch before it: an entry whose file is gone is dropped and its `size` added to `Freed`; a group
+>   that resume step 2 found damaged gets its survivor's key in `Damaged`; an entry whose file is
+>   still on disk (a failed or changed removal, S11, or M2 below) moves to the survivor's
+>   `AlsoFiles`. After this save no record holds a `MergedFiles` entry.
+> - **On a resume, after step 2**, whenever step 2 worked on any entry, the same save, before anything
+>   else runs (the batches from `Folded` on, or the result file when no batch is left). So what step 2
+>   found (`Freed`, `Damaged`, moves to `AlsoFiles`) is saved before it can be reported. *(The folding
+>   agent's call: when batches follow, this save comes in addition to their fold saves; the next fold
+>   save then finds no earlier entry to drop.)*
+> - **The result file is built only from that save:** the saved manifest after the final save, with
+>   no `MergedFiles` entry left and `Freed` and `Damaged` final, plus the disk for the two kept lines
+>   (fold-check-5 M2). Never from the run's memory. The result file's "every entry the clear is about
+>   to move there" (fold-check-4 S6) is then empty: those files are already in `AlsoFiles` and are
+>   listed from there.
+> - **The order after the last batch is now:** the final save, the result file, the run-history entry,
+>   the clear's save. The clear has no entry left to drop: it removes `MergePending`, and `FormatVersion`
+>   stamps 7.
+> - **A crash, at each point.** Before the final save's rename: the entries are still there, so the
+>   next resume's step 2 finds the same, does the same, and saves. After it and before the result
+>   file: step 2 finds no entry and makes no save; the result file is written from the saved manifest,
+>   which already holds `Damaged` and `Freed`. Between the result file and the clear: resume writes
+>   the file again from the same saved manifest (replaced whole), then the entry, then the clear. The
+>   damaged survivor is listed every time.
+> - **Cost:** one more whole-manifest save per merge (0.66 to 0.74 seconds measured on this Mac's
+>   disk, about 2.5 to 3 on the slower estimate; §9 check-first note), and one per resume that found
+>   entries.
+> - This also settles fold check 5's S4 for `Freed` ("its space freed adds the last batch's gone
+>   entries as the clear will", §13 fold-check-5 note): the final save adds them, so the total in the
+>   result file is the saved one.
+>
+> **M2 — resume's re-check counts as deleted only files that are gone.** In place of the fold-check-5
+> note's "that group's entries count as deleted (their sizes added to `Freed`)", so that §9 says what
+> §27 says ("entries whose files are already gone"):
+>
+> - At resume step 2, an entry is dropped as deleted only when **its own file is gone from disk**, and
+>   only that entry's `size` is added to `Freed`.
+> - A page or zip **still on disk** whose copy's `.eml` is gone is **not removed**: a copy's page and
+>   zip are removed only while its `.eml` is on disk and proven (§25, Confirmed (1)). Its entry moves
+>   to the survivor's `AlsoFiles` at the save that follows (the final save above, or the next fold
+>   save), as a failed removal does (S11). It stays owned, the result file lists it as kept, and its
+>   size is not added to `Freed`.
+> - Normal running cannot reach this: (d) removes the `.eml` last, and a failed or changed page keeps
+>   the `.eml`. Only an outside program that removes a folded copy's `.eml` and leaves its page can.
+> - **With a damaged survivor**, the group still goes into `Damaged` (no folded copy's `.eml` of it is
+>   on disk) and the merge goes on. **With an unchanged survivor**, the same rule applies. *(The
+>   folding agent's call, flagged: the lead's words name the re-check as a whole; without this, step
+>   2's redo of (d) would remove that page with no `.eml` on disk, against §25's Confirmed (1).)*
+>
+> **S2 — the header read runs only on an unencrypted archive, after the encrypted check.** Restating
+> the fold-check-5 M1 note's read: it runs only when `opts.Key == nil`, after the existing encrypted
+> check (`RefuseKeyless`, `app/run.go:663-664`, among the checks run again under the lock), and before
+> the "running" record (`beginRun`), the place fold-check-4 S1 set. An encrypted archive's file holds
+> version **100** (`vault/envelope.go:13`), which the header read would refuse with the newer-format
+> words; it never reaches the read. A keyless backup into it gets `RefuseKeyless`'s words, and a keyed
+> one takes the encrypted path (`openEncrypted`, `run.go:681`). Row in §12's fold-check-6 note.
 
 ## 10. Evidence
 
@@ -2938,13 +3051,45 @@ throwaway account's Thunderbird, never from the owner's profile.
 > is the real loader and the real refusals run with their highest readable version set to 7 by one
 > test-only seam *(the folding agent's call, flagged: a seam on one constant, read by all three
 > comparison places, not a mock of the loader; the shipped v1.6.1 binary is the lab alternative and
-> covers 1.6.1 only)*.
+> covers 1.6.1 only)*. *[Amended 2026-11-07 by [dedup foldcheck6 M3] (lead's call): a capped D2 build
+> is not a build without D2 (its header read refuses 8 before any sweep), so the capped-build rows
+> move to slice B2, a genuine build without D2; after D2 lands they run with the seam and call the
+> sweep directly; the real v1.6.1 binary runs in a new lab row, MA-1246. The seam is treated as fault
+> injection **pending the operator's confirmation** (the owner, at B2). See the fold-check-6 rows.]*
 >
 > | Row | Now also asserts |
 > |---|---|
 > | MA-1216 | **(M1):** the reflection test's decision for `MergePending` is **8**. `FormatVersion` of a manifest holding a `MergePending` (with or without `MergedFiles`, `DedupStores` or memberships) is 8; of the same manifest with it removed, 7. Each version-writing site (`save` on the plain path, `newManifest`, the load-time bump, a fresh sealed record) stamps what `FormatVersion` returns. Mutation: make `MergePending` count as 7, and the test goes red |
-> | MA-1229 | **(M1, the stamp):** positive twin first: a healthy switched-on archive is 7 before and after a merge's plan. The manifest saved at step 5.1 reads back 8; after each fold save it is still 8; after the clear's save it is 7. A test hook stopping the save just before 5.1's rename leaves 7 with no `MergePending`, just after leaves 8 with it; just before the clear's rename, 8; just after, 7. **(M1, a build capped at 7):** an archive stopped after a batch's (b), with `MergedFiles` entries waiting: the capped build's backup, `reindex`, `app.Rebuild`, `verify -record`, archive delete and the Desktop card each refuse with the newer-format refusal naming version 8; after each, the manifest's bytes, `search.db`'s bytes and every message file are unchanged, and every file a `MergedFiles` entry names is still on disk after the backup's `SweepOrphans` (which runs before its refusal); the only files the backup writes are its own last-run record and run-history entry. Then a D2 build resumes and clears: the stamp is 7, and the capped build now backs up into the archive. **(M1, the words):** the capped build's refusal of exactly 8 shows the tidy-up words; of 9, §7.4 (f)'s words. **(M1, the header read):** in the D2 build, a manifest stamped 8 is refused before the pre-sync hook is called (call count zero), compact and pretty-printed alike; one stamped 9 is refused there with the newer-format words; one stamped 7 that holds a `MergePending` (written by the test by hand) passes the header read and is refused by the second guard after the full load, and no manifest is written. **(M1, B2):** a build without D2 that loads a manifest stamped 7 holding a `MergePending` refuses it as version 8 and writes nothing. **(S1, null):** a pending manifest edited by the test to `"merge_pending":null` and stamped 7 loads as no merge; neither a backup nor `merge-copies -resume` deletes any file, and every file a `MergedFiles` entry names is still on disk and reported by verify as owned. Stamped 8 with no `MergePending`: with an entry still waiting, resume stops as a damaged merge record and the manifest's bytes are unchanged; with none, resume saves once, the stamp is 7, and every record is equal before and after |
-> | MA-1229 | **(M2, the survivor order):** a group whose earliest complete record has no recorded zip digest and a later complete record has one: the plan picks the later record, the yes's recompute picks the same, and the yes is accepted. Positive twin: a group whose records all record the same pieces picks by the old tiebreak. Mutation: drop step 2 of the order, and the earlier record is picked, so the test goes red. **(M2, a copy with a part):** positive twin first: a survivor with its zip on disk and a copy with a zip: the copy folds and its zip, page and `.eml` are deleted. Then a survivor with no zip on disk and a copy with a zip on disk, once with and once without a recorded zip digest: the copy is kept, in `Kept`, its three files byte-equal after, and the result file lists it as "kept: this copy has a part the kept email does not"; a copy kept because its `.eml` changed is listed as "kept: this copy differs". Mutation: fold the copy anyway, and the test goes red. **(M2, a damaged survivor after its copies are gone):** a crash after a group's last folded copy's `.eml` is deleted and before the next fold save, then the survivor's original changed by the test, then resume: the merge goes on and the next group folds; after the next save `MergePending.Damaged` holds the survivor's key and that group has no entries left; the result file lists it with "Run `mailarchive verify`"; verify reports the damaged original. Positive twin (the stop): the same with one of that group's folded copies' `.eml` still on disk: the merge stops with its words and nothing more is deleted. A crash between that resume's step 2 and the next save, then resume again: the same outcome, one `Damaged` entry. **(M2, `Damaged` load checks):** a key in `Damaged` that is not the survivor of a group before `Folded`, is not a record, or appears twice makes resume stop as a damaged merge record, the manifest's bytes unchanged |
+> | MA-1229 | **(M1, the stamp):** positive twin first: a healthy switched-on archive is 7 before and after a merge's plan. The manifest saved at step 5.1 reads back 8; after each fold save it is still 8; after the clear's save it is 7. A test hook stopping the save just before 5.1's rename leaves 7 with no `MergePending`, just after leaves 8 with it; just before the clear's rename, 8; just after, 7. **(M1, a build capped at 7):** an archive stopped after a batch's (b), with `MergedFiles` entries waiting: the capped build's backup, `reindex`, `app.Rebuild`, `verify -record`, archive delete and the Desktop card each refuse with the newer-format refusal naming version 8; after each, the manifest's bytes, `search.db`'s bytes and every message file are unchanged, and every file a `MergedFiles` entry names is still on disk after the backup's `SweepOrphans` (which runs before its refusal); the only files the backup writes are its own last-run record and run-history entry. Then a D2 build resumes and clears: the stamp is 7, and the capped build now backs up into the archive. *[This case is superseded 2026-11-07 by [dedup foldcheck6 M3, S5] (lead's call): in a capped D2 build the header read refuses 8 before `SweepOrphans`, so "after the backup's `SweepOrphans`" never ran a sweep, and the backup writes more than its last-run record and run-history entry. The case moves to MA-1216 in slice B2; see the fold-check-6 rows.]* **(M1, the words):** the capped build's refusal of exactly 8 shows the tidy-up words; of 9, §7.4 (f)'s words. **(M1, the header read):** in the D2 build, a manifest stamped 8 is refused before the pre-sync hook is called (call count zero), compact and pretty-printed alike; one stamped 9 is refused there with the newer-format words; one stamped 7 that holds a `MergePending` (written by the test by hand) passes the header read and is refused by the second guard after the full load, and no manifest is written. **(M1, B2):** a build without D2 that loads a manifest stamped 7 holding a `MergePending` refuses it as version 8 and writes nothing. *[“(M1, the words)” and “(M1, B2)” move with the capped case to MA-1216 in slice B2, by [dedup foldcheck6 M3] (lead's call), 2026-11-07; see the fold-check-6 rows.]* **(S1, null):** a pending manifest edited by the test to `"merge_pending":null` and stamped 7 loads as no merge; neither a backup nor `merge-copies -resume` deletes any file, and every file a `MergedFiles` entry names is still on disk and reported by verify as owned. Stamped 8 with no `MergePending`: with an entry still waiting, resume stops as a damaged merge record and the manifest's bytes are unchanged; with none, resume saves once, the stamp is 7, and every record is equal before and after |
+> | MA-1229 | **(M2, the survivor order):** a group whose earliest complete record has no recorded zip digest and a later complete record has one: the plan picks the later record, the yes's recompute picks the same, and the yes is accepted. Positive twin: a group whose records all record the same pieces picks by the old tiebreak. Mutation: drop step 2 of the order, and the earlier record is picked, so the test goes red. **(M2, a copy with a part):** positive twin first: a survivor with its zip on disk and a copy with a zip: the copy folds and its zip, page and `.eml` are deleted. Then a survivor with no zip on disk and a copy with a zip on disk, once with and once without a recorded zip digest: the copy is kept, in `Kept`, its three files byte-equal after, and the result file lists it as "kept: this copy has a part the kept email does not"; a copy kept because its `.eml` changed is listed as "kept: this copy differs". Mutation: fold the copy anyway, and the test goes red. **(M2, a damaged survivor after its copies are gone):** a crash after a group's last folded copy's `.eml` is deleted and before the next fold save, then the survivor's original changed by the test, then resume: the merge goes on and the next group folds; after the next save `MergePending.Damaged` holds the survivor's key and that group has no entries left; the result file lists it with "Run `mailarchive verify`"; verify reports the damaged original. *[This case tests a middle batch only; [dedup foldcheck6 M1] adds the last batch's case, 2026-11-07; see the fold-check-6 rows.]* Positive twin (the stop): the same with one of that group's folded copies' `.eml` still on disk: the merge stops with its words and nothing more is deleted. A crash between that resume's step 2 and the next save, then resume again: the same outcome, one `Damaged` entry. **(M2, `Damaged` load checks):** a key in `Damaged` that is not the survivor of a group before `Folded`, is not a record, or appears twice makes resume stop as a damaged merge record, the manifest's bytes unchanged |
+
+> **Folded 2026-11-07 [dedup foldcheck6 M1, M2, M3, S2, S5, S6, S7] (lead's calls): rows after fold
+> check 6.** These add to the rows above, which stand except where marked. Every refusal is tested with
+> `assure.Refused` (the exact refusal, words that name the archive and the remedy, the side effect
+> absent) after its positive twin; every fix ships prove-fail then prove-pass. One new id, MA-1246.
+>
+> | Row | Now also asserts |
+> |---|---|
+> | MA-1216 | **(M3, a build without D2; moved from MA-1229, slice B2).** Run in B2's own build, whose highest readable version really is 7, so no seam is used. A version-8 fixture written by the test: a manifest holding a `MergePending` with one group folded and its `MergedFiles` entries waiting, their files on disk, an index stopped after that batch's (c) (version 4 if B3 has landed, else 3), a planted old `.mailarchive-*.tmp` and a planted zip of another, unowned stem whose page is gone. The backup (the run path a scheduled run takes, with the Thunderbird pre-sync hook on), `reindex`, `app.Rebuild`, `verify -record`, archive delete and the Desktop card each refuse with the newer-format refusal naming version 8, each after its positive twin on a version-7 fixture. For the backup, **the sweep really runs before the refusal**: the planted temp file and the planted page-less zip are gone, which proves the sweep ran, and every file a `MergedFiles` entry names is still on disk; the pre-sync hook is called once (a build without D2 has no header read). After each program: the manifest's bytes and every message file's bytes are unchanged; `search.db`'s bytes as S6's row below says; the files the backup created or changed are only those in S5's list (§13 fold-check-6 note). **(the words, moved):** the refusal of exactly 8 shows the tidy-up words in every place B2 shows newer-format words (S7's four places); of 9, §7.4 (f)'s words. **(a hand-changed stamp, moved):** a manifest stamped 7 holding a `MergePending` is refused as version 8, and nothing is written. Mutation: let B2's loader accept 8, and every refusal case goes red |
+> | MA-1216 | **(M3, after D2 lands).** The same cases run in the D2 build with the version cap lowered to 7 by the test seam (one unexported variable in package `state`, read by all three comparison places, set only by a test helper that restores it; treated as fault injection **pending the operator's confirmation**, the owner, at B2). Because the capped build's header read refuses 8 before its sweep, the case calls `export.SweepOrphans` directly on the fixture, standing in for an older build's order, as the other rows already do; the owned files are still there after it. Then the D2 build resumes and clears: the stamp is 7, and the capped build backs up into the archive |
+> | MA-1216 | **(S6, `reindex`'s index open, slice B2):** in B2's build, `reindex` on the version-8 fixture with an index B2 can read: `search.db`, its `-wal` and its `-shm` are compared byte for byte before and after the refusal and must be unchanged. Positive twin: `reindex` on a healthy version-7 archive runs. Mutation: put `index.Open` back before the manifest check, and the bytes compare goes red (measured with the sqlite3 command line, §13 fold-check-6 note: the open's header write raises two header counters) |
+> | MA-1229 | **(M1, a damaged survivor in the last batch):** a crash after the **last** batch's last folded copy's `.eml` is deleted and before the final save, then the survivor's original changed by the test, then resume: no batch is left; step 2 counts the entries whose files are gone as deleted; the final save holds the survivor's key in `MergePending.Damaged`, no `MergedFiles` entry, and `Freed` including those entries' sizes; `MERGE-RESULT-<date>.txt` lists the survivor with "Run `mailarchive verify`" and its space freed equals the sum of the deleted files' sizes; after the clear, `MergePending` is gone and the stamp is 7. **(M1, a crash between the result file and the clear):** the same, with a crash just after the result file is written, then resume: one result file, under the same name, still listing the damaged survivor. Positive twin: the middle-batch case above. Mutation: drop the final save (go from the last batch's (d) straight to the result file), and the first case goes red |
+> | MA-1229 | **(M2, a page left on disk):** after a group's fold save, the test removes a folded copy's `.eml` (standing in for an outside program) and leaves its page, then changes the survivor's original, then resume: the merge goes on; the page is still on disk, byte-equal, and after the next save is named in the survivor's `AlsoFiles`; the result file lists it as kept; `Freed` does not include its size; the ownership check (2) holds at every step; the survivor is in `Damaged`. Second case, the survivor unchanged: the page is again not removed and goes to `AlsoFiles`. Positive twin: the same with the page also gone: its entry counts as deleted and its size is in `Freed`. Mutation: count the page's entry as deleted, and the ownership check (2) goes red |
+> | MA-1229 | **(S2, the header read's place):** positive twin first: a keyed backup into an encrypted archive (its file holds version 100) runs. Then a keyless backup into the same archive is refused with `RefuseKeyless`'s words, **not** the newer-format words, and the pre-sync hook is not called. Mutation: move the header read before `RefuseKeyless`, and the keyless case shows the newer-format words, so the test goes red |
+>
+> **New row (M3):**
+>
+> | Id | Tier | What it proves | Covers |
+> |---|---|---|---|
+> | MA-1246 | L (pending) | the real v1.6.1 binary against a version-8 archive, on the Windows VM and on the Mac. Fixture: a plaintext Gmail archive with a merge stopped after a batch's (c) (manifest stamped 8, `MergedFiles` entries waiting, index version 4), made by the D2 build. Each of these runs refuses: a scheduled `run-job` with the Thunderbird pre-sync on, `reindex`, `verify`, the Desktop card and archive delete. Before and after each, the manifest's bytes, `search.db`'s bytes and every message file's bytes are compared and must be unchanged, and every file a `MergedFiles` entry names is still on disk. Then the D2 build resumes and clears, and v1.6.1 still refuses (7). | R45, S82, S83 |
+>
+> Lab story: the local lab (Windows through the Parallels VM with `.claude/winrun.sh`, Windows first by
+> the owner's 2026-11-01 rule; the Mac native), with the v1.6.1 release binaries and a fixture made by
+> the D2 build, so the row runs once D2 is built. No live mail server and no real account is needed.
+> *(The folding agent's call, flagged: the fixture's index is version 4, which v1.6.1's `reindex`
+> refuses at its index open, before any write. With an index still at 3, its `reindex` raises two
+> header counters of `search.db` before refusing (§13 fold-check-6 note, S6); no row changes, and a
+> shipped binary cannot be fixed, so that case is recorded, not asserted.)*
 
 ## 13. Build slices and gates
 
@@ -3068,6 +3213,44 @@ rule is shared with the completeness design; whichever lands first owns it and t
 >     §25's table row.
 > - **Done in this fold:** S9 (the five unmarked places and §26's "any copy `.eml`" wording, each
 >   marked where it stands).
+> - **D2 waits for an independent re-check of these folds.**
+
+> **Folded 2026-11-07 [dedup foldcheck6] (lead's calls): slices B2 and D2 after fold check 6.** Fold
+> check 6 (`docs/review-gmail-dedup-foldcheck6.md`) found three must-fix items, all folded: M1 and M2
+> (§9 fold-check-6 note) and M3 (§12 fold-check-6 rows). Its should-fix items go with the slice that
+> builds them, one line each.
+>
+> - **Slice B2:**
+>   - **M3:** B2 carries the capped-build rows (MA-1216, moved from MA-1229), run in its own build; the
+>     version-cap test seam used from D2 on is treated as fault injection **pending the operator's
+>     confirmation (the owner, at B2)**.
+>   - **S3:** `TestRecordFieldsArePinnedToTheRecordVersion` (`container/adversarial_test.go:194-210`)
+>     needs a pinned field list for each new version (7 at B2; 8, the same list, at D2); adding a pinned
+>     list is **OPERATOR acceptance at B2, not self-granted**.
+>   - **S4:** `FormatVersion` runs inside `save`, under the manifest's lock (`state/manifest.go:2149-2155`),
+>     so it must not take that lock itself (an unexported variant for use under the lock).
+>   - **S5:** an older build's backup writes before it refuses: the archive lock, `mailarchive.log`
+>     (`wizard/wizard.go:283-298`), an Outlook job's PSTs under `_outlook-pst` (`:307-327`), the
+>     pre-sync's own records, and the last-run record and run-history entry; MA-1216 checks this list.
+>   - **S6:** `reindex` opens the index (`app/reindex.go:90`) before the manifest (`:100`), so in a build
+>     without D2 it writes the index header (`index/index.go:172-182`) before refusing. **That changes
+>     the index's bytes, not its rows:** measured 2026-11-07 with the sqlite3 command line (3.51.0,
+>     macOS; not the product's SQLite driver) on a small WAL-mode file, the open's statements raised the
+>     header's file change counter (bytes 24 to 27) and the number at bytes 92 to 95 by one. So B2 moves
+>     `reindex`'s manifest load (or the header read) before `index.Open` *(the fold check's
+>     recommendation; the folding agent's call, flagged)*, and MA-1216's S6 row compares the bytes.
+>   - **S7:** the version-8 words are written in four places (the loader, `state/manifest.go:712`;
+>     archive delete, `archdelete/classify.go:133`; the Desktop card's rendering; the backup's failure
+>     record); B2 changes each, and MA-1216 names them.
+> - **Slice D2:**
+>   - **S1:** every other D2 writer (`reindex`, `app.Rebuild`, `verify -record`, a Microsoft 365 run,
+>     the rest of S3's list) refuses when `MergePending` is present **or** the load marked the merge
+>     record damaged, which includes a file stamped 8 with no `MergePending` while entries wait.
+>   - **S8:** the plan's "space freed" is an upper bound, since the piece check at (a) can keep copies;
+>     the plan's words say so (for example "up to").
+> - **Slice L** gains MA-1246 (§12 fold-check-6 rows), runnable once D2 can make its fixture.
+> - **Done in this fold:** S9's two places marked (GD-2 in §0; §7.4's first bullet); S2's place
+>   restated (§9 fold-check-6 note) with its row.
 > - **D2 waits for an independent re-check of these folds.**
 
 ## 14. Owner questions, each with a recommendation
@@ -3648,7 +3831,10 @@ pause check; **(a)** the check, per file (M1), the survivor's original, page and
 entries dropped (adding to `Freed`) or moved to the survivor's `AlsoFiles`; **(c)** index and pages;
 **(d)** deletions, zip then page then `.eml`, each re-hashed, through the stem guard (S8). A changed
 page or zip is a failed removal (S11); a changed `.eml` or survivor original stops the merge. After
-the last batch: the result file, the run-history entry, then the clear's save.
+the last batch: the result file, the run-history entry, then the clear's save. *[Amended 2026-11-07
+by [dedup foldcheck6 M1] (lead's call): after the last batch, and after resume's step 2, a final save
+(still version 8) comes first, and the result file is built only from it; see the §9 fold-check-6
+note.]*
 
 **Every MailArchive program, at every point below.** v1.6.1 refuses (version 7). A 1.7 local backup
 refuses from its header read before its "running" record, its pre-sync and its `SweepOrphans`
@@ -3799,7 +3985,9 @@ Folded 2026-11-07 [dedup foldcheck5 M1, M2, S1] (lead's call). Fold check 5 is
 - **The folding agent's calls, flagged for the lead:** B2's load refusing a decoded `MergePending` as
   version 8; the version-8 words in B2 (owner's sign-off); a manifest stamped 8 with no
   `MergePending`; the header read also refusing a value above 8; the test seam for "a build capped at
-  7".
+  7". *[The seam's rows are settled 2026-11-07 by [dedup foldcheck6 M3] (lead's call): the capped
+  rows run in slice B2's own build, the seam serves them after D2, and a lab row (MA-1246) runs the
+  real v1.6.1 binary; the seam is fault injection pending the operator's confirmation at B2.]*
 
 **The cross-version story.** Which build does what, by the archive's state:
 
@@ -3865,7 +4053,9 @@ refuses it as 8). Each either refuses or ends with no file deleted.
 **Not traced:** what a 1.7 build without D2 shows on its Desktop card for 8 (that build does not exist
 yet; today's card reader refuses with the loader's refusal, `archindex/recognise.go:432`); whether
 `index.Open` writes to `search.db` before `reindex`'s refusal (as before); every `LoadedVersion`
-comparison (B2's to list); how the test seam is wired (D2's builder).
+comparison (B2's to list); how the test seam is wired (D2's builder). *[By [dedup foldcheck6 S6,
+M3], 2026-11-07: `index.Open` does write `search.db`'s header before `reindex`'s refusal (§13
+fold-check-6 note), and the seam's shape is in §12's fold-check-6 rows.]*
 
 This re-read is the folding agent's, not independent. An independent re-check of these folds is owed
 before D2.
@@ -3968,3 +4158,20 @@ checked: what v1.6.1's Desktop shows for a refused backup beyond the run record'
 shipped v1.6.1 binary behaves as today's code on these paths (the branch contains 1.6.1's release
 commit 0923ffa, checked with `git merge-base`); every `LoadedVersion` comparison. No product code
 was changed or run; no test was run.
+
+Fold-check-6 folds (the notes tagged `[dedup foldcheck6 …]`), 7 November 2026, from the session's
+clock: by a model answering under no name, a fresh instance that has not met the record before, for
+Alex DiMarco, under the Limen method. Register: design folds of the lead's calls on
+`docs/review-gmail-dedup-foldcheck6.md`, plus the folding agent's calls where marked (the final save
+also after a resume's step 2 when batches follow; M2's rule applied with an unchanged survivor too;
+`reindex`'s manifest load moved before `index.Open` in B2; MA-1246's fixture index at version 4).
+Drew on, and reached: fold check 6 in full; this design's header notes, GD-2, §7.1's fold-check-5
+note, §7.4 with its notes, §9's check-first, fold-check-4 and fold-check-5 notes, §12's rows, §13's
+notes and §25 to §27; the code at `index/index.go:36` and `:100-222`, `app/reindex.go:80-110`, and
+`app/run.go`'s `RefuseKeyless` and `openEncrypted` lines by grep. **Measured:** the index open's
+statements, repeated with the sqlite3 command line (3.51.0, macOS) on a small WAL-mode scratch file
+under the repo's `.claude/`, since removed, changed two header counters and no row. Not checked: the
+same with the product's SQLite driver (MA-1216's S6 row measures it); every other citation taken from
+fold check 6 (`wizard.go`, `adversarial_test.go`, `manifest.go`, `classify.go` lines); the operator's
+view of the seam and the pinned lists. Ids: MA-1246 checked free in main's `docs/`, every worktree and
+every branch's history. No product code was changed; no test was run.
