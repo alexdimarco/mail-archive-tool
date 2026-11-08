@@ -2219,6 +2219,60 @@ C4 must land with or before C3 if encrypted archives get any words beyond today'
 > **Built 2026-11-07 [C0c] (the builder's call, for the lead):** C0c's gate before merge gains an
 > **adversarial pass** on the prefs.js read and write and the account match (§4.1 step 1's build
 > note). The builder stops there; the pass is run by a reviewer other than the builder.
+>
+> **Built 2026-11-08 [C1a] (the builder's notes, for the lead and for C1a's adversarial pass).**
+> C1a is built as the new leaf package `internal/tbcomplete` (`cache.go`, `profile.go`), with
+> `thunderbird.PanoramaEnabled` and `thunderbird.LastVersionMajor` added (`panorama.go`); rows
+> MA-1170 and MA-1171 in the catalog, and MA-1235 amended with the All Mail cases the [B1 split]
+> left for C1a. No new id. No verdict rule is built (C1b), and nothing calls the package yet (C2).
+> Where the builder read the text more strictly, or chose where the text is silent:
+>
+> - **Separators by the OS's rules.** §4.1 step 2 item 1 says "`\` and `/` alike". The build
+>   follows MA-1265's later rule (a backslash separates folders on Windows only), as C0c's account
+>   match does. So a Windows-shaped key read on macOS or Linux matches no store and the store has no
+>   keys (C1b: `unknown`), which fails safe; a POSIX key read on Windows is found by its tail. The
+>   lead may widen it.
+> - **The tail refusal (L2) is wider than the list.** Each part is read split at `/` and `\` alike
+>   on every OS. Refused: an empty piece (a leading, doubled or trailing separator, so absolute and
+>   UNC tails), `.` or `..`, a drive letter (`X:` at a piece's start, on every OS), a NUL, a folder
+>   **named** `.` or `..` once `.msf` or `.sbd` is taken off (`..msf`, `...msf`: the mailbox-file
+>   check would otherwise `Lstat` the store itself or its parent; found by the fuzz test), a part
+>   of dots and spaces only (`.. `, `...`: Windows drops trailing dots and spaces, so these name
+>   the parent or the folder itself there; the builder's own find on review), and on Windows a
+>   colon anywhere (a stream name). A refused key is listed (`Store.Refused`); C1b reads
+>   it as `invalid_entry`, as L2 says. The pass may narrow any of these to "ignored and counted".
+> - **A key's shape.** A key under the store's current path whose tail is not `X.sbd/…/Y.msf` (in
+>   lower case, as Thunderbird writes them) is refused the same way; an old-path key of another
+>   shape is no key of the store, which keeps a folder of another account whose path happens to
+>   hold the store's name out of it. Tail matching uses the **last** part named as the store.
+> - **"Still in the current store" (M2).** C1a has no walk, so "the walk read its mailbox file" is
+>   read as "its mailbox file is there". The check is an `Lstat` one part at a time from the store
+>   and the tail as written: a link where a `.sbd` folder would be, or any error but "not there",
+>   reads as still there ("can't tell", toward `unknown`); a file where the `.sbd` folder would be
+>   reads as gone.
+> - **The store's current path** is the path made absolute and, when different, the same path with
+>   its links resolved: a key written through either spelling is exact (macOS's `/var` is
+>   `/private/var`). Two exact keys for one folder through the two spellings would be a duplicate.
+> - **Inside an entry.** A field named twice is broken. A value that is not an object is kept as a
+>   folder whose flags are not known (M3's rule, so C1b treats it as kept), rather than "skipped
+>   and counted": with no flags, "kept or not" cannot be told, which is M3's case. A negative
+>   `lastSyncTimeInSec` is read, not broken (≤ 0 is "never checked", §2.3's TC-12 fold).
+>   `expungedBytes` is required on every folder entry (the M4 re-read).
+> - **Roots and duplicates.** Two keys for the account root are a duplicate too (`""` in
+>   `Duplicates`). An old-path root beside an exact one is ignored and counted.
+> - **All Mail (M5, the [B1 split]).** One folder with 0x8000: that folder. None: none. Two or
+>   more: several, no pick. A folder whose flags are broken, a duplicate, or an old-path-only folder
+>   that carries 0x8000 (or whose flags are broken) makes it can't tell. Only "one" names a folder,
+>   and the zero value is can't tell.
+> - **The Panorama setting** is read through C0c's reader by `thunderbird.PanoramaEnabled`, with
+>   its type checked there for this one setting (any statement not true or false → can't tell). It
+>   was **not** added to MA-1270's `wrongType`, so the account match reads every profile as before.
+>   `panorama.sqlite` is seen by `Lstat` (any kind of entry counts) and never opened.
+> - **Gate owed: C1a's adversarial pass** (§13's slice table; "a new parser of an untrusted file").
+>   The builder stops there. Its scope should also take in B1's change to the C0c reader (commit
+>   5f92b89: `is_gmail` added to `wrongType`'s typed settings, and `findAccount` split out of
+>   `FindAccountForStore` so `GmailForStore` reads the files once), and this slice's two small
+>   additions to `internal/thunderbird`. Not self-certified here.
 
 ## 14. Owner questions (each with a recommendation)
 

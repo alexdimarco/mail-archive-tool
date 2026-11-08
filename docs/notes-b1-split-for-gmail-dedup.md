@@ -48,6 +48,12 @@ Can't tell is the dedup design's "not Gmail this run, per folder, with one note"
   folders carry 0x8000"; S7's "from a `folderCache.json` fixture") are proven with C1a. Until
   then the MA-1235 row says they are left for C1a.
 
+**Built 2026-11-08 (slice C1a):** the answer is `tbcomplete.Store.AllMail`, from
+`tbcomplete.ReadCache(profile)` then `Cache.Store(store)`: `AllMailOne` names the folder (its
+`Path`, for example `[Gmail]/All Mail`); `AllMailNone`, `AllMailSeveral` and `AllMailCantTell`
+name none, and the zero value is can't tell. MA-1235 is amended with these cases. C1a still owes
+its adversarial pass.
+
 ## What the dedup design should fold
 
 1. §6's S7 note: All Mail comes from C1a's `folderCache.json` reader, not from
