@@ -2355,6 +2355,30 @@ C4 must land with or before C3 if encrypted archives get any words beyond today'
 > - **The Panorama setting** is read from prefs.js and user.js only. A setting forced by
 >   `policies.json` or an administrator's autoconfig is not seen; `panorama.sqlite` is the second
 >   signal for that case. This was not tested on a real install.
+>
+> **Fixed 2026-11-08 [C1a pass round 2] (the lead's calls on
+> `docs/review-thunderbird-completeness-c1a-adversarial-r2.md`).**
+>
+> - **R2-01 (LOW, MA-1275 amended).** The C1A-05 bullet above ("item 1's normalising now applies
+>   only when no key matches byte for byte") is **extended**: the store's path **as given** ranks
+>   first. A key byte for byte at the path as given wins; a key byte for byte only at another
+>   spelling of it (its link target; on Windows its long or 8.3 short form, C1A-08) is then an
+>   old-path key under M2's rule, as a folded key is. Only when no key matches the path as given do
+>   the other spellings count as exact, and only when none matches byte for byte at any spelling
+>   does a folded key. So a profile reached once through a link and now through its target, or held
+>   once short and now long, is never `unknown` for good. The pass's N1 stands: when MailArchive's
+>   spelling is the old one byte for byte, the old keys win, with their old `lastSyncTimeInSec`,
+>   so TC-12's dated words and the stale rule apply.
+> - **R2-02 (LOW), a note for C2 (not fixed in C1).** Tail mode can take another account's keys
+>   when the store has no keys of its own and the other account's folder is also
+>   `…/ImapMail/<the store's name>`. C2 closes it, as the C1A-06 bullet above already proposes:
+>   - **C2 passes the profile's other store paths** to the reader, and tail mode skips a key that
+>     is exact for one of them;
+>   - **C2 decides "IMAP" by the matched account's `type`** (`findAccount`'s account), never by
+>     `thunderbird.IsImapStore` or the folder's path (the pass's Q6; the TC-5 fold);
+>   - **a C2 test** shows that a Local Folders store never gets a completeness verdict other than
+>     `not_applicable` (C1b's verdict function already gives `not_applicable` for type `none`
+>     before it reads the cache; C2's test proves the run never hands it to the IMAP path).
 
 ## 14. Owner questions (each with a recommendation)
 

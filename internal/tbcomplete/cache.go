@@ -186,7 +186,9 @@ const (
 	// while it is still in the store. A key that matches the current path byte for byte wins:
 	// when one does, a key that matches only once case or Unicode form is folded is an old-path
 	// key (C1a pass C1A-05: Thunderbird looks keys up byte for byte, nsMsgFolderCache.cpp :335,
-	// so after a respelling of the profile's path it writes new keys beside the old ones).
+	// so after a respelling of the profile's path it writes new keys beside the old ones). In the
+	// same way a key at the path as given wins over one at only another spelling of it, a link's
+	// target or a Windows long or short form (round 2's R2-01).
 	Exact
 	// Tail: no key matches exactly (a moved or restored profile Thunderbird has not opened since):
 	// the keys are matched by their tail under the store's folder name, itself under a folder
@@ -420,11 +422,12 @@ func withinDepth(data []byte, limit int) bool {
 var spellingsOf = osSpellings
 
 // Store is the view of the store folder storeDir. The store's current path is storeDir made
-// absolute, and also that path with its links resolved, when that differs (a key written by
-// Thunderbird through either spelling is exact); on Windows each part of it may also be spelled
-// as its long or its 8.3 short name (C1a pass C1A-08: Thunderbird may hold the profile's path
-// in either spelling). Keys are compared by this OS's rules. When the store's path exists and its
-// Windows spellings cannot be found, the view is CantTellKeys.
+// absolute, and also that path with its links resolved, when that differs; on Windows each part of
+// it may also be spelled as its long or its 8.3 short name (C1a pass C1A-08: Thunderbird may hold
+// the profile's path in either spelling). A key at the path as given, byte for byte, wins; only
+// when there is none is a key at another spelling exact (round 2's R2-01). Keys are compared by
+// this OS's rules. When the store's path exists and its Windows spellings cannot be found, the view
+// is CantTellKeys.
 func (c *Cache) Store(storeDir string) (Store, error) {
 	abs, err := filepath.Abs(storeDir)
 	if err != nil {
@@ -454,11 +457,16 @@ type one struct {
 // take (more than one on Windows only: the part as given, long and 8.3 short).
 type place [][]string
 
-// How a key matched the store.
+// How a key matched the store, strongest first: when keys of the store match by more than one of
+// the first three, only the strongest kind is exact and the others are old-path keys (C1a pass
+// C1A-05 for folded keys, round 2's R2-01 for the store's other spellings: Thunderbird writes a key
+// byte for byte from the path it holds and never removes the old ones, so a key set left under
+// another spelling never makes every folder a duplicate for good).
 const (
-	byteExact = iota + 1 // the store's path, part for part, byte for byte
-	foldExact            // the store's path once each part is compared as goos compares names
-	byName               // its tail under a part named as the store, itself under the store's parent's name
+	givenExact = iota + 1 // the store's path as given, part for part, byte for byte
+	byteExact             // another spelling of it byte for byte: its link target, or on Windows a long or 8.3 short form
+	foldExact             // any spelling once each part is compared as goos compares names
+	byName                // its tail under a part named as the store, itself under the store's parent's name
 )
 
 // storeAt is Store for the store whose current path has the given spellings (absolute; the first
@@ -502,9 +510,11 @@ func (c *Cache) storeAt(spellings []string, goos string, variants ...string) Sto
 	}
 	strict := func(a, b string) bool { return a == b }
 	folded := func(a, b string) bool { return same(a, goos) == same(b, goos) }
+	given := asPlace(storeParts(spellings[0], goos)) // the path as given, no other spelling merged in
 
-	// First, how each key matches; a byte-for-byte match anywhere makes folded matches old-path
-	// keys (C1A-05).
+	// First, how each key matches; the strongest kind of match among the usable keys (not refused,
+	// shaped as a folder's or the root's key) is the exact one, and the weaker kinds are old-path
+	// keys (C1A-05, R2-01).
 	type matched struct {
 		kv   keyed
 		raw  []string
@@ -512,14 +522,19 @@ func (c *Cache) storeAt(spellings []string, goos string, variants ...string) Sto
 		how  int
 	}
 	var keys []matched
-	anyByteExact := false
+	best := 0 // the strongest kind among usable keys; 0 when none matched exactly
 	for _, kv := range c.pairs {
 		raw := splitPath(kv.key, goos)
 		m := matched{kv: kv, raw: raw}
+		if tail, ok := exactTail(raw, given, strict); ok && len(given) > 0 {
+			m.tail, m.how = tail, givenExact
+		}
 		for _, pl := range places {
+			if m.how != 0 {
+				break
+			}
 			if tail, ok := exactTail(raw, pl, strict); ok {
 				m.tail, m.how = tail, byteExact
-				break
 			}
 		}
 		if m.how == 0 {
@@ -537,9 +552,9 @@ func (c *Cache) storeAt(spellings []string, goos string, variants ...string) Sto
 			}
 			m.tail, m.how = tail, byName
 		}
-		if m.how == byteExact && refusedTail(m.tail, goos) == "" {
+		if m.how < byName && (best == 0 || m.how < best) && refusedTail(m.tail, goos) == "" {
 			if _, ok := folderPath(m.tail); ok || len(m.tail) == 0 {
-				anyByteExact = true
+				best = m.how
 			}
 		}
 		keys = append(keys, m)
@@ -549,7 +564,7 @@ func (c *Cache) storeAt(spellings []string, goos string, variants ...string) Sto
 	var mine []one
 	for _, m := range keys {
 		kv, tail := m.kv, m.tail
-		exact := m.how == byteExact || m.how == foldExact && !anyByteExact
+		exact := m.how < byName && (best == 0 || m.how <= best)
 		if c.count[kv.key] > 1 && !dupKeys[kv.key] {
 			dupKeys[kv.key] = true
 			s.DuplicateKeys = append(s.DuplicateKeys, kv.key)
