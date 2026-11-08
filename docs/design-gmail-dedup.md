@@ -2470,6 +2470,24 @@ U1 rebuilds a page.
 
 This re-read is the folding agent's, not independent: a re-check of M1 to M3 is owed before D2.
 
+## 21. The lead's calls on §20's open items (2026-11-07)
+
+Folded 2026-11-07 [dedup foldcheck2 lead's calls] (lead's call).
+
+- **A merge entry with no usable `Before` record** (a manifest 1.7 never writes: hand-edited or damaged):
+  the resume STOPS, deletes nothing and changes nothing, and says in plain words that the archive's
+  merge record is damaged, that no email has been removed, and to run `mailarchive verify`. MailArchive
+  does not guess a record from the copy's `.eml`. Every file stays owned (by `MergedFiles`/`AlsoFiles`)
+  as §20 states. Accepted as the one named exception; a test row covers it (refusal names the archive,
+  no file is removed, positive twin first).
+- **A fully deleted copy under M2 is not put back**: accepted. Nothing is on disk for it, and its
+  folder stays listed on the damaged survivor, which is the truth about where that email was.
+- **Desktop single-email delete of a `RebuildOwed` record**: slice D2 must trace it and add a test row
+  before D2 is built; the rule is that the delete removes only that record's own files and never the
+  survivor's.
+- **B2's `LoadedVersion` loose end**: folds with slice B2 (the re-check counted the two checks at
+  `state/manifest.go:817` and `:851` and found neither affected).
+
 ---
 
 Folded by a model answering under no name, a fresh instance that has not met the record before, for
