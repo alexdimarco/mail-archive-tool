@@ -535,6 +535,70 @@ Two adjustments:
 >
 > **Folded 2026-11-07 [TC-24] (review condition):** `mozillaReadFlag` is at `mbox.go:283`; `:280` is
 > its comment.
+>
+> **Folded 2026-11-08 [C2 pass, ADV-C2-02] (lead's call): one identity per email, never one per
+> copy.** Adjustment 2's sentence "A message with no Message-ID counts once each" is **superseded**.
+> The builder read it as once per copy, so one ID-less email kept in INBOX and in All Mail counted
+> twice and could cover an All Mail message never downloaded (a false `caught_up`, against R42).
+> The rule now:
+>
+> - **Identity = the Message-ID** when the message has one: the first `Message-ID` field of the
+>   header block, its name read in any letter case with optional white space before the colon
+>   (RFC 5322's obsolete syntax, ADV-C2-14), unfolded, trimmed of white space and angle brackets.
+> - **Otherwise, the content identity** of the gmail-dedup design (§4.4 step 1 there): a checksum
+>   of the message's bytes with the `X-Mozilla-Status`, `X-Mozilla-Status2` and `X-Mozilla-Keys`
+>   lines of its top header block (and their continuation lines) taken out, so two copies that
+>   differ only in what Thunderbird marks per copy have one identity. Its bounds are that design's:
+>   at most 8 such lines and 1 KiB, and the header block's end within 64 KiB (a message shorter
+>   than 64 KiB that is all header has an identity).
+> - **X counts each identity once** across the account's kept folders.
+> - **A message that yields neither** (none is expected: no Message-ID and a split out of bounds) is
+>   left out of X, counted in the record as `no_identity`, and the account **may not say complete**
+>   (`MaySayComplete` is false while any is there). Leaving it out can only lower X, toward
+>   "behind".
+> - The 16-byte keys are the first 16 bytes of SHA-256: of the Message-ID as before, and of
+>   "content", a NUL and the bytes for the content identity. Still about 4 MB for 238,000 messages.
+>
+> **Folded 2026-11-08 [C2 pass, ADV-C2-03] (lead's call): only Thunderbird's own separators are
+> counted.** The walk's mbox reader (go-mbox v1.0.4) starts a new piece at every line beginning
+> "From ", so a body line its writer did not escape inflated X. The **count** now takes a piece only
+> when it begins at a separator Thunderbird writes: a line starting "From " that is at the file's
+> start or follows an empty line, and has the From_ shape: "From ", a sender word, then the time as C's
+> `ctime` gives it (Thunderbird writes "From - " and `ctime`, `nsImapMailFolder.cpp`'s
+> `SetupMsgWriteStream` in the ESR 153 copy), a time zone allowed beside the year (the repo's
+> fixtures' "From sender Mon Mar  3 09:00:00 2025" form). Every other piece is noted as
+> unseparated and never counted.
+>
+> - A kept mailbox with any unseparated piece is **split differently**: the account is `unknown`
+>   with its own reason, `split_differently`, unless the folders already miss more than the
+>   tolerance, when it is `behind` (as M2's can't-tell folders are: a certain gap is still told).
+>   It never says complete. The record keeps `split_mailboxes`.
+> - **What is archived is unchanged** in this slice (Q7). The on/off byte-equality test and the
+>   P14 golden still pass.
+> - **Not checked from the source copies:** whether every Thunderbird version puts an empty line
+>   before each separator. `nsMsgBrkMBoxStore.cpp` wraps the offline store in `MboxMsgOutputStream`
+>   ("handle mbox 'From ' separator, escaping etc."), whose own source is not in the copies under
+>   `.claude/`. If a real store had separators with no empty line before them, its messages would
+>   count low and read `behind` or `split_differently`: it fails safe, but lab row MA-1199 (or
+>   MA-1190 on the owner's profile) should count real separators before the release notes claim
+>   the count is exact.
+> - **Residual:** a body line of exactly Thunderbird's separator shape after an empty line is still
+>   a separator to the count, since nothing in the file tells it from one. Current Thunderbird
+>   escapes such lines when it writes (the wrapper above); an older store written unescaped is the
+>   case left.
+>
+> **Follow-up, not this slice: archive splitting of unescaped From lines (pre-existing, check
+> separately).** The archive's own walk splits a message at an unescaped "From " body line today:
+> a probe on 2026-11-08 (a throwaway test, not committed) showed the message cut at the first such
+> line, the "From …" lines themselves dropped (each is taken as a separator), and the rest archived
+> as an extra "(unparseable message)" and an empty one. That is a fidelity question for the reader,
+> outside this design; it needs its own design and review.
+>
+> **Folded 2026-11-08 [C2 pass, ADV-C2-12] (lead's call):** a maildir folder's count leaves out the
+> files Thunderbird's maildir store would not hold as messages: a name starting with "." (a Finder
+> `.DS_Store`, a sync tool's file) and an empty file. They are archived as before; `tmp/` is never
+> read. The maildir store's own source is not in the copies under `.claude/`, so the list is the
+> lead's, not read from Thunderbird.
 
 Maildir stores (`storeContractID` maildirstore, `internal/tbrestore/storekind.go:26-28`) count
 one file per message the same way. A `-copy-first` run counts its copy, but maps it back to the
@@ -2468,6 +2532,59 @@ C4 must land with or before C3 if encrypted archives get any words beyond today'
 >   records that `status` and the Desktop will read from a folder anyone who can write the archive can
 >   write, a header scan of untrusted mail in the walk of every local store, and a change to C1a's
 >   reviewed reader (`StoreAmong`). Not self-certified here.
+>
+> **Built 2026-11-08 [C2 pass fixes] (the builder's notes, for the lead).** The adversarial pass
+> (`docs/review-thunderbird-completeness-c2-adversarial.md`, NOT CLEAN at `18f0b6c`) is answered
+> fix by fix; its attack tests are brought in as guards. The two MEDIUM fixes are §2.4's
+> [C2 pass, ADV-C2-02] and [ADV-C2-03] folds and the maildir fold beside them. The LOW items:
+>
+> - **A store with no result (ADV-C2-16 and a failed walk).** A store under a Thunderbird profile
+>   that another local reader opened is told `unknown`, `other_reader`; a store whose walk ended
+>   with an error is told `unknown`, `walk_failed` (the run's failure words still win, and a failed
+>   run records nothing, §11). Neither is ever silently absent from the results, so `RunLead` can
+>   never say complete over it. A real Evolution store, under no Thunderbird profile, is still told
+>   nothing. **Follow-up, not changed here:** source detection still opens a maildir-format
+>   Thunderbird store whose server has folders named `cur`/`new` and one starting with "." with the
+>   Evolution reader (`isEvolutionMaildirStore`); the account is now `unknown` instead of counted.
+>   Whether detection should prefer the Thunderbird reader under a profile wants its own change.
+> - **The streak and the record are keyed by the store (ADV-C2-01).** The key is a hash of the
+>   store's full path, profile and store, each compared as the OS compares names (`store_id` in the
+>   record, `store` in the streak record); the folder name stays for the words. TC-19's first-seen
+>   times are carried by it. **Migration: dropped.** A streak entry with no key (written by C2 at
+>   `18f0b6c`, which never shipped) is dropped when read, never matched by its name, so its streak
+>   starts again: toward a later notice, never a false one. A record entry with no `store_id`
+>   carries no first-seen time, so a chosen-setting WARN shows once more.
+> - **A loose-permission streak record (ADV-C2-05) is never silent.** The run logs a line and the
+>   last-run record keeps a WARN, `tbstreak_unreadable`, that `status` shows. The record is **not
+>   trusted** (a file other users can read may also be one they wrote), so the streak **starts
+>   again** from that run and the record is rewritten owner-only. Why fresh: for R42 it can only make
+>   the "still downloading" notice later; it can never claim more than a run saw. The cost is that
+>   C5 could send a second still-downloading email for a streak already emailed. On a drive that
+>   cannot keep files private (exFAT on macOS, not checked) the WARN shows after every backup and
+>   the notice cannot count days there; the WARN's words say so. To fold the streak before the
+>   record is written, the streak update now runs just before the last-run write (it ran just after).
+>   **Follow-up, not changed here:** the presync streak (`app/syncstreak.go:53-56`) still freezes
+>   silently on the same refusal and still reads a later format as its own.
+> - **A later-format streak record (ADV-C2-10) is never downgraded.** `ReadTBStreak` refuses a
+>   version above its own (`ErrTBStreakNewer`); the run moves nothing, writes nothing, logs a line
+>   and keeps the same WARN. Any other refusal (a link, a pipe, too large) does the same.
+> - **The account's own old `directory` (ADV-C2-07)** is no longer "another store" in `StoreAmong`.
+> - **The record's size (ADV-C2-08).** The folders of all three lists across every account are
+>   capped at 1,000 together (`TBFoldersTotalMax`): each of n accounts gets 1,000 ÷ n, not-kept
+>   folders first (they carry a WARN), then kept, then Trash and Junk; what is cut is counted in the
+>   "more" fields (`default_not_kept_more` is new). Measured worst case (64 accounts, 80-character
+>   names of "<", 6 bytes each in JSON): see MA-1180's row; it stays under 1 MiB, a quarter of the
+>   reader's 4 MiB.
+> - **Name cleaning (ADV-C2-11)** also takes out every Unicode format character (category Cf: the
+>   zero-width ones U+200B to U+200D and U+2060, the byte-order mark U+FEFF, the soft hyphen, the
+>   tag characters, and the bidirectional controls the fold already listed) and the line and
+>   paragraph separators U+2028 and U+2029.
+> - **New codes and fields, the builder's names:** reasons `split_differently`, `other_reader`,
+>   `walk_failed`; record fields `store_id`, `no_identity`, `split_mailboxes`,
+>   `default_not_kept_more`; WARN code `tbstreak_unreadable` and its sentence. C3 owns the words of
+>   the reasons.
+> - **Gate owed:** the pass's own rerun ("Rerun after fixes": the four attack files against the
+>   fixed commit). Not self-certified here.
 
 ## 14. Owner questions (each with a recommendation)
 

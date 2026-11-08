@@ -3,6 +3,7 @@ package state
 import (
 	"strings"
 	"time"
+	"unicode"
 	"unicode/utf8"
 
 	"mail-archive-tool/internal/util"
@@ -16,7 +17,11 @@ import (
 // by their store folder; folder names are cleaned and capped (CleanFolderName) before they are
 // written. The words are C3's: nothing here is a sentence.
 type TBAccount struct {
-	Account string `json:"account"`          // the store folder's name (§4.1 step 1 fold)
+	Account string `json:"account"` // the store folder's name (§4.1 step 1 fold)
+	// StoreID is a hash of the store's full path (profile and store, compared as the OS compares
+	// names): two stores with one folder name are told apart by it (the C2 pass's ADV-C2-01), and
+	// TC-19's fingerprints are carried forward by it. A hash, never the path.
+	StoreID string `json:"store_id,omitempty"`
 	Verdict string `json:"verdict"`          // caught_up | behind | limited | unknown
 	Reason  string `json:"reason,omitempty"` // when unknown: §7's reason codes
 	// Complete is the full "may say complete" test (§4.2's fold; `-json`'s complete).
@@ -54,8 +59,10 @@ type TBAccount struct {
 	NotKeptMore  int        `json:"not_kept_more,omitempty"`
 	NotKeptHash  string     `json:"not_kept_hash,omitempty"`
 	NotKeptSince time.Time  `json:"not_kept_since,omitzero"`
-	// DefaultNotKept are Trash and Junk not kept, Thunderbird's default (a note only).
-	DefaultNotKept []TBFolder `json:"default_not_kept,omitempty"`
+	// DefaultNotKept are Trash and Junk not kept, Thunderbird's default (a note only);
+	// DefaultNotKeptMore how many more there were.
+	DefaultNotKept     []TBFolder `json:"default_not_kept,omitempty"`
+	DefaultNotKeptMore int        `json:"default_not_kept_more,omitempty"`
 	// LabelsNotKept counts Gmail labels not kept while All Mail sets Y (TC-8: one note).
 	LabelsNotKept int `json:"labels_not_kept,omitempty"`
 
@@ -65,6 +72,10 @@ type TBAccount struct {
 	IgnoredOldKeys   int   `json:"ignored_old_keys,omitempty"`
 	UnkeyedMailboxes int   `json:"unkeyed_mailboxes,omitempty"`
 	UnkeyedMessages  int64 `json:"unkeyed_messages,omitempty"`
+	// The C2 pass: Gmail messages with no identity key (ADV-C2-02), and kept mailboxes split
+	// differently from Thunderbird's separators (ADV-C2-03).
+	NoIdentity     int64 `json:"no_identity,omitempty"`
+	SplitMailboxes int   `json:"split_mailboxes,omitempty"`
 }
 
 // TBLimit is an account's own download limits as the record keeps them.
@@ -92,22 +103,28 @@ type TBCompact struct {
 
 // The record's bounds: TBFolderMax kept folders, TBNotKeptMax not-kept folders per list (§6's
 // "first 10 by listed count, then and N more"), TBAccountsMax accounts, and TBNameMax
-// characters of a folder name (§6's TC-7 fold: 80, plus "…").
+// characters of a folder name (§6's TC-7 fold: 80, plus "…"). TBFoldersTotalMax bounds the
+// folders of all three lists across all accounts together (the C2 pass's ADV-C2-08): each of n
+// accounts gets TBFoldersTotalMax/n of them, so the record's `thunderbird` stays far inside
+// ReadLastRun's 4 MiB whatever the names (MA-1180's bound test measures the worst case).
 const (
-	TBFolderMax   = 200
-	TBNotKeptMax  = 10
-	TBAccountsMax = 64
-	TBNameMax     = 80
+	TBFolderMax       = 200
+	TBNotKeptMax      = 10
+	TBAccountsMax     = 64
+	TBNameMax         = 80
+	TBFoldersTotalMax = 1000
 )
 
 // CleanFolderName is a folder or account name as the record and every surface may show it
-// (§6's TC-7 fold): control characters stripped (util.StripControl), the Unicode bidirectional
-// controls removed (U+202A to U+202E, U+2066 to U+2069, U+200E, U+200F and U+061C), and capped at
-// TBNameMax characters plus "…". A folder name is text the mail server controls.
+// (§6's TC-7 fold): control characters stripped (util.StripControl), every Unicode format
+// character removed (category Cf: the bidirectional controls the fold lists, U+202A to U+202E,
+// U+2066 to U+2069, U+200E, U+200F and U+061C, and with them the zero-width ones U+200B to U+200D
+// and U+2060, the byte-order mark U+FEFF, the soft hyphen and the tag characters, the C2 pass's
+// ADV-C2-11), the line and paragraph separators U+2028 and U+2029 removed, and capped at TBNameMax
+// characters plus "…". A folder name is text the mail server controls.
 func CleanFolderName(s string) string {
 	s = strings.Map(func(r rune) rune {
-		switch {
-		case r >= 0x202a && r <= 0x202e, r >= 0x2066 && r <= 0x2069, r == 0x200e, r == 0x200f, r == 0x061c:
+		if unicode.Is(unicode.Cf, r) || r == 0x2028 || r == 0x2029 {
 			return -1
 		}
 		return r
@@ -128,11 +145,11 @@ func saneTB(in []TBAccount) []TBAccount {
 	for i := range in {
 		a := &in[i]
 		a.Account, a.Verdict, a.Reason, a.AllMail = CleanFolderName(a.Account), util.StripControl(a.Verdict), util.StripControl(a.Reason), util.StripControl(a.AllMail)
-		a.LimitHash, a.NotKeptHash = util.StripControl(a.LimitHash), util.StripControl(a.NotKeptHash)
-		for _, n := range []*int64{&a.OnDisk, &a.Listed, &a.Missing, &a.Tolerance, &a.ExpungedEstimate, &a.CapNote, &a.UnkeyedMessages} {
+		a.LimitHash, a.NotKeptHash, a.StoreID = util.StripControl(a.LimitHash), util.StripControl(a.NotKeptHash), util.StripControl(a.StoreID)
+		for _, n := range []*int64{&a.OnDisk, &a.Listed, &a.Missing, &a.Tolerance, &a.ExpungedEstimate, &a.CapNote, &a.UnkeyedMessages, &a.NoIdentity} {
 			*n = max(0, *n)
 		}
-		for _, n := range []*int{&a.FoldersMore, &a.NotKeptMore, &a.LabelsNotKept, &a.CantTellFolders, &a.SkippedEntries, &a.IgnoredOldKeys, &a.UnkeyedMailboxes} {
+		for _, n := range []*int{&a.FoldersMore, &a.NotKeptMore, &a.DefaultNotKeptMore, &a.LabelsNotKept, &a.CantTellFolders, &a.SkippedEntries, &a.IgnoredOldKeys, &a.UnkeyedMailboxes, &a.SplitMailboxes} {
 			*n = max(0, *n)
 		}
 		a.Folders = saneFolders(a.Folders, TBFolderMax)

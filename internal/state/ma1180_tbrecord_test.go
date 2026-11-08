@@ -89,23 +89,23 @@ func TestTheCompletenessRecordIsCleanedAndBounded(t *testing.T) {
 // extend one streak with one serial.
 func TestTheBehindStreakRecordsClockRules(t *testing.T) {
 	t0 := time.Date(2026, 11, 1, 0, 0, 0, 0, time.UTC)
-	s := TBStreak{}.Behind("h", 10, t0).Behind("h", 12, t0.Add(24*time.Hour))
-	a, ok := s.Account("h")
+	s := TBStreak{}.Behind("k-h", "h", 10, t0).Behind("k-h", "h", 12, t0.Add(24*time.Hour))
+	a, ok := s.Account("k-h")
 	if !ok || a.Runs != 2 || a.Serial != 1 || s.Serial != 1 || !a.FirstBehind.Equal(t0) || a.GrewX != 12 {
 		t.Fatalf("positive twin: %+v %+v", s, a)
 	}
-	back := s.Behind("h", 13, t0.Add(-time.Hour))
-	b, _ := back.Account("h")
+	back := s.Behind("k-h", "h", 13, t0.Add(-time.Hour))
+	b, _ := back.Account("k-h")
 	if b.Serial != 1 || back.Serial != 1 || !b.FirstBehind.Equal(t0.Add(-time.Hour)) || b.Runs != 3 {
 		t.Errorf("a clock that went back: %+v", b)
 	}
-	early := s.Behind("h", 20, MinPlausibleTime.Add(-time.Hour))
-	e, _ := early.Account("h")
+	early := s.Behind("k-h", "h", 20, MinPlausibleTime.Add(-time.Hour))
+	e, _ := early.Account("k-h")
 	if e.Runs != 3 || !e.LastBehind.Equal(a.LastBehind) {
 		t.Errorf("an implausible time moved the streak's times: %+v", e)
 	}
-	two := s.Behind("other", 1, t0)
-	if o, _ := two.Account("other"); o.Serial != 2 || two.Serial != 2 {
+	two := s.Behind("k-other", "other", 1, t0)
+	if o, _ := two.Account("k-other"); o.Serial != 2 || two.Serial != 2 {
 		t.Errorf("a second account's streak: %+v serial %d", o, two.Serial)
 	}
 
@@ -117,7 +117,7 @@ func TestTheBehindStreakRecordsClockRules(t *testing.T) {
 	if err != nil || got.RecordID == "" || len(got.Accounts) != 1 {
 		t.Fatalf("read back: %v %+v", err, got)
 	}
-	if err := os.WriteFile(filepath.Join(out, TBStreakName), []byte(`{"record_id":"bad id!","accounts":[{"account":"h\u001b‮","first_x":-3,"runs":-1}]}`), 0o600); err != nil {
+	if err := os.WriteFile(filepath.Join(out, TBStreakName), []byte(`{"record_id":"bad id!","accounts":[{"store":"k-h","account":"h\u001b‮","first_x":-3,"runs":-1}]}`), 0o600); err != nil {
 		t.Fatal(err)
 	}
 	got, err = ReadTBStreak(out)

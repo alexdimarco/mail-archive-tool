@@ -90,10 +90,21 @@ const (
 	// counted by Thunderbird yet", never invalid_entry's words (C1a pass C1A-01). The design words
 	// it but names no code; not_counted_yet is the builder's.
 	ReasonNotCountedYet
+	// ReasonSplitDifferently: a kept mailbox the archive's reader split into more pieces than
+	// Thunderbird's own separators (the C2 pass's ADV-C2-03), with no certain gap. The code is
+	// the C2 pass fix's.
+	ReasonSplitDifferently
+	// ReasonOtherReader: a Thunderbird store this run read with another reader (the Evolution
+	// one, ADV-C2-16), which counts nothing for the check. The code is the C2 pass fix's.
+	ReasonOtherReader
+	// ReasonWalkFailed: the walk of the store ended with an error, so its count is not whole.
+	// The code is the C2 pass fix's.
+	ReasonWalkFailed
 )
 
 var reasonCodes = [...]string{"", "cache_unreadable", "no_match", "duplicate_key", "invalid_entry", "panorama",
-	"account_type", "never_checked", "gmail_floor", "expunged_unsized", "partial_input", "old_path_only", "not_counted_yet"}
+	"account_type", "never_checked", "gmail_floor", "expunged_unsized", "partial_input", "old_path_only", "not_counted_yet",
+	"split_differently", "other_reader", "walk_failed"}
 
 // String is the reason's code, "" for NoReason or a reason nobody defined.
 func (r Reason) String() string {
@@ -140,9 +151,16 @@ type OnDisk struct {
 	// Folders: messages per folder, keyed by Entry.Path exactly as the reader gives it. A kept
 	// folder missing here has no mailbox file: 0. Not used for Gmail's X.
 	Folders map[string]int64
-	// Distinct: Gmail's X before the estimate: distinct messages by Message-ID across the account's
-	// mailbox files that have a cache key (L3: never one without).
+	// Distinct: Gmail's X before the estimate: distinct messages by identity key (the Message-ID,
+	// else the content, the C2 pass's rule) across the account's mailbox files that have a cache
+	// key (L3: never one without).
 	Distinct int64
+	// NoKey: Gmail's counted messages with no identity key, left out of Distinct (none is
+	// expected); any keeps the account from saying complete.
+	NoKey int64
+	// SplitMailboxes: keyed mailboxes the reader split into pieces that do not begin at a
+	// separator Thunderbird writes (ADV-C2-03).
+	SplitMailboxes int
 	// UnkeyedMailboxes, UnkeyedMessages: walked mailboxes with no cache key and their messages
 	// (L3). Counted in the result; never added to X.
 	UnkeyedMailboxes int
@@ -152,18 +170,21 @@ type OnDisk struct {
 // Input is everything the verdict decides from, for one store. Its zero value is never caught up
 // and never not_applicable.
 type Input struct {
-	Account    string            // the store folder's name (§4.1 step 1 fold), for the words
-	Matched    bool              // C0c's match found the store's account
-	Type       string            // that account's type ("imap", "pop3", …), when Matched
-	Unmatched  Unmatched         // the M6 facts, when not Matched
-	WholeStore bool              // the walk covered the whole store (TC-11)
-	Gmail      thunderbird.Gmail // GmailForStore's answer
-	Profile    Profile           // ReadProfile's Panorama signals
-	CacheErr   error             // ReadCache's refusal; nil when the cache was read
-	Store      Store             // Cache.Store's view, when CacheErr is nil
-	Limits     Limits
-	OnDisk     OnDisk
-	Now        time.Time // for the "as of" and "in the future"
+	Account     string            // the store folder's name (§4.1 step 1 fold), for the words
+	StoreID     string            // the store's identity by its full path (the caller's hash), carried to the Result
+	Matched     bool              // C0c's match found the store's account
+	OtherReader bool              // the run read the store with another reader, which counts nothing (ADV-C2-16)
+	WalkFailed  bool              // the store's walk ended with an error
+	Type        string            // that account's type ("imap", "pop3", …), when Matched
+	Unmatched   Unmatched         // the M6 facts, when not Matched
+	WholeStore  bool              // the walk covered the whole store (TC-11)
+	Gmail       thunderbird.Gmail // GmailForStore's answer
+	Profile     Profile           // ReadProfile's Panorama signals
+	CacheErr    error             // ReadCache's refusal; nil when the cache was read
+	Store       Store             // Cache.Store's view, when CacheErr is nil
+	Limits      Limits
+	OnDisk      OnDisk
+	Now         time.Time // for the "as of" and "in the future"
 }
 
 // FolderCount is one folder's listed count and the walk's count on disk (raw, before the estimate).
@@ -176,6 +197,7 @@ type FolderCount struct {
 // Result is one account's verdict and the numbers its words and record need.
 type Result struct {
 	Account string
+	StoreID string // Input.StoreID: the streak and the record's carry-forward key on it (ADV-C2-01)
 	Verdict Verdict
 	Reason  Reason // when Unknown
 
@@ -208,6 +230,8 @@ type Result struct {
 	IgnoredOldKeys   int
 	UnkeyedMailboxes int // L3
 	UnkeyedMessages  int64
+	NoIdentity       int64 // Gmail messages with no identity key, left out of X: no complete words
+	SplitMailboxes   int   // kept mailboxes split differently from Thunderbird's separators
 }
 
 // StaleAfter is §2.3's 3 days, the same as state.SyncStaleAfter.
@@ -243,11 +267,13 @@ func ExpungedEstimate(expungedBytes, folderSize, listed int64) (int64, bool) {
 // L4 folds; `status -json`'s `complete`): not_applicable, or caught up with nothing missing, not
 // stale, no TC-22 cap note, no deleted copies, and no not-kept folder that gets the WARN. Spam and
 // Trash not kept and Gmail labels not kept are notes and do not block it (§0, the lead's call).
+// The C2 pass adds: no message without an identity key, and no mailbox split differently.
 func (r Result) MaySayComplete() bool {
 	if r.Verdict == NotApplicable {
 		return true
 	}
-	return r.Verdict == CaughtUp && r.Missing == 0 && !r.Stale && r.CapNote == 0 && !r.DeletedCopies && len(r.NotKept) == 0
+	return r.Verdict == CaughtUp && r.Missing == 0 && !r.Stale && r.CapNote == 0 && !r.DeletedCopies && len(r.NotKept) == 0 &&
+		r.NoIdentity == 0 && r.SplitMailboxes == 0
 }
 
 // Lead is the run's lead, set by its weakest account (§4.2's fold). Its zero value is LeadFinished,
@@ -293,8 +319,9 @@ func RunLead(rs []Result) Lead {
 // missing and the tolerance (§4.1 step 5), and the limits last (TC-9: before the never-checked rule
 // for background download).
 func Assess(in Input) Result {
-	r := Result{Account: in.Account, Limits: in.Limits,
-		UnkeyedMailboxes: in.OnDisk.UnkeyedMailboxes, UnkeyedMessages: in.OnDisk.UnkeyedMessages}
+	r := Result{Account: in.Account, StoreID: in.StoreID, Limits: in.Limits,
+		UnkeyedMailboxes: in.OnDisk.UnkeyedMailboxes, UnkeyedMessages: in.OnDisk.UnkeyedMessages,
+		SplitMailboxes: in.OnDisk.SplitMailboxes}
 	unknown := func(why Reason) Result {
 		r.Verdict, r.Reason = Unknown, why
 		return r
@@ -313,12 +340,19 @@ func Assess(in Input) Result {
 	case !in.Matched:
 		return unknown(ReasonNoMatch)
 	}
+	if in.WalkFailed {
+		return unknown(ReasonWalkFailed)
+	}
 	if !in.WholeStore {
 		return unknown(ReasonPartialInput)
+	}
+	if in.OtherReader {
+		return unknown(ReasonOtherReader)
 	}
 	switch in.Gmail {
 	case thunderbird.GmailYes:
 		r.Gmail = true
+		r.NoIdentity = in.OnDisk.NoKey
 	case thunderbird.GmailNo:
 	default:
 		return unknown(ReasonNoMatch) // GmailForStore cannot tell only without an account it can read
@@ -525,6 +559,10 @@ func Assess(in Input) Result {
 		r.Verdict, r.Reason = Unknown, ReasonGmailFloor
 	case r.Missing > r.Tolerance:
 		r.Verdict = Behind
+	case r.SplitMailboxes > 0:
+		// A mailbox split differently from Thunderbird's separators (ADV-C2-03): a certain gap
+		// above still says behind, as M2's can't-tell folders do; otherwise it can't be told.
+		r.Verdict, r.Reason = Unknown, ReasonSplitDifferently
 	case r.CantTellFolders > 0:
 		r.Verdict, r.Reason = Unknown, ReasonOldPathOnly
 	case unsure > 0:

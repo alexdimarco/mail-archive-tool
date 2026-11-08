@@ -721,6 +721,11 @@ func assessKeyless(r *Report, in Input, now time.Time) {
 			switch w.Code {
 			case "credential_in_archive", "config_in_archive":
 				r.warn(w.Code, w.Message)
+			case "tbstreak_unreadable":
+				// The Thunderbird completeness check's behind-streak record could not be used
+				// (the C2 pass's ADV-C2-05 and -10): the recorded Message names the file and
+				// what was done. A WARN, so the notice it feeds is never silently lost.
+				r.warn(w.Code, w.Message)
 			case "presync_cannot_start", "presync_no_desktop_session", "presync_did_not_start",
 				"presync_identity_unavailable", "presync_not_quiet", "presync_exited_early",
 				"presync_quit_not_permitted", "presync_quit_timeout", "presync_quit_skipped_others", "presync_owner_active",

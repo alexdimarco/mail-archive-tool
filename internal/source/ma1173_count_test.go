@@ -123,30 +123,35 @@ func TestTheWalkCountsEachMailboxLeavingOutDeletedCopies(t *testing.T) {
 		}
 		got[mb.Rel] = mb
 	}
+	// Amended 2026-11-08 (the C2 pass's identity rule): a message with no Message-ID has a
+	// content key ("" below), never a per-copy count; NoKey is 0 for every real message.
 	for _, w := range []struct {
-		rel                      string
-		messages, expunged, noID int64
-		ids                      []string
+		rel                string
+		messages, expunged int64
+		ids                []string
 	}{
-		{"INBOX", 3, 1, 0, []string{"one@x", "two@x", "plain@x"}},
-		{"[Gmail].sbd/All Mail", 3, 1, 2, []string{"one@x"}},
-		{"Kept", 2, 1, 1, []string{"md1@x"}},
+		{"INBOX", 3, 1, []string{"one@x", "two@x", "plain@x"}},
+		{"[Gmail].sbd/All Mail", 3, 1, []string{"one@x", "", ""}},
+		{"Kept", 2, 1, []string{"", "md1@x"}}, // new/ is read before cur/
 	} {
 		mb := got[w.rel]
 		if mb == nil {
 			t.Errorf("no count for %q (got %d mailboxes)", w.rel, len(c.Mailboxes))
 			continue
 		}
-		if mb.Messages != w.messages || mb.Expunged != w.expunged || mb.NoID != w.noID {
-			t.Errorf("%s: messages %d expunged %d noID %d, want %d %d %d", w.rel, mb.Messages, mb.Expunged, mb.NoID, w.messages, w.expunged, w.noID)
+		if mb.Messages != w.messages || mb.Expunged != w.expunged || mb.NoKey != 0 || mb.Unseparated != 0 {
+			t.Errorf("%s: messages %d expunged %d noKey %d unseparated %d, want %d %d 0 0", w.rel, mb.Messages, mb.Expunged, mb.NoKey, mb.Unseparated, w.messages, w.expunged)
 		}
-		if len(mb.IDs) != len(w.ids) {
-			t.Errorf("%s: %d ids, want %d", w.rel, len(mb.IDs), len(w.ids))
+		if len(mb.Keys) != len(w.ids) {
+			t.Errorf("%s: %d keys, want %d", w.rel, len(mb.Keys), len(w.ids))
 			continue
 		}
 		for i, id := range w.ids {
-			if mb.IDs[i] != idKey(id) {
-				t.Errorf("%s: id %d is not %q's key", w.rel, i, id)
+			switch {
+			case id != "" && mb.Keys[i] != idKey(id):
+				t.Errorf("%s: key %d is not %q's key", w.rel, i, id)
+			case id == "" && (mb.Keys[i] == [16]byte{} || mb.Keys[i] == idKey("")):
+				t.Errorf("%s: key %d is no content key", w.rel, i)
 			}
 		}
 	}
@@ -165,7 +170,7 @@ func TestTheWalkCountsEachMailboxLeavingOutDeletedCopies(t *testing.T) {
 	nd := &MailboxCounts{Count: true}
 	walkCounting(t, dir, nd)
 	for _, mb := range nd.Mailboxes {
-		if len(mb.IDs) != 0 || mb.NoID != 0 {
+		if len(mb.Keys) != 0 || mb.NoKey != 0 {
 			t.Errorf("%s: keys kept without Distinct", mb.Rel)
 		}
 	}
@@ -192,10 +197,10 @@ func TestTheCountReadsHeaderFieldsAsFields(t *testing.T) {
 		t.Fatalf("%d mailboxes, want 1", len(none.Mailboxes))
 	}
 	mb := none.Mailboxes[0]
-	if mb.Rel != "Box" || mb.Messages != 3 || mb.Expunged != 1 || mb.NoID != 0 {
+	if mb.Rel != "Box" || mb.Messages != 3 || mb.Expunged != 1 || mb.NoKey != 0 {
 		t.Errorf("Box: %+v; want 3 counted, 1 expunged, every one with an id", *mb)
 	}
-	if len(mb.IDs) != 3 || mb.IDs[0] != idKey("folded@x") || mb.IDs[1] != idKey("st2@x") || mb.IDs[2] != idKey("bad@x") {
+	if len(mb.Keys) != 3 || mb.Keys[0] != idKey("folded@x") || mb.Keys[1] != idKey("st2@x") || mb.Keys[2] != idKey("bad@x") {
 		t.Errorf("Box: the ids are not the unfolded folded@x, st2 and bad")
 	}
 

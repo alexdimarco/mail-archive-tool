@@ -88,7 +88,9 @@ func TestTheAccountsTypeDecidesFirst(t *testing.T) {
 			ReasonInvalidEntry: "invalid_entry", ReasonPanorama: "panorama", ReasonAccountType: "account_type",
 			ReasonNeverChecked: "never_checked", ReasonGmailFloor: "gmail_floor", ReasonExpungedUnsized: "expunged_unsized",
 			ReasonPartialInput: "partial_input", ReasonOldPathOnly: "old_path_only", ReasonNotCountedYet: "not_counted_yet",
-			Reason(99): "", Reason(13): "", Reason(-1): "",
+			// The C2 pass's codes (amended 2026-11-08).
+			ReasonSplitDifferently: "split_differently", ReasonOtherReader: "other_reader", ReasonWalkFailed: "walk_failed",
+			Reason(99): "", Reason(16): "", Reason(-1): "",
 		} {
 			if r.String() != s {
 				t.Errorf("%d: %q, want %q", int(r), r.String(), s)

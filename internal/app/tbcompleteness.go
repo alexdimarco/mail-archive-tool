@@ -11,6 +11,7 @@ package app
 import (
 	"crypto/sha256"
 	"encoding/hex"
+	"errors"
 	"fmt"
 	"log"
 	"os"
@@ -24,6 +25,7 @@ import (
 	"mail-archive-tool/internal/state"
 	"mail-archive-tool/internal/tbcomplete"
 	"mail-archive-tool/internal/thunderbird"
+	"mail-archive-tool/internal/util"
 )
 
 // Seams, so a test sees each read the check makes (the functions are the real ones).
@@ -48,6 +50,38 @@ type tbStore struct {
 	hasProfile bool
 	facts      thunderbird.StoreFacts
 	counts     *source.MailboxCounts // nil: the walk counts nothing for it
+	// otherReader: the run opened the store with another reader than the mbox one (the
+	// Evolution reader, which a maildir store with folders named "cur" and ".x" passes for,
+	// ADV-C2-16), so the walk counted nothing; walkFailed: its walk ended with an error. Either
+	// way the store is told unknown, never left out (the C2 pass's LOW item 3).
+	otherReader bool
+	walkFailed  bool
+}
+
+// planTBOther is planTB for a local store the run opened with another reader than the mbox
+// one: kept (as unknown, other_reader) only when it is under a Thunderbird profile, so a real
+// Evolution store is never told anything. The walk counts nothing for it.
+func planTBOther(input string) *tbStore {
+	t := planTB(input)
+	if !t.hasProfile {
+		return nil
+	}
+	t.counts, t.otherReader = nil, true
+	return t
+}
+
+// storeID is a store's identity by its full path, profile and store, each made absolute and
+// compared as this OS compares names (tbcomplete.FolderIdentity over the slash form), hashed: the
+// streak and the record's carry-forward key on it, so two stores with one folder name are never
+// one account (ADV-C2-01). A hash, so no path is written beside the archive.
+func storeID(profile, store string) string {
+	norm := func(p string) string {
+		if p == "" {
+			return ""
+		}
+		return tbcomplete.FolderIdentity(filepath.ToSlash(filepath.Clean(absOrSame(p))))
+	}
+	return fingerprint("tbstore\x00" + norm(profile) + "\x00" + norm(store))
 }
 
 // planTB is what the check needs of a local source before its walk: its profile and account,
@@ -148,18 +182,21 @@ func assessThunderbird(stores []*tbStore, now time.Time) []tbcomplete.Result {
 			told[store] = true
 		}
 		in := tbcomplete.Input{
-			Account:    filepath.Base(store),
-			Matched:    a != nil,
-			WholeStore: t.facts.Whole,
-			Gmail:      t.facts.Gmail,
-			Now:        now,
+			Account:     filepath.Base(store),
+			StoreID:     storeID(t.profile, store),
+			Matched:     a != nil,
+			WholeStore:  t.facts.Whole,
+			OtherReader: t.otherReader,
+			WalkFailed:  t.walkFailed,
+			Gmail:       t.facts.Gmail,
+			Now:         now,
 		}
 		if a == nil {
 			in.Unmatched = tbcomplete.Unmatched{NoProfile: !t.hasProfile, NoImapMailPart: !hasImapMailPart(store), NoMsf: t.noMsf()}
 		} else {
 			in.Type = a.Type
 		}
-		if a != nil && a.Type == "imap" && t.facts.Whole {
+		if a != nil && a.Type == "imap" && t.facts.Whole && t.counts != nil && !t.walkFailed {
 			if _, ok := profiles[t.profile]; !ok {
 				profiles[t.profile] = readTBProfile(t.profile)
 			}
@@ -179,7 +216,7 @@ func assessThunderbird(stores []*tbStore, now time.Time) []tbcomplete.Result {
 				in.Store = view
 				var walked []tbcomplete.Mailbox
 				for _, mb := range t.counts.Mailboxes {
-					walked = append(walked, tbcomplete.Mailbox{Rel: mb.Rel, Messages: mb.Messages, IDs: mb.IDs, NoID: mb.NoID})
+					walked = append(walked, tbcomplete.Mailbox{Rel: mb.Rel, Messages: mb.Messages, Keys: mb.Keys, NoKey: mb.NoKey, Unseparated: mb.Unseparated})
 				}
 				in.OnDisk = view.OnDiskFor(walked, t.facts.Gmail == thunderbird.GmailYes)
 			}
@@ -215,10 +252,23 @@ func limitsOn(l tbcomplete.Limits) bool {
 // tbRecords is the run's results as a plaintext last-run record keeps them (§7, §9.1), each
 // TC-19 fingerprint carried forward from prev (the previous run's record, read before this run
 // wrote its "running" one) while it is unchanged, so its first-seen time stays.
+//
+// The carry-forward is by the store's identity (StoreID), never by its folder name, so two
+// stores with one name never trade first-seen times (ADV-C2-01); a previous entry with no store
+// identity carries nothing (the chosen-setting WARN shows once more). The folders of all three
+// lists across every account stay within state.TBFoldersTotalMax: each account gets its share,
+// not-kept folders first (they carry a WARN), then kept, then Trash and Junk (ADV-C2-08).
 func tbRecords(results []tbcomplete.Result, prev []state.TBAccount, now time.Time) []state.TBAccount {
 	before := map[string]state.TBAccount{}
 	for _, p := range prev {
-		before[p.Account] = p
+		if p.StoreID != "" {
+			before[p.StoreID] = p
+		}
+	}
+	n := min(len(results), state.TBAccountsMax)
+	share := state.TBFoldersTotalMax
+	if n > 0 {
+		share = max(1, state.TBFoldersTotalMax/n)
 	}
 	var out []state.TBAccount
 	for _, r := range results {
@@ -226,7 +276,8 @@ func tbRecords(results []tbcomplete.Result, prev []state.TBAccount, now time.Tim
 			break
 		}
 		a := state.TBAccount{
-			Account: state.CleanFolderName(r.Account), Verdict: r.Verdict.String(), Reason: r.Reason.String(),
+			Account: state.CleanFolderName(r.Account), StoreID: r.StoreID, Verdict: r.Verdict.String(), Reason: r.Reason.String(),
+			NoIdentity: r.NoIdentity, SplitMailboxes: r.SplitMailboxes,
 			Complete: r.MaySayComplete(), Gmail: r.Gmail, Floor: r.Floor, AllMail: allMailNames[r.AllMail],
 			OnDisk: r.OnDisk, Listed: r.Listed, Missing: r.Missing, Tolerance: r.Tolerance,
 			ExpungedEstimate: r.ExpungedEstimate, DeletedCopies: r.DeletedCopies, Stale: r.Stale,
@@ -237,7 +288,8 @@ func tbRecords(results []tbcomplete.Result, prev []state.TBAccount, now time.Tim
 		if r.AsOf > 0 {
 			a.AsOf = time.Unix(r.AsOf, 0).UTC()
 		}
-		p, had := before[a.Account]
+		p, had := before[a.StoreID]
+		had = had && a.StoreID != ""
 		since := func(hash, prevHash string, prevSince time.Time) time.Time {
 			if had && hash == prevHash && !prevSince.IsZero() {
 				return prevSince
@@ -263,9 +315,13 @@ func tbRecords(results []tbcomplete.Result, prev []state.TBAccount, now time.Tim
 			}
 			return folders[i].Path < folders[j].Path
 		})
-		a.Folders, a.FoldersMore = tbFolders(folders, state.TBFolderMax)
 		notKept := byListed(r.NotKept)
-		a.NotKept, a.NotKeptMore = tbFolders(notKept, state.TBNotKeptMax)
+		left := share
+		a.NotKept, a.NotKeptMore = tbFolders(notKept, min(state.TBNotKeptMax, left))
+		left -= len(a.NotKept)
+		a.Folders, a.FoldersMore = tbFolders(folders, min(state.TBFolderMax, left))
+		left -= len(a.Folders)
+		a.DefaultNotKept, a.DefaultNotKeptMore = tbFolders(byListed(r.DefaultNotKept), min(state.TBNotKeptMax, left))
 		if len(notKept) > 0 {
 			ids := make([]string, 0, len(notKept))
 			for _, f := range notKept {
@@ -275,7 +331,6 @@ func tbRecords(results []tbcomplete.Result, prev []state.TBAccount, now time.Tim
 			a.NotKeptHash = fingerprint(strings.Join(ids, "\x00"))
 			a.NotKeptSince = since(a.NotKeptHash, p.NotKeptHash, p.NotKeptSince)
 		}
-		a.DefaultNotKept, _ = tbFolders(byListed(r.DefaultNotKept), state.TBNotKeptMax)
 		out = append(out, a)
 	}
 	return out
@@ -326,35 +381,70 @@ func previousThunderbird(opts Options) []state.TBAccount {
 // not reach, move nothing. Plaintext only, by code: a keyed run, or a run into an encrypted
 // archive, writes nothing and removes a stray record (O1). Only a run that ended ok moves it.
 // Best effort: a read or write problem never fails the run and never falsely moves the streak.
-func updateTBStreak(opts Options, results []tbcomplete.Result, encrypted, ok bool, now time.Time, logger *log.Logger) {
+//
+// Each account's streak is keyed by its store's identity (Result.StoreID, ADV-C2-01), never by
+// its folder name. A record it cannot use is never silent (the C2 pass's ADV-C2-05, -10): the
+// run logs a line and returns a WARN for the last-run record (code tbstreak_unreadable), which
+// status shows. Then:
+//   - a record other users can read (util.ErrReadableByOthers) is not trusted (other users may
+//     also have written it): the streak starts again from this run and the record is rewritten
+//     owner-only, so the next run reads it. Fresh is the fail-safe reading for R42: a fresh
+//     streak can only make the "still downloading" notice later, never claim more than was seen;
+//   - a record a later MailArchive wrote (state.ErrTBStreakNewer) is never downgraded: nothing
+//     moves and nothing is written;
+//   - any other refusal (a link, a pipe, too large, a read error) leaves the record as it is.
+func updateTBStreak(opts Options, results []tbcomplete.Result, encrypted, ok bool, now time.Time, logger *log.Logger) *state.RunWarning {
 	if opts.Key != nil || encrypted || ArchiveEncrypted(opts.Out) {
 		_ = removeTBStreak(opts.Out)
-		return
+		return nil
 	}
 	if !ok || len(results) == 0 {
-		return
+		return nil
 	}
+	path := filepath.Join(opts.Out, state.TBStreakName)
+	logf := func(format string, args ...any) {
+		if logger != nil {
+			logger.Printf(format, args...)
+		}
+	}
+	var warn *state.RunWarning
 	prev, err := readTBStreak(opts.Out)
-	if err != nil {
-		return // an unreadable record is left as it is, never reset
+	switch {
+	case err == nil:
+	case errors.Is(err, util.ErrReadableByOthers):
+		logf("warning: MailArchive's record of how long Thunderbird has been downloading (%s) could be read by other users, so it was not trusted; it starts again from this backup and is now readable only by you", path)
+		warn = &state.RunWarning{Code: tbStreakUnreadable, Message: fmt.Sprintf("MailArchive's record of how long Thunderbird has been downloading (%s) could be read by other users, so it started again from the last backup. Nothing is needed unless this shows after every backup: then the archive is on a drive that cannot keep files private (such as exFAT), and the \"still downloading\" notice cannot count days there.", path)}
+		prev = state.TBStreak{}
+	case errors.Is(err, state.ErrTBStreakNewer):
+		logf("warning: %v; it was left as it is, so how long Thunderbird has been downloading is not counted by this version", err)
+		return &state.RunWarning{Code: tbStreakUnreadable, Message: fmt.Sprintf("A newer MailArchive keeps its record of how long Thunderbird has been downloading in %s, so this version leaves it as it is and does not count. Use the newer MailArchive for this archive.", path)}
+	default:
+		logf("warning: could not read MailArchive's record of how long Thunderbird has been downloading (%v); it was left as it is", err)
+		return &state.RunWarning{Code: tbStreakUnreadable, Message: fmt.Sprintf("MailArchive could not read its record of how long Thunderbird has been downloading (%s), so it was left as it is and not counted. Remove the file if it is not a regular file of yours; the next backup starts it again.", path)}
 	}
-	next, moved := prev, false
+	next, moved := prev, warn != nil
 	for _, r := range results {
-		name := state.CleanFolderName(r.Account)
-		_, had := next.Account(name)
+		if r.StoreID == "" {
+			continue // a store with no identity is never matched to a streak
+		}
+		_, had := next.Account(r.StoreID)
 		switch r.Verdict {
 		case tbcomplete.Behind:
-			next, moved = next.Behind(name, r.OnDisk, now), true
+			next, moved = next.Behind(r.StoreID, state.CleanFolderName(r.Account), r.OnDisk, now), true
 		case tbcomplete.CaughtUp, tbcomplete.Limited:
 			if had {
-				next, moved = next.End(name), true
+				next, moved = next.End(r.StoreID), true
 			}
 		}
 	}
 	if !moved {
-		return
+		return warn
 	}
-	if werr := writeTBStreak(opts.Out, next.Named()); werr != nil && logger != nil {
-		logger.Printf("warning: could not record how long Thunderbird has been downloading in %s (%v)", filepath.Join(opts.Out, state.TBStreakName), werr)
+	if werr := writeTBStreak(opts.Out, next.Named()); werr != nil {
+		logf("warning: could not record how long Thunderbird has been downloading in %s (%v)", path, werr)
 	}
+	return warn
 }
+
+// tbStreakUnreadable is the WARN code of a behind-streak record the run could not use.
+const tbStreakUnreadable = "tbstreak_unreadable"

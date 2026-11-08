@@ -14,11 +14,16 @@ type Mailbox struct {
 	// Rel is its place under the store as on disk, slash-separated, its containers with
 	// their ".sbd" ending ("[Gmail].sbd/All Mail").
 	Rel string
-	// Messages counted (deleted copies carrying 0x0008 already left out, §2.4).
+	// Messages counted (deleted copies carrying 0x0008 already left out, §2.4; only pieces that
+	// begin at a separator Thunderbird writes).
 	Messages int64
-	// IDs are the counted messages' Message-ID keys, and NoID how many had none (Gmail's X).
-	IDs  [][16]byte
-	NoID int64
+	// Keys are the counted messages' identity keys (source.IdentityKey: the Message-ID, else the
+	// content without Thunderbird's per-copy lines), and NoKey how many had none (Gmail's X).
+	Keys  [][16]byte
+	NoKey int64
+	// Unseparated: pieces the mbox reader split off that do not begin at a separator
+	// Thunderbird writes (the C2 pass's ADV-C2-03): the mailbox is "split differently".
+	Unseparated int64
 }
 
 // OnDiskFor is the walk's count as the verdict reads it for the store s (the C1b note: keyed by
@@ -28,9 +33,13 @@ type Mailbox struct {
 //
 //   - Folders holds each such folder's count (a folder with no mailbox has none: 0);
 //   - for Gmail, Distinct is the distinct count over the mailboxes of folders kept on this
-//     computer (the Offline flag): one per distinct Message-ID, plus one per message with none.
-//     A mailbox of a folder that is not kept never adds to X: its messages are outside Y (the
-//     builder's reading of §3, beside L3; it fails toward "behind");
+//     computer (the Offline flag): one per distinct identity key, never one per copy (the C2
+//     pass's ADV-C2-02); a message with no key is left out of X and counted in NoKey, which
+//     keeps the account from saying complete. A mailbox of a folder that is not kept never adds
+//     to X: its messages are outside Y (the builder's reading of §3, beside L3; it fails toward
+//     "behind");
+//   - a keyed mailbox with pieces that do not begin at a separator Thunderbird writes is counted
+//     in SplitMailboxes (the C2 pass's ADV-C2-03);
 //   - a mailbox with no folder of s (no key, a container not named ".sbd", or the store's own
 //     maildir) is counted in UnkeyedMailboxes and UnkeyedMessages and never in X (L3);
 //   - two mailboxes that name one folder are both unkeyed (neither can be told to be it);
@@ -73,16 +82,19 @@ func (s Store) onDiskFor(walked []Mailbox, gmail bool, goos string) OnDisk {
 			continue
 		}
 		d.Folders[e.Path] = mb.Messages
+		if mb.Unseparated > 0 {
+			d.SplitMailboxes++
+		}
 		if !gmail || !e.Has(FlagOffline) {
 			continue
 		}
-		for _, k := range mb.IDs {
+		for _, k := range mb.Keys {
 			if !seen[k] {
 				seen[k] = true
 				d.Distinct++
 			}
 		}
-		d.Distinct += mb.NoID
+		d.NoKey += mb.NoKey
 	}
 	return d
 }

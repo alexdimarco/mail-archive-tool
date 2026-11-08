@@ -3,6 +3,7 @@ package state
 import (
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io/fs"
 	"os"
 	"path/filepath"
@@ -42,7 +43,11 @@ type TBStreak struct {
 // then; the latest behind run's time; the latest time X grew, and X then; the number of behind
 // runs; and the two once-per-streak flags (set by C5).
 type TBStreakAccount struct {
-	Account     string    `json:"account"` // the store folder's name
+	// Store is the account's key: a hash of the store's full path (profile and store), so two
+	// stores with one folder name keep a streak each (the C2 pass's ADV-C2-01). An entry with
+	// none (written before the key existed, on this unreleased branch only) is dropped when read.
+	Store       string    `json:"store"`
+	Account     string    `json:"account"` // the store folder's name, for the words
 	Serial      int       `json:"serial"`  // the record's Serial when this streak started
 	FirstBehind time.Time `json:"first_behind,omitzero"`
 	FirstX      int64     `json:"first_x"`
@@ -62,39 +67,39 @@ func (s TBStreak) Named() TBStreak {
 	return s
 }
 
-// account is the index of name's streak in s, or -1.
-func (s TBStreak) account(name string) int {
+// account is the index of the streak of the store keyed store in s, or -1.
+func (s TBStreak) account(store string) int {
 	for i, a := range s.Accounts {
-		if a.Account == name {
+		if a.Store == store {
 			return i
 		}
 	}
 	return -1
 }
 
-// Account is name's streak and whether it has one.
-func (s TBStreak) Account(name string) (TBStreakAccount, bool) {
-	if i := s.account(name); i >= 0 {
+// Account is the streak of the store keyed store and whether it has one.
+func (s TBStreak) Account(store string) (TBStreakAccount, bool) {
+	if i := s.account(store); i >= 0 {
 		return s.Accounts[i], true
 	}
 	return TBStreakAccount{}, false
 }
 
-// Behind folds a behind run of account name with x messages on disk at now (§5's rules, M10):
-// a streak starts (Serial up) or is extended. The times follow MA-891's rules, as the presync
-// streak's: a time before MinPlausibleTime moves neither first nor latest, though the run still
-// counts; a clock that went back restarts the first time and keeps the serial. X "grew" when it
-// is above the X of the latest growth.
-func (s TBStreak) Behind(name string, x int64, now time.Time) TBStreak {
+// Behind folds a behind run of the store keyed store (its folder named name) with x messages on
+// disk at now (§5's rules, M10): a streak starts (Serial up) or is extended. The times follow
+// MA-891's rules, as the presync streak's: a time before MinPlausibleTime moves neither first nor
+// latest, though the run still counts; a clock that went back restarts the first time and keeps
+// the serial. X "grew" when it is above the X of the latest growth.
+func (s TBStreak) Behind(store, name string, x int64, now time.Time) TBStreak {
 	s.Version = TBStreakVersion
 	s.Accounts = append([]TBStreakAccount(nil), s.Accounts...)
-	i := s.account(name)
+	i := s.account(store)
 	if i < 0 {
 		if len(s.Accounts) >= TBAccountsMax {
 			return s
 		}
 		s.Serial++
-		a := TBStreakAccount{Account: name, Serial: s.Serial, FirstX: x, GrewX: x, Runs: 1}
+		a := TBStreakAccount{Store: store, Account: name, Serial: s.Serial, FirstX: x, GrewX: x, Runs: 1}
 		if !now.Before(MinPlausibleTime) {
 			a.FirstBehind, a.LastBehind, a.LastGrew = now, now, now
 		}
@@ -102,6 +107,7 @@ func (s TBStreak) Behind(name string, x int64, now time.Time) TBStreak {
 		return s
 	}
 	a := s.Accounts[i]
+	a.Account = name
 	a.Runs++
 	restarted := a.FirstBehind
 	a.FirstBehind, a.LastBehind = spanAt(a.FirstBehind, a.LastBehind, now)
@@ -119,11 +125,11 @@ func (s TBStreak) Behind(name string, x int64, now time.Time) TBStreak {
 	return s
 }
 
-// End ends name's streak (a caught_up run, with no email; or a limited run, silently): its
-// entry goes. Serial is kept, so the next streak gets a new number.
-func (s TBStreak) End(name string) TBStreak {
+// End ends the streak of the store keyed store (a caught_up run, with no email; or a limited
+// run, silently): its entry goes. Serial is kept, so the next streak gets a new number.
+func (s TBStreak) End(store string) TBStreak {
 	s.Version = TBStreakVersion
-	i := s.account(name)
+	i := s.account(store)
 	if i < 0 {
 		return s
 	}
@@ -143,12 +149,20 @@ func (a TBStreakAccount) Stopped() bool {
 	return spanOf(a.Runs, a.LastGrew, a.LastBehind) >= SyncStaleAfter
 }
 
+// ErrTBStreakNewer is ReadTBStreak's refusal of a record a later MailArchive wrote (a format
+// version above TBStreakVersion): it is never read as this format and never written over, so a
+// later version's fields are never lost (the C2 pass's ADV-C2-10).
+var ErrTBStreakNewer = errors.New("written by a later MailArchive")
+
 // ReadTBStreak reads the archive's behind-streak record. An ABSENT record is the zero streak
 // with no error. A present one is read fail-closed through util.ReadSecureFile (owner-only,
-// bounded, never a link); a malformed one reads as zero, so a damaged file never wedges a run.
-// Names are cleaned; a RecordID Named could not have chosen reads as none.
+// bounded, never a link: a refusal wraps util.ErrReadableByOthers when only its permissions are
+// wrong); a malformed one reads as zero, so a damaged file never wedges a run; one of a later
+// format is refused with ErrTBStreakNewer. Names are cleaned; a RecordID Named could not have
+// chosen reads as none; an entry with no store key is dropped.
 func ReadTBStreak(out string) (TBStreak, error) {
-	data, err := util.ReadSecureFile(filepath.Join(out, TBStreakName), "Thunderbird download record", maxTBStreakBytes)
+	path := filepath.Join(out, TBStreakName)
+	data, err := util.ReadSecureFile(path, "Thunderbird download record", maxTBStreakBytes)
 	if err != nil {
 		if errors.Is(err, fs.ErrNotExist) {
 			return TBStreak{}, nil
@@ -159,16 +173,25 @@ func ReadTBStreak(out string) (TBStreak, error) {
 	if json.Unmarshal(data, &s) != nil {
 		return TBStreak{}, nil
 	}
+	if s.Version > TBStreakVersion {
+		return TBStreak{}, fmt.Errorf("Thunderbird download record %s is format %d, %w (this one reads format %d)", path, s.Version, ErrTBStreakNewer, TBStreakVersion)
+	}
 	if !plausibleRecordID(s.RecordID) {
 		s.RecordID = ""
 	}
-	if len(s.Accounts) > TBAccountsMax {
-		s.Accounts = s.Accounts[:TBAccountsMax]
-	}
-	for i := range s.Accounts {
-		a := &s.Accounts[i]
+	kept := s.Accounts[:0]
+	for _, a := range s.Accounts {
+		a.Store = util.StripControl(a.Store)
+		if a.Store == "" || len(kept) >= TBAccountsMax {
+			continue
+		}
 		a.Account = CleanFolderName(a.Account)
 		a.FirstX, a.GrewX, a.Runs = max(0, a.FirstX), max(0, a.GrewX), max(0, a.Runs)
+		kept = append(kept, a)
+	}
+	s.Accounts = kept
+	if len(s.Accounts) == 0 {
+		s.Accounts = nil
 	}
 	return s, nil
 }

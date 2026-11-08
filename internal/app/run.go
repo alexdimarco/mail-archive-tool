@@ -1456,6 +1456,13 @@ func recordRun(opts Options, lr state.LastRun, result *Result, err *error, logge
 	lr.GapsObserved, lr.GapsNew, lr.GapsRecovered = g.Observed, g.New, g.Recovered
 	lr.GapsFillable, lr.GapsTerminal, lr.GapsStuck, lr.Unreadable = g.Fillable, g.Terminal, g.Stuck, result.Stats.Unreadable
 	recordCounts(&lr, *result)
+	// How long each Thunderbird account has been behind (completeness design §5, M10):
+	// plaintext only, a run that ended ok only, best effort. Folded before the last-run record
+	// is written, so a streak record the run could not use is a WARN that status shows (the C2
+	// pass's ADV-C2-05 and -10), never silent.
+	if w := updateTBStreak(opts, result.Thunderbird, lr.Encrypted, *err == nil, lr.Finished, logger); w != nil && !lr.Encrypted && opts.Key == nil {
+		lr.Warnings = append(lr.Warnings, *w)
+	}
 	// Best effort: a refused write never fails the run, but it is logged (F12),
 	// because the "running" record then stays and status reads it as a run that
 	// never finished although this log says how it ended.
@@ -1483,9 +1490,6 @@ func recordRun(opts Options, lr state.LastRun, result *Result, err *error, logge
 	// And how long its scheduled backups have gone without a Thunderbird sync
 	// (design-presync-attended §5, slice AS5): plaintext only, best effort.
 	updateSyncStreak(opts, result.Presync, lr.Encrypted, lr.Finished, logger)
-	// And how long each Thunderbird account has been behind (completeness design §5, M10):
-	// plaintext only, a run that ended ok only, best effort.
-	updateTBStreak(opts, result.Thunderbird, lr.Encrypted, *err == nil, lr.Finished, logger)
 }
 
 // recordCounts puts a run's parse-fidelity counts in its last-run record, the numbers
@@ -1733,15 +1737,25 @@ func runFile(ctx context.Context, lr *localRun, path string, copyFirst, followLi
 			Folder:     src.noteFolder,
 		}
 		// A local mbox or maildir store may be a Thunderbird account's: the completeness check
-		// is planned from the input path as given (TC-11), and the walk counts as it reads.
+		// is planned from the input path as given (TC-11), and the walk counts as it reads. A
+		// store under a Thunderbird profile that another local reader opened (the Evolution
+		// one) counts nothing, and is told unknown, never left out (the C2 pass's ADV-C2-16;
+		// which reader opens it is unchanged here).
 		var tb *tbStore
-		if source.IsMboxReader(reader) && !tbCheckOff {
+		switch {
+		case tbCheckOff || !src.local:
+		case source.IsMboxReader(reader):
 			tb = planTB(path)
 			opts.Counts = tb.counts
+		default:
+			tb = planTBOther(path)
 		}
 		defer func() {
-			if tb != nil && err == nil {
-				lr.tb = append(lr.tb, tb) // a store whose walk ended is told after every walk (TC-21)
+			if tb != nil {
+				// Every store is told after every walk (TC-21); one whose walk ended with an
+				// error is told unknown (walk_failed), never left out.
+				tb.walkFailed = err != nil
+				lr.tb = append(lr.tb, tb)
 			}
 		}()
 		// MailArchive's own restores into Thunderbird are left out (R41,

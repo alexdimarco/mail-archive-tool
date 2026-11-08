@@ -170,7 +170,7 @@ func TestTheBehindStreakOutlivesTheHistory(t *testing.T) {
 	opts := Options{Out: out}
 	t0 := time.Date(2026, 11, 1, 2, 0, 0, 0, time.UTC)
 	run := func(at time.Time, v tbcomplete.Verdict, x int64) {
-		updateTBStreak(opts, []tbcomplete.Result{{Account: "imap.c2.example", Verdict: v, OnDisk: x, Listed: 1000}}, false, true, at, nil)
+		updateTBStreak(opts, []tbcomplete.Result{{Account: "imap.c2.example", StoreID: "k1", Verdict: v, OnDisk: x, Listed: 1000}}, false, true, at, nil)
 		_ = state.AppendRunHistory(out, state.RunHistoryEntry{When: at, Status: state.RunOK})
 	}
 	streak := func() state.TBStreakAccount {
@@ -179,7 +179,7 @@ func TestTheBehindStreakOutlivesTheHistory(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		a, _ := s.Account("imap.c2.example")
+		a, _ := s.Account("k1")
 		return a
 	}
 	run(t0, tbcomplete.Behind, 100)
@@ -215,7 +215,7 @@ func TestTheBehindStreakOutlivesTheHistory(t *testing.T) {
 	}
 	// A caught_up run ends it; the next behind run starts a new streak, serial 2.
 	run(t0.Add(200*time.Hour), tbcomplete.CaughtUp, 1000)
-	if _, had := mustStreak(t, out).Account("imap.c2.example"); had {
+	if _, had := mustStreak(t, out).Account("k1"); had {
 		t.Error("a caught-up run did not end the streak")
 	}
 	run(t0.Add(201*time.Hour), tbcomplete.Behind, 900)
@@ -223,15 +223,15 @@ func TestTheBehindStreakOutlivesTheHistory(t *testing.T) {
 		t.Errorf("a new streak: %+v, want serial 2, 1 run", b)
 	}
 	run(t0.Add(202*time.Hour), tbcomplete.Limited, 900)
-	if _, had := mustStreak(t, out).Account("imap.c2.example"); had {
+	if _, had := mustStreak(t, out).Account("k1"); had {
 		t.Error("a limited run did not end the streak")
 	}
 	if s, _ := state.ReadTBStreak(out); s.RecordID != s0.RecordID {
 		t.Errorf("the record was renamed: %q → %q", s0.RecordID, s.RecordID)
 	}
 	// A run that did not end ok moves nothing.
-	updateTBStreak(opts, []tbcomplete.Result{{Account: "imap.c2.example", Verdict: tbcomplete.Behind}}, false, false, t0.Add(203*time.Hour), nil)
-	if _, had := mustStreak(t, out).Account("imap.c2.example"); had {
+	updateTBStreak(opts, []tbcomplete.Result{{Account: "imap.c2.example", StoreID: "k1", Verdict: tbcomplete.Behind}}, false, false, t0.Add(203*time.Hour), nil)
+	if _, had := mustStreak(t, out).Account("k1"); had {
 		t.Error("a failed run started a streak")
 	}
 }

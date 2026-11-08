@@ -49,7 +49,8 @@ type StoreFacts struct {
 	Limits Limits
 	// OtherStores are the folders every other live account's settings name as its own
 	// (directory-rel with [ProfD] resolved, and directory): the profile's other stores, whose
-	// keys the folder cache's tail mode must never take (R2-02).
+	// keys the folder cache's tail mode must never take (R2-02). The matched account's own
+	// settings are never in it (ADV-C2-07).
 	OtherStores []string
 }
 
@@ -125,6 +126,12 @@ func ReadStoreFacts(profileDir, input string) (StoreFacts, error) {
 	}
 	f.Account = acct
 	for _, key := range liveServers(func(k string) string { return s.vals[k] }) {
+		if key == acct.ServerKey {
+			// The account's own settings are never "another store": its `directory` may still
+			// name the profile's old place after a move, the very case tail mode is for (the C2
+			// pass's ADV-C2-07).
+			continue
+		}
 		p := func(field string) string { return unquote(s.vals["mail.server."+key+"."+field]) }
 		var folders []string
 		if rel, ok := strings.CutPrefix(p("directory-rel"), "[ProfD]"); ok {

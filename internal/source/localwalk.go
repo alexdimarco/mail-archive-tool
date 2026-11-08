@@ -384,7 +384,7 @@ func (w *localWalk) maildirMessageIn(sc *scope, rel, name string, folder []strin
 		}
 		return nil
 	}
-	w.count(mb, data) // before the handler, so before any manifest skip or date filter (§2.4)
+	w.countMaildirFile(mb, name, data) // before the handler, so before any manifest skip or date filter (§2.4)
 	m := parseRaw(data)
 	if m == nil {
 		return nil
@@ -484,7 +484,16 @@ func (w *localWalk) mboxFileAs(sc *scope, rel, mailbox string, folder []string) 
 	defer f.Close()
 
 	mb := w.startMailbox(sc.at(mailbox))
-	mr := gombox.NewReader(skipBOM(wrapMboxStream(sc.at(rel), f)))
+	stream := skipBOM(wrapMboxStream(sc.at(rel), f))
+	// The count takes only the pieces that begin at a separator Thunderbird writes (the C2
+	// pass's ADV-C2-03): the reader splits at every line beginning "From ", which a body line
+	// its writer did not escape also does. What is archived is unchanged.
+	var seps *separatorScan
+	if mb != nil {
+		seps = newSeparatorScan(stream)
+		stream = seps
+	}
+	mr := gombox.NewReader(stream)
 	n := 0
 	partial := func(err error) {
 		w.folderFault(sc, rel, folder, "folder-partially-read", err, fmt.Sprintf("%d message(s) were read before the stream failed: ", n))
@@ -508,7 +517,9 @@ func (w *localWalk) mboxFileAs(sc *scope, rel, mailbox string, folder []string) 
 		}
 		n++
 		// Counted here, before the handler's manifest skip and date filter (§2.4).
-		w.count(mb, data)
+		if seps != nil {
+			w.countPiece(mb, data, seps.separated(n))
+		}
 		if m := parseRaw(data); m != nil {
 			if err := w.handler(folder, m); err != nil {
 				return err

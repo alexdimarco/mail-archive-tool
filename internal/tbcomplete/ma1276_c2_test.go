@@ -71,10 +71,10 @@ func TestOnDiskForMapsTheWalkToTheStoresFolders(t *testing.T) {
 		at("[Gmail]/Spam", notKept(FlagJunk, 2)))
 	k := func(id string) [16]byte { return [16]byte{id[0], id[len(id)-1]} }
 	walked := []Mailbox{
-		{Rel: "INBOX", Messages: 3, IDs: [][16]byte{k("a1"), k("a2"), k("a3")}},
-		{Rel: "[Gmail].sbd/All Mail", Messages: 4, IDs: [][16]byte{k("a1"), k("a2"), k("a4")}, NoID: 1},
-		{Rel: "[Gmail].sbd/Spam", Messages: 2, IDs: [][16]byte{k("s1"), k("s2")}},
-		{Rel: "Leftover", Messages: 7, IDs: [][16]byte{k("x1")}},
+		{Rel: "INBOX", Messages: 3, Keys: [][16]byte{k("a1"), k("a2"), k("a3")}},
+		{Rel: "[Gmail].sbd/All Mail", Messages: 4, Keys: [][16]byte{k("a1"), k("a2"), k("a4")}, NoKey: 1},
+		{Rel: "[Gmail].sbd/Spam", Messages: 2, Keys: [][16]byte{k("s1"), k("s2")}, NoKey: 5},
+		{Rel: "Leftover", Messages: 7, Keys: [][16]byte{k("x1")}, NoKey: 3},
 		{Rel: "Linked/INBOX", Messages: 2},
 		{Rel: "", Messages: 1},
 	}
@@ -82,8 +82,10 @@ func TestOnDiskForMapsTheWalkToTheStoresFolders(t *testing.T) {
 	if d.Folders["INBOX"] != 3 || d.Folders["[Gmail]/All Mail"] != 4 || d.Folders["[Gmail]/Spam"] != 2 || len(d.Folders) != 3 {
 		t.Errorf("folders: %v", d.Folders)
 	}
-	if d.Distinct != 5 {
-		t.Errorf("distinct %d, want 5 (a1, a2, a3, a4 and one with no id; never Spam's or Leftover's)", d.Distinct)
+	// Amended 2026-11-08 (the C2 pass, ADV-C2-02): a message with no key is never in X, once
+	// per copy or at all; it is counted in NoKey (kept folders only).
+	if d.Distinct != 4 || d.NoKey != 1 {
+		t.Errorf("distinct %d, no key %d; want 4 (a1, a2, a3, a4; never Spam's or Leftover's) and 1 (All Mail's only)", d.Distinct, d.NoKey)
 	}
 	if d.UnkeyedMailboxes != 3 || d.UnkeyedMessages != 10 {
 		t.Errorf("unkeyed: %d mailboxes, %d messages; want 3, 10", d.UnkeyedMailboxes, d.UnkeyedMessages)
@@ -98,7 +100,7 @@ func TestOnDiskForMapsTheWalkToTheStoresFolders(t *testing.T) {
 		t.Errorf("case: darwin %+v, linux %+v", mac, lin)
 	}
 	// A container not named .sbd names no folder of Thunderbird's.
-	if bare := s.onDiskFor([]Mailbox{{Rel: "[Gmail]/All Mail", Messages: 4, IDs: [][16]byte{k("a1")}}}, true, "linux"); len(bare.Folders) != 0 || bare.Distinct != 0 || bare.UnkeyedMailboxes != 1 {
+	if bare := s.onDiskFor([]Mailbox{{Rel: "[Gmail]/All Mail", Messages: 4, Keys: [][16]byte{k("a1")}}}, true, "linux"); len(bare.Folders) != 0 || bare.Distinct != 0 || bare.UnkeyedMailboxes != 1 {
 		t.Errorf("a container not named .sbd: %+v", bare)
 	}
 	// Two mailboxes naming one folder: both unkeyed.
@@ -108,7 +110,7 @@ func TestOnDiskForMapsTheWalkToTheStoresFolders(t *testing.T) {
 	}
 	// An old-path-only folder is in neither.
 	old := Store{Mode: Exact, OldPathOnly: []Entry{{Path: "Old"}}}
-	if o := old.onDiskFor([]Mailbox{{Rel: "Old", Messages: 9, IDs: [][16]byte{k("o1")}}}, true, "linux"); len(o.Folders) != 0 || o.Distinct != 0 || o.UnkeyedMailboxes != 0 {
+	if o := old.onDiskFor([]Mailbox{{Rel: "Old", Messages: 9, Keys: [][16]byte{k("o1")}, Unseparated: 2}}, true, "linux"); o.SplitMailboxes != 0 || len(o.Folders) != 0 || o.Distinct != 0 || o.UnkeyedMailboxes != 0 {
 		t.Errorf("an old-path-only folder: %+v", o)
 	}
 }
