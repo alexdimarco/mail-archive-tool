@@ -481,7 +481,7 @@ func RunGraph(ctx context.Context, g GraphOptions, opts Options, logger *log.Log
 	// Deleted Items / Junk Email are excluded by default; the flags opt in (T7).
 	filter := graph.FolderFilter{IncludeDeleted: g.IncludeDeleted, IncludeJunk: g.IncludeJunk}
 
-	result = Result{Files: len(g.Mailboxes), ManifestBefore: manifestBefore}
+	result = Result{Files: len(g.Mailboxes), ManifestBefore: manifestBefore, FillableFrom: state.FromMicrosoft365}
 	var failures int
 	var firstErr error
 	unread := 0 // mailboxes a run-level stop left unread

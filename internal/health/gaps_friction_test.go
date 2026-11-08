@@ -123,7 +123,7 @@ func TestStatusHeadlinesSayEachRemedyOnceAndLabelTheSource(t *testing.T) {
 	in = gapInput(stuck)
 	rep = Assess(in, gapNow)
 	line = rep.Reasons[codeIndex(rep, "capture_gaps_stuck")]
-	if !strings.Contains(line, "have failed on every run since 2026-08-23") || !strings.Contains(line, "the rest of the archive is unaffected") {
+	if !strings.Contains(line, "1 message has failed on every run since 2026-08-23") || !strings.Contains(line, "the rest of the archive is unaffected") {
 		t.Errorf("stuck line %q; want the existing words and that only these items are affected", line)
 	}
 }
@@ -151,7 +151,7 @@ func TestStatusMoreLineCountsItemsAndNamesTheReport(t *testing.T) {
 		}
 	}
 	assure.Reached(t, more, "the +N more line")
-	for _, want := range []string{"+6 more entries", "4005 item(s)", "/a/attachments-report.tsv"} {
+	for _, want := range []string{"+6 more entries", "4,005 messages", "/a/attachments-report.tsv"} {
 		if !strings.Contains(more, want) {
 			t.Errorf("more line %q lacks %q", more, want)
 		}
@@ -199,7 +199,7 @@ func TestStatusTopBlockHasANotCapturedLine(t *testing.T) {
 	if at < 0 || !(msgs < at && at < posture) {
 		t.Fatalf("Not captured line at %d, Messages at %d, Posture at %d; want it between them:\n%s", at, msgs, posture, strings.Join(lines, "\n"))
 	}
-	for _, want := range []string{"3 item(s)", "1 stuck", "1 need action", "1 retried", "/a/attachments-report.tsv"} {
+	for _, want := range []string{"3 messages", "1 stuck", "1 need action", "1 retried", "/a/attachments-report.tsv"} {
 		if !strings.Contains(lines[at], want) {
 			t.Errorf("Not captured line %q lacks %q", lines[at], want)
 		}
@@ -291,7 +291,7 @@ func TestStatusWithNoRunRecordSaysSoAndKeepsTheTerminalWarn(t *testing.T) {
 		t.Fatalf("the terminal WARN vanished with the run record: %v", rep.Codes)
 	}
 	i := codeIndex(rep, "capture_gaps_not_attempted")
-	if i < 0 || !strings.Contains(rep.Reasons[i], "no run record") || !strings.Contains(rep.Reasons[i], "1 item(s)") {
+	if i < 0 || !strings.Contains(rep.Reasons[i], "no run record") || !strings.Contains(rep.Reasons[i], "1 message") {
 		t.Fatalf("note for the other gap: codes %v reasons %v; want one that names the missing run record", rep.Codes, rep.Reasons)
 	}
 	for _, l := range append(Summary(in, rep), rep.Reasons...) {

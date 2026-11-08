@@ -54,10 +54,18 @@ func missingGap(g state.CaptureGap) bool {
 	return g.Class == state.ClassFillable || g.Class == state.ClassTerminal
 }
 
-// countGaps phrases a set of gaps as "N item(s)", "F folder(s)" or both: items
-// and folders are counted apart (FC23(3)), an overflow entry for the items it
-// absorbed.
+// countGaps phrases a set of gaps in the words a backup's outcome is told in
+// (design-plain-failure-words; the 1.6.1 friction review's P4, MA-1154): "3 messages",
+// "1 folder" or "2 messages and 1 folder", the digits grouped — never "item(s)". Items and
+// folders are counted apart (FC23(3)), an overflow entry for the items it absorbed.
 func countGaps(gaps []state.CaptureGap) string {
+	w, _ := countGapsN(gaps)
+	return w
+}
+
+// countGapsN is countGaps with whether the words are one thing (the verb after them agrees:
+// "1 message has", "2 messages have").
+func countGapsN(gaps []state.CaptureGap) (string, bool) {
 	items, folders := 0, 0
 	for _, g := range gaps {
 		if g.Scope == state.GapScopeFolder {
@@ -66,13 +74,22 @@ func countGaps(gaps []state.CaptureGap) string {
 			items += g.Weight()
 		}
 	}
+	one := items+folders == 1
 	switch {
 	case items > 0 && folders > 0:
-		return fmt.Sprintf("%d item(s) and %d folder(s)", items, folders)
+		return state.Count(items, "message", "messages") + " and " + state.Count(folders, "folder", "folders"), one
 	case folders > 0:
-		return fmt.Sprintf("%d folder(s)", folders)
+		return state.Count(folders, "folder", "folders"), one
 	}
-	return fmt.Sprintf("%d item(s)", items)
+	return state.Count(items, "message", "messages"), one
+}
+
+// agree picks the verb form for a count's words: one for a single thing, many otherwise.
+func agree(single bool, one, many string) string {
+	if single {
+		return one
+	}
+	return many
 }
 
 // kindLabel names a source kind in a headline ("" for an unknown one).
@@ -292,15 +309,17 @@ func assessCaptureGaps(r *Report, in Input, now time.Time) {
 				first = g.FirstRun
 			}
 		}
-		r.warn("capture_gaps_stuck", fmt.Sprintf("%s have failed on every run since %s (each run could not capture them; the rest of the archive is unaffected) — %s%s",
-			countGaps(stuck), first.UTC().Format("2006-01-02"), remedyFor(in, stuck, true, false, false), deletionTrackingNote(stuck)))
+		what, one := countGapsN(stuck)
+		r.warn("capture_gaps_stuck", fmt.Sprintf("%s %s failed on every run since %s (each run could not capture %s; the rest of the archive is unaffected) — %s%s",
+			what, agree(one, "has", "have"), first.UTC().Format("2006-01-02"), agree(one, "it", "them"), remedyFor(in, stuck, true, false, false), deletionTrackingNote(stuck)))
 	}
 	if len(fillable) > 0 {
 		when := "whenever the archive runs again"
 		if in.HasDescriptor {
 			when = "automatically whenever the archive runs again"
 		}
-		msg := fmt.Sprintf("%s could not be captured on the last run; they are retried %s", countGaps(fillable), when)
+		what, one := countGapsN(fillable)
+		msg := fmt.Sprintf("%s could not be captured on the last run; %s retried %s", what, agree(one, "it is", "they are"), when)
 		if in.ReportExists {
 			msg += fmt.Sprintf(" (see %s)", in.ReportPath)
 		}
@@ -315,7 +334,8 @@ func assessCaptureGaps(r *Report, in Input, now time.Time) {
 		r.warn("capture_gaps_fillable", msg)
 	}
 	if len(terminal) > 0 {
-		msg := fmt.Sprintf("%s are NOT in this archive and will not be without action", countGaps(terminal))
+		what, one := countGapsN(terminal)
+		msg := fmt.Sprintf("%s %s NOT in this archive and will not be without action", what, agree(one, "is", "are"))
 		if in.ReportExists {
 			msg += fmt.Sprintf(" (see %s)", in.ReportPath)
 		}
@@ -336,12 +356,13 @@ func assessCaptureGaps(r *Report, in Input, now time.Time) {
 		if len(sources) > 1 {
 			from = fmt.Sprintf("from %d sources", len(sources))
 		}
+		what, one := countGapsN(notAttempted)
 		if in.noRunRecord() {
-			r.note("capture_gaps_not_attempted", fmt.Sprintf("%s %s were never captured; there is %s (.mailarchive-lastrun.json), so whether a run is still retrying them cannot be judged — run mailarchive against the source again",
-				countGaps(notAttempted), from, in.noRecordText()))
+			r.note("capture_gaps_not_attempted", fmt.Sprintf("%s %s %s never captured; there is %s (.mailarchive-lastrun.json), so whether a run is still retrying %s cannot be judged — run mailarchive against the source again",
+				what, from, agree(one, "was", "were"), in.noRecordText(), agree(one, "it", "them")))
 		} else {
-			r.note("capture_gaps_not_attempted", fmt.Sprintf("%s %s were never captured (last attempted %s; this source or folder is not in recent runs)",
-				countGaps(notAttempted), from, last.UTC().Format("2006-01-02")))
+			r.note("capture_gaps_not_attempted", fmt.Sprintf("%s %s %s never captured (last attempted %s; this source or folder is not in recent runs)",
+				what, from, agree(one, "was", "were"), last.UTC().Format("2006-01-02")))
 		}
 	}
 }
@@ -394,10 +415,10 @@ func gapLine(in Input, g state.CaptureGap, now time.Time) string {
 	case g.Scope == state.GapScopeFolder:
 		b.WriteString(why)
 		if g.Skipped > 0 {
-			fmt.Fprintf(&b, " (%d item(s) not read)", g.Skipped)
+			fmt.Fprintf(&b, " (%s not read)", state.Count(g.Skipped, "message", "messages"))
 		}
 	case g.Scope == state.GapScopeOverflow:
-		fmt.Fprintf(&b, "%d more item(s): %s", g.Skipped, why)
+		fmt.Fprintf(&b, "%s more: %s", state.Count(g.Skipped, "message", "messages"), why)
 	default:
 		if g.Subject != "" {
 			fmt.Fprintf(&b, "%q", util.StripControl(g.Subject))
@@ -468,7 +489,7 @@ func (in Input) anyKind(gaps []state.CaptureGap, kind string) bool {
 func moreLine(in Input, rest []state.CaptureGap) string {
 	n := len(rest)
 	what := fmt.Sprintf("+%d more", n)
-	if counted := countGaps(rest); counted != fmt.Sprintf("%d item(s)", n) {
+	if counted := countGaps(rest); counted != state.Count(n, "message", "messages") {
 		what = fmt.Sprintf("+%d more entries (%s)", n, counted)
 	}
 	line := "  " + what + " — see the report"

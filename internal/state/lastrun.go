@@ -18,11 +18,24 @@ import (
 // Windows in double quotes as it is (a Windows path holds no double quote), elsewhere in single
 // quotes, an embedded single quote closed and reopened. Never Go's %q, which doubled every
 // Windows backslash (friction review of plain-failure-words, 2026-11-07).
+//
+// A Windows folder that ends in a backslash (a drive root E:\, a share root) would have that
+// backslash read as escaping the closing quote by the C runtime's rule, so its trailing
+// backslashes are doubled inside the quotes, which the rule reads back as one each (the same
+// rule as encmark.CommandPath; MA-1158).
 func typedPath(path, goos string) string {
 	if goos == "windows" {
-		return `"` + path + `"`
+		trail := len(path) - len(strings.TrimRight(path, `\`))
+		return `"` + path + strings.Repeat(`\`, trail) + `"`
 	}
 	return "'" + strings.ReplaceAll(path, "'", `'\''`) + "'"
+}
+
+// noticeTime is when a run ended as a notice says it: the reader's own local time with its
+// offset from UTC, as the alert email gives local time (the 1.6.1 friction review's P5,
+// MA-1155), never UTC in ISO form.
+func noticeTime(t time.Time) string {
+	return t.Local().Format("2006-01-02 15:04:05 -07:00")
 }
 
 // LastRunName is the archive-local record of the most recent run (R18).
@@ -120,6 +133,10 @@ type LastRun struct {
 	// tells it in the kinds' words. Status stays "failed" (the S1a mapping), and an encrypted
 	// archive's record never carries it (its allow-list, encryptedLastRun).
 	Partial *PartialCounts `json:"partial,omitempty"`
+	// FillableFrom is the kind of mail the run read (a From* value, MA-1157; additive), so the
+	// words for its messages not downloaded in full yet name a mail app only when it read one's
+	// store. Absent on an older record, for a mix of kinds, and on an encrypted archive's.
+	FillableFrom string `json:"fillable_from,omitempty"`
 
 	// Undecodable and FidelityFallback (design-mime-fidelity §4.9, MC19; additive,
 	// omitted when zero) are how many records, at the end of this run, carry a part this
@@ -268,7 +285,7 @@ func updateAttentionSidecar(out string, r LastRun) {
 			"MailArchive, download it from its official page:\n"+
 			"  https://github.com/alexdimarco/mail-archive-tool/releases\n"+
 			"This file is removed automatically after the next backup that succeeds.\n",
-			out, r.Finished.UTC().Format(time.RFC3339), reason, typedPath(out, runtime.GOOS))
+			out, noticeTime(r.Finished), reason, typedPath(out, runtime.GOOS))
 		_ = writeSidecarAtomic(path, []byte(body))
 	case RunOK:
 		_ = os.Remove(path)
@@ -285,7 +302,7 @@ func partialAttention(out string, r LastRun) string {
 		"When:    %s\n\n"+
 		"Everything else it found was saved, and the messages already in this folder\n"+
 		"are unaffected — open index.html in a web browser to read them. What it could\n"+
-		"not save, and what to do:\n\n", out, r.Finished.UTC().Format(time.RFC3339))
+		"not save, and what to do:\n\n", out, noticeTime(r.Finished))
 	for _, s := range PartialSentences(*r.Partial) {
 		b.WriteString("  - " + s + "\n")
 	}
@@ -352,6 +369,7 @@ func ReadLastRun(out string) (LastRun, LastRunState, error) {
 	}
 	// A planted record's kinds are said only when they are counts (design-plain-failure-words).
 	r.Partial = r.Partial.sane()
+	r.FillableFrom = FillableFrom(r.FillableFrom) // a closed set (MA-1157)
 	// The sync's strings too (design-presync-attended §4.2, C-37): every surface shows
 	// its name only through a closed map, and none of them is echoed raw.
 	if p := r.Presync; p != nil {
@@ -568,10 +586,10 @@ func updateIntegritySidecar(out string, v LastVerify) {
 			"  - Restore the affected files from a backup, or re-export them from the\n"+
 			"    original mail source.\n"+
 			"  - Then run\n"+
-			"      mailarchive verify -out %q\n"+
+			"      mailarchive verify -out %s\n"+
 			"    again — it names each affected file and confirms the archive is intact.\n"+
 			"This file is removed automatically once a verify attests (every file intact).\n",
-			out, when, v.Modified, v.Missing, out)
+			out, when, v.Modified, v.Missing, typedPath(out, runtime.GOOS))
 		_ = writeSidecarAtomic(path, []byte(body))
 	case v.Attested:
 		_ = os.Remove(path)

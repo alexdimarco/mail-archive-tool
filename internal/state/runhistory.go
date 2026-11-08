@@ -55,6 +55,9 @@ type RunHistoryEntry struct {
 	// full (MA-1149): plaintext entries only, absent when none and on an older entry.
 	Partial  *PartialCounts `json:"partial,omitempty"`
 	Fillable int            `json:"fillable,omitempty"`
+	// FillableFrom is the kind of mail the run read (a From* value, MA-1157), so Recent backups
+	// words its messages not downloaded in full by where they came from: plaintext entries only.
+	FillableFrom string `json:"fillable_from,omitempty"`
 }
 
 // minimal is e as an encrypted archive keeps it: when, the outcome and the kind.
@@ -92,6 +95,7 @@ func ReadRunHistory(out string) ([]RunHistoryEntry, error) {
 		if e.Fillable < 0 {
 			e.Fillable = 0
 		}
+		e.FillableFrom = FillableFrom(e.FillableFrom) // a closed set (MA-1157)
 	}
 	return h, nil
 }
@@ -130,7 +134,7 @@ func RunHistoryEntryFrom(lr LastRun) RunHistoryEntry {
 		return RunHistoryEntry{When: lr.Finished, Status: lr.Status, ErrorKind: lr.ErrorKind}.minimal()
 	}
 	e := RunHistoryEntry{When: lr.Finished, Status: lr.Status, Exported: lr.Exported, Filled: lr.Filled, Mode: lr.Mode, Error: lr.Error,
-		Partial: lr.Partial, Fillable: lr.Fillable}
+		Partial: lr.Partial, Fillable: lr.Fillable, FillableFrom: lr.FillableFrom}
 	if lr.Presync != nil {
 		e.Presync = lr.Presync.Name // the sync's outcome name (design-presync-attended §4.3)
 	}

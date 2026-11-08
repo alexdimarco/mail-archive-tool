@@ -307,6 +307,49 @@ func HolderVerb(path string) string {
 	return ""
 }
 
+// HolderHost returns the computer name the current holder recorded ("host=…"), or "" when
+// the line names none or cannot be read. Like Holder it is untrusted content: only the
+// characters a computer name is made of are kept (letters, digits, '-', '.', '_'), at most
+// maxHostLen of them, so it can be named to a person without forging anything.
+func HolderHost(path string) string {
+	for _, field := range strings.Fields(readHolderN(path, 1024)) {
+		if v, ok := strings.CutPrefix(field, "host="); ok {
+			return sanitizeHost(v)
+		}
+	}
+	return ""
+}
+
+// sanitizeHost keeps a computer name to the characters one is made of, bounded.
+func sanitizeHost(h string) string {
+	h = strings.Map(func(r rune) rune {
+		switch {
+		case r >= 'a' && r <= 'z', r >= 'A' && r <= 'Z', r >= '0' && r <= '9', r == '-', r == '.', r == '_':
+			return r
+		default:
+			return -1
+		}
+	}, h)
+	if len(h) > maxHostLen {
+		h = h[:maxHostLen]
+	}
+	return strings.Trim(h, ".-_")
+}
+
+// maxHostLen bounds a holder's computer name: a DNS name's longest label and a little more
+// (a Windows computer name is at most 15 characters).
+const maxHostLen = 64
+
+// SameHost reports whether a and b name the same computer: equal ignoring case, or with the
+// same first label (a Windows name and its full DNS name, "ALEX-PC" and "alex-pc.home").
+func SameHost(a, b string) bool {
+	if a == "" || b == "" {
+		return false
+	}
+	first := func(s string) string { s, _, _ = strings.Cut(s, "."); return s }
+	return strings.EqualFold(a, b) || strings.EqualFold(first(a), first(b))
+}
+
 func readHolder(path string) string { return readHolderN(path, 256) }
 
 // readHolderN reads up to max bytes of the holder line, control characters

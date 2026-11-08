@@ -271,6 +271,9 @@ type Result struct {
 	Fillable   int    // manifest records still missing content an on-demand source may deliver (a record that is only partly read is counted in Unreadable instead)
 	Terminal   int    // records missing content the source can never deliver (recorded, never retried)
 	Unknown    int    // legacy records not yet re-examined (migrated from a version-1 manifest)
+	// FillableFrom is the kind of mail the run read (a state.From* value; "" not known), so the
+	// words for its messages not downloaded in full say where they came from (MA-1157).
+	FillableFrom string
 
 	// Fault isolation (§4.2). Unreadable and Unparsed are the manifest's partly-read
 	// and unparsed records; Gaps is what this run observed in the capture-gap
@@ -936,7 +939,7 @@ func Run(ctx context.Context, opts Options, logger *log.Logger, onProgress Progr
 			lockLost = err
 		}
 	}
-	result = Result{Files: len(files), ManifestBefore: manifestBefore}
+	result = Result{Files: len(files), ManifestBefore: manifestBefore, FillableFrom: fillableFrom(files)}
 	var failures int
 	var firstFailed string
 	var firstErr error
@@ -1420,6 +1423,9 @@ func recordRun(opts Options, lr state.LastRun, result *Result, err *error, logge
 	}
 	lr.Exported, lr.Filled = result.Stats.Exported, result.Stats.Filled
 	lr.Fillable, lr.Terminal, lr.Unknown, lr.IndexErrors = result.Fillable, result.Terminal, result.Unknown, result.IndexErrors
+	if !lr.Encrypted { // where the run read its mail: plaintext only, beside its count (MA-1157)
+		lr.FillableFrom = result.FillableFrom
+	}
 	// What this run observed in the capture-gap ledger (additive; a monitor keys on
 	// gaps_new, FC23(2)). A partial run is recorded as the failure it maps to in
 	// S1a: status "failed" with the *PartialError's one-line text.

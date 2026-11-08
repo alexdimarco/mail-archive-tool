@@ -27,7 +27,10 @@ func TestTheRecentBackupsCardTagsTheSync(t *testing.T) {
 	at := time.Date(2026, 10, 30, 9, 0, 0, 0, time.UTC)
 	names := []string{"", "ok", "ok-noactivity", "watch-truncated-noactivity", "quit-no-window", "start-blocked", "wait-ended", "cancelled", "\x1b[31mrm -rf <b>evil</b>"}
 	for i, n := range names {
-		if err := state.AppendRunHistory(out, state.RunHistoryEntry{When: at.Add(time.Duration(i) * time.Minute), Status: state.RunOK, Exported: 1, Presync: n}); err != nil {
+		// Each run archived a different count, so no two rows say the same words: Recent backups
+		// tells runs in a row that ended in the same words once (MA-1152), and two of these names
+		// share a tag.
+		if err := state.AppendRunHistory(out, state.RunHistoryEntry{When: at.Add(time.Duration(i) * time.Minute), Status: state.RunOK, Exported: 1 + i, Presync: n}); err != nil {
 			t.Fatal(err)
 		}
 	}

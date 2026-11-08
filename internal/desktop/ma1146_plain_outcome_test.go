@@ -51,7 +51,7 @@ func TestRecentBackupsTellsEachRunAsItEnded(t *testing.T) {
 	if r.Status != "Incomplete" || !r.Failed || r.Detail != wantDetail || r.Sync != "Thunderbird was already open, so the backup left it alone" {
 		t.Errorf("the partial run's row: %+v\nwant detail %q", r, wantDetail)
 	}
-	if ok := rows[2]; ok.Status != "OK" || ok.Detail != "12 messages · "+state.NotDownloadedSentence(420) {
+	if ok := rows[2]; ok.Status != "OK" || ok.Detail != "12 messages · "+state.NotDownloadedSentence(420, "") {
 		t.Errorf("the finished run's row: %+v", ok)
 	}
 	if old := rows[3]; old.Status != "Failed" || old.Detail != "partial: 1 item(s) not captured — see attachments-report.tsv" {

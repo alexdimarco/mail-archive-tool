@@ -761,7 +761,7 @@ func assessKeyless(r *Report, in Input, now time.Time) {
 			if in.HasVerifyDescriptor {
 				sched = fmt.Sprintf("; check its log %s (the verify started %s local time) — the next scheduled run of %q also replaces this record", verifyLogHint(in), lv.Started.Local().Format("2006-01-02 15:04"), in.VerifyDesc.Name)
 			}
-			r.warn("verify_never_finished", fmt.Sprintf("the verify started %s UTC never finished (Ctrl-C, crash, kill, or power loss) — run `%s` again; the last finished verify's verdict is still reported%s", started, verifyCommand(in.Out, lv), sched))
+			r.warn("verify_never_finished", fmt.Sprintf("the verify started %s UTC never finished (Ctrl-C, crash, kill, or power loss) — run `%s` again; the last finished verify's verdict is still reported%s", started, verifyCommand(outArg(in), lv), sched))
 		}
 		judge = lv.Previous != nil
 		if judge {
@@ -771,7 +771,7 @@ func assessKeyless(r *Report, in Input, now time.Time) {
 	// A check stopped on purpose (phase3 §8) attests nothing and changes nothing: a
 	// note, and the last finished verdict it carries is judged as usual.
 	if judge && lv.Status == state.VerifyStopped {
-		r.note("verify_stopped", fmt.Sprintf("the last check (started %s UTC) was stopped before it finished — the last finished check's result still stands; run `%s` to check again", lv.Started.UTC().Format("2006-01-02 15:04"), verifyCommand(in.Out, lv)))
+		r.note("verify_stopped", fmt.Sprintf("the last check (started %s UTC) was stopped before it finished — the last finished check's result still stands; run `%s` to check again", lv.Started.UTC().Format("2006-01-02 15:04"), verifyCommand(outArg(in), lv)))
 		judge = lv.Previous != nil
 		if judge {
 			lv = *lv.Previous
@@ -798,7 +798,7 @@ func assessKeyless(r *Report, in Input, now time.Time) {
 		}
 		reason := fmt.Sprintf("the last %s of this encrypted archive (%s UTC): %s", check, when, text)
 		if state.TierOf(&lv) == state.TierFull && state.OutcomeIsRed(lv.Outcome) {
-			reason += fullRedClears(in.Out) // the P3-2b pass, REC-05
+			reason += fullRedClears(outArg(in)) // the P3-2b pass, REC-05
 		}
 		switch {
 		case state.OutcomeIsRed(lv.Outcome):
@@ -813,7 +813,7 @@ func assessKeyless(r *Report, in Input, now time.Time) {
 			if s.Finished != nil {
 				since = s.Finished.UTC().Format("2006-01-02 15:04")
 			}
-			r.red("verify_"+s.Outcome, fmt.Sprintf("an earlier check with the key of this encrypted archive (%s UTC) found: %s%s", since, state.OutcomeTextFor(s.Outcome, state.TierFull), fullRedClears(in.Out)))
+			r.red("verify_"+s.Outcome, fmt.Sprintf("an earlier check with the key of this encrypted archive (%s UTC) found: %s%s", since, state.OutcomeTextFor(s.Outcome, state.TierFull), fullRedClears(outArg(in))))
 		}
 	} else if judge && lv.Status == state.VerifyDone {
 		when := ""
@@ -822,15 +822,15 @@ func assessKeyless(r *Report, in Input, now time.Time) {
 		}
 		switch {
 		case lv.Modified+lv.Missing > 0:
-			r.red("not_attested", fmt.Sprintf("the last verify (%s UTC) found the archive NOT intact: %d modified, %d missing — restore the affected files from a backup or re-export them from the source, then run `mailarchive verify -out %q` again", when, lv.Modified, lv.Missing, in.Out))
+			r.red("not_attested", fmt.Sprintf("the last verify (%s UTC) found the archive NOT intact: %d modified, %d missing — restore the affected files from a backup or re-export them from the source, then run `mailarchive verify -out %s` again", when, lv.Modified, lv.Missing, outArg(in)))
 		case lv.Unrecorded > 0:
-			r.warn("verify_unrecorded", fmt.Sprintf("the last verify (%s UTC) left %d file(s) with no recorded fixity — run `mailarchive verify -record -out %q` to baseline them", when, lv.Unrecorded, in.Out))
+			r.warn("verify_unrecorded", fmt.Sprintf("the last verify (%s UTC) left %d file(s) with no recorded fixity — run `mailarchive verify -record -out %s` to baseline them", when, lv.Unrecorded, outArg(in)))
 		}
 		// Exit 1 on a produced report is an error after the check (a -record
 		// baseline whose save failed): its counts stand, but it did not finish
 		// cleanly, so say so (F79).
 		if lv.ExitCode == 1 {
-			r.warn("verify_failed", fmt.Sprintf("the last verify (%s UTC) checked the archive but then failed with an error (see its log) — fix the cause and run `mailarchive verify -out %q` again", when, in.Out))
+			r.warn("verify_failed", fmt.Sprintf("the last verify (%s UTC) checked the archive but then failed with an error (see its log) — fix the cause and run `mailarchive verify -out %s` again", when, outArg(in)))
 		}
 	}
 	assessVerifySchedule(r, in, now)
@@ -842,11 +842,11 @@ func assessKeyless(r *Report, in Input, now time.Time) {
 	// the next run heals; other unreadable lines are a WARN that reindex compacts.
 	switch {
 	case in.HistoryReadErr != nil:
-		r.red("history_unreadable", fmt.Sprintf("the go-back history log %s could not be read (%s) — the point-in-time view is unavailable; run `mailarchive reindex -out %q` to compact and heal the log", filepath.Join(in.Out, state.HistoryName), util.StripControl(in.HistoryReadErr.Error()), in.Out))
+		r.red("history_unreadable", fmt.Sprintf("the go-back history log %s could not be read (%s) — the point-in-time view is unavailable; run `mailarchive reindex -out %s` to compact and heal the log", filepath.Join(in.Out, state.HistoryName), util.StripControl(in.HistoryReadErr.Error()), outArg(in)))
 	case in.History.Exists && in.History.TornTail && in.History.BadLines <= 1:
-		r.warn("history_torn_tail", fmt.Sprintf("the go-back history log has a torn tail (a run crashed mid-line) — the next run repairs it, or run `mailarchive reindex -out %q` to compact and heal it now; past-date views may be incomplete until then", in.Out))
+		r.warn("history_torn_tail", fmt.Sprintf("the go-back history log has a torn tail (a run crashed mid-line) — the next run repairs it, or run `mailarchive reindex -out %s` to compact and heal it now; past-date views may be incomplete until then", outArg(in)))
 	case in.History.Exists && (in.History.BadLines > 0 || in.History.TornTail):
-		r.warn("history_corrupt", fmt.Sprintf("the go-back history log has %d unreadable line(s) — those events are skipped, so past-date views may be incomplete; run `mailarchive reindex -out %q` to compact the log", in.History.BadLines, in.Out))
+		r.warn("history_corrupt", fmt.Sprintf("the go-back history log has %d unreadable line(s) — those events are skipped, so past-date views may be incomplete; run `mailarchive reindex -out %s` to compact the log", in.History.BadLines, outArg(in)))
 	}
 
 	// A scheduled backup that cannot write into its archive folder fails every
@@ -1034,7 +1034,7 @@ func rebuildHow(in Input) string {
 	case "gui":
 		return "choose \"Rebuild the search index\" below to rebuild it from your archive"
 	}
-	return fmt.Sprintf("rebuild it from the archive with `mailarchive reindex -rebuild -out %q`", in.Out)
+	return fmt.Sprintf("rebuild it from the archive with `mailarchive reindex -rebuild -out %s`", outArg(in))
 }
 
 // repairHow renders how to repair a recorded backup schedule, in the words of
@@ -1354,7 +1354,7 @@ func assessVerifySchedule(r *Report, in Input, now time.Time) {
 		switch {
 		case !last.IsZero() && now.Sub(last) > 2*period && vd.InstalledAt.After(last) && now.Sub(vd.InstalledAt) <= 2*period:
 			// Re-installing would change nothing here; a verify run now clears it.
-			r.warn("verify_stale", fmt.Sprintf("%s, more than twice the %s verify schedule period of %q — that schedule was installed %s ago, after the last verify, and has not run since: wait for its next run (%s), or run `mailarchive verify -out %q` now", lastWhat, vd.Interval, vd.Name, HumanAge(now.Sub(vd.InstalledAt)), cadenceOf(vd), in.Out))
+			r.warn("verify_stale", fmt.Sprintf("%s, more than twice the %s verify schedule period of %q — that schedule was installed %s ago, after the last verify, and has not run since: wait for its next run (%s), or run `mailarchive verify -out %s` now", lastWhat, vd.Interval, vd.Name, HumanAge(now.Sub(vd.InstalledAt)), cadenceOf(vd), outArg(in)))
 		case !last.IsZero() && now.Sub(last) > 2*period && vd.InstalledAt.After(last):
 			r.warn("verify_stale", fmt.Sprintf("no verify has run in the %s since the %s verify schedule %q was installed, more than twice its period (%s, before the install) — %s", HumanAge(now.Sub(vd.InstalledAt)), vd.Interval, vd.Name, lastWhat, verifyStaleRemedy(in)))
 		case !last.IsZero() && now.Sub(last) > 2*period:
@@ -1366,7 +1366,7 @@ func assessVerifySchedule(r *Report, in Input, now time.Time) {
 		// reported once, by the last-verify block in Assess, which also knows
 		// which verb holds the lock; this function only judges its staleness.
 		if in.LastVerifyState == state.LastVerifyUnreadable {
-			r.warn("lastverify_unreadable", fmt.Sprintf("the last-verify record %s is unreadable (%s), so the scheduled verify %q cannot be judged — the next verify rewrites it, or run `mailarchive verify -out %q` now", filepath.Join(in.Out, state.LastVerifyName), lastVerifyCause(in), vd.Name, in.Out))
+			r.warn("lastverify_unreadable", fmt.Sprintf("the last-verify record %s is unreadable (%s), so the scheduled verify %q cannot be judged — the next verify rewrites it, or run `mailarchive verify -out %s` now", filepath.Join(in.Out, state.LastVerifyName), lastVerifyCause(in), vd.Name, outArg(in)))
 		}
 		return
 	}
@@ -1374,13 +1374,13 @@ func assessVerifySchedule(r *Report, in Input, now time.Time) {
 		// With no verify schedule there is nothing to judge staleness by, but the
 		// record may have held an earlier RED: it is never silent (F79; the fix
 		// re-verification, FV-R-03).
-		r.warn("lastverify_unreadable", fmt.Sprintf("the last-verify record %s is unreadable (%s), so its last verdict cannot be judged — run `mailarchive verify -out %q` to check the archive again", filepath.Join(in.Out, state.LastVerifyName), lastVerifyCause(in), in.Out))
+		r.warn("lastverify_unreadable", fmt.Sprintf("the last-verify record %s is unreadable (%s), so its last verdict cannot be judged — run `mailarchive verify -out %s` to check the archive again", filepath.Join(in.Out, state.LastVerifyName), lastVerifyCause(in), outArg(in)))
 	}
 	if in.VerifyDescErr != nil && !errors.Is(in.VerifyDescErr, os.ErrNotExist) {
 		r.warn("verify_descriptor_unreadable", in.VerifyDescErr.Error())
 	}
 	if isVerifyJob(in.Desc.Job) && done && now.Sub(checked) > 2*IntervalOf(in.Desc.Interval) {
-		r.warn("verify_stale", fmt.Sprintf("the last verify was %s ago, more than twice the %s verify schedule period — schedule it, or run `mailarchive verify -out %q`", HumanAge(now.Sub(checked)), in.Desc.Interval, in.Out))
+		r.warn("verify_stale", fmt.Sprintf("the last verify was %s ago, more than twice the %s verify schedule period — schedule it, or run `mailarchive verify -out %s`", HumanAge(now.Sub(checked)), in.Desc.Interval, outArg(in)))
 	}
 }
 
@@ -1430,7 +1430,7 @@ func verifyStaleRemedy(in Input) string {
 	// lock is running now (or hung): re-installing changes nothing, and another
 	// verify would collide with the lock (K3).
 	if in.LockHeld && in.LastVerifyState == state.LastVerifyPresent && in.LastVerify.Status == state.VerifyRunning {
-		return fmt.Sprintf("a verify holds the archive lock and is still running: let it finish (its log is %s), or, if it is hung, end its process and run `mailarchive verify -out %q`", verifyLogHint(in), in.Out)
+		return fmt.Sprintf("a verify holds the archive lock and is still running: let it finish (its log is %s), or, if it is hung, end its process and run `mailarchive verify -out %s`", verifyLogHint(in), outArg(in))
 	}
 	reinstall := verifyReinstall(in)
 	why := "it has stopped running here"
@@ -1443,7 +1443,7 @@ func verifyStaleRemedy(in Input) string {
 	default:
 		why = "it has stopped running, or another archive's verify installed under the same -name replaced it (on macOS and Windows a shared -name is not detected)"
 	}
-	return fmt.Sprintf("%s: re-install it with %s (no -name, so it has this archive's own entry), or run `mailarchive verify -out %q`", why, reinstall, in.Out)
+	return fmt.Sprintf("%s: re-install it with %s (no -name, so it has this archive's own entry), or run `mailarchive verify -out %s`", why, reinstall, outArg(in))
 }
 
 // sameArchivePath moved to schedule.SameArchivePath (§4.6.2/§4.6.5) so the kind
@@ -1540,7 +1540,7 @@ func scheduleRemedy(in Input) string {
 		}
 		return "keep it current by scheduling the same job that made this archive: " + scheduleCommand(job, in.GOOS)
 	}
-	return "keep it current by scheduling the same job that made this archive (e.g. `mailarchive schedule -out " + fmt.Sprintf("%q", in.Out) + " ... -install`)"
+	return "keep it current by scheduling the same job that made this archive (e.g. `mailarchive schedule -out " + outArg(in) + " ... -install`)"
 }
 
 // scheduleCommand renders a runnable `schedule … -install` line that repeats a
@@ -1585,9 +1585,29 @@ func shellQuoteToken(s, goos string) string {
 		return s
 	}
 	if goos == "windows" {
-		return `"` + strings.ReplaceAll(s, `"`, `""`) + `"`
+		// A token that ends in a backslash (a drive or share root) would have it read as
+		// escaping the closing quote by the C runtime's rule: its trailing backslashes are
+		// doubled inside the quotes, each read back as one (as encmark.CommandPath; MA-1158).
+		trail := len(s) - len(strings.TrimRight(s, `\`))
+		return `"` + strings.ReplaceAll(s, `"`, `""`) + strings.Repeat(`\`, trail) + `"`
 	}
 	return "'" + strings.ReplaceAll(s, "'", `'\''`) + "'"
+}
+
+// outArg is the archive's folder as status's commands name it (-out …). On Windows it is in
+// double quotes as it is typed, never Go's quoted form, which doubled every backslash (the 1.6.1
+// friction review's P8, MA-1158); its trailing backslashes are doubled so a drive or share root
+// keeps its closing quote (encmark.CommandPath's rule). Elsewhere it is unchanged.
+func outArg(in Input) string {
+	goos := in.GOOS
+	if goos == "" {
+		goos = runtime.GOOS
+	}
+	if goos == "windows" && !strings.Contains(in.Out, `"`) {
+		trail := len(in.Out) - len(strings.TrimRight(in.Out, `\`))
+		return `"` + in.Out + strings.Repeat(`\`, trail) + `"`
+	}
+	return fmt.Sprintf("%q", in.Out)
 }
 
 // unsafeTokenPlaceholder stands in for a Windows token no quoting makes inert.
@@ -2294,9 +2314,9 @@ func Summary(in Input, rep Report) []string {
 			// check the bytes; when some records lack a digest it also names the
 			// baseline remedy (FC12, friction #4).
 			if in.Messages > 0 {
-				fx := fmt.Sprintf("Fixity coverage: %d of %d records recorded (run `mailarchive verify -out %q` to check the bytes)", in.WithFixity, in.Messages, in.Out)
+				fx := fmt.Sprintf("Fixity coverage: %d of %d records recorded (run `mailarchive verify -out %s` to check the bytes)", in.WithFixity, in.Messages, outArg(in))
 				if in.WithFixity < in.Messages {
-					fx += fmt.Sprintf(" · run `mailarchive verify -record -out %q` to baseline the rest", in.Out)
+					fx += fmt.Sprintf(" · run `mailarchive verify -record -out %s` to baseline the rest", outArg(in))
 				}
 				lines = append(lines, fx)
 			}
@@ -2479,17 +2499,19 @@ const maxKeyFileRead = 1 << 20
 // verifyCommand is the verify that finishes or repeats lv's check: with -full for a
 // check with the key, which a check without it can neither finish nor clear (the
 // P3-2b pass, REC-07).
+// out is the folder as the command names it (outArg).
 func verifyCommand(out string, lv state.LastVerify) string {
 	if lv.Encrypted && state.TierOf(&lv) == state.TierFull {
-		return fmt.Sprintf("mailarchive verify -full -out %q", out)
+		return "mailarchive verify -full -out " + out
 	}
-	return fmt.Sprintf("mailarchive verify -out %q", out)
+	return "mailarchive verify -out " + out
 }
 
 // fullRedClears says what clears a red a check with the key found (the owner's
-// ruling, phase3 §8; the P3-2b pass, REC-05, CRIT-02).
+// ruling, phase3 §8; the P3-2b pass, REC-05, CRIT-02); out is the folder as the command
+// names it (outArg).
 func fullRedClears(out string) string {
-	return fmt.Sprintf(" — then run `mailarchive verify -full -out %q`: only a check with the key clears this, or restoring the folder from a backup copy", out)
+	return " — then run `mailarchive verify -full -out " + out + "`: only a check with the key clears this, or restoring the folder from a backup copy"
 }
 
 func verifyVerdict(lv state.LastVerify) string {

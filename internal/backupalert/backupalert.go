@@ -149,9 +149,22 @@ func deliver(cfg alert.Config, store graphconfig.SecretStore, out, result string
 		return false
 	}
 	if logger != nil {
-		logger.Printf("backup alert email sent (%s) to %s", result, cfg.To)
+		logger.Printf("backup alert email sent (%s) to %s", sentWhat(ev), cfg.To)
 	}
 	return true
+}
+
+// sentWhat names the email the job's log says was sent, as its subject says it: a partial run's
+// "did not save everything" and a busy skip's "skipped, the archive was still in use", never
+// "failed" for either (the 1.6.1 friction review's P9, MA-1159); any other result by its word.
+func sentWhat(ev alert.Event) string {
+	switch {
+	case ev.Partial:
+		return "did not save everything"
+	case ev.Busy:
+		return "skipped, the archive was still in use"
+	}
+	return ev.Result
 }
 
 // FireForRunDefault fires using the default Desktop settings path and OS secret store, for

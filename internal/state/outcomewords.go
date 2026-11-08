@@ -170,12 +170,56 @@ func PartialText(p PartialCounts, withReport bool) string {
 	return strings.Join(parts, " ")
 }
 
-// NotDownloadedSentence says that n messages in the archive are not on this computer yet in
-// full (fillable records: the mail app has not downloaded them), and that later backups add
-// them: what Recent backups and Run now say about them.
-func NotDownloadedSentence(n int) string {
-	return (Count(n, "message", "messages")) + " " + pick(n, "is", "are") + " not on this computer in full yet: your mail app (such as Thunderbird) has not downloaded " + pick(n, "it", "them") +
-		". Later backups add " + pick(n, "it", "them") + " once it has; opening " + pick(n, "it", "them") + " in your mail app makes it download " + pick(n, "it", "them") + " sooner."
+// Where the messages a backup could not read in full came from (fillable records), by the
+// kind of mail the run read (the 1.6.1 friction review's P7: never blame a mail app for a plain
+// file). The run's last-run record and its history entry carry it as "fillable_from"
+// (additive; plaintext only), and NotDownloadedSentence words it.
+const (
+	// FromThunderbird: the run read Thunderbird's own store, which downloads its mail over time.
+	FromThunderbird = "thunderbird"
+	// FromMailApp: the run read another mail app's own store (an Evolution IMAP cache, an
+	// Outlook .ost or the Outlook export), which may also download its mail over time.
+	FromMailApp = "mail_app"
+	// FromMailFile: the run read a mail file or folder no mail app keeps (an mbox, a maildir,
+	// a .pst), which holds only what was copied into it.
+	FromMailFile = "mail_file"
+	// FromMicrosoft365: the run read Microsoft 365, which hands over each message whole, so
+	// what is missing came into the archive another way.
+	FromMicrosoft365 = "microsoft365"
+)
+
+// FillableFrom is from as a reader keeps it from a record anyone who can write the archive
+// folder can write: one of the From* values, else "" (not known).
+func FillableFrom(from string) string {
+	switch from {
+	case FromThunderbird, FromMailApp, FromMailFile, FromMicrosoft365:
+		return from
+	}
+	return ""
+}
+
+// NotDownloadedSentence says that n messages in the archive are not in it in full yet
+// (fillable records), why, by where the run read them (from, a From* value; "" when it is not
+// known, as on an older record or for a mix of kinds), and that later backups add them: what
+// Recent backups and Run now say about them. It blames a mail app only for a mail app's own
+// store (the 1.6.1 friction review's P7).
+func NotDownloadedSentence(n int, from string) string {
+	msgs, is, it := Count(n, "message", "messages"), pick(n, "is", "are"), pick(n, "it", "them")
+	switch FillableFrom(from) {
+	case FromThunderbird:
+		return msgs + " " + is + " not on this computer in full: Thunderbird has not downloaded " + it + " yet. Later backups add " + it +
+			" once it has; opening " + it + " in Thunderbird makes it download " + it + " sooner."
+	case FromMailApp:
+		return msgs + " " + is + " not on this computer in full: your mail app has not downloaded " + it + " yet. Later backups add " + it +
+			" once it has; opening " + it + " in your mail app makes it download " + it + " sooner."
+	case FromMailFile:
+		return msgs + " " + is + " not in the archive in full: the mail file holds only part of " + pick(n, "this message", "these messages") +
+			"; if it is a copy, copy it again from its mail program. Later backups add " + it + " once the file holds " + it + " in full."
+	case FromMicrosoft365:
+		return msgs + " in this archive " + is + " not in it in full. " + pick(n, "It was", "They were") + " not read from Microsoft 365, which hands over each message whole, but from mail added to this archive another way; later backups of that mail add " + it + " once it holds " + it + " in full."
+	}
+	return msgs + " " + is + " not in the archive in full yet: the mail " + pick(n, "it was", "they were") + " read from does not hold all of " + pick(n, "its", "their") +
+		" content yet (a mail app still downloading, or a mail file that is only a partial copy). Later backups add " + it + " once it does."
 }
 
 // countWords is a kind's count in words: "4 messages", "1 folder", "2 messages and 1 folder".

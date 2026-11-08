@@ -176,5 +176,5 @@ func encryptedAttention(r LastRun) string {
 		"added, not that the archive is damaged.\n\n"+
 		"What to do: open MailArchive and look at this archive's status for the\n"+
 		"remedy. This file is removed automatically after the next run that succeeds.\n",
-		r.Finished.UTC().Format(time.RFC3339), FailureText(r.ErrorKind))
+		noticeTime(r.Finished), FailureText(r.ErrorKind))
 }

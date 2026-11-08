@@ -2,6 +2,7 @@ package app
 
 import (
 	"errors"
+	"os"
 	"path/filepath"
 	"strings"
 	"time"
@@ -11,8 +12,9 @@ import (
 
 // busyError is a run refused because another run holds the archive's lock, in plain
 // words: what is using the archive and since when, said once — never the lock's own
-// diagnostics (process id, host, nonce, full lock path; P3-8 friction, B15). It still
-// matches lockfile.ErrHeld.
+// diagnostics (process id, host line, nonce, full lock path; P3-8 friction, B15); only a
+// holder that may be stuck on another computer is named by that computer's name (MA-1153).
+// It still matches lockfile.ErrHeld.
 type busyError struct {
 	msg string
 	err error
@@ -50,6 +52,13 @@ func busyWords(lockPath string, now time.Time) string {
 	lock := "(its lock file, " + lockfile.Name + ")"
 	lead := busyLead(verb) + since + " — this backup was skipped"
 	if stuck {
+		// An archive on a shared drive may be held from another computer, which the holder line
+		// names: restarting this one would not end it (the 1.6.1 friction review's P3, MA-1153).
+		// The name is the line's own, kept to a computer name's characters (lockfile.HolderHost).
+		if host := lockfile.HolderHost(lockPath); host != "" && !lockfile.SameHost(host, thisHost()) {
+			return lead + ". It started more than a day ago on another computer, " + host + ", and still keeps this archive in use " + lock +
+				", so it may be stuck: if it should have finished by now, restart the computer " + host + " to end it (restarting this one does not); the next backup then runs as usual."
+		}
 		return lead + ". It started more than a day ago and still keeps this archive in use " + lock + ", so it may be stuck: if it should have finished by now, restart the computer to end it; the next backup then runs as usual."
 	}
 	switch verb {
@@ -60,6 +69,9 @@ func busyWords(lockPath string, now time.Time) string {
 	}
 	return lead + "; nothing is wrong. Try again when it finishes: until then it keeps this archive in use " + lock + "."
 }
+
+// thisHost is this computer's name, as the lock's holder line records it; a test sets it.
+var thisHost = func() string { h, _ := os.Hostname(); return h }
 
 // busyLead names what holds the archive's lock to the person whose backup it skipped, from the
 // verb its holder line records; an encrypted archive's lock names no verb (A18).
