@@ -2925,6 +2925,28 @@ owner-sized archive, and reading speed on the owner's disk.
 This re-read is the folding agent's, not independent. An independent re-check of the check-first fold
 is owed before D2.
 
+## 24. The lead's calls on §22 and §23's open items (2026-11-07)
+
+Folded 2026-11-07 [dedup check-first lead's calls] (lead's call).
+
+- **A merge stopped by a changed file (an outside writer) stays stopped in version 1**: accepted, as the
+  fail-safe direction. Its words must give the person a way forward without the manual: what changed
+  (the file's name, kept, nothing removed), the likely cause ("a sync app or another computer changed
+  this archive while it was being tidied"), what to do (pause that sync app or stop backups on the other
+  computer, then choose Resume tidy-up / run `mailarchive merge-copies -resume`, which re-checks from
+  the start), and, if the resume stops again, the report link. While stopped, scheduled backups of this
+  archive are refused with these same words and count toward the alert streak, so the person is told by
+  email too. A way to abandon a stopped merge (keeping every remaining file shown as mail) is a future
+  design with its own review, not version 1.
+- **Plain `verify` is read-only during a merge; `verify -record` refuses**: accepted (the folding
+  agent's call, §22).
+- **The folding agent's other calls are accepted**: batches of whole groups of about 5,000 copies;
+  re-hashing the zip and page before deleting them as well as the `.eml`; the fallback of rebuilding
+  folder pages once at the end if per-batch rebuilds prove slow (to be measured in D2 on an owner-sized
+  fake archive, not assumed); the new field names. The words go to the owner's sign-off on D2's words.
+- **Restore to Thunderbird and extract during a merge**: slice D2 traces both and adds a test row; the
+  rule is that each either refuses while `MergePending` is set or reads only shown records.
+
 ---
 
 Folded by a model answering under no name, a fresh instance that has not met the record before, for
