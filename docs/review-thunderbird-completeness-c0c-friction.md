@@ -269,3 +269,237 @@ Thunderbird there is nothing to turn on)". The rest is the same.
 - The wizard dialog on screen, on any platform. Its words were taken from the code path above.
 - A real Thunderbird profile, on purpose: only made-up profiles were used.
 - Mac and Linux dialogs. F12 is reasoned from the zenity source, not seen.
+
+## Re-look of the words as built (2026-11-08)
+
+Walked 8 November 2026, Mac clock 01:25 EST. A light re-look (same process doc, light form) of
+the words slice C0c ships, at tip 32c2e53 of `tb-completeness` (worktree pulled, already up to
+date). Read: §1 to §4 above, `docs/ux-contract.md`, `internal/thunderbird/offline_words.go` (every
+sentence), `imapPrepAccount` / `prepFailWords` / `imapNotPrepared` in `internal/wizard/wizard.go`,
+`checkOfflineStore` in `cmd/mailarchive/main.go`, and catalog row MA-1260. Windows judged first.
+
+**Verdict: SHIPPABLE_WITH_NOTES.** W0 to W8 were applied faithfully, mostly word for word, and
+in three places better than proposed (below). The wizard words carry no prefs.js, no server key,
+no raw error and no full path except user.js's, which is meant. F1 (the dead end) is fixed: every
+command-line refusal now ends with "Then run the same command again without -enable-offline."
+Two medium findings remain, both word changes (Type III): **R1**, the steps do not say how to
+open Account Settings on Windows, where Thunderbird's menu bar is hidden; **R2**, on the command
+line the lead's leftover-folder sentence says "you can ignore this message" right after
+"nothing was exported". One more medium sits outside this slice (**R8**, the Desktop guide names
+a label that does not match these words). The rest are low. The replacement words are below, for
+the lead and the owner to accept; this re-look does not self-certify them.
+
+### How the words were got
+
+- A small program under the worktree's gitignored `.claude/worktrees/fric-relook/`, built from
+  32c2e53. It made 10 made-up profiles there (never a real one). For the wizard it made the same
+  calls `imapPrepAccount` makes (`FindProfileDir`, `AccountToEnable`, `CheckOffline`,
+  `PlainWords`) and added `imapNotPrepared` copied word for word. For the command line it ran the
+  real `mailarchive -out … -enable-offline -input <store>` built from 32c2e53 and kept its output
+  and exit code.
+- The tests that pin these words, run verbosely, all pass: `TestYesPrepareRefusalsArePlain`
+  (MA-1260), `TestYesPrepareSaysWhyAndDoesNotCarryOn` (MA-1204, MA-1205),
+  `TestTheIMAPQuestionSaysWhatThunderbirdDoes` (MA-947), `TestClosingThePrepWarningGoesOn`
+  (MA-1209), `TestEveryPrepRefusalGivesTheWayOut`, `TestNoAccountRefusesWithTheReason`,
+  `TestTheKeptBackupIsReportedTruly`, `TestUserJSRefusalOnTheCommandLine`,
+  `TestEnableOfflineSaysWhenItWasOnByDefault`, `TestUserJSControlsTheOfflineSetting`.
+- **Windows: not rendered on screen** (the same limit as the first walk). Judged from the strings
+  and from how a Win32 message box behaves: zenity's Windows warning is `win.MessageBox`
+  (`msg_windows.go`), which shows `&` as written, so "Synchronization & Storage" is safe, and
+  Ctrl+C copies the box's text. Not seen live.
+
+Every refusal exited 1 and left no `-out` folder. The one healthy profile exited 0. With no
+profile found, the command line does not refuse (R10).
+
+### The words as built (wizard; each ends with W0, shown once at the end)
+
+Two accounts on one server, Thunderbird 153 (816 characters with W0):
+
+> MailArchive could not tell which of your Thunderbird accounts on imap.gmail.com this mail
+> belongs to, so it did not change any Thunderbird setting.
+>
+> To make sure Thunderbird keeps all of this mail on this computer:
+> 1. In Thunderbird, open Account Settings.
+> 2. For each account on imap.gmail.com, open its "Synchronization & Storage" page.
+> 3. Make sure "Keep messages in all folders for this account on this computer" is ticked.
+>
+> Why: more than one account in Thunderbird uses imap.gmail.com, and MailArchive does not guess.
+> If you removed an account from Thunderbird, its leftover mail folder can cause this; if so, you
+> can ignore this message.
+>
+> This export goes ahead now with the mail already on this computer. Mail that Thunderbird has
+> not downloaded yet is not in it; a later run adds it once Thunderbird has it.
+
+At 160 steps 2 and 3 read: `2. For each account on imap.gmail.com, find "Offline message
+storage".` and `3. Make sure "Save copies of all folders and messages on this computer for
+offline use" is ticked.` With no version (998 characters, the longest), step 2 adds "(in
+Thunderbird 160 and later, find "Offline message storage")" and step 3 adds "(in Thunderbird 160
+and later it is called "Save copies of all folders and messages on this computer for offline
+use")".
+
+The others, first paragraph and what follows:
+
+| Case | Wizard words (before W0) |
+|---|---|
+| A removed account's folder | "MailArchive could not find a Thunderbird account for the mail in mail.oldjob.com, so it did not change any Thunderbird setting." / "Why: no account in Thunderbird uses this mail now." + the leftover sentence / "If the account is still in Thunderbird:" + steps 1 to 3 for "that account" |
+| No account list | the two-accounts headline / steps for "the account on imap.gmail.com" / "Why: Thunderbird's settings list no accounts." |
+| A settings file it could not read (user.js a link; prefs.js too big) | "MailArchive could not read Thunderbird's settings, so it did not change any of them." / the steps |
+| A hand-edited line (160) | "Thunderbird's settings file has been edited by hand where this account's setting is, so MailArchive could not be sure what it says and did not change any Thunderbird setting." / the 160 steps |
+| user.js keeps it off | "Thunderbird is set, in its file user.js, not to keep the mail of imap.gmail.com on this computer, and it applies that file every time it starts. So MailArchive changed nothing: a change would be undone." / "If you or your IT set this on purpose, leave it. Otherwise: close Thunderbird, open user.js in a plain text editor (Notepad on Windows), and delete the line that contains mail.server.server1.offline_download (or change its false to true)." / "The file: <path>" |
+| No profile | W8, word for word |
+
+The command line, two accounts on one server, 153:
+
+> mailarchive: -enable-offline changed nothing, and nothing was exported: MailArchive could not
+> tell which Thunderbird account the mail in imap.gmail.com belongs to (more than one account in
+> prefs.js (server1, server2) could own the store folder imap.gmail.com, so MailArchive does not
+> pick one). If you removed an account from Thunderbird, its leftover mail folder can cause this;
+> if so, you can ignore this message. In Thunderbird, open Account Settings and, for each account
+> on imap.gmail.com, make sure "Keep messages in all folders for this account on this computer"
+> is ticked (on its "Synchronization & Storage" page). Then run the same command again without
+> -enable-offline.
+
+Every other command-line refusal has the same shape: "-enable-offline changed nothing, and
+nothing was exported:", the reason with its technical detail in brackets, where to tick, then the
+same last sentence. The user.js one ends "…and run again. The file: <path>". The log line on a
+healthy profile: "Enabled offline download for imap.gmail.com (folder imap.gmail.com, server1);
+prefs.js backed up to prefs.js.mailarchive-bak in the Thunderbird profile folder."
+
+### Were W0 to W8 applied?
+
+| Proposed | As built | Faithful? |
+|---|---|---|
+| W0 | Word for word, on every wizard refusal, including the fallback | Yes |
+| W1 | Word for word for 153, 160 and no version. With no version, step 2 also gives the 160 place, which W1 left out | Yes, better |
+| W2 | Steps instead of one line. The lead's leftover sentence replaces "This is usual when…" | Yes; see R2, R3 |
+| W3 | The "Details:" line with the raw error is dropped, and the steps are given | Yes, better: the person gets something to do, and no error text they cannot act on |
+| W4 | Word for word, except "your IT department" became "your IT" | Yes; see R6 |
+| W5 | Word for word, plus the leftover sentence | Yes; see R2 |
+| W6 | Word for word, with "or change its false to true" | Yes |
+| W7 | As proposed, and the account is named by folder and server too | Yes, better |
+| W8 | Word for word | Yes |
+| F12, F13 | Fixed: a closed warning goes on (MA-1209); no "mailarchive: MailArchive" stutter | Yes |
+
+### Findings
+
+**Medium (build before the public release; words only):**
+
+- **R1. Step 1 does not say how to open Account Settings, and on Windows that is the first place
+  a person gets stuck.** Thunderbird on Windows hides its menu bar by default, so there is no
+  Tools menu to see. The Windows lab of 7 November (`docs/lab/restore-thunderbird-windows-MA-1133.md`, its table
+  row "≡ → Account Settings") saw Account Settings in the menu button (≡) of Thunderbird 153.6.0
+  on Windows. The shipped Restore words already say "click the menu button (≡, top right)", so
+  this also makes the two features say it the same way. The same button is on the Mac, so one
+  sentence serves both. Replace step 1 (in `Place.steps`):
+
+  > 1. In Thunderbird, click the menu button (≡, top right), then Account Settings.
+
+  On the command line (`Place.remedy`), optional, for the same reason:
+
+  > open Account Settings (the menu button ≡, top right) and, for …
+
+- **R2. On the command line, "you can ignore this message" is wrong.** That sentence comes right
+  after "nothing was exported". A person who ignores the message has no export at all. What they
+  need is the last sentence (run again without -enable-offline), and nothing to tick. Replace the
+  command-line form of the leftover sentence (two-accounts and removed-account cases) with:
+
+  > If you once removed an account on HOST from Thunderbird, this may be its leftover mail
+  > folder; if so, there is nothing to turn on: just run the same command again without
+  > -enable-offline.
+
+  HOST is the folder's name (imap.gmail.com, mail.oldjob.com). This needs the sentence split from
+  the wizard's (today one constant, `leftoverWords`, serves both).
+
+**Medium, outside this slice (before the public release):**
+
+- **R8. The Desktop guide names a different label.** "How to use MailArchive" (`internal/desktop/help.go`,
+  around line 215, pinned by MA-945) says "Keep messages for this account on this computer". The
+  source read of ESR 153 (`docs/lab/thunderbird-completeness-source-esr153.md`, row 12) found that
+  label in no version read: below 160 it is "Keep messages in all folders for this account on
+  this computer", the label these words use. A person who reads the guide and then the wizard sees
+  two names for one box. The guide should take the same label and the same 160 form, test-first
+  under MA-945. Not changed here.
+
+**Low (the lead's call):**
+
+- **R3. The leftover sentence in the wizard.** Where it is placed does not confuse the two-accounts
+  case. The code (`matchWith`, `thunderbird.go`) gives "two accounts" whenever two live accounts
+  share the server and neither has this folder as its own, which includes a removed account's
+  leftover folder, so the sentence belongs there. It sits after the steps, in Why, and the steps
+  do no harm if it was a leftover. But "ignore this message" is broader than meant, since W0
+  still holds, and the person cannot tell which account was removed. Wording that names the
+  server and reads right before or after the steps:
+
+  > If you once removed an account on HOST from Thunderbird, this may be its leftover mail; if so,
+  > there is nothing to turn on.
+
+- **R4. 160 gives no page.** "find "Offline message storage"" does not say where. The source read
+  did not read 160's page name (`thunderbird-completeness-source-esr153.md`, "Whether 160 still
+  names the panel… not read"), and lab row MA-1191's machines are 153.6.0 and 159.0, so no lab
+  check yet sees the 160 screen. Words that claim nothing unread:
+
+  > 2. For each account on HOST, look through the pages listed under its name on the left until
+  > you see "Offline message storage".
+
+  For no version: "(in Thunderbird 160 and later, look through its pages for "Offline message
+  storage")".
+
+- **R5. "Account on imap.gmail.com".** Account Settings lists accounts by their names, usually
+  the email address, not by server. A Gmail user will guess. With another provider, a person may
+  not. If the lead wants it, add to step 2: "(an account's "Server Settings" page shows its
+  server name)". About 60 characters more.
+
+- **R6. user.js on Windows.** "your IT" is clipped: say "If you, or whoever looks after this
+  computer, set this on purpose, leave it." For Windows, "open user.js in a plain text editor
+  (Notepad on Windows)" leaves two traps. First, Notepad's Open box shows only .txt files unless
+  you type the name. Second, double-clicking a .js file on Windows runs it with Windows Script
+  Host (a harmless error box), and does not open it for editing. This is from Windows'
+  defaults, not seen in the lab. Words that stay right on every platform:
+
+  > Otherwise: close Thunderbird and open the file below in a plain text editor (on Windows:
+  > start Notepad, choose File, then Open, and type or paste the whole path into "File name";
+  > double-clicking the file does not open it for editing). Delete the line that contains KEY (or
+  > change its false to true), and save.
+
+- **R7. "Edited by hand"** reads as blame, and an add-on or an IT tool may have made the change.
+  Say: "Thunderbird's settings file was changed outside Thunderbird where this account's setting
+  is, so MailArchive could not be sure what it says and did not change any Thunderbird setting."
+
+- **R9 (cosmetic, command line).** The two-accounts reason has brackets inside brackets and says
+  twice that MailArchive does not choose: "(more than one account in prefs.js (server1, server2)
+  could own the store folder …, so MailArchive does not pick one)". It is readable, and the
+  technical part may stay here. No change needed.
+
+- **R10 (behaviour, not words; from before this slice).** With no profile found, the command line
+  prints "Could not find the Thunderbird profile for <path>; skipping prep." and exports with exit
+  0. Every other -enable-offline refusal stops with exit 1. The wizard goes ahead in both cases,
+  so the two surfaces agree on what happens. Noted for the lead; not judged here.
+
+### Length, on a phone and in the dialog
+
+The wizard texts are 540 to 1,000 characters, about 90 to 170 words. A Win32 message box wraps
+them into one tall box with no scrolling, which fits a laptop screen. The no-version text is the
+densest, because steps 2 and 3 each carry a bracket. It appears only when compatibility.ini
+cannot be read, which is rare, since Thunderbird writes that file every time it starts. R1 adds
+about 40 characters and R4 about 50. Nothing needs cutting.
+
+### Against the UX contract
+
+- X1 holds: every refusal exits 1, and the healthy run exits 0.
+- X2 now holds for these refusals: each says what failed and a remedy that gets you past it
+  (F1 fixed). R2 is the one sentence that points the other way.
+- X7 holds: no crash text. X8 holds: refusals go to stderr. X17 holds: the program is
+  "MailArchive" throughout.
+- X11 covers the dashboard only. Its spirit, plain words, is met by the wizard texts. R8 is the
+  dashboard side of the same label.
+- No contradiction otherwise.
+
+### What the changes need (for the lead; nothing changed here)
+
+- R1 to R3 and R6 change words that tests pin: `TestYesPrepareRefusalsArePlain` (its
+  `leftover` constant and step 1), `TestEveryPrepRefusalGivesTheWayOut`, `TestNoAccountRefusesWithTheReason`
+  and `TestYesPrepareSaysWhyAndDoesNotCarryOn`. Catalog row MA-1260 quotes the leftover sentence
+  word for word. Each would change test-first under its row, with prove-fail on the old words.
+- R2 needs `leftoverWords` split into a wizard form and a command-line form, each taking HOST.
+- The ≡ path (R1) is lab-seen on 153.6.0 on Windows only. Lab row MA-1191 can confirm it on the
+  Mac's 159.0 along with the labels.
