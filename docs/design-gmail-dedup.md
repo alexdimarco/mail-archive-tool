@@ -3420,6 +3420,24 @@ speed on the owner's disk; the size of the owner's largest group (S5: unmeasured
 This re-read is the folding agent's, not independent. An independent re-check of these folds, M1
 first, is owed before D2.
 
+## 26. The lead's calls on §25's open items (2026-11-07)
+
+Folded 2026-11-07 [dedup foldcheck4 lead's calls] (lead's call).
+
+- **A copy holds a piece its survivor lacks** (for example the copy has a zip and the survivor has
+  none): that copy is kept, not folded, and listed in the result as "kept: this copy has a part the
+  kept email does not". The merge never leaves an email with fewer pieces anywhere than it had. The
+  plan prefers as survivor the record that holds every piece any copy holds; only when no record does
+  are the extra-piece copies kept. Test row in MA-1229.
+- **A group whose copies are all already deleted, and whose survivor's original then fails its
+  re-hash** (fold check 4's second case): this does NOT stop the merge, because nothing of that group
+  is left to protect. The survivor's damage is reported in `MERGE-RESULT-…` and by verify, as for any
+  damaged original today, and the merge goes on with other groups. A group with any copy `.eml` still
+  on disk stops the merge as §24/§25 say. Test row in MA-1229.
+- **The folding agent's calls in §25 are accepted** (`MergePending.Started` and `.Freed`; no per-copy
+  reason in the result file; pause re-checked before each batch; the three adopted should-fixes; the
+  third load check not added; `MergePending` placed before `Entries`).
+
 ---
 
 Folded by a model answering under no name, a fresh instance that has not met the record before, for
