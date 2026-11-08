@@ -22,6 +22,10 @@ func TestPresyncOfferable(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(profile, "prefs.js"), []byte("// prefs\n"), 0o644); err != nil {
 		t.Fatal(err)
 	}
+	// Thunderbird writes compatibility.ini at every start; a profile is known by it (MA-1206).
+	if err := os.WriteFile(filepath.Join(profile, "compatibility.ini"), []byte("[Compatibility]\nLastVersion=153.6.0\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
 	if !presyncOfferable([]string{store}) {
 		t.Error("a Thunderbird store among the inputs should make the pre-sync offerable")
 	}

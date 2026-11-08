@@ -34,6 +34,7 @@ func twoAccountProfile(t *testing.T) string {
 	if err := os.WriteFile(filepath.Join(profile, "prefs.js"), []byte(prefs), 0o600); err != nil {
 		t.Fatal(err)
 	}
+	writeCompat(t, profile, testCompatINI)
 	return profile
 }
 

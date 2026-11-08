@@ -97,6 +97,10 @@ func thunderbirdStore(t *testing.T) string {
 	if err := os.WriteFile(filepath.Join(profile, "prefs.js"), []byte("// prefs\n"), 0o644); err != nil {
 		t.Fatal(err)
 	}
+	// Thunderbird writes compatibility.ini at every start; a profile is known by it (MA-1206).
+	if err := os.WriteFile(filepath.Join(profile, "compatibility.ini"), []byte("[Compatibility]\nLastVersion=153.6.0\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
 	store := filepath.Join(profile, "Mail", "Local Folders")
 	if err := os.MkdirAll(store, 0o755); err != nil {
 		t.Fatal(err)
@@ -733,6 +737,7 @@ func TestAnEncryptedRunNowLeavesNothingOfTheSyncBesideIt(t *testing.T) {
 		t.Fatal(err)
 	}
 	os.WriteFile(filepath.Join(profile, "prefs.js"), []byte("// prefs\n"), 0o644)
+	os.WriteFile(filepath.Join(profile, "compatibility.ini"), []byte("[Compatibility]\nLastVersion=153.6.0\n"), 0o644) // MA-1206
 	os.WriteFile(filepath.Join(store, "Inbox"), []byte(laterMbox), 0o644)
 	j, err := job.Read(g.jp)
 	if err != nil {

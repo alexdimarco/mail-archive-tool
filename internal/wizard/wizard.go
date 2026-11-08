@@ -1571,8 +1571,9 @@ func prepareThunderbirdGUI(store string) (bool, error) {
 	profile, acct, refusal := imapPrepAccount(store)
 	if refusal != "" {
 		// Nothing was changed, so the export is not prepared: it goes ahead with what is on
-		// this computer, in its usual mode, and says so (MA-1204).
-		return false, zenity.Warning(refusal, zenity.Title(appTitle))
+		// this computer, in its usual mode, and says so (MA-1204). Closing the warning goes on
+		// too, as its words say (MA-1209).
+		return false, noticeClosed(zenity.Warning(refusal, zenity.Title(appTitle)))
 	}
 
 	// prefs.js must not be edited while Thunderbird is running.
@@ -1594,7 +1595,9 @@ func prepareThunderbirdGUI(store string) (bool, error) {
 
 	if acct != nil && !acct.OfflineDownload {
 		if _, e := thunderbird.EnableOffline(profile, acct.ServerKey); e != nil {
-			return false, zenity.Error("Couldn't enable offline download:\n"+e.Error(), zenity.Title(appTitle))
+			// Checked before the quit (imapPrepAccount), so only a change since then or a failed
+			// write lands here: plain words, and the export goes ahead, closed or not (MA-1209).
+			return false, noticeClosed(zenity.Error(prepFailWords(e, profile, acct.Hostname)+imapNotPrepared, zenity.Title(appTitle)))
 		}
 	}
 
@@ -1605,21 +1608,49 @@ func prepareThunderbirdGUI(store string) (bool, error) {
 	return true, nil
 }
 
-// imapNotPrepared ends every Yes, prepare refusal: the export still runs, on what is here.
-const imapNotPrepared = "\n\nThis export goes ahead with the mail already on this computer."
+// imapNotPrepared ends every Yes, prepare refusal (the C0c friction review's W0): the export
+// still runs, on what is here, and the words say what that leaves out.
+const imapNotPrepared = "\n\nThis export goes ahead now with the mail already on this computer. " +
+	"Mail that Thunderbird has not downloaded yet is not in it; a later run adds it once Thunderbird has it."
+
+// noticeClosed reads the answer to a one-button notice after which the wizard goes on: OK and a
+// window closed with its close button (ErrCanceled, as zenity reports it on Linux) both go on,
+// as after the Full-mode information dialog; any other error stops the wizard (MA-1209).
+func noticeClosed(choice error) error {
+	if errors.Is(choice, zenity.ErrCanceled) {
+		return nil
+	}
+	return choice
+}
+
+// prepFailWords are the wizard's plain words for err, a refusal of the offline change: its own
+// plain words when it has them (MA-1210), else a sentence that names no file and no raw error,
+// with the steps to make sure by hand.
+func prepFailWords(err error, profile, host string) string {
+	if words, ok := thunderbird.PlainWords(err); ok {
+		return words
+	}
+	return "MailArchive could not change Thunderbird's setting safely, so it did not change any Thunderbird setting.\n\n" +
+		thunderbird.SettingSteps(profile, host)
+}
 
 // imapPrepAccount is the profile and account Yes, prepare would change for store, or the
-// refusal the person is shown when it cannot change one: no profile found, no account it
-// can tell (the reason and what to turn on by hand, MA-1204), or user.js keeping the setting
-// off (MA-1205). On a refusal nothing has been changed.
+// refusal the person is shown when it cannot change one, in plain words (MA-1210): no profile
+// found (W8), no account it can tell (MA-1204), user.js keeping the setting off (MA-1205), or,
+// for an account to turn on, any refusal EnableOffline would give (a hand-edited line, a backup
+// path refused; MA-1207), checked here before the person is asked to quit Thunderbird. On a
+// refusal nothing has been changed.
 func imapPrepAccount(store string) (string, *thunderbird.Account, string) {
 	profile, ok := thunderbird.FindProfileDir(store)
 	if !ok {
-		return "", nil, "Couldn't find the Thunderbird profile, so nothing was changed." + imapNotPrepared
+		return "", nil, "MailArchive could not find the Thunderbird profile this mail belongs to (the mail may have been copied out of Thunderbird), so it did not change any Thunderbird setting." + imapNotPrepared
 	}
 	acct, err := thunderbird.AccountToEnable(profile, store)
+	if err == nil && !acct.OfflineDownload {
+		err = thunderbird.CheckOffline(profile, acct.ServerKey)
+	}
 	if err != nil {
-		return "", nil, err.Error() + "." + imapNotPrepared
+		return "", nil, prepFailWords(err, profile, filepath.Base(store)) + imapNotPrepared
 	}
 	return profile, acct, ""
 }

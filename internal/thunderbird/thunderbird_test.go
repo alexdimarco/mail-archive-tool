@@ -85,6 +85,10 @@ user_pref("mail.server.server3.offline_download", false);
 	if err := os.WriteFile(filepath.Join(profile, "prefs.js"), []byte(prefs), 0o644); err != nil {
 		t.Fatal(err)
 	}
+	// Thunderbird writes compatibility.ini at every start; a profile is known by it (MA-1206).
+	if err := os.WriteFile(filepath.Join(profile, "compatibility.ini"), []byte(compatINI), 0o644); err != nil {
+		t.Fatal(err)
+	}
 
 	got, ok := FindProfileDir(store)
 	if !ok || got != profile {

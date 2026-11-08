@@ -21,7 +21,17 @@ func prepProfile(t *testing.T, prefs string) (string, string) {
 	if err := os.WriteFile(filepath.Join(p, "prefs.js"), []byte(prefs), 0o600); err != nil {
 		t.Fatal(err)
 	}
+	// Thunderbird writes compatibility.ini at every start; a profile is known by it (MA-1206).
+	writeCompat(t, p, "[Compatibility]\nLastVersion=153.6.0_20251212000000/20251212000000\n")
 	return p, store
+}
+
+// writeCompat writes the profile's compatibility.ini.
+func writeCompat(t *testing.T, p, body string) {
+	t.Helper()
+	if err := os.WriteFile(filepath.Join(p, "compatibility.ini"), []byte(body), 0o600); err != nil {
+		t.Fatal(err)
+	}
 }
 
 // filesIn are the names in dir.
@@ -44,15 +54,20 @@ const prepOne = `user_pref("mail.accountmanager.accounts", "account1");` + "\n" 
 	`user_pref("mail.server.server1.type", "imap");` + "\n" +
 	`user_pref("mail.server.server1.offline_download", false);` + "\n"
 
+// imapGoesAhead is the friction review's W0, the tail of every Yes, prepare refusal.
+const imapGoesAhead = "This export goes ahead now with the mail already on this computer. Mail that Thunderbird has not downloaded yet is not in it; a later run adds it once Thunderbird has it."
+
 // covers: MA-1204, MA-1205
 // The wizard's Yes, prepare shows why it cannot prepare and does not carry on as if it had
-// (the C0c pass's OUT-01). When no account can be told, the refusal gives the reason (naming
-// prefs.js and the accounts), says nothing was changed and what to turn on by hand, and that
-// the export goes ahead with the mail already here; when user.js keeps the setting off, it
-// names user.js. prepareThunderbirdGUI shows that refusal and returns "not prepared" at once,
-// so no sync is guided and the export is not run as a prepared Full export (its dialogs are
-// zenity, not driven in a test: that part is checked in its source). Nothing is written.
-// Positive twin first: one account gives the account and no refusal.
+// (the C0c pass's OUT-01). When no account can be told, the refusal says, in plain words, that
+// no Thunderbird setting was changed, why, what to make sure of by hand for each account on
+// that server, and that the export goes ahead with the mail already here and what that leaves
+// out (the friction review's W1, W0); it names neither prefs.js nor a server key. When user.js
+// keeps the setting off, it names user.js and gives the file last (W4). prepareThunderbirdGUI
+// shows that refusal and returns "not prepared" at once, so no sync is guided and the export is
+// not run as a prepared Full export (its dialogs are zenity, not driven in a test: that part is
+// checked in its source). Nothing is written. Positive twin first: one account gives the account
+// and no refusal.
 func TestYesPrepareSaysWhyAndDoesNotCarryOn(t *testing.T) {
 	_, store := prepProfile(t, prepOne)
 	if _, acct, refusal := imapPrepAccount(store); acct == nil || refusal != "" {
@@ -71,10 +86,11 @@ func TestYesPrepareSaysWhyAndDoesNotCarryOn(t *testing.T) {
 			rc = 1
 		}
 		assure.Refused(t, rc, refusal, assure.Code(1),
-			assure.Names("MailArchive could not tell which Thunderbird account the folder imap.gmail.com belongs to, so it changed nothing",
-				`turn on "Keep messages in all folders for this account on this computer"`,
-				"more than one account in prefs.js (server1, server2)",
-				"This export goes ahead with the mail already on this computer."),
+			assure.Names("MailArchive could not tell which of your Thunderbird accounts on imap.gmail.com this mail belongs to, so it did not change any Thunderbird setting.",
+				`3. Make sure "Keep messages in all folders for this account on this computer" is ticked.`,
+				"Why: more than one account in Thunderbird uses imap.gmail.com, and MailArchive does not guess.",
+				imapGoesAhead),
+			assure.Forbid("prefs.js", "server1", "server2"),
 			assure.NoSideEffect(func() bool { return filesIn(t, p) == before }))
 	})
 
@@ -91,7 +107,11 @@ func TestYesPrepareSaysWhyAndDoesNotCarryOn(t *testing.T) {
 			rc = 1
 		}
 		assure.Refused(t, rc, refusal, assure.Code(1),
-			assure.Names(userJS, "changed nothing", "This export goes ahead with the mail already on this computer."),
+			assure.Names(userJS, "changed nothing",
+				"Thunderbird is set, in its file user.js, not to keep the mail of imap.gmail.com on this computer",
+				"If you or your IT set this on purpose, leave it.",
+				"The file: "+userJS+"\n\n"+imapGoesAhead),
+			assure.Forbid("prefs.js"),
 			assure.NoSideEffect(func() bool { return filesIn(t, p) == before }))
 	})
 
@@ -102,7 +122,7 @@ func TestYesPrepareSaysWhyAndDoesNotCarryOn(t *testing.T) {
 	}
 	for _, wired := range []string{
 		"profile, acct, refusal := imapPrepAccount(store)\n\tif refusal != \"\" {",
-		"return false, zenity.Warning(refusal, zenity.Title(appTitle))",
+		"return false, noticeClosed(zenity.Warning(refusal, zenity.Title(appTitle)))",
 	} {
 		if !strings.Contains(string(src), wired) {
 			t.Errorf("prepareThunderbirdGUI does not stop on the refusal: %q is gone from wizard.go", wired)

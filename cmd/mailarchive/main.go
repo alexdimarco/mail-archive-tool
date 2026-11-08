@@ -2104,12 +2104,15 @@ func prepareThunderbird(ctx context.Context, inputs []string, auto, enableOfflin
 		}
 		return nil
 	}
-	// Every store's account is told before any is changed, so a refusal (MA-1204, MA-1205)
-	// means nothing was changed in this run.
+	// Every store is checked for every refusal before any is changed (MA-1208): Thunderbird
+	// running, no account it can tell, user.js keeping the setting off, a hand-edited line, a
+	// backup path that is not a regular file. So a refusal means nothing was changed in this
+	// run. Only a write that then fails (a full disk, a file swapped in after the check) can
+	// stop the run after an earlier store was changed; the log names each change made.
 	if enableOffline {
 		for _, store := range stores {
 			if profile, ok := thunderbird.FindProfileDir(store); ok {
-				if _, err := thunderbird.AccountToEnable(profile, store); err != nil {
+				if _, err := checkOfflineStore(profile, store); err != nil {
 					return err
 				}
 			}
@@ -2130,38 +2133,39 @@ func prepareStore(ctx context.Context, store string, enableOffline, syncWait boo
 		return nil
 	}
 	if enableOffline {
-		if thunderbird.Running(profile) {
-			return fmt.Errorf("Thunderbird looks like it is running — close it, then re-run with -enable-offline (prefs.js must not be edited while it is open)")
-		}
-		// No account it can tell, or user.js keeps the setting off: a refusal with the words,
-		// nothing changed (MA-1204, MA-1205; the code stays the command line's refusal code, 1).
-		acct, err := thunderbird.AccountToEnable(profile, store)
+		// Thunderbird running, no account it can tell, user.js keeping the setting off, a
+		// hand-edited line or a backup path refused: a refusal with the words, nothing changed
+		// (MA-1204, MA-1205, MA-1207, MA-1208; the code stays the command line's refusal code, 1).
+		acct, err := checkOfflineStore(profile, store)
 		if err != nil {
 			return err
 		}
+		// The account by its folder and server, so two accounts on one server are told apart
+		// (the C0c friction review's W7).
+		who := fmt.Sprintf("%s (folder %s, %s)", thunderbird.StripControl(acct.Hostname), thunderbird.StripControl(filepath.Base(store)), acct.ServerKey)
 		switch {
 		case acct.OfflineDownload && acct.OfflineInUserJS:
-			logger.Printf("Offline download already enabled for %s (user.js turns it on).", acct.Hostname)
+			logger.Printf("Offline download already enabled for %s (user.js turns it on).", who)
 		case acct.OfflineDownload:
-			logger.Printf("Offline download already enabled for %s.", acct.Hostname)
+			logger.Printf("Offline download already enabled for %s.", who)
 		default:
 			c, err := thunderbird.EnableOffline(profile, acct.ServerKey)
 			if err != nil {
 				return err
 			}
 			backup := filepath.Base(c.Backup)
-			saved := "prefs backed up to " + backup
+			saved := "; prefs.js backed up to " + backup + " in the Thunderbird profile folder."
 			if c.BackupKept {
 				// The first backup is never overwritten (CON-04): say what it holds.
-				saved = "the backup " + backup + " was kept as it was, from before MailArchive first changed prefs.js"
+				saved = ". prefs.js was not backed up again: " + backup + ", in the Thunderbird profile folder, still holds prefs.js from before MailArchive first changed it."
 			}
 			switch {
 			case c.Changed && acct.OnByDefault:
 				// No line of its own: Thunderbird's default had it on (MA-947), so writing it out
 				// changed nothing Thunderbird does.
-				logger.Printf("Offline download was already on for %s: Thunderbird keeps a new account's messages on this computer by default. The setting was written into prefs.js to make sure (%s).", acct.Hostname, saved)
+				logger.Printf("Offline download was already on for %s: Thunderbird keeps a new account's messages on this computer by default. The setting was written into prefs.js to make sure%s", who, saved)
 			case c.Changed:
-				logger.Printf("Enabled offline download for %s (%s).", acct.Hostname, saved)
+				logger.Printf("Enabled offline download for %s%s", who, saved)
 			}
 		}
 		logger.Printf("Next: START Thunderbird, then right-click the account -> Download/Sync Now.")
@@ -2172,6 +2176,30 @@ func prepareStore(ctx context.Context, store string, enableOffline, syncWait boo
 		return waitForSync(ctx, store, logger)
 	}
 	return nil
+}
+
+// checkOfflineStore runs every -enable-offline refusal for store in profile with nothing written
+// (MA-1208): Thunderbird running for that profile, then the account (AccountToEnable), then, when
+// the account is not on, every check EnableOffline makes before it writes (CheckOffline). It
+// returns the account to change.
+func checkOfflineStore(profile, store string) (*thunderbird.Account, error) {
+	if thunderbird.Running(profile) {
+		return nil, fmt.Errorf("-enable-offline changed nothing, and nothing was exported: Thunderbird looks like it is running for the profile %s. Close it, then run the same command again (prefs.js must not be edited while Thunderbird is open).", profile)
+	}
+	acct, err := thunderbird.AccountToEnable(profile, store)
+	if err != nil {
+		return nil, err
+	}
+	if !acct.OfflineDownload {
+		if err := thunderbird.CheckOffline(profile, acct.ServerKey); err != nil {
+			if _, worded := thunderbird.PlainWords(err); !worded {
+				// prefs.js or its backup path refused (a link, a folder, a pipe, over the bound).
+				err = fmt.Errorf("-enable-offline changed nothing, and nothing was exported: %w", err)
+			}
+			return nil, err
+		}
+	}
+	return acct, nil
 }
 
 // waitForSync watches a store's size and returns once it stops growing (sync

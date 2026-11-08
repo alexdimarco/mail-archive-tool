@@ -865,6 +865,70 @@ is a label-membership question, not completeness (§14 Q6).
 > - **Gate owed:** the wizard's new words owe a light friction look (the friction review this
 >   feature owes already). Not self-certified here.
 >
+> **Folded 2026-11-08 [C0c adversarial pass round 2 + friction W0 to W8] (the lead's calls,
+> `docs/review-thunderbird-completeness-c0c-adversarial-r2.md` and
+> `docs/review-thunderbird-completeness-c0c-friction.md`; built and tested, MA-1206 to MA-1210):**
+>
+> - **The profile, by its own files (R2-03, R2-04, R2-06; MA-1206). Supersedes the INS-01 bullet
+>   above ("the structure rule is what keeps a store out").** A folder is a Thunderbird profile only
+>   when it holds a regular `prefs.js` **and** a regular `compatibility.ini` that reads as
+>   Thunderbird's: read through `util.ReadRegularFile` (64 KB), its first line that is not blank is
+>   `[Compatibility]` and that section holds a `LastVersion=` line. Folder names around it no longer
+>   matter: a profile in `~/Mail/tb-profile` is found. The nearest folder at or above the input that
+>   holds both files decides: it is the input's profile when the input is that folder or sits under
+>   its own `ImapMail/` or `Mail/`; otherwise the input has no profile (the walk does not go on
+>   upward, so a folder outside a copied profile's mail is never the outer profile's store). An mbox
+>   file starts with "From ", so a mail folder named `prefs.js` or `compatibility.ini` never makes a
+>   store a profile. A copied profile under this profile's `Mail/` that carries its own two files is
+>   its own profile, and its store gets its own account.
+>   - **Residual (R2-04, not built):** a copy under `Mail/` *without* its own `compatibility.ini` is
+>     still read as part of the outer profile, and the hostname fallback can give its store the outer
+>     profile's server. A one-line fix (the hostname fallback only for a store directly in the
+>     profile's `ImapMail/`) is listed as a follow-up for the lead.
+>   - **The other profile checks are not changed.** The restore's `tbrestore.checkProfile` and the
+>     pre-sync's `validateProfile` (macOS, Windows) check a profile chosen from `profiles.ini` or
+>     named by the person; they never climb from a store, so R2-03 does not reach them. Making them
+>     require `compatibility.ini` would change which profiles the restore and the pre-sync accept,
+>     with their own lab rows, so it is a follow-up, not part of this fix. `tbrestore.LastVersion`
+>     keeps its own reader for the same reason.
+> - **Hand-edited lines (R2-01, R2-02; MA-1207).** prefs.js and user.js are read statement by
+>   statement, as Thunderbird's parser reads them: a line may hold several statements and each
+>   counts; for a name set twice the last statement wins. A line whose text outside comments is not a
+>   run of whole statements is one MailArchive cannot read; a setting it names is one MailArchive
+>   cannot be sure of, so the match gives no account and EnableOffline changes nothing
+>   (`HandEditedError`). EnableOffline rewrites only a line that holds exactly one `user_pref`
+>   statement for the setting and nothing else but spaces and the line ending; a statement of the
+>   setting sharing its line with anything else (another statement, a comment, a commented copy), a
+>   `pref(` line, or a comment left open at the end of prefs.js (an added line would not count) →
+>   nothing changed, words telling the person to make sure of it in Thunderbird. Not handled
+>   (refused or read conservatively, never guessed): a statement spread over several lines, and
+>   `pref()` against `user_pref()` priority in user.js.
+> - **Every refusal before any write (R2-05; MA-1208).** `-enable-offline` runs, for every store,
+>   the Thunderbird-running check, the account, and `thunderbird.CheckOffline` (every check
+>   EnableOffline makes before it writes: user.js, hand-edited lines, prefs.js and its backup path)
+>   before it changes any. Only a write that then fails (a full disk, a file swapped in after the
+>   check) can stop the run after an earlier store was changed; the log names each change made.
+>   The wizard runs the same `CheckOffline` before asking the person to quit Thunderbird.
+> - **A closed warning goes on (R2-07; MA-1209).** The wizard's refusal warning, and the dialog for
+>   a change that failed after the quit, read OK and a window closed with its close button alike
+>   (`noticeClosed`), as after the Full-mode information dialog; the export goes ahead, as the words
+>   say.
+> - **The words (friction W0 to W8, plus the lead's sentence; MA-1210; MA-1204 and MA-1205 amended).**
+>   Each refusal has the command line's words (`Error`: "-enable-offline changed nothing, and
+>   nothing was exported: …", the technical reason kept after the plain sentence, what to make sure
+>   of for each account on the server and where, "Then run the same command again without
+>   -enable-offline.") and the wizard's (`Plain`: no prefs.js, no server key, no raw error; numbered
+>   steps; ends with W0, which says mail not yet downloaded is left out and a later run adds it).
+>   Where the setting is follows the version: below 160 the account's "Synchronization & Storage"
+>   page and "Keep messages in all folders for this account on this computer"; 160 and later
+>   "Offline message storage" and "Save copies of all folders and messages on this computer for
+>   offline use"; both when the version cannot be read. Where a removed account can cause it (two
+>   accounts on one server, or no account), the words add: "If you removed an account from
+>   Thunderbird, its leftover mail folder can cause this; if so, you can ignore this message." The
+>   user.js words name the server, say "If you or your IT set this on purpose, leave it", and give
+>   the file's path last. The log lines name the account by its folder and server and say the backup
+>   is in the Thunderbird profile folder. The words still rest on lab row MA-1191 for the labels.
+>
 > **Folded 2026-11-07 [foldcheck M6] (lead's call):** the bullet "No match → `unknown` if a
 > folder-cache entry exists" is **superseded by [foldcheck M6]**. No match → `unknown` whether or not
 > the cache could be read, unless no `prefs.js` is found above the input **and** no path part is
