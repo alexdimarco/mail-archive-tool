@@ -77,7 +77,7 @@ MailArchive is one program with verbs; there is no separate GUI download.
 | Linux arm64 | `mailarchive-linux-arm64` | the same verbs (compiled, not lab-run) |
 | Linux app menu (optional) | `mailarchive-linux-desktop-entry.tar.gz` | adds **MailArchive Desktop**, with its icon, to your app menu: unpack it and follow its `READ ME.txt` |
 
-### Changed in the next release
+### Changed in 1.6.2 — clearer words after a backup, and a link to report a mistake
 - **The address to report a mistake in MailArchive is a link.** On MailArchive Desktop's page (Recent backups, the Scheduled backup card's note, Archive now and Status & health) https://github.com/alexdimarco/mail-archive-tool/issues opens in a new tab when you click it.
 - **Recent backups no longer repeats itself.** Backups in a row that ended the same way are one line that says how often and when the last one ran, for example "Incomplete (3 times, last at 5:04 PM)". Counts read in plain words: "1 message", "1,240 messages".
 - **A backup that may be stuck on another computer says which computer it calls itself.** When an archive on a shared drive is held by a backup that started more than a day ago on another computer, the words say "another computer, which calls itself OFFICE-PC" and: "If that computer is yours and the backup should have finished by now, restart it to end the backup (restarting this one does not); if you don't recognise it, check who else uses this folder before restarting anything." Only the part of the name before its first dot is said.
