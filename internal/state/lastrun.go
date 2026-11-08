@@ -135,6 +135,12 @@ type LastRun struct {
 	// configured" and an older binary ignores it.
 	Presync *PresyncRecord `json:"presync,omitempty"`
 
+	// Thunderbird is how much of each Thunderbird IMAP account of the run Thunderbird had
+	// downloaded (the completeness design §7's records row, slice C2): plaintext runs that
+	// ended ok only, additive, and never beside an encrypted archive (O1; encryptedLastRun
+	// has no such field).
+	Thunderbird []TBAccount `json:"thunderbird,omitempty"`
+
 	// Program is an encrypted archive's program step outcome, one of the Program*
 	// codes (program design §4, §8). Absent when the step did not run.
 	Program string `json:"program,omitempty"`
@@ -358,6 +364,9 @@ func ReadLastRun(out string) (LastRun, LastRunState, error) {
 		p.State, p.Code = util.StripControl(p.State), util.StripControl(p.Code)
 		p.Name, p.Result = util.StripControl(p.Name), util.StripControl(p.Result)
 	}
+	// The completeness record's names are server text and its counts may be planted: cleaned,
+	// bounded and never negative here, at the same choke point.
+	r.Thunderbird = saneTB(r.Thunderbird)
 	return r, LastRunPresent, nil
 }
 

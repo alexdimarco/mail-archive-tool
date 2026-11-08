@@ -271,6 +271,9 @@ func maildirEntryMode(m fs.FileMode) bool {
 // directory link.
 func (w *localWalk) maildir(sc *scope, rel string, folder []string) error {
 	w.noteFolder(folder)
+	// The folder's count (completeness design §2.4: one file per message, as an mbox's
+	// separators), carried to every message file under it, through a followed link too.
+	mb := w.startMailbox(sc.at(rel))
 	for _, sub := range []string{"new", "cur"} {
 		srel := relJoin(rel, sub)
 		fi, err := sc.lstat(srel)
@@ -281,7 +284,7 @@ func (w *localWalk) maildir(sc *scope, rel string, folder []string) error {
 			continue // an absent new/ or cur/: nothing to read
 		}
 		v := w.judge(sc, srel, fi.Mode(), posDir)
-		if err := w.into(sc, srel, v, folder, func(s *scope, r string) error { return w.maildirDir(s, r, folder) }); err != nil {
+		if err := w.into(sc, srel, v, folder, func(s *scope, r string) error { return w.maildirDir(s, r, folder, mb) }); err != nil {
 			return err
 		}
 	}
@@ -291,8 +294,8 @@ func (w *localWalk) maildir(sc *scope, rel string, folder []string) error {
 // maildirDir reads every message file under a maildir new/ or cur/ directory.
 // Standard maildirs store messages as flat files; Evolution sub-buckets them into
 // two-hex-character shard directories (e.g. cur/04/<msg>), so a plain directory is
-// descended into, not skipped.
-func (w *localWalk) maildirDir(sc *scope, rel string, folder []string) error {
+// descended into, not skipped. mb is the folder's count (nil: not counted).
+func (w *localWalk) maildirDir(sc *scope, rel string, folder []string, mb *MailboxCount) error {
 	entries, err := sc.readDir(rel)
 	if err != nil {
 		if !errors.Is(err, fs.ErrNotExist) {
@@ -308,11 +311,11 @@ func (w *localWalk) maildirDir(sc *scope, rel string, folder []string) error {
 		v := w.judge(sc, erel, fe.Type(), posEither)
 		switch v.kind {
 		case kindDir, kindDirLink:
-			if err := w.into(sc, erel, v, folder, func(s *scope, r string) error { return w.maildirDir(s, r, folder) }); err != nil {
+			if err := w.into(sc, erel, v, folder, func(s *scope, r string) error { return w.maildirDir(s, r, folder, mb) }); err != nil {
 				return err
 			}
 		case kindFile, kindFileLink, kindPlaceholder:
-			if err := w.maildirMessage(sc, v.rel, fe.Name(), folder); err != nil {
+			if err := w.maildirMessageIn(sc, v.rel, fe.Name(), folder, mb); err != nil {
 				return err
 			}
 		default:
@@ -347,6 +350,11 @@ func readFileIn(sc *scope, rel string) ([]byte, error) {
 // that file: the gap is fillable when the operator fixes it outside the source (its
 // permissions, the disk) and the walk goes on; no record is minted for it (FC7).
 func (w *localWalk) maildirMessage(sc *scope, rel, name string, folder []string) error {
+	return w.maildirMessageIn(sc, rel, name, folder, nil)
+}
+
+// maildirMessageIn is maildirMessage counting a file it read into mb (nil: not counted).
+func (w *localWalk) maildirMessageIn(sc *scope, rel, name string, folder []string, mb *MailboxCount) error {
 	key := strings.Join(folder, "/")
 	// The ledger strips control characters from a locator and cuts it at a bound, so the
 	// locator is built in the ledger's own spelling, with a digest where it had to be
@@ -376,6 +384,7 @@ func (w *localWalk) maildirMessage(sc *scope, rel, name string, folder []string)
 		}
 		return nil
 	}
+	w.count(mb, data) // before the handler, so before any manifest skip or date filter (§2.4)
 	m := parseRaw(data)
 	if m == nil {
 		return nil
@@ -455,6 +464,12 @@ func (w *localWalk) relocate(sc *scope, rel, name string) (nrel, nname string, o
 // read, and the next folder goes on: the tool does not resynchronise a broken stream
 // (N2).
 func (w *localWalk) mboxFile(sc *scope, rel string, folder []string) error {
+	return w.mboxFileAs(sc, rel, rel, folder)
+}
+
+// mboxFileAs is mboxFile for the mailbox whose entry is at mailbox in the scope (a link's
+// own place, where rel is its target): the place its count is named by (§2.4).
+func (w *localWalk) mboxFileAs(sc *scope, rel, mailbox string, folder []string) error {
 	w.noteFolder(folder)
 	f, err := util.OpenRegularFileIn(sc.root, filepath.FromSlash(rel))
 	if err != nil {
@@ -468,6 +483,7 @@ func (w *localWalk) mboxFile(sc *scope, rel string, folder []string) error {
 	}
 	defer f.Close()
 
+	mb := w.startMailbox(sc.at(mailbox))
 	mr := gombox.NewReader(skipBOM(wrapMboxStream(sc.at(rel), f)))
 	n := 0
 	partial := func(err error) {
@@ -491,6 +507,8 @@ func (w *localWalk) mboxFile(sc *scope, rel string, folder []string) error {
 			return nil
 		}
 		n++
+		// Counted here, before the handler's manifest skip and date filter (§2.4).
+		w.count(mb, data)
 		if m := parseRaw(data); m != nil {
 			if err := w.handler(folder, m); err != nil {
 				return err
@@ -534,6 +552,7 @@ func (w *localWalk) mboxDir(sc *scope, rel string, prefix []string, top bool) er
 		}
 		name := e.Name()
 		erel := relJoin(rel, name)
+		w.noteEntry(name) // a ".msf" summary file, seen by name only (completeness M6 residual)
 		if strings.HasSuffix(name, ".sbd") {
 			continue // subfolder container, reached through its parent folder
 		}
@@ -577,7 +596,7 @@ func (w *localWalk) mboxDir(sc *scope, rel string, prefix []string, top bool) er
 			if ok, err := looksLikeMboxIn(sc, v.rel); err != nil {
 				w.folderFault(sc, erel, folderPath, "folder-unreadable", err, "the file could not be opened: ")
 			} else if ok {
-				if err := w.mboxFile(sc, v.rel, folderPath); err != nil {
+				if err := w.mboxFileAs(sc, v.rel, erel, folderPath); err != nil {
 					return err
 				}
 			}

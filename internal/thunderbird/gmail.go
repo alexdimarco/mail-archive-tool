@@ -68,17 +68,23 @@ func GmailForStore(profileDir, storeDir string) (Gmail, error) {
 	if err != nil {
 		return GmailCantTell, &gmailUnknown{store: StripControl(filepath.Base(storeDir)), why: err}
 	}
+	return gmailOf(acct, s.vals), nil
+}
+
+// gmailOf is GmailForStore's answer for the matched account acct, from the settings vals it was
+// matched on (also ReadStoreFacts's, so both read the one rule).
+func gmailOf(acct *Account, vals map[string]string) Gmail {
 	if acct.Type != "imap" {
-		return GmailNo, nil // Thunderbird's single-copy rule is IMAP's (lead's call, 2026-11-08)
+		return GmailNo // Thunderbird's single-copy rule is IMAP's (lead's call, 2026-11-08)
 	}
-	v, own := s.vals["mail.server."+acct.ServerKey+".is_gmail"]
+	v, own := vals["mail.server."+acct.ServerKey+".is_gmail"]
 	if !own {
-		v = s.vals["mail.server.default.is_gmail"]
+		v = vals["mail.server.default.is_gmail"]
 	}
 	if v == "true" {
-		return GmailYes, nil
+		return GmailYes
 	}
-	return GmailNo, nil
+	return GmailNo
 }
 
 // gmailUnknown is why GmailForStore cannot tell.

@@ -28,6 +28,7 @@ import (
 	"mail-archive-tool/internal/seal"
 	"mail-archive-tool/internal/source"
 	"mail-archive-tool/internal/state"
+	"mail-archive-tool/internal/tbcomplete"
 	"mail-archive-tool/internal/util"
 	"mail-archive-tool/internal/vault"
 )
@@ -308,6 +309,16 @@ type Result struct {
 	// ran, on every return (design-presync-attended §4.1, C-12); nil otherwise. In
 	// memory only.
 	Presync *PresyncOutcome
+
+	// Thunderbird is each Thunderbird store's completeness verdict (docs/design-thunderbird-
+	// completeness.md, slice C2), for a run whose walk of every source ended; a store that is
+	// not_applicable (Local Folders, POP3, a plain mail folder) has none. In memory: a plaintext
+	// run that ends ok records it (recordRun); for an encrypted archive it is the only place it
+	// is kept, for the screen while unlocked (O1). tbcomplete.RunLead gives the run's lead.
+	Thunderbird []tbcomplete.Result
+	// tbPrev is the previous run's completeness record, read before this run's "running"
+	// record replaced it, for TC-19's carried fingerprints.
+	tbPrev []state.TBAccount
 }
 
 // finish fills the manifest-derived fields of a Result and regenerates the
@@ -701,6 +712,9 @@ func Run(ctx context.Context, opts Options, logger *log.Logger, onProgress Progr
 	// the stamp every capture-gap observation carries: a gap whose LastRun equals
 	// it was attempted by this run, and `status` tells attempted from not attempted
 	// by comparing with the last-run record's start (FC14).
+	// The previous run's Thunderbird completeness is read first, before the "running"
+	// record replaces it (completeness design TC-19: fingerprints carried forward).
+	tbPrev := previousThunderbird(opts)
 	begun := beginRun(opts)
 	// The opt-in Thunderbird pre-sync runs here, after the lock and the run's
 	// start and before any source is read; nil unless a caller opts in, and it
@@ -746,6 +760,10 @@ func Run(ctx context.Context, opts Options, logger *log.Logger, onProgress Progr
 	// Registered after recordRun so it runs first: every return below, the early ones
 	// that build a fresh Result included, hands the caller the session's outcome.
 	defer func() { result.Presync = presyncOut }()
+	// The same for the Thunderbird completeness verdicts, set once every source was walked
+	// (nil on any earlier return), and the previous record recordRun carries forward from.
+	var tbResults []tbcomplete.Result
+	defer func() { result.Thunderbird, result.tbPrev = tbResults, tbPrev }()
 	// T16 (design-presync-attended §4.1, C-11): a cancel during the pre-sync, or before
 	// it, stops the run here, before any sweep, index or source. It comes after the
 	// deferred recordRun and Release, so the record ends cancelled, never running, and
@@ -1010,6 +1028,11 @@ func Run(ctx context.Context, opts Options, logger *log.Logger, onProgress Progr
 			}
 			logger.Printf("error: %s: %v%s", f, runErr, dataFileRemedyFor(f, runErr))
 		}
+	}
+	// Thunderbird completeness (slice C2): once every store is walked, so its folder cache is
+	// read after the walk, once per profile (TC-21). It reads; it writes nothing here.
+	if fatal == nil {
+		tbResults = assessThunderbird(lr.tb, time.Now())
 	}
 
 	// Browsable folder index pages, built from the finished index. Regenerate
@@ -1393,6 +1416,12 @@ func recordRun(opts Options, lr state.LastRun, result *Result, err *error, logge
 	switch {
 	case *err == nil:
 		lr.Status = state.RunOK
+		// How much of each Thunderbird IMAP account Thunderbird had downloaded (completeness
+		// design §7, slice C2): a plaintext run that ended ok only. Nothing about it is written
+		// beside an encrypted archive (O1, R44); a run that failed says its failure (§11).
+		if !lr.Encrypted && opts.Key == nil && len(result.Thunderbird) > 0 {
+			lr.Thunderbird = tbRecords(result.Thunderbird, result.tbPrev, lr.Finished)
+		}
 		if lr.Encrypted && result.IndexBehind {
 			// The backup finished, but its search index misses messages until a later
 			// run catches it up: recorded by kind, so status warns (owner ruling
@@ -1454,6 +1483,9 @@ func recordRun(opts Options, lr state.LastRun, result *Result, err *error, logge
 	// And how long its scheduled backups have gone without a Thunderbird sync
 	// (design-presync-attended §5, slice AS5): plaintext only, best effort.
 	updateSyncStreak(opts, result.Presync, lr.Encrypted, lr.Finished, logger)
+	// And how long each Thunderbird account has been behind (completeness design §5, M10):
+	// plaintext only, a run that ended ok only, best effort.
+	updateTBStreak(opts, result.Thunderbird, lr.Encrypted, *err == nil, lr.Finished, logger)
 }
 
 // recordCounts puts a run's parse-fidelity counts in its last-run record, the numbers
@@ -1624,7 +1656,7 @@ func fileFailureError(failures int, firstPath string, firstErr error) error {
 // message it contains, honouring ctx cancellation between messages. What goes
 // wrong with one item or folder is recorded in the capture-gap ledger and the walk
 // goes on; what goes wrong with the archive itself ends the source (localrun.go).
-func runFile(ctx context.Context, lr *localRun, path string, copyFirst, followLinks bool, onProgress ProgressFunc, abort func() error) error {
+func runFile(ctx context.Context, lr *localRun, path string, copyFirst, followLinks bool, onProgress ProgressFunc, abort func() error) (err error) {
 	exp, out, logger := lr.exp, lr.out, lr.logger
 	openPath := path
 	if copyFirst {
@@ -1700,6 +1732,18 @@ func runFile(ctx context.Context, lr *localRun, path string, copyFirst, followLi
 			NoStoreUID: noStoreUID(path),
 			Folder:     src.noteFolder,
 		}
+		// A local mbox or maildir store may be a Thunderbird account's: the completeness check
+		// is planned from the input path as given (TC-11), and the walk counts as it reads.
+		var tb *tbStore
+		if source.IsMboxReader(reader) && !tbCheckOff {
+			tb = planTB(path)
+			opts.Counts = tb.counts
+		}
+		defer func() {
+			if tb != nil && err == nil {
+				lr.tb = append(lr.tb, tb) // a store whose walk ended is told after every walk (TC-21)
+			}
+		}()
 		// MailArchive's own restores into Thunderbird are left out (R41,
 		// design-restore-thunderbird §7.2): the record is restores.log in MailArchive's
 		// default settings folder, whatever -config says (tbrestore.LogPath).

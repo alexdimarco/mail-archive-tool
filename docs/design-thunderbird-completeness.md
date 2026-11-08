@@ -2426,6 +2426,48 @@ C4 must land with or before C3 if encrypted archives get any words beyond today'
 > - **Gate.** §13 names test-first and a mutation sweep for C1b. Both are done: 12 test functions,
 >   all red on a stub; 143 mutants, each red (recorded in the commit). No other gate is named for
 >   C1b; C2's unfiltered run and Windows walk tests come next.
+>
+> **Built 2026-11-08 [C2] (the builder's notes, for the lead).** C2 wires the verdict into the backup
+> run without changing what is archived. The walk counts as it reads (`source.MailboxCounts`; the
+> Expunged copies left out of the count, still archived); `thunderbird.ReadStoreFacts` reads the
+> account, its Gmail answer, its limits and the profile's other stores from one read of prefs.js and
+> user.js; once every source is walked, `app.assessThunderbird` reads `folderCache.json` once per
+> profile and calls `tbcomplete.Assess` per store; `app.Result.Thunderbird` holds the verdicts in
+> memory; a plaintext run that ends ok records them (`thunderbird` in the last-run record, `tb` in the
+> history) and folds them into `.mailarchive-tbstreak.json` (M10). An encrypted archive's run keeps them
+> in memory only and removes a stray streak record (O1). Rows: MA-1180, MA-1184 (the record's half),
+> MA-1202 new; MA-1173, MA-1175, MA-1177, MA-1196 and MA-1276 amended. No id above MA-1278. Where the
+> builder read the text more strictly, or chose where it is silent:
+>
+> - **A not-kept folder's mailbox never adds to Gmail's X**, like L3's unkeyed mailbox: its mail is
+>   outside Y (Spam and Trash not kept), so counting it could cover a gap. Fails toward "behind".
+> - **Two walked mailboxes that name one folder** (once compared as the OS compares names) are both
+>   unkeyed. A mailbox under a container not named `.sbd` (a followed link's own name) is unkeyed.
+> - **A limit setting of a type Thunderbird never writes** gives no account (`no_match`), as the C1b
+>   note says. It is checked only for imap accounts, in `ReadStoreFacts`, and was **not** added to
+>   MA-1270's `wrongType`, so the account match, `-enable-offline` and the wizard read every profile
+>   as before (the Panorama precedent).
+> - **A not_applicable store gives no result and no record entry** (Local Folders, POP3, Feeds, a
+>   plain mail folder). `-json`'s `complete: true` for not_applicable (M9) is then C3's to show or not.
+> - **A partial input whose store is also walked whole in the same run** is told once, by the whole.
+> - **TC-19 after a failed run.** §11 says a failed run writes no completeness record, so the
+>   fingerprints' first-seen times are not in it, and the next ok run sees no previous hash: a
+>   chosen-setting WARN shows once more after a failed run. Carrying the fingerprints through a failed
+>   record is a small change if the lead wants it.
+> - **The streak record is built here**, at the caller's request, though the M10 table above gates it
+>   "before C5". Its notices, its email and **the archive README's line for the new file** (a word
+>   change) are C5's. The record's field names beyond `thunderbird` and `tb`, and the record bounds
+>   (200 kept folders, 10 not kept per list, 64 accounts), are the builder's; the names follow §7's
+>   `-json` names where §7 has one.
+> - **The R2-02 fix** looks up the other stores as given and with their links resolved, not their
+>   Windows long and 8.3 short spellings (C1A-08 looks those up for the store itself only).
+> - **The run log says nothing new.** Every word is C3's.
+> - **Gate owed: an adversarial pass** (the builder's reading of the repo's rule for security-sensitive
+>   changes; §13's C2 row names only the unfiltered run and the Windows walk tests). C2 adds a file
+>   written beside every plaintext Thunderbird archive and read back on every run, new fields in two
+>   records that `status` and the Desktop will read from a folder anyone who can write the archive can
+>   write, a header scan of untrusted mail in the walk of every local store, and a change to C1a's
+>   reviewed reader (`StoreAmong`). Not self-certified here.
 
 ## 14. Owner questions (each with a recommendation)
 

@@ -55,6 +55,11 @@ type RunHistoryEntry struct {
 	// full (MA-1149): plaintext entries only, absent when none and on an older entry.
 	Partial  *PartialCounts `json:"partial,omitempty"`
 	Fillable int            `json:"fillable,omitempty"`
+	// TB is each Thunderbird IMAP account's verdict and its X and Y (the completeness design
+	// §7's records row and §9.1, slice C2): a plaintext entry of a run that ended ok only, for
+	// Recent backups; never on an encrypted archive's (minimal never copies it). Held through a
+	// pointer so an entry stays comparable; nil when the run had none.
+	TB *[]TBCompact `json:"tb,omitempty"`
 }
 
 // minimal is e as an encrypted archive keeps it: when, the outcome and the kind.
@@ -91,6 +96,10 @@ func ReadRunHistory(out string) ([]RunHistoryEntry, error) {
 		e.Partial = e.Partial.sane()
 		if e.Fillable < 0 {
 			e.Fillable = 0
+		}
+		if e.TB != nil {
+			tb := saneTBCompact(*e.TB)
+			e.TB = &tb
 		}
 	}
 	return h, nil
@@ -130,7 +139,7 @@ func RunHistoryEntryFrom(lr LastRun) RunHistoryEntry {
 		return RunHistoryEntry{When: lr.Finished, Status: lr.Status, ErrorKind: lr.ErrorKind}.minimal()
 	}
 	e := RunHistoryEntry{When: lr.Finished, Status: lr.Status, Exported: lr.Exported, Filled: lr.Filled, Mode: lr.Mode, Error: lr.Error,
-		Partial: lr.Partial, Fillable: lr.Fillable}
+		Partial: lr.Partial, Fillable: lr.Fillable, TB: TBCompactOf(lr.Thunderbird)}
 	if lr.Presync != nil {
 		e.Presync = lr.Presync.Name // the sync's outcome name (design-presync-attended §4.3)
 	}

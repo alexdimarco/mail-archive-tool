@@ -429,6 +429,15 @@ var spellingsOf = osSpellings
 // this OS's rules. When the store's path exists and its Windows spellings cannot be found, the view
 // is CantTellKeys.
 func (c *Cache) Store(storeDir string) (Store, error) {
+	return c.StoreAmong(storeDir, nil)
+}
+
+// StoreAmong is Store for a store whose profile has the other stores others (each a folder
+// another live account's settings name as its own; slice C2, the C1a pass round 2's R2-02): in
+// tail mode a key that matches one of them exactly, as given or with its links resolved, is that
+// store's and never this one's, so a store with no keys of its own cannot take another account's
+// whose folder is also …/ImapMail/<the store's name>. Exact mode is unchanged.
+func (c *Cache) StoreAmong(storeDir string, others []string) (Store, error) {
 	abs, err := filepath.Abs(storeDir)
 	if err != nil {
 		return Store{}, err
@@ -441,7 +450,18 @@ func (c *Cache) Store(storeDir string) (Store, error) {
 	if err != nil {
 		return Store{Mode: CantTellKeys, CantTellWhy: "could not find the long and short spellings of the store's folder: " + err.Error()}, nil
 	}
-	return c.storeAt(spellings, runtime.GOOS, variants...), nil
+	var otherSpellings []string
+	for _, o := range others {
+		oa, err := filepath.Abs(o)
+		if err != nil {
+			continue
+		}
+		otherSpellings = append(otherSpellings, oa)
+		if real, err := filepath.EvalSymlinks(oa); err == nil && real != oa {
+			otherSpellings = append(otherSpellings, real)
+		}
+	}
+	return c.storeAmong(spellings, otherSpellings, runtime.GOOS, variants...), nil
 }
 
 // one is a key of the store, as matched.
@@ -476,7 +496,19 @@ const (
 // merged into it part by part, so a path spelled long in one part and short in another still
 // matches; one with another number of parts is a spelling of its own.
 func (c *Cache) storeAt(spellings []string, goos string, variants ...string) Store {
+	return c.storeAmong(spellings, nil, goos, variants...)
+}
+
+// storeAmong is storeAt for a store whose profile's other stores have the spellings others
+// (absolute): in tail mode a key exact for one of them, by goos's comparison, is left out (R2-02).
+func (c *Cache) storeAmong(spellings, others []string, goos string, variants ...string) Store {
 	var s Store
+	var otherPlaces []place
+	for _, o := range others {
+		if parts := storeParts(o, goos); len(parts) > 0 {
+			otherPlaces = append(otherPlaces, asPlace(parts))
+		}
+	}
 	var places, extras []place
 	for i, sp := range spellings {
 		parts := storeParts(sp, goos)
@@ -516,10 +548,11 @@ func (c *Cache) storeAt(spellings []string, goos string, variants ...string) Sto
 	// shaped as a folder's or the root's key) is the exact one, and the weaker kinds are old-path
 	// keys (C1A-05, R2-01).
 	type matched struct {
-		kv   keyed
-		raw  []string
-		tail []string
-		how  int
+		kv    keyed
+		raw   []string
+		tail  []string
+		how   int
+		other bool // found by name, and exact for another store of the profile (R2-02)
 	}
 	var keys []matched
 	best := 0 // the strongest kind among usable keys; 0 when none matched exactly
@@ -551,6 +584,12 @@ func (c *Cache) storeAt(spellings []string, goos string, variants ...string) Sto
 				continue // another store's key, or no store's
 			}
 			m.tail, m.how = tail, byName
+			for _, op := range otherPlaces {
+				if _, ok := exactTail(raw, op, folded); ok {
+					m.other = true
+					break
+				}
+			}
 		}
 		if m.how < byName && (best == 0 || m.how < best) && refusedTail(m.tail, goos) == "" {
 			if _, ok := folderPath(m.tail); ok || len(m.tail) == 0 {
@@ -558,6 +597,16 @@ func (c *Cache) storeAt(spellings []string, goos string, variants ...string) Sto
 			}
 		}
 		keys = append(keys, m)
+	}
+	if best == 0 {
+		// Tail mode: a key another store of the profile owns exactly is that store's (R2-02).
+		kept := keys[:0]
+		for _, m := range keys {
+			if !m.other {
+				kept = append(kept, m)
+			}
+		}
+		keys = kept
 	}
 
 	dupKeys := map[string]bool{}

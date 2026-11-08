@@ -26,6 +26,14 @@ func openMboxFile(path string, opts OpenOptions) (*mboxReader, error) {
 	return &mboxReader{root: path, isDir: false, store: strings.TrimSuffix(base, filepath.Ext(base)), follow: opts.FollowLinks}, nil
 }
 
+// IsMboxReader reports whether s is the reader of a local mbox or maildir store (a
+// Thunderbird account's folder among them), the only reader that fills
+// WalkOptions.Counts.
+func IsMboxReader(s Source) bool {
+	_, ok := s.(*mboxReader)
+	return ok
+}
+
 func (r *mboxReader) StoreName() string { return r.store }
 func (r *mboxReader) Close() error      { return nil }
 

@@ -138,6 +138,10 @@ type localRun struct {
 	// MailArchive's own restore folders out (R41); restoreSkipRead says it was read.
 	restoreSkip     *tbrestore.SkipSet
 	restoreSkipRead bool
+
+	// tb are the local stores whose walk ended, as the Thunderbird completeness check sees
+	// them (tbcompleteness.go), told once every source has been walked.
+	tb []*tbStore
 }
 
 // restoreSkipLogPath is where restores.log is (tbrestore.LogPath, MailArchive's default
