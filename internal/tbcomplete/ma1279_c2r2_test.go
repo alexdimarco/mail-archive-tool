@@ -8,10 +8,11 @@ import "testing"
 
 // covers: MA-1279
 // Two counts (the lead's call on R2-04): caught up only by the STRICT count (pieces carrying
-// X-Mozilla-Status), behind only by the LENIENT one (every piece at a separator), else unknown,
-// count_uncertain; so a piece without the line can neither fake complete nor fake behind. The
-// owner-shaped case: 2 of 170 without the line is strict short by 2, within the tolerance (17):
-// still caught up, never complete (missing 2). A separator glued to the line before it (R2-05)
+// X-Mozilla-Status or, since the owner's ruling of 2026-11-08, a well-formed header), behind only
+// by the LENIENT one (every piece at a separator), else unknown, count_uncertain; so a loose piece
+// can neither fake complete nor fake behind. 2 of 170 loose (neither the line nor a well-formed
+// header) is strict short by 2, within the tolerance (17): still caught up, never complete
+// (missing 2). A separator glued to the line before it (R2-05)
 // makes the account unknown, split_differently, never behind. A body "From " line of another shape
 // (a git patch) still lets a certain gap say behind. Positive twin: all 170 counted for certain.
 func TestBehindByTheLenientCountCaughtUpByTheStrict(t *testing.T) {

@@ -54,7 +54,9 @@ func countStore(t *testing.T) string {
 		countMsg("one", "one@x", "0001"),
 		countMsg("two", "two@x", "0000"),
 		countMsg("deleted", "gone@x", "0009"),
-		countMsg("plain", "plain@x", "")))
+		// No X-Mozilla-Status and no Date (not well-formed: the owner's ruling of 2026-11-08), so
+		// it stays a loose piece.
+		strings.Replace(countMsg("plain", "plain@x", ""), "Date: Mon, 03 Mar 2025 09:00:00 +0000\n", "", 1)))
 	countWrite(t, filepath.Join(dir, "INBOX.msf"), "// a summary file, never read\n")
 	countWrite(t, filepath.Join(dir, "[Gmail].sbd", "All Mail"), countMbox(
 		countMsg("one again", "one@x", "0001"),

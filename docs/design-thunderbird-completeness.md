@@ -663,6 +663,48 @@ Two adjustments:
 > never behind (as a glued separator, R2-05). The record keeps `misaligned_mailboxes`. Only a file
 > Thunderbird did not write can hold such a line (it escapes body "From " lines). Memory: a
 > mailbox's readings are held until its end, about 20 bytes a message.
+>
+> **Folded 2026-11-08 [owner ruling: header check] (owner's ruling, "go"; the lead's reason).
+> Supersedes the round-2 fold's STRICT rule "the pieces at a separator whose header holds
+> `X-Mozilla-Status`".** A piece at a separator now counts STRICT when its header holds
+> `X-Mozilla-Status` **or** its header is well-formed. The lead's reason: `X-Mozilla-Status` is as
+> forgeable as any header line, so a well-formed header is an equally strong sign that the piece
+> is no accidental body "From - <date>" line; and it lets the owner's 2 real messages without the
+> line count, so that account may say complete. Everything else in the round-2 and round-3 folds
+> stands (what a separator is, glued, unseparated, misaligned, the lenient count, `behind` only by
+> the lenient count).
+>
+> - **Well-formed, exactly** (`source.wellFormedHeader`): the header block is the lines after the
+>   separator up to the first empty line, and it must end within the 64 KiB bound, read as the
+>   identity's Message-ID is (`headerWithin`, R2-01): an empty line inside the bound, or a piece no
+>   longer than the bound that is all header. A header that does not end within the bound is not
+>   well-formed. Every line of the block is either a field, `<name>:` with a name of one or more
+>   bytes 33 to 126 but 58 (RFC 5322 ftext: printable ASCII, no space, no colon), or a continuation
+>   line starting with a space or tab, never the first line. CRLF is tolerated. The block holds a
+>   `Date:` field and at least one of `From:` or `Message-ID:`, names compared case-blind. Anything
+>   else is not well-formed, and the piece is LENIENT only (`Loose`), as before.
+> - **Builder's readings (each fails toward lenient or matches the existing bound; the lead may
+>   change them):** "ends within the bound" includes a short piece that is all header, because
+>   go-mbox drops the empty line before the next separator, so a message with no body reaches the
+>   count with no empty line (the same reading `headerWithin` already gives the identity). A field
+>   with an empty value (`Date:` and nothing after it) counts as present: the ruling names fields,
+>   not values. The obsolete spelling with white space before the colon (`Date :`) is not
+>   well-formed (space is not ftext), though `headerValue` reads it for the identity. A piece that
+>   begins with an empty line has an empty block, so no `Date:`: not well-formed (the round-3
+>   R3-02 empty-header variant stays lenient unless it carries `X-Mozilla-Status`, as before).
+> - **The residual widens, by the ruling.** The round-2 residual (a body line of exactly
+>   Thunderbird's separator after an empty line, unescaped, followed by `X-Mozilla-Status`) now
+>   also covers such a line followed by a well-formed header (e.g. a quoted mbox excerpt with
+>   `From:` and `Date:` lines). Thunderbird escapes such body lines (the owner's 5,655 ">From "
+>   lines, 0 bare), so only a store another writer made can carry it; release notes still wait for
+>   MA-1199. The git patch's "From <sha> …" line is still no separator, whatever header follows it.
+> - **The record's `no_status`** keeps its name and now means pieces at a separator with neither
+>   `X-Mozilla-Status` nor a well-formed header.
+> - **Owner-shaped, under the ruling** (counts only, the lead's scan): 2 of about 170 without the
+>   line, with well-formed headers, are strict: missing 0, `caught_up`, and the account may say
+>   complete when everything else holds. **Not checked:** the lead's scan counted the 2 messages
+>   without the line but did not test their headers against this definition; that they are
+>   well-formed is the lead's expectation, to be confirmed by a count-only re-scan (MA-1190).
 
 Maildir stores (`storeContractID` maildirstore, `internal/tbrestore/storekind.go:26-28`) count
 one file per message the same way. A `-copy-first` run counts its copy, but maps it back to the

@@ -46,7 +46,9 @@ type MailboxCount struct {
 	// message read, but those carrying the Expunged bit; in an mbox file only the pieces that
 	// begin at a separator Thunderbird writes (separatorShape) AND whose header holds
 	// X-Mozilla-Status, the line Thunderbird writes at the top of every offline copy
-	// (nsImapMailFolder.cpp's SetupMsgWriteStream). Only this count may make an account
+	// (nsImapMailFolder.cpp's SetupMsgWriteStream), OR is well-formed (wellFormedHeader; the
+	// owner's ruling of 2026-11-08: the line is as forgeable as any header, so a well-formed header
+	// is as strong a sign against a body "From - <date>" line). Only this count may make an account
 	// "caught up". A maildir file is one message whatever its header (no separator to mistake).
 	Messages int64
 	// Expunged is how many were left out for the Expunged bit.
@@ -59,9 +61,11 @@ type MailboxCount struct {
 	// expected; each is left out of X, and the account may not say complete.
 	NoKey int64
 	// Loose is how many pieces of an mbox file begin at a separator Thunderbird writes but
-	// carry no X-Mozilla-Status (a body line of exactly the separator's shape after an empty
-	// line, or a real message Thunderbird wrote without the line: the owner's profile holds 2 of
-	// 318,856). They are archived as before; the LENIENT count is Messages + Loose, and an
+	// carry no X-Mozilla-Status and no well-formed header (a body line of exactly the separator's
+	// shape after an empty line, or a real message written without the line whose header is not
+	// well-formed; the owner's profile holds 2 of 318,856 without the line, taken by the lead to be
+	// well-formed, so strict under the ruling). They are archived as before; the LENIENT count is
+	// Messages + Loose, and an
 	// account is "behind" only if it is short even by the lenient count, so a piece without
 	// the line can neither make an account complete nor make it behind.
 	Loose int64
@@ -116,17 +120,20 @@ func (w *localWalk) noteEntry(name string) {
 }
 
 // pieceCount is what the count reads of one message's bytes, whatever its place in the file.
+// certain: its header holds X-Mozilla-Status or is well-formed (wellFormedHeader), so a piece of
+// an mbox file that begins at a separator is in the STRICT count.
 type pieceCount struct {
-	expunged, status, keyed bool
-	key                     [16]byte
+	expunged, certain, keyed bool
+	key                      [16]byte
 }
 
-// read is what the count takes of raw: its X-Mozilla-Status (and the Expunged bit), and, when
-// the walk keeps identities, its identity key.
+// read is what the count takes of raw: its X-Mozilla-Status (and the Expunged bit), whether its
+// header is well-formed (only looked at when there is no X-Mozilla-Status), and, when the walk
+// keeps identities, its identity key.
 func (w *localWalk) read(raw []byte) pieceCount {
 	var p pieceCount
 	st, status := headerValue(headerSection(raw), "X-Mozilla-Status")
-	p.status = status
+	p.certain = status || wellFormedHeader(raw)
 	if status {
 		if v, err := strconv.ParseUint(strings.TrimSpace(st), 16, 32); err == nil && v&mozillaExpunged != 0 {
 			p.expunged = true
@@ -141,7 +148,7 @@ func (w *localWalk) read(raw []byte) pieceCount {
 
 // count counts one message read into mb (nil: not counted). mbox says it is a piece of an mbox
 // file that began at a separator: it is counted for certain only when its header holds
-// X-Mozilla-Status, else it is Loose.
+// X-Mozilla-Status or is well-formed, else it is Loose.
 func (w *localWalk) count(mb *MailboxCount, raw []byte, mbox bool) {
 	if mb == nil {
 		return
@@ -155,7 +162,7 @@ func (w *localWalk) add(mb *MailboxCount, p pieceCount, mbox bool) {
 		mb.Expunged++
 		return
 	}
-	loose := mbox && !p.status
+	loose := mbox && !p.certain
 	if loose {
 		mb.Loose++
 	} else {
@@ -370,6 +377,50 @@ func isMozillaLine(line []byte) bool {
 		}
 	}
 	return false
+}
+
+// wellFormedHeader reports whether raw begins with a well-formed message header (the owner's
+// ruling of 2026-11-08, the header check; the completeness design §2.4): its header block, the
+// lines before the first empty line, ends within headerBound (headerWithin: an empty line inside
+// the bound, or a piece no longer than the bound that is all header, as go-mbox hands on a message
+// with no body); every line of it is a field, a name of one or more printable ASCII bytes but space
+// and colon (RFC 5322's ftext, bytes 33 to 126 but 58) then a colon, or a continuation line
+// beginning with a space or tab, never the first line; and it holds a Date field and a From or
+// Message-ID field (names compared case-blind). A CR before a line's LF is part of its value, or a
+// line with no colon, so CRLF needs no case of its own. A piece that begins with an empty line has
+// an empty block, so no Date: not well-formed. A header that runs past the bound is not.
+func wellFormedHeader(raw []byte) bool {
+	hb, ok := headerWithin(raw)
+	if !ok {
+		return false
+	}
+	var date, from, id bool
+	for i, line := range strings.Split(strings.TrimSuffix(hb, "\n"), "\n") {
+		if line != "" && (line[0] == ' ' || line[0] == '\t') {
+			if i == 0 {
+				return false
+			}
+			continue
+		}
+		name, _, ok := strings.Cut(line, ":")
+		if !ok || name == "" {
+			return false
+		}
+		for j := 0; j < len(name); j++ {
+			if c := name[j]; c < 33 || c > 126 {
+				return false
+			}
+		}
+		switch strings.ToLower(name) {
+		case "date":
+			date = true
+		case "from":
+			from = true
+		case "message-id":
+			id = true
+		}
+	}
+	return date && (from || id)
 }
 
 // headerSection is raw's header section (headerBlock), or, when no blank line ends it within

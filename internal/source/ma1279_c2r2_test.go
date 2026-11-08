@@ -294,7 +294,10 @@ func TestR2_05_SeparatorWithNoEmptyLineBefore(t *testing.T) {
 // 2026-11-08): every "From " line is "From - <ctime>" after an empty line or at the file's start,
 // body lines are escaped ">From ", and 2 of 318,856 messages carry no X-Mozilla-Status. An
 // owner-shaped mailbox of 170 such messages, 2 without the line and a dozen escaped body lines,
-// counts 168 for certain and 2 loose, nothing split. Positive twin: all 170 with the line.
+// counts 168 for certain and 2 loose, nothing split. Amended 2026-11-08 by the owner's ruling (the
+// header check): the 2 here also have no Date line, so their header is not well-formed and they
+// stay loose; with a well-formed header they count strict
+// (TestAnOwnerShapedMailboxWithWellFormedHeadersCountsAll). Positive twin: all 170 with the line.
 func TestAnOwnerShapedMailboxCountsStrictAndLenient(t *testing.T) {
 	mbox := func(without int) string {
 		var b strings.Builder
@@ -304,6 +307,9 @@ func TestAnOwnerShapedMailboxCountsStrictAndLenient(t *testing.T) {
 				status = ""
 			}
 			m := countMsg(fmt.Sprintf("m%d", i), fmt.Sprintf("m%d@x", i), status)
+			if i <= without {
+				m = strings.Replace(m, "Date: Mon, 03 Mar 2025 09:00:00 +0000\n", "", 1)
+			}
 			if i%14 == 0 {
 				m += "\n>From the archives, a quoted line\n"
 			}

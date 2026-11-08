@@ -100,7 +100,8 @@ const (
 	// ReasonWalkFailed: the walk of the store ended with an error, so its count is not whole.
 	// The code is the C2 pass fix's.
 	ReasonWalkFailed
-	// ReasonCountUncertain: the strict count (pieces carrying X-Mozilla-Status, messages with an
+	// ReasonCountUncertain: the strict count (pieces carrying X-Mozilla-Status or a well-formed
+	// header, messages with an
 	// identity) is short by more than the tolerance, but the lenient count (every piece at a
 	// separator, every message without an identity taken as one more) is not: what is missing
 	// cannot be told (the C2 pass round 2's R2-04). The code is the builder's.
@@ -159,7 +160,8 @@ type OnDisk struct {
 	// Folders: messages per folder counted for certain, keyed by Entry.Path exactly as the reader
 	// gives it. A kept folder missing here has no mailbox file: 0. Not used for Gmail's X.
 	Folders map[string]int64
-	// Loose: per folder, pieces at a separator with no X-Mozilla-Status; the lenient count of a
+	// Loose: per folder, pieces at a separator with no X-Mozilla-Status and no well-formed
+	// header; the lenient count of a
 	// folder is Folders + Loose.
 	Loose map[string]int64
 	// Distinct: Gmail's X before the estimate: distinct messages by identity key (the Message-ID,
@@ -257,7 +259,7 @@ type Result struct {
 	// MisalignedMailboxes: of them, those whose pieces and separators differ in number, none
 	// counted (R3-01: never behind).
 	MisalignedMailboxes int
-	NoStatus            int64 // pieces at a separator with no X-Mozilla-Status (in the lenient count only)
+	NoStatus            int64 // pieces at a separator with no X-Mozilla-Status and no well-formed header (in the lenient count only)
 	// OnDiskMost is X by the lenient count (R2-04), after the same estimate; MissingLeast the
 	// gap by it. Behind is told only when MissingLeast is above the tolerance.
 	OnDiskMost   int64

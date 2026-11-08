@@ -103,14 +103,20 @@ func TestR2_04_GitPatchAttachmentMakesFalseCaughtUp(t *testing.T) {
 
 // covers: MA-1279
 // The owner-shaped case (the lead's count-only scan of the owner's real profile, with the owner's
-// permission: 2 of 318,856 messages lack X-Mozilla-Status, in one mailbox): a mailbox listing 170
-// with 2 of its messages written without the line is short by 2 for certain, within the tolerance
-// (17), so still caught up; never complete (missing 2); the record keeps no_status 2. With 30
-// listed messages missing as well it is behind. Positive twin: all 170 with the line.
+// permission: 2 of 318,856 messages lack X-Mozilla-Status, in one mailbox). Amended 2026-11-08 by
+// the owner's ruling (the header check): a piece whose header is well-formed counts strict too,
+// so a mailbox listing 170 with 2 of its messages written without the line but with a well-formed
+// header is missing 0, caught up, and may say complete; the record keeps no_status 0. The same 2
+// without a Date line (not well-formed) are short by 2 for certain, within the tolerance (17):
+// still caught up, never complete (missing 2), no_status 2, as before the ruling. With 30 listed
+// messages missing as well it is behind. Positive twin: all 170 with the line.
 func TestTwoMessagesWithoutTheStatusLineStayCaughtUp(t *testing.T) {
 	noStatus := func(id string) string {
 		return "From: Alice <alice@example.com>\nTo: Bob <bob@example.com>\nSubject: message " + id +
 			"\nDate: Mon, 03 Mar 2025 09:00:00 +0000\nMessage-ID: <" + id + "@c2.example>\nContent-Type: text/plain\n\nbody of " + id + "\n"
+	}
+	undated := func(id string) string {
+		return strings.Replace(noStatus(id), "Date: Mon, 03 Mar 2025 09:00:00 +0000\n", "", 1)
 	}
 	run := func(listed int, msgs []string) (tbcomplete.Result, string) {
 		_, s := imapProfile(t, "imap.owner.example", nil, tbFolder{path: "INBOX", flags: tbcomplete.FlagInbox, listed: listed, msgs: msgs})
@@ -120,16 +126,26 @@ func TestTwoMessagesWithoutTheStatusLineStayCaughtUp(t *testing.T) {
 	if r, _ := run(170, tbMsgs("in", 170)); r.Verdict != tbcomplete.CaughtUp || !r.MaySayComplete() {
 		t.Fatalf("positive twin: %v %v complete %v", r.Verdict, r.Reason, r.MaySayComplete())
 	}
-	msgs := append(tbMsgs("in", 168), noStatus("ns-1"), noStatus("ns-2"))
-	r, out := run(170, msgs)
+	formed := append(tbMsgs("in", 168), noStatus("ns-1"), noStatus("ns-2"))
+	r, out := run(170, formed)
+	if r.Verdict != tbcomplete.CaughtUp || !r.MaySayComplete() || r.OnDisk != 170 || r.Missing != 0 || r.NoStatus != 0 {
+		t.Errorf("2 of 170 without X-Mozilla-Status, well-formed: %v %v complete %v X %d missing %d no status %d; want caught_up, complete, 170, 0, 0", r.Verdict, r.Reason, r.MaySayComplete(), r.OnDisk, r.Missing, r.NoStatus)
+	}
+	if lr, _, _ := state.ReadLastRun(out); len(lr.Thunderbird) != 1 || lr.Thunderbird[0].NoStatus != 0 || lr.Thunderbird[0].Verdict != "caught_up" || !lr.Thunderbird[0].Complete {
+		t.Errorf("the record, well-formed: %+v", lr.Thunderbird)
+	}
+	msgs := append(tbMsgs("in", 168), undated("ns-1"), undated("ns-2"))
+	r, out = run(170, msgs)
 	if r.Verdict != tbcomplete.CaughtUp || r.MaySayComplete() || r.OnDisk != 168 || r.Missing != 2 || r.Tolerance != 17 || r.NoStatus != 2 {
-		t.Errorf("2 of 170 without X-Mozilla-Status: %v %v complete %v X %d missing %d tolerance %d no status %d", r.Verdict, r.Reason, r.MaySayComplete(), r.OnDisk, r.Missing, r.Tolerance, r.NoStatus)
+		t.Errorf("2 of 170 without X-Mozilla-Status or Date: %v %v complete %v X %d missing %d tolerance %d no status %d", r.Verdict, r.Reason, r.MaySayComplete(), r.OnDisk, r.Missing, r.Tolerance, r.NoStatus)
 	}
 	if lr, _, _ := state.ReadLastRun(out); len(lr.Thunderbird) != 1 || lr.Thunderbird[0].NoStatus != 2 || lr.Thunderbird[0].Verdict != "caught_up" || lr.Thunderbird[0].Complete {
-		t.Errorf("the record: %+v", lr.Thunderbird)
+		t.Errorf("the record, not well-formed: %+v", lr.Thunderbird)
 	}
-	if r, _ := run(200, msgs); r.Verdict != tbcomplete.Behind {
-		t.Errorf("200 listed, 170 on disk with 2 without the line: %v %v", r.Verdict, r.Reason)
+	for _, m := range [][]string{formed, msgs} {
+		if r, _ := run(200, m); r.Verdict != tbcomplete.Behind {
+			t.Errorf("200 listed, 170 on disk with 2 without the line: %v %v", r.Verdict, r.Reason)
+		}
 	}
 }
 

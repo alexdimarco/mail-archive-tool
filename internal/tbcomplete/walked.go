@@ -16,13 +16,15 @@ type Mailbox struct {
 	Rel string
 	// Messages counted for certain, the STRICT count (deleted copies carrying 0x0008 already
 	// left out, §2.4; in an mbox file only pieces that begin at a separator Thunderbird writes
-	// and carry X-Mozilla-Status, the C2 pass round 2's R2-04).
+	// and carry X-Mozilla-Status or a well-formed header, the C2 pass round 2's R2-04 and the
+	// owner's ruling of 2026-11-08).
 	Messages int64
 	// Keys are the counted messages' identity keys (source.IdentityKey: the Message-ID, else the
 	// content without Thunderbird's per-copy lines), and NoKey how many had none (Gmail's X).
 	Keys  [][16]byte
 	NoKey int64
-	// Loose: pieces at a separator with no X-Mozilla-Status (source.MailboxCount.Loose), with
+	// Loose: pieces at a separator with no X-Mozilla-Status and no well-formed header
+	// (source.MailboxCount.Loose), with
 	// their keys and how many had none. The LENIENT count adds them.
 	Loose      int64
 	LooseKeys  [][16]byte
@@ -57,7 +59,8 @@ type Mailbox struct {
 //     at a separator-shaped line with no empty line before it (R2-05), or in MisalignedMailboxes
 //     when the reader's pieces and the scan's notes differ in number (R3-01: none was counted);
 //   - the LENIENT count (R2-04) is kept beside the strict one: Loose holds each folder's pieces
-//     with no X-Mozilla-Status, and for Gmail LooseDistinct is how many more X could be: the
+//     with no X-Mozilla-Status and no well-formed header, and for Gmail LooseDistinct is how many
+//     more X could be: the
 //     Loose pieces' identities not already counted, and every message with no identity key,
 //     strict or loose (each may be one more distinct email). Strict plus lenient is never less
 //     than what is on disk, so a gap by it is certain;
