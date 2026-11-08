@@ -648,6 +648,21 @@ Two adjustments:
 > is read as LF before the content checksum, so an LF and a CRLF copy of one ID-less email have
 > one key (a lone CR stays content). **The gmail-dedup design's stricter identity is intentional:**
 > it merges only byte-identical copies, which stays safe, and it is not changed.
+>
+> **Folded 2026-11-08 [C2 pass round 3, R3-01] (lead's call): the count never depends on the
+> reader's chunks.** The round-2 fold's sentence "such a piece cannot hold a message Thunderbird
+> wrote" did not hold for a "From " line longer than go-mbox's 4,096-byte line buffer: the reader
+> can end one more piece at a later chunk of it, and matching pieces to separators by their order
+> then hands each later piece the next one's separator, so the last real message is counted
+> nowhere (a false "behind"). Now each piece's reading waits for the file's end, and pieces are
+> matched to the scan's separators only when the reader handed on exactly as many pieces as the
+> scan saw "From " lines. go-mbox ends a piece at every line the scan notes and may end more, never
+> fewer (read from `reader.go` v1.0.4: a fresh piece reader forgets it was in the middle of a line,
+> never the other way), so equal numbers are equal splits. Otherwise the mailbox is **misaligned**:
+> no piece is counted, it is split differently, and its account is `unknown`, `split_differently`,
+> never behind (as a glued separator, R2-05). The record keeps `misaligned_mailboxes`. Only a file
+> Thunderbird did not write can hold such a line (it escapes body "From " lines). Memory: a
+> mailbox's readings are held until its end, about 20 bytes a message.
 
 Maildir stores (`storeContractID` maildirstore, `internal/tbrestore/storekind.go:26-28`) count
 one file per message the same way. A `-copy-first` run counts its copy, but maps it back to the
@@ -2677,6 +2692,41 @@ C4 must land with or before C3 if encrypted archives get any words beyond today'
 >   `behind_run`. C3 owns the words.
 > - **Gate owed:** the pass's own rerun (round 3: the clone's attack files against the fixed
 >   commit). Not self-certified here.
+>
+> **Built 2026-11-08 [C2 pass round 3 fixes] (the builder's notes, for the lead).** Round 3
+> (`docs/review-thunderbird-completeness-c2-adversarial-r3.md`, NOT CLEAN at `57d9cd3`, 4 LOW) is
+> answered by the lead's four calls, its attack tests brought in as guards (rows MA-1279, MA-1281,
+> MA-1283 amended). R3-01 is §2.4's round-3 fold. The rest supersede the round-2 note above where
+> they differ:
+>
+> - **Pruning by time (R3-03).** An entry is pruned only when no run has reached its store for **30
+>   days**, by the record's own times (`seen_at` per entry, `last_run_at` for the record), never by
+>   a count of runs. A clock that went back never prunes; a run whose clock is before
+>   MinPlausibleTime prunes nothing; a planted `seen_at` is clamped to `last_run_at` when read. Why
+>   30: the longest schedule is weekly, so a weekly store has three missed weeks to spare; a store
+>   no longer backed up goes within a month. The 72-run rule is gone.
+> - **Capacity (R3-04).** The streak record keeps **256** stores (`TBStreakAccountsMax`, apart from
+>   the last-run record's 64); its reader's bound is 512 KiB (the worst record at 256 is measured
+>   by MA-1281's bound test). A full record evicts only an entry this run did not find behind,
+>   **never one it found behind**. A new behind store that finds no room is logged by name and
+>   leaves a WARN `tbstreak_full` in the last-run record, which `status` shows (the builder's
+>   words, naming the record, how many wait and up to three of them; C3 owns the final ones).
+>   **Builder's reading, for the lead to confirm:** "currently behind" is "found behind by this
+>   run"; an entry reached this run only as unknown, or not reached, may still be evicted (the one
+>   reached longest ago first). **For C5:** a store waiting under `tbstreak_full` has no streak, so
+>   no "still downloading" email can come for it until room frees up.
+> - **Name cleaning (R3-05).** U+2800 is removed; every other Zs space becomes U+0020; runs of
+>   spaces become one and the ends are trimmed. Display only: no key is built from a cleaned name.
+> - **Tests amended, by the lead's calls, not weakened:** the round-2 streak tests now state 30
+>   days, 256 entries and "never evict a streak found behind" (the round-2 line "else the oldest of
+>   all goes" is reversed by R3-04); round 3's R3-01 attack test keeps its trigger and asserts the
+>   lead's rule (misaligned, nothing counted) as its effect in place of "lenient at least 3";
+>   `TestADV_C2_09_PlantedStreakShapes` checks the streak's own cap and adds a record past the byte
+>   bound.
+> - **New codes and fields, the builder's names:** WARN `tbstreak_full`; record field
+>   `misaligned_mailboxes`; streak fields `last_run_at`, `seen_at`.
+> - **Gate owed:** the pass's own rerun (round 4: round 3's clone files against the fixed commit).
+>   Not self-certified here.
 
 ## 14. Owner questions (each with a recommendation)
 

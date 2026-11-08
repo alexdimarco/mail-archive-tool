@@ -83,8 +83,8 @@ func TestR2_08_StaleEntriesFillTheStreakCap(t *testing.T) {
 	for i := 0; i < TBAccountsMax-1; i++ {
 		s = s.Behind(fmt.Sprintf("old%02d", i), "imap.old.example", 1, now.Add(-30*24*time.Hour))
 	}
-	room, _, dropped := s.BehindEvicting("new", "imap.new.example", 1, now)
-	if _, ok := room.Account("new"); !ok || dropped || len(room.Accounts) != TBAccountsMax {
+	room, _, placed := s.BehindEvicting("new", "imap.new.example", 1, now)
+	if _, ok := room.Account("new"); !ok || placed != TBRoomKept || len(room.Accounts) != TBAccountsMax {
 		t.Fatal("positive twin: with room, no streak")
 	}
 	s = s.Behind("old63", "imap.old.example", 1, now.Add(-30*24*time.Hour))
@@ -94,73 +94,85 @@ func TestR2_08_StaleEntriesFillTheStreakCap(t *testing.T) {
 }
 
 // covers: MA-1281
-// R2-08, the rules: each run's fold starts with StartRun (Run up by one); a store the run reaches
-// is Seen whatever its verdict; an entry whose store no run reached for TBStreakUnseenRuns (72)
-// runs is pruned and given back, one seen at 71 is kept; a full record makes room for a new behind
-// store by dropping the oldest entry this run did not find behind (the one reached longest ago),
-// else the oldest of all, and says which; the counters are kept in the record, a planted one
-// clamped (never ahead of the record's run, never negative, never wrapping). Positive twin: a
-// streak seen every run is never pruned.
+// R2-08's rules as round 3 amended them (R3-03 and R3-04, the lead's calls): each run's fold starts
+// with StartRun (Run up by one, LastRunAt its time); a store the run reaches is Seen whatever its
+// verdict; an entry whose store no run reached for TBStreakUnseenFor (30 days) is pruned and given
+// back, one seen 30 days less a second ago is kept; a full record makes room for a new behind store
+// by dropping the oldest entry this run did not find behind (the one reached longest ago), and
+// never one it found behind; the counters are kept in the record, a planted one clamped (never
+// ahead of the record's run, never negative, never wrapping). Positive twin: a streak seen every
+// run is never pruned.
 func TestTheStreakRecordPrunesAndMakesRoom(t *testing.T) {
 	now := time.Date(2026, 11, 8, 12, 0, 0, 0, time.UTC)
-	s := TBStreak{}.StartRun().Behind("live", "imap.live.example", 1, now).Behind("gone", "imap.gone.example", 1, now)
-	for i := 0; i < 100; i++ {
-		s = s.StartRun().Seen("live")
+	s := TBStreak{}.StartRun(now).Behind("live", "imap.live.example", 1, now).Behind("gone", "imap.gone.example", 1, now)
+	for h := 1; h <= 31*24; h++ {
+		at := now.Add(time.Duration(h) * time.Hour)
+		s = s.StartRun(at).Seen("live", at)
 		var p []TBStreakAccount
-		s, p = s.Prune()
-		if i < TBStreakUnseenRuns-1 && len(p) != 0 {
-			t.Fatalf("run %d: pruned %+v before %d unseen runs", i, p, TBStreakUnseenRuns)
+		s, p = s.Prune(at)
+		if at.Sub(now) < TBStreakUnseenFor && len(p) != 0 {
+			t.Fatalf("hour %d: pruned %+v before 30 days", h, p)
 		}
-		if i == TBStreakUnseenRuns-1 && (len(p) != 1 || p[0].Store != "gone") {
-			t.Fatalf("run %d: %+v, want the unseen entry pruned at %d", i, p, TBStreakUnseenRuns)
+		if at.Sub(now) == TBStreakUnseenFor && (len(p) != 1 || p[0].Store != "gone") {
+			t.Fatalf("hour %d: %+v, want the unseen entry pruned at 30 days", h, p)
 		}
 	}
-	if _, ok := s.Account("live"); !ok || len(s.Accounts) != 1 || s.Run != 101 {
+	if _, ok := s.Account("live"); !ok || len(s.Accounts) != 1 || s.Run != 31*24+1 {
 		t.Fatalf("positive twin: the entry seen every run: %+v", s)
 	}
-	// A streak extended every run is reached every run, Seen or not.
-	ext := TBStreak{}.StartRun().Behind("ext", "imap.ext.example", 1, now)
-	for i := 0; i < 100; i++ {
-		ext, _ = ext.StartRun().Behind("ext", "imap.ext.example", int64(i), now).Prune()
+	// A second short of 30 days is kept.
+	edge := TBStreak{}.StartRun(now).Behind("e", "imap.e.example", 1, now)
+	if kept, p := edge.Prune(now.Add(TBStreakUnseenFor - time.Second)); len(p) != 0 || len(kept.Accounts) != 1 {
+		t.Errorf("30 days less a second: pruned %+v", p)
 	}
-	if a, ok := ext.Account("ext"); !ok || a.Runs != 101 || a.SeenRun != ext.Run || a.BehindRun != ext.Run {
+	// A streak extended every run is reached every run, Seen or not.
+	ext := TBStreak{}.StartRun(now).Behind("ext", "imap.ext.example", 1, now)
+	for i := 0; i < 100; i++ {
+		at := now.Add(time.Duration(i+1) * 24 * time.Hour)
+		ext, _ = ext.StartRun(at).Behind("ext", "imap.ext.example", int64(i), at).Prune(at)
+	}
+	if a, ok := ext.Account("ext"); !ok || a.Runs != 101 || a.SeenRun != ext.Run || a.BehindRun != ext.Run || !a.SeenAt.Equal(now.Add(100*24*time.Hour)) {
 		t.Errorf("a streak extended every run: %+v %v", a, ok)
 	}
 
-	// A full record, this run: entries 0..61 not reached for a while (reached at runs 1..62), 62
-	// and 63 found behind in this run. The new store drops entry 0, the one reached longest ago.
+	// A full record, this run: entries 0..253 not reached for a while (reached at runs 1..254),
+	// 254 and 255 found behind in this run. The new store drops entry 0, the one reached longest
+	// ago.
 	full := TBStreak{}
-	for i := 0; i < TBAccountsMax; i++ {
-		full = full.StartRun().Behind(fmt.Sprintf("s%02d", i), "imap.example", 1, now)
+	for i := 0; i < TBStreakAccountsMax; i++ {
+		full = full.StartRun(now).Behind(fmt.Sprintf("s%03d", i), "imap.example", 1, now)
 	}
-	full = full.StartRun().Behind("s62", "imap.example", 2, now).Behind("s63", "imap.example", 2, now)
-	got, gone, dropped := full.BehindEvicting("new", "imap.new.example", 1, now)
-	if !dropped || gone.Store != "s00" || len(got.Accounts) != TBAccountsMax {
-		t.Errorf("full: dropped %v %q (%d entries); want s00", dropped, gone.Store, len(got.Accounts))
+	full = full.StartRun(now).Behind("s254", "imap.example", 2, now).Behind("s255", "imap.example", 2, now)
+	got, gone, placed := full.BehindEvicting("new", "imap.new.example", 1, now)
+	if placed != TBRoomEvicted || gone.Store != "s000" || len(got.Accounts) != TBStreakAccountsMax {
+		t.Errorf("full: %v %q (%d entries); want s000 evicted", placed, gone.Store, len(got.Accounts))
 	}
-	if a, ok := got.Account("new"); !ok || a.SeenRun != got.Run || a.BehindRun != got.Run || a.Runs != 1 {
+	if a, ok := got.Account("new"); !ok || a.SeenRun != got.Run || a.BehindRun != got.Run || a.Runs != 1 || !a.SeenAt.Equal(now) {
 		t.Errorf("the new streak: %+v", a)
 	}
-	// Reaching another entry this run changes nothing; reaching s00 this run spares it, and the
-	// next reached longest ago (s01) goes.
-	reach := full.Seen("s05")
-	if _, gone, _ := reach.BehindEvicting("new", "imap.new.example", 1, now); gone.Store != "s00" {
-		t.Errorf("dropped %q, want s00", gone.Store)
+	// Reaching another entry this run changes nothing; reaching s000 this run spares it, and the
+	// next reached longest ago (s001) goes.
+	reach := full.Seen("s005", now)
+	if _, gone, _ := reach.BehindEvicting("new", "imap.new.example", 1, now); gone.Store != "s000" {
+		t.Errorf("dropped %q, want s000", gone.Store)
 	}
-	reach = full.Seen("s00")
-	if _, gone, _ := reach.BehindEvicting("new", "imap.new.example", 1, now); gone.Store != "s01" {
-		t.Errorf("s00 reached this run: dropped %q, want s01", gone.Store)
+	reach = full.Seen("s000", now)
+	if _, gone, _ := reach.BehindEvicting("new", "imap.new.example", 1, now); gone.Store != "s001" {
+		t.Errorf("s000 reached this run: dropped %q, want s001", gone.Store)
 	}
-	// Every entry found behind this run: the oldest of all goes (never a refusal).
-	all := TBStreak{}.StartRun()
-	for i := 0; i < TBAccountsMax; i++ {
-		all = all.Behind(fmt.Sprintf("b%02d", i), "imap.example", 1, now)
+	// Every entry found behind this run: none goes, the record is unchanged, and the new store
+	// gets no streak (TBRoomFull: the caller says so).
+	all := TBStreak{}.StartRun(now)
+	for i := 0; i < TBStreakAccountsMax; i++ {
+		all = all.Behind(fmt.Sprintf("b%03d", i), "imap.example", 1, now)
 	}
-	all = all.Seen("b00")
-	if got, gone, dropped := all.BehindEvicting("new", "imap.new.example", 1, now); !dropped || gone.Store != "b00" {
-		t.Errorf("all behind now: dropped %v %q", dropped, gone.Store)
-	} else if _, ok := got.Account("new"); !ok {
-		t.Error("all behind now: the new store got no streak")
+	all = all.Seen("b000", now)
+	if after, _, placed := all.BehindEvicting("new", "imap.new.example", 1, now); placed != TBRoomFull || len(after.Accounts) != TBStreakAccountsMax || after.Serial != all.Serial {
+		t.Errorf("all behind now: %v, %d entries, serial %d (was %d)", placed, len(after.Accounts), after.Serial, all.Serial)
+	} else if _, ok := after.Account("new"); ok {
+		t.Error("all behind now: the new store took a running streak's place")
+	} else if _, ok := after.Account("b000"); !ok {
+		t.Error("all behind now: b000 was evicted")
 	}
 
 	// The counters round-trip; a planted one is clamped.
@@ -169,7 +181,7 @@ func TestTheStreakRecordPrunesAndMakesRoom(t *testing.T) {
 		t.Fatal(err)
 	}
 	back, err := ReadTBStreak(out)
-	if err != nil || back.Run != got.Run || back.Accounts[len(back.Accounts)-1].SeenRun != got.Run {
+	if err != nil || back.Run != got.Run || back.Accounts[len(back.Accounts)-1].SeenRun != got.Run || !back.LastRunAt.Equal(now) || !back.Accounts[len(back.Accounts)-1].SeenAt.Equal(now) {
 		t.Fatalf("round trip: %v run %d", err, back.Run)
 	}
 	planted := map[string]any{"version": 1, "serial": 3, "run": 5, "record_id": back.RecordID, "accounts": []map[string]any{
@@ -186,11 +198,11 @@ func TestTheStreakRecordPrunesAndMakesRoom(t *testing.T) {
 	planted["run"] = 1 << 62
 	data, _ = json.Marshal(planted)
 	_ = os.WriteFile(filepath.Join(out, TBStreakName), data, 0o600)
-	if p, _ := ReadTBStreak(out); p.Run != maxTBStreakRun || p.StartRun().Run != maxTBStreakRun {
+	if p, _ := ReadTBStreak(out); p.Run != maxTBStreakRun || p.StartRun(now).Run != maxTBStreakRun {
 		t.Errorf("a planted huge run: %d", p.Run)
 	}
-	if p, _ := ReadTBStreak(out); func() bool { q, _ := p.StartRun().Prune(); return len(q.Accounts) == 0 }() {
-		t.Error("the planted entry, seen at the clamped run, was pruned at once")
+	if p, _ := ReadTBStreak(out); func() bool { q, _ := p.StartRun(now).Prune(now); return len(q.Accounts) == 0 }() {
+		t.Error("the planted entry, with no time of its own, was pruned at once")
 	}
 }
 

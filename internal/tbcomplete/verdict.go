@@ -179,6 +179,9 @@ type OnDisk struct {
 	// separator-shaped line with no empty line before it (R2-05).
 	SplitMailboxes int
 	GluedMailboxes int
+	// MisalignedMailboxes: those of them whose reader's pieces and scan's notes differ in number
+	// (R3-01), none of their pieces counted.
+	MisalignedMailboxes int
 	// UnkeyedMailboxes, UnkeyedMessages: walked mailboxes with no cache key and their messages
 	// (L3). Counted in the result; never added to X.
 	UnkeyedMailboxes int
@@ -251,7 +254,10 @@ type Result struct {
 	NoIdentity       int64 // Gmail messages with no identity key, left out of X: no complete words
 	SplitMailboxes   int   // kept mailboxes split differently from Thunderbird's separators
 	GluedMailboxes   int   // of them, those with a separator glued to the line before (never behind)
-	NoStatus         int64 // pieces at a separator with no X-Mozilla-Status (in the lenient count only)
+	// MisalignedMailboxes: of them, those whose pieces and separators differ in number, none
+	// counted (R3-01: never behind).
+	MisalignedMailboxes int
+	NoStatus            int64 // pieces at a separator with no X-Mozilla-Status (in the lenient count only)
 	// OnDiskMost is X by the lenient count (R2-04), after the same estimate; MissingLeast the
 	// gap by it. Behind is told only when MissingLeast is above the tolerance.
 	OnDiskMost   int64
@@ -353,7 +359,8 @@ func RunLeadWith(rs []Result, more int) Lead {
 func Assess(in Input) Result {
 	r := Result{Account: in.Account, StoreID: in.StoreID, Limits: in.Limits,
 		UnkeyedMailboxes: in.OnDisk.UnkeyedMailboxes, UnkeyedMessages: in.OnDisk.UnkeyedMessages,
-		SplitMailboxes: in.OnDisk.SplitMailboxes, GluedMailboxes: in.OnDisk.GluedMailboxes, NoStatus: in.OnDisk.NoStatus}
+		SplitMailboxes: in.OnDisk.SplitMailboxes, GluedMailboxes: in.OnDisk.GluedMailboxes, NoStatus: in.OnDisk.NoStatus,
+		MisalignedMailboxes: in.OnDisk.MisalignedMailboxes}
 	unknown := func(why Reason) Result {
 		r.Verdict, r.Reason = Unknown, why
 		return r
@@ -590,9 +597,10 @@ func Assess(in Input) Result {
 
 	// The verdict. Behind only by the lenient count, caught up only by the strict one (R2-04).
 	switch {
-	case r.GluedMailboxes > 0:
+	case r.GluedMailboxes > 0 || r.MisalignedMailboxes > 0:
 		// A separator glued to the line before it may be a message the count could not take
-		// (R2-05): never behind, never caught up.
+		// (R2-05), and a mailbox whose pieces and separators differ in number had none counted
+		// (R3-01): never behind, never caught up.
 		r.Verdict, r.Reason = Unknown, ReasonSplitDifferently
 	case r.Floor && r.OnDiskMost < r.Listed-r.Tolerance:
 		r.Verdict = Behind

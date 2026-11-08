@@ -487,11 +487,15 @@ func (w *localWalk) mboxFileAs(sc *scope, rel, mailbox string, folder []string) 
 	stream := skipBOM(wrapMboxStream(sc.at(rel), f))
 	// The count takes only the pieces that begin at a separator Thunderbird writes (the C2
 	// pass's ADV-C2-03): the reader splits at every line beginning "From ", which a body line
-	// its writer did not escape also does. What is archived is unchanged.
+	// its writer did not escape also does. Each piece's reading waits for the file's end, and is
+	// matched to the scan's notes only if there are as many of each (settlePieces, R3-01). What
+	// is archived is unchanged.
 	var seps *separatorScan
+	var pieces []pieceCount
 	if mb != nil {
 		seps = newSeparatorScan(stream)
 		stream = seps
+		defer func() { w.settlePieces(mb, pieces, seps) }()
 	}
 	mr := gombox.NewReader(stream)
 	n := 0
@@ -516,9 +520,9 @@ func (w *localWalk) mboxFileAs(sc *scope, rel, mailbox string, folder []string) 
 			return nil
 		}
 		n++
-		// Counted here, before the handler's manifest skip and date filter (§2.4).
+		// Read here, before the handler's manifest skip and date filter (§2.4).
 		if seps != nil {
-			w.countPiece(mb, data, seps.start(n))
+			pieces = append(pieces, w.read(data))
 		}
 		if m := parseRaw(data); m != nil {
 			if err := w.handler(folder, m); err != nil {

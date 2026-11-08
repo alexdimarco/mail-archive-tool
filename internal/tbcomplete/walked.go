@@ -33,6 +33,11 @@ type Mailbox struct {
 	// Glued: pieces at a separator-shaped line with no empty line before it (R2-05): the mailbox
 	// is split differently and the account is never told behind.
 	Glued int64
+	// Misaligned: the reader handed on a different number of pieces than the separator scan saw
+	// "From " lines (the C2 pass round 3's R3-01), so none was counted; Uncounted is how many
+	// pieces it handed on. The mailbox is split differently and the account is never told behind.
+	Misaligned bool
+	Uncounted  int64
 }
 
 // OnDiskFor is the walk's count as the verdict reads it for the store s (the C1b note: keyed by
@@ -49,7 +54,8 @@ type Mailbox struct {
 //     "behind");
 //   - a keyed mailbox with pieces that do not begin at a separator Thunderbird writes is counted
 //     in SplitMailboxes (the C2 pass's ADV-C2-03), and also in GluedMailboxes when some begin
-//     at a separator-shaped line with no empty line before it (R2-05);
+//     at a separator-shaped line with no empty line before it (R2-05), or in MisalignedMailboxes
+//     when the reader's pieces and the scan's notes differ in number (R3-01: none was counted);
 //   - the LENIENT count (R2-04) is kept beside the strict one: Loose holds each folder's pieces
 //     with no X-Mozilla-Status, and for Gmail LooseDistinct is how many more X could be: the
 //     Loose pieces' identities not already counted, and every message with no identity key,
@@ -94,7 +100,8 @@ func (s Store) onDiskFor(walked []Mailbox, gmail bool, goos string) OnDisk {
 			continue // M2: left out of X and Y
 		case id == "" || !keyed || len(byFolder[id]) > 1:
 			d.UnkeyedMailboxes++
-			d.UnkeyedMessages += mb.Messages + mb.Loose // its loose pieces are on disk too (TC-2's "lists no mail")
+			// Its loose and uncounted pieces are on disk too (TC-2's "lists no mail").
+			d.UnkeyedMessages += mb.Messages + mb.Loose + mb.Uncounted
 			continue
 		}
 		d.Folders[e.Path] = mb.Messages
@@ -102,11 +109,14 @@ func (s Store) onDiskFor(walked []Mailbox, gmail bool, goos string) OnDisk {
 			d.Loose[e.Path] = mb.Loose
 			d.NoStatus += mb.Loose
 		}
-		if mb.Unseparated > 0 || mb.Glued > 0 {
+		if mb.Unseparated > 0 || mb.Glued > 0 || mb.Misaligned {
 			d.SplitMailboxes++
 		}
 		if mb.Glued > 0 {
 			d.GluedMailboxes++
+		}
+		if mb.Misaligned {
+			d.MisalignedMailboxes++
 		}
 		if !gmail || !e.Has(FlagOffline) {
 			continue

@@ -81,6 +81,15 @@ type MailboxCount struct {
 	// of 318,856), so such a piece may be a message the count could not take, or a body line:
 	// its mailbox is split differently and its account is never told "behind" (R2-05).
 	Glued int64
+	// Misaligned: the mbox reader handed on a different number of pieces than the separator scan
+	// saw "From " lines (the C2 pass round 3's R3-01, the lead's call: go-mbox reads a line through
+	// a 4,096-byte buffer, and a "From " line longer than that can end one more piece at a later
+	// chunk). Then no piece is matched to a separator: Messages, Loose, Expunged, Glued,
+	// Unseparated and the keys stay 0, Uncounted is how many pieces were handed on (archived as
+	// before), and the mailbox is split differently with its account never told "behind". The
+	// count never depends on where the reader's chunks fall.
+	Misaligned bool
+	Uncounted  int64
 }
 
 // mozillaExpunged is the Expunged bit of X-Mozilla-Status (nsMsgMessageFlags.idl,
@@ -106,6 +115,30 @@ func (w *localWalk) noteEntry(name string) {
 	}
 }
 
+// pieceCount is what the count reads of one message's bytes, whatever its place in the file.
+type pieceCount struct {
+	expunged, status, keyed bool
+	key                     [16]byte
+}
+
+// read is what the count takes of raw: its X-Mozilla-Status (and the Expunged bit), and, when
+// the walk keeps identities, its identity key.
+func (w *localWalk) read(raw []byte) pieceCount {
+	var p pieceCount
+	st, status := headerValue(headerSection(raw), "X-Mozilla-Status")
+	p.status = status
+	if status {
+		if v, err := strconv.ParseUint(strings.TrimSpace(st), 16, 32); err == nil && v&mozillaExpunged != 0 {
+			p.expunged = true
+			return p
+		}
+	}
+	if w.opts.Counts.Distinct {
+		p.key, p.keyed = IdentityKey(raw)
+	}
+	return p
+}
+
 // count counts one message read into mb (nil: not counted). mbox says it is a piece of an mbox
 // file that began at a separator: it is counted for certain only when its header holds
 // X-Mozilla-Status, else it is Loose.
@@ -113,14 +146,16 @@ func (w *localWalk) count(mb *MailboxCount, raw []byte, mbox bool) {
 	if mb == nil {
 		return
 	}
-	st, status := headerValue(headerSection(raw), "X-Mozilla-Status")
-	if status {
-		if v, err := strconv.ParseUint(strings.TrimSpace(st), 16, 32); err == nil && v&mozillaExpunged != 0 {
-			mb.Expunged++
-			return
-		}
+	w.add(mb, w.read(raw), mbox)
+}
+
+// add adds one message's reading p to mb, as count says.
+func (w *localWalk) add(mb *MailboxCount, p pieceCount, mbox bool) {
+	if p.expunged {
+		mb.Expunged++
+		return
 	}
-	loose := mbox && !status
+	loose := mbox && !p.status
 	if loose {
 		mb.Loose++
 	} else {
@@ -129,33 +164,43 @@ func (w *localWalk) count(mb *MailboxCount, raw []byte, mbox bool) {
 	if !w.opts.Counts.Distinct {
 		return
 	}
-	key, ok := IdentityKey(raw)
 	switch {
-	case loose && ok:
-		mb.LooseKeys = append(mb.LooseKeys, key)
+	case loose && p.keyed:
+		mb.LooseKeys = append(mb.LooseKeys, p.key)
 	case loose:
 		mb.LooseNoKey++
-	case ok:
-		mb.Keys = append(mb.Keys, key)
+	case p.keyed:
+		mb.Keys = append(mb.Keys, p.key)
 	default:
 		mb.NoKey++
 	}
 }
 
-// countPiece counts one piece of an mbox file by how it begins (separatorScan): at a separator
-// Thunderbird writes it is counted; at a separator-shaped line with no empty line before it, or
-// at a "From " line of another shape, it is noted, never counted.
-func (w *localWalk) countPiece(mb *MailboxCount, raw []byte, start pieceStart) {
+// settlePieces counts an mbox file's pieces into mb once the reader has handed on its last (the
+// C2 pass round 3's R3-01): each piece is matched to the scan's note of the same place only when
+// the reader handed on exactly as many pieces as the scan saw "From " lines. go-mbox ends a piece
+// at every line the scan notes, and may end more (a fresh piece reader forgets it was in the
+// middle of a line longer than its buffer), never fewer, so equal numbers are equal splits.
+// Otherwise the mailbox is Misaligned and no piece is counted. Then each matched piece is counted
+// by how it begins: at a separator Thunderbird writes, as count says; at a separator-shaped line
+// with no empty line before it, Glued; at a "From " line of another shape, Unseparated.
+func (w *localWalk) settlePieces(mb *MailboxCount, pieces []pieceCount, seps *separatorScan) {
 	if mb == nil {
 		return
 	}
-	switch start {
-	case startSeparator:
-		w.count(mb, raw, true)
-	case startGlued:
-		mb.Glued++
-	default:
-		mb.Unseparated++
+	if len(pieces) != len(seps.marks) {
+		mb.Misaligned, mb.Uncounted = true, int64(len(pieces))
+		return
+	}
+	for i, p := range pieces {
+		switch seps.marks[i] {
+		case startSeparator:
+			w.add(mb, p, true)
+		case startGlued:
+			mb.Glued++
+		default:
+			mb.Unseparated++
+		}
 	}
 }
 
@@ -392,7 +437,8 @@ const (
 // every line beginning "From ") and notes, for each such line in order, how it begins a piece:
 // a separator Thunderbird writes (of separatorShape, at the file's start or after an empty
 // line), a glued one (of the shape, no empty line before it), or another line. The reader's n-th
-// piece begins at the n-th note. It changes no byte.
+// piece begins at the n-th note only when the reader handed on as many pieces as there are notes
+// (settlePieces checks it: R3-01). It changes no byte.
 type separatorScan struct {
 	r         io.Reader
 	marks     []pieceStart

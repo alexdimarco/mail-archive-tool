@@ -217,7 +217,8 @@ func assessThunderbird(stores []*tbStore, now time.Time) []tbcomplete.Result {
 				var walked []tbcomplete.Mailbox
 				for _, mb := range t.counts.Mailboxes {
 					walked = append(walked, tbcomplete.Mailbox{Rel: mb.Rel, Messages: mb.Messages, Keys: mb.Keys, NoKey: mb.NoKey,
-						Loose: mb.Loose, LooseKeys: mb.LooseKeys, LooseNoKey: mb.LooseNoKey, Unseparated: mb.Unseparated, Glued: mb.Glued})
+						Loose: mb.Loose, LooseKeys: mb.LooseKeys, LooseNoKey: mb.LooseNoKey, Unseparated: mb.Unseparated, Glued: mb.Glued,
+						Misaligned: mb.Misaligned, Uncounted: mb.Uncounted})
 				}
 				in.OnDisk = view.OnDiskFor(walked, t.facts.Gmail == thunderbird.GmailYes)
 			}
@@ -293,7 +294,7 @@ func tbRecords(results []tbcomplete.Result, prev []state.TBAccount, now time.Tim
 			CapNote: r.CapNote, ListsNoMail: r.ListsNoMail, LabelsNotKept: r.LabelsNotKept,
 			CantTellFolders: r.CantTellFolders, SkippedEntries: r.SkippedEntries, IgnoredOldKeys: r.IgnoredOldKeys,
 			UnkeyedMailboxes: r.UnkeyedMailboxes, UnkeyedMessages: r.UnkeyedMessages,
-			GluedMailboxes: r.GluedMailboxes, NoStatus: r.NoStatus,
+			GluedMailboxes: r.GluedMailboxes, NoStatus: r.NoStatus, MisalignedMailboxes: r.MisalignedMailboxes,
 		}
 		if r.AsOf > 0 {
 			a.AsOf = time.Unix(r.AsOf, 0).UTC()
@@ -424,7 +425,11 @@ func previousThunderbird(opts Options) []state.TBAccount {
 //   - a record a later MailArchive wrote (state.ErrTBStreakNewer) is never downgraded: nothing
 //     moves and nothing is written;
 //   - any other refusal (a link, a pipe, too large, a read error) leaves the record as it is.
-func updateTBStreak(opts Options, results []tbcomplete.Result, encrypted, ok bool, now time.Time, logger *log.Logger) *state.RunWarning {
+//
+// A full record never drops a streak this run found behind (the C2 pass round 3's R3-04): a new
+// behind store that finds no room is logged by name and the run gets a WARN for the last-run
+// record (code tbstreak_full), which status shows. The WARNs come back in the order they arose.
+func updateTBStreak(opts Options, results []tbcomplete.Result, encrypted, ok bool, now time.Time, logger *log.Logger) []state.RunWarning {
 	if opts.Key != nil || encrypted || ArchiveEncrypted(opts.Out) {
 		_ = removeTBStreak(opts.Out)
 		return nil
@@ -438,31 +443,33 @@ func updateTBStreak(opts Options, results []tbcomplete.Result, encrypted, ok boo
 			logger.Printf(format, args...)
 		}
 	}
-	var warn *state.RunWarning
+	var warns []state.RunWarning
 	prev, err := readTBStreak(opts.Out)
 	switch {
 	case err == nil:
 	case errors.Is(err, util.ErrReadableByOthers):
 		logf("warning: MailArchive's record of how long Thunderbird has been downloading (%s) could be read by other users, so it was not trusted; it starts again from this backup and is now readable only by you", path)
-		warn = &state.RunWarning{Code: tbStreakUnreadable, Message: fmt.Sprintf("MailArchive's record of how long Thunderbird has been downloading (%s) could be read by other users, so it started again from the last backup. Nothing is needed unless this shows after every backup: then the archive is on a drive that cannot keep files private (such as exFAT), and the \"still downloading\" notice cannot count days there.", path)}
+		warns = append(warns, state.RunWarning{Code: tbStreakUnreadable, Message: fmt.Sprintf("MailArchive's record of how long Thunderbird has been downloading (%s) could be read by other users, so it started again from the last backup. Nothing is needed unless this shows after every backup: then the archive is on a drive that cannot keep files private (such as exFAT), and the \"still downloading\" notice cannot count days there.", path)})
 		prev = state.TBStreak{}
 	case errors.Is(err, state.ErrTBStreakNewer):
 		logf("warning: %v; it was left as it is, so how long Thunderbird has been downloading is not counted by this version", err)
-		return &state.RunWarning{Code: tbStreakUnreadable, Message: fmt.Sprintf("A newer MailArchive keeps its record of how long Thunderbird has been downloading in %s, so this version leaves it as it is and does not count. Use the newer MailArchive for this archive.", path)}
+		return []state.RunWarning{{Code: tbStreakUnreadable, Message: fmt.Sprintf("A newer MailArchive keeps its record of how long Thunderbird has been downloading in %s, so this version leaves it as it is and does not count. Use the newer MailArchive for this archive.", path)}}
 	default:
 		logf("warning: could not read MailArchive's record of how long Thunderbird has been downloading (%v); it was left as it is", err)
-		return &state.RunWarning{Code: tbStreakUnreadable, Message: fmt.Sprintf("MailArchive could not read its record of how long Thunderbird has been downloading (%s), so it was left as it is and not counted. Remove the file if it is not a regular file of yours; the next backup starts it again.", path)}
+		return []state.RunWarning{{Code: tbStreakUnreadable, Message: fmt.Sprintf("MailArchive could not read its record of how long Thunderbird has been downloading (%s), so it was left as it is and not counted. Remove the file if it is not a regular file of yours; the next backup starts it again.", path)}}
 	}
-	// The run's own count, and every store it reached is seen, whatever its verdict (the C2 pass
-	// round 2's R2-08): an entry whose store no run reaches for state.TBStreakUnseenRuns runs is
-	// pruned below. Streaks already in the record are folded first, so a full record that must
-	// make room for a new one drops an entry this run did not find behind.
-	next, moved := prev.StartRun(), warn != nil
+	// The run's own count and time, and every store it reached is seen, whatever its verdict
+	// (the C2 pass round 2's R2-08): an entry whose store no run has reached for
+	// state.TBStreakUnseenFor is pruned below (by time: round 3's R3-03). Streaks already in the
+	// record are folded first, so a full record that must make room for a new one drops only an
+	// entry this run did not find behind (R3-04).
+	next, moved := prev.StartRun(now), len(warns) > 0
 	for _, r := range results {
 		if r.StoreID != "" {
-			next = next.Seen(r.StoreID)
+			next = next.Seen(r.StoreID, now)
 		}
 	}
+	var waiting []string // new behind stores that found no room
 	for _, existing := range []bool{true, false} {
 		for _, r := range results {
 			if r.StoreID == "" {
@@ -474,11 +481,16 @@ func updateTBStreak(opts Options, results []tbcomplete.Result, encrypted, ok boo
 			switch r.Verdict {
 			case tbcomplete.Behind:
 				var gone state.TBStreakAccount
-				var evicted bool
-				next, gone, evicted = next.BehindEvicting(r.StoreID, state.CleanFolderName(r.Account), r.OnDisk, now)
+				var room state.TBRoom
+				name := state.CleanFolderName(r.Account)
+				next, gone, room = next.BehindEvicting(r.StoreID, name, r.OnDisk, now)
 				moved = true
-				if evicted {
-					logf("warning: MailArchive's record of how long Thunderbird has been downloading (%s) is full (%d accounts), so it dropped the record of %s, last reached %d backup(s) ago, to start counting %s", path, state.TBAccountsMax, gone.Account, next.Run-gone.SeenRun, state.CleanFolderName(r.Account))
+				switch room {
+				case state.TBRoomEvicted:
+					logf("warning: MailArchive's record of how long Thunderbird has been downloading (%s) is full (%d accounts), so it dropped the record of %s, last reached %d backup(s) ago, to start counting %s", path, state.TBStreakAccountsMax, gone.Account, next.Run-gone.SeenRun, name)
+				case state.TBRoomFull:
+					logf("warning: MailArchive's record of how long Thunderbird has been downloading (%s) is full: all %d accounts in it were still downloading at this backup, so it could not start counting %s", path, state.TBStreakAccountsMax, name)
+					waiting = append(waiting, name)
 				}
 			case tbcomplete.CaughtUp, tbcomplete.Limited:
 				if existing {
@@ -487,20 +499,41 @@ func updateTBStreak(opts Options, results []tbcomplete.Result, encrypted, ok boo
 			}
 		}
 	}
-	next, pruned := next.Prune()
-	for _, a := range pruned {
-		logf("note: MailArchive's record of how long Thunderbird has been downloading (%s) dropped %s: no backup has reached it in the last %d", path, a.Account, state.TBStreakUnseenRuns)
+	if len(waiting) > 0 {
+		warns = append(warns, state.RunWarning{Code: tbStreakFull, Message: tbStreakFullMessage(path, waiting)})
 	}
-	// With any streak kept, the run's count is recorded every run, so an entry's unseen runs add up.
+	next, pruned := next.Prune(now)
+	for _, a := range pruned {
+		logf("note: MailArchive's record of how long Thunderbird has been downloading (%s) dropped %s: no backup has reached it in the last %d days", path, a.Account, int(state.TBStreakUnseenFor/(24*time.Hour)))
+	}
+	// With any streak kept, the run's count and time are recorded every run.
 	moved = moved || len(pruned) > 0 || len(next.Accounts) > 0
 	if !moved {
-		return warn
+		return warns
 	}
 	if werr := writeTBStreak(opts.Out, next.Named()); werr != nil {
 		logf("warning: could not record how long Thunderbird has been downloading in %s (%v)", path, werr)
 	}
-	return warn
+	return warns
 }
 
-// tbStreakUnreadable is the WARN code of a behind-streak record the run could not use.
-const tbStreakUnreadable = "tbstreak_unreadable"
+// The WARN codes of the behind-streak record: one the run could not use, and one too full to
+// start a behind store's streak (R3-04).
+const (
+	tbStreakUnreadable = "tbstreak_unreadable"
+	tbStreakFull       = "tbstreak_full"
+)
+
+// tbStreakFullNames is how many of the waiting accounts tbstreak_full's sentence names.
+const tbStreakFullNames = 3
+
+// tbStreakFullMessage is tbstreak_full's sentence: the record, how many accounts wait and the
+// first of them by name, and what follows (the builder's words; C3 owns the final ones).
+func tbStreakFullMessage(path string, waiting []string) string {
+	names := waiting
+	more := ""
+	if len(names) > tbStreakFullNames {
+		names, more = names[:tbStreakFullNames], fmt.Sprintf(" and %d more", len(waiting)-tbStreakFullNames)
+	}
+	return fmt.Sprintf("MailArchive's record of how long Thunderbird has been downloading (%s) is full: all %d accounts in it were still downloading at the last backup, so it did not start counting %d more (%s%s). The \"still downloading\" notice cannot come for those until an account in the record catches up or is no longer backed up.", path, state.TBStreakAccountsMax, len(waiting), strings.Join(names, ", "), more)
+}

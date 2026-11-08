@@ -81,6 +81,10 @@ type TBAccount struct {
 	// toward "behind").
 	GluedMailboxes int   `json:"glued_mailboxes,omitempty"`
 	NoStatus       int64 `json:"no_status,omitempty"`
+	// The C2 pass round 3: kept mailboxes whose mbox reader handed on a different number of
+	// pieces than the separator scan saw "From " lines (R3-01: a "From " line longer than the
+	// reader's buffer), so none of their pieces was counted and the account is never behind.
+	MisalignedMailboxes int `json:"misaligned_mailboxes,omitempty"`
 }
 
 // TBLimit is an account's own download limits as the record keeps them.
@@ -129,20 +133,28 @@ const (
 // Other_Default_Ignorable_Code_Point and Variation_Selector: the combining grapheme joiner
 // U+034F, the Hangul fillers U+115F, U+1160, U+3164 and U+FFA0, U+17B4 and U+17B5, the variation
 // selectors U+180B to U+180F, U+FE00 to U+FE0F and U+E0100 to U+E01EF; the C2 pass round 2's
-// R2-07), the line and paragraph separators U+2028 and U+2029 removed, and capped at TBNameMax
-// characters plus "…". A folder name is text the mail server controls; a name of only such
-// characters becomes "", which looks as empty as it is.
+// R2-07), the line and paragraph separators U+2028 and U+2029 removed, the Braille blank U+2800
+// removed, every other space separator (category Zs: U+00A0, U+1680, U+2000 to U+200A, U+202F,
+// U+205F, U+3000) made an ordinary space U+0020, runs of spaces made one and the ends trimmed (the
+// C2 pass round 3's R3-05, the lead's call), and capped at TBNameMax characters plus "…" (with no
+// space left before it). A folder name is text the mail server controls; a name of only such
+// characters becomes "", which looks as empty as it is, and two names that look the same are the
+// same.
 func CleanFolderName(s string) string {
 	s = strings.Map(func(r rune) rune {
-		if invisible(r) || r == 0x2028 || r == 0x2029 {
+		switch {
+		case invisible(r) || r == 0x2028 || r == 0x2029 || r == 0x2800:
 			return -1
+		case unicode.Is(unicode.Zs, r):
+			return ' '
 		}
 		return r
 	}, util.StripControl(s))
+	s = strings.Join(strings.FieldsFunc(s, func(r rune) bool { return r == ' ' }), " ")
 	if utf8.RuneCountInString(s) <= TBNameMax {
 		return s
 	}
-	return string([]rune(s)[:TBNameMax]) + "…"
+	return strings.TrimRight(string([]rune(s)[:TBNameMax]), " ") + "…"
 }
 
 // invisible reports whether r renders as nothing: a format character (Cf) or another
@@ -175,7 +187,7 @@ func saneTB(in []TBAccount) (out []TBAccount, cut int) {
 		for _, n := range []*int64{&a.OnDisk, &a.Listed, &a.Missing, &a.Tolerance, &a.ExpungedEstimate, &a.CapNote, &a.UnkeyedMessages, &a.NoIdentity, &a.NoStatus} {
 			*n = max(0, *n)
 		}
-		for _, n := range []*int{&a.FoldersMore, &a.NotKeptMore, &a.DefaultNotKeptMore, &a.LabelsNotKept, &a.CantTellFolders, &a.SkippedEntries, &a.IgnoredOldKeys, &a.UnkeyedMailboxes, &a.SplitMailboxes, &a.GluedMailboxes} {
+		for _, n := range []*int{&a.FoldersMore, &a.NotKeptMore, &a.DefaultNotKeptMore, &a.LabelsNotKept, &a.CantTellFolders, &a.SkippedEntries, &a.IgnoredOldKeys, &a.UnkeyedMailboxes, &a.SplitMailboxes, &a.GluedMailboxes, &a.MisalignedMailboxes} {
 			*n = max(0, *n)
 		}
 		a.Folders = saneFolders(a.Folders, TBFolderMax)

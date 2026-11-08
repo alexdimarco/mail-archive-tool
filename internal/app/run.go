@@ -1459,10 +1459,11 @@ func recordRun(opts Options, lr state.LastRun, result *Result, err *error, logge
 	recordCounts(&lr, *result)
 	// How long each Thunderbird account has been behind (completeness design §5, M10):
 	// plaintext only, a run that ended ok only, best effort. Folded before the last-run record
-	// is written, so a streak record the run could not use is a WARN that status shows (the C2
-	// pass's ADV-C2-05 and -10), never silent.
-	if w := updateTBStreak(opts, result.Thunderbird, lr.Encrypted, *err == nil, lr.Finished, logger); w != nil && !lr.Encrypted && opts.Key == nil {
-		lr.Warnings = append(lr.Warnings, *w)
+	// is written, so a streak record the run could not use, or one too full to start a behind
+	// store's streak, is a WARN that status shows (the C2 pass's ADV-C2-05 and -10, round 3's
+	// R3-04), never silent.
+	if ws := updateTBStreak(opts, result.Thunderbird, lr.Encrypted, *err == nil, lr.Finished, logger); len(ws) > 0 && !lr.Encrypted && opts.Key == nil {
+		lr.Warnings = append(lr.Warnings, ws...)
 	}
 	// Best effort: a refused write never fails the run, but it is logged (F12),
 	// because the "running" record then stays and status reads it as a run that

@@ -63,8 +63,16 @@ func TestADV_C2_09_PlantedStreakShapes(t *testing.T) {
 	if err := os.WriteFile(p(huge), []byte(`{"version":1,"accounts":[`+strings.Repeat(`{"store":"k","account":"a","runs":9},`, 5000)+`{}]}`), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	if s, err := ReadTBStreak(huge); err == nil && len(s.Accounts) > TBAccountsMax {
+	// The streak's own cap (TBStreakAccountsMax, 256 since the C2 pass round 3's R3-04).
+	if s, err := ReadTBStreak(huge); err == nil && len(s.Accounts) > TBStreakAccountsMax {
 		t.Errorf("a huge record read %d accounts", len(s.Accounts))
+	}
+	// Past the reader's byte bound, a record is refused, never read.
+	if err := os.WriteFile(p(huge), []byte(`{"version":1,"accounts":[`+strings.Repeat(`{"store":"k","account":"a","runs":9},`, 20000)+`{}]}`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if s, err := ReadTBStreak(huge); err == nil || len(s.Accounts) != 0 {
+		t.Errorf("a record past the byte bound read: %d accounts, %v", len(s.Accounts), err)
 	}
 	garbage := t.TempDir()
 	if err := os.WriteFile(p(garbage), []byte("\x00\xff{not json"), 0o600); err != nil {

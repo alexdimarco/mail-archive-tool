@@ -237,11 +237,12 @@ func TestR2_06_AccountsPastTheCapLeaveNoTrace(t *testing.T) {
 }
 
 // covers: MA-1281
-// R2-08 in the run's fold: a full streak record never silently refuses a new behind store. The
-// record holds 64 entries no run reaches any more; a new behind store gets its streak, the entry
-// reached longest ago goes, and the run's log says so. A store no run reaches for
-// state.TBStreakUnseenRuns runs is pruned and logged; one the runs keep reaching (even only as
-// unknown) is kept. Positive twin: a behind store with room starts its streak and logs nothing.
+// R2-08 in the run's fold, as round 3 amended it (R3-03, R3-04): a full streak record makes room
+// for a new behind store from an entry this run did not find behind. The record holds 256 entries,
+// each last reached in an earlier run; a new behind store gets its streak, the entry reached
+// longest ago goes, and the run's log says so. A store no run has reached for 30 days is pruned and
+// logged; one the runs keep reaching (even only as unknown) is kept. Positive twin: a behind store
+// with room starts its streak and logs nothing.
 func TestAFullStreakRecordMakesRoomAndSaysSo(t *testing.T) {
 	out := tmpDir(t)
 	now := time.Date(2026, 11, 8, 12, 0, 0, 0, time.UTC)
@@ -256,30 +257,32 @@ func TestAFullStreakRecordMakesRoomAndSaysSo(t *testing.T) {
 	if _, ok := mustStreak(t, out).Account("first"); !ok {
 		t.Fatal("positive twin: no streak")
 	}
-	// 63 more, each in its own run: 64 entries.
-	for i := 1; i < state.TBAccountsMax; i++ {
-		updateTBStreak(Options{Out: out}, behind(fmt.Sprintf("s%02d", i)), false, true, now.Add(time.Duration(i)*time.Minute), logger)
+	// 255 more, each in its own run: 256 entries.
+	for i := 1; i < state.TBStreakAccountsMax; i++ {
+		updateTBStreak(Options{Out: out}, behind(fmt.Sprintf("s%03d", i)), false, true, now.Add(time.Duration(i)*time.Second), logger)
 	}
-	if s := mustStreak(t, out); len(s.Accounts) != state.TBAccountsMax || buf.Len() != 0 {
-		t.Fatalf("64 entries: %d, log %q", len(s.Accounts), buf.String())
+	if s := mustStreak(t, out); len(s.Accounts) != state.TBStreakAccountsMax || buf.Len() != 0 {
+		t.Fatalf("256 entries: %d, log %q", len(s.Accounts), buf.String())
 	}
-	updateTBStreak(Options{Out: out}, behind("new"), false, true, now.Add(2*time.Hour), logger)
+	if w := updateTBStreak(Options{Out: out}, behind("new"), false, true, now.Add(2*time.Hour), logger); w != nil {
+		t.Errorf("a full record that made room: a WARN %+v", w)
+	}
 	s := mustStreak(t, out)
-	if _, ok := s.Account("new"); !ok || len(s.Accounts) != state.TBAccountsMax {
+	if _, ok := s.Account("new"); !ok || len(s.Accounts) != state.TBStreakAccountsMax {
 		t.Errorf("a full record: the new behind store got no streak (%d entries)", len(s.Accounts))
 	}
-	if _, ok := s.Account("first"); ok || !strings.Contains(buf.String(), "is full (64 accounts)") || !strings.Contains(buf.String(), "imap.first.example") || !strings.Contains(buf.String(), "imap.new.example") {
+	if _, ok := s.Account("first"); ok || !strings.Contains(buf.String(), "is full (256 accounts)") || !strings.Contains(buf.String(), "imap.first.example") || !strings.Contains(buf.String(), "imap.new.example") {
 		t.Errorf("the entry reached longest ago did not go, or the log does not say so: %q", buf.String())
 	}
 	// One run with a new behind store listed before the oldest entry's store, behind again: the
 	// record's streaks are folded first, so the oldest is extended, and the next oldest goes.
-	oldest, _ := s.Account("s01")
-	updateTBStreak(Options{Out: out}, append(behind("newer"), behind("s01")...), false, true, now.Add(3*time.Hour), logger)
+	oldest, _ := s.Account("s001")
+	updateTBStreak(Options{Out: out}, append(behind("newer"), behind("s001")...), false, true, now.Add(3*time.Hour), logger)
 	s = mustStreak(t, out)
-	if a, ok := s.Account("s01"); !ok || a.Runs != oldest.Runs+1 || a.Serial != oldest.Serial {
+	if a, ok := s.Account("s001"); !ok || a.Runs != oldest.Runs+1 || a.Serial != oldest.Serial {
 		t.Errorf("the oldest entry, behind again in the run that made room: %+v %v (was %+v)", a, ok, oldest)
 	}
-	if _, ok := s.Account("s02"); ok {
+	if _, ok := s.Account("s002"); ok {
 		t.Error("the next oldest entry did not go")
 	}
 
@@ -289,16 +292,16 @@ func TestAFullStreakRecordMakesRoomAndSaysSo(t *testing.T) {
 	two := append(behind("kept"), behind("left")...)
 	updateTBStreak(Options{Out: out2}, two, false, true, now, logger)
 	unknown := []tbcomplete.Result{{Account: "imap.kept.example", StoreID: "kept", Verdict: tbcomplete.Unknown}}
-	for i := 1; i < state.TBStreakUnseenRuns; i++ {
-		updateTBStreak(Options{Out: out2}, unknown, false, true, now.Add(time.Duration(i)*time.Hour), logger)
+	for h := 1; h < 30*24; h++ {
+		updateTBStreak(Options{Out: out2}, unknown, false, true, now.Add(time.Duration(h)*time.Hour), logger)
 	}
 	if s := mustStreak(t, out2); len(s.Accounts) != 2 || buf.Len() != 0 {
-		t.Fatalf("after %d unseen runs: %d entries, log %q", state.TBStreakUnseenRuns-1, len(s.Accounts), buf.String())
+		t.Fatalf("after 30 days less an hour unseen: %d entries, log %q", len(s.Accounts), buf.String())
 	}
-	updateTBStreak(Options{Out: out2}, unknown, false, true, now.Add(100*time.Hour), logger)
+	updateTBStreak(Options{Out: out2}, unknown, false, true, now.Add(state.TBStreakUnseenFor), logger)
 	s = mustStreak(t, out2)
-	if _, ok := s.Account("left"); ok || len(s.Accounts) != 1 || !strings.Contains(buf.String(), "dropped imap.left.example") {
-		t.Errorf("after %d unseen runs: %+v, log %q", state.TBStreakUnseenRuns, s.Accounts, buf.String())
+	if _, ok := s.Account("left"); ok || len(s.Accounts) != 1 || !strings.Contains(buf.String(), "dropped imap.left.example") || !strings.Contains(buf.String(), "last 30 days") {
+		t.Errorf("after 30 days unseen: %+v, log %q", s.Accounts, buf.String())
 	}
 	if a, ok := s.Account("kept"); !ok || a.Runs != 1 {
 		t.Errorf("the store reached as unknown: %+v %v (its streak neither extended nor ended)", a, ok)

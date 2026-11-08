@@ -245,7 +245,7 @@ func TestADV_C2_05_LooseModeIsNeverSilent(t *testing.T) {
 		t.Fatal(err)
 	}
 	w := updateTBStreak(Options{Out: out}, behind, false, true, t0.Add(48*time.Hour), logger)
-	if w == nil || w.Code != "tbstreak_unreadable" || !strings.Contains(w.Message, state.TBStreakName) || !strings.Contains(logBuf.String(), "other users") {
+	if len(w) != 1 || w[0].Code != "tbstreak_unreadable" || !strings.Contains(w[0].Message, state.TBStreakName) || !strings.Contains(logBuf.String(), "other users") {
 		t.Fatalf("a 0644 record: warn %+v, log %q", w, logBuf.String())
 	}
 	fi, err := os.Stat(filepath.Join(out, state.TBStreakName))
@@ -308,7 +308,7 @@ func TestALaterStreakRecordIsNeverDowngraded(t *testing.T) {
 	later := `{"version":2,"serial":7,"accounts":[{"store":"k","account":"imap.x.example","runs":40,"new_field":true}]}`
 	tbWrite(t, filepath.Join(out, state.TBStreakName), later)
 	w := updateTBStreak(Options{Out: out}, behind, false, true, time.Now(), discard())
-	if b, _ := os.ReadFile(filepath.Join(out, state.TBStreakName)); string(b) != later || w == nil || w.Code != "tbstreak_unreadable" {
+	if b, _ := os.ReadFile(filepath.Join(out, state.TBStreakName)); string(b) != later || len(w) != 1 || w[0].Code != "tbstreak_unreadable" {
 		t.Errorf("a version-2 record: now %q, warn %+v", b, w)
 	}
 }
