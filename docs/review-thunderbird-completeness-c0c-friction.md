@@ -503,3 +503,248 @@ about 40 characters and R4 about 50. Nothing needs cutting.
 - R2 needs `leftoverWords` split into a wizard form and a command-line form, each taking HOST.
 - The ≡ path (R1) is lab-seen on 153.6.0 on Windows only. Lab row MA-1191 can confirm it on the
   Mac's 159.0 along with the labels.
+
+## Final look after round 3 (2026-11-08)
+
+Walked 8 November 2026, Mac clock 02:32 EST. The last light look (same process doc, light form)
+at the words round 3 added or changed, at tip 1adcf64 of `tb-completeness` (worktree pulled,
+already up to date). Read: the two sections above, `docs/ux-contract.md`, and
+`git show 1adcf64 -- internal/thunderbird/offline_words.go internal/desktop/help.go
+cmd/mailarchive/main.go`. Windows judged first.
+
+**Verdict: SHIPPABLE_WITH_NOTES.** Every medium from the re-look is fixed as proposed: R1 (the ≡
+step, on both surfaces), R2 (the command line's leftover sentence now gives the way on) and R8
+(the Desktop guide names both labels, by version, pinned so it cannot drift from the wizard). The
+low notes R3 to R7 went in with the proposed words. The new words for MA-1261 (strict reading) and
+MA-1263 (a stop after a change) are true and readable. No new finding is medium. Six low notes
+follow (Q1 to Q6), with exact words, for the lead's call; none must be done before the release.
+R10 is judged below: not required before the release; a word fix is recommended. These are
+proposals; this look does not self-certify them.
+
+### How the words were got
+
+- A small program under the worktree's gitignored `.claude/worktrees/fric-final/`, built from
+  1adcf64, made 17 made-up profiles there (never a real one). For the wizard it makes the same
+  calls `imapPrepAccount` makes (`FindProfileDir`, `AccountToEnable`, `CheckOffline`,
+  `PlainWords`) and adds `imapNotPrepared` copied word for word. For the command line it runs the
+  real `mailarchive -out … -enable-offline -input <store>` built from 1adcf64 and keeps the output
+  and exit code.
+- Strict reading (MA-1261), each in prefs.js on Thunderbird 153: a NUL byte, a missing `;`, a
+  `pref(` line, a `sticky_pref(` line, a setting name with a backslash, a quoted value going on
+  past its line. Also a `pref(` line at 160, and a `pref(` line in user.js turning the setting on.
+- MA-1263 cannot be staged from outside package `main`. The program's fault seam (`tbRunning`) is
+  package-private, and the real check looks at every store before any change. So its words were
+  put together from `stoppedAfterChange.Error()`, copied word for word, plus two real reasons
+  from the real program: a profile whose `lock` link reads as Thunderbird running, and a profile
+  folder made read-only (the real failed-write error). `TestALaterStopSaysWhatWasChanged` proves
+  the wiring end to end. It passes.
+- These tests pass, run verbosely: `TestALaterStopSaysWhatWasChanged`,
+  `TestAPrefCallInUserJSIsNeverAlreadyOn`, `TestYesPrepareRefusalsArePlain` (9 cases),
+  `TestEveryPrepRefusalGivesTheWayOut`, `TestUserJSRefusalOnTheCommandLine`,
+  `TestTheGuideNamesTheOfflineBoxAsTheWizardDoes` and
+  `TestHowToUseMailArchiveSaysWhatThisVersionDoes`. This was a filtered run, for the words only.
+  It is not the gate run.
+- **Windows: not rendered on screen** (the same limit as both earlier walks). The Desktop guide's
+  ≡ is shown in Edge, and the Restore lab has seen it there. The wizard's ≡ (U+2261) sits in a
+  Win32 message box (`MessageBoxW`, Segoe UI), where it should draw as written. That was reasoned,
+  not seen.
+
+Every refusal exited 1 and left no `-out` folder. The healthy profile exited 0. One mistake of
+my own, kept here: the first missing-`;` profile was not edited as meant, so it was healthy and
+exported. Made correctly, it refuses with exit 1 and leaves no `-out` folder. The re-run used a
+fresh `-out` path.
+
+### The new words as rendered
+
+**The ≡ step (R1)**, in every wizard refusal with steps:
+
+> 1. In Thunderbird, click the menu button (≡, top right), then Account Settings.
+
+The command line: "open Account Settings (the menu button ≡, top right) and, for …".
+
+**The split leftover sentence (R2, R3).** Wizard, two accounts on imap.gmail.com, in Why:
+
+> If you once removed an account on imap.gmail.com from Thunderbird, this may be its leftover
+> mail folder; if so, there is nothing to turn on.
+
+Command line, the same case:
+
+> … If you once removed an account on imap.gmail.com from Thunderbird, this may be its leftover
+> mail folder; if so, there is nothing to turn on: just run the same command again without
+> -enable-offline. In Thunderbird, open Account Settings (the menu button ≡, top right) and, for
+> each account on imap.gmail.com, make sure "Keep messages in all folders for this account on
+> this computer" is ticked (on its "Synchronization & Storage" page). Then run the same command
+> again without -enable-offline.
+
+**MA-1261, the wizard** (every strict-reading case, prefs.js or user.js; 701 characters with W0
+at 153):
+
+> Thunderbird's settings file was changed outside Thunderbird, so MailArchive could not be sure
+> what it says and did not change any Thunderbird setting.
+>
+> To make sure Thunderbird keeps all of this mail on this computer:
+> 1. In Thunderbird, click the menu button (≡, top right), then Account Settings.
+> 2. For the account on imap.gmail.com (an account's "Server Settings" page shows its server
+> name), open its "Synchronization & Storage" page.
+> 3. Make sure "Keep messages in all folders for this account on this computer" is ticked.
+>
+> W0
+
+**MA-1261, the command line**, the shape of each:
+
+> mailarchive: -enable-offline changed nothing, and nothing was exported: prefs.js line 7 holds
+> WHAT. Thunderbird never writes such a line, so the file was changed outside Thunderbird (by
+> hand or by another program), and MailArchive cannot be sure what Thunderbird applies for
+> mail.server.server1.offline_download. In Thunderbird, open Account Settings (the menu button ≡,
+> top right) and, for the account on imap.gmail.com, make sure LABEL is ticked (on its
+> "Synchronization & Storage" page). Then run the same command again without -enable-offline.
+
+WHAT, as rendered: "a NUL (zero) byte, where Thunderbird stops reading the file"; "text that is
+not a whole user_pref("name", value); statement" (the missing `;`, reported on its own line 4);
+"a pref( statement, which Thunderbird does not apply in prefs.js or user.js" (also user.js line
+1); "a sticky_pref( statement, …"; "a setting name holding a backslash (an escape code)"; "a quoted
+value that goes on past the end of its line".
+
+**MA-1263** (the command line only), Thunderbird started for the second profile:
+
+> mailarchive: -enable-offline stopped, and nothing was exported. Before it stopped, it changed
+> prefs.js to turn on offline download for imap.gmail.com (folder imap.gmail.com, server1), in
+> the Thunderbird profile …/partial-a; that change stays (the log above says where prefs.js was
+> backed up). Why it stopped: Thunderbird looks like it is running for the profile …/partial-b.
+> Close it, then run the same command again (prefs.js must not be edited while Thunderbird is
+> open).
+
+With a failed write, "Why it stopped:" is followed by the raw error: "back up prefs.js: temp file
+in …/partial-c: open …/partial-c/.mailarchive-prefs-3245455535.tmp: permission denied".
+
+**user.js (R6)**, the wizard: "If you, or whoever looks after this computer, set this on purpose,
+leave it. Otherwise: close Thunderbird and open the file below in a plain text editor (on Windows:
+start Notepad, choose File, then Open, and type or paste the whole path into "File name";
+double-clicking the file does not open it for editing). Delete the line that contains
+mail.server.server1.offline_download (or change its false to true), and save." The file's path
+follows on its own line, then W0 (943 characters in all, with this walk's long test path).
+
+**The Desktop guide (R8)**, `help.go`, the third requirement:
+
+> … For an IMAP account this is the setting **Keep messages in all folders for this account on
+> this computer** (in Thunderbird 160 and later it is called **Save copies of all folders and
+> messages on this computer for offline use**). Thunderbird turns it on for a new account, so
+> usually there is nothing to change. To check it, in Thunderbird click the menu button (≡, top
+> right), then **Account Settings**, choose your account's **Synchronization & Storage** page (in
+> Thunderbird 160 and later, look through its pages for **Offline message storage**), and see that
+> the box is ticked. …
+
+### The questions asked
+
+- **Would a non-technical Windows person know what to do?** Yes, in the wizard. Each refusal says
+  what MailArchive did (nothing), where to click (≡, Account Settings, the page, the box), and
+  that the export goes ahead anyway. Doing nothing is safe in every case, so no wizard text is a
+  dead end. The hardest is the user.js case. It asks for Notepad and a long path. But "leave it"
+  comes first, so stopping there is safe too.
+- **Jargon.** The wizard texts hold no "statement", "NUL", "user_pref", "store", "prefs.js" or
+  raw error. The words "user.js" and its setting name are kept on purpose: the person has to find
+  that line. The command line keeps all of these words, as agreed in the first walk (F2). Each one
+  comes with a gloss: "NUL (zero) byte, where Thunderbird stops reading", "an escape code".
+- **MA-1263's "that change stays".** It is clear and true, and it is not alarming to a
+  command-line user. Two small gaps remain (Q3). "That change" stays singular when several
+  profiles were changed. And it does not say that the change is the one the person asked for, or
+  that running again skips it ("Offline download already enabled", the code path for an account
+  already on).
+- **The guide's two names.** Readable. The guide cannot know the version, so naming both is
+  right. The bracket that gives the 160 name comes straight after the first name, so a reader on
+  either version finds theirs. It is a long list item, as it was before.
+
+### Low notes (the lead's call; none required before the release)
+
+- **Q1. Step 2's server hint interrupts the step.** "For each account on imap.gmail.com (an
+  account's "Server Settings" page shows its server name), open its …" puts the bracket between
+  "For each account" and what to do, and "its" then reads as the Server Settings page. Words:
+
+  > 2. For each account on imap.gmail.com, open its "Synchronization & Storage" page. (To see
+  > which server an account uses, look at its "Server Settings" page.)
+
+  At 160: "2. For each account on HOST, look through the pages listed under its name on the left
+  until you see "Offline message storage". (To see …)". The test that pins the hint's place is
+  `TestYesPrepareRefusalsArePlain`.
+
+- **Q2. Pasting the user.js path on Windows.** You cannot select text in a Win32 message box.
+  Ctrl+C copies the whole message, not the path (Win32 behaviour, not seen live). So "type or
+  paste the whole path" mostly means typing a long AppData path. Words:
+
+  > … and type the whole path below into "File name" (or press Ctrl+C on this message, paste it
+  > into Notepad, and copy the path from there); …
+
+- **Q3. MA-1263's middle sentence.** Words, one change:
+
+  > -enable-offline stopped, and nothing was exported. Before it stopped, it turned on offline
+  > download for ACCOUNT, in the Thunderbird profile P, by changing prefs.js. That change is kept:
+  > it is what -enable-offline is for, and running the same command again leaves it as it is (the
+  > log above says where the old prefs.js was backed up). Why it stopped: REASON
+
+  With more than one: "Those changes are kept: they are what …, and running the same command
+  again leaves them as they are".
+
+- **Q4. A failed write gives a raw error and no next step.** This was the case before this
+  slice, and it is now also the "Why it stopped:" of MA-1263. It is the command line only, and
+  rare. Words, for a write or backup error of EnableOffline:
+
+  > -enable-offline changed nothing, and nothing was exported: MailArchive could not write
+  > prefs.js or its backup in the Thunderbird profile P (RAW ERROR). Check that the folder is not
+  > read-only and that the disk has room, then run the same command again.
+
+  On the first store this is true as written. As MA-1263's reason, the prefix comes off as it
+  does today.
+
+- **Q5 (cosmetic, command line).** "holds a setting name holding a backslash" stutters. Make it
+  "has a setting name with a backslash (an escape code) in it". A missing `;` reads as "text that
+  is not a whole user_pref("name", value); statement", and the person cannot see what is wrong
+  with that line. Add: "(often a missing ; at its end)".
+
+- **Q6 (cosmetic, command line).** In the two leftover cases, "run the same command again without
+  -enable-offline" appears twice in one message. It is true both times. No change needed.
+
+### R10, judged
+
+**What it is.** On the command line, `-enable-offline` with a store whose Thunderbird profile
+cannot be found (mail copied out of Thunderbird, or a folder not inside a profile) logs "Could not
+find the Thunderbird profile for <path>; skipping prep." Then the export runs, with exit 0. Every
+other `-enable-offline` case where nothing can be turned on refuses: exit 1, nothing exported. That
+includes the leftover-folder case, whose words now say "there is nothing to turn on: just run the
+same command again without -enable-offline". The wizard goes ahead in both cases (W8), so the two
+surfaces differ only on the command line's exit code and words.
+
+**Must it be done before the release? No.** It predates this slice. It harms nothing: the export
+is the same one the wizard makes, of the mail that is there. The line goes to the log and says
+prep was skipped. `-enable-offline` cannot be scheduled (`job.go` refuses it unattended), so no
+unattended job hides it. But two things are worth doing:
+
+- **Words, recommended before the release (Type III).** "skipping prep" does not say that
+  `-enable-offline` did nothing, or why. Words:
+
+  > -enable-offline did nothing for PATH: MailArchive could not find the Thunderbird profile this
+  > mail belongs to (the mail may have been copied out of Thunderbird), so it changed no
+  > Thunderbird setting. The export goes ahead with the mail as it is.
+
+- **Exit code, a ruling for the lead or owner, not a word change.** Should it refuse (exit 1) like
+  the leftover-folder case? Or should the leftover case go ahead like this one? Either keeps
+  one shape. My lean is to refuse. That matches X2's one refusal voice, and the scheduler already
+  keeps unattended jobs from depending on it. But this changes behaviour, so it is not
+  self-granted here.
+
+### Against the UX contract
+
+- X1 holds: every refusal walked exits 1, and the healthy run exits 0. R10 is the one case that
+  exits 0, and it is not a refusal today.
+- X2 holds for every refusal walked. Each says what failed, and each gives a remedy that gets you
+  past it. Q4 is the one case with no remedy.
+- X7 holds: no crash text. X8 was not re-checked separately this round; the earlier walks saw
+  refusals on stderr. X17 holds: "MailArchive" throughout.
+- X11 (the dashboard): the guide's words are plain, and both labels match the wizard's.
+- No contradiction.
+
+### Still owed (not words; already gated elsewhere)
+
+- Lab row MA-1191. The labels and the ≡ path on the Mac's 159.0. The 160 screen ("Offline
+  message storage", and "the pages listed under its name on the left"), which no lab has seen
+  yet. The wizard's ≡ in a Windows message box.
+- The adversarial pass's re-run on round 3 (the commit names it as the next gate).
