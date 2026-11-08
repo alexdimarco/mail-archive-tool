@@ -801,6 +801,30 @@ is a label-membership question, not completeness (§14 Q6).
 > - `EnableOffline` runs attended only (the wizard, `-enable-offline`), so this is no "complete"
 >   path. MA-1195 gains the cases (§12 fold).
 >
+> **Built 2026-11-07 [C0c] (the builder's notes, for the lead).** C0c is built as written above,
+> with MA-1195 in the catalog. Where the builder read the text more strictly, or the code changes
+> something the text does not name:
+>
+> - **The hostname fallback, read more strictly (the builder's reading; the lead may widen it).**
+>   Item 2 above says "fall back to `hostname` only when exactly one server has it". The build also
+>   requires that server's own folder settings, if it has any, to name a folder of the store's name.
+>   Otherwise a leftover `ImapMail/imap.gmail.com` (an account removed, its folder left) would be
+>   given the one remaining `imap.gmail.com` server, whose folder is `imap.gmail.com-1`. A moved
+>   profile's stale `directory` still names a folder of the same name, so it is still found. This
+>   fails toward "no account".
+> - **Only `[ProfD]` is resolved** in `directory-rel`. Any other prefix is not used for the match.
+> - **prefs.js after `EnableOffline`** is a new file put in place by a rename, with mode 0600, and so
+>   is its backup. The old in-place write kept the file's own mode and identity (a hard link to it
+>   now stops seeing changes). The mode Thunderbird itself gives prefs.js was not checked.
+> - **On Windows** the open cannot refuse a link by itself (no `O_NOFOLLOW`), so containment there
+>   rests on the `Lstat` just before, as `util.OpenRegularFile` says. The rename waits out a moment
+>   of Windows file sharing (up to 2 s, `util.ReplaceRetrying`).
+> - **Gate owed: an adversarial pass** on C0c's prefs.js read and write and the account match. The
+>   slice table's C0c gate (§13) names none, but foldcheck2 L1 made C0c change how MailArchive
+>   writes a file in the person's Thunderbird profile. Under the repo's rule (security-sensitive
+>   changes get the adversarial pass), C0c stops at that pass before merge. It is not self-certified
+>   here.
+>
 > **Folded 2026-11-07 [foldcheck M6] (lead's call):** the bullet "No match → `unknown` if a
 > folder-cache entry exists" is **superseded by [foldcheck M6]**. No match → `unknown` whether or not
 > the cache could be read, unless no `prefs.js` is found above the input **and** no path part is
@@ -2013,6 +2037,10 @@ C4 must land with or before C3 if encrypted archives get any words beyond today'
 >   none of them.
 > - **C1a** carries L2 (to its adversarial pass as well); **C1b** carries L3; **C3** carries MF1, L4
 >   and L5.
+>
+> **Built 2026-11-07 [C0c] (the builder's call, for the lead):** C0c's gate before merge gains an
+> **adversarial pass** on the prefs.js read and write and the account match (§4.1 step 1's build
+> note). The builder stops there; the pass is run by a reviewer other than the builder.
 
 ## 14. Owner questions (each with a recommendation)
 

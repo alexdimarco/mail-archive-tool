@@ -7,18 +7,30 @@
 package thunderbird
 
 import (
+	"errors"
 	"fmt"
+	"io/fs"
 	"os"
+	"path"
 	"path/filepath"
 	"regexp"
+	"runtime"
+	"sort"
 	"strconv"
 	"strings"
 	"time"
+
+	"golang.org/x/text/unicode/norm"
+
+	"mail-archive-tool/internal/util"
 )
 
-// IsImapStore reports whether dir is a Thunderbird IMAP account store (Thunderbird
-// downloads its messages over time, so the local copy may be incomplete).
-// Local Folders (under Mail/) are excluded — they are always fully local.
+// IsImapStore reports whether dir sits under an ImapMail/ folder, where Thunderbird keeps
+// its IMAP accounts' stores (it downloads their messages over time, so the local copy may
+// be incomplete). It is a path test only: it says nothing about the kind of account. Local
+// Folders and POP3 accounts live under Mail/, but so do Thunderbird's native Exchange
+// accounts, whose mail is downloaded over time too, and an IMAP account may be given a
+// folder outside ImapMail/ (completeness design §2.2, the TC-5 fold).
 func IsImapStore(dir string) bool {
 	slash := filepath.ToSlash(dir)
 	return strings.Contains(slash, "/ImapMail/")
@@ -59,9 +71,16 @@ type Account struct {
 
 var rePref = regexp.MustCompile(`^user_pref\("([^"]+)",\s*(.+)\);\s*$`)
 
-// parsePrefs reads prefs.js into a key→raw-value map.
+// prefsMaxBytes bounds prefs.js, as tbrestore.PrefsMaxBytes bounds the same file: a larger
+// one is refused, never read whole.
+const prefsMaxBytes = 16 << 20
+
+// parsePrefs reads prefs.js into a key→raw-value map. It is read as a planted file may be
+// (C0c, completeness foldcheck M1): every backup of an IMAP store reads it, unattended
+// when scheduled, so a link is refused, not followed; a pipe or device is neither waited
+// on nor read; and a file over prefsMaxBytes is refused.
 func parsePrefs(path string) (map[string]string, error) {
-	data, err := os.ReadFile(path)
+	data, err := util.ReadRegularFile(path, prefsMaxBytes)
 	if err != nil {
 		return nil, err
 	}
@@ -76,43 +95,144 @@ func parsePrefs(path string) (map[string]string, error) {
 
 func unquote(v string) string { return strings.Trim(v, `"`) }
 
-// FindAccountForStore locates the account whose store directory matches
-// storeDir (by hostname or configured directory).
+// FindAccountForStore locates the account whose own store folder is storeDir (C0c,
+// completeness design §4.1 step 1). With two accounts on one server
+// (ImapMail/imap.gmail.com and ImapMail/imap.gmail.com-1) the hostname alone cannot tell
+// them apart, so:
+//
+//  1. the store is matched against each server's directory-rel ([ProfD] is profileDir) and
+//     directory, compared by whole path components (samePath);
+//  2. only when no server matches that way, the hostname is compared with the store
+//     folder's name, and only for a server whose own folder settings, if it has any, name
+//     a folder of that name (a moved profile's stale directory still does; a server whose
+//     folder is imap.gmail.com-1 does not own a leftover imap.gmail.com);
+//  3. no match, or more than one, gives no account and an error: never a guess.
 func FindAccountForStore(profileDir, storeDir string) (*Account, error) {
 	prefs, err := parsePrefs(filepath.Join(profileDir, "prefs.js"))
 	if err != nil {
 		return nil, err
 	}
-	want := filepath.Base(strings.TrimRight(storeDir, string(os.PathSeparator)))
-
-	// Collect server keys.
-	servers := map[string]bool{}
-	for k := range prefs {
-		if strings.HasPrefix(k, "mail.server.server") {
-			parts := strings.SplitN(strings.TrimPrefix(k, "mail.server."), ".", 2)
-			servers[parts[0]] = true
-		}
+	store, err := filepath.Abs(storeDir)
+	if err != nil {
+		return nil, err
 	}
+	profile, err := filepath.Abs(profileDir)
+	if err != nil {
+		return nil, err
+	}
+	return matchAccount(prefs, profile, store, runtime.GOOS)
+}
 
-	for key := range servers {
+// matchAccount is FindAccountForStore's rule on parsed prefs, for goos.
+func matchAccount(prefs map[string]string, profile, store, goos string) (*Account, error) {
+	parts := components(store)
+	name := ""
+	if len(parts) > 0 {
+		name = parts[len(parts)-1]
+	}
+	var byFolder, byHost []string
+	for _, key := range serverKeys(prefs) {
 		p := func(field string) string { return unquote(prefs["mail.server."+key+"."+field]) }
-		host := p("hostname")
-		dir := p("directory")
-		rel := p("directory-rel")
-		if host == want ||
-			(dir != "" && filepath.Base(dir) == want) ||
-			(rel != "" && strings.HasSuffix(rel, want)) {
-			own, set := prefs["mail.server."+key+".offline_download"]
-			return &Account{
-				ServerKey:       key,
-				Hostname:        host,
-				Type:            p("type"),
-				OfflineDownload: own == "true",
-				OnByDefault:     !set && prefs["mail.server.default.offline_download"] != "false",
-			}, nil
+		var folders []string
+		if rel, ok := strings.CutPrefix(p("directory-rel"), "[ProfD]"); ok {
+			folders = append(folders, profile+"/"+rel)
+		}
+		if dir := p("directory"); dir != "" {
+			folders = append(folders, dir)
+		}
+		ownsName := true
+		for _, f := range folders {
+			if samePath(f, store, goos) {
+				byFolder = append(byFolder, key)
+				break
+			}
+			if fp := components(f); len(fp) == 0 || !sameComponent(fp[len(fp)-1], name, goos) {
+				ownsName = false
+			}
+		}
+		if name != "" && ownsName && sameComponent(norm.NFC.String(p("hostname")), name, goos) {
+			byHost = append(byHost, key)
 		}
 	}
-	return nil, fmt.Errorf("no account in prefs.js matches store %q", want)
+	pick := byFolder
+	if len(pick) == 0 {
+		pick = byHost
+	}
+	switch len(pick) {
+	case 1:
+		key := pick[0]
+		own, set := prefs["mail.server."+key+".offline_download"]
+		return &Account{
+			ServerKey:       key,
+			Hostname:        unquote(prefs["mail.server."+key+".hostname"]),
+			Type:            unquote(prefs["mail.server."+key+".type"]),
+			OfflineDownload: own == "true",
+			OnByDefault:     !set && prefs["mail.server.default.offline_download"] != "false",
+		}, nil
+	case 0:
+		return nil, fmt.Errorf("no account in prefs.js matches the store folder %s", name)
+	default:
+		return nil, fmt.Errorf("more than one account in prefs.js (%s) could own the store folder %s, so MailArchive does not pick one", strings.Join(pick, ", "), name)
+	}
+}
+
+// serverKeys are prefs' mail.server.serverN keys, sorted, so the match never depends on
+// map order.
+func serverKeys(prefs map[string]string) []string {
+	seen := map[string]bool{}
+	for k := range prefs {
+		if rest, ok := strings.CutPrefix(k, "mail.server.server"); ok && rest != "" {
+			seen["server"+strings.SplitN(rest, ".", 2)[0]] = true
+		}
+	}
+	keys := make([]string, 0, len(seen))
+	for k := range seen {
+		keys = append(keys, k)
+	}
+	sort.Strings(keys)
+	return keys
+}
+
+// samePath reports whether a and b name the same folder, compared by whole path components
+// after one normalising (completeness design §4.1 step 2's fold): Unicode NFC; "\" and "/"
+// alike, so a prefs.js value with its backslashes doubled matches the native path; "." and
+// ".." resolved; and case-folded on Windows and macOS only. An empty path matches nothing.
+func samePath(a, b, goos string) bool {
+	ca, cb := components(a), components(b)
+	if len(ca) == 0 || len(ca) != len(cb) {
+		return false
+	}
+	for i := range ca {
+		if !sameComponent(ca[i], cb[i], goos) {
+			return false
+		}
+	}
+	return true
+}
+
+// components splits p as samePath compares it. A leading "" stands for the root, so an
+// absolute path never equals a relative one.
+func components(p string) []string {
+	if p == "" {
+		return nil
+	}
+	parts := strings.Split(path.Clean(strings.ReplaceAll(norm.NFC.String(p), `\`, "/")), "/")
+	out := parts[:0]
+	for i, s := range parts {
+		if s != "" || i == 0 {
+			out = append(out, s)
+		}
+	}
+	return out
+}
+
+// sameComponent compares one path component: case-blind on Windows and macOS, whose usual
+// file systems are, and exact elsewhere.
+func sameComponent(a, b, goos string) bool {
+	if goos == "windows" || goos == "darwin" {
+		return strings.EqualFold(a, b)
+	}
+	return a == b
 }
 
 // Running reports whether Thunderbird is currently running for this profile.
@@ -167,9 +287,13 @@ func windowsLockHeld(profileDir string) bool {
 // EnableOffline turns on "keep messages on this computer" (offline_download) for
 // the account in prefs.js, after backing the file up. It returns whether a
 // change was made and the backup path. Thunderbird must be closed.
+//
+// prefs.js is read as parsePrefs reads it, and neither write (the backup, then prefs.js)
+// follows a link or replaces anything but a regular file (C0c, completeness foldcheck2
+// L1): see writeOverRegular.
 func EnableOffline(profileDir, serverKey string) (changed bool, backup string, err error) {
 	prefsPath := filepath.Join(profileDir, "prefs.js")
-	data, err := os.ReadFile(prefsPath)
+	data, err := util.ReadRegularFile(prefsPath, prefsMaxBytes)
 	if err != nil {
 		return false, "", err
 	}
@@ -192,13 +316,31 @@ func EnableOffline(profileDir, serverKey string) (changed bool, backup string, e
 	}
 
 	backup = prefsPath + ".mailarchive-bak"
-	if err := os.WriteFile(backup, data, 0o600); err != nil {
+	if err := writeOverRegular(backup, data, true); err != nil {
 		return false, "", fmt.Errorf("back up prefs.js: %w", err)
 	}
-	if err := os.WriteFile(prefsPath, []byte(content), 0o600); err != nil {
+	if err := writeOverRegular(prefsPath, []byte(content), false); err != nil {
 		return false, backup, fmt.Errorf("write prefs.js: %w", err)
 	}
 	return true, backup, nil
+}
+
+// writeOverRegular writes data to path through the repo's atomic writer (a temporary file
+// beside it, then a rename, which replaces the name and never writes through a link), once
+// a fresh Lstat shows path is a regular file, or nothing at all when mayBeAbsent. A link, a
+// pipe, a device or a folder there is refused and left as it is (the same rule
+// util.ReadRegularFile applies). Something swapped in between the Lstat and the rename is
+// replaced by the rename, never written through or waited on.
+func writeOverRegular(path string, data []byte, mayBeAbsent bool) error {
+	fi, err := os.Lstat(path)
+	switch {
+	case errors.Is(err, fs.ErrNotExist) && mayBeAbsent:
+	case err != nil:
+		return err
+	case fi.Mode()&fs.ModeSymlink != 0 || !util.DescriptorReadable(runtime.GOOS, fi.Mode()):
+		return &util.NotRegularError{Path: path, Mode: fi.Mode()}
+	}
+	return util.WriteFileAtomic0600Temp(path, data, ".mailarchive-prefs-*.tmp")
 }
 
 // MboxFiles returns the mbox files under a store directory (the things that grow
