@@ -12,7 +12,7 @@ import (
 	"mail-archive-tool/internal/assure"
 )
 
-// covers: MA-1261, R12, S10
+// covers: MA-1261, MA-1271, R12, S10
 // -enable-offline never says "already on" unless it read prefs.js and user.js with certainty (the
 // C0c pass round 3's R3-01, end to end). A user.js turning the setting on with pref( (which
 // Thunderbird ignores in a user's settings file) was logged "Offline download already enabled …
@@ -38,10 +38,15 @@ func TestAPrefCallInUserJSIsNeverAlreadyOn(t *testing.T) {
 				rc, words = exitCode(err), err.Error()
 			}
 			assure.Refused(t, rc, words, assure.Code(1),
-				assure.Names("-enable-offline changed nothing, and nothing was exported", "user.js", "Thunderbird never writes"),
+				// MA-1271: user.js is never Thunderbird's, so its words say whose file it is.
+				assure.Names("-enable-offline changed nothing, and nothing was exported",
+					"user.js has a line MailArchive cannot read with certainty (user.js is a file people or add-ons write by hand). Its line 1 holds a "+fn+"( statement"),
 				assure.NoSideEffect(func() bool {
 					return sameFiles(t, profile, before) && !strings.Contains(buf.String(), "already enabled")
 				}))
+			if strings.Contains(words, "changed outside Thunderbird") {
+				t.Errorf("user.js is said to be changed outside Thunderbird: %s", words)
+			}
 		})
 	}
 }

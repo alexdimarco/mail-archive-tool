@@ -213,7 +213,8 @@ func (e *NoAccountError) Plain() string {
 	}
 }
 
-// HandEditedError is the refusal when prefs.js or user.js was changed outside Thunderbird, so
+// HandEditedError is the refusal when prefs.js was changed outside Thunderbird, or user.js (which
+// only people and add-ons write) holds a line MailArchive cannot read with certainty, so
 // MailArchive cannot be sure what Thunderbird reads in it: a line anywhere in the file is not one
 // of the shapes Thunderbird writes (the allow-list of MA-1264; MA-1261's strict reading; the C0c
 // pass round 2's R2-01 and R2-02, MA-1207; round 3's R3-01 to R3-04; round 4's R4-01 and R4-02).
@@ -228,19 +229,35 @@ type HandEditedError struct {
 	Place Place
 }
 
-// Error is the command line's words.
+// userJSHand is the command line's sentence for user.js (MA-1271, the lead's words on the round-5
+// review's N1): Thunderbird never writes user.js, so a line there was never "changed outside
+// Thunderbird"; it is a file people or add-ons write.
+const userJSHand = "user.js has a line MailArchive cannot read with certainty (user.js is a file people or add-ons write by hand)"
+
+// Error is the command line's words. For prefs.js, which Thunderbird writes, a line in a shape it
+// never writes means the file was changed outside it; for user.js, which only people and add-ons
+// write, the words say so instead (MA-1271).
 func (e *HandEditedError) Error() string {
 	applies := ""
 	if e.Key != "" {
 		applies = " for " + e.Key
 	}
 	what := fmt.Sprintf("%s line %d %s. Thunderbird never writes such a line, so the file was changed outside Thunderbird (by hand or by another program), and MailArchive cannot be sure what Thunderbird applies%s.", e.File, e.Line, e.What, applies)
+	if e.File == "user.js" {
+		what = fmt.Sprintf("%s. Its line %d %s, so MailArchive cannot be sure what Thunderbird applies%s.", userJSHand, e.Line, e.What, applies)
+	}
 	return cliNothing + what + " In Thunderbird, " + e.Place.remedy(onHost("the account", e.Host)) + cliAgain
 }
 
-// Plain is the wizard's words: "changed outside Thunderbird", since an add-on or an IT tool may
-// have made the change (the C0c friction re-look's R7).
+// Plain is the wizard's words: for prefs.js "changed outside Thunderbird", since an add-on or an
+// IT tool may have made the change (the C0c friction re-look's R7); for user.js, a file
+// Thunderbird never writes, that it is a file people or add-ons write by hand (MA-1271). Neither
+// names the file (MA-1260's F2).
 func (e *HandEditedError) Plain() string {
+	if e.File == "user.js" {
+		return "One of Thunderbird's settings files has a line MailArchive cannot read with certainty. It is a file that people or add-ons write by hand, not Thunderbird, so MailArchive could not be sure what it says and did not change any Thunderbird setting.\n\n" +
+			stepsIntro + e.Place.steps("the account", e.Host)
+	}
 	return "Thunderbird's settings file was changed outside Thunderbird, so MailArchive could not be sure what it says and did not change any Thunderbird setting.\n\n" +
 		stepsIntro + e.Place.steps("the account", e.Host)
 }

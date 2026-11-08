@@ -67,7 +67,8 @@ func TestTheFinalLookWordsOnTheCommandLine(t *testing.T) {
 		"Q5: a missing semicolon": {`user_pref("mail.zz", 1)`,
 			`prefs.js line 7 holds text that is not a whole user_pref("name", value); statement (often a missing ; at its end). Thunderbird never writes such a line`},
 		"Q5: a name with a backslash": {`user_pref("mail.z\x7a", 1);`,
-			"prefs.js line 7 has a setting name with a backslash (an escape code) in it. Thunderbird never writes such a line"},
+			// MA-1269: \\ and \" are names Thunderbird writes; \x is not.
+			`prefs.js line 7 has a setting name with an escape code Thunderbird never writes in a name (a backslash not followed by \ or "). Thunderbird never writes such a line`},
 	} {
 		t.Run(name, func(t *testing.T) {
 			profile, store := offlineProfile(t, setOffOwnFolder+tc.line+"\n")

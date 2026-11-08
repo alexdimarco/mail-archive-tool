@@ -157,9 +157,11 @@ type prefStmt struct {
 //
 //   - an empty line (spaces only);
 //   - a // comment, after leading spaces only;
-//   - exactly `user_pref("NAME", VALUE);` between optional spaces, NAME holding no backslash and
-//     VALUE true, false, a whole number Thunderbird can hold (32 bits, an optional minus) or a
-//     double-quoted string whose only escapes are \\, \", \n and \r.
+//   - exactly `user_pref("NAME", VALUE);` between optional spaces, NAME a double-quoted string
+//     whose only escapes are \\ and \" (MA-1269), and VALUE true, false, a whole number
+//     Thunderbird can hold (32 bits, an optional minus) or a double-quoted string whose only
+//     escapes are \\, \", \n and \r; and, for the settings MailArchive reads, VALUE of the type
+//     Thunderbird uses for that setting (wrongType, MA-1270).
 //
 // The lines end all in LF or all in CRLF, with no other carriage return (CR) anywhere, no NUL
 // byte and no byte-order mark. Inside a quoted NAME or VALUE any other byte stands for itself.
@@ -193,7 +195,9 @@ const (
 	whatMixedEOL = "ends in a different way from the file's other lines (LF and CRLF mixed)"
 	whatNotWhole = `holds text that is not a whole user_pref("name", value); statement (often a missing ; at its end)`
 	whatSpanning = "holds a quoted value that goes on past the end of its line"
-	whatNameBS   = "has a setting name with a backslash (an escape code) in it"
+	whatNameBS   = `has a setting name with an escape code Thunderbird never writes in a name (a backslash not followed by \ or ")`
+	whatNotBool  = "has a value for its setting that is not true or false, the only values Thunderbird writes for that setting"
+	whatNotText  = "has a value for its setting that is not a quoted text, the only kind of value Thunderbird writes for that setting"
 	whatEscape   = `has a quoted value with an escape code Thunderbird never writes (a backslash not followed by \, ", n or r)`
 	whatBigInt   = "holds a number too large for Thunderbird, which skips such a line"
 	whatComment  = "holds a comment Thunderbird never writes (its own comments are lines that start with //)"
@@ -259,25 +263,33 @@ func allowedLine(line string) (s prefStmt, ok bool, why string) {
 	case strings.HasPrefix(code, "#") || strings.HasPrefix(code, "/*"):
 		return s, false, whatComment
 	}
-	rest, found := strings.CutPrefix(code, `user_pref("`)
-	if !found {
+	rest, found := strings.CutPrefix(code, `user_pref(`)
+	if !found || !strings.HasPrefix(rest, `"`) {
 		return s, false, whatNotWhole
 	}
-	// The name: up to the next quote, with no backslash in it (Thunderbird decodes escapes in a
-	// name; MailArchive does not guess at them).
-	end := strings.IndexByte(rest, '"')
-	if bs := strings.IndexByte(rest, '\\'); bs >= 0 && (end < 0 || bs < end) {
-		return s, false, whatNameBS
+	// The name: a double-quoted string whose only escapes are \\ and \" (MA-1269, the C0c pass
+	// round 5's R5-02). StrEscape writes a name as it writes a value (Preferences.cpp's
+	// pref_savePrefs), so a Windows network printer's settings are saved as
+	// print.printer_\\\\SERVER\\Printer.*; lib.rs reads a name with the same get_string_token as a
+	// value, so each escape is one character after the backslash, never the closing quote, and the
+	// name ends at the same quote for both readers. The name is kept decoded, as Thunderbird keeps
+	// it. A \n or \r in a name (StrEscape would write them, but no name holds a line break), a \x
+	// or \u, or a backslash before anything else stays refused.
+	n, why := quotedLen(rest, `\"`, whatNameBS)
+	switch {
+	case why == whatSpanning:
+		return s, false, whatNotWhole // the name does not end on its line
+	case why != "":
+		return s, false, why
+	case n <= 2:
+		return s, false, whatNotWhole // an empty name
 	}
-	if end <= 0 {
-		return s, false, whatNotWhole
-	}
-	s.key, rest = rest[:end], rest[end+1:]
+	s.key, rest = unquote(rest[:n]), rest[n:]
 	if rest, found = strings.CutPrefix(rest, ", "); !found {
 		return s, false, whatNotWhole
 	}
 	if strings.HasPrefix(rest, `"`) {
-		n, why := quotedLen(rest)
+		n, why := quotedLen(rest, `\"nr`, whatEscape)
 		if why != "" {
 			return s, false, why
 		}
@@ -294,6 +306,9 @@ func allowedLine(line string) (s prefStmt, ok bool, why string) {
 	}
 	switch {
 	case rest == ");":
+		if why := wrongType(s); why != "" {
+			return s, false, why
+		}
 		return s, true, ""
 	case strings.HasPrefix(rest, ");"):
 		return s, false, whatMore
@@ -303,9 +318,10 @@ func allowedLine(line string) (s prefStmt, ok bool, why string) {
 }
 
 // quotedLen is the length of the double-quoted string v starts with, its quotes included, when
-// every backslash in it is one of the escapes StrEscape writes (\\, \", \n, \r); why says what is
-// wrong otherwise.
-func quotedLen(v string) (int, string) {
+// every backslash in it is followed by one of escapes (for a value the four StrEscape writes, \\,
+// \", \n and \r; for a name \\ and \" only); why is bad when another escape is there, and
+// whatSpanning when the string does not end in v.
+func quotedLen(v, escapes, bad string) (int, string) {
 	for i := 1; i < len(v); i++ {
 		switch v[i] {
 		case '"':
@@ -314,8 +330,8 @@ func quotedLen(v string) (int, string) {
 			if i+1 >= len(v) {
 				return 0, whatSpanning
 			}
-			if strings.IndexByte(`\"nr`, v[i+1]) < 0 {
-				return 0, whatEscape
+			if strings.IndexByte(escapes, v[i+1]) < 0 {
+				return 0, bad
 			}
 			i++
 		}
@@ -341,6 +357,61 @@ func bareValue(v string) string {
 	}
 	if n, err := strconv.ParseInt(v, 10, 64); err != nil || n < -1<<31 || n > 1<<31-1 {
 		return whatBigInt
+	}
+	return ""
+}
+
+// wrongType is "" unless s is one of the settings MailArchive reads and its value is not of the
+// type Thunderbird uses for that setting (MA-1270, the C0c pass round 5's R5-01): then what is
+// there. Thunderbird drops a user value whose type differs from the setting's built-in default
+// (Preferences.cpp's Pref::SetUserValue, "Rejected attempt to change type of pref", copy
+// .claude/mozsrc-r5, sha256 196973de…), so for such a setting the last statement does not win, and
+// MailArchive does not model which one does: the file is one it cannot read with certainty.
+// Thunderbird never writes another type for these settings, so the rule refuses no file it wrote.
+// The settings, with where each type comes from:
+//
+//   - mail.server.default.offline_download: true or false. mailnews.js line 622,
+//     pref("mail.server.default.offline_download",true) (comm-central tip, copy
+//     .claude/mozsrc-r5b, sha256 41ebf6b1…).
+//   - mail.server.<key>.offline_download (each server's own): true or false. It has no default of
+//     its own in mailnews.js; Thunderbird reads it with mail.server.default.offline_download as its
+//     fallback, the same setting by another name, so it takes that default's type (mailnews.js line
+//     622 again; the fallback rule is the builder's reading, not checked in source this round).
+//   - mail.accountmanager.accounts: a quoted string. mailnews.js line 535,
+//     pref("mail.accountmanager.accounts", "").
+//   - mail.account.<id>.server, and mail.server.<key>.hostname, .type, .directory and
+//     .directory-rel: a quoted string. None has a default in mailnews.js; each holds a name or a
+//     path, which Thunderbird writes as a string (the builder's judgement, as the round-5 review
+//     suggested; not checked in Thunderbird's account code this round).
+//
+// <key> is a name with no dot in it (as liveServers takes server keys), so a setting such as
+// mail.server.server1.spamActionTargetAccount.type is not one of these; <id> is any name, as
+// liveServers takes account ids from the list.
+func wrongType(s prefStmt) string {
+	isBool := s.value == "true" || s.value == "false"
+	isText := strings.HasPrefix(s.value, `"`)
+	switch k := s.key; {
+	case k == "mail.accountmanager.accounts":
+	case strings.HasPrefix(k, "mail.account.") && strings.HasSuffix(k, ".server") && len(k) > len("mail.account..server"):
+	case strings.HasPrefix(k, "mail.server."):
+		key, field, ok := strings.Cut(strings.TrimPrefix(k, "mail.server."), ".")
+		switch {
+		case !ok || key == "" || strings.Contains(field, "."):
+			return ""
+		case field == "offline_download":
+			if !isBool {
+				return whatNotBool
+			}
+			return ""
+		case field == "hostname", field == "type", field == "directory", field == "directory-rel":
+		default:
+			return ""
+		}
+	default:
+		return ""
+	}
+	if !isText {
+		return whatNotText
 	}
 	return ""
 }
@@ -447,6 +518,12 @@ func unquote(v string) string {
 		b.WriteByte(v[i])
 	}
 	return b.String()
+}
+
+// strEscape is s as Thunderbird's StrEscape writes it inside quotes (Preferences.cpp): \n, \r, \\
+// and \" escaped, every other byte as it is.
+func strEscape(s string) string {
+	return strings.NewReplacer(`\`, `\\`, `"`, `\"`, "\n", `\n`, "\r", `\r`).Replace(s)
 }
 
 // FindAccountForStore locates the account whose own store folder is storeDir (C0c,
@@ -826,7 +903,10 @@ func planOffline(profileDir, serverKey string) (*offlinePlan, error) {
 	if i := strings.IndexByte(content, '\n'); i > 0 && content[i-1] == '\r' {
 		eol = "\r\n"
 	}
-	trueLine := fmt.Sprintf(`user_pref("%s", true);`, key)
+	// The name is written as Thunderbird writes it (StrEscape), since names are read decoded
+	// (MA-1269): a server key holding a quote or a backslash still gives a line that reads back as
+	// this setting.
+	trueLine := fmt.Sprintf(`user_pref("%s", true);`, strEscape(key))
 	var mine []prefStmt
 	for _, s := range pt.stmts {
 		if s.key == key {

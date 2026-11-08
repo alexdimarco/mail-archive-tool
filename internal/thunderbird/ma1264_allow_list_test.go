@@ -90,7 +90,7 @@ func TestTheAllowListReadsWhatThunderbirdWrites(t *testing.T) {
 	}
 }
 
-// covers: MA-1264, R9, S10
+// covers: MA-1264, MA-1271, R9, S10
 // Accept only the shapes Thunderbird writes (the C0c pass round 4's R4-01 and R4-02, the lead's
 // allow-list): any other line anywhere in prefs.js or user.js, a lone carriage return (CR), mixed
 // LF and CRLF endings, a byte-order mark, an escape other than \\, \", \n and \r (the \u high
@@ -159,9 +159,35 @@ func TestOnlyTheShapesThunderbirdWritesAreRead(t *testing.T) {
 	})
 }
 
+// handWords are what the command line's refusal says of file, and the wizard's (MA-1271): of
+// prefs.js that Thunderbird never writes such a line and the file was changed outside it; of
+// user.js, which Thunderbird never writes, that it is a file people or add-ons write by hand, and
+// never "changed outside Thunderbird".
+func handWords(t *testing.T, err error, file string) {
+	t.Helper()
+	plain, _ := PlainWords(err)
+	if file == "user.js" {
+		if !strings.Contains(err.Error(), "user.js has a line MailArchive cannot read with certainty (user.js is a file people or add-ons write by hand)") ||
+			strings.Contains(err.Error(), "changed outside Thunderbird") {
+			t.Errorf("the command line's words for user.js:\n%s", err)
+		}
+		if !strings.Contains(plain, "It is a file that people or add-ons write by hand, not Thunderbird") ||
+			strings.Contains(plain, "changed outside Thunderbird") || strings.Contains(plain, file) {
+			t.Errorf("the wizard's words for user.js:\n%s", plain)
+		}
+		return
+	}
+	if !strings.Contains(err.Error(), "Thunderbird never writes such a line, so the file was changed outside Thunderbird") {
+		t.Errorf("the command line's words for %s:\n%s", file, err)
+	}
+	if !strings.Contains(plain, "Thunderbird's settings file was changed outside Thunderbird") || strings.Contains(plain, file) {
+		t.Errorf("the wizard's words for %s:\n%s", file, plain)
+	}
+}
+
 // shapeRefused asserts that p, holding a line MailArchive cannot be sure of in file, is refused
 // by AccountToEnable, CheckOffline and EnableOffline with a HandEditedError naming file and what,
-// with both files byte for byte and no backup.
+// in the words for that file (handWords), with both files byte for byte and no backup.
 func shapeRefused(t *testing.T, p, store, file, what string) {
 	t.Helper()
 	prefsPath, userPath := filepath.Join(p, "prefs.js"), filepath.Join(p, "user.js")
@@ -179,7 +205,8 @@ func shapeRefused(t *testing.T, p, store, file, what string) {
 	if !errors.As(err, &h) {
 		t.Fatalf("AccountToEnable: %+v, %v; want a HandEditedError (never \"already on\")", acct, err)
 	}
-	refusedNaming(t, err, func() bool { return acct == nil && untouched() }, file, "changed nothing", what, "Thunderbird never writes")
+	refusedNaming(t, err, func() bool { return acct == nil && untouched() }, file, "changed nothing", what)
+	handWords(t, err, file)
 	if err := CheckOffline(p, "server1"); !errors.As(err, &h) {
 		t.Fatalf("CheckOffline: %v; want a HandEditedError", err)
 	}
@@ -188,4 +215,5 @@ func shapeRefused(t *testing.T, p, store, file, what string) {
 		t.Fatalf("EnableOffline: %+v, %v; want a HandEditedError (never \"already on\" or Changed)", c, err)
 	}
 	refusedNaming(t, err, func() bool { return !c.Changed && untouched() }, file, offKey, "changed nothing", what)
+	handWords(t, err, file)
 }

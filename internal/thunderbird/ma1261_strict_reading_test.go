@@ -4,7 +4,6 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
-	"strings"
 	"testing"
 )
 
@@ -22,7 +21,7 @@ func uncertainFiles() map[string]struct{ file, body, what string } {
 		nul      = "holds a NUL (zero) byte, where Thunderbird stops reading the file"
 		notWhole = `holds text that is not a whole user_pref("name", value); statement (often a missing ; at its end)`
 		spanning = "holds a quoted value that goes on past the end of its line"
-		slash    = "has a setting name with a backslash (an escape code) in it"
+		slash    = `has a setting name with an escape code Thunderbird never writes in a name (a backslash not followed by \ or ")`
 	)
 	ignored := func(fn string) string {
 		return "holds a " + fn + "( statement, which Thunderbird does not apply in prefs.js or user.js"
@@ -61,7 +60,7 @@ func uncertainProfile(t *testing.T, file, body string, on bool) (string, string)
 	return offProfile(t, own+"\n"+body)
 }
 
-// covers: MA-1261, R9, S10
+// covers: MA-1261, MA-1271, R9, S10
 // MailArchive changes prefs.js only when it can read prefs.js and user.js with certainty (the C0c
 // pass round 3's R3-01 to R3-04, the lead's strict rule). Either file holding a NUL byte anywhere,
 // a statement it cannot parse (one missing its semicolon among them), a string value spanning
@@ -106,7 +105,8 @@ func TestTheSettingsAreChangedOnlyWhenReadWithCertainty(t *testing.T) {
 				if !errors.As(err, &h) {
 					t.Fatalf("AccountToEnable: %+v, %v; want a HandEditedError (never \"already on\")", acct, err)
 				}
-				refusedNaming(t, err, func() bool { return acct == nil && untouched() }, tc.file, "changed nothing", "Thunderbird never writes")
+				refusedNaming(t, err, func() bool { return acct == nil && untouched() }, tc.file, "changed nothing")
+				handWords(t, err, tc.file)
 
 				err = CheckOffline(p, "server1")
 				if !errors.As(err, &h) {
@@ -118,9 +118,12 @@ func TestTheSettingsAreChangedOnlyWhenReadWithCertainty(t *testing.T) {
 					t.Fatalf("EnableOffline: %+v, %v; want a HandEditedError (never \"already on\" or Changed)", c, err)
 				}
 				refusedNaming(t, err, func() bool { return !c.Changed && untouched() }, tc.file, offKey, "changed nothing", tc.what)
-				if words, ok := PlainWords(err); !ok || !strings.Contains(words, "changed outside Thunderbird") || strings.Contains(words, tc.file) {
-					t.Errorf("the wizard's words do not say the file was changed outside Thunderbird, or name the file:\n%s", words)
+				// The words for the file (MA-1271): "changed outside Thunderbird" for prefs.js only,
+				// and the wizard's never name the file.
+				if _, ok := PlainWords(err); !ok {
+					t.Errorf("no wizard words for %v", err)
 				}
+				handWords(t, err, tc.file)
 			})
 		}
 	}
