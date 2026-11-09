@@ -78,7 +78,7 @@ func (g *localRunRig) tbBackdate(grew bool) {
 	a := &s.Accounts[0]
 	a.FirstBehind, a.LastBehind, a.LastGrew, a.SeenAt, s.LastRunAt = back, back, back, back, back
 	if grew {
-		a.FirstX, a.GrewX = 1, 1
+		a.FirstX, a.GrewX, a.LastX = 1, 1, 1
 	}
 	if err := state.WriteTBStreak(g.out, s); err != nil {
 		g.t.Fatal(err)
@@ -112,19 +112,25 @@ func TestTheScheduledRunSendsTheDownloadEmailsOncePerStreak(t *testing.T) {
 		t.Fatalf("the still-downloading email: %+v", ev)
 	}
 	line := ev.TB.Lines[0]
-	if !strings.Contains(line, "the Thunderbird account kept in the folder imap.qzc5.example for 4 days") || !strings.Contains(line, "about 3 of 40 messages") ||
-		strings.Contains(line, "qzsam") || strings.Contains(line, "Inbox") || strings.Contains(ev.TB.Remedy, "qzsam") {
+	if line != "The account kept in the folder imap.qzc5.example: about 3 of 40 messages downloaded, still going after 4 days." ||
+		strings.Contains(line, "qzsam") || strings.Contains(line, "Inbox") || strings.Contains(strings.Join(ev.TB.Remedy, " ")+ev.TB.Which, "qzsam") {
 		t.Errorf("the still-downloading words: %q / %q", line, ev.TB.Remedy)
 	}
 	if RunHeadless(j) != 0 || g.tbSent() != 1 {
 		t.Fatalf("the next run sent again: %q", g.results())
 	}
+	// The computer was off for 4 days (the times moved back, X as before): the first backup after
+	// it is the second without progress, so no stopped email yet (FALSE-01's rule: 3 backups); the
+	// next one is the third, and sends it.
 	g.tbBackdate(false)
-	if RunHeadless(j) != 0 || g.tbSent() != 2 || !g.sent[1].TB.Stopped {
-		t.Fatalf("3 days without growth sent %q, want the stopped email", g.results())
+	if RunHeadless(j) != 0 || g.tbSent() != 1 {
+		t.Fatalf("the first backup after a 4-day gap sent %q, want nothing", g.results())
 	}
-	if !strings.Contains(g.sent[1].TB.Lines[0], "has not downloaded any more of the Thunderbird account kept in the folder imap.qzc5.example since") {
-		t.Errorf("the stopped words: %q", g.sent[1].TB.Lines[0])
+	if RunHeadless(j) != 0 || g.tbSent() != 2 || !g.sent[1].TB.Stopped {
+		t.Fatalf("3 days and 3 backups without growth sent %q, want the stopped email", g.results())
+	}
+	if l := g.sent[1].TB.Lines[0]; !strings.HasPrefix(l, "The account kept in the folder imap.qzc5.example: about 3 of 40 messages downloaded, no progress since ") || strings.Contains(l, "qzsam") {
+		t.Errorf("the stopped words: %q", l)
 	}
 	if RunHeadless(j) != 0 || g.tbSent() != 2 {
 		t.Fatalf("the run after the stopped email sent again: %q", g.results())

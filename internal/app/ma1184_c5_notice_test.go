@@ -64,7 +64,12 @@ func TestTheFoldNamesTheStreaksDueAnEmail(t *testing.T) {
 	if _, n = foldTBStreak(opts, []tbcomplete.Result{c5Behind("k1", 700)}, false, true, t0.Add(4*day), nil); n != nil {
 		t.Errorf("a marked streak is due again: %+v", n)
 	}
-	// X stops at 700 for 3 days: the stopped email, once.
+	// X stops at 700 for 3 days and 3 backups (FALSE-01's rule): the stopped email, once.
+	for _, d := range []time.Duration{5, 6} {
+		if _, n = foldTBStreak(opts, []tbcomplete.Result{c5Behind("k1", 700)}, false, true, t0.Add(d*day), nil); n != nil {
+			t.Fatalf("X unchanged for %d days is due %+v", d-4, n)
+		}
+	}
 	_, n = foldTBStreak(opts, []tbcomplete.Result{c5Behind("k1", 700)}, false, true, t0.Add(7*day+time.Hour), nil)
 	if len(n) != 1 || !n[0].Stopped || !n[0].LastGrew.Equal(t0.Add(4*day)) {
 		t.Fatalf("3 days without growth: %+v", n)
@@ -232,7 +237,7 @@ func TestR4_01_AnImplausibleCounterStartsFresh(t *testing.T) {
 	var buf bytes.Buffer
 	ws, _ = foldTBStreak(Options{Out: out}, []tbcomplete.Result{c5Behind("real", 1)}, false, true, now, log.New(&buf, "", 0))
 	s := mustStreak(t, out)
-	if _, ok := s.Account("real"); !ok || len(s.Accounts) != 1 || s.Run != 1 || s.Implausible() || s.RecordID == "PlantedRecordId01" {
+	if _, ok := s.Account("real"); !ok || len(s.Accounts) != 1 || s.Run != 1 || s.ImplausibleAt(now) || s.RecordID == "PlantedRecordId01" {
 		t.Errorf("the damaged record was not started fresh: run %d, %d entries, id %q", s.Run, len(s.Accounts), s.RecordID)
 	}
 	if codes(ws) != "tbstreak_unreadable" || !strings.Contains(ws[0].Message, state.TBStreakName) || !strings.Contains(buf.String(), "could not have been written by a backup") {
@@ -299,7 +304,7 @@ func TestARealBehindRunCarriesItsNotice(t *testing.T) {
 	// The streak began 4 days ago, with 1 message then: this run's 3 are growth, so it is the
 	// still-downloading email.
 	back := time.Now().UTC().Add(-4 * 24 * time.Hour)
-	s.Accounts[0].FirstBehind, s.Accounts[0].LastBehind, s.Accounts[0].LastGrew, s.Accounts[0].GrewX, s.Accounts[0].FirstX = back, back, back, 1, 1
+	s.Accounts[0].FirstBehind, s.Accounts[0].LastBehind, s.Accounts[0].LastGrew, s.Accounts[0].GrewX, s.Accounts[0].FirstX, s.Accounts[0].LastX = back, back, back, 1, 1, 1
 	s.LastRunAt, s.Accounts[0].SeenAt = back, back
 	if err := state.WriteTBStreak(out, s); err != nil {
 		t.Fatal(err)

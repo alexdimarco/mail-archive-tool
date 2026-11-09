@@ -37,12 +37,18 @@ var markTBSent = app.MarkTBNoticesSent
 //   - deferred: this run already sent an email (the recovery or the Thunderbird-not-synced one),
 //     so this one waits for the next due run (one email per run, as design-presync-attended §5.5
 //     keeps it) and nothing is marked;
-//   - never for an encrypted archive, even if handed a notice.
+//   - never for an encrypted archive, even if handed a notice;
+//   - never for a notice whose email the archive's record already marks sent (the C5 pass's
+//     SPAM-01 second guard): a notice handed again, or a run racing the mark, sends nothing.
 //
-// The caller calls it only for a scheduled run that did not fail. Best effort: nothing here fails
-// the backup.
+// An email the mail server accepted counts as sent even when the goodbye after it failed (send,
+// SPAM-01). The caller calls it only for a scheduled run that did not fail. Best effort: nothing
+// here fails the backup.
 func ReportTBBehind(settingsPath string, store graphconfig.SecretStore, out string, notices []state.TBNotice, deferred bool, logger *log.Logger) bool {
 	if len(notices) == 0 || app.ArchiveEncrypted(out) {
+		return false
+	}
+	if notices = unsentTBNotices(out, notices); len(notices) == 0 {
 		return false
 	}
 	if deferred {
@@ -63,6 +69,22 @@ func ReportTBBehind(settingsPath string, store graphconfig.SecretStore, out stri
 	return sent
 }
 
+// unsentTBNotices is notices less those whose email the archive's streak record already marks
+// sent. A record that cannot be read keeps them all: toward a repeat, never silence.
+func unsentTBNotices(out string, notices []state.TBNotice) []state.TBNotice {
+	s, err := state.ReadTBStreak(out)
+	if err != nil {
+		return notices
+	}
+	var keep []state.TBNotice
+	for _, n := range notices {
+		if !s.Sent(n) {
+			keep = append(keep, n)
+		}
+	}
+	return keep
+}
+
 // ReportTBBehindDefault is ReportTBBehind with the default Desktop settings path and OS secret
 // store, for the wizard's local scheduled job.
 func ReportTBBehindDefault(out string, notices []state.TBNotice, deferred bool, logger *log.Logger) bool {
@@ -74,14 +96,14 @@ func ReportTBBehindDefault(out string, notices []state.TBNotice, deferred bool, 
 func deliverTBBehind(cfg alert.Config, store graphconfig.SecretStore, out string, notices []state.TBNotice, logger *log.Logger) bool {
 	host, _ := os.Hostname()
 	now := time.Now()
-	stopped, lines, remedy := state.TBNoticeEmail(notices, now)
+	e := state.TBNoticeEmail(notices, now)
 	ev := alert.Event{Result: ResultTBBehind, Archive: out, Host: host, When: now,
-		TB: &alert.TBBehind{Stopped: stopped, Lines: lines, Remedy: remedy}}
+		TB: &alert.TBBehind{Stopped: e.Stopped, Accounts: e.Accounts, Lines: e.Lines, Remedy: e.Remedy, Which: e.Which}}
 	what := "still downloading"
-	if stopped {
+	if e.Stopped {
 		what = "stopped downloading"
 	}
-	if err := sendFn(cfg, Password(store), ev); err != nil {
+	if err := send(cfg, store, ev, logger); err != nil {
 		logf(logger, "the Thunderbird %s email could not be sent: %v", what, err)
 		return false
 	}

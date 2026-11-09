@@ -152,7 +152,7 @@ func deliverSyncStale(cfg alert.Config, store graphconfig.SecretStore, out strin
 	phrase, remedy := health.SyncAlertWords(runtime.GOOS, s)
 	ev := alert.Event{Result: ResultSyncStale, Archive: out, Host: host, When: time.Now(),
 		Sync: &alert.SyncStale{Since: s.FirstMissed, Missed: s.Missed, Phrase: phrase, Remedy: remedy}}
-	if err := sendFn(cfg, Password(store), ev); err != nil {
+	if err := send(cfg, store, ev, logger); err != nil {
 		logf(logger, "the Thunderbird-not-synced email could not be sent: %v", err)
 		return false
 	}

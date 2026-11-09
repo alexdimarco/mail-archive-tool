@@ -38,6 +38,11 @@ func newTBRig(t *testing.T, alertJSON string, stopped bool) *tbRig {
 		x = 100
 	}
 	s := state.TBStreak{}.StartRun(t0).Behind("k1", "imap.qzc5.example", 100, t0)
+	if stopped { // stopped needs 3 backups without progress across 3 days (FALSE-01's rule)
+		for _, h := range []time.Duration{25, 49} {
+			s = s.StartRun(t0.Add(h*time.Hour)).Behind("k1", "imap.qzc5.example", x, t0.Add(h*time.Hour))
+		}
+	}
 	s = s.StartRun(t0.Add(73*time.Hour)).Behind("k1", "imap.qzc5.example", x, t0.Add(73*time.Hour)).Named()
 	if err := state.WriteTBStreak(out, s); err != nil {
 		t.Fatal(err)
@@ -78,8 +83,9 @@ func TestTheThunderbirdDownloadEmailGoesThenIsMarked(t *testing.T) {
 	if !g.report(false, log.New(&buf, "", 0)) || len(g.sent) != 1 || g.sent[0].Result != ResultTBBehind || g.sent[0].TB == nil {
 		t.Fatalf("positive twin: sent %q", g.results())
 	}
-	stopped, lines, remedy := state.TBNoticeEmail([]state.TBNotice{g.notice}, time.Now())
-	if tb := g.sent[0].TB; tb.Stopped != stopped || strings.Join(tb.Lines, "|") != strings.Join(lines, "|") || tb.Remedy != remedy || g.sent[0].Archive != g.out {
+	e := state.TBNoticeEmail([]state.TBNotice{g.notice}, time.Now())
+	if tb := g.sent[0].TB; tb.Stopped != e.Stopped || tb.Accounts != e.Accounts || strings.Join(tb.Lines, "|") != strings.Join(e.Lines, "|") ||
+		strings.Join(tb.Remedy, "|") != strings.Join(e.Remedy, "|") || tb.Which != e.Which || tb.Which == "" || g.sent[0].Archive != g.out {
 		t.Errorf("the email's words: %+v", tb)
 	}
 	if still, st := g.flags(); !still || st {

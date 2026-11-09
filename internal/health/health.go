@@ -1917,7 +1917,9 @@ func Gather(out, nameOverride string) Input {
 	in.LastRun, in.LastRunState, in.LastRunErr = state.ReadLastRun(out)
 	in.LastVerify, in.LastVerifyState, in.LastVerifyErr = state.ReadLastVerify(out)
 	if in.LastRunState == state.LastRunPresent && !in.LastRun.Encrypted && len(in.LastRun.Thunderbird) > 0 {
-		if s, err := state.ReadTBStreak(out); err == nil && !s.Implausible() {
+		// A damaged record (counts or dates no backup could have written, R4-01 and the C5
+		// pass's PLANT-01) is never read: behind_since never shows a planted date.
+		if s, err := state.ReadTBStreak(out); err == nil && !s.ImplausibleAt(time.Now()) {
 			in.TBStreak = s
 		}
 	}

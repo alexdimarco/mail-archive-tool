@@ -1,9 +1,6 @@
 package state
 
-import (
-	"fmt"
-	"time"
-)
+import "time"
 
 // The behind streak's two emails (docs/design-thunderbird-completeness.md §5 with its TC-20 and M10
 // folds, §7's still-downloading and stopped sentences, §9.3; slice C5): when a scheduled backup of a
@@ -67,39 +64,98 @@ func (s TBStreak) MarkSent(store string, serial int, stopped bool) (TBStreak, bo
 	return s, true
 }
 
+// Sent reports whether the record already marks n's email sent: the same record, store and
+// streak, with that email's flag set (the C5 pass's SPAM-01 second guard). The alert layer drops
+// such a notice before sending, so a notice handed again, or a run racing the mark, never sends
+// the email a second time.
+func (s TBStreak) Sent(n TBNotice) bool {
+	i := s.account(n.Store)
+	if i < 0 || n.RecordID == "" || n.RecordID != s.RecordID || s.Accounts[i].Serial != n.Serial {
+		return false
+	}
+	if n.Stopped {
+		return s.Accounts[i].StoppedSent
+	}
+	return s.Accounts[i].StillSent
+}
+
 // tbStreakPlausibleMax bounds the run counter, the serial and an entry's behind runs a record may
 // carry before it is read as damaged (the C2 pass round 4's R4-01): one backup a minute for 31
 // years. Far below maxTBStreakRun, where StartRun stops counting, so a planted counter can never
 // freeze "this run".
 const tbStreakPlausibleMax = 1 << 24
 
-// Implausible reports a record no run of this archive could have written (R4-01, the lead's call):
-// a run counter, serial or behind-run count past tbStreakPlausibleMax, or an entry whose streak
-// number is above the record's. The run treats it as damaged: the streak starts fresh and the run
-// records a WARN (tbstreak_unreadable), never silent. Fresh is R42's fail-safe reading: a later
-// notice, never a false one.
-func (s TBStreak) Implausible() bool {
+// tbStreakEarliest is the earliest date a record may hold (the C5 pass's PLANT-01, the lead's call):
+// MailArchive's completeness check did not exist before it, so an earlier date was planted.
+var tbStreakEarliest = time.Date(2020, 1, 1, 0, 0, 0, 0, time.UTC)
+
+// tbStreakAhead is how far after the run's own clock a record's date may be before it is damaged
+// (PLANT-01): a day, so a time zone or a small clock correction is never called damage.
+const tbStreakAhead = 24 * time.Hour
+
+// ImplausibleAt reports a record no run of this archive could have written, read at now (R4-01 and
+// PLANT-01, the lead's calls). Counters: a run counter, serial or behind-run count past
+// tbStreakPlausibleMax, an entry whose streak number is above the record's, or more behind runs
+// without progress than behind runs. Dates: any date before 2020-01-01; any date more than a day
+// after now (only when now itself is plausible, so a run whose clock is wrong never calls a real
+// record damaged); a first time after a last one (the streak's first behind after its latest, its
+// latest progress before its first or after its latest); and one behind run holding two different
+// times. The run treats it as damaged: the streak starts fresh and the run records a WARN
+// (tbstreak_unreadable), never silent. Fresh is R42's fail-safe reading: a later notice, never a
+// false one, and the email and behind_since never show a planted date.
+func (s TBStreak) ImplausibleAt(now time.Time) bool {
 	if s.Run > tbStreakPlausibleMax || s.Serial > tbStreakPlausibleMax {
 		return true
 	}
+	bad := func(t time.Time) bool {
+		return !t.IsZero() && (t.Before(tbStreakEarliest) || !now.Before(MinPlausibleTime) && t.After(now.Add(tbStreakAhead)))
+	}
+	before := func(a, b time.Time) bool { return !a.IsZero() && !b.IsZero() && b.Before(a) } // a is after b
+	if bad(s.LastRunAt) {
+		return true
+	}
 	for _, a := range s.Accounts {
-		if a.Serial > s.Serial || a.Runs > tbStreakPlausibleMax {
+		if a.Serial > s.Serial || a.Runs > tbStreakPlausibleMax || a.NoProgressRuns > a.Runs {
+			return true
+		}
+		if bad(a.FirstBehind) || bad(a.LastBehind) || bad(a.LastGrew) || bad(a.SeenAt) {
+			return true
+		}
+		if before(a.FirstBehind, a.LastBehind) || before(a.FirstBehind, a.LastGrew) || before(a.LastGrew, a.LastBehind) {
+			return true
+		}
+		if a.Runs == 1 && !a.FirstBehind.Equal(a.LastBehind) {
 			return true
 		}
 	}
 	return false
 }
 
-// tbLeave is what to do while Thunderbird is still downloading, as the screen says it (tbBehind),
-// for a scheduled backup: the email only ever comes from one.
-const tbLeave = "leave Thunderbird open (it downloads mostly while the computer is left alone); later backups add the rest."
+// TBEmail is the Thunderbird download email's words, built from a run's notices (the C5 friction
+// review's P1 to P4 and lows, the lead's call of 2026-11-09): which email it is, how many accounts
+// its opening counts, one line per account, what to do (one line, or numbered steps) and how to
+// tell which account a folder is. The alert layer (alert.TBBehind) adds the subject, the opening,
+// the archive and computer lines and the once-only line.
+type TBEmail struct {
+	Stopped  bool     // any account stopped: the stopped email
+	Accounts int      // the accounts the opening counts: the stopped ones in the stopped email, else all
+	Lines    []string // one per account, the stopped ones first
+	Remedy   []string // one line (begins in lower case after "Do this on that computer: "), or numbered steps
+	Which    string   // how to see which account a folder is
+}
 
-// TBNoticeEmail is the email's words for notices (the friction review of the email owes its
-// look): whether it is the stopped email (any account stopped), one line per account (the stopped
-// ones first), and what to do, beginning in lower case after the email's "Do this on that
-// computer: ". Each account is said by its folder ("the Thunderbird account kept in the folder
-// NAME", the owner's fallback wording, §9.3: an email leaves the computer), with counts only.
-func TBNoticeEmail(notices []TBNotice, now time.Time) (stopped bool, lines []string, remedy string) {
+// tbLeave is what to do while Thunderbird is still downloading, for a scheduled backup (the email
+// only ever comes from one): it begins in lower case after "Do this on that computer: ".
+const tbLeave = "leave Thunderbird open (it downloads mostly while the computer is left alone). Later backups add the rest by themselves."
+
+// tbWhich is how to tell which account a folder is (M2): Thunderbird never shows the folder name
+// in its account list, only on each account's "Server Settings" page.
+const tbWhich = "To see which account that is: in Thunderbird, " + tbMenu + `; each account's "Server Settings" page shows the folder its mail is kept in, at the bottom.`
+
+// TBNoticeEmail is the email's words for notices. Each account is said by its folder ("The account
+// kept in the folder NAME", the owner's fallback wording, §9.3: an email leaves the computer), with
+// counts only and no mail folder.
+func TBNoticeEmail(notices []TBNotice, now time.Time) TBEmail {
 	var halted, going []TBNotice
 	for _, n := range notices {
 		if n.Stopped {
@@ -108,61 +164,68 @@ func TBNoticeEmail(notices []TBNotice, now time.Time) (stopped bool, lines []str
 			going = append(going, n)
 		}
 	}
+	if len(halted) == 0 && len(going) == 0 {
+		return TBEmail{}
+	}
 	say := TBSay{Scheduled: true, Now: now}
+	e := TBEmail{Stopped: len(halted) > 0, Accounts: len(going), Which: tbWhich}
 	for _, n := range halted {
-		lines = append(lines, tbStoppedLine(n, say))
+		e.Lines = append(e.Lines, tbStoppedLine(n, say))
 	}
 	for _, n := range going {
-		lines = append(lines, tbStillLine(n))
+		e.Lines = append(e.Lines, tbStillLine(n))
 	}
-	switch {
-	case len(halted) == 0 && len(going) == 0:
-		return false, nil, ""
-	case len(halted) == 0:
-		return false, lines, tbLeave
+	if !e.Stopped {
+		e.Remedy = []string{tbLeave}
+		return e
 	}
-	whose := "each account named above"
-	if len(halted) == 1 {
-		whose = tbNoticeName(halted[0])
+	e.Accounts = len(halted)
+	whose := "that account's"
+	if len(halted) > 1 {
+		whose = "each stopped account's"
 	}
-	remedy = "open Thunderbird and leave it open with the computer idle for a while. If nothing changes, in Thunderbird, " + tbMenu + `, and check the "Synchronization & Storage" page of ` + whose + "."
-	if len(going) > 0 {
-		remedy += " For the " + pick(len(going), "account", thousands(len(going))+" accounts") + " still downloading: " + tbLeave
+	e.Remedy = []string{
+		"1. Open Thunderbird and leave it open, with the computer left alone, for an hour or more. If it asks for a password, enter it.",
+		"2. If Status & health in MailArchive Desktop still shows the same count the next day: in Thunderbird, " + tbMenu + ". On " + whose + ` "Synchronization & Storage" page, make sure it is set to keep all of the account's mail on this computer.`,
 	}
-	return true, lines, remedy
+	return e
 }
 
-// tbNoticeName is the account as the email says it: by its folder, never by a name (§9.3).
-func tbNoticeName(n TBNotice) string { return tbName(TBAccount{Account: n.Account}) }
+// tbEmailAccount is how an account's line begins: by its folder, never by a name (§9.3).
+func tbEmailAccount(n TBNotice) string {
+	if f := CleanFolderName(n.Account); f != "" {
+		return "The account kept in the folder " + f
+	}
+	return "An account"
+}
 
-// tbStillLine is §7's still-downloading sentence: how long, measured between the streak's behind
-// runs (never to now), and both numbers.
+// tbEmailCounts is how much of the account is downloaded: "about X of Y messages downloaded",
+// "none of its Y messages downloaded yet" ("none of its messages (at least Y)" for a floor), or
+// "its 1 message is not downloaded yet".
+func tbEmailCounts(n TBNotice) string {
+	switch {
+	case n.OnDisk > 0:
+		return "about " + tbN(n.OnDisk) + " of " + tbOfMessages(n.Listed, n.Floor) + " downloaded"
+	case n.Floor:
+		return "none of its messages (at least " + tbN(n.Listed) + ") downloaded yet"
+	case n.Listed == 1:
+		return "its 1 message is not downloaded yet"
+	}
+	return "none of its " + tbMessages(n.Listed) + " downloaded yet"
+}
+
+// tbStillLine is the still-downloading line: the counts, and how long, in whole days between the
+// streak's first and latest behind runs (never to now).
 func tbStillLine(n TBNotice) string {
 	days := int(max(0, n.LastBehind.Sub(n.FirstBehind)) / (24 * time.Hour))
-	s := fmt.Sprintf("Thunderbird has been downloading %s for %s and ", tbNoticeName(n), Count(days, "day", "days"))
-	if n.OnDisk <= 0 {
-		return s + "has not downloaded " + tbNoneOf(n.Listed, n.Floor) + " yet."
+	after := "after " + Count(days, "day", "days") + "."
+	if n.OnDisk > 0 {
+		after = "still going " + after
 	}
-	return s + "has about " + tbN(n.OnDisk) + " of " + tbOfMessages(n.Listed, n.Floor) + " so far."
+	return tbEmailAccount(n) + ": " + tbEmailCounts(n) + ", " + after
 }
 
-// tbStoppedLine is §7's stopped sentence: since when X has not grown, and both numbers; with
-// nothing on that computer, that none is there yet.
+// tbStoppedLine is the stopped line: the counts, and since when there was no progress.
 func tbStoppedLine(n TBNotice, say TBSay) string {
-	since := tbDate(n.LastGrew, say)
-	if n.OnDisk <= 0 {
-		if n.Listed == 1 && !n.Floor {
-			return "The 1 message in " + tbNoticeName(n) + " is not on that computer yet, and Thunderbird has downloaded nothing since " + since + "."
-		}
-		return "None of " + tbOfMessagesThe(n.Listed, n.Floor) + " in " + tbNoticeName(n) + " are on that computer yet, and Thunderbird has downloaded none since " + since + "."
-	}
-	return "Thunderbird has not downloaded any more of " + tbNoticeName(n) + " since " + since + " (about " + tbN(n.OnDisk) + " of " + tbOfMessages(n.Listed, n.Floor) + " are on that computer)."
-}
-
-// tbOfMessagesThe is "the Y messages", or, for a floor, "at least Y messages".
-func tbOfMessagesThe(y int64, floor bool) string {
-	if floor {
-		return "at least " + tbMessages(y)
-	}
-	return "the " + tbMessages(y)
+	return tbEmailAccount(n) + ": " + tbEmailCounts(n) + ", no progress since " + tbDate(n.LastGrew, say) + "."
 }

@@ -478,9 +478,10 @@ func previousThunderbird(opts Options) []state.TBAccount {
 //   - a record a later MailArchive wrote (state.ErrTBStreakNewer) is never downgraded: nothing
 //     moves and nothing is written;
 //   - any other refusal (a link, a pipe, too large, a read error) leaves the record as it is;
-//   - a record no run of this archive could have written (state.TBStreak.Implausible: a run
-//     counter at its cap, the C2 pass round 4's R4-01, the lead's call) is damaged: the streak
-//     starts fresh from this run, as for a record other users can read, and is rewritten.
+//   - a record no run of this archive could have written (state.TBStreak.ImplausibleAt: a run
+//     counter at its cap, the C2 pass round 4's R4-01; a date in the future, before 2020 or out of
+//     order, the C5 pass's PLANT-01; the lead's calls) is damaged: the streak starts fresh from
+//     this run, as for a record other users can read, and is rewritten.
 //
 // A full record never drops a streak this run found behind (the C2 pass round 3's R3-04): a new
 // behind store that finds no room is logged by name and the run gets a WARN for the last-run
@@ -514,8 +515,8 @@ func foldTBStreak(opts Options, results []tbcomplete.Result, encrypted, ok bool,
 	var warns []state.RunWarning
 	prev, err := readTBStreak(opts.Out)
 	switch {
-	case err == nil && prev.Implausible():
-		logf("warning: MailArchive's record of how long Thunderbird has been downloading (%s) holds counts that could not have been written by a backup of this archive, so it was not trusted; it starts again from this backup", path)
+	case err == nil && prev.ImplausibleAt(now):
+		logf("warning: MailArchive's record of how long Thunderbird has been downloading (%s) holds counts or dates that could not have been written by a backup of this archive, so it was not trusted; it starts again from this backup", path)
 		warns = append(warns, state.RunWarning{Code: tbStreakUnreadable, Message: tbStreakDamagedMessage(path)})
 		prev = state.TBStreak{}
 	case err == nil:
@@ -678,7 +679,7 @@ func tbStreakNewerMessage(path string) string {
 // tbStreakDamagedMessage is tbstreak_unreadable's sentence for a record no backup of this archive
 // could have written (R4-01): started again, like a record others could read.
 func tbStreakDamagedMessage(path string) string {
-	return "MailArchive did not trust its record of how long Thunderbird has been downloading (" + path + "), because it holds counts no backup of this archive could have written, so it started that count again at the last backup. Nothing is needed; if this shows again, the file is being changed by something other than MailArchive."
+	return "MailArchive did not trust its record of how long Thunderbird has been downloading (" + path + "), because it holds counts or dates no backup of this archive could have written (a computer clock that was set wrong can cause the dates), so it started that count again at the last backup. Nothing is needed. If this shows again and the computer's clock is right, the file is being changed by something other than MailArchive."
 }
 
 func tbStreakOtherMessage(path string) string {

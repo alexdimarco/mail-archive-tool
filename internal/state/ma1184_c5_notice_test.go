@@ -3,7 +3,6 @@ package state
 import (
 	"os"
 	"path/filepath"
-	"strings"
 	"testing"
 	"time"
 )
@@ -42,11 +41,13 @@ func TestTheStreakIsDueEachEmailOnce(t *testing.T) {
 	if due, _ := a.Due(); due {
 		t.Errorf("the still-downloading email is due twice: %+v", a)
 	}
-	// X unchanged for a day: nothing. For 3 days: the stopped email, once.
+	// X unchanged for a day: nothing. For 3 days and 3 backups (FALSE-01's rule): the stopped
+	// email, once.
 	s = s.Behind("k", "imap.x.example", 500, t0.Add(4*day))
 	if a, _ = s.Account("k"); func() bool { d, _ := a.Due(); return d }() {
 		t.Errorf("a day without growth is due an email: %+v", a)
 	}
+	s = s.Behind("k", "imap.x.example", 500, t0.Add(5*day))
 	s = s.Behind("k", "imap.x.example", 500, t0.Add(6*day+time.Hour))
 	a, _ = s.Account("k")
 	if due, stopped := a.Due(); !due || !stopped {
@@ -60,7 +61,7 @@ func TestTheStreakIsDueEachEmailOnce(t *testing.T) {
 
 	// A streak that stalls from its start: only the stopped email, and never a still-downloading
 	// one after it, even once X grows again.
-	b := TBStreak{}.Behind("j", "imap.y.example", 7, t0).Behind("j", "imap.y.example", 7, t0.Add(3*day))
+	b := TBStreak{}.Behind("j", "imap.y.example", 7, t0).Behind("j", "imap.y.example", 7, t0.Add(day)).Behind("j", "imap.y.example", 7, t0.Add(2*day)).Behind("j", "imap.y.example", 7, t0.Add(3*day))
 	ja, _ := b.Account("j")
 	if due, stopped := ja.Due(); !due || !stopped {
 		t.Fatalf("a stall from the start: due %v stopped %v, want the stopped email only", due, stopped)
@@ -91,12 +92,13 @@ func TestAnImplausibleStreakRecordIsSeen(t *testing.T) {
 		t.Fatal(err)
 	}
 	got, err := ReadTBStreak(out)
-	if err != nil || got.Implausible() {
-		t.Fatalf("positive twin: a record of real folds: %v implausible %v", err, got.Implausible())
+	now := t0.Add(2 * time.Hour)
+	if err != nil || got.ImplausibleAt(now) {
+		t.Fatalf("positive twin: a record of real folds: %v implausible %v", err, got.ImplausibleAt(now))
 	}
 	edge := got
 	edge.Run, edge.Serial = tbStreakPlausibleMax, tbStreakPlausibleMax
-	if edge.Implausible() {
+	if edge.ImplausibleAt(now) {
 		t.Errorf("a counter at the bound itself is implausible")
 	}
 	for name, plant := range map[string]string{
@@ -110,61 +112,8 @@ func TestAnImplausibleStreakRecordIsSeen(t *testing.T) {
 			t.Fatal(err)
 		}
 		r, err := ReadTBStreak(out)
-		if err != nil || !r.Implausible() {
-			t.Errorf("%s: read %v, implausible %v", name, err, r.Implausible())
+		if err != nil || !r.ImplausibleAt(now) {
+			t.Errorf("%s: read %v, implausible %v", name, err, r.ImplausibleAt(now))
 		}
-	}
-}
-
-// covers: MA-1188
-// The email's words (§7's still-downloading and stopped sentences, §9.3): each account is said by
-// the folder its mail is kept in, never by a name, and with counts only: no mail folder is named
-// (the notice holds none). A hostile folder name is cleaned. Positive twin first: one account still
-// downloading after 3 days.
-func TestTheNoticeEmailWords(t *testing.T) {
-	now := time.Date(2026, 11, 9, 12, 0, 0, 0, time.Local)
-	still := TBNotice{Store: "k1", Serial: 1, Account: "imap.gmail.com", OnDisk: 120000, Listed: 238080,
-		FirstBehind: now.Add(-3*24*time.Hour - time.Hour), LastBehind: now, LastGrew: now}
-	stopped, lines, remedy := TBNoticeEmail([]TBNotice{still}, now)
-	want := "Thunderbird has been downloading the Thunderbird account kept in the folder imap.gmail.com for 3 days and has about 120,000 of 238,080 messages so far."
-	if stopped || len(lines) != 1 || lines[0] != want {
-		t.Fatalf("positive twin: stopped %v, lines %q, want %q", stopped, lines, want)
-	}
-	if remedy != "leave Thunderbird open (it downloads mostly while the computer is left alone); later backups add the rest." {
-		t.Errorf("the still-downloading remedy: %q", remedy)
-	}
-
-	stall := TBNotice{Stopped: true, Store: "k2", Serial: 2, Account: "imap.work.example", OnDisk: 1670, Listed: 56611, Floor: true,
-		FirstBehind: time.Date(2026, 11, 1, 9, 0, 0, 0, time.Local), LastBehind: now, LastGrew: time.Date(2026, 11, 4, 9, 0, 0, 0, time.Local)}
-	stopped, lines, remedy = TBNoticeEmail([]TBNotice{stall}, now)
-	if !stopped || len(lines) != 1 || lines[0] != "Thunderbird has not downloaded any more of the Thunderbird account kept in the folder imap.work.example since Nov 4 (about 1,670 of at least 56,611 messages are on that computer)." {
-		t.Errorf("the stopped line: %v %q", stopped, lines)
-	}
-	if remedy != `open Thunderbird and leave it open with the computer idle for a while. If nothing changes, in Thunderbird, click the menu button (≡, top right), then Account Settings, and check the "Synchronization & Storage" page of the Thunderbird account kept in the folder imap.work.example.` {
-		t.Errorf("the stopped remedy: %q", remedy)
-	}
-
-	// Nothing on that computer yet; a mix of both kinds (stopped first); a hostile folder name.
-	none := stall
-	none.OnDisk, none.Floor, none.Listed, none.Account = 0, false, 1200, "imap.‮none\u001b.example"
-	stopped, lines, remedy = TBNoticeEmail([]TBNotice{still, none}, now)
-	if !stopped || len(lines) != 2 || lines[0] != "None of the 1,200 messages in the Thunderbird account kept in the folder imap.none.example are on that computer yet, and Thunderbird has downloaded none since Nov 4." || lines[1] != want {
-		t.Errorf("the mixed email's lines: %v %q", stopped, lines)
-	}
-	if !strings.HasSuffix(remedy, `page of the Thunderbird account kept in the folder imap.none.example. For the account still downloading: leave Thunderbird open (it downloads mostly while the computer is left alone); later backups add the rest.`) {
-		t.Errorf("the mixed remedy: %q", remedy)
-	}
-	if _, _, two := TBNoticeEmail([]TBNotice{stall, none, still, still}, now); !strings.Contains(two, `page of each account named above. For the 2 accounts still downloading: leave`) {
-		t.Errorf("two stopped and two still downloading: %q", two)
-	}
-	for _, s := range append(lines, remedy) {
-		for _, bad := range []string{"‮", "\u001b", "Inbox", "INBOX", "Furthest behind", "store", "cache", "msf"} {
-			if strings.Contains(s, bad) {
-				t.Errorf("the email says %q: %q", bad, s)
-			}
-		}
-	}
-	if _, lines, _ := TBNoticeEmail(nil, now); lines != nil {
-		t.Errorf("no notice gave lines %q", lines)
 	}
 }

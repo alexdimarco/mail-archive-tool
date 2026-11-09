@@ -44,6 +44,21 @@ func SetSenderForTest(f func(alert.Config, string, alert.Event) error) (restore 
 	return func() { sendFn = prev }
 }
 
+// send is the one way this package hands an email over: every alert email (the backup result, the
+// recovery, the Thunderbird-not-synced and the Thunderbird download emails) and the test email go
+// through it. An email the mail server accepted is sent, even when the goodbye after it failed
+// (alert.ErrAfterAccepted): that is logged and is not a send failure (the C5 adversarial pass's
+// SPAM-01, the lead's call of 2026-11-09), so a once-per-streak email is marked sent and never
+// goes again at every backup. A failure before acceptance is returned.
+func send(cfg alert.Config, store graphconfig.SecretStore, ev alert.Event, logger *log.Logger) error {
+	err := sendFn(cfg, Password(store), ev)
+	if errors.Is(err, alert.ErrAfterAccepted) {
+		logf(logger, "the mail server accepted the email, but the connection did not end cleanly (%v); it counts as sent", err)
+		return nil
+	}
+	return err
+}
+
 // DefaultSettingsPath is where the Desktop keeps its settings (desktop-settings.json under
 // the OS config dir) — where a scheduled run that was not handed a path reads the alert
 // config. A var so a test can redirect it.
@@ -142,7 +157,7 @@ func deliver(cfg alert.Config, store graphconfig.SecretStore, out, result string
 			ev.Error = state.FailureText(app.FailureKind(runErr))
 		}
 	}
-	if err := sendFn(cfg, Password(store), ev); err != nil {
+	if err := send(cfg, store, ev, logger); err != nil {
 		if logger != nil {
 			logger.Printf("backup alert email could not be sent: %v", err)
 		}
@@ -184,5 +199,5 @@ func SendTest(settingsPath string, store graphconfig.SecretStore, out string, lo
 	}
 	host, _ := os.Hostname()
 	ev := alert.Event{Result: alert.ResultOK, Archive: "— MailArchive alert test (no backup ran) —", Host: host, When: time.Now()}
-	return sendFn(cfg, Password(store), ev)
+	return send(cfg, store, ev, logger)
 }

@@ -1381,6 +1381,14 @@ backup finds Thunderbird already open." The release notes' 1.5.2 line says "or a
   the target-list builder). The archive's own `.mailarchive-syncstreak.json` stays with the archive
   (R36).
 
+> **Amended 2026-11-09 (the Thunderbird completeness C5 adversarial pass's SPAM-01, the lead's
+> call; MA-1289).** "Delivered" now means the mail server accepted the message (its reply after the
+> end of the message data). Before, a goodbye (QUIT) that got no reply after an accepted message
+> made the send look failed, so `ToldFor` was never written and every later stale backup sent this
+> email again. Now that failure is logged and the email counts as sent, so `ToldFor` is written. A
+> refusal of the message itself is still a failure and is tried again at the next stale run. The
+> fix is in the one sender every alert email uses (`backupalert.send`).
+
 ### 5.6 With auto-pause and the alert streak
 
 - A run that finds the source unreachable fails before the hook, so it moves neither the sync streak

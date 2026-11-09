@@ -83,7 +83,9 @@ const maxTBStreakRun = 1 << 40
 
 // TBStreakAccount is one account's streak (M10's list): the first behind run's time and X
 // then; the latest behind run's time; the latest time X grew, and X then; the number of behind
-// runs; and the two once-per-streak flags (set by C5).
+// runs; X at the latest behind run and how many behind runs since the latest growth saw none (the
+// C5 pass's FALSE-01 and FALSE-02, the lead's calls); and the two once-per-streak flags (set by
+// C5).
 type TBStreakAccount struct {
 	// Store is the account's key: a hash of the store's full path (profile and store), so two
 	// stores with one folder name keep a streak each (the C2 pass's ADV-C2-01). An entry with
@@ -97,8 +99,17 @@ type TBStreakAccount struct {
 	LastGrew    time.Time `json:"last_grew,omitzero"`
 	GrewX       int64     `json:"grew_x"`
 	Runs        int       `json:"runs"`
-	StillSent   bool      `json:"still_downloading_sent,omitempty"`
-	StoppedSent bool      `json:"stopped_sent,omitempty"`
+	// LastX is X at the latest behind run: growth ("progress") is X above it, never above the
+	// streak's highest (FALSE-02), so X that fell and grows again is progress. An entry without it
+	// (written before this field) reads 0, so its next behind run counts as progress: the stopped
+	// email comes later, never falsely.
+	LastX int64 `json:"last_x"`
+	// NoProgressRuns counts the behind runs with a plausible clock since the latest growth whose X
+	// did not grow (FALSE-01): "stopped" needs TBStoppedRuns of them, so the days a computer was
+	// switched off count for nothing.
+	NoProgressRuns int  `json:"no_progress_runs,omitempty"`
+	StillSent      bool `json:"still_downloading_sent,omitempty"`
+	StoppedSent    bool `json:"stopped_sent,omitempty"`
 	// SeenRun is the record's Run when a run last reached the store (any verdict), and SeenAt
 	// that run's time (zero when its clock was before MinPlausibleTime); BehindRun is the Run
 	// when a run last found it behind.
@@ -187,8 +198,11 @@ func (s TBStreak) Account(store string) (TBStreakAccount, bool) {
 // disk at now (§5's rules, M10): a streak starts (Serial up) or is extended. The times follow
 // MA-891's rules, as the presync streak's: a time before MinPlausibleTime moves neither first nor
 // latest, though the run still counts; a clock that went back restarts the first time and keeps
-// the serial. X "grew" when it is above the X of the latest growth. A full record makes room
-// (BehindEvicting).
+// the serial. X "grew" when it is above the previous behind run's X (the C5 pass's FALSE-02); a
+// plausible run whose X did not grow counts toward "stopped" (FALSE-01). A plausible run that finds
+// no progress time it can use, none (the streak's first run had a clock before MinPlausibleTime,
+// MISS-01) or one later than now (a wrong clock), starts the progress time at now. A full record
+// makes room (BehindEvicting).
 func (s TBStreak) Behind(store, name string, x int64, now time.Time) TBStreak {
 	s, _, _ = s.BehindEvicting(store, name, x, now)
 	return s
@@ -222,7 +236,7 @@ func (s TBStreak) BehindEvicting(store, name string, x int64, now time.Time) (TB
 	}
 	if i < 0 {
 		s.Serial++
-		a := TBStreakAccount{Store: store, Account: name, Serial: s.Serial, FirstX: x, GrewX: x, Runs: 1, SeenRun: s.Run, SeenAt: seenAt, BehindRun: s.Run}
+		a := TBStreakAccount{Store: store, Account: name, Serial: s.Serial, FirstX: x, GrewX: x, LastX: x, Runs: 1, SeenRun: s.Run, SeenAt: seenAt, BehindRun: s.Run}
 		if !now.Before(MinPlausibleTime) {
 			a.FirstBehind, a.LastBehind, a.LastGrew = now, now, now
 		}
@@ -238,19 +252,31 @@ func (s TBStreak) BehindEvicting(store, name string, x int64, now time.Time) (TB
 	}
 	restarted := a.FirstBehind
 	a.FirstBehind, a.LastBehind = spanAt(a.FirstBehind, a.LastBehind, now)
-	if !a.FirstBehind.Equal(restarted) && !restarted.IsZero() {
+	plausible := !now.Before(MinPlausibleTime)
+	grew := x > a.LastX
+	a.LastX = x
+	switch {
+	case !a.FirstBehind.Equal(restarted) && !restarted.IsZero():
 		// The clock went back: the streak's first time restarts, and so does its growth's.
-		a.LastGrew, a.GrewX, a.FirstX = a.FirstBehind, x, x
-	}
-	if x > a.GrewX {
-		a.GrewX = x
-		if !now.Before(MinPlausibleTime) {
+		a.LastGrew, a.GrewX, a.FirstX, a.NoProgressRuns = a.FirstBehind, x, x, 0
+	case plausible && (a.LastGrew.IsZero() || a.LastGrew.After(now)):
+		// No progress time this run can measure from (MISS-01): it starts here.
+		a.LastGrew, a.GrewX, a.NoProgressRuns = now, x, 0
+	case grew:
+		a.GrewX, a.NoProgressRuns = x, 0
+		if plausible {
 			a.LastGrew = now
 		}
+	case plausible && a.NoProgressRuns < tbStreakPlausibleMax:
+		a.NoProgressRuns++
 	}
 	s.Accounts[i] = a
 	return s, evicted, room
 }
+
+// TBStoppedRuns is how many behind runs since the latest growth must have seen none before the
+// stopped email is due (the C5 pass's FALSE-01, the lead's call of 2026-11-09), beside the 3 days.
+const TBStoppedRuns = 3
 
 // oldest is the index of the entry BehindEvicting may drop: of the entries this run did not find
 // behind (BehindRun before Run; a read clamps BehindRun to at most Run), the least (SeenRun,
@@ -292,9 +318,11 @@ func (a TBStreakAccount) StillDownloading() bool {
 }
 
 // Stopped reports §5's "stopped downloading" threshold: X has not grown across behind runs
-// spanning SyncStaleAfter, measured from the latest growth to the latest behind run.
+// spanning SyncStaleAfter, measured from the latest growth to the latest behind run, AND at least
+// TBStoppedRuns behind runs in that span saw no growth (FALSE-01): a computer switched off for
+// days, then one backup, is never "stopped".
 func (a TBStreakAccount) Stopped() bool {
-	return spanOf(a.Runs, a.LastGrew, a.LastBehind) >= SyncStaleAfter
+	return a.NoProgressRuns >= TBStoppedRuns && spanOf(a.Runs, a.LastGrew, a.LastBehind) >= SyncStaleAfter
 }
 
 // ErrTBStreakNewer is ReadTBStreak's refusal of a record a later MailArchive wrote (a format
@@ -338,7 +366,7 @@ func ReadTBStreak(out string) (TBStreak, error) {
 			continue
 		}
 		a.Account = CleanFolderName(a.Account)
-		a.FirstX, a.GrewX, a.Runs = max(0, a.FirstX), max(0, a.GrewX), max(0, a.Runs)
+		a.FirstX, a.GrewX, a.LastX, a.Runs, a.NoProgressRuns = max(0, a.FirstX), max(0, a.GrewX), max(0, a.LastX), max(0, a.Runs), max(0, a.NoProgressRuns)
 		// A planted run number is never ahead of the record's (it would never be pruned).
 		a.SeenRun, a.BehindRun = min(max(0, a.SeenRun), s.Run), min(max(0, a.BehindRun), s.Run)
 		// Nor is a planted time: SeenAt is never after the latest run's time, nor implausible,

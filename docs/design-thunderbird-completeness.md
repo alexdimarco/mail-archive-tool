@@ -1712,6 +1712,29 @@ plaintext archives; encrypted archives use §9.2.
 > - The run history's compact `tb` field stays, for Recent backups only.
 > - MA-1184 gains an hourly schedule run for 4 days: the still-downloading email fires once, after
 >   the history has wrapped (§12 fold).
+>
+> **Folded 2026-11-09 [C5 pass: FALSE-01, FALSE-02, MISS-01, PLANT-01] (the lead's calls):** the
+> stopped rule above was too easy to trip, and the record trusted any date it held.
+>
+> - **Stopped needs 3 days and 3 backups (FALSE-01).** X has not grown for 3 days since the last
+>   progress, **and** at least 3 behind backups in that span saw no progress. A computer switched off
+>   for days and then backed up once trips nothing, as this section's first paragraph says. The
+>   still-downloading email keeps MA-891's rule (between runs, a gap counts).
+> - **Progress is against the previous backup (FALSE-02).** X above the previous behind backup's X,
+>   never above the streak's highest. X that fell (a bulk delete, a folder repaired) and grows again
+>   is progress; a fall is not.
+> - **A wrong clock (MISS-01).** A plausible backup whose streak has no progress time (its first
+>   backup's clock was before MinPlausibleTime: a dead clock battery) or one later than this backup
+>   starts the progress time at this backup.
+> - **The record's dates (PLANT-01).** A record holding a date before 2020-01-01, a date more than a
+>   day after the run's clock (when that clock is plausible), a first time after a last one, or one
+>   behind run with two times, is damaged, as R4-01's counters: a fresh streak and a
+>   `tbstreak_unreadable` WARN. So a clock put back more than a day also starts the streak again,
+>   with that WARN.
+> - The record gains `last_x` and `no_progress_runs`.
+> - **Not settled, for the confirm round:** on an hourly schedule, after a long switch-off, the 3
+>   backups without progress can come within about 2 hours of the computer coming back. The rule is
+>   met, but Thunderbird has then had only those hours to download.
 
 ## 6. Folders not kept on this computer
 
@@ -3115,6 +3138,31 @@ C4 must land with or before C3 if encrypted archives get any words beyond today'
 > - **Gates owed (not self-certified):** the **adversarial pass** on the emails and the streak
 >   record's read (the caller's brief), and the **friction review** of the email words (§13's C5
 >   row).
+
+> **Fixed 2026-11-09 [C5 fix round] (the lead's calls on the adversarial pass and the friction
+> review of a385f97).** Both gates' findings are built; a short adversarial confirm is owed.
+>
+> - **SPAM-01 (the shared sender).** An email the mail server accepted (its reply after the end of
+>   the message data) is sent. A failure after that (the goodbye unanswered, the connection
+>   dropped) is `alert.ErrAfterAccepted`; `backupalert`'s one sender logs it and counts the email as
+>   sent. Every alert email goes through it, so this **also fixes the already-shipped
+>   Thunderbird-not-synced email** (design-presync-attended §5.5), which could repeat at every stale
+>   backup the same way. A second guard: `ReportTBBehind` drops a notice whose email the record
+>   already marks sent. Row MA-1289 (new).
+> - **FALSE-01, FALSE-02, MISS-01, PLANT-01:** §5's fold of 2026-11-09. Rows MA-1184, MA-1281 and
+>   MA-1183 amended.
+> - **The words:** the friction review's P1 to P4 and every low, exactly as proposed: the subjects
+>   "MailArchive: Thunderbird still downloading (backups OK) — NAME" and "…stopped downloading
+>   (backups OK) — NAME" (NAME the last part of the archive's path; never a day count); the "Your
+>   backups are working…" openings; "Archive:" and "Computer:" lines (no Computer line when the name
+>   is unknown); one line per account ("The account kept in the folder NAME: …"); one remedy line, or
+>   the two numbered stopped steps; the which-account line; the two once-only lines. The folder
+>   words stay (never a name or an address, §9.3). The remedy is now a list of lines. Row MA-1188
+>   amended. "on this computer" in step 2 is the review's own word, echoing Thunderbird's setting.
+> - **Backlog:** a Mac's computer name ends ".local" in every alert email (the review's L7); the
+>   older alert emails' subjects keep the full path (L1).
+> - **Still owed by lab row MA-1191:** that "Server Settings" shows the folder at the bottom, and
+>   that Thunderbird 160 keeps the "Synchronization & Storage" page name.
 
 ## 14. Owner questions (each with a recommendation)
 
