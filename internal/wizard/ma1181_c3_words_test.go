@@ -45,7 +45,7 @@ const (
 	c3BehindScheduled = c3BehindHead + "; later backups add the rest."
 	c3BehindOneOff    = c3BehindHead + ". Run the backup again once Thunderbird has downloaded more, to add the rest."
 	c3BehindRunNow    = c3BehindHead + ". Click Run now again once Thunderbird has downloaded more, to add the rest."
-	c3UnknownLine     = "MailArchive cannot tell whether Thunderbird has downloaded all of " + c3Example + ", because it could not read Thunderbird's list of folders. Opening Thunderbird and letting it check your mail usually fixes this; then run the backup again."
+	c3UnknownLine     = "MailArchive cannot tell whether Thunderbird has downloaded all of the mail of " + c3Example + ", because it could not read Thunderbird's list of folders. Opening Thunderbird and letting it check your mail usually fixes this; then run the backup again."
 )
 
 // covers: MA-1181

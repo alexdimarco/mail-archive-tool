@@ -147,7 +147,7 @@ func TestCannotTellSaysBackupFinishedAndWhy(t *testing.T) {
 	}
 	out = tmpDir(t)
 	lead, lines, recLead, recLines := c3Words(t, runTB(t, Options{Inputs: []string{s}, Out: out}), out)
-	why := "MailArchive cannot tell whether Thunderbird has downloaded all of the Thunderbird account kept in the folder imap.example.com, because it could not read Thunderbird's list of folders. Opening Thunderbird and letting it check your mail usually fixes this; then run the backup again."
+	why := "MailArchive cannot tell whether Thunderbird has downloaded all of the mail of the Thunderbird account kept in the folder imap.example.com, because it could not read Thunderbird's list of folders. Opening Thunderbird and letting it check your mail usually fixes this; then run the backup again."
 	if lead != "Backup finished." || recLead != lead || len(lines) != 1 || lines[0] != why || len(recLines) != 1 || recLines[0] != why {
 		t.Errorf("no folder list: %q %q / %q %q", lead, lines, recLead, recLines)
 	}

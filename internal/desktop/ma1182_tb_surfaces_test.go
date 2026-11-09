@@ -63,7 +63,7 @@ func TestRecentBackupsSaysThunderbirdIsStillDownloading(t *testing.T) {
 	if r.Status != "OK — Thunderbird still downloading" || r.Failed {
 		t.Errorf("a behind run's status: %q failed %v", r.Status, r.Failed)
 	}
-	want := "3 messages · Thunderbird has downloaded about 1,670 of at least 56,611 messages in the Thunderbird account kept in the folder imap.gmail.com so far · MailArchive could not tell how much of the Thunderbird account kept in the folder imap.example.com Thunderbird has downloaded"
+	want := "3 messages · Thunderbird has downloaded about 1,670 of at least 56,611 messages in the Thunderbird account kept in the folder imap.gmail.com so far · MailArchive could not tell how much of the mail of the Thunderbird account kept in the folder imap.example.com Thunderbird has downloaded"
 	if r.Detail != want {
 		t.Errorf("a behind run's detail:\n got %q\nwant %q", r.Detail, want)
 	}

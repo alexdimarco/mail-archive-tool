@@ -2978,6 +2978,15 @@ C4 must land with or before C3 if encrypted archives get any words beyond today'
 >   command-line summary has carried the name there since the fold above. A `-log` path the person
 >   types by hand can be anywhere; that is the person's choice. §9.1's "only the per-account X and Y
 >   go into the run history" now reads "X, Y and the name".
+>   **Superseded 2026-11-09 (the lead's call on the name pass's N-04, fail-private; row MA-1288):**
+>   the sentence "The same holds for logs…" above was true only for the default path. A `-log` can
+>   sit outside the archive (a custom `schedule -log`, a hand run), and a keyed run into an
+>   encrypted archive must keep its `-log` outside it (`RefuseLogInside`). So no log file holds the
+>   name: the command line's summary says it only when its logger writes to a terminal; a `-log`, a
+>   stderr sent to a file and any other writer get the folder words. A scheduled run-job's own log
+>   never carried completeness words. Encrypted runs: no address anywhere outside the screen. The
+>   owner's earlier "tell me if you'd rather keep addresses out of logs" was not answered; this is
+>   the lead's call, and the owner may reverse it.
 > - **Not changed.** §9.3: an email leaves the computer. No completeness email is built yet; when one
 >   is, it keeps the store folder unless a new ruling says otherwise.
 > - **Size.** At the bounds (50 history entries of 64 accounts, each folder and name 80 characters
@@ -2985,6 +2994,42 @@ C4 must land with or before C3 if encrypted archives get any words beyond today'
 >   (about 85%); the last-run `thunderbird` field is 590,145 bytes, within its 1 MiB share. Measured
 >   by MA-1284's and MA-1180's tests. Real names are far shorter.
 > - Row MA-1284 (amended).
+>
+> **Folded 2026-11-09 [the re-look's words and the name pass] (the lead's calls; built).** The C3
+> friction re-look (`docs/review-thunderbird-completeness-c3-friction.md`, "Re-look after the fold
+> rounds", R1 to R6) and the C3 account-name pass
+> (`docs/review-thunderbird-completeness-c3-name-adversarial.md`, N-01 to N-04):
+>
+> - **R1.** The Gmail floor's "(see below to keep it)" stays where an account's lines are said in
+>   order (the wizard, Run now, the command line); `status` and Status & health say every WARN
+>   before the notes, so there it reads "(the line that names [Gmail]/All Mail says how to keep
+>   it)", the folder as the not-kept line names it (`TBSay.Apart`).
+> - **R2.** With two or more accounts behind, the one remedy goes after every account's lines and
+>   says whom it is for: "For the 2 accounts still downloading: leave Thunderbird open (it downloads
+>   mostly while the computer is left alone), then run the backup again to add the rest." (each
+>   surface's own last clause; "…; later backups add the rest." with a schedule). This amends
+>   P2's "after the last of them".
+> - **R3.** Nothing downloaded yet: "Thunderbird has not downloaded any of the 1,200 messages in
+>   ACCOUNT yet." (Recent backups the same; the card "…: none of its 1,200 messages are on this
+>   computer yet"). This supersedes the C3 friction fold's "the card's 'about 0 of 1 message are'
+>   keeps 'are'": the card now says "its 1 message is not on this computer yet".
+> - **R4.** With no name, a limited warning says the full fallback words once (the headline), then
+>   "this account's mail"; the fix-it step keeps the full words.
+> - **R5.** `status` and Status & health say "Click Run now again" for a Run-now-only archive.
+> - **R6.** "all of ACCOUNT's mail" (and "Only part of…", Recent backups' "how much of…"); a name
+>   that already ends in "mail" ("Work mail", "AT&T Mail") is said as it is, never "Work mail's
+>   mail" (the builder's call, low confidence; the lead may prefer the possessive everywhere).
+> - **N-01 (MEDIUM, Linux).** Every zenity list dialog's text passes through `wizard.listText`:
+>   on Linux and the BSDs every backslash is doubled and `& < > " '` escaped as Pango markup, since
+>   zenity's list sets its text with `gtk_label_set_markup(g_strcompress(text))`; on macOS and
+>   Windows the text is unchanged. Names, folder names and paths alike. The list's choices are
+>   not escaped (zenity returns the chosen one as given; whether GNOME zenity draws them as markup
+>   was not settled from its source here). Not seen on a Linux desktop. Row MA-1286.
+> - **N-02, N-03 (LOW).** A name that, compared after cleaning, NFKC and Unicode case folding, is
+>   "this account" or starts with "the Thunderbird account kept in the folder" is no name; the
+>   shared-name rule compares by the same key. **Documented limit:** letters of another script that
+>   look the same (a Cyrillic "а") are not folded. Row MA-1287.
+> - **N-04.** See the superseding note above: no log file holds the name. Row MA-1288.
 
 ## 14. Owner questions (each with a recommendation)
 

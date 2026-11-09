@@ -6,6 +6,9 @@ import (
 	"unicode"
 	"unicode/utf8"
 
+	"golang.org/x/text/cases"
+	"golang.org/x/text/unicode/norm"
+
 	"mail-archive-tool/internal/util"
 )
 
@@ -225,9 +228,10 @@ func saneTB(in []TBAccount) (out []TBAccount, cut int) {
 	return in, cut
 }
 
-// TBDistinctNames clears the name of every account that shares it with another (compared without
-// letter case, after cleaning), so two accounts are never said as one: each is then said by its
-// folder (MA-1284). The run applies it before the record is written; a record read back gets it
+// TBDistinctNames clears the name of every account that shares it with another, and of every
+// account whose name spells the words an account with no name is said by (TBNameIsFallback), so two
+// accounts are never said as one: each is then said by its folder (MA-1284, MA-1287). Names are
+// compared by tbNameKey. The run applies it before the record is written; a record read back gets it
 // again, as anyone who can write the archive folder can write the record.
 func TBDistinctNames(accts []TBAccount) {
 	dropSharedNames(len(accts), func(i int) *string { return &accts[i].Name })
@@ -236,15 +240,48 @@ func TBDistinctNames(accts []TBAccount) {
 func dropSharedNames(n int, name func(int) *string) {
 	seen := map[string]int{}
 	for i := range n {
-		if s := *name(i); s != "" {
-			seen[strings.ToLower(s)]++
+		p := name(i)
+		if TBNameIsFallback(*p) {
+			*p = ""
+		}
+		if *p != "" {
+			seen[tbNameKey(*p)]++
 		}
 	}
 	for i := range n {
-		if p := name(i); seen[strings.ToLower(*p)] > 1 {
+		if p := name(i); *p != "" && seen[tbNameKey(*p)] > 1 {
 			*p = ""
 		}
 	}
+}
+
+// tbNameKey is the key account names are compared by (MA-1287, the C3 name pass's N-03): cleaned
+// (CleanFolderName), then NFKC, Unicode case folding and NFKC again, so a name in NFC and in NFD, a
+// compatibility form ("ﬁ" and "fi") and letter case beyond ASCII ("ß" and "SS") are one name.
+// Letters of another script that look the same (a Cyrillic "а" beside a Latin "a") are not folded:
+// a documented limit (LOW, the lead's call of 2026-11-09), since Unicode gives no normalisation for
+// them and two real Thunderbird accounts rarely differ that way.
+func tbNameKey(s string) string {
+	s = norm.NFKC.String(CleanFolderName(s))
+	return norm.NFKC.String(cases.Fold().String(s))
+}
+
+// tbFallbackKeys are the words an account with no name is said by, as tbNameKey keys them.
+var (
+	tbFallbackPrefixKey = tbNameKey(strings.TrimSpace(tbFolderPrefix))
+	tbThisAccountKey    = tbNameKey("this account")
+)
+
+// TBNameIsFallback reports whether a name spells the words MailArchive says an account with no
+// name by (MA-1287, the C3 name pass's N-02): equal to "this account", or starting with "the
+// Thunderbird account kept in the folder", compared by tbNameKey. Such a name is no name, so it
+// can never make one account read as another's folder words.
+func TBNameIsFallback(s string) bool {
+	if s == "" {
+		return false
+	}
+	k := tbNameKey(s)
+	return k == tbThisAccountKey || strings.HasPrefix(k, tbFallbackPrefixKey)
 }
 
 func saneFolders(fs []TBFolder, limit int) []TBFolder {

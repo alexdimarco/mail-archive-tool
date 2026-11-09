@@ -55,7 +55,7 @@ func TestScheduleWordsSayWhatSleepDoes(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	for _, wired := range []string{"zenity.List(scheduleQuestionFor(runtime.GOOS),", "note := scheduleRunsNoteFor(runtime.GOOS)"} {
+	for _, wired := range []string{"zenity.List(listText(scheduleQuestionFor(runtime.GOOS)),", "note := scheduleRunsNoteFor(runtime.GOOS)"} {
 		if !strings.Contains(string(src), wired) {
 			t.Errorf("offerSchedule does not show the words: %q is gone from wizard.go", wired)
 		}

@@ -21,6 +21,10 @@ import (
 // friction review's P3); the complete lead is "Backup complete." (the owner's ruling of
 // 2026-11-08). Positive twin first: a run that read no Thunderbird account says nothing of it.
 func TestTheRunSummarySaysWhatThunderbirdHasSoFar(t *testing.T) {
+	// The terminal's words (a log's say the folder instead of the name: MA-1288).
+	onScreen := summaryOnScreen
+	summaryOnScreen = func(*log.Logger) bool { return true }
+	t.Cleanup(func() { summaryOnScreen = onScreen })
 	text := func(r app.Result) string {
 		var buf bytes.Buffer
 		printSummaryFor(log.New(&buf, "", 0), r, false, false, t.TempDir(), "Done.", "darwin")

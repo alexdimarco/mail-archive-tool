@@ -51,6 +51,11 @@ type TBSay struct {
 	// Surface is where the words are said, so a "run it again" names what to do there (the C3
 	// friction review's P3): the zero value is the wizard's and status's words.
 	Surface TBSurface
+	// Apart: the account's lines are said apart, each a reason ordered by how much it matters
+	// (`status`, Status & health: every WARN before the notes), so a sentence names another line
+	// instead of pointing below it (the C3 friction re-look's R1). The zero value is in order:
+	// the wizard, Run now and the command line say an account's lines one after another.
+	Apart bool
 }
 
 // TBSurface is where the words are said.
@@ -93,21 +98,22 @@ func (a TBAccount) MaySayComplete() bool {
 // the record left out (more, its thunderbird_more): what the wizard, Run now and the command
 // line say under the lead. Notes that block nothing (Spam and Trash, Gmail's labels) are left to
 // Status & health and `status` (TBNotes). With two or more accounts behind, each one's line stops
-// after its numbers and what to do is said once, after the last of them (the friction review's
-// P2).
+// after its numbers and what to do is said once (the friction review's P2), after every account's
+// lines, saying whom it is for (the re-look's R2: said after the last behind account, it could sit
+// between one account's folder line and the next account).
 func TBLines(accounts []TBAccount, more int, say TBSay) []string {
-	behind, last := 0, -1
-	for i, a := range accounts {
+	behind := 0
+	for _, a := range accounts {
 		if a.Verdict == "behind" {
-			behind, last = behind+1, i
+			behind++
 		}
 	}
 	var lines []string
-	for i, a := range accounts {
+	for _, a := range accounts {
 		lines = append(lines, tbAccountLines(a, say, behind < 2)...)
-		if behind >= 2 && i == last {
-			lines = append(lines, tbBehindRemedy(say))
-		}
+	}
+	if behind >= 2 {
+		lines = append(lines, tbBehindRemedy(say, behind))
 	}
 	if s := TBMoreSentence(more); s != "" {
 		lines = append(lines, s)
@@ -160,13 +166,17 @@ func tbHeadline(a TBAccount, say TBSay, remedy bool) string {
 	case "caught_up":
 		return tbCaughtUp(a, name, say)
 	}
-	return tbUnknown(a, name)
+	return tbUnknown(a, name, say)
 }
 
-// tbBehind is a behind account's headline: both numbers, the stale count's date, the folders
-// furthest behind (never for Gmail, which is judged per account, §3), and, with remedy, what to do.
+// tbBehind is a behind account's headline: both numbers (or, with nothing downloaded yet, that,
+// the re-look's R3: never "about 0 of"), the stale count's date, the folders furthest behind (never
+// for Gmail, which is judged per account, §3), and, with remedy, what to do.
 func tbBehind(a TBAccount, name string, say TBSay, remedy bool) string {
 	s := fmt.Sprintf("Thunderbird has downloaded about %s of %s in %s so far", tbN(a.OnDisk), tbOfMessages(a.Listed, a.Floor), name)
+	if a.OnDisk <= 0 {
+		s = "Thunderbird has not downloaded " + tbNoneOf(a.Listed, a.Floor) + " in " + name + " yet"
+	}
 	if a.Stale && !a.AsOf.IsZero() {
 		s += " (Thunderbird's count from " + tbDate(a.AsOf, say) + ")"
 	}
@@ -206,9 +216,22 @@ func tbAgain(say TBSay) string {
 	return "Run the backup again"
 }
 
-// tbBehindRemedy is what to do, said once after two or more accounts behind (P2).
-func tbBehindRemedy(say TBSay) string {
-	const leave = "Leave Thunderbird open (it downloads mostly while the computer is left alone)"
+// tbNoneOf is "any of the Y messages" (R3), "the 1 message", or, for a floor, "any of at least Y
+// messages".
+func tbNoneOf(y int64, floor bool) string {
+	switch {
+	case floor:
+		return "any of at least " + tbMessages(y)
+	case y == 1:
+		return "the 1 message"
+	}
+	return "any of the " + tbMessages(y)
+}
+
+// tbBehindRemedy is what to do, said once after every account's lines when n accounts are behind
+// (P2), naming whom it is for (R2).
+func tbBehindRemedy(say TBSay, n int) string {
+	leave := "For the " + thousands(n) + " accounts still downloading: leave Thunderbird open (it downloads mostly while the computer is left alone)"
 	if say.Scheduled {
 		return leave + "; later backups add the rest."
 	}
@@ -252,19 +275,21 @@ func tbCaughtUp(a TBAccount, name string, say TBSay) string {
 
 // tbUnknown is an account MailArchive cannot tell about (§4.4's fold table, the reason codes of
 // C1b and C2): one sentence why, never "complete", and, where the person can do something, what
-// (the friction review's P8).
-func tbUnknown(a TBAccount, name string) string {
-	pre := "MailArchive cannot tell whether Thunderbird has downloaded all of " + name + ", because "
+// (the friction review's P8). The account's mail is said as such ("all of sam@fastmail.com's
+// mail", the re-look's R6: "all of sam@fastmail.com" read as all of a person).
+func tbUnknown(a TBAccount, name string, say TBSay) string {
+	mail := tbOwn(a, "mail")
+	pre := "MailArchive cannot tell whether Thunderbird has downloaded all of " + mail + ", because "
 	const again = " so it saves that list again, then run the backup again."
 	switch a.Reason {
 	case "panorama":
-		return "This Thunderbird uses its newer storage, which MailArchive cannot read yet, so it cannot tell whether Thunderbird has downloaded all of " + name + "."
+		return "This Thunderbird uses its newer storage, which MailArchive cannot read yet, so it cannot tell whether Thunderbird has downloaded all of " + mail + "."
 	case "never_checked":
 		return "Thunderbird has not checked the server for " + name + " yet, so MailArchive cannot tell how much is still to come. Open Thunderbird and leave it open."
 	case "gmail_floor":
-		return tbGmailFloor(a, name)
+		return tbGmailFloor(a, name, say)
 	case "partial_input":
-		return "Only part of " + name + " was backed up, so MailArchive did not compare it with Thunderbird's count."
+		return "Only part of " + mail + " was backed up, so MailArchive did not compare it with Thunderbird's count."
 	case "account_type", "no_match":
 		return pre + "MailArchive does not yet know how this kind of Thunderbird account keeps its mail."
 	case "old_path_only":
@@ -295,16 +320,37 @@ func tbUnknown(a TBAccount, name string) string {
 // tbGmailFloor is O3's sentence (§3's TC-1 fold) as the friction review's P9 rewords it: the
 // number on this computer with the account; Thunderbird's floor only when it is above that number
 // (at or below it, it adds nothing and reads as "all is well"); and All Mail not kept points at the
-// line below that says how to keep it.
-func tbGmailFloor(a TBAccount, name string) string {
+// line that says how to keep it: "see below" where the lines are said in order, and by what that
+// line names where they are said apart (the re-look's R1).
+func tbGmailFloor(a TBAccount, name string, say TBSay) string {
 	here := fmt.Sprintf("About %s of %s %s on this computer", tbMessages(a.OnDisk), name, pick(int(min(a.OnDisk, 2)), "is", "are"))
 	if a.AllMail == "not_kept" {
-		return here + ". MailArchive cannot tell how many more there are, because Gmail's All Mail folder, which holds all of this account's mail, is not kept on this computer (see below to keep it)."
+		where := "see below to keep it"
+		if say.Apart {
+			where = "the line that names " + tbAllMailFolder(a) + " says how to keep it"
+			if len(a.Folders) == 0 && a.FoldersMore == 0 {
+				// TBNotKeptLine then says the account's own setting, which names no folder.
+				where = "the line that says Thunderbird is not set to keep " + tbOwn(a, "mail") + " says how to keep it"
+			}
+		}
+		return here + ". MailArchive cannot tell how many more there are, because Gmail's All Mail folder, which holds all of this account's mail, is not kept on this computer (" + where + ")."
 	}
 	if a.OnDisk < a.Listed {
 		here += ", and Thunderbird lists at least " + tbN(a.Listed)
 	}
 	return here + ". MailArchive cannot tell whether that is all of it, because Gmail's All Mail " + tbAllMailClause(a.AllMail) + "."
+}
+
+// tbAllMailFolder is the All Mail folder as TBNotKeptLine names it: the not-kept folder whose last
+// part is "All Mail" ("[Gmail]/All Mail", "[Google Mail]/All Mail"), else "[Gmail]/All Mail".
+func tbAllMailFolder(a TBAccount) string {
+	for _, f := range a.NotKept {
+		n := tbFolderName(f.Folder)
+		if i := strings.LastIndex(n, "/"); strings.EqualFold(n[i+1:], "All Mail") {
+			return n
+		}
+	}
+	return "[Gmail]/All Mail"
 }
 
 // tbAllMailClause is O3's last clause, by what All Mail did for Y (§3's TC-1 fold).
@@ -323,27 +369,33 @@ func tbAllMailClause(use string) string {
 // TBLimitLines are a limited account's sentences (§6's limited words with the TC-9, TC-13, M4
 // re-read and L5 folds): each limit Thunderbird's own settings put on it, and how to lift it,
 // labelled for the Thunderbird version that last opened the profile, reached by the menu button
-// (the friction review's P4).
+// (the friction review's P4). An account with no name, which its headline has just said in the
+// long fallback words, is "this account" in the limit sentences after it (the re-look's R4); the
+// fix-it steps keep the full words, since that is how the person finds it in Account Settings.
 func TBLimitLines(a TBAccount) []string {
 	name := tbName(a)
+	ageOf, sizeFor, mail := "mail for "+name, name, tbOwn(a, "mail")
+	if tbSayName(a) == "" && CleanFolderName(a.Account) != "" && a.Listed > 0 { // the headline (tbHeadline's limited case) named it
+		ageOf, sizeFor, mail = "this account's mail", "this account", "this account's mail"
+	}
 	var lines []string
 	if l := a.Limit; l != nil {
 		if l.MaxAgeDays > 0 {
-			lines = append(lines, fmt.Sprintf("Thunderbird is set to keep only the most recent %s of mail for %s on this computer, so older mail is not backed up. To back up all of it: %s.",
-				Count(l.MaxAgeDays, "day", "days"), name, tbAgeRemedy(a)))
+			lines = append(lines, fmt.Sprintf("Thunderbird is set to keep only the most recent %s of %s on this computer, so older mail is not backed up. To back up all of it: %s.",
+				Count(l.MaxAgeDays, "day", "days"), ageOf, tbAgeRemedy(a)))
 		}
 		if l.MaxSizeKB > 0 {
 			lines = append(lines, fmt.Sprintf("Thunderbird is set not to download messages larger than %s KB for %s, so those are not backed up. To back them up: %s.",
-				thousands(l.MaxSizeKB), name, tbSizeRemedy(a)))
+				thousands(l.MaxSizeKB), sizeFor, tbSizeRemedy(a)))
 		}
 		if l.NoBackgroundDownload {
 			// TC-9: the download-now command's label is lab-required (MA-1191), so the remedy
 			// stays neutral.
-			lines = append(lines, "Thunderbird is set not to download "+tbOwn(a, "mail")+" in the background, so MailArchive backs up only what you have opened or downloaded by hand. In Thunderbird, "+tbMenu+"; for "+name+", turn on the setting that saves copies of this account's messages on this computer.")
+			lines = append(lines, "Thunderbird is set not to download "+mail+" in the background, so MailArchive backs up only what you have opened or downloaded by hand. In Thunderbird, "+tbMenu+"; for "+name+", turn on the setting that saves copies of this account's messages on this computer.")
 		}
 	}
 	if len(lines) == 0 {
-		lines = append(lines, "Thunderbird's own settings keep only part of "+tbOwn(a, "mail")+" on this computer, so the rest is not backed up. To check: in Thunderbird, "+tbMenu+", and open "+tbOwn(a, `"Synchronization & Storage" page`)+".")
+		lines = append(lines, "Thunderbird's own settings keep only part of "+mail+" on this computer, so the rest is not backed up. To check: in Thunderbird, "+tbMenu+", and open "+tbOwn(a, `"Synchronization & Storage" page`)+".")
 	}
 	return lines
 }
@@ -505,6 +557,9 @@ func TBCompactSentence(c TBCompact) (s string, behind bool) {
 	name := tbName(a)
 	switch c.Verdict {
 	case "behind":
+		if c.X <= 0 { // R3
+			return "Thunderbird has not downloaded " + tbNoneOf(c.Y, c.Floor) + " in " + name + " yet", true
+		}
 		return fmt.Sprintf("Thunderbird has downloaded about %s of %s in %s so far", tbN(c.X), tbOfMessages(c.Y, c.Floor), name), true
 	case "limited":
 		return fmt.Sprintf("Thunderbird's own settings keep only part of %s on this computer (about %s of %s)", tbOwn(a, "mail"), tbN(c.X), tbOfMessages(c.Y, c.Floor)), false
@@ -514,7 +569,7 @@ func TBCompactSentence(c TBCompact) (s string, behind bool) {
 		}
 		return "", false
 	}
-	return "MailArchive could not tell how much of " + name + " Thunderbird has downloaded", false
+	return "MailArchive could not tell how much of " + tbOwn(a, "mail") + " Thunderbird has downloaded", false // R6
 }
 
 // TBCardBanner is the archive card's one line (§7's Desktop archive card row, with the friction
@@ -538,7 +593,16 @@ func TBCardBanner(accounts []TBAccount) string {
 	case 0:
 	case 1:
 		a := behind[0]
-		parts = append(parts, fmt.Sprintf("Thunderbird is still downloading %s: about %s of %s are on this computer so far", tbName(a), tbN(a.OnDisk), tbOfMessages(a.Listed, a.Floor)))
+		switch {
+		case a.OnDisk > 0:
+			parts = append(parts, fmt.Sprintf("Thunderbird is still downloading %s: about %s of %s are on this computer so far", tbName(a), tbN(a.OnDisk), tbOfMessages(a.Listed, a.Floor)))
+		case a.Floor: // R3: nothing downloaded yet
+			parts = append(parts, "Thunderbird is still downloading "+tbName(a)+": none of at least "+tbMessages(a.Listed)+" are on this computer yet")
+		case a.Listed == 1:
+			parts = append(parts, "Thunderbird is still downloading "+tbName(a)+": its 1 message is not on this computer yet")
+		default:
+			parts = append(parts, "Thunderbird is still downloading "+tbName(a)+": none of its "+tbMessages(a.Listed)+" are on this computer yet")
+		}
 	default:
 		parts = append(parts, "Thunderbird is still downloading "+thousands(len(behind))+" accounts")
 	}
@@ -566,10 +630,19 @@ func TBCardBanner(accounts []TBAccount) string {
 // tbFolderPrefix is the owner's fallback wording for an account the words cannot name.
 const tbFolderPrefix = "the Thunderbird account kept in the folder "
 
+// tbSayName is the account's name as the words may say it: cleaned and capped, and "" when it
+// spells the words MailArchive says an account with no name by (TBNameIsFallback, MA-1287).
+func tbSayName(a TBAccount) string {
+	if n := CleanFolderName(a.Name); !TBNameIsFallback(n) {
+		return n
+	}
+	return ""
+}
+
 // tbName is an account as the words say it: the name Thunderbird shows for it when the run read
 // one, else by the folder its mail is kept in, else "this account"; each cleaned and capped.
 func tbName(a TBAccount) string {
-	if n := CleanFolderName(a.Name); n != "" {
+	if n := tbSayName(a); n != "" {
 		return n
 	}
 	if f := CleanFolderName(a.Account); f != "" {
@@ -581,7 +654,10 @@ func tbName(a TBAccount) string {
 // tbOwn is the account's thing: "sam@example.com's mail", "the mail of the Thunderbird account
 // kept in the folder imap.example.com", or "this account's mail".
 func tbOwn(a TBAccount, thing string) string {
-	if n := CleanFolderName(a.Name); n != "" {
+	if n := tbSayName(a); n != "" {
+		if f := strings.Fields(n); thing == "mail" && strings.EqualFold(f[len(f)-1], "mail") {
+			return n // a name that already says it ("Work mail", "AT&T Mail"), never "Work mail's mail"
+		}
 		return n + "'s " + thing
 	}
 	if f := CleanFolderName(a.Account); f != "" {

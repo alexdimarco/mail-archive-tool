@@ -38,7 +38,13 @@ func assessThunderbird(r *Report, in Input) {
 	if !ok {
 		return
 	}
-	say := state.TBSay{Scheduled: in.HasDescriptor && !manualBackup(in), Now: r.now}
+	// Every WARN is said before the notes, so the account's lines are said apart (the C3 friction
+	// re-look's R1); a Run-now-only archive's remedy says "Click Run now again", as its Run now
+	// note does (R5).
+	say := state.TBSay{Scheduled: in.HasDescriptor && !manualBackup(in), Now: r.now, Apart: true}
+	if manualBackup(in) {
+		say.Surface = state.TBSurfaceRunNow
+	}
 	firstSeen := func(since time.Time) bool { return since.IsZero() || since.Equal(lr.Finished) }
 	chosen := func(code, msg string, since time.Time) {
 		if firstSeen(since) {

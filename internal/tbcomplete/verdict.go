@@ -222,7 +222,7 @@ type FolderCount struct {
 // Result is one account's verdict and the numbers its words and record need.
 type Result struct {
 	Account string
-	Name    string // Input.Name: for the words on screen only, never recorded
+	Name    string // Input.Name: for the words; recorded beside a plaintext archive only (MA-1284), never the key, never in a log (MA-1288)
 	StoreID string // Input.StoreID: the streak and the record's carry-forward key on it (ADV-C2-01)
 	Verdict Verdict
 	Reason  Reason // when Unknown

@@ -156,7 +156,7 @@ func TestBehindWordsSayBothNumbersAndWhatToDo(t *testing.T) {
 
 // covers: MA-1181
 // Two or more accounts behind (the friction review's P2): each account's line stops after its
-// numbers (and its folders furthest behind), and one line after the last of them says what to do,
+// numbers (and its folders furthest behind), and one line after every account says what to do and whom it is for (the re-look's R2),
 // named for the surface with no schedule (P3). Positive twin first: one account behind keeps its
 // single line, remedy and all.
 func TestTwoAccountsBehindSayTheRemedyOnce(t *testing.T) {
@@ -179,17 +179,17 @@ func TestTwoAccountsBehindSayTheRemedyOnce(t *testing.T) {
 		say    TBSay
 		remedy string
 	}{
-		{"scheduled", sched, "Leave Thunderbird open (it downloads mostly while the computer is left alone); later backups add the rest."},
-		{"no schedule, the wizard", TBSay{Now: tbNow}, "Leave Thunderbird open (it downloads mostly while the computer is left alone), then run the backup again to add the rest."},
-		{"no schedule, Run now", TBSay{Now: tbNow, Surface: TBSurfaceRunNow}, "Leave Thunderbird open (it downloads mostly while the computer is left alone), then click Run now again to add the rest."},
-		{"no schedule, the command line", TBSay{Now: tbNow, Surface: TBSurfaceCommandLine}, "Leave Thunderbird open (it downloads mostly while the computer is left alone), then run the same command again to add the rest."},
+		{"scheduled", sched, "For the 2 accounts still downloading: leave Thunderbird open (it downloads mostly while the computer is left alone); later backups add the rest."},
+		{"no schedule, the wizard", TBSay{Now: tbNow}, "For the 2 accounts still downloading: leave Thunderbird open (it downloads mostly while the computer is left alone), then run the backup again to add the rest."},
+		{"no schedule, Run now", TBSay{Now: tbNow, Surface: TBSurfaceRunNow}, "For the 2 accounts still downloading: leave Thunderbird open (it downloads mostly while the computer is left alone), then click Run now again to add the rest."},
+		{"no schedule, the command line", TBSay{Now: tbNow, Surface: TBSurfaceCommandLine}, "For the 2 accounts still downloading: leave Thunderbird open (it downloads mostly while the computer is left alone), then run the same command again to add the rest."},
 	} {
 		got := TBLines([]TBAccount{b1, cu, b2}, 1, c.say)
 		want := []string{h1, TBHeadline(cu, c.say), h2, kept, c.remedy, TBMoreSentence(1)}
 		if strings.Join(got, "\n") != strings.Join(want, "\n") {
 			t.Errorf("%s:\n got %q\nwant %q", c.what, got, want)
 		}
-		if n := strings.Count(strings.Join(got, "\n"), "Leave Thunderbird open"); n != 1 {
+		if n := strings.Count(strings.ToLower(strings.Join(got, "\n")), "leave thunderbird open"); n != 1 {
 			t.Errorf("%s: the remedy is said %d times", c.what, n)
 		}
 	}
@@ -201,7 +201,7 @@ func TestTwoAccountsBehindSayTheRemedyOnce(t *testing.T) {
 // step now give one (the friction review's P8: "usually" for the folder list, unverified until a
 // lab note sees which event makes Thunderbird write it again).
 func TestUnknownWordsSayWhyInOneSentence(t *testing.T) {
-	pre := "MailArchive cannot tell whether Thunderbird has downloaded all of " + tbFolderExample + ", because "
+	pre := "MailArchive cannot tell whether Thunderbird has downloaded all of the mail of " + tbFolderExample + ", because "
 	couldNot := pre + "it could not read Thunderbird's list of folders. Opening Thunderbird and letting it check your mail usually fixes this; then run the backup again."
 	for reason, want := range map[string]string{
 		"cache_unreadable":  couldNot,
@@ -218,9 +218,9 @@ func TestUnknownWordsSayWhyInOneSentence(t *testing.T) {
 		"other_reader":      pre + "this backup read its mail the way it reads another mail app's, which does not count it.",
 		"walk_failed":       pre + "this backup could not read all of its mail.",
 		"old_path_only":     pre + "Thunderbird's list of folders still names 2 folders by where they used to be. Open Thunderbird and leave it open for a minute so it saves that list again, then run the backup again.",
-		"panorama":          "This Thunderbird uses its newer storage, which MailArchive cannot read yet, so it cannot tell whether Thunderbird has downloaded all of " + tbFolderExample + ".",
+		"panorama":          "This Thunderbird uses its newer storage, which MailArchive cannot read yet, so it cannot tell whether Thunderbird has downloaded all of the mail of " + tbFolderExample + ".",
 		"never_checked":     "Thunderbird has not checked the server for " + tbFolderExample + " yet, so MailArchive cannot tell how much is still to come. Open Thunderbird and leave it open.",
-		"partial_input":     "Only part of " + tbFolderExample + " was backed up, so MailArchive did not compare it with Thunderbird's count.",
+		"partial_input":     "Only part of the mail of " + tbFolderExample + " was backed up, so MailArchive did not compare it with Thunderbird's count.",
 	} {
 		a := TBAccount{Account: "imap.example.com", Verdict: "unknown", Reason: reason, CantTellFolders: 2, OnDisk: 5, Listed: 9}
 		got := TBHeadline(a, TBSay{Now: tbNow})
@@ -358,8 +358,8 @@ func TestLimitedWordsNameTheSetting(t *testing.T) {
 	}
 	f := a
 	f.Name, f.ThunderbirdVersion = "", 153
-	wantLine(t, "the age limit, named by its folder", TBLimitLines(f)[0],
-		`Thunderbird is set to keep only the most recent 30 days of mail for `+tbFolderExample+` on this computer, so older mail is not backed up. To back up all of it: `+menu+`on the "Synchronization & Storage" page of `+tbFolderExample+`, choose "Synchronize all messages locally regardless of age".`)
+	wantLine(t, "the age limit, named by its folder (the headline names it: R4)", TBLimitLines(f)[0],
+		`Thunderbird is set to keep only the most recent 30 days of this account's mail on this computer, so older mail is not backed up. To back up all of it: `+menu+`on the "Synchronization & Storage" page of `+tbFolderExample+`, choose "Synchronize all messages locally regardless of age".`)
 	b := TBAccount{Account: "imap.example.com", Name: "sam@example.com", Verdict: "limited", Limit: &TBLimit{NoBackgroundDownload: true}}
 	if h := TBHeadline(b, say); h != "" {
 		t.Errorf("limited with nothing listed: no numbers to say, got %q", h)
@@ -388,13 +388,13 @@ func TestTheShortWords(t *testing.T) {
 		t.Error("a behind entry is not told behind")
 	}
 	s, _ = TBCompactSentence(TBCompact{Account: "imap.example.com", Verdict: "behind", X: 0, Y: 1})
-	wantLine(t, "behind, one message (P13)", s, "Thunderbird has downloaded about 0 of 1 message in "+tbFolderExample+" so far")
+	wantLine(t, "behind, one message, none downloaded (P13, R3)", s, "Thunderbird has not downloaded the 1 message in "+tbFolderExample+" yet")
 	s, _ = TBCompactSentence(TBCompact{Account: "imap.example.com", Verdict: "caught_up", X: 3400, Y: 3402})
 	wantLine(t, "caught up, 2 missing", s, "Thunderbird has downloaded about 3,400 of the 3,402 messages it lists for "+tbFolderExample)
 	s, _ = TBCompactSentence(TBCompact{Account: "imap.example.com", Verdict: "limited", X: 900, Y: 5000})
 	wantLine(t, "limited", s, "Thunderbird's own settings keep only part of the mail of "+tbFolderExample+" on this computer (about 900 of 5,000 messages)")
 	s, _ = TBCompactSentence(TBCompact{Account: "imap.example.com", Verdict: "unknown"})
-	wantLine(t, "unknown", s, "MailArchive could not tell how much of "+tbFolderExample+" Thunderbird has downloaded")
+	wantLine(t, "unknown", s, "MailArchive could not tell how much of the mail of "+tbFolderExample+" Thunderbird has downloaded")
 
 	if b := TBCardBanner([]TBAccount{tbGmailCaughtUp()}); b != "" {
 		t.Errorf("positive twin: a caught-up archive's card: %q", b)
@@ -410,7 +410,7 @@ func TestTheShortWords(t *testing.T) {
 	wantLine(t, "the card, behind, two limited and a not-kept folder (P10)", TBCardBanner([]TBAccount{
 		{Account: "imap.example.com", Verdict: "behind", OnDisk: 0, Listed: 1},
 		{Account: "l1", Verdict: "limited", OnDisk: 1, Listed: 2}, {Account: "l2", Verdict: "limited", NotKept: []TBFolder{{Folder: "x", Listed: 1}}}}),
-		"Thunderbird is still downloading "+tbFolderExample+": about 0 of 1 message are on this computer so far; Thunderbird keeps only part of the mail of 2 accounts on this computer, so the rest is not backed up; 1 folder is not kept on this computer, so it is not backed up — see Status & health.")
+		"Thunderbird is still downloading "+tbFolderExample+": its 1 message is not on this computer yet; Thunderbird keeps only part of the mail of 2 accounts on this computer, so the rest is not backed up; 1 folder is not kept on this computer, so it is not backed up — see Status & health.")
 
 	wantLine(t, "one account left out", TBMoreSentence(1), "MailArchive did not keep the details of 1 more Thunderbird account in this backup's record, so it does not say it is complete.")
 	if got := TBLines(nil, 3, TBSay{}); len(got) != 1 || !strings.Contains(got[0], "3 more Thunderbird accounts") {
@@ -427,8 +427,8 @@ func TestOneMessageIsSingular(t *testing.T) {
 		t.Fatalf("positive twin: %q", h)
 	}
 	one := TBAccount{Account: "imap.example.com", Verdict: "behind", OnDisk: 0, Listed: 1}
-	wantLine(t, "behind, 0 of 1", TBHeadline(one, TBSay{Scheduled: true}),
-		"Thunderbird has downloaded about 0 of 1 message in "+tbFolderExample+" so far. Leave Thunderbird open (it downloads mostly while the computer is left alone); later backups add the rest.")
+	wantLine(t, "behind, 0 of 1 (R3)", TBHeadline(one, TBSay{Scheduled: true}),
+		"Thunderbird has not downloaded the 1 message in "+tbFolderExample+" yet. Leave Thunderbird open (it downloads mostly while the computer is left alone); later backups add the rest.")
 	one.Verdict = "limited"
 	wantLine(t, "limited, 0 of 1", TBHeadline(one, TBSay{}), "Thunderbird has downloaded about 0 of 1 message in "+tbFolderExample+".")
 	one.Floor = true
@@ -468,7 +468,7 @@ func TestHostileNamesAreCleanedInEveryWord(t *testing.T) {
 			t.Errorf("the words miss %q:\n%s", good, lines)
 		}
 	}
-	if h := TBHeadline(TBAccount{Account: "\u200b", Verdict: "unknown"}, TBSay{}); !strings.Contains(h, "all of this account,") {
+	if h := TBHeadline(TBAccount{Account: "\u200b", Verdict: "unknown"}, TBSay{}); !strings.Contains(h, "all of this account's mail,") {
 		t.Errorf("an account of nothing visible: %q", h)
 	}
 }

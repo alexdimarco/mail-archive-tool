@@ -53,6 +53,7 @@ import (
 	"mail-archive-tool/internal/state"
 	"mail-archive-tool/internal/tbcomplete"
 	"mail-archive-tool/internal/thunderbird"
+	"mail-archive-tool/internal/tty"
 	"mail-archive-tool/internal/util"
 )
 
@@ -2378,6 +2379,16 @@ func printSummaryLed(logger *log.Logger, r app.Result, indexed, keepRaw bool, ou
 	printSummaryFor(logger, r, indexed, keepRaw, out, lead, runtime.GOOS)
 }
 
+// summaryOnScreen reports whether the summary's logger writes to a terminal, the only place the
+// summary says the name Thunderbird shows for an account (MA-1288, the C3 name pass's N-04, the
+// lead's call of 2026-11-09, fail-private). A -log (a scheduled run's, a custom one, a keyed run's
+// beside an encrypted archive), a stderr sent to a file and any other writer get the folder words,
+// so no log file holds the address. A variable so a test can stand in for a terminal.
+var summaryOnScreen = func(logger *log.Logger) bool {
+	f, ok := logger.Writer().(*os.File)
+	return ok && tty.IsTerminal(f)
+}
+
 // printSummaryFor is printSummaryLed for goos, which says how its commands name the archive's
 // folder (MA-1163).
 func printSummaryFor(logger *log.Logger, r app.Result, indexed, keepRaw bool, out, lead, goos string) {
@@ -2403,7 +2414,14 @@ func printSummaryFor(logger *log.Logger, r app.Result, indexed, keepRaw bool, ou
 	// How much of each Thunderbird account Thunderbird had downloaded (completeness design §7's
 	// command-line row, slice C3): the run's lead, then each account's lines, from its verdicts in
 	// memory, in the words every surface says; names cleaned (TC-7). The exit code is unchanged.
+	// Only a terminal is told the name Thunderbird shows for an account; a log gets the folder
+	// words (MA-1288).
 	if accts, more := app.TBAccounts(r); len(accts) > 0 || more > 0 {
+		if !summaryOnScreen(logger) {
+			for i := range accts {
+				accts[i].Name = ""
+			}
+		}
 		logger.Printf("Thunderbird: %s", tbcomplete.RunLead(r.Thunderbird).Sentence())
 		for _, l := range state.TBLines(accts, more, state.TBSay{Scheduled: app.TBScheduled(out), Surface: state.TBSurfaceCommandLine}) {
 			logger.Printf("  %s", l)
