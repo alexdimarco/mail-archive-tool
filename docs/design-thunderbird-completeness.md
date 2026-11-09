@@ -3275,6 +3275,21 @@ C4 must land with or before C3 if encrypted archives get any words beyond today'
 > - **Gate owed (not self-certified):** a TINY **adversarial confirm** of this round: the delivery
 >   mark and its id, the daily rule, the WARN's clearing, and the TIE-R3 line.
 
+> **Folded 2026-11-09 [C5 round-4 confirm] (lead's call).** The round-4 confirm
+> (`docs/review-thunderbird-completeness-c5-adversarial-r4.md`, 50be038) found no MEDIUM or HIGH:
+> CAP-R3-A is fixed (a working server gets each email exactly once after an outage; a dead server
+> gets 5 tries, then one a day, per email type). Its two LOW findings are accepted as documented
+> residuals, and slice C5's adversarial gate is closed:
+> - **QUIET-R4-A:** a server that refuses only the Thunderbird email while delivering the
+>   "every successful backup" email (off by default) keeps resetting that email's failed tries, so
+>   it is tried at every due backup and `alert_send_failed` never shows. Follow-up for a later
+>   polish: count this email's own failures toward the WARN without resetting them on another
+>   email's delivery.
+> - **DEFER-R4-B:** a run whose "working again" email failed still holds back the Thunderbird email
+>   and adds no WARN for that one run; the next backup shows it.
+> - The review's two notes (an unwritable settings folder keeps old failure counts for up to a day,
+>   logged; a clock that was fast at the last failure can delay one try up to two days) are accepted.
+
 ## 14. Owner questions (each with a recommendation)
 
 - **Q1. How close counts as "caught up"?** Recommend: within 20 messages or 0.2% of the total,
