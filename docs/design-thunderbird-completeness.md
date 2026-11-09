@@ -1792,6 +1792,45 @@ plaintext archives; encrypted archives use §9.2.
 >   its email about Thunderbird (5 tries). Check the email settings in MailArchive Desktop's
 >   Settings, then use Send test email." The shipped sync email has the same cap
 >   (design-presync-attended §5.5's amendment).
+>
+> **Amended 2026-11-09 [C5 pass round 3: CAP-R3-A, FRIC-R3-1, GAP-R3-C, TIE-R3] (the lead's calls
+> on `docs/review-thunderbird-completeness-c5-adversarial-r3.md`):** the cap above could silence a
+> mail server that worked again, for the rest of the streak, and its WARN's own remedy could not
+> clear it.
+>
+> - **5 failed tries in a row, then at most one a day; never silent for good (CAP-R3-A, MA-1291).**
+>   Under 5 failures in a row, every due backup tries. At 5, the email is tried once a day after
+>   the latest failure (`state.AlertTryDue`; also when that latest is more than a day after the
+>   clock, so a clock that ran ahead cannot freeze it).
+> - **Any delivered email starts every count again.** Every email the mail server accepts (a
+>   backup alert, the recovery, either email about Thunderbird, and Send test email on the Backup
+>   alerts card) writes a new random id into `alert-delivered`, beside the Desktop settings file
+>   (only a version and the id). Each failed send is counted with the id current at the time
+>   (`tried_since`, and the time in `last_failed_try`, in the streak record and in the sync email's
+>   told-file); counts made under another id read 0, and the next failure starts them again at 1.
+>   So after Send test email goes, every archive's email about Thunderbird is tried at its next due
+>   backup, without writing into any archive folder. Uninstall removes the file with the settings
+>   files.
+> - **The WARN clears once an email gets through.** `alert_send_failed` is added only by a run that
+>   holds an email with 5 failures in a row and does not get an email through; each run writes its
+>   last-run record afresh, so the WARN is gone from the first backup after an email gets through.
+>   (Not built: removing it from the record at the moment Send test email goes; until the next
+>   backup, Status & health still shows it. A call for the confirm round.)
+> - **The words (the lead's, FRIC-R3-1):** `alert_send_failed`: "MailArchive tried 5 times to send
+>   you an email about Thunderbird and could not. Open MailArchive Desktop, go to Backup alerts,
+>   check the mail server details, then click Send test email. Once an email gets through,
+>   MailArchive tries this one again at the next backup." `tbstreak_clock_behind`: "When this backup
+>   ran, this computer's clock said DATE, which is earlier than a previous backup, so MailArchive
+>   did not use this backup to judge how Thunderbird's download is going. Check this computer's
+>   date and time. If it is wrong each time the computer starts, its clock battery may need
+>   replacing."
+> - **A clock equal to a stored time is not "later" (TIE-R3, MA-1290).** A backup whose clock is
+>   before the latest behind backup went back, even when it reads exactly the streak's first time.
+> - **Documented residual (GAP-R3-C, LOW, MA-1290).** A record with no dates yet, whose first
+>   backup's clock reads 3 to 30 days slow, sends the still-downloading email one real hour into the
+>   streak, saying "still going after N days" with N the clock's error; once per such streak. A fix
+>   needs a sign that the first clock was wrong, and a 2-backup streak spanning 3 to 30 days is also
+>   a daily schedule after a week switched off. Kept as a skipped test citing MA-1290.
 
 ## 6. Folders not kept on this computer
 
@@ -3228,6 +3267,13 @@ C4 must land with or before C3 if encrypted archives get any words beyond today'
 >   two new WARNs' words (`tbstreak_clock_behind`, `alert_send_failed`) and the damaged WARN's new
 >   words go to the **friction review** (the round-2 pass asked for it: CLOCK-R2-A changes when the
 >   WARN shows and what it says).
+
+> **Fixed 2026-11-09 [C5 round-3 fix] (the lead's calls on the round-3 confirm, which was NOT
+> CLEAN: 1 MEDIUM, 2 LOW; friction SHIPPABLE_WITH_NOTES).** CAP-R3-A and FRIC-R3-1 (MA-1291
+> amended; also the shipped sync email), the clock words, TIE-R3 and GAP-R3-C's residual (MA-1290
+> amended): §5's amendment of the same date.
+> - **Gate owed (not self-certified):** a TINY **adversarial confirm** of this round: the delivery
+>   mark and its id, the daily rule, the WARN's clearing, and the TIE-R3 line.
 
 ## 14. Owner questions (each with a recommendation)
 

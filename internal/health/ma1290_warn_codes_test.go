@@ -33,9 +33,11 @@ func TestTheClockAndSendWarningsAreShown(t *testing.T) {
 	if rep, sum := show(twin); !shown(rep, sum, twin) {
 		t.Fatalf("positive twin: %+v %q", rep, sum)
 	}
+	// Amended 2026-11-09 (the C5 round-3 pass's FRIC-R3-1 and friction words, the lead's call): both
+	// sentences are the new ones, shown whole.
 	for _, w := range []state.RunWarning{
-		{Code: "tbstreak_clock_behind", Message: "This backup's clock read Mar 1, 2025, earlier than a previous backup of this archive, so MailArchive did not count it toward how long Thunderbird has been downloading. Check this computer's date and time."},
-		{Code: "alert_send_failed", Message: "MailArchive could not send its email about Thunderbird (5 tries). Check the email settings in MailArchive Desktop's Settings, then use Send test email."},
+		{Code: "tbstreak_clock_behind", Message: "When this backup ran, this computer's clock said Mar 1, 2025, which is earlier than a previous backup, so MailArchive did not use this backup to judge how Thunderbird's download is going. Check this computer's date and time. If it is wrong each time the computer starts, its clock battery may need replacing."},
+		{Code: "alert_send_failed", Message: "MailArchive tried 5 times to send you an email about Thunderbird and could not. Open MailArchive Desktop, go to Backup alerts, check the mail server details, then click Send test email. Once an email gets through, MailArchive tries this one again at the next backup."},
 	} {
 		if rep, sum := show(w); !shown(rep, sum, w) {
 			t.Errorf("%s is not shown: codes %v posture %s summary %q", w.Code, rep.Codes, rep.Posture, sum)

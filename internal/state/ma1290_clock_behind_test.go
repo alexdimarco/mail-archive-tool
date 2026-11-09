@@ -181,21 +181,22 @@ func TestAnInconsistentPairIsDamaged(t *testing.T) {
 // SPAM-R2-A: the record counts the failed sends of each email of a streak, beside its sent flag: up
 // to AlertSendTries and no further, for that record, store, streak and kind only, and a failure
 // never marks the email sent. The counts survive the record's write and read. Positive twin first:
-// an unmarked streak has no failed send.
+// an unmarked streak has no failed send. (Amended 2026-11-09, the C5 round-3 fix, signatures only:
+// each failure is counted under the delivery id "" at t0; the reset is TestADeliveryStartsTheCountAgain.)
 func TestTheRecordCountsFailedSends(t *testing.T) {
 	t0 := time.Date(2026, 11, 1, 9, 0, 0, 0, time.UTC)
 	s := TBStreak{}.Behind("k", "imap.k.example", 1, t0).Behind("k", "imap.k.example", 9, t0.Add(80*time.Hour)).Named()
 	a, _ := s.Account("k")
 	n := TBNotice{RecordID: s.RecordID, Store: "k", Serial: a.Serial}
-	if s.Tries(n) != 0 {
-		t.Fatalf("positive twin: an unmarked streak has %d failed sends", s.Tries(n))
+	if s.Tries(n, "") != 0 {
+		t.Fatalf("positive twin: an unmarked streak has %d failed sends", s.Tries(n, ""))
 	}
 	for i := 1; i <= AlertSendTries+2; i++ {
 		var ok bool
-		if s, ok = s.MarkFailed("k", a.Serial, false); !ok {
+		if s, ok = s.MarkFailed("k", a.Serial, false, "", t0); !ok {
 			t.Fatalf("send %d: the streak was not found", i)
 		}
-		if got := s.Tries(n); got != min(i, AlertSendTries) {
+		if got := s.Tries(n, ""); got != min(i, AlertSendTries) {
 			t.Errorf("after %d failed sends the record says %d", i, got)
 		}
 	}
@@ -204,18 +205,18 @@ func TestTheRecordCountsFailedSends(t *testing.T) {
 	}
 	stopped := n
 	stopped.Stopped = true
-	if s.Tries(stopped) != 0 {
-		t.Errorf("the stopped email has the still one's count: %d", s.Tries(stopped))
+	if s.Tries(stopped, "") != 0 {
+		t.Errorf("the stopped email has the still one's count: %d", s.Tries(stopped, ""))
 	}
-	if s, _ = s.MarkFailed("k", a.Serial, true); s.Tries(stopped) != 1 || s.Tries(n) != AlertSendTries {
-		t.Errorf("the stopped email's own count: stopped %d, still %d", s.Tries(stopped), s.Tries(n))
+	if s, _ = s.MarkFailed("k", a.Serial, true, "", t0); s.Tries(stopped, "") != 1 || s.Tries(n, "") != AlertSendTries {
+		t.Errorf("the stopped email's own count: stopped %d, still %d", s.Tries(stopped, ""), s.Tries(n, ""))
 	}
-	if _, ok := s.MarkFailed("k", a.Serial+1, false); ok {
+	if _, ok := s.MarkFailed("k", a.Serial+1, false, "", t0); ok {
 		t.Error("another streak's failure was counted on this one")
 	}
 	other := n
 	other.RecordID = "AnotherRecord0123"
-	if s.Tries(other) != 0 {
+	if s.Tries(other, "") != 0 {
 		t.Error("another record's notice reads this record's count")
 	}
 	out := t.TempDir()
@@ -223,7 +224,7 @@ func TestTheRecordCountsFailedSends(t *testing.T) {
 		t.Fatal(err)
 	}
 	back, err := ReadTBStreak(out)
-	if err != nil || back.Tries(n) != AlertSendTries || back.Tries(stopped) != 1 || back.Damaged() {
-		t.Errorf("read back: %v still %d stopped %d damaged %v", err, back.Tries(n), back.Tries(stopped), back.Damaged())
+	if err != nil || back.Tries(n, "") != AlertSendTries || back.Tries(stopped, "") != 1 || back.Damaged() {
+		t.Errorf("read back: %v still %d stopped %d damaged %v", err, back.Tries(n, ""), back.Tries(stopped, ""), back.Damaged())
 	}
 }

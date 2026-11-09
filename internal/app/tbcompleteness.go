@@ -676,11 +676,14 @@ func markTBNotices(out string, notices []state.TBNotice, mark func(state.TBStrea
 
 // MarkTBNoticesFailed counts, in the archive's behind-streak record, one failed send of each
 // notice's email (its record, store, serial and kind), up to state.AlertSendTries (the C5 round-2
-// pass's SPAM-R2-A, the lead's call of 2026-11-09). It never marks an email sent. Under the
-// archive's lock, as MarkTBNoticesSent; an error leaves the record as it was, so that send is not
-// counted and the email is tried again.
-func MarkTBNoticesFailed(out string, notices []state.TBNotice) error {
-	return markTBNotices(out, notices, state.TBStreak.MarkFailed)
+// pass's SPAM-R2-A, the lead's call of 2026-11-09), at now, under the alert layer's delivery id
+// since (the round-3 pass's CAP-R3-A: counts made under another id start again). It never marks an
+// email sent. Under the archive's lock, as MarkTBNoticesSent; an error leaves the record as it was,
+// so that send is not counted and the email is tried again.
+func MarkTBNoticesFailed(out string, notices []state.TBNotice, since string, now time.Time) error {
+	return markTBNotices(out, notices, func(s state.TBStreak, store string, serial int, stopped bool) (state.TBStreak, bool) {
+		return s.MarkFailed(store, serial, stopped, since, now)
+	})
 }
 
 // RecordRunWarning adds w to the archive's last-run record, the one `status` and Status & health
@@ -723,10 +726,11 @@ func RecordRunWarning(out string, w state.RunWarning) error {
 // behind-streak record (CLOCK-R2-A): it was not counted.
 const tbStreakClockBehind = "tbstreak_clock_behind"
 
-// tbStreakClockBehindMessage is tbstreak_clock_behind's sentence (the lead's words of 2026-11-09):
-// the date this backup's clock read, in local time, with its year (the year is often what is wrong).
+// tbStreakClockBehindMessage is tbstreak_clock_behind's sentence (the lead's words of 2026-11-09,
+// as the C5 round-3 friction review proposed them): the date this computer's clock said, in local
+// time, with its year (the year is often what is wrong).
 func tbStreakClockBehindMessage(now time.Time) string {
-	return "This backup's clock read " + now.Local().Format("Jan 2, 2006") + ", earlier than a previous backup of this archive, so MailArchive did not count it toward how long Thunderbird has been downloading. Check this computer's date and time."
+	return "When this backup ran, this computer's clock said " + now.Local().Format("Jan 2, 2006") + ", which is earlier than a previous backup, so MailArchive did not use this backup to judge how Thunderbird's download is going. Check this computer's date and time. If it is wrong each time the computer starts, its clock battery may need replacing."
 }
 
 // The WARN codes of the behind-streak record: one the run could not use, and one too full to

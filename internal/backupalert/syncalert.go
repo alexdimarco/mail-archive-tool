@@ -37,15 +37,19 @@ const SyncAlertSuffix = ".sync-alert"
 // RecordID of the sync record it was in. Both, because a sync record removed (the sync
 // switched off) or damaged starts again at Serial 1 while this file stays (the gate-2
 // adversarial pass after AS5 and AS6): the new record's streak is a new streak. Tries counts the
-// failed sends for the streak TriedFor and TriedRecord name (the C5 round-2 pass's SPAM-R2-A, the
-// lead's call of 2026-11-09): at state.AlertSendTries, no more are tried for it.
+// failed sends in a row for the streak TriedFor and TriedRecord name (the C5 round-2 pass's
+// SPAM-R2-A), under the delivery mark's id TriedSince, the latest at LastFailedTry (the round-3
+// pass's CAP-R3-A, the lead's calls of 2026-11-09): at state.AlertSendTries the email is tried once
+// a day, and an email delivered since (another id) starts the count again.
 type syncAlertRecord struct {
-	Version     int    `json:"version"`
-	ToldFor     int    `json:"told_for"`
-	ToldRecord  string `json:"told_record,omitempty"`
-	Tries       int    `json:"tries,omitempty"`
-	TriedFor    int    `json:"tried_for,omitempty"`
-	TriedRecord string `json:"tried_record,omitempty"`
+	Version       int       `json:"version"`
+	ToldFor       int       `json:"told_for"`
+	ToldRecord    string    `json:"told_record,omitempty"`
+	Tries         int       `json:"tries,omitempty"`
+	TriedFor      int       `json:"tried_for,omitempty"`
+	TriedRecord   string    `json:"tried_record,omitempty"`
+	TriedSince    string    `json:"tried_since,omitempty"`
+	LastFailedTry time.Time `json:"last_failed_try,omitzero"`
 }
 
 // toldOf reports whether r names streak s as told.
@@ -53,9 +57,10 @@ func (r syncAlertRecord) toldOf(s state.SyncStreak) bool {
 	return r.ToldFor == s.Serial && r.ToldRecord == s.RecordID
 }
 
-// triesOf is how many sends of streak s's email r counts as failed: 0 for any other streak.
-func (r syncAlertRecord) triesOf(s state.SyncStreak) int {
-	if r.TriedFor != s.Serial || r.TriedRecord != s.RecordID {
+// triesOf is how many sends of streak s's email r counts as failed in a row since the delivery id
+// since: 0 for any other streak, or counts made under another id.
+func (r syncAlertRecord) triesOf(s state.SyncStreak, since string) int {
+	if r.TriedFor != s.Serial || r.TriedRecord != s.RecordID || r.TriedSince != since {
 		return 0
 	}
 	return min(max(0, r.Tries), state.AlertSendTries)
@@ -110,11 +115,13 @@ func writeSyncAlert(path string, r syncAlertRecord) error {
 //     the file is rewritten;
 //   - deferred: this run sent the recovery email, so this one waits for the next stale run
 //     (one email per run, §5.5), and nothing is marked told;
-//   - at most state.AlertSendTries (5) tries per streak (the C5 round-2 pass's SPAM-R2-A, the
-//     lead's call of 2026-11-09): each failed send is counted in the told-file (never as told);
-//     at the cap the email is not tried, and every stale run, from the one with the 5th failure
-//     on, adds the alert_send_failed WARN to the last-run record. With no told-file path there
-//     is nowhere to count, and each stale run tries again, as before.
+//   - 5 failed tries in a row, then at most one try a day, never silent for good (the C5 round-2
+//     pass's SPAM-R2-A, then the round-3 pass's CAP-R3-A, the lead's calls of 2026-11-09): each
+//     failed send is counted in the told-file (never as told) under the delivery mark's id; any
+//     email delivered since starts the count again, so the next stale run tries. At 5 in a row the
+//     email is tried once a day, and every stale run that does not get it through adds the
+//     alert_send_failed WARN to the last-run record. With no told-file path there is nowhere to
+//     count, and each stale run tries again, as before.
 //
 // The caller calls it only for a scheduled run that did not fail. Best effort: nothing here
 // fails the backup. It reports whether this run delivered the email, so the Thunderbird download
@@ -141,7 +148,8 @@ func ReportSyncStale(settingsPath string, store graphconfig.SecretStore, key, ou
 	}
 	cfg := LoadConfig(settingsPath)
 	want := cfg.ShouldSend(ResultSyncStale)
-	if want && told.triesOf(s) >= state.AlertSendTries {
+	since, now := deliveredID(settingsPath), alertNow()
+	if want && !state.AlertTryDue(told.triesOf(s, since), told.LastFailedTry, now) {
 		sendGivenUp(out, "the Thunderbird-not-synced email", logger)
 		return false
 	}
@@ -150,9 +158,9 @@ func ReportSyncStale(settingsPath string, store graphconfig.SecretStore, key, ou
 		return false
 	}
 	if want {
-		if !deliverSyncStale(cfg, store, out, s, logger) {
-			syncSendFailed(path, told, s, out, logger)
-			return false // not delivered: the next stale run tries again, up to the cap
+		if !deliverSyncStale(settingsPath, cfg, store, out, s, logger) {
+			syncSendFailed(path, told, s, since, now, out, logger)
+			return false // not delivered: the next stale run tries again, up to 5 in a row, then daily
 		}
 		sent = true
 	}
@@ -164,13 +172,15 @@ func ReportSyncStale(settingsPath string, store graphconfig.SecretStore, key, ou
 	return sent
 }
 
-// syncSendFailed counts a failed send of streak s's email in the told-file at path (told is what
-// it held), keeping what it says was told; at the cap it gives the email up (sendGivenUp).
-func syncSendFailed(path string, told syncAlertRecord, s state.SyncStreak, out string, logger *log.Logger) {
+// syncSendFailed counts a failed send of streak s's email, at now under the delivery id since, in
+// the told-file at path (told is what it held), keeping what it says was told; at 5 in a row it adds
+// the WARN (sendGivenUp).
+func syncSendFailed(path string, told syncAlertRecord, s state.SyncStreak, since string, now time.Time, out string, logger *log.Logger) {
 	if path == "" {
 		return
 	}
-	told.Tries, told.TriedFor, told.TriedRecord = told.triesOf(s)+1, s.Serial, s.RecordID
+	told.Tries, told.TriedFor, told.TriedRecord = min(told.triesOf(s, since)+1, state.AlertSendTries), s.Serial, s.RecordID
+	told.TriedSince, told.LastFailedTry = since, now
 	if err := writeSyncAlert(path, told); err != nil {
 		logf(logger, "the Thunderbird sync alert record %s could not be written (%v), so this failed send was not counted", path, err)
 		return
@@ -189,12 +199,12 @@ func ReportSyncStaleDefault(key, out string, deferred bool, logger *log.Logger) 
 // deliverSyncStale sends the email for streak s under cfg, which the caller has gated. Its
 // words come only from the closed maps (C-37). It reports whether the mail was handed over;
 // a failure is logged, never returned.
-func deliverSyncStale(cfg alert.Config, store graphconfig.SecretStore, out string, s state.SyncStreak, logger *log.Logger) bool {
+func deliverSyncStale(settingsPath string, cfg alert.Config, store graphconfig.SecretStore, out string, s state.SyncStreak, logger *log.Logger) bool {
 	host, _ := os.Hostname()
 	phrase, remedy := health.SyncAlertWords(runtime.GOOS, s)
 	ev := alert.Event{Result: ResultSyncStale, Archive: out, Host: host, When: time.Now(),
 		Sync: &alert.SyncStale{Since: s.FirstMissed, Missed: s.Missed, Phrase: phrase, Remedy: remedy}}
-	if err := send(cfg, store, ev, logger); err != nil {
+	if err := send(settingsPath, cfg, store, ev, logger); err != nil {
 		logf(logger, "the Thunderbird-not-synced email could not be sent: %v", err)
 		return false
 	}

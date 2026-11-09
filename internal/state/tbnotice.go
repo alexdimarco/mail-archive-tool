@@ -91,11 +91,25 @@ var tbStreakEarliest = time.Date(2020, 1, 1, 0, 0, 0, 0, time.UTC)
 // small clock correction is neither.
 const tbStreakAhead = 24 * time.Hour
 
-// AlertSendTries is how many times an email about Thunderbird is tried per streak before no more
-// are (the C5 round-2 pass's SPAM-R2-A, the lead's call of 2026-11-09): the download emails count
-// their failed sends in this record (StillTries, StoppedTries), the Thunderbird-not-synced email in
-// its told-file. After the last, the alert layer leaves the alert_send_failed WARN instead.
+// AlertSendTries is how many failed sends in a row an email about Thunderbird is tried at every due
+// backup (the C5 round-2 pass's SPAM-R2-A, then the round-3 pass's CAP-R3-A, the lead's calls of
+// 2026-11-09): the download emails count their failed sends in this record (StillTries,
+// StoppedTries), the Thunderbird-not-synced email in its told-file. After the 5th it is tried at
+// most once a day (AlertRetryEvery), never given up for good, and the alert layer leaves the
+// alert_send_failed WARN; any delivered email starts the count again.
 const AlertSendTries = 5
+
+// AlertRetryEvery is how often an email about Thunderbird that failed AlertSendTries times in a row
+// is still tried (CAP-R3-A): once a day.
+const AlertRetryEvery = 24 * time.Hour
+
+// AlertTryDue reports whether an email about Thunderbird whose sends failed tries times in a row,
+// the latest at last, is tried at now (CAP-R3-A): under AlertSendTries, at every due backup; at it,
+// once AlertRetryEvery has passed since the latest, or when the latest is more than that after now
+// (a clock that was ahead, or a planted time: never silent for good).
+func AlertTryDue(tries int, last, now time.Time) bool {
+	return tries < AlertSendTries || !now.Before(last.Add(AlertRetryEvery)) || last.After(now.Add(AlertRetryEvery))
+}
 
 // Damaged reports a record no run of this archive could have written (R4-01, PLANT-01 and the C5
 // round-2 pass's PLANT-R2, the lead's calls): only what is impossible in the record itself, never
@@ -179,34 +193,50 @@ func (s TBStreak) entry(n TBNotice) (TBStreakAccount, bool) {
 	return s.Accounts[i], true
 }
 
-// MarkFailed counts one failed send of the streak's still-downloading email, or its stopped one
-// (SPAM-R2-A), up to AlertSendTries; it never sets a sent flag. Only the streak of store with that
-// serial; ok is false when the record holds no such streak.
-func (s TBStreak) MarkFailed(store string, serial int, stopped bool) (TBStreak, bool) {
+// MarkFailed counts one failed send, at now, of the streak's still-downloading email, or its stopped
+// one (SPAM-R2-A), up to AlertSendTries; it never sets a sent flag. since is the alert layer's
+// delivery id at that send (CAP-R3-A): when the entry's counts were made under another id, an email
+// was delivered in between, so both counts start again from this failure. Only the streak of store
+// with that serial; ok is false when the record holds no such streak.
+func (s TBStreak) MarkFailed(store string, serial int, stopped bool, since string, now time.Time) (TBStreak, bool) {
 	i := s.account(store)
 	if i < 0 || s.Accounts[i].Serial != serial {
 		return s, false
 	}
 	s.Accounts = append([]TBStreakAccount(nil), s.Accounts...)
-	tries := &s.Accounts[i].StillTries
+	a := &s.Accounts[i]
+	if a.TriedSince != since {
+		a.StillTries, a.StoppedTries, a.TriedSince = 0, 0, since
+	}
+	tries := &a.StillTries
 	if stopped {
-		tries = &s.Accounts[i].StoppedTries
+		tries = &a.StoppedTries
 	}
 	*tries = min(*tries+1, AlertSendTries)
+	a.LastFailedTry = now
 	return s, true
 }
 
-// Tries is how many sends of n's email the record counts as failed: the same record, store and
-// streak, that kind of email; 0 for any other.
-func (s TBStreak) Tries(n TBNotice) int {
+// Tries is how many sends of n's email the record counts as failed in a row since the delivery id
+// since (CAP-R3-A): the same record, store and streak, that kind of email, counted under that id; 0
+// for any other.
+func (s TBStreak) Tries(n TBNotice, since string) int {
 	a, ok := s.entry(n)
 	switch {
-	case !ok:
+	case !ok || a.TriedSince != since:
 		return 0
 	case n.Stopped:
 		return a.StoppedTries
 	}
 	return a.StillTries
+}
+
+// TryDue reports whether n's email is tried at now, given the delivery id since (CAP-R3-A,
+// AlertTryDue): at every due backup until it failed AlertSendTries times in a row since the last
+// delivered email, then once a day.
+func (s TBStreak) TryDue(n TBNotice, since string, now time.Time) bool {
+	a, _ := s.entry(n)
+	return AlertTryDue(s.Tries(n, since), a.LastFailedTry, now)
 }
 
 // TBEmail is the Thunderbird download email's words, built from a run's notices (the C5 friction

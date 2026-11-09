@@ -20,8 +20,10 @@ import (
 // download email keeps its count in the streak record beside its sent flag; the shipped
 // Thunderbird-not-synced email keeps it in its told-file. A failure never counts as sent.
 
-// sendFailedWords is the alert_send_failed WARN's sentence (the lead's words).
-const sendFailedWords = "MailArchive could not send its email about Thunderbird (5 tries). Check the email settings in MailArchive Desktop's Settings, then use Send test email."
+// sendFailedWords is the alert_send_failed WARN's sentence (the lead's words). Amended 2026-11-09
+// (the C5 round-3 pass's FRIC-R3-1 and CAP-R3-A, the lead's new words): the Backup alerts card, and
+// what happens once an email gets through.
+const sendFailedWords = "MailArchive tried 5 times to send you an email about Thunderbird and could not. Open MailArchive Desktop, go to Backup alerts, check the mail server details, then click Send test email. Once an email gets through, MailArchive tries this one again at the next backup."
 
 // finishedRun writes a finished ok last-run record into out, as each scheduled run does before its
 // alert step (which rewrites it, so a WARN must be added again by every run it still holds for).
@@ -96,7 +98,7 @@ func TestTheDownloadEmailIsTriedAtMostFiveTimes(t *testing.T) {
 	if still, _ := g.flags(); still {
 		t.Error("failed sends marked the email sent")
 	}
-	if !strings.Contains(buf.String(), "no more are tried") {
+	if !strings.Contains(buf.String(), "5 times in a row, so it is tried once a day") { // amended 2026-11-09 (CAP-R3-A): no longer "no more are tried"
 		t.Errorf("the log: %q", buf.String())
 	}
 	stop := g.notice

@@ -40,7 +40,13 @@ var fixedConfigNames = map[string]bool{
 	// §7.4 foldcheck2 note N-b): removed with the settings files; MA-1140's test keeps the
 	// two in step by behaviour.
 	restoresLogName: true,
+	// The alert layer's delivery mark (backupalert.DeliveredName; the C5 round-3 pass's CAP-R3-A):
+	// removed with the settings files; MA-1291's test keeps the two in step by behaviour.
+	alertDeliveredName: true,
 }
+
+// alertDeliveredName is the alert layer's delivery mark, backupalert.DeliveredName.
+const alertDeliveredName = "alert-delivered"
 
 // restoresLogName is the restore record's name, tbrestore.LogName.
 const restoresLogName = "restores.log"

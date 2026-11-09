@@ -25,9 +25,10 @@ func r2Fold(t *testing.T, out string, r tbcomplete.Result, now time.Time) ([]sta
 }
 
 // clockBehindWords is the tbstreak_clock_behind WARN's sentence for a backup whose clock read now
-// (the lead's words of 2026-11-09).
+// (the lead's words of 2026-11-09). Amended 2026-11-09 (the C5 round-3 friction review's words, the
+// lead's call): the computer's clock, not the backup's, and the clock battery.
 func clockBehindWords(now time.Time) string {
-	return "This backup's clock read " + now.Local().Format("Jan 2, 2006") + ", earlier than a previous backup of this archive, so MailArchive did not count it toward how long Thunderbird has been downloading. Check this computer's date and time."
+	return "When this backup ran, this computer's clock said " + now.Local().Format("Jan 2, 2006") + ", which is earlier than a previous backup, so MailArchive did not use this backup to judge how Thunderbird's download is going. Check this computer's date and time. If it is wrong each time the computer starts, its clock battery may need replacing."
 }
 
 // covers: MA-1290
@@ -138,7 +139,7 @@ func TestADeadClockBatteryEmailsOnce(t *testing.T) {
 		t.Errorf("X stuck: WARNs %v, want 5 tbstreak_clock_behind", codes)
 	}
 	for _, w := range words {
-		if !strings.HasPrefix(w, "This backup's clock read Mar 1, 2025, earlier than a previous backup") && !strings.HasPrefix(w, "This backup's clock read Feb 28, 2025,") {
+		if !strings.HasPrefix(w, "When this backup ran, this computer's clock said Mar 1, 2025, which is earlier than a previous backup") && !strings.HasPrefix(w, "When this backup ran, this computer's clock said Feb 28, 2025,") { // amended 2026-11-09: the round-3 words
 			t.Errorf("the WARN: %q", w)
 		}
 	}

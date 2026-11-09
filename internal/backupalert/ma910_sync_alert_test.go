@@ -177,7 +177,8 @@ func TestWithAlertsOffTheSyncStreakIsMarkedToldAtOnce(t *testing.T) {
 //
 // Amended 2026-11-09 (the C5 round-2 pass's SPAM-R2-A, the lead's call): the told-file now also
 // counts failed sends, so after a failure it exists; the check is what it says: the streak is not
-// told, and one failed send is counted for it.
+// told, and one failed send is counted for it. (Amended again 2026-11-09, the C5 round-3 fix,
+// signatures only: the count is read under the current delivery id.)
 func TestAFailedSyncEmailIsTriedAgain(t *testing.T) {
 	g := newSyncRig(t, alertsOnFailure)
 	s := staleFrom(state.SyncStreak{}, syncT0, "owner-active-skipped").Named()
@@ -188,7 +189,7 @@ func TestAFailedSyncEmailIsTriedAgain(t *testing.T) {
 	if len(g.sent) != 0 || !strings.Contains(buf.String(), "could not be sent") {
 		t.Fatalf("the failed delivery: sent %q, log %q", g.results(), buf.String())
 	}
-	if told, err := readSyncAlert(SyncAlertPath(g.settings, g.key)); err != nil || told.toldOf(s) || told.triesOf(s) != 1 {
+	if told, err := readSyncAlert(SyncAlertPath(g.settings, g.key)); err != nil || told.toldOf(s) || told.triesOf(s, deliveredID(g.settings)) != 1 {
 		t.Fatalf("a failed delivery: the told-file %+v (%v), want not told and 1 failed send", told, err)
 	}
 	g.tell(false)

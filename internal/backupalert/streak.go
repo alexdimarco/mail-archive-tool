@@ -146,7 +146,7 @@ func Report(settingsPath string, store graphconfig.SecretStore, key, out, result
 		}
 		o := Outcome{Notify: !(path != "" && readErr == nil && prev.Noticed)}
 		rec := streakRecord{Failing: true, Noticed: true, Since: time.Now().UTC()}
-		if cfg.ShouldSend(ResultFailed) && !deliver(cfg, store, out, ResultFailed, runErr, 0, logger) {
+		if cfg.ShouldSend(ResultFailed) && !deliver(settingsPath, cfg, store, out, ResultFailed, runErr, 0, logger) {
 			rec.Failing = false // not delivered: the next failure tries the email again, not the notice
 			if !prev.Since.IsZero() && readErr == nil {
 				rec.Since = prev.Since
@@ -170,15 +170,15 @@ func Report(settingsPath string, store graphconfig.SecretStore, key, out, result
 			// (only its notice did) gets the notice, and a success email if wanted.
 			emailed := false
 			if prev.Failing && cfg.ShouldSend(ResultRecovered) {
-				deliver(cfg, store, out, ResultRecovered, nil, messages, logger)
+				deliver(settingsPath, cfg, store, out, ResultRecovered, nil, messages, logger)
 				emailed = true // sent, delivered or not: this run has had its email
 			} else if cfg.ShouldSend(ResultOK) {
-				deliver(cfg, store, out, ResultOK, nil, messages, logger)
+				deliver(settingsPath, cfg, store, out, ResultOK, nil, messages, logger)
 			}
 			return Outcome{Recovered: true, RecoveryEmailed: emailed}
 		}
 		if cfg.ShouldSend(ResultOK) {
-			deliver(cfg, store, out, ResultOK, nil, messages, logger)
+			deliver(settingsPath, cfg, store, out, ResultOK, nil, messages, logger)
 		}
 		return Outcome{}
 	}

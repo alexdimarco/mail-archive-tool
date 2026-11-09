@@ -122,6 +122,13 @@ type TBStreakAccount struct {
 	// tried. A failure never sets the sent flag beside it.
 	StillTries   int `json:"still_downloading_tries,omitempty"`
 	StoppedTries int `json:"stopped_tries,omitempty"`
+	// TriedSince is the alert layer's delivery id (backupalert's alert-delivered mark) current when
+	// those failures were counted, and LastFailedTry the time of the latest (the C5 round-3 pass's
+	// CAP-R3-A, the lead's call of 2026-11-09): once any email has been delivered since (a different
+	// id) the counts no longer count, and after the 5th failure in a row the email is still tried
+	// once a day (AlertTryDue). Neither is a date the streak's rules read.
+	TriedSince    string    `json:"tried_since,omitempty"`
+	LastFailedTry time.Time `json:"last_failed_try,omitzero"`
 	// SeenRun is the record's Run when a run last reached the store (any verdict), and SeenAt
 	// that run's time (zero when its clock was before MinPlausibleTime); BehindRun is the Run
 	// when a run last found it behind.
@@ -271,6 +278,10 @@ func (s TBStreak) BehindEvicting(store, name string, x int64, now time.Time) (TB
 	// of 2026-11-09): either the earlier clock was wrong (a dead clock battery's firmware date at a
 	// streak's first backup) or no backup ran for a month; neither is a month of downloading.
 	gap := plausible && !a.LastBehind.IsZero() && now.Sub(a.LastBehind) > TBStreakUnseenFor
+	// A clock before the latest behind backup went back, even when it reads exactly the streak's
+	// first time, which spanAt then keeps (the C5 round-3 pass's TIE-R3, the lead's call of
+	// 2026-11-09): a clock equal to a stored time is not "later".
+	back := plausible && !a.LastBehind.IsZero() && now.Before(a.LastBehind)
 	a.FirstBehind, a.LastBehind = spanAt(a.FirstBehind, a.LastBehind, now)
 	if gap {
 		a.FirstBehind = now
@@ -278,7 +289,7 @@ func (s TBStreak) BehindEvicting(store, name string, x int64, now time.Time) (TB
 	grew := x > a.LastX
 	a.LastX = x
 	switch {
-	case !a.FirstBehind.Equal(restarted) && !restarted.IsZero():
+	case (back || !a.FirstBehind.Equal(restarted)) && !restarted.IsZero():
 		// The clock went back, or a gap of more than a month: the streak's first time restarts, and
 		// so does its growth's. The serial and the sent flags are kept.
 		a.LastGrew, a.GrewX, a.FirstX, a.NoProgressRuns, a.FirstNoProgress = a.FirstBehind, x, x, 0, time.Time{}
