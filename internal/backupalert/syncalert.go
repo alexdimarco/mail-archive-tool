@@ -99,15 +99,16 @@ func writeSyncAlert(path string, r syncAlertRecord) error {
 //     (one email per run, §5.5), and nothing is marked told.
 //
 // The caller calls it only for a scheduled run that did not fail. Best effort: nothing here
-// fails the backup.
-func ReportSyncStale(settingsPath string, store graphconfig.SecretStore, key, out string, deferred bool, logger *log.Logger) {
+// fails the backup. It reports whether this run delivered the email, so the Thunderbird download
+// email (ReportTBBehind) waits for the next run: one email per run.
+func ReportSyncStale(settingsPath string, store graphconfig.SecretStore, key, out string, deferred bool, logger *log.Logger) (sent bool) {
 	s, err := state.ReadSyncStreak(out)
 	if err != nil {
 		logf(logger, "the Thunderbird sync record can't be read (%v), so no Thunderbird-not-synced email was considered", err)
-		return
+		return false
 	}
 	if !s.Stale() {
-		return
+		return false
 	}
 	path := SyncAlertPath(settingsPath, key)
 	if path != "" {
@@ -115,28 +116,32 @@ func ReportSyncStale(settingsPath string, store graphconfig.SecretStore, key, ou
 		if rerr != nil {
 			logf(logger, "the Thunderbird sync alert record can't be read (%v); it is treated as not told and written again", rerr)
 		} else if told.toldOf(s) {
-			return // this streak was told already
+			return false // this streak was told already
 		}
 	}
 	if deferred {
 		logf(logger, "the Thunderbird-not-synced email waits for the next backup: this one sent the recovery email")
-		return
+		return false
 	}
 	cfg := LoadConfig(settingsPath)
-	if cfg.ShouldSend(ResultSyncStale) && !deliverSyncStale(cfg, store, out, s, logger) {
-		return // not delivered: the next stale run tries again
+	if cfg.ShouldSend(ResultSyncStale) {
+		if !deliverSyncStale(cfg, store, out, s, logger) {
+			return false // not delivered: the next stale run tries again
+		}
+		sent = true
 	}
 	if path != "" {
 		if werr := writeSyncAlert(path, syncAlertRecord{ToldFor: s.Serial, ToldRecord: s.RecordID}); werr != nil {
 			logf(logger, "the Thunderbird sync alert record %s could not be written (%v), so every stale backup sends its own email until it can", path, werr)
 		}
 	}
+	return sent
 }
 
 // ReportSyncStaleDefault is ReportSyncStale with the default Desktop settings path and OS
 // secret store, for the wizard's local scheduled job.
-func ReportSyncStaleDefault(key, out string, deferred bool, logger *log.Logger) {
-	ReportSyncStale(DefaultSettingsPath(), defaultStore(), key, out, deferred, logger)
+func ReportSyncStaleDefault(key, out string, deferred bool, logger *log.Logger) bool {
+	return ReportSyncStale(DefaultSettingsPath(), defaultStore(), key, out, deferred, logger)
 }
 
 // deliverSyncStale sends the email for streak s under cfg, which the caller has gated. Its

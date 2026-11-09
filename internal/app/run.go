@@ -322,6 +322,12 @@ type Result struct {
 	// tbPrev is the previous run's completeness record, read before this run's "running"
 	// record replaced it, for TC-19's carried fingerprints.
 	tbPrev []state.TBAccount
+	// TBNotices are the Thunderbird accounts whose behind-streak this run found due an email
+	// (the "still downloading" or "stopped" email, design §5, slice C5): only accounts this run
+	// found behind, of a plaintext archive, and only when the run wrote the streak record, so the
+	// email's flag can be set in it. A scheduled run's alert layer sends them
+	// (backupalert.ReportTBBehind), then MarkTBNoticesSent sets the flags. In memory only.
+	TBNotices []state.TBNotice
 }
 
 // finish fills the manifest-derived fields of a Result and regenerates the
@@ -1468,9 +1474,13 @@ func recordRun(opts Options, lr state.LastRun, result *Result, err *error, logge
 	// is written, so a streak record the run could not use, or one too full to start a behind
 	// store's streak, is a WARN that status shows (the C2 pass's ADV-C2-05 and -10, round 3's
 	// R3-04), never silent.
-	if ws := updateTBStreak(opts, result.Thunderbird, lr.Encrypted, *err == nil, lr.Finished, logger); len(ws) > 0 && !lr.Encrypted && opts.Key == nil {
+	// The accounts it finds due an email go back in the result for the scheduled run's alert
+	// layer (slice C5).
+	ws, notices := foldTBStreak(opts, result.Thunderbird, lr.Encrypted, *err == nil, lr.Finished, logger)
+	if len(ws) > 0 && !lr.Encrypted && opts.Key == nil {
 		lr.Warnings = append(lr.Warnings, ws...)
 	}
+	result.TBNotices = notices
 	// Best effort: a refused write never fails the run, but it is logged (F12),
 	// because the "running" record then stays and status reads it as a run that
 	// never finished although this log says how it ended.

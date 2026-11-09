@@ -147,6 +147,11 @@ Housekeeping files (safe to leave alone):
                                a Thunderbird sync, or with no new mail arriving
                                (only for a Thunderbird archive that syncs; used
                                for the 3-day warnings)
+  .mailarchive-tbstreak.json   how long Thunderbird has been downloading each
+                               account's mail, and whether its emails were sent
+                               (only for an archive of Thunderbird mail; used
+                               for the 3-day "still downloading" and "stopped
+                               downloading" emails)
   .mailarchive-paused.json     present only while the archive is paused: nothing
                                writes to it until it is resumed in MailArchive
                                Desktop; do not delete it by hand

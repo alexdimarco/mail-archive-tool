@@ -93,6 +93,21 @@ func tbLeadSuffix(in Input) string {
 	return " · " + tbcomplete.RecordLead(lr.Thunderbird, lr.ThunderbirdMore).Sentence()
 }
 
+// tbBehindSince is `-json`'s behind_since for account a of the record lr (slice C5): the first
+// behind backup of its streak, when the last backup found it behind and the streak record's latest
+// fold extended that streak; zero otherwise. Never a time after the record's run, nor before
+// MinPlausibleTime, so a planted streak record cannot date it outside what the runs saw.
+func tbBehindSince(s state.TBStreak, a state.TBAccount, lr state.LastRun) time.Time {
+	if a.Verdict != "behind" || a.StoreID == "" {
+		return time.Time{}
+	}
+	e, ok := s.Account(a.StoreID)
+	if !ok || e.BehindRun != s.Run || e.FirstBehind.Before(state.MinPlausibleTime) || (!lr.Finished.IsZero() && e.FirstBehind.After(lr.Finished)) {
+		return time.Time{}
+	}
+	return e.FirstBehind
+}
+
 // tbJSON fills `status -json`'s additive keys (§7's -json folds): the record's accounts, with
 // complete and stale in every entry (M9), the accounts left out, and the run's lead by name.
 func tbJSON(doc *JSONReport, in Input) {
@@ -100,7 +115,9 @@ func tbJSON(doc *JSONReport, in Input) {
 	if !ok {
 		return
 	}
-	doc.ThunderbirdCompleteness = lr.Thunderbird
+	for _, a := range lr.Thunderbird {
+		doc.ThunderbirdCompleteness = append(doc.ThunderbirdCompleteness, JSONTBAccount{TBAccount: a, BehindSince: tbBehindSince(in.TBStreak, a, lr)})
+	}
 	doc.ThunderbirdMore = lr.ThunderbirdMore
 	doc.ThunderbirdLead = tbcomplete.RecordLead(lr.Thunderbird, lr.ThunderbirdMore).String()
 }

@@ -179,6 +179,11 @@ type Input struct {
 	LastRunState state.LastRunState
 	LastRunErr   error
 
+	// TBStreak is the archive's behind-streak record (the Thunderbird completeness check, slice
+	// C5), read with the run records, for `-json`'s behind_since; zero when absent, unreadable or
+	// implausible (R4-01), and never read beside an encrypted archive.
+	TBStreak state.TBStreak
+
 	// LastStartFailure is the headless run-job start-failure breadcrumb (§4.6.6),
 	// set by Gather only when its Name matches schedule.DefaultNameFor(Out): keyed
 	// on the owner-pointed out, never the archive-held Desc.Name, so a forged
@@ -1911,6 +1916,11 @@ func Gather(out, nameOverride string) Input {
 	// using this archive" beside its own failure.
 	in.LastRun, in.LastRunState, in.LastRunErr = state.ReadLastRun(out)
 	in.LastVerify, in.LastVerifyState, in.LastVerifyErr = state.ReadLastVerify(out)
+	if in.LastRunState == state.LastRunPresent && !in.LastRun.Encrypted && len(in.LastRun.Thunderbird) > 0 {
+		if s, err := state.ReadTBStreak(out); err == nil && !s.Implausible() {
+			in.TBStreak = s
+		}
+	}
 
 	// The headless start-failure breadcrumb (§4.6.6): health is its one reader from
 	// SE2. Keyed on the owner-pointed out (DefaultNameFor), never Desc.Name, so a
@@ -2624,9 +2634,18 @@ type JSONReport struct {
 	// stale (M9). ThunderbirdMore is how many accounts the record left out (R2-06), and
 	// ThunderbirdLead the run's lead by name (complete, so_far or finished). Omitted for a record
 	// without them, a backup that did not end ok, and always for an encrypted archive (O1).
-	ThunderbirdCompleteness []state.TBAccount `json:"thunderbird_completeness,omitempty"`
-	ThunderbirdMore         int               `json:"thunderbird_more,omitempty"`
-	ThunderbirdLead         string            `json:"thunderbird_lead,omitempty"`
+	ThunderbirdCompleteness []JSONTBAccount `json:"thunderbird_completeness,omitempty"`
+	ThunderbirdMore         int             `json:"thunderbird_more,omitempty"`
+	ThunderbirdLead         string          `json:"thunderbird_lead,omitempty"`
+}
+
+// JSONTBAccount is one `thunderbird_completeness` entry: the record's account, with every field
+// of it as the record names it, and BehindSince, the first behind backup of the account's current
+// streak (§7's `-json` row, `behind_since`; slice C5): from the archive's behind-streak record, and
+// only for an account the last backup found behind. Additive; omitted otherwise.
+type JSONTBAccount struct {
+	state.TBAccount
+	BehindSince time.Time `json:"behind_since,omitzero"`
 }
 
 // JSONShownAsSource is the shown-as-source facet: the total and a count per

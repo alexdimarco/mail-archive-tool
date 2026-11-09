@@ -256,7 +256,8 @@ func TestR2_06_AccountsPastTheCapLeaveNoTrace(t *testing.T) {
 // R2-08 in the run's fold, as round 3 amended it (R3-03, R3-04): a full streak record makes room
 // for a new behind store from an entry this run did not find behind. The record holds 256 entries,
 // each last reached in an earlier run; a new behind store gets its streak, the entry reached
-// longest ago goes, and the run's log says so. A store no run has reached for 30 days is pruned and
+// longest ago goes, and the run's log says so (and, since round 4's R4-02, a tbstreak_full WARN
+// names it). A store no run has reached for 30 days is pruned and
 // logged; one the runs keep reaching (even only as unknown) is kept. Positive twin: a behind store
 // with room starts its streak and logs nothing.
 func TestAFullStreakRecordMakesRoomAndSaysSo(t *testing.T) {
@@ -280,8 +281,10 @@ func TestAFullStreakRecordMakesRoomAndSaysSo(t *testing.T) {
 	if s := mustStreak(t, out); len(s.Accounts) != state.TBStreakAccountsMax || buf.Len() != 0 {
 		t.Fatalf("256 entries: %d, log %q", len(s.Accounts), buf.String())
 	}
-	if w := updateTBStreak(Options{Out: out}, behind("new"), false, true, now.Add(2*time.Hour), logger); w != nil {
-		t.Errorf("a full record that made room: a WARN %+v", w)
+	// R4-02 (the C2 pass round 4, the lead's call, slice C5) reverses round 2's "no WARN" here:
+	// every eviction raises tbstreak_full, naming the store whose streak was dropped.
+	if w := updateTBStreak(Options{Out: out}, behind("new"), false, true, now.Add(2*time.Hour), logger); len(w) != 1 || w[0].Code != "tbstreak_full" || !strings.Contains(w[0].Message, "imap.first.example") {
+		t.Errorf("a full record that made room: %+v, want one tbstreak_full naming the dropped store", w)
 	}
 	s := mustStreak(t, out)
 	if _, ok := s.Account("new"); !ok || len(s.Accounts) != state.TBStreakAccountsMax {

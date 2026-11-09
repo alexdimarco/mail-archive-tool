@@ -44,7 +44,22 @@ const (
 	// a plaintext archive's scheduled backups ran for 3 days without syncing Thunderbird
 	// first. Sent once per streak, under the failure option.
 	ResultSyncStale = "sync-stale"
+	// ResultTBBehind is the Thunderbird download email (docs/design-thunderbird-completeness.md
+	// §5, slice C5): a plaintext archive's scheduled backups have found a Thunderbird account still
+	// downloading for 3 days, or its download stopped for 3 days. At most one of each kind per
+	// streak, under the failure option, as the Thunderbird-not-synced email.
+	ResultTBBehind = "tb-behind"
 )
+
+// TBBehind is what the Thunderbird download email says beyond the archive and the computer: which
+// email it is, one line per account and what to do, all built by the caller from the state words
+// (state.TBNoticeEmail), never from a record's own text. The remedy begins in lower case, after
+// "Do this on that computer: ".
+type TBBehind struct {
+	Stopped bool // any account stopped: the stopped email's subject and lead
+	Lines   []string
+	Remedy  string
+}
 
 // SyncStale is what the Thunderbird-not-synced email says beyond the archive and the
 // computer: when the streak began, how many backups in a row, and the phrase and remedy,
@@ -90,6 +105,7 @@ type Event struct {
 	Host     string // the machine the backup ran on
 	When     time.Time
 	Sync     *SyncStale // ResultSyncStale only
+	TB       *TBBehind  // ResultTBBehind only
 }
 
 // Preset fills the host, port and security for a known provider; the SMTP provider
@@ -110,7 +126,7 @@ func (c Config) ShouldSend(result string) bool {
 		return false
 	}
 	switch result {
-	case ResultFailed, ResultRecovered, ResultSyncStale:
+	case ResultFailed, ResultRecovered, ResultSyncStale, ResultTBBehind:
 		return c.OnFailure
 	case ResultOK:
 		return c.OnSuccess
@@ -158,6 +174,9 @@ func (c Config) subjectAndBody(ev Event) (subject, body string) {
 	name := header(ev.Archive) // an archive path never contains CR/LF; strip any so neither the subject header nor the body line is malformed
 	if ev.Result == ResultSyncStale {
 		return syncStaleSubjectAndBody(name, ev)
+	}
+	if ev.Result == ResultTBBehind {
+		return tbBehindSubjectAndBody(name, ev)
 	}
 	word := strings.ToUpper(resultWord(ev.Result))
 	switch {
@@ -219,6 +238,44 @@ func syncStaleSubjectAndBody(name string, ev Event) (subject, body string) {
 	fmt.Fprintf(&b, "Do this on that computer: %s\r\n", header(s.Remedy))
 	b.WriteString("The buttons and cards named above are in MailArchive Desktop.\r\n\r\n")
 	b.WriteString("You will get this email once, until Thunderbird syncs again.\r\n")
+	b.WriteString("\r\nThis message was sent by MailArchive's built-in backup alerts.\r\n")
+	return subject, b.String()
+}
+
+// tbBehindSubjectAndBody is the Thunderbird download email (completeness design §5, §7, §9.3;
+// slice C5; the builder's words around the state lines, for the friction review of the email).
+// The lines and remedy come from the caller's state words; every one is stripped of line breaks
+// all the same, so none can add a header or change the body's shape.
+func tbBehindSubjectAndBody(name string, ev Event) (subject, body string) {
+	var tb TBBehind
+	if ev.TB != nil {
+		tb = *ev.TB
+	}
+	host := header(ev.Host)
+	if strings.TrimSpace(host) == "" {
+		host = "this computer"
+	}
+	which := "the account below"
+	if len(tb.Lines) > 1 {
+		which = "the accounts below"
+	}
+	var b strings.Builder
+	if tb.Stopped {
+		subject = "MailArchive: Thunderbird has stopped downloading mail — " + name
+		fmt.Fprintf(&b, "The scheduled backups of %s on %s are working, but Thunderbird on that computer has stopped downloading mail of %s, so the backups cannot get the rest.\r\n\r\n", name, host, which)
+	} else {
+		subject = "MailArchive: Thunderbird is still downloading mail after 3 days — " + name
+		fmt.Fprintf(&b, "The scheduled backups of %s on %s are working, but Thunderbird on that computer is still downloading the mail of %s, so the backups have only what it has so far.\r\n\r\n", name, host, which)
+	}
+	for _, l := range tb.Lines {
+		fmt.Fprintf(&b, "%s\r\n", header(l))
+	}
+	fmt.Fprintf(&b, "\r\nDo this on that computer: %s\r\n\r\n", header(tb.Remedy))
+	if tb.Stopped {
+		b.WriteString("You will get this email once for each download that stops, not after every backup.\r\n")
+	} else {
+		b.WriteString("You will get this email once while this mail is still downloading, and one more only if Thunderbird then stops.\r\n")
+	}
 	b.WriteString("\r\nThis message was sent by MailArchive's built-in backup alerts.\r\n")
 	return subject, b.String()
 }

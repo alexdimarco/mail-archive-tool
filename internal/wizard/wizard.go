@@ -403,12 +403,16 @@ func RunHeadless(path string) int {
 	// A completed (not cancelled) local backup ends a failing streak (a recovery email and
 	// notice) and emails its success too, if alerts want it. Then, for a job that syncs
 	// Thunderbird, the one email per stale sync streak (design-presync-attended §5.5), which
-	// waits for the next run when this one sent the recovery email: one email per run.
+	// waits for the next run when this one sent the recovery email: one email per run. Then the
+	// Thunderbird download email for the accounts this run found 3 days into a behind-streak
+	// (completeness design §5, slice C5), which waits likewise when this run sent either email.
 	if runErr == nil {
 		o := reportRun(key, j.Name, j.Out, backupalert.ResultOK, nil, result.Stats.Exported, logger)
+		syncSent := false
 		if j.ThunderbirdSync != nil {
-			backupalert.ReportSyncStaleDefault(key, j.Out, o.RecoveryEmailed, logger)
+			syncSent = backupalert.ReportSyncStaleDefault(key, j.Out, o.RecoveryEmailed, logger)
 		}
+		backupalert.ReportTBBehindDefault(j.Out, result.TBNotices, o.RecoveryEmailed || syncSent, logger)
 	}
 	return 0
 }

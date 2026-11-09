@@ -3051,6 +3051,71 @@ C4 must land with or before C3 if encrypted archives get any words beyond today'
 >   fallback-imitation rules. Folding them needs Unicode's TR39 "skeleton", which
 >   `golang.org/x/text` does not provide. Row MA-1287 (amended).
 
+> **Built 2026-11-09 [C5] (the builder's notes, for the lead, the adversarial pass and the friction
+> review of the email).** C5 sends the "still downloading" and "stopped" emails for a plaintext
+> archive's Thunderbird accounts (§5 with its TC-20 and M10 folds, §9.3), adds `-json`'s
+> `behind_since` and the README line for `.mailarchive-tbstreak.json`, and fixes the C2 pass round
+> 4's R4-01 and R4-02 carried here. Rows: MA-1188 new; MA-1184, MA-1183 and MA-1281 amended. No id
+> above MA-1288.
+>
+> - **Who decides, who sends.** The run that folds the streak (`app.foldTBStreak`, under the
+>   archive's lock) names the streaks due an email in `app.Result.TBNotices`
+>   (`state.TBStreakAccount.Due`): only an account this run found behind, whose streak the record
+>   holds, and only when the record was written. A store the run did not reach, or found unknown,
+>   is never named (C2's "never email about a store the run did not reach"), nor one waiting under
+>   `tbstreak_full`. The scheduled local job (`RunHeadless`) sends them through
+>   `backupalert.ReportTBBehind`; then `app.MarkTBNoticesSent` sets the flags under the archive's
+>   lock (a 5-second wait), matching the record's `record_id`, the store and the streak's serial.
+>   A Desktop Run now and a command-line run fold the streak but send nothing (as today: only the
+>   scheduled job reports to `backupalert`); a streak that crosses 3 days at such a run is emailed
+>   at the next scheduled behind run.
+> - **Once per streak (TC-20).** Stopped is due when X has not grown across behind runs spanning 3
+>   days and it was not sent; else still-downloading when the behind runs span 3 days (at least 2
+>   runs) and neither was sent. The stopped email sets both flags, so a still-downloading email
+>   never follows it, and a streak that stalls from its start gets only the stopped one.
+> - **The builder's readings, for the lead:**
+>   - **One email per run, every due account in it.** Several accounts due in one run share one
+>     email (the stopped subject when any stopped; the stopped lines first). The design said "one
+>     email of each kind per streak" and nothing about runs.
+>   - **One email per run with the other emails.** A run that sent the recovery email or the
+>     Thunderbird-not-synced email defers this one to the next run, as the presync design's §5.5
+>     does for its own; nothing is marked, so the next due run sends it.
+>   - **Alerts off marks at once**, as the Thunderbird-not-synced email does: turning alerts on
+>     later in the same streak sends nothing for it. The gate is the failure option (`OnFailure`),
+>     as that email's.
+>   - **A failed delivery** sets nothing; each later behind run of the streak tries again until it
+>     is delivered (the existing "fail loud, retry" style). A mark that fails after delivery (the
+>     lock held by another run for 5 seconds, a write refused) is logged, and the next due run may
+>     send a second email of that kind: toward a repeat, never silence.
+>   - **The email names the account by its folder** ("the Thunderbird account kept in the folder
+>     NAME"), never by the name Thunderbird shows (§9.3, MA-1288's fail-private reading; the
+>     notice carries no name), with counts only and no mail folder (no "furthest behind" list).
+> - **The words** (built in `state.TBNoticeEmail` and `alert.tbBehindSubjectAndBody`; the friction
+>   review owes their look). §7's sentences, with the folder wording and the friction review's
+>   menu path; the stopped remedy's "Synchronization & Storage" page is the limited fallback's
+>   wording (all versions; lab row MA-1191 still owes the labels). Subjects: "MailArchive:
+>   Thunderbird is still downloading mail after 3 days — ARCHIVE" and "MailArchive: Thunderbird has
+>   stopped downloading mail — ARCHIVE". The days are whole days between the streak's first and
+>   latest behind runs, never to now.
+> - **`behind_since`** (`status -json`, additive in each `thunderbird_completeness` entry): the
+>   streak's first behind run, only for an account the last backup found behind and whose streak
+>   that record's latest fold extended; never after the record's run, never before
+>   MinPlausibleTime, never from an implausible record.
+> - **R4-01:** `state.TBStreak.Implausible` (a run counter, serial or behind-run count past 2^24,
+>   one backup a minute for 31 years, far below the 2^40 cap where the counter froze; or an entry
+>   whose serial is above the record's) is a damaged record: fresh streak, a log line, a
+>   `tbstreak_unreadable` WARN with its own sentence, the record rewritten.
+> - **R4-02:** every eviction raises `tbstreak_full`, naming the dropped store, in the same WARN as
+>   the stores that found no room. Round 2's test asserting "no WARN" on an eviction is amended to
+>   the lead's call (stricter: one `tbstreak_full` naming the dropped store).
+> - **Not built:** the archive card's own still-downloading and stopped banner (§5, §7's card row
+>   "a one-line banner for behind, still-downloading or stopped"): the card keeps C3's behind line.
+>   A planted streak record (owner-only, so written by another hand) can still overstate the days
+>   or the since-date in an email for a store this run found behind; for the adversarial pass.
+> - **Gates owed (not self-certified):** the **adversarial pass** on the emails and the streak
+>   record's read (the caller's brief), and the **friction review** of the email words (§13's C5
+>   row).
+
 ## 14. Owner questions (each with a recommendation)
 
 - **Q1. How close counts as "caught up"?** Recommend: within 20 messages or 0.2% of the total,
