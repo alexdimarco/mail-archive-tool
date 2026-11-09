@@ -329,3 +329,220 @@ own count at -1 and then read as designed. For cell I, the lab helper first wrot
 click Run now" record into the encrypted archive folder; an encrypted archive keeps no such file, so
 `status` correctly went RED ("now holds other files"). The record was removed and `status` went back
 to GREEN. Neither is a product finding.
+
+## Re-look after the fold rounds (2026-11-08)
+
+Walked 8 November 2026, Windows VM clock 9:32 PM to 9:37 PM, then the Mac at 9:38 PM to 9:40 PM (EST).
+A short re-look: the same process (`../assurance-kit/process/friction-review.md`), judged against the
+proposals above, `docs/ux-contract.md`, §13's two notes of 2026-11-08 ("C3 friction review; fold
+check 3's N1 and N2" and "the account's name on every surface"), and `internal/state/tbwords.go` as
+b8f9229 and a2bd246 left it. Windows judged first.
+
+**Verdict: SHIPPABLE_WITH_NOTES.** Every proposal was applied as written, and the owner's two rulings
+read well on every surface: the email address names the account everywhere (cell O's two Gmail
+accounts are now told apart at a glance), and the fallback is used only where it should be. Two
+findings are medium, both small word changes (Type III, buildable-away, so built before the public
+release): R1, "see below" points the wrong way on `status` and Status & health; R2, the shared
+"Leave Thunderbird open…" line can land between one account's folder line and the next account. Five
+are low. Exact words are below. They are proposals for the lead; this re-look does not self-certify
+them.
+
+### Header
+
+| | |
+|---|---|
+| Reviewed commit | a2bd246, branch `tb-completeness` (worktree pulled, already up to date) |
+| Programs | Built from `git archive a2bd246` into the main checkout's untracked `.claude/fric-c3r/src`: `mailarchive.exe`, `mailarchivew.exe` (`-H=windowsgui`) and the Mac `mailarchive`, from the tip's code unchanged. Lab-only, never in the worktree: the earlier `c3lab` helper (the wizard's own `exportSummary` after a real run, and the wizard's run-job), now with an "encrypted, Run now only" job that writes no file into the archive folder; and `labenc.exe`, a build of the same copy with a lab tag that answers `-encrypt`'s terminal questions from a script, used only to make the throwaway encrypted archive and later to forget its key |
+| Profiles | Made-up Thunderbird-shaped profiles only, under `C:\Users\Public\tb-c3r\<cell>` on the VM and `.claude/fric-c3r/mac/tb` on the Mac (153.6.0). Each account has `mail.server.<key>.name`: `sam.walker@gmail.com`, `sam@fastmail.com`, `sam.work@gmail.com` (the second Gmail), `sam@work.example`; cells P and Q have one account with no name; cell R has two accounts that share the name "Sam Walker". Thunderbird itself was not started |
+| Own settings | `APPDATA` and `LOCALAPPDATA` (Mac: `HOME`) pointed at lab folders; Desktop with `-config C:\Users\Public\c3rlab\cfg\config.json`. At the end: cell B's daily Task Scheduler entry and its launchd twin removed (checked: none left on the VM), the encrypted cell's remembered key forgotten from the VM user's Credential Manager, both Desktops stopped, the Chrome tab closed |
+| Browser and input | Windows: Microsoft Edge in the VM user's session, real clicks and keys. Mac: Chrome (page text) |
+| Evidence | 16 VM screenshots in `.claude/fric-c3r/shots/` (private, not committed); each cell's command-line output, `status`, `status -json` and wizard summary under `C:\Users\Public\c3rlab\results\` and `.claude/fric-c3r/mac/res/` |
+| Cells walked | 19 profiles (A to R and I0) on Windows: the command line, `status`, `status -json` and the wizard's words for 17 plaintext cells; Desktop in Edge for every archive card, Run now on the encrypted archive (390 messages, then none) and on cell Q (two behind, one with no name, Run now only), Recent backups (I, Q), Status & health (I, Q). Mac: the same 17 plaintext cells × the same four, and the Desktop's page (every card, Recent backups and Status & health for L) |
+| Functioning | All cells fully. Exit code 0 for every backup (X1) |
+
+### Were the proposals applied faithfully?
+
+Yes, each one, seen on a real surface:
+
+| Proposal | Seen | Result |
+|---|---|---|
+| M1 / P1, the name (owner ruling) | every cell | "sam.walker@gmail.com" and "sam.work@gmail.com" (O); "sam@work.example" (L); folder words only with no name (P, Q) or a shared name (R) |
+| P2, one remedy after two behind | L, O, Q on the wizard, command line and Run now | applied; see R2 for where it lands |
+| P3, words for each surface | C, Q, I | "Click Run now again…" on Run now; "Run the same command again…" on the command line; "Run the backup again…" in the wizard and `status` |
+| P4, the ≡ path | G, P | applied to every Account Settings remedy |
+| P5, Gmail's path | M | applied (still unverified until lab row MA-1201) |
+| P6, the encrypted count in words | I, Run now twice | "Backed up what Thunderbird has so far: 390 messages added or updated. They are sealed…", then "…: no new messages. Your messages are sealed…". No "(s)" |
+| P7, encrypted Recent backups | I | "OK (3 times, last at 9:36 PM) — backup finished (its counts are sealed)" |
+| P8, next steps | E, F, J, N | each ends with what to do |
+| P9, Gmail floor | D | no more "50 here, at least 40 there"; see R1 |
+| P10, card line for a limited account | G, P | "Thunderbird keeps only part of sam@fastmail.com's mail on this computer (about 170 of 2,300 messages), so the rest is not backed up — see Status & health." |
+| P11, usual folders | A, B, H | "the Spam and Trash folders of sam.walker@gmail.com … so they are"; "the Trash folder of sam@fastmail.com … so it is" |
+| P12, Inbox | B, C, L, Q | "Inbox 300 of 1,200" |
+| L4, "Backup complete." (owner ruling) | A | wizard, command line and `status`'s Last run line |
+
+The Mac said every one of these word for word.
+
+### How the names read
+
+- **The email address reads well.** "Thunderbird has downloaded about 120 of 900 messages in
+  sam.walker@gmail.com so far" is what a person sees in Thunderbird's folder pane, so they know which
+  account it is. In fix-it words it points at what they click: "on sam@fastmail.com's
+  "Synchronization & Storage" page". Cell O's two Gmail accounts, the worst case before, now read
+  as two different lines.
+- **The fallback reads correctly but long.** "the Thunderbird account kept in the folder
+  imap.fastmail.com" is clear, and it is rare: Thunderbird writes a name when an account is made, so
+  only an unusual profile (P, Q) or two accounts with one name (R) reach it. In the limited WARN
+  (cell P) it is said three times in one block of about 480 characters. R4 trims it.
+- **A shared name** (R) falls back to folder words for both accounts, on every surface. Correct.
+
+### Findings
+
+Grade: **medium** = fix before the public release; **low** = the lead's call.
+
+| # | Cell(s) | Finding | Grade | Fix |
+|---|---|---|---|---|
+| R1 | D | "(see below to keep it)" is wrong where the folder's WARN is printed above | medium | P-R1 |
+| R2 | L | the shared "Leave Thunderbird open…" line sits between one account's folder line and the next account | medium | P-R2 |
+| R3 | I (first backup) | "about 0 of 1,200 messages" | low | P-R3 |
+| R4 | P | the fallback said three times in one WARN | low | P-R4 |
+| R5 | C, O, Q | Status & health says "Run the backup again" for a Run-now-only archive, while the Run now note just above says "Click Run now again" | low | P-R5 |
+| R6 | E, F, N | "all of sam@fastmail.com" reads as "all of a person" | low | P-R6 |
+
+- **R1 (medium). "See below" points up on two surfaces.** The Gmail floor sentence ends "…is not
+  kept on this computer (see below to keep it)." In the wizard and on the command line the line that
+  says how to keep All Mail is indeed below. But `status` prints every WARN before the notes, so in
+  `status` and in Desktop Status & health that line is *above* (cell D, Windows and Mac). The
+  person looks down and finds nothing. A direction that is true on one surface and false on another
+  should name the line instead.
+- **R2 (medium). Where the shared line lands.** P2's line is said "after the last of them", that is,
+  after the last behind account's lines, including its not-kept folder line. In cell L (two behind,
+  one caught up) the wizard reads:
+
+  > Thunderbird has downloaded about 120 of 900 messages in sam.walker@gmail.com so far.
+  > Thunderbird has downloaded about 100 of 500 messages in sam@fastmail.com so far. Furthest behind: Inbox 100 of 500.
+  > This folder of sam@fastmail.com is not kept on this computer, … then click Download Now.
+  > Leave Thunderbird open (it downloads mostly while the computer is left alone), then run the backup again to add the rest.
+  > Thunderbird has downloaded everything it lists for sam@work.example (8 messages).
+
+  The shared line reads as the end of the folder instructions, and another account's line follows
+  it. Nothing in it says which accounts it is for. When the behind accounts are the last ones (O, Q,
+  Run now in Q) it reads clearly; it is only in the middle that it is unclear. On a phone, where
+  these are five wrapped paragraphs, the person cannot tell what "the rest" means.
+- **R3 (low).** A brand-new account Thunderbird has not downloaded yet reads "Thunderbird has
+  downloaded about 0 of 1,200 messages in sam@fastmail.com so far. Furthest behind: Inbox 0 of
+  1,200." (the encrypted archive's first backup in this walk). "About 0" is odd, and this is a
+  common first-run case.
+- **R4 (low).** Cell P's WARN names "the Thunderbird account kept in the folder imap.fastmail.com"
+  three times. After the headline has named it, the limit sentence can say "this account's mail";
+  the remedy keeps the full words, since that is how the person finds the account.
+- **R5 (low).** `status` already knows the archive is "Only when I click Run now" (its
+  `manual_backup` note), but it says its behind remedy with the default surface. On the Desktop the
+  Run now note says "Click Run now again…" and Status & health a little further down says "Run the
+  backup again…". Not a contradiction, but two words for one action on one page.
+- **R6 (low).** "MailArchive cannot tell whether Thunderbird has downloaded all of sam@fastmail.com,
+  because…" now that the name is an address. "All of sam@fastmail.com's mail" says what is meant.
+- Noted, no change:
+  - `status` and Status & health keep a full remedy in each behind WARN (L, O, Q: two WARNs with the
+    same two sentences). That is X6 (each WARN names its remedy) and §13 says so; R2 is about the
+    wizard, Run now and the command line only.
+  - No "(s)", no "store", "cache" or "msf" anywhere walked; "IMAP" only inside Gmail's own label.
+  - Status & health's monospace box still hides the remedies below its fold (L5, backlog, seen
+    again in cell Q).
+- Noted, outside these words (pre-existing, for the backlog):
+  - After Run now, the Recent backups card on the same page does not change until the page is
+    reloaded (I, Q). After a reload, the encrypted runs were grouped as "OK (3 times, last at
+    9:36 PM)".
+  - The encrypted archive's Scheduled backup card still says "Not installed." under a Run now note
+    that just reported a backup.
+  - The wizard's summary prints "Newly downloaded this run: 0" a few lines below "Thunderbird has
+    downloaded about 390 of 1,690…". The first counter is MailArchive's (Microsoft 365) and the
+    second is Thunderbird's, but both say "downloaded".
+
+### The ≡ steps on Windows
+
+"in Thunderbird, click the menu button (≡, top right), then Account Settings; on sam@fastmail.com's
+"Synchronization & Storage" page, choose "Synchronize all messages locally regardless of age"" is
+right for Thunderbird on Windows as far as this re-look can tell: the menu bar is hidden by default
+there, the ≡ menu at the right end of the toolbar holds Account Settings, and the left side of
+Account Settings lists each account by its name with "Synchronization & Storage" under it. This
+re-look did **not** see it in a running Thunderbird (none on the VM, on purpose). It rests on C0c's
+re-look (R1), which saw the ≡ path on 153.6.0 on Windows. Lab row MA-1191 still owes the Mac's 159.
+The right-click steps for a folder ("right-click the folder → Properties → Synchronization → tick
+"Select this folder for offline use", then click Download Now") are unchanged and were not
+re-checked.
+
+### Length on a phone
+
+The wizard and Run now lines are each one short paragraph. The longest blocks are in `status` and
+Status & health: cell P's limited WARN at about 480 characters (about 400 with a name, cell G, and
+about 400 after R4), and Gmail's cap note at about 330. Cell O's two behind lines and the shared line
+are about 290 characters together in the wizard. Phone width was not rendered (as before, the
+window would not shrink); this is judged from the strings.
+
+### Proposed words
+
+ACCOUNT is the account's name as these words say it today (`tbName`).
+
+**P-R1.** `tbGmailFloor`, All Mail not kept:
+
+> About 50 messages of ACCOUNT are on this computer. MailArchive cannot tell how many more there are, because Gmail's All Mail folder, which holds all of this account's mail, is not kept on this computer (the line that names [Gmail]/All Mail says how to keep it).
+
+(The folder as `TBNotKeptLine` names it, so the two lines match whatever order a surface prints them in.)
+
+**P-R2.** `TBLines`: with two or more accounts behind, say the shared line once **after every
+account's lines** (before `TBMoreSentence`), and say whom it is for:
+
+> For the 2 accounts still downloading: leave Thunderbird open (it downloads mostly while the computer is left alone), then run the backup again to add the rest.
+
+with the surface's own words as today ("…then click Run now again to add the rest.", "…then run the
+same command again to add the rest."), and with a schedule:
+
+> For the 2 accounts still downloading: leave Thunderbird open (it downloads mostly while the computer is left alone); later backups add the rest.
+
+**P-R3.** When X is 0 (`tbBehind`, `TBCompactSentence`, `TBCardBanner`):
+
+> Thunderbird has not downloaded any of the 1,200 messages in ACCOUNT yet.
+
+and on the card: "Thunderbird is still downloading ACCOUNT: none of its 1,200 messages are on this
+computer yet". "Furthest behind: Inbox 0 of 1,200" can stay.
+
+**P-R4.** `TBLimitLines` and its remedies, when the account has no name: the limit sentence says
+"this account's mail" after the headline has named it; the remedy keeps the folder words:
+
+> Thunderbird is set to keep only the most recent 30 days of this account's mail on this computer, so older mail is not backed up. To back up all of it: in Thunderbird, click the menu button (≡, top right), then Account Settings; on the "Synchronization & Storage" page of the Thunderbird account kept in the folder imap.fastmail.com, choose "Synchronize all messages locally regardless of age".
+
+(With a name, today's words are fine: the name is short.)
+
+**P-R5.** `status` (and so Status & health) says its behind remedy with `TBSurfaceRunNow` when the
+archive's How often is "Only when I click Run now", as its `manual_backup` note already knows:
+
+> …Leave Thunderbird open (it downloads mostly while the computer is left alone). Click Run now again once Thunderbird has downloaded more, to add the rest.
+
+**P-R6.** `tbUnknown`'s opening, with the possessive the words already use (`tbOwn`):
+
+> MailArchive cannot tell whether Thunderbird has downloaded all of sam@fastmail.com's mail, because …
+
+(with no name: "…all of the mail of the Thunderbird account kept in the folder imap.fastmail.com,
+because …").
+
+### What the changes need (for the lead; nothing changed here)
+
+- Tests pin today's words: MA-1181 (state, app, wizard, cmd), MA-1182 (Desktop), MA-1183 (status),
+  MA-1284 (names). Each change test-first under its row, prove-fail on the old words.
+- P-R2 changes where a line goes, not only its words: the MA-1181 test for P2's placement changes
+  with it. P-R5 needs `status` to pass the surface it already knows.
+
+### Not walked in this re-look
+
+- A real Thunderbird (on purpose), so the ≡ path, "Synchronization & Storage" and Download Now
+  were not seen on screen here.
+- The wizard's dialog itself (its words were taken from the wizard's own `exportSummary` over a
+  real run, as before) and phone width.
+- The alert email (unchanged, §9.3).
+- Reasons with no cell (as listed in §4 above); their words were read in `tbwords.go`.
+
+Two mistakes of my own, kept here. The Mac link shim was first written without its execute bit, so
+the first Mac Desktop start handed its one-time link to the real `osascript`, which may have
+opened it in the Mac's default browser. That Desktop was stopped at once (so the link no longer
+works), and started again with the shim fixed. On the VM, `forget-key` refused to run without a terminal (correct: it is the person's
+own action), so the lab-only build answered it; the key is forgotten.
