@@ -1,6 +1,7 @@
 package backupalert
 
 import (
+	"fmt"
 	"log"
 	"os"
 	"time"
@@ -39,7 +40,12 @@ var markTBSent = app.MarkTBNoticesSent
 //     keeps it) and nothing is marked;
 //   - never for an encrypted archive, even if handed a notice;
 //   - never for a notice whose email the archive's record already marks sent (the C5 pass's
-//     SPAM-01 second guard): a notice handed again, or a run racing the mark, sends nothing.
+//     SPAM-01 second guard): a notice handed again, or a run racing the mark, sends nothing;
+//   - at most state.AlertSendTries (5) tries per streak and kind (the C5 round-2 pass's SPAM-R2-A,
+//     the lead's call of 2026-11-09): each failed send is counted in the record beside the sent
+//     flag (app.MarkTBNoticesFailed); a notice at the cap is not tried, and every due run that holds
+//     one, from the one with the 5th failure on, adds the alert_send_failed WARN to the last-run
+//     record (sendGivenUp). A failure never counts as sent.
 //
 // An email the mail server accepted counts as sent even when the goodbye after it failed (send,
 // SPAM-01). The caller calls it only for a scheduled run that did not fail. Best effort: nothing
@@ -48,18 +54,30 @@ func ReportTBBehind(settingsPath string, store graphconfig.SecretStore, out stri
 	if len(notices) == 0 || app.ArchiveEncrypted(out) {
 		return false
 	}
-	if notices = unsentTBNotices(out, notices); len(notices) == 0 {
+	s, rerr := state.ReadTBStreak(out)
+	if notices = unsentTBNotices(s, rerr, notices); len(notices) == 0 {
 		return false
+	}
+	cfg := LoadConfig(settingsPath)
+	want := cfg.ShouldSend(ResultTBBehind)
+	if want {
+		var spent []state.TBNotice
+		if notices, spent = triedTBNotices(s, rerr, notices); len(spent) > 0 {
+			sendGivenUp(out, "the Thunderbird download email", logger)
+		}
+		if len(notices) == 0 {
+			return false
+		}
 	}
 	if deferred {
 		logf(logger, "the Thunderbird still downloading email waits for the next backup: this one already sent an email")
 		return false
 	}
 	sent := false
-	cfg := LoadConfig(settingsPath)
-	if cfg.ShouldSend(ResultTBBehind) {
+	if want {
 		if !deliverTBBehind(cfg, store, out, notices, logger) {
-			return false // not delivered: the next due run tries again
+			tbSendFailed(out, notices, logger)
+			return false // not delivered: the next due run tries again, up to the cap
 		}
 		sent = true
 	}
@@ -69,10 +87,9 @@ func ReportTBBehind(settingsPath string, store graphconfig.SecretStore, out stri
 	return sent
 }
 
-// unsentTBNotices is notices less those whose email the archive's streak record already marks
-// sent. A record that cannot be read keeps them all: toward a repeat, never silence.
-func unsentTBNotices(out string, notices []state.TBNotice) []state.TBNotice {
-	s, err := state.ReadTBStreak(out)
+// unsentTBNotices is notices less those whose email the archive's streak record s already marks
+// sent. A record that could not be read (err) keeps them all: toward a repeat, never silence.
+func unsentTBNotices(s state.TBStreak, err error, notices []state.TBNotice) []state.TBNotice {
 	if err != nil {
 		return notices
 	}
@@ -83,6 +100,56 @@ func unsentTBNotices(out string, notices []state.TBNotice) []state.TBNotice {
 		}
 	}
 	return keep
+}
+
+// triedTBNotices splits notices into those still to try and those whose sends the record s counts
+// as failed state.AlertSendTries times. A record that could not be read (err) tries them all.
+func triedTBNotices(s state.TBStreak, err error, notices []state.TBNotice) (try, spent []state.TBNotice) {
+	for _, n := range notices {
+		if err == nil && s.Tries(n) >= state.AlertSendTries {
+			spent = append(spent, n)
+		} else {
+			try = append(try, n)
+		}
+	}
+	return try, spent
+}
+
+// tbSendFailed counts the failed send of notices in the streak record and, when that was the last
+// try for any of them, gives it up (sendGivenUp).
+func tbSendFailed(out string, notices []state.TBNotice, logger *log.Logger) {
+	if err := markTBFailed(out, notices); err != nil {
+		logf(logger, "could not record that the Thunderbird download email failed (%v); the next backup tries it again", err)
+		return
+	}
+	s, err := state.ReadTBStreak(out)
+	if err != nil {
+		return
+	}
+	if _, spent := triedTBNotices(s, nil, notices); len(spent) > 0 {
+		sendGivenUp(out, "the Thunderbird download email", logger)
+	}
+}
+
+// markTBFailed counts a failed send in the archive's streak record; a var so a test sees a refusal.
+var markTBFailed = app.MarkTBNoticesFailed
+
+// SendFailedCode is the WARN an email about Thunderbird given up after state.AlertSendTries failed
+// sends leaves in the last-run record (SPAM-R2-A); `status` and Status & health show it.
+const SendFailedCode = "alert_send_failed"
+
+// sendFailedMessage is SendFailedCode's sentence (the lead's words of 2026-11-09).
+func sendFailedMessage() string {
+	return fmt.Sprintf("MailArchive could not send its email about Thunderbird (%d tries). Check the email settings in MailArchive Desktop's Settings, then use Send test email.", state.AlertSendTries)
+}
+
+// sendGivenUp logs that what (an email about Thunderbird) is no longer tried and adds the
+// alert_send_failed WARN to the archive's last-run record, once per run whatever the email.
+func sendGivenUp(out, what string, logger *log.Logger) {
+	logf(logger, "%s could not be sent %d times, so no more are tried for this streak; check the email settings in MailArchive Desktop's Settings, then use Send test email", what, state.AlertSendTries)
+	if err := app.RecordRunWarning(out, state.RunWarning{Code: SendFailedCode, Message: sendFailedMessage()}); err != nil {
+		logf(logger, "could not add the warning that %s was given up to the last-run record (%v)", what, err)
+	}
 }
 
 // ReportTBBehindDefault is ReportTBBehind with the default Desktop settings path and OS secret

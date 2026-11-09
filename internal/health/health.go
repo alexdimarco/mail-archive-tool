@@ -738,11 +738,14 @@ func assessKeyless(r *Report, in Input, now time.Time) {
 			switch w.Code {
 			case "credential_in_archive", "config_in_archive":
 				r.warn(w.Code, w.Message)
-			case "tbstreak_unreadable", "tbstreak_full":
+			case "tbstreak_unreadable", "tbstreak_full", "tbstreak_clock_behind", "alert_send_failed":
 				// The Thunderbird completeness check's behind-streak record could not be used
 				// (the C2 pass's ADV-C2-05 and -10), or was too full to start counting a behind
-				// account (round 3's R3-04): the recorded Message names the file and what was
-				// done. A WARN, so the notice it feeds is never silently lost.
+				// account (round 3's R3-04), or the backup's clock was behind it and it was not
+				// counted (the C5 round-2 pass's CLOCK-R2-A); or an email about Thunderbird was
+				// given up after 5 failed sends (SPAM-R2-A, added by the alert layer after the run).
+				// The recorded Message says what was done and what to do. A WARN, so the notice it
+				// feeds is never silently lost.
 				r.warn(w.Code, w.Message)
 			case "presync_cannot_start", "presync_no_desktop_session", "presync_did_not_start",
 				"presync_identity_unavailable", "presync_not_quiet", "presync_exited_early",
@@ -1918,9 +1921,12 @@ func Gather(out, nameOverride string) Input {
 	in.LastVerify, in.LastVerifyState, in.LastVerifyErr = state.ReadLastVerify(out)
 	if in.LastRunState == state.LastRunPresent && !in.LastRun.Encrypted && len(in.LastRun.Thunderbird) > 0 {
 		// A damaged record (counts or dates no backup could have written, R4-01 and the C5
-		// pass's PLANT-01) is never read: behind_since never shows a planted date.
-		if s, err := state.ReadTBStreak(out); err == nil && !s.ImplausibleAt(time.Now()) {
-			in.TBStreak = s
+		// pass's PLANT-01), or one holding a date more than a day after now (a clock behind, the
+		// round-2 pass's CLOCK-R2-A), is never read: behind_since never shows a planted date.
+		if s, err := state.ReadTBStreak(out); err == nil && !s.Damaged() {
+			if _, ahead := s.AheadOf(time.Now()); !ahead {
+				in.TBStreak = s
+			}
 		}
 	}
 

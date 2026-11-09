@@ -127,12 +127,13 @@ func TestStoppedNeedsThreeDaysAndThreeBackupsWithoutProgress(t *testing.T) {
 
 // covers: MA-1281
 // PLANT-01 (the lead's call): the damaged-record check covers the record's dates too. Any date
-// more than a day after now, any date before 2020-01-01, or a first time after a last one (the
-// streak's first behind after its latest, its progress before its first or after its latest), and
-// one behind run holding two different times, are damaged: the run starts the streak fresh and
-// WARNs (as R4-01), so the email and behind_since never show such a date. A run whose own clock is
-// implausible calls no record damaged by its dates. Positive twin first: a record of real folds,
-// read back, is not damaged; nor is a date less than a day ahead.
+// before 2020-01-01, or a first time after a last one (the streak's first behind after its latest,
+// its progress before its first or after its latest), and one behind run holding two different
+// times, are damaged: the run starts the streak fresh and WARNs (as R4-01), so the email and
+// behind_since never show such a date. Amended 2026-11-09 (the C5 round-2 pass's CLOCK-R2-A, the
+// lead's call): a date more than a day after the run's clock is no longer damage; it is a clock
+// behind (AheadOf, TestARecordAheadOfTheClockIsNotDamaged), so those plants moved there. Positive
+// twin first: a record of real folds, read back, is not damaged, at any clock.
 func TestAPlantedDateIsDamaged(t *testing.T) {
 	now := time.Date(2026, 11, 9, 12, 0, 0, 0, time.UTC)
 	day := 24 * time.Hour
@@ -143,18 +144,8 @@ func TestAPlantedDateIsDamaged(t *testing.T) {
 		t.Fatal(err)
 	}
 	good, err := ReadTBStreak(out)
-	if err != nil || good.ImplausibleAt(now) {
-		t.Fatalf("positive twin: a record of real folds: %v damaged %v", err, good.ImplausibleAt(now))
-	}
-	if good.ImplausibleAt(time.Date(2001, 1, 1, 0, 0, 0, 0, time.UTC)) {
-		t.Error("a run with an implausible clock called a real record damaged")
-	}
-	// The record's latest date is now-1h: 23 hours ahead of a clock is not damaged; 25 hours is.
-	if good.ImplausibleAt(now.Add(-time.Hour - 23*time.Hour)) {
-		t.Error("a date less than a day ahead is damaged")
-	}
-	if !good.ImplausibleAt(now.Add(-time.Hour - 25*time.Hour)) {
-		t.Error("a date more than a day ahead is not damaged")
+	if err != nil || good.Damaged() {
+		t.Fatalf("positive twin: a record of real folds: %v damaged %v", err, good.Damaged())
 	}
 	f := func(t time.Time) string { return t.Format(time.RFC3339) }
 	entry := func(first, last, grew time.Time, runs, noProgress int) string {
@@ -162,25 +153,33 @@ func TestAPlantedDateIsDamaged(t *testing.T) {
 			itoa(runs) + `,"no_progress_runs":` + itoa(noProgress) + `,"first_behind":"` + f(first) + `","last_behind":"` + f(last) + `","last_grew":"` + f(grew) + `"}]}`
 	}
 	a, b := now.Add(-3*day), now.Add(-time.Hour)
-	if r := mustReadPlant(t, out, entry(a, b, a, 2, 1)); r.ImplausibleAt(now) {
+	if r := mustReadPlant(t, out, entry(a, b, a, 2, 0)); r.Damaged() {
 		t.Fatalf("positive twin: a plausible planted shape is damaged: %+v", r)
 	}
 	for name, plant := range map[string]string{
-		"a first time in the future":           entry(now.Add(2*day), now.Add(2*day), now.Add(2*day), 2, 0),
-		"a progress time in 2099":              entry(a, b, time.Date(2099, 1, 1, 0, 0, 0, 0, time.UTC), 2, 0),
-		"a latest time before 2020":            entry(time.Date(2019, 6, 1, 0, 0, 0, 0, time.UTC), time.Date(2019, 12, 31, 0, 0, 0, 0, time.UTC), time.Date(2019, 6, 1, 0, 0, 0, 0, time.UTC), 2, 0),
-		"the first after the latest":           entry(b, a, b, 2, 0),
-		"progress before the first":            entry(b, b, a, 2, 0),
-		"progress after the latest":            entry(a, a.Add(day), b, 2, 0),
-		"one behind run with two times":        entry(time.Date(2024, 1, 1, 0, 0, 0, 0, time.UTC), b, b, 1, 0),
-		"more stuck backups than backups":      entry(a, b, a, 2, 3),
-		"the record's run in the future":       `{"version":1,"serial":1,"run":2,"last_run_at":"` + f(now.Add(3*day)) + `","accounts":[{"store":"k","serial":1,"runs":1}]}`,
-		"the record's run alone in the future": `{"version":1,"serial":1,"run":2,"last_run_at":"` + f(now.Add(3*day)) + `"}`,
+		"a progress time in 2099 (after the latest)": entry(a, b, time.Date(2099, 1, 1, 0, 0, 0, 0, time.UTC), 2, 0),
+		"a latest time before 2020":                  entry(time.Date(2019, 6, 1, 0, 0, 0, 0, time.UTC), time.Date(2019, 12, 31, 0, 0, 0, 0, time.UTC), time.Date(2019, 6, 1, 0, 0, 0, 0, time.UTC), 2, 0),
+		"the first after the latest":                 entry(b, a, b, 2, 0),
+		"progress before the first":                  entry(b, b, a, 2, 0),
+		"progress after the latest":                  entry(a, a.Add(day), b, 2, 0),
+		"one behind run with two times":              entry(time.Date(2024, 1, 1, 0, 0, 0, 0, time.UTC), b, b, 1, 0),
+		"more stuck backups than backups":            entry(a, b, a, 2, 3),
 		"the first after the latest, no progress time": `{"version":1,"serial":1,"run":2,"last_run_at":"` + f(now.Add(-time.Hour)) + `","accounts":[{"store":"k","serial":1,"runs":2,"first_behind":"` +
 			f(b) + `","last_behind":"` + f(a) + `"}]}`,
 	} {
-		if r := mustReadPlant(t, out, plant); !r.ImplausibleAt(now) {
+		if r := mustReadPlant(t, out, plant); !r.Damaged() {
 			t.Errorf("%s: not damaged: %+v", name, r)
+		}
+	}
+	// Moved by CLOCK-R2-A: dates ahead of the clock, in order, are a clock behind, not damage.
+	for name, plant := range map[string]string{
+		"a first time in the future":           entry(now.Add(2*day), now.Add(2*day), now.Add(2*day), 2, 0),
+		"the record's run in the future":       `{"version":1,"serial":1,"run":2,"last_run_at":"` + f(now.Add(3*day)) + `","accounts":[{"store":"k","serial":1,"runs":1}]}`,
+		"the record's run alone in the future": `{"version":1,"serial":1,"run":2,"last_run_at":"` + f(now.Add(3*day)) + `"}`,
+	} {
+		r := mustReadPlant(t, out, plant)
+		if _, ahead := r.AheadOf(now); r.Damaged() || !ahead {
+			t.Errorf("%s: damaged %v, ahead %v; want a clock behind", name, r.Damaged(), ahead)
 		}
 	}
 }

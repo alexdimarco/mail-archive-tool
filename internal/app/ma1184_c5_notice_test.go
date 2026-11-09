@@ -237,7 +237,7 @@ func TestR4_01_AnImplausibleCounterStartsFresh(t *testing.T) {
 	var buf bytes.Buffer
 	ws, _ = foldTBStreak(Options{Out: out}, []tbcomplete.Result{c5Behind("real", 1)}, false, true, now, log.New(&buf, "", 0))
 	s := mustStreak(t, out)
-	if _, ok := s.Account("real"); !ok || len(s.Accounts) != 1 || s.Run != 1 || s.ImplausibleAt(now) || s.RecordID == "PlantedRecordId01" {
+	if _, ok := s.Account("real"); !ok || len(s.Accounts) != 1 || s.Run != 1 || s.Damaged() || s.RecordID == "PlantedRecordId01" {
 		t.Errorf("the damaged record was not started fresh: run %d, %d entries, id %q", s.Run, len(s.Accounts), s.RecordID)
 	}
 	if codes(ws) != "tbstreak_unreadable" || !strings.Contains(ws[0].Message, state.TBStreakName) || !strings.Contains(buf.String(), "could not have been written by a backup") {

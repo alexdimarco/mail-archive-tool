@@ -3,6 +3,8 @@ package app
 import (
 	"bytes"
 	"log"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
@@ -147,7 +149,7 @@ func TestAttackC5_PlantedTimesShapeTheEmail(t *testing.T) {
 	}
 	damaged := func(name string, ws []state.RunWarning, logged string) {
 		t.Helper()
-		if len(ws) != 1 || ws[0].Code != tbStreakUnreadable || !strings.Contains(ws[0].Message, "holds counts or dates no backup") || !strings.Contains(logged, "counts or dates that could not have been written by a backup") {
+		if len(ws) != 1 || ws[0].Code != tbStreakUnreadable || !strings.Contains(ws[0].Message, "holds counts or dates that do not fit together") || !strings.Contains(logged, "counts or dates that could not have been written by a backup") {
 			t.Errorf("%s: no damaged-record WARN: %+v, log %q", name, ws, logged)
 		}
 	}
@@ -221,7 +223,11 @@ func TestAttackC5_PlantedTimesShapeTheEmail(t *testing.T) {
 		t.Errorf("c: the stopped email first came on day %d, want day 3", firstStopped)
 	}
 
-	// (d) Every date 10 days ahead, all in order: only "in the future" says it is damaged.
+	// (d) Every date 10 days ahead, all in order. Amended 2026-11-09 (the C5 round-2 pass's
+	// CLOCK-R2-A, the lead's call): no longer damaged, but a clock behind. The run records nothing
+	// (the record's bytes unchanged), sends nothing, and leaves the tbstreak_clock_behind WARN. This
+	// is the documented residual: a planted date ahead, in order, freezes the count (with that WARN at
+	// every backup) until the clock passes it; it needs write access to the archive folder.
 	out4 := tmpDir(t)
 	ahead := aT0.Add(10 * aDay)
 	s4 := state.TBStreak{}.StartRun(ahead)
@@ -232,10 +238,11 @@ func TestAttackC5_PlantedTimesShapeTheEmail(t *testing.T) {
 	if err := state.WriteTBStreak(out4, s4.Named()); err != nil {
 		t.Fatal(err)
 	}
+	before, _ := os.ReadFile(filepath.Join(out4, state.TBStreakName))
 	ws, n, logged = fold(out4, 500, aT0)
-	damaged("d", ws, logged)
-	if a, _ := mustStreak(t, out4).Account("k"); n != nil || a.Runs != 1 || !a.FirstBehind.Equal(aT0) {
-		t.Errorf("d: not started fresh: %+v, notices %+v", a, n)
+	after, _ := os.ReadFile(filepath.Join(out4, state.TBStreakName))
+	if len(ws) != 1 || ws[0].Code != tbStreakClockBehind || n != nil || string(after) != string(before) || !strings.Contains(logged, "clock read") {
+		t.Errorf("d: every date 10 days ahead: WARNs %+v, notices %+v, record changed %v, log %q", ws, n, string(after) != string(before), logged)
 	}
 }
 

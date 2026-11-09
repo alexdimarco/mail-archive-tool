@@ -478,10 +478,14 @@ func previousThunderbird(opts Options) []state.TBAccount {
 //   - a record a later MailArchive wrote (state.ErrTBStreakNewer) is never downgraded: nothing
 //     moves and nothing is written;
 //   - any other refusal (a link, a pipe, too large, a read error) leaves the record as it is;
-//   - a record no run of this archive could have written (state.TBStreak.ImplausibleAt: a run
-//     counter at its cap, the C2 pass round 4's R4-01; a date in the future, before 2020 or out of
-//     order, the C5 pass's PLANT-01; the lead's calls) is damaged: the streak starts fresh from
-//     this run, as for a record other users can read, and is rewritten.
+//   - a record no run of this archive could have written (state.TBStreak.Damaged: a run counter at
+//     its cap, the C2 pass round 4's R4-01; a date before 2020 or out of order, the C5 pass's
+//     PLANT-01; a pair of fields no backup writes apart, the round-2 pass's PLANT-R2; the lead's
+//     calls) is damaged: the streak starts fresh from this run, as for a record other users can
+//     read, and is rewritten;
+//   - a record holding a date more than a day after this run's clock (state.TBStreak.AheadOf, the
+//     round-2 pass's CLOCK-R2-A) means this run's clock is behind: nothing is recorded or written,
+//     no email is due, and the run gets the tbstreak_clock_behind WARN.
 //
 // A full record never drops a streak this run found behind (the C2 pass round 3's R3-04): a new
 // behind store that finds no room is logged by name and the run gets a WARN for the last-run
@@ -515,11 +519,18 @@ func foldTBStreak(opts Options, results []tbcomplete.Result, encrypted, ok bool,
 	var warns []state.RunWarning
 	prev, err := readTBStreak(opts.Out)
 	switch {
-	case err == nil && prev.ImplausibleAt(now):
+	case err == nil && prev.Damaged():
 		logf("warning: MailArchive's record of how long Thunderbird has been downloading (%s) holds counts or dates that could not have been written by a backup of this archive, so it was not trusted; it starts again from this backup", path)
 		warns = append(warns, state.RunWarning{Code: tbStreakUnreadable, Message: tbStreakDamagedMessage(path)})
 		prev = state.TBStreak{}
 	case err == nil:
+		// A clock more than a day behind the record (CLOCK-R2-A, the lead's call of 2026-11-09): this
+		// backup is not counted at all. Nothing is written, so the streak and its sent flags stay as
+		// the last backup with a right clock left them, and no email is due from this run.
+		if latest, ahead := prev.AheadOf(now); ahead {
+			logf("warning: this backup's clock read %s, more than a day before a previous backup of this archive (%s), so it was not counted in MailArchive's record of how long Thunderbird has been downloading (%s); check this computer's date and time", now.Format(time.RFC3339), latest.Format(time.RFC3339), path)
+			return []state.RunWarning{{Code: tbStreakClockBehind, Message: tbStreakClockBehindMessage(now)}}, nil
+		}
 	case errors.Is(err, util.ErrReadableByOthers):
 		logf("warning: MailArchive's record of how long Thunderbird has been downloading (%s) could be read by other users, so it was not trusted; it starts again from this backup and is now readable only by you", path)
 		warns = append(warns, state.RunWarning{Code: tbStreakUnreadable, Message: tbStreakOthersMessage(path)})
@@ -626,6 +637,12 @@ var tbMarkWait = 5 * time.Second
 // encrypted archive, which keeps no streak (O1). An error leaves the record as it was: the next
 // behind run finds the streak due again and its email is tried again.
 func MarkTBNoticesSent(out string, notices []state.TBNotice) error {
+	return markTBNotices(out, notices, state.TBStreak.MarkSent)
+}
+
+// markTBNotices applies mark (MarkSent or MarkFailed) to each notice's streak in the archive's
+// behind-streak record, under the archive's lock, and writes the record when any streak was found.
+func markTBNotices(out string, notices []state.TBNotice, mark func(state.TBStreak, string, int, bool) (state.TBStreak, bool)) error {
 	if len(notices) == 0 {
 		return nil
 	}
@@ -647,7 +664,7 @@ func MarkTBNoticesSent(out string, notices []state.TBNotice) error {
 			continue
 		}
 		var ok bool
-		if s, ok = s.MarkSent(n.Store, n.Serial, n.Stopped); ok {
+		if s, ok = mark(s, n.Store, n.Serial, n.Stopped); ok {
 			marked = true
 		}
 	}
@@ -655,6 +672,61 @@ func MarkTBNoticesSent(out string, notices []state.TBNotice) error {
 		return nil
 	}
 	return writeTBStreak(out, s)
+}
+
+// MarkTBNoticesFailed counts, in the archive's behind-streak record, one failed send of each
+// notice's email (its record, store, serial and kind), up to state.AlertSendTries (the C5 round-2
+// pass's SPAM-R2-A, the lead's call of 2026-11-09). It never marks an email sent. Under the
+// archive's lock, as MarkTBNoticesSent; an error leaves the record as it was, so that send is not
+// counted and the email is tried again.
+func MarkTBNoticesFailed(out string, notices []state.TBNotice) error {
+	return markTBNotices(out, notices, state.TBStreak.MarkFailed)
+}
+
+// RecordRunWarning adds w to the archive's last-run record, the one `status` and Status & health
+// read, for a WARN found after the run ended (the alert layer's alert_send_failed, SPAM-R2-A). Once
+// per code: a record already holding w.Code is left as it is. Under the archive's lock, waiting
+// briefly (tbMarkWait). Refused, and nothing written, when there is no readable record, when a run
+// is writing it (status running), and for an encrypted archive (its record keeps no warnings, by
+// its allow-list). Each run writes its record afresh, so the WARN shows for as long as each run's
+// alert step adds it again.
+func RecordRunWarning(out string, w state.RunWarning) error {
+	if ArchiveEncrypted(out) {
+		return errors.New("an encrypted archive's last-run record keeps no warnings")
+	}
+	lock, err := lockfile.AcquireWait(filepath.Join(out, lockfile.Name), "export", tbMarkWait)
+	if err != nil {
+		return err
+	}
+	defer lock.Release()
+	lr, st, err := state.ReadLastRun(out)
+	switch {
+	case err != nil:
+		return err
+	case st != state.LastRunPresent:
+		return errors.New("no last-run record to add the warning to")
+	case lr.Encrypted:
+		return errors.New("an encrypted archive's last-run record keeps no warnings")
+	case lr.Status == state.RunRunning:
+		return errors.New("a run is writing the last-run record")
+	}
+	for _, have := range lr.Warnings {
+		if have.Code == w.Code {
+			return nil
+		}
+	}
+	lr.Warnings = append(lr.Warnings, w)
+	return state.WriteLastRun(out, lr)
+}
+
+// tbStreakClockBehind is the WARN of a backup whose clock was more than a day behind the
+// behind-streak record (CLOCK-R2-A): it was not counted.
+const tbStreakClockBehind = "tbstreak_clock_behind"
+
+// tbStreakClockBehindMessage is tbstreak_clock_behind's sentence (the lead's words of 2026-11-09):
+// the date this backup's clock read, in local time, with its year (the year is often what is wrong).
+func tbStreakClockBehindMessage(now time.Time) string {
+	return "This backup's clock read " + now.Local().Format("Jan 2, 2006") + ", earlier than a previous backup of this archive, so MailArchive did not count it toward how long Thunderbird has been downloading. Check this computer's date and time."
 }
 
 // The WARN codes of the behind-streak record: one the run could not use, and one too full to
@@ -677,9 +749,11 @@ func tbStreakNewerMessage(path string) string {
 }
 
 // tbStreakDamagedMessage is tbstreak_unreadable's sentence for a record no backup of this archive
-// could have written (R4-01): started again, like a record others could read.
+// could have written (R4-01): started again, like a record others could read. The C5 round-2 pass's
+// WARN-R2 (the lead's words of 2026-11-09): no clock in it (a clock behind is
+// tbstreak_clock_behind's), and no "Nothing is needed".
 func tbStreakDamagedMessage(path string) string {
-	return "MailArchive did not trust its record of how long Thunderbird has been downloading (" + path + "), because it holds counts or dates no backup of this archive could have written (a computer clock that was set wrong can cause the dates), so it started that count again at the last backup. Nothing is needed. If this shows again and the computer's clock is right, the file is being changed by something other than MailArchive."
+	return "MailArchive did not trust its record of how long Thunderbird has been downloading (" + path + "), because it holds counts or dates that do not fit together, so it started that count again at the last backup. If this shows after every backup, something other than MailArchive is changing that file."
 }
 
 func tbStreakOtherMessage(path string) string {

@@ -1759,6 +1759,39 @@ plaintext archives; encrypted archives use §9.2.
 >   (`TestTheScheduledRunSendsTheDownloadEmailsOncePerStreak`) passes through this case. Closing that needs a rule about gaps between backups (for example, a gap longer
 >   than the window restarts it), which would hold back a daily or weekly schedule whose backups
 >   drift. Not built; a call for the lead.
+>
+> **Amended 2026-11-09 [C5 pass round 2: CLOCK-R2-A, WARN-R2, PLANT-R2, SPAM-R2-A] (the lead's
+> calls on `docs/review-thunderbird-completeness-c5-adversarial-r2.md`):** PLANT-01's "a date more
+> than a day ahead is damaged" threw away the sent flags whenever a clock was behind, so a dead
+> clock battery sent the still-downloading email at every cold start ("610 days").
+>
+> - **A clock behind is not counted (CLOCK-R2-A, MA-1290).** A backup whose clock is more than a
+>   day earlier than any date in the record records nothing: no reset, the flags kept, no email
+>   from that run. It logs one line and leaves the `tbstreak_clock_behind` WARN: "This backup's
+>   clock read DATE, earlier than a previous backup of this archive, so MailArchive did not count it
+>   toward how long Thunderbird has been downloading. Check this computer's date and time."
+> - **Why a date ahead is no longer damage.** A record a day or more ahead of the clock cannot be
+>   told from a clock a day or more behind, and the clock behind is the real case. The cost, a
+>   documented residual: a planted date ahead (in order; it needs write access to the archive
+>   folder) freezes the count until the clock passes it, with the WARN at every backup. A clock
+>   that once ran more than a day ahead does the same, and its WARN then names the right date.
+> - **A month-long gap restarts the streak's times** (serial and flags kept), as a clock that went
+>   back does: a streak whose first backup read a firmware date never says "still going after 610
+>   days". The pass's dead battery now sends one email over 6 cold starts.
+> - **Damaged is only what is impossible in the record itself** (MA-1281): counters, dates before
+>   2020, times out of order, and now pairs no backup writes apart (PLANT-R2): `first_no_progress`
+>   without `no_progress_runs` or the reverse, `first_no_progress` without `last_grew`, as many
+>   backups without progress as backups, `stopped_sent` without `still_downloading_sent`, a
+>   failed-send count past 5. Its WARN no longer mentions clocks or says "Nothing is needed"
+>   (WARN-R2): "…because it holds counts or dates that do not fit together, so it started that count
+>   again at the last backup. If this shows after every backup, something other than MailArchive
+>   is changing that file."
+> - **At most 5 tries per email per streak (SPAM-R2-A, MA-1291).** Failed sends are counted beside
+>   each sent flag (`still_downloading_tries`, `stopped_tries`); at 5 the email is not tried again
+>   and every due run adds `alert_send_failed` to the last-run record: "MailArchive could not send
+>   its email about Thunderbird (5 tries). Check the email settings in MailArchive Desktop's
+>   Settings, then use Send test email." The shipped sync email has the same cap
+>   (design-presync-attended §5.5's amendment).
 
 ## 6. Folders not kept on this computer
 
@@ -3187,6 +3220,14 @@ C4 must land with or before C3 if encrypted archives get any words beyond today'
 >   older alert emails' subjects keep the full path (L1).
 > - **Still owed by lab row MA-1191:** that "Server Settings" shows the folder at the bottom, and
 >   that Thunderbird 160 keeps the "Synchronization & Storage" page name.
+
+> **Fixed 2026-11-09 [C5 round-2 fix] (the lead's calls on the round-2 confirm, which was NOT
+> CLEAN: 1 MEDIUM, 3 LOW).** CLOCK-R2-A (MA-1290 new), WARN-R2 and PLANT-R2 (MA-1281 amended),
+> SPAM-R2-A (MA-1291 new; also the shipped sync email): §5's amendment of the same date.
+> - **Gates owed (not self-certified):** a short **adversarial confirm** of this round, and the
+>   two new WARNs' words (`tbstreak_clock_behind`, `alert_send_failed`) and the damaged WARN's new
+>   words go to the **friction review** (the round-2 pass asked for it: CLOCK-R2-A changes when the
+>   WARN shows and what it says).
 
 ## 14. Owner questions (each with a recommendation)
 

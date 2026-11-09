@@ -92,13 +92,12 @@ func TestAnImplausibleStreakRecordIsSeen(t *testing.T) {
 		t.Fatal(err)
 	}
 	got, err := ReadTBStreak(out)
-	now := t0.Add(2 * time.Hour)
-	if err != nil || got.ImplausibleAt(now) {
-		t.Fatalf("positive twin: a record of real folds: %v implausible %v", err, got.ImplausibleAt(now))
+	if err != nil || got.Damaged() {
+		t.Fatalf("positive twin: a record of real folds: %v implausible %v", err, got.Damaged())
 	}
 	edge := got
 	edge.Run, edge.Serial = tbStreakPlausibleMax, tbStreakPlausibleMax
-	if edge.ImplausibleAt(now) {
+	if edge.Damaged() {
 		t.Errorf("a counter at the bound itself is implausible")
 	}
 	for name, plant := range map[string]string{
@@ -112,8 +111,8 @@ func TestAnImplausibleStreakRecordIsSeen(t *testing.T) {
 			t.Fatal(err)
 		}
 		r, err := ReadTBStreak(out)
-		if err != nil || !r.ImplausibleAt(now) {
-			t.Errorf("%s: read %v, implausible %v", name, err, r.ImplausibleAt(now))
+		if err != nil || !r.Damaged() {
+			t.Errorf("%s: read %v, implausible %v", name, err, r.Damaged())
 		}
 	}
 }

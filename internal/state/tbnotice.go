@@ -69,14 +69,11 @@ func (s TBStreak) MarkSent(store string, serial int, stopped bool) (TBStreak, bo
 // such a notice before sending, so a notice handed again, or a run racing the mark, never sends
 // the email a second time.
 func (s TBStreak) Sent(n TBNotice) bool {
-	i := s.account(n.Store)
-	if i < 0 || n.RecordID == "" || n.RecordID != s.RecordID || s.Accounts[i].Serial != n.Serial {
-		return false
-	}
+	a, ok := s.entry(n)
 	if n.Stopped {
-		return s.Accounts[i].StoppedSent
+		return ok && a.StoppedSent
 	}
-	return s.Accounts[i].StillSent
+	return ok && a.StillSent
 }
 
 // tbStreakPlausibleMax bounds the run counter, the serial and an entry's behind runs a record may
@@ -89,34 +86,49 @@ const tbStreakPlausibleMax = 1 << 24
 // MailArchive's completeness check did not exist before it, so an earlier date was planted.
 var tbStreakEarliest = time.Date(2020, 1, 1, 0, 0, 0, 0, time.UTC)
 
-// tbStreakAhead is how far after the run's own clock a record's date may be before it is damaged
-// (PLANT-01): a day, so a time zone or a small clock correction is never called damage.
+// tbStreakAhead is how far after the run's own clock a record's date may be before the run's clock
+// is called behind (PLANT-01, then the C5 round-2 pass's CLOCK-R2-A): a day, so a time zone or a
+// small clock correction is neither.
 const tbStreakAhead = 24 * time.Hour
 
-// ImplausibleAt reports a record no run of this archive could have written, read at now (R4-01 and
-// PLANT-01, the lead's calls). Counters: a run counter, serial or behind-run count past
-// tbStreakPlausibleMax, an entry whose streak number is above the record's, or more behind runs
-// without progress than behind runs. Dates: any date before 2020-01-01; any date more than a day
-// after now (only when now itself is plausible, so a run whose clock is wrong never calls a real
-// record damaged); a first time after a last one (the streak's first behind after its latest, its
-// latest progress before its first or after its latest, its first backup without progress before
-// its latest progress or after its latest behind); and one behind run holding two different
-// times. The run treats it as damaged: the streak starts fresh and the run records a WARN
+// AlertSendTries is how many times an email about Thunderbird is tried per streak before no more
+// are (the C5 round-2 pass's SPAM-R2-A, the lead's call of 2026-11-09): the download emails count
+// their failed sends in this record (StillTries, StoppedTries), the Thunderbird-not-synced email in
+// its told-file. After the last, the alert layer leaves the alert_send_failed WARN instead.
+const AlertSendTries = 5
+
+// Damaged reports a record no run of this archive could have written (R4-01, PLANT-01 and the C5
+// round-2 pass's PLANT-R2, the lead's calls): only what is impossible in the record itself, never
+// how its dates stand against the run's clock (AheadOf). Counters: a run counter, serial or
+// behind-run count past tbStreakPlausibleMax, an entry whose streak number is above the record's, a
+// count of failed sends past AlertSendTries. Dates: any date before 2020-01-01; a first time after a
+// last one (the streak's first behind after its latest, its latest progress before its first or
+// after its latest, its first backup without progress before its latest progress or after its
+// latest behind); and one behind run holding two different times. Pairs no backup writes apart: a
+// first backup without progress with no count of them, or a count with none; a first backup without
+// progress with no progress time; as many backups without progress as backups (a streak's first
+// never counts one); the stopped email marked sent but not the still one (the stopped mark sets
+// both). The run treats it as damaged: the streak starts fresh and the run records a WARN
 // (tbstreak_unreadable), never silent. Fresh is R42's fail-safe reading: a later notice, never a
 // false one, and the email and behind_since never show a planted date.
-func (s TBStreak) ImplausibleAt(now time.Time) bool {
+func (s TBStreak) Damaged() bool {
 	if s.Run > tbStreakPlausibleMax || s.Serial > tbStreakPlausibleMax {
 		return true
 	}
-	bad := func(t time.Time) bool {
-		return !t.IsZero() && (t.Before(tbStreakEarliest) || !now.Before(MinPlausibleTime) && t.After(now.Add(tbStreakAhead)))
-	}
+	bad := func(t time.Time) bool { return !t.IsZero() && t.Before(tbStreakEarliest) }
 	before := func(a, b time.Time) bool { return !a.IsZero() && !b.IsZero() && b.Before(a) } // a is after b
 	if bad(s.LastRunAt) {
 		return true
 	}
 	for _, a := range s.Accounts {
-		if a.Serial > s.Serial || a.Runs > tbStreakPlausibleMax || a.NoProgressRuns > a.Runs {
+		if a.Serial > s.Serial || a.Runs > tbStreakPlausibleMax || a.NoProgressRuns > 0 && a.NoProgressRuns >= a.Runs {
+			return true
+		}
+		if a.StillTries > AlertSendTries || a.StoppedTries > AlertSendTries {
+			return true
+		}
+		// Pairs a backup only ever writes together (PLANT-R2, the lead's call of 2026-11-09).
+		if (a.NoProgressRuns > 0) != !a.FirstNoProgress.IsZero() || !a.FirstNoProgress.IsZero() && a.LastGrew.IsZero() || a.StoppedSent && !a.StillSent {
 			return true
 		}
 		if bad(a.FirstBehind) || bad(a.LastBehind) || bad(a.LastGrew) || bad(a.SeenAt) || bad(a.FirstNoProgress) {
@@ -135,6 +147,66 @@ func (s TBStreak) ImplausibleAt(now time.Time) bool {
 		}
 	}
 	return false
+}
+
+// AheadOf reports whether the record holds a date more than a day after now, and the latest date it
+// holds (the C5 round-2 pass's CLOCK-R2-A, the lead's call of 2026-11-09): the run's clock is then
+// behind a previous backup of this archive, and the run records nothing to the streak (the app's
+// tbstreak_clock_behind). Never when now is before MinPlausibleTime: such a clock is plainly wrong,
+// and MA-891's rules already move no time for it. This is not damage: a record a day or more ahead
+// of the clock cannot be told from a clock a day or more behind, and the clock behind is the real
+// case (a dead clock battery resetting at every cold start). So a planted date ahead, in order,
+// freezes the count until the clock passes it, with that WARN at every backup: a documented
+// residual, which needs write access to the archive folder.
+func (s TBStreak) AheadOf(now time.Time) (time.Time, bool) {
+	latest := s.LastRunAt
+	for _, a := range s.Accounts {
+		for _, t := range []time.Time{a.FirstBehind, a.LastBehind, a.LastGrew, a.SeenAt, a.FirstNoProgress} {
+			if t.After(latest) {
+				latest = t
+			}
+		}
+	}
+	return latest, !now.Before(MinPlausibleTime) && latest.After(now.Add(tbStreakAhead))
+}
+
+// entry is the streak n is for in s: the same record, store and streak.
+func (s TBStreak) entry(n TBNotice) (TBStreakAccount, bool) {
+	i := s.account(n.Store)
+	if i < 0 || n.RecordID == "" || n.RecordID != s.RecordID || s.Accounts[i].Serial != n.Serial {
+		return TBStreakAccount{}, false
+	}
+	return s.Accounts[i], true
+}
+
+// MarkFailed counts one failed send of the streak's still-downloading email, or its stopped one
+// (SPAM-R2-A), up to AlertSendTries; it never sets a sent flag. Only the streak of store with that
+// serial; ok is false when the record holds no such streak.
+func (s TBStreak) MarkFailed(store string, serial int, stopped bool) (TBStreak, bool) {
+	i := s.account(store)
+	if i < 0 || s.Accounts[i].Serial != serial {
+		return s, false
+	}
+	s.Accounts = append([]TBStreakAccount(nil), s.Accounts...)
+	tries := &s.Accounts[i].StillTries
+	if stopped {
+		tries = &s.Accounts[i].StoppedTries
+	}
+	*tries = min(*tries+1, AlertSendTries)
+	return s, true
+}
+
+// Tries is how many sends of n's email the record counts as failed: the same record, store and
+// streak, that kind of email; 0 for any other.
+func (s TBStreak) Tries(n TBNotice) int {
+	a, ok := s.entry(n)
+	switch {
+	case !ok:
+		return 0
+	case n.Stopped:
+		return a.StoppedTries
+	}
+	return a.StillTries
 }
 
 // TBEmail is the Thunderbird download email's words, built from a run's notices (the C5 friction

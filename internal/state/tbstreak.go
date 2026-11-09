@@ -110,12 +110,18 @@ type TBStreakAccount struct {
 	NoProgressRuns int `json:"no_progress_runs,omitempty"`
 	// FirstNoProgress is the time of the first of those runs (the lead's call of 2026-11-09):
 	// "stopped" also needs them to span TBStoppedSpan, first to latest, so an hourly schedule after
-	// a long switch-off waits a day. None until a plausible run without progress sets it; a record
-	// written before this field sets it at its next such run (the stopped email comes later, never
-	// falsely).
+	// a long switch-off waits a day. None until a plausible run without progress sets it, always
+	// together with NoProgressRuns: one without the other is damaged (the C5 round-2 pass's
+	// PLANT-R2, the lead's call; a record of this unreleased branch written before the field starts
+	// fresh once).
 	FirstNoProgress time.Time `json:"first_no_progress,omitzero"`
 	StillSent       bool      `json:"still_downloading_sent,omitempty"`
 	StoppedSent     bool      `json:"stopped_sent,omitempty"`
+	// StillTries and StoppedTries count the sends of each email that failed in this streak (the C5
+	// round-2 pass's SPAM-R2-A, the lead's call of 2026-11-09): at AlertSendTries, no more are
+	// tried. A failure never sets the sent flag beside it.
+	StillTries   int `json:"still_downloading_tries,omitempty"`
+	StoppedTries int `json:"stopped_tries,omitempty"`
 	// SeenRun is the record's Run when a run last reached the store (any verdict), and SeenAt
 	// that run's time (zero when its clock was before MinPlausibleTime); BehindRun is the Run
 	// when a run last found it behind.
@@ -204,7 +210,8 @@ func (s TBStreak) Account(store string) (TBStreakAccount, bool) {
 // disk at now (§5's rules, M10): a streak starts (Serial up) or is extended. The times follow
 // MA-891's rules, as the presync streak's: a time before MinPlausibleTime moves neither first nor
 // latest, though the run still counts; a clock that went back restarts the first time and keeps
-// the serial. X "grew" when it is above the previous behind run's X (the C5 pass's FALSE-02); a
+// the serial, and so does a gap of more than TBStreakUnseenFor since the latest behind run
+// (CLOCK-R2-A: a streak never counts a firmware date's 610 days). X "grew" when it is above the previous behind run's X (the C5 pass's FALSE-02); a
 // plausible run whose X did not grow counts toward "stopped" (FALSE-01), and the first such run
 // since the latest growth starts the window TBStoppedSpan measures from. A plausible run that finds
 // no progress time it can use, none (the streak's first run had a clock before MinPlausibleTime,
@@ -258,13 +265,22 @@ func (s TBStreak) BehindEvicting(store, name string, x int64, now time.Time) (TB
 		a.SeenAt = seenAt
 	}
 	restarted := a.FirstBehind
-	a.FirstBehind, a.LastBehind = spanAt(a.FirstBehind, a.LastBehind, now)
 	plausible := !now.Before(MinPlausibleTime)
+	// A gap of more than TBStreakUnseenFor since the latest behind backup restarts the streak's
+	// times here, as a clock that went back does (the C5 round-2 pass's CLOCK-R2-A, the lead's call
+	// of 2026-11-09): either the earlier clock was wrong (a dead clock battery's firmware date at a
+	// streak's first backup) or no backup ran for a month; neither is a month of downloading.
+	gap := plausible && !a.LastBehind.IsZero() && now.Sub(a.LastBehind) > TBStreakUnseenFor
+	a.FirstBehind, a.LastBehind = spanAt(a.FirstBehind, a.LastBehind, now)
+	if gap {
+		a.FirstBehind = now
+	}
 	grew := x > a.LastX
 	a.LastX = x
 	switch {
 	case !a.FirstBehind.Equal(restarted) && !restarted.IsZero():
-		// The clock went back: the streak's first time restarts, and so does its growth's.
+		// The clock went back, or a gap of more than a month: the streak's first time restarts, and
+		// so does its growth's. The serial and the sent flags are kept.
 		a.LastGrew, a.GrewX, a.FirstX, a.NoProgressRuns, a.FirstNoProgress = a.FirstBehind, x, x, 0, time.Time{}
 	case plausible && (a.LastGrew.IsZero() || a.LastGrew.After(now)):
 		// No progress time this run can measure from (MISS-01): it starts here.
@@ -387,6 +403,7 @@ func ReadTBStreak(out string) (TBStreak, error) {
 		}
 		a.Account = CleanFolderName(a.Account)
 		a.FirstX, a.GrewX, a.LastX, a.Runs, a.NoProgressRuns = max(0, a.FirstX), max(0, a.GrewX), max(0, a.LastX), max(0, a.Runs), max(0, a.NoProgressRuns)
+		a.StillTries, a.StoppedTries = max(0, a.StillTries), max(0, a.StoppedTries)
 		// A planted run number is never ahead of the record's (it would never be pruned).
 		a.SeenRun, a.BehindRun = min(max(0, a.SeenRun), s.Run), min(max(0, a.BehindRun), s.Run)
 		// Nor is a planted time: SeenAt is never after the latest run's time, nor implausible,

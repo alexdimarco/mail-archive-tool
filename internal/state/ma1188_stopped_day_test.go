@@ -104,8 +104,10 @@ func TestStoppedNeedsADayOfBackupsWithoutProgress(t *testing.T) {
 
 // covers: MA-1281, MA-1188
 // The new date is checked as the others (PLANT-01): a first backup without progress before 2020,
-// more than a day ahead, before the progress time or after the latest behind backup is damaged.
-// Positive twin first: a planted record whose window sits between its progress and latest times.
+// before the progress time or after the latest behind backup is damaged. Amended 2026-11-09 (the
+// C5 round-2 pass's CLOCK-R2-A, the lead's call): one more than a day ahead, in order, is a clock
+// behind (AheadOf), not damage. Positive twin first: a planted record whose window sits between
+// its progress and latest times.
 func TestAPlantedNoProgressDateIsDamaged(t *testing.T) {
 	now := time.Date(2026, 11, 9, 12, 0, 0, 0, time.UTC)
 	day := 24 * time.Hour
@@ -126,21 +128,26 @@ func TestAPlantedNoProgressDateIsDamaged(t *testing.T) {
 	mid := now.Add(-2 * day)
 	for name, p := range map[string]string{
 		"a window between progress and latest": plant(grew, last, mid),
-		"a window with no progress time":       plant(time.Time{}, last, mid),
 		"a window with no latest time":         plant(grew, time.Time{}, mid),
+		// "a window with no progress time" left the positive twins 2026-11-09: PLANT-R2's pair rule
+		// (TestAnInconsistentPairIsDamaged) makes it damaged, since no backup writes one without the other.
 	} {
-		if r := mustReadPlant(t, out, p); r.ImplausibleAt(now) {
+		if r := mustReadPlant(t, out, p); r.Damaged() {
 			t.Fatalf("positive twin, %s: damaged: %+v", name, r)
 		}
 	}
 	for name, p := range map[string]string{
-		"before 2020 (no progress time)": plant(time.Time{}, last, time.Date(2019, 6, 1, 0, 0, 0, 0, time.UTC)),
-		"in 2099 (no latest time)":       plant(grew, time.Time{}, time.Date(2099, 1, 1, 0, 0, 0, 0, time.UTC)),
-		"before the progress time":       plant(grew, last, grew.Add(-time.Hour)),
-		"after the latest behind run":    plant(grew, last, last.Add(time.Hour)),
+		"before 2020":                 plant(grew, last, time.Date(2019, 6, 1, 0, 0, 0, 0, time.UTC)),
+		"before the progress time":    plant(grew, last, grew.Add(-time.Hour)),
+		"after the latest behind run": plant(grew, last, last.Add(time.Hour)),
 	} {
-		if r := mustReadPlant(t, out, p); !r.ImplausibleAt(now) {
+		if r := mustReadPlant(t, out, p); !r.Damaged() {
 			t.Errorf("a first backup without progress %s: not damaged", name)
 		}
+	}
+	if r := mustReadPlant(t, out, plant(grew, time.Time{}, time.Date(2099, 1, 1, 0, 0, 0, 0, time.UTC))); r.Damaged() {
+		t.Error("a first backup without progress in 2099 (no latest time) is damaged; it is a clock behind")
+	} else if _, ahead := r.AheadOf(now); !ahead {
+		t.Error("a first backup without progress in 2099 is not ahead of the clock")
 	}
 }
