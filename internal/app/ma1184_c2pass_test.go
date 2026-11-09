@@ -380,7 +380,9 @@ func TestADV_C2_08_RecordBoundsFitTheReader(t *testing.T) {
 		notKept = append(notKept, tbcomplete.FolderCount{Path: name, Listed: 1 << 40})
 	}
 	acct := func(i int) tbcomplete.Result {
-		return tbcomplete.Result{Account: fmt.Sprintf("%s%02d", name[:state.TBNameMax-2], i), StoreID: strings.Repeat("f", 32), Verdict: tbcomplete.Behind,
+		// Each with a name Thunderbird shows of the same worst case, each its own (MA-1284: the
+		// record keeps it beside the folder).
+		return tbcomplete.Result{Account: fmt.Sprintf("%s%02d", name[:state.TBNameMax-2], i), Name: fmt.Sprintf("%s%02d", name[:state.TBNameMax-2], i), StoreID: strings.Repeat("f", 32), Verdict: tbcomplete.Behind,
 			Folders: folders, NotKept: notKept, DefaultNotKept: notKept, Limits: tbcomplete.Limits{MaxAgeDays: 1}}
 	}
 	one := tbRecords([]tbcomplete.Result{acct(0)}, nil, time.Now())

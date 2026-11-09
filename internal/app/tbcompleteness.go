@@ -286,6 +286,12 @@ func limitsOn(l tbcomplete.Limits) bool {
 // Past state.TBAccountsMax accounts the record keeps the weakest first (behind, limited,
 // unknown, then the caught-up ones that may not say complete, then the rest), each group in the
 // run's order, and tbRecordsMore says how many were left out (the C2 pass round 2's R2-06).
+//
+// Each account keeps the name Thunderbird shows for it beside its store folder (Name, cleaned and
+// capped; the owner's ruling of 2026-11-08 on the C3 friction review's M1, and the lead's call that
+// every surface says it), except when two accounts share one name as the words would say it: then
+// neither keeps one (state.TBDistinctNames), so two accounts never read as one. The store folder
+// stays the key.
 func tbRecords(results []tbcomplete.Result, prev []state.TBAccount, now time.Time) []state.TBAccount {
 	before := map[string]state.TBAccount{}
 	for _, p := range prev {
@@ -367,6 +373,7 @@ func tbRecords(results []tbcomplete.Result, prev []state.TBAccount, now time.Tim
 		}
 		out = append(out, a)
 	}
+	state.TBDistinctNames(out)
 	return out
 }
 
@@ -378,31 +385,14 @@ func tbRecordsMore(results []tbcomplete.Result) int {
 // TBAccounts is r's Thunderbird verdicts in the shape the last-run record keeps them, names
 // cleaned and capped (TC-7), and how many it leaves out past state.TBAccountsMax: what the
 // wizard's end summary, Run now's note and the command line say them from (state.TBLines), so
-// a run's words on screen and its record's words in `status` are one producer's (slice C3). For
-// the screen only: nothing here is written, and for an encrypted archive it is the only form the
-// verdicts take (O1). The run's lead is tbcomplete.RunLead(r.Thunderbird).
-//
-// Each account carries the name Thunderbird shows for it (state.TBAccount.Name, for the screen
-// only; the owner's ruling of 2026-11-08 on the C3 friction review's M1), except when two accounts
-// share one name as the words would say it (compared without letter case): then both are said by
-// their folders, so two accounts never read as one.
+// a run's words on screen and its record's words in `status` are one producer's (slice C3),
+// names included (tbRecords). Nothing here is written, and for an encrypted archive it is the only
+// form the verdicts take (O1). The run's lead is tbcomplete.RunLead(r.Thunderbird).
 func TBAccounts(r Result) ([]state.TBAccount, int) {
 	if len(r.Thunderbird) == 0 {
 		return nil, 0
 	}
-	accts := tbRecords(r.Thunderbird, nil, time.Now().UTC())
-	seen := map[string]int{}
-	for _, a := range accts {
-		if a.Name != "" {
-			seen[strings.ToLower(a.Name)]++
-		}
-	}
-	for i := range accts {
-		if seen[strings.ToLower(accts[i].Name)] > 1 {
-			accts[i].Name = ""
-		}
-	}
-	return accts, tbRecordsMore(r.Thunderbird)
+	return tbRecords(r.Thunderbird, nil, time.Now().UTC()), tbRecordsMore(r.Thunderbird)
 }
 
 // TBScheduled reports whether a schedule other than "only when I click Run now" will run the

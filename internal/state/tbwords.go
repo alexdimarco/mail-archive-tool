@@ -19,8 +19,9 @@ import (
 // An account is said by the name Thunderbird shows for it (TBAccount.Name, usually the email
 // address; the owner's ruling of 2026-11-08 on the friction review's M1) when the run read one, and
 // otherwise as "the Thunderbird account kept in the folder imap.gmail.com-1" (the owner's fallback
-// wording): a record keeps no name, so every surface that reads a record says the folder words.
-// Both are cleaned and capped (CleanFolderName). No sentence here says "store", "cache" or "msf",
+// wording). A plaintext record and its history keep the name (the lead's call of 2026-11-08), so
+// every surface that reads a record says it too; an older record without one says the folder
+// words. Both are cleaned and capped (CleanFolderName). No sentence here says "store", "cache" or "msf",
 // and "IMAP" only inside Gmail's own labels that the person must find (the cap note, P5): the words
 // are read on a phone by someone who does not know those words.
 
@@ -497,10 +498,10 @@ func TBMoreSentence(more int) string {
 // TBCompactSentence is a Recent backups row's words for one account of a history entry, which
 // keeps only the verdict and the two numbers (§9.1): "" for an account caught up with nothing
 // missing (the row's "OK" says it), and behind reports whether the account is behind (its row
-// then says "OK — Thunderbird still downloading", §7). A history entry keeps no name, so the
-// account is said by its folder.
+// then says "OK — Thunderbird still downloading", §7). The account is said by the name the entry
+// keeps (MA-1284), else by its folder.
 func TBCompactSentence(c TBCompact) (s string, behind bool) {
-	a := TBAccount{Account: c.Account}
+	a := TBAccount{Account: c.Account, Name: c.Name}
 	name := tbName(a)
 	switch c.Verdict {
 	case "behind":

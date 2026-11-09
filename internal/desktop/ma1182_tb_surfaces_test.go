@@ -1,6 +1,7 @@
 package desktop
 
 import (
+	"encoding/json"
 	"html"
 	"path/filepath"
 	"strings"
@@ -178,6 +179,61 @@ func TestAnEncryptedRowNeverSaysCompleted(t *testing.T) {
 	}
 }
 
+// covers: MA-1284, MA-1182
+// The card, Recent backups and Status & health name the account as Thunderbird shows it, from the
+// plaintext record and history (the lead's call of 2026-11-08: every surface, not only those that
+// see the live run). Positive twin first: an older record and entry with no name say the folder.
+func TestTheDesktopSaysThunderbirdsNameForTheAccount(t *testing.T) {
+	archive := func(name string) (string, ArchiveRow, string) {
+		t.Helper()
+		dir := t.TempDir()
+		writeManifest(t, dir)
+		a := state.TBAccount{Account: "imap.gmail.com", Name: name, Verdict: "behind", OnDisk: 1670, Listed: 238080}
+		lr := state.LastRun{Status: state.RunOK, Started: time.Now().Add(-time.Minute), Finished: time.Now(), Exported: 3, Thunderbird: []state.TBAccount{a}}
+		if err := state.WriteLastRun(dir, lr); err != nil {
+			t.Fatal(err)
+		}
+		if err := state.AppendRunHistory(dir, state.RunHistoryEntryFrom(lr)); err != nil {
+			t.Fatal(err)
+		}
+		row := Config{SettingsPath: filepath.Join(t.TempDir(), "s.json")}.archiveRows(archindex.Index{Entries: []archindex.Entry{{Path: dir}}})[0]
+		cfg := Config{Out: dir, SettingsPath: filepath.Join(t.TempDir(), "s.json"), GOOS: "darwin"}
+		h := DashboardHandler(cfg)
+		_, _ = getPage(t, h)
+		return dir, row, apiGet(h, "/api/health")
+	}
+	healthSays := func(body string) string {
+		t.Helper()
+		var m struct {
+			Summary []string `json:"summary"`
+		}
+		if err := json.Unmarshal([]byte(body), &m); err != nil {
+			t.Fatalf("/api/health: %v %s", err, body)
+		}
+		return strings.Join(m.Summary, "\n")
+	}
+	dir, row, body := archive("")
+	const folder = "the Thunderbird account kept in the folder imap.gmail.com"
+	if r := recentRunRows(dir); len(r) != 1 || !strings.Contains(r[0].Detail, "in "+folder+" so far") || !strings.HasPrefix(row.TBBanner, "Thunderbird is still downloading "+folder+":") ||
+		!strings.Contains(healthSays(body), "WARN: Thunderbird has downloaded about 1,670 of 238,080 messages in "+folder+" so far.") {
+		t.Fatalf("positive twin: no name: %+v %q %s", r, row.TBBanner, body)
+	}
+
+	dir, row, body = archive("sam.walker@gmail.com")
+	if r := recentRunRows(dir); len(r) != 1 || r[0].Detail != "3 messages · Thunderbird has downloaded about 1,670 of 238,080 messages in sam.walker@gmail.com so far" {
+		t.Errorf("Recent backups: %+v", r)
+	}
+	if want := "Thunderbird is still downloading sam.walker@gmail.com: about 1,670 of 238,080 messages are on this computer so far — see Status & health."; row.TBBanner != want {
+		t.Errorf("the card:\n got %q\nwant %q", row.TBBanner, want)
+	}
+	if s := healthSays(body); !strings.Contains(s, "WARN: Thunderbird has downloaded about 1,670 of 238,080 messages in sam.walker@gmail.com so far.") || strings.Contains(s, "kept in the folder") {
+		t.Errorf("Status & health:\n%s", s)
+	}
+	if page := renderRecent(t, dir); !strings.Contains(page, "in sam.walker@gmail.com so far") {
+		t.Error("the page does not show the name")
+	}
+}
+
 // covers: MA-1198
 // A planted record's names reach Recent backups and the card cleaned and capped (TC-7), and the
 // page renders them only through html/template. Positive twin first: an ordinary name as it is.
@@ -215,5 +271,66 @@ func TestHostileNamesOnTheDesktop(t *testing.T) {
 	row := Config{SettingsPath: filepath.Join(t.TempDir(), "s.json")}.archiveRows(archindex.Index{Entries: []archindex.Entry{{Path: dir}}})[0]
 	if strings.Contains(row.TBBanner, "‮") || strings.Contains(row.TBBanner, strings.Repeat("z", 80)) || !strings.Contains(row.TBBanner, "…") {
 		t.Errorf("the card: %q", row.TBBanner)
+	}
+}
+
+// covers: MA-1284, MA-1198
+// A planted account name (MA-1284: the record keeps Thunderbird's name for the account) reaches the
+// card, Recent backups and Status & health cleaned and capped, and never as markup: the card and
+// Recent backups render through html/template, Status & health through JSON and textContent.
+// Positive twin first: an ordinary name as it is, on the page.
+func TestAHostileAccountNameOnTheDesktop(t *testing.T) {
+	plant := func(name string) (dir string, row ArchiveRow, page, health string) {
+		t.Helper()
+		dir = t.TempDir()
+		writeManifest(t, dir)
+		lr := state.LastRun{Status: state.RunOK, Started: time.Now(), Finished: time.Now(),
+			Thunderbird: []state.TBAccount{{Account: "imap.gmail.com", Name: name, Verdict: "behind", OnDisk: 1, Listed: 9}}}
+		if err := state.WriteLastRun(dir, lr); err != nil {
+			t.Fatal(err)
+		}
+		if err := state.AppendRunHistory(dir, state.RunHistoryEntryFrom(lr)); err != nil {
+			t.Fatal(err)
+		}
+		idxPath := filepath.Join(t.TempDir(), archindex.Name)
+		if err := archindex.WriteFile(idxPath, archindex.Index{Version: archindex.Version, Entries: []archindex.Entry{{Path: dir}}}); err != nil {
+			t.Fatal(err)
+		}
+		row = Config{SettingsPath: filepath.Join(t.TempDir(), "s.json")}.archiveRows(archindex.Index{Entries: []archindex.Entry{{Path: dir}}})[0]
+		h := DashboardHandler(Config{Out: dir, SettingsPath: filepath.Join(t.TempDir(), "s.json"), IndexPath: idxPath, GOOS: "darwin"})
+		page, _ = getPage(t, h)
+		return dir, row, page, apiGet(h, "/api/health")
+	}
+	dir, row, page, _ := plant("sam@example.com")
+	if r := recentRunRows(dir); !strings.Contains(r[0].Detail, "in sam@example.com so far") || !strings.Contains(row.TBBanner, "downloading sam@example.com:") ||
+		!strings.Contains(page, "in sam@example.com so far") || !strings.Contains(page, html.EscapeString("downloading sam@example.com:")) {
+		t.Fatalf("positive twin: %+v %q", r, row.TBBanner)
+	}
+	hostile := "<b>x</b><script>alert(1)</script>‮\x1b[31m\x07" + strings.Repeat("z", 10*1024)
+	dir, row, page, body := plant(hostile)
+	clean := state.CleanFolderName(hostile)
+	r := recentRunRows(dir)[0]
+	var m struct {
+		Summary []string `json:"summary"`
+	}
+	if err := json.Unmarshal([]byte(body), &m); err != nil {
+		t.Fatalf("/api/health: %v", err)
+	}
+	said := strings.Join(m.Summary, "\n")
+	for what, s := range map[string]string{"Recent backups": r.Detail, "the card": row.TBBanner, "Status & health": said} {
+		for _, bad := range []string{"‮", "\x1b", "\x07", strings.Repeat("z", 80)} {
+			if strings.Contains(s, bad) {
+				t.Errorf("%s holds %q", what, bad)
+			}
+		}
+		if !strings.Contains(s, clean) || !strings.HasSuffix(clean, "…") {
+			t.Errorf("%s does not say the cleaned, capped name: %q", what, s)
+		}
+	}
+	if strings.Contains(page, "<b>x</b>") || strings.Contains(page, "<script>alert(1)") || !strings.Contains(page, "&lt;b&gt;x&lt;/b&gt;&lt;script&gt;alert(1)&lt;/script&gt;") {
+		t.Error("a planted account name is not escaped on the page")
+	}
+	if strings.Contains(body, "<b>") || strings.Contains(body, "<script>") {
+		t.Error("Status & health's reply carries the name as markup")
 	}
 }

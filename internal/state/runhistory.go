@@ -59,7 +59,8 @@ type RunHistoryEntry struct {
 	// words its messages not downloaded in full by where they came from: plaintext entries only.
 	FillableFrom string `json:"fillable_from,omitempty"`
 	// TB is each Thunderbird IMAP account's verdict and its X and Y (the completeness design
-	// §7's records row and §9.1, slice C2): a plaintext entry of a run that ended ok only, for
+	// §7's records row and §9.1, slice C2), and the name Thunderbird shows for it (MA-1284, §13's
+	// note of 2026-11-08): a plaintext entry of a run that ended ok only, for
 	// Recent backups; never on an encrypted archive's (minimal never copies it). Held through a
 	// pointer so an entry stays comparable; nil when the run had none.
 	TB *[]TBCompact `json:"tb,omitempty"`

@@ -2070,6 +2070,10 @@ reason to keep waiting.**
 >   they are written.
 > - TC-19's fingerprints are hashes. They add no name beyond the list above.
 > - Accounts are recorded by store folder name (§4.1 step 1 fold).
+>
+> **Amended 2026-11-08 (§13's note "the account's name on every surface"):** the record, `-json`
+> and the run history also keep the name Thunderbird shows for each account (usually the email
+> address), beside the store folder, which stays the key. Why that adds no exposure is in that note.
 
 ### 9.2 Encrypted archives
 
@@ -2886,7 +2890,8 @@ C4 must land with or before C3 if encrypted archives get any words beyond today'
 >   fallback). The name never takes part in the account match. It is cleaned and capped as TC-7.
 >   Two accounts with one name (compared without letter case, after cleaning) are both said by
 >   their folders (`app.TBAccounts`).
-> - **The name is never written.** `state.TBAccount.Name` is `json:"-"`: the last-run record,
+> - **The name is never written** (superseded the same day by the note below: the plaintext
+>   record and history now keep it). `state.TBAccount.Name` is `json:"-"`: the last-run record,
 >   `-json`, the run history and the alert email keep the store folder (§9.1, §9.3). So every
 >   surface that reads a record (`status`, Status & health, the archive card, Recent backups) says
 >   the folder words; the wizard, Run now and the command line say the name. §7's "never by its
@@ -2942,6 +2947,44 @@ C4 must land with or before C3 if encrypted archives get any words beyond today'
 >   rows and beside others, by its length).
 > - **Owed:** the friction re-look of the changed words. Whether the name lookup owes an
 >   adversarial look is the lead's call (the commit gives the builder's reasons).
+>
+> **Folded 2026-11-08 [the account's name on every surface] (the owner's ruling and the lead's
+> call; built).** The owner ruled that accounts are named by the name Thunderbird shows (usually the
+> email address). The lead's call: every surface shows it, not only those that see the live run.
+> This supersedes the "name is never written" bullet of the fold above.
+>
+> - **What is written.** Each last-run `thunderbird` entry and each run-history `tb` entry gains an
+>   optional `name`: the cleaned, capped name (TC-7), or absent when the lookup fell back or when two
+>   accounts of the run share one name (compared without letter case, after cleaning:
+>   `state.TBDistinctNames`, applied by `app.tbRecords` before the record is written). Plaintext
+>   archives only: an encrypted archive's record and history are their allow-lists, unchanged (O1),
+>   and an archive's older plaintext entries lose their names with its first encrypted entry (F19).
+> - **What stays.** `account` stays the store folder and is the key everywhere: the streak record,
+>   TC-19's carry-forward (by `store_id`), `-json`'s `account` and folder fields. `-json` gains `name`
+>   alongside (additive). An older record or entry without `name` reads as before, in the folder words.
+> - **What reads it.** `status`, Status & health, the archive card and Recent backups say the name
+>   when it is present and still has something visible after cleaning; else "the Thunderbird account
+>   kept in the folder NAME". Readers clean it again on read (`saneTB`, `saneTBCompact`: control and
+>   format characters, the cap) and apply the shared-name rule again, since anyone who can write the
+>   archive folder can write the record. The Desktop renders it as everything else: html/template for
+>   the card and Recent backups, JSON and `textContent` for Status & health.
+> - **Privacy (§9.1 amended; why there is no new exposure).** The address is written beside the
+>   archive only in files that sit next to the mail itself: the last-run record and the run history,
+>   in the archive folder. That mail already holds the address (the account's own mail is to and
+>   from it), in the plaintext archive's own message files and pages. So whoever can read these
+>   files can already read the address. A name that is not an address is a label the person chose
+>   in Thunderbird, beside their own mail.
+>   The same holds for logs: a scheduled run's `-log` file sits in the archive folder, and the
+>   command-line summary has carried the name there since the fold above. A `-log` path the person
+>   types by hand can be anywhere; that is the person's choice. §9.1's "only the per-account X and Y
+>   go into the run history" now reads "X, Y and the name".
+> - **Not changed.** §9.3: an email leaves the computer. No completeness email is built yet; when one
+>   is, it keeps the store folder unless a new ruling says otherwise.
+> - **Size.** At the bounds (50 history entries of 64 accounts, each folder and name 80 characters
+>   of `<`, 6 bytes each in JSON) the history is 3,561,752 bytes, within `ReadRunHistory`'s 4 MiB
+>   (about 85%); the last-run `thunderbird` field is 590,145 bytes, within its 1 MiB share. Measured
+>   by MA-1284's and MA-1180's tests. Real names are far shorter.
+> - Row MA-1284 (amended).
 
 ## 14. Owner questions (each with a recommendation)
 

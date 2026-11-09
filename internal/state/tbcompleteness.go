@@ -13,17 +13,19 @@ import (
 // (docs/design-thunderbird-completeness.md §7's records row, §9.1, §2.4's "the last backup's
 // numbers, from its record"; slice C2). Additive: absent on an older record, on a run with no
 // Thunderbird IMAP store, on a run that did not end ok (§11: the failure words win), and always
-// beside an encrypted archive (O1, R44: encryptedLastRun never carries it). Accounts are named
-// by their store folder; folder names are cleaned and capped (CleanFolderName) before they are
-// written. The words are C3's: nothing here is a sentence.
+// beside an encrypted archive (O1, R44: encryptedLastRun never carries it). Accounts are keyed
+// by their store folder, with the name Thunderbird shows beside it (MA-1284); folder and account
+// names are cleaned and capped (CleanFolderName) before they are written, and again when read. The words are C3's: nothing here is a sentence.
 type TBAccount struct {
 	Account string `json:"account"` // the store folder's name (§4.1 step 1 fold)
 	// Name is Thunderbird's own name for the account, as its folder pane and Account Settings
 	// show it (usually the email address; the owner's ruling of 2026-11-08 on the C3 friction
-	// review's M1), for the words on screen only: it is never written (the record, `-json`, the run
-	// history and the alert email keep the store folder, Account), so an account read back from a
-	// record has none and the words name it by its folder. "" when the run could not tell it.
-	Name string `json:"-"`
+	// review's M1), cleaned and capped as folder names are. Written beside Account in a plaintext
+	// record and in `-json` (the lead's call of 2026-11-08: every surface says it, design §13's note
+	// of that date), so the words read from a record say it too; Account stays the key. "" (and not
+	// written) when the run could not tell it, or another account of the run shares it
+	// (TBDistinctNames): the words then say the folder. An older record has none and reads as before.
+	Name string `json:"name,omitempty"`
 	// StoreID is a hash of the store's full path (profile and store, compared as the OS compares
 	// names): two stores with one folder name are told apart by it (the C2 pass's ADV-C2-01), and
 	// TC-19's fingerprints are carried forward by it. A hash, never the path.
@@ -117,6 +119,9 @@ type TBFolder struct {
 // (§9.1: only the per-account X and Y go into the history).
 type TBCompact struct {
 	Account string `json:"account"`
+	// Name is TBAccount.Name, so Recent backups says the account as Thunderbird shows it (MA-1284);
+	// absent on an older entry, which is said by its folder.
+	Name    string `json:"name,omitempty"`
 	Verdict string `json:"verdict"`
 	X       int64  `json:"x"`
 	Y       int64  `json:"y"`
@@ -211,11 +216,35 @@ func saneTB(in []TBAccount) (out []TBAccount, cut int) {
 		if l := a.Limit; l != nil {
 			l.MaxAgeDays, l.MaxSizeKB = max(0, l.MaxAgeDays), max(0, l.MaxSizeKB)
 		}
+		a.Name = CleanFolderName(a.Name)
 		a.Folders = saneFolders(a.Folders, TBFolderMax)
 		a.NotKept = saneFolders(a.NotKept, TBNotKeptMax)
 		a.DefaultNotKept = saneFolders(a.DefaultNotKept, TBNotKeptMax)
 	}
+	TBDistinctNames(in)
 	return in, cut
+}
+
+// TBDistinctNames clears the name of every account that shares it with another (compared without
+// letter case, after cleaning), so two accounts are never said as one: each is then said by its
+// folder (MA-1284). The run applies it before the record is written; a record read back gets it
+// again, as anyone who can write the archive folder can write the record.
+func TBDistinctNames(accts []TBAccount) {
+	dropSharedNames(len(accts), func(i int) *string { return &accts[i].Name })
+}
+
+func dropSharedNames(n int, name func(int) *string) {
+	seen := map[string]int{}
+	for i := range n {
+		if s := *name(i); s != "" {
+			seen[strings.ToLower(s)]++
+		}
+	}
+	for i := range n {
+		if p := name(i); seen[strings.ToLower(*p)] > 1 {
+			*p = ""
+		}
+	}
 }
 
 func saneFolders(fs []TBFolder, limit int) []TBFolder {
@@ -235,9 +264,10 @@ func saneTBCompact(in []TBCompact) []TBCompact {
 		in = in[:TBAccountsMax]
 	}
 	for i := range in {
-		in[i].Account, in[i].Verdict = CleanFolderName(in[i].Account), util.StripControl(in[i].Verdict)
+		in[i].Account, in[i].Name, in[i].Verdict = CleanFolderName(in[i].Account), CleanFolderName(in[i].Name), util.StripControl(in[i].Verdict)
 		in[i].X, in[i].Y = max(0, in[i].X), max(0, in[i].Y)
 	}
+	dropSharedNames(len(in), func(i int) *string { return &in[i].Name })
 	return in
 }
 
@@ -248,7 +278,7 @@ func TBCompactOf(accounts []TBAccount) *[]TBCompact {
 	}
 	out := make([]TBCompact, 0, len(accounts))
 	for _, a := range accounts {
-		out = append(out, TBCompact{Account: a.Account, Verdict: a.Verdict, X: a.OnDisk, Y: a.Listed, Floor: a.Floor})
+		out = append(out, TBCompact{Account: a.Account, Name: a.Name, Verdict: a.Verdict, X: a.OnDisk, Y: a.Listed, Floor: a.Floor})
 	}
 	return &out
 }
