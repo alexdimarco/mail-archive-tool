@@ -669,7 +669,7 @@ func wizard() error {
 	//    IN-PROCESS to MailArchive Desktop (Microsoft 365, folder export, browsing,
 	//    scheduling, the maintenance tools); the local item (the default) stays on
 	//    the quick path. zenity.List returns ErrCanceled on dismiss → quiet exit.
-	switch pick, err := zenity.List(listText("What would you like to do?"), surfaceChoices, zenity.Title(appTitle), zenity.DefaultItems(surfaceLocalItem)); {
+	switch pick, err := zenity.List("What would you like to do?", surfaceChoices, zenity.Title(appTitle), zenity.DefaultItems(surfaceLocalItem)); {
 	case err != nil:
 		return err
 	case surfaceOpensDesktop(pick):
@@ -774,7 +774,7 @@ func localArchiveFlowHooks(chosen func(out string), finished func(), check func(
 		err        error
 	)
 	for {
-		srcType, err = zenity.List(listText("What are you exporting?"), choices, zenity.Title(appTitle), zenity.DefaultItems(srcAuto))
+		srcType, err = zenity.List("What are you exporting?", choices, zenity.Title(appTitle), zenity.DefaultItems(srcAuto))
 		if err != nil {
 			return err
 		}
@@ -891,7 +891,7 @@ func localArchiveFlowHooks(chosen func(out string), finished func(), check func(
 	} else {
 		const modeInc = "Incremental — only messages new since the last run (and any still missing content)"
 		const modeFull = "Full — export everything again"
-		modeChoice, err := zenity.List(listText("Export mode:"), []string{modeInc, modeFull}, zenity.Title(appTitle), zenity.DefaultItems(modeInc))
+		modeChoice, err := zenity.List("Export mode:", []string{modeInc, modeFull}, zenity.Title(appTitle), zenity.DefaultItems(modeInc))
 		if err != nil {
 			return err
 		}
@@ -911,7 +911,7 @@ func localArchiveFlowHooks(chosen func(out string), finished func(), check func(
 	//    Outlook running anyway.
 	if choice.outlookCOM == false && anyRegularFile(choice.inputs) {
 		openChoice, err := zenity.List(
-			listText("Is your mail app (Outlook / Thunderbird) currently open?"),
+			"Is your mail app (Outlook / Thunderbird) currently open?",
 			[]string{"No", "Yes — copy the file first to avoid a lock"},
 			zenity.Title(appTitle), zenity.DefaultItems("No"))
 		if err != nil {
@@ -925,7 +925,7 @@ func localArchiveFlowHooks(chosen func(out string), finished func(), check func(
 	//     Outlook-app export path have no originals to keep, so they aren't asked.
 	if keepRawWorthAsking(srcType, choice.inputs) {
 		rawChoice, err := zenity.List(
-			listText("Also keep a copy of each original message (.eml) so you can re-import it into a mail program later? (uses more disk space)"),
+			"Also keep a copy of each original message (.eml) so you can re-import it into a mail program later? (uses more disk space)",
 			[]string{"No", "Yes — keep the original .eml files too"},
 			zenity.Title(appTitle), zenity.DefaultItems("No"))
 		if err != nil {
@@ -939,7 +939,7 @@ func localArchiveFlowHooks(chosen func(out string), finished func(), check func(
 	//      Asked only when a chosen input is a folder (a link lives in a folder store).
 	if followLinksWorthAsking(srcType, choice.inputs) {
 		linkChoice, err := zenity.List(
-			listText(followLinksQuestion),
+			followLinksQuestion,
 			[]string{followLinksNo, followLinksYes},
 			zenity.Title(appTitle), zenity.DefaultItems(followLinksNo))
 		if err != nil {
@@ -1010,7 +1010,7 @@ var liveGUISources = map[string]bool{}
 // (T7). The answer→flags mapping is the pure includeDeletedJunk.
 func askDeletedJunk() (includeDeleted, includeJunk bool, err error) {
 	answer, err := zenity.List(
-		listText("Include the Deleted Items and Junk Email folders in the archive?"),
+		"Include the Deleted Items and Junk Email folders in the archive?",
 		[]string{deletedJunkExcludeItem, deletedJunkIncludeItem},
 		zenity.Title(appTitle), zenity.DefaultItems(deletedJunkExcludeItem))
 	if err != nil {
@@ -1245,7 +1245,9 @@ func healthCheck() error {
 		choices = append(choices, rebuildChoice)
 	}
 	choices = append(choices, remove)
-	pick, err := zenity.List(listText("Backup health — "+rep.Posture+"\n\n"+text), choices, zenity.Title(appTitle), zenity.DefaultItems(cont))
+	// The health text holds names, paths and commands; on Linux and the BSDs it is shown in a
+	// message before the list, which then says only healthListPrompt (MA-1286).
+	pick, err := textThenList("Backup health — "+rep.Posture+"\n\n"+text, healthListPrompt, choices, zenity.Title(appTitle), zenity.DefaultItems(cont))
 	if err != nil {
 		return err
 	}
@@ -1810,7 +1812,7 @@ func pickAutoInputs(found []string) ([]string, bool, error) {
 	}
 
 	choice, err := zenity.List(
-		listText("These mailboxes were found. Export which one?"),
+		"These mailboxes were found. Export which one?",
 		labels,
 		zenity.Title(appTitle),
 		zenity.DefaultItems(allOfThem),
@@ -2131,9 +2133,12 @@ func presyncOfferable(inputs []string) bool {
 // shows (presync.MacAutomationNote, MA-861). The notice is this platform's
 // (presync.SyncNoticeFor): the Desktop's Run now runs the same job, so where Run now
 // starts Thunderbird the notice says it does not wait (design-presync-attended §7, C-84).
-func presyncQuestionText() string {
-	q := "Sync Thunderbird before each scheduled backup?\n\n" + presync.SyncNoticeFor(runtime.GOOS)
-	if runtime.GOOS == "darwin" {
+func presyncQuestionText() string { return presyncQuestionTextFor(runtime.GOOS) }
+
+// presyncQuestionTextFor is presyncQuestionText on goos.
+func presyncQuestionTextFor(goos string) string {
+	q := "Sync Thunderbird before each scheduled backup?\n\n" + presync.SyncNoticeFor(goos)
+	if goos == "darwin" {
 		q += "\n\n" + presync.MacAutomationNote
 	}
 	return q
@@ -2171,7 +2176,7 @@ func offerSchedule(c wizardChoice) error {
 	if err := archdelete.ActionRefusal("", c.out, scheduledBackup+" was not installed"); err != nil {
 		return err
 	}
-	pick, err := zenity.List(listText(scheduleQuestionFor(runtime.GOOS)),
+	pick, err := zenity.List(scheduleQuestionFor(runtime.GOOS),
 		[]string{no, daily, weekly}, zenity.Title(appTitle), zenity.DefaultItems(no))
 	if err != nil {
 		if errors.Is(err, zenity.ErrCanceled) {
@@ -2193,7 +2198,7 @@ func offerSchedule(c wizardChoice) error {
 	// checked at run time, §4.3/PC3); No or cancel installs the schedule without
 	// the sync. The running-Thunderbird defer leaves an in-use Thunderbird alone.
 	if !c.outlookCOM && presyncOfferable(c.inputs) {
-		syncPick, serr := zenity.List(listText(presyncQuestionText()), []string{presyncNo, presyncYes},
+		syncPick, serr := zenity.List(presyncQuestionText(), []string{presyncNo, presyncYes},
 			zenity.Title(appTitle), zenity.DefaultItems(presyncNo))
 		if serr != nil && !errors.Is(serr, zenity.ErrCanceled) {
 			return serr

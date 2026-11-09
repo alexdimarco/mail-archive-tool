@@ -3031,6 +3031,26 @@ C4 must land with or before C3 if encrypted archives get any words beyond today'
 >   look the same (a Cyrillic "а") are not folded. Row MA-1287.
 > - **N-04.** See the superseding note above: no log file holds the name. Row MA-1288.
 
+> **Folded 2026-11-09 [C3 name confirm R2-01, R2-02] (the lead's calls; built for R2-01, words only
+> for R2-02).** `docs/review-thunderbird-completeness-c3-name-adversarial-r2.md`.
+>
+> - **R2-01 (LOW, Linux and the BSDs) supersedes the N-01 bullet above.** The ncruces/zenity module
+>   runs qarma first when it is installed (then zenity, then matedialog). qarma shows a list's text as
+>   plain text, so `listText`'s escapes showed literally there (`AT&amp;T`, and `&quot;` in the
+>   copyable `verify -out` command). No one text shows as written in all three lists. So on Linux
+>   and the BSDs no list dialog is given text that can vary: the launch health view's text is shown
+>   first in a message dialog, which the module always opens with `--no-markup` (plain text, exactly
+>   as written, in all three; its button says Next), and the list then says only the fixed prompt
+>   "Backup health — what would you like to do next?" (`wizard.textThenList`). macOS and Windows
+>   are unchanged. `listText` is removed; every other list prompt is fixed words with no `&`, `<`,
+>   `>` or backslash, passed as written. Row MA-1286 (amended). The lab check owed is now on both
+>   tools: zenity and qarma, an account named "AT&T Mail", then `mailarchive wizard`.
+> - **R2-02 (LOW) widens the documented limit in the N-02, N-03 bullet above.** Characters Unicode
+>   lists as confusable, in any script (Cyrillic, Greek, Latin variants such as ɑ ɡ ı, hyphen
+>   variants), and wordings that drop the leading "the", are not caught by the same-name and
+>   fallback-imitation rules. Folding them needs Unicode's TR39 "skeleton", which
+>   `golang.org/x/text` does not provide. Row MA-1287 (amended).
+
 ## 14. Owner questions (each with a recommendation)
 
 - **Q1. How close counts as "caught up"?** Recommend: within 20 messages or 0.2% of the total,
