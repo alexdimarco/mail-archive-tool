@@ -77,6 +77,9 @@ func (g *localRunRig) tbBackdate(grew bool) {
 	back := time.Now().UTC().Add(-4 * 24 * time.Hour)
 	a := &s.Accounts[0]
 	a.FirstBehind, a.LastBehind, a.LastGrew, a.SeenAt, s.LastRunAt = back, back, back, back, back
+	if !a.FirstNoProgress.IsZero() {
+		a.FirstNoProgress = back // every date moves back together (else the record reads as damaged)
+	}
 	if grew {
 		a.FirstX, a.GrewX, a.LastX = 1, 1, 1
 	}

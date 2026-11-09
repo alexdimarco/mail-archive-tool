@@ -1735,6 +1735,30 @@ plaintext archives; encrypted archives use §9.2.
 > - **Not settled, for the confirm round:** on an hourly schedule, after a long switch-off, the 3
 >   backups without progress can come within about 2 hours of the computer coming back. The rule is
 >   met, but Thunderbird has then had only those hours to download.
+>
+> **Amended 2026-11-09 [the lead's call on the item above]:** the backups without progress that
+> "stopped" counts must also span **at least 24 hours**, from the first of them to the latest
+> (`state.TBStoppedSpan`; the record gains `first_no_progress`, the first such backup since the
+> latest progress, set only by a backup with a plausible clock, cleared by progress, by a clock that
+> went back and by MISS-01's restart). So "stopped" needs all three: 3 days since the last progress,
+> 3 backups without progress, and those backups spanning a day.
+>
+> - Hourly, after 4 days off: the first backup back gets the still-downloading email (MA-891's rule,
+>   unchanged); the backups of the next 23 hours (and at 23h59) send nothing; the backup 24 hours
+>   after the first one back sends the stopped email, once.
+> - Daily: unchanged. The third backup without progress is already 48 hours after the first.
+> - A record written before `first_no_progress` sets it at its next backup without progress: the
+>   stopped email comes a day later, never falsely.
+> - The new date is checked as the others (PLANT-01): before 2020, more than a day ahead, before the
+>   latest progress or after the latest behind backup is damaged.
+> - **Still open (for the confirm round):** the window starts at the first backup without progress,
+>   which can be BEFORE the switch-off. An hourly schedule whose last backups before the switch-off
+>   already saw no progress (say Thunderbird was quit an hour or two before the computer was turned
+>   off) has a window that began days ago, so the first backup after the computer comes back (with 2
+>   such backups before the switch-off) can still send "stopped". The real scheduled-run test
+>   (`TestTheScheduledRunSendsTheDownloadEmailsOncePerStreak`) passes through this case. Closing that needs a rule about gaps between backups (for example, a gap longer
+>   than the window restarts it), which would hold back a daily or weekly schedule whose backups
+>   drift. Not built; a call for the lead.
 
 ## 6. Folders not kept on this computer
 

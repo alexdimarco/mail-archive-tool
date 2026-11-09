@@ -99,7 +99,8 @@ const tbStreakAhead = 24 * time.Hour
 // without progress than behind runs. Dates: any date before 2020-01-01; any date more than a day
 // after now (only when now itself is plausible, so a run whose clock is wrong never calls a real
 // record damaged); a first time after a last one (the streak's first behind after its latest, its
-// latest progress before its first or after its latest); and one behind run holding two different
+// latest progress before its first or after its latest, its first backup without progress before
+// its latest progress or after its latest behind); and one behind run holding two different
 // times. The run treats it as damaged: the streak starts fresh and the run records a WARN
 // (tbstreak_unreadable), never silent. Fresh is R42's fail-safe reading: a later notice, never a
 // false one, and the email and behind_since never show a planted date.
@@ -118,10 +119,15 @@ func (s TBStreak) ImplausibleAt(now time.Time) bool {
 		if a.Serial > s.Serial || a.Runs > tbStreakPlausibleMax || a.NoProgressRuns > a.Runs {
 			return true
 		}
-		if bad(a.FirstBehind) || bad(a.LastBehind) || bad(a.LastGrew) || bad(a.SeenAt) {
+		if bad(a.FirstBehind) || bad(a.LastBehind) || bad(a.LastGrew) || bad(a.SeenAt) || bad(a.FirstNoProgress) {
 			return true
 		}
 		if before(a.FirstBehind, a.LastBehind) || before(a.FirstBehind, a.LastGrew) || before(a.LastGrew, a.LastBehind) {
+			return true
+		}
+		// The first backup without progress sits between the latest progress and the latest behind
+		// backup (the lead's call of 2026-11-09).
+		if before(a.LastGrew, a.FirstNoProgress) || before(a.FirstNoProgress, a.LastBehind) {
 			return true
 		}
 		if a.Runs == 1 && !a.FirstBehind.Equal(a.LastBehind) {

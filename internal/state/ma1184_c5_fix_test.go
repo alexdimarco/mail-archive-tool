@@ -54,9 +54,15 @@ func TestStoppedNeedsThreeDaysAndThreeBackupsWithoutProgress(t *testing.T) {
 	if a := acct(off); a.Stopped() {
 		t.Errorf("two backups without progress are stopped: %+v", a)
 	}
+	// Amended 2026-11-09 (the lead's call): the third, 2 hours after the gap, is not stopped either;
+	// those backups must span a day (TestStoppedNeedsADayOfBackupsWithoutProgress); a day later it is.
 	off = runs(off, 100, t0.Add(4*day+2*time.Hour))
+	if a := acct(off); a.Stopped() {
+		t.Errorf("three backups without progress within 2 hours of a 4-day gap are stopped: %+v", a)
+	}
+	off = runs(off, 100, t0.Add(5*day))
 	if a := acct(off); !a.Stopped() {
-		t.Errorf("three backups without progress across 4 days are not stopped: %+v", a)
+		t.Errorf("backups without progress across 4 days and a day after the gap are not stopped: %+v", a)
 	}
 	// A backup whose clock is implausible counts no backup without progress.
 	if a := acct(runs(runs(TBStreak{}, 100, t0, t0.Add(day), time.Date(2001, 1, 1, 0, 0, 0, 0, time.UTC)), 100, t0.Add(3*day))); a.NoProgressRuns != 2 || a.Stopped() {

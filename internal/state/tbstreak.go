@@ -107,9 +107,15 @@ type TBStreakAccount struct {
 	// NoProgressRuns counts the behind runs with a plausible clock since the latest growth whose X
 	// did not grow (FALSE-01): "stopped" needs TBStoppedRuns of them, so the days a computer was
 	// switched off count for nothing.
-	NoProgressRuns int  `json:"no_progress_runs,omitempty"`
-	StillSent      bool `json:"still_downloading_sent,omitempty"`
-	StoppedSent    bool `json:"stopped_sent,omitempty"`
+	NoProgressRuns int `json:"no_progress_runs,omitempty"`
+	// FirstNoProgress is the time of the first of those runs (the lead's call of 2026-11-09):
+	// "stopped" also needs them to span TBStoppedSpan, first to latest, so an hourly schedule after
+	// a long switch-off waits a day. None until a plausible run without progress sets it; a record
+	// written before this field sets it at its next such run (the stopped email comes later, never
+	// falsely).
+	FirstNoProgress time.Time `json:"first_no_progress,omitzero"`
+	StillSent       bool      `json:"still_downloading_sent,omitempty"`
+	StoppedSent     bool      `json:"stopped_sent,omitempty"`
 	// SeenRun is the record's Run when a run last reached the store (any verdict), and SeenAt
 	// that run's time (zero when its clock was before MinPlausibleTime); BehindRun is the Run
 	// when a run last found it behind.
@@ -199,7 +205,8 @@ func (s TBStreak) Account(store string) (TBStreakAccount, bool) {
 // MA-891's rules, as the presync streak's: a time before MinPlausibleTime moves neither first nor
 // latest, though the run still counts; a clock that went back restarts the first time and keeps
 // the serial. X "grew" when it is above the previous behind run's X (the C5 pass's FALSE-02); a
-// plausible run whose X did not grow counts toward "stopped" (FALSE-01). A plausible run that finds
+// plausible run whose X did not grow counts toward "stopped" (FALSE-01), and the first such run
+// since the latest growth starts the window TBStoppedSpan measures from. A plausible run that finds
 // no progress time it can use, none (the streak's first run had a clock before MinPlausibleTime,
 // MISS-01) or one later than now (a wrong clock), starts the progress time at now. A full record
 // makes room (BehindEvicting).
@@ -258,17 +265,22 @@ func (s TBStreak) BehindEvicting(store, name string, x int64, now time.Time) (TB
 	switch {
 	case !a.FirstBehind.Equal(restarted) && !restarted.IsZero():
 		// The clock went back: the streak's first time restarts, and so does its growth's.
-		a.LastGrew, a.GrewX, a.FirstX, a.NoProgressRuns = a.FirstBehind, x, x, 0
+		a.LastGrew, a.GrewX, a.FirstX, a.NoProgressRuns, a.FirstNoProgress = a.FirstBehind, x, x, 0, time.Time{}
 	case plausible && (a.LastGrew.IsZero() || a.LastGrew.After(now)):
 		// No progress time this run can measure from (MISS-01): it starts here.
-		a.LastGrew, a.GrewX, a.NoProgressRuns = now, x, 0
+		a.LastGrew, a.GrewX, a.NoProgressRuns, a.FirstNoProgress = now, x, 0, time.Time{}
 	case grew:
-		a.GrewX, a.NoProgressRuns = x, 0
+		a.GrewX, a.NoProgressRuns, a.FirstNoProgress = x, 0, time.Time{}
 		if plausible {
 			a.LastGrew = now
 		}
-	case plausible && a.NoProgressRuns < tbStreakPlausibleMax:
-		a.NoProgressRuns++
+	case plausible:
+		if a.NoProgressRuns < tbStreakPlausibleMax {
+			a.NoProgressRuns++
+		}
+		if a.FirstNoProgress.IsZero() {
+			a.FirstNoProgress = now
+		}
 	}
 	s.Accounts[i] = a
 	return s, evicted, room
@@ -277,6 +289,12 @@ func (s TBStreak) BehindEvicting(store, name string, x int64, now time.Time) (TB
 // TBStoppedRuns is how many behind runs since the latest growth must have seen none before the
 // stopped email is due (the C5 pass's FALSE-01, the lead's call of 2026-11-09), beside the 3 days.
 const TBStoppedRuns = 3
+
+// TBStoppedSpan is how long those runs must span, the first of them to the latest (the lead's call
+// of 2026-11-09, beside FALSE-01): a day, so an hourly schedule after a long switch-off cannot call
+// an account stopped a few hours after the computer is back on. A daily schedule's third such run
+// already spans two days.
+const TBStoppedSpan = 24 * time.Hour
 
 // oldest is the index of the entry BehindEvicting may drop: of the entries this run did not find
 // behind (BehindRun before Run; a read clamps BehindRun to at most Run), the least (SeenRun,
@@ -319,10 +337,12 @@ func (a TBStreakAccount) StillDownloading() bool {
 
 // Stopped reports §5's "stopped downloading" threshold: X has not grown across behind runs
 // spanning SyncStaleAfter, measured from the latest growth to the latest behind run, AND at least
-// TBStoppedRuns behind runs in that span saw no growth (FALSE-01): a computer switched off for
-// days, then one backup, is never "stopped".
+// TBStoppedRuns behind runs in that span saw no growth (FALSE-01), AND those runs span
+// TBStoppedSpan, the first to the latest: a computer switched off for days, then one backup, or a
+// few hours of hourly ones, is never "stopped".
 func (a TBStreakAccount) Stopped() bool {
-	return a.NoProgressRuns >= TBStoppedRuns && spanOf(a.Runs, a.LastGrew, a.LastBehind) >= SyncStaleAfter
+	return a.NoProgressRuns >= TBStoppedRuns && spanOf(a.Runs, a.LastGrew, a.LastBehind) >= SyncStaleAfter &&
+		spanOf(a.NoProgressRuns, a.FirstNoProgress, a.LastBehind) >= TBStoppedSpan
 }
 
 // ErrTBStreakNewer is ReadTBStreak's refusal of a record a later MailArchive wrote (a format

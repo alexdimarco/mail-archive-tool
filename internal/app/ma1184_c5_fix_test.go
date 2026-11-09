@@ -26,12 +26,13 @@ func aFold(t *testing.T, out string, r tbcomplete.Result, now time.Time) []state
 	return n
 }
 
-// covers: MA-1184
+// covers: MA-1184, MA-1188
 // FALSE-01: the computer is off for 4 days between two behind runs; the first run after it finds X
 // unchanged (Thunderbird had no chance to download). "A computer that was switched off trips
-// nothing" (§5): the stopped email needs 3 backups without progress across 3 days. The
-// still-downloading email is due (MA-891's rule, measured between runs). Positive twin: the third
-// backup after the gap without progress is due the stopped email.
+// nothing" (§5): the stopped email needs 3 backups without progress across 3 days, spanning a day
+// themselves (the lead's call of 2026-11-09). The still-downloading email is due (MA-891's rule,
+// measured between runs). Positive twin: hourly backups without progress, a day after the gap, are
+// due the stopped email, once.
 func TestAttackC5_SwitchedOffFourDaysSendsStopped(t *testing.T) {
 	out := tmpDir(t)
 	aFold(t, out, c5Behind("k", 100), aT0)
@@ -47,11 +48,35 @@ func TestAttackC5_SwitchedOffFourDaysSendsStopped(t *testing.T) {
 	if err := MarkTBNoticesSent(out, n); err != nil {
 		t.Fatal(err)
 	}
-	if n = aFold(t, out, c5Behind("k", 100), aT0.Add(4*aDay+time.Hour)); n != nil {
-		t.Errorf("two backups without progress are due %+v", n)
+	// Amended 2026-11-09 (the lead's call): hourly backups after the gap are due nothing for the
+	// first 23 hours (nor at 23h59) though 3 of them found no progress; at 24 hours, exactly one
+	// stopped email; none after it.
+	for h := 1; h <= 23; h++ {
+		if n = aFold(t, out, c5Behind("k", 100), aT0.Add(4*aDay+time.Duration(h)*time.Hour)); n != nil {
+			t.Fatalf("hourly, %d hours after the gap: due %+v", h, n)
+		}
 	}
-	if n = aFold(t, out, c5Behind("k", 100), aT0.Add(4*aDay+2*time.Hour)); len(n) != 1 || !n[0].Stopped || !n[0].LastGrew.Equal(aT0) {
-		t.Errorf("positive twin: three backups without progress across 4 days: %+v", n)
+	if n = aFold(t, out, c5Behind("k", 100), aT0.Add(4*aDay+23*time.Hour+59*time.Minute)); n != nil {
+		t.Fatalf("23h59 after the gap: due %+v", n)
+	}
+	stopped := 0
+	for h := 24; h <= 30; h++ {
+		n = aFold(t, out, c5Behind("k", 100), aT0.Add(4*aDay+time.Duration(h)*time.Hour))
+		for _, nn := range n {
+			if !nn.Stopped || !nn.LastGrew.Equal(aT0) {
+				t.Errorf("hourly, %d hours after the gap: %+v", h, nn)
+			}
+			stopped++
+		}
+		if h == 24 && len(n) != 1 {
+			t.Errorf("positive twin: a day of hourly backups without progress after the gap: %+v", n)
+		}
+		if err := MarkTBNoticesSent(out, n); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if stopped != 1 {
+		t.Errorf("want exactly one stopped email, got %d", stopped)
 	}
 }
 
