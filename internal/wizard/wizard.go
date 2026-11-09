@@ -1995,7 +1995,7 @@ func exportSummaryFor(out string, keepRaw bool, r app.Result, goos string) strin
 	s := r.Stats
 	b := &strings.Builder{}
 	// The lead follows the run's weakest Thunderbird account (completeness design §4.2's fold, §7's
-	// wizard-lead fold; slice C3): "Export complete." only when every one may say complete, or the
+	// wizard-lead fold; slice C3): "Backup complete." only when every one may say complete, or the
 	// run read none; then each account's lines. A one-off wizard export has no schedule yet, so
 	// the words ask for the backup to be run again (TC-17).
 	b.WriteString(tbcomplete.RunLead(r.Thunderbird).Sentence() + "\n\n")

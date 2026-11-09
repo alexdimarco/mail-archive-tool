@@ -4,26 +4,27 @@ import (
 	"testing"
 
 	"mail-archive-tool/internal/state"
+	"mail-archive-tool/internal/thunderbird"
 )
 
 // covers: MA-1181
 // Slice C3's half of the lead: its words, and the lead of a run read back from its record
 // (RecordLead, through RunLeadWith with the record's thunderbird_more, the C2 pass round 2's
 // R2-06). Positive twin first: the owner-shaped record (Gmail caught up, another account caught
-// up; Local Folders never recorded) leads "Export complete.". Then: one behind leads "Backed up
+// up; Local Folders never recorded) leads "Backup complete." (the owner's ruling of 2026-11-08 on the friction review's L4; it was "Export complete."). Then: one behind leads "Backed up
 // what Thunderbird has so far." whatever else; caught up beside unknown, or a caught-up account
 // that may not say complete, leads "Backup finished."; an account left out of the record is never
 // complete; a record that says complete over its own numbers, or holds not_applicable or a verdict
-// nobody defined, never leads complete; no Thunderbird account keeps today's "Export complete.".
+// nobody defined, never leads complete; no Thunderbird account leads "Backup complete.".
 func TestTheLeadOfARecord(t *testing.T) {
 	ok := func(name string, n int64) state.TBAccount {
 		return state.TBAccount{Account: name, Verdict: "caught_up", Complete: true, OnDisk: n, Listed: n}
 	}
 	owner := []state.TBAccount{ok("imap.gmail.com", 238169), ok("imap.example.com", 3402)}
-	if l := RecordLead(owner, 0); l != LeadComplete || l.Sentence() != "Export complete." {
+	if l := RecordLead(owner, 0); l != LeadComplete || l.Sentence() != "Backup complete." {
 		t.Fatalf("positive twin: the owner-shaped record: %v %q", l, l.Sentence())
 	}
-	if l := RecordLead(nil, 0); l.Sentence() != "Export complete." {
+	if l := RecordLead(nil, 0); l.Sentence() != "Backup complete." {
 		t.Errorf("no Thunderbird account: %q", l.Sentence())
 	}
 	behind := state.TBAccount{Account: "imap.example.com", Verdict: "behind", OnDisk: 1670, Listed: 14201}
@@ -77,5 +78,28 @@ func TestTheVersionReachesTheResult(t *testing.T) {
 	in.Profile = Profile{VersionMajor: 160, VersionKnown: false}
 	if r := Assess(in); r.Version != 0 {
 		t.Errorf("a version that cannot be told: %d, want 0", r.Version)
+	}
+}
+
+// covers: MA-1284
+// Thunderbird's own name for the account reaches the result for the words, whatever the verdict
+// (an unknown account is named too), and changes no verdict. Positive twin first: no name, none.
+func TestTheNameReachesTheResult(t *testing.T) {
+	in := Input{Account: "imap.example.com", Matched: true, Type: "imap", WholeStore: true, Gmail: thunderbird.GmailNo}
+	r0 := Assess(in)
+	if r0.Name != "" {
+		t.Fatalf("positive twin: %q", r0.Name)
+	}
+	in.Name = "sam@example.com"
+	r := Assess(in)
+	if r.Name != "sam@example.com" || r.Account != "imap.example.com" {
+		t.Errorf("the name: %q (account %q)", r.Name, r.Account)
+	}
+	if r.Verdict != r0.Verdict || r.Reason != r0.Reason {
+		t.Errorf("the name changed the verdict: %v %v, was %v %v", r.Verdict, r.Reason, r0.Verdict, r0.Reason)
+	}
+	in.Type = "ews"
+	if r := Assess(in); r.Name != "sam@example.com" || r.Reason != ReasonAccountType {
+		t.Errorf("an Exchange account's name: %q %v", r.Name, r.Reason)
 	}
 }

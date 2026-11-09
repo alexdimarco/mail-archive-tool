@@ -45,6 +45,9 @@ type StoreFacts struct {
 	Whole bool
 	// Gmail is GmailForStore's answer for Account, from the same read.
 	Gmail Gmail
+	// Name is Account's name as Thunderbird shows it in its folder pane and Account Settings
+	// (accountNameOf), as written, not yet cleaned; "" when it cannot be told for certain.
+	Name string
 	// Limits are Account's limits, read for an imap account only.
 	Limits Limits
 	// OtherStores are the folders every other live account's settings name as its own
@@ -117,6 +120,7 @@ func ReadStoreFacts(profileDir, input string) (StoreFacts, error) {
 		return f, err
 	}
 	f.Gmail = gmailOf(acct, s.vals)
+	f.Name = accountNameOf(acct.ServerKey, s.vals)
 	if acct.Type == "imap" {
 		lim, lerr := limitsOf(acct.ServerKey, s.vals)
 		if lerr != nil {
@@ -147,6 +151,30 @@ func ReadStoreFacts(profileDir, input string) (StoreFacts, error) {
 		}
 	}
 	return f, nil
+}
+
+// accountNameOf is the server key's name as Thunderbird shows it in its folder pane and Account
+// Settings (the owner's ruling of 2026-11-08 on the C3 friction review's M1), from vals as
+// Thunderbird applies them: nsMsgIncomingServer::GetPrettyName reads the server's "name" through
+// GetStringValue, which takes the server's own setting, else mail.server.default's (ESR 153
+// nsMsgIncomingServer.cpp:558-562 and :589-595). When that is empty Thunderbird builds a name
+// (nsImapIncomingServer::GetConstructedPrettyName, from a localized string and the identity's
+// email) that MailArchive does not model, so the name is "" and the words say the folder instead.
+// Only a quoted text is a name: a value of another type cannot be told for certain (Thunderbird
+// would fall back past it), so it is "" too. The name is never part of the account match, so a
+// mistyped name never costs the account its check; it is as written (state cleans and caps it).
+func accountNameOf(key string, vals map[string]string) string {
+	for _, k := range []string{"mail.server." + key + ".name", "mail.server.default.name"} {
+		v, ok := vals[k]
+		if !ok {
+			continue
+		}
+		if !strings.HasPrefix(v, `"`) {
+			return ""
+		}
+		return unquote(v)
+	}
+	return ""
 }
 
 // limitsOf reads the account key's limits from vals, each setting with its type checked.

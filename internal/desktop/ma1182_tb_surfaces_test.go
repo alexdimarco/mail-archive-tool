@@ -62,7 +62,7 @@ func TestRecentBackupsSaysThunderbirdIsStillDownloading(t *testing.T) {
 	if r.Status != "OK — Thunderbird still downloading" || r.Failed {
 		t.Errorf("a behind run's status: %q failed %v", r.Status, r.Failed)
 	}
-	want := "3 messages · Thunderbird has downloaded about 1,670 of at least 56,611 messages in imap.gmail.com so far · MailArchive could not tell how much of imap.example.com Thunderbird has downloaded"
+	want := "3 messages · Thunderbird has downloaded about 1,670 of at least 56,611 messages in the Thunderbird account kept in the folder imap.gmail.com so far · MailArchive could not tell how much of the Thunderbird account kept in the folder imap.example.com Thunderbird has downloaded"
 	if r.Detail != want {
 		t.Errorf("a behind run's detail:\n got %q\nwant %q", r.Detail, want)
 	}
@@ -109,7 +109,7 @@ func TestTheArchiveCardSaysThunderbirdIsStillDownloading(t *testing.T) {
 	if b := by[caught].TBBanner; b != "" {
 		t.Fatalf("positive twin: a caught-up archive's banner: %q", b)
 	}
-	want := "Thunderbird is still downloading imap.gmail.com: about 1,670 of 238,080 messages are on this computer so far; 1 folder is not kept on this computer, so it is not backed up — see Status & health."
+	want := "Thunderbird is still downloading the Thunderbird account kept in the folder imap.gmail.com: about 1,670 of 238,080 messages are on this computer so far; 1 folder is not kept on this computer, so it is not backed up — see Status & health."
 	if b := by[behind].TBBanner; b != want {
 		t.Errorf("a behind archive's banner:\n got %q\nwant %q", b, want)
 	}
@@ -128,6 +128,56 @@ func TestTheArchiveCardSaysThunderbirdIsStillDownloading(t *testing.T) {
 	}
 }
 
+// covers: MA-1182
+// The C3 friction review's P10 (a small design change, the lead's call of 2026-11-08): the archive
+// card also speaks for an account Thunderbird keeps only in part by its own settings (cell G: 170
+// of 2,300, so most of its mail is not backed up), as `status` WARNs thunderbird_limited. Positive
+// twin first: a caught-up archive's card says nothing.
+func TestTheArchiveCardSaysALimitedAccount(t *testing.T) {
+	caught, limited := t.TempDir(), t.TempDir()
+	for dir, a := range map[string]state.TBAccount{
+		caught:  {Account: "imap.fastmail.com", Verdict: "caught_up", Complete: true, OnDisk: 9, Listed: 9},
+		limited: {Account: "imap.fastmail.com", Verdict: "limited", OnDisk: 170, Listed: 2300, Limit: &state.TBLimit{MaxAgeDays: 30}},
+	} {
+		writeManifest(t, dir)
+		if err := state.WriteLastRun(dir, state.LastRun{Status: state.RunOK, Started: time.Now().Add(-time.Minute), Finished: time.Now(), Thunderbird: []state.TBAccount{a}}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	rows := Config{SettingsPath: filepath.Join(t.TempDir(), "s.json")}.archiveRows(archindex.Index{Entries: []archindex.Entry{{Path: caught}, {Path: limited}}})
+	by := map[string]ArchiveRow{}
+	for _, r := range rows {
+		by[r.Path] = r
+	}
+	if b := by[caught].TBBanner; b != "" {
+		t.Fatalf("positive twin: %q", b)
+	}
+	want := "Thunderbird keeps only part of the mail of the Thunderbird account kept in the folder imap.fastmail.com on this computer (about 170 of 2,300 messages), so the rest is not backed up — see Status & health."
+	if b := by[limited].TBBanner; b != want {
+		t.Errorf("a limited archive's card:\n got %q\nwant %q", b, want)
+	}
+}
+
+// covers: MA-1182, MA-1186
+// The C3 friction review's P7: an encrypted archive's Recent backups row says "backup finished",
+// never "completed", since its entry keeps nothing of completeness (O1) and the run may have been
+// behind (§7's M8 fold: no record-based surface says "complete"). Positive twin first: a plaintext
+// row says its count.
+func TestAnEncryptedRowNeverSaysCompleted(t *testing.T) {
+	if r := runRowOf(state.RunHistoryEntry{When: time.Now(), Status: state.RunOK, Exported: 3}, true); r.Detail != "3 messages" {
+		t.Fatalf("positive twin: %q", r.Detail)
+	}
+	for kind, want := range map[string]string{
+		"":                    "backup finished (its counts are sealed)",
+		state.NoteIndexBehind: "backup finished; some messages are not searchable yet — the next backup adds them",
+	} {
+		r := runRowOf(state.RunHistoryEntry{When: time.Now(), Status: state.RunOK, Encrypted: true, ErrorKind: kind}, false)
+		if r.Status != "OK" || r.Detail != want || strings.Contains(r.Detail, "complete") {
+			t.Errorf("an encrypted row (%q): %q %q, want %q", kind, r.Status, r.Detail, want)
+		}
+	}
+}
+
 // covers: MA-1198
 // A planted record's names reach Recent backups and the card cleaned and capped (TC-7), and the
 // page renders them only through html/template. Positive twin first: an ordinary name as it is.
@@ -137,7 +187,7 @@ func TestHostileNamesOnTheDesktop(t *testing.T) {
 	if err := state.AppendRunHistory(out, state.RunHistoryEntry{When: time.Now(), Status: state.RunOK, TB: &tb}); err != nil {
 		t.Fatal(err)
 	}
-	if r := recentRunRows(out); len(r) != 1 || !strings.Contains(r[0].Detail, "in imap.gmail.com so far") {
+	if r := recentRunRows(out); len(r) != 1 || !strings.Contains(r[0].Detail, "kept in the folder imap.gmail.com so far") {
 		t.Fatalf("positive twin: %+v", r)
 	}
 	hostile := "<b>x</b>‮\x1b" + strings.Repeat("z", 10*1024)

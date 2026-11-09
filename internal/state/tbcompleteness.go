@@ -18,6 +18,12 @@ import (
 // written. The words are C3's: nothing here is a sentence.
 type TBAccount struct {
 	Account string `json:"account"` // the store folder's name (§4.1 step 1 fold)
+	// Name is Thunderbird's own name for the account, as its folder pane and Account Settings
+	// show it (usually the email address; the owner's ruling of 2026-11-08 on the C3 friction
+	// review's M1), for the words on screen only: it is never written (the record, `-json`, the run
+	// history and the alert email keep the store folder, Account), so an account read back from a
+	// record has none and the words name it by its folder. "" when the run could not tell it.
+	Name string `json:"-"`
 	// StoreID is a hash of the store's full path (profile and store, compared as the OS compares
 	// names): two stores with one folder name are told apart by it (the C2 pass's ADV-C2-01), and
 	// TC-19's fingerprints are carried forward by it. A hash, never the path.

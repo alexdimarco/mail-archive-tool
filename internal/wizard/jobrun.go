@@ -121,10 +121,11 @@ func runNowLead(l tbcomplete.Lead) string {
 }
 
 // tbNoteLines are the run's Thunderbird lines for Run now's note, from its in-memory verdicts
-// (never a record, O1): scheduled says a schedule runs this archive's later backups (TC-17).
+// (never a record, O1): scheduled says a schedule runs this archive's later backups (TC-17); with
+// none they ask for Run now to be clicked again (the C3 friction review's P3).
 func tbNoteLines(r app.Result, scheduled bool) []string {
 	accts, more := app.TBAccounts(r)
-	return state.TBLines(accts, more, state.TBSay{Scheduled: scheduled})
+	return state.TBLines(accts, more, state.TBSay{Scheduled: scheduled, Surface: state.TBSurfaceRunNow})
 }
 
 // runNowSummaryFor is runNowSummary for an archive whose later backups a schedule runs, or not.
@@ -302,7 +303,14 @@ func encryptedSummaryFor(result app.Result, scheduled bool) string {
 	case tbcomplete.LeadSoFar:
 		lead = "Backed up what Thunderbird has so far: "
 	}
-	s := fmt.Sprintf(lead+"%d message(s) added or updated. They are sealed in the encrypted archive; open it in MailArchive Desktop to read them.", result.Stats.Exported)
+	// The count in words (the C3 friction review's P6), as the plaintext note says it: "no new
+	// messages" when nothing was written, otherwise "1 message" or "390 messages". The sealed
+	// sentence stays either way: the Desktop turns its "open it in MailArchive Desktop" into the
+	// Open archive hint (wizardReadThem, MA-852's Run now test).
+	s := lead + "no new messages. Your messages are sealed in the encrypted archive; open it in MailArchive Desktop to read them."
+	if n := result.Stats.Exported; n > 0 {
+		s = lead + messages(n) + " added or updated. They are sealed in the encrypted archive; open it in MailArchive Desktop to read them."
+	}
 	tb := tbNoteLines(result, scheduled)
 	if len(tb) > 0 {
 		s += "\n" + strings.Join(tb, "\n")

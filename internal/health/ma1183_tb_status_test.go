@@ -39,7 +39,7 @@ func reasonsByCode(rep Report, code string) []string {
 // about is a note (thunderbird_unknown), never a WARN; Spam and Trash not kept, and Gmail's labels,
 // notes only. The Last run line ends with the run's lead, built from the record through
 // RunLeadWith with its thunderbird_more (R2-06). A record without completeness shows nothing of
-// it. Positive twin first: the owner-shaped record is GREEN and its Last run line says "Export
+// it. Positive twin first: the owner-shaped record is GREEN and its Last run line says "Backup
 // complete.".
 func TestStatusSaysThunderbirdIsBehind(t *testing.T) {
 	gmail := state.TBAccount{Account: "imap.gmail.com", Verdict: "caught_up", Complete: true, Gmail: true, OnDisk: 238169, Listed: 238169,
@@ -50,16 +50,16 @@ func TestStatusSaysThunderbirdIsBehind(t *testing.T) {
 	if w := tbWarns(rep); len(w) != 0 || len(reasonsByCode(rep, "thunderbird_caught_up")) == 0 {
 		t.Fatalf("positive twin: the owner-shaped record WARNs %q", w)
 	}
-	if got := reasonsByCode(rep, "thunderbird_caught_up"); len(got) != 2 || got[0] != "Thunderbird has downloaded everything it lists for imap.gmail.com (238,169 messages)." {
+	if got := reasonsByCode(rep, "thunderbird_caught_up"); len(got) != 2 || got[0] != "Thunderbird has downloaded everything it lists for the Thunderbird account kept in the folder imap.gmail.com (238,169 messages)." {
 		t.Errorf("the caught-up notes: %q", got)
 	}
-	if got := reasonsByCode(rep, "thunderbird_default_not_kept"); len(got) != 1 || !strings.HasPrefix(got[0], "Thunderbird does not keep Spam and Trash of imap.gmail.com") {
-		t.Errorf("Spam and Trash: %q", got)
+	if got := reasonsByCode(rep, "thunderbird_default_not_kept"); len(got) != 1 || got[0] != "Thunderbird does not keep the Spam folder of the Thunderbird account kept in the folder imap.gmail.com on this computer (its usual setting), so it is not backed up." {
+		t.Errorf("only Spam not kept, named alone (P11): %q", got)
 	}
 	if got := reasonsByCode(rep, "thunderbird_labels_not_kept"); len(got) != 1 {
 		t.Errorf("Gmail's labels: %q", got)
 	}
-	if line := lastRunLine(in, rep); !strings.HasSuffix(line, " · Export complete.") {
+	if line := lastRunLine(in, rep); !strings.HasSuffix(line, " · Backup complete.") {
 		t.Errorf("the Last run line: %q", line)
 	}
 
@@ -70,7 +70,7 @@ func TestStatusSaysThunderbirdIsBehind(t *testing.T) {
 	if w := tbWarns(rep); len(w) != 1 || rep.Posture != "WARN" {
 		t.Errorf("one behind: posture %s, WARNs %q", rep.Posture, w)
 	}
-	if got := reasonsByCode(rep, "thunderbird_behind"); len(got) != 1 || got[0] != "WARN: Thunderbird has downloaded about 1,670 of 14,201 messages in imap.example.com so far. Leave Thunderbird open (it downloads mostly while the computer is left alone). Run the backup again once Thunderbird has downloaded more, to add the rest." {
+	if got := reasonsByCode(rep, "thunderbird_behind"); len(got) != 1 || got[0] != "WARN: Thunderbird has downloaded about 1,670 of 14,201 messages in the Thunderbird account kept in the folder imap.example.com so far. Leave Thunderbird open (it downloads mostly while the computer is left alone). Run the backup again once Thunderbird has downloaded more, to add the rest." {
 		t.Errorf("thunderbird_behind: %q", got)
 	}
 	if got := reasonsByCode(rep, "thunderbird_unknown"); len(got) != 1 || strings.HasPrefix(got[0], "WARN") || !strings.Contains(got[0], "newer storage") {
@@ -123,11 +123,11 @@ func TestAChosenSettingWarnsOnceThenNotes(t *testing.T) {
 		NotKept: []state.TBFolder{{Folder: "Projects", Listed: 772}}, NotKeptSince: fin, ThunderbirdVersion: 153}
 	first := Assess(tbIn(state.LastRun{Finished: fin, Started: fin.Add(-time.Minute), Thunderbird: []state.TBAccount{a}}), time.Now())
 	lim, nk := reasonsByCode(first, "thunderbird_limited"), reasonsByCode(first, "thunderbird_not_kept")
-	if len(lim) != 1 || !strings.HasPrefix(lim[0], "WARN: Thunderbird has downloaded about 900 of 5,000 messages in imap.example.com. Thunderbird is set to keep only the most recent 30 days") ||
+	if len(lim) != 1 || !strings.HasPrefix(lim[0], "WARN: Thunderbird has downloaded about 900 of 5,000 messages in the Thunderbird account kept in the folder imap.example.com. Thunderbird is set to keep only the most recent 30 days") ||
 		!strings.Contains(lim[0], `choose "Synchronize all messages locally regardless of age".`) {
 		t.Fatalf("positive twin: the first run's limited WARN: %q", lim)
 	}
-	if len(nk) != 1 || !strings.HasPrefix(nk[0], "WARN: This folder of imap.example.com is not kept on this computer") || !strings.Contains(nk[0], "To keep it:") {
+	if len(nk) != 1 || !strings.HasPrefix(nk[0], "WARN: This folder of the Thunderbird account kept in the folder imap.example.com is not kept on this computer") || !strings.Contains(nk[0], "To keep it:") {
 		t.Fatalf("positive twin: the first run's not-kept WARN: %q", nk)
 	}
 	a.LimitSince, a.NotKeptSince = fin.Add(-24*time.Hour), fin.Add(-24*time.Hour)
@@ -207,8 +207,11 @@ func TestStatusWordsArePlainAndNamesAreCleaned(t *testing.T) {
 			continue
 		}
 		n++
+		// Gmail's own two labels the cap note quotes are what the person must find (the C3
+		// friction review's P5, the lead's call): only those exact labels may carry "IMAP".
+		said := strings.NewReplacer(`"Forwarding and POP/IMAP"`, "", `"Do not limit the number of messages in an IMAP folder"`, "").Replace(rep.Reasons[i])
 		for _, w := range []string{"store", "IMAP", "imap", "cache", "msf"} {
-			if strings.Contains(rep.Reasons[i], w) {
+			if strings.Contains(said, w) {
 				t.Errorf("%s says %q: %q", c, w, rep.Reasons[i])
 			}
 		}

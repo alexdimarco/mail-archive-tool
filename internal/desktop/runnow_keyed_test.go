@@ -298,7 +298,7 @@ func (g *encRig) nothingWasRead() bool {
 	}
 	g.start()
 	m := g.done()
-	return strings.Contains(str(m["note"])+str(m["result"]), "Backup complete: 1 message(s) added") && g.status() == state.RunOK
+	return strings.Contains(str(m["note"])+str(m["result"]), "Backup complete: 1 message added") && g.status() == state.RunOK
 }
 
 // pauseAt sets the Run now's seam to call fn at the named step.

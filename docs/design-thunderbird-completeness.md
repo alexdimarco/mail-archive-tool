@@ -1875,7 +1875,11 @@ Spam and Trash (by default), shown as a note only:
 
 The same sentence is used on every surface, built once in `internal/state` beside
 `NotDownloadedSentence` (`outcomewords.go:176`), following design-plain-failure-words rule 1. An
-account is named by its server (`imap.gmail.com`), never by its email address.
+account is named by its server (`imap.gmail.com`), never by its email address. **(Superseded
+2026-11-08 for the words on screen by the owner's ruling on the C3 friction review's M1: the name
+Thunderbird shows for the account, else "the Thunderbird account kept in the folder NAME"; records,
+`-json` and email keep the store folder. See §13's C3 friction fold. The completeness lead "Export
+complete." is "Backup complete." by the same day's ruling.)**
 
 **Headline sentences:**
 
@@ -2649,7 +2653,9 @@ C4 must land with or before C3 if encrypted archives get any words beyond today'
 >   with an error is told `unknown`, `walk_failed` (the run's failure words still win, and a failed
 >   run records nothing, §11). Neither is ever silently absent from the results, so `RunLead` can
 >   never say complete over it. A real Evolution store, under no Thunderbird profile, is still told
->   nothing. **Follow-up, not changed here:** source detection still opens a maildir-format
+>   nothing. **(Amended 2026-11-08 by fold check 3's N1, §13's C3 friction fold: a store with no
+>   profile that holds any `.msf` is kept too, as "can't tell".)** **Follow-up, not changed here:**
+>   source detection still opens a maildir-format
 >   Thunderbird store whose server has folders named `cur`/`new` and one starting with "." with the
 >   Evolution reader (`isEvolutionMaildirStore`); the account is now `unknown` instead of counted.
 >   Whether detection should prefer the Thunderbird reader under a profile wants its own change.
@@ -2864,6 +2870,78 @@ C4 must land with or before C3 if encrypted archives get any words beyond today'
 >   whether it was done elsewhere.
 > - **Gate owed: the friction review** (§13's C3 row: Windows on Edge first, then the Mac), with the
 >   X-series walk. MA-904's checks are unchanged and green. Not self-certified here.
+>
+> **Folded 2026-11-08 [C3 friction review; fold check 3's N1 and N2] (the owner's rulings and the
+> lead's calls; built, for the friction re-look).** The friction review
+> (`docs/review-thunderbird-completeness-c3-friction.md`, SHIPPABLE_WITH_NOTES at e85d840) and fold
+> check 3 (`docs/review-thunderbird-completeness-foldcheck3.md`, PASS narrow) are answered:
+>
+> - **M1 (owner ruling 2026-11-08): the account's name.** On screen an account is said by the name
+>   Thunderbird shows for it: `mail.server.<key>.name`, else `mail.server.default.name`, as
+>   `nsMsgIncomingServer::GetPrettyName` reads it (ESR 153 `nsMsgIncomingServer.cpp:558-562`,
+>   `:589-595`), from the same one read of prefs.js and user.js through C0c's allow-list reader
+>   (`thunderbird.ReadStoreFacts`, `StoreFacts.Name`). Only a quoted text counts. An empty, mistyped
+>   or absent name is no name (Thunderbird then builds one from a localized string, which is not
+>   modelled), and the words say "the Thunderbird account kept in the folder NAME" (the owner's
+>   fallback). The name never takes part in the account match. It is cleaned and capped as TC-7.
+>   Two accounts with one name (compared without letter case, after cleaning) are both said by
+>   their folders (`app.TBAccounts`).
+> - **The name is never written.** `state.TBAccount.Name` is `json:"-"`: the last-run record,
+>   `-json`, the run history and the alert email keep the store folder (§9.1, §9.3). So every
+>   surface that reads a record (`status`, Status & health, the archive card, Recent backups) says
+>   the folder words; the wizard, Run now and the command line say the name. §7's "never by its
+>   email address" and its TC-10 "Names" bullet are superseded by this note for the words on screen.
+>   Row MA-1284.
+> - **L4 (owner ruling): "Backup complete."** replaces "Export complete." as the completeness lead
+>   (`state.TBLeadComplete`): the wizard's end summary, the command line's "Thunderbird:" line and
+>   `status`'s Last run line. The encrypted Run now note's "Backup complete:" is unchanged. Wherever
+>   this design names "Export complete." as the lead, read "Backup complete.".
+> - **M2 to M9 and L1 to L3 (the lead's calls: as proposed).**
+>   - P2: two or more accounts behind say the remedy once, after the last of them (`TBLines`).
+>     `status` keeps a remedy in each `thunderbird_behind` WARN (X6).
+>   - P3: `TBSay.Surface`. With no schedule, the wizard and `status` say "Run the backup again…",
+>     Run now "Click Run now again…", the command line "Run the same command again…". P2's single
+>     line follows the same choice.
+>   - P4: every Account Settings remedy opens with "click the menu button (≡, top right), then
+>     Account Settings". Lab row MA-1191 still owes the Mac's 159.
+>   - P5: the cap note names Gmail's path, quoting Gmail's own labels. Recollection, unverified
+>     until lab row MA-1201.
+>   - P6: the encrypted Run now count in words ("no new messages", "1 message"). The sealed
+>     sentence stays when nothing was written ("Your messages are sealed…"), so the Desktop still
+>     turns it into its Open archive hint (MA-852's test caught the first build dropping it).
+>   - P7: Recent backups' encrypted rows say "backup finished".
+>   - P8: the four next steps. "Opening Thunderbird and letting it check your mail usually fixes
+>     this" is kept, unverified until a lab note sees which event writes `folderCache.json` again.
+>   - P9: the Gmail floor sentence. P11: Thunderbird's usual folders named as the record lists
+>     them. P12: "Inbox". P13: "message" after a Y of 1.
+> - **M10 (the lead's call: a small design change).** §7's Desktop archive card row gains the
+>   limited accounts, after the behind part and before the not-kept count: "Thunderbird keeps only
+>   part of ACCOUNT's mail on this computer (about X of Y messages), so the rest is not backed up",
+>   or "…of the mail of N accounts…". Row MA-1182.
+> - **The builder's choices inside those calls, for the re-look:**
+>   - `partial_input` now reads "Only part of ACCOUNT was backed up, …", so the folder words read
+>     as a sentence;
+>   - a possessive with no name is "the mail of the Thunderbird account kept in the folder NAME";
+>   - the Gmail floor's verb follows X ("About 1 message … is");
+>   - P11 with more folders than the record lists: "the Trash folder and 2 more folders of
+>     ACCOUNT";
+>   - P8's "then run the backup again" is P8's words exactly, not named by surface;
+>   - the card's "about 0 of 1 message are" keeps "are".
+> - **N1 (fold check 3; the lead's call).** `planTBOther`: a store another reader opened, with no
+>   profile above it, is kept when its folder holds any `.msf` entry, seen by name in one
+>   `os.ReadDir`. It is then `unknown`, `no_match` (the unmatched rule's reason; `Assess` gives
+>   `other_reader` only to a matched store), never no result. A folder that cannot be listed shows
+>   none: its walk fails too, and the failure words win (§11). A real Evolution store is still told
+>   nothing. This amends the ADV-C2-16 bullet of §13's C2-pass note. Row MA-1196.
+> - **N2 (fold check 3).** The three tests are added: a store more than six levels below a profile
+>   holding a `.msf`; a single mbox file input with and without a `.msf` beside it; real encrypted
+>   runs of an unmatched store holding a `.msf` and of an `ews` store, through
+>   `encryptedSummaryFor`. Rows MA-1196 and MA-1186.
+> - **Backlog, not built (layout; the lead's call):** L5 (Status & health's monospace box hides the
+>   longest remedies below its fold on a 1080p-class screen) and L6 (the card line sits under some
+>   rows and beside others, by its length).
+> - **Owed:** the friction re-look of the changed words. Whether the name lookup owes an
+>   adversarial look is the lead's call (the commit gives the builder's reasons).
 
 ## 14. Owner questions (each with a recommendation)
 
@@ -3135,7 +3213,7 @@ folds.
 >
 > | # | Path (fold check) | Now | Can it print "complete", "Export complete." or "caught up"? |
 > |---|---|---|---|
-> | 1 | no matched account and no readable cache → `not_applicable` | M6: `unknown` unless a matched account is `pop3`/`none`/`rss`, or there is no profile above the input and no `ImapMail` path part | **No**, for every case the fold check named (ambiguous account, `prefs.js` missing above an `ImapMail` path or unreadable or refused, `panacea.dat`, a refused cache, a copied `ImapMail/<host>`). One case outside them remains (below) |
+> | 1 | no matched account and no readable cache → `not_applicable` | M6: `unknown` unless a matched account is `pop3`/`none`/`rss`, or there is no profile above the input and no `ImapMail` path part **(superseded 2026-11-08, fold check 3's §4 wording note: read "…and no `ImapMail` path part and no `.msf`", the M6-residual note below)** | **No**, for every case the fold check named (ambiguous account, `prefs.js` missing above an `ImapMail` path or unreadable or refused, `panacea.dat`, a refused cache, a copied `ImapMail/<host>`). One case outside them remains (below) |
 > | 2 | an Archive-only label stands in for a hidden All Mail | M5: All Mail is the one folder with 0x8000; none or several → floor | **No**: a floor is `behind` or `unknown` |
 > | 3 | deleted copies smaller than average beat the estimate | M7: complete words need `expungedBytes` = 0 | **No**: with any `expungedBytes` the lead is "Backup finished." with both numbers |
 > | 4 | `encryptedSummary` always says "Backup complete:" | M8: its lead follows the weakest-account rule | **No** |

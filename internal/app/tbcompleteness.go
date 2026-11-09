@@ -60,15 +60,35 @@ type tbStore struct {
 }
 
 // planTBOther is planTB for a local store the run opened with another reader than the mbox
-// one: kept (as unknown, other_reader) only when it is under a Thunderbird profile, so a real
-// Evolution store is never told anything. The walk counts nothing for it.
+// one: kept (as unknown) when it is under a Thunderbird profile, or, with no profile above it,
+// when its folder holds any .msf summary file (fold check 3's N1, the lead's call of 2026-11-08:
+// the M6 residual's rule, so a Thunderbird store copied out of its profile is "can't tell", never
+// no result). A real Evolution store has no .msf file and is never told anything. The walk counts
+// nothing for it.
 func planTBOther(input string) *tbStore {
 	t := planTB(input)
-	if !t.hasProfile {
+	if !t.hasProfile && !holdsMsf(t.storeDir()) {
 		return nil
 	}
 	t.counts, t.otherReader = nil, true
 	return t
+}
+
+// holdsMsf reports whether dir holds an entry named *.msf (any letter case), seen by name in one
+// listing, never opened. A folder that cannot be listed shows none (as before N1, a folder under
+// no profile is then told nothing): the reader cannot walk it either, so the run fails and its
+// failure words win (§11).
+func holdsMsf(dir string) bool {
+	entries, err := os.ReadDir(dir)
+	if err != nil {
+		return false
+	}
+	for _, e := range entries {
+		if strings.HasSuffix(strings.ToLower(e.Name()), ".msf") {
+			return true
+		}
+	}
+	return false
 }
 
 // storeID is a store's identity by its full path, profile and store, each made absolute and
@@ -184,6 +204,7 @@ func assessThunderbird(stores []*tbStore, now time.Time) []tbcomplete.Result {
 		}
 		in := tbcomplete.Input{
 			Account:     filepath.Base(store),
+			Name:        t.facts.Name,
 			StoreID:     storeID(t.profile, store),
 			Matched:     a != nil,
 			WholeStore:  t.facts.Whole,
@@ -287,7 +308,7 @@ func tbRecords(results []tbcomplete.Result, prev []state.TBAccount, now time.Tim
 			break
 		}
 		a := state.TBAccount{
-			Account: state.CleanFolderName(r.Account), StoreID: r.StoreID, Verdict: r.Verdict.String(), Reason: r.Reason.String(),
+			Account: state.CleanFolderName(r.Account), Name: state.CleanFolderName(r.Name), StoreID: r.StoreID, Verdict: r.Verdict.String(), Reason: r.Reason.String(),
 			NoIdentity: r.NoIdentity, SplitMailboxes: r.SplitMailboxes,
 			Complete: r.MaySayComplete(), Gmail: r.Gmail, Floor: r.Floor, AllMail: allMailNames[r.AllMail],
 			OnDisk: r.OnDisk, Listed: r.Listed, Missing: r.Missing, Tolerance: r.Tolerance,
@@ -360,11 +381,28 @@ func tbRecordsMore(results []tbcomplete.Result) int {
 // a run's words on screen and its record's words in `status` are one producer's (slice C3). For
 // the screen only: nothing here is written, and for an encrypted archive it is the only form the
 // verdicts take (O1). The run's lead is tbcomplete.RunLead(r.Thunderbird).
+//
+// Each account carries the name Thunderbird shows for it (state.TBAccount.Name, for the screen
+// only; the owner's ruling of 2026-11-08 on the C3 friction review's M1), except when two accounts
+// share one name as the words would say it (compared without letter case): then both are said by
+// their folders, so two accounts never read as one.
 func TBAccounts(r Result) ([]state.TBAccount, int) {
 	if len(r.Thunderbird) == 0 {
 		return nil, 0
 	}
-	return tbRecords(r.Thunderbird, nil, time.Now().UTC()), tbRecordsMore(r.Thunderbird)
+	accts := tbRecords(r.Thunderbird, nil, time.Now().UTC())
+	seen := map[string]int{}
+	for _, a := range accts {
+		if a.Name != "" {
+			seen[strings.ToLower(a.Name)]++
+		}
+	}
+	for i := range accts {
+		if seen[strings.ToLower(accts[i].Name)] > 1 {
+			accts[i].Name = ""
+		}
+	}
+	return accts, tbRecordsMore(r.Thunderbird)
 }
 
 // TBScheduled reports whether a schedule other than "only when I click Run now" will run the

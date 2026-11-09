@@ -61,7 +61,7 @@ func TestTheWeakestAccountSetsTheLead(t *testing.T) {
 // The owner-shaped run, through the real readers (C0c's account match, B1's GmailForStore, C1a's
 // ReadCache and ReadProfile) and a real temp profile, counts only, invented names: one Gmail store
 // with All Mail and about 352,000 listed in all, one IMAP store that is not Gmail, and Local
-// Folders, which is not_applicable. Everything on disk → "Export complete."; the other IMAP store
+// Folders, which is not_applicable. Everything on disk → "Backup complete." (was "Export complete."); the other IMAP store
 // behind → "Backed up what Thunderbird has so far."; Gmail with 1,670 of 238,169 (the owner's first
 // backup) → the same.
 func TestTheOwnerShapedRun(t *testing.T) {

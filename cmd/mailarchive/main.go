@@ -2405,7 +2405,7 @@ func printSummaryFor(logger *log.Logger, r app.Result, indexed, keepRaw bool, ou
 	// memory, in the words every surface says; names cleaned (TC-7). The exit code is unchanged.
 	if accts, more := app.TBAccounts(r); len(accts) > 0 || more > 0 {
 		logger.Printf("Thunderbird: %s", tbcomplete.RunLead(r.Thunderbird).Sentence())
-		for _, l := range state.TBLines(accts, more, state.TBSay{Scheduled: app.TBScheduled(out)}) {
+		for _, l := range state.TBLines(accts, more, state.TBSay{Scheduled: app.TBScheduled(out), Surface: state.TBSurfaceCommandLine}) {
 			logger.Printf("  %s", l)
 		}
 	}

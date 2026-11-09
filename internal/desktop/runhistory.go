@@ -127,10 +127,13 @@ func runRowOf(e state.RunHistoryEntry, tagged bool) runRow {
 	case state.RunOK:
 		r.Status = "OK"
 		switch {
+		// An encrypted entry says "finished", never "completed": it keeps nothing of how much
+		// Thunderbird had downloaded (O1), so it cannot know (the C3 friction review's P7; §7's M8
+		// fold: no record-based surface says "complete").
 		case e.Encrypted && e.ErrorKind == state.NoteIndexBehind:
-			r.Detail = "backup completed; some messages are not searchable yet — the next backup adds them"
+			r.Detail = "backup finished; some messages are not searchable yet — the next backup adds them"
 		case e.Encrypted: // its counts are sealed with the archive (F15)
-			r.Detail = "backup completed (its counts are sealed)"
+			r.Detail = "backup finished (its counts are sealed)"
 		case e.Exported > 0 && e.Filled > 0:
 			r.Detail = state.Count(e.Exported, "message", "messages") + ", " + state.Count(e.Filled, "filled", "filled")
 		case e.Exported > 0:

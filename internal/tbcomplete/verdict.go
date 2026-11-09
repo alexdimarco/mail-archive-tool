@@ -195,6 +195,7 @@ type OnDisk struct {
 // and never not_applicable.
 type Input struct {
 	Account     string            // the store folder's name (§4.1 step 1 fold), for the words
+	Name        string            // Thunderbird's own name for the account (ReadStoreFacts), for the words on screen only; "" when not told
 	StoreID     string            // the store's identity by its full path (the caller's hash), carried to the Result
 	Matched     bool              // C0c's match found the store's account
 	OtherReader bool              // the run read the store with another reader, which counts nothing (ADV-C2-16)
@@ -221,6 +222,7 @@ type FolderCount struct {
 // Result is one account's verdict and the numbers its words and record need.
 type Result struct {
 	Account string
+	Name    string // Input.Name: for the words on screen only, never recorded
 	StoreID string // Input.StoreID: the streak and the record's carry-forward key on it (ADV-C2-01)
 	Verdict Verdict
 	Reason  Reason // when Unknown
@@ -319,7 +321,7 @@ type Lead int
 const (
 	LeadFinished Lead = iota // "Backup finished."
 	LeadSoFar                // "Backed up what Thunderbird has so far."
-	LeadComplete             // "Export complete." (an encrypted archive's Run now note: "Backup complete:")
+	LeadComplete             // "Backup complete." (an encrypted archive's Run now note: "Backup complete:")
 )
 
 // String is the lead's name in a log; the words are Sentence's.
@@ -333,7 +335,7 @@ func (l Lead) String() string {
 	return "finished"
 }
 
-// Sentence is the lead's words (slice C3), the same on every surface: "Export complete.",
+// Sentence is the lead's words (slice C3), the same on every surface: "Backup complete.",
 // "Backed up what Thunderbird has so far." or "Backup finished." (any value not defined).
 func (l Lead) Sentence() string {
 	switch l {
@@ -397,7 +399,7 @@ func RunLeadWith(rs []Result, more int) Lead {
 // missing and the tolerance (§4.1 step 5), and the limits last (TC-9: before the never-checked rule
 // for background download).
 func Assess(in Input) Result {
-	r := Result{Account: in.Account, StoreID: in.StoreID, Limits: in.Limits,
+	r := Result{Account: in.Account, Name: in.Name, StoreID: in.StoreID, Limits: in.Limits,
 		UnkeyedMailboxes: in.OnDisk.UnkeyedMailboxes, UnkeyedMessages: in.OnDisk.UnkeyedMessages,
 		SplitMailboxes: in.OnDisk.SplitMailboxes, GluedMailboxes: in.OnDisk.GluedMailboxes, NoStatus: in.OnDisk.NoStatus,
 		MisalignedMailboxes: in.OnDisk.MisalignedMailboxes}

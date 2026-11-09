@@ -51,16 +51,16 @@ func ownerProfile(t *testing.T, otherSent []string) []string {
 
 // covers: MA-1181, MA-1183
 // The owner-shaped run (Gmail caught up, the other account caught up, Local Folders never given a
-// line) leads "Export complete." on every surface, each account's line saying "everything", from
+// line) leads "Backup complete." on every surface, each account's line saying "everything", from
 // memory and from the record alike; status WARNs nothing about it. With the other account's Sent
 // 0 of 3 on disk it leads "Backed up what Thunderbird has so far." with both numbers (O2), and
 // status WARNs thunderbird_behind. Positive twin first.
-func TestTheOwnerShapedRunSaysExportComplete(t *testing.T) {
+func TestTheOwnerShapedRunSaysBackupComplete(t *testing.T) {
 	out := tmpDir(t)
 	res := runTB(t, Options{Inputs: ownerProfile(t, tbMsgs("o-sent", 3)), Out: out})
 	lead, lines, recLead, recLines := c3Words(t, res, out)
-	want := []string{"Thunderbird has downloaded everything it lists for imap.gmail.com (6 messages).", "Thunderbird has downloaded everything it lists for imap.example.com (5 messages)."}
-	if lead != "Export complete." || recLead != "Export complete." || strings.Join(lines, "\n") != strings.Join(want, "\n") || strings.Join(recLines, "\n") != strings.Join(want, "\n") {
+	want := []string{"Thunderbird has downloaded everything it lists for the Thunderbird account kept in the folder imap.gmail.com (6 messages).", "Thunderbird has downloaded everything it lists for the Thunderbird account kept in the folder imap.example.com (5 messages)."}
+	if lead != "Backup complete." || recLead != "Backup complete." || strings.Join(lines, "\n") != strings.Join(want, "\n") || strings.Join(recLines, "\n") != strings.Join(want, "\n") {
 		t.Fatalf("positive twin: the owner-shaped run:\n%s %q\n%s %q", lead, lines, recLead, recLines)
 	}
 	for _, l := range append(lines, recLines...) {
@@ -83,7 +83,7 @@ func TestTheOwnerShapedRunSaysExportComplete(t *testing.T) {
 	out = tmpDir(t)
 	res = runTB(t, Options{Inputs: ownerProfile(t, nil), Out: out})
 	lead, lines, recLead, recLines = c3Words(t, res, out)
-	behind := "Thunderbird has downloaded about 2 of 5 messages in imap.example.com so far. Furthest behind: Sent 0 of 3."
+	behind := "Thunderbird has downloaded about 2 of 5 messages in the Thunderbird account kept in the folder imap.example.com so far. Furthest behind: Sent 0 of 3."
 	if lead != "Backed up what Thunderbird has so far." || recLead != lead || len(lines) != 2 || !strings.HasPrefix(lines[1], behind) || !strings.HasPrefix(recLines[1], behind) {
 		t.Errorf("the other account's Sent not downloaded:\n%s %q\n%s %q", lead, lines, recLead, recLines)
 	}
@@ -99,11 +99,11 @@ func TestTheOwnerShapedRunSaysExportComplete(t *testing.T) {
 
 // covers: MA-1181, MA-1279
 // The owner's 2 of 170 messages written without X-Mozilla-Status but with well-formed headers
-// (the owner's ruling of 2026-11-08) count for certain: the run leads "Export complete.". The
+// (the owner's ruling of 2026-11-08) count for certain: the run leads "Backup complete.". The
 // same 2 without a Date line (not well-formed) are 2 short for certain, within the tolerance: the
 // run leads "Backup finished." and the line says both numbers and why. Positive twin first: all
 // 170 with the line.
-func TestTwoOf170WellFormedSaysExportComplete(t *testing.T) {
+func TestTwoOf170WellFormedSaysBackupComplete(t *testing.T) {
 	noStatus := func(id string) string {
 		return "From: Alice <alice@example.com>\nTo: Bob <bob@example.com>\nSubject: message " + id +
 			"\nDate: Mon, 03 Mar 2025 09:00:00 +0000\nMessage-ID: <" + id + "@c2.example>\nContent-Type: text/plain\n\nbody of " + id + "\n"
@@ -118,16 +118,16 @@ func TestTwoOf170WellFormedSaysExportComplete(t *testing.T) {
 		}
 		return recLead, recLines
 	}
-	if lead, _ := run(tbMsgs("in", 170)); lead != "Export complete." {
+	if lead, _ := run(tbMsgs("in", 170)); lead != "Backup complete." {
 		t.Fatalf("positive twin: %q", lead)
 	}
 	lead, lines := run(append(tbMsgs("in", 168), noStatus("ns-1"), noStatus("ns-2")))
-	if lead != "Export complete." || len(lines) != 1 || lines[0] != "Thunderbird has downloaded everything it lists for imap.owner.example (170 messages)." {
+	if lead != "Backup complete." || len(lines) != 1 || lines[0] != "Thunderbird has downloaded everything it lists for the Thunderbird account kept in the folder imap.owner.example (170 messages)." {
 		t.Errorf("2 of 170 well-formed: %q %q", lead, lines)
 	}
 	undated := func(id string) string { return strings.Replace(noStatus(id), "Date: Mon, 03 Mar 2025 09:00:00 +0000\n", "", 1) }
 	lead, lines = run(append(tbMsgs("in", 168), undated("ns-1"), undated("ns-2")))
-	if lead != "Backup finished." || len(lines) != 1 || lines[0] != "Thunderbird has downloaded about 168 of the 170 messages it lists for imap.owner.example. The rest is likely mail that arrived or was deleted since Thunderbird's count." {
+	if lead != "Backup finished." || len(lines) != 1 || lines[0] != "Thunderbird has downloaded about 168 of the 170 messages it lists for the Thunderbird account kept in the folder imap.owner.example. The rest is likely mail that arrived or was deleted since Thunderbird's count." {
 		t.Errorf("2 of 170 not well-formed: %q %q", lead, lines)
 	}
 }
@@ -135,11 +135,11 @@ func TestTwoOf170WellFormedSaysExportComplete(t *testing.T) {
 // covers: MA-1181
 // When MailArchive cannot tell (here: Thunderbird's folderCache.json is gone), the run leads
 // "Backup finished." and the account's line says why in one sentence; status notes it, never a
-// WARN. Positive twin first: the same store with its folder list leads "Export complete.".
+// WARN. Positive twin first: the same store with its folder list leads "Backup complete.".
 func TestCannotTellSaysBackupFinishedAndWhy(t *testing.T) {
 	p, s := imapProfile(t, "imap.example.com", nil, tbFolder{path: "INBOX", flags: tbcomplete.FlagInbox, listed: 2, msgs: tbMsgs("in", 2)})
 	out := tmpDir(t)
-	if lead, _, _, _ := c3Words(t, runTB(t, Options{Inputs: []string{s}, Out: out}), out); lead != "Export complete." {
+	if lead, _, _, _ := c3Words(t, runTB(t, Options{Inputs: []string{s}, Out: out}), out); lead != "Backup complete." {
 		t.Fatalf("positive twin: %q", lead)
 	}
 	if err := os.Remove(filepath.Join(p, tbcomplete.CacheFile)); err != nil {
@@ -147,7 +147,7 @@ func TestCannotTellSaysBackupFinishedAndWhy(t *testing.T) {
 	}
 	out = tmpDir(t)
 	lead, lines, recLead, recLines := c3Words(t, runTB(t, Options{Inputs: []string{s}, Out: out}), out)
-	why := "MailArchive cannot tell whether Thunderbird has downloaded all of imap.example.com, because it could not read Thunderbird's list of folders."
+	why := "MailArchive cannot tell whether Thunderbird has downloaded all of the Thunderbird account kept in the folder imap.example.com, because it could not read Thunderbird's list of folders. Opening Thunderbird and letting it check your mail usually fixes this; then run the backup again."
 	if lead != "Backup finished." || recLead != lead || len(lines) != 1 || lines[0] != why || len(recLines) != 1 || recLines[0] != why {
 		t.Errorf("no folder list: %q %q / %q %q", lead, lines, recLead, recLines)
 	}
@@ -180,7 +180,7 @@ func TestAnEncryptedRunShowsItsWordsOnlyOnScreen(t *testing.T) {
 	}
 	accts, more := TBAccounts(res)
 	lines := state.TBLines(accts, more, state.TBSay{})
-	if lead := tbcomplete.RunLead(res.Thunderbird).Sentence(); lead != "Backed up what Thunderbird has so far." || len(lines) != 1 || !strings.HasPrefix(lines[0], "Thunderbird has downloaded about 3 of 40 messages in imap.qzc3account.example so far.") {
+	if lead := tbcomplete.RunLead(res.Thunderbird).Sentence(); lead != "Backed up what Thunderbird has so far." || len(lines) != 1 || !strings.HasPrefix(lines[0], "Thunderbird has downloaded about 3 of 40 messages in the Thunderbird account kept in the folder imap.qzc3account.example so far.") {
 		t.Errorf("the screen's words: %q %q", lead, lines)
 	}
 	data, err := os.ReadFile(filepath.Join(out, state.LastRunName))
