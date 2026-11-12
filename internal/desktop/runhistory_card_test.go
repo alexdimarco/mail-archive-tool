@@ -24,13 +24,13 @@ func TestMA701_RecentBackupsCard(t *testing.T) {
 	cfg := Config{SettingsPath: filepath.Join(t.TempDir(), "s.json"), ConfigPath: filepath.Join(t.TempDir(), "none.json"), Out: out}
 	page := cfg.overview("csrf-token")
 
-	for _, want := range []string{`id="sec-history"`, `href="#sec-history"`, "Recent backups", "1240 messages", "the backup drive was not mounted", "Failed"} {
+	for _, want := range []string{`id="sec-history"`, `href="#sec-history"`, "Recent backups", "1,240 messages", "the backup drive was not mounted", "Failed"} {
 		if !strings.Contains(page, want) {
 			t.Errorf("the Recent backups card is missing %q", want)
 		}
 	}
 	// The failed run is the most recent, so it renders before the ok one.
-	if strings.Index(page, "the backup drive was not mounted") > strings.Index(page, "1240 messages") {
+	if strings.Index(page, "the backup drive was not mounted") > strings.Index(page, "1,240 messages") {
 		t.Fatal("recent runs should render newest-first (the failure before the earlier success)")
 	}
 }

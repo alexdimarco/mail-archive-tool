@@ -44,6 +44,27 @@ func SetSenderForTest(f func(alert.Config, string, alert.Event) error) (restore 
 	return func() { sendFn = prev }
 }
 
+// send is the one way this package hands an email over: every alert email (the backup result, the
+// recovery, the Thunderbird-not-synced and the Thunderbird download emails) and the test email go
+// through it. An email the mail server accepted is sent, even when the goodbye after it failed
+// (alert.ErrAfterAccepted): that is logged and is not a send failure (the C5 adversarial pass's
+// SPAM-01, the lead's call of 2026-11-09), so a once-per-streak email is marked sent and never
+// goes again at every backup. A failure before acceptance is returned. An email sent writes a new
+// delivery mark beside the settings file at settingsPath (markDelivered; the C5 round-3 pass's
+// CAP-R3-A), so every email about Thunderbird whose sends failed is tried again at its next due
+// backup.
+func send(settingsPath string, cfg alert.Config, store graphconfig.SecretStore, ev alert.Event, logger *log.Logger) error {
+	err := sendFn(cfg, Password(store), ev)
+	if errors.Is(err, alert.ErrAfterAccepted) {
+		logf(logger, "the mail server accepted the email, but the connection did not end cleanly (%v); it counts as sent", err)
+		err = nil
+	}
+	if err == nil {
+		markDelivered(settingsPath, logger)
+	}
+	return err
+}
+
 // DefaultSettingsPath is where the Desktop keeps its settings (desktop-settings.json under
 // the OS config dir) — where a scheduled run that was not handed a path reads the alert
 // config. A var so a test can redirect it.
@@ -114,12 +135,13 @@ func FireForRun(settingsPath string, store graphconfig.SecretStore, out, result 
 	if !cfg.ShouldSend(result) {
 		return
 	}
-	deliver(cfg, store, out, result, runErr, messages, logger)
+	deliver(settingsPath, cfg, store, out, result, runErr, messages, logger)
 }
 
-// deliver builds the event for a run and sends it under cfg, which the caller has gated. It
-// reports whether the mail was handed over; a failure is logged, never returned.
-func deliver(cfg alert.Config, store graphconfig.SecretStore, out, result string, runErr error, messages int, logger *log.Logger) bool {
+// deliver builds the event for a run and sends it under cfg, which the caller has gated (cfg is
+// read from settingsPath, beside which a delivered email leaves its mark). It reports whether the
+// mail was handed over; a failure is logged, never returned.
+func deliver(settingsPath string, cfg alert.Config, store graphconfig.SecretStore, out, result string, runErr error, messages int, logger *log.Logger) bool {
 	host, _ := os.Hostname()
 	ev := alert.Event{Result: result, Archive: out, Messages: messages, Host: host, When: time.Now()}
 	if runErr != nil {
@@ -142,16 +164,29 @@ func deliver(cfg alert.Config, store graphconfig.SecretStore, out, result string
 			ev.Error = state.FailureText(app.FailureKind(runErr))
 		}
 	}
-	if err := sendFn(cfg, Password(store), ev); err != nil {
+	if err := send(settingsPath, cfg, store, ev, logger); err != nil {
 		if logger != nil {
 			logger.Printf("backup alert email could not be sent: %v", err)
 		}
 		return false
 	}
 	if logger != nil {
-		logger.Printf("backup alert email sent (%s) to %s", result, cfg.To)
+		logger.Printf("backup alert email sent (%s) to %s", sentWhat(ev), cfg.To)
 	}
 	return true
+}
+
+// sentWhat names the email the job's log says was sent, as its subject says it: a partial run's
+// "did not save everything" and a busy skip's "skipped, the archive was still in use", never
+// "failed" for either (the 1.6.1 friction review's P9, MA-1159); any other result by its word.
+func sentWhat(ev alert.Event) string {
+	switch {
+	case ev.Partial:
+		return "did not save everything"
+	case ev.Busy:
+		return "skipped, the archive was still in use"
+	}
+	return ev.Result
 }
 
 // FireForRunDefault fires using the default Desktop settings path and OS secret store, for
@@ -162,7 +197,9 @@ func FireForRunDefault(out, result string, runErr error, messages int, logger *l
 
 // SendTest sends one test email with the saved configuration regardless of the on/off
 // toggle, so the dashboard's "Send test email" button can confirm the setup. It validates
-// first, so a missing field is named rather than silently dropped.
+// first, so a missing field is named rather than silently dropped. A test email that goes writes
+// the delivery mark like any other (CAP-R3-A): an email about Thunderbird that failed 5 times is
+// tried again at its next due backup.
 func SendTest(settingsPath string, store graphconfig.SecretStore, out string, logger *log.Logger) error {
 	cfg := LoadConfig(settingsPath)
 	cfg.Enabled = true
@@ -171,5 +208,5 @@ func SendTest(settingsPath string, store graphconfig.SecretStore, out string, lo
 	}
 	host, _ := os.Hostname()
 	ev := alert.Event{Result: alert.ResultOK, Archive: "— MailArchive alert test (no backup ran) —", Host: host, When: time.Now()}
-	return sendFn(cfg, Password(store), ev)
+	return send(settingsPath, cfg, store, ev, logger)
 }

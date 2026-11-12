@@ -54,7 +54,7 @@ func TestRunNowNoteLeadsWithTheBackup(t *testing.T) {
 	if n := str(m["note"]); n != want {
 		t.Errorf("the end note:\n got %q\nwant %q", n, want)
 	}
-	for _, gone := range []string{"Export complete.", "Newly downloaded this run", "Exported:", "mailarchive serve", "Output folder", "Your data stays on this computer"} {
+	for _, gone := range []string{"Export complete.", "Backup complete.", "Newly downloaded this run", "Exported:", "mailarchive serve", "Output folder", "Your data stays on this computer"} {
 		if strings.Contains(str(m["note"]), gone) {
 			t.Errorf("the end note still carries %q", gone)
 		}

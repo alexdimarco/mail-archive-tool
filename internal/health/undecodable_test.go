@@ -31,7 +31,7 @@ func TestStatusSplitsSourceEmptyFromCannotDecode(t *testing.T) {
 	for _, want := range []string{
 		"Incomplete: 3 still missing content · 1 source-empty (never fillable) · 4 with parts this version cannot decode · 2 not yet re-examined",
 		"with parts this version cannot decode = kept as received in the attachments zip",
-		"Fallback:   2 message(s)",
+		"Fallback:   2 messages",
 	} {
 		if !strings.Contains(text, want) {
 			t.Errorf("status lacks %q:\n%s", want, text)

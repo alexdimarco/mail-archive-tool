@@ -155,6 +155,11 @@ func TestABackupMetByARunningOneIsSkippedNotFailed(t *testing.T) {
 			t.Errorf("verb %q: %q", verb, w)
 		}
 	}
+	// The holder is this computer ("h"), as when this test was written before MA-1153 named another
+	// one: its words say "restart the computer".
+	prevHost := thisHost
+	thisHost = func() string { return "h" }
+	t.Cleanup(func() { thisHost = prevHost })
 	if err := os.WriteFile(lock, []byte("pid=1 started="+now.Add(-30*time.Hour).Format(time.RFC3339)+" host=h verb=export\n"), 0o600); err != nil {
 		t.Fatal(err)
 	}

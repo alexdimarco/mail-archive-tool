@@ -20,7 +20,14 @@ import (
 func tbProfileArchive(t *testing.T) string {
 	t.Helper()
 	profile := t.TempDir()
-	if err := os.WriteFile(filepath.Join(profile, "prefs.js"), []byte("// prefs\n"), 0o644); err != nil {
+	// Amended 2026-11-08 (completeness slice C3): prefs.js names the Local Folders account
+	// (localFoldersPrefs), so the store is known not to be an IMAP account and Run now's note has
+	// no completeness line; a profile naming no account for it is "cannot tell" (M6).
+	if err := os.WriteFile(filepath.Join(profile, "prefs.js"), []byte(localFoldersPrefs), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	// Thunderbird writes compatibility.ini at every start; a profile is known by it (MA-1206).
+	if err := os.WriteFile(filepath.Join(profile, "compatibility.ini"), []byte("[Compatibility]\nLastVersion=153.6.0\n"), 0o644); err != nil {
 		t.Fatal(err)
 	}
 	store := filepath.Join(profile, "Mail", "Local Folders")

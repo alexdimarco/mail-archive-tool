@@ -89,12 +89,29 @@ func encryptedFor(t *testing.T, index bool) string {
 	return out
 }
 
+// localFoldersPrefs is a prefs.js holding one account, Local Folders, at Mail/Local Folders, every
+// line a shape Thunderbird writes.
+const localFoldersPrefs = "// Mozilla User Preferences\n\n" +
+	`user_pref("mail.account.account1.server", "server1");` + "\n" +
+	`user_pref("mail.accountmanager.accounts", "account1");` + "\n" +
+	`user_pref("mail.server.server1.directory-rel", "[ProfD]Mail/Local Folders");` + "\n" +
+	`user_pref("mail.server.server1.hostname", "Local Folders");` + "\n" +
+	`user_pref("mail.server.server1.type", "none");` + "\n"
+
 // thunderbirdStore is a mail folder under a Thunderbird profile (a prefs.js at its
 // root) holding laterMbox, a message the archive does not have yet.
 func thunderbirdStore(t *testing.T) string {
 	t.Helper()
 	profile := t.TempDir()
-	if err := os.WriteFile(filepath.Join(profile, "prefs.js"), []byte("// prefs\n"), 0o644); err != nil {
+	// Amended 2026-11-08 (completeness slice C3): prefs.js names the folder's account, Local
+	// Folders, as Thunderbird writes it, so the store is known not to be an IMAP account and the
+	// note has no completeness line. A profile that names no account for the store is "cannot
+	// tell" by the design (M6), which these Lock and sync tests are not about.
+	if err := os.WriteFile(filepath.Join(profile, "prefs.js"), []byte(localFoldersPrefs), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	// Thunderbird writes compatibility.ini at every start; a profile is known by it (MA-1206).
+	if err := os.WriteFile(filepath.Join(profile, "compatibility.ini"), []byte("[Compatibility]\nLastVersion=153.6.0\n"), 0o644); err != nil {
 		t.Fatal(err)
 	}
 	store := filepath.Join(profile, "Mail", "Local Folders")
@@ -281,7 +298,7 @@ func (g *encRig) nothingWasRead() bool {
 	}
 	g.start()
 	m := g.done()
-	return strings.Contains(str(m["note"])+str(m["result"]), "Backup complete: 1 message(s) added") && g.status() == state.RunOK
+	return strings.Contains(str(m["note"])+str(m["result"]), "Backup complete: 1 message added") && g.status() == state.RunOK
 }
 
 // pauseAt sets the Run now's seam to call fn at the named step.
@@ -733,6 +750,7 @@ func TestAnEncryptedRunNowLeavesNothingOfTheSyncBesideIt(t *testing.T) {
 		t.Fatal(err)
 	}
 	os.WriteFile(filepath.Join(profile, "prefs.js"), []byte("// prefs\n"), 0o644)
+	os.WriteFile(filepath.Join(profile, "compatibility.ini"), []byte("[Compatibility]\nLastVersion=153.6.0\n"), 0o644) // MA-1206
 	os.WriteFile(filepath.Join(store, "Inbox"), []byte(laterMbox), 0o644)
 	j, err := job.Read(g.jp)
 	if err != nil {

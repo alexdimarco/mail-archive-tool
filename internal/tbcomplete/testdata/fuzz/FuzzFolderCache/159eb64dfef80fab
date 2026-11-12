@@ -1,0 +1,2 @@
+go test fuzz v1
+[]byte("{\"C:\\\\p\\\\ImApMAil\\\\h\":{},\"h/..msf\":0}")

@@ -76,11 +76,17 @@ func TestFindAccountAndEnableOffline(t *testing.T) {
 	if err := os.MkdirAll(store, 0o755); err != nil {
 		t.Fatal(err)
 	}
-	prefs := `user_pref("mail.server.server3.type", "imap");
+	prefs := `user_pref("mail.accountmanager.accounts", "account3");
+user_pref("mail.account.account3.server", "server3");
+user_pref("mail.server.server3.type", "imap");
 user_pref("mail.server.server3.hostname", "mail.example.com");
 user_pref("mail.server.server3.offline_download", false);
 `
 	if err := os.WriteFile(filepath.Join(profile, "prefs.js"), []byte(prefs), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	// Thunderbird writes compatibility.ini at every start; a profile is known by it (MA-1206).
+	if err := os.WriteFile(filepath.Join(profile, "compatibility.ini"), []byte(compatINI), 0o644); err != nil {
 		t.Fatal(err)
 	}
 
@@ -100,14 +106,14 @@ user_pref("mail.server.server3.offline_download", false);
 		t.Error("offline download should start false")
 	}
 
-	changed, backup, err := EnableOffline(profile, "server3")
+	c, err := EnableOffline(profile, "server3")
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !changed {
+	if !c.Changed {
 		t.Error("expected a change")
 	}
-	if _, err := os.Stat(backup); err != nil {
+	if _, err := os.Stat(c.Backup); err != nil {
 		t.Errorf("backup not written: %v", err)
 	}
 	acct2, _ := FindAccountForStore(profile, store)
@@ -116,11 +122,11 @@ user_pref("mail.server.server3.offline_download", false);
 	}
 
 	// Idempotent: enabling again is a no-op.
-	changed2, _, err := EnableOffline(profile, "server3")
+	c2, err := EnableOffline(profile, "server3")
 	if err != nil {
 		t.Fatal(err)
 	}
-	if changed2 {
+	if c2.Changed {
 		t.Error("second EnableOffline should report no change")
 	}
 }

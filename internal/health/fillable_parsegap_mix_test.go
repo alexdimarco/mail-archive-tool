@@ -4,6 +4,8 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"mail-archive-tool/internal/state"
 )
 
 // covers: MA-348, R1, R18, X2, X6
@@ -35,7 +37,9 @@ func TestStatusOfAMixSaysWhatCuresTheCutOnes(t *testing.T) {
 	mixed := healthyInput(now)
 	mixed.Fillable, mixed.Undecodable, mixed.FillableParseGap, mixed.FillableOnlyParseGap = 3, 1, 1, 1
 	warn, sum = text(mixed)
-	if !strings.Contains(warn, "download for offline use in your mail app") {
+	// Amended for MA-1160: the not-downloaded sentence, worded by where the run read its mail (no
+	// kind recorded here, so the words that blame nobody), is the one for the messages not delivered.
+	if !strings.Contains(warn, strings.TrimSuffix(state.NotDownloadedSentence(3, ""), ".")) {
 		t.Errorf("a mix lost the download remedy in the WARN: %s", warn)
 	}
 	if !strings.Contains(warn, "1 of them is cut short, or has parts that could not be told apart, in the mailbox file") || !strings.Contains(warn, cure) {

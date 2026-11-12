@@ -41,6 +41,7 @@ import (
 	"mail-archive-tool/internal/encmark"
 	"mail-archive-tool/internal/export"
 	"mail-archive-tool/internal/graphconfig"
+	"mail-archive-tool/internal/health"
 	"mail-archive-tool/internal/index"
 	"mail-archive-tool/internal/keyring"
 	"mail-archive-tool/internal/outlookcom"
@@ -50,7 +51,9 @@ import (
 	"mail-archive-tool/internal/seal"
 	"mail-archive-tool/internal/source"
 	"mail-archive-tool/internal/state"
+	"mail-archive-tool/internal/tbcomplete"
 	"mail-archive-tool/internal/thunderbird"
+	"mail-archive-tool/internal/tty"
 	"mail-archive-tool/internal/util"
 )
 
@@ -2104,53 +2107,186 @@ func prepareThunderbird(ctx context.Context, inputs []string, auto, enableOfflin
 		}
 		return nil
 	}
+	return prepareThunderbirdStores(ctx, stores, enableOffline, syncWait, logger)
+}
+
+// prepareThunderbirdStores is prepareThunderbird's work once the stores are found.
+//
+// Every store is checked for every refusal before any is changed (MA-1208): Thunderbird running,
+// no account it can tell, user.js keeping the setting off, a hand-edited line, a backup path that
+// is not a regular file. So a refusal here means nothing was changed in this run. Only something
+// that changes after the check (Thunderbird started, a write that fails, a file swapped in) can
+// stop the run after an earlier store was changed: then the words say what was changed, never
+// "changed nothing" (MA-1263), and the log names each change with its backup.
+func prepareThunderbirdStores(ctx context.Context, stores []string, enableOffline, syncWait bool, logger *log.Logger) error {
+	if enableOffline {
+		for _, store := range stores {
+			if profile, ok := thunderbird.FindProfileDir(store); ok {
+				if _, err := checkOfflineStore(profile, store); err != nil {
+					return err
+				}
+			}
+		}
+	}
+	// Then every change, with Thunderbird closed throughout, then one "START Thunderbird", then
+	// every wait (MA-1266, the C0c pass round 4's R4-04): with -sync-wait and two stores, a
+	// person who starts Thunderbird at the first store's wait must never find the second store
+	// refused for it.
+	var changed []string
+	stop := func(err error) error {
+		if len(changed) > 0 {
+			return &stoppedAfterChange{changed: changed, err: err}
+		}
+		return err
+	}
+	var waits []string
+	enabled := 0
 	for _, store := range stores {
-		if err := prepareStore(ctx, store, enableOffline, syncWait, logger); err != nil {
-			return err
+		if _, ok := thunderbird.FindProfileDir(store); !ok {
+			if enableOffline {
+				// R10's words (the friction final look): the export still goes ahead, exit 0.
+				logger.Printf("-enable-offline did nothing for %s: MailArchive could not find the Thunderbird profile this mail belongs to (the mail may have been copied out of Thunderbird), so it changed no Thunderbird setting. The export goes ahead with the mail as it is.", store)
+			} else {
+				logger.Printf("Could not find the Thunderbird profile for %s; skipping prep.", store)
+			}
+			continue
+		}
+		waits = append(waits, store)
+		if !enableOffline {
+			continue
+		}
+		if err := enableStoreNoting(store, logger, &changed); err != nil {
+			return stop(err)
+		}
+		enabled++
+	}
+	if enabled > 0 {
+		each := "the account"
+		if enabled > 1 {
+			each = "each account"
+		}
+		logger.Printf("Next: START Thunderbird, then right-click %s -> Download/Sync Now.", each)
+		logger.Printf("Then run again — an incremental run re-examines and fills mail that had no content yet (no -mode full needed).")
+	}
+	if syncWait {
+		for _, store := range waits {
+			if err := waitForSync(ctx, store, logger); err != nil {
+				return stop(err)
+			}
 		}
 	}
 	return nil
 }
 
-func prepareStore(ctx context.Context, store string, enableOffline, syncWait bool, logger *log.Logger) error {
-	profile, ok := thunderbird.FindProfileDir(store)
-	if !ok {
-		logger.Printf("Could not find the Thunderbird profile for %s; skipping prep.", store)
-		return nil
-	}
-	acct, _ := thunderbird.FindAccountForStore(profile, store)
+// stoppedAfterChange is a store's refusal or failed write after an earlier store of the run was
+// changed (MA-1263): its words say what was changed and that the change is kept, then why the run
+// stopped, in place of the refusal's "changed nothing" (the friction final look's Q3). Its code is
+// the refusal's.
+type stoppedAfterChange struct {
+	changed []string // each change, "<account> (folder <f>, <server>), in the Thunderbird profile <p>"
+	err     error
+}
 
-	if enableOffline {
-		if thunderbird.Running(profile) {
-			return fmt.Errorf("Thunderbird looks like it is running — close it, then re-run with -enable-offline (prefs.js must not be edited while it is open)")
+func (e *stoppedAfterChange) Unwrap() error { return e.err }
+
+func (e *stoppedAfterChange) Error() string {
+	why := strings.TrimPrefix(e.err.Error(), "-enable-offline changed nothing, and nothing was exported: ")
+	kept := "That change is kept: it is what -enable-offline is for, and running the same command again leaves it as it is"
+	if len(e.changed) > 1 {
+		kept = "Those changes are kept: they are what -enable-offline is for, and running the same command again leaves them as they are"
+	}
+	return "-enable-offline stopped, and nothing was exported. Before it stopped, it turned on offline download for " +
+		strings.Join(e.changed, "; and for ") + ", by changing prefs.js. " + kept +
+		" (the log above says where the old prefs.js was backed up). Why it stopped: " + why
+}
+
+// prepareStore is prepareThunderbirdStores for one store.
+func prepareStore(ctx context.Context, store string, enableOffline, syncWait bool, logger *log.Logger) error {
+	return prepareThunderbirdStores(ctx, []string{store}, enableOffline, syncWait, logger)
+}
+
+// enableStoreNoting turns on offline download for store's account (store has a profile), adding
+// to changed the store's change when it wrote prefs.js. It is checked again first: Thunderbird
+// may have been started since every store was checked.
+func enableStoreNoting(store string, logger *log.Logger, changed *[]string) error {
+	profile, _ := thunderbird.FindProfileDir(store)
+	{
+		// Thunderbird running, no account it can tell, user.js keeping the setting off, a
+		// hand-edited line or a backup path refused: a refusal with the words, nothing changed
+		// (MA-1204, MA-1205, MA-1207, MA-1208; the code stays the command line's refusal code, 1).
+		acct, err := checkOfflineStore(profile, store)
+		if err != nil {
+			return err
 		}
+		// The account by its folder and server, so two accounts on one server are told apart
+		// (the C0c friction review's W7).
+		// Every part is cleaned: a hand-made server key may hold a control character (the C0c pass
+		// round 6's note, settled in slice C3).
+		who := fmt.Sprintf("%s (folder %s, %s)", thunderbird.StripControl(acct.Hostname), thunderbird.StripControl(filepath.Base(store)), thunderbird.StripControl(acct.ServerKey))
 		switch {
-		case acct == nil:
-			logger.Printf("Skipping -enable-offline: could not match an account to %s.", filepath.Base(store))
+		case acct.OfflineDownload && acct.OfflineInUserJS:
+			logger.Printf("Offline download already enabled for %s (user.js turns it on).", who)
 		case acct.OfflineDownload:
-			logger.Printf("Offline download already enabled for %s.", acct.Hostname)
+			logger.Printf("Offline download already enabled for %s.", who)
 		default:
-			changed, backup, err := thunderbird.EnableOffline(profile, acct.ServerKey)
+			c, err := thunderbird.EnableOffline(profile, acct.ServerKey)
+			var we *thunderbird.WriteError
+			if errors.As(err, &we) {
+				// The friction final look's Q4: what failed, and the way on.
+				return fmt.Errorf("-enable-offline changed nothing, and nothing was exported: MailArchive could not write prefs.js or its backup in the Thunderbird profile %s (%w). Check that the folder is not read-only and that the disk has room, then run the same command again.", profile, err)
+			}
 			if err != nil {
 				return err
 			}
+			if c.Changed && changed != nil {
+				*changed = append(*changed, who+", in the Thunderbird profile "+profile)
+			}
+			backup := filepath.Base(c.Backup)
+			saved := "; prefs.js backed up to " + backup + " in the Thunderbird profile folder."
+			if c.BackupKept {
+				// The first backup is never overwritten (CON-04): say what it holds.
+				saved = ". prefs.js was not backed up again: " + backup + ", in the Thunderbird profile folder, still holds prefs.js from before MailArchive first changed it."
+			}
 			switch {
-			case changed && acct.OnByDefault:
+			case c.Changed && acct.OnByDefault:
 				// No line of its own: Thunderbird's default had it on (MA-947), so writing it out
 				// changed nothing Thunderbird does.
-				logger.Printf("Offline download was already on for %s: Thunderbird keeps a new account's messages on this computer by default. The setting was written into prefs.js to make sure (prefs backed up to %s).", acct.Hostname, filepath.Base(backup))
-			case changed:
-				logger.Printf("Enabled offline download for %s (prefs backed up to %s).", acct.Hostname, filepath.Base(backup))
+				logger.Printf("Offline download was already on for %s: Thunderbird keeps a new account's messages on this computer by default. The setting was written into prefs.js to make sure%s", who, saved)
+			case c.Changed:
+				logger.Printf("Enabled offline download for %s%s", who, saved)
 			}
 		}
-		logger.Printf("Next: START Thunderbird, then right-click the account -> Download/Sync Now.")
-		logger.Printf("Then run again — an incremental run re-examines and fills mail that had no content yet (no -mode full needed).")
-	}
-
-	if syncWait {
-		return waitForSync(ctx, store, logger)
 	}
 	return nil
+}
+
+// tbRunning is thunderbird.Running, a variable so a test can start Thunderbird between two
+// stores of one run (fault injection, MA-1263): no temp folder can stage a running Thunderbird
+// on every OS.
+var tbRunning = thunderbird.Running
+
+// checkOfflineStore runs every -enable-offline refusal for store in profile with nothing written
+// (MA-1208): Thunderbird running for that profile, then the account (AccountToEnable), then, when
+// the account is not on, every check EnableOffline makes before it writes (CheckOffline). It
+// returns the account to change.
+func checkOfflineStore(profile, store string) (*thunderbird.Account, error) {
+	if tbRunning(profile) {
+		return nil, fmt.Errorf("-enable-offline changed nothing, and nothing was exported: Thunderbird looks like it is running for the profile %s. Close it, then run the same command again (prefs.js must not be edited while Thunderbird is open).", profile)
+	}
+	acct, err := thunderbird.AccountToEnable(profile, store)
+	if err != nil {
+		return nil, err
+	}
+	if !acct.OfflineDownload {
+		if err := thunderbird.CheckOffline(profile, acct.ServerKey); err != nil {
+			if _, worded := thunderbird.PlainWords(err); !worded {
+				// prefs.js or its backup path refused (a link, a folder, a pipe, over the bound).
+				err = fmt.Errorf("-enable-offline changed nothing, and nothing was exported: %w", err)
+			}
+			return nil, err
+		}
+	}
+	return acct, nil
 }
 
 // waitForSync watches a store's size and returns once it stops growing (sync
@@ -2240,7 +2376,24 @@ func summaryLead(runErr error) string {
 
 // printSummaryLed is printSummary with its first word given.
 func printSummaryLed(logger *log.Logger, r app.Result, indexed, keepRaw bool, out, lead string) {
+	printSummaryFor(logger, r, indexed, keepRaw, out, lead, runtime.GOOS)
+}
+
+// summaryOnScreen reports whether the summary's logger writes to a terminal, the only place the
+// summary says the name Thunderbird shows for an account (MA-1288, the C3 name pass's N-04, the
+// lead's call of 2026-11-09, fail-private). A -log (a scheduled run's, a custom one, a keyed run's
+// beside an encrypted archive), a stderr sent to a file and any other writer get the folder words,
+// so no log file holds the address. A variable so a test can stand in for a terminal.
+var summaryOnScreen = func(logger *log.Logger) bool {
+	f, ok := logger.Writer().(*os.File)
+	return ok && tty.IsTerminal(f)
+}
+
+// printSummaryFor is printSummaryLed for goos, which says how its commands name the archive's
+// folder (MA-1163).
+func printSummaryFor(logger *log.Logger, r app.Result, indexed, keepRaw bool, out, lead, goos string) {
 	s := r.Stats
+	outArg := health.OutArg(out, goos) // as it is typed, never Go's quoted form (MA-1163)
 	msg := fmt.Sprintf(lead+" exported=%d filled=%d skipped(seen)=%d skipped(date)=%d attachments=%d inline=%d non-html=%d no-body=%d manifest=%d",
 		s.Exported, s.Filled, s.SkippedManifest, s.SkippedDate, s.Attachments, s.AttachmentsInline, s.NonHTMLBodies, s.NoBody, r.ManifestSize)
 	if indexed {
@@ -2258,13 +2411,29 @@ func printSummaryLed(logger *log.Logger, r app.Result, indexed, keepRaw bool, ou
 	if replaced := s.Exported - newMsgs; newMsgs >= 0 && replaced > s.Filled {
 		logger.Printf("Note:   %d exports made %d new message(s); %d replaced an earlier copy of the same message, so exported is above the growth in manifest and indexed.", s.Exported, newMsgs, replaced-s.Filled)
 	}
+	// How much of each Thunderbird account Thunderbird had downloaded (completeness design §7's
+	// command-line row, slice C3): the run's lead, then each account's lines, from its verdicts in
+	// memory, in the words every surface says; names cleaned (TC-7). The exit code is unchanged.
+	// Only a terminal is told the name Thunderbird shows for an account; a log gets the folder
+	// words (MA-1288).
+	if accts, more := app.TBAccounts(r); len(accts) > 0 || more > 0 {
+		if !summaryOnScreen(logger) {
+			for i := range accts {
+				accts[i].Name = ""
+			}
+		}
+		logger.Printf("Thunderbird: %s", tbcomplete.RunLead(r.Thunderbird).Sentence())
+		for _, l := range state.TBLines(accts, more, state.TBSay{Scheduled: app.TBScheduled(out), Surface: state.TBSurfaceCommandLine}) {
+			logger.Printf("  %s", l)
+		}
+	}
 	printNotCaptured(logger, r)
 	// An index that holds fewer messages than the manifest (search.db lost or
 	// emptied and re-created by this run, or earlier runs skipped indexing)
 	// would otherwise end in a quiet exit 0 (F4). Rows the run itself could not
 	// index have their own warning below.
 	if indexed && r.IndexErrors == 0 && r.Indexed < r.ManifestSize {
-		logger.Printf("WARNING: the search index holds %d of the archive's %d messages (search.db was missing or emptied, or earlier runs skipped indexing); search will not find the rest. Rebuild it from the archive with `mailarchive reindex -rebuild -out %q`.", r.Indexed, r.ManifestSize, out)
+		logger.Printf("WARNING: the search index holds %d of the archive's %d messages (search.db was missing or emptied, or earlier runs skipped indexing); search will not find the rest. Rebuild it from the archive with `mailarchive reindex -rebuild -out %s`.", r.Indexed, r.ManifestSize, outArg)
 	}
 
 	// One coherent Verification line: what is still missing, what the source can
@@ -2358,10 +2527,10 @@ func printSummaryLed(logger *log.Logger, r app.Result, indexed, keepRaw bool, ou
 	// Plain `reindex` only prunes; the rebuild re-adds the missing rows from the
 	// archived files (F50).
 	if r.IndexErrors > 0 {
-		logger.Printf("WARNING: %d message(s) were exported but could not be indexed; rebuild the index from the archive with `mailarchive reindex -rebuild -out %q` and re-check.", r.IndexErrors, out)
+		logger.Printf("WARNING: %d message(s) were exported but could not be indexed; rebuild the index from the archive with `mailarchive reindex -rebuild -out %s` and re-check.", r.IndexErrors, outArg)
 	}
 
 	if indexed && r.Indexed > 0 {
-		logger.Printf("Search:  mailarchive serve -out %q   (then open the printed URL)", out)
+		logger.Printf("Search:  mailarchive serve -out %s   (then open the printed URL)", outArg)
 	}
 }

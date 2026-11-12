@@ -32,7 +32,9 @@ func TestStatusRemedyFitsWhatIsMissing(t *testing.T) {
 	plain := healthyInput(now)
 	plain.Fillable = 3
 	warn, sum := text(plain)
-	if !strings.Contains(warn, "3 message(s) still missing content — download for offline use in your mail app, then re-run; incremental fills them") ||
+	// Amended for MA-1160: the not-downloaded sentence, worded by where the run read its mail (none
+	// recorded here: the words that blame nobody).
+	if !strings.Contains(warn, strings.TrimSuffix(state.NotDownloadedSentence(3, ""), ".")) ||
 		!strings.Contains(sum, "(still missing content = not downloaded yet; fills on the next run)") || strings.Contains(sum, "also counted") {
 		t.Fatalf("positive twin: the ordinary missing-content text changed:\n%s\n%s", warn, sum)
 	}
@@ -40,17 +42,17 @@ func TestStatusRemedyFitsWhatIsMissing(t *testing.T) {
 	mixed := healthyInput(now)
 	mixed.Fillable, mixed.Undecodable, mixed.FillableParseGap, mixed.FillableOnlyParseGap = 3, 1, 1, 1
 	warn, sum = text(mixed)
-	if !strings.Contains(warn, "download for offline use in your mail app") || !strings.Contains(sum, "1 of the messages still missing content is also counted as having parts this version cannot decode") {
+	if !strings.Contains(warn, strings.TrimSuffix(state.NotDownloadedSentence(3, ""), ".")) || !strings.Contains(sum, "1 of the messages still missing content is also counted as having parts this version cannot decode") {
 		t.Errorf("a mixed archive lost the download remedy or the overlap note:\n%s\n%s", warn, sum)
 	}
 
 	only := healthyInput(now)
 	only.Fillable, only.Undecodable, only.FillableParseGap, only.FillableOnlyParseGap = 2, 2, 2, 2
 	warn, sum = text(only)
-	if strings.Contains(warn, "download for offline use in your mail app, then re-run") || strings.Contains(sum, "not downloaded yet") {
+	if strings.Contains(warn, "download for offline use in your mail app, then re-run") || strings.Contains(warn, "not in the archive in full yet") || strings.Contains(sum, "not downloaded yet") {
 		t.Errorf("a cut or boundary-less message read in full is told to download:\n%s\n%s", warn, sum)
 	}
-	for _, want := range []string{"2 message(s) still missing content", "cut short", "complete export", "IMAP cache", "re-run", "malformed when it was sent cannot be completed by either, and stays listed"} {
+	for _, want := range []string{"2 messages still missing content", "cut short", "complete export", "IMAP cache", "re-run", "malformed when it was sent cannot be completed by either, and stays listed"} {
 		if !strings.Contains(warn, want) {
 			t.Errorf("the WARN lacks %q: %s", want, warn)
 		}

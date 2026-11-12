@@ -9,6 +9,7 @@ package alert
 
 import (
 	"crypto/tls"
+	"errors"
 	"fmt"
 	"net"
 	"net/smtp"
@@ -44,7 +45,32 @@ const (
 	// a plaintext archive's scheduled backups ran for 3 days without syncing Thunderbird
 	// first. Sent once per streak, under the failure option.
 	ResultSyncStale = "sync-stale"
+	// ResultTBBehind is the Thunderbird download email (docs/design-thunderbird-completeness.md
+	// §5, slice C5): a plaintext archive's scheduled backups have found a Thunderbird account still
+	// downloading for 3 days, or its download stopped for 3 days. At most one of each kind per
+	// streak, under the failure option, as the Thunderbird-not-synced email.
+	ResultTBBehind = "tb-behind"
 )
+
+// TBBehind is what the Thunderbird download email says beyond the archive and the computer: which
+// email it is, how many accounts its opening counts, one line per account, what to do and how to
+// tell which account a folder is, all built by the caller from the state words
+// (state.TBNoticeEmail), never from a record's own text. A one-line remedy begins in lower case,
+// after "Do this on that computer: "; two or more lines are numbered steps, each on its own line.
+type TBBehind struct {
+	Stopped  bool // any account stopped: the stopped email's subject and opening
+	Accounts int  // the accounts the opening counts: the stopped ones in the stopped email, else all
+	Lines    []string
+	Remedy   []string
+	Which    string
+}
+
+// ErrAfterAccepted is a failure after the mail server accepted the message (its reply after the
+// end of DATA): the message was sent, and only the goodbye (QUIT) or the connection's close failed
+// (the C5 adversarial pass's SPAM-01, the lead's call of 2026-11-09). Send wraps it; the shared
+// sender (internal/backupalert) logs it and counts the email as sent, so a once-per-streak email
+// is never sent again at every backup.
+var ErrAfterAccepted = errors.New("the mail server accepted the message, but the connection did not end cleanly")
 
 // SyncStale is what the Thunderbird-not-synced email says beyond the archive and the
 // computer: when the streak began, how many backups in a row, and the phrase and remedy,
@@ -90,6 +116,7 @@ type Event struct {
 	Host     string // the machine the backup ran on
 	When     time.Time
 	Sync     *SyncStale // ResultSyncStale only
+	TB       *TBBehind  // ResultTBBehind only
 }
 
 // Preset fills the host, port and security for a known provider; the SMTP provider
@@ -110,7 +137,7 @@ func (c Config) ShouldSend(result string) bool {
 		return false
 	}
 	switch result {
-	case ResultFailed, ResultRecovered, ResultSyncStale:
+	case ResultFailed, ResultRecovered, ResultSyncStale, ResultTBBehind:
 		return c.OnFailure
 	case ResultOK:
 		return c.OnSuccess
@@ -158,6 +185,9 @@ func (c Config) subjectAndBody(ev Event) (subject, body string) {
 	name := header(ev.Archive) // an archive path never contains CR/LF; strip any so neither the subject header nor the body line is malformed
 	if ev.Result == ResultSyncStale {
 		return syncStaleSubjectAndBody(name, ev)
+	}
+	if ev.Result == ResultTBBehind {
+		return tbBehindSubjectAndBody(name, ev)
 	}
 	word := strings.ToUpper(resultWord(ev.Result))
 	switch {
@@ -221,6 +251,76 @@ func syncStaleSubjectAndBody(name string, ev Event) (subject, body string) {
 	b.WriteString("You will get this email once, until Thunderbird syncs again.\r\n")
 	b.WriteString("\r\nThis message was sent by MailArchive's built-in backup alerts.\r\n")
 	return subject, b.String()
+}
+
+// tbBehindSubjectAndBody is the Thunderbird download email (completeness design §5, §7, §9.3;
+// slice C5, with the C5 friction review's P1 to P4 and lows, the lead's call of 2026-11-09). A
+// phone's preview shows the subject's start and the body's first line, so the subject says what
+// and "(backups OK)" and ends with the archive folder's own name, and the body opens with "Your
+// backups are working"; the archive's path and the computer follow on their own lines, as in the
+// backup-result emails (no Computer line when the name is unknown). The subject never says how
+// many days (a retried email may be later): the account lines do. The lines, remedy and
+// which-account line come from the caller's state words; every one is stripped of line breaks all
+// the same, so none can add a header or change the body's shape.
+func tbBehindSubjectAndBody(name string, ev Event) (subject, body string) {
+	var tb TBBehind
+	if ev.TB != nil {
+		tb = *ev.TB
+	}
+	whose := "one account's"
+	if tb.Accounts > 1 {
+		whose = strconv.Itoa(tb.Accounts) + " accounts'"
+	}
+	var b strings.Builder
+	if tb.Stopped {
+		subject = "MailArchive: Thunderbird stopped downloading (backups OK) — " + archiveFolderName(name)
+		fmt.Fprintf(&b, "Your backups are working, but Thunderbird has stopped downloading %s mail, so the backups cannot get the rest until it starts again.\r\n\r\n", whose)
+	} else {
+		subject = "MailArchive: Thunderbird still downloading (backups OK) — " + archiveFolderName(name)
+		fmt.Fprintf(&b, "Your backups are working. Thunderbird has not finished downloading %s mail yet, so the backups have only part of it so far.\r\n\r\n", whose)
+	}
+	fmt.Fprintf(&b, "Archive: %s\r\n", name)
+	if host := header(ev.Host); strings.TrimSpace(host) != "" {
+		fmt.Fprintf(&b, "Computer: %s\r\n", host)
+	}
+	b.WriteString("\r\n")
+	for _, l := range tb.Lines {
+		fmt.Fprintf(&b, "%s\r\n", header(l))
+	}
+	switch len(tb.Remedy) {
+	case 0:
+	case 1:
+		fmt.Fprintf(&b, "\r\nDo this on that computer: %s\r\n", header(tb.Remedy[0]))
+	default:
+		b.WriteString("\r\nDo this on that computer:\r\n")
+		for _, step := range tb.Remedy {
+			fmt.Fprintf(&b, "%s\r\n", header(step))
+		}
+	}
+	if tb.Which != "" {
+		fmt.Fprintf(&b, "\r\n%s\r\n", header(tb.Which))
+	}
+	if tb.Stopped {
+		b.WriteString("\r\nYou will get this email once for each account that stops downloading, not after every backup.\r\n")
+	} else {
+		b.WriteString("\r\nYou will get this email once. If the download then stops, you will get one more.\r\n")
+	}
+	b.WriteString("\r\nThis message was sent by MailArchive's built-in backup alerts.\r\n")
+	return subject, b.String()
+}
+
+// archiveFolderName is the last part of an archive's path, for a subject a phone shows the end of
+// ("Thunderbird archive 2026", never the whole Windows path): split at "/" or "\", whichever
+// computer wrote it, with any trailing separator dropped; the whole path when it has no last part.
+func archiveFolderName(path string) string {
+	p := strings.TrimRight(path, `/\`)
+	if i := strings.LastIndexAny(p, `/\`); i >= 0 {
+		p = p[i+1:]
+	}
+	if strings.TrimSpace(p) == "" {
+		return path
+	}
+	return p
 }
 
 func resultWord(r string) string {
@@ -345,5 +445,10 @@ func smtpTransport(addr, host, security string, auth smtp.Auth, from string, to 
 	if err := w.Close(); err != nil {
 		return err
 	}
-	return client.Quit()
+	// The server has accepted the message: it is sent. A goodbye that fails now (no reply, a
+	// dropped connection, the deadline) is ErrAfterAccepted, never a failed send (SPAM-01).
+	if err := client.Quit(); err != nil {
+		return fmt.Errorf("%w: %v", ErrAfterAccepted, err)
+	}
+	return nil
 }

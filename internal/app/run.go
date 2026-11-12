@@ -28,6 +28,7 @@ import (
 	"mail-archive-tool/internal/seal"
 	"mail-archive-tool/internal/source"
 	"mail-archive-tool/internal/state"
+	"mail-archive-tool/internal/tbcomplete"
 	"mail-archive-tool/internal/util"
 	"mail-archive-tool/internal/vault"
 )
@@ -271,6 +272,9 @@ type Result struct {
 	Fillable   int    // manifest records still missing content an on-demand source may deliver (a record that is only partly read is counted in Unreadable instead)
 	Terminal   int    // records missing content the source can never deliver (recorded, never retried)
 	Unknown    int    // legacy records not yet re-examined (migrated from a version-1 manifest)
+	// FillableFrom is the kind of mail the run read (a state.From* value; "" not known), so the
+	// words for its messages not downloaded in full say where they came from (MA-1157).
+	FillableFrom string
 
 	// Fault isolation (§4.2). Unreadable and Unparsed are the manifest's partly-read
 	// and unparsed records; Gaps is what this run observed in the capture-gap
@@ -308,6 +312,22 @@ type Result struct {
 	// ran, on every return (design-presync-attended §4.1, C-12); nil otherwise. In
 	// memory only.
 	Presync *PresyncOutcome
+
+	// Thunderbird is each Thunderbird store's completeness verdict (docs/design-thunderbird-
+	// completeness.md, slice C2), for a run whose walk of every source ended; a store that is
+	// not_applicable (Local Folders, POP3, a plain mail folder) has none. In memory: a plaintext
+	// run that ends ok records it (recordRun); for an encrypted archive it is the only place it
+	// is kept, for the screen while unlocked (O1). tbcomplete.RunLead gives the run's lead.
+	Thunderbird []tbcomplete.Result
+	// tbPrev is the previous run's completeness record, read before this run's "running"
+	// record replaced it, for TC-19's carried fingerprints.
+	tbPrev []state.TBAccount
+	// TBNotices are the Thunderbird accounts whose behind-streak this run found due an email
+	// (the "still downloading" or "stopped" email, design §5, slice C5): only accounts this run
+	// found behind, of a plaintext archive, and only when the run wrote the streak record, so the
+	// email's flag can be set in it. A scheduled run's alert layer sends them
+	// (backupalert.ReportTBBehind), then MarkTBNoticesSent sets the flags. In memory only.
+	TBNotices []state.TBNotice
 }
 
 // finish fills the manifest-derived fields of a Result and regenerates the
@@ -701,6 +721,9 @@ func Run(ctx context.Context, opts Options, logger *log.Logger, onProgress Progr
 	// the stamp every capture-gap observation carries: a gap whose LastRun equals
 	// it was attempted by this run, and `status` tells attempted from not attempted
 	// by comparing with the last-run record's start (FC14).
+	// The previous run's Thunderbird completeness is read first, before the "running"
+	// record replaces it (completeness design TC-19: fingerprints carried forward).
+	tbPrev := previousThunderbird(opts)
 	begun := beginRun(opts)
 	// The opt-in Thunderbird pre-sync runs here, after the lock and the run's
 	// start and before any source is read; nil unless a caller opts in, and it
@@ -746,6 +769,10 @@ func Run(ctx context.Context, opts Options, logger *log.Logger, onProgress Progr
 	// Registered after recordRun so it runs first: every return below, the early ones
 	// that build a fresh Result included, hands the caller the session's outcome.
 	defer func() { result.Presync = presyncOut }()
+	// The same for the Thunderbird completeness verdicts, set once every source was walked
+	// (nil on any earlier return), and the previous record recordRun carries forward from.
+	var tbResults []tbcomplete.Result
+	defer func() { result.Thunderbird, result.tbPrev = tbResults, tbPrev }()
 	// T16 (design-presync-attended §4.1, C-11): a cancel during the pre-sync, or before
 	// it, stops the run here, before any sweep, index or source. It comes after the
 	// deferred recordRun and Release, so the record ends cancelled, never running, and
@@ -936,7 +963,7 @@ func Run(ctx context.Context, opts Options, logger *log.Logger, onProgress Progr
 			lockLost = err
 		}
 	}
-	result = Result{Files: len(files), ManifestBefore: manifestBefore}
+	result = Result{Files: len(files), ManifestBefore: manifestBefore, FillableFrom: fillableFrom(files)}
 	var failures int
 	var firstFailed string
 	var firstErr error
@@ -1010,6 +1037,11 @@ func Run(ctx context.Context, opts Options, logger *log.Logger, onProgress Progr
 			}
 			logger.Printf("error: %s: %v%s", f, runErr, dataFileRemedyFor(f, runErr))
 		}
+	}
+	// Thunderbird completeness (slice C2): once every store is walked, so its folder cache is
+	// read after the walk, once per profile (TC-21). It reads; it writes nothing here.
+	if fatal == nil {
+		tbResults = assessThunderbird(lr.tb, time.Now())
 	}
 
 	// Browsable folder index pages, built from the finished index. Regenerate
@@ -1393,6 +1425,13 @@ func recordRun(opts Options, lr state.LastRun, result *Result, err *error, logge
 	switch {
 	case *err == nil:
 		lr.Status = state.RunOK
+		// How much of each Thunderbird IMAP account Thunderbird had downloaded (completeness
+		// design §7, slice C2): a plaintext run that ended ok only. Nothing about it is written
+		// beside an encrypted archive (O1, R44); a run that failed says its failure (§11).
+		if !lr.Encrypted && opts.Key == nil && len(result.Thunderbird) > 0 {
+			lr.Thunderbird = tbRecords(result.Thunderbird, result.tbPrev, lr.Finished)
+			lr.ThunderbirdMore = tbRecordsMore(result.Thunderbird)
+		}
 		if lr.Encrypted && result.IndexBehind {
 			// The backup finished, but its search index misses messages until a later
 			// run catches it up: recorded by kind, so status warns (owner ruling
@@ -1420,6 +1459,9 @@ func recordRun(opts Options, lr state.LastRun, result *Result, err *error, logge
 	}
 	lr.Exported, lr.Filled = result.Stats.Exported, result.Stats.Filled
 	lr.Fillable, lr.Terminal, lr.Unknown, lr.IndexErrors = result.Fillable, result.Terminal, result.Unknown, result.IndexErrors
+	if !lr.Encrypted { // where the run read its mail: plaintext only, beside its count (MA-1157)
+		lr.FillableFrom = result.FillableFrom
+	}
 	// What this run observed in the capture-gap ledger (additive; a monitor keys on
 	// gaps_new, FC23(2)). A partial run is recorded as the failure it maps to in
 	// S1a: status "failed" with the *PartialError's one-line text.
@@ -1427,6 +1469,18 @@ func recordRun(opts Options, lr state.LastRun, result *Result, err *error, logge
 	lr.GapsObserved, lr.GapsNew, lr.GapsRecovered = g.Observed, g.New, g.Recovered
 	lr.GapsFillable, lr.GapsTerminal, lr.GapsStuck, lr.Unreadable = g.Fillable, g.Terminal, g.Stuck, result.Stats.Unreadable
 	recordCounts(&lr, *result)
+	// How long each Thunderbird account has been behind (completeness design §5, M10):
+	// plaintext only, a run that ended ok only, best effort. Folded before the last-run record
+	// is written, so a streak record the run could not use, or one too full to start a behind
+	// store's streak, is a WARN that status shows (the C2 pass's ADV-C2-05 and -10, round 3's
+	// R3-04), never silent.
+	// The accounts it finds due an email go back in the result for the scheduled run's alert
+	// layer (slice C5).
+	ws, notices := foldTBStreak(opts, result.Thunderbird, lr.Encrypted, *err == nil, lr.Finished, logger)
+	if len(ws) > 0 && !lr.Encrypted && opts.Key == nil {
+		lr.Warnings = append(lr.Warnings, ws...)
+	}
+	result.TBNotices = notices
 	// Best effort: a refused write never fails the run, but it is logged (F12),
 	// because the "running" record then stays and status reads it as a run that
 	// never finished although this log says how it ended.
@@ -1624,7 +1678,7 @@ func fileFailureError(failures int, firstPath string, firstErr error) error {
 // message it contains, honouring ctx cancellation between messages. What goes
 // wrong with one item or folder is recorded in the capture-gap ledger and the walk
 // goes on; what goes wrong with the archive itself ends the source (localrun.go).
-func runFile(ctx context.Context, lr *localRun, path string, copyFirst, followLinks bool, onProgress ProgressFunc, abort func() error) error {
+func runFile(ctx context.Context, lr *localRun, path string, copyFirst, followLinks bool, onProgress ProgressFunc, abort func() error) (err error) {
 	exp, out, logger := lr.exp, lr.out, lr.logger
 	openPath := path
 	if copyFirst {
@@ -1700,6 +1754,28 @@ func runFile(ctx context.Context, lr *localRun, path string, copyFirst, followLi
 			NoStoreUID: noStoreUID(path),
 			Folder:     src.noteFolder,
 		}
+		// A local mbox or maildir store may be a Thunderbird account's: the completeness check
+		// is planned from the input path as given (TC-11), and the walk counts as it reads. A
+		// store under a Thunderbird profile that another local reader opened (the Evolution
+		// one) counts nothing, and is told unknown, never left out (the C2 pass's ADV-C2-16;
+		// which reader opens it is unchanged here).
+		var tb *tbStore
+		switch {
+		case tbCheckOff || !src.local:
+		case source.IsMboxReader(reader):
+			tb = planTB(path)
+			opts.Counts = tb.counts
+		default:
+			tb = planTBOther(path)
+		}
+		defer func() {
+			if tb != nil {
+				// Every store is told after every walk (TC-21); one whose walk ended with an
+				// error is told unknown (walk_failed), never left out.
+				tb.walkFailed = err != nil
+				lr.tb = append(lr.tb, tb)
+			}
+		}()
 		// MailArchive's own restores into Thunderbird are left out (R41,
 		// design-restore-thunderbird §7.2): the record is restores.log in MailArchive's
 		// default settings folder, whatever -config says (tbrestore.LogPath).

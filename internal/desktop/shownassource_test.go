@@ -31,7 +31,7 @@ func TestHealthCardSaysMessagesAreShownAsSource(t *testing.T) {
 		return rec.Body.String()
 	}
 	body := card("too-deeply-nested")
-	for _, want := range []string{"Shown as source: 1 message(s)", "nested too deeply", "Nothing to do"} {
+	for _, want := range []string{"Shown as source: 1 message is shown", "nested too deeply", "Nothing to do"} {
 		if !strings.Contains(body, want) {
 			t.Errorf("health card lacks %q: %s", want, body)
 		}

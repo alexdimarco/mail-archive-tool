@@ -93,16 +93,17 @@ func TestAPartialRunSaysWhatHappenedByKind(t *testing.T) {
 	}
 }
 
-// covers: MA-1149, R18, S29
+// covers: MA-1149, MA-1157, R18, S29
 // Messages the mail app has not downloaded in full yet (fillable records: Thunderbird still
 // downloading) are said as that, with the remedy that later backups add them — one sentence,
-// singular and plural, the digits grouped.
+// singular and plural, the digits grouped. Amended for 1.6.2 (the 1.6.1 friction review's P7,
+// MA-1157): the sentence names Thunderbird only when the run read Thunderbird's store.
 func TestMessagesNotDownloadedYetAreSaidAsThat(t *testing.T) {
-	if got, want := NotDownloadedSentence(1), "1 message is not on this computer in full yet: your mail app (such as Thunderbird) has not downloaded it. Later backups add it once it has; opening it in your mail app makes it download it sooner."; got != want {
+	if got, want := NotDownloadedSentence(1, FromThunderbird), "1 message is not on this computer in full: Thunderbird has not downloaded it yet. Later backups add it once it has; opening it in Thunderbird makes it download it sooner."; got != want {
 		t.Errorf("one:\n got %q\nwant %q", got, want)
 	}
-	got := NotDownloadedSentence(1420)
-	assure.Reached(t, strings.HasPrefix(got, "1,420 messages are not on this computer in full yet") && strings.Contains(got, "Later backups add them once it has"),
+	got := NotDownloadedSentence(1420, FromThunderbird)
+	assure.Reached(t, strings.HasPrefix(got, "1,420 messages are not on this computer in full") && strings.Contains(got, "Later backups add them once it has"),
 		"many, grouped: "+got)
 }
 

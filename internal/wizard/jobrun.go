@@ -2,6 +2,7 @@ package wizard
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"log"
 	"path/filepath"
@@ -17,6 +18,7 @@ import (
 	"mail-archive-tool/internal/presyncjob"
 	"mail-archive-tool/internal/seal"
 	"mail-archive-tool/internal/state"
+	"mail-archive-tool/internal/tbcomplete"
 	"mail-archive-tool/internal/util"
 )
 
@@ -89,9 +91,16 @@ func RunJobInProcess(ctx, stop context.Context, jobPath string, logger *log.Logg
 	logger.Printf("Running the scheduled backup now for %s", j.Out)
 	result, runErr := app.Run(ctx, opts, logger, nil)
 	if runErr != nil {
+		// A partial backup's note says what is not downloaded in full yet too, as a finished
+		// one's does (the 1.6.1 friction review's P6, MA-1156).
+		if errors.Is(runErr, app.ErrPartial) {
+			if nd := notDownloadedLines(result); len(nd) > 0 {
+				return "", &partialNote{err: runErr, lines: nd}
+			}
+		}
 		return "", runErr
 	}
-	return runNowSummary(result), nil
+	return runNowSummaryFor(result, app.TBScheduled(j.Out)), nil
 }
 
 // runNowSummary is what the Desktop's Run now says when its backup finished (MA-943): one
@@ -99,20 +108,43 @@ func RunJobInProcess(ctx, stop context.Context, jobPath string, logger *log.Logg
 // now and the command line count it (F13) — then only what explains that count when it is
 // not zero, and what a person must act on, one line each. The Desktop puts the Thunderbird
 // sync's line after the first line. The wizard's own dialog keeps exportSummary.
-func runNowSummary(r app.Result) string {
+func runNowSummary(r app.Result) string { return runNowSummaryFor(r, false) }
+
+// runNowLead is Run now's first words for the run's lead (completeness design §7, slice C3): a
+// plaintext Run now never said "complete", so a run that may say so keeps "Backup finished:";
+// one with a Thunderbird account behind or limited says "Backed up what Thunderbird has so far:".
+func runNowLead(l tbcomplete.Lead) string {
+	if l == tbcomplete.LeadSoFar {
+		return "Backed up what Thunderbird has so far: "
+	}
+	return "Backup finished: "
+}
+
+// tbNoteLines are the run's Thunderbird lines for Run now's note, from its in-memory verdicts
+// (never a record, O1): scheduled says a schedule runs this archive's later backups (TC-17); with
+// none they ask for Run now to be clicked again (the C3 friction review's P3).
+func tbNoteLines(r app.Result, scheduled bool) []string {
+	accts, more := app.TBAccounts(r)
+	return state.TBLines(accts, more, state.TBSay{Scheduled: scheduled, Surface: state.TBSurfaceRunNow})
+}
+
+// runNowSummaryFor is runNowSummary for an archive whose later backups a schedule runs, or not.
+func runNowSummaryFor(r app.Result, scheduled bool) string {
 	s := r.Stats
 	added := r.ManifestSize - r.ManifestBefore
+	lead := runNowLead(tbcomplete.RunLead(r.Thunderbird))
 	var lines []string
 	switch {
 	case added < 0 || added > s.Exported:
 		// The record shrank or grew by more than this run wrote: say what was written.
-		lines = append(lines, "Backup finished: "+messages(s.Exported)+" added or updated in the archive.")
+		lines = append(lines, lead+messages(s.Exported)+" added or updated in the archive.")
 		added = s.Exported
 	case added == 0:
-		lines = append(lines, "Backup finished: no new messages.")
+		lines = append(lines, lead+"no new messages.")
 	default:
-		lines = append(lines, "Backup finished: "+messagesNew(added)+" archived.")
+		lines = append(lines, lead+messagesNew(added)+" archived.")
 	}
+	lines = append(lines, tbNoteLines(r, scheduled)...)
 	if s.Filled > 0 {
 		lines = append(lines, messages(s.Filled)+" an earlier backup could not fully download "+guiVerb(s.Filled, "is", "are")+" now complete.")
 	}
@@ -121,24 +153,9 @@ func runNowSummary(r app.Result) string {
 		// duplicate is made (friction review O4; TestSavedAgainMakesNoCopies).
 		lines = append(lines, messages(again)+" already in the archive "+guiVerb(again, "was", "were")+" saved again (no copies are made).")
 	}
-	notDone := r.Fillable + r.Unknown
-	onlyGaps := r.Fillable > 0 && r.FillableOnlyParseGap >= r.Fillable
-	switch {
-	case onlyGaps:
-		lines = append(lines, messages(r.Fillable)+" "+guiVerb(r.Fillable, "is", "are")+" cut short in the mail files, or "+guiVerb(r.Fillable, "has", "have")+
-			" parts that could not be told apart, so "+guiVerb(r.Fillable, "it", "they")+" could not be read in full. To add them, replace that mail file with a complete export from your mail app, then click Run now again. A message that was already damaged when it was sent stays listed.")
-	case notDone > 0:
-		// The one sentence Recent backups says too (design-plain-failure-words, MA-1149).
-		line := state.NotDownloadedSentence(notDone)
-		if r.Unknown > 0 {
-			line += fmt.Sprintf(" %d of them %s from an older archive and %s checked again by each backup.", r.Unknown, guiVerb(r.Unknown, "is", "are"), guiVerb(r.Unknown, "is", "are"))
-		}
-		lines = append(lines, line)
-		if r.FillableParseGap > 0 {
-			lines = append(lines, fmt.Sprintf("%d of them %s cut short in the mail file: replace that file with a complete export from your mail app.", r.FillableParseGap, guiVerb(r.FillableParseGap, "is", "are")))
-		}
-	}
-	if (onlyGaps || notDone > 0) && r.ReportPath != "" {
+	nd := notDownloadedLines(r)
+	lines = append(lines, nd...)
+	if len(nd) > 0 && r.ReportPath != "" {
 		// The report is always in the archive's folder (app.writeReport): name the file and
 		// where it is, not a full path the page cannot open (friction review L6).
 		lines = append(lines, "Which ones: the file "+filepath.Base(r.ReportPath)+" in the archive's folder (it opens in a spreadsheet program).")
@@ -151,6 +168,42 @@ func runNowSummary(r app.Result) string {
 	}
 	return strings.Join(lines, "\n")
 }
+
+// notDownloadedLines says what of the archive is not in it in full yet after r, one line each:
+// messages cut short in the mail files, or not downloaded in full (in the one sentence Recent
+// backups says too, worded by where the run read its mail; design-plain-failure-words MA-1149,
+// MA-1157), with those from an older archive and those cut short among them. None when all is
+// there. Run now's result says these after a finished backup and after a partial one (MA-1156).
+func notDownloadedLines(r app.Result) []string {
+	var lines []string
+	notDone := r.Fillable + r.Unknown
+	switch {
+	case r.Fillable > 0 && r.FillableOnlyParseGap >= r.Fillable:
+		lines = append(lines, messages(r.Fillable)+" "+guiVerb(r.Fillable, "is", "are")+" cut short in the mail files, or "+guiVerb(r.Fillable, "has", "have")+
+			" parts that could not be told apart, so "+guiVerb(r.Fillable, "it", "they")+" could not be read in full. To add them, replace that mail file with a complete export from your mail app, then click Run now again. A message that was already damaged when it was sent stays listed.")
+	case notDone > 0:
+		line := state.NotDownloadedSentence(notDone, r.FillableFrom)
+		if r.Unknown > 0 {
+			line += fmt.Sprintf(" %d of them %s from an older archive and %s checked again by each backup.", r.Unknown, guiVerb(r.Unknown, "is", "are"), guiVerb(r.Unknown, "is", "are"))
+		}
+		lines = append(lines, line)
+		if r.FillableParseGap > 0 {
+			lines = append(lines, fmt.Sprintf("%d of them %s cut short in the mail file: replace that file with a complete export from your mail app.", r.FillableParseGap, guiVerb(r.FillableParseGap, "is", "are")))
+		}
+	}
+	return lines
+}
+
+// partialNote is a partial backup's words (its *app.PartialError, unchanged for every code that
+// matches it) with the lines Run now says of what is not downloaded in full yet after them, one
+// per line (MA-1156): the record, the history and the email carry the error's own words.
+type partialNote struct {
+	err   error
+	lines []string
+}
+
+func (e *partialNote) Error() string { return e.err.Error() + "\n" + strings.Join(e.lines, "\n") }
+func (e *partialNote) Unwrap() error { return e.err }
 
 // messages is a count of messages in words: "1 message", "20,351 messages".
 func messages(n int) string {
@@ -223,15 +276,51 @@ func RunJobInProcessKeyed(ctx, stop context.Context, jobPath string, logger *log
 	if runErr != nil {
 		return "", runErr
 	}
-	return encryptedSummary(result), nil
+	return encryptedSummaryFor(result, app.TBScheduled(j.Out)), nil
 }
 
 // encryptedSummary is what a keyed run says: no counts kept anywhere, no file of the
 // archive named — its pages, report and index are sealed (U16).
-func encryptedSummary(result app.Result) string {
-	s := fmt.Sprintf("Backup complete: %d message(s) added or updated. They are sealed in the encrypted archive; open it in MailArchive Desktop to read them.", result.Stats.Exported)
+func encryptedSummary(result app.Result) string { return encryptedSummaryFor(result, false) }
+
+// syncPausedText is the wizard's wait when Thunderbird's files stop growing (completeness design
+// §7's surfaces table, slice C3): Thunderbird pauses for long stretches, so a pause is never said
+// to be the end of the download; the end summary then says how much there is.
+const syncPausedText = "The download has paused — starting the backup of what Thunderbird has so far…"
+
+// encryptedSummaryFor is encryptedSummary for an archive whose later backups a schedule runs, or
+// not. Its lead obeys R42 (completeness design §7's foldcheck M8 and foldcheck2 MF1 folds): "Backup
+// complete:" only when every Thunderbird account of the run may say complete, or the run read
+// none; "Backed up what Thunderbird has so far:" when one is behind or limited; "Backup
+// finished:" otherwise. The Thunderbird lines follow the sealed sentence, from the run's result
+// in memory only (O1): the Desktop clears the whole note at Lock or a switch (C-15), and nothing
+// of it is written beside the archive.
+func encryptedSummaryFor(result app.Result, scheduled bool) string {
+	lead := "Backup finished: "
+	switch tbcomplete.RunLead(result.Thunderbird) {
+	case tbcomplete.LeadComplete:
+		lead = "Backup complete: "
+	case tbcomplete.LeadSoFar:
+		lead = "Backed up what Thunderbird has so far: "
+	}
+	// The count in words (the C3 friction review's P6), as the plaintext note says it: "no new
+	// messages" when nothing was written, otherwise "1 message" or "390 messages". The sealed
+	// sentence stays either way: the Desktop turns its "open it in MailArchive Desktop" into the
+	// Open archive hint (wizardReadThem, MA-852's Run now test).
+	s := lead + "no new messages. Your messages are sealed in the encrypted archive; open it in MailArchive Desktop to read them."
+	if n := result.Stats.Exported; n > 0 {
+		s = lead + messages(n) + " added or updated. They are sealed in the encrypted archive; open it in MailArchive Desktop to read them."
+	}
+	tb := tbNoteLines(result, scheduled)
+	if len(tb) > 0 {
+		s += "\n" + strings.Join(tb, "\n")
+	}
 	if result.IndexBehind {
-		s += " The search index is missing some messages; the next backup, or Rebuild search index, brings it up to date."
+		sep := " "
+		if len(tb) > 0 {
+			sep = "\n"
+		}
+		s += sep + "The search index is missing some messages; the next backup, or Rebuild search index, brings it up to date."
 	}
 	return s
 }

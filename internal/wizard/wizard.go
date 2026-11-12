@@ -47,6 +47,8 @@ import (
 	"mail-archive-tool/internal/schedule"
 	"mail-archive-tool/internal/seal"
 	"mail-archive-tool/internal/source"
+	"mail-archive-tool/internal/state"
+	"mail-archive-tool/internal/tbcomplete"
 	"mail-archive-tool/internal/thunderbird"
 	"mail-archive-tool/internal/util"
 )
@@ -401,12 +403,16 @@ func RunHeadless(path string) int {
 	// A completed (not cancelled) local backup ends a failing streak (a recovery email and
 	// notice) and emails its success too, if alerts want it. Then, for a job that syncs
 	// Thunderbird, the one email per stale sync streak (design-presync-attended §5.5), which
-	// waits for the next run when this one sent the recovery email: one email per run.
+	// waits for the next run when this one sent the recovery email: one email per run. Then the
+	// Thunderbird download email for the accounts this run found 3 days into a behind-streak
+	// (completeness design §5, slice C5), which waits likewise when this run sent either email.
 	if runErr == nil {
 		o := reportRun(key, j.Name, j.Out, backupalert.ResultOK, nil, result.Stats.Exported, logger)
+		syncSent := false
 		if j.ThunderbirdSync != nil {
-			backupalert.ReportSyncStaleDefault(key, j.Out, o.RecoveryEmailed, logger)
+			syncSent = backupalert.ReportSyncStaleDefault(key, j.Out, o.RecoveryEmailed, logger)
 		}
+		backupalert.ReportTBBehindDefault(j.Out, result.TBNotices, o.RecoveryEmailed || syncSent, logger)
 	}
 	return 0
 }
@@ -848,12 +854,13 @@ func localArchiveFlowHooks(chosen func(out string), finished func(), check func(
 	//     Outlook .ost gets the equivalent guidance.
 	prepared := false
 	ostNoted := false
+	var changed []string // the accounts this run's Yes, prepare changed (MA-1267)
 	for _, in := range choice.inputs {
 		fi, statErr := os.Stat(in)
 		switch {
 		case statErr != nil:
 		case fi.IsDir() && thunderbird.IsImapStore(in):
-			p, err := prepareThunderbirdGUI(in)
+			p, err := prepareThunderbirdGUI(in, &changed)
 			if err != nil {
 				return err
 			}
@@ -1242,7 +1249,9 @@ func healthCheck() error {
 		choices = append(choices, rebuildChoice)
 	}
 	choices = append(choices, remove)
-	pick, err := zenity.List("Backup health — "+rep.Posture+"\n\n"+text, choices, zenity.Title(appTitle), zenity.DefaultItems(cont))
+	// The health text holds names, paths and commands; on Linux and the BSDs it is shown in a
+	// message before the list, which then says only healthListPrompt (MA-1286).
+	pick, err := textThenList("Backup health — "+rep.Posture+"\n\n"+text, healthListPrompt, choices, zenity.Title(appTitle), zenity.DefaultItems(cont))
 	if err != nil {
 		return err
 	}
@@ -1549,8 +1558,10 @@ const imapPrepQuestion = "This looks like an IMAP account.\n\n" +
 // prepareThunderbirdGUI offers, for a Thunderbird IMAP account, to enable
 // offline download and guide a full sync so nothing is missed. It returns
 // whether preparation was done (in which case the export should run in Full
-// mode). Non-IMAP stores need no preparation.
-func prepareThunderbirdGUI(store string) (bool, error) {
+// mode). Non-IMAP stores need no preparation. changed holds the accounts this wizard run has
+// already changed, and gets this store's account when it changes prefs.js, so a later refusal in
+// the same run says what was changed (MA-1267).
+func prepareThunderbirdGUI(store string, changed *[]string) (bool, error) {
 	if !thunderbird.IsImapStore(store) {
 		return false, nil
 	}
@@ -1568,11 +1579,13 @@ func prepareThunderbirdGUI(store string) (bool, error) {
 		return false, choice
 	}
 
-	profile, ok := thunderbird.FindProfileDir(store)
-	if !ok {
-		return false, zenity.Warning("Couldn't find the Thunderbird profile; exporting whatever is cached.", zenity.Title(appTitle))
+	profile, acct, refusal := imapPrepAccount(store, *changed)
+	if refusal != "" {
+		// Nothing was changed, so the export is not prepared: it goes ahead with what is on
+		// this computer, in its usual mode, and says so (MA-1204). Closing the warning goes on
+		// too, as its words say (MA-1209).
+		return false, noticeClosed(zenity.Warning(refusal, zenity.Title(appTitle)))
 	}
-	acct, _ := thunderbird.FindAccountForStore(profile, store)
 
 	// prefs.js must not be edited while Thunderbird is running.
 	for acct != nil && thunderbird.Running(profile) {
@@ -1592,9 +1605,13 @@ func prepareThunderbirdGUI(store string) (bool, error) {
 	}
 
 	if acct != nil && !acct.OfflineDownload {
-		if _, _, e := thunderbird.EnableOffline(profile, acct.ServerKey); e != nil {
-			return false, zenity.Error("Couldn't enable offline download:\n"+e.Error(), zenity.Title(appTitle))
+		c, e := thunderbird.EnableOffline(profile, acct.ServerKey)
+		if e != nil {
+			// Checked before the quit (imapPrepAccount), so only a change since then or a failed
+			// write lands here: plain words, and the export goes ahead, closed or not (MA-1209).
+			return false, noticeClosed(zenity.Error(afterChange(prepFailWords(e, profile, acct.Hostname), *changed)+imapNotPrepared, zenity.Title(appTitle)))
 		}
+		noteChange(changed, acct, c)
 	}
 
 	// Guide the sync, then watch the store until the download stops growing.
@@ -1602,6 +1619,93 @@ func prepareThunderbirdGUI(store string) (bool, error) {
 		return false, e
 	}
 	return true, nil
+}
+
+// imapNotPrepared ends every Yes, prepare refusal (the C0c friction review's W0): the export
+// still runs, on what is here, and the words say what that leaves out.
+const imapNotPrepared = "\n\nThis export goes ahead now with the mail already on this computer. " +
+	"Mail that Thunderbird has not downloaded yet is not in it; a later run adds it once Thunderbird has it."
+
+// noticeClosed reads the answer to a one-button notice after which the wizard goes on: OK and a
+// window closed with its close button (ErrCanceled, as zenity reports it on Linux) both go on,
+// as after the Full-mode information dialog; any other error stops the wizard (MA-1209).
+func noticeClosed(choice error) error {
+	if errors.Is(choice, zenity.ErrCanceled) {
+		return nil
+	}
+	return choice
+}
+
+// prepFailWords are the wizard's plain words for err, a refusal of the offline change: its own
+// plain words when it has them (MA-1260), else a sentence that names no file and no raw error,
+// with the steps to make sure by hand.
+func prepFailWords(err error, profile, host string) string {
+	if words, ok := thunderbird.PlainWords(err); ok {
+		return words
+	}
+	return "MailArchive could not change Thunderbird's setting safely, so it did not change any Thunderbird setting.\n\n" +
+		thunderbird.SettingSteps(profile, host)
+}
+
+// imapPrepAccount is the profile and account Yes, prepare would change for store, or the
+// refusal the person is shown when it cannot change one, in plain words (MA-1260): no profile
+// found (W8), no account it can tell (MA-1204), user.js keeping the setting off (MA-1205), or,
+// for an account to turn on, any refusal EnableOffline would give (a hand-edited line, a backup
+// path refused; MA-1207), checked here before the person is asked to quit Thunderbird. On a
+// refusal nothing has been changed for store; changed are the accounts this wizard run changed
+// before (MA-1267), which the refusal then names in place of "did not change any setting".
+func imapPrepAccount(store string, changed []string) (string, *thunderbird.Account, string) {
+	profile, ok := thunderbird.FindProfileDir(store)
+	if !ok {
+		return "", nil, afterChange("MailArchive could not find the Thunderbird profile this mail belongs to (the mail may have been copied out of Thunderbird), so it did not change any Thunderbird setting.", changed) + imapNotPrepared
+	}
+	acct, err := thunderbird.AccountToEnable(profile, store)
+	if err == nil && !acct.OfflineDownload {
+		err = thunderbird.CheckOffline(profile, acct.ServerKey)
+	}
+	if err != nil {
+		return "", nil, afterChange(prepFailWords(err, profile, filepath.Base(store)), changed) + imapNotPrepared
+	}
+	return profile, acct, ""
+}
+
+// noteChange adds acct to changed when EnableOffline wrote prefs.js for it (c.Changed).
+func noteChange(changed *[]string, acct *thunderbird.Account, c thunderbird.OfflineChange) {
+	if c.Changed {
+		*changed = append(*changed, onHostPlain(acct.Hostname))
+	}
+}
+
+// onHostPlain is "the account on HOST", or "an account" when the host is not known.
+func onHostPlain(host string) string {
+	if host = thunderbird.StripControl(host); host != "" {
+		return "the account on " + host
+	}
+	return "an account"
+}
+
+// nothingChanged are the refusals' sentences that say no Thunderbird setting was changed, each
+// with its form for a run that changed one before (MA-1267): true of this mail, not of the run.
+var nothingChanged = strings.NewReplacer(
+	"did not change any Thunderbird setting", "did not change a Thunderbird setting for this mail",
+	"did not change any of them", "did not change any of them for this mail",
+	"So MailArchive changed nothing: a change would be undone.", "So MailArchive changed nothing for this mail: a change would be undone.",
+)
+
+// afterChange is words, a refusal's plain words, for a wizard run that has changed the accounts in
+// changed before it (the C0c pass round 4's R4-05, MA-1263's rule on the wizard's surface): it
+// first says what was changed and that the change is kept, and its "did not change any setting"
+// is said of this mail. With nothing changed before, it is words as they are.
+func afterChange(words string, changed []string) string {
+	if len(changed) == 0 {
+		return words
+	}
+	kept := "That change is kept: it is what Yes, prepare is for."
+	if len(changed) > 1 {
+		kept = "Those changes are kept: they are what Yes, prepare is for."
+	}
+	return "Earlier in this run, MailArchive set Thunderbird to keep all mail on this computer for " +
+		strings.Join(changed, ", and for ") + ". " + kept + "\n\n" + nothingChanged.Replace(words)
 }
 
 // guiWaitForSync shows a live progress dialog while the user runs Download/Sync
@@ -1634,7 +1738,7 @@ func guiWaitForSync(store string) error {
 			"Downloaded %s so far (+%s).\nWaiting for the sync to finish…\n\nIn Thunderbird: right-click the account → Download / Sync Now.",
 			thunderbird.HumanBytes(size), thunderbird.HumanBytes(size-start)))
 		if stable {
-			_ = dlg.Text("Download complete — starting export…")
+			_ = dlg.Text(syncPausedText)
 			_ = dlg.Complete()
 			return nil
 		}
@@ -1888,11 +1992,27 @@ func runExport(c wizardChoice) error {
 // X6) and the choice, worded for someone who has never met the engine, so a unit
 // test can assert both the counts and the wording without a display.
 func exportSummary(out string, keepRaw bool, r app.Result) string {
+	return exportSummaryFor(out, keepRaw, r, runtime.GOOS)
+}
+
+// exportSummaryFor is exportSummary for goos, which says how its search command names the
+// archive's folder (MA-1163).
+func exportSummaryFor(out string, keepRaw bool, r app.Result, goos string) string {
 	s := r.Stats
 	b := &strings.Builder{}
+	// The lead follows the run's weakest Thunderbird account (completeness design §4.2's fold, §7's
+	// wizard-lead fold; slice C3): "Backup complete." only when every one may say complete, or the
+	// run read none; then each account's lines. A one-off wizard export has no schedule yet, so
+	// the words ask for the backup to be run again (TC-17).
+	b.WriteString(tbcomplete.RunLead(r.Thunderbird).Sentence() + "\n\n")
+	if accts, more := app.TBAccounts(r); len(accts) > 0 || more > 0 {
+		for _, l := range state.TBLines(accts, more, state.TBSay{}) {
+			b.WriteString(l + "\n")
+		}
+		b.WriteString("\n")
+	}
 	fmt.Fprintf(b,
-		"Export complete.\n\n"+
-			"Newly downloaded this run: %d\n"+
+		"Newly downloaded this run: %d\n"+
 			"Exported:                  %d\n"+
 			"Skipped (already done):    %d\n"+
 			"Skipped (date filter):     %d\n"+
@@ -1947,7 +2067,7 @@ func exportSummary(out string, keepRaw bool, r app.Result) string {
 		b.WriteString("\nEach message is saved twice: an .html page to read, and an .eml file to import back into a mail program if you ever need to.\n")
 	}
 	b.WriteString("\nYour data stays on this computer: the archive is read from your own mail files, nothing is uploaded anywhere, and the saved pages run no scripts and load nothing from the internet — safe to open offline.\n")
-	fmt.Fprintf(b, "\nOutput folder:\n%s\n\nOpen index.html there to browse — no extra software needed. Each folder page has a box to filter within that folder; to search the whole archive at once, use the command-line tool: mailarchive serve -out %q", out, out)
+	fmt.Fprintf(b, "\nOutput folder:\n%s\n\nOpen index.html there to browse — no extra software needed. Each folder page has a box to filter within that folder; to search the whole archive at once, use the command-line tool: mailarchive serve -out %s", out, health.OutArg(out, goos))
 	return b.String()
 }
 
@@ -2017,9 +2137,12 @@ func presyncOfferable(inputs []string) bool {
 // shows (presync.MacAutomationNote, MA-861). The notice is this platform's
 // (presync.SyncNoticeFor): the Desktop's Run now runs the same job, so where Run now
 // starts Thunderbird the notice says it does not wait (design-presync-attended §7, C-84).
-func presyncQuestionText() string {
-	q := "Sync Thunderbird before each scheduled backup?\n\n" + presync.SyncNoticeFor(runtime.GOOS)
-	if runtime.GOOS == "darwin" {
+func presyncQuestionText() string { return presyncQuestionTextFor(runtime.GOOS) }
+
+// presyncQuestionTextFor is presyncQuestionText on goos.
+func presyncQuestionTextFor(goos string) string {
+	q := "Sync Thunderbird before each scheduled backup?\n\n" + presync.SyncNoticeFor(goos)
+	if goos == "darwin" {
 		q += "\n\n" + presync.MacAutomationNote
 	}
 	return q

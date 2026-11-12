@@ -82,6 +82,10 @@ type WalkOptions struct {
 	// if set, is told the folder path of each one left out.
 	RestoreSkip    RestoreSkip
 	RestoreSkipped func(path []string)
+	// Counts, if set, is filled with what the walk of a local mbox or maildir store counted
+	// of each mailbox (MailboxCounts: the Thunderbird completeness check, design §2.4). Only
+	// that reader fills it; it changes nothing the walk delivers.
+	Counts *MailboxCounts
 }
 
 // FaultWalker is a Source that reports what it could not read as it goes. The PST

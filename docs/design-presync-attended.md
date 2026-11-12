@@ -1381,6 +1381,37 @@ backup finds Thunderbird already open." The release notes' 1.5.2 line says "or a
   the target-list builder). The archive's own `.mailarchive-syncstreak.json` stays with the archive
   (R36).
 
+> **Amended 2026-11-09 (the Thunderbird completeness C5 adversarial pass's SPAM-01, the lead's
+> call; MA-1289).** "Delivered" now means the mail server accepted the message (its reply after the
+> end of the message data). Before, a goodbye (QUIT) that got no reply after an accepted message
+> made the send look failed, so `ToldFor` was never written and every later stale backup sent this
+> email again. Now that failure is logged and the email counts as sent, so `ToldFor` is written. A
+> refusal of the message itself is still a failure and is tried again at the next stale run. The
+> fix is in the one sender every alert email uses (`backupalert.send`).
+
+> **Amended 2026-11-09 (the C5 adversarial pass round 2's SPAM-R2-A, the lead's call; MA-1291).**
+> "Tried again at the next stale run" is now capped: at most 5 tries per streak. The told-file
+> also counts the failed sends (`tries`, for the streak `tried_for` and `tried_record` name; never
+> as told). At 5 failures this email is not tried again in that streak, and every stale run from
+> then on adds the `alert_send_failed` WARN to the archive's last-run record, which `status` and
+> Status & health show: "MailArchive could not send its email about Thunderbird (5 tries). Check
+> the email settings in MailArchive Desktop's Settings, then use Send test email." A new streak
+> starts at 0. Why: a server that takes the message but breaks its reply to the end of the data
+> looks like a refusal to the client, so without a cap that email could go at every stale run.
+
+> **Amended 2026-11-09 (the C5 adversarial pass round 3's CAP-R3-A and FRIC-R3-1, the lead's
+> calls; MA-1291).** The cap above silenced a mail server that worked again for the rest of the
+> streak, where before it this email was tried at every stale run. Now: 5 failed tries in a row,
+> then at most one try a day, never given up for good. Any delivered email (a backup alert, the
+> recovery, the Thunderbird download email, or Send test email on the Backup alerts card) writes a
+> new id into `alert-delivered` beside the settings file; the told-file counts each failure with
+> the id current then (`tried_since`, and `last_failed_try`), and a count made under another id
+> reads 0, so the next stale run tries again. The WARN's words are now: "MailArchive tried 5 times
+> to send you an email about Thunderbird and could not. Open MailArchive Desktop, go to Backup
+> alerts, check the mail server details, then click Send test email. Once an email gets through,
+> MailArchive tries this one again at the next backup." It is added only by a stale run that does
+> not get an email through.
+
 ### 5.6 With auto-pause and the alert streak
 
 - A run that finds the source unreachable fails before the hook, so it moves neither the sync streak

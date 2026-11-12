@@ -70,7 +70,7 @@ func TestStatusFillableGapIsWarnAndAutomaticallyOnlyWithASchedule(t *testing.T) 
 		t.Fatalf("a fillable gap: posture %s codes %v; want WARN capture_gaps_fillable", rep.Posture, rep.Codes)
 	}
 	line := rep.Reasons[i]
-	if !strings.Contains(line, "2 item(s)") || !strings.Contains(line, "retried automatically whenever the archive runs again") {
+	if !strings.Contains(line, "2 messages") || !strings.Contains(line, "retried automatically whenever the archive runs again") {
 		t.Errorf("with a schedule installed the line must say 2 items and 'automatically': %q", line)
 	}
 	in.HasDescriptor = false
@@ -100,12 +100,12 @@ func TestStatusStuckIsWarnListedFirstNeverRed(t *testing.T) {
 		t.Fatalf("capture_gaps_stuck is at position %d of %v; want it listed first", i, rep.Codes)
 	}
 	line := rep.Reasons[0]
-	for _, want := range []string{"1 item(s) have failed on every run since 2026-08-23", "Microsoft 365 will not export this item", "save a copy from Outlook on the web", "stays listed while the item remains in the mailbox"} {
+	for _, want := range []string{"1 message has failed on every run since 2026-08-23", "Microsoft 365 will not export this item", "save a copy from Outlook on the web", "stays listed while the item remains in the mailbox"} {
 		if !strings.Contains(line, want) {
 			t.Errorf("the stuck line lacks %q: %q", want, line)
 		}
 	}
-	if i := codeIndex(rep, "capture_gaps_fillable"); i < 0 || !strings.Contains(rep.Reasons[i], "1 item(s)") {
+	if i := codeIndex(rep, "capture_gaps_fillable"); i < 0 || !strings.Contains(rep.Reasons[i], "1 message") {
 		t.Errorf("the other, not-yet-stuck gap is still the fillable line: %v", rep.Reasons)
 	}
 
@@ -120,7 +120,7 @@ func TestStatusStuckIsWarnListedFirstNeverRed(t *testing.T) {
 	if i < 0 {
 		t.Fatalf("no capture_gaps_not_attempted note: %v", rep.Codes)
 	}
-	for _, want := range []string{"1 item(s)", "ann@contoso.com", "never captured", "last attempted 2026-08-03", "not in recent runs"} {
+	for _, want := range []string{"1 message", "ann@contoso.com", "never captured", "last attempted 2026-08-03", "not in recent runs"} {
 		if !strings.Contains(rep.Reasons[i], want) {
 			t.Errorf("the not-attempted note lacks %q: %q", want, rep.Reasons[i])
 		}
@@ -210,7 +210,7 @@ func TestStatusPartlyReadRecordsAreTheirOwnWarn(t *testing.T) {
 	if rep.Posture != "WARN" || codeIndex(rep, "unreadable_messages") < 0 || codeIndex(rep, "incomplete_content") >= 0 {
 		t.Fatalf("two partly-read records: posture %s codes %v; want WARN unreadable_messages and no incomplete_content", rep.Posture, rep.Codes)
 	}
-	if line := rep.Reasons[codeIndex(rep, "unreadable_messages")]; !strings.Contains(line, "2 message(s) could only be partly read") || !strings.Contains(line, "scanpst.exe") {
+	if line := rep.Reasons[codeIndex(rep, "unreadable_messages")]; !strings.Contains(line, "2 messages could only be partly read") || !strings.Contains(line, "scanpst.exe") {
 		t.Errorf("unreadable_messages line %q; want the count and the in-place repair remedy", line)
 	}
 	if doc := JSON(in, rep); doc.Fillable != 2 || doc.Unreadable != 2 {
@@ -219,7 +219,7 @@ func TestStatusPartlyReadRecordsAreTheirOwnWarn(t *testing.T) {
 
 	in.Fillable, in.Unreadable, in.UnreadableOnly = 3, 2, 2 // one record is also missing an ordinary item
 	rep = Assess(in, gapNow)
-	if line := rep.Reasons[codeIndex(rep, "incomplete_content")]; !strings.Contains(line, "1 message(s) still missing content") {
+	if line := rep.Reasons[codeIndex(rep, "incomplete_content")]; !strings.Contains(line, "1 message is not in the archive in full") { // MA-1160's words
 		t.Errorf("incomplete_content must count only the records that are not merely partly read: %q", line)
 	}
 

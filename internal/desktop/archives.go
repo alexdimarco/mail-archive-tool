@@ -73,6 +73,11 @@ type ArchiveRow struct {
 	// the operator's delegate's decision). Set for the rows of Your archives, not for one whose
 	// delete did not finish (its row already says "Delete not finished").
 	ShowUnlistWhy bool
+	// TBBanner is the card's one line when the archive's last backup found Thunderbird still
+	// downloading an account, or folders not kept on this computer (completeness design §7's
+	// archive card row, slice C3): state.TBCardBanner over the plaintext last-run record; "" for
+	// none, for a backup that did not end ok, and always for an encrypted archive (O1).
+	TBBanner string
 }
 
 // OffersSwitch reports whether the row draws Switch to this archive: as the row template decides
@@ -199,6 +204,7 @@ func (cfg Config) archiveRows(idx archindex.Index) []ArchiveRow {
 			SourceLostSince: lostSince,
 			RunNowOnly:      lostSince != "" && runNowOnlyRecorded(e.Path),
 			Problem:         problem,
+			TBBanner:        tbBanner(e.Path, avail && kind != "" && kind != archindex.KindEncrypted && problem == ""),
 		})
 	}
 	return rows
@@ -232,6 +238,22 @@ func runNowOnlyRecorded(out string) bool {
 	}
 	var d schedule.Descriptor
 	return json.Unmarshal(data, &d) == nil && d.IsManual()
+}
+
+// tbBanner is the card's Thunderbird line for the archive at out (completeness design §7, slice
+// C3): from its last-run record, read bounded and never through a link (state.ReadLastRun, whose
+// reader cleans every name again), for a plaintext archive whose last backup ended ok. An
+// encrypted archive, or one whose kind cannot be told as plaintext, gets none (O1: nothing is
+// written beside it, and nothing planted there is shown).
+func tbBanner(out string, plaintext bool) string {
+	if !plaintext || encmark.MustMinimise(out) {
+		return ""
+	}
+	lr, st, _ := state.ReadLastRun(out)
+	if st != state.LastRunPresent || lr.Status != state.RunOK || lr.Encrypted {
+		return ""
+	}
+	return state.TBCardBanner(lr.Thunderbird)
 }
 
 // sourceLostSince returns a "since DATE" string when the archive's SOURCE has been unreachable

@@ -41,6 +41,8 @@ class El {
   get htmlFor() { return this.attrs.for; } set htmlFor(v) { this.attrs.for = String(v); }
   get content() { return this.attrs.content; }
   get href() { return this.attrs.href || ''; } set href(v) { this.attrs.href = String(v); }
+  get rel() { return this.attrs.rel || ''; } set rel(v) { this.attrs.rel = String(v); }
+  get target() { return this.attrs.target || ''; } set target(v) { this.attrs.target = String(v); }
   get download() { return this.attrs.download; } set download(v) { this.attrs.download = String(v); }
   get classList() {
     const el = this, list = () => (el.attrs.class || '').split(/\s+/).filter(Boolean);
@@ -538,6 +540,77 @@ const scenarios = {
     const note = () => doc.querySelectorAll('.archive-row')[1].querySelector('[data-made-note]');
     const first = await untilTrue(() => !!note() && note().textContent.endsWith(BUSY));
     check(first && !note().textContent.includes('did not finish'), "a new archive's first backup met by a running one says the skip", note() && note().textContent);
+  },
+  // The address where a mistake in MailArchive is reported is a real link wherever the page says it
+  // (MA-1151; the 1.6.1 friction review's P1): Archive now's result, Run now's note and Status &
+  // health each show it as a link to that fixed address alone, opening apart from the page
+  // (rel="noopener noreferrer", target _blank), the words around it unchanged; any other address,
+  // and markup in the words, stay words. Positive twin first: words with no report address hold
+  // no link.
+  async reportLink() {
+    const ADDR = 'https://github.com/alexdimarco/mail-archive-tool/issues';
+    const PARTIAL = 'Not everything was saved. 2 messages could not be saved because of a mistake in MailArchive — your mail is fine (the original is untouched); please report it at ' + ADDR + '. Details: attachments-report.tsv in the archive folder.';
+    const OTHER = 'Archived 3 messages. See https://evil.example/x or <a href="https://evil.example/">this</a>.';
+    page([['E:\\Cur', 'current']], 'E:\\Cur');
+    doc.body.append(el('div', { id: 'device', hidden: '' }, el('span', { id: 'deviceCode' }), el('a', { id: 'deviceUrl' })), el('pre', { id: 'activity', hidden: '' }));
+    doc.getElementById('sec-health').append(el('pre', { id: 'healthBody' }, 'Loading…'));
+    const SUMMARY = ['Posture: RED', 'RED: the last backup did not save everything: ' + PARTIAL, 'Not ' + ADDR + 'x either: https://evil.example/y'];
+    replies['api/health'] = { posture: 'RED', summary: SUMMARY };
+    boot(); await wait(30);
+    const links = n => n.querySelectorAll('a');
+    const isReport = a => a.href === ADDR && a.textContent === ADDR && a.rel === 'noopener noreferrer' && a.target === '_blank';
+    const res = doc.getElementById('captureResult'), ab = doc.getElementById('archiveBtn');
+    replies['api/capture'] = { ok: true };
+    replies['api/activity'] = { running: false, job: '2', result: OTHER, error: '' };
+    ab.click();
+    const plain = await untilTrue(() => !res.hidden && res.textContent === OTHER);
+    check(plain && links(res).length === 0, 'the positive twin: words with no report address hold no link, and another address or markup stays words', res.textContent);
+    await untilTrue(() => !ab.disabled);
+    replies['api/activity'] = { running: false, job: '3', result: PARTIAL, error: '' };
+    ab.click();
+    const arch = await untilTrue(() => !res.hidden && res.textContent === PARTIAL);
+    check(arch && links(res).length === 1 && isReport(links(res)[0]), "Archive now's result links the report address alone", JSON.stringify({ text: res.textContent, n: links(res).length }));
+    replies['api/run-backup'] = { ok: true };
+    replies['api/activity'] = { running: false, job: '4', result: '', error: '', note: PARTIAL + '\nThunderbird synced first.' };
+    doc.getElementById('runBackupBtn').click();
+    const n = doc.getElementById('runBackupNote');
+    const rn = await untilTrue(() => !n.hidden && n.textContent === PARTIAL + '\nThunderbird synced first.');
+    check(rn && links(n).length === 1 && isReport(links(n)[0]), "Run now's note links the report address alone", JSON.stringify({ text: n.textContent, n: links(n).length }));
+    const hb = doc.getElementById('healthBody');
+    check(hb.textContent === SUMMARY.join('\n') && links(hb).length === 2 && links(hb).every(isReport),
+      'Status & health links each report address, the words unchanged, another address still words', JSON.stringify({ text: hb.textContent, n: links(hb).length }));
+  },
+  // Hostile words beside the report address (the polish-161 adversarial pass, L3 refuted and kept as
+  // a guard; L2, MA-1167): through sayText on Archive now's error, Run now's busy note and Status &
+  // health, each element holds only text and links to the fixed address, nothing parsed as markup,
+  // and the direction-changing characters (U+202A to U+202E, U+2066 to U+2069) are gone.
+  async plantedReportLink() {
+    const ADDR = 'https://github.com/alexdimarco/mail-archive-tool/issues';
+    const HOSTILE = ADDR + '@evil.example/x ' + 'javascript:alert(1)//' + ADDR + ADDR + ' "><img src=x onerror=alert(1)><a href="https://evil.example/">x</a> ' +
+      'https://evil.example/?u=' + ADDR + ' \u202e' + ADDR + ' \u2066see\u2069 $' + '{reportAddress} ' + ADDR.toUpperCase();
+    const SHOWN = HOSTILE.replace(/[\u202a-\u202e\u2066-\u2069]/g, '');
+    page([['E:\\Cur', 'current']], 'E:\\Cur');
+    doc.body.append(el('div', { id: 'device', hidden: '' }, el('span', { id: 'deviceCode' }), el('a', { id: 'deviceUrl' })), el('pre', { id: 'activity', hidden: '' }));
+    doc.getElementById('sec-health').append(el('pre', { id: 'healthBody' }, 'Loading…'));
+    replies['api/health'] = { posture: 'RED', summary: [HOSTILE] };
+    boot(); await wait(30);
+    const kids = n => n.children.map(c => c.tagName);
+    const onlyReport = n => n.children.every(c => c.tagName === '#TEXT' || (c.tagName === 'A' && c.href === ADDR && c.textContent === ADDR && c.children.length === 0));
+    const res = doc.getElementById('captureResult'), ab = doc.getElementById('archiveBtn');
+    replies['api/capture'] = { ok: true };
+    replies['api/activity'] = { running: false, job: '2', result: '', error: HOSTILE };
+    ab.click();
+    const r1 = await untilTrue(() => !res.hidden && res.textContent === "It didn't finish: " + SHOWN);
+    check(r1 && onlyReport(res) && res.querySelectorAll('a').length === 5, "Archive now's error: words and the report link only, no direction-changing character", JSON.stringify({ kids: kids(res), text: res.textContent }));
+    await untilTrue(() => !ab.disabled);
+    replies['api/run-backup'] = { ok: true };
+    replies['api/activity'] = { running: false, job: '3', result: '', error: '', busy: HOSTILE };
+    doc.getElementById('runBackupBtn').click();
+    const n = doc.getElementById('runBackupNote');
+    const r2 = await untilTrue(() => !n.hidden && n.textContent === SHOWN);
+    check(r2 && onlyReport(n) && n.querySelectorAll('a').length === 5, "Run now's busy note: words and the report link only, no direction-changing character", JSON.stringify({ kids: kids(n), text: n.textContent }));
+    const hb = doc.getElementById('healthBody');
+    check(hb.textContent === SHOWN && onlyReport(hb) && hb.querySelectorAll('a').length === 5, 'Status & health: words and the report link only, no direction-changing character', JSON.stringify({ kids: kids(hb), text: hb.textContent }));
   },
   // What Make a new encrypted archive… says before any step needs the person (MA-1073; the review's
   // MED-1: a folder refused after the wizard's windows was said 2,553 pixels below the window, so the

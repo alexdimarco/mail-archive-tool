@@ -179,6 +179,11 @@ type Input struct {
 	LastRunState state.LastRunState
 	LastRunErr   error
 
+	// TBStreak is the archive's behind-streak record (the Thunderbird completeness check, slice
+	// C5), read with the run records, for `-json`'s behind_since; zero when absent, unreadable or
+	// implausible (R4-01), and never read beside an encrypted archive.
+	TBStreak state.TBStreak
+
 	// LastStartFailure is the headless run-job start-failure breadcrumb (§4.6.6),
 	// set by Gather only when its Name matches schedule.DefaultNameFor(Out): keyed
 	// on the owner-pointed out, never the archive-held Desc.Name, so a forged
@@ -384,6 +389,15 @@ func (r *Report) note(code, msg string) {
 	r.Codes = append(r.Codes, code)
 }
 
+// fillableFrom is where the last run read its mail (a state.From* value), "" when no last-run
+// record says (MA-1160).
+func (in Input) fillableFrom() string {
+	if in.LastRunState != state.LastRunPresent {
+		return ""
+	}
+	return state.FillableFrom(in.LastRun.FillableFrom)
+}
+
 // onlyParseGap says every one of the n messages still missing content is so only because a part is
 // cut short or its parts could not be told apart (a fillable parse gap), so the remedy of a
 // message the source has not delivered is not theirs.
@@ -563,11 +577,14 @@ func assessContents(r *Report, in Input, now time.Time) {
 	// Completeness. A partly-read record is fillable too, but it has its own
 	// reason and its own remedy below; it is left out of this count and text.
 	if n := in.Fillable - in.UnreadableOnly; n > 0 {
-		msg := fmt.Sprintf("%d message(s) still missing content — download for offline use in your mail app, then re-run; incremental fills them", n)
+		// In the sentence Run now and Recent backups say, worded by where the last run read its mail
+		// (the polish-161 friction walk's N2, MA-1160): a mail app is blamed only for its own store.
+		msg := strings.TrimSuffix(state.NotDownloadedSentence(n, in.fillableFrom()), ".")
 		if onlyParseGap(in, n) {
 			// Every one is cut short, or has parts that could not be told apart, in the file it was
 			// read from: a download returns the same bytes from a mailbox file (friction F3).
-			msg = fmt.Sprintf("%d message(s) still missing content: cut short, or with parts that could not be told apart, in the file they were read from — replace the mailbox file with a complete export from your mail app (an IMAP cache: download the messages for offline use), then re-run; incremental fills them. A message that was malformed when it was sent cannot be completed by either, and stays listed", n)
+			msg = fmt.Sprintf("%s still missing content: cut short, or with parts that could not be told apart, in the file %s read from — replace the mailbox file with a complete export from your mail app (an IMAP cache: download %s for offline use), then re-run; incremental fills %s. A message that was malformed when it was sent cannot be completed by either, and stays listed",
+				state.Count(n, "message", "messages"), plural(n, "it was", "they were"), plural(n, "the message", "the messages"), plural(n, "it", "them"))
 		} else if in.FillableParseGap > 0 {
 			// A mix: the download is for the messages a source has not delivered, and a cut one among
 			// them is not changed by it (friction F3, re-verification).
@@ -624,7 +641,7 @@ func assessContents(r *Report, in Input, now time.Time) {
 		}
 		r.red("index_unreadable", fmt.Sprintf("the search index %s cannot be read%s — search, serve and the folder pages need it; %s", idxPath, cause, remedy))
 	case !in.HasIndex && !in.HasIndexFile && in.HasManifest && in.Messages > 0 && !(in.LastRunState == state.LastRunPresent && in.LastRun.NoIndex):
-		r.warn("index_missing", fmt.Sprintf("the archive has no search index (%s) although the manifest records %d message(s) — search, serve and the folder pages need it; %s (or ignore this if the archive is deliberately kept without one, -index=false)", idxPath, in.Messages, rebuildHow(in)))
+		r.warn("index_missing", fmt.Sprintf("the archive has no search index (%s) although the manifest records %s — search, serve and the folder pages need it; %s (or ignore this if the archive is deliberately kept without one, -index=false)", idxPath, state.Count(in.Messages, "message", "messages"), rebuildHow(in)))
 	}
 }
 
@@ -721,6 +738,15 @@ func assessKeyless(r *Report, in Input, now time.Time) {
 			switch w.Code {
 			case "credential_in_archive", "config_in_archive":
 				r.warn(w.Code, w.Message)
+			case "tbstreak_unreadable", "tbstreak_full", "tbstreak_clock_behind", "alert_send_failed":
+				// The Thunderbird completeness check's behind-streak record could not be used
+				// (the C2 pass's ADV-C2-05 and -10), or was too full to start counting a behind
+				// account (round 3's R3-04), or the backup's clock was behind it and it was not
+				// counted (the C5 round-2 pass's CLOCK-R2-A); or an email about Thunderbird was
+				// given up after 5 failed sends (SPAM-R2-A, added by the alert layer after the run).
+				// The recorded Message says what was done and what to do. A WARN, so the notice it
+				// feeds is never silently lost.
+				r.warn(w.Code, w.Message)
 			case "presync_cannot_start", "presync_no_desktop_session", "presync_did_not_start",
 				"presync_identity_unavailable", "presync_not_quiet", "presync_exited_early",
 				"presync_quit_not_permitted", "presync_quit_timeout", "presync_quit_skipped_others", "presync_owner_active",
@@ -736,6 +762,9 @@ func assessKeyless(r *Report, in Input, now time.Time) {
 				r.warn(w.Code, w.Message)
 			}
 		}
+		// How much of each Thunderbird account Thunderbird had downloaded (the completeness
+		// design §5, §7; slice C3): a plaintext record of a backup that ended ok only.
+		assessThunderbird(r, in)
 	}
 
 	// Last verify: the archive's integrity verdict, from verify's own record.
@@ -761,7 +790,7 @@ func assessKeyless(r *Report, in Input, now time.Time) {
 			if in.HasVerifyDescriptor {
 				sched = fmt.Sprintf("; check its log %s (the verify started %s local time) — the next scheduled run of %q also replaces this record", verifyLogHint(in), lv.Started.Local().Format("2006-01-02 15:04"), in.VerifyDesc.Name)
 			}
-			r.warn("verify_never_finished", fmt.Sprintf("the verify started %s UTC never finished (Ctrl-C, crash, kill, or power loss) — run `%s` again; the last finished verify's verdict is still reported%s", started, verifyCommand(in.Out, lv), sched))
+			r.warn("verify_never_finished", fmt.Sprintf("the verify started %s UTC never finished (Ctrl-C, crash, kill, or power loss) — run `%s` again; the last finished verify's verdict is still reported%s", started, verifyCommand(outArg(in), lv), sched))
 		}
 		judge = lv.Previous != nil
 		if judge {
@@ -771,7 +800,7 @@ func assessKeyless(r *Report, in Input, now time.Time) {
 	// A check stopped on purpose (phase3 §8) attests nothing and changes nothing: a
 	// note, and the last finished verdict it carries is judged as usual.
 	if judge && lv.Status == state.VerifyStopped {
-		r.note("verify_stopped", fmt.Sprintf("the last check (started %s UTC) was stopped before it finished — the last finished check's result still stands; run `%s` to check again", lv.Started.UTC().Format("2006-01-02 15:04"), verifyCommand(in.Out, lv)))
+		r.note("verify_stopped", fmt.Sprintf("the last check (started %s UTC) was stopped before it finished — the last finished check's result still stands; run `%s` to check again", lv.Started.UTC().Format("2006-01-02 15:04"), verifyCommand(outArg(in), lv)))
 		judge = lv.Previous != nil
 		if judge {
 			lv = *lv.Previous
@@ -798,7 +827,7 @@ func assessKeyless(r *Report, in Input, now time.Time) {
 		}
 		reason := fmt.Sprintf("the last %s of this encrypted archive (%s UTC): %s", check, when, text)
 		if state.TierOf(&lv) == state.TierFull && state.OutcomeIsRed(lv.Outcome) {
-			reason += fullRedClears(in.Out) // the P3-2b pass, REC-05
+			reason += fullRedClears(outArg(in)) // the P3-2b pass, REC-05
 		}
 		switch {
 		case state.OutcomeIsRed(lv.Outcome):
@@ -813,7 +842,7 @@ func assessKeyless(r *Report, in Input, now time.Time) {
 			if s.Finished != nil {
 				since = s.Finished.UTC().Format("2006-01-02 15:04")
 			}
-			r.red("verify_"+s.Outcome, fmt.Sprintf("an earlier check with the key of this encrypted archive (%s UTC) found: %s%s", since, state.OutcomeTextFor(s.Outcome, state.TierFull), fullRedClears(in.Out)))
+			r.red("verify_"+s.Outcome, fmt.Sprintf("an earlier check with the key of this encrypted archive (%s UTC) found: %s%s", since, state.OutcomeTextFor(s.Outcome, state.TierFull), fullRedClears(outArg(in))))
 		}
 	} else if judge && lv.Status == state.VerifyDone {
 		when := ""
@@ -822,15 +851,15 @@ func assessKeyless(r *Report, in Input, now time.Time) {
 		}
 		switch {
 		case lv.Modified+lv.Missing > 0:
-			r.red("not_attested", fmt.Sprintf("the last verify (%s UTC) found the archive NOT intact: %d modified, %d missing — restore the affected files from a backup or re-export them from the source, then run `mailarchive verify -out %q` again", when, lv.Modified, lv.Missing, in.Out))
+			r.red("not_attested", fmt.Sprintf("the last verify (%s UTC) found the archive NOT intact: %d modified, %d missing — restore the affected files from a backup or re-export them from the source, then run `mailarchive verify -out %s` again", when, lv.Modified, lv.Missing, outArg(in)))
 		case lv.Unrecorded > 0:
-			r.warn("verify_unrecorded", fmt.Sprintf("the last verify (%s UTC) left %d file(s) with no recorded fixity — run `mailarchive verify -record -out %q` to baseline them", when, lv.Unrecorded, in.Out))
+			r.warn("verify_unrecorded", fmt.Sprintf("the last verify (%s UTC) left %s with no recorded fixity — run `mailarchive verify -record -out %s` to baseline %s", when, state.Count(lv.Unrecorded, "file", "files"), outArg(in), plural(lv.Unrecorded, "it", "them")))
 		}
 		// Exit 1 on a produced report is an error after the check (a -record
 		// baseline whose save failed): its counts stand, but it did not finish
 		// cleanly, so say so (F79).
 		if lv.ExitCode == 1 {
-			r.warn("verify_failed", fmt.Sprintf("the last verify (%s UTC) checked the archive but then failed with an error (see its log) — fix the cause and run `mailarchive verify -out %q` again", when, in.Out))
+			r.warn("verify_failed", fmt.Sprintf("the last verify (%s UTC) checked the archive but then failed with an error (see its log) — fix the cause and run `mailarchive verify -out %s` again", when, outArg(in)))
 		}
 	}
 	assessVerifySchedule(r, in, now)
@@ -842,11 +871,11 @@ func assessKeyless(r *Report, in Input, now time.Time) {
 	// the next run heals; other unreadable lines are a WARN that reindex compacts.
 	switch {
 	case in.HistoryReadErr != nil:
-		r.red("history_unreadable", fmt.Sprintf("the go-back history log %s could not be read (%s) — the point-in-time view is unavailable; run `mailarchive reindex -out %q` to compact and heal the log", filepath.Join(in.Out, state.HistoryName), util.StripControl(in.HistoryReadErr.Error()), in.Out))
+		r.red("history_unreadable", fmt.Sprintf("the go-back history log %s could not be read (%s) — the point-in-time view is unavailable; run `mailarchive reindex -out %s` to compact and heal the log", filepath.Join(in.Out, state.HistoryName), util.StripControl(in.HistoryReadErr.Error()), outArg(in)))
 	case in.History.Exists && in.History.TornTail && in.History.BadLines <= 1:
-		r.warn("history_torn_tail", fmt.Sprintf("the go-back history log has a torn tail (a run crashed mid-line) — the next run repairs it, or run `mailarchive reindex -out %q` to compact and heal it now; past-date views may be incomplete until then", in.Out))
+		r.warn("history_torn_tail", fmt.Sprintf("the go-back history log has a torn tail (a run crashed mid-line) — the next run repairs it, or run `mailarchive reindex -out %s` to compact and heal it now; past-date views may be incomplete until then", outArg(in)))
 	case in.History.Exists && (in.History.BadLines > 0 || in.History.TornTail):
-		r.warn("history_corrupt", fmt.Sprintf("the go-back history log has %d unreadable line(s) — those events are skipped, so past-date views may be incomplete; run `mailarchive reindex -out %q` to compact the log", in.History.BadLines, in.Out))
+		r.warn("history_corrupt", fmt.Sprintf("the go-back history log has %s — %s skipped, so past-date views may be incomplete; run `mailarchive reindex -out %s` to compact the log", state.Count(in.History.BadLines, "unreadable line", "unreadable lines"), plural(in.History.BadLines, "that event is", "those events are"), outArg(in)))
 	}
 
 	// A scheduled backup that cannot write into its archive folder fails every
@@ -1034,7 +1063,7 @@ func rebuildHow(in Input) string {
 	case "gui":
 		return "choose \"Rebuild the search index\" below to rebuild it from your archive"
 	}
-	return fmt.Sprintf("rebuild it from the archive with `mailarchive reindex -rebuild -out %q`", in.Out)
+	return fmt.Sprintf("rebuild it from the archive with `mailarchive reindex -rebuild -out %s`", outArg(in))
 }
 
 // repairHow renders how to repair a recorded backup schedule, in the words of
@@ -1354,7 +1383,7 @@ func assessVerifySchedule(r *Report, in Input, now time.Time) {
 		switch {
 		case !last.IsZero() && now.Sub(last) > 2*period && vd.InstalledAt.After(last) && now.Sub(vd.InstalledAt) <= 2*period:
 			// Re-installing would change nothing here; a verify run now clears it.
-			r.warn("verify_stale", fmt.Sprintf("%s, more than twice the %s verify schedule period of %q — that schedule was installed %s ago, after the last verify, and has not run since: wait for its next run (%s), or run `mailarchive verify -out %q` now", lastWhat, vd.Interval, vd.Name, HumanAge(now.Sub(vd.InstalledAt)), cadenceOf(vd), in.Out))
+			r.warn("verify_stale", fmt.Sprintf("%s, more than twice the %s verify schedule period of %q — that schedule was installed %s ago, after the last verify, and has not run since: wait for its next run (%s), or run `mailarchive verify -out %s` now", lastWhat, vd.Interval, vd.Name, HumanAge(now.Sub(vd.InstalledAt)), cadenceOf(vd), outArg(in)))
 		case !last.IsZero() && now.Sub(last) > 2*period && vd.InstalledAt.After(last):
 			r.warn("verify_stale", fmt.Sprintf("no verify has run in the %s since the %s verify schedule %q was installed, more than twice its period (%s, before the install) — %s", HumanAge(now.Sub(vd.InstalledAt)), vd.Interval, vd.Name, lastWhat, verifyStaleRemedy(in)))
 		case !last.IsZero() && now.Sub(last) > 2*period:
@@ -1366,7 +1395,7 @@ func assessVerifySchedule(r *Report, in Input, now time.Time) {
 		// reported once, by the last-verify block in Assess, which also knows
 		// which verb holds the lock; this function only judges its staleness.
 		if in.LastVerifyState == state.LastVerifyUnreadable {
-			r.warn("lastverify_unreadable", fmt.Sprintf("the last-verify record %s is unreadable (%s), so the scheduled verify %q cannot be judged — the next verify rewrites it, or run `mailarchive verify -out %q` now", filepath.Join(in.Out, state.LastVerifyName), lastVerifyCause(in), vd.Name, in.Out))
+			r.warn("lastverify_unreadable", fmt.Sprintf("the last-verify record %s is unreadable (%s), so the scheduled verify %q cannot be judged — the next verify rewrites it, or run `mailarchive verify -out %s` now", filepath.Join(in.Out, state.LastVerifyName), lastVerifyCause(in), vd.Name, outArg(in)))
 		}
 		return
 	}
@@ -1374,13 +1403,13 @@ func assessVerifySchedule(r *Report, in Input, now time.Time) {
 		// With no verify schedule there is nothing to judge staleness by, but the
 		// record may have held an earlier RED: it is never silent (F79; the fix
 		// re-verification, FV-R-03).
-		r.warn("lastverify_unreadable", fmt.Sprintf("the last-verify record %s is unreadable (%s), so its last verdict cannot be judged — run `mailarchive verify -out %q` to check the archive again", filepath.Join(in.Out, state.LastVerifyName), lastVerifyCause(in), in.Out))
+		r.warn("lastverify_unreadable", fmt.Sprintf("the last-verify record %s is unreadable (%s), so its last verdict cannot be judged — run `mailarchive verify -out %s` to check the archive again", filepath.Join(in.Out, state.LastVerifyName), lastVerifyCause(in), outArg(in)))
 	}
 	if in.VerifyDescErr != nil && !errors.Is(in.VerifyDescErr, os.ErrNotExist) {
 		r.warn("verify_descriptor_unreadable", in.VerifyDescErr.Error())
 	}
 	if isVerifyJob(in.Desc.Job) && done && now.Sub(checked) > 2*IntervalOf(in.Desc.Interval) {
-		r.warn("verify_stale", fmt.Sprintf("the last verify was %s ago, more than twice the %s verify schedule period — schedule it, or run `mailarchive verify -out %q`", HumanAge(now.Sub(checked)), in.Desc.Interval, in.Out))
+		r.warn("verify_stale", fmt.Sprintf("the last verify was %s ago, more than twice the %s verify schedule period — schedule it, or run `mailarchive verify -out %s`", HumanAge(now.Sub(checked)), in.Desc.Interval, outArg(in)))
 	}
 }
 
@@ -1430,7 +1459,7 @@ func verifyStaleRemedy(in Input) string {
 	// lock is running now (or hung): re-installing changes nothing, and another
 	// verify would collide with the lock (K3).
 	if in.LockHeld && in.LastVerifyState == state.LastVerifyPresent && in.LastVerify.Status == state.VerifyRunning {
-		return fmt.Sprintf("a verify holds the archive lock and is still running: let it finish (its log is %s), or, if it is hung, end its process and run `mailarchive verify -out %q`", verifyLogHint(in), in.Out)
+		return fmt.Sprintf("a verify holds the archive lock and is still running: let it finish (its log is %s), or, if it is hung, end its process and run `mailarchive verify -out %s`", verifyLogHint(in), outArg(in))
 	}
 	reinstall := verifyReinstall(in)
 	why := "it has stopped running here"
@@ -1443,7 +1472,7 @@ func verifyStaleRemedy(in Input) string {
 	default:
 		why = "it has stopped running, or another archive's verify installed under the same -name replaced it (on macOS and Windows a shared -name is not detected)"
 	}
-	return fmt.Sprintf("%s: re-install it with %s (no -name, so it has this archive's own entry), or run `mailarchive verify -out %q`", why, reinstall, in.Out)
+	return fmt.Sprintf("%s: re-install it with %s (no -name, so it has this archive's own entry), or run `mailarchive verify -out %s`", why, reinstall, outArg(in))
 }
 
 // sameArchivePath moved to schedule.SameArchivePath (§4.6.2/§4.6.5) so the kind
@@ -1540,7 +1569,7 @@ func scheduleRemedy(in Input) string {
 		}
 		return "keep it current by scheduling the same job that made this archive: " + scheduleCommand(job, in.GOOS)
 	}
-	return "keep it current by scheduling the same job that made this archive (e.g. `mailarchive schedule -out " + fmt.Sprintf("%q", in.Out) + " ... -install`)"
+	return "keep it current by scheduling the same job that made this archive (e.g. `mailarchive schedule -out " + outArg(in) + " ... -install`)"
 }
 
 // scheduleCommand renders a runnable `schedule … -install` line that repeats a
@@ -1585,9 +1614,32 @@ func shellQuoteToken(s, goos string) string {
 		return s
 	}
 	if goos == "windows" {
-		return `"` + strings.ReplaceAll(s, `"`, `""`) + `"`
+		// A token that ends in a backslash (a drive or share root) would have it read as
+		// escaping the closing quote by the C runtime's rule: its trailing backslashes are
+		// doubled inside the quotes, each read back as one (as encmark.CommandPath; MA-1158).
+		trail := len(s) - len(strings.TrimRight(s, `\`))
+		return `"` + strings.ReplaceAll(s, `"`, `""`) + strings.Repeat(`\`, trail) + `"`
 	}
 	return "'" + strings.ReplaceAll(s, "'", `'\''`) + "'"
+}
+
+// outArg is the archive's folder as status's commands name it (-out …). On Windows it is in
+// double quotes as it is typed, never Go's quoted form, which doubled every backslash (the 1.6.1
+// friction review's P8, MA-1158); its trailing backslashes are doubled so a drive or share root
+// keeps its closing quote (encmark.CommandPath's rule). Elsewhere it is unchanged.
+func outArg(in Input) string { return OutArg(in.Out, in.GOOS) }
+
+// OutArg is outArg for any command that names an archive folder: the backup's own command-line
+// summary and the wizard's summary dialog say it the same way (MA-1163). goos "" is this computer's.
+func OutArg(out, goos string) string {
+	if goos == "" {
+		goos = runtime.GOOS
+	}
+	if goos == "windows" && !strings.Contains(out, `"`) {
+		trail := len(out) - len(strings.TrimRight(out, `\`))
+		return `"` + out + strings.Repeat(`\`, trail) + `"`
+	}
+	return fmt.Sprintf("%q", out)
 }
 
 // unsafeTokenPlaceholder stands in for a Windows token no quoting makes inert.
@@ -1867,6 +1919,16 @@ func Gather(out, nameOverride string) Input {
 	// using this archive" beside its own failure.
 	in.LastRun, in.LastRunState, in.LastRunErr = state.ReadLastRun(out)
 	in.LastVerify, in.LastVerifyState, in.LastVerifyErr = state.ReadLastVerify(out)
+	if in.LastRunState == state.LastRunPresent && !in.LastRun.Encrypted && len(in.LastRun.Thunderbird) > 0 {
+		// A damaged record (counts or dates no backup could have written, R4-01 and the C5
+		// pass's PLANT-01), or one holding a date more than a day after now (a clock behind, the
+		// round-2 pass's CLOCK-R2-A), is never read: behind_since never shows a planted date.
+		if s, err := state.ReadTBStreak(out); err == nil && !s.Damaged() {
+			if _, ahead := s.AheadOf(time.Now()); !ahead {
+				in.TBStreak = s
+			}
+		}
+	}
 
 	// The headless start-failure breadcrumb (§4.6.6): health is its one reader from
 	// SE2. Keyed on the owner-pointed out (DefaultNameFor), never Desc.Name, so a
@@ -2254,7 +2316,7 @@ func Summary(in Input, rep Report) []string {
 				lines = append(lines, l)
 			}
 			if in.Unreadable > 0 {
-				lines = append(lines, fmt.Sprintf("Partly read: %d message(s) could only be partly read from the source (see the posture below)", in.Unreadable))
+				lines = append(lines, fmt.Sprintf("Partly read: %s could only be partly read from the source (see the posture below)", state.Count(in.Unreadable, "message", "messages")))
 				shown := in.PartlyRead
 				if len(shown) > maxPartlyReadNamed {
 					shown = shown[:maxPartlyReadNamed]
@@ -2271,10 +2333,10 @@ func Summary(in Input, rep Report) []string {
 				}
 			}
 			if in.Unparsed > 0 {
-				lines = append(lines, fmt.Sprintf("Raw text:   %d message(s) could not be parsed and are kept as raw text (see the posture below)", in.Unparsed))
+				lines = append(lines, fmt.Sprintf("Raw text:   %s could not be parsed and %s kept as raw text (see the posture below)", state.Count(in.Unparsed, "message", "messages"), plural(in.Unparsed, "is", "are")))
 			}
 			if in.FidelityFallback > 0 {
-				line := fmt.Sprintf("Fallback:   %d message(s) are kept as an earlier version read them, because this version could not decode them in full; nothing is lost", in.FidelityFallback)
+				line := "Fallback:   " + fallbackWords(in.FidelityFallback) + "; nothing is lost"
 				if in.ReportExists {
 					line += " — see " + in.ReportPath
 				}
@@ -2294,9 +2356,9 @@ func Summary(in Input, rep Report) []string {
 			// check the bytes; when some records lack a digest it also names the
 			// baseline remedy (FC12, friction #4).
 			if in.Messages > 0 {
-				fx := fmt.Sprintf("Fixity coverage: %d of %d records recorded (run `mailarchive verify -out %q` to check the bytes)", in.WithFixity, in.Messages, in.Out)
+				fx := fmt.Sprintf("Fixity coverage: %d of %d records recorded (run `mailarchive verify -out %s` to check the bytes)", in.WithFixity, in.Messages, outArg(in))
 				if in.WithFixity < in.Messages {
-					fx += fmt.Sprintf(" · run `mailarchive verify -record -out %q` to baseline the rest", in.Out)
+					fx += fmt.Sprintf(" · run `mailarchive verify -record -out %s` to baseline the rest", outArg(in))
 				}
 				lines = append(lines, fx)
 			}
@@ -2339,11 +2401,11 @@ func Summary(in Input, rep Report) []string {
 	case in.HistoryReadErr != nil:
 		lines = append(lines, "History:    present but unreadable — see the posture below")
 	case in.History.Clean():
-		lines = append(lines, fmt.Sprintf("History:    %d run(s), %d event(s) recorded — go-back available", in.History.Runs, in.History.Events))
+		lines = append(lines, fmt.Sprintf("History:    %s recorded — go-back available", historyCounts(in.History)))
 	case in.History.TornTail && in.History.BadLines <= 1:
-		lines = append(lines, fmt.Sprintf("History:    %d run(s), %d event(s) — torn tail, go-back partial (repairs on the next run)", in.History.Runs, in.History.Events))
+		lines = append(lines, fmt.Sprintf("History:    %s — torn tail, go-back partial (repairs on the next run)", historyCounts(in.History)))
 	default:
-		lines = append(lines, fmt.Sprintf("History:    %d run(s), %d event(s) — %d unreadable line(s), go-back partial", in.History.Runs, in.History.Events, in.History.BadLines))
+		lines = append(lines, fmt.Sprintf("History:    %s — %s, go-back partial", historyCounts(in.History), state.Count(in.History.BadLines, "unreadable line", "unreadable lines")))
 	}
 	switch in.LastRunState {
 	case state.LastRunPresent:
@@ -2370,6 +2432,7 @@ func Summary(in Input, rep Report) []string {
 			line += fmt.Sprintf(" · took %s · its counts are sealed", lr.Finished.Sub(lr.Started).Round(time.Second))
 		} else if lr.Status == state.RunOK {
 			line += fmt.Sprintf(" · exported %d · filled %d · took %s", lr.Exported, lr.Filled, lr.Finished.Sub(lr.Started).Round(time.Second))
+			line += tbLeadSuffix(in) // the run's lead when it read Thunderbird accounts (slice C3)
 		} else if partial {
 			line += ": " + strings.Join(state.PartialSentences(*lr.Partial), " ")
 		} else if lr.Error != "" || lr.Encrypted {
@@ -2479,17 +2542,19 @@ const maxKeyFileRead = 1 << 20
 // verifyCommand is the verify that finishes or repeats lv's check: with -full for a
 // check with the key, which a check without it can neither finish nor clear (the
 // P3-2b pass, REC-07).
+// out is the folder as the command names it (outArg).
 func verifyCommand(out string, lv state.LastVerify) string {
 	if lv.Encrypted && state.TierOf(&lv) == state.TierFull {
-		return fmt.Sprintf("mailarchive verify -full -out %q", out)
+		return "mailarchive verify -full -out " + out
 	}
-	return fmt.Sprintf("mailarchive verify -out %q", out)
+	return "mailarchive verify -out " + out
 }
 
 // fullRedClears says what clears a red a check with the key found (the owner's
-// ruling, phase3 §8; the P3-2b pass, REC-05, CRIT-02).
+// ruling, phase3 §8; the P3-2b pass, REC-05, CRIT-02); out is the folder as the command
+// names it (outArg).
 func fullRedClears(out string) string {
-	return fmt.Sprintf(" — then run `mailarchive verify -full -out %q`: only a check with the key clears this, or restoring the folder from a backup copy", out)
+	return " — then run `mailarchive verify -full -out " + out + "`: only a check with the key clears this, or restoring the folder from a backup copy"
 }
 
 func verifyVerdict(lv state.LastVerify) string {
@@ -2570,6 +2635,25 @@ type JSONReport struct {
 	// last backup's sync result (design-presync-attended §4.7, slice AS5, C-55): an
 	// additive key at version 2, omitted when the sync is off and nothing is recorded.
 	ThunderbirdSync *JSONThunderbirdSync `json:"thunderbird_sync,omitempty"`
+
+	// ThunderbirdCompleteness is how much of each Thunderbird account Thunderbird had downloaded
+	// at the last backup, as its plaintext record keeps it (docs/design-thunderbird-completeness.md
+	// §7's -json folds, slice C3): additive keys at version 2, each entry carrying complete and
+	// stale (M9). ThunderbirdMore is how many accounts the record left out (R2-06), and
+	// ThunderbirdLead the run's lead by name (complete, so_far or finished). Omitted for a record
+	// without them, a backup that did not end ok, and always for an encrypted archive (O1).
+	ThunderbirdCompleteness []JSONTBAccount `json:"thunderbird_completeness,omitempty"`
+	ThunderbirdMore         int             `json:"thunderbird_more,omitempty"`
+	ThunderbirdLead         string          `json:"thunderbird_lead,omitempty"`
+}
+
+// JSONTBAccount is one `thunderbird_completeness` entry: the record's account, with every field
+// of it as the record names it, and BehindSince, the first behind backup of the account's current
+// streak (§7's `-json` row, `behind_since`; slice C5): from the archive's behind-streak record, and
+// only for an account the last backup found behind. Additive; omitted otherwise.
+type JSONTBAccount struct {
+	state.TBAccount
+	BehindSince time.Time `json:"behind_since,omitzero"`
 }
 
 // JSONShownAsSource is the shown-as-source facet: the total and a count per
@@ -2813,6 +2897,7 @@ func JSON(in Input, rep Report) JSONReport {
 			jlr.Finished = &f
 		}
 		doc.LastRun = jlr
+		tbJSON(&doc, in)
 	}
 	if in.LastVerifyState == state.LastVerifyPresent {
 		doc.LastVerify = jsonLastVerify(in.LastVerify)
