@@ -24,7 +24,7 @@ nothing, sign out and back in once: some menus only notice a new entry after a
 new sign-in. If it is still missing after that, you can always start it from a
 terminal with:
 
-   ~/.local/bin/mailarchive desktop
+   ~/.local/bin/mailarchive start
 
 You can leave mailarchive.svg where it is: it is the same icon as a drawing,
 and the three lines do not need it.

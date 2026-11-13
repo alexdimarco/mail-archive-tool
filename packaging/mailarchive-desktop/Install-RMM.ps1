@@ -12,7 +12,9 @@ if (-not (Test-Path $MsiPath)) { throw "MSI not found: $MsiPath" }
 # The former name mailarchive-desktop.exe (a copy this release) is stopped
 # unconditionally — its only role now is that pre-upgrade dashboard. A running
 # mailarchivew.exe is stopped ONLY when it is a dashboard: no argument after the
-# program path, or a first argument `desktop` without `-capture`. A run-job, a
+# program path, or a first argument `desktop` without `-capture`, or a first
+# argument `start` (with or without -background: the running MailArchive the
+# shortcuts start since design-menubar slice S1, MB-7). A run-job, a
 # -job, a -capture, a `desktop -capture` (the weekly backup) or a `wizard` is NEVER
 # stopped — a mid-run scheduled backup or an open wizard is left to finish
 # (MA-614, SC34). No mailarchive-gui is stopped.
@@ -24,7 +26,8 @@ Get-CimInstance Win32_Process -Filter "Name = 'mailarchivew.exe'" -ErrorAction S
     # Strip the program path (quoted or bare) to leave just the arguments.
     $cmdArgs = ($cmd -replace '^\s*("[^"]*"|\S+)\s*', '')
     $isDashboard = ($cmdArgs.Trim() -eq '') -or
-                   ($cmdArgs -match '^desktop(\s|$)' -and $cmdArgs -notmatch '(^|\s)-capture(\s|$)')
+                   ($cmdArgs -match '^desktop(\s|$)' -and $cmdArgs -notmatch '(^|\s)-capture(\s|$)') -or
+                   ($cmdArgs -match '^start(\s|$)')
     if ($isDashboard) { Stop-Process -Id $_.ProcessId -Force -ErrorAction SilentlyContinue }
 }
 

@@ -77,6 +77,10 @@ type Input struct {
 	// DesktopEnded, when set, is the older instance the running MailArchive Desktop
 	// ended at start (§4.5.2, MA-638); its line names the pid and program.
 	DesktopEnded *instance.Ended
+	// DesktopRunning is the running MailArchive's line (instance.RunningWords: it runs,
+	// its version, why no icon shows; design-menubar MB-20), "" when none runs or it is
+	// of a version that records no icon state.
+	DesktopRunning string
 
 	// HasManifestFile is true when a manifest file exists on disk (even if it
 	// cannot be loaded); HasManifest is true only when it loaded. A present-but-
@@ -695,6 +699,11 @@ func assessKeyless(r *Report, in Input, now time.Time) {
 		if txt := instance.EndedNotice(in.DesktopEnded); txt != "" {
 			r.warn("desktop_ended_older", txt)
 		}
+	}
+	// Whether MailArchive runs, its version, and why no icon shows (design-menubar
+	// MB-20): information, never a WARN.
+	if in.DesktopRunning != "" {
+		r.note("desktop_running", in.DesktopRunning)
 	}
 
 	// Last run.
@@ -1923,6 +1932,9 @@ func Gather(out, nameOverride string) Input {
 	in := Input{Out: out, GOOS: runtime.GOOS, PIDAlive: procs.Alive}
 	in.DesktopFormer = instance.Former()
 	in.DesktopEnded = instance.EndedRecord()
+	if info, ok := instance.Running(); ok {
+		in.DesktopRunning = instance.RunningWords(info)
+	}
 	in.ThisHost, _ = os.Hostname()
 	if _, err := os.Stat(out); errors.Is(err, os.ErrNotExist) {
 		in.OutAbsent = true // the location is gone (an unplugged drive, a deleted folder): not a new archive (OP-3)

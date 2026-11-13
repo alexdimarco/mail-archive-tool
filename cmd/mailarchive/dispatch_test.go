@@ -113,7 +113,7 @@ func TestMA610_EverySurfaceIsAVerb(t *testing.T) {
 	}
 
 	usage := captureExportUsage(t)
-	for _, v := range []string{"desktop", "wizard", "run-job"} {
+	for _, v := range []string{"start", "desktop", "wizard", "run-job"} {
 		if !strings.Contains(usage, "mailarchive "+v) {
 			t.Errorf("root usage does not list the %q verb:\n%s", v, usage)
 		}
@@ -150,8 +150,9 @@ func TestMA651_WizardOpensDesktopInProcess(t *testing.T) {
 // the program's own names (mailarchive, mailarchivew); every other flag-first
 // list reaches export unchanged. Under a former name (§4.1 rule 6, invokedBase
 // injected): mailarchive-desktop reaches desktop with the same argv;
-// mailarchive-gui maps -job F (and its variants) to run-job, no -job to wizard,
-// and an unknown flag to today's usage refusal and exit code.
+// mailarchive-gui maps -job F (and its variants) to run-job, no -job to start (the
+// launcher choice; amended 2026-11-13, design-menubar MB-24), and an unknown flag to
+// today's usage refusal and exit code.
 func TestMA611_LegacySpellingsExactShapeAndOwnNamesOnly(t *testing.T) {
 	cases := []struct {
 		name string
@@ -167,12 +168,15 @@ func TestMA611_LegacySpellingsExactShapeAndOwnNamesOnly(t *testing.T) {
 		{"desktop former: -capture=true", "mailarchive-desktop", []string{"-capture=true"}, verbRoute{verb: "desktop", args: []string{"-capture=true"}}},
 		{"desktop former: empty", "mailarchive-desktop", nil, verbRoute{verb: "desktop"}},
 		{"desktop former: .exe suffix", "mailarchive-desktop.exe", []string{"-capture"}, verbRoute{verb: "desktop", args: []string{"-capture"}}},
-		// Former name mailarchive-gui: -job → run-job F; no -job → wizard; unknown → usage.
+		// Former name mailarchive-gui: -job → run-job F; no -job → start; unknown → usage. Amended
+		// 2026-11-13 (design-menubar MB-13, MB-24; amended, not weakened): the .app's executable is
+		// this name, so no -job now reaches `start`, the launcher choice, where it reached `wizard`.
 		{"gui former: -job F", "mailarchive-gui", []string{"-job", "j.json"}, verbRoute{verb: "run-job", args: []string{"j.json"}}},
 		{"gui former: -job=F", "mailarchive-gui", []string{"-job=j.json"}, verbRoute{verb: "run-job", args: []string{"j.json"}}},
 		{"gui former: --job F", "mailarchive-gui", []string{"--job", "j.json"}, verbRoute{verb: "run-job", args: []string{"j.json"}}},
 		{"gui former: --job=F", "mailarchive-gui", []string{"--job=j.json"}, verbRoute{verb: "run-job", args: []string{"j.json"}}},
-		{"gui former: no -job → wizard", "mailarchive-gui", nil, verbRoute{verb: "wizard"}},
+		{"gui former: no -job → start", "mailarchive-gui", nil, verbRoute{verb: "start"}},
+		{"gui former: a bare positional → start", "mailarchive-gui", []string{"x"}, verbRoute{verb: "start"}},
 		{"gui former: unknown flag → usage", "mailarchive-gui", []string{"-nope"}, verbRoute{usage: true}},
 		{"gui former: .exe suffix", "mailarchive-gui.exe", []string{"-job", "j.json"}, verbRoute{verb: "run-job", args: []string{"j.json"}}},
 		// Own names: the former-name desktop lists are UNCHANGED by rule 6.

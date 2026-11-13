@@ -116,8 +116,11 @@ func TestPackagingFilesMatchTheNewLaunch(t *testing.T) {
 	if s := shortcuts["CopyLinkShortcut"]; s["Name"] != "Copy MailArchive link" || s["Arguments"] != "desktop -copy-link" || s["Directory"] != "ApplicationProgramsFolder" {
 		t.Errorf("the Start Menu shortcut \"Copy MailArchive link\" is missing or wrong: %v", s)
 	}
-	if shortcuts["StartupShortcut"]["Arguments"] != "desktop -no-browser" {
-		t.Errorf("the Startup shortcut lost its quiet desktop start (desktop -no-browser): %v", shortcuts["StartupShortcut"])
+	// Amended 2026-11-13 (design-menubar MB-7; amended, not weakened): the quiet sign-in
+	// start is now `start -background`, which shows nothing and does nothing when
+	// MailArchive already runs.
+	if shortcuts["StartupShortcut"]["Arguments"] != "start -background" {
+		t.Errorf("the Startup shortcut lost its quiet start (start -background): %v", shortcuts["StartupShortcut"])
 	}
 
 	// Shortcuts must live in real Windows Installer system folders. CommonDesktopFolder,

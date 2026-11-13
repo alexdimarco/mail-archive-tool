@@ -66,6 +66,25 @@ func LockIsHeld(dir, session string) bool {
 	return false
 }
 
+// WizardLockName is the per-account wizard lock beside desktop.lock (design-menubar
+// §6.3, MB-9): whichever process runs a wizard — the instance or a standalone `wizard`
+// — holds it, so at most one wizard runs per account. Not per logon session: two
+// wizards of one account would write the same settings and job files.
+const WizardLockName = "wizard.lock"
+
+// AcquireWizard takes the per-account wizard lock in dir without waiting, creating dir
+// 0700. When another process (or this one) holds it the error wraps lockfile.ErrHeld.
+func AcquireWizard(dir string) (*lockfile.Lock, error) {
+	if err := os.MkdirAll(dir, 0o700); err != nil {
+		return nil, err
+	}
+	return lockfile.AcquireAs(filepath.Join(dir, WizardLockName), "wizard")
+}
+
+// WizardOpenText is what a second wizard says, in one line, when one is already open
+// for this account (MB-9).
+const WizardOpenText = "The wizard is already open. Look for its window on your screen or in the taskbar."
+
 // FilePath is the instance file's path.
 func (h *Holder) FilePath() string { return FilePathIn(h.Dir, h.Session) }
 

@@ -32,7 +32,7 @@ type noArgInputs struct {
 // refusal. consoleWait marks the one case (W2) that first writes the console
 // pointer and then waits for Enter around that refusal.
 type noArgPlan struct {
-	verb        string // "desktop" | "wizard" | "usage"
+	verb        string // "start" | "desktop" | "wizard" | "usage"
 	consoleWait bool   // W2 only: write the X2 pointer and wait for Enter around the refusal
 }
 
@@ -60,7 +60,9 @@ func defaultVerb(goos string, consoleAttached, consoleIsOwn, inBundle, noTermina
 		}
 	case "darwin":
 		if inBundle && noTerminal {
-			return noArgPlan{verb: "wizard"} // M1: Finder/Dock/open of the .app
+			// M1: Finder/Dock/open of the .app gives `start`, the launcher choice
+			// (design-menubar D3, MB-24; MA-620 amended 2026-11-13).
+			return noArgPlan{verb: "start"}
 		}
 		return noArgPlan{verb: "usage"} // M2: a terminal on any stream, or a path outside a bundle
 	case "linux":
@@ -84,6 +86,8 @@ type noArgEnv struct {
 	self          string // the program's own invoked name, for the pointer's "run <self> -h"
 	sibling       string // the GUI sibling file to name in the pointer, or "" (name only the shortcut)
 	launchDesktop func([]string) error
+	launchStart   func([]string) error
+	invoked       string // the unresolved invoked path, for the event-loop choice
 	runWizard     func() int
 	usageRefusal  func() int // today's usage refusal: text and exit code unchanged
 }
@@ -102,6 +106,8 @@ func runNoArg() (code int, handled bool) {
 		self:          invokedBase(),
 		sibling:       guiSibling(), // "" in SE1: the §4.6.1 sibling finder (passing §4.6.0) lands in SE2
 		launchDesktop: launchDesktop,
+		launchStart:   launchStart,
+		invoked:       invokedPath(),
 		runWizard:     runWizard,
 		usageRefusal:  usageRefusal,
 	}, plan)
@@ -113,7 +119,11 @@ func runNoArg() (code int, handled bool) {
 // blocks). It never starts the sibling (§5.4 item 1, R33, MA-612).
 func runNoArgWith(env noArgEnv, plan noArgPlan) (code int, handled bool) {
 	switch plan.verb {
+	case "start":
+		useAppLoop(appLoopFor(runtime.GOOS, "start", env.invoked))
+		return runGUILaunch(env.launchStart, nil)
 	case "desktop":
+		useAppLoop(appLoopFor(runtime.GOOS, "desktop", env.invoked))
 		if err := env.launchDesktop(nil); err != nil {
 			// A refusal the desktop already showed is not reprinted (§4.1 rule 4, MA-636).
 			if !desktop.RefusalShown(err) {

@@ -149,9 +149,18 @@ func TestMA614_PairBuildAndPackaging(t *testing.T) {
 			gotArgs[sc.args] = true
 		}
 	}
-	for _, want := range []string{"desktop", "desktop -no-browser", "desktop -copy-link", "wizard"} {
+	// Amended 2026-11-13 (design-menubar MB-7's table, MB-13; amended, not weakened): the
+	// Desktop and Start-menu shortcuts run `start`, the Startup shortcut `start -background`;
+	// Copy link and the wizard are unchanged. Every argument list a shortcut runs is one of
+	// these, and the former `desktop` and `desktop -no-browser` are gone.
+	for _, want := range []string{"start", "start -background", "desktop -copy-link", "wizard"} {
 		if !gotArgs[want] {
-			t.Errorf("Product.wxs: no shortcut runs mailarchivew.exe with arguments %q (SC20)", want)
+			t.Errorf("Product.wxs: no shortcut runs mailarchivew.exe with arguments %q (SC20, MB-7)", want)
+		}
+	}
+	for _, gone := range []string{"desktop", "desktop -no-browser"} {
+		if gotArgs[gone] {
+			t.Errorf("Product.wxs: a shortcut still runs mailarchivew.exe %q; MB-7 moves it to start", gone)
 		}
 	}
 	if !wizardSeen {
@@ -193,6 +202,11 @@ func TestMA614_PairBuildAndPackaging(t *testing.T) {
 		if !strings.Contains(inst, want) {
 			t.Errorf("Install-RMM.ps1 is missing %q (the dashboard-only mailarchivew stop; SC34)", want)
 		}
+	}
+	// Amended 2026-11-13 (design-menubar MB-7): a first argument `start` is a dashboard too,
+	// so an RMM upgrade stops the running MailArchive the shortcuts now start.
+	if !strings.Contains(inst, `($cmdArgs -match '^start(\s|$)')`) {
+		t.Error("Install-RMM.ps1 does not recognise a mailarchivew started with `start` as the dashboard (MB-7)")
 	}
 	if strings.Contains(inst, "Get-Process mailarchive-gui") || regexp.MustCompile(`Name = 'mailarchive-gui`).MatchString(inst) {
 		t.Error("Install-RMM.ps1 must NOT stop mailarchive-gui (SC34)")

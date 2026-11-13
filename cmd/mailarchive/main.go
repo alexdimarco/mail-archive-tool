@@ -178,7 +178,7 @@ func runExport(args []string) error {
 	inputs := append(o.inputs, fs.Args()...)
 
 	if *o.out == "" {
-		return errors.New("-out is required (or use a subcommand: desktop, wizard, run-job, setup, serve, search, reindex, schedule, graph, status, verify, extract, decrypt, restore-thunderbird, pause, resume, uninstall, delete-archive, unlist-archive, add-archive, change-password, new-recovery-key, restore-key-file, forget-key, forget-archive, repair-record, encrypt)")
+		return errors.New("-out is required (or use a subcommand: start, desktop, wizard, run-job, setup, serve, search, reindex, schedule, graph, status, verify, extract, decrypt, restore-thunderbird, pause, resume, uninstall, delete-archive, unlist-archive, add-archive, change-password, new-recovery-key, restore-key-file, forget-key, forget-archive, repair-record, encrypt)")
 	}
 	if err := refuseEncryptWith(*kf.encrypt, *o.unattended, *o.manifest != "", *o.list); err != nil {
 		return err
@@ -2051,6 +2051,7 @@ Usage:
   mailarchive unlist-archive -out DIR                    remove an archive from MailArchive Desktop's list of archives; the folder is kept (-config FILE: a Desktop's config)
   mailarchive add-archive DIR                            add an archive folder you already have to MailArchive Desktop's list of archives (-config FILE: a Desktop's config)
   mailarchive setup                                      set up a Microsoft 365 connection in your browser
+  mailarchive start    [-background]                     open MailArchive: the wizard or MailArchive Desktop (what the app icon runs)
   mailarchive desktop  [-capture]                        the dashboard & launcher (also opens on double-click)
   mailarchive wizard                                     step-by-step setup with native dialogs
   mailarchive run-job  FILE                              run a saved job headlessly (what a schedule runs)

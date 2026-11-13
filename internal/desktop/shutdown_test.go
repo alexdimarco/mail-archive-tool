@@ -16,6 +16,12 @@ import (
 // launch starts cleanly with no port conflict and nothing to kill by hand. A stop
 // drains the running export first (R36: it never touches an archive). A dashboard
 // with no lifecycle refuses gracefully instead of panicking.
+//
+// Amended 2026-11-13 (design-menubar slice S1, the fold's second contradiction; amended,
+// not weakened): Shut down is the person's own stop, so while work runs it first asks
+// the Quit question (MA-1422), and every stop now also waits for the job slot and the
+// wizard's export (MA-1424). This test's idle Shut down, its cancel and its drain stand
+// as they were; the lock is let go after the wait.
 func TestMA695_ShutdownStopsFromThePage(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()

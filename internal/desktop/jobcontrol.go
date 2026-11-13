@@ -60,6 +60,11 @@ func (d *dashboard) runCancellableJobOnClaiming(out string, claimed func(), fn f
 			// The person's Cancel, not a failure (the PG4 pass, CMP-1).
 			return cancelledText, nil
 		}
+		if d.stopping(err) {
+			// A stop of MailArchive ended it: the engine wrote its record whole, as
+			// cancelled (design-menubar MB-2 items 2 and 5).
+			return interruptedText, nil
+		}
 		return result, err
 	})
 	if err != nil {

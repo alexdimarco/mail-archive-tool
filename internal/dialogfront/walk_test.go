@@ -26,7 +26,12 @@ const (
 // installingEntries are the entries that open dialogs, each of which calls Install
 // as its first statement: MailArchive Desktop (which runs the wizard's Add another
 // archive in-process) and the wizard on its own.
-var installingEntries = []string{"internal/desktop.Launch", "internal/wizard.Run"}
+//
+// Amended 2026-11-13 (design-menubar slice S1, MB-8 and MB-13: widened, not duplicated):
+// the `start` verb's entry desktop.Start, and desktop.HandOffWizard, which the `wizard`
+// verb asks before it shows anything (it may tell the person, in one line, that the
+// wizard is already open or open in another sign-in).
+var installingEntries = []string{"internal/desktop.Launch", "internal/wizard.Run", "internal/desktop.Start", "internal/desktop.HandOffWizard"}
 
 // waysInNotThroughInstall are the ways to a dialog that do not pass an installing
 // entry, each with its reason; the walk stops there. A listed way in the walk no
@@ -610,6 +615,13 @@ type card struct{}
 var askingWays = []string{
 	"internal/wizard.Run", "internal/wizard.AddArchive", "internal/wizard.AddEncryptedArchive",
 	"internal/wizard.ResumeArchive", "internal/desktop.pickFolder", "internal/desktop.pickFile",
+	// Amended 2026-11-13 (design-menubar slice S1, MB-8 and MB-13: widened, not
+	// duplicated): the running MailArchive's new entry points, each arming first — the
+	// launcher choice (shown on start, on a hand-off only after its proof is verified,
+	// and on macOS's reopen), the wizard run inside it, the person's Quit with its
+	// question, and the `wizard` verb's hand-off.
+	"internal/desktop.front.showChoice", "internal/wizard.RunIn", "internal/desktop.front.personQuits",
+	"internal/desktop.HandOffWizard",
 }
 
 // covers: MA-1117, R39

@@ -54,6 +54,13 @@ import (
 type Config struct {
 	Out        string
 	ConfigPath string
+	// WizardLock takes the per-account wizard lock (design-menubar MB-9): Add another
+	// archive shares it with the launcher choice, the hand-off and a standalone wizard.
+	// nil (a test, the informational shell) takes none.
+	WizardLock func() (release func(), held bool)
+	// made, when set, is told the dashboard newDashboard made: the instance keeps it, to
+	// ask what work runs (the Quit question, design-menubar MB-2).
+	made func(*dashboard)
 	// CaptureLog is a scheduled capture's own log file (`desktop -capture -log`), which
 	// its schedule keeps in the archive folder: the emptied-folder guard does not count
 	// it as the person's file (design-archive-delete §7, MA-956).
@@ -315,6 +322,12 @@ func newDashboard(cfg Config) *dashboard {
 	d.cfg.rowBusy = d.planBusy
 	d.cfg.rowDeleting = func(folder string) bool { return d.running.of(folder) != nil }
 	d.life.OnDrain(d.drain)
+	// The job slot (Run now, Check integrity, Rebuild, the encryption copy, a restore) is
+	// waited for at every stop, within the drain's budget (design-menubar MB-2 item 4).
+	d.life.OnDrain(d.drainSlot)
+	if cfg.made != nil {
+		cfg.made(d)
+	}
 	return d
 }
 
@@ -510,6 +523,13 @@ func (d *dashboard) shutdown(w http.ResponseWriter, r *http.Request) {
 	// within the drain's budget.)
 	if it := d.running.any(); it != nil {
 		writeJSON(w, map[string]any{"ok": false, "error": fmt.Sprintf(deletingShutdown, it.row)})
+		return
+	}
+	// Shut down is the person's own stop: while work runs it asks first, Keep running
+	// being the default (design-menubar MB-2 item 3, the fold's second contradiction).
+	// The page asks, then sends confirm=1 for Quit.
+	if q := d.quitQuestion(); q != "" && r.URL.Query().Get("confirm") != "1" {
+		writeJSON(w, map[string]any{"ok": false, "ask": true, "question": q, "keep": keepRunningLabel, "quit": quitLabel})
 		return
 	}
 	writeJSON(w, map[string]any{"ok": true, "message": "MailArchive Desktop is stopping. You can close this tab; your archives and schedules are untouched."})
@@ -2538,6 +2558,16 @@ if(sd)sd.addEventListener('click',async()=>{
   const done=busy(sd,'Shutting down…',n,'Stopping MailArchive Desktop…');
   const stopped=()=>{document.body.innerHTML='<div style="max-width:40rem;margin:4rem auto;text-align:center"><h1>MailArchive Desktop has stopped.</h1><p>You can close this tab. Your archives and schedules are untouched — reopen MailArchive any time.</p></div>';};
   try{const d=await(await post('api/shutdown')).json();
+    if(!d.ok&&d.ask&&n){done();sd.dataset.armed='';sd.textContent='Shut down';
+      // Work is running (design-menubar MB-2): the question, with Keep running the default.
+      n.hidden=false;n.textContent='';const p=document.createElement('p');p.textContent=d.question;n.appendChild(p);
+      const keep=document.createElement('button');keep.type='button';keep.className='btn';keep.textContent=d.keep||'Keep running';
+      const quit=document.createElement('button');quit.type='button';quit.className='btn secondary';quit.textContent=d.quit||'Quit';
+      n.appendChild(keep);n.appendChild(document.createTextNode(' '));n.appendChild(quit);keep.focus();
+      keep.addEventListener('click',()=>{n.hidden=true;n.textContent='';});
+      quit.addEventListener('click',async()=>{keep.disabled=true;const qd=busy(quit,'Shutting down…',null,'');
+        try{const q=await(await post('api/shutdown?confirm=1')).json();if(q.ok){stopped();return;}qd();n.textContent=q.error||'Could not shut down.';}catch(e){stopped();}});
+      return;}
     if(!d.ok){done();sd.dataset.armed='';sd.textContent='Shut down';if(n){n.hidden=false;n.textContent=d.error||'Could not shut down.';}return;}
     stopped();
   }catch(e){stopped();}

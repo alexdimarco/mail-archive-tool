@@ -9,6 +9,7 @@ cache / vendor tree.
 | Module | Version | License | Copyright |
 |---|---|---|---|
 | github.com/dustin/go-humanize | v1.0.1 | MIT | Copyright (c) 2005-2008  Dustin Sallings <dustin@spy.net> |
+| github.com/ebitengine/purego | v0.8.4 | Apache-2.0 | Copyright 2022 The Ebitengine Authors (macOS build only) |
 | github.com/emersion/go-mbox | v1.0.4 | MIT | Copyright (c) 2019 Simon Ser |
 | github.com/emersion/go-message | v0.16.0 | MIT | Copyright (c) 2016 emersion |
 | github.com/emersion/go-textwrapper | v0.0.0-20200911093747-65d896831594 | MIT | Copyright (c) 2016 emersion |

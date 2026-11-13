@@ -33,6 +33,16 @@ func Launch(args []string) error {
 	return launch(ctx, args, osEnv())
 }
 
+// Start is the `start` verb's entry (design-menubar D3), what every app icon and
+// shortcut runs: like Launch, its dialogs come up in front of the browser on Windows
+// (MA-1110, R39).
+func Start(args []string) error {
+	dialogfront.Install()
+	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+	defer stop()
+	return launchStart(ctx, args, osEnv())
+}
+
 // buildVersion is the version the binary was built as, for the manifest of an export;
 // "dev" for a build with no module version.
 func buildVersion() string {

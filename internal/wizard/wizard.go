@@ -27,6 +27,7 @@ import (
 	"path/filepath"
 	"runtime"
 	"strings"
+	"sync"
 	"syscall"
 	"time"
 
@@ -39,6 +40,7 @@ import (
 	"mail-archive-tool/internal/encmark"
 	"mail-archive-tool/internal/export"
 	"mail-archive-tool/internal/health"
+	"mail-archive-tool/internal/instance"
 	"mail-archive-tool/internal/job"
 	"mail-archive-tool/internal/nowindow"
 	"mail-archive-tool/internal/outlookcom"
@@ -143,6 +145,14 @@ func Run() (code int) {
 		}
 	}()
 
+	// One wizard per account (design-menubar D5, MB-9): with MailArchive running, the
+	// running copy shows it and this launch ends — first, since it is the running copy
+	// that shows the windows; otherwise this one takes the wizard lock, and a second
+	// wizard says so in one line.
+	if HandOff != nil && HandOff() {
+		return 0
+	}
+
 	// The wizard is made of native dialogs; on Linux/BSD it cannot open them
 	// without a dialog tool and a desktop session, so it refuses on stderr rather
 	// than fail silently (§4.4, MA-639). It looks up a file and an environment
@@ -151,6 +161,18 @@ func Run() (code int) {
 		fmt.Fprintln(os.Stderr, refusal)
 		return 1
 	}
+
+	release, held := LockWizard()
+	if held {
+		_ = zenity.Info(instance.WizardOpenText, zenity.Title(appTitle))
+		return 0
+	}
+	var once sync.Once
+	letGo := func() { once.Do(release) }
+	defer letGo()
+	// Opening Desktop from here makes this process the instance, in-process: the wizard
+	// has ended, so its lock goes first, or the instance's own wizard would find it held.
+	beforeDesktop = letGo
 
 	switch err := wizard(); {
 	case err == nil, errors.Is(err, zenity.ErrCanceled):
@@ -665,19 +687,31 @@ func openDesktopSurface() error {
 	if OpenDesktop == nil {
 		return zenity.Info(openDesktopUnwired, zenity.Title(appTitle))
 	}
+	if beforeDesktop != nil {
+		beforeDesktop()
+	}
 	return OpenDesktop()
 }
 
-func wizard() error {
+// beforeDesktop is called by openDesktopSurface before Desktop starts in this process:
+// Run sets it to let go of the wizard lock.
+var beforeDesktop func()
+
+func wizard() error { return wizardWith(surfaceChoices, openDesktopSurface) }
+
+// wizardWith is the wizard with its first list's items and the way its Desktop items
+// open Desktop: the standalone wizard's (all four, Desktop in this process) or the
+// running MailArchive's (RunIn: no Desktop item, the instance's own link).
+func wizardWith(items []string, openDesktop func() error) error {
 	// 1. First step (MA-651): open the various options. The Desktop item hands off
 	//    IN-PROCESS to MailArchive Desktop (Microsoft 365, folder export, browsing,
 	//    scheduling, the maintenance tools); the local item (the default) stays on
 	//    the quick path. zenity.List returns ErrCanceled on dismiss → quiet exit.
-	switch pick, err := zenity.List("What would you like to do?", surfaceChoices, zenity.Title(appTitle), zenity.DefaultItems(surfaceLocalItem)); {
+	switch pick, err := zenity.List("What would you like to do?", items, zenity.Title(appTitle), zenity.DefaultItems(surfaceLocalItem)); {
 	case err != nil:
 		return err
 	case surfaceOpensDesktop(pick):
-		return openDesktopSurface()
+		return openDesktop()
 	}
 
 	// 2. Health of the last archive this wizard scheduled, if any (S8): the
@@ -1889,8 +1923,12 @@ func runExport(c wizardChoice) error {
 		return err
 	}
 
-	ctx, cancel := context.WithCancel(context.Background())
+	// Inside the running MailArchive the export is a child of its life, and a stop waits
+	// for it (design-menubar MB-2); a standalone wizard's is the background's.
+	ctx, cancel := exportContext()
 	defer cancel()
+	exportStarted()
+	defer exportEnded()
 	// Cancelling the progress dialog cancels the export.
 	go func() {
 		<-dlg.Done()

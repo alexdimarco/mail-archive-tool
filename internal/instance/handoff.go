@@ -62,6 +62,13 @@ type Handoff struct {
 	// Now is the clock for the rate limit (time.Now when nil).
 	Now func() time.Time
 
+	// Act answers a request with an action that shows something in the instance
+	// (ActChoose, ActWizard; design-menubar §7.1): it is called only after the
+	// request's proof is verified, never for ActOpen, and it returns at once with
+	// whether the window is shown and, when not, why (a Reason* value). nil means
+	// this instance shows nothing of the kind: it answers ReasonCantShow.
+	Act func(ActRequest) (shown bool, reason string)
+
 	mu   sync.Mutex
 	last time.Time
 }
@@ -70,13 +77,101 @@ type handoffRequest struct {
 	N     string `json:"n"`
 	P     string `json:"p"`
 	Quiet bool   `json:"quiet"`
+	// The second form (label handoff-req2, design-menubar §7.1 and MB-3): the action,
+	// the launcher's version (MB-14), its sign-in session (R50, the fold's third
+	// contradiction) and, on Linux, its activation token (§7.4). Each is inside the
+	// request's MAC.
+	Act  string `json:"act,omitempty"`
+	Ver  string `json:"ver,omitempty"`
+	Sess string `json:"sess,omitempty"`
+	Tok  string `json:"tok,omitempty"`
 }
 
 type handoffReply struct {
 	Opened bool   `json:"opened"`
 	Busy   bool   `json:"busy,omitempty"`
 	Link   string `json:"link,omitempty"`
+	// Shown and Reason answer ActChoose and ActWizard (MB-3 item 4).
+	Shown  bool   `json:"shown,omitempty"`
+	Reason string `json:"reason,omitempty"`
 	P      string `json:"p"`
+}
+
+// The actions of the second request form (design-menubar §7.1, D4 as MB-3 amends it).
+const (
+	// ActOpen opens Desktop in the instance's browser, as the first form does.
+	ActOpen = "open"
+	// ActChoose shows the launcher choice (Run the wizard / Open MailArchive Desktop).
+	ActChoose = "choose"
+	// ActWizard runs the wizard in the instance.
+	ActWizard = "wizard"
+)
+
+// KnownActs is what an instance of this version advertises in its file (Info.Acts):
+// a launcher sends the second form only to an instance that lists the action (MB-3).
+var KnownActs = []string{ActOpen, ActChoose, ActWizard}
+
+// Why an action was not shown (MB-3 item 4, MB-9, the fold's third contradiction).
+const (
+	// ReasonAlreadyOpen: a choice or a wizard is already open in the instance.
+	ReasonAlreadyOpen = "already-open"
+	// ReasonCantShow: the instance cannot show dialogs (no display, no dialog tool);
+	// the launcher opens Desktop or shows the link instead (MB-9).
+	ReasonCantShow = "cant-show"
+	// ReasonOtherSession: the instance belongs to another sign-in of this account; the
+	// launcher says so in its own session and nothing shows on the other screen (R50).
+	ReasonOtherSession = "other-session"
+)
+
+// ActRequest is a verified request with an action, as the instance's Act sees it.
+type ActRequest struct {
+	Act string
+	// Version is the launcher's build version (MB-14), Session its sign-in session
+	// ("" when it has none to tell), Token its activation token ("" for none).
+	Version, Session, Token string
+}
+
+// Field bounds of the second form: each is printable ASCII with no "|" (the MAC's
+// separator), the token at most 256 characters (MB-3 item 5).
+const (
+	maxVerLen  = 64
+	maxSessLen = 64
+	maxTokLen  = 256
+)
+
+// validField reports whether s is at most max printable ASCII characters with no "|".
+func validField(s string, max int) bool {
+	if len(s) > max {
+		return false
+	}
+	for i := 0; i < len(s); i++ {
+		if c := s[i]; c < 0x20 || c > 0x7e || c == '|' {
+			return false
+		}
+	}
+	return true
+}
+
+func validReason(r string) bool {
+	switch r {
+	case "", ReasonAlreadyOpen, ReasonCantShow, ReasonOtherSession:
+		return true
+	}
+	return false
+}
+
+func knownAct(a string) bool {
+	for _, k := range KnownActs {
+		if a == k {
+			return true
+		}
+	}
+	return false
+}
+
+// reqMAC2 is the second form's request proof: every field it carries is inside it.
+func reqMAC2(key []byte, n, act, ver, sess, tok string) string {
+	return MAC(key, "handoff-req2", n, act, ver, sess, tok)
 }
 
 func validNonce(n string) bool {
@@ -106,8 +201,23 @@ func (h *Handoff) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "bad request", http.StatusBadRequest)
 		return
 	}
+	// The second form names its action; an unknown one, or a field out of bounds, is
+	// refused with 400 and never read as "open" (MB-3 item 3).
+	v2 := req.Act != ""
+	if v2 && (!knownAct(req.Act) || !validField(req.Ver, maxVerLen) || !validField(req.Sess, maxSessLen) || !validField(req.Tok, maxTokLen)) {
+		http.Error(w, "bad request", http.StatusBadRequest)
+		return
+	}
+	if !v2 && (req.Ver != "" || req.Sess != "" || req.Tok != "") {
+		http.Error(w, "bad request", http.StatusBadRequest)
+		return
+	}
 
-	if !SameMAC(req.P, MAC(h.Key, "handoff-req", req.N)) {
+	want := MAC(h.Key, "handoff-req", req.N)
+	if v2 {
+		want = reqMAC2(h.Key, req.N, req.Act, req.Ver, req.Sess, req.Tok)
+	}
+	if !SameMAC(req.P, want) {
 		http.Error(w, "refused", http.StatusForbidden)
 		return
 	}
@@ -116,11 +226,41 @@ func (h *Handoff) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	now := h.now()
 	if !h.last.IsZero() && now.Sub(h.last) < handoffRate {
 		h.mu.Unlock()
+		if v2 {
+			writeReply(w, handoffReply{Busy: true, P: MAC(h.Key, "handoff-busy2", req.N, req.Act)})
+			return
+		}
 		writeReply(w, handoffReply{Busy: true, P: MAC(h.Key, "handoff-busy", req.N)})
 		return
 	}
+	prev := h.last
 	h.last = now
 	h.mu.Unlock()
+
+	if v2 && req.Act != ActOpen {
+		// The proof is verified: only now may the instance show anything (MB-8).
+		shown, reason := false, ReasonCantShow
+		if h.Act != nil {
+			shown, reason = h.Act(ActRequest{Act: req.Act, Version: req.Ver, Session: req.Sess, Token: req.Tok})
+		}
+		if shown || !validReason(reason) {
+			reason = ""
+			if !shown {
+				reason = ReasonCantShow
+			}
+		}
+		if !shown {
+			// Nothing was shown, so the second does not count: the launcher's fallback
+			// (today's open, MB-9) must not be answered "busy" and lost.
+			h.mu.Lock()
+			if h.last.Equal(now) {
+				h.last = prev
+			}
+			h.mu.Unlock()
+		}
+		writeReply(w, handoffReply{Shown: shown, Reason: reason, P: MAC(h.Key, "handoff-shown2", req.N, req.Act, strconv.FormatBool(shown), reason)})
+		return
+	}
 
 	opened, link := false, ""
 	if !req.Quiet && h.Open != nil {
@@ -135,6 +275,10 @@ func (h *Handoff) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	}
 	if !opened {
 		link, _ = h.Mint(localweb.LinkTTL)
+	}
+	if v2 {
+		writeReply(w, handoffReply{Opened: opened, Link: link, P: MAC(h.Key, "handoff-ok2", req.N, req.Act, strconv.FormatBool(opened), link)})
+		return
 	}
 	writeReply(w, handoffReply{Opened: opened, Link: link, P: MAC(h.Key, "handoff-ok", req.N, strconv.FormatBool(opened), link)})
 }
@@ -154,6 +298,9 @@ type Reply struct {
 	// Link is a fresh one-time link, when the instance did not open its browser
 	// (quiet, or it could not).
 	Link string
+	// Shown and Reason answer an action that shows a window (ActChoose, ActWizard).
+	Shown  bool
+	Reason string
 }
 
 // ErrBadProof means the listener answered but did not prove it holds the key: a
@@ -161,14 +308,48 @@ type Reply struct {
 // nothing at that address.
 var ErrBadProof = errors.New("the listener did not prove it is this account's MailArchive")
 
+// ErrRefused (which is also ErrBadProof) is a 403 to the request: the listener did not
+// accept the request's proof. A launcher that sent the second form to an instance that
+// advertises it falls back once to the first form on it (MB-3 item 2).
+var ErrRefused = fmt.Errorf("%w (the request was refused)", ErrBadProof)
+
 // Call is the client side: one handoff to the instance at addr (host:port) with
 // key K, quiet to ask for a link and no browser. It returns ErrBadProof for an
 // answer that is not covered by K.
 func Call(ctx context.Context, addr string, key []byte, quiet bool) (Reply, error) {
+	return call(ctx, addr, key, quiet, ActRequest{})
+}
+
+// CallAct is Call in the second form (design-menubar §7.1): the action ar.Act with the
+// launcher's version, session and token, all inside the request's MAC, and the reply's
+// MAC covering the action. A 403 is ErrRefused.
+func CallAct(ctx context.Context, addr string, key []byte, quiet bool, ar ActRequest) (Reply, error) {
+	if !knownAct(ar.Act) {
+		return Reply{}, fmt.Errorf("unknown action %q", ar.Act)
+	}
+	if !validField(ar.Version, maxVerLen) {
+		ar.Version = ""
+	}
+	if !validField(ar.Session, maxSessLen) {
+		ar.Session = ""
+	}
+	if !validField(ar.Token, maxTokLen) {
+		ar.Token = "" // a token out of bounds is not passed on (MB-3 item 5)
+	}
+	return call(ctx, addr, key, quiet, ar)
+}
+
+func call(ctx context.Context, addr string, key []byte, quiet bool, ar ActRequest) (Reply, error) {
 	nb := make([]byte, 32)
 	rand.Read(nb)
 	n := hex.EncodeToString(nb)
-	body, _ := json.Marshal(handoffRequest{N: n, P: MAC(key, "handoff-req", n), Quiet: quiet})
+	hr := handoffRequest{N: n, P: MAC(key, "handoff-req", n), Quiet: quiet}
+	v2 := ar.Act != ""
+	if v2 {
+		hr = handoffRequest{N: n, P: reqMAC2(key, n, ar.Act, ar.Version, ar.Session, ar.Token), Quiet: quiet,
+			Act: ar.Act, Ver: ar.Version, Sess: ar.Session, Tok: ar.Token}
+	}
+	body, _ := json.Marshal(hr)
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, "http://"+addr+"/_handoff", bytes.NewReader(body))
 	if err != nil {
 		return Reply{}, err
@@ -188,11 +369,32 @@ func Call(ctx context.Context, addr string, key []byte, quiet bool) (Reply, erro
 	defer resp.Body.Close()
 	if resp.StatusCode != http.StatusOK {
 		io.Copy(io.Discard, io.LimitReader(resp.Body, maxReplyBody))
+		if resp.StatusCode == http.StatusForbidden {
+			return Reply{}, ErrRefused
+		}
 		return Reply{}, fmt.Errorf("%w (status %d)", ErrBadProof, resp.StatusCode)
 	}
 	var rep handoffReply
 	if err := json.NewDecoder(io.LimitReader(resp.Body, maxReplyBody)).Decode(&rep); err != nil {
 		return Reply{}, fmt.Errorf("%w (unreadable answer)", ErrBadProof)
+	}
+	if v2 {
+		switch {
+		case rep.Busy:
+			if !SameMAC(rep.P, MAC(key, "handoff-busy2", n, ar.Act)) {
+				return Reply{}, ErrBadProof
+			}
+			return Reply{Busy: true}, nil
+		case ar.Act == ActOpen:
+			if !SameMAC(rep.P, MAC(key, "handoff-ok2", n, ar.Act, strconv.FormatBool(rep.Opened), rep.Link)) {
+				return Reply{}, ErrBadProof
+			}
+			return Reply{Opened: rep.Opened, Link: rep.Link}, nil
+		}
+		if !validReason(rep.Reason) || !SameMAC(rep.P, MAC(key, "handoff-shown2", n, ar.Act, strconv.FormatBool(rep.Shown), rep.Reason)) {
+			return Reply{}, ErrBadProof
+		}
+		return Reply{Shown: rep.Shown, Reason: rep.Reason}, nil
 	}
 	if rep.Busy {
 		if !SameMAC(rep.P, MAC(key, "handoff-busy", n)) {

@@ -137,6 +137,51 @@ type Info struct {
 	Version string `json:"version,omitempty"`
 	// Ended, when set, is the older instance this launch ended (§4.5.2, MA-638).
 	Ended *Ended `json:"ended,omitempty"`
+	// Acts are the hand-off actions this instance knows (design-menubar §7.1, MB-3): a
+	// launcher sends the second request form only for an action listed here, and the
+	// first form ("open") to an instance whose file has none. No version is parsed.
+	Acts []string `json:"acts,omitempty"`
+	// Icon is the state of the instance's indicator, an Icon* value (MB-20), so
+	// `status` can say whether MailArchive runs and why no icon shows.
+	Icon string `json:"icon,omitempty"`
+}
+
+// The indicator's states an instance records (design-menubar MB-20).
+const (
+	// IconShown: the icon is in the menu bar or notification area (slices S3 to S5).
+	IconShown = "shown"
+	// IconNoTray: this desktop shows no tray icons (plain GNOME, no display).
+	IconNoTray = "no-tray"
+	// IconOff: the person turned it off.
+	IconOff = "off"
+	// IconNotYet: this version has no icon (slice S1 ships before the icon slices).
+	IconNotYet = "not-yet"
+)
+
+// HasAct reports whether the instance file advertises the action act (MB-3).
+func (i Info) HasAct(act string) bool {
+	for _, a := range i.Acts {
+		if a == act {
+			return true
+		}
+	}
+	return false
+}
+
+// IconWords is what `status` says about a running instance's icon (MB-20), "" for an
+// instance that recorded no state (an older version).
+func IconWords(state string) string {
+	switch state {
+	case IconShown:
+		return "Its icon is in the menu bar (on Windows, the notification area of the taskbar)."
+	case IconNoTray:
+		return "It shows no icon: this desktop does not show tray icons. Open it from its app icon or shortcut."
+	case IconOff:
+		return "Its icon is turned off. Open it from its app icon or shortcut."
+	case IconNotYet:
+		return "This version shows no icon yet. Open it from its app icon or shortcut."
+	}
+	return ""
 }
 
 // What a desktop start found at MailArchive's former address 127.0.0.1:8097
@@ -233,6 +278,51 @@ func EndedFor(dir, session string) *Ended {
 		return nil
 	}
 	return info.Ended
+}
+
+// Running is this account's running instance, as its file records it (MB-20): ok is
+// false when none runs. The file is read like any instance file.
+func Running() (Info, bool) {
+	dir, err := Dir()
+	if err != nil {
+		return Info{}, false
+	}
+	return RunningIn(dir, LogonSession())
+}
+
+// RunningIn is Running for the instance file of a session in dir.
+func RunningIn(dir, session string) (Info, bool) {
+	info, err := Read(FilePathIn(dir, session))
+	if err != nil || !procs.Alive(info.PID) {
+		return Info{}, false
+	}
+	return info, true
+}
+
+// RunningWords is what `status` says of a running instance (MB-20): that it runs, its
+// version, and why no icon shows; "" for an instance of an older version, which records
+// no icon state.
+func RunningWords(info Info) string {
+	words := IconWords(info.Icon)
+	if words == "" {
+		return ""
+	}
+	v := info.Version
+	if v == "" {
+		v = "unknown"
+	}
+	return fmt.Sprintf("MailArchive is running for your account (version %s, process %d). %s", stripCtl(v), info.PID, words)
+}
+
+// stripCtl drops control characters from a recorded string before it is shown.
+func stripCtl(s string) string {
+	b := make([]rune, 0, len(s))
+	for _, r := range s {
+		if r >= 0x20 && r != 0x7f {
+			b = append(b, r)
+		}
+	}
+	return string(b)
 }
 
 // NewKey returns a fresh key K and its hex form.

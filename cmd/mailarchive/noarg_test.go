@@ -11,7 +11,7 @@ import (
 // covers: MA-620, S59
 // §4.3's no-argument rule as a pure table: every row, every OS, inputs injected.
 // SE1 constants — Windows no-console → desktop (W3); macOS bundle-without-terminal
-// → wizard (M1); every no-argument Linux launch → usage (L1 dormant until L-L1,
+// → start (M1; was wizard until design-menubar S1); every no-argument Linux launch → usage (L1 dormant until L-L1,
 // L2 otherwise). The console build double-clicked (W2) is usage with the wait.
 //
 // Prove-fail (§9.4): changing defaultVerb's macOS arm from `inBundle && noTerminal`
@@ -27,7 +27,9 @@ func TestMA620_DefaultVerbTable(t *testing.T) {
 		{"W1 shell-shared console", "windows", true, false, false, false, false, noArgPlan{verb: "usage"}},
 		{"W2 own console (double-click)", "windows", true, true, false, false, false, noArgPlan{verb: "usage", consoleWait: true}},
 		{"W3 no console (any own name)", "windows", false, false, false, false, false, noArgPlan{verb: "desktop"}},
-		{"M1 bundle, no terminal", "darwin", false, false, true, true, false, noArgPlan{verb: "wizard"}},
+		// Amended 2026-11-13 (design-menubar MB-13, MB-24; amended, not weakened): M1 gives
+		// `start`, the launcher choice, where it gave `wizard`.
+		{"M1 bundle, no terminal", "darwin", false, false, true, true, false, noArgPlan{verb: "start"}},
 		{"M2 bundle from a terminal", "darwin", false, false, true, false, false, noArgPlan{verb: "usage"}},
 		{"M2 PATH symlink from a terminal", "darwin", false, false, false, false, false, noArgPlan{verb: "usage"}},
 		{"M2 no terminal, outside a bundle", "darwin", false, false, false, true, false, noArgPlan{verb: "usage"}},
@@ -151,8 +153,8 @@ func TestMA620_NoArgRouting(t *testing.T) {
 	if got := resolveInvocation("mailarchive-desktop", nil); got.verb != "desktop" {
 		t.Errorf("mailarchive-desktop (former) with no args: verb=%q, want desktop (rule 6)", got.verb)
 	}
-	if got := resolveInvocation("mailarchive-gui", nil); got.verb != "wizard" {
-		t.Errorf("mailarchive-gui (former) with no args: verb=%q, want wizard (rule 6)", got.verb)
+	if got := resolveInvocation("mailarchive-gui", nil); got.verb != "start" {
+		t.Errorf("mailarchive-gui (former) with no args: verb=%q, want start (rule 6, amended by design-menubar MB-24)", got.verb)
 	}
 
 	// An own name that carries a verb is that verb, not the no-argument rule.

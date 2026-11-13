@@ -14,6 +14,7 @@ import (
 	"path/filepath"
 	"runtime"
 	"strings"
+	"sync"
 	"time"
 
 	"mail-archive-tool/internal/alert"
@@ -24,6 +25,7 @@ import (
 	"mail-archive-tool/internal/instance"
 	"mail-archive-tool/internal/localweb"
 	"mail-archive-tool/internal/seal"
+	"mail-archive-tool/internal/wizard"
 )
 
 // launchEnv is what a launch needs from its surroundings: the per-account state
@@ -69,10 +71,59 @@ type launchEnv struct {
 	// WorkspaceOff reports the machine policy that turns the Extraction workspace off
 	// (Windows: an administrator's HKLM value); nil is "not set".
 	WorkspaceOff func() bool
+
+	// GUISession is this process's sign-in session (instance.GUISession): a launch
+	// sends it in the hand-off, and the instance compares a launcher's with its own
+	// (R50, the fold's third contradiction).
+	GUISession string
+	// AllowForeground lets the process pid bring a window to the front (Windows'
+	// AllowSetForegroundWindow, design-menubar §7.3); a launch calls it, before a
+	// hand-off, only for the pid the lock's holder record confirms (MB-17). nil where the
+	// operating system has no such rule.
+	AllowForeground func(pid int)
+	// Loop, when set, runs the operating system's event loop for the instance (the
+	// AppKit run loop on macOS's main thread; a hidden window's message loop on Windows)
+	// around the serving, so the instance answers macOS's reopen and terminate requests
+	// and Windows' end of session (design-menubar §7.2, §8, MB-2). nil serves directly.
+	Loop AppLoop
+	// BundleVersion is the version of the program on disk, for MB-14's line on macOS's
+	// reopen; nil where there is no bundle to read.
+	BundleVersion func() string
 }
 
+// AppLoop runs serve while the operating system's event loop for the instance runs on
+// the calling thread, routing the system's requests to ev, and returns serve's error.
+// It returns once serve has returned.
+type AppLoop func(serve func() error, ev LoopEvents) error
+
+// LoopEvents are what the operating system's loop reports to the instance.
+type LoopEvents struct {
+	// Reopen: macOS opened the app again while it runs (Launch Services' reopen).
+	Reopen func()
+	// EndSession: sign-out, shut down, an installer or Restart Manager asks the
+	// process to end. It stops without asking and waits for running work up to bound
+	// (MB-2 items 1 and 3), then returns.
+	EndSession func(bound time.Duration)
+	// Busy reports whether the instance runs work now (Windows blocks the shutdown with
+	// a reason while it does).
+	Busy func() bool
+}
+
+// appLoop is the platform's AppLoop, set by loop_darwin.go and loop_windows.go; the
+// command layer turns it on with UseAppLoop for a launch the operating system started
+// as the app (macOS: from the bundle). nil elsewhere.
+var appLoop AppLoop
+
+// appLoopOn is whether osEnv uses appLoop (UseAppLoop).
+var appLoopOn bool
+
+// UseAppLoop turns the platform's event loop on for this process's instance: on macOS
+// for a launch from the .app bundle (Launch Services routes the app's later clicks to
+// it), on Windows for every instance (its end-of-session messages).
+func UseAppLoop(on bool) { appLoopOn = on }
+
 func osEnv() *launchEnv {
-	return &launchEnv{
+	env := &launchEnv{
 		Stdout: os.Stdout, Stderr: os.Stderr, StateDir: instance.Dir, Session: instance.LogonSession(),
 		Open: browser.Open, ShowRefusal: showRefusal, ShowLink: showLink, ShowNotice: showNotice,
 		Version:    buildVersion(),
@@ -80,7 +131,13 @@ func osEnv() *launchEnv {
 		EndOld:     func() (int, string) { return endPreUpgrade(instance.FormerAddress) },
 		WatchEvery: time.Minute, Window: instance.DefaultWait,
 		ExportDir: StateDir, WorkspaceOff: workspacePolicyOff,
+		GUISession: instance.GUISession(), AllowForeground: allowForeground,
+		BundleVersion: bundleVersionOnDisk,
 	}
+	if appLoopOn {
+		env.Loop = appLoop
+	}
+	return env
 }
 
 // refusedError is a refusal that has already been shown to the user.
@@ -162,6 +219,11 @@ type launchOpts struct {
 	noBrowser        bool
 	copyLink         bool
 	dcfg             Config
+	// start is the `start` verb (design-menubar D3): an instance it starts shows the
+	// launcher choice instead of opening the browser, and a launch that finds one
+	// running hands off `choose`; background (`start -background`, the sign-in launch)
+	// shows nothing, and does nothing when one runs.
+	start, background bool
 }
 
 // launch is MailArchive Desktop (design §4.C4): a scheduled `-capture` runs one
@@ -170,18 +232,46 @@ type launchOpts struct {
 // launch hands off to that instance after it has proven itself with its key, so a
 // listener that is not it, whatever port it holds, is never opened.
 func launch(ctx context.Context, args []string, env *launchEnv) error {
-	fs := flag.NewFlagSet("mailarchive desktop", flag.ContinueOnError)
+	return launchMode(ctx, args, env, false)
+}
+
+// launchStart is the `start` verb (design-menubar §6, §7): what every app icon and
+// shortcut runs. It is the desktop launch with the launcher choice in place of the
+// browser, and `-background` for the sign-in launch.
+func launchStart(ctx context.Context, args []string, env *launchEnv) error {
+	return launchMode(ctx, args, env, true)
+}
+
+func launchMode(ctx context.Context, args []string, env *launchEnv, start bool) error {
+	name := "mailarchive desktop"
+	if start {
+		name = "mailarchive start"
+	}
+	fs := flag.NewFlagSet(name, flag.ContinueOnError)
 	addr := fs.String("addr", "127.0.0.1:0", "loopback address for the dashboard (must be loopback; port 0 takes any free port)")
 	readerAddr := fs.String("reader-addr", "127.0.0.1:0", "loopback address for the archive reader (must be loopback; port 0 takes any free port)")
 	out := fs.String("out", "", "archive directory to manage")
 	cfg := fs.String("config", "", "Graph config file (default: under your OS config dir)")
-	capture := fs.Bool("capture", false, "run ONE scheduled headless capture (no dashboard) and exit — what the scheduled backup runs")
-	logPath := fs.String("log", "", "capture mode: append the run log here (default: desktop-capture.log under your OS config dir)")
-	noBrowser := fs.Bool("no-browser", false, "do not open the dashboard in a browser on start (use for a background/Startup launch)")
-	copyLink := fs.Bool("copy-link", false, "show a fresh one-time link in a dialog, to copy into a browser, instead of opening one (for a default browser that cannot be opened)")
 	noWorkspace := fs.Bool("no-workspace", false, "turn the Extraction workspace off: its pages and endpoints are not served and the Export group is hidden (an administrator can also set the machine policy)")
+	var capture, noBrowser, copyLink, background *bool
+	var logPath *string
+	never := false
+	if start {
+		background = fs.Bool("background", false, "start MailArchive with no window (the sign-in launch); when it already runs, do nothing")
+		capture, noBrowser, copyLink = &never, &never, &never
+		logPath = new(string)
+	} else {
+		capture = fs.Bool("capture", false, "run ONE scheduled headless capture (no dashboard) and exit — what the scheduled backup runs")
+		logPath = fs.String("log", "", "capture mode: append the run log here (default: desktop-capture.log under your OS config dir)")
+		noBrowser = fs.Bool("no-browser", false, "do not open the dashboard in a browser on start (use for a background/Startup launch)")
+		copyLink = fs.Bool("copy-link", false, "show a fresh one-time link in a dialog, to copy into a browser, instead of opening one (for a default browser that cannot be opened)")
+		background = &never
+	}
 	if err := fs.Parse(args); err != nil {
 		return err
+	}
+	if start && fs.NArg() > 0 {
+		return fmt.Errorf("mailarchive start takes no arguments but its flags (got %q); run mailarchive start -h", fs.Arg(0))
 	}
 	set := map[string]bool{}
 	fs.Visit(func(f *flag.Flag) { set[f.Name] = true })
@@ -241,7 +331,8 @@ func launch(ctx context.Context, args []string, env *launchEnv) error {
 		return fmt.Errorf("-reader-addr %s is not a loopback address: the archive reader is served only on 127.0.0.1/localhost", *readerAddr)
 	}
 
-	o := &launchOpts{addr: *addr, readerAddr: *readerAddr, addrSet: set["addr"], noBrowser: *noBrowser, copyLink: *copyLink, dcfg: dcfg}
+	o := &launchOpts{addr: *addr, readerAddr: *readerAddr, addrSet: set["addr"], noBrowser: *noBrowser, copyLink: *copyLink, dcfg: dcfg,
+		start: start, background: *background}
 	o.cfgPath, _ = filepath.Abs(cfgPath)
 	if *out != "" {
 		o.out, _ = filepath.Abs(*out)
@@ -309,14 +400,32 @@ func handoff(ctx context.Context, dir string, o *launchOpts, env *launchEnv, dea
 	if kerr != nil {
 		return false, nil
 	}
-	quiet := o.noBrowser || o.copyLink
 	window := time.Until(deadline)
 	if window < 0 {
 		window = 0
 	}
-	rep, cerr := instance.Reach(ctx, info.Dashboard, key, quiet, window, func() bool {
-		return instance.LockIsHeld(dir, env.Session)
-	})
+	stillHeld := func() bool { return instance.LockIsHeld(dir, env.Session) }
+	if o.start {
+		// The `start` verb (design-menubar §7): a sign-in launch does nothing when
+		// MailArchive already runs; any other asks the running copy for the choice, in
+		// the second request form when its file says it knows it (MB-3), else today's
+		// open with the other-version notice below.
+		if o.background {
+			return true, nil
+		}
+		if info.HasAct(instance.ActChoose) {
+			done, herr := handoffAct(ctx, dir, info, key, instance.ActChoose, env, window, stillHeld)
+			if done {
+				return true, herr
+			}
+			if herr != nil {
+				return false, nil // not reached yet: the caller tries again until its deadline
+			}
+			// Refused once (MB-3 item 2) or "can't show here" (MB-9): today's open.
+		}
+	}
+	quiet := o.noBrowser || o.copyLink
+	rep, cerr := instance.Reach(ctx, info.Dashboard, key, quiet, window, stillHeld)
 	if cerr != nil {
 		return false, nil
 	}
@@ -400,7 +509,11 @@ func samePathLaunch(a, b string) bool {
 // its address and key in the 0600 instance file, serves, and opens the browser at
 // its own one-time link unless it was told not to.
 func serveInstance(ctx context.Context, h *instance.Holder, o *launchOpts, env *launchEnv) error {
-	defer h.Close()
+	// Closed once: by the serving itself when it ends (so a macOS terminate request,
+	// which ends the process inside the event loop, still lets go of the instance file
+	// and the lock first), or here.
+	closeHolder := sync.OnceFunc(h.Close)
+	defer closeHolder()
 	h.RemoveStale()
 
 	ln, err := net.Listen("tcp", o.addr)
@@ -460,6 +573,7 @@ func serveInstance(ctx context.Context, h *instance.Holder, o *launchOpts, env *
 	dcfg.Former = former
 	dcfg.Ended = ended
 	dcfg.NewLink = func() string { return sess.Link(origin, localweb.LinkTTL) }
+	dcfg.WizardLock = func() (func(), bool) { return wizard.LockWizardIn(h.Dir) }
 	// The reader is made first so a Delete can close its index of the archive it deletes
 	// (design-archive-delete §9 "Open files", MA-974); it is given the finished config below.
 	rmx := &readerMux{}
@@ -473,6 +587,34 @@ func serveInstance(ctx context.Context, h *instance.Holder, o *launchOpts, env *
 			return origin + localweb.OpenPath(t), t
 		},
 	}
+	var d *dashboard
+	dcfg.made = func(x *dashboard) {
+		d = x
+		if instanceDashboardMade != nil {
+			instanceDashboardMade(x)
+		}
+	}
+	// The wizard this process runs exports on its life, and every stop waits for it
+	// (design-menubar MB-2 item 4).
+	wizard.BindExports(life.Context())
+	life.OnDrain(wizard.WaitExports)
+	// The launcher choice and the in-process wizard (design-menubar §6, slice S1).
+	openDesktop := func() {
+		if env.Open(sess.Link(origin, localweb.OpenerTTL)) != nil {
+			env.ShowLink(sess.Link(origin, localweb.LinkTTL))
+		}
+	}
+	f := &front{
+		life: life, dir: h.Dir, session: env.GUISession, version: env.Version, open: openDesktop,
+		busy: func() string { return d.quitQuestion() },
+		idle: func() bool {
+			n, _ := sess.Opened()
+			return n == 0 && d.quitQuestion() == ""
+		},
+		hasArchives:   func() bool { return dcfg.effectiveOut() != "" },
+		bundleVersion: env.BundleVersion,
+	}
+	handoffH.Act = f.act
 	// DisableGeneralOptionsHandler: net/http would answer OPTIONS * before the Host guard (AC8).
 	dash := &http.Server{Handler: dashboardHandler(dcfg, ln.Addr(), sess, handoffH), ReadHeaderTimeout: 10 * time.Second, IdleTimeout: 2 * time.Minute, DisableGeneralOptionsHandler: true}
 	rmx.cfg = dcfg
@@ -483,6 +625,7 @@ func serveInstance(ctx context.Context, h *instance.Holder, o *launchOpts, env *
 	info := instance.Info{
 		PID: os.Getpid(), Exe: exe, Started: time.Now(), Config: o.cfgPath, Out: o.out, Session: env.Session,
 		Dashboard: ln.Addr().String(), Reader: readerLn.Addr().String(), Key: keyHex, Former: former, Version: env.Version, Ended: ended,
+		Acts: instance.KnownActs, Icon: instance.IconNotYet,
 	}
 	if err := h.Publish(info); err != nil {
 		ln.Close()
@@ -492,6 +635,34 @@ func serveInstance(ctx context.Context, h *instance.Holder, o *launchOpts, env *
 	stopWatch := h.Watch(env.WatchEvery, func(s string) { fmt.Fprintln(env.Stderr, "mailarchive desktop: "+s) })
 	defer stopWatch()
 
+	serve := func() error {
+		defer closeHolder()
+		defer stopWatch()
+		return serveUntilStopped(ln, readerLn, dash, reader, rm, sess, origin, info, o, env, life, f)
+	}
+	if env.Loop == nil {
+		return serve()
+	}
+	served := make(chan struct{})
+	return env.Loop(func() error { defer close(served); return serve() }, LoopEvents{
+		Reopen: f.reopen,
+		// Sign-out, an installer, Restart Manager: stop without asking and wait for
+		// running work up to the bound (MB-2 items 1 and 3).
+		EndSession: func(bound time.Duration) {
+			life.Stop()
+			select {
+			case <-served:
+			case <-time.After(bound):
+			}
+		},
+		Busy: func() bool { return d.quitQuestion() != "" },
+	})
+}
+
+// serveUntilStopped serves the dashboard and the reader until the lifecycle stops (or a
+// server fails), then shuts both down and waits for the drain: the second half of
+// serveInstance, run directly or inside the operating system's event loop.
+func serveUntilStopped(ln, readerLn net.Listener, dash, reader *http.Server, rm http.Handler, sess *localweb.Session, origin string, info instance.Info, o *launchOpts, env *launchEnv, life *Lifecycle, f *front) error {
 	errc := make(chan error, 2)
 	go func() { errc <- dash.Serve(ln) }()
 	go func() { errc <- reader.Serve(readerLn) }()
@@ -509,9 +680,16 @@ func serveInstance(ctx context.Context, h *instance.Holder, o *launchOpts, env *
 	// -no-browser (the Startup launch) suppresses it; -copy-link shows the link
 	// without opening anything.
 	switch {
+	case o.start && o.background:
+		// The sign-in launch: nothing shows (design-menubar §7.3).
+	case o.start && canShowDialogs():
+		// An app icon or shortcut: the launcher choice in place of the browser (§6.1).
+		f.offerChoice(false, true)
 	case o.copyLink:
 		go env.ShowLink(sess.Link(origin, localweb.LinkTTL))
 	case !o.noBrowser:
+		// The desktop verb, and `start` where no dialog can show (Linux with no dialog
+		// tool): Desktop opens directly (§6.1).
 		if env.Open(sess.Link(origin, localweb.OpenerTTL)) != nil {
 			go env.ShowLink(sess.Link(origin, localweb.LinkTTL))
 		}

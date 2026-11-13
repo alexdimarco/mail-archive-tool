@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"mail-archive-tool/internal/archindex"
+	"mail-archive-tool/internal/instance"
 	"mail-archive-tool/internal/server"
 	"mail-archive-tool/internal/wizard"
 )
@@ -37,6 +38,16 @@ func (d *dashboard) addArchive(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	defer d.addBusy.Store(false)
+	// One wizard per account (design-menubar MB-9, MA-1405): Add another archive shares
+	// the wizard lock with the launcher choice, the hand-off and a standalone wizard.
+	if d.cfg.WizardLock != nil {
+		release, held := d.cfg.WizardLock()
+		if held {
+			writeJSON(w, map[string]any{"ok": false, "error": instance.WizardOpenText})
+			return
+		}
+		defer release()
+	}
 
 	out, err := addArchiveFn()
 	if errors.Is(err, wizard.ErrStoppedEarly) && strings.TrimSpace(out) != "" {

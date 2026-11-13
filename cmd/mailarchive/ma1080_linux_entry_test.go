@@ -62,7 +62,7 @@ func desktopEntry(t *testing.T, src string) map[string]string {
 // folder mailarchive-linux-desktop-entry/ with mailarchive.png (packaging/icon's
 // square 256 px PNG), mailarchive.svg (its square drawing), mailarchive.desktop and
 // READ ME.txt. The .desktop is a valid [Desktop Entry]: Type=Application,
-// Name=MailArchive Desktop, Exec=mailarchive desktop, Icon=mailarchive,
+// Name=MailArchive Desktop, Exec=mailarchive start (desktop until design-menubar S1), Icon=mailarchive,
 // Terminal=false, Categories ending in ";". READ ME.txt has exactly three install
 // lines, which put the program at ~/.local/bin/mailarchive, the PNG at
 // ~/.local/share/icons/hicolor/256x256/apps/mailarchive.png (the name Icon finds) and
@@ -147,7 +147,9 @@ func TestMA1080_LinuxDesktopEntryAsset(t *testing.T) {
 
 	keys := desktopEntry(t, string(members[dir+"mailarchive.desktop"]))
 	for k, v := range map[string]string{
-		"Type": "Application", "Name": "MailArchive Desktop", "Exec": "mailarchive desktop",
+		// Amended 2026-11-13 (design-menubar §7.4, MB-13; amended, not weakened): the entry
+		// runs `start`, the launcher choice, where it ran `desktop`.
+		"Type": "Application", "Name": "MailArchive Desktop", "Exec": "mailarchive start",
 		"Icon": "mailarchive", "Terminal": "false",
 	} {
 		if keys[k] != v {
@@ -190,7 +192,7 @@ func TestMA1080_LinuxDesktopEntryAsset(t *testing.T) {
 	for _, want := range []string{
 		"If MailArchive Desktop is not in your app menu yet",
 		"sign out and back in once",
-		"~/.local/bin/mailarchive desktop",
+		"~/.local/bin/mailarchive start",
 		"Uninstall MailArchive",
 	} {
 		if !strings.Contains(prose, want) {
@@ -264,8 +266,8 @@ func runInstallLines(t *testing.T, members map[string][]byte, dir string, lines 
 	}
 	got, _ := os.ReadFile(entry)
 	shipped := string(members[dir+"mailarchive.desktop"])
-	wantExec := `Exec="` + home + `/.local/bin/mailarchive" desktop`
-	if want := strings.Replace(shipped, "\nExec=mailarchive desktop\n", "\n"+wantExec+"\n", 1); want == shipped || string(got) != want {
+	wantExec := `Exec="` + home + `/.local/bin/mailarchive" start`
+	if want := strings.Replace(shipped, "\nExec=mailarchive start\n", "\n"+wantExec+"\n", 1); want == shipped || string(got) != want {
 		t.Errorf("the installed menu entry is\n%s\nwant the shipped entry with only %s", got, wantExec)
 	}
 	if keys := desktopEntry(t, string(got)); keys["Exec"] != strings.TrimPrefix(wantExec, "Exec=") {

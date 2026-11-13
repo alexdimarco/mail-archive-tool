@@ -25,7 +25,8 @@ separate Go module so the product build never compiles it). *[Superseded 2026-11
 - Owed from the owner: the answers to §13 (Q1–Q9). Each recommended answer is what gets built if
   the owner agrees; each alternative is named beside its question. *(2026-11-13: the
   recommendations are now the defaults, pending the owner's "ok to your picks"; see the note in
-  §13.)*
+  §13.)* *[Answered 2026-11-13: the owner's "ok to your picks" — Q1–Q9 are rulings as
+  recommended; the dated note is in §13.]*
 - Order (owner, 2026-11-13): build after the Gmail duplicates work, before the cloud-copy design.
 
 Base: `main` at 1a6d437 (v1.7.1). Branch `menubar`.
@@ -1086,6 +1087,29 @@ revert), recorded in the commit; the unfiltered `go test ./...` runs before each
 >   (MB-8), and logoff and MSI-upgrade end-session behaviour (MB-2, MB-7); a macOS lab of the
 >   LaunchAgent across two unsigned upgrades (MB-11).
 
+> **Built 2026-11-13 (slice S1; the builder's calls, for the lead to check).**
+> - **MB-22 is held back to the first icon slice.** "or Quit MailArchive from its icon" would be
+>   untrue while no icon exists; the refusal keeps naming Shut down until S3–S5 add the icon.
+> - **MB-7's RMM scripts:** only Install-RMM.ps1 changes (a first argument `start` is a
+>   dashboard). Uninstall-RMM.ps1 and Cleanup-CurrentUser.ps1 already stop every
+>   `mailarchivew` process, a `start` instance among them, so they are unchanged.
+> - **Task words before S2's job-slot kind:** the Quit question and the choice's "Now:" line name
+>   a backup (Run now), a restore to Thunderbird, a delete, a workspace export and the wizard's
+>   copy; a check, a rebuild or the encryption copy reads "a task is running" until S2 adds the
+>   kind (MA-1410).
+> - **Linux choice text:** the choice's extra lines (the newer-version line, the "Now:" line)
+>   follow MA-1286's rule: on Linux they show first in a message dialog, then the list with its
+>   fixed question; macOS and Windows show them above the list.
+> - **A hand-off that showed nothing does not count against the one-a-second limit**, so the
+>   launcher's fallback open after "can't show here" is not answered "busy" and lost.
+> - **The `wizard` verb hands off before its dialog preflight**, so a launch with no dialog tool
+>   still reaches a running copy that has one.
+> - **The two-process proof of MA-1403** is the Mac smoke lab (MA-1436); the unit run is
+>   in-process over the real lock and listeners.
+> - **MB-14's Quit is a third list item**, "Quit MailArchive — then open it again to use the
+>   newer version", not a button: on macOS the dialog library's list has no extra button
+>   (found in the S1 Mac lab, `docs/lab/menubar-s1-mac-2026-11-13.md`).
+
 ### 12.2 New dependencies (operator decision)
 `github.com/ebitengine/purego` (macOS only, behind a build tag) and `github.com/godbus/dbus/v5`
 (Linux only, behind a build tag). Both pure Go; both go into THIRD-PARTY-NOTICES. (Q7.)
@@ -1152,6 +1176,16 @@ revert), recorded in the commit; the unfiltered `go test ./...` runs before each
 > - **Q7:** accept godbus; accept purego pinned, with the menu-bar lab and MB-19's whole-program
 >   lab on the Go-bump checklist. Needed before S1's macOS code (§12.2 note).
 > - **Q8:** no icon, plus the late-watcher re-check (MB-12) and MB-16's Cancel rule.
+
+> **Owner ruling 2026-11-13 ("ok to your picks").** The owner accepted every recommendation
+> above: Q1–Q9 are now rulings as recommended, with the review's additions. In words: the menu
+> and the choice say "Open MailArchive Desktop" (Q1); the wizard reached from the choice drops
+> only its Desktop item (Q2); start at sign-in on Mac and Linux is off until the person ticks it
+> (Q3); Quit while busy asks, Keep running the default (Q4); no archive names in the tooltip
+> (Q5); S1 ships first as its own small release (Q6); purego and godbus are accepted (Q7); plain
+> GNOME gets no icon and the Help page explains (Q8); the icon shows whenever MailArchive runs
+> (Q9). This also answers MB-21's Windows default (a quiet background start for a user with no
+> archives, S6). Slice S1 is built on this ruling (branch `menubar`, 2026-11-13).
 
 ## 14. Not in this design
 - Notifications (the existing failure/recovery notices and email alerts are unchanged).

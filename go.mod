@@ -3,6 +3,7 @@ module mail-archive-tool
 go 1.26.0
 
 require (
+	github.com/ebitengine/purego v0.8.4
 	github.com/emersion/go-mbox v1.0.4
 	github.com/emersion/go-message v0.16.0
 	github.com/go-ole/go-ole v1.3.0

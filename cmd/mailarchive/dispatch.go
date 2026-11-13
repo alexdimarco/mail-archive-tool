@@ -27,18 +27,26 @@ import (
 // MA-612's walk sees no process start here.
 var (
 	launchDesktop  = desktop.Launch
+	launchStart    = desktop.Start
 	runWizard      = wizard.Run
 	runHeadlessJob = wizard.RunHeadless
+	// useAppLoop turns the platform's event loop on for the instance this launch may
+	// become (design-menubar §7.2, §8): a seam so MA-1400 can see the routing ask for it.
+	useAppLoop = desktop.UseAppLoop
 )
 
 // The wizard's first step can open MailArchive Desktop; wire that hand-off to the
 // in-process launchDesktop seam (MA-651/MA-612 — the same process, never a child).
 // A closure over the var, so MA-651's test can swap launchDesktop and see the route.
-func init() { wizard.OpenDesktop = func() error { return launchDesktop(nil) } }
+// The `wizard` verb first asks a running MailArchive to show the wizard (D5).
+func init() {
+	wizard.OpenDesktop = func() error { return launchDesktop(nil) }
+	wizard.HandOff = desktop.HandOffWizard
+}
 
 // verbRoute is where one invocation is routed.
 type verbRoute struct {
-	verb  string   // "desktop" | "wizard" | "run-job" | "" (a CLI verb or export)
+	verb  string   // "start" | "desktop" | "wizard" | "run-job" | "" (a CLI verb or export)
 	args  []string // the arguments to hand the verb's handler
 	usage bool     // mailarchive-gui former name with an unknown flag → today's usage refusal
 }
@@ -65,7 +73,8 @@ func resolveInvocation(invokedBase string, args []string) verbRoute {
 		// Former name: every argv reaches the dashboard unchanged (§4.1 rule 6).
 		return verbRoute{verb: "desktop", args: args}
 	case "mailarchive-gui":
-		// Former name: -job F → run-job F; no -job → wizard; unknown flag → usage.
+		// Former name, and the .app's executable: -job F → run-job F; no -job → start
+		// (design-menubar MB-24, MA-611 amended); unknown flag → usage.
 		return resolveGUIFormerName(args)
 	}
 
@@ -80,6 +89,8 @@ func resolveInvocation(invokedBase string, args []string) verbRoute {
 	// An explicit GUI verb is a verb of the one program under our own name.
 	if len(args) > 0 {
 		switch args[0] {
+		case "start":
+			return verbRoute{verb: "start", args: args[1:]}
 		case "desktop":
 			return verbRoute{verb: "desktop", args: args[1:]}
 		case "wizard":
@@ -104,7 +115,9 @@ func resolveInvocation(invokedBase string, args []string) verbRoute {
 
 // resolveGUIFormerName maps the args seen under the mailarchive-gui former name,
 // mirroring that binary's only flag (-job): -job/--job F (or =F) runs the saved
-// job; no -job opens the wizard; any other flag is today's usage refusal.
+// job; no -job is `start`, the launcher choice (design-menubar MB-24: the .app's
+// executable is this name, so a Finder click comes here); any other flag is today's
+// usage refusal.
 func resolveGUIFormerName(args []string) verbRoute {
 	for i := 0; i < len(args); i++ {
 		a := args[i]
@@ -120,11 +133,11 @@ func resolveGUIFormerName(args []string) verbRoute {
 			return verbRoute{usage: true} // any other flag → today's usage refusal
 		default:
 			// A bare positional with no -job seen: the historical flag.Parse stops
-			// here with jobPath unset, so the wizard opens.
-			return verbRoute{verb: "wizard"}
+			// here with jobPath unset, so the launch opens: now the launcher choice.
+			return verbRoute{verb: "start"}
 		}
 	}
-	return verbRoute{verb: "wizard"} // empty argv → the wizard
+	return verbRoute{verb: "start"} // empty argv → the launcher choice
 }
 
 // runResolvedVerb runs a resolved GUI verb (desktop / wizard / run-job) or the
@@ -145,7 +158,11 @@ func runResolvedVerb(base string, args []string) (code int, handled bool) {
 		fs.String("job", "", "run this saved job headlessly (no dialogs); what the installed schedule uses")
 		_ = fs.Parse(args)
 		return 2, true
+	case r.verb == "start":
+		useAppLoop(appLoopFor(runtime.GOOS, "start", invokedPath()))
+		return runGUILaunch(launchStart, r.args)
 	case r.verb == "desktop":
+		useAppLoop(appLoopFor(runtime.GOOS, "desktop", invokedPath()))
 		if err := launchDesktop(r.args); err != nil {
 			// `desktop -h`: the flagset printed its own usage; help is not an error
 			// (MA-613, X1 — exit 0, not a spurious 1 with a "help requested" line).
@@ -179,6 +196,37 @@ func runResolvedVerb(base string, args []string) (code int, handled bool) {
 	default:
 		return 0, false
 	}
+}
+
+// runGUILaunch runs a desktop-like launch (start) and maps its outcome to an exit
+// code as the desktop verb's is: help is 0, a refusal already shown is not printed
+// again (§4.1 rule 4, MA-636), any other error is printed once.
+func runGUILaunch(launch func([]string) error, args []string) (int, bool) {
+	if err := launch(args); err != nil {
+		if errors.Is(err, flag.ErrHelp) {
+			return 0, true
+		}
+		if !desktop.RefusalShown(err) {
+			fmt.Fprintln(os.Stderr, "mailarchive: "+err.Error())
+		}
+		return 1, true
+	}
+	return 0, true
+}
+
+// appLoopFor says whether the instance a launch may become runs the platform's event
+// loop (design-menubar §7.2, §8, MB-2). macOS: only a launch from the .app bundle, the
+// process Launch Services routes the app's later clicks to (a launch typed in Terminal
+// is not one, and its instance is reached by the hand-off). Windows: every instance,
+// for the end of the session. Pure.
+func appLoopFor(goos, verb, invoked string) bool {
+	switch goos {
+	case "darwin":
+		return verb == "start" && strings.Contains(invoked, "/Contents/MacOS/")
+	case "windows":
+		return verb == "start" || verb == "desktop"
+	}
+	return false
 }
 
 // isHelpRequest reports whether a GUI verb's arguments ask for help. The wizard
