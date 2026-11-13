@@ -77,7 +77,7 @@ MailArchive is one program with verbs; there is no separate GUI download.
 | Linux arm64 | `mailarchive-linux-arm64` | the same verbs (compiled, not lab-run) |
 | Linux app menu (optional) | `mailarchive-linux-desktop-entry.tar.gz` | adds **MailArchive Desktop**, with its icon, to your app menu: unpack it and follow its `READ ME.txt` |
 
-### Changed in the next release
+### Changed in 1.7.1 — an archive in a cloud-synced folder says "Keep it local"
 - **An archive in a cloud-synced folder now shows a "Keep it local" warning.** A backup writes thousands of small files in a few minutes, and sync apps (OneDrive, Dropbox, Google Drive, iCloud Drive, Nextcloud and others) can lose some of them while they catch up, without any error. So **Status & health** and `mailarchive status` now mark an archive in such a folder as a warning (it was an information line since 1.6.0), name the sync app when MailArchive knows it, and recommend moving the archive to a folder on this computer that the app does not sync, backed up separately if you want a copy elsewhere. Scheduling a backup into a synced folder says the same in two sentences; it never stops you.
 
 ### New in 1.7.0 — MailArchive tells you whether Thunderbird has downloaded all of your mail
