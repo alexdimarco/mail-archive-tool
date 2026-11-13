@@ -183,6 +183,10 @@ func StripBidi(s string) string {
 	}, s)
 }
 
+// UnknownCloudService is the service UnderCloudSync returns for a
+// Library/CloudStorage folder whose provider it cannot name.
+const UnknownCloudService = "a cloud storage service"
+
 // UnderCloudSync reports whether absPath sits inside a consumer cloud-sync
 // folder that re-uploads on every change (P3). It recognises OneDrive by the
 // OneDrive* environment variables the client sets to its sync roots, and every
@@ -214,7 +218,7 @@ func UnderCloudSync(absPath string) (service string, ok bool) {
 						return svc, true
 					}
 				}
-				return "a cloud storage service", true
+				return UnknownCloudService, true
 			}
 		}
 		if svc := cloudSyncService(seg); svc != "" {

@@ -1272,6 +1272,16 @@ Flags:
 	}
 }
 
+// keepLocalNote is the "Keep it local" recommendation printed when a backup is
+// scheduled into a cloud-synced folder (MA-1083, owner's ruling of 2026-11-13);
+// "" for any other folder. It never blocks the schedule.
+func keepLocalNote(out string) string {
+	if svc, ok := util.UnderCloudSync(out); ok {
+		return health.KeepItLocalShort(svc)
+	}
+	return ""
+}
+
 // runSchedule prints (default) or installs/removes a recurring-backup entry for
 // the host OS's scheduler. Two forms: the flat form (`schedule -out DIR -auto
 // …` — the export job's flags on the schedule command) and the job form
@@ -1506,8 +1516,8 @@ func runSchedule(args []string) error {
 		if jobUsesOutlook(spec.Args) {
 			fmt.Println(outlookReminderText)
 		}
-		if svc, ok := util.UnderCloudSync(j.out); ok {
-			fmt.Printf("Note: %s is inside %s's synced folder — a local, non-synced folder avoids re-uploads and sync conflicts.\n", j.out, svc)
+		if note := keepLocalNote(j.out); note != "" {
+			fmt.Println(note)
 		}
 		return nil
 	}
