@@ -645,14 +645,40 @@ func assessContents(r *Report, in Input, now time.Time) {
 	}
 }
 
+// keepLocalNames gives the two phrases the "Keep it local" words name the sync app
+// by: where the archive is, and who does not sync the folder to move it to. When
+// util.UnderCloudSync could not name the app (an unknown Library/CloudStorage
+// provider) the words stay generic, never blank or wrong (owner, 2026-11-13).
+func keepLocalNames(svc string) (where, who string) {
+	if svc == "" || svc == util.UnknownCloudService {
+		return "a folder a cloud sync app keeps in step with an online copy", "the sync app"
+	}
+	return svc + "'s synced folder", svc
+}
+
+// KeepItLocalText is the status line for an archive inside svc's synced folder
+// (MA-1083, owner's ruling of 2026-11-13).
+func KeepItLocalText(svc string) string {
+	where, who := keepLocalNames(svc)
+	return fmt.Sprintf("Keep it local: this archive is in %s. A backup writes thousands of small files in a few minutes, and sync apps can lose some of them while they catch up — files go missing from the archive without any error. Move the archive to a folder on this computer that %s does not sync (Settings → Archive location, or mailarchive with a local -out). If you want a copy off this computer, back up that local folder separately.", where, who)
+}
+
+// KeepItLocalShort is the same reason in two sentences, for the moment a folder is
+// chosen (the schedule install's note). It recommends and never blocks.
+func KeepItLocalShort(svc string) string {
+	where, who := keepLocalNames(svc)
+	return fmt.Sprintf("Keep it local: this archive is in %s, and sync apps can lose some of the thousands of small files a backup writes in a few minutes, without any error. A folder on this computer that %s does not sync is safer; back that folder up separately if you want a copy off this computer.", where, who)
+}
+
 // assessKeyless judges what every archive is judged by, encrypted ones too: the
 // location, the last run, verify, the schedule and the program.
 func assessKeyless(r *Report, in Input, now time.Time) {
-	// The archive's own location. A cloud-sync folder re-uploads every change
-	// and can conflict with the sync (P3). The person chose the folder, so it is
-	// said as information, not a warning (MA-1083, owner's ruling of 2026-11-05).
+	// The archive's own location (P3). A backup writes thousands of small files in
+	// minutes and a sync app can lose some while it catches up, so a synced folder
+	// is a WARN titled "Keep it local" (MA-1083 as amended by the owner's ruling of
+	// 2026-11-13, which superseded the 2026-11-05 information line).
 	if in.OutUnderSync != "" {
-		r.note("cloud_sync", fmt.Sprintf("Location: the archive is in %s's synced folder, so %s uploads each backup's changes again. That is fine; a local, non-synced folder makes backups faster and avoids sync conflicts. If %s ever reports a conflict on the archive's files, run mailarchive verify on it.", in.OutUnderSync, in.OutUnderSync, in.OutUnderSync))
+		r.warn("cloud_sync", KeepItLocalText(in.OutUnderSync))
 	}
 
 	// The desktop's former address: never silent when another program holds it, or
