@@ -53,6 +53,50 @@ The program's own version stamp read `v1.5.6+dirty` (a dev build), the bundle's 
    (the app's program) and amd64 under Rosetta (`GOARCH=amd64 go build`): both
    "exported=1 … indexed=1".
 
+## Second run: the finishing pass on b0a9fbe (2026-11-13, evening)
+
+Run by the finishing agent on the same Mac, against `b0a9fbe` as pushed (no rebuild with
+log lines). `packaging/macos/build-app.sh 1.8.0`, unzipped under the worktree's
+`.claude/s1lab2/`, renamed `Mail Archive S1Lab2.app`, bundle id
+`com.dimarcotech.mailarchive.s1lab2`. Its `CFBundleShortVersionString` was set to `1.5.6`
+to match the program's own stamp (`v1.5.6+dirty`: Go stamps a worktree build from the
+parent repo's `.git`, so a lab build reads as main's version; a release build has the two
+equal), so the choice showed without MB-14's newer line. Own `HOME` and `PATH` through
+`open --env`. A lab-only `osascript` stand-in first on that `PATH` (never committed)
+wrote the browser opener's `open location` link to a lab file instead of opening any
+browser, passed every dialog to the real `/usr/bin/osascript`, and, only when a one-shot
+lab file said so, answered the choice list with "Open MailArchive Desktop" (the person's
+click, at the dialog seam). Links were redeemed over loopback with `curl` and a cookie jar.
+
+1. **First `open`:** exit 0; one `mailarchive` process; stderr "the macOS event loop
+   runs". The first choice listed the two items with Run the wizard the default (the lab
+   has no archive, §6.1). Answered Desktop: the instance's own `/_open?t=` link came to
+   the opener, and with that link's cookie the dashboard served (200, 63,866 bytes).
+   Instance file: `acts=[open choose wizard] icon=not-yet`.
+2. **`open` again while it runs:** `open` exit 0 with no output (no error −600); still
+   one `mailarchive` process (pid 56875); stderr "macOS opened the app again; showing the
+   choice"; the real `osascript` choice ran as its child, and `lsappinfo front` named
+   "Mail Archive S1Lab2", pid 56875, as the front app. Dismissed by ending that
+   `osascript` once (SIGTERM, read as no pick): the instance kept running, no process
+   left stuck.
+3. **`open` a third time, the choice answered "Open MailArchive Desktop":** a new
+   one-time link to the same running copy (same port); redeemed with a fresh cookie jar,
+   the dashboard served (200, 63,866 bytes); the same page with no cookie: 401. Still
+   one process.
+4. **Quit with no work running:** macOS's own quit request
+   (`tell application id "com.dimarcotech.mailarchive.s1lab2" to quit`, the
+   `applicationShouldTerminate:` path): `osascript` exit 0 at once, no question asked
+   (nothing ran), the process gone, its instance file removed, only `desktop.lock` left.
+5. **Screenshot: not taken.** `screencapture` again failed ("could not create image from
+   display"); the choice is drawn by `osascript`, so the app has no render of its own.
+
+Beside the lab, a second prove-fail sweep (9 mutations of S1 pieces the first sweep did
+not touch; 9 of 9 red) found one unchecked line: nothing tested that a launch is told
+"MailArchive is already open, and its window is on your screen…"; TestMA1427 now does.
+
+Not shown by this run: a person's own click on the list (the pick came through the dialog
+seam), Quit while work runs (the Quit question), the product's own bundle id.
+
 ## Not done here (still owed for MA-1436)
 - The product's own bundle id (only a copy with another id was safe to run beside the
   owner's app), a real person's click on the app, and a screenshot (needs Screen Recording

@@ -28,8 +28,10 @@ type frontSeams struct {
 	pick      string        // what the choice answers
 	quit      bool          // what the Quit question answers
 	hold      chan struct{} // when set, the wizard runs until it is closed
-	opened    []func() error
-	canShow   bool
+	// choiceHold, when set, keeps the choice on the screen until it is closed.
+	choiceHold chan struct{}
+	opened     []func() error
+	canShow    bool
 }
 
 func installFrontSeams(t *testing.T) *frontSeams {
@@ -42,8 +44,11 @@ func installFrontSeams(t *testing.T) *frontSeams {
 	chooseDialog = func(v choiceView) (string, error) {
 		s.mu.Lock()
 		s.views = append(s.views, v)
-		p := s.pick
+		p, h := s.pick, s.choiceHold
 		s.mu.Unlock()
+		if h != nil {
+			<-h
+		}
 		return p, nil
 	}
 	infoDialog = func(text string) { s.mu.Lock(); s.infos = append(s.infos, text); s.mu.Unlock() }
@@ -402,10 +407,35 @@ func TestMA1427_TheLaunchIsToldInItsOwnSession(t *testing.T) {
 		t.Errorf("the can't-show launch was told %q", n)
 	}
 
-	// A choice already on the screen.
+	// A choice already on the screen: a launch is told so in its own session, and no
+	// second choice shows.
+	held := make(chan struct{})
 	s.mu.Lock()
 	s.canShow = true
+	s.choiceHold = held
+	shownBefore := len(s.views)
 	s.mu.Unlock()
+	time.Sleep(1100 * time.Millisecond)
+	if _, err := g.secondStart(nil); err != nil {
+		t.Fatal(err)
+	}
+	waitUntil(t, "the held choice", func() bool { v, _, _, _ := s.snap(); return len(v) == shownBefore+1 })
+	time.Sleep(1100 * time.Millisecond)
+	rec, err = g.secondStart(nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if n := rec.noticeList(); len(n) != 1 || n[0] != choiceOpenText {
+		t.Errorf("a launch while the choice is on the screen was told %q, want %q", n, choiceOpenText)
+	}
+	if v, _, _, _ := s.snap(); len(v) != shownBefore+1 {
+		t.Errorf("a launch while the choice is on the screen showed a second choice")
+	}
+	s.mu.Lock()
+	s.choiceHold = nil
+	s.mu.Unlock()
+	close(held)
+
 	f := &front{life: NewLifecycle(context.Background()), dir: g.dir}
 	f.mu.Lock()
 	f.choosing = true
