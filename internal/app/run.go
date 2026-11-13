@@ -29,6 +29,7 @@ import (
 	"mail-archive-tool/internal/source"
 	"mail-archive-tool/internal/state"
 	"mail-archive-tool/internal/tbcomplete"
+	"mail-archive-tool/internal/thunderbird"
 	"mail-archive-tool/internal/util"
 	"mail-archive-tool/internal/vault"
 )
@@ -160,6 +161,21 @@ type Options struct {
 	// sweeps, the index open and the sealed catch-up — the moment mail reading starts
 	// (design-presync-attended §3.2, C-76). The run checks for a cancel right after it.
 	OnReadStart func()
+
+	// The Gmail switch (Q-B, docs/design-gmail-dedup.md §7.4 fold c; gmailswitch.go).
+	// GmailYes is the person's yes given on this computer before this run (the Desktop
+	// card's, kept in the job file until a backup applies it): the run switches on the
+	// Gmail stores it reads. GmailNotNow is their Not now kept on this computer: nothing is
+	// asked. AskGmail, set only when a person is there to answer (a terminal on both stdin
+	// and stdout), asks the question once, at the first Gmail store of an existing archive
+	// that is off, before that store is read; it returns true for Yes. A scheduled run sets
+	// none of them, so it never asks and never switches an existing archive.
+	// GmailYesStores is the yes for the named store tokens only (the card's yes, given for the
+	// stores its archive's last backup found off).
+	GmailYes       bool
+	GmailYesStores []string
+	GmailNotNow    bool
+	AskGmail       func(question string) bool
 }
 
 // PresyncOutcome is the Thunderbird sync's outcome for the run's caller, in memory
@@ -328,6 +344,12 @@ type Result struct {
 	// email's flag can be set in it. A scheduled run's alert layer sends them
 	// (backupalert.ReportTBBehind), then MarkTBNoticesSent sets the flags. In memory only.
 	TBNotices []state.TBNotice
+
+	// Gmail is what the run did about the Gmail switch (Q-B, gmailswitch.go): which Gmail
+	// stores it switched on, and whether an existing archive still holds one that is off, so
+	// the Desktop's card or the terminal can ask the person. In memory; a plaintext run's
+	// last-run record keeps only that the question is waiting (GmailQuestion).
+	Gmail GmailOutcome
 }
 
 // finish fills the manifest-derived fields of a Result and regenerates the
@@ -905,6 +927,15 @@ func Run(ctx context.Context, opts Options, logger *log.Logger, onProgress Progr
 			if addErr := indexExported(idx, si, sealed, logger, store, folderPath, m, relPath, key); addErr != nil {
 				indexErrors++
 				warns.add(addErr)
+				return
+			}
+			// A Gmail record's other folders, as its manifest record holds them (§8.2).
+			if rec, ok := manifest.Get(key); ok && len(rec.Folders) > 0 {
+				if mErr := indexMembers(idx, store, key, rec); mErr != nil {
+					markSealedIndexBehind(sealed)
+					indexErrors++
+					warns.add(mErr)
+				}
 			}
 		}
 	}
@@ -932,6 +963,7 @@ func Run(ctx context.Context, opts Options, logger *log.Logger, onProgress Progr
 	// fault counts as processed for the checkpoint gate below, so a stretch of
 	// nothing but faults still saves and still re-checks the lock (FC12).
 	lr := &localRun{exp: exp, out: opts.Out, snapDir: snapDir, runAt: runAt, logger: logger, lock: lock}
+	lr.gmail = newGmailRun(manifest, opts, logger)
 	for _, p := range opts.OutlookExported {
 		if lr.outlookFresh == nil {
 			lr.outlookFresh = map[string]bool{}
@@ -1042,6 +1074,10 @@ func Run(ctx context.Context, opts Options, logger *log.Logger, onProgress Progr
 	// read after the walk, once per profile (TC-21). It reads; it writes nothing here.
 	if fatal == nil {
 		tbResults = assessThunderbird(lr.tb, time.Now())
+	}
+	result.Gmail = lr.gmail.outcome()
+	if opts.Key == nil && exp.Units == nil {
+		result.Gmail.Counts = state.GmailCountsOf(manifest)
 	}
 
 	// Browsable folder index pages, built from the finished index. Regenerate
@@ -1432,6 +1468,11 @@ func recordRun(opts Options, lr state.LastRun, result *Result, err *error, logge
 			lr.Thunderbird = tbRecords(result.Thunderbird, result.tbPrev, lr.Finished)
 			lr.ThunderbirdMore = tbRecordsMore(result.Thunderbird)
 		}
+		// The Gmail question waits for the person (Q-B): plaintext only, never beside an
+		// encrypted archive (O1).
+		if !lr.Encrypted && opts.Key == nil && result.Gmail.Waiting() {
+			lr.GmailOff = result.Gmail.Off
+		}
 		if lr.Encrypted && result.IndexBehind {
 			// The backup finished, but its search index misses messages until a later
 			// run catches it up: recorded by kind, so status warns (owner ruling
@@ -1765,6 +1806,10 @@ func runFile(ctx context.Context, lr *localRun, path string, copyFirst, followLi
 		case source.IsMboxReader(reader):
 			tb = planTB(path)
 			opts.Counts = tb.counts
+			// A Gmail store: the switch is decided before any of its mail is read (Q-B).
+			if tb.facts.Gmail == thunderbird.GmailYes {
+				lr.gmail.store(exp.Manifest, token)
+			}
 		default:
 			tb = planTBOther(path)
 		}

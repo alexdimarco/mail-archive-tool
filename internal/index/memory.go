@@ -77,7 +77,7 @@ func begin(db *sql.DB) (*Index, error) {
 		db.Close()
 		return nil, fmt.Errorf("the sealed search index was %w (format version %d; this build understands %d): upgrade this copy of mailarchive", ErrNewerFormat, version, indexReadMax)
 	}
-	return &Index{db: db, version: version, memory: true}, nil
+	return &Index{db: db, version: version, memory: true, members: tableExists(db, membersTable)}, nil
 }
 
 // openOne opens dsn on one connection, never recycled: each new :memory: connection

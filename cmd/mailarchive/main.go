@@ -418,6 +418,10 @@ func runExport(args []string) error {
 		}
 	}
 
+	// The Gmail question (Q-B): asked only of a person at this terminal, never in a
+	// scheduled run, and not after a Not now this computer keeps for the archive.
+	setGmailQuestion(&opts, *o.unattended)
+
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
 
@@ -499,6 +503,7 @@ func exportOptions(o *exportOpts, inputs []string, mode export.Mode, since time.
 		KeepRaw:     *o.keepRaw,
 		Unattended:  *o.unattended,
 		OwnFiles:    cliOwnFiles(*o.log, *o.outlook, *o.out),
+		GmailYes:    o.gmailFolders != nil && *o.gmailFolders,
 	}
 }
 
@@ -2413,6 +2418,10 @@ func printSummaryFor(logger *log.Logger, r app.Result, indexed, keepRaw bool, ou
 		msg += fmt.Sprintf(" INDEX-ERRORS=%d", r.IndexErrors)
 	}
 	logger.Printf("%s", msg)
+	// A plaintext archive's Gmail counts (docs/design-gmail-dedup.md §8.1): counts only.
+	if l := r.Gmail.Counts.Line(); l != "" {
+		logger.Printf("%s", l)
+	}
 	// Exports that were not new messages: a key exported again replaces its
 	// earlier copy, so exported exceeds the growth in manifest and indexed.
 	// A fill is its own explanation ("filled="); anything beyond it gets one

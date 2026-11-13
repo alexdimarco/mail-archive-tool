@@ -3393,6 +3393,40 @@ rule is shared with the completeness design; whichever lands first owns it and t
 >   known baseline names. Every B2 test passes on the VM run alone (index's package panics in a
 >   temp-folder cleanup on main too, before reaching it).
 
+> **Folded 2026-11-13 [B3 built] (the builder's record, not a design change): what slice B3
+> built, and the builder's calls for the friction review.** Rows: MA-1243, MA-1222, MA-1224 and
+> S78 registered; MA-1236 amended with the surfaces.
+>
+> - **Index.** `doc_folders(key, store, folder)` is made with its first row, and that row's
+>   transaction stamps 4 (`SetMembers`); with no row the table never exists. Every row delete
+>   (`Add`'s replace, `DeleteByID`, `DeleteByKey`, `Rekey`'s drop) takes the key's rows in its
+>   transaction; `Rekey` and `RepairKeys` move them. Members come from the manifest only
+>   (`app.indexMembers`: the rebuild, the encrypted catch-up, the unencrypted copy's index, the
+>   backup's index write). The folder lister refuses a `doc_folders` that is a view or lacks a
+>   column.
+> - **The search reader's "In:" line** is the result's folder pill ("In: All Mail, INBOX, Sent
+>   Mail"); `serve` has no separate message view, so no other "In:" line exists to change.
+> - **Static pages.** A member row says "(saved in All Mail)" beside its link (the builder's words).
+>   A member whose email lives in the store's top folder says "saved in the account's top folder".
+> - **The card's yes is kept on this computer and applied by the archive's next backup** (job file
+>   `gmail_yes`, the stores named), not saved into the archive at once as (c) says. Reason: the run
+>   is the only writer of the manifest, plaintext and sealed alike, and an encrypted archive needs
+>   its key to be saved; the person sees no difference until that backup anyway. The terminal's yes
+>   is applied in that very run. *(The builder's call, flagged for the lead.)*
+> - **No `mailarchive gmail-folders` verb.** The scripted yes is the backup's `-gmail-folders` flag
+>   (the friction review checks the name, as (c) asks).
+> - **Not built, each flagged:** Settings' copy of the question; the card's question for an
+>   encrypted archive (its last-run record must not say it holds a Gmail account, O1; the terminal
+>   asks it, with the encrypted sentence); a Not now typed at a terminal is not remembered when the
+>   archive has no Desktop job file (the terminal says it asks again); `mailarchive-gui`'s own runs
+>   do not ask; GD-18b's "This folder: All Mail" on the frozen message page; GD-21 (c) and the
+>   Desktop workspace's tree with members (the copy export, slice B4: until then its folder list
+>   already shows members, through the lister, and a copy writes such an email under its home
+>   folder).
+> - **What a run with a Gmail store now does that 1.7.1 did not:** a NEW archive of a Gmail store
+>   is version 7 from its first run (§7.4 (c)), so 1.7.x then refuses it. Nothing merges yet
+>   (slice D1).
+
 ## 14. Owner questions, each with a recommendation
 
 - **Q1 — Keep `Mail-archive-dimarcotech` or start a new Gmail archive?** Recommended: keep it and use the

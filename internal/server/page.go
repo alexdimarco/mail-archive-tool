@@ -89,6 +89,9 @@ function fileURL(p){return 'files/'+p.split('/').map(encodeURIComponent).join('/
 function zipURL(p){return fileURL(p.replace(/\.html$/,'-attachments.zip'));}
 function fmtDate(s){if(!s)return '';const d=new Date(s);return isNaN(d)?'':d.toISOString().slice(0,10);}
 function esc(s){return (s||'').replace(/[&<>]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;'}[c]));}
+// inFolders names every folder a result is in: its own folder alone, or, for a Gmail email also
+// in other folders, "In: " its own folder first, then the others (docs/design-gmail-dedup.md §8.3).
+function inFolders(m){return (m.also&&m.also.length)?'In: '+[m.folder].concat(m.also).map(esc).join(', '):esc(m.folder);}
 
 // busy shows that Prev or Next is working (MA-872): the button is disabled and marked
 // aria-busy, its label becomes the working label and the results line says what is loading.
@@ -120,7 +123,7 @@ function render(d){
       '<div class="subj"><a href="'+fileURL(m.path)+'" target="_blank" rel="noopener">'+(esc(m.subject)||'(no subject)')+'</a></div>'+
       '<div class="line"><span>'+(esc(m.senderName)||esc(m.senderEmail)||'')+'</span>'+
         '<span>'+fmtDate(m.date)+'</span>'+
-        '<span class="pill">'+esc(m.folder)+'</span>'+
+        '<span class="pill">'+inFolders(m)+'</span>'+
         (m.hasAttach?'<a class="pill" href="'+zipURL(m.path)+'">📎 zip</a>':'')+'</div>'+
       (m.snippet?'<div class="snip">'+m.snippet+'</div>':'');
     box.appendChild(el);

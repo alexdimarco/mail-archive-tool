@@ -410,6 +410,15 @@ func Rebuild(out string, logger *log.Logger) (RebuildReport, error) {
 			rep.Pruned++
 			continue
 		}
+		// Its other Gmail folders come from the manifest's memberships, and from nothing
+		// else (docs/design-gmail-dedup.md §8.2, Q-L4). A failure leaves the email in its
+		// home folder only; the next backup's index write sets them again.
+		if mErr := indexMembers(idx, store, key, rec); mErr != nil {
+			if lostCause == nil && idx.Lost() > lostBefore {
+				lostCause = mErr
+			}
+			logger.Printf("rebuild: could not index the other folders of %s: %v", rec.Path, mErr)
+		}
 		rep.Rebuilt++
 		if fromEML {
 			rep.FromEML++

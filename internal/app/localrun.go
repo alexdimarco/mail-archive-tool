@@ -142,6 +142,9 @@ type localRun struct {
 	// tb are the local stores whose walk ended, as the Thunderbird completeness check sees
 	// them (tbcompleteness.go), told once every source has been walked.
 	tb []*tbStore
+
+	// gmail is the Gmail switch's state for this run (gmailswitch.go).
+	gmail gmailRun
 }
 
 // restoreSkipLogPath is where restores.log is (tbrestore.LogPath, MailArchive's default

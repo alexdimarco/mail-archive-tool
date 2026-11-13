@@ -197,6 +197,22 @@ func guardLateIndexWrite(si *sealedIndex, store *container.Store, manifest *stat
 // test can fail it.
 var indexAdd = (*index.Index).Add
 
+// indexMembers sets, after its row was added, the Gmail member folders of the record rec (key, in
+// store) in idx: every folder it is in other than its home (docs/design-gmail-dedup.md §8.2). The
+// index takes them from the manifest only, never from a folder page (Q-L4). A record with none
+// writes nothing (Add's replace already removed any earlier member rows), so an archive nobody
+// switched on never gets the table.
+func indexMembers(idx *index.Index, store, key string, rec state.Record) error {
+	if len(rec.Folders) == 0 {
+		return nil
+	}
+	folders := make([]string, 0, len(rec.Folders))
+	for _, f := range rec.Folders {
+		folders = append(folders, f.Folder)
+	}
+	return idx.SetMembers(key, store, folders)
+}
+
 // markSealedIndexBehind marks a sealed index behind when a message the run exported
 // could not be added to it: only a catch-up adds it later, and only an index marked
 // behind is caught up (P2b-C16). A plaintext archive (sealed nil) counts the failure
@@ -262,6 +278,11 @@ func catchUpIndex(ctx context.Context, idx *index.Index, manifest *state.Manifes
 		}
 		if err := indexAdd(idx, segs[0], append([]string{}, segs[1:len(segs)-1]...), m, rec.Path, key); err != nil {
 			logger.Printf("index catch-up: a message could not be indexed: %v", err)
+			rep.Failed++
+			continue
+		}
+		if err := indexMembers(idx, segs[0], key, rec); err != nil {
+			logger.Printf("index catch-up: a message's other Gmail folders could not be indexed: %v", err)
 			rep.Failed++
 			continue
 		}

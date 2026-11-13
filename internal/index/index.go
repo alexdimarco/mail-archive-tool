@@ -100,6 +100,10 @@ type Index struct {
 	loaded  bool
 	base    int64    // total_changes() right after the load: Changes counts from here
 	scratch *os.File // the scratch file an index above the memory budget is worked on in, open to read
+
+	// members: the doc_folders table exists (members.go). It is made only with its first
+	// row, so an index nobody switched on never holds it.
+	members bool
 }
 
 // Open opens (creating if needed) a writable index at path and begins a batch.
@@ -194,7 +198,7 @@ func openRW(path, extra string) (*Index, error) {
 	}
 	// Transactions are opened lazily on the first Add so that read methods are
 	// never blocked waiting for the single connection an open write tx holds.
-	return &Index{db: db, version: version}, nil
+	return &Index{db: db, version: version, members: tableExists(db, membersTable)}, nil
 }
 
 // tableExists reports whether a table of the given name is present.
@@ -264,7 +268,7 @@ func OpenReadonly(path string) (*Index, error) {
 	if err != nil {
 		return nil, &UnreadableError{Path: path, Cause: err}
 	}
-	return &Index{db: db}, nil
+	return &Index{db: db, members: tableExists(db, membersTable)}, nil
 }
 
 // UnreadableError is OpenReadonly's refusal of a search.db that is present but
@@ -466,8 +470,10 @@ func (ix *Index) Add(store string, folderPath []string, m *model.Message, relPat
 	if _, err := ix.tx.Exec(`SAVEPOINT add_row`); err != nil {
 		return ix.abandonBatch(err)
 	}
-	// Replace any existing row with the same key (full-mode re-export).
-	if err := deleteByKeyTx(ix.tx, key); err != nil {
+	// Replace any existing row with the same key (full-mode re-export), its
+	// doc_folders rows with it: the caller that knows the record's members sets them
+	// again (SetMembers).
+	if err := deleteByKeyTx(ix.tx, key, ix.members); err != nil {
 		return ix.rollbackRow(err)
 	}
 
@@ -525,6 +531,7 @@ func (ix *Index) abandonBatch(cause error) error {
 	}
 	_ = ix.tx.Rollback()
 	ix.tx = nil
+	ix.resyncMembers()
 	lost := ix.pending
 	ix.pending = 0
 	if lost == 0 {
@@ -554,6 +561,9 @@ func (ix *Index) commitBatch(reported int) error {
 	}
 	ix.tx = nil
 	ix.pending = 0
+	if err != nil {
+		ix.resyncMembers()
+	}
 	return err
 }
 
@@ -617,12 +627,16 @@ func boolToInt(b bool) int {
 // deleteByKeyTx removes any existing document (and its FTS row) with the given
 // key inside tx. It is the "replace" step of Add, shared with DeleteByKey so the
 // two-table delete lives in exactly one place.
-func deleteByKeyTx(tx *sql.Tx, key string) error {
+func deleteByKeyTx(tx *sql.Tx, key string, members bool) error {
 	var id int64
 	switch err := tx.QueryRow(`SELECT id FROM docs WHERE key=?`, key).Scan(&id); {
 	case err == nil:
-		return deleteByIDTx(tx, id)
+		return deleteByIDTx(tx, id, members)
 	case errors.Is(err, sql.ErrNoRows):
+		if members { // a member row whose docs row is gone is removed too
+			_, err := tx.Exec(`DELETE FROM doc_folders WHERE key=?`, key)
+			return err
+		}
 		return nil
 	default:
 		return err
@@ -630,8 +644,15 @@ func deleteByKeyTx(tx *sql.Tx, key string) error {
 }
 
 // deleteByIDTx removes the document with rowid id from both the metadata table
-// and the aligned FTS index inside tx.
-func deleteByIDTx(tx *sql.Tx, id int64) error {
+// and the aligned FTS index inside tx, and, when the index has a doc_folders
+// table, the key's member rows in the same transaction (docs/design-gmail-dedup.md
+// §8.2 fold: redaction, Add's replace and every other row delete).
+func deleteByIDTx(tx *sql.Tx, id int64, members bool) error {
+	if members {
+		if _, err := tx.Exec(`DELETE FROM doc_folders WHERE key IN (SELECT key FROM docs WHERE id=?)`, id); err != nil {
+			return err
+		}
+	}
 	if _, err := tx.Exec(`DELETE FROM docs WHERE id=?`, id); err != nil {
 		return err
 	}
@@ -688,7 +709,7 @@ func (ix *Index) DeleteByID(id int64) error {
 	if err != nil {
 		return err
 	}
-	if err := deleteByIDTx(tx, id); err != nil {
+	if err := deleteByIDTx(tx, id, ix.members); err != nil {
 		tx.Rollback()
 		return err
 	}
@@ -728,7 +749,7 @@ func (ix *Index) DeleteByKey(key string) error {
 	if err != nil {
 		return err
 	}
-	if err := deleteByKeyTx(tx, key); err != nil {
+	if err := deleteByKeyTx(tx, key, ix.members); err != nil {
 		tx.Rollback()
 		return err
 	}
@@ -759,7 +780,7 @@ func (ix *Index) Rekey(remap map[string]string, drop []string) error {
 		return err
 	}
 	for _, k := range drop {
-		if err := deleteByKeyTx(tx, k); err != nil {
+		if err := deleteByKeyTx(tx, k, ix.members); err != nil {
 			tx.Rollback()
 			return err
 		}
@@ -777,12 +798,16 @@ func (ix *Index) Rekey(remap map[string]string, drop []string) error {
 		var otherID int64
 		switch err := tx.QueryRow(`SELECT id FROM docs WHERE key=? AND id<>?`, nk, id).Scan(&otherID); {
 		case err == nil:
-			if err := deleteByIDTx(tx, otherID); err != nil {
+			if err := deleteByIDTx(tx, otherID, ix.members); err != nil {
 				tx.Rollback()
 				return err
 			}
 		case errors.Is(err, sql.ErrNoRows):
 		default:
+			tx.Rollback()
+			return err
+		}
+		if err := rekeyMembersTx(tx, ix.members, old, nk); err != nil {
 			tx.Rollback()
 			return err
 		}
@@ -822,8 +847,8 @@ func (ix *Index) RepairKeys(force bool, fn func(key, path string) (string, bool)
 	// Collect first: the single connection is held by the row cursor for the
 	// walk, so rows cannot be mutated until it is closed.
 	type change struct {
-		id     int64
-		newKey string
+		id             int64
+		oldKey, newKey string
 	}
 	var changes []change
 	rows, err := ix.db.Query(`SELECT id, key, path FROM docs ORDER BY id`)
@@ -840,7 +865,7 @@ func (ix *Index) RepairKeys(force bool, fn func(key, path string) (string, bool)
 			return 0, err
 		}
 		if nk, ok := fn(key, path); ok && nk != key {
-			changes = append(changes, change{id: id, newKey: nk})
+			changes = append(changes, change{id: id, oldKey: key, newKey: nk})
 		}
 	}
 	if err := rows.Err(); err != nil {
@@ -863,12 +888,16 @@ func (ix *Index) RepairKeys(force bool, fn func(key, path string) (string, bool)
 		var otherID int64
 		switch err := tx.QueryRow(`SELECT id FROM docs WHERE key=? AND id<>?`, c.newKey, c.id).Scan(&otherID); {
 		case err == nil:
-			if err := deleteByIDTx(tx, otherID); err != nil {
+			if err := deleteByIDTx(tx, otherID, ix.members); err != nil {
 				tx.Rollback()
 				return 0, err
 			}
 		case errors.Is(err, sql.ErrNoRows):
 		default:
+			tx.Rollback()
+			return 0, err
+		}
+		if err := rekeyMembersTx(tx, ix.members, c.oldKey, c.newKey); err != nil {
 			tx.Rollback()
 			return 0, err
 		}

@@ -368,6 +368,7 @@ func (d *dashboard) router() localweb.Router {
 	mux.HandleFunc("/api/settings", d.saveSettings)
 	mux.HandleFunc("/api/pause-archive", d.pauseArchive)
 	mux.HandleFunc("/api/resume-archive", d.resumeArchive)
+	mux.HandleFunc("/api/gmail-answer", d.gmailAnswer)
 	mux.HandleFunc("/api/add-archive", d.addArchive)
 	mux.HandleFunc("/api/alert-settings", d.saveAlertSettings)
 	mux.HandleFunc("/api/alert-test", d.alertTest)
@@ -2391,6 +2392,7 @@ pre{white-space:pre-wrap;overflow-wrap:anywhere;background:var(--bg);border:1px 
           {{if .KindLabel}}<span class="archive-kind">{{.KindLabel}}</span>{{end}}
           {{if .SourceLostSince}}<span class="archive-tag">This archive's source hasn't been reachable since {{.SourceLostSince}} — reconnect the source (its mailbox or mail folder){{if .RunNowOnly}}, then click {{if not .Current}}Switch to this archive and click {{end}}Run now on its Scheduled backup card: its backup runs only when you click Run now.{{else}} to resume backups.{{end}}</span>{{end}}
           {{if .TBBanner}}<span class="archive-tag">{{.TBBanner}}</span>{{end}}
+          {{if .Gmail}}<span class="archive-tag" data-gmail-question>{{.Gmail}}</span> <button class="btn secondary" type="button" data-gmail-answer="yes" data-path="{{.Path}}" title="Switch this archive's Gmail accounts on at its next backup. Every computer that backs up into it then needs MailArchive 1.8 or later.">Yes</button> <button class="btn secondary" type="button" data-gmail-answer="not-now" data-path="{{.Path}}" title="Change nothing. MailArchive will not ask again on this computer.">Not now</button>{{else if .GmailYes}}<span class="archive-tag">{{.GmailYes}}</span>{{end}}
           {{if eq .Kind "encrypted"}}<button class="btn secondary" type="button" data-forget-archive data-path="{{.Path}}" title="Stop protecting this folder as an encrypted archive on this computer — for example after you removed the archive on purpose. Nothing in the folder is changed.">Forget this encrypted archive here</button>{{end}}
           <span class="row-state">{{if .Deleting}}<span class="archive-tag">Being deleted — its result shows on this page when the delete ends.</span>{{else if .Unfinished}}{{if .UnfinishedText}}<span class="archive-tag">{{.UnfinishedText}}</span>{{else}}<span class="archive-tag">Delete not finished: click Delete again</span>{{end}}{{else if .Problem}}<span class="archive-tag">{{.Problem}}</span>{{else if not .Available}}<span class="archive-tag">Not reachable right now — reconnect the drive or folder and it comes back. Nothing was removed.</span>{{else if .Sealed}}<span class="archive-tag">Paused (read-only) — Resume it to make changes.</span> <button class="btn secondary" type="button" data-resume-archive data-path="{{.Path}}" title="Make this archive writable again so backups and changes can resume.">Resume</button>{{else}}{{if .Current}}<span class="archive-tag current">Current archive</span>{{else}}<button class="btn secondary" type="button" data-switch-archive data-path="{{.Path}}" title="Make this the current archive: the one this page shows and changes.">Switch to this archive</button>{{end}} <button class="btn secondary" type="button" data-pause-archive data-path="{{.Path}}" title="Make this archive read-only so nothing can change it. You can Resume it any time; nothing is deleted.">Pause (make read-only)</button>{{end}}</span>
           {{if not .Deleting}}<button class="btn secondary" type="button" data-unlist-archive data-path="{{.Path}}" title="{{if .UnlistWhy}}{{.UnlistWhy}}{{else}}Take this archive off this list. The folder and its files are kept; you are asked first, and told which scheduled backups would stop.{{end}}"{{if .UnlistWhy}} disabled{{end}}>Remove from list</button> <button class="btn danger" type="button" data-delete-archive data-path="{{.Path}}" title="{{if .DeleteOK}}Permanently delete this archive's files. You see what would be removed first, and type the folder's name to confirm.{{else}}{{.DeleteWhy}}{{end}}"{{if not .DeleteOK}} disabled{{end}}>Delete…</button>{{end}}
@@ -2757,6 +2759,17 @@ const archAction=(sel,path,label,text)=>document.querySelectorAll(sel).forEach(b
 }));
 archAction('[data-pause-archive]','api/pause-archive','Pausing…','Making this archive read-only…');
 archAction('[data-resume-archive]','api/resume-archive','Resuming…','Making this archive writable again…');
+// The Gmail question's Yes and Not now (Q-B): the answer is kept on this computer; the note says what follows.
+document.querySelectorAll('[data-gmail-answer]').forEach(b=>b.addEventListener('click',async()=>{
+  noteBeside(b.closest('li'));
+  const n=$('settingsNote'),done=busy(b,'Saving…',n,'Keeping your answer…');
+  let keep=false;
+  try{const r=await(await fetch('api/gmail-answer',{method:'POST',headers:{'Content-Type':'application/json','X-CSRF-Token':csrf},body:JSON.stringify({path:b.dataset.path,answer:b.dataset.gmailAnswer})})).json();
+    if(n){n.hidden=false;n.textContent=r.ok?r.note:(r.error||'Could not do that.');}
+    if(r.ok){keep=true;setTimeout(()=>reloadPage(),3000);}
+  }catch(e){if(n){n.hidden=false;n.textContent='Error: '+e;}}
+  finally{done(keep);}
+}));
 // Forget every encrypted archive on this computer (K8): only with the word typed.
 const fab=$('forgetAllBtn');
 if(fab)fab.addEventListener('click',async()=>{

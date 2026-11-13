@@ -78,6 +78,11 @@ type ArchiveRow struct {
 	// archive card row, slice C3): state.TBCardBanner over the plaintext last-run record; "" for
 	// none, for a backup that did not end ok, and always for an encrypted archive (O1).
 	TBBanner string
+	// Gmail is the Gmail question when this archive's last backup read a Gmail account that is
+	// not switched on and this computer keeps no answer for it (Q-B; gmailquestion.go); GmailYes
+	// the line that says a yes given here waits for the next backup. Plaintext archives only.
+	Gmail    string
+	GmailYes string
 }
 
 // OffersSwitch reports whether the row draws Switch to this archive: as the row template decides
@@ -197,7 +202,11 @@ func (cfg Config) archiveRows(idx archindex.Index) []ArchiveRow {
 		if err := rc.UnlistRefusal(e.Path); err != nil {
 			unlistWhy = refusalText(err)
 		}
+		plaintextOK := avail && kind != "" && kind != archindex.KindEncrypted && problem == ""
+		gq, gyes := gmailCard(e.Path, plaintextOK)
 		rows = append(rows, ArchiveRow{
+			Gmail:           gq,
+			GmailYes:        gyes,
 			UnlistWhy:       unlistWhy,
 			DeleteOK:        del.ok,
 			DeleteWhy:       del.why,
@@ -212,7 +221,7 @@ func (cfg Config) archiveRows(idx archindex.Index) []ArchiveRow {
 			SourceLostSince: lostSince,
 			RunNowOnly:      lostSince != "" && runNowOnlyRecorded(e.Path),
 			Problem:         problem,
-			TBBanner:        tbBanner(e.Path, avail && kind != "" && kind != archindex.KindEncrypted && problem == ""),
+			TBBanner:        tbBanner(e.Path, plaintextOK),
 		})
 	}
 	return rows

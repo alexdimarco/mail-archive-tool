@@ -163,6 +163,15 @@ type LastRun struct {
 	// as complete.
 	ThunderbirdMore int `json:"thunderbird_more,omitempty"`
 
+	// GmailOff are the store folders (tokens) of Gmail accounts the run read in this existing
+	// archive that are not switched on to the Gmail rule (Q-B, docs/design-gmail-dedup.md §7.4
+	// fold c), so the Desktop's card asks the person, once, unless they said Not now on this
+	// computer; a yes there names these stores. A plaintext run that ended ok only; additive (an
+	// older binary ignores it), and never beside an encrypted archive (encryptedLastRun has no
+	// such field: it would say the archive holds a Gmail account). A token is the name of a folder
+	// at the archive's top, which a plaintext archive shows anyway.
+	GmailOff []string `json:"gmail_off,omitempty"`
+
 	// Program is an encrypted archive's program step outcome, one of the Program*
 	// codes (program design §4, §8). Absent when the step did not run.
 	Program string `json:"program,omitempty"`

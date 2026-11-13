@@ -454,7 +454,9 @@ func indexCopied(ctx context.Context, dest string, m *state.Manifest, idx *index
 		if msg == nil {
 			continue
 		}
-		_ = idx.Add(segs[0], append([]string{}, segs[1:len(segs)-1]...), msg, rec.Path, key)
+		if idx.Add(segs[0], append([]string{}, segs[1:len(segs)-1]...), msg, rec.Path, key) == nil {
+			_ = indexMembers(idx, segs[0], key, rec)
+		}
 	}
 	if err := idx.Flush(); err != nil {
 		return err

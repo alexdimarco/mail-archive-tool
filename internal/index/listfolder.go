@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"io/fs"
 	"os"
+	"strings"
 	"sync/atomic"
 	"time"
 	"unicode/utf8"
@@ -83,6 +84,7 @@ type ListHandle struct {
 	db      *sql.DB
 	Version int // the index's key-format version (1 when it has no meta table)
 	closed  atomic.Bool
+	members bool // the index holds Gmail member rows (doc_folders): a folder lists its members too
 }
 
 // listColumns are the docs columns a list reads.
@@ -188,7 +190,38 @@ func openListQuery(path, query string) (*ListHandle, error) {
 		db.Close()
 		return nil, &NewerIndexError{Path: path, Version: version, Understood: indexReadMax}
 	}
-	return &ListHandle{db: db, Version: version}, nil
+	// A doc_folders (slice B3's Gmail members) must be a table with this build's columns, as
+	// docs must: a view could run its own query (RR2-C11).
+	members := false
+	switch err := db.QueryRow(`SELECT type FROM sqlite_master WHERE name = ?`, membersTable).Scan(&typ); {
+	case errors.Is(err, sql.ErrNoRows):
+	case err != nil:
+		return unusable("it can't be read", err)
+	case typ != "table":
+		return unusable("its doc_folders is a "+typ+", not a table", nil)
+	default:
+		cols := map[string]bool{}
+		rows, err := db.Query(`SELECT name FROM pragma_table_info('doc_folders')`)
+		if err != nil {
+			return unusable("it can't be read", err)
+		}
+		for rows.Next() {
+			var name string
+			if err := rows.Scan(&name); err != nil {
+				rows.Close()
+				return unusable("it can't be read", err)
+			}
+			cols[name] = true
+		}
+		rows.Close()
+		for _, c := range []string{"key", "store", "folder"} {
+			if !cols[c] {
+				return unusable("its doc_folders table has no "+c+" column", nil)
+			}
+		}
+		members = true
+	}
+	return &ListHandle{db: db, Version: version, members: members}, nil
 }
 
 // NewerIndexError is a list's refusal of a search.db a newer mailarchive wrote. It is
@@ -226,9 +259,23 @@ const listSelect = `SELECT
  CASE WHEN length(CAST(sender_email AS BLOB)) > 512 THEN substr(sender_email, 1, 512) ELSE sender_email END,
  date, has_attach FROM docs WHERE store = ? AND folder = ? ORDER BY date DESC, id DESC`
 
+// listMembersWhere is the folder test of a list on an index with Gmail members: a message
+// whose home is the folder, or one that is a member of it (docs/design-gmail-dedup.md §8.2
+// fold). Each message is one row either way.
+const listMembersWhere = `store = ? AND (folder = ? OR key IN (SELECT key FROM doc_folders WHERE store = ? AND folder = ?))`
+
+// listQuery is the list's select and its arguments for folder in store.
+func (h *ListHandle) listQuery(store, folder string) (string, []any) {
+	if !h.members {
+		return listSelect, []any{store, folder}
+	}
+	return strings.Replace(listSelect, "WHERE store = ? AND folder = ?", "WHERE "+listMembersWhere, 1), []any{store, folder, store, folder}
+}
+
 // ListFolder is one page of the messages of folder in store (an exact match: a subfolder's
 // messages are not its parent's), newest first, with the folder's total. A page holds at
-// most MaxListRows rows however many are asked for.
+// most MaxListRows rows however many are asked for. A Gmail email is listed in every folder
+// it is in (its home, and each member folder).
 func (h *ListHandle) ListFolder(store, folder string, offset, limit int) ([]ListRow, int, error) {
 	if limit <= 0 || limit > MaxListRows {
 		limit = MaxListRows
@@ -236,11 +283,16 @@ func (h *ListHandle) ListFolder(store, folder string, offset, limit int) ([]List
 	if offset < 0 {
 		offset = 0
 	}
+	sel, args := h.listQuery(store, folder)
+	countQ, countArgs := `SELECT count(*) FROM docs WHERE store = ? AND folder = ?`, []any{store, folder}
+	if h.members {
+		countQ, countArgs = `SELECT count(*) FROM docs WHERE `+listMembersWhere, args
+	}
 	var total int
-	if err := h.db.QueryRow(`SELECT count(*) FROM docs WHERE store = ? AND folder = ?`, store, folder).Scan(&total); err != nil {
+	if err := h.db.QueryRow(countQ, countArgs...).Scan(&total); err != nil {
 		return nil, 0, err
 	}
-	rows, err := h.db.Query(listSelect+` LIMIT ? OFFSET ?`, store, folder, limit, offset)
+	rows, err := h.db.Query(sel+` LIMIT ? OFFSET ?`, append(args, limit, offset)...)
 	if err != nil {
 		return nil, 0, err
 	}
@@ -260,7 +312,8 @@ func (h *ListHandle) ListFolder(store, folder string, offset, limit int) ([]List
 // a preview of a whole folder needs, without holding a page of rows. A non-nil error from
 // fn stops it.
 func (h *ListHandle) EachInFolder(store, folder string, fn func(ListRow) error) error {
-	rows, err := h.db.Query(listSelect, store, folder)
+	sel, args := h.listQuery(store, folder)
+	rows, err := h.db.Query(sel, args...)
 	if err != nil {
 		return err
 	}

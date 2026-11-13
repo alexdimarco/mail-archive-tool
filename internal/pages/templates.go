@@ -56,7 +56,7 @@ const folderTmpl = `<!DOCTYPE html>
 {{range .Rows}}<tr>
   <td class="date">{{.DateStr}}</td>
   <td class="from">{{.From}}</td>
-  <td><a href="{{urlpath .File}}">{{if .Subject}}{{.Subject}}{{else}}(no subject){{end}}</a></td>
+  <td><a href="{{urlpath .File}}">{{if .Subject}}{{.Subject}}{{else}}(no subject){{end}}</a>{{if .Home}} <span class="muted">(saved in {{.Home}})</span>{{end}}</td>
   <td>{{if .HasAttach}}<a href="{{urlpath .ZipFile}}" title="attachments">📎</a>{{end}}</td>
 </tr>{{end}}
 </tbody></table>

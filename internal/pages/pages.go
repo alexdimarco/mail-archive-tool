@@ -11,6 +11,7 @@ import (
 	"os"
 	"path"
 	"path/filepath"
+	"runtime"
 	"sort"
 	"strings"
 	"time"
@@ -31,6 +32,11 @@ type row struct {
 	From      string
 	Date      time.Time
 	HasAttach bool
+	// Home is the folder a Gmail email lives in when this row lists it in another folder it is
+	// in (docs/design-gmail-dedup.md §8.4); File and ZipFile then lead there. "" for a row in its
+	// own folder.
+	Home string
+	name string // the file's own name: rows of a folder are listed by it, newest first
 }
 
 type folderInfo struct {
@@ -128,9 +134,22 @@ func build(ix *index.Index, gaps int, encrypted bool, emit func(rel string, page
 	)
 	now := time.Now().UTC().Format("2006-01-02 15:04 MST")
 
+	// A Gmail email is listed on the page of every folder it is in, linking to its files in its
+	// home folder (§8.4 and its GD-21 fold).
+	members, err := memberRows(ix)
+	if err != nil {
+		return 0, err
+	}
+
 	flush := func() error {
 		if curDir == "" {
 			return nil
+		}
+		if more := members[curDir]; len(more) > 0 {
+			curRows = append(curRows, more...)
+			total += len(more)
+			sort.SliceStable(curRows, func(i, j int) bool { return curRows[i].name > curRows[j].name })
+			delete(members, curDir)
 		}
 		if err := buildFolderPages(curDir, curRows, total, now, emit); err != nil {
 			return err
@@ -141,7 +160,7 @@ func build(ix *index.Index, gaps int, encrypted bool, emit func(rel string, page
 		return nil
 	}
 
-	err := ix.EachDoc(func(d index.PageRow) error {
+	err = ix.EachDoc(func(d index.PageRow) error {
 		dir := path.Dir(d.Path)
 		if dir != curDir {
 			if err := flush(); err != nil {
@@ -158,6 +177,7 @@ func build(ix *index.Index, gaps int, encrypted bool, emit func(rel string, page
 				From:      formatFrom(d.SenderName, d.SenderEmail),
 				Date:      d.Date,
 				HasAttach: d.HasAttach,
+				name:      path.Base(d.Path),
 			})
 		}
 		return nil
@@ -167,6 +187,19 @@ func build(ix *index.Index, gaps int, encrypted bool, emit func(rel string, page
 	}
 	if err := flush(); err != nil {
 		return 0, err
+	}
+	// A folder whose every email lives elsewhere (Sent Mail, when its bodies are kept in All
+	// Mail) still gets its page.
+	rest := make([]string, 0, len(members))
+	for dir := range members {
+		rest = append(rest, dir)
+	}
+	sort.Strings(rest)
+	for _, dir := range rest {
+		curDir = dir
+		if err := flush(); err != nil {
+			return 0, err
+		}
 	}
 
 	sort.Slice(folders, func(i, j int) bool { return folders[i].Dir < folders[j].Dir })
@@ -181,6 +214,68 @@ func build(ix *index.Index, gaps int, encrypted bool, emit func(rel string, page
 		return 0, err
 	}
 	return len(folders), nil
+}
+
+// memberRows is every Gmail member row of the index, by the folder page that lists it
+// ("store/folder"). The GD-21 limits (docs/design-gmail-dedup.md §8.4 fold): a row's link is built
+// only from the email's own recorded path, and only when that path is inside the same store's
+// folder as the page; the page's folder must be a clean relative folder of that store, or the row
+// is left out (a page is never written outside the store's folder, R4). The link is relative, so
+// it works from file:// and in the encrypted reader alike, with no script.
+func memberRows(ix *index.Index) (map[string][]row, error) {
+	out := map[string][]row{}
+	err := ix.EachMember(func(m index.MemberRow) error {
+		if !cleanSegments(m.Store) || strings.Contains(m.Store, "/") || !cleanSegments(m.Folder) {
+			return nil
+		}
+		segs := strings.Split(m.Path, "/")
+		if len(segs) < 2 || segs[0] != m.Store || !cleanSegments(m.Path) || !strings.HasSuffix(m.Path, ".html") {
+			return nil
+		}
+		dir := m.Store + "/" + m.Folder
+		home := strings.Join(segs[1:len(segs)-1], "/")
+		if home == m.Folder {
+			return nil // its own folder lists it already
+		}
+		shown := home
+		if shown == "" {
+			shown = "the account's top folder"
+		}
+		up := strings.Repeat("../", strings.Count(m.Folder, "/")+1)
+		rel := up + strings.Join(segs[1:], "/")
+		out[dir] = append(out[dir], row{
+			File:      rel,
+			ZipFile:   strings.TrimSuffix(rel, ".html") + "-attachments.zip",
+			Subject:   m.Subject,
+			From:      formatFrom(m.SenderName, m.SenderEmail),
+			Date:      m.Date,
+			HasAttach: m.HasAttach,
+			Home:      shown,
+			name:      segs[len(segs)-1],
+		})
+		return nil
+	})
+	return out, err
+}
+
+// cleanSegments reports whether p is a relative slash path whose every segment is a plain name:
+// not empty, not "." or "..", with no backslash or control character, and on Windows no colon
+// (a drive or a stream name there, never a folder).
+func cleanSegments(p string) bool {
+	if p == "" {
+		return false
+	}
+	for _, s := range strings.Split(p, "/") {
+		if s == "" || s == "." || s == ".." || strings.Contains(s, `\`) || (runtime.GOOS == "windows" && strings.Contains(s, ":")) {
+			return false
+		}
+		for _, r := range s {
+			if r < 0x20 || r == 0x7f {
+				return false
+			}
+		}
+	}
+	return true
 }
 
 func formatFrom(name, email string) string {

@@ -55,6 +55,11 @@ type Job struct {
 	// and never in the archive (a field there would make it version 7, or be dropped
 	// by an older binary's save): this computer does not ask again by itself. Additive.
 	GmailNotNow bool `json:"gmail_not_now,omitempty"`
+	// GmailYes is the person's yes to the Gmail switch given on the archive's card (slice B3):
+	// the store folders (tokens) it names are switched on at this archive's next backup, which
+	// reads them. Kept on this computer until then; a store the next backup does not find Gmail
+	// is never switched. Additive.
+	GmailYes []string `json:"gmail_yes,omitempty"`
 }
 
 // ThunderbirdSync is the GUI job's Thunderbird pre-sync setting (design §4.2.5).

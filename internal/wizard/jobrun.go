@@ -372,6 +372,10 @@ func optsForJob(j job.Job, inputs []string, logger *log.Logger, hooks runHooks, 
 		// for the scheduled run and Run now alike (del-s2-A1-05).
 		OwnFiles: jobOwnFiles(j),
 	}
+	// The Gmail question's answers kept on this computer (Q-B): a yes given on the archive's
+	// card switches those stores on at this run; a Not now asks nothing. A job run never asks.
+	opts.GmailYesStores = append([]string(nil), j.GmailYes...)
+	opts.GmailNotNow = j.GmailNotNow
 	opts.PresyncWanted = j.ThunderbirdSync != nil
 	opts.PresyncAttended = mode == runAttended
 	opts.OnReadStart = hooks.rn.OnReadStart

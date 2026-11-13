@@ -78,7 +78,7 @@ func (ix *Index) ensure() error {
 		m.close()
 		return err
 	}
-	ix.db, ix.version, ix.scratch, ix.loaded = m.db, m.version, m.scratch, true
+	ix.db, ix.version, ix.scratch, ix.loaded, ix.members = m.db, m.version, m.scratch, true, m.members
 	return nil
 }
 

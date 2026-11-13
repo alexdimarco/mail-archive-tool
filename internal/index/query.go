@@ -1,6 +1,7 @@
 package index
 
 import (
+	"database/sql"
 	"fmt"
 	"html"
 	"strings"
@@ -31,7 +32,14 @@ type Result struct {
 	Path        string    `json:"path"`
 	HasAttach   bool      `json:"hasAttach"`
 	Snippet     string    `json:"snippet"` // HTML-escaped text; only the index's own <mark> tags are live
+	// Also is the other folders a Gmail email is in, sorted (docs/design-gmail-dedup.md §8.3):
+	// the reader says "In: Folder, then these". Empty for every other email.
+	Also []string `json:"also,omitempty"`
 }
+
+// memberSep joins a result's member folders in one SQL cell: a unit separator, which no
+// folder name holds (folder names are cleaned of control characters before they are stored).
+const memberSep = "\x1f"
 
 // Snippet highlight sentinels: FTS5 wraps matches in these control characters
 // (never present in mail text), the text is HTML-escaped, and only then are
@@ -65,10 +73,16 @@ func (ix *Index) Search(q Query) ([]Result, int, error) {
 	if q.Limit <= 0 {
 		q.Limit = 50
 	}
+	ix.seeMembers()
 
-	filters, args := buildFilters(q)
+	filters, args := buildFilters(q, ix.members)
 	match := ftsMatch(q.Text)
 
+	// A Gmail email's other folders ride on its one row (one email is one hit).
+	alsoCol := `''`
+	if ix.members {
+		alsoCol = `(SELECT group_concat(folder, char(31)) FROM (SELECT folder FROM doc_folders WHERE key = d.key ORDER BY folder))`
+	}
 	var (
 		fromWhere  string
 		selectCol  string
@@ -78,13 +92,13 @@ func (ix *Index) Search(q Query) ([]Result, int, error) {
 	)
 	if match != "" {
 		selectCol = `d.subject, d.sender_name, d.sender_email, d.folder, d.date, d.path, d.has_attach,
-			snippet(docs_fts, ` + fmt.Sprint(bodyColumn) + `, ?, ?, '… ', 12)`
+			snippet(docs_fts, ` + fmt.Sprint(bodyColumn) + `, ?, ?, '… ', 12), ` + alsoCol
 		selectArgs = []any{snipOpen, snipClose}
 		fromWhere = `FROM docs_fts JOIN docs d ON d.id = docs_fts.rowid WHERE docs_fts MATCH ?`
 		countExpr = `SELECT count(*) FROM docs_fts JOIN docs d ON d.id = docs_fts.rowid WHERE docs_fts MATCH ?`
 		baseArgs = append(baseArgs, match)
 	} else {
-		selectCol = `d.subject, d.sender_name, d.sender_email, d.folder, d.date, d.path, d.has_attach, d.snippet`
+		selectCol = `d.subject, d.sender_name, d.sender_email, d.folder, d.date, d.path, d.has_attach, d.snippet, ` + alsoCol
 		fromWhere = `FROM docs d WHERE 1=1`
 		countExpr = `SELECT count(*) FROM docs d WHERE 1=1`
 	}
@@ -118,9 +132,13 @@ func (ix *Index) Search(q Query) ([]Result, int, error) {
 			r         Result
 			date      int64
 			hasAttach int
+			also      sql.NullString
 		)
-		if err := rows.Scan(&r.Subject, &r.SenderName, &r.SenderEmail, &r.Folder, &date, &r.Path, &hasAttach, &r.Snippet); err != nil {
+		if err := rows.Scan(&r.Subject, &r.SenderName, &r.SenderEmail, &r.Folder, &date, &r.Path, &hasAttach, &r.Snippet, &also); err != nil {
 			return nil, 0, err
+		}
+		if also.String != "" {
+			r.Also = strings.Split(also.String, memberSep)
 		}
 		if date > 0 {
 			r.Date = time.Unix(date, 0).UTC()
@@ -133,14 +151,21 @@ func (ix *Index) Search(q Query) ([]Result, int, error) {
 }
 
 // buildFilters returns the SQL fragment and args for the structured filters,
-// referencing docs columns via the alias "d".
-func buildFilters(q Query) (string, []any) {
+// referencing docs columns via the alias "d". With members (the index holds a
+// doc_folders table), a folder filter also matches a Gmail email that is in the
+// folder without living there (docs/design-gmail-dedup.md §8.2 fold).
+func buildFilters(q Query, members bool) (string, []any) {
 	var clauses []string
 	var args []any
 
 	if f := strings.TrimSpace(q.Folder); f != "" {
-		clauses = append(clauses, "(d.folder = ? OR d.folder LIKE ?)")
-		args = append(args, f, f+"/%")
+		if members {
+			clauses = append(clauses, "(d.folder = ? OR d.folder LIKE ? OR EXISTS (SELECT 1 FROM doc_folders m WHERE m.key = d.key AND (m.folder = ? OR m.folder LIKE ?)))")
+			args = append(args, f, f+"/%", f, f+"/%")
+		} else {
+			clauses = append(clauses, "(d.folder = ? OR d.folder LIKE ?)")
+			args = append(args, f, f+"/%")
+		}
 	}
 	if s := strings.TrimSpace(q.Sender); s != "" {
 		clauses = append(clauses, "(d.sender_name LIKE ? OR d.sender_email LIKE ?)")
@@ -307,7 +332,13 @@ func (ix *Index) Folders() ([]FolderCount, error) {
 	if err := ix.commitPending(); err != nil {
 		return nil, err
 	}
-	rows, err := ix.db.Query(`SELECT folder, count(*) FROM docs GROUP BY folder ORDER BY folder`)
+	ix.seeMembers()
+	q := `SELECT folder, count(*) FROM docs GROUP BY folder ORDER BY folder`
+	if ix.members {
+		// A Gmail email counts once in each folder it is in, home or member (§8.2 fold).
+		q = `SELECT folder, count(DISTINCT key) FROM (SELECT folder, key FROM docs UNION ALL SELECT folder, key FROM doc_folders) GROUP BY folder ORDER BY folder`
+	}
+	rows, err := ix.db.Query(q)
 	if err != nil {
 		return nil, err
 	}
