@@ -45,7 +45,8 @@ func memberArchive(t *testing.T) (string, *index.Index) {
 	}
 	add("All Mail", "2026-03-01-receipt.html", "Receipt", 1, true)
 	add("INBOX", "2026-03-02-lunch.html", "Lunch", 2, false)
-	if err := ix.SetMembers("k-Receipt", "s", []string{"Sent Mail", "Labels/Work", "INBOX"}); err != nil {
+	// "All Mail" is Receipt's own home: a member row naming it adds nothing to All Mail's page.
+	if err := ix.SetMembers("k-Receipt", "s", []string{"Sent Mail", "Labels/Work", "INBOX", "All Mail"}); err != nil {
 		t.Fatal(err)
 	}
 	if err := ix.Flush(); err != nil {
@@ -83,12 +84,29 @@ func pageLinks(t *testing.T, out, rel string) []string {
 // Mail, whose every email lives in All Mail, gets its own page; a nested label links two levels
 // up; INBOX lists its own email and Receipt once each; every link resolves to a file on disk. The
 // member row adds no script and no scripted link (R19); it says where the email is saved. The
-// root page lists the member-only folder with its count. Positive twin first: INBOX's own email
-// keeps its plain same-folder link.
+// root page lists the member-only folder with its count. An email living in the store's top
+// folder is "saved in the account's top folder"; a member row naming the email's own home folder
+// adds nothing to that folder's page. Positive twin first: INBOX's own email keeps its plain
+// same-folder link.
 func TestFolderPagesListEmailsLivingElsewhere(t *testing.T) {
 	out, ix := memberArchive(t)
+	// "Memo" lives in the store's top folder and is also in "Top Label".
+	memo := &model.Message{Subject: "Memo", Received: time.Date(2026, 3, 3, 9, 0, 0, 0, time.UTC), PlainBody: "b"}
+	if err := ix.Add("s", nil, memo, "s/2026-03-03-memo.html", "k-Memo"); err != nil {
+		t.Fatal(err)
+	}
+	os.WriteFile(filepath.Join(out, "s", "2026-03-03-memo.html"), []byte("<html>Memo</html>"), 0o644)
+	ix.SetMembers("k-Memo", "s", []string{"Top Label"})
+	ix.Flush()
 	if err := Generate(out, ix, log.New(io.Discard, "", 0), 0); err != nil {
 		t.Fatal(err)
+	}
+	top, _ := os.ReadFile(filepath.Join(out, "s", "Top Label", "index.html"))
+	if !strings.Contains(string(top), "Memo</a> <span class=\"muted\">(saved in the account&#39;s top folder)</span>") {
+		t.Fatalf("Top Label's page does not say Memo is saved in the account's top folder:\n%s", top)
+	}
+	if links := pageLinks(t, out, "s/Top Label/index.html"); len(links) != 1 || links[0] != "s/2026-03-03-memo.html" {
+		t.Fatalf("Top Label links %q, want Memo in the store's top folder", links)
 	}
 
 	inbox := pageLinks(t, out, "s/INBOX/index.html")
@@ -145,8 +163,9 @@ func TestFolderPagesListEmailsLivingElsewhere(t *testing.T) {
 // covers: MA-1224, R45, R4
 // GD-21 (a): a member row is linked only from the email's own recorded path, inside the same
 // store's folder, and its page only in a clean folder of that store. A member folder that climbs
-// out ("../../x"), is absolute-looking or holds a control character, and a member whose email's
-// path is in another store's folder, are each left out: no page is written for them and nothing
+// out ("../../x", or with backslashes), is absolute-looking or holds a control character, and a
+// member whose email's path is in another store's folder, is not a page or climbs out of the
+// store's folder, are each left out: no page is written for them and nothing
 // is written outside the archive. The healthy member of the same index still gets its page (the
 // positive twin).
 func TestAHostileMemberRowIsLeftOut(t *testing.T) {
@@ -161,8 +180,13 @@ func TestAHostileMemberRowIsLeftOut(t *testing.T) {
 	m := &model.Message{Subject: "Receipt", Received: time.Date(2026, 3, 1, 9, 0, 0, 0, time.UTC), PlainBody: "b"}
 	ix.Add("s", []string{"All Mail"}, m, "s/All Mail/r.html", "k1")
 	ix.Add("t", []string{"Elsewhere"}, &model.Message{Subject: "Other", PlainBody: "b"}, "t/Elsewhere/o.html", "k2")
-	ix.SetMembers("k1", "s", []string{"Sent Mail", "../../escaped", "/abs", "bad\x01name", "a//b"})
+	ix.SetMembers("k1", "s", []string{"Sent Mail", "../../escaped", "/abs", "bad\x01name", "a//b", `..\..\escaped`})
 	ix.SetMembers("k2", "s", []string{"Stolen"})
+	// An email whose recorded path is not a page, or climbs out of its store's folder.
+	ix.Add("s", []string{"All Mail"}, &model.Message{Subject: "Notes", PlainBody: "b"}, "s/All Mail/n.eml", "k3")
+	ix.SetMembers("k3", "s", []string{"NotAPage"})
+	ix.Add("s", []string{"All Mail"}, &model.Message{Subject: "Out", PlainBody: "b"}, "s/../../outside.html", "k4")
+	ix.SetMembers("k4", "s", []string{"Climbs"})
 	ix.Flush()
 	if err := Generate(out, ix, log.New(io.Discard, "", 0), 0); err != nil {
 		t.Fatal(err)

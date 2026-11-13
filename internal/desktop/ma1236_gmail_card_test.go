@@ -46,7 +46,8 @@ func cardRow(t *testing.T, e *delEnv, out string) ArchiveRow {
 // archive whose last backup found no Gmail store off asks nothing. One whose last backup did asks
 // the question in its exact words, with Yes and Not now, beside the archive (the page carries
 // them); the archive itself is never written by the card. Not now is kept in the archive's job
-// file on this computer and the card asks no more. Yes names the stores the record holds (never
+// file on this computer and the card asks no more (a Yes sent after it, from a page left open,
+// replaces it). Yes names the stores the record holds (never
 // the page's), is kept in the job file for the next backup, which the job's run options carry,
 // and the card then says the yes waits. A planted store name that is not a safe one is never
 // taken. With no job file the answer is refused, with words that say why and what to do, and
@@ -104,6 +105,14 @@ func TestTheCardAsksTheGmailQuestionAndKeepsTheAnswerHere(t *testing.T) {
 	}
 	if after, _ := os.ReadFile(out + "/.mailarchive-manifest.json"); string(after) != string(manifestBefore) {
 		t.Fatal("answering on the card changed the archive's manifest")
+	}
+
+	// A Yes after a Not now (a page left open) replaces it: the stores are kept and Not now goes.
+	if _, m := e.post("/api/gmail-answer", map[string]any{"path": out, "answer": "yes"}); m["ok"] != true {
+		t.Fatalf("Yes after Not now: %v", m)
+	}
+	if j, _ := job.Read(jp); j.GmailNotNow || !reflect.DeepEqual(j.GmailYes, []string{"gmail-store"}) {
+		t.Fatalf("after Yes following Not now the job file holds %+v", j)
 	}
 
 	// An encrypted archive's card never asks.

@@ -41,7 +41,7 @@ type gmailRun struct {
 	encrypted bool
 	yes       bool            // the person's yes, given before the run (Options.GmailYes)
 	yesFor    map[string]bool // the yes for these stores only (Options.GmailYesStores)
-	notNow    bool // the person's Not now, kept on this computer (Options.GmailNotNow)
+	notNow    bool            // the person's Not now, kept on this computer (Options.GmailNotNow)
 	ask       func(string) bool
 	logger    *log.Logger
 

@@ -52,7 +52,7 @@ func TestTheReaderFindsAnEmailUnderEveryFolderItIsIn(t *testing.T) {
 		Total   int                 `json:"total"`
 	}
 	get("/api/facets", &facets)
-	if want := []index.FolderCount{{"All Mail", 1}, {"INBOX", 2}, {"Sent Mail", 1}}; !reflect.DeepEqual(facets.Folders, want) || facets.Total != 2 {
+	if want := []index.FolderCount{{Folder: "All Mail", Count: 1}, {Folder: "INBOX", Count: 2}, {Folder: "Sent Mail", Count: 1}}; !reflect.DeepEqual(facets.Folders, want) || facets.Total != 2 {
 		t.Fatalf("facets %+v total %d, want %+v total 2", facets.Folders, facets.Total, want)
 	}
 	var res struct {

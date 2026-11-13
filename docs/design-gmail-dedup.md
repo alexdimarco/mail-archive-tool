@@ -3427,6 +3427,35 @@ rule is shared with the completeness design; whichever lands first owns it and t
 >   is version 7 from its first run (§7.4 (c)), so 1.7.x then refuses it. Nothing merges yet
 >   (slice D1).
 
+> **Folded 2026-11-13 [B3 verified] (the verifier's record, not a design change).** The paused
+> work (b3670c4) was checked against this section's B3 row: nothing in it fills a membership,
+> merges or reads a summary file (no D1, D2 or M1 code); the views read only the memberships the
+> manifest holds, and the switch is B2's `GmailDecision` wired into the run.
+>
+> - **Tests added where a mutation survived or a writer was untested:** the member rows on every
+>   open and through a key repair, `SetMembers` replacing a set, a parent folder's filter and a
+>   member naming its own home, a reader opened before the first member row
+>   (`index/ma1243_members_reopen_test.go`); the copy's index and the keyed rebuild
+>   (`app/ma1222_members_writers_test.go`); one question per run with two Gmail accounts
+>   (`app/ma1236_gmail_two_stores_test.go`); an encrypted archive's switch, with nothing beside it
+>   and the encrypted sentence (`app/ma1236_gmail_encrypted_run_test.go`); `status` and the run
+>   summary as the real program (`cmd/mailarchive/ma1222_gmail_status_line_test.go`); hostile
+>   paths, the top folder and a member of its own home in the page tests; a Yes after Not now on
+>   the card. MA-1222, MA-1236 and MA-1243 amended to say so.
+> - **Mutation sweep: 100 mutations, 97 red.** Three survive, each explained: a store name holding
+>   a slash (equivalent: it can never equal the path's first segment, which the next test
+>   compares); the encrypted guard on the last-run record's waiting stores (equivalent: the
+>   encrypted record's writer has no such field, so the guard is a second fence); the backup's
+>   own index write of a record's members (unreachable until slice D1 writes memberships at
+>   capture; D1 owes its test).
+> - **Fixed:** `go vet` (CI runs it) refused an unkeyed literal in the reader test; `gmailswitch.go`
+>   was not gofmt-clean.
+> - **Still not built, unchanged from the [B3 built] note, for the lead and the friction review:**
+>   GD-18b's "This folder: All Mail" on the frozen message page (so a message reached from Sent
+>   Mail's page still leads back to All Mail, which the §8.3 fold's back-link rule forbids);
+>   Settings' copy of the question; the encrypted card's question; a terminal Not now remembered
+>   without a job file; `mailarchive-gui`'s own runs asking; GD-21 (c) and the workspace tree (B4).
+
 ## 14. Owner questions, each with a recommendation
 
 - **Q1 — Keep `Mail-archive-dimarcotech` or start a new Gmail archive?** Recommended: keep it and use the
