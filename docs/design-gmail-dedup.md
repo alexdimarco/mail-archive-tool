@@ -3382,6 +3382,16 @@ rule is shared with the completeness design; whichever lands first owns it and t
 >   that wires the Gmail capture does).
 > - **Fixtures moved, intent kept.** Tests that used manifest version 7, or index version 4, as "a
 >   newer format" now use 9 (or 5), since this build reads 7 and 4.
+> - **Runs at 88fddf7 (2026-11-13).** Mac, `go test -count=1 -p 4 ./...` unfiltered: all 54
+>   packages pass. Linux (Docker `golang:1.26`, the repo recipe): 51 pass; `internal/desktop`'s
+>   MA-272 is the known container red (no scheduler); `internal/presync`'s watchdog timing test
+>   passes alone; `internal/source` is killed for memory alone too, and so is unchanged main 1a6d437
+>   in the same container (environment, not B2; it passes on the Mac). Windows VM (touched packages
+>   plus `cmd/mailarchive`, `GOTOOLCHAIN=local`): state, container, archindex, archdelete and job
+>   pass; index, app and desktop fail by name exactly as unchanged main 1a6d437 does on the VM, but
+>   for one app timing test (the Graph breaker) that passes alone; `cmd/mailarchive`'s 4 are the
+>   known baseline names. Every B2 test passes on the VM run alone (index's package panics in a
+>   temp-folder cleanup on main too, before reaching it).
 
 ## 14. Owner questions, each with a recommendation
 
