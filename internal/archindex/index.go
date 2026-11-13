@@ -25,6 +25,7 @@ import (
 	"mail-archive-tool/internal/encmark"
 	"mail-archive-tool/internal/job"
 	"mail-archive-tool/internal/lockfile"
+	"mail-archive-tool/internal/state"
 	"mail-archive-tool/internal/util"
 )
 
@@ -314,8 +315,20 @@ func inspectAll(folder string) recognised {
 		return recognised{} // a read that failed may pass next time: not kept
 	}
 	r := recognised{dir: dir, man: man, kind: kind, ok: err == nil, outlook: err == nil && outlookFrom(stores)}
+	var nf *state.NewerFormatError
+	if errors.As(err, &nf) {
+		r.newer = nf.Version
+	}
 	remember(key, r)
 	return r
+}
+
+// NewerFormat is, for a folder whose manifest a newer MailArchive wrote, the version it holds
+// (8 while that MailArchive is part-way through tidying it, docs/design-gmail-dedup.md §7.4
+// fold-check-5 note); 0 for any other folder. The card shows state.NewerFormatWords for it in
+// place of "Not reachable" (fold check 6's S7).
+func NewerFormat(folder string) int {
+	return inspectAll(folder).newer
 }
 
 // manifestReader is the open manifest as the walk reads it: the file itself. A var only so a test

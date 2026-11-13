@@ -182,6 +182,14 @@ func (cfg Config) archiveRows(idx archindex.Index) []ArchiveRow {
 		if kind == archindex.KindEncrypted {
 			problem = recordedProblem(e.Path)
 		}
+		// A folder a newer MailArchive wrote is reachable but not one this build reads: say
+		// so, never "Not reachable right now" (docs/design-gmail-dedup.md §7.4 fold f, and
+		// for exactly version 8 the tidy-up words; fold check 6's S7).
+		if !avail {
+			if v := archindex.NewerFormat(e.Path); v > 0 {
+				problem = state.NewerFormatWords(v)
+			}
+		}
 		lostSince := sourceLostSince(e.Path)
 		del := cfg.deleteRowFacts(e.Path, rc, avail && kind != "" && problem == "")
 		unlistWhy := ""

@@ -31,7 +31,19 @@ const batchSize = 1000
 // by RepairKeys; a pre-go-back version-2 index is re-stamped to 3 on first open
 // (its store-scoped keys are already correct, so no row changes); a stored
 // version above this is refused by Open (written by a newer mailarchive).
+//
+// Since docs/design-gmail-dedup.md (§7.4, fold check F3; slice B2) "the highest
+// version this build reads" and "the version written" are two things. indexVersion
+// is the key format, the version this build writes and the one RepairKeys compares
+// with (a version-3 index needs no repair); indexReadMax is what every newer-index
+// refusal compares with (Open, memory.go, lazy.go, listfolder.go: fold check 2's
+// B3). Version 4 adds the doc_folders table (slice B3) and is written only when that
+// table holds a row (writeVersion), so an archive nobody switched on keeps a
+// version-3 index that v1.6.1 and 1.7.x open.
 const indexVersion = 3
+
+// indexReadMax is the highest index version this build reads.
+const indexReadMax = 4
 
 const pragmas = `PRAGMA journal_mode=WAL; PRAGMA synchronous=NORMAL;`
 
@@ -159,9 +171,9 @@ func openRW(path, extra string) (*Index, error) {
 		db.Close()
 		return nil, fmt.Errorf("index version: %w", err)
 	}
-	if version > indexVersion {
+	if version > indexReadMax {
 		db.Close()
-		return nil, fmt.Errorf("search index %s was %w (format version %d; this build understands %d): upgrade this copy of mailarchive, or point -out at an archive this version wrote", path, ErrNewerFormat, version, indexVersion)
+		return nil, fmt.Errorf("search index %s was %w (format version %d; this build understands %d): upgrade this copy of mailarchive, or point -out at an archive this version wrote", path, ErrNewerFormat, version, indexReadMax)
 	}
 	// SQLite opens a file it may not write (mode 0444, Windows' Read-only
 	// attribute) read-only without a word, and every later write then fails one
@@ -865,19 +877,45 @@ func (ix *Index) RepairKeys(force bool, fn func(key, path string) (string, bool)
 			return 0, err
 		}
 	}
-	// Stamp the current version whenever the repair runs (a fresh row when the
-	// legacy index had none), so the next open needs no force.
+	// Stamp the version to write whenever the repair runs (a fresh row when the
+	// legacy index had none), so the next open needs no force: the key format (3),
+	// or 4 when the index holds a doc_folders row (writeVersion; F3).
+	stamp, err := writeVersion(tx)
+	if err != nil {
+		tx.Rollback()
+		return 0, err
+	}
 	if _, err := tx.Exec(`DELETE FROM meta`); err != nil {
 		tx.Rollback()
 		return 0, err
 	}
-	if _, err := tx.Exec(`INSERT INTO meta(version) VALUES(?)`, indexVersion); err != nil {
+	if _, err := tx.Exec(`INSERT INTO meta(version) VALUES(?)`, stamp); err != nil {
 		tx.Rollback()
 		return 0, err
 	}
 	if err := tx.Commit(); err != nil {
 		return 0, err
 	}
-	ix.version = indexVersion
+	ix.version = stamp
 	return len(changes), nil
+}
+
+// writeVersion is the index version to stamp (docs/design-gmail-dedup.md §7.4, F3): 4 when a
+// doc_folders table (slice B3's) holds a row, otherwise the key format, indexVersion (3).
+func writeVersion(tx *sql.Tx) (int, error) {
+	var n int
+	if err := tx.QueryRow(`SELECT count(*) FROM sqlite_master WHERE type='table' AND name='doc_folders'`).Scan(&n); err != nil {
+		return 0, err
+	}
+	if n == 0 {
+		return indexVersion, nil
+	}
+	var one int
+	switch err := tx.QueryRow(`SELECT 1 FROM doc_folders LIMIT 1`).Scan(&one); {
+	case errors.Is(err, sql.ErrNoRows):
+		return indexVersion, nil
+	case err != nil:
+		return 0, err
+	}
+	return indexReadMax, nil
 }

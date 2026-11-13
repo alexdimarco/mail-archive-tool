@@ -45,7 +45,7 @@ func TestASealedManifestGetsEveryLoadCheck(t *testing.T) {
 		t.Fatalf("two records sharing a unit: want ErrUnitRecord, got %v", err)
 	}
 	var newer *NewerFormatError
-	if _, err := FromSealed(path, View{Version: manifestVersion + 1}, &recordingPersister{}); !errors.As(err, &newer) {
+	if _, err := FromSealed(path, View{Version: ManifestVersion + 2}, &recordingPersister{}); !errors.As(err, &newer) {
 		t.Fatalf("a newer inner format: want NewerFormatError, got %v", err)
 	}
 	if _, err := FromSealed(path, View{Version: manifestVersion, Entries: map[string]Record{"s\x00a": sealedRecord("XYZ")}}, &recordingPersister{}); !errors.Is(err, ErrUnitRecord) {

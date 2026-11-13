@@ -109,7 +109,7 @@ func TestAnInMemoryIndexRefusesAForeignImage(t *testing.T) {
 		}
 	}
 	newer, _ := OpenMemory(nil)
-	newer.db.Exec(`UPDATE meta SET version = ?`, indexVersion+1)
+	newer.db.Exec(`UPDATE meta SET version = ?`, indexReadMax+1)
 	nb, _ := newer.Image()
 	newer.Close()
 	if _, err := OpenMemory(nb); !errors.Is(err, ErrNewerFormat) {

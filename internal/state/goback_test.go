@@ -394,9 +394,9 @@ func TestVersionGateAndRefusesFuture(t *testing.T) {
 		t.Errorf("the identical one-NUL key was NOT re-scoped under v2 (Rekeyed=%d, want 1); the gate is not version-sensitive", m2.Rekeyed)
 	}
 
-	// version 7 (above the current constant, 6) is refused, byte-unchanged.
+	// version 9 (above the highest this build reads, 7; 8 is the tidy-up case) is refused, byte-unchanged.
 	v7 := filepath.Join(t.TempDir(), "v7.json")
-	body := []byte(`{"version":7,"entries":{"whatever":{"path":"s/Inbox/a.html"}}}`)
+	body := []byte(`{"version":9,"entries":{"whatever":{"path":"s/Inbox/a.html"}}}`)
 	if err := os.WriteFile(v7, body, 0o644); err != nil {
 		t.Fatal(err)
 	}

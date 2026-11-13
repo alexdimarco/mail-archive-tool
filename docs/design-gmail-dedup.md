@@ -3364,6 +3364,25 @@ rule is shared with the completeness design; whichever lands first owns it and t
 >   restated (§9 fold-check-6 note) with its row.
 > - **D2 waits for an independent re-check of these folds.**
 
+> **Folded 2026-11-13 [B2 built] (the builder's record, not a design change): what slice B2 found.**
+>
+> - **S5's list misses one file.** A refused scheduled backup also writes `BACKUP-NEEDS-ATTENTION.txt`
+>   at the archive root (`state.AttentionName`). It is a root text file, not a message file, the
+>   manifest or an index row, so §27's two tests hold; MA-1216 now names it.
+> - **"The header read" in B2** is `reindex`'s manifest load moved before `index.Open` (S6). The
+>   backup's header read stays D2's: MA-1216 asserts that a build without D2 calls the pre-sync hook
+>   once and runs its sweep before the load refuses.
+> - **`LoadedVersion` comparisons (F3's "B2's to list").** A grep of every package on 2026-11-13
+>   finds only `state/manifest.go`'s `< 3` and `< 4` (and one test); both read 7 and 8 as later
+>   versions, as they should. `vault/claims.go`'s `version < EncryptedManifestVersion` (100) reads 7
+>   and 8 as plaintext, correctly.
+> - **The card.** Before B2 a newer-format archive was shown as "Not reachable right now", which is
+>   untrue; it now shows the newer words (or the tidy-up words for 8) in the row's problem line.
+> - **Load validation's notes** are kept in `Manifest.DedupNotes`; no run logs them yet (the slice
+>   that wires the Gmail capture does).
+> - **Fixtures moved, intent kept.** Tests that used manifest version 7, or index version 4, as "a
+>   newer format" now use 9 (or 5), since this build reads 7 and 4.
+
 ## 14. Owner questions, each with a recommendation
 
 - **Q1 — Keep `Mail-archive-dimarcotech` or start a new Gmail archive?** Recommended: keep it and use the

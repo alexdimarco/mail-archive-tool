@@ -194,6 +194,11 @@ func sha(b []byte) [32]byte { return sha256.Sum256(b) }
 func TestRecordFieldsArePinnedToTheRecordVersion(t *testing.T) {
 	pinned := map[int]string{
 		6: "also_files alt_phys_ids body_fallback chash date exported_at fidelity_fallback first_folder first_seen fixity folder fp fp_scheme last_seen loc missing parse_scheme parser_gen path phys_id present raw_sha256 recovered_by sealed subject terminal unit unresolved",
+		// Gmail de-duplication (docs/design-gmail-dedup.md §7.1; fold check 6's S3): one list
+		// per manifest version, 7 and 8 (8 adds no record field: MergePending is the
+		// manifest's). Operator-accepted, owner ruling 2026-11-11 (b).
+		7: "also_files alt_phys_ids body_fallback chash date exported_at fidelity_fallback first_folder first_seen fixity folder folders fp fp_scheme gm_sha256 last_seen loc merged_files missing parse_scheme parser_gen path phys_id present raw_sha256 recovered_by sealed subject terminal unit unresolved",
+		8: "also_files alt_phys_ids body_fallback chash date exported_at fidelity_fallback first_folder first_seen fixity folder folders fp fp_scheme gm_sha256 last_seen loc merged_files missing parse_scheme parser_gen path phys_id present raw_sha256 recovered_by sealed subject terminal unit unresolved",
 	}
 	var names []string
 	rt := reflect.TypeOf(state.Record{})

@@ -73,9 +73,9 @@ func begin(db *sql.DB) (*Index, error) {
 		db.Close()
 		return nil, fmt.Errorf("index version: %w", err)
 	}
-	if version > indexVersion {
+	if version > indexReadMax { // the highest readable, never the key format (F3, fold check 2's B3)
 		db.Close()
-		return nil, fmt.Errorf("the sealed search index was %w (format version %d; this build understands %d): upgrade this copy of mailarchive", ErrNewerFormat, version, indexVersion)
+		return nil, fmt.Errorf("the sealed search index was %w (format version %d; this build understands %d): upgrade this copy of mailarchive", ErrNewerFormat, version, indexReadMax)
 	}
 	return &Index{db: db, version: version, memory: true}, nil
 }

@@ -87,6 +87,14 @@ func Reindex(out string, logger *log.Logger) (kept, pruned int, err error) {
 		}
 		return 0, 0, fmt.Errorf("no search index at %s (run an export first)", idxPath)
 	}
+	// The manifest is loaded BEFORE the index is opened: index.Open writes the
+	// file's header (its read-only check), so a manifest this build refuses (a
+	// newer format, a merge part-way at version 8) must refuse first and leave
+	// search.db's bytes alone (docs/design-gmail-dedup.md, fold check 6's S6).
+	manifest, err := state.Load(mpath)
+	if err != nil {
+		return 0, 0, err
+	}
 	idx, err := index.Open(idxPath)
 	if err != nil {
 		// The same refusals a run gives (F5): busy names the retry, a newer
@@ -96,11 +104,6 @@ func Reindex(out string, logger *log.Logger) (kept, pruned int, err error) {
 		return 0, 0, indexOpenError(idxPath, out, err)
 	}
 	defer idx.Close()
-
-	manifest, err := state.Load(mpath)
-	if err != nil {
-		return 0, 0, err
-	}
 	// A first open after upgrade re-scopes the manifest and index once (F2);
 	// reindex is a valid place for it (it already opens both). Driven by the
 	// manifest's re-key signal so an old-binary excursion is repaired here too.

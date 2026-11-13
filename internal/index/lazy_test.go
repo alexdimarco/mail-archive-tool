@@ -309,7 +309,7 @@ func TestALazyIndexIsRepairedOrRefusedByItsRecordedVersion(t *testing.T) {
 	if *calls != 1 || ix.Version() != indexVersion {
 		t.Fatalf("an older recorded version: %d load(s), version %d after the repair; want 1 and %d", *calls, ix.Version(), indexVersion)
 	}
-	if _, err := OpenLazy(load, 2, indexVersion+1, nil); !errors.Is(err, ErrNewerFormat) {
+	if _, err := OpenLazy(load, 2, indexReadMax+1, nil); !errors.Is(err, ErrNewerFormat) {
 		t.Fatalf("a newer recorded version: want ErrNewerFormat, got %v", err)
 	}
 	if *calls != 1 {

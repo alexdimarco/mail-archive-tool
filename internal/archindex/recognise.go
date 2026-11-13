@@ -429,8 +429,10 @@ func scanStores(r io.Reader) (map[string]string, string, error) {
 	if src.n > manifestCap {
 		return nil, "", errManifestTooLarge
 	}
-	if version > state.ManifestVersion {
-		return nil, "", &state.NewerFormatError{Name: manifestName, Version: version, Understood: state.ManifestVersion}
+	// The highest version this build reads, never the one it writes
+	// (docs/design-gmail-dedup.md §7.4, F3).
+	if version > state.ReadableVersion() {
+		return nil, "", &state.NewerFormatError{Name: manifestName, Version: version, Understood: state.ReadableVersion()}
 	}
 	return stores, kindFrom(stores), nil
 }
@@ -646,6 +648,7 @@ type recognised struct {
 	kind     string
 	ok       bool
 	outlook  bool // every store an Outlook data file (outlookFrom)
+	newer    int  // the manifest's version when a newer MailArchive wrote it (not ok); 0 otherwise
 }
 
 // recognisedMax bounds what is kept: far more archives than a person keeps.

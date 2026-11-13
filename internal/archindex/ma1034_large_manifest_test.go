@@ -159,8 +159,8 @@ func TestRecognitionAgreesWithAWholeParse(t *testing.T) {
 		"null":                 `null`,
 		"null version":         `{"version":null,"stores":{"path:/m":"b"}}`,
 		"no version":           `{"stores":{"path:/m":"b"}}`,
-		"newer":                `{"version":7,"stores":{"path:/m":"b"}}`,
-		"newer then older":     `{"version":7,"version":6,"stores":{"path:/m":"b"}}`,
+		"newer":                `{"version":9,"stores":{"path:/m":"b"}}`,
+		"newer then older":     `{"version":9,"version":6,"stores":{"path:/m":"b"}}`,
 		"records and extras":   `{"version":6,"entries":{"a\u0000b":{"path":"a/x.html","missing":["body"],"sealed":null},"c":null},"capture_gaps":{},"collapsed_tokens":{"a":true},"stores":{"path:/m":"a"}}`,
 		"white space around":   " \n\t{\"version\":6,\"stores\":{\"path:/m\":\"a\"}}\n ",
 		"version not integer":  `{"version":"6","stores":{"path:/m":"a"}}`,
@@ -283,7 +283,7 @@ func TestAHostileManifestIsStillRefused(t *testing.T) {
 	if !bytes.Contains(realBytes, []byte(`"version":6`)) {
 		t.Fatal("the fixture: the real manifest names its version as \"version\":6")
 	}
-	refused("a newer format", bytes.Replace(realBytes, []byte(`"version":6`), []byte(`"version":7`), 1))
+	refused("a newer format", bytes.Replace(realBytes, []byte(`"version":6`), []byte(`"version":9`), 1))
 
 	// A manifest that is a folder.
 	folderDir := filepath.Join(t.TempDir(), "Folder")

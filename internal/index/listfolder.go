@@ -184,9 +184,9 @@ func openListQuery(path, query string) (*ListHandle, error) {
 			version = int(v.Int64)
 		}
 	}
-	if version > indexVersion {
+	if version > indexReadMax { // the highest readable, never the key format (F3, fold check 2's B3)
 		db.Close()
-		return nil, &NewerIndexError{Path: path, Version: version, Understood: indexVersion}
+		return nil, &NewerIndexError{Path: path, Version: version, Understood: indexReadMax}
 	}
 	return &ListHandle{db: db, Version: version}, nil
 }

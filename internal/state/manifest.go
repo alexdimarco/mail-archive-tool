@@ -31,12 +31,29 @@ import (
 // timeline defaults for a pre-v4 record; the fingerprint-safe v3→v4 collapse of
 // move-duplicates is CollapseByIdentity, invoked by the live path (a one-shot
 // local import keeps its folder-scoped keys and R3 — §3.6). Load refuses a
-// stored version above manifestVersion.
+// stored version above what this build reads (ReadableVersion).
+//
+// Version 7 (docs/design-gmail-dedup.md §7.4, slice B2) adds the Gmail fields
+// (dedup.go). "Highest readable" and "the version written" are two things since
+// then (fold check F3): manifestVersion is the version a manifest with none of the
+// Gmail fields is written at, and FormatVersion alone decides what is stamped, so
+// an archive nobody switched on stays 6 and stays usable by v1.6.1 and 1.7.x.
 const manifestVersion = 6
 
-// ManifestVersion is the manifest format this build writes: a sealed record's
-// inner version too (Phase 2b).
-const ManifestVersion = manifestVersion
+// ManifestVersion is the highest manifest format this build reads (a sealed
+// record's inner version too, Phase 2b). It is not what is written: FormatVersion
+// is.
+const ManifestVersion = versionGmail
+
+// readMax is the highest version the three newer-format refusals compare with: the
+// loader (finish), the sealed record's probe (container) and the archive card's
+// reader (archindex), all through ReadableVersion. A variable only so a test can
+// lower it to stand in for an older build: fault injection, accepted by the owner
+// on 2026-11-11 (docs/design-gmail-dedup.md, [owner rulings 2026-11-11]).
+var readMax = ManifestVersion
+
+// ReadableVersion is the highest manifest version this build reads.
+func ReadableVersion() int { return readMax }
 
 // Fingerprint scheme tags (version 5). A record's FpScheme says which algorithm
 // produced its Fingerprint. fpSchemeLegacy (0, the zero value, so every pre-v5
@@ -213,6 +230,15 @@ type Record struct {
 	// byte-identical to before (MA-329).
 	Unit   string     `json:"unit,omitempty"`
 	Sealed *SealedSet `json:"sealed,omitempty"`
+
+	// Gmail de-duplication (version 7; dedup.go, docs/design-gmail-dedup.md §7.1).
+	// GmailSHA256 is the SHA-256 of the original bytes of a Gmail record with no
+	// Fixity.EML; Folders the folders other than Folder this message is also in;
+	// MergedFiles the merge step's files awaiting deletion. Any of them makes the
+	// manifest version 7 (FormatVersion).
+	GmailSHA256 string       `json:"gm_sha256,omitempty"`
+	Folders     []Membership `json:"folders,omitempty"`
+	MergedFiles []MergedFile `json:"merged_files,omitempty"`
 }
 
 // ParserGenCurrent is the parser generation this build writes on an unparsed stub. It
@@ -304,8 +330,12 @@ type Manifest struct {
 	path string
 
 	mu      sync.Mutex
-	Version int               `json:"version"`
-	Entries map[string]Record `json:"entries"`
+	Version int `json:"version"`
+	// MergePending is the merge step in progress (slice D2): while present the
+	// manifest is version 8. Declared before Entries (fold check 4's S1); a build
+	// that reads at most 7 refuses a decoded one as version 8 whatever the stamp says.
+	MergePending *MergePending     `json:"merge_pending,omitempty"`
+	Entries      map[string]Record `json:"entries"`
 
 	// Stores maps a source id (the original input path, or the Graph mailbox
 	// address) to the store token that names both its on-disk directory and the
@@ -332,6 +362,17 @@ type Manifest struct {
 	// manifest-wide scalar — EC4). The live path skips the collapse scan for a
 	// marked token.
 	CollapsedTokens map[string]bool `json:"collapsed_tokens,omitempty"`
+
+	// DedupStores (version 7) maps a store token to DedupGmail: the person's yes to
+	// the Gmail switch (Q-B), or a new archive's first run. SummaryStamps (version 7,
+	// slice M2) keeps each summary file's size and time at its last whole read, keyed
+	// token\x00folder.
+	DedupStores   map[string]string       `json:"dedup_stores,omitempty"`
+	SummaryStamps map[string]SummaryStamp `json:"summary_stamps,omitempty"`
+
+	// DedupNotes are load validation's words for each Gmail field it dropped or
+	// moved (MA-1217), for the caller to log. Never saved.
+	DedupNotes []string `json:"-"`
 
 	// Migrated counts the records converted to the unknown sentinel by this
 	// Load (a version-1 file). Zero for a version-2/3 file.
@@ -708,9 +749,21 @@ type NewerFormatError struct {
 	Understood int    // the version this build understands
 }
 
+// Error leads with the plain words (NewerFormatWords: the tidy-up words for exactly
+// version 8, a merge part-way; otherwise "needs a newer MailArchive"), then names the
+// file and both versions (docs/design-gmail-dedup.md §7.4 fold f and its fold-check-5
+// note). It is the loader's refusal and, through the run's error, the backup's failure
+// record (fold check 6's S7).
 func (e *NewerFormatError) Error() string {
-	return fmt.Sprintf("manifest %s was written by a newer mailarchive (format version %d; this build understands %d): upgrade this copy of mailarchive, or point -out at an archive this version wrote", e.Name, e.Version, e.Understood)
+	if e.Version == versionMergePending {
+		return fmt.Sprintf("%s (manifest %s: format version %d; this build understands %d)", TidyUpWords, e.Name, e.Version, e.Understood)
+	}
+	return fmt.Sprintf("%s — manifest %s was written by a newer mailarchive (format version %d; this build understands %d): upgrade this copy of mailarchive, or point -out at an archive this version wrote", NewerWords, e.Name, e.Version, e.Understood)
 }
+
+// Plain is the refusal's plain sentence alone, for a surface with room for no detail
+// (the archive card).
+func (e *NewerFormatError) Plain() string { return NewerFormatWords(e.Version) }
 
 // manifestTempPattern names an in-flight manifest save. It has the
 // `.mailarchive-*.tmp` shape export.SweepTemps reaps, so a crash between the
@@ -747,6 +800,11 @@ type View struct {
 	Stores          map[string]string
 	CaptureGaps     map[string]CaptureGap
 	CollapsedTokens map[string]bool
+	// The version-7 manifest fields (sealed slots, §7.1 fold, MA-1237): without
+	// them every save of an encrypted archive would silently drop them.
+	DedupStores   map[string]string
+	MergePending  *MergePending
+	SummaryStamps map[string]SummaryStamp
 }
 
 // FromSealed is the manifest decoded from an encrypted archive's sealed record,
@@ -759,6 +817,7 @@ func FromSealed(path string, v View, p Persister) (*Manifest, error) {
 		m.Entries = v.Entries
 	}
 	m.Stores, m.CaptureGaps, m.CollapsedTokens = v.Stores, v.CaptureGaps, v.CollapsedTokens
+	m.DedupStores, m.MergePending, m.SummaryStamps = v.DedupStores, v.MergePending, v.SummaryStamps
 	m.persist = p
 	if err := finish(m, path, path); err != nil {
 		return nil, err
@@ -781,8 +840,18 @@ func finish(m *Manifest, path, name string) error {
 	// already-shipped v2 binary has no such guard, so this only protects v3 and
 	// later from still-newer binaries; a shared/synced -out must be written only
 	// by upgraded binaries (README rule). (FC1.)
-	if m.Version > manifestVersion {
-		return &NewerFormatError{Name: name, Version: m.Version, Understood: manifestVersion}
+	//
+	// The comparison is with the highest version this build reads (ReadableVersion),
+	// never with the version it writes (F3). A decoded MergePending is version 8
+	// whatever the stamp says (a stamp changed by hand), so a build that reads at
+	// most 7 never backs up into a pending merge (§7.1 fold-check-5 note). An
+	// explicit "merge_pending": null decodes as absent (fold check 5's S1).
+	stored := m.Version
+	if m.MergePending != nil && stored < versionMergePending {
+		stored = versionMergePending
+	}
+	if stored > readMax {
+		return &NewerFormatError{Name: name, Version: stored, Understood: readMax}
 	}
 	// Remember the on-disk version before any upgrade rewrites it: the live path
 	// consults LoadedVersion to know whether the v3→v4 collapse still owes a run.
@@ -930,8 +999,12 @@ func finish(m *Manifest, path, name string) error {
 			m.Entries[key] = r
 		}
 	}
-	if m.Version < manifestVersion {
-		m.Version = manifestVersion
+	// The Gmail fields are untrusted on read like the rest (MA-1217).
+	m.validateDedup()
+	// The load-time bump goes up to what FormatVersion says, never to a constant and
+	// never down (F3): an archive nobody switched on stays 6.
+	if v := m.formatVersionLocked(); m.Version < v {
+		m.Version = v
 	}
 	if err := checkUnits(name, m); err != nil {
 		return err
@@ -2152,9 +2225,12 @@ func (m *Manifest) save() error {
 		return errors.New("this manifest is a read-only snapshot (LoadFrom) and has no file to save to")
 	}
 
-	m.Version = manifestVersion
+	// Exactly what FormatVersion says, on the plain and the sealed path alike (§7.4
+	// fold a): 6 with no Gmail field, 7 with one, 8 while a merge is pending.
+	m.Version = m.formatVersionLocked()
 	if m.persist != nil {
-		return m.persist.Commit(View{Version: m.Version, Entries: m.Entries, Stores: m.Stores, CaptureGaps: m.CaptureGaps, CollapsedTokens: m.CollapsedTokens})
+		return m.persist.Commit(View{Version: m.Version, Entries: m.Entries, Stores: m.Stores, CaptureGaps: m.CaptureGaps, CollapsedTokens: m.CollapsedTokens,
+			DedupStores: m.DedupStores, MergePending: m.MergePending, SummaryStamps: m.SummaryStamps})
 	}
 	// Compact, not pretty-printed: the manifest is machine state (one record per
 	// exported message), never hand-read, and indentation roughly doubles its

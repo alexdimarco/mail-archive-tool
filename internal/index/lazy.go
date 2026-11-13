@@ -44,8 +44,8 @@ func OpenScratch(path string, write func(w io.Writer) error, rows, version int, 
 }
 
 func openLazy(l *lazyLoad, version int) (*Index, error) {
-	if version > indexVersion {
-		return nil, fmt.Errorf("the sealed search index was %w (format version %d; this build understands %d): upgrade this copy of mailarchive", ErrNewerFormat, version, indexVersion)
+	if version > indexReadMax { // the highest readable, never the key format (F3, fold check 2's B3)
+		return nil, fmt.Errorf("the sealed search index was %w (format version %d; this build understands %d): upgrade this copy of mailarchive", ErrNewerFormat, version, indexReadMax)
 	}
 	return &Index{lazy: l, version: version, memory: true}, nil
 }

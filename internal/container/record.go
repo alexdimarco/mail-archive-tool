@@ -48,6 +48,11 @@ type header struct {
 	PauseNote       string               `json:"pause_note,omitempty"`
 	NoteDigest      string               `json:"note_sha256,omitempty"` // the note beside the archive, as last written (phase3 §13.1)
 	Program         json.RawMessage      `json:"program,omitempty"`     // the program set, its own format, kept as bytes (program design §2, R6)
+	// The version-7 manifest fields (docs/design-gmail-dedup.md §7.1 fold, sealed
+	// slots, MA-1237): carried so a save of an encrypted archive never drops them.
+	DedupStores   map[string]string             `json:"dedup_stores,omitempty"`
+	MergePending  *state.MergePending           `json:"merge_pending,omitempty"`
+	SummaryStamps map[string]state.SummaryStamp `json:"summary_stamps,omitempty"`
 }
 
 // seenLatest is the LastSeen encoding of a record seen at its mailbox's last
@@ -112,6 +117,7 @@ func encodeSections(k *vault.Key, v state.View, h header, n uint32, runStamp tim
 	}
 	h.Version = v.Version
 	h.Stores, h.CollapsedTokens = v.Stores, v.CollapsedTokens
+	h.DedupStores, h.MergePending, h.SummaryStamps = v.DedupStores, v.MergePending, v.SummaryStamps
 	head, err := json.Marshal(h)
 	if err != nil {
 		return nil, 0, err
@@ -165,13 +171,16 @@ func decodeSections(k *vault.Key, sections [][]byte, n uint32) (state.View, head
 	var probe struct {
 		Version int `json:"version"`
 	}
-	if json.Unmarshal(sections[posHeader], &probe) == nil && probe.Version > state.ManifestVersion {
-		return state.View{}, h, fmt.Errorf("%w: the record's format is %d, this MailArchive reads %d", ErrNewerFormat, probe.Version, state.ManifestVersion)
+	// Compared with the highest version this build reads, never the version it writes
+	// (docs/design-gmail-dedup.md §7.4, F3).
+	if json.Unmarshal(sections[posHeader], &probe) == nil && probe.Version > state.ReadableVersion() {
+		return state.View{}, h, fmt.Errorf("%w: the record's format is %d, this MailArchive reads %d", ErrNewerFormat, probe.Version, state.ReadableVersion())
 	}
 	if err := strictJSON(sections[posHeader], &h); err != nil {
 		return state.View{}, h, fmt.Errorf("%w: header: %v", ErrRecord, err)
 	}
-	v := state.View{Version: h.Version, Stores: h.Stores, CollapsedTokens: h.CollapsedTokens, Entries: map[string]state.Record{}}
+	v := state.View{Version: h.Version, Stores: h.Stores, CollapsedTokens: h.CollapsedTokens, Entries: map[string]state.Record{},
+		DedupStores: h.DedupStores, MergePending: h.MergePending, SummaryStamps: h.SummaryStamps}
 	if err := strictJSON(sections[posGaps], &v.CaptureGaps); err != nil {
 		return state.View{}, h, fmt.Errorf("%w: capture gaps: %v", ErrRecord, err)
 	}

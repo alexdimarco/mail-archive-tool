@@ -50,6 +50,11 @@ type Job struct {
 	// until a run seals it, never over a choice already sealed (the PG4 pass, SEC-1).
 	// Additive: a job written before it carries none.
 	ProgramCopies string `json:"program_copies,omitempty"`
+	// GmailNotNow is the person's "Not now" to the Gmail switch (Q-B,
+	// docs/design-gmail-dedup.md §7.4 fold c), kept on this computer for this archive
+	// and never in the archive (a field there would make it version 7, or be dropped
+	// by an older binary's save): this computer does not ask again by itself. Additive.
+	GmailNotNow bool `json:"gmail_not_now,omitempty"`
 }
 
 // ThunderbirdSync is the GUI job's Thunderbird pre-sync setting (design §4.2.5).

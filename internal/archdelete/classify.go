@@ -130,7 +130,12 @@ func manifestRefusal(abs string, err error) error {
 		// "no longer an archive" (del-s5-A2-04).
 		return unreadableRefusal(path, err)
 	case errors.As(err, &newer):
-		return refuse(CaseNewerFormat, "This archive was written by a newer version of MailArchive (manifest format %d; this version understands %d). Update MailArchive, then delete it.", newer.Version, newer.Understood)
+		// The plain words first (docs/design-gmail-dedup.md §7.4 fold f; for exactly
+		// version 8, a merge part-way, the tidy-up words: fold check 6's S7).
+		if newer.Plain() == state.TidyUpWords {
+			return refuse(CaseNewerFormat, "%s (manifest format %d; this version understands %d)", state.TidyUpWords, newer.Version, newer.Understood)
+		}
+		return refuse(CaseNewerFormat, "%s It was written by a newer version of MailArchive (manifest format %d; this version understands %d). Update MailArchive, then delete it.", newer.Plain(), newer.Version, newer.Understood)
 	case errors.Is(err, errManifestTooLarge):
 		return refuse(CaseUnreadable, "This archive's manifest %s is larger than MailArchive can read (1 GiB). Delete the archive's files by hand.", path)
 	case isNotExist(err), errors.As(err, &notRegular), errors.As(err, &parse):

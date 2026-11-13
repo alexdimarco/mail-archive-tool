@@ -163,7 +163,9 @@ func LoadManifest(out string, o LoadOptions) (*state.Manifest, *Store, error) {
 			return nil, nil, err
 		}
 		s.fresh = true
-		m, err := state.FromSealed(filepath.Join(out, EnvelopeName), state.View{Version: state.ManifestVersion}, s)
+		// A fresh record is FormatVersion of the empty manifest (6), never the highest
+		// version this build reads (docs/design-gmail-dedup.md §7.4, F3).
+		m, err := state.FromSealed(filepath.Join(out, EnvelopeName), state.View{Version: state.FormatVersionOf(state.View{})}, s)
 		return m, s, err
 	}
 	s.ptr, s.attempted = ptr, ptr.Gen

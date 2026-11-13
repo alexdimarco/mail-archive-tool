@@ -70,9 +70,9 @@ func TestAManifestThatCannotBeReadIsNotCalledNoArchive(t *testing.T) {
 // current stays refused (del-s1a-A2-03, A3-05).
 func TestANewerManifestIsNotCalledNoArchive(t *testing.T) {
 	dir := t.TempDir()
-	writeManifest(t, dir, 7, map[string]string{"path:/m": "Mailbox"}, []rec{{Path: stemA + ".html"}})
+	writeManifest(t, dir, 9, map[string]string{"path:/m": "Mailbox"}, []rec{{Path: stemA + ".html"}})
 	{
-		rc, msg, opts := refusedCase(t, dir, testDeps(), CaseNewerFormat, "written by a newer version of MailArchive", "format 7", "Update MailArchive, then delete it.")
+		rc, msg, opts := refusedCase(t, dir, testDeps(), CaseNewerFormat, "written by a newer version of MailArchive", "format 9", "Update MailArchive, then delete it.")
 		assure.Refused(t, rc, msg, opts...)
 	}
 	if r := AsRefusal(unlistedAsCurrent(dir)); r == nil || r.Case != CaseCurrentArchive {
