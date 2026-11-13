@@ -1159,6 +1159,24 @@ revert), recorded in the commit; the unfiltered `go test ./...` runs before each
 - Progress percentages in the menu (task kind and start time only; Desktop shows progress).
 - Any change to archives, schedules, the engine, the reader, or the private-link session model.
 
+> **Folded 2026-11-13 [menubar fold contradictions] (lead's call).** The four contradictions the
+> 10-lens fold left open are settled:
+> 1. **The Quit question names no archive**, like the choice window: "MailArchive is busy (a backup
+>    is running). Quit anyway? The backup stops and is recorded as interrupted." Buttons: Keep
+>    running (default), Quit.
+> 2. **Shut down is a person's own stop**, so it asks the same question when work is running (MB-2).
+>    MA-695's test is added to the list of tests S1 amends; its assertion that Shut down releases
+>    the lock stays, now after the wait.
+> 3. **A second sign-in to the same Mac or Linux account never ends silently (R50):** when the
+>    running copy belongs to another session, it answers the hand-off with "open in another
+>    session", and the launcher shows its own message in this session: "MailArchive is already
+>    open in another sign-in of this account. Use it there, or quit it there to open it here." The
+>    choice window never appears on the other screen for this click.
+> 4. **purego comes with S1 on macOS**, so owner Q7 must be answered before S1 is built (asked
+>    2026-11-13 as part of "ok to your picks"). S1's labs gain a Mac smoke test on the real app
+>    bundle: Desktop running, open the app again, the choice window appears in front, no second
+>    process, no −600.
+
 ## 15. Sources
 Read for this design (branch `menubar` at 1a6d437): `cmd/mailarchive/noarg*.go`, `dispatch.go`;
 `internal/instance/instance.go`, `handoff.go`; `internal/desktop/launch.go`, `lifecycle.go`,
