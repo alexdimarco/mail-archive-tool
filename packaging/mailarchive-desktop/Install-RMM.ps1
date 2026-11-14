@@ -29,7 +29,7 @@ $ErrorActionPreference = 'Stop'
 # installation is in progress), so the RMM tool tries again later. A copy that cannot be
 # asked is never called busy and never forced: the script names it and why, starts no
 # upgrade, and exits 3. Only a copy proven to be from before slice S1 is ended at once,
-# as before: by its own record (`quit` answers 6), or, when the installed MailArchive
+# as before: by its own record (`quit -end-older` ends it), or, when the installed MailArchive
 # itself predates the quit request (no QuitVerb value in its registry key), by running
 # that installed program. The task has a random name, a security descriptor that lets
 # only SYSTEM and Administrators change it, an execution limit and an expiry after which
@@ -37,8 +37,8 @@ $ErrorActionPreference = 'Stop'
 
 # --- functions ---
 
-# What `mailarchive quit` answers (internal/desktop/quitverb.go).
-$QuitDone = 0; $QuitBusy = 3; $QuitNotRunning = 4; $QuitOlder = 6; $QuitStillClosing = 7
+# What `mailarchive quit` answers (internal/desktop/quitverb.go; X1's declared set).
+$QuitDone = 0; $QuitCouldNotAsk = 1; $QuitNotRunning = 2; $QuitBusy = 3
 # This script's own outcome when a running copy could not be asked (besides msiexec's).
 $ExitCouldNotAsk = 3
 
@@ -161,7 +161,7 @@ function Get-CouldNotAskReason([long]$r) {
     if ($r -eq -2) { return 'the one-time task in its user''s sign-in did not finish in time' }
     if ($r -lt 0) { return 'the one-time task in its user''s sign-in could not be made' }
     if ($r -gt 255) { return ('the one-time task in its user''s sign-in could not run (result 0x{0:X})' -f $r) }
-    return "MailArchive could not reach it (quit answered $r)"
+    return "quit could not ask it (answered $r)"
 }
 
 # Close-RunningMailArchive asks every running dashboard of $ProcessName to close, all or
@@ -183,20 +183,21 @@ function Close-RunningMailArchive([string]$ProcessName, [string]$Exe, [bool]$Qui
             continue
         }
         if (-not $trusted) { $cannot += "process ${id}: MailArchive is not installed under $root, so its program is not run as another user to ask"; continue }
-        $r = Invoke-AsCopyUser $proc $Exe "quit -check -pid $id" 45
+        # -end-older: a copy whose own record lists no requests (from before slice S1) is
+        # ended by quit itself, as upgrades always did; one that can be asked never is.
+        $r = Invoke-AsCopyUser $proc $Exe "quit -check -end-older -pid $id" 45
         if ($r -eq $QuitDone) { $ask += $proc }
         elseif ($r -eq $QuitBusy) { $busy += $id }
         elseif ($r -eq $QuitNotRunning) { }  # not (or no longer) its account's running copy: nothing to close
-        elseif ($r -eq $QuitOlder) { $force += $proc }  # its own record: from before slice S1
         else { $cannot += "process ${id}: " + (Get-CouldNotAskReason $r) }
     }
     if (-not $busy -and -not $cannot) {
         foreach ($proc in $ask) {
             $id = [int]$proc.ProcessId
-            $r = Invoke-AsCopyUser $proc $Exe "quit -pid $id -wait 30s" 75
+            $r = Invoke-AsCopyUser $proc $Exe "quit -end-older -pid $id -wait 30s" 75
             if ($r -eq $QuitDone) { $lines += "Closed MailArchive (process $id) after it finished its work." }
             elseif ($r -eq $QuitNotRunning) { }
-            elseif ($r -eq $QuitBusy -or $r -eq $QuitStillClosing) { $busy += $id }  # work began since it was asked
+            elseif ($r -eq $QuitBusy) { $busy += $id }  # work began since it was asked, or it is still finishing
             else { $cannot += "process ${id}: " + (Get-CouldNotAskReason $r) }
         }
     }

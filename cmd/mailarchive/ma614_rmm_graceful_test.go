@@ -28,7 +28,7 @@ import (
 // blocks); every copy is first asked only whether it would close (-check) and copies are
 // closed only when none said no (B7); a copy that could not be asked is never called busy
 // and never forced: exit 3, before msiexec (B2); only a copy proven to be from before
-// slice S1 is forced — by its own record (quit's 6) or because the installed program
+// slice S1 is forced — by its own record (quit -end-older ends it) or because the installed program
 // predates the verb (no QuitVerb value, which Product.wxs now writes) and the copy runs
 // it — never because it could not be reached (B1); the installed program is run only
 // from under Program Files (it runs as another user); the task has a random name, is
@@ -59,7 +59,7 @@ func TestMA614_TheUpgradeAsksTheRunningCopyAndNeverForcesWork(t *testing.T) {
 	}
 
 	// The ask: the installed program's quit verb, as the copy's own user, all or none.
-	check, gate, closeAt := at(`"quit -check -pid $id"`), at(`if (-not $busy -and -not $cannot) {`), at(`"quit -pid $id -wait 30s"`)
+	check, gate, closeAt := at(`"quit -check -end-older -pid $id"`), at(`if (-not $busy -and -not $cannot) {`), at(`"quit -end-older -pid $id -wait 30s"`)
 	if !(check < gate && gate < closeAt) {
 		t.Errorf("copies are closed before every copy was asked whether it would (check %d, gate %d, close %d)", check, gate, closeAt)
 	}
@@ -77,11 +77,14 @@ func TestMA614_TheUpgradeAsksTheRunningCopyAndNeverForcesWork(t *testing.T) {
 	// The task: random name, never -Force, a protected descriptor, bounded, self-deleting.
 	for _, want := range []string{"'MailArchive upgrade ' + (New-Guid).Guid", "D:P(A;;FA;;;SY)(A;;FA;;;BA)(A;;FR;;;{2})", "<ExecutionTimeLimit>PT2M</ExecutionTimeLimit>",
 		"<EndBoundary>{4}</EndBoundary>", "<DeleteExpiredTaskAfter>PT0S</DeleteExpiredTaskAfter>", "<StartWhenAvailable>false</StartWhenAvailable>",
-		"<DisallowStartIfOnBatteries>false</DisallowStartIfOnBatteries>", "} finally {\n        Unregister-ScheduledTask -TaskName $name -TaskPath '\\'"} {
+		"<DisallowStartIfOnBatteries>false</DisallowStartIfOnBatteries>", "} finally {\n        & schtasks.exe /delete /tn \"\\$name\" /f",
+		// The task is made and run with schtasks.exe: the ScheduledTasks module does not load
+		// in a session in Constrained Language mode (found on the VM); its action is checked.
+		"& schtasks.exe /create /tn \"\\$name\" /xml $file", "($made -split '<Exec>').Count -ne 2"} {
 		at(want)
 	}
-	if regexp.MustCompile(`Register-ScheduledTask[^\n]*-Force`).MatchString(code) {
-		t.Errorf("the task is registered with -Force (it would update a task someone made first)")
+	if regexp.MustCompile(`schtasks\.exe /create[^\n]*/f\b`).MatchString(code) || strings.Contains(code, "Register-ScheduledTask") {
+		t.Errorf("the task is created with /f or -Force (it would replace a task someone made first), or through the module")
 	}
 
 	// The one forced stop of a mailarchivew is a copy proven older; it comes only after
@@ -93,10 +96,12 @@ func TestMA614_TheUpgradeAsksTheRunningCopyAndNeverForcesWork(t *testing.T) {
 	if ret := at(`return @{ Code = $code; Lines = $lines }`); ret > forced[0][0] {
 		t.Errorf("a copy is forced before a busy or unaskable copy stops the run")
 	}
-	if n := strings.Count(code, "$force += $proc"); n != 2 ||
-		!strings.Contains(code, "$r -eq $QuitOlder) { $force += $proc }") ||
+	// The script's own forced stop is only for a copy running an installed program that
+	// predates quit; a copy whose own record says it is older is ended by quit -end-older,
+	// which never ends a copy that can be asked (TestMA1424_TheQuitVerbStopsOnlyAnIdleCopy).
+	if n := strings.Count(code, "$force += $proc"); n != 1 ||
 		!strings.Contains(code, "$proc.ExecutablePath.ToLowerInvariant() -eq $Exe.ToLowerInvariant()) { $force += $proc }") {
-		t.Errorf("a copy is marked for a forced stop other than by its own record or by running the installed program that predates quit (%d)", n)
+		t.Errorf("a copy is marked for a forced stop other than by running the installed program that predates quit (%d)", n)
 	}
 	if !strings.Contains(code, "elseif ($r -eq $QuitBusy) { $busy += $id }") || !strings.Contains(code, `else { $cannot += "process ${id}: " + (Get-CouldNotAskReason $r) }`) {
 		t.Errorf("a refusal is not busy, or a copy that could not be asked is not reported as such")
@@ -112,8 +117,8 @@ func TestMA614_TheUpgradeAsksTheRunningCopyAndNeverForcesWork(t *testing.T) {
 	}
 	at("$code = 1618")
 	// The verb's codes, as the program defines them.
-	want := fmt.Sprintf("$QuitDone = %d; $QuitBusy = %d; $QuitNotRunning = %d; $QuitOlder = %d; $QuitStillClosing = %d",
-		desktop.QuitDone, desktop.QuitBusy, desktop.QuitNotRunning, desktop.QuitOlder, desktop.QuitStillClosing)
+	want := fmt.Sprintf("$QuitDone = %d; $QuitCouldNotAsk = %d; $QuitNotRunning = %d; $QuitBusy = %d",
+		desktop.QuitDone, desktop.QuitCouldNotAsk, desktop.QuitNotRunning, desktop.QuitBusy)
 	at(want)
 	if strings.Contains(code, "'^wizard") || strings.Contains(code, "run-job") {
 		t.Errorf("the script now matches a wizard or run-job process")

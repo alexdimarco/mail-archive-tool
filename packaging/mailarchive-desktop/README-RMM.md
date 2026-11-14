@@ -121,8 +121,8 @@ dashboard address `127.0.0.1:8097` no longer reaches MailArchive at all.
 running MailArchive (`mailarchivew.exe start`) also runs the wizard and Run now, so
 `Install-RMM.ps1` asks each running dashboard to close the graceful way, through the
 installed program itself: a one-time task of that copy's user runs
-`mailarchivew.exe quit -check -pid N` (would you close?) and, only once every copy said
-yes, `mailarchivew.exe quit -pid N` (close now), from `C:\Program Files\MailArchive
+`mailarchivew.exe quit -check -end-older -pid N` (would you close?) and, only once every
+copy said yes, `mailarchivew.exe quit -end-older -pid N` (close now), from `C:\Program Files\MailArchive
 Desktop\`. Nothing shows on the user's screen; the task has a random name, only SYSTEM and
 Administrators can change it, and it removes itself. It works under PowerShell's
 Constrained Language mode (AppLocker, WDAC). The script's outcomes:
@@ -142,8 +142,7 @@ Only a dashboard proven to be from before the menu-bar release is still ended at
 before: one whose own record says it cannot be asked, or one running an installed
 MailArchive from before that release (which has no `quit` to ask with). An administrator
 can ask by hand the same way, in a terminal of the signed-in user: `mailarchive.exe quit
--check` (exit 0 would close, 3 busy, 4 not running, 5 could not ask, 6 older version, 7
-still finishing; it prints which).
+-check` (exit 0 would close, 1 could not ask, 2 not running, 3 busy; it prints which).
 
 Detection: `powershell -NoProfile -ExecutionPolicy Bypass -File .\Detect-RMM.ps1` (exit 0 = installed).
 Detect-RMM.ps1 names no former name, so it passes unchanged at this release and after

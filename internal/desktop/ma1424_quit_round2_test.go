@@ -5,6 +5,7 @@ import (
 	"context"
 	"os"
 	"strings"
+	"sync"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -21,9 +22,18 @@ import (
 // status and what it printed. The rig's copy is this test process, alive while it holds
 // the lock.
 func quitRun(t *testing.T, g *dRig, args ...string) (int, string) {
+	return quitRunEnding(t, g, func(pid int) error {
+		t.Errorf("quit ended process %d by force", pid)
+		return nil
+	}, args...)
+}
+
+// quitRunEnding is quitRun with the seam that ends an older copy at once.
+func quitRunEnding(t *testing.T, g *dRig, end func(int) error, args ...string) (int, string) {
 	t.Helper()
 	var out, errb bytes.Buffer
 	env := &quitEnv{
+		End: end,
 		Stdout: &out, Stderr: &errb,
 		StateDir:  func() (string, error) { return g.dir, nil },
 		Session:   g.session,
@@ -45,9 +55,12 @@ func quitRun(t *testing.T, g *dRig, args ...string) (int, string) {
 // an idle copy asked -check says it would quit and keeps running (a question stops
 // nothing); asked to quit, it quits after its own drain and the verb says so, exit 0.
 // A copy running a backup is asked both and says it is busy, exit 3, naming the way to
-// quit it anyway; the backup and the copy keep running. No copy is exit 4; a process that
-// is not the copy is exit 4; a copy whose record lists no hand-off actions (a version
-// from before the menu-bar release) is exit 6, decided by its own record.
+// quit it anyway; the backup and the copy keep running. No copy is exit 2; a process that
+// is not the copy is exit 2; a copy whose record lists no hand-off actions (a version
+// from before the menu-bar release) cannot be asked, exit 1, and is left running — unless
+// -end-older is given (the upgrade script): then -check says it would be ended and quit
+// ends it, decided by its own record; -end-older never ends a copy that can be asked.
+// Every code is in X1's declared set (MA-613).
 func TestMA1424_TheQuitVerbStopsOnlyAnIdleCopy(t *testing.T) {
 	installFrontSeams(t)
 	var dash atomic.Pointer[dashboard]
@@ -107,9 +120,23 @@ func TestMA1424_TheQuitVerbStopsOnlyAnIdleCopy(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer lock.Close()
+	closeLock := sync.OnceFunc(lock.Close)
+	defer closeLock()
+	olderRuns := func() bool { return instance.LockIsHeld(older.dir, "") }
 	code, words = quitRun(t, older)
-	assure.Refused(t, code, words, assure.Code(QuitOlder), assure.Names("older version", "Shut down"))
+	assure.Refused(t, code, words, assure.Code(QuitCouldNotAsk), assure.Names("older version", "Shut down"), assure.NoSideEffect(olderRuns))
+	code, words = quitRun(t, older, "-check", "-end-older")
+	if code != QuitDone || !strings.Contains(words, "it would be ended") || !olderRuns() {
+		t.Errorf("-check -end-older on an older copy: %d %q, still running %v", code, words, olderRuns())
+	}
+	var ended []int
+	code, words = quitRunEnding(t, older, func(pid int) error { ended = append(ended, pid); closeLock(); return nil }, "-end-older", "-wait", "5s")
+	if code != QuitDone || !strings.Contains(words, "was ended") || len(ended) != 1 || ended[0] != os.Getpid() {
+		t.Errorf("-end-older on an older copy: %d %q, ended %v", code, words, ended)
+	}
+	// -end-older never ends a copy that can be asked: the busy one still says busy.
+	code, words = quitRun(t, busy, "-end-older", "-wait", "2s")
+	assure.Refused(t, code, words, assure.Code(QuitBusy), assure.Names("is busy"), assure.NoSideEffect(stillWorking))
 }
 
 // covers: MA-1427, MA-1402, R50
