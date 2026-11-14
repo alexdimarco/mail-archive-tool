@@ -13,6 +13,7 @@ import (
 	"mail-archive-tool/internal/alert"
 	"mail-archive-tool/internal/graphconfig"
 	"mail-archive-tool/internal/schedule"
+	"mail-archive-tool/internal/state"
 	"mail-archive-tool/internal/util"
 )
 
@@ -42,6 +43,11 @@ type streakRecord struct {
 	// been delivered (Failing false). The notice goes once per streak; the email is tried again
 	// at the next failure until it is delivered (MA-879).
 	Noticed bool `json:"noticed,omitempty"`
+	// Waiting: this streak was opened by the alert of a wait for another computer's tidy-up (state.
+	// TidyingElsewhere), worded as a wait. It is a streak of its own: a failure for another reason
+	// after it begins a new streak, with its own email and notice (the B3 adversarial pass, round
+	// 3's H3); a wait's alert after a real failure is that failure's streak, told already.
+	Waiting bool `json:"waiting,omitempty"`
 }
 
 // KeyFor is the alert streak's key for a scheduled run that backs up into the archive folder
@@ -141,14 +147,21 @@ func Report(settingsPath string, store graphconfig.SecretStore, key, out, result
 	}
 	switch result {
 	case ResultFailed:
-		if path != "" && readErr == nil && prev.Failing {
+		// same: the record is this failure's streak. A real failure after a tidy-up wait's alert is
+		// not: it begins its own streak, told (H3).
+		wait := state.TidyingElsewhere(runErr)
+		same := path != "" && readErr == nil && (!prev.Waiting || wait)
+		if same && prev.Failing {
 			return Outcome{} // this failing streak was told already
 		}
-		o := Outcome{Notify: !(path != "" && readErr == nil && prev.Noticed)}
-		rec := streakRecord{Failing: true, Noticed: true, Since: time.Now().UTC()}
+		o := Outcome{Notify: !(same && prev.Noticed)}
+		rec := streakRecord{Failing: true, Noticed: true, Since: time.Now().UTC(), Waiting: wait}
+		if same && (prev.Failing || prev.Noticed) {
+			rec.Waiting = prev.Waiting // a wait inside a real failure's streak keeps it a real one
+		}
 		if cfg.ShouldSend(ResultFailed) && !deliver(settingsPath, cfg, store, out, ResultFailed, runErr, 0, logger) {
 			rec.Failing = false // not delivered: the next failure tries the email again, not the notice
-			if !prev.Since.IsZero() && readErr == nil {
+			if same && !prev.Since.IsZero() {
 				rec.Since = prev.Since
 			}
 		}
