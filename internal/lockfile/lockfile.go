@@ -15,6 +15,7 @@ import (
 	"fmt"
 	"os"
 	"strings"
+	"sync"
 	"time"
 )
 
@@ -26,6 +27,9 @@ var ErrHeld = errors.New("held by another run")
 
 // Lock is a held lock.
 type Lock struct {
+	// mu guards f: a run's archive guard may give up a slow StillHeld at a cancel (1.7.2,
+	// MA-1460) and let it finish while the run releases the lock.
+	mu    sync.Mutex
 	f     *os.File
 	path  string
 	nonce string // this holder's random identity, stamped into the file content
@@ -118,7 +122,12 @@ const maxVerbLen = 24
 // process holds it, which is why holders are always re-verified by locking,
 // never by reading.
 func (l *Lock) Release() error {
-	if l == nil || l.f == nil {
+	if l == nil {
+		return nil
+	}
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	if l.f == nil {
 		return nil
 	}
 	err := unlock(l.f)
@@ -127,11 +136,19 @@ func (l *Lock) Release() error {
 	return err
 }
 
+// holding says the lock has not been released. The file is read after it, outside mu, so a slow
+// read never holds up a Release.
+func (l *Lock) holding() bool {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	return l.f != nil
+}
+
 // StillHeld verifies the held lock is still the file at its path: if the lock
 // file was removed or replaced (another process could then hold a fresh one),
 // it returns an error naming that, so the run can stop rather than race.
 func (l *Lock) StillHeld() error {
-	if l == nil || l.f == nil {
+	if l == nil || !l.holding() {
 		return errors.New("lock not held")
 	}
 	// Compare CONTENT, not inode/file-id. On Windows an open file can be neither

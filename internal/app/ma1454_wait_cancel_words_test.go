@@ -10,6 +10,7 @@ import (
 	"path/filepath"
 	"runtime"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -350,6 +351,71 @@ func TestACancelAfterTheFolderIsBackSavesProgress(t *testing.T) {
 			}
 			return true
 		}))
+}
+
+// covers: MA-1460, R5
+// The last check's sec-2: the cancel's one more look is bounded, so a share that hangs each look
+// (an SMB server gone, each call waiting for the client's timeout) does not make a Cancel or the
+// Desktop's Shut down wait for another slow look: a look that has not answered within about a
+// quarter of a second is given up and the cancel returned. Positive twin first: a look that answers
+// at once, the folder back and the lock the run's, still lets the proof pass (MA-1460's case).
+func TestTheCancelsSecondLookIsBounded(t *testing.T) {
+	dir := tmpDir(t)
+	denied := &lockfile.LostError{Path: filepath.Join(dir, lockfile.Name), Err: os.ErrPermission}
+	guard := func(after func() error) (*archiveGuard, context.CancelFunc) {
+		ctx, cancel := context.WithCancel(context.Background())
+		var once sync.Once
+		first := true
+		g := &archiveGuard{out: dir, ctx: ctx, stillHeld: func() error {
+			if first {
+				first = false
+				once.Do(func() { time.AfterFunc(100*time.Millisecond, cancel) })
+				return denied
+			}
+			return after()
+		}}
+		return g, cancel
+	}
+	g, cancel := guard(func() error { return nil })
+	defer cancel()
+	if err := g.prove(); err != nil {
+		t.Fatalf("positive twin: a quick second look at a folder that is back gave %v, want the proof to pass", err)
+	}
+	g, cancel = guard(func() error { time.Sleep(2 * time.Second); return nil })
+	defer cancel()
+	began := time.Now()
+	err := g.prove()
+	if took := time.Since(began); !errors.Is(err, context.Canceled) || took > time.Second {
+		t.Fatalf("a slow second look gave %v after %v, want the cancel within a second", err, took)
+	}
+}
+
+// covers: MA-1460, R5
+// A look given up at a cancel (askWithin) may still be reading the run's lock when the run lets
+// the lock go: the two must not race (go test -race). The look still gets a true answer: the lock
+// is not held any more.
+func TestALookGivenUpDoesNotRaceTheLocksRelease(t *testing.T) {
+	dir := tmpDir(t)
+	lock, err := lockfile.Acquire(filepath.Join(dir, lockfile.Name))
+	if err != nil {
+		t.Fatal(err)
+	}
+	ended := make(chan error, 1)
+	g := &archiveGuard{out: dir, stillHeld: func() error {
+		time.Sleep(300 * time.Millisecond)
+		err := lock.StillHeld()
+		ended <- err
+		return err
+	}}
+	if answered, _, _ := g.askWithin(10 * time.Millisecond); answered {
+		t.Fatal("a look that takes 300 ms answered within 10 ms")
+	}
+	if err := lock.Release(); err != nil {
+		t.Fatal(err)
+	}
+	if err := <-ended; err == nil {
+		t.Fatal("the look given up said the lock is still held after the run let it go")
+	}
 }
 
 // covers: MA-1461, R5

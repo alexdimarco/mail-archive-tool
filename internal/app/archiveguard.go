@@ -174,8 +174,10 @@ func (g *archiveGuard) settle() error {
 			pause.Stop()
 			// One more look, without waiting (the 1.7.2 final check's security-2): a folder
 			// that is back answers as any proof does, so a run whose lock is still its own
-			// goes on to its own cancel, which saves its progress first.
-			if unreadable, err := g.ask(); !unreadable {
+			// goes on to its own cancel, which saves its progress first. The look is bounded
+			// (cancelLookFor, the last check's sec-2): one that has not answered is given up
+			// and the cancel returned.
+			if answered, unreadable, err := g.askWithin(cancelLookFor); answered && !unreadable {
 				g.say("the archive folder can be reached again after %s.", durationWords(time.Since(began)))
 				return err
 			}
@@ -183,6 +185,33 @@ func (g *archiveGuard) settle() error {
 			return g.ctx.Err()
 		case <-pause.C:
 		}
+	}
+}
+
+// cancelLookFor bounds the one more look a cancel takes in a wait (the 1.7.2 last check's sec-2):
+// on a network share that has stopped answering, each look can wait for the client's timeout, and
+// a Cancel or MailArchive Desktop's Shut down must not wait for it.
+var cancelLookFor = 250 * time.Millisecond
+
+// askWithin asks once and waits at most d for the answer: answered says it came in time. A look
+// given up goes on until the system answers it; its answer is dropped.
+func (g *archiveGuard) askWithin(d time.Duration) (answered, unreadable bool, err error) {
+	type answer struct {
+		unreadable bool
+		err        error
+	}
+	got := make(chan answer, 1) // room for the answer, so a look given up still ends
+	go func() {
+		unreadable, err := g.ask()
+		got <- answer{unreadable, err}
+	}()
+	limit := time.NewTimer(d)
+	defer limit.Stop()
+	select {
+	case a := <-got:
+		return true, a.unreadable, a.err
+	case <-limit.C:
+		return false, true, nil
 	}
 }
 

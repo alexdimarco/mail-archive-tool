@@ -73,20 +73,33 @@ func TestMA1453_AnInstanceFileWindowsWillNotLabelIsWrittenAs171Did(t *testing.T)
 		t.Fatalf("the writer was told %q, want %q", notes, want)
 	}
 
+	// The plain write's error as that write gives it (the last check's words-1): its text gives
+	// only the system's words of each write, without their full stops.
+	// Both ways that write fails: making its temp file, and renaming it into place.
 	restore()
-	restore = SetWritersForTest(refusing(privilegeNotHeld), func(string, []byte) error { return errors.New("Access is denied.") })
-	nowhere := filepath.Join(dir, "nowhere", FileName)
-	_, err = WriteNoting(nowhere, info, note)
-	var kf *KeyFileError
-	rc := 0
-	if errors.As(err, &kf) && kf.Dir == filepath.Join(dir, "nowhere") && kf.Plain.Error() == "Access is denied." {
-		rc = 2
+	denied := errors.New("Access is denied.")
+	nowhereDir := filepath.Join(dir, "nowhere")
+	nowhere := filepath.Join(nowhereDir, FileName)
+	tmp := filepath.Join(nowhereDir, ".tmp-0123456789")
+	for _, plainErr := range []error{
+		fmt.Errorf("temp file in %s: %w", nowhereDir, &os.PathError{Op: "open", Path: tmp, Err: denied}),
+		fmt.Errorf("rename into place %s: %w", nowhere, &os.LinkError{Op: "rename", Old: tmp, New: nowhere, Err: denied}),
+	} {
+		restore = SetWritersForTest(refusing(privilegeNotHeld), func(string, []byte) error { return plainErr })
+		_, err = WriteNoting(nowhere, info, note)
+		restore()
+		var kf *KeyFileError
+		rc := 0
+		if errors.As(err, &kf) && kf.Dir == nowhereDir && errors.Is(err, denied) {
+			rc = 2
+		}
+		assure.Refused(t, rc, fmt.Sprint(err), assure.Names("could not save the private key file in "+nowhereDir+": the protected save failed ("+strings.TrimSuffix(privilegeNotHeld.Error(), ".")+"), and saving it the 1.7.1 way failed too (Access is denied)"),
+			assure.Forbid("temp file in", "rename into place", ".tmp-", "createsecret", ".;", ".)"),
+			assure.NoSideEffect(func() bool {
+				_, serr := os.Stat(nowhere)
+				return errors.Is(serr, os.ErrNotExist) && len(notes) == 1
+			}))
 	}
-	assure.Refused(t, rc, fmt.Sprint(err), assure.Names("could not save the private key file in", "Access is denied."),
-		assure.NoSideEffect(func() bool {
-			_, serr := os.Stat(nowhere)
-			return errors.Is(serr, os.ErrNotExist) && len(notes) == 1
-		}))
 }
 
 // covers: MA-1458, R23

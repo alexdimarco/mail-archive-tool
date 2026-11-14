@@ -21,6 +21,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io/fs"
 	"os"
 	"path/filepath"
 	"runtime"
@@ -353,8 +354,9 @@ type KeyFileError struct {
 	Protected, Plain error
 }
 
+// Error gives each write's system words only (the 1.7.2 last check's words-1).
 func (e *KeyFileError) Error() string {
-	return fmt.Sprintf("could not save the private key file in %s: %v; written as before 1.7.2, it failed too: %v", e.Dir, e.Protected, e.Plain)
+	return fmt.Sprintf("could not save the private key file in %s: the protected save failed (%s), and saving it the 1.7.1 way failed too (%s)", e.Dir, SystemWords(e.Protected), SystemWords(e.Plain))
 }
 
 func (e *KeyFileError) Unwrap() []error { return []error{e.Protected, e.Plain} }
@@ -367,9 +369,19 @@ func UnlabelledNote(dir string, cause error) string {
 	return fmt.Sprintf("warning: Windows would not protect MailArchive's private key file in %s (%s), so it was saved as MailArchive 1.7.1 saved it: everything works as usual, but a sandboxed program running under your account may be able to read it.", dir, SystemWords(cause))
 }
 
-// SystemWords is err's text without the full stop Windows ends its messages with, for a
-// sentence that goes on after it (the final check's wording-8).
+// SystemWords is the system's own words in err, without the full stop Windows ends its messages
+// with, for a sentence that goes on after it (the final check's wording-8): a file write's error
+// is unwrapped to what the system said, without the write's "temp file in …", its paths and its
+// temp file's name (the last check's words-1).
 func SystemWords(err error) string {
+	var pe *fs.PathError
+	var le *os.LinkError
+	switch {
+	case errors.As(err, &pe) && pe.Err != nil:
+		err = pe.Err
+	case errors.As(err, &le) && le.Err != nil:
+		err = le.Err
+	}
 	return strings.TrimSuffix(fmt.Sprint(err), ".")
 }
 

@@ -110,7 +110,10 @@ func TestADesktopWhoseStartFileWindowsWillNotLabelStillStarts(t *testing.T) {
 	g.stop()
 
 	restore()
-	restore = instance.SetWritersForTest(refuse, func(string, []byte) error { return errors.New("Access is denied.") })
+	// The plain write's error as that write gives it (the last check's words-1): only the
+	// system's words are shown.
+	plainErr, words := ma1451PlainWriteError(t)
+	restore = instance.SetWritersForTest(refuse, func(string, []byte) error { return plainErr })
 	g = newDRig(t)
 	logs = &ma1453Log{}
 	err := ma1453Start(t, g, logs)
@@ -118,7 +121,8 @@ func TestADesktopWhoseStartFileWindowsWillNotLabelStillStarts(t *testing.T) {
 	if RefusalShown(err) {
 		rc = 2
 	}
-	assure.Refused(t, rc, fmt.Sprint(err), assure.Names("MailArchive Desktop cannot start: it could not save its private key file in "+g.dir+" (Access is denied). Do this: start MailArchive Desktop from the Start menu"),
+	assure.Refused(t, rc, fmt.Sprint(err), assure.Names("MailArchive Desktop cannot start: it could not save its private key file in "+g.dir+" ("+words+"). Do this: start MailArchive Desktop from the Start menu"),
+		assure.Forbid("temp file in", ".tmp-"),
 		assure.NoSideEffect(func() bool {
 			_, serr := os.Stat(instance.FilePathIn(g.dir, g.session))
 			return errors.Is(serr, os.ErrNotExist)
