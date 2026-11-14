@@ -65,6 +65,12 @@ func textThenListOn(goos, text, prompt string, choices []string, opts ...zenity.
 // zenityInfo shows one line from the running MailArchive.
 func zenityInfo(text string) { _ = zenity.Info(text, zenity.Title(choiceTitle)) }
 
+// zenityAskDesktop asks a yes-or-no question with OK and Cancel (a message box: it can
+// open beside the wizard's list); true is OK.
+func zenityAskDesktop(q string) bool {
+	return zenity.Question(q, zenity.Title(choiceTitle)) == nil
+}
+
 // zenityQuitQuestion asks the Quit question (Q4): Keep running is the default and
 // Cancel's answer; true means Quit.
 func zenityQuitQuestion(q string) bool {

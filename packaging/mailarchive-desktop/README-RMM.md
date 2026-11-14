@@ -117,6 +117,15 @@ is that account's, and otherwise names it in the dashboard header and in `status
 older MailArchive Desktop is still running … sign out and back in"). Typing the old
 dashboard address `127.0.0.1:8097` no longer reaches MailArchive at all.
 
+**A running MailArchive that is busy is never cut off.** Since the menu-bar release the
+running MailArchive (`mailarchivew.exe start`) also runs the wizard and Run now, so
+`Install-RMM.ps1` first asks each running dashboard to close the graceful way (Restart
+Manager, no force). An idle one finishes and closes. One that is running a backup or
+another task, or whose wizard is open, says no: the script then stops nothing, does not
+start the install, prints which process is busy and **exits 1618**, so schedule a retry
+(most RMM tools retry 1618 on their own). Only a dashboard from before that release, which
+has no window to ask, is still ended at once, as before.
+
 Detection: `powershell -NoProfile -ExecutionPolicy Bypass -File .\Detect-RMM.ps1` (exit 0 = installed).
 Detect-RMM.ps1 names no former name, so it passes unchanged at this release and after
 the copies are removed; **replace any older stored copy of the detection rule that

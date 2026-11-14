@@ -48,6 +48,9 @@ const (
 	// copy's cannot be read, so nothing is shown on a screen that may not be this one
 	// (fail closed, the S1 adversarial pass A3).
 	unknownSessionText = "MailArchive is already open for this account, but it cannot tell whether that is on this screen. If you do not see it here, quit it where it runs, then open it here."
+	// wizardOpenDesktopText is what a click on MailArchive asks while the wizard is open
+	// (F3): Desktop stays one click away, OK and Cancel.
+	wizardOpenDesktopText = "The wizard is open. Open MailArchive Desktop in your browser as well?"
 	// closingText is what a launch says when the running copy is still finishing its
 	// work and closing after the launch's whole wait (the S1 adversarial pass, A7).
 	closingText = "MailArchive is finishing its work and closing. Open it again in a moment."
@@ -102,7 +105,9 @@ var (
 	chooseDialog       = zenityChoose
 	infoDialog         = zenityInfo
 	quitQuestionDialog = zenityQuitQuestion
-	runWizardIn        = wizard.RunIn
+	// wizardOpenDesktopDialog asks whether to open Desktop while the wizard is open.
+	wizardOpenDesktopDialog = zenityAskDesktop
+	runWizardIn             = wizard.RunIn
 	// canShowDialogs says whether this process can show the native dialogs: macOS and
 	// Windows always can; Linux needs a dialog tool and a display (MB-9).
 	canShowDialogs = dialogsPossible
@@ -270,7 +275,21 @@ func (f *front) showChoice(newer bool, token string) {
 		f.choosing = false
 		f.mu.Unlock()
 	}
-	pick, err := f.choose(f.view(newer), token)
+	var pick string
+	var err error
+	if wizard.OpenHere() && !newer {
+		// The wizard of this process is open: the click is answered with Desktop, one
+		// question away, never a second list — Windows' dialog library cannot open a
+		// second list window while the wizard's list is open in the same process (the S1
+		// fix round's VM walk), and the list's wizard item would only say it is open (F3).
+		dialogfront.Arm()
+		pick = pickNone
+		if wizardOpenDesktopDialog(wizardOpenDesktopText) {
+			pick = pickDesktop
+		}
+	} else {
+		pick, err = f.choose(f.view(newer), token)
+	}
 	if err != nil {
 		fmt.Fprintln(os.Stderr, "mailarchive: the choice window could not be shown: "+err.Error())
 		pick = pickNone

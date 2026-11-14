@@ -5,6 +5,7 @@ package desktop
 import (
 	"runtime"
 	"sync"
+	"sync/atomic"
 	"time"
 	"unsafe"
 
@@ -20,7 +21,11 @@ import (
 //   - WM_ENDSESSION: the one stop, asking nothing, waiting for running work for about 5
 //     seconds, then letting go (MB-2 items 1 to 3).
 // WM_COMMAND is ignored: no other process of the session can post a command to it
-// (MB-17). The icon in the notification area comes with slice S3.
+// (MB-17). The S1 fix round: an installer's close request (ENDSESSION_CLOSEAPP) is
+// refused while work or a wizard runs (A2); WM_ENDSESSION stops the copy only when the
+// session really ends or Restart Manager asks (A5); a WM_CLOSE from outside is a stop
+// request that waits and never takes the window down, and a loop that ends early is one
+// too (A1). The icon in the notification area comes with slice S3.
 
 var (
 	user32                     = windows.NewLazySystemDLL("user32.dll")
@@ -97,18 +102,54 @@ var (
 	classErr   error
 )
 
+// endsessionCloseApp is lParam's ENDSESSION_CLOSEAPP: Restart Manager (an installer, the
+// upgrade script) asks this application to close, the session itself goes on.
+const endsessionCloseApp = 0x1
+
+// smShuttingDown is GetSystemMetrics' SM_SHUTTINGDOWN: nonzero while the session ends.
+const smShuttingDown = 0x2000
+
+// wmLoopEnd is the private message only this process posts, after the serving ended, to
+// take its own window down (A1): a WM_CLOSE from outside never does.
+const wmLoopEnd = 0x8000 + 0x4D // WM_APP + 0x4D
+
+var procGetSystemMetrics = user32.NewProc("GetSystemMetrics")
+
+// sessionEnding reports whether this sign-in session is really ending (sign-out, shut
+// down): a WM_ENDSESSION another program sent while it is not is ignored (A5). A var
+// so MA-1435's test can say either.
+var sessionEnding = func() bool {
+	r, _, _ := procGetSystemMetrics.Call(smShuttingDown)
+	return r != 0
+}
+
+// serveEnded is set once the serving has returned: only then does wmLoopEnd take the
+// window down.
+var serveEnded atomic.Bool
+
 func wndProc(hwnd, msg, wParam, lParam uintptr) uintptr {
 	loopMu.Lock()
 	ev := loopEvents
 	loopMu.Unlock()
 	switch msg {
 	case wmQueryEndSession:
-		if ev.Busy != nil && ev.Busy() {
+		busy := ev.Busy != nil && ev.Busy()
+		if busy && lParam&endsessionCloseApp != 0 {
+			// An installer or the upgrade script asks this copy to close while it runs
+			// work or an open wizard: it stays, and the installer leaves it running (it
+			// never cuts work short; the S1 adversarial pass, A2).
+			return 0
+		}
+		if busy {
 			procShutdownBlockReasonCrt.Call(hwnd, uintptr(unsafe.Pointer(windows.StringToUTF16Ptr(shutdownBlockWords))))
 		}
 		return 1 // allow: the stop happens in WM_ENDSESSION
 	case wmEndSession:
-		if wParam != 0 && ev.EndSession != nil {
+		// Only a session that is really ending, or Restart Manager's close request, stops
+		// the copy; the same message from another program at another time does nothing
+		// (A5; ENDSESSION_CLOSEAPP can be sent by anyone, so this narrows, not closes, the
+		// gap, and that stop still waits for the work).
+		if wParam != 0 && ev.EndSession != nil && (lParam&endsessionCloseApp != 0 || sessionEnding()) {
 			ev.EndSession(endSessionBound)
 		}
 		procShutdownBlockReasonDst.Call(hwnd)
@@ -116,7 +157,18 @@ func wndProc(hwnd, msg, wParam, lParam uintptr) uintptr {
 	case wmCommand:
 		return 0 // MB-17: no command reaches the instance through a posted message
 	case wmClose:
-		procDestroyWindow.Call(hwnd)
+		// A close request from outside (`taskkill` without /F, the upgrade script): the
+		// window never goes, so the end of the session still reaches the copy (A1). An idle
+		// copy takes it as the one stop, asking nothing; one that runs work or an open
+		// wizard refuses it and keeps running, as it refuses an installer (A2).
+		if ev.Close != nil && (ev.Busy == nil || !ev.Busy()) {
+			go ev.Close()
+		}
+		return 0
+	case wmLoopEnd:
+		if serveEnded.Load() {
+			procDestroyWindow.Call(hwnd)
+		}
 		return 0
 	case wmDestroy:
 		procPostQuitMessage.Call(0)
@@ -153,8 +205,11 @@ func windowsLoop(serve func() error, ev LoopEvents) error {
 	loopMu.Lock()
 	loopEvents = ev
 	loopMu.Unlock()
+	serveEnded.Store(false)
 	hwndc := make(chan uintptr, 1)
+	loopDone := make(chan struct{})
 	go func() {
+		defer close(loopDone)
 		runtime.LockOSThread()
 		h := newHiddenWindow()
 		hwndc <- h
@@ -165,19 +220,39 @@ func windowsLoop(serve func() error, ev LoopEvents) error {
 		for {
 			r, _, _ := procGetMessageW.Call(uintptr(unsafe.Pointer(&m)), 0, 0, 0)
 			if int32(r) <= 0 {
-				return
+				break
 			}
 			procTranslateMessage.Call(uintptr(unsafe.Pointer(&m)))
 			procDispatchMessageW.Call(uintptr(unsafe.Pointer(&m)))
 		}
+		// The loop ended before the serving did (a WM_QUIT another program posted): no
+		// window hears the end of the session any more, so this is a stop request that
+		// waits for the work, never a copy left deaf to sign-out (A1).
+		if !serveEnded.Load() && ev.Close != nil {
+			ev.Close()
+		}
 	}()
 	h := <-hwndc
+	loopMu.Lock()
+	loopHwnd = h
+	loopMu.Unlock()
 	err := serve()
+	serveEnded.Store(true)
+	loopMu.Lock()
+	loopHwnd = 0
+	loopMu.Unlock()
 	if h != 0 {
-		procPostMessageW.Call(h, wmClose, 0, 0)
+		procPostMessageW.Call(h, wmLoopEnd, 0, 0)
+		select {
+		case <-loopDone:
+		case <-time.After(2 * time.Second):
+		}
 	}
 	return err
 }
+
+// loopHwnd is the hidden window of the loop now running, for MA-1435's test.
+var loopHwnd uintptr
 
 // hiddenWindowStyle is the hidden window's style, for MA-1435's check that it has no
 // title bar.

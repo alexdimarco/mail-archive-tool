@@ -35,15 +35,23 @@ type frontSeams struct {
 	canShow    bool
 	// tokens is the activation token in the environment while each choice showed.
 	tokens []string
+	// desktopAsks are the questions asked in place of the choice while the wizard is open.
+	desktopAsks []string
 }
 
 func installFrontSeams(t *testing.T) *frontSeams {
 	t.Helper()
 	s := &frontSeams{pick: pickNone, canShow: true}
-	oc, oi, oq, ow, os_ := chooseDialog, infoDialog, quitQuestionDialog, runWizardIn, canShowDialogs
+	oc, oi, oq, ow, os_, od := chooseDialog, infoDialog, quitQuestionDialog, runWizardIn, canShowDialogs, wizardOpenDesktopDialog
 	t.Cleanup(func() {
-		chooseDialog, infoDialog, quitQuestionDialog, runWizardIn, canShowDialogs = oc, oi, oq, ow, os_
+		chooseDialog, infoDialog, quitQuestionDialog, runWizardIn, canShowDialogs, wizardOpenDesktopDialog = oc, oi, oq, ow, os_, od
 	})
+	wizardOpenDesktopDialog = func(q string) bool {
+		s.mu.Lock()
+		defer s.mu.Unlock()
+		s.desktopAsks = append(s.desktopAsks, q)
+		return s.pick == pickDesktop
+	}
 	chooseDialog = func(_ context.Context, v choiceView) (string, error) {
 		s.mu.Lock()
 		s.views = append(s.views, v)
@@ -128,12 +136,10 @@ func (g *dRig) secondStart(env *launchEnv, extra ...string) (*recorder, error) {
 // instance's own fresh link; a `start -background` while it runs does nothing at all.
 func TestMA1403_ASecondStartShowsTheChoiceInTheRunningCopy(t *testing.T) {
 	s := installFrontSeams(t)
-	// The first choice: the wizard, held open for the whole test (a Cancel, or a wizard
-	// that ended with nothing opened, would stop it: MB-16 as F2 extends it).
-	s.pick = pickWizard
-	wizardOpen := make(chan struct{})
-	s.hold = wizardOpen
-	t.Cleanup(func() { close(wizardOpen) })
+	// The first choice: Open MailArchive Desktop (a Cancel, or a wizard that ended with
+	// nothing opened, would stop it: MB-16 as F2 extends it; a wizard held open would make
+	// a later click ask about Desktop instead of showing the list, F3).
+	s.pick = pickDesktop
 	g := newDRig(t)
 	g.startInstance(g.env(g.rec))
 
@@ -145,9 +151,10 @@ func TestMA1403_ASecondStartShowsTheChoiceInTheRunningCopy(t *testing.T) {
 		t.Fatalf("the started instance does not hold the lock")
 	}
 	waitUntil(t, "the first choice", func() bool { v, _, _, _ := s.snap(); return len(v) == 1 })
-	waitUntil(t, "the wizard picked", func() bool { _, _, _, w := s.snap(); return w == 1 })
-	if o, _, _ := g.rec.snapshot(); len(o) != 0 {
-		t.Errorf("start opened the browser %q; it shows the choice instead", o)
+	waitUntil(t, "Desktop from the first choice", func() bool { o, _, _ := g.rec.snapshot(); return len(o) == 1 })
+	time.Sleep(200 * time.Millisecond)
+	if o, _, _ := g.rec.snapshot(); len(o) != 1 {
+		t.Errorf("start opened the browser %q besides the choice's Desktop; it shows the choice instead", o)
 	}
 	if v, _, _, _ := s.snap(); v[0].DefaultItem != choiceDesktopItem || v[0].Quit || v[0].Line != "" {
 		t.Errorf("the first choice %+v: want Desktop the default (an archive is set up), no Quit, no lines", v[0])
@@ -165,9 +172,9 @@ func TestMA1403_ASecondStartShowsTheChoiceInTheRunningCopy(t *testing.T) {
 	if o, r, l := rec2.snapshot(); len(o)+len(r)+len(l)+len(rec2.noticeList()) != 0 {
 		t.Errorf("the second start opened %q, refused %q, showed %q, told %q; it should do nothing itself", o, r, l, rec2.noticeList())
 	}
-	waitUntil(t, "Desktop opened by the instance", func() bool { o, _, _ := g.rec.snapshot(); return len(o) == 1 })
-	if o, _, _ := g.rec.snapshot(); !strings.HasPrefix(o[0], "http://"+g.info.Dashboard+"/_open?t=") {
-		t.Errorf("Open MailArchive Desktop opened %q, want the instance's own link", o[0])
+	waitUntil(t, "Desktop opened by the instance", func() bool { o, _, _ := g.rec.snapshot(); return len(o) == 2 })
+	if o, _, _ := g.rec.snapshot(); !strings.HasPrefix(o[1], "http://"+g.info.Dashboard+"/_open?t=") {
+		t.Errorf("Open MailArchive Desktop opened %q, want the instance's own link", o[1])
 	}
 	if now, err := instance.Read(instance.FilePathIn(g.dir, "")); err != nil || now.PID != g.info.PID || now.Dashboard != g.info.Dashboard {
 		t.Errorf("a second instance replaced the first: %+v, %v", now, err)
@@ -202,8 +209,10 @@ func TestMA1430_OneWizardPerAccount(t *testing.T) {
 	s := installFrontSeams(t)
 	hold := make(chan struct{})
 	s.hold = hold
+	endHold := sync.OnceFunc(func() { close(hold) })
 	g := newDRig(t)
 	g.startInstance(g.env(g.rec), "-background")
+	t.Cleanup(endHold) // a failure never leaves the wizard open for the next test
 
 	rec := &recorder{arrive: true}
 	env := g.env(rec)
@@ -239,7 +248,8 @@ func TestMA1430_OneWizardPerAccount(t *testing.T) {
 	if _, held := wizard.LockWizardIn(g.dir); !held {
 		t.Errorf("the wizard lock is not held while the instance's wizard is open")
 	}
-	// The choice's Run the wizard says so in the instance.
+	// A click while this wizard is open asks about Desktop in the instance and runs no
+	// second wizard (amended by the S1 fix round's F3: no second list beside the wizard's).
 	s.mu.Lock()
 	s.pick = pickWizard
 	s.mu.Unlock()
@@ -247,9 +257,9 @@ func TestMA1430_OneWizardPerAccount(t *testing.T) {
 	if _, err := g.secondStart(nil); err != nil {
 		t.Fatal(err)
 	}
-	waitUntil(t, "the already-open line", func() bool { _, i, _, _ := s.snap(); return len(i) == 1 })
-	if _, i, _, w := s.snap(); i[0] != instance.WizardOpenText || w != 1 {
-		t.Errorf("the choice's wizard while one is open: info %q, wizards %d; want the line and still one wizard", i, w)
+	waitUntil(t, "the Desktop question", func() bool { s.mu.Lock(); defer s.mu.Unlock(); return len(s.desktopAsks) == 1 })
+	if _, _, _, w := s.snap(); w != 1 {
+		t.Errorf("a click while the wizard is open ran %d wizards, want still one", w)
 	}
 	// Add another archive refuses with the same words.
 	d := newDashboard(Config{SettingsPath: filepath.Join(t.TempDir(), "s.json"), WizardLock: func() (func(), bool) { return wizard.LockWizardIn(g.dir) }})
@@ -269,7 +279,7 @@ func TestMA1430_OneWizardPerAccount(t *testing.T) {
 	}
 
 	// It ends: the lock is free again.
-	close(hold)
+	endHold()
 	waitUntil(t, "the wizard lock let go", func() bool {
 		release, held := wizard.LockWizardIn(g.dir)
 		if !held {
@@ -277,6 +287,22 @@ func TestMA1430_OneWizardPerAccount(t *testing.T) {
 		}
 		return !held
 	})
+
+	// A standalone wizard (another process holds the lock, this one runs none): the
+	// choice's wizard item says it is already open, in the instance.
+	other, err := instance.AcquireWizard(g.dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer other.Release()
+	time.Sleep(1100 * time.Millisecond)
+	if _, err := g.secondStart(nil); err != nil {
+		t.Fatal(err)
+	}
+	waitUntil(t, "the already-open line", func() bool { _, i, _, _ := s.snap(); return len(i) == 1 })
+	if _, i, _, w := s.snap(); i[0] != instance.WizardOpenText || w != 1 {
+		t.Errorf("the choice's wizard while another process runs one: info %q, wizards %d; want the line and still one wizard", i, w)
+	}
 }
 
 // covers: MA-1402, MA-1427, R50, R12

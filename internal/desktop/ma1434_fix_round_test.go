@@ -79,11 +79,13 @@ func TestMA1434_TheChoiceOrTheWizardEndingIdleEndsTheProgram(t *testing.T) {
 
 // covers: MA-1403, MA-1405, R50
 // The friction review's F3: while the wizard the choice started is open, a click on
-// MailArchive shows the choice again — never only "already open" — so Desktop stays one
-// click away. Positive twin first: the choice picks the wizard and it runs. A second start
-// during it shows a second choice whose line says the wizard is open; its Open MailArchive
-// Desktop opens the instance's link; its wizard item says the wizard is already open,
-// running no second wizard.
+// MailArchive is answered in the running copy — never only "already open" — and Desktop
+// stays one click away. Positive twin first: the choice picks the wizard and it runs. A
+// second start during it is told nothing in its own session and asks, in the copy, "The
+// wizard is open. Open MailArchive Desktop in your browser as well?" (a question, not a
+// second list: Windows' dialog library cannot open a second list beside the wizard's, as
+// the fix round's VM walk found); OK opens the instance's link; Cancel opens nothing and
+// runs no second wizard.
 func TestMA1403_AClickDuringTheWizardReachesTheChoice(t *testing.T) {
 	s := installFrontSeams(t)
 	hold := make(chan struct{})
@@ -103,24 +105,33 @@ func TestMA1403_AClickDuringTheWizardReachesTheChoice(t *testing.T) {
 	if n := rec.noticeList(); len(n) != 0 {
 		t.Errorf("a click during the wizard was told %q, want the choice", n)
 	}
-	waitUntil(t, "the second choice", func() bool { v, _, _, _ := s.snap(); return len(v) == 2 })
-	if v, _, _, _ := s.snap(); v[1].Line != "Now: the wizard is open." {
-		t.Errorf("the choice during the wizard says %q, want it to say the wizard is open", v[1].Line)
+	asks := func() []string { s.mu.Lock(); defer s.mu.Unlock(); return append([]string(nil), s.desktopAsks...) }
+	waitUntil(t, "the question in the copy", func() bool { return len(asks()) == 1 })
+	if a := asks(); a[0] != "The wizard is open. Open MailArchive Desktop in your browser as well?" {
+		t.Errorf("the click during the wizard asked %q", a[0])
+	}
+	if v, _, _, _ := s.snap(); len(v) != 1 {
+		t.Errorf("a second list was opened beside the wizard's")
 	}
 	waitUntil(t, "Desktop from it", func() bool { o, _, _ := g.rec.snapshot(); return len(o) == 1 })
 
 	s.mu.Lock()
-	s.pick = pickWizard
+	s.pick = pickNone
 	s.mu.Unlock()
 	time.Sleep(1100 * time.Millisecond)
 	if _, err := g.secondStart(nil); err != nil {
 		t.Fatal(err)
 	}
-	waitUntil(t, "the already-open line", func() bool { _, i, _, _ := s.snap(); return len(i) == 1 })
-	if _, i, _, w := s.snap(); i[0] != instance.WizardOpenText || w != 1 {
-		t.Errorf("the choice's wizard item during the wizard: %q, %d wizards", i, w)
+	waitUntil(t, "the second question", func() bool { return len(asks()) == 2 })
+	time.Sleep(200 * time.Millisecond)
+	if o, _, _ := g.rec.snapshot(); len(o) != 1 {
+		t.Errorf("Cancel on the question opened Desktop")
+	}
+	if _, _, _, w := s.snap(); w != 1 {
+		t.Errorf("%d wizards ran, want 1", w)
 	}
 	close(hold)
+	waitUntil(t, "the wizard let go", func() bool { return !wizard.OpenHere() })
 }
 
 // covers: MA-1422, MA-1434, MA-1424, R52
