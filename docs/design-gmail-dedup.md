@@ -3664,6 +3664,76 @@ rule is shared with the completeness design; whichever lands first owns it and t
 > unlocked (the key opens only the archive it was made for, which is A1's binding for an encrypted
 > archive), and is then spent.
 
+> **Folded 2026-11-14 [B3 adversarial round 2 fixes] (the builder's record of the fix round after
+> `docs/review-gmail-dedup-b3-adversarial-r2.md`, G1 to G8; a design change only where it says
+> so).** Rows MA-1316 to MA-1326 registered (MA-1400 to MA-1439 are the menubar slice's; neither
+> main nor menubar uses MA-1316 up). Each finding, with the builder's call:
+>
+> - **G1 (MED): checked again after the manifest loads.** `app.Run` keeps its snapshot and its
+>   "running" record before the pre-sync (the reviewer's optional point 3 not taken: `status` must
+>   see a run that waits minutes for Thunderbird as running), and checks again once the manifest has
+>   loaded, under the lock: the folder's record carries the id the run began with (or, carrying none,
+>   the run's lock is still there: an archive an older MailArchive wrote) and the lock is still the
+>   run's own. Otherwise the run is refused (`lock_lost`, "the archive folder … now holds another
+>   archive than the one this backup began with (…): nothing was written into it. Run the backup
+>   again") before any store is switched or anything written, and neither its record nor the
+>   version-8 skip's put-back is written into that folder. The yes is checked against the id the
+>   record carries after the load as well as the one the run began with. A lock lost mid-walk in the
+>   same archive still records the run failed, as before. `app.RunGraph` is not changed for G1: it
+>   has no pre-sync wait, and its lock is re-checked at its checkpoints as before. An encrypted
+>   archive's binding is its key (H10).
+> - **G2:** the person's latest answer is the one kept. `gmailanswer.Keep` and `KeepHere` keep no
+>   yes beside a Not now; the card's and Settings' Not now clear it; a terminal Not now
+>   (`gmailanswer.NotNowHere`) also takes the waiting yes out of the archive's job file (the
+>   terminal, another process, already rewrites that file through Settle; MA-1307's concession).
+> - **G3: a design change, the smallest one.** `<key>.tidy-wait` stays one file per folder (so
+>   Delete, Remove from list and uninstall still remove it) but holds a start per archive id
+>   (format 2, `waits`; an archive whose record has no id under none). A format-1 file, written only
+>   by unreleased builds of this branch, reads as no wait.
+> - **G4: the engine ends the wait.** Once the manifest has loaded, `app.Run` and `app.RunGraph`
+>   end the wait of the archive the run began with (and the one under no id when the record had none
+>   before the run): "gets past the manifest", which this note already said and which covers every
+>   successful backup, whatever started it. The builder's call over "only a successful backup": a
+>   run past the load proves the tidy-up is over; a later failure has its own alert. Run-job no
+>   longer clears it itself. The engine reads this computer's settings folder for it (as it already
+>   reads the deletion log) and writes only when a wait is kept for that archive. The skip is told
+>   the same way on every scheduled path: run-job (unchanged), a `mailarchive schedule` job
+>   (`export -unattended`, `graph -unattended`: exit 0, "Skipped, not failed: " and the words, the
+>   wait kept; such jobs have no email alerts at all), and the Desktop's scheduled Microsoft 365
+>   capture (`RunGraph` now puts the record back as `Run` does; no email for 3 days, then one,
+>   worded as a wait; the recovery after). Attended backups (a terminal, Run now, Archive now) still
+>   say the refusal ("Not backed up:") and keep no wait.
+> - **G5:** the question's buttons sit in a row carrying the archive's id (`data-gmail-archive`;
+>   on the row, not the box, so the box's markup the owner-approved tests pin is unchanged), which
+>   the page sends; the route refuses another id, or none, with "There is no Gmail question for this
+>   archive now. Reload the page.", keeping nothing.
+> - **G6:** an encrypted archive's yes is the stores its question named, carried as
+>   `RunNow.GmailYesStores` into `Options.GmailYesStores` and applied to an encrypted run without an
+>   id (the key binds), spent per store. `RunNow.GmailYes` is gone.
+> - **G7:** on macOS the key is in Unicode NFC (APFS treats the two forms as one name); Linux and
+>   Windows keep telling them apart, as their file systems do.
+> - **G8:** the Desktop's Run now spends a used yes inside `RunNow.HoldJobFile`, a hold of
+>   `jobFileMu`. Not covered: run-job and the terminal, other processes (MA-1307's concession).
+> - **Existing tests changed, each named for the lead:** MA-1236's, MA-1294's, MA-1295's,
+>   MA-1307's and MA-1309's Desktop tests post the archive id as the page now does (G5; no
+>   assertion changed); MA-1315's wizard test passes `RunNow.GmailYesStores` and asserts the named
+>   stores are carried and `Options.GmailYes` stays false (it asserted `Options.GmailYes` true, the
+>   archive-wide yes G6 removes). No covers marker removed, no gate, suppression or baseline touched.
+> - **Runs at `59b91ca` (2026-11-14).** Mac, `go test -count=1 -p 4 -timeout 60m ./...` unfiltered:
+>   54 packages pass; `internal/app` red on `TestRetryReadsTheRunRecord` alone (the copy export's
+>   25-errors breaker under that load; 3 of 3 pass alone; not on a path this round changed). Linux
+>   (Docker `golang:1.26`): every package passes but the two known container reds, desktop's MA-272
+>   (no scheduler) and `internal/source` killed for memory. Windows VM (touched packages, Go
+>   1.26.11, `GOTOOLCHAIN=local`): nobody was signed in, so the run was as SYSTEM with the lab
+>   folder reached as `\\Mac\winlab`, and compared by name with `8c9af02` run the same way:
+>   gmailanswer, state, uninstall, archdelete, health and wizard pass; app, cmd/mailarchive and
+>   desktop are red on the same names as the base (tests that need a signed-in user session: the
+>   scheduler, the credential vault, the terminal, encrypted copies), apart from
+>   `TestADeleteRunsOnlyThroughItsPlansToken` (red once in the loaded run, 3 of 3 alone) and
+>   `TestGraphBreakerTripsOnlyWithAFailingControlRequest` and `TestReconciliationIsOffTheRequestPath`
+>   (each red on the base too). Every new and amended test passes there, the `subst` drive-letter
+>   test included (no mapping left); the two rename tests skip on Windows by design.
+
 ## 14. Owner questions, each with a recommendation
 
 - **Q1 — Keep `Mail-archive-dimarcotech` or start a new Gmail archive?** Recommended: keep it and use the
