@@ -119,13 +119,31 @@ dashboard address `127.0.0.1:8097` no longer reaches MailArchive at all.
 
 **A running MailArchive that is busy is never cut off.** Since the menu-bar release the
 running MailArchive (`mailarchivew.exe start`) also runs the wizard and Run now, so
-`Install-RMM.ps1` first asks each running dashboard to close the graceful way, from inside
-its user's own sign-in (a one-time task of that user, removed afterwards; a console window
-may flash there for a moment). An idle one finishes and closes. One that is running a backup or
-another task, or whose wizard is open, says no: the script then stops nothing, does not
-start the install, prints which process is busy and **exits 1618**, so schedule a retry
-(most RMM tools retry 1618 on their own). Only a dashboard from before that release, which
-has no window to ask, is still ended at once, as before.
+`Install-RMM.ps1` asks each running dashboard to close the graceful way, through the
+installed program itself: a one-time task of that copy's user runs
+`mailarchivew.exe quit -check -pid N` (would you close?) and, only once every copy said
+yes, `mailarchivew.exe quit -pid N` (close now), from `C:\Program Files\MailArchive
+Desktop\`. Nothing shows on the user's screen; the task has a random name, only SYSTEM and
+Administrators can change it, and it removes itself. It works under PowerShell's
+Constrained Language mode (AppLocker, WDAC). The script's outcomes:
+
+- **Every copy idle:** each closes after finishing its work, the script prints "Closed
+  MailArchive (process N) after it finished its work." and runs the install.
+- **Exit 1618 — a copy is busy:** one copy is running a backup or another task, or its
+  wizard is open. No copy is closed and the install is not started; the script prints
+  which process is busy. Schedule a retry (most RMM tools retry 1618 on their own).
+- **Exit 3 — a copy could not be asked:** the script prints which process and why (for
+  example, the one-time task could not run in that user's sign-in, or MailArchive is not
+  installed under Program Files). Nothing is closed or forced and the install is not
+  started. This does not go away by retrying: have that user click **Shut down** in
+  MailArchive Desktop (or sign out), then run the script again.
+
+Only a dashboard proven to be from before the menu-bar release is still ended at once, as
+before: one whose own record says it cannot be asked, or one running an installed
+MailArchive from before that release (which has no `quit` to ask with). An administrator
+can ask by hand the same way, in a terminal of the signed-in user: `mailarchive.exe quit
+-check` (exit 0 would close, 3 busy, 4 not running, 5 could not ask, 6 older version, 7
+still finishing; it prints which).
 
 Detection: `powershell -NoProfile -ExecutionPolicy Bypass -File .\Detect-RMM.ps1` (exit 0 = installed).
 Detect-RMM.ps1 names no former name, so it passes unchanged at this release and after

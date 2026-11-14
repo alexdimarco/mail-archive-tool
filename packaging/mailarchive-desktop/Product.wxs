@@ -135,6 +135,10 @@
           <RegistryValue Name="Installed" Type="integer" Value="1" KeyPath="yes" />
           <RegistryValue Name="Version" Type="string" Value="$(var.ProductVersion)" />
           <RegistryValue Name="InstallDir" Type="string" Value="[INSTALLFOLDER]" />
+          <!-- The installed program has the `quit` verb (design-menubar, the S1 fix round 2):
+               Install-RMM.ps1 asks a running copy to close through it. Absent on an
+               install from before it, whose running copies cannot be asked. -->
+          <RegistryValue Name="QuitVerb" Type="integer" Value="1" />
         </RegistryKey>
 
         <!-- Shortcuts target the no-console build mailarchivew.exe with an explicit
