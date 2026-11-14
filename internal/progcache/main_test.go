@@ -5,12 +5,15 @@ import (
 	"os"
 	"path/filepath"
 	"testing"
+
+	"mail-archive-tool/internal/testhome"
 )
 
 // TestMain points the cache's default folder at a throwaway one for the whole package
 // and fails if the real one was touched (program design R22). Then the home, settings,
-// cache and state folders are throwaway too (MA-894); a test that needs its own sets
-// them again with t.Setenv.
+// cache and state folders are throwaway too (MA-894), checked by testhome.Run before
+// and after the tests (MA-1333); a test that needs its own sets them again with
+// t.Setenv.
 func TestMain(m *testing.M) {
 	tmp, err := os.MkdirTemp("", "mailarchive-progcache-")
 	if err != nil {
@@ -27,7 +30,7 @@ func TestMain(m *testing.M) {
 	for _, v := range []string{"HOME", "USERPROFILE", "XDG_CONFIG_HOME", "XDG_CACHE_HOME", "XDG_STATE_HOME", "APPDATA", "LOCALAPPDATA"} {
 		os.Setenv(v, home)
 	}
-	code := m.Run()
+	code := testhome.Run(home, m)
 	if err := done(); err != nil {
 		fmt.Fprintln(os.Stderr, "TestMain:", err)
 		code = 1

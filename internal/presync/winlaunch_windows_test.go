@@ -35,11 +35,15 @@ type startReport struct {
 	Show  uint16   // its STARTUPINFO.wShowWindow
 }
 
-func TestMain(m *testing.M) {
-	if out := os.Getenv(startHelperEnv); out != "" {
-		os.Exit(reportStart(out))
+// The package's TestMain (testhome_main_test.go) runs this test binary as the stand-in when
+// startHelperEnv is set.
+func init() {
+	childMain = func() (int, bool) {
+		if out := os.Getenv(startHelperEnv); out != "" {
+			return reportStart(out), true
+		}
+		return 0, false
 	}
-	os.Exit(m.Run())
 }
 
 // reportStart is the stand-in's whole run: it writes what it received and exits.

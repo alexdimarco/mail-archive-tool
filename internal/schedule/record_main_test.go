@@ -6,6 +6,7 @@ import (
 	"testing"
 
 	"mail-archive-tool/internal/encrecord"
+	"mail-archive-tool/internal/testhome"
 	"mail-archive-tool/internal/vault"
 )
 
@@ -17,7 +18,9 @@ var testHome string
 // The home, settings, cache and state folders are throwaway too, for every OS, so a
 // test that installs a schedule never writes its job file into the developer's
 // (on Windows %APPDATA%\mailarchive; MA-894). A test that needs its own sets them
-// again with t.Setenv. Its tests make keys at the cheap test cost (MA-776).
+// again with t.Setenv. Its tests make keys at the cheap test cost (MA-776). testhome.Run
+// checks before and after the tests that the settings folder resolves inside the
+// throwaway home (MA-1333).
 func TestMain(m *testing.M) {
 	vault.UseTestCost()
 	dir, err := os.MkdirTemp("", "mailarchive-schedule-record-")
@@ -32,7 +35,7 @@ func TestMain(m *testing.M) {
 	for _, v := range []string{"HOME", "USERPROFILE", "XDG_CONFIG_HOME", "XDG_CACHE_HOME", "XDG_STATE_HOME", "APPDATA", "LOCALAPPDATA"} {
 		os.Setenv(v, testHome)
 	}
-	code := m.Run()
+	code := testhome.Run(testHome, m)
 	restore()
 	os.RemoveAll(dir)
 	os.Exit(code)
