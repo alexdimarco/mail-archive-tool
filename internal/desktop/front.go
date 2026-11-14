@@ -171,6 +171,24 @@ func (f *front) gate(r instance.ActRequest) string {
 	return ""
 }
 
+// quitRequest answers a proven quit request (instance.Handoff.Quit; `mailarchive quit`, the
+// upgrade script; the S1 fix round 2, B1, B2, B7): a copy that is closing says so; one that
+// runs work or has its wizard open says "busy" and keeps running, as it refuses an
+// installer (R52: only a person's own answer stops work); an idle one would quit, and with
+// stop it does: the one stop, which waits for whatever starts meanwhile.
+func (f *front) quitRequest(stop bool) (bool, string) {
+	if f.closing() {
+		return false, instance.ReasonClosing
+	}
+	if f.question != nil && f.question() != "" {
+		return false, instance.ReasonBusy
+	}
+	if stop {
+		f.life.Stop()
+	}
+	return true, ""
+}
+
 // act answers a proven hand-off's action (instance.Handoff.Act): it returns at once,
 // and the window, when shown, belongs to the instance.
 func (f *front) act(r instance.ActRequest) (bool, string) {
@@ -315,25 +333,62 @@ func (f *front) showChoice(newer bool, token string) {
 }
 
 // choose shows the choice; a launch's Wayland activation token is in the dialog
-// process's environment while it starts, so the window may come to the front (§7.4;
-// the S1 adversarial pass, A9).
+// process's environment when it starts, so the window may come to the front (§7.4;
+// the S1 adversarial pass, A9), and is taken out of this process's environment as soon
+// as that process has started (or after dialogStartBound, or when the dialog returns), so
+// nothing else this copy starts meanwhile inherits it (the S1 fix round 2, B10).
 func (f *front) choose(v choiceView, token string) (string, error) {
 	dialogfront.Arm() // only showChoice calls it: the person's click or a proven launch (R39, MB-8)
-	if token != "" {
-		activationMu.Lock()
-		os.Setenv(activationEnv, token)
-		defer func() {
+	if token == "" {
+		return chooseDialog(f.life.Context(), v)
+	}
+	activationMu.Lock()
+	var once sync.Once
+	clear := func() {
+		once.Do(func() {
 			os.Unsetenv(activationEnv)
 			activationMu.Unlock()
-		}()
+		})
 	}
-	return chooseDialog(f.life.Context(), v)
+	defer clear()
+	stop := make(chan struct{})
+	defer close(stop)
+	started := dialogProcessStarted(stop) // watches from before the dialog starts
+	os.Setenv(activationEnv, token)
+	type answer struct {
+		pick string
+		err  error
+	}
+	got := make(chan answer, 1)
+	go func() {
+		p, err := chooseDialog(f.life.Context(), v)
+		got <- answer{p, err}
+	}()
+	select {
+	case <-started:
+	case a := <-got:
+		clear()
+		return a.pick, a.err
+	case <-time.After(dialogStartBound):
+	}
+	clear()
+	a := <-got
+	return a.pick, a.err
 }
 
 // activationEnv is the variable a Wayland app reads its activation token from.
 const activationEnv = "XDG_ACTIVATION_TOKEN"
 
 var activationMu sync.Mutex
+
+// dialogStartBound is the longest the activation token stays in this process's
+// environment while the choice's dialog process starts (B10).
+const dialogStartBound = 2 * time.Second
+
+// dialogProcessStarted returns a channel closed once a new child process of this process
+// has started (the dialog tool the choice runs; Linux reads /proc), or never where that
+// cannot be seen; it stops looking when stop closes. A var so MA-1427's test can say when.
+var dialogProcessStarted = newChildStarted
 
 // endIfIdle stops the instance when nothing runs, no wizard is open and no Desktop
 // page was opened or asked for in this run (MB-16; F2).

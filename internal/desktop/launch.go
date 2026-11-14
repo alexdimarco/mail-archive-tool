@@ -732,6 +732,10 @@ func serveInstance(ctx context.Context, h *instance.Holder, o *launchOpts, env *
 	}
 	handoffH.Act = f.act
 	handoffH.Gate = f.gate
+	handoffH.Quit = f.quitRequest
+	// Where one copy serves every sign-in of the account, a first-form open (it carries no
+	// sign-in) gets a link for the launch's own session, never this copy's browser (B9).
+	handoffH.FirstFormQuiet = !sessionsSeparate
 	// DisableGeneralOptionsHandler: net/http would answer OPTIONS * before the Host guard (AC8).
 	dash := &http.Server{Handler: dashboardHandler(dcfg, ln.Addr(), sess, handoffH), ReadHeaderTimeout: 10 * time.Second, IdleTimeout: 2 * time.Minute, DisableGeneralOptionsHandler: true}
 	rmx.cfg = dcfg
