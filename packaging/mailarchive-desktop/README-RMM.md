@@ -124,19 +124,27 @@ installed program itself: a one-time task of that copy's user runs
 `mailarchivew.exe quit -check -end-older -pid N` (would you close?) and, only once every
 copy said yes, `mailarchivew.exe quit -end-older -pid N` (close now), from `C:\Program Files\MailArchive
 Desktop\`. Nothing shows on the user's screen; the task has a random name, only SYSTEM and
-Administrators can change it, and it removes itself. It works under PowerShell's
+Administrators can change it, and it removes itself. The program's answer comes back
+through a file (`quit … -out`) in a one-time folder under `C:\Windows\Temp` that only
+SYSTEM, Administrators and that user can reach, removed with the task. It works under PowerShell's
 Constrained Language mode (AppLocker, WDAC). The script's outcomes:
 
 - **Every copy idle:** each closes after finishing its work, the script prints "Closed
   MailArchive (process N) after it finished its work." and runs the install.
 - **Exit 1618 — a copy is busy:** one copy is running a backup or another task, or its
-  wizard is open. No copy is closed and the install is not started; the script prints
-  which process is busy. Schedule a retry (most RMM tools retry 1618 on their own).
-- **Exit 3 — a copy could not be asked:** the script prints which process and why (for
-  example, the one-time task could not run in that user's sign-in, or MailArchive is not
-  installed under Program Files). Nothing is closed or forced and the install is not
-  started. This does not go away by retrying: have that user click **Shut down** in
-  MailArchive Desktop (or sign out), then run the script again.
+  wizard or its choice window is open. No copy is closed and the install is not started;
+  the script prints which process is busy. Schedule a retry (most RMM tools retry 1618 on
+  their own).
+- **Exit 1618 — a copy is still finishing:** it agreed to close but had not ended after 30
+  seconds (its work was still draining). It is not forced and the install is not started;
+  the script says so ("agreed to close and is finishing its work"). Retry in a few minutes.
+- **Exit 3 — a copy could not be asked:** the script prints which process and why, in the
+  `quit` program's own words when it ran (for example, its record belongs to another
+  account, as for a copy started as administrator), or why the program could not run (the
+  one-time task could not run in that user's sign-in, or MailArchive is not installed
+  under Program Files). Nothing is closed or forced and the install is not started. This
+  does not go away by retrying: have that user click **Shut down** in MailArchive Desktop
+  (or sign out), then run the script again.
 
 Only a dashboard proven to be from before the menu-bar release is still ended at once, as
 before: one whose own record says it cannot be asked, or one running an installed

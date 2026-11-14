@@ -37,6 +37,12 @@ import (
 // DeleteExpiredTaskAfter, and is removed in a finally (B5, B6). The script's codes for
 // quit's outcomes are the verb's own. The Windows VM lab of fix round 2 ran the real
 // close step as SYSTEM against lab copies (idle, busy, under Constrained Language mode).
+//
+// Amended 2026-11-14 (the S1 fix round 3, docs/review-menubar-s1-adversarial-r3.md C4;
+// amended, not weakened): the verb's own answer comes back through its -out file in a
+// folder only SYSTEM, Administrators and the copy's user can reach; "still finishing
+// after 30 s" is told apart from "busy" by the verb's word (both exit 1618), and a copy
+// that could not be asked is named with the verb's own line.
 func TestMA614_TheUpgradeAsksTheRunningCopyAndNeverForcesWork(t *testing.T) {
 	root := moduleRoot(t)
 	b, err := os.ReadFile(filepath.Join(root, "packaging", "mailarchive-desktop", "Install-RMM.ps1"))
@@ -108,6 +114,28 @@ func TestMA614_TheUpgradeAsksTheRunningCopyAndNeverForcesWork(t *testing.T) {
 	}
 	if strings.Contains(code, "else { $busy += ") {
 		t.Errorf("any other answer is still lumped in with busy (B2)")
+	}
+	// The verb's own answer reaches the RMM log (the S1 fix round 3, C4): the task's
+	// output is not kept, so quit writes its outcome word and its line to an -out file in a
+	// folder made for that task, only SYSTEM, Administrators and the copy's user can
+	// reach (the user may add and change files, never remove or replace the folder), empty
+	// once its access is set, removed with the task; a link there is never read. A copy
+	// that agreed but is still finishing after the wait is told apart from a busy one by
+	// the verb's own word, and a copy that could not be asked is named with the verb's line.
+	for _, want := range []string{
+		`$arguments = $arguments + ' -out ' + $outFile`, `if ($outFile -match '[\s"]') { return -1 }`,
+		`& icacls.exe $outDir /inheritance:r /grant:r '*S-1-5-18:(OI)(CI)F' '*S-1-5-32-544:(OI)(CI)F' ('*' + $sid + ':(RD,WD,RA,X)') ('*' + $sid + ':(OI)(IO)M')`,
+		`@(Get-ChildItem -Force -LiteralPath $outDir).Count -ne 0) { return -1 }`,
+		`if ($madeDir) { Remove-Item -LiteralPath $outDir -Recurse -Force`,
+		`([string]$item.Attributes -match 'ReparsePoint')`,
+		`if ($script:QuitWords) { return "quit answered $r and said: $($script:QuitWords)" }`,
+		`if ($busy -or $cannot -or $finishing) {`,
+		fmt.Sprintf("$QuitOutcomeFinishing = '%s'", desktop.QuitOutcomeFinishing),
+	} {
+		at(want)
+	}
+	if fin, busyAt := at(`elseif ($r -eq $QuitBusy -and $script:QuitOutcome -eq $QuitOutcomeFinishing) { $finishing += $id }`), at(`elseif ($r -eq $QuitBusy) { $busy += $id }  # work began since it was asked`); fin > busyAt {
+		t.Errorf("a copy still finishing is counted busy before it is told apart")
 	}
 	at("if ($cannot) { $code = $ExitCouldNotAsk }")
 	at("$ExitCouldNotAsk = 3")

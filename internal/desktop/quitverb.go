@@ -9,11 +9,13 @@ import (
 	"os"
 	"path/filepath"
 	"runtime"
+	"strings"
 	"time"
 
 	"mail-archive-tool/internal/instance"
 	"mail-archive-tool/internal/procs"
 	"mail-archive-tool/internal/schedule"
+	"mail-archive-tool/internal/util"
 )
 
 // The `quit` verb (the S1 fix round 2, B1, B2, B5, B7): it asks this account's running
@@ -99,7 +101,26 @@ func endProcess(pid int) error {
 // Quit is the `quit` verb; it returns the process's exit status.
 func Quit(args []string) int { return quitVerb(context.Background(), args, osQuitEnv()) }
 
-func quitVerb(ctx context.Context, args []string, env *quitEnv) int {
+// The outcome words the verb writes first in its -out file (the S1 fix round 3, C4): the
+// upgrade script tells apart, by them, two answers that share exit 3 (busy, and agreed but
+// still finishing after -wait), and prints the verb's own line for a copy it could not ask.
+// MA-614's test pins the script's copies of them.
+const (
+	QuitOutcomeDone        = "done"          // it quit
+	QuitOutcomeWould       = "would"         // -check: it would quit now
+	QuitOutcomeAlready     = "already"       // -check: it is already quitting
+	QuitOutcomeOlderWould  = "older-would"   // -check -end-older: an older copy would be ended
+	QuitOutcomeOlderEnded  = "older-ended"   // -end-older: an older copy was ended
+	QuitOutcomeBusy        = "busy"          // it runs work, or its wizard or choice is open
+	QuitOutcomeFinishing   = "finishing"     // it agreed, and had not ended after -wait
+	QuitOutcomeNotRunning  = "not-running"   // no copy (as that process)
+	QuitOutcomeCouldNotAsk = "could-not-ask" // the line says why
+)
+
+// maxQuitOutLine bounds the line the -out file carries.
+const maxQuitOutLine = 400
+
+func quitVerb(ctx context.Context, args []string, env *quitEnv) (code int) {
 	fs := flag.NewFlagSet("mailarchive quit", flag.ContinueOnError)
 	fs.SetOutput(env.Stderr)
 	fs.Usage = func() {
@@ -110,34 +131,48 @@ func quitVerb(ctx context.Context, args []string, env *quitEnv) int {
 	pid := fs.Int("pid", 0, "the process to ask (default: this sign-in's MailArchive)")
 	wait := fs.Duration("wait", 30*time.Second, "how long to wait for it to end once it agreed")
 	endOlder := fs.Bool("end-older", false, "end an older MailArchive that cannot be asked (its live record lists no requests, and its process runs a MailArchive program), as an upgrade does")
+	outPath := fs.String("out", "", "also write the outcome (one word, then the line printed) to this file, for a script that cannot read this program's output (the upgrade script)")
 	if err := fs.Parse(args); err != nil {
 		if errors.Is(err, flag.ErrHelp) {
 			return QuitDone
 		}
 		return QuitCouldNotAsk
 	}
+	// say prints the verb's one line and remembers it, with its outcome word, for -out.
+	outcome, said := "", ""
+	say := func(w io.Writer, word, line string) {
+		fmt.Fprintln(w, line)
+		outcome, said = word, line
+	}
+	if *outPath != "" {
+		defer func() {
+			if err := writeQuitOut(*outPath, outcome, said); err != nil {
+				fmt.Fprintln(env.Stderr, "quit could not write its outcome to "+*outPath+": "+err.Error())
+			}
+		}()
+	}
 	if fs.NArg() > 0 {
-		fmt.Fprintf(env.Stderr, "quit takes no arguments, only flags (got %q); run mailarchive quit -h\n", fs.Arg(0))
+		say(env.Stderr, QuitOutcomeCouldNotAsk, fmt.Sprintf("quit takes no arguments, only flags (got %q); run mailarchive quit -h", fs.Arg(0)))
 		return QuitCouldNotAsk
 	}
 	cannot := func(why string) int {
-		fmt.Fprintf(env.Stderr, quitCouldNotAskText+"\n", why)
+		say(env.Stderr, QuitOutcomeCouldNotAsk, fmt.Sprintf(quitCouldNotAskText, why))
 		return QuitCouldNotAsk
 	}
 	notRunning := func() int {
 		if *pid != 0 {
-			fmt.Fprintf(env.Stderr, quitNotThisPIDText+"\n", *pid)
+			say(env.Stderr, QuitOutcomeNotRunning, fmt.Sprintf(quitNotThisPIDText, *pid))
 		} else {
-			fmt.Fprintln(env.Stderr, quitNotRunningText)
+			say(env.Stderr, QuitOutcomeNotRunning, quitNotRunningText)
 		}
 		return QuitNotRunning
 	}
 	// waitEnd waits up to -wait for the copy to end and says how it went.
-	waitEnd := func(p int, done string) int {
+	waitEnd := func(p int, word, done string) int {
 		deadline := time.Now().Add(*wait)
 		for env.Alive(p) {
 			if time.Now().After(deadline) {
-				fmt.Fprintf(env.Stderr, quitStillClosingText+"\n", p, *wait)
+				say(env.Stderr, QuitOutcomeFinishing, fmt.Sprintf(quitStillClosingText, p, *wait))
 				return QuitBusy
 			}
 			select {
@@ -146,7 +181,7 @@ func quitVerb(ctx context.Context, args []string, env *quitEnv) int {
 			case <-time.After(env.Poll):
 			}
 		}
-		fmt.Fprintf(env.Stdout, done+"\n", p)
+		say(env.Stdout, word, fmt.Sprintf(done, p))
 		return QuitDone
 	}
 
@@ -195,7 +230,7 @@ func quitVerb(ctx context.Context, args []string, env *quitEnv) int {
 			return notRunning()
 		}
 		if !*endOlder {
-			fmt.Fprintf(env.Stderr, quitOlderText+"\n", info.PID)
+			say(env.Stderr, QuitOutcomeCouldNotAsk, fmt.Sprintf(quitOlderText, info.PID))
 			return QuitCouldNotAsk
 		}
 		prog, err := env.Program(info.PID)
@@ -206,13 +241,13 @@ func quitVerb(ctx context.Context, args []string, env *quitEnv) int {
 			return cannot(fmt.Sprintf("process %d runs %s, which is not MailArchive, so it is not ended", info.PID, stripControl(prog)))
 		}
 		if *check {
-			fmt.Fprintf(env.Stdout, quitOlderWouldText+"\n", info.PID)
+			say(env.Stdout, QuitOutcomeOlderWould, fmt.Sprintf(quitOlderWouldText, info.PID))
 			return QuitDone
 		}
 		if err := env.End(info.PID); err != nil {
 			return cannot(fmt.Sprintf("the older copy (process %d) could not be ended (%v)", info.PID, err))
 		}
-		return waitEnd(info.PID, quitOlderEndedText)
+		return waitEnd(info.PID, QuitOutcomeOlderEnded, quitOlderEndedText)
 	}
 	if !info.HasAct(instance.ActQuit) {
 		return cannot("this copy does not know the quit request")
@@ -232,17 +267,31 @@ func quitVerb(ctx context.Context, args []string, env *quitEnv) int {
 	}
 	switch {
 	case rep.Shown && *check:
-		fmt.Fprintf(env.Stdout, quitWouldText+"\n", info.PID)
+		say(env.Stdout, QuitOutcomeWould, fmt.Sprintf(quitWouldText, info.PID))
 		return QuitDone
 	case rep.Reason == instance.ReasonClosing && *check:
-		fmt.Fprintf(env.Stdout, quitAlreadyText+"\n", info.PID)
+		say(env.Stdout, QuitOutcomeAlready, fmt.Sprintf(quitAlreadyText, info.PID))
 		return QuitDone
 	case rep.Shown, rep.Reason == instance.ReasonClosing:
 		// It agreed (or was already stopping): wait for it to end, its work drained.
-		return waitEnd(info.PID, quitDoneText)
+		return waitEnd(info.PID, QuitOutcomeDone, quitDoneText)
 	case rep.Reason == instance.ReasonBusy:
-		fmt.Fprintf(env.Stderr, quitBusyText+"\n", info.PID)
+		say(env.Stderr, QuitOutcomeBusy, fmt.Sprintf(quitBusyText, info.PID))
 		return QuitBusy
 	}
 	return cannot(fmt.Sprintf("it answered %q", rep.Reason))
+}
+
+// writeQuitOut writes the -out file: the outcome word on the first line and the line the
+// verb printed on the second, control characters dropped and bounded, atomically. Nothing
+// said (a usage error before the verb began) is the could-not-ask word with no line.
+func writeQuitOut(path, outcome, line string) error {
+	if outcome == "" {
+		outcome = QuitOutcomeCouldNotAsk
+	}
+	line = stripControl(line)
+	if len(line) > maxQuitOutLine {
+		line = strings.ToValidUTF8(line[:maxQuitOutLine], "")
+	}
+	return util.WriteFileAtomic0600(path, []byte(outcome+"\n"+line+"\n"))
 }

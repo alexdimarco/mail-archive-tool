@@ -1344,6 +1344,29 @@ revert), recorded in the commit; the unfiltered `go test ./...` runs before each
 >   program named. *Builder's call:* the record's own `exe` is not trusted for this (a later
 >   `run-job` of the same program could hold a reused pid; the lock check is what rules that out,
 >   and the name check what rules out a foreign program).
+> - **C4 — the verb's own answer reaches the RMM log.** `quit` gains `-out FILE`: it writes its
+>   outcome word (`done`, `would`, `already`, `older-would`, `older-ended`, `busy`, `finishing`,
+>   `not-running`, `could-not-ask`) and the very line it printed, one line, control characters
+>   dropped, at most 400 bytes. `Invoke-AsCopyUser` makes, for each ask, a folder
+>   `%windir%\Temp\MailArchive-upgrade-<GUID>` (its own random GUID; no space or quote, since
+>   Task Scheduler gives quotes back unescaped and the script compares the arguments it reads
+>   back — found on the VM), sets its access before the task runs (`/inheritance:r`; SYSTEM and
+>   Administrators full; the copy's user list, add file, read attributes and traverse on the
+>   folder, modify on files in it — so the user can never remove the folder or put a link in
+>   its place; the folder must still be empty), passes `-out` to the task, reads the file only
+>   when it is a small plain file (never a reparse point), and removes the folder in its
+>   `finally`. Exit 3 with the word `finishing` is "agreed to close and is finishing its work,
+>   but had not ended after 30 seconds … Run this script again in a few minutes" (1618), never
+>   "busy"; "could not ask" carries "quit answered N and said: <its line>". The verb's exit codes
+>   (X1) and the script's own (0, 1618, 3) are unchanged. *VM, as SYSTEM under Constrained
+>   Language mode, the real close step against lab copies:* idle → closed (code 0, the folder
+>   gone); a copy whose record the task cannot accept → code 3 with the verb's own reason
+>   ("… is owned by S-1-5-32-544, not by this account"); a copy with its wizard open → 1618 with
+>   the busy words; a stand-in installed program answering `finishing` → 1618 with the
+>   finishing words. *Owed (L-W1):* the folder's grants checked with a real user's token (as
+>   SYSTEM in the lab the copy's SID is SYSTEM's own, which has full access anyway); if the
+>   user could not write the file, the script falls back to the old generic words — never to a
+>   wrong decision, since the decisions still follow the exit codes.
 > - **C5 — an open choice is busy for `quit` (builder's call, as the lead allowed).** Closing it
 >   is not harmless: on Windows the choice is a window of the copy itself and vanishes under the
 >   person's hand; a pick of the wizard or of Desktop a moment later is lost without a word; and

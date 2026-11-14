@@ -26,9 +26,10 @@ $ErrorActionPreference = 'Stop'
 # when all say yes is each asked to close, and each closes after its own drain. A copy
 # that runs work or an open wizard says no: then nothing is closed or forced, the
 # upgrade is not started, the busy process is named, and the script exits 1618 (another
-# installation is in progress), so the RMM tool tries again later. A copy that cannot be
-# asked is never called busy and never forced: the script names it and why, starts no
-# upgrade, and exits 3. Only a copy proven to be from before slice S1 is ended at once,
+# installation is in progress), so the RMM tool tries again later; so does a copy that
+# agreed to close but is still finishing its work after 30 seconds, named as such. A copy
+# that cannot be asked is never called busy and never forced: the script names it and
+# why, in the quit verb's own words (its -out file), starts no upgrade, and exits 3. Only a copy proven to be from before slice S1 is ended at once,
 # as before: by its own record (`quit -end-older` ends it), or, when the installed MailArchive
 # itself predates the quit request (no QuitVerb value in its registry key), by running
 # that installed program. The task has a random name, a security descriptor that lets
@@ -39,6 +40,9 @@ $ErrorActionPreference = 'Stop'
 
 # What `mailarchive quit` answers (internal/desktop/quitverb.go; X1's declared set).
 $QuitDone = 0; $QuitCouldNotAsk = 1; $QuitNotRunning = 2; $QuitBusy = 3
+# The outcome word its -out file starts with when it agreed to quit but had not ended after
+# -wait (exit 3, as busy; the S1 fix round 3, C4).
+$QuitOutcomeFinishing = 'finishing'
 # This script's own outcome when a running copy could not be asked (besides msiexec's).
 $ExitCouldNotAsk = 3
 
@@ -114,20 +118,38 @@ function Test-Dashboard([string]$cmd) {
 # in a sign-in of that user, through a one-time task, and returns its exit status, or -1
 # when the task could not be made. A status above 255 is Task Scheduler's own result
 # (the program never ran to its end). It uses schtasks.exe, not the ScheduledTasks
-# module, which Constrained Language mode can keep from loading.
+# module, which Constrained Language mode can keep from loading. The verb's own answer —
+# its outcome word and the line it printed — comes back through its -out file (the task's
+# output is not kept) and is left in $script:QuitOutcome and $script:QuitWords ('' when
+# there is none).
 function Invoke-AsCopyUser($proc, [string]$exe, [string]$arguments, [int]$bound) {
     $ErrorActionPreference = 'SilentlyContinue'
+    $script:QuitOutcome = ''; $script:QuitWords = ''
     $owner = Invoke-CimMethod -InputObject $proc -MethodName GetOwnerSid
     if ($owner.ReturnValue -ne 0 -or -not ($owner.Sid -match '^S-1-[0-9-]+$')) { return -1 }
     $sid = [string]$owner.Sid
     $name = 'MailArchive upgrade ' + (New-Guid).Guid
     $now = Get-Date
+    # The answer file is in a folder of SYSTEM's own temporary folder, under a random
+    # name of its own, that only SYSTEM, Administrators and the copy's user can reach: the user
+    # may add and change files in it, never remove or replace the folder; it must be empty
+    # once its access is set, and it is removed with the task. Its path has no space or
+    # quote, so the argument needs no quoting (Task Scheduler gives quotes back unescaped,
+    # and the check below compares the arguments it holds).
+    $outDir = Join-Path $env:windir ('Temp\MailArchive-upgrade-' + (New-Guid).Guid)
+    $outFile = Join-Path $outDir 'quit.txt'
+    if ($outFile -match '[\s"]') { return -1 }
+    $arguments = $arguments + ' -out ' + $outFile
     $xml = $taskXml -f (ConvertTo-XmlText $exe), (ConvertTo-XmlText $arguments), $sid, $now.AddDays(-1).ToString('s'), $now.AddMinutes(15).ToString('s')
     # The definition goes through a file of SYSTEM's own temporary folder, under the
     # task's random name.
     $file = Join-Path $env:windir ('Temp\' + $name + '.xml')
-    $code = -1
+    $code = -1; $madeDir = $false
     try {
+        if (-not (New-Item -ItemType Directory -Path $outDir -ErrorAction SilentlyContinue)) { return -1 }
+        $madeDir = $true
+        & icacls.exe $outDir /inheritance:r /grant:r '*S-1-5-18:(OI)(CI)F' '*S-1-5-32-544:(OI)(CI)F' ('*' + $sid + ':(RD,WD,RA,X)') ('*' + $sid + ':(OI)(IO)M') 2>$null | Out-Null
+        if ($LASTEXITCODE -ne 0 -or @(Get-ChildItem -Force -LiteralPath $outDir).Count -ne 0) { return -1 }
         Set-Content -LiteralPath $file -Value $xml -Encoding Unicode
         # No /f: a task of that name made by anyone else first makes this fail.
         & schtasks.exe /create /tn "\$name" /xml $file 2>$null | Out-Null
@@ -149,18 +171,37 @@ function Invoke-AsCopyUser($proc, [string]$exe, [string]$arguments, [int]$bound)
             if ($ran -lt 0) { $ran += 4294967296 }  # an HRESULT, shown signed
             if ($ran -ne 267011 -and $ran -ne 267009) { $code = $ran; break }
         }
+        if ($code -ge 0 -and $code -le 255) { Read-QuitOut $outFile }
     } finally {
         & schtasks.exe /delete /tn "\$name" /f 2>$null | Out-Null
         Remove-Item -LiteralPath $file -Force -ErrorAction SilentlyContinue
+        if ($madeDir) { Remove-Item -LiteralPath $outDir -Recurse -Force -ErrorAction SilentlyContinue }
     }
     return $code
 }
 
-# The words for a copy that could not be asked, from what the task returned.
+# Read-QuitOut reads the verb's -out file into $script:QuitOutcome (its first line, one
+# lower-case word) and $script:QuitWords (its second, control characters dropped, at most
+# 400 characters). A link, a folder, or a file larger than 2 KB is not read.
+function Read-QuitOut([string]$f) {
+    $item = Get-Item -LiteralPath $f -Force -ErrorAction SilentlyContinue
+    if (-not $item -or $item.PSIsContainer -or $item.Length -gt 2048 -or ([string]$item.Attributes -match 'ReparsePoint')) { return }
+    $l = @(Get-Content -LiteralPath $f -TotalCount 2 -Encoding UTF8 -ErrorAction SilentlyContinue)
+    if ($l.Count -ge 1 -and ([string]$l[0]) -match '^[a-z-]{1,20}$') { $script:QuitOutcome = [string]$l[0] }
+    if ($l.Count -ge 2) {
+        $w = ([string]$l[1]) -replace '[\x00-\x1f\x7f]', ''
+        if ($w.Length -gt 400) { $w = $w.Substring(0, 400) }
+        $script:QuitWords = $w
+    }
+}
+
+# The words for a copy that could not be asked, from what the task returned and, when the
+# program ran, the verb's own line (the S1 fix round 3, C4).
 function Get-CouldNotAskReason([long]$r) {
     if ($r -eq -2) { return 'the one-time task in its user''s sign-in did not finish in time' }
     if ($r -lt 0) { return 'the one-time task in its user''s sign-in could not be made' }
     if ($r -gt 255) { return ('the one-time task in its user''s sign-in could not run (result 0x{0:X})' -f $r) }
+    if ($script:QuitWords) { return "quit answered $r and said: $($script:QuitWords)" }
     return "quit could not ask it (answered $r)"
 }
 
@@ -169,7 +210,7 @@ function Get-CouldNotAskReason([long]$r) {
 # mailarchivew.exe, $QuitVerb whether it has the `quit` verb, $TrustedRoot the folder only
 # administrators can write that it must be in (it is run as each copy's user).
 function Close-RunningMailArchive([string]$ProcessName, [string]$Exe, [bool]$QuitVerb, [string]$TrustedRoot) {
-    $lines = @(); $ask = @(); $force = @(); $busy = @(); $cannot = @()
+    $lines = @(); $ask = @(); $force = @(); $busy = @(); $cannot = @(); $finishing = @()
     $root = $TrustedRoot.TrimEnd('\') + '\'
     $trusted = [bool]$Exe -and ($Exe -notmatch '\.\.') -and $Exe.ToLowerInvariant().StartsWith($root.ToLowerInvariant()) -and (Test-Path -LiteralPath $Exe -PathType Leaf)
     foreach ($proc in @(Get-CimInstance Win32_Process -Filter "Name = '$ProcessName'" -ErrorAction SilentlyContinue)) {
@@ -197,13 +238,17 @@ function Close-RunningMailArchive([string]$ProcessName, [string]$Exe, [bool]$Qui
             $r = Invoke-AsCopyUser $proc $Exe "quit -end-older -pid $id -wait 30s" 75
             if ($r -eq $QuitDone) { $lines += "Closed MailArchive (process $id) after it finished its work." }
             elseif ($r -eq $QuitNotRunning) { }
-            elseif ($r -eq $QuitBusy) { $busy += $id }  # work began since it was asked, or it is still finishing
+            elseif ($r -eq $QuitBusy -and $script:QuitOutcome -eq $QuitOutcomeFinishing) { $finishing += $id }  # it agreed, and is still finishing its work
+            elseif ($r -eq $QuitBusy) { $busy += $id }  # work began since it was asked
             else { $cannot += "process ${id}: " + (Get-CouldNotAskReason $r) }
         }
     }
-    if ($busy -or $cannot) {
+    if ($busy -or $cannot -or $finishing) {
         foreach ($id in $busy) {
-            $lines += "MailArchive is busy in a signed-in session (process $id): it is running a backup or another task, or its wizard is open. It was left running and the upgrade was not started. Run this script again later."
+            $lines += "MailArchive is busy in a signed-in session (process $id): it is running a backup or another task, or its wizard or its choice window is open. It was left running and the upgrade was not started. Run this script again later."
+        }
+        foreach ($id in $finishing) {
+            $lines += "MailArchive (process $id) agreed to close and is finishing its work, but had not ended after 30 seconds. It was not forced and the upgrade was not started. Run this script again in a few minutes."
         }
         foreach ($c in $cannot) {
             $lines += "MailArchive could not be asked to close in a signed-in session ($c). It was left running and the upgrade was not started. See README-RMM.md: A running MailArchive that is busy is never cut off."
