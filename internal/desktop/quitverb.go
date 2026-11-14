@@ -7,10 +7,13 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"path/filepath"
+	"runtime"
 	"time"
 
 	"mail-archive-tool/internal/instance"
 	"mail-archive-tool/internal/procs"
+	"mail-archive-tool/internal/schedule"
 )
 
 // The `quit` verb (the S1 fix round 2, B1, B2, B5, B7): it asks this account's running
@@ -59,6 +62,9 @@ type quitEnv struct {
 	Session   string
 	SessionOf func(pid int) (string, error)
 	Alive     func(pid int) bool
+	// Program is the full path of the program a process runs (procs.Program): an older
+	// copy is ended only when it is proven to be MailArchive (the S1 fix round 3, C3).
+	Program func(pid int) (string, error)
 	// End ends the process pid at once (an older copy, -end-older only).
 	End     func(pid int) error
 	Version string
@@ -69,8 +75,16 @@ type quitEnv struct {
 
 func osQuitEnv() *quitEnv {
 	return &quitEnv{Stdout: os.Stdout, Stderr: os.Stderr, StateDir: instance.Dir, Session: instance.LogonSession(),
-		SessionOf: instance.SessionOf, Alive: procs.Alive, End: endProcess, Version: buildVersion(),
+		SessionOf: instance.SessionOf, Alive: procs.Alive, Program: procs.Program, End: endProcess, Version: buildVersion(),
 		Reach: 5 * time.Second, Poll: 200 * time.Millisecond}
+}
+
+// isMailArchiveProgram reports whether path names one of MailArchive's programs: its
+// install or former names (schedule.KnownName: mailarchive, mailarchivew,
+// mailarchive-desktop, mailarchive-gui, with or without .exe), matched as the system
+// matches names (the S1 fix round 3, C3).
+func isMailArchiveProgram(path string) bool {
+	return path != "" && schedule.KnownName(filepath.Base(path), runtime.GOOS)
 }
 
 // endProcess ends pid at once (Windows' TerminateProcess, a kill elsewhere).
@@ -95,7 +109,7 @@ func quitVerb(ctx context.Context, args []string, env *quitEnv) int {
 	check := fs.Bool("check", false, "only ask whether it would quit now; stop nothing")
 	pid := fs.Int("pid", 0, "the process to ask (default: this sign-in's MailArchive)")
 	wait := fs.Duration("wait", 30*time.Second, "how long to wait for it to end once it agreed")
-	endOlder := fs.Bool("end-older", false, "end an older MailArchive that cannot be asked (its record lists no requests), as an upgrade does")
+	endOlder := fs.Bool("end-older", false, "end an older MailArchive that cannot be asked (its live record lists no requests, and its process runs a MailArchive program), as an upgrade does")
 	if err := fs.Parse(args); err != nil {
 		if errors.Is(err, flag.ErrHelp) {
 			return QuitDone
@@ -173,12 +187,25 @@ func quitVerb(ctx context.Context, args []string, env *quitEnv) int {
 	if len(info.Acts) == 0 {
 		// Its own record lists no hand-off actions: a version from before the menu-bar
 		// release, which has no way to be asked (never decided by failing to reach it).
-		// Only when asked to (the upgrade script) is it ended, as upgrades always did.
-		switch {
-		case !*endOlder:
+		// Only when asked to (the upgrade script) is it ended, as upgrades always did — and
+		// only when the record is live and its process is MailArchive (the S1 fix round 3,
+		// C3): a record whose lock nobody holds was left by a copy that ended without its
+		// clean-up, and its pid may now be any program's.
+		if !instance.LockIsHeld(dir, session) {
+			return notRunning()
+		}
+		if !*endOlder {
 			fmt.Fprintf(env.Stderr, quitOlderText+"\n", info.PID)
 			return QuitCouldNotAsk
-		case *check:
+		}
+		prog, err := env.Program(info.PID)
+		if err != nil {
+			return cannot(fmt.Sprintf("cannot tell which program process %d runs (%v), so it is not ended", info.PID, err))
+		}
+		if !isMailArchiveProgram(prog) {
+			return cannot(fmt.Sprintf("process %d runs %s, which is not MailArchive, so it is not ended", info.PID, stripControl(prog)))
+		}
+		if *check {
 			fmt.Fprintf(env.Stdout, quitOlderWouldText+"\n", info.PID)
 			return QuitDone
 		}

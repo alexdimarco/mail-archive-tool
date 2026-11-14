@@ -1335,6 +1335,15 @@ revert), recorded in the commit; the unfiltered `go test ./...` runs before each
 >   `/proc/self/cgroup` unreadable the answer is "" (fail closed). Consequence for MA-1439: a copy
 >   started by the user manager never shows the choice on a second click (the "cannot tell"
 >   notice) even if its environment has an id; the lab still decides whether that is acceptable.
+> - **C3 — `quit -end-older` ends only a live, proven MailArchive.** For a record with no hand-off
+>   actions the verb now first checks that its lock is held (a record nobody's lock backs is
+>   stale: "not running", exit 2, whatever flag), and, before ending or saying it would, reads
+>   the process's program from the system (`procs.Program`: QueryFullProcessImageName on
+>   Windows, `/proc/<pid>/exe` on Linux, `kern.procargs2` on macOS, "cannot tell" elsewhere) and
+>   requires one of `schedule.KnownName`'s names; otherwise "could not ask", exit 1, with the
+>   program named. *Builder's call:* the record's own `exe` is not trusted for this (a later
+>   `run-job` of the same program could hold a reused pid; the lock check is what rules that out,
+>   and the name check what rules out a foreign program).
 
 ### 12.2 New dependencies (operator decision)
 `github.com/ebitengine/purego` (macOS only, behind a build tag) and `github.com/godbus/dbus/v5`

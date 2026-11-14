@@ -28,12 +28,21 @@ func quitRun(t *testing.T, g *dRig, args ...string) (int, string) {
 	}, args...)
 }
 
-// quitRunEnding is quitRun with the seam that ends an older copy at once.
+// quitRunEnding is quitRun with the seam that ends an older copy at once. The rig's copy is
+// this test process, whose program is read as an installed MailArchive's.
 func quitRunEnding(t *testing.T, g *dRig, end func(int) error, args ...string) (int, string) {
+	t.Helper()
+	return quitRunWith(t, g, func(int) (string, error) { return "/opt/MailArchive/mailarchive", nil }, end, args...)
+}
+
+// quitRunWith is quitRunEnding with the seam that reads which program a process runs
+// (procs.Program, an operating-system seam; the real one is proven in
+// TestMA1424_TheProgramOfAProcessIsReadFromTheSystem).
+func quitRunWith(t *testing.T, g *dRig, program func(int) (string, error), end func(int) error, args ...string) (int, string) {
 	t.Helper()
 	var out, errb bytes.Buffer
 	env := &quitEnv{
-		End: end,
+		End: end, Program: program,
 		Stdout: &out, Stderr: &errb,
 		StateDir:  func() (string, error) { return g.dir, nil },
 		Session:   g.session,
