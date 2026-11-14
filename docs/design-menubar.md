@@ -1187,6 +1187,127 @@ revert), recorded in the commit; the unfiltered `go test ./...` runs before each
 >   keyboard belonged to the Parallels console window, not the lab's dialog; a real-keyboard
 >   pass stays owed.
 
+> **S1 fix round 2, 2026-11-13 (the re-check `docs/review-menubar-s1-adversarial-r2.md`, B1–B10
+> and A5; the lead's direction, and where the builder deviated, why).**
+> - **B1, B2, B5, B7 — the upgrade asks through the program, never by window messages.** A new
+>   verb, **`mailarchive quit [-check] [-pid N] [-wait 30s]`**, asks this account's running copy
+>   over the signed hand-off (two new actions, `can-quit` and `quit`, advertised in the instance
+>   file): an idle copy quits by the one stop and waits for its drain; a copy running work or with
+>   its wizard open answers "busy" and keeps running. Exit 0 quit (or, with -check, would), 1 could
+>   not ask (the reason said; usage errors too), 2 not running, 3 busy or still finishing after
+>   -wait. *Gate found while building:* the lead's "a distinct code per outcome" first got codes
+>   3–7, but X1 (docs/ux-contract.md) and MA-613 pin every exit code the program emits to
+>   {0, 1, 2, 3, 130, 143}; MA-613's scan did not see codes defined in `internal/desktop`, so it
+>   stayed green — routing around the gate, and widening it is the operator's call. So the four
+>   outcomes the lead named (closed, busy, none, could not ask) take 0, 3, 2 and 1, and an older
+>   copy is not a fifth code: with `-end-older` (only the script passes it) `quit` ends a copy
+>   whose own record lists no actions, as upgrades did, and never a copy that can be asked. A test
+>   now pins quit's codes inside MA-613's set. If the operator prefers separate codes for "older"
+>   and "still finishing", that is a widening of X1 for them to accept. `-pid` finds that process's own sign-in's instance file, so a user signed in
+>   twice, or a copy at a higher integrity, is reached all the same (the hand-off is loopback, not a
+>   window). Install-RMM.ps1 asks every dashboard `quit -check` first and asks them to `quit` only
+>   when none said no (B7); busy → nothing closed, exit 1618; could not ask → never "busy", never
+>   forced, exit **3** with the process and the reason. *Builder's calls:* the verb is `quit` (the
+>   CLI's verbs are single words; a person at a terminal can use it too), not `instance close`; the
+>   task runs the installed **`mailarchivew.exe`** (no console window flashes in the user's
+>   session), not `mailarchive.exe`; the script's codes for the verb's answers are pinned to the
+>   verb's own constants by MA-614's test.
+> - **"Before S1" is decided by version, never by unreachability.** Our Windows programs carry no
+>   file-version resource (the .syso holds only the icon), so: (a) the copy's own instance file —
+>   no hand-off actions listed is a version from before S1, which `quit -end-older` ends as before;
+>   (b) for an installed MailArchive that predates `quit`, the MSI's key now gets a
+>   `QuitVerb` value (Product.wxs): when it is absent, a copy running that installed program is from
+>   before S1 and is ended as before; a copy running from anywhere else cannot be asked → exit 3.
+> - **B5, B6 — the task.** Random name (`MailArchive upgrade <GUID>`), created without /f (a name
+>   taken fails), a protected security descriptor in its own XML (SYSTEM and Administrators full,
+>   the user read), its action checked after creation, `ExecutionTimeLimit` 2 minutes, a trigger
+>   that never fires with an `EndBoundary` 15 minutes on and `DeleteExpiredTaskAfter` PT0S, deleted
+>   in a `finally`; it may start on battery (the round-1 task inherited "do not start on battery",
+>   which would have made an idle laptop's copy look busy). *Deviation:* a task **folder** that only
+>   SYSTEM and Administrators can write needs the Task Scheduler COM object to set its security,
+>   which Constrained Language mode blocks; the task's own protected descriptor gives the same
+>   protection in the root folder. *Found on the VM:* the ScheduledTasks module (CDXML) does not load
+>   in a session switched to Constrained Language mode, so the script makes and runs the task with
+>   **schtasks.exe**; it reads the last result from the verbose CSV row by position (the labels are
+>   localised, the column order is not). The installed program is run only from under
+>   `%ProgramW6432%` (Program Files): it runs as another user, so it must sit where only
+>   administrators write (else exit 3, "not installed under Program Files").
+> - **B3 (and A5):** a posted WM_QUIT is a close request like WM_CLOSE — refused while busy, the
+>   message loop going on (the window still answers sign-out), the one waiting stop when idle. A
+>   WM_ENDSESSION with ENDSESSION_CLOSEAPP stops the copy only after the copy allowed that request's
+>   WM_QUERYENDSESSION (once) and while still idle; a lone one is ignored.
+> - **B4, accepted LOW (builder's call):** the dialog library answers a WM_CLOSE to the wizard's own
+>   dialog exactly as its Cancel (both are its "canceled"), so telling them apart would mean
+>   changing the library. `taskkill` without /F therefore closes an open wizard like Cancel, and an
+>   idle copy then ends; the wizard's Cancel is a safe point (its copy stops; "run the wizard again
+>   to finish it"). MA-1424 and MA-1435 say so.
+> - **B8:** Linux's sign-in is XDG_SESSION_ID, else logind's own answer for the process — the
+>   session scope its control group sits in (`session-<id>.scope`, the rule of systemd's
+>   `sd_pid_get_session`), read from `/proc/self/cgroup`, with no new dependency (godbus stays S5's)
+>   — never the kernel's audit session. A process the user manager started (GNOME on Wayland starts
+>   apps under `user@<uid>.service`) has none: "unknown", the "cannot tell" notice, fail closed. If
+>   GNOME-started copies all land there, a second click on GNOME never shows the choice; MA-1439
+>   (pending, now in the catalog) settles that before the Linux release.
+> - **B9 (deviation: a link, not a refusal):** a first-form open carries no sign-in; where one copy
+>   serves every sign-in (macOS, Linux) the copy answers it as a quiet open — a link the older
+>   launcher shows in its own session — never its own browser. A refusal (503) would make an older
+>   launcher retry for 15 s and then say the copy is "not responding … quit it in Task Manager",
+>   which is false and asks the person to kill a copy that may be working; a link is what the
+>   unknown-sign-in rule already gives a quiet open, and opens nothing on the copy's screen.
+> - **B10:** the token is set, the dialog started, and the token taken out of the environment as
+>   soon as a new child process of the copy appears (the dialog tool; Linux reads /proc), at most
+>   2 s after, or when the dialog returns.
+> - **Residuals, for the lead:** the quit request's idle check and its stop are not one step (as
+>   WM_CLOSE's are not): work started in that instant is cancelled by the stop, waited for and
+>   recorded as interrupted. Install-RMM.ps1 still ends the former name `mailarchive-desktop.exe`
+>   unconditionally (MA-614, SC34), and this release's former-name file is the S1 program: a copy
+>   started under that name is ended whatever it is doing — outside B1–B10, not changed here. No
+>   admin override for a copy that stays busy for days (the review's suggestion): the runbook tells
+>   the admin to have the user click Shut down. A8 stays the L-W1 lab.
+> - **The Windows VM lab of this round (2026-11-13, Windows 11 ARM VM, lab builds `ma2fixw.exe`
+>   and `ma2fix.exe` from this branch, the real close step cut from Install-RMM.ps1 between its
+>   `# --- functions ---` and `# --- the upgrade ---` markers and run as SYSTEM against lab copies
+>   only, with a lab wrapper standing in for the installed program that points the verb at the
+>   lab copy's own state folder; files under `.winlab/fix2/`):**
+>   - *In a real user session (before the switch to schtasks.exe):* an idle copy, full language:
+>     "Closed MailArchive (process 13584) after it finished its work.", code 0 after 7 s, the
+>     copy gone, no task left.
+>   - *Under Constrained Language mode (the session switched, as the re-check did):* the first
+>     try found the ScheduledTasks module cannot load; the script said "could not be made",
+>     exit 3, forced nothing (the B2 rule held even then) — hence schtasks.exe. Then Windows
+>     Update restarted the VM (22:14, MoUsoCoreWorker, "Service pack (Planned)"), signing the
+>     user out; no one signed in again, and this round signs no one in, so the rest ran against
+>     copies started as SYSTEM in session 0: under CLM the whole close step ran with
+>     schtasks.exe (no CLM error), the task ran, the verb answered "could not ask" — a
+>     SYSTEM-started copy's record is owned by Administrators while the task's token differs,
+>     exactly what a copy started "as administrator" meets — and the script printed it, exit 3,
+>     the copy alive, no task left. The legacy path under CLM: a copy not running the installed
+>     program is exit 3; one running it is ended, code 0.
+>   - *B6:* the close step killed 2 s in left `\MailArchive upgrade <GUID>` with
+>     `D:P(A;;FA;;;SY)(A;;FA;;;BA)(A;;FR;;;…)`, limit PT2M, delete-after PT0S, end 22:41:54;
+>     at 22:42 Task Scheduler had deleted it.
+>   - *B3:* MA-1435's tests and their two mutations ran on the VM (as SYSTEM, no user signed in).
+>   - *Owed (L-W1 above):* the success path and a busy refusal under CLM in a real user session,
+>     two users or two copies (B7) end to end, a copy started as administrator.
+> - **Owner's ruling on F7, 2026-11-13 ("rename it", relayed by the lead):** what opens the
+>   choice is named **MailArchive**. Done here: the MSI's Desktop, Start-menu and Startup
+>   shortcuts (the three that run `start`) are named "MailArchive" with the description "Add or
+>   back up mail, or open MailArchive Desktop in your browser"; the Linux menu entry
+>   (`Exec=mailarchive start`) likewise, with its READ ME; the guide's way back on Windows, the
+>   README and the release notes' first steps and README-RMM name the MailArchive shortcut.
+>   Kept: the product name, its Program Files and Start-menu folders, the Uninstall entry and the
+>   DC6 key stay "MailArchive Desktop" (renaming the product is not what F7 asked, and DC6 pins
+>   the key). *Builder's finding, macOS:* the app is "Mail Archive" (`Mail Archive.app`,
+>   CFBundleName) and opens the choice, but never said "Desktop", so it is not F7's mismatch; it
+>   is left alone (a renamed .app would sit beside the old one after a drag-install upgrade). The
+>   guide's macOS way back still named the old wizard item and now says "choose Open MailArchive
+>   Desktop in your browser". *Upgrades:* the shortcuts are plain shortcuts of the product's
+>   component and the MajorUpgrade removes the earlier product, with its shortcuts, before the
+>   new files go in (afterInstallInitialize), so no "MailArchive Desktop" shortcut is left; a
+>   pin a person made to the old shortcut is theirs to re-pin. Not proven on the VM (installing
+>   over the shared VM's own MailArchive would change it): L-W1 below. Linux: the entry keeps its
+>   file name, so the install line replaces it in place. MA-1431 and MA-1080 are amended.
+
 ### 12.2 New dependencies (operator decision)
 `github.com/ebitengine/purego` (macOS only, behind a build tag) and `github.com/godbus/dbus/v5`
 (Linux only, behind a build tag). Both pure Go; both go into THIRD-PARTY-NOTICES. (Q7.)
@@ -1206,7 +1327,12 @@ revert), recorded in the commit; the unfiltered `go test ./...` runs before each
   hand).
 - L-W1 (Windows 11 ARM VM, `prlctl exec` cannot drive a signed-in desktop, so by hand): first-run
   overflow, pinning, Explorer restart, Narrator, high contrast, the choice in front of Edge, Startup
-  launch with the tick off.
+  launch with the tick off. *Added 2026-11-13 (F7):* install an MSI whose shortcuts are named
+  "MailArchive Desktop", then upgrade to one naming them "MailArchive": no "MailArchive Desktop"
+  shortcut is left on the all-users Desktop, in Startup or in the Start menu. *Added 2026-11-13
+  (fix round 2):* Install-RMM.ps1's close step in a real user session — an idle copy, a busy one
+  (exit 1618, nothing closed), two users or two copies (all or none), under AppLocker or WDAC
+  Constrained Language mode, and a copy started "as administrator" (exit 3, never forced).
 - L-L1/L-L2 (Linux, a desktop VM; Docker has no GUI): KDE, GNOME with and without AppIndicator,
   Xfce; X11 and Wayland focus for the choice.
 
