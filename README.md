@@ -30,11 +30,11 @@ it makes — that page needs no software to read.
 
 | Your machine | Download | First run |
 |---|---|---|
-| **Windows** | **`MailArchiveDesktop-<version>-x64.msi`**, the installer (needs administrator rights) | double-click it; it is unsigned, so on **"Windows protected your PC"** click *More info → Run anyway*, and at the permission prompt that names an **Unknown publisher** click **Yes**. Then open **MailArchive Desktop** from the Start menu |
+| **Windows** | **`MailArchiveDesktop-<version>-x64.msi`**, the installer (needs administrator rights) | double-click it; it is unsigned, so on **"Windows protected your PC"** click *More info → Run anyway*, and at the permission prompt that names an **Unknown publisher** click **Yes**. Then open **MailArchive** from the Start menu |
 | **Windows, without administrator rights** | `mailarchive-windows-amd64.zip` | unzip, then double-click **`mailarchivew.exe`** (SmartScreen → *More info → Run anyway*) |
 | **macOS** | `MailArchive-macos.zip` | unzip to **`Mail Archive.app`**, drag it into Applications, then **right-click → Open → Open** once (it is unsigned) |
 | **Linux** | `mailarchive-linux-amd64` | needs `zenity` and a desktop session; run **`mailarchive wizard`** (or `mailarchive desktop`) |
-| **Linux app menu** (optional) | `mailarchive-linux-desktop-entry.tar.gz` | unpack it, put the program in the folder it makes, and follow its `READ ME.txt`: three lines add **MailArchive Desktop**, with its icon, to your app menu |
+| **Linux app menu** (optional) | `mailarchive-linux-desktop-entry.tar.gz` | unpack it, put the program in the folder it makes, and follow its `READ ME.txt`: three lines add **MailArchive**, with its icon, to your app menu |
 
 On macOS the double-click app is **`MailArchive-macos.zip`** (it unzips to
 `Mail Archive.app`). The command-line tool is a separate download,
@@ -43,14 +43,17 @@ On macOS the double-click app is **`MailArchive-macos.zip`** (it unzips to
 it in a text editor. Both are universal (Apple Silicon and Intel).
 
 On Windows the installer puts MailArchive in Program Files for everyone on the
-computer, adds **MailArchive Desktop**, **MailArchive wizard**, **Copy MailArchive
-link** and **Uninstall MailArchive Desktop** to the Start menu and a desktop
-shortcut, and starts MailArchive Desktop quietly (no browser tab) each time anyone
+computer, adds **MailArchive**, **MailArchive wizard**, **Copy MailArchive
+link** and **Uninstall MailArchive Desktop** to the Start menu and a **MailArchive**
+desktop shortcut (each asks whether to add or back up mail or to open MailArchive
+Desktop in your browser; an upgrade replaces the shortcuts an earlier version named
+**MailArchive Desktop**), and starts MailArchive quietly (no browser tab) each time anyone
 signs in to this computer (every account on it, not only yours). The zip does none
 of that. To remove an installed copy, click **Uninstall MailArchive…** in MailArchive
 Desktop first (it removes the scheduled backups), then Settings → Apps → Installed
 apps → **MailArchive Desktop** → Uninstall. Moving from the zip to the installer: shut
-MailArchive Desktop down, install, open MailArchive Desktop from the Start menu,
+MailArchive Desktop down, install, open **MailArchive** from the Start menu and choose
+Open MailArchive Desktop in your browser,
 click **Repair** on each archive's **Scheduled backup** card (so the schedule
 runs the installed program, not the unzipped one), then delete the unzipped
 folder; the release notes give the steps. IT teams can deploy the same MSI

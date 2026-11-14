@@ -1,7 +1,9 @@
 MailArchive on Linux: a menu entry with its icon
 ================================================
 
-These files add MailArchive Desktop to your app menu, with MailArchive's icon.
+These files add MailArchive to your app menu, with its icon. Clicking it asks
+whether to add or back up mail step by step or to open MailArchive Desktop in
+your browser.
 You need nothing else installed, and nothing here needs administrator rights.
 
 1. Put the program in this folder. Download it from the same release page as
@@ -19,7 +21,7 @@ You need nothing else installed, and nothing here needs administrator rights.
    The third line is long: copy it whole. It writes where the program now is
    (in your home folder) into the menu entry, so the menu can start it.
 
-If MailArchive Desktop is not in your app menu yet, or clicking it does
+If MailArchive is not in your app menu yet, or clicking it does
 nothing, sign out and back in once: some menus only notice a new entry after a
 new sign-in. If it is still missing after that, you can always start it from a
 terminal with:

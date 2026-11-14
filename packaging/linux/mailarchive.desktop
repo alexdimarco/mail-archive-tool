@@ -1,9 +1,9 @@
 [Desktop Entry]
 Type=Application
 Version=1.0
-Name=MailArchive Desktop
+Name=MailArchive
 GenericName=Mail archive
-Comment=Your mail archives, backups and alerts, in your browser
+Comment=Add or back up mail, or open MailArchive Desktop in your browser
 Exec=mailarchive start
 Icon=mailarchive
 Terminal=false

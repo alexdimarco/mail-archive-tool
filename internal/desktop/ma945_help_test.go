@@ -389,7 +389,9 @@ var helpPlatforms = []helpPlatform{
 		helpMacWizard,
 		"When the wizard is done, reload this page (press Command-R).",
 		"Run now starts a backup now (with the Thunderbird sync on, it first waits for Thunderbird's mail; see Thunderbird below), Repair fixes",
-		"Your archives and scheduled backups are not affected. To come back, open Mail Archive.app and choose Microsoft 365, folder export, browsing & tools (open MailArchive Desktop).",
+		// Amended 2026-11-13 (the S1 friction review's F7 ruling and slice S1's choice;
+		// amended, not weakened): the app and the shortcut open the choice.
+		"Your archives and scheduled backups are not affected. To come back, open Mail Archive.app and choose Open MailArchive Desktop in your browser.",
 		"Thunderbird installed in the Applications folder, or in the Applications folder inside your home folder. The Thunderbird sync looks for it only there.",
 		"(Thunderbird keeps its profiles in ~/Library/Thunderbird/Profiles.)",
 		"Scheduled backups: Thunderbird starts out of sight.",
@@ -400,7 +402,7 @@ var helpPlatforms = []helpPlatform{
 		helpWinWizard,
 		"When the wizard is done, reload this page (press F5).",
 		"Run now starts a backup now (with the Thunderbird sync on, it first waits for Thunderbird's mail; see Thunderbird below), Repair fixes",
-		"Your archives and scheduled backups are not affected. To come back, open MailArchive Desktop from the Start menu, or, if MailArchive was unzipped, double-click mailarchivew.exe in its folder.",
+		"Your archives and scheduled backups are not affected. To come back, open MailArchive from the Start menu and choose Open MailArchive Desktop in your browser, or, if MailArchive was unzipped, double-click mailarchivew.exe in its folder.",
 		`Thunderbird installed in its usual place: a Mozilla Thunderbird folder in Program Files (or Program Files (x86)), or in AppData\Local\Programs in your user folder. The Thunderbird sync looks for it only there.`,
 		`(Thunderbird keeps its profiles in %APPDATA%\Thunderbird\Profiles.)`,
 		"Scheduled backups: Thunderbird starts minimized.",

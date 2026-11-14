@@ -62,7 +62,8 @@ func desktopEntry(t *testing.T, src string) map[string]string {
 // folder mailarchive-linux-desktop-entry/ with mailarchive.png (packaging/icon's
 // square 256 px PNG), mailarchive.svg (its square drawing), mailarchive.desktop and
 // READ ME.txt. The .desktop is a valid [Desktop Entry]: Type=Application,
-// Name=MailArchive Desktop, Exec=mailarchive start (desktop until design-menubar S1), Icon=mailarchive,
+// Name=MailArchive (MailArchive Desktop until the owner's F7 ruling, 2026-11-13),
+// Exec=mailarchive start (desktop until design-menubar S1), Icon=mailarchive,
 // Terminal=false, Categories ending in ";". READ ME.txt has exactly three install
 // lines, which put the program at ~/.local/bin/mailarchive, the PNG at
 // ~/.local/share/icons/hicolor/256x256/apps/mailarchive.png (the name Icon finds) and
@@ -148,8 +149,10 @@ func TestMA1080_LinuxDesktopEntryAsset(t *testing.T) {
 	keys := desktopEntry(t, string(members[dir+"mailarchive.desktop"]))
 	for k, v := range map[string]string{
 		// Amended 2026-11-13 (design-menubar §7.4, MB-13; amended, not weakened): the entry
-		// runs `start`, the launcher choice, where it ran `desktop`.
-		"Type": "Application", "Name": "MailArchive Desktop", "Exec": "mailarchive start",
+		// runs `start`, the launcher choice, where it ran `desktop`. Amended 2026-11-13 (the
+		// owner's ruling on the S1 friction review's F7; amended, not weakened): it opens the
+		// choice, so it is named MailArchive, as the Windows shortcuts are.
+		"Type": "Application", "Name": "MailArchive", "Exec": "mailarchive start",
 		"Icon": "mailarchive", "Terminal": "false",
 	} {
 		if keys[k] != v {
@@ -190,7 +193,7 @@ func TestMA1080_LinuxDesktopEntryAsset(t *testing.T) {
 	// scheduled backups) before the program file is deleted.
 	prose := strings.Join(strings.Fields(string(members[dir+"READ ME.txt"])), " ")
 	for _, want := range []string{
-		"If MailArchive Desktop is not in your app menu yet",
+		"If MailArchive is not in your app menu yet", // F7's name (amended 2026-11-13)
 		"sign out and back in once",
 		"~/.local/bin/mailarchive start",
 		"Uninstall MailArchive",

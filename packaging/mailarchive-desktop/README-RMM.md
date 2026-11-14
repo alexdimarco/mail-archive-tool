@@ -153,7 +153,10 @@ Silent uninstall: `powershell -NoProfile -ExecutionPolicy Bypass -File .\Uninsta
 
 Install is per-machine to `C:\Program Files\MailArchive Desktop\` and creates: an
 all-users Desktop shortcut, an all-users Startup shortcut, Start Menu + Uninstall
-shortcuts, a Start Menu **MailArchive wizard** shortcut (`wizard`), a Start Menu
+shortcuts (the Desktop, Startup and Start Menu shortcuts are named **MailArchive**:
+they run `start`, which asks whether to add or back up mail or to open MailArchive
+Desktop; an upgrade removes the earlier version's shortcuts of the old name
+**MailArchive Desktop** with the earlier product, before the new ones are made), a Start Menu **MailArchive wizard** shortcut (`wizard`), a Start Menu
 **Copy MailArchive link** shortcut (`-copy-link`: shows a fresh private link in a
 dialog with a Copy button, for a default browser that cannot be opened), the Apps &
 Features entry, and `HKLM\Software\MailArchive Desktop`.
@@ -198,8 +201,8 @@ integration below is **lab-pending** and is exactly what this round covers:
    startup`) all launch `mailarchivew.exe desktop`. The binary is windowsgui (no
    console) but opens the dashboard in the OS default browser itself once listening
    (MA-281), at a private one-time link, so a Desktop/Start-menu click should pop the
-   dashboard straight away — **verify the install this way: open MailArchive Desktop
-   from its shortcut and see the page.** The **Startup** shortcut passes
+   dashboard straight away — **verify the install this way: open MailArchive
+   from its shortcut, choose Open MailArchive Desktop in your browser, and see the page.** The **Startup** shortcut passes
    `-no-browser` so the at-login launch starts the background server quietly (no
    browser tab every sign-in); verify by then clicking the Desktop shortcut, which
    should reconnect to the running instance — after it proves itself — and open the

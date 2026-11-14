@@ -151,12 +151,18 @@
              and Start-menu shortcuts run `start`, which shows the launcher choice (Run
              the wizard / Open MailArchive Desktop) or, when MailArchive already runs,
              asks the running copy to show it; the Startup shortcut runs
-             `start -background`; the wizard and Copy link shortcuts are unchanged. -->
+             `start -background`; the wizard and Copy link shortcuts are unchanged.
+             Owner's ruling 2026-11-13 (the S1 friction review's F7): the three that run
+             `start` are named "MailArchive", since they open the choice, not only
+             MailArchive Desktop. An upgrade leaves no shortcut of the old name: the
+             MajorUpgrade above removes the earlier product, with its shortcuts, before
+             these are installed. The product, its folder, its Start-menu folder and the
+             Uninstall entry keep the name MailArchive Desktop (DC6). -->
         <Shortcut
             Id="DesktopShortcut"
             Directory="DesktopFolder"
-            Name="MailArchive Desktop"
-            Description="Open MailArchive Desktop"
+            Name="MailArchive"
+            Description="Add or back up mail, or open MailArchive Desktop in your browser"
             Target="[INSTALLFOLDER]mailarchivew.exe"
             Arguments="start"
             WorkingDirectory="INSTALLFOLDER"
@@ -171,8 +177,8 @@
         <Shortcut
             Id="StartupShortcut"
             Directory="StartupFolder"
-            Name="MailArchive Desktop"
-            Description="Start MailArchive Desktop after Windows sign-in"
+            Name="MailArchive"
+            Description="Start MailArchive after Windows sign-in"
             Target="[INSTALLFOLDER]mailarchivew.exe"
             Arguments="start -background"
             WorkingDirectory="INSTALLFOLDER"
@@ -182,8 +188,8 @@
         <Shortcut
             Id="StartMenuShortcut"
             Directory="ApplicationProgramsFolder"
-            Name="MailArchive Desktop"
-            Description="Open MailArchive Desktop"
+            Name="MailArchive"
+            Description="Add or back up mail, or open MailArchive Desktop in your browser"
             Target="[INSTALLFOLDER]mailarchivew.exe"
             Arguments="start"
             WorkingDirectory="INSTALLFOLDER"

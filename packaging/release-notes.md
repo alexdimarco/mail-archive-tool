@@ -30,11 +30,13 @@ scheduled backups, alerts and status), a step-by-step wizard, and a command line
     account is not an administrator, Windows asks for an administrator's password.
 
   It installs MailArchive for everyone on this computer, in Program Files. It adds
-  **MailArchive Desktop**, **MailArchive wizard**, **Copy MailArchive link** and
-  **Uninstall MailArchive Desktop** to the Start menu and a **MailArchive Desktop** shortcut
-  on the desktop, and it starts MailArchive Desktop quietly, without opening your browser,
+  **MailArchive**, **MailArchive wizard**, **Copy MailArchive link** and
+  **Uninstall MailArchive Desktop** to the Start menu and a **MailArchive** shortcut
+  on the desktop, and it starts MailArchive quietly, without opening your browser,
   each time anyone signs in to this computer (every account on it, not only yours). Open
-  **MailArchive Desktop** from the Start menu to begin.
+  **MailArchive** from the Start menu to begin: it asks whether to add or back up mail
+  step by step or to open MailArchive Desktop in your browser. (Earlier versions named
+  these shortcuts **MailArchive Desktop**; installing this version replaces them.)
 - **Updating to a newer version.** First click **Shut down** at the top of MailArchive
   Desktop's page; if a backup is running, let it finish first. On a computer several
   people are signed in to, each of them has MailArchive Desktop running: ask them to sign
@@ -53,7 +55,8 @@ scheduled backups, alerts and status), a step-by-step wizard, and a command line
   program changes. A scheduled backup you set up with the zip still runs the programs in
   the unzipped folder, so point it at the installed program before you delete that folder:
   1. If MailArchive Desktop is open, click **Shut down** at the top of its page.
-  2. Install the MSI as above, then open **MailArchive Desktop** from the Start menu.
+  2. Install the MSI as above, then open **MailArchive** from the Start menu and choose
+     **Open MailArchive Desktop in your browser**.
   3. For each archive with a scheduled backup: open it (in **Your archives**, click **Switch
      to this archive** if it is not the one shown), then click **Repair** on its **Scheduled
      backup** card. How often it runs and
@@ -75,7 +78,7 @@ MailArchive is one program with verbs; there is no separate GUI download.
 |---|---|---|
 | Linux x86-64 | `mailarchive-linux-amd64` | `mailarchive wizard` or `mailarchive desktop` (the wizard needs `zenity` and a desktop session) |
 | Linux arm64 | `mailarchive-linux-arm64` | the same verbs (compiled, not lab-run) |
-| Linux app menu (optional) | `mailarchive-linux-desktop-entry.tar.gz` | adds **MailArchive Desktop**, with its icon, to your app menu: unpack it and follow its `READ ME.txt` |
+| Linux app menu (optional) | `mailarchive-linux-desktop-entry.tar.gz` | adds **MailArchive**, with its icon, to your app menu: unpack it and follow its `READ ME.txt` |
 
 ### Changed in 1.7.1 — an archive in a cloud-synced folder says "Keep it local"
 - **An archive in a cloud-synced folder now shows a "Keep it local" warning.** A backup writes thousands of small files in a few minutes, and sync apps (OneDrive, Dropbox, Google Drive, iCloud Drive, Nextcloud and others) can lose some of them while they catch up, without any error. So **Status & health** and `mailarchive status` now mark an archive in such a folder as a warning (it was an information line since 1.6.0), name the sync app when MailArchive knows it, and recommend moving the archive to a folder on this computer that the app does not sync, backed up separately if you want a copy elsewhere. Scheduling a backup into a synced folder says the same in two sentences; it never stops you.

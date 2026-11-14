@@ -130,7 +130,8 @@ func helpDataFor(goos string, open bool) helpData {
 		d.Reload, d.Missed = "press Command-R", helpMissedOnWake
 		// A double-click on Mail Archive.app opens the wizard (noarg M1); the Desktop is its
 		// surfaceDesktopItem.
-		d.ComeBack = "To come back, open Mail Archive.app and choose Microsoft 365, folder export, browsing & tools (open MailArchive Desktop)."
+		// Since slice S1 the app opens the choice (the F7 ruling's pass, 2026-11-13).
+		d.ComeBack = "To come back, open Mail Archive.app and choose Open MailArchive Desktop in your browser."
 	case "windows":
 		d.On, d.Sync = "on Windows", true
 		d.WizardHow = "On Windows, open MailArchive wizard from the Start menu; the MailArchive installer (MailArchiveDesktop-…-x64.msi) puts it there. If MailArchive was unzipped rather than installed, there is no Start menu entry: open the MailArchive folder, click in the address bar at the top of the window, type cmd and press Enter, then type mailarchivew.exe wizard and press Enter."
@@ -147,7 +148,8 @@ func helpDataFor(goos string, open bool) helpData {
 		d.Reload, d.Missed = "press F5", helpMissedOnWake
 		// The installer's Start menu shortcut (Product.wxs); mailarchivew.exe opened with no
 		// console starts the Desktop (noarg W3).
-		d.ComeBack = "To come back, open MailArchive Desktop from the Start menu, or, if MailArchive was unzipped, double-click mailarchivew.exe in its folder."
+		// The shortcut is named MailArchive since it opens the choice (the owner's F7 ruling).
+		d.ComeBack = "To come back, open MailArchive from the Start menu and choose Open MailArchive Desktop in your browser, or, if MailArchive was unzipped, double-click mailarchivew.exe in its folder."
 	default:
 		d.On = "on Linux"
 		d.WizardHow = "On Linux, run mailarchive wizard."
