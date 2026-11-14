@@ -21,7 +21,6 @@ import (
 	"mail-archive-tool/internal/index"
 	"mail-archive-tool/internal/pages"
 	"mail-archive-tool/internal/state"
-	"mail-archive-tool/internal/vault"
 )
 
 // archiveRecheckEvery is how often, at most, a plaintext run's walk proves again that its folder
@@ -46,7 +45,7 @@ var tailForTest func()
 // An encrypted run's is encryptedArchiveChangedFor: its record has no id.
 func archiveChangedFor(opts Options, began string, stillHeld func() error) func() bool {
 	if opts.Key != nil {
-		return encryptedArchiveChangedFor(opts, stillHeld)
+		return encryptedArchiveChangedFor(stillHeld)
 	}
 	return func() bool {
 		if began == "" {
@@ -60,20 +59,15 @@ func archiveChangedFor(opts Options, began string, stillHeld func() error) func(
 	}
 }
 
-// encryptedArchiveChangedFor says the folder opts.Out no longer holds the encrypted archive the
-// run's key opens (the B3 adversarial pass, round 4's J2): the vault there names another archive,
-// or the folder holds no vault MailArchive can read while the run's lock file is gone or replaced
-// too. The vault's archive id is read without the key (vault.Detect): it is not trusted, only
-// compared, and the lock is proved beside it, so a copy of the same archive is told by its lock.
-// It needs no archive id in the record, so a release before 1.8 can take it.
-func encryptedArchiveChangedFor(opts Options, stillHeld func() error) func() bool {
-	want := opts.Key.ArchiveID()
-	return func() bool {
-		if info, ok, err := vault.Detect(opts.Out); err == nil && ok {
-			return info.ArchiveID != want
-		}
-		return stillHeld() != nil
-	}
+// encryptedArchiveChangedFor says an encrypted run's folder may no longer hold its archive (the B3
+// adversarial pass, round 4's J2): its lock file there is gone or no longer its own. An encrypted
+// archive's record has no id, and the vault's is not read here (no production code outside the
+// unlock path may call vault.Detect, MA-726's gate), so the binding is the key, which the run's
+// saves prove at their commit point, and the lock: a run whose lock is no longer its own records
+// nothing in the folder, whichever archive is there now (the review's recommended fix). It needs
+// no archive id, so a release before 1.8 can take it.
+func encryptedArchiveChangedFor(stillHeld func() error) func() bool {
+	return func() bool { return stillHeld() != nil }
 }
 
 // archiveGuard proves, before every save of a run's progress and on time during its walk, that
@@ -93,6 +87,12 @@ type archiveGuard struct {
 }
 
 func newArchiveGuard(opts Options, stillHeld func() error, changed func() bool) *archiveGuard {
+	if opts.Key != nil {
+		// An encrypted run's proof is its lock alone, told in the lock's own words: its changed is
+		// the lock too (encryptedArchiveChangedFor), and cannot tell another archive from a lock
+		// another run took.
+		changed = nil
+	}
 	return &archiveGuard{out: opts.Out, stillHeld: stillHeld, changed: changed, proved: time.Now(), everyWrite: opts.Key != nil}
 }
 
@@ -169,4 +169,16 @@ func (g *archiveGuard) writePages(idx *index.Index, logger *log.Logger, gaps int
 // proof on time bounds them to about archiveRecheckEvery of the walk.
 func archiveChangedDuringError(out string) error {
 	return fmt.Errorf("the archive folder %s now holds another archive than the one this backup began with (its drive was changed, or the folder was moved, during the backup): this backup stopped and recorded nothing in it. Run the backup again", out)
+}
+
+// changedEnd is the error a run's deferred record gives a run that would have ended ok, or partly
+// ok, when the folder changed under it: a plaintext run's archiveChangedDuringError; an encrypted
+// run's lock words, since its lock alone cannot tell another archive from a lock another run took.
+func changedEnd(opts Options, stillHeld func() error) error {
+	if opts.Key != nil {
+		if err := stillHeld(); err != nil {
+			return err
+		}
+	}
+	return archiveChangedDuringError(opts.Out)
 }

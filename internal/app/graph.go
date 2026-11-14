@@ -234,7 +234,7 @@ func RunGraph(ctx context.Context, g GraphOptions, opts Options, logger *log.Log
 				logger.Printf("warning: %s no longer holds the archive this capture began with; nothing was recorded in it", opts.Out)
 			}
 			if err == nil || errors.Is(err, ErrPartial) {
-				err = withKind(state.FailLockLost, archiveChangedDuringError(opts.Out))
+				err = withKind(state.FailLockLost, changedEnd(opts, lock.StillHeld))
 			}
 			return
 		}

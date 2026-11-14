@@ -9,6 +9,7 @@ import (
 
 	"mail-archive-tool/internal/assure"
 	"mail-archive-tool/internal/export"
+	"mail-archive-tool/internal/lockfile"
 	"mail-archive-tool/internal/state"
 )
 
@@ -28,10 +29,11 @@ func ma1338Outside(changed []string) []string {
 
 // covers: MA-1338, R5, R45
 // The B3 adversarial pass, round 4's J2: an encrypted archive's run proves its folder too, as a
-// plaintext run does, before every save and on time during its walk (its binding is its key's
-// archive, which the folder's vault names, and its lock). Here encrypted archive A's folder comes
-// to hold encrypted archive B while A's run walks its store: the run stops as a lost lock, with
-// words that say so, and writes nothing into B outside its sealed message files: no record, no run
+// plaintext run does, before every save and on time during its walk (its binding is its key,
+// proved by its saves, and its lock; its record has no id, and no production code outside the
+// unlock path may read the vault's, MA-726). Here encrypted archive A's folder comes to hold
+// encrypted archive B while A's run walks its store: the run stops as a lost lock, in the lock's
+// words, and writes nothing into B outside its sealed message files: no record, no run
 // history entry, no BACKUP-NEEDS-ATTENTION.txt, no sealed manifest. An encrypted walk proves after
 // every message it writes, not only on time: whether or not the proof on time is due, the walk
 // reads at most one more message after the swap, so B receives at most the sealed files of the
@@ -87,7 +89,7 @@ func TestAnEncryptedRunWhoseFolderIsSwappedRecordsNothingInTheOther(t *testing.T
 				t.Errorf("the walk read %d messages after its folder came to hold another archive", n)
 			}
 			rc, msg := ma1328LockLost(err)
-			assure.Refused(t, rc, msg, assure.Names("another archive", "Run the backup again"),
+			assure.Refused(t, rc, msg, assure.Names(lockfile.Name, "run again"),
 				assure.NoSideEffect(func() bool {
 					if len(outside) > 0 {
 						t.Logf("written into the other archive: %v", outside)

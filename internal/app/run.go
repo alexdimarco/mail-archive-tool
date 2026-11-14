@@ -778,7 +778,8 @@ func Run(ctx context.Context, opts Options, logger *log.Logger, onProgress Progr
 	// lock file goes with the old folder, so nothing else tells the run before a checkpoint. It is
 	// another archive when the folder's record carries another id, or carries none while this run's
 	// lock is gone too (an archive an older MailArchive made). An encrypted archive's record has no
-	// id: its vault names the archive its key opens (round 4's J2).
+	// id: its lock alone tells, and a keyed run whose lock is no longer its own records nothing
+	// there (round 4's J2).
 	archiveChanged := archiveChangedFor(opts, begun.Archive, lock.StillHeld)
 	// The same proof, with the lock's, before every save of the run's progress and on time during
 	// its walk (round 3's H1): a swap after the check below is caught before anything of this
@@ -835,7 +836,7 @@ func Run(ctx context.Context, opts Options, logger *log.Logger, onProgress Progr
 				logger.Printf("warning: %s no longer holds the archive this backup began with; nothing was recorded in it", opts.Out)
 			}
 			if err == nil || errors.Is(err, ErrPartial) {
-				err = withKind(state.FailLockLost, archiveChangedDuringError(opts.Out))
+				err = withKind(state.FailLockLost, changedEnd(opts, lock.StillHeld))
 			}
 			return
 		}
