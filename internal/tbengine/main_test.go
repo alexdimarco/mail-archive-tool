@@ -12,6 +12,7 @@ import (
 	"mail-archive-tool/internal/encrecord"
 	"mail-archive-tool/internal/lockfile"
 	"mail-archive-tool/internal/tbrestore"
+	"mail-archive-tool/internal/testhome"
 	"mail-archive-tool/internal/vault"
 )
 
@@ -59,7 +60,8 @@ func TestMain(m *testing.M) {
 	// environment) is never read: the engine's own look for profiles sharing a Local
 	// Folders (R6-06) reads a throwaway folder unless a test names its own.
 	profileBases = func() []string { return []string{filepath.Join(root, "thunderbird-profiles")} }
-	code := m.Run()
+	// Checked before and after the tests: the settings folder resolves inside the throw-away home.
+	code := testhome.Run(home, m)
 	restoreProbe()
 	restoreRecord()
 	os.RemoveAll(root)

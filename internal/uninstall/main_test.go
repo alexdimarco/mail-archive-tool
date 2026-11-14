@@ -6,6 +6,7 @@ import (
 	"testing"
 
 	"mail-archive-tool/internal/progcache"
+	"mail-archive-tool/internal/testhome"
 )
 
 // TestMain points MailArchive's scratch folder at a throwaway folder for the whole
@@ -29,7 +30,8 @@ func TestMain(m *testing.M) {
 	for _, v := range []string{"HOME", "USERPROFILE", "XDG_CONFIG_HOME", "XDG_CACHE_HOME", "XDG_STATE_HOME", "APPDATA", "LOCALAPPDATA"} {
 		os.Setenv(v, home)
 	}
-	code := m.Run()
+	// Checked before and after the tests: the settings folder resolves inside the throw-away home.
+	code := testhome.Run(home, m)
 	if err := cacheDone(); err != nil {
 		println("TestMain:", err.Error())
 		code = 1

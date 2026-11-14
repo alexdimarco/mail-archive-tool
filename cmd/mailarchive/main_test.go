@@ -15,6 +15,7 @@ import (
 	"mail-archive-tool/internal/encrecord"
 	"mail-archive-tool/internal/lockfile"
 	"mail-archive-tool/internal/progcache"
+	"mail-archive-tool/internal/testhome"
 )
 
 var testBin string
@@ -111,7 +112,9 @@ func TestMain(m *testing.M) {
 		}
 		os.Setenv("PATH", fakeNotifierDir+string(os.PathListSeparator)+os.Getenv("PATH"))
 	}
-	code := m.Run()
+	// Checked before and after the tests: the settings folder resolves inside the throw-away home.
+	// (A pty leader above inherits this process's checked home.)
+	code := testhome.Run(cliHome, m)
 	os.RemoveAll(dir)
 	os.RemoveAll(recordDir)
 	os.Exit(code)

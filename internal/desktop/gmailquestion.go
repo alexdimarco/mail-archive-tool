@@ -81,7 +81,9 @@ func (d *dashboard) keepGmailOutcome(out string, g app.GmailOutcome) {
 }
 
 // gmailYesForRunNow says the open encrypted archive at out has a yes waiting for its Run now.
-func (d *dashboard) gmailYesForRunNow(out string) bool { return len(d.gmailYesStoresForRunNow(out)) > 0 }
+func (d *dashboard) gmailYesForRunNow(out string) bool {
+	return len(d.gmailYesStoresForRunNow(out)) > 0
+}
 
 // gmailYesStoresForRunNow is the yes waiting for the open encrypted archive at out's Run now: the
 // stores its question named (G6); none when none waits.

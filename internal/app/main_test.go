@@ -11,6 +11,7 @@ import (
 
 	"mail-archive-tool/internal/encrecord"
 	"mail-archive-tool/internal/progcache"
+	"mail-archive-tool/internal/testhome"
 	"mail-archive-tool/internal/vault"
 )
 
@@ -66,7 +67,8 @@ func TestMain(m *testing.M) {
 		return &progcache.Fetcher{Cache: c, This: this, BaseURL: refusingReleases.URL, Client: refusingReleases.Client(),
 			Trusted: func(h string) bool { return h == "127.0.0.1" }, Overall: programDownloadMax}
 	}
-	code := m.Run()
+	// Checked before and after the tests: the settings folder resolves inside the throw-away home.
+	code := testhome.Run(testHome, m)
 	refusingReleases.Close()
 	restore()
 	if err := cacheDone(); err != nil {

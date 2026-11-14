@@ -5,6 +5,7 @@ import (
 	"testing"
 
 	"mail-archive-tool/internal/encrecord"
+	"mail-archive-tool/internal/testhome"
 )
 
 // TestMain points the home, settings, cache and state folders, and this
@@ -23,7 +24,8 @@ func TestMain(m *testing.M) {
 	if err := os.MkdirAll(dir+"/home", 0o700); err != nil {
 		panic(err)
 	}
-	code := m.Run()
+	// Checked before and after the tests: the settings folder resolves inside the throw-away home.
+	code := testhome.Run(dir+"/home", m)
 	restore()
 	os.RemoveAll(dir)
 	os.Exit(code)

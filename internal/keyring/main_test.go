@@ -8,6 +8,7 @@ import (
 
 	"mail-archive-tool/internal/app"
 	"mail-archive-tool/internal/encrecord"
+	"mail-archive-tool/internal/testhome"
 	"mail-archive-tool/internal/vault"
 )
 
@@ -39,7 +40,8 @@ func TestMain(m *testing.M) {
 	}
 	app.UseTestProgram(stand)
 	restore := encrecord.SetDirForTest(filepath.Join(root, "record"))
-	code := m.Run()
+	// Checked before and after the tests: the settings folder resolves inside the throw-away home.
+	code := testhome.Run(home, m)
 	restore()
 	os.RemoveAll(root)
 	os.Exit(code)

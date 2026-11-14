@@ -3719,6 +3719,19 @@ rule is shared with the completeness design; whichever lands first owns it and t
 >   assertion changed); MA-1315's wizard test passes `RunNow.GmailYesStores` and asserts the named
 >   stores are carried and `Options.GmailYes` stays false (it asserted `Options.GmailYes` true, the
 >   archive-wide yes G6 removes). No covers marker removed, no gate, suppression or baseline touched.
+> - **Tests never reach the real settings folder (the lead's follow-up, MA-1327).** The engine's
+>   tidy-up-wait lookup made every test that runs a backup look in this computer's settings
+>   folder. The lead's call: no test may, even to read it. The builder's call over an engine option
+>   (the engine has no settings folder of its own; one would touch every caller): each test package
+>   that reaches `internal/app` or `internal/gmailanswer` points its home, settings, cache and state
+>   folders at a throw-away folder in its TestMain (eleven did already; seven more now:
+>   gmailanswer, encmark, export, presyncjob, source, and the two GUI commands) and runs its tests
+>   through `testhome.Run`, which runs none and fails when `job.Dir` resolves outside that folder,
+>   and fails the run if it does after them (it resolves the path, never opens it).
+>   `assureblock`'s meta-test names any such package without it. `internal/testhome` computes no
+>   folder of its own, so MA-621's pinned set of per-user-state files is unchanged (a first
+>   version that listed the folder variables in that package tripped MA-621; the pin was not
+>   widened).
 > - **Runs at `59b91ca` (2026-11-14).** Mac, `go test -count=1 -p 4 -timeout 60m ./...` unfiltered:
 >   54 packages pass; `internal/app` red on `TestRetryReadsTheRunRecord` alone (the copy export's
 >   25-errors breaker under that load; 3 of 3 pass alone; not on a path this round changed). Linux

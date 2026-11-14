@@ -11,6 +11,7 @@ import (
 	"mail-archive-tool/internal/backupalert"
 	"mail-archive-tool/internal/encrecord"
 	"mail-archive-tool/internal/progcache"
+	"mail-archive-tool/internal/testhome"
 	"mail-archive-tool/internal/vault"
 )
 
@@ -44,7 +45,8 @@ func TestMain(m *testing.M) {
 		os.Setenv(v, home)
 	}
 	restore := encrecord.SetDirForTest(filepath.Join(home, "record"))
-	code := m.Run()
+	// Checked before and after the tests: the settings folder resolves inside the throw-away home.
+	code := testhome.Run(home, m)
 	restore()
 	if err := cacheDone(); err != nil {
 		println("TestMain:", err.Error())

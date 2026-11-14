@@ -5,6 +5,7 @@ import (
 	"testing"
 
 	"mail-archive-tool/internal/encrecord"
+	"mail-archive-tool/internal/testhome"
 	"mail-archive-tool/internal/vault"
 )
 
@@ -24,7 +25,8 @@ func TestMain(m *testing.M) {
 	for _, v := range []string{"HOME", "USERPROFILE", "XDG_CONFIG_HOME", "XDG_CACHE_HOME", "XDG_STATE_HOME", "APPDATA", "LOCALAPPDATA"} {
 		os.Setenv(v, dir)
 	}
-	code := m.Run()
+	// Checked before and after the tests: the settings folder resolves inside the throw-away home.
+	code := testhome.Run(dir, m)
 	restore()
 	os.RemoveAll(dir)
 	os.Exit(code)
