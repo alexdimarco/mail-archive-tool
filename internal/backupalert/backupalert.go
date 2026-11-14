@@ -151,6 +151,9 @@ func deliver(settingsPath string, cfg alert.Config, store graphconfig.SecretStor
 		// A backup another run's lock kept out was skipped: its email says so (MA-1147).
 		_, skipped := app.BusySkipped(runErr)
 		ev.Busy = result == ResultFailed && skipped
+		// Backups waiting 3 days for another computer's tidy-up: its email says they wait, never
+		// "FAILED" (the B3 UX walk's U2).
+		ev.Tidying = result == ResultFailed && app.TidyingElsewhere(runErr)
 	}
 	// An encrypted archive's alert says which archive and the failure kind's fixed
 	// words: never the error's text, nor how many messages a run archived (P2a-C16).
@@ -185,6 +188,8 @@ func sentWhat(ev alert.Event) string {
 		return "did not save everything"
 	case ev.Busy:
 		return "skipped, the archive was still in use"
+	case ev.Tidying:
+		return "waiting for another computer's tidy-up"
 	}
 	return ev.Result
 }

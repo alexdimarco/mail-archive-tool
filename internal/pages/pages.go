@@ -19,6 +19,7 @@ import (
 	"mail-archive-tool/internal/export"
 	"mail-archive-tool/internal/index"
 	"mail-archive-tool/internal/state"
+	"mail-archive-tool/internal/util"
 )
 
 // pageSize is how many messages one folder page lists; a bigger folder gets
@@ -226,7 +227,7 @@ func build(ix *index.Index, gaps int, encrypted bool, emit func(rel string, page
 func memberRows(ix *index.Index) (map[string][]row, error) {
 	out := map[string][]row{}
 	err := ix.EachMember(func(m index.MemberRow) error {
-		if !cleanSegments(m.Store) || strings.Contains(m.Store, "/") || !cleanSegments(m.Folder) {
+		if !exporterFolder(m.Store) || strings.Contains(m.Store, "/") || !exporterFolder(m.Folder) {
 			return nil
 		}
 		segs := strings.Split(m.Path, "/")
@@ -275,6 +276,23 @@ func cleanSegments(p string) bool {
 			if r < 0x20 || r == 0x7f {
 				return false
 			}
+		}
+	}
+	return true
+}
+
+// exporterFolder reports whether p, a store or a folder a page is written for, is clean
+// (cleanSegments) and each of its segments is what the exporter's name rule (util.SanitizeSegment,
+// which the local walk applies to every folder) writes: so no name Windows spells another way
+// ("INBOX." is INBOX's own folder there, ".. " is "..") becomes a page's folder (the B3 adversarial
+// pass's A2).
+func exporterFolder(p string) bool {
+	if !cleanSegments(p) {
+		return false
+	}
+	for _, s := range strings.Split(p, "/") {
+		if util.SanitizeSegment(s) != s {
+			return false
 		}
 	}
 	return true

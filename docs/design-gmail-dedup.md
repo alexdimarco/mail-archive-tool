@@ -3570,6 +3570,78 @@ rule is shared with the completeness design; whichever lands first owns it and t
 >   `TestAWedgedRunIsFinishedAsPartialAfterARestart` (passes 3 of 3 alone) were each red once in a
 >   loaded run.
 
+> **Folded 2026-11-13 [B3 adversarial and UX fixes] (the builder's record of the fix round after
+> `docs/review-gmail-dedup-b3-adversarial.md` (A1 to A7) and `docs/review-gmail-dedup-b3-ux.md` (U1
+> to U11); a design change only where it says so).** Rows MA-1302 to MA-1314 registered (no
+> MA-1310 gap: every number is used). Each finding, with the builder's call:
+>
+> - **A1 (HIGH): the archive's own id. A design change, the smallest one.** The manifest has no
+>   id, and a field there is dropped by an older binary's save or makes it a newer version. The
+>   plaintext archive's last-run record carries one instead, `archive` (16 random bytes in hex):
+>   a backup run gives it the first time, `WriteLastRun` carries it into every later record, and a
+>   planted or damaged one reads as none. An older binary's record drops it; the next run gives a
+>   new id, so a kept answer is then asked again, never applied. Never beside an encrypted archive
+>   (its allow-listed record has no such field, and it is never asked on the card). Every kept
+>   answer names the id it was given for (the answer file's `archive`, the job file's
+>   `gmail_archive`); `Read` returns an answer only while the folder's archive carries that id;
+>   the run applies a kept yes only when the id it was given for is the id of the archive it holds
+>   the lock of (`Options.GmailYesFor`), so a caller that read the answer before the folder changed
+>   cannot switch another archive. A yes is spent once the archive's last ok backup found its
+>   store on (`gmail_on`): `Read` leaves it out, and `gmailanswer.Settle`, called after the
+>   terminal backup, Run now and the scheduled run, removes it. Delete and Remove from list remove
+>   the `.gmail-answer` file (their step 3). **Conceded:** a copy of the archive (an older copy
+>   restored into the folder, a cloned folder) carries the same id and is treated as the same
+>   archive; a person who answers on two archives that share one folder's answer file (two drives
+>   used in turn at one letter) keeps only the latest answer, and the other archive is asked again.
+> - **A2:** a member folder is accepted only when each segment is what `util.SanitizeSegment`
+>   writes, in the manifest's validation and the page builder's check.
+> - **A3:** the answer file's name folds the folder as the file system does (absolute, links
+>   resolved, lower case on macOS and Windows). A case-sensitive macOS volume may give two folders
+>   one name; A1's id keeps one archive's answer from the other.
+> - **A4:** only a typed line is an answer. Ctrl-C ends the question at once (the run's context)
+>   and the run ends cancelled. Not proved on Windows: the console's Ctrl-C (an interactive
+>   console cannot be driven through the VM's command runner); both ways it can arrive (a read
+>   error, the interrupt) end the question as no answer.
+> - **A5:** the store name is scrubbed as the command line's other untrusted names are.
+> - **A6:** the route takes the settings hold, the unfinished-delete check and one in-process lock
+>   with Save settings on the job file. Not covered: another program's job-file write (the wizard,
+>   another Desktop), which carries the answer over instead (A7). The answer's temporary copy a
+>   crash leaves is removed by uninstall.
+> - **A7:** the wizard's schedule offer carries the job file's Gmail answer when it writes the file
+>   afresh. Desktop Add another archive is not held under the job-file lock (it waits on dialogs for
+>   minutes); the carry is its guard.
+> - **U1:** the Yes note is the row's line (what starts the next backup).
+> - **U2 (the lead's call): a version-8 refusal is a skip, not a failed run.** The run loads the
+>   manifest before its running record; at version 8 it returns before writing any record, as a
+>   busy archive's run does. A scheduled run then exits 0, logs the skip, and keeps on this
+>   computer when its waiting began (`<key>.tidy-wait`, beside the job files: not the archive,
+>   which the other computer is changing); `status` says the tidy-up WARN with "since DATE" and no
+>   RED; after 3 days of waiting one alert is sent through the backup alert's own failure path
+>   (one email and one notice per streak however many backups wait, and the recovery once a
+>   backup goes through); the email and the notice say the backups wait, never "FAILED" (a flag
+>   on the failure email changes its words, as the busy skip's does: no new alert kind). Any run
+>   that gets past the load removes the file. The terminal backup still exits 1 (nothing was
+>   backed up), with "Not backed up:" instead of "FAILED:", and records nothing.
+> - **Existing tests changed with the behaviour:** MA-1236 (card, terminal, run and wizard tests:
+>   fixtures carry the archive's id; the end of input says "No answer"; the Yes note is U1's),
+>   MA-1292 (gmailanswer, wizard, uninstall: answers name their archive; the file name folds the
+>   folder), MA-1293 (terminal: the question is asked inside a run whose record names the archive;
+>   the version-8 words are MA-1313's), MA-1295, MA-1296. No covers marker removed, no gate,
+>   suppression or baseline touched.
+> - **U3, U4, U7, U9:** the Gmail lines are health's reasons (`gmail_counts` with the 1.8 line,
+>   `gmail_waiting`), in `status`, `status -json` and the Desktop's Status & health view alike; a
+>   held store waits unless a Not now is kept here (an unanswered terminal question, U4); none when
+>   the manifest does not load or the store is on (U3); the run's switch line ends with the 1.8 line.
+> - **U5, U6, U10:** the encrypted terminal Not now says the next terminal backup asks again;
+>   Settings' Not now says yes can be said there; Yes is a secondary button; after a Not now
+>   Settings shows one line with "Turn on…".
+> - **U8:** the tidy-up words, checked against the code: `mailarchive search` and `serve` still
+>   read a version-8 archive (they read its search index, not its manifest), and its pages open in
+>   a browser, so "open it" is not true and is left out (told to the lead): "Until it finishes,
+>   this computer cannot back up into it or add it. To finish it, open MailArchive on that
+>   computer, …". For the owner's sign-off.
+> - **U11:** one paragraph on the question in the guide's Thunderbird part.
+
 ## 14. Owner questions, each with a recommendation
 
 - **Q1 — Keep `Mail-archive-dimarcotech` or start a new Gmail archive?** Recommended: keep it and use the

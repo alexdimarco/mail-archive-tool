@@ -84,6 +84,12 @@ func removeNameFiles(names, spellings []string, settingsDir string) (string, err
 				return p, err
 			}
 		}
+		// And its wait for another computer's tidy-up (the B3 UX walk's U2).
+		if p, err := gmailanswer.TidyWaitPath(s); err == nil {
+			if err := removeIfThere(p); err != nil {
+				return p, err
+			}
+		}
 		for _, d := range alertDirs {
 			for _, suffix := range []string{alertStreakSuffix, syncAlertSuffix, deleteRefusedSuffix} {
 				if err := removeIfThere(filepath.Join(d, k+suffix)); err != nil {

@@ -78,6 +78,14 @@ const gmailAnswerSuffix = ".gmail-answer"
 // adversarial pass's A6; MA-1302's test keeps the two in step by behaviour).
 const gmailAnswerTempPrefix = ".gmail-answer-"
 
+// tidyWaitSuffix ends this computer's record of a wait for another computer's tidy-up of an
+// archive, <key>.tidy-wait, and tidyWaitTempPrefix begins its temporary copy
+// (gmailanswer.TidyWaitSuffix; MA-1310's test keeps them in step by behaviour).
+const (
+	tidyWaitSuffix     = ".tidy-wait"
+	tidyWaitTempPrefix = ".tidy-wait-"
+)
+
 // ErrOverlap refuses the WHOLE config cleanup because the config dir is, contains, or
 // sits inside a mail archive; deleting its contents could destroy mail (R36, U-C1).
 var ErrOverlap = errors.New("refusing to clean the config directory: it overlaps a mail archive")
@@ -151,6 +159,10 @@ func deletableConfigName(name string) bool {
 	case strings.HasSuffix(name, gmailAnswerSuffix): // the Gmail answer kept for an archive
 		return true
 	case strings.HasPrefix(name, gmailAnswerTempPrefix) && strings.HasSuffix(name, ".tmp"): // its copy a crash left (A6)
+		return true
+	case strings.HasSuffix(name, tidyWaitSuffix): // a wait for another computer's tidy-up (U2)
+		return true
+	case strings.HasPrefix(name, tidyWaitTempPrefix) && strings.HasSuffix(name, ".tmp"):
 		return true
 	case thunderbird.IsRestoreLockName(name): // a restore's lock, restore-<16 lowercase hex>.lock (N-b)
 		return true

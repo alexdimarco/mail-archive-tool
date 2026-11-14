@@ -1938,6 +1938,12 @@ func dropRunLogOnRefusal(logPath, out string, made bool, closeLog func(), err er
 // report already say what happened, so it logs no "FAILED:" line (S1a still maps
 // it to exit 1, like a failure, §4.9).
 func logFailure(logger *log.Logger, err error) {
+	// Another computer tidying the archive is a skip, not a failure (the B3 UX walk's U2): its
+	// words without "FAILED:"; the exit stays 1 (the backup did not run).
+	if app.TidyingElsewhere(err) {
+		logger.Printf("Not backed up: %s", state.TidyUpWords)
+		return
+	}
 	if err != nil && !errors.Is(err, app.ErrPartial) {
 		logger.Printf("FAILED: %v", err)
 	}

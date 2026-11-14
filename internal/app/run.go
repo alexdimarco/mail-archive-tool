@@ -750,6 +750,16 @@ func Run(ctx context.Context, opts Options, logger *log.Logger, onProgress Progr
 	// The previous run's Thunderbird completeness is read first, before the "running"
 	// record replaces it (completeness design TC-19: fingerprints carried forward).
 	tbPrev := previousThunderbird(opts)
+	// A plaintext archive's manifest is read before the run's record: one another computer is
+	// tidying (version 8) is a skip, not a failed run, so it returns here with nothing recorded, as
+	// a busy archive's run does (the B3 UX walk's U2, the lead's call; TidyingElsewhere). Any other
+	// refusal of the manifest is returned below, after the record, as before.
+	var preLoadErr error
+	if manifest == nil {
+		if manifest, preLoadErr = state.Load(mpath); preLoadErr != nil && TidyingElsewhere(preLoadErr) {
+			return Result{}, withKind(state.FailManifestUnreadable, preLoadErr)
+		}
+	}
 	begun := beginRun(opts)
 	// The opt-in Thunderbird pre-sync runs here, after the lock and the run's
 	// start and before any source is read; nil unless a caller opts in, and it
@@ -838,10 +848,8 @@ func Run(ctx context.Context, opts Options, logger *log.Logger, onProgress Progr
 		}
 	}
 
-	if manifest == nil {
-		if manifest, err = state.Load(mpath); err != nil {
-			return Result{}, withKind(state.FailManifestUnreadable, err)
-		}
+	if preLoadErr != nil {
+		return Result{}, withKind(state.FailManifestUnreadable, preLoadErr)
 	}
 	manifestBefore := manifest.Len()
 

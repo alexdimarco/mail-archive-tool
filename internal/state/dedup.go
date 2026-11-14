@@ -230,9 +230,19 @@ func GmailSwitchQuestion(encrypted bool) string {
 // itself; "Nothing is lost" holds by §23 and §25 (a copy is deleted only once proven equal to the
 // email kept); Resume tidy-up is on the archive's card in the build with slice D2 (§9 S2).
 const (
-	NewerWords  = "This archive needs a newer MailArchive on this computer."
-	TidyUpWords = "Another computer started tidying this archive with a newer MailArchive (it removes extra copies of Gmail emails). Nothing is lost. Until it finishes, this computer does not back up into it. To finish: finish it on that computer, or install the newest MailArchive here and click Resume tidy-up on this archive's card."
+	NewerWords = "This archive needs a newer MailArchive on this computer."
+	// TidyUpWords as the B3 UX walk's U8 put them, checked against the code: this computer cannot
+	// back up into the archive (the run refuses its manifest) or add it (add-archive and Open an
+	// archive folder… refuse it), but it can still open it to read (`mailarchive search` and
+	// `serve` read its search index, and its pages open in a browser), so "open it" is left out.
+	TidyUpWords = "Another computer started tidying this archive with a newer MailArchive (it removes extra copies of Gmail emails). Nothing is lost. Until it finishes, this computer cannot back up into it or add it. To finish it, open MailArchive on that computer, or install the newest MailArchive here and click Resume tidy-up on this archive's card."
 )
+
+// TidyWaitSinceLine is said after the tidy-up words when this computer's scheduled backups have
+// waited for the tidy-up since t (the B3 UX walk's U2).
+func TidyWaitSinceLine(t time.Time) string {
+	return "This computer's scheduled backups have waited since " + t.Local().Format("Jan 2, 2006") + "."
+}
 
 // NewerFormatWords is the plain sentence a refusal of a manifest at version v says: the tidy-up
 // words for exactly 8, the newer words otherwise.
@@ -315,13 +325,16 @@ func (m *Manifest) validMembers(key string, r Record) []Membership {
 }
 
 // validMemberFolder says f is a folder spelled as Record.Folder is: not empty, not absolute, no
-// control character, and no empty, "." or ".." segment.
+// control character, and every segment what the exporter's name rule (util.SanitizeSegment, which
+// the local walk applies to each folder) writes: so no empty, "." or ".." segment, and none that
+// Windows spells another way ("INBOX." is "INBOX" there, ".. " is ".."; the B3 adversarial pass's
+// A2).
 func validMemberFolder(f string) bool {
 	if f == "" || util.StripControl(f) != f || strings.HasPrefix(f, "/") || strings.HasPrefix(f, `\`) {
 		return false
 	}
 	for _, s := range strings.Split(strings.ReplaceAll(f, `\`, "/"), "/") {
-		if s == "" || s == "." || s == ".." {
+		if s == "" || s == "." || s == ".." || util.SanitizeSegment(s) != s {
 			return false
 		}
 	}

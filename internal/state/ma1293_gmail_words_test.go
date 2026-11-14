@@ -21,7 +21,8 @@ func TestTheGmailQuestionSaysWhatIsWrongWhatYesDoesAndThatItCannotBeUndone(t *te
 		"yes":       {GmailYesButton, "Yes, show every folder"},
 		"not now":   {GmailNotNowButton, "Not now"},
 		"needs 1.8": {GmailNeedsLine, "Every computer that backs up into this archive needs MailArchive 1.8 or newer."},
-		"tidy-up":   {NewerFormatWords(8), "Another computer started tidying this archive with a newer MailArchive (it removes extra copies of Gmail emails). Nothing is lost. Until it finishes, this computer does not back up into it. To finish: finish it on that computer, or install the newest MailArchive here and click Resume tidy-up on this archive's card."},
+		// The B3 UX walk's U8 words (MA-1313), "open it" left out: this computer can still read it.
+		"tidy-up":   {NewerFormatWords(8), "Another computer started tidying this archive with a newer MailArchive (it removes extra copies of Gmail emails). Nothing is lost. Until it finishes, this computer cannot back up into it or add it. To finish it, open MailArchive on that computer, or install the newest MailArchive here and click Resume tidy-up on this archive's card."},
 		"newer (9)": {NewerFormatWords(9), NewerWords},
 	} {
 		if c.got != c.want {

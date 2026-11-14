@@ -17,6 +17,7 @@ import (
 
 	"mail-archive-tool/internal/delmark"
 	"mail-archive-tool/internal/encmark"
+	"mail-archive-tool/internal/gmailanswer"
 	"mail-archive-tool/internal/index"
 	"mail-archive-tool/internal/instance"
 	"mail-archive-tool/internal/job"
@@ -485,7 +486,13 @@ func Assess(in Input, now time.Time) Report {
 	switch {
 	case !in.HasManifestFile || in.HasManifest || in.ManifestLoadErr == nil:
 	case errors.As(in.ManifestLoadErr, &newer) && newer.Plain() == state.TidyUpWords:
-		r.warn("manifest_tidying", state.TidyUpWords)
+		// With since when this computer's scheduled backups have waited for it, when they have
+		// (the B3 UX walk's U2): a skip each time, never a failed run, so WARN, never RED.
+		words := state.TidyUpWords
+		if !in.TidyWaitSince.IsZero() {
+			words += " " + state.TidyWaitSinceLine(in.TidyWaitSince)
+		}
+		r.warn("manifest_tidying", words)
 	default:
 		r.red("manifest_unreadable", fmt.Sprintf("the archive's manifest cannot be read: %s", util.StripControl(in.ManifestLoadErr.Error())))
 	}
@@ -2042,6 +2049,9 @@ func Gather(out, nameOverride string) Input {
 			// The file exists but does not load (newer format, corrupt). Keep the
 			// loader's error so Assess can RED it instead of saying "no archive".
 			in.ManifestLoadErr = err
+			if w, ok := gmailanswer.ReadTidyWait(out); ok {
+				in.TidyWaitSince = w.Since // kept on this computer by its waiting scheduled backups (U2)
+			}
 		}
 	}
 	in.ReportPath = filepath.Join(out, "attachments-report.tsv")

@@ -8,6 +8,7 @@ package app
 // from this run's first message of that store.
 
 import (
+	"errors"
 	"log"
 
 	"mail-archive-tool/internal/state"
@@ -124,6 +125,14 @@ func (g *gmailRun) store(m *state.Manifest, token string) {
 		g.out.NotNow = true
 	}
 	g.out.Off = append(g.out.Off, token)
+}
+
+// TidyingElsewhere reports whether err is a run's refusal of an archive another computer is
+// tidying (a manifest at version 8, a merge part-way: state.TidyUpWords). Such a run wrote no
+// record: it is a skip, not a failure (the B3 UX walk's U2, the lead's call).
+func TidyingElsewhere(err error) bool {
+	var newer *state.NewerFormatError
+	return errors.As(err, &newer) && newer.Plain() == state.TidyUpWords
 }
 
 // appendToken adds t to list once (a store read twice in a run is one store).

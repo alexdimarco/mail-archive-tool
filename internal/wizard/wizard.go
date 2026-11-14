@@ -347,6 +347,14 @@ func RunHeadless(path string) int {
 		fmt.Fprintln(os.Stderr, "mailarchive run-job: "+line)
 		return 0
 	}
+	// Another computer is tidying the archive (version 8): a skip, not a failure (the B3 UX
+	// walk's U2, the lead's call). Nothing was recorded in the archive.
+	if app.TidyingElsewhere(runErr) {
+		tidyWaitSkip(key, j, runErr, logger)
+		return 0
+	}
+	// Past the manifest: a wait for another computer's tidy-up has ended.
+	_ = gmailanswer.ClearTidyWait(j.Out)
 	// Refused because the folder holds no archive — the emptied-folder guard, or the folder
 	// gone (archive_absent), or a delete of it that did not finish (MA-1044): what this run
 	// wrote there before its lock goes too, the PSTs (a plaintext copy of the mailbox), the PST
@@ -417,6 +425,28 @@ func RunHeadless(path string) int {
 		backupalert.ReportTBBehindDefault(j.Out, result.TBNotices, o.RecoveryEmailed || syncSent, logger)
 	}
 	return 0
+}
+
+// tidySkippedLine is a scheduled run's line when another computer is tidying the archive.
+const tidySkippedLine = "Skipped, not failed: "
+
+// tidyWaitSkip handles a scheduled run that met an archive another computer is tidying (the B3
+// UX walk's U2): it says so in the run log and on standard error, keeps on this computer when the
+// wait began, and once the wait has lasted 3 days reports it to the backup alert's failure streak,
+// which sends one email and one Desktop notice for it (and the recovery once a backup goes
+// through). Before that, no alert: the tidy-up is the other computer's and nothing is wrong here.
+func tidyWaitSkip(key string, j job.Job, runErr error, logger *log.Logger) {
+	line := tidySkippedLine + state.TidyUpWords
+	logger.Printf("%s", line)
+	fmt.Fprintln(os.Stderr, "mailarchive run-job: "+line)
+	w, err := gmailanswer.NoteTidyWait(j.Out, time.Now())
+	if err != nil {
+		logger.Printf("warning: when this wait began could not be kept on this computer (%v)", err)
+		return
+	}
+	if w.Due(time.Now()) {
+		reportRun(key, j.Name, j.Out, backupalert.ResultFailed, fmt.Errorf("%w %s", runErr, state.TidyWaitSinceLine(w.Since)), 0, logger)
+	}
 }
 
 // jobOwnFiles are the files and folders of MailArchive's own a local backup job keeps in its
@@ -529,7 +559,11 @@ func jobNote(path, text string) {
 // caller can tell whether this run sent the recovery email.
 func reportRun(key, name, out, result string, runErr error, messages int, logger *log.Logger) backupalert.Outcome {
 	o := backupalert.ReportDefault(key, out, result, runErr, messages, logger)
-	if o.Notify {
+	switch {
+	case o.Notify && app.TidyingElsewhere(runErr):
+		// Backups waiting for another computer's tidy-up have not failed (the B3 UX walk's U2).
+		sendNotice(noticeTitle, tidyWaitNotice(out))
+	case o.Notify:
 		notifyFailure(out)
 	}
 	if o.Recovered {
@@ -559,6 +593,12 @@ var sendNotice = func(title, text string) { _ = notify(text, zenity.Title(title)
 // failureNotice is notifyFailure's words.
 func failureNotice(out string) string {
 	return fmt.Sprintf("MailArchive: the scheduled backup of %s failed. Open MailArchive Desktop to see why.", out)
+}
+
+// tidyWaitNotice is the notice once scheduled backups have waited 3 days for another computer's
+// tidy-up of the archive (the B3 UX walk's U2).
+func tidyWaitNotice(out string) string {
+	return fmt.Sprintf("MailArchive: the scheduled backups of %s have waited 3 days for another computer to finish tidying it. Open MailArchive Desktop to see what to do.", out)
 }
 
 // notifyRecovered raises the best-effort desktop notice that a scheduled backup that had been
