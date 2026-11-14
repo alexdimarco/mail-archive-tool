@@ -25,7 +25,27 @@ var (
 	exportParent   = context.Background()
 	exportsRunning atomic.Int32
 	exportsIdle    = sync.NewCond(&sync.Mutex{})
+	// writesRunning counts the wizard's own writes after its export (the job file and
+	// the schedule install), which a stop waits for so it never leaves half a setup
+	// (the S1 adversarial pass, A4); wizardsHere counts the wizards this process holds
+	// the wizard lock for (an open wizard is work: A4, friction F5 and F9).
+	writesRunning atomic.Int32
+	wizardsHere   atomic.Int32
 )
+
+// writeStarted and writeEnded mark one of the wizard's writes after its export.
+func writeStarted() { writesRunning.Add(1) }
+
+func writeEnded() {
+	exportsIdle.L.Lock()
+	writesRunning.Add(-1)
+	exportsIdle.L.Unlock()
+	exportsIdle.Broadcast()
+}
+
+// OpenHere reports whether this process runs a wizard now (it holds the wizard lock
+// through LockWizardIn): the choice's launch, a hand-off, or Add another archive.
+func OpenHere() bool { return wizardsHere.Load() > 0 }
 
 // BindExports makes every export this process's wizard runs from now on a child of
 // ctx, so a stop of the instance cancels it (MB-2 item 4). A standalone wizard never
@@ -57,13 +77,15 @@ func exportEnded() {
 // ExportsRunning reports whether a wizard export runs in this process.
 func ExportsRunning() bool { return exportsRunning.Load() > 0 }
 
-// WaitExports waits until no wizard export runs in this process, or ctx ends (a stop's
-// bound): the drain the instance registers for the wizard (MB-2 item 4).
+// WaitExports waits until no wizard export, and none of the wizard's writes after it,
+// runs in this process, or ctx ends (a stop's bound): the drain the instance registers
+// for the wizard (MB-2 item 4; the S1 adversarial pass, A4). A wizard that only waits
+// for an answer is not waited for.
 func WaitExports(ctx context.Context) error {
 	done := make(chan struct{})
 	go func() {
 		exportsIdle.L.Lock()
-		for exportsRunning.Load() > 0 && ctx.Err() == nil {
+		for (exportsRunning.Load() > 0 || writesRunning.Load() > 0) && ctx.Err() == nil {
 			exportsIdle.Wait()
 		}
 		exportsIdle.L.Unlock()
@@ -77,6 +99,18 @@ func WaitExports(ctx context.Context) error {
 		return ctx.Err()
 	}
 }
+
+// The first list's question: the standalone wizard's (MA-651), and, from the launcher
+// choice or a hand-off, one that does not repeat the choice's own "What would you like
+// to do?" (the S1 friction review, F10).
+const (
+	surfacePrompt  = "What would you like to do?"
+	launcherPrompt = "What mail do you want to add or back up?"
+)
+
+// firstListDialog shows the wizard's first list; a package variable so a test can see
+// the question it asks (an operating-system seam: the native list).
+var firstListDialog = zenity.List
 
 // launcherChoices is the first list of a wizard reached from the launcher choice or a
 // hand-off (Q2, design-menubar §6.2): the "open MailArchive Desktop" item is dropped,
@@ -121,7 +155,7 @@ func RunIn(openDesktop func() error) (code int) {
 		}
 		return openDesktop()
 	}
-	switch err := wizardWith(launcherChoices(), open); {
+	switch err := wizardWith(launcherPrompt, launcherChoices(), open); {
 	case err == nil, errors.Is(err, zenity.ErrCanceled):
 		return 0
 	default:
@@ -158,5 +192,12 @@ func LockWizardIn(dir string) (release func(), held bool) {
 		}
 		return func() {}, false
 	}
-	return func() { _ = l.Release() }, false
+	wizardsHere.Add(1)
+	var once sync.Once
+	return func() {
+		once.Do(func() {
+			_ = l.Release()
+			wizardsHere.Add(-1)
+		})
+	}, false
 }

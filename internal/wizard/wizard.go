@@ -697,17 +697,17 @@ func openDesktopSurface() error {
 // Run sets it to let go of the wizard lock.
 var beforeDesktop func()
 
-func wizard() error { return wizardWith(surfaceChoices, openDesktopSurface) }
+func wizard() error { return wizardWith(surfacePrompt, surfaceChoices, openDesktopSurface) }
 
 // wizardWith is the wizard with its first list's items and the way its Desktop items
 // open Desktop: the standalone wizard's (all four, Desktop in this process) or the
 // running MailArchive's (RunIn: no Desktop item, the instance's own link).
-func wizardWith(items []string, openDesktop func() error) error {
+func wizardWith(prompt string, items []string, openDesktop func() error) error {
 	// 1. First step (MA-651): open the various options. The Desktop item hands off
 	//    IN-PROCESS to MailArchive Desktop (Microsoft 365, folder export, browsing,
 	//    scheduling, the maintenance tools); the local item (the default) stays on
 	//    the quick path. zenity.List returns ErrCanceled on dismiss → quiet exit.
-	switch pick, err := zenity.List("What would you like to do?", items, zenity.Title(appTitle), zenity.DefaultItems(surfaceLocalItem)); {
+	switch pick, err := firstListDialog(prompt, items, zenity.Title(appTitle), zenity.DefaultItems(surfaceLocalItem)); {
 	case err != nil:
 		return err
 	case surfaceOpensDesktop(pick):
@@ -2286,6 +2286,10 @@ func offerSchedule(c wizardChoice) error {
 // installOffered writes the job file and installs the offer's run-job schedule for c.out (the
 // "Yes — every day" answer), returning the Spec installed.
 func installOffered(c wizardChoice, iv schedule.Interval, at, exe, deletionsLog string) (schedule.Spec, error) {
+	// A stop of the running MailArchive waits for this write to end (the S1 adversarial
+	// pass, A4): never a job file without its schedule.
+	writeStarted()
+	defer writeEnded()
 	name := schedule.DefaultNameFor(c.out)
 	jobPath, err := job.PathFor(name)
 	if err != nil {
