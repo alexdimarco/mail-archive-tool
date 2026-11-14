@@ -29,9 +29,11 @@ func TestMA1427_GUISessionIsTheSignInSession(t *testing.T) {
 		if s := GUISession(); s != "c2" {
 			t.Errorf("GUISession = %q, want c2", s)
 		}
+		// A value with the separator is never sent: the rule (guiSessionFrom) then falls
+		// back to the audit session, proven in TestMA1427_ASignInThatCannotBeReadIsUnknown.
 		t.Setenv("XDG_SESSION_ID", "a|b")
-		if s := GUISession(); s != "" {
-			t.Errorf("GUISession with the separator = %q, want \"\"", s)
+		if s := GUISession(); s == "a|b" {
+			t.Errorf("GUISession with the separator = %q, want it refused", s)
 		}
 	}
 }

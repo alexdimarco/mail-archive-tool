@@ -93,12 +93,13 @@ func TestTheSecondFormCarriesItsActionUnderTheMAC(t *testing.T) {
 
 	// The MAC covers every field: each changed after signing is refused, Act not called.
 	n := strings.Repeat("ab", 32)
-	signed := reqMAC2(g.key, n, ActChoose, "v1.8.0", "42", "tok")
+	signed := reqMAC2(g.key, n, ActChoose, "v1.8.0", "42", "tok", false)
 	for name, body := range map[string]map[string]any{
 		"action swapped":  {"n": n, "p": signed, "act": ActWizard, "ver": "v1.8.0", "sess": "42", "tok": "tok"},
 		"version changed": {"n": n, "p": signed, "act": ActChoose, "ver": "v9.9.9", "sess": "42", "tok": "tok"},
 		"session changed": {"n": n, "p": signed, "act": ActChoose, "ver": "v1.8.0", "sess": "43", "tok": "tok"},
 		"token changed":   {"n": n, "p": signed, "act": ActChoose, "ver": "v1.8.0", "sess": "42", "tok": "TOK"},
+		"quiet changed":   {"n": n, "p": signed, "act": ActChoose, "ver": "v1.8.0", "sess": "42", "tok": "tok", "quiet": true},
 		"old label":       {"n": n, "p": MAC(g.key, "handoff-req", n), "act": ActChoose},
 	} {
 		g.clock.Advance(2 * time.Second)
@@ -121,7 +122,7 @@ func TestTheSecondFormCarriesItsActionUnderTheMAC(t *testing.T) {
 		"separator in action": {"choose|x", "", "", ""},
 	} {
 		g.clock.Advance(2 * time.Second)
-		b, _ := json.Marshal(map[string]any{"n": n, "p": reqMAC2(g.key, n, f[0], f[1], f[2], f[3]), "act": f[0], "ver": f[1], "sess": f[2], "tok": f[3]})
+		b, _ := json.Marshal(map[string]any{"n": n, "p": reqMAC2(g.key, n, f[0], f[1], f[2], f[3], false), "act": f[0], "ver": f[1], "sess": f[2], "tok": f[3]})
 		if c := rawPost(t, g, string(b)); c != http.StatusBadRequest {
 			t.Errorf("%s: %d, want 400", name, c)
 		}
@@ -144,7 +145,7 @@ func TestTheSecondFormCarriesItsActionUnderTheMAC(t *testing.T) {
 	}
 
 	// Reasons come back covered by the MAC.
-	for _, want := range []string{ReasonAlreadyOpen, ReasonCantShow, ReasonOtherSession} {
+	for _, want := range []string{ReasonAlreadyOpen, ReasonCantShow, ReasonOtherSession, ReasonUnknownSession, ReasonClosing} {
 		g.clock.Advance(2 * time.Second)
 		rec.shown, rec.reason = false, want
 		rep, err := CallAct(ctx, g.addr, g.key, false, ActRequest{Act: ActWizard})

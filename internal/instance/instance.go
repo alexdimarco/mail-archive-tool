@@ -144,6 +144,10 @@ type Info struct {
 	// Icon is the state of the instance's indicator, an Icon* value (MB-20), so
 	// `status` can say whether MailArchive runs and why no icon shows.
 	Icon string `json:"icon,omitempty"`
+	// Closing is set when the instance has begun to stop and waits for its running work
+	// (the S1 fix round, A7): a launch then waits for it to end, within the drain's bound,
+	// instead of telling the person it is not responding.
+	Closing bool `json:"closing,omitempty"`
 }
 
 // The indicator's states an instance records (design-menubar MB-20).

@@ -69,8 +69,41 @@ type Handoff struct {
 	// this instance shows nothing of the kind: it answers ReasonCantShow.
 	Act func(ActRequest) (shown bool, reason string)
 
+	// Gate, when set, is asked about every proven request before anything is opened or
+	// shown, and returns "" to go on or a Reason* value to answer instead (the S1 fix
+	// round, A3 and A7): another or an unknown sign-in (R50), or an instance that is
+	// already closing. A first-form request reaches it with Act "" (it carries no
+	// sign-in); a refusal of one is answered 503, since the first form has no reason.
+	Gate func(ActRequest) string
+
 	mu   sync.Mutex
 	last time.Time
+	// seen remembers the nonces of proven requests, oldest first, at most maxSeen of
+	// them, so a request read off the wire is refused when it is sent again (A6).
+	seen    map[string]struct{}
+	seenLog []string
+}
+
+// maxSeen bounds the replay record: at one hand-off a second, a nonce stays remembered
+// for at least 17 minutes of continuous launches, and evicting one needs requests only
+// a holder of K can make.
+const maxSeen = 1024
+
+// replayed records n and reports whether it was already seen. The caller holds h.mu.
+func (h *Handoff) replayed(n string) bool {
+	if h.seen == nil {
+		h.seen = make(map[string]struct{}, maxSeen)
+	}
+	if _, ok := h.seen[n]; ok {
+		return true
+	}
+	h.seen[n] = struct{}{}
+	h.seenLog = append(h.seenLog, n)
+	if len(h.seenLog) > maxSeen {
+		delete(h.seen, h.seenLog[0])
+		h.seenLog = h.seenLog[1:]
+	}
+	return false
 }
 
 type handoffRequest struct {
@@ -121,6 +154,13 @@ const (
 	// ReasonOtherSession: the instance belongs to another sign-in of this account; the
 	// launcher says so in its own session and nothing shows on the other screen (R50).
 	ReasonOtherSession = "other-session"
+	// ReasonUnknownSession: this launch's sign-in or the instance's cannot be read, so
+	// the instance cannot tell whether the launch is at its screen; it shows nothing
+	// (fail closed, R50; the S1 fix round, A3).
+	ReasonUnknownSession = "unknown-session"
+	// ReasonClosing: the instance is stopping and waits for its work; the launcher
+	// waits for it to end and then starts a fresh copy (the S1 fix round, A7).
+	ReasonClosing = "closing"
 )
 
 // ActRequest is a verified request with an action, as the instance's Act sees it.
@@ -129,6 +169,9 @@ type ActRequest struct {
 	// Version is the launcher's build version (MB-14), Session its sign-in session
 	// ("" when it has none to tell), Token its activation token ("" for none).
 	Version, Session, Token string
+	// Quiet asks for a link to show in the launcher's own session instead of a browser
+	// opened by the instance (an `open` only). Inside the request's MAC.
+	Quiet bool
 }
 
 // Field bounds of the second form: each is printable ASCII with no "|" (the MAC's
@@ -154,7 +197,7 @@ func validField(s string, max int) bool {
 
 func validReason(r string) bool {
 	switch r {
-	case "", ReasonAlreadyOpen, ReasonCantShow, ReasonOtherSession:
+	case "", ReasonAlreadyOpen, ReasonCantShow, ReasonOtherSession, ReasonUnknownSession, ReasonClosing:
 		return true
 	}
 	return false
@@ -169,9 +212,10 @@ func knownAct(a string) bool {
 	return false
 }
 
-// reqMAC2 is the second form's request proof: every field it carries is inside it.
-func reqMAC2(key []byte, n, act, ver, sess, tok string) string {
-	return MAC(key, "handoff-req2", n, act, ver, sess, tok)
+// reqMAC2 is the second form's request proof: every field it carries is inside it,
+// the quiet flag included.
+func reqMAC2(key []byte, n, act, ver, sess, tok string, quiet bool) string {
+	return MAC(key, "handoff-req2", n, act, ver, sess, tok, strconv.FormatBool(quiet))
 }
 
 func validNonce(n string) bool {
@@ -215,11 +259,41 @@ func (h *Handoff) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 
 	want := MAC(h.Key, "handoff-req", req.N)
 	if v2 {
-		want = reqMAC2(h.Key, req.N, req.Act, req.Ver, req.Sess, req.Tok)
+		want = reqMAC2(h.Key, req.N, req.Act, req.Ver, req.Sess, req.Tok, req.Quiet)
 	}
 	if !SameMAC(req.P, want) {
 		http.Error(w, "refused", http.StatusForbidden)
 		return
+	}
+
+	// A proven request is used once: the same nonce again is a request read off the wire
+	// and sent a second time (A6).
+	h.mu.Lock()
+	again := h.replayed(req.N)
+	h.mu.Unlock()
+	if again {
+		http.Error(w, "refused", http.StatusForbidden)
+		return
+	}
+
+	// The gate, before anything is opened or shown, and before the second is counted:
+	// another or an unknown sign-in, or a closing instance, gets its reason (A3, A7).
+	if h.Gate != nil {
+		ar := ActRequest{Quiet: req.Quiet}
+		if v2 {
+			ar = ActRequest{Act: req.Act, Version: req.Ver, Session: req.Sess, Token: req.Tok, Quiet: req.Quiet}
+		}
+		if reason := h.Gate(ar); reason != "" {
+			if !v2 {
+				http.Error(w, "unavailable", http.StatusServiceUnavailable)
+				return
+			}
+			if !validReason(reason) {
+				reason = ReasonCantShow
+			}
+			writeReply(w, handoffReply{Reason: reason, P: MAC(h.Key, "handoff-shown2", req.N, req.Act, "false", reason)})
+			return
+		}
 	}
 
 	h.mu.Lock()
@@ -346,7 +420,7 @@ func call(ctx context.Context, addr string, key []byte, quiet bool, ar ActReques
 	hr := handoffRequest{N: n, P: MAC(key, "handoff-req", n), Quiet: quiet}
 	v2 := ar.Act != ""
 	if v2 {
-		hr = handoffRequest{N: n, P: reqMAC2(key, n, ar.Act, ar.Version, ar.Session, ar.Token), Quiet: quiet,
+		hr = handoffRequest{N: n, P: reqMAC2(key, n, ar.Act, ar.Version, ar.Session, ar.Token, quiet), Quiet: quiet,
 			Act: ar.Act, Ver: ar.Version, Sess: ar.Session, Tok: ar.Token}
 	}
 	body, _ := json.Marshal(hr)
@@ -385,7 +459,7 @@ func call(ctx context.Context, addr string, key []byte, quiet bool, ar ActReques
 				return Reply{}, ErrBadProof
 			}
 			return Reply{Busy: true}, nil
-		case ar.Act == ActOpen:
+		case ar.Act == ActOpen && rep.Reason == "":
 			if !SameMAC(rep.P, MAC(key, "handoff-ok2", n, ar.Act, strconv.FormatBool(rep.Opened), rep.Link)) {
 				return Reply{}, ErrBadProof
 			}
@@ -415,9 +489,31 @@ func call(ctx context.Context, addr string, key []byte, quiet bool, ar ActReques
 // so it waits out a busy answer and asks again; a launching client takes busy as
 // done.
 func Reach(ctx context.Context, addr string, key []byte, quiet bool, window time.Duration, stillHeld func() bool) (Reply, error) {
+	return reach(ctx, addr, key, quiet, ActRequest{}, window, stillHeld)
+}
+
+// ReachOpen is Reach in the second form's `open` (the S1 fix round, A3): it carries the
+// launcher's sign-in, so the instance opens nothing on another screen, and its answer may
+// be a reason instead (other or unknown sign-in, closing). A 403 is returned at once as
+// ErrRefused, never retried, so the caller can fall back to the first form once (MB-3).
+func ReachOpen(ctx context.Context, addr string, key []byte, quiet bool, ar ActRequest, window time.Duration, stillHeld func() bool) (Reply, error) {
+	ar.Act = ActOpen
+	return reach(ctx, addr, key, quiet, ar, window, stillHeld)
+}
+
+func reach(ctx context.Context, addr string, key []byte, quiet bool, ar ActRequest, window time.Duration, stillHeld func() bool) (Reply, error) {
 	deadline := time.Now().Add(window)
 	for {
-		rep, err := Call(ctx, addr, key, quiet)
+		var rep Reply
+		var err error
+		if ar.Act == "" {
+			rep, err = Call(ctx, addr, key, quiet)
+		} else {
+			rep, err = CallAct(ctx, addr, key, quiet, ar)
+			if errors.Is(err, ErrRefused) {
+				return Reply{}, err
+			}
+		}
 		switch {
 		case err == nil && !(rep.Busy && quiet):
 			return rep, nil

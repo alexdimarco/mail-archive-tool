@@ -4,8 +4,10 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	"mail-archive-tool/internal/lockfile"
@@ -19,8 +21,11 @@ type Holder struct {
 	Session string
 
 	lock *lockfile.Lock
-	info *Info
 	stop chan struct{}
+
+	mu     sync.Mutex // guards info and closed
+	info   *Info
+	closed bool
 }
 
 // Names are the lock and instance file names of a logon session: the account's
@@ -82,8 +87,35 @@ func AcquireWizard(dir string) (*lockfile.Lock, error) {
 }
 
 // WizardOpenText is what a second wizard says, in one line, when one is already open
-// for this account (MB-9).
-const WizardOpenText = "The wizard is already open. Look for its window on your screen or in the taskbar."
+// for this account (MB-9), in its platform's words: only Windows has a taskbar (the S1
+// friction review, F6).
+var WizardOpenText = WizardOpenTextOn(runtime.GOOS)
+
+// The two forms of WizardOpenText.
+const (
+	wizardOpenTextWindows   = "The wizard is already open. Look for its window on your screen or in the taskbar."
+	wizardOpenTextElsewhere = "The wizard is already open. Look for its window on your screen."
+)
+
+// WizardOpenTextOn is WizardOpenText for the operating system goos.
+func WizardOpenTextOn(goos string) string {
+	if goos == "windows" {
+		return wizardOpenTextWindows
+	}
+	return wizardOpenTextElsewhere
+}
+
+// Publish while closing: MarkClosing rewrites the instance file with Closing set, unless
+// the holder has already let go (Close), so no stale file is left behind (A7).
+func (h *Holder) MarkClosing() {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	if h.closed || h.info == nil {
+		return
+	}
+	h.info.Closing = true
+	_ = Write(h.FilePath(), *h.info)
+}
 
 // FilePath is the instance file's path.
 func (h *Holder) FilePath() string { return FilePathIn(h.Dir, h.Session) }
@@ -101,6 +133,8 @@ func (h *Holder) RemoveStale() { os.Remove(h.FilePath()) }
 
 // Publish writes the instance file and remembers it, so Watch can rewrite it.
 func (h *Holder) Publish(info Info) error {
+	h.mu.Lock()
+	defer h.mu.Unlock()
 	h.info = &info
 	return Write(h.FilePath(), info)
 }
@@ -126,11 +160,13 @@ func (h *Holder) Watch(interval time.Duration, log func(string)) (stop func()) {
 					log(err.Error())
 					continue
 				}
-				if _, err := os.Lstat(h.FilePath()); err != nil && h.info != nil {
+				h.mu.Lock()
+				if _, err := os.Lstat(h.FilePath()); err != nil && h.info != nil && !h.closed {
 					if err := Write(h.FilePath(), *h.info); err != nil {
 						log("could not rewrite the instance file: " + err.Error())
 					}
 				}
+				h.mu.Unlock()
 			}
 		}
 	}()
@@ -159,7 +195,10 @@ func (h *Holder) Close() {
 			close(h.stop)
 		}
 	}
+	h.mu.Lock()
+	h.closed = true
 	os.Remove(h.FilePath())
+	h.mu.Unlock()
 	h.lock.Release()
 }
 
