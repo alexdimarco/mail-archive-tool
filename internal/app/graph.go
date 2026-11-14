@@ -221,15 +221,19 @@ func RunGraph(ctx context.Context, g GraphOptions, opts Options, logger *log.Log
 	// (archiveguard.go): a drive of a rotation swapped at the same path mid-capture gets nothing of
 	// this archive's (1.7.2).
 	proof := newArchiveGuard(opts, lock.StillHeld)
+	proof.recorded = func() (string, [32]byte, bool) { return recordedFile(opts, mpath, manifest, sealed) }
 	defer func() {
-		// Nothing is recorded in a folder whose lock is no longer this capture's, and the capture
-		// is not this archive's success.
-		if gone := proof.lockGone(); gone != nil {
-			lockGoneWarning(logger, opts.Out, "capture")
+		// A capture whose lock is no longer its own is not this archive's success, and its
+		// failure is recorded only in a folder that still holds the archive it last read or
+		// wrote (endUnheld), as a local run's.
+		if end, here := proof.endUnheld(); end != nil {
 			if err == nil || errors.Is(err, ErrPartial) {
-				err = withKind(state.FailLockLost, gone)
+				err = end
 			}
-			return
+			if !here {
+				lockGoneWarning(logger, opts.Out, "capture")
+				return
+			}
 		}
 		recordRun(opts, begun, &result, &err, logger)
 	}()
@@ -478,6 +482,9 @@ func RunGraph(ctx context.Context, g GraphOptions, opts Options, logger *log.Log
 			lockLost = err
 		}
 	}
+	// Right before a file already in the folder is written over or removed, the folder is proved
+	// at once (the round-5 review's K1), as a local run's.
+	exp.BeforeReplace = proof.replaceGuard(&lockLost)
 	checkpoint := func() {
 		// Gate on messages PROCESSED (written + skipped-as-already-archived), not
 		// just Exported: a migration or steady-state run is nearly all skips

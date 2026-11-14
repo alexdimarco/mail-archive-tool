@@ -748,6 +748,7 @@ func Run(ctx context.Context, opts Options, logger *log.Logger, onProgress Progr
 	// folder renamed, in that time, and nothing of this archive's may then be written into the
 	// other (1.7.2).
 	proof := newArchiveGuard(opts, lock.StillHeld)
+	proof.recorded = func() (string, [32]byte, bool) { return recordedFile(opts, mpath, manifest, sealed) }
 	// The opt-in Thunderbird pre-sync runs here, after the lock and the run's
 	// start and before any source is read; nil unless a caller opts in, and it
 	// never fails the run (design thunderbird-presync §4.1). Its warnings join
@@ -790,17 +791,20 @@ func Run(ctx context.Context, opts Options, logger *log.Logger, onProgress Progr
 	}
 	rec := begun
 	defer func() {
-		// Nothing is recorded in a folder whose lock is no longer this run's: it may hold another
-		// archive now (a drive swapped at the same path or letter, the folder moved), or another
-		// run took the lock and records its own; no record, run history entry,
-		// BACKUP-NEEDS-ATTENTION.txt or streak. A run that would otherwise end ok, or partly ok,
-		// ends as that lost lock: it is not this archive's success (1.7.2).
-		if gone := proof.lockGone(); gone != nil {
-			lockGoneWarning(logger, opts.Out, "backup")
+		// A run whose lock is no longer its own is not this archive's success: one that would
+		// otherwise end ok, or partly ok, ends as that lost lock (or "unavailable", the folder
+		// gone). Its failure is recorded only in a folder that still holds the archive it last
+		// read or wrote; nothing at all goes into one that may hold another archive now (a drive
+		// swapped at the same path or letter, the folder moved) or that another run took over
+		// (1.7.2; endUnheld).
+		if end, here := proof.endUnheld(); end != nil {
 			if err == nil || errors.Is(err, ErrPartial) {
-				err = withKind(state.FailLockLost, gone)
+				err = end
 			}
-			return
+			if !here {
+				lockGoneWarning(logger, opts.Out, "backup")
+				return
+			}
 		}
 		recordRun(opts, rec, &result, &err, logger)
 	}()
@@ -817,6 +821,13 @@ func Run(ctx context.Context, opts Options, logger *log.Logger, onProgress Progr
 	// the profile lock is released.
 	if ctx.Err() != nil {
 		return result, context.Canceled
+	}
+	// Once the pre-sync's wait is over, before the sweeps or anything else is read or written, the
+	// folder is proved to still be this run's, encrypted or not (an encrypted run's manifest was
+	// loaded before the wait, so the proof after the load below is a plaintext run's only: the
+	// round-5 review's K4).
+	if perr := proof.prove(); perr != nil {
+		return Result{}, proofStop(perr)
 	}
 	runAt := begun.Started
 
@@ -1018,6 +1029,10 @@ func Run(ctx context.Context, opts Options, logger *log.Logger, onProgress Progr
 			lockLost = err
 		}
 	}
+	// Right before a file already in the folder is written over or removed, the folder is proved
+	// at once, not on time: a removal or an overwrite is what the other archive's own next backup
+	// could not undo (the round-5 review's K1; new files keep the 10 s bound).
+	exp.BeforeReplace = proof.replaceGuard(&lockLost)
 	result = Result{Files: len(files), ManifestBefore: manifestBefore, FillableFrom: fillableFrom(files)}
 	var failures int
 	var firstFailed string
