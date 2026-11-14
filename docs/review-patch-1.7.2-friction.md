@@ -278,3 +278,23 @@ Everything is under the worktree's `.claude/testdata/fric172/` (untracked, not c
 `/Users/alex.dimarco/repositories/.winlab/fric172/walk-win.ps1`; its results are in the VM at
 `C:\fric172lab\res`. The stray folders of cell 10 and the first Desktop attempt are kept in
 `mac/parked/` as evidence.
+
+## Fix round (2026-11-14, the patch builder; added beside the review, nothing above changed)
+
+The lead's calls, one fix round on `patch-1.7.2`. Each finding, what was done, and its catalog row:
+
+| Finding | Outcome |
+|---|---|
+| F1 | Adopted as proposed: three plain sentences by what the run found at its end, the lock's sentence after "Details:" (MA-1447). The words live in one place (`internal/app/archiveguard.go`). They replace the run's error on every surface; kind `lock_lost` and exit 1 unchanged. |
+| F2 | Adopted as the base of the release notes, then made true after the round: the Windows bullet says a sandboxed program can no longer read the key file (the adversarial review's P2: not "can no longer open MailArchive Desktop"); quit MailArchive Desktop or sign out after updating (P4); "at least every 10 seconds while it writes"; the hiccup bullet says about 30 seconds (P1); "did not finish" (F3's new words); the sentence `It says "Backup stopped: the archive folder changed during the backup."`. About 345 words. |
+| F3 | Adopted (MA-1448). The Type II option (a breadcrumb beside the job file) was not taken. |
+| F4 | Adopted (MA-1447); printed only when the folder is there but not the run's (an unreachable folder ends on "unavailable" and needs no second line). |
+| F5 | Fixed (MA-1446): a run's exporter never makes the archive's own folder; a vanished folder ends "the archive location … is unavailable … reconnect the drive or share". Cell 10's stray folder can no longer be made by the walk. |
+| F6 | Adopted inside F1: the system's error is not in the shown words. |
+| F7 | Adopted (MA-1449). |
+| F8 | Adopted (MA-1450). |
+| F9 | Pre-existing (the failure printed twice); not in this patch. |
+| F10 | Pre-existing (`status` probes the lock with `Acquire`); not in this patch. |
+| F11 | Adopted (MA-1451), not walked on a file system without labels. |
+
+Every sentence was re-checked after the P1 and F5 changes: "Nothing more was saved there" holds (the run proves before its next write and never makes the folder again; files written before it noticed stay, as the notes say); "Your archive is fine" holds for the two own-archive branches (the run stopped before any save after its lock was lost).

@@ -240,3 +240,40 @@ Accept.
   person's own vault (P3), the MSI itself (P4 uses the lab binaries).
 - The Microsoft 365 path for P1 and P5 (shown on the local path; the capture calls the same proof on
   every skipped message).
+
+## Follow-up: the fix round (2026-11-14, the patch builder; added beside the review, nothing above changed)
+
+The lead's calls, one fix round on `patch-1.7.2`:
+
+| Finding | Outcome |
+|---|---|
+| P1 | Fixed (MA-1444). No proof on a timer while a run only reads: a plaintext walk proves right before a message's first write once 10 s have passed since its last proof (`export.Exporter.BeforeMessageWrite`), an encrypted walk after each message it writes, and every save, page, overwrite and removal is proved as before. A proof now tells "read, and not this run's" (the lock file holds another mark, or is gone from a folder that is there), which stops at once, from "could not read" (the folder or the lock file: permission, I/O error, share reconnecting, folder gone), which it asks again with growing pauses for about 30 s, writing nothing, before the run ends on the existing "the archive location … is unavailable … reconnect the drive or share" (`archive_unwritable`), never "lock lost". Before and after, on the Mac, the same probe in each tree (an incremental backup with nothing new walking 40 messages for about 14 s; 8 s in, its lock file, or its folder's parent, unreadable for 5 s; real interval and waits): 1.7.1 (`1a6d437`) lock ok, folder ok; the first 1.7.2 build (`c71467d`) lock failed `lock_lost` ("lock … was removed during the run (… permission denied) …", recorded failed), folder failed `archive_unwritable` (record left "running"); the fix round lock ok, folder ok, about 14.2 s each, as 1.7.1. Committed form: `TestABackupAcrossAMomentsOutageEndsOk` (5 s outages, nothing new, full run, capture) and `TestAWalkThatOnlyReadsProvesNothing`. |
+| P2 | Not in this patch (pre-existing; needs its own design). Written up below. The release notes now say a sandboxed program can no longer read the key file, not that it can no longer open MailArchive Desktop. |
+| P3 | Not in this patch (pre-existing; needs an operator call on the threat model and its own design). Written up below. |
+| P4 | Release notes: "After updating, quit MailArchive Desktop (or sign out and back in) so the copy already running is replaced." The MSI still closes only `mailarchive-desktop.exe`; adding `mailarchivew.exe` to its CloseApplication list is a follow-up. |
+| P5 | Fixed (MA-1445): the crash-leftover sweep asks the run's proof right before each removal (`export.SweepOrphansChecked`, `SweepTempsChecked`), local runs and captures. |
+| P6 | Fixed (MA-1452), cheaply: the "running" record a run writes at its start (its start to the nanosecond) binds the run to its folder; a brand-new archive with no manifest yet is bound by it alone, so its first backup whose lock file is removed is recorded failed there. |
+| P7 | Fixed by the same binding (MA-1452), beyond the lead's "accept": the folder must still hold the run's own running record, which another archive never does, so two archives with the same manifest bytes are no longer taken for one. |
+| P8 | Fixed (MA-1444): the proof follows a link (`os.Stat`); a linked folder whose drive is pulled ends "unavailable". (The removed-lock re-check, also `os.Stat`, catches it on its own; mutation FM6 shows that.) |
+| P9 | Accepted. Re-measured on the VM after the round (SYSTEM, 1,500 messages kept with `-raw`, two full re-runs each, the Mac busy with a test run meanwhile, so the numbers are noisy): full re-run over SMB (`\\localhost\C$`) 6.83 and 6.45 s for 1.7.1, 6.96 and 7.86 s for `c71467d`, 7.96 and 7.13 s for the fix round (about 12 to 14% over 1.7.1, the same as the first build: the proofs before each overwrite are unchanged, and the proof before new writes comes at most once per 10 s); on the local disk 1.84/1.67, 1.83/1.96 and 1.89/1.72 s; first and nothing-new runs unchanged (0.2 to 0.35 s). Every run exit 0, every record "ok". |
+
+### P2 (follow-up, not 1.7.2): the one-time link on a command line
+
+MailArchive Desktop opens the browser with `rundll32 url.dll,FileProtocolHandler <link>`, so the
+60-second, single-use opener link is on rundll32's command line and then the browser's, where a
+Low-integrity process that tries pids can read it and redeem it first (the person then sees "link
+already used"). "Copy link" puts a 10-minute link on the clipboard. Proposed direction for its own
+design and adversarial pass: hand the browser no secret on any command line, for example a small
+local HTML file written with the same Medium no-read-up label as the instance file (MA-1427) and
+opened by its path, whose content carries the link; and say in "Copy link" that the clipboard holds
+a working link. Needs a check that the browser process that reads the file runs at Medium.
+
+### P3 (follow-up, not 1.7.2): Credential Manager entries readable from Low integrity
+
+On Windows MailArchive keeps the Microsoft 365 app secret, the delegated sign-in, the alert email
+password and remembered encryption keys in Credential Manager, which a Low-integrity process of the
+same account read back whole in the lab. 1.7.2 neither causes nor changes it. Against the attacker
+C1 accepts (a sandboxed process of this account), these entries give more than a Desktop session.
+Needs an operator call on the threat model first, then its own design (for example sealing the
+entries with a key kept in a file labelled like the instance file, or DPAPI with entropy held the
+same way), a 10-lens review and an adversarial pass.
