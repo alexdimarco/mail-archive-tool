@@ -25,6 +25,10 @@ func TestMA1427_GUISessionIsTheSignInSession(t *testing.T) {
 			t.Errorf("GUISession on Windows = %q, want \"\"", s)
 		}
 	default:
+		// Where systemd runs, logind's answer outranks XDG_SESSION_ID (the S1 fix round 3,
+		// C2; TestMA1427_LogindsAnswerOutranksTheEnvironment): the environment is read here
+		// as on a system without it.
+		noLogindForTest(t)
 		t.Setenv("XDG_SESSION_ID", "c2")
 		if s := GUISession(); s != "c2" {
 			t.Errorf("GUISession = %q, want c2", s)

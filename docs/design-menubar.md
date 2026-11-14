@@ -1325,6 +1325,16 @@ revert), recorded in the commit; the unfiltered `go test ./...` runs before each
 >   v1.7.1** (built from the tag): a Low process reads K, the quiet hand-off returns a link, and
 >   its redemption gives a Desktop session (status 200) — the exposure ships today (lead: patch
 >   decision). Owed: the same with a real user's token (L-W1).
+> - **C2 — logind first on Linux.** Where systemd runs (`/run/systemd/system` exists, sd_booted's
+>   test, or the process's own group path names a systemd unit), the sign-in is logind's answer
+>   only: the `session-<id>.scope` the process sits in, else "" (unknown, the "cannot tell"
+>   notice) — even when `XDG_SESSION_ID` is set, since the shared user manager's environment can
+>   carry one sign-in's id to apps of every sign-in. Where systemd does not run (elogind, a
+>   container, the BSDs), `XDG_SESSION_ID` as before. *Builder's call:* "logind unavailable" is
+>   decided by systemd's presence, not by a failed read: with systemd running and
+>   `/proc/self/cgroup` unreadable the answer is "" (fail closed). Consequence for MA-1439: a copy
+>   started by the user manager never shows the choice on a second click (the "cannot tell"
+>   notice) even if its environment has an id; the lab still decides whether that is acceptable.
 
 ### 12.2 New dependencies (operator decision)
 `github.com/ebitengine/purego` (macOS only, behind a build tag) and `github.com/godbus/dbus/v5`
