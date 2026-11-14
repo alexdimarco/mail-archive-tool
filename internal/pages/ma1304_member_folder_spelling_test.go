@@ -5,6 +5,7 @@ import (
 	"log"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 )
@@ -18,21 +19,26 @@ import (
 // first: a member folder spelled as the exporter spells it ("Receipts") gets its page.
 func TestAMemberFolderWindowsSpellsAnotherWayGetsNoPage(t *testing.T) {
 	out, ix := memberArchive(t)
-	if err := ix.SetMembers("k-Lunch", "s", []string{"Receipts", "INBOX.", ".. ", "x/.. ", "CON", "Lunch "}); err != nil {
+	// Receipt lives in All Mail; its member folders name the others.
+	if err := ix.SetMembers("k-Receipt", "s", []string{"Receipts", "INBOX.", ".. ", "x/.. ", "CON", "Sent "}); err != nil {
 		t.Fatal(err)
 	}
 	ix.Flush()
 	if err := Generate(out, ix, log.New(io.Discard, "", 0), 0); err != nil {
 		t.Fatalf("the page build failed: %v", err)
 	}
-	if b, err := os.ReadFile(filepath.Join(out, "s", "Receipts", "index.html")); err != nil || !strings.Contains(string(b), "Lunch") {
+	if b, err := os.ReadFile(filepath.Join(out, "s", "Receipts", "index.html")); err != nil || !strings.Contains(string(b), "Receipt") {
 		t.Fatalf("positive twin: the member page for Receipts: %v", err)
 	}
+	// On Windows "INBOX." is INBOX's own folder: a member-only page for it would replace INBOX's.
 	inbox, err := os.ReadFile(filepath.Join(out, "s", "INBOX", "index.html"))
-	if err != nil || !strings.Contains(string(inbox), "Lunch") {
-		t.Fatalf("INBOX's own page lost its own email: %v", err)
+	if err != nil || !strings.Contains(string(inbox), "Lunch") || strings.Contains(string(inbox), "Receipt") {
+		t.Fatalf("INBOX's own page lost its own email, or lists the member of \"INBOX.\": %v", err)
 	}
-	for _, f := range []string{"INBOX.", ".. ", "x", "CON", "Lunch "} {
+	for _, f := range []string{"INBOX.", ".. ", "x", "CON", "Sent "} {
+		if runtime.GOOS == "windows" && strings.TrimRight(f, ". ") != f {
+			continue // Windows finds INBOX (or the parent) by this spelling: the page check above stands
+		}
 		if _, err := os.Lstat(filepath.Join(out, "s", f)); err == nil {
 			t.Fatalf("a page folder was made for the member folder %q", f)
 		}

@@ -206,9 +206,17 @@ func TestABuildWithoutTheMergeStepRefusesAPendingMergesBackup(t *testing.T) {
 			t.Fatalf("a file the merge owns (%s) is gone", p)
 		}
 	}
-	lr, st, _ := state.ReadLastRun(out)
-	if st != state.LastRunPresent || lr.Status != state.RunFailed || !strings.Contains(lr.Error, state.TidyUpWords) {
-		t.Fatalf("the backup's failure record: status %q, words %q; want failed with the tidy-up words", lr.Status, lr.Error)
+	// Amended for the B3 UX walk's U2 (the lead's call, MA-1310): the refusal is a skip, not a
+	// failed run, so the archive's last-run record is put back exactly as it was before the backup
+	// (it said a failure before U2), and the refusal is said by the run's own error.
+	if after[state.LastRunName] != before[state.LastRunName] {
+		t.Fatalf("the skipped backup left a record in the archive: before %q, after %q", before[state.LastRunName], after[state.LastRunName])
+	}
+	if lr, st, _ := state.ReadLastRun(out); st == state.LastRunPresent && lr.Status == state.RunFailed && strings.Contains(lr.Error, state.TidyUpWords) {
+		t.Fatal("the skipped backup is recorded as a failed run")
+	}
+	if !TidyingElsewhere(err) {
+		t.Fatalf("the refusal is not told as another computer's tidy-up: %v", err)
 	}
 }
 

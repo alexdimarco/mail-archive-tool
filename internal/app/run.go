@@ -750,16 +750,11 @@ func Run(ctx context.Context, opts Options, logger *log.Logger, onProgress Progr
 	// The previous run's Thunderbird completeness is read first, before the "running"
 	// record replaces it (completeness design TC-19: fingerprints carried forward).
 	tbPrev := previousThunderbird(opts)
-	// A plaintext archive's manifest is read before the run's record: one another computer is
-	// tidying (version 8) is a skip, not a failed run, so it returns here with nothing recorded, as
-	// a busy archive's run does (the B3 UX walk's U2, the lead's call; TidyingElsewhere). Any other
-	// refusal of the manifest is returned below, after the record, as before.
-	var preLoadErr error
-	if manifest == nil {
-		if manifest, preLoadErr = state.Load(mpath); preLoadErr != nil && TidyingElsewhere(preLoadErr) {
-			return Result{}, withKind(state.FailManifestUnreadable, preLoadErr)
-		}
-	}
+	// The record as it was before this run: a run refused because another computer is tidying the
+	// archive (version 8) is a skip, not a failed run, so its "running" record is put back as it
+	// was, with no failure, history entry or streak (the B3 UX walk's U2, the lead's call;
+	// TidyingElsewhere). Everything before the refusal runs as before (the pre-sync, the sweeps).
+	putBackRecord := state.SnapshotLastRun(opts.Out)
 	begun := beginRun(opts)
 	// The opt-in Thunderbird pre-sync runs here, after the lock and the run's
 	// start and before any source is read; nil unless a caller opts in, and it
@@ -801,7 +796,16 @@ func Run(ctx context.Context, opts Options, logger *log.Logger, onProgress Progr
 	if presyncRelease != nil {
 		defer presyncRelease()
 	}
-	defer recordRun(opts, begun, &result, &err, logger)
+	rec := begun
+	defer func() {
+		if opts.Key == nil && TidyingElsewhere(err) {
+			if perr := putBackRecord(); perr != nil && logger != nil {
+				logger.Printf("warning: could not put back this archive's last-run record (%v)", perr)
+			}
+			return
+		}
+		recordRun(opts, rec, &result, &err, logger)
+	}()
 	// Registered after recordRun so it runs first: every return below, the early ones
 	// that build a fresh Result included, hands the caller the session's outcome.
 	defer func() { result.Presync = presyncOut }()
@@ -848,8 +852,10 @@ func Run(ctx context.Context, opts Options, logger *log.Logger, onProgress Progr
 		}
 	}
 
-	if preLoadErr != nil {
-		return Result{}, withKind(state.FailManifestUnreadable, preLoadErr)
+	if manifest == nil {
+		if manifest, err = state.Load(mpath); err != nil {
+			return Result{}, withKind(state.FailManifestUnreadable, err)
+		}
 	}
 	manifestBefore := manifest.Len()
 

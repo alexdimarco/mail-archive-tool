@@ -3611,9 +3611,12 @@ rule is shared with the completeness design; whichever lands first owns it and t
 >   afresh. Desktop Add another archive is not held under the job-file lock (it waits on dialogs for
 >   minutes); the carry is its guard.
 > - **U1:** the Yes note is the row's line (what starts the next backup).
-> - **U2 (the lead's call): a version-8 refusal is a skip, not a failed run.** The run loads the
->   manifest before its running record; at version 8 it returns before writing any record, as a
->   busy archive's run does. A scheduled run then exits 0, logs the skip, and keeps on this
+> - **U2 (the lead's call): a version-8 refusal is a skip, not a failed run. Changes fold check
+>   6's S5 in one point:** the run still takes the lock, runs the pre-sync and the sweeps, and is
+>   refused at its manifest load as S5 says, but then puts the archive's last-run record back
+>   exactly as it was before the run (no failure record, history entry or streak), as a busy
+>   archive's run leaves none. MA-1216's capped-build test, which asserted the failure record, is
+>   amended to the new posture (named for the lead). A scheduled run then exits 0, logs the skip, and keeps on this
 >   computer when its waiting began (`<key>.tidy-wait`, beside the job files: not the archive,
 >   which the other computer is changing); `status` says the tidy-up WARN with "since DATE" and no
 >   RED; after 3 days of waiting one alert is sent through the backup alert's own failure path

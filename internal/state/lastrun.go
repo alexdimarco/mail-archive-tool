@@ -600,6 +600,39 @@ func SnapshotLastVerify(out string) (putBack func() error) {
 	return func() error { return writeLastVerifyFile(out, data) }
 }
 
+// SnapshotLastRun keeps the last-run record as it is now and returns what puts it back exactly:
+// its own bytes, or no record when there was none (or it could not be read). A run that turns out
+// to be a skip, not a run (another computer tidying the archive; the B3 UX walk's U2), puts the
+// record back so its "running" record leaves no trace.
+func SnapshotLastRun(out string) (putBack func() error) {
+	path := filepath.Join(out, LastRunName)
+	data, err := util.ReadRegularFile(path, maxLastRunSize)
+	if err != nil {
+		return func() error {
+			if err := os.Remove(path); err != nil && !errors.Is(err, fs.ErrNotExist) {
+				return err
+			}
+			return nil
+		}
+	}
+	return func() error {
+		tmp, err := os.CreateTemp(out, ".mailarchive-lastrun-*.tmp")
+		if err != nil {
+			return err
+		}
+		if _, err := tmp.Write(data); err != nil {
+			tmp.Close()
+			os.Remove(tmp.Name())
+			return err
+		}
+		if err := tmp.Close(); err != nil {
+			os.Remove(tmp.Name())
+			return err
+		}
+		return replaceFile(tmp.Name(), path)
+	}
+}
+
 // updateIntegritySidecar writes verify's ARCHIVE-INTEGRITY-ATTENTION.txt when a
 // finalized verify found modified or missing files (real corruption, a RED
 // posture) and removes it when a verify attests. An unrecorded-only result
