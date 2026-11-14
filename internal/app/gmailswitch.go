@@ -20,6 +20,12 @@ type GmailOutcome struct {
 	// Off are the Gmail stores of this existing archive the run read that are still off, the
 	// person not having said yes: the question waits for them (Question).
 	Off []string
+	// Encrypted says the run was of an encrypted archive: nothing beside it, its log and run
+	// summary included, may name its Gmail accounts (O1).
+	Encrypted bool
+	// On are the Gmail stores the run read that are switched on at its end: already on, or
+	// switched on by it (Switched among them).
+	On []string
 	// Question is the words to ask, the encrypted sentence added for an encrypted archive.
 	Question string
 	// NotNow says the person answered Not now: in this run (the terminal's question), or
@@ -66,15 +72,18 @@ func newGmailRun(m *state.Manifest, opts Options, logger *log.Logger) gmailRun {
 // "new" is taken at the run's start, so a new archive's later sources are switched on too.
 func (g *gmailRun) store(m *state.Manifest, token string) {
 	if m.DedupOn(token) {
+		g.out.On = appendToken(g.out.On, token)
 		return
 	}
 	switchOn := func(why string) {
 		m.SwitchOnGmail(token)
 		if m.DedupOn(token) {
 			g.out.Switched = append(g.out.Switched, token)
+			g.out.On = appendToken(g.out.On, token)
 			// Never logged for an encrypted archive: its log is plain text, and nothing about its
-			// Gmail accounts is written beside it (§8.1 fold, GD-3).
-			if g.logger != nil && !g.encrypted {
+			// Gmail accounts is written beside it (§8.1 fold, GD-3). Nor for a yes typed at the
+			// terminal in this run, which the terminal has just said (the B3 friction review's F13).
+			if g.logger != nil && !g.encrypted && !g.answered {
 				g.logger.Printf("Gmail: %s — from now on each email is stored once and shown in all of its folders", why)
 			}
 		}
@@ -104,9 +113,20 @@ func (g *gmailRun) store(m *state.Manifest, token string) {
 	g.out.Off = append(g.out.Off, token)
 }
 
+// appendToken adds t to list once (a store read twice in a run is one store).
+func appendToken(list []string, t string) []string {
+	for _, s := range list {
+		if s == t {
+			return list
+		}
+	}
+	return append(list, t)
+}
+
 // outcome is the run's GmailOutcome, with the question's words when one waits.
 func (g *gmailRun) outcome() GmailOutcome {
 	o := g.out
+	o.Encrypted = g.encrypted
 	if len(o.Off) > 0 {
 		o.Question = state.GmailSwitchQuestion(g.encrypted)
 	}

@@ -476,10 +476,12 @@ func TestTheGmailSwitchIsThePersons(t *testing.T) {
 	if got := existing.GmailDecision([]string{"s", "t"}, false, true); got != GmailAskPerson {
 		t.Fatalf("an existing archive that gains a second Gmail store is asked: %d", got)
 	}
-	if !strings.Contains(GmailSwitchQuestion(false), "MailArchive 1.8 or later") || strings.Contains(GmailSwitchQuestion(false), "encrypted") {
+	// The words as amended by the B3 friction review (MA-1293): "1.8 or newer", and the encrypted
+	// sentence the review proposed.
+	if !strings.Contains(GmailSwitchQuestion(false), "MailArchive 1.8 or newer") || strings.Contains(GmailSwitchQuestion(false), "encrypted") {
 		t.Fatalf("the question's words: %q", GmailSwitchQuestion(false))
 	}
-	if GmailSwitchQuestion(true) != GmailQuestion+" Emails this archive already holds more than once stay as they are, because it is encrypted." {
+	if GmailSwitchQuestion(true) != GmailQuestion+" Emails already saved twice stay as they are: MailArchive cannot tidy an encrypted archive." {
 		t.Fatalf("the encrypted question's words: %q", GmailSwitchQuestion(true))
 	}
 }

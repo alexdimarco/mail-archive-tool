@@ -42,6 +42,11 @@ var (
 	// tbCheckOff turns the check off for a test that compares a run with and without it (the
 	// archive's bytes must be the same either way).
 	tbCheckOff = false
+	// gmailDetectOff makes a run that does not look at a store's Thunderbird account for the
+	// Gmail switch: the archive an older MailArchive made, for a test. Separate from tbCheckOff,
+	// so a run with the check off still switches a Gmail store as the run with it on does, and
+	// the two archives' bytes stay comparable (a switched-on store's pages name their folder).
+	gmailDetectOff = false
 )
 
 // tbStore is one local mbox or maildir source of the run, as the check sees it.

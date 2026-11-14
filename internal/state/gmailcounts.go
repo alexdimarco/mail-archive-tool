@@ -11,6 +11,9 @@ type GmailCounts struct {
 	Messages int
 	Copies   int
 	Listed   int
+	// InOther is how many of the emails are also listed in a folder other than their own (one
+	// or more memberships): the line's "N of them are also listed in another folder" (F12).
+	InOther int
 }
 
 // GmailCountsOf counts m's records in its switched-on Gmail stores. A manifest with none gives
@@ -33,6 +36,9 @@ func GmailCountsOf(m *Manifest) GmailCounts {
 			continue
 		}
 		c.Messages++
+		if len(r.Folders) > 0 {
+			c.InOther++
+		}
 		for _, f := range r.Folders {
 			switch f.Kind {
 			case MemberCopy:
@@ -45,19 +51,17 @@ func GmailCountsOf(m *Manifest) GmailCounts {
 	return c
 }
 
-// Line is the status and run summary's Gmail line: "Gmail: 233,322 messages. 79,200 extra folder
-// copies recorded without storing them again. 34,800 folder entries taken from Thunderbird's
-// folder lists." (§8.1); "" when no store is switched on. A count of zero is left out.
+// Line is the status and run summary's Gmail line, in the B3 friction review's plain words (F12,
+// replacing §8.1's "messages … extra folder copies … folder entries"): "Gmail: 19 emails saved; 4
+// of them are also listed in another folder without a second copy."; "" when no store is switched
+// on. With none listed elsewhere, only how many are saved.
 func (c GmailCounts) Line() string {
 	if c.Stores == 0 {
 		return ""
 	}
-	s := "Gmail: " + Count(c.Messages, "message", "messages") + "."
-	if c.Copies > 0 {
-		s += " " + Count(c.Copies, "extra folder copy", "extra folder copies") + " recorded without storing " + pick(c.Copies, "it", "them") + " again."
+	s := "Gmail: " + Count(c.Messages, "email", "emails") + " saved"
+	if c.InOther > 0 {
+		s += "; " + thousands(c.InOther) + " of them " + pick(c.InOther, "is", "are") + " also listed in another folder without a second copy"
 	}
-	if c.Listed > 0 {
-		s += " " + Count(c.Listed, "folder entry", "folder entries") + " taken from Thunderbird's folder lists."
-	}
-	return s
+	return s + "."
 }

@@ -16,9 +16,9 @@ func TestTheGmailQuestionIsAskedOncePerRun(t *testing.T) {
 	existing := func() string {
 		t.Helper()
 		out := tmpDir(t)
-		tbCheckOff = true
+		gmailDetectOff = true // an older MailArchive did not look at the account (was tbCheckOff, which no longer turns Gmail detection off)
 		runTB(t, Options{Inputs: []string{a, b}, Out: out})
-		tbCheckOff = false
+		gmailDetectOff = false
 		if v, on := manifestOnDisk(t, out); v != 6 || len(on) != 0 {
 			t.Fatalf("fixture: version %d, %v switched on", v, on)
 		}

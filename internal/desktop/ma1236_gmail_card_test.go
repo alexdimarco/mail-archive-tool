@@ -10,6 +10,7 @@ import (
 
 	"mail-archive-tool/internal/archindex"
 	"mail-archive-tool/internal/assure"
+	"mail-archive-tool/internal/gmailanswer"
 	"mail-archive-tool/internal/job"
 	"mail-archive-tool/internal/schedule"
 	"mail-archive-tool/internal/state"
@@ -62,11 +63,19 @@ func TestTheCardAsksTheGmailQuestionAndKeepsTheAnswerHere(t *testing.T) {
 	gmailWaits(t, out, "gmail-store", "../escape")
 	manifestBefore, _ := os.ReadFile(out + "/.mailarchive-manifest.json")
 
-	// No job file: the answer is refused, nothing written.
+	// No job file: amended by the B3 friction review's F2 (MA-1292). The answer is no longer
+	// refused: it is kept on this computer beside the job files, no job file is made, and the
+	// archive is not written. The answer is then taken back so the job-file half below starts clean.
 	jp, _ := job.PathFor(schedule.DefaultNameFor(out))
-	_, m := e.post("/api/gmail-answer", map[string]any{"path": out, "answer": "yes"})
-	assure.Refused(t, http.StatusOK, replyErr(m), assure.Code(http.StatusOK), assure.Names("could not keep your answer", "Back it up once"),
-		assure.NoSideEffect(func() bool { _, err := os.Lstat(jp); return os.IsNotExist(err) }))
+	if _, m := e.post("/api/gmail-answer", map[string]any{"path": out, "answer": "not-now"}); m["ok"] != true {
+		t.Fatalf("Not now with no job file: %v", m)
+	}
+	if _, err := os.Lstat(jp); !os.IsNotExist(err) || !gmailanswer.Read(out).NotNow {
+		t.Fatalf("Not now with no job file: job file %v, kept %+v", err, gmailanswer.Read(out))
+	}
+	if ap, _ := gmailanswer.Path(out); os.Remove(ap) != nil {
+		t.Fatal("the answer kept beside the job files is not there")
+	}
 
 	if err := job.Write(jp, job.Job{Name: "gmail", Out: out, Mode: "incremental"}); err != nil {
 		t.Fatal(err)
@@ -87,7 +96,8 @@ func TestTheCardAsksTheGmailQuestionAndKeepsTheAnswerHere(t *testing.T) {
 	if err != nil || !reflect.DeepEqual(j.GmailYes, []string{"gmail-store"}) || j.GmailNotNow {
 		t.Fatalf("after Yes the job file holds %+v (%v)", j, err)
 	}
-	if r := cardRow(t, e, out); r.Gmail != "" || r.GmailYes != gmailYesWaits {
+	// The yes line, with what starts the next backup (F15, MA-1294).
+	if r := cardRow(t, e, out); r.Gmail != "" || !strings.HasPrefix(r.GmailYes, gmailYesWaits) {
 		t.Fatalf("after Yes the card says %q / %q", r.Gmail, r.GmailYes)
 	}
 
@@ -116,12 +126,12 @@ func TestTheCardAsksTheGmailQuestionAndKeepsTheAnswerHere(t *testing.T) {
 	}
 
 	// An encrypted archive's card never asks.
-	if q, y := gmailCard(out, false); q != "" || y != "" {
+	if q, y := gmailCard(out, false, false); q != "" || y != "" {
 		t.Fatalf("a card told it is not plaintext asks %q / %q", q, y)
 	}
 	// A bad answer is refused.
 	jb, _ := os.ReadFile(jp)
-	_, m = e.post("/api/gmail-answer", map[string]any{"path": out, "answer": "maybe"})
+	_, m := e.post("/api/gmail-answer", map[string]any{"path": out, "answer": "maybe"})
 	assure.Refused(t, http.StatusOK, replyErr(m), assure.Code(http.StatusOK), assure.Names("Yes or Not now"),
 		assure.NoSideEffect(func() bool { after, _ := os.ReadFile(jp); return string(after) == string(jb) }))
 }

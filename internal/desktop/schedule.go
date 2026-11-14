@@ -322,7 +322,7 @@ func (d *dashboard) scheduleInstallRouted(w http.ResponseWriter, r *http.Request
 		refuse(schedule.ErrEncryptedArchive.Error() + ": scheduled backups of an encrypted archive are not available yet; nothing was installed")
 		return
 	case backupUnknown:
-		refuse(unknownKindRefusal) // C-8: nothing is decided on a guess
+		refuse(unknownRefusalFor(out)) // C-8: nothing is decided on a guess
 		return
 	}
 	if seal.IsSealed(out) {

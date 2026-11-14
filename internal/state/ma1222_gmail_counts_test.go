@@ -30,10 +30,11 @@ func TestTheGmailLineCountsTheSwitchedOnStoresOnly(t *testing.T) {
 	}
 	m.SwitchOnGmail("g")
 	c := GmailCountsOf(m)
-	if c != (GmailCounts{Stores: 1, Messages: 2, Copies: 2, Listed: 1}) {
+	if c != (GmailCounts{Stores: 1, Messages: 2, Copies: 2, Listed: 1, InOther: 2}) {
 		t.Fatalf("counts %+v", c)
 	}
-	want := "Gmail: 2 messages. 2 extra folder copies recorded without storing them again. 1 folder entry taken from Thunderbird's folder lists."
+	// The words amended 2026-11-13 by the B3 friction review's F12 (MA-1300).
+	want := "Gmail: 2 emails saved; 2 of them are also listed in another folder without a second copy."
 	if c.Line() != want {
 		t.Fatalf("line %q, want %q", c.Line(), want)
 	}
@@ -42,10 +43,10 @@ func TestTheGmailLineCountsTheSwitchedOnStoresOnly(t *testing.T) {
 			t.Fatalf("the line names a folder: %q", c.Line())
 		}
 	}
-	if l := (GmailCounts{Stores: 1, Messages: 233322, Copies: 79200}).Line(); l != "Gmail: 233,322 messages. 79,200 extra folder copies recorded without storing them again." {
+	if l := (GmailCounts{Stores: 1, Messages: 233322, Copies: 79200, InOther: 79200}).Line(); l != "Gmail: 233,322 emails saved; 79,200 of them are also listed in another folder without a second copy." {
 		t.Fatalf("the owner-sized line: %q", l)
 	}
-	if l := (GmailCounts{Stores: 1, Messages: 1, Copies: 1}).Line(); l != "Gmail: 1 message. 1 extra folder copy recorded without storing it again." {
+	if l := (GmailCounts{Stores: 1, Messages: 1, Copies: 1, InOther: 1}).Line(); l != "Gmail: 1 email saved; 1 of them is also listed in another folder without a second copy." {
 		t.Fatalf("the singular line: %q", l)
 	}
 }

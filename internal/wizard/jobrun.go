@@ -7,12 +7,14 @@ import (
 	"log"
 	"path/filepath"
 	"runtime"
+	"slices"
 	"strconv"
 	"strings"
 	"time"
 
 	"mail-archive-tool/internal/app"
 	"mail-archive-tool/internal/export"
+	"mail-archive-tool/internal/gmailanswer"
 	"mail-archive-tool/internal/job"
 	"mail-archive-tool/internal/presync"
 	"mail-archive-tool/internal/presyncjob"
@@ -145,6 +147,11 @@ func runNowSummaryFor(r app.Result, scheduled bool) string {
 		lines = append(lines, lead+messagesNew(added)+" archived.")
 	}
 	lines = append(lines, tbNoteLines(r, scheduled)...)
+	// The backup that switched Gmail on says so (the B3 friction review's F6). Plaintext only:
+	// a keyed run's result is encryptedSummaryFor's.
+	if len(r.Gmail.Switched) > 0 {
+		lines = append(lines, state.GmailSwitchedLine+" "+state.GmailNeedsLine)
+	}
 	if s.Filled > 0 {
 		lines = append(lines, messages(s.Filled)+" an earlier backup could not fully download "+guiVerb(s.Filled, "is", "are")+" now complete.")
 	}
@@ -374,8 +381,16 @@ func optsForJob(j job.Job, inputs []string, logger *log.Logger, hooks runHooks, 
 	}
 	// The Gmail question's answers kept on this computer (Q-B): a yes given on the archive's
 	// card switches those stores on at this run; a Not now asks nothing. A job run never asks.
+	// Also the answer kept beside the job files (gmailanswer), given before this archive had a
+	// job file, or typed at a terminal (the B3 friction review's F2 and F7).
+	kept := gmailanswer.Read(j.Out)
 	opts.GmailYesStores = append([]string(nil), j.GmailYes...)
-	opts.GmailNotNow = j.GmailNotNow
+	for _, t := range kept.Yes {
+		if !slices.Contains(opts.GmailYesStores, t) {
+			opts.GmailYesStores = append(opts.GmailYesStores, t)
+		}
+	}
+	opts.GmailNotNow = j.GmailNotNow || kept.NotNow
 	opts.PresyncWanted = j.ThunderbirdSync != nil
 	opts.PresyncAttended = mode == runAttended
 	opts.OnReadStart = hooks.rn.OnReadStart

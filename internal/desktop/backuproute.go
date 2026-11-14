@@ -6,8 +6,10 @@ import (
 	"strings"
 	"time"
 
+	"mail-archive-tool/internal/archindex"
 	"mail-archive-tool/internal/job"
 	"mail-archive-tool/internal/schedule"
+	"mail-archive-tool/internal/state"
 )
 
 // The archive's kind for its backup options (design-desktop-settings-card 3.1, C-8): read from
@@ -112,6 +114,24 @@ func routeFor(out string) backupRoute {
 	r.notice = r.captureCounted && (r.kind == backupLocal || r.runJob || descRunJob)
 	r.export = !r.runJob && (ev.Has(schedule.KindExport) || (r.hasDesc && len(r.desc.Job) > 0 && r.descKind == schedule.KindExport))
 	return r
+}
+
+// unknownLineFor is the Unknown archive's line for the Scheduled backup card and Settings, and
+// unknownRefusalFor its refusal: for a record a newer MailArchive wrote, the newer format's own
+// words (the tidy-up words for version 8), never "is its drive connected?" (the B3 friction
+// review's F9); otherwise the words they had.
+func unknownLineFor(out string) string {
+	if v := archindex.NewerFormat(out); v > 0 {
+		return state.NewerFormatWords(v)
+	}
+	return unknownKindLine
+}
+
+func unknownRefusalFor(out string) string {
+	if v := archindex.NewerFormat(out); v > 0 {
+		return state.NewerFormatWords(v) + " Nothing was changed."
+	}
+	return unknownKindRefusal
 }
 
 // Section 6's refusals and section 4's notice, in plain words (X2).

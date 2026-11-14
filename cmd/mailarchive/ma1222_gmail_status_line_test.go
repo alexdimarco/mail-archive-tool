@@ -13,7 +13,8 @@ import (
 // program (docs/design-gmail-dedup.md §8.1, slice B3): counts only, never a folder name.
 // Positive twin first: an archive nobody switched on has no Gmail line in either.
 func TestStatusAndTheRunSummarySayTheGmailCounts(t *testing.T) {
-	const line = "Gmail: 1 message. 1 extra folder copy recorded without storing it again."
+	// The words amended 2026-11-13 by the B3 friction review's F12 (MA-1300).
+	const line = "Gmail: 1 email saved; 1 of them is also listed in another folder without a second copy."
 	src := filepath.Join(t.TempDir(), "Inbox")
 	writeMaildirMsg(t, src, "1.eml", sampleMsg)
 	dir := filepath.Join(t.TempDir(), "archive")

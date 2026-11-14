@@ -18,6 +18,7 @@ import (
 
 	"mail-archive-tool/internal/export"
 	"mail-archive-tool/internal/index"
+	"mail-archive-tool/internal/state"
 )
 
 // pageSize is how many messages one folder page lists; a bigger folder gets
@@ -237,7 +238,8 @@ func memberRows(ix *index.Index) (map[string][]row, error) {
 		if home == m.Folder {
 			return nil // its own folder lists it already
 		}
-		shown := home
+		// Gmail's own name, "All Mail", never "[Gmail]/All Mail" (the B3 friction review's F11).
+		shown := state.ShownFolder(home)
 		if shown == "" {
 			shown = "the account's top folder"
 		}

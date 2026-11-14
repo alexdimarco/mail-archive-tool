@@ -241,6 +241,11 @@ func folderProblem(path string, atTerminal bool) string {
 		// The same words as the No-archive card; a manifest that is there but cannot be
 		// read is told so, with where its repair shows (the P3-3 pass, REG-04).
 		if _, err := os.Lstat(filepath.Join(abs, ".mailarchive-manifest.json")); err == nil {
+			// A record a newer MailArchive wrote is not damaged: its own words, never "repair"
+			// (the B3 friction review's F9; the tidy-up words for version 8).
+			if v := archindex.NewerFormat(abs); v > 0 {
+				return fmt.Sprintf("%s: %s", abs, state.NewerFormatWords(v))
+			}
 			if atTerminal {
 				return fmt.Sprintf("%s holds an archive whose record (.mailarchive-manifest.json) cannot be read — run mailarchive status -out %s to see why and how to repair it.", abs, encmark.CommandPath(abs))
 			}

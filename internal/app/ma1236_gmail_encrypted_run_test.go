@@ -69,9 +69,9 @@ func TestTheGmailSwitchOnAnEncryptedArchiveSaysNothingBesideIt(t *testing.T) {
 	// An existing encrypted archive whose Gmail store is off: an unattended run keeps no
 	// waiting question beside it.
 	out, key = encryptedOut(t)
-	tbCheckOff = true
+	gmailDetectOff = true // an older MailArchive did not look at the account (was tbCheckOff, which no longer turns Gmail detection off)
 	run(Options{Inputs: []string{store}, Out: out, Key: key})
-	tbCheckOff = false
+	gmailDetectOff = false
 	res, _ = run(Options{Inputs: []string{store}, Out: out, Key: key, Unattended: true})
 	if len(res.Gmail.Off) != 1 {
 		t.Fatalf("fixture: the existing encrypted archive's store is not off: %+v", res.Gmail)

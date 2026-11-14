@@ -69,6 +69,10 @@ const syncAlertSuffix = ".sync-alert"
 // MA-1058's test keeps the two in step by behaviour).
 const deleteRefusedSuffix = ".delete-refused"
 
+// gmailAnswerSuffix ends the Gmail answer this computer keeps for an archive, <key>.gmail-answer,
+// beside the job files (gmailanswer.Suffix; MA-1292's test keeps the two in step by behaviour).
+const gmailAnswerSuffix = ".gmail-answer"
+
 // ErrOverlap refuses the WHOLE config cleanup because the config dir is, contains, or
 // sits inside a mail archive; deleting its contents could destroy mail (R36, U-C1).
 var ErrOverlap = errors.New("refusing to clean the config directory: it overlaps a mail archive")
@@ -138,6 +142,8 @@ func deletableConfigName(name string) bool {
 	case strings.HasSuffix(name, syncAlertSuffix): // its Thunderbird-not-synced told-file
 		return true
 	case strings.HasSuffix(name, deleteRefusedSuffix): // its count of runs refused for an unfinished delete
+		return true
+	case strings.HasSuffix(name, gmailAnswerSuffix): // the Gmail answer kept for an archive
 		return true
 	case thunderbird.IsRestoreLockName(name): // a restore's lock, restore-<16 lowercase hex>.lock (N-b)
 		return true
