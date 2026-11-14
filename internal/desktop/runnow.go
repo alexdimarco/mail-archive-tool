@@ -401,6 +401,9 @@ func (d *dashboard) runNowHooks(goos string) (rn wizard.RunNow, slot uint64, end
 		// The engine asks this Desktop's deletion log again at the run's start and under its
 		// lock, as the Run now refusal (MA-987) asked it before the run (MA-1044).
 		DeletionsLog: d.cfg.deletionsLogPath(),
+		// Spending a used yes rewrites the archive's job file: under the lock Save settings and
+		// the Gmail answer take on it (the B3 adversarial pass, round 2's G8).
+		HoldJobFile: func() func() { jobFileMu.Lock(); return jobFileMu.Unlock },
 	}
 	return rn, slot, endWait
 }

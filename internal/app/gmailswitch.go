@@ -61,12 +61,15 @@ type gmailRun struct {
 // archive is the id the archive this run holds the lock of carries (its running record's,
 // state.LastRun.Archive; "" for an encrypted archive): the card's yes (GmailYesStores) is applied
 // only when it was given for this archive (Options.GmailYesFor), checked here, under the lock,
-// whatever the caller read before it (the B3 adversarial pass's A1).
+// whatever the caller read before it (the B3 adversarial pass's A1). An encrypted archive's yes
+// for named stores (the Desktop's, kept in memory on the entry its key opened, MA-1315) is bound by
+// that key instead, which opens only the archive it was made for: it is applied to those stores
+// only, never to an account added since the question was asked (round 2's G6).
 func newGmailRun(m *state.Manifest, opts Options, archive string, logger *log.Logger) gmailRun {
 	g := gmailRun{fresh: m.Len() == 0, encrypted: opts.Key != nil, yes: opts.GmailYes, notNow: opts.GmailNotNow, ask: opts.AskGmail, logger: logger}
 	g.out.NotNow = opts.GmailNotNow // an answer kept on this computer: nothing waits to be asked
 	yesStores := opts.GmailYesStores
-	if len(yesStores) > 0 && (archive == "" || opts.GmailYesFor != archive) {
+	if len(yesStores) > 0 && !g.encrypted && (archive == "" || opts.GmailYesFor != archive) {
 		yesStores = nil
 		if logger != nil && !g.encrypted {
 			logger.Printf("Gmail: the yes this computer keeps for this folder was given for another archive; it is not used, and the question waits")

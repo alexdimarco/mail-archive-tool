@@ -68,7 +68,7 @@ func TestTheCardAsksTheGmailQuestionAndKeepsTheAnswerHere(t *testing.T) {
 	// refused: it is kept on this computer beside the job files, no job file is made, and the
 	// archive is not written. The answer is then taken back so the job-file half below starts clean.
 	jp, _ := job.PathFor(schedule.DefaultNameFor(out))
-	if _, m := e.post("/api/gmail-answer", map[string]any{"path": out, "answer": "not-now"}); m["ok"] != true {
+	if _, m := e.post("/api/gmail-answer", map[string]any{"path": out, "answer": "not-now", "archive": state.ArchiveID(out)}); m["ok"] != true {
 		t.Fatalf("Not now with no job file: %v", m)
 	}
 	if _, err := os.Lstat(jp); !os.IsNotExist(err) || !gmailanswer.Read(out).NotNow {
@@ -91,7 +91,7 @@ func TestTheCardAsksTheGmailQuestionAndKeepsTheAnswerHere(t *testing.T) {
 
 	// Yes: the record's safe stores, kept for the next backup.
 	// The note says what starts that backup, as the row does after a reload (U1, MA-1294's words).
-	if _, m := e.post("/api/gmail-answer", map[string]any{"path": out, "answer": "yes"}); m["ok"] != true || m["note"] != gmailYesWaitsFor(out, false) {
+	if _, m := e.post("/api/gmail-answer", map[string]any{"path": out, "answer": "yes", "archive": state.ArchiveID(out)}); m["ok"] != true || m["note"] != gmailYesWaitsFor(out, false) {
 		t.Fatalf("Yes: %v", m)
 	}
 	j, err := job.Read(jp)
@@ -106,7 +106,7 @@ func TestTheCardAsksTheGmailQuestionAndKeepsTheAnswerHere(t *testing.T) {
 	// Not now: kept; the card asks no more.
 	j.GmailYes = nil
 	job.Write(jp, j)
-	if _, m := e.post("/api/gmail-answer", map[string]any{"path": out, "answer": "not-now"}); m["ok"] != true || m["note"] != gmailNotNowNote {
+	if _, m := e.post("/api/gmail-answer", map[string]any{"path": out, "answer": "not-now", "archive": state.ArchiveID(out)}); m["ok"] != true || m["note"] != gmailNotNowNote {
 		t.Fatalf("Not now: %v", m)
 	}
 	if j, _ := job.Read(jp); !j.GmailNotNow || len(j.GmailYes) != 0 {
@@ -120,7 +120,7 @@ func TestTheCardAsksTheGmailQuestionAndKeepsTheAnswerHere(t *testing.T) {
 	}
 
 	// A Yes after a Not now (a page left open) replaces it: the stores are kept and Not now goes.
-	if _, m := e.post("/api/gmail-answer", map[string]any{"path": out, "answer": "yes"}); m["ok"] != true {
+	if _, m := e.post("/api/gmail-answer", map[string]any{"path": out, "answer": "yes", "archive": state.ArchiveID(out)}); m["ok"] != true {
 		t.Fatalf("Yes after Not now: %v", m)
 	}
 	if j, _ := job.Read(jp); j.GmailNotNow || !reflect.DeepEqual(j.GmailYes, []string{"gmail-store"}) {

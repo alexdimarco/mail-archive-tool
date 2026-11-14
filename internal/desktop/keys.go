@@ -154,8 +154,10 @@ type keyEntry struct {
 	// gmailquestion.go): the Gmail stores its last Run now here found off, and the person's
 	// answer. Memory only, gone with the entry at any lock: nothing beside an encrypted archive,
 	// nor this computer's settings, may say it holds a Gmail account (O1). Guarded by lastSyncMu.
+	// gmailYes is the yes for the stores the question named (the B3 adversarial pass, round 2's
+	// G6), never for an account added since.
 	gmailOff    []string
-	gmailYes    bool
+	gmailYes    []string
 	gmailNotNow bool
 }
 

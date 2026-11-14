@@ -85,7 +85,9 @@ func setGmailQuestionCtx(ctx context.Context, opts *app.Options, unattended bool
 		// record's id); no answer is not an answer. Never for an encrypted archive: nothing
 		// beside it may say it holds a Gmail account (O1).
 		if !yes && answered && !encrypted {
-			err := gmailanswer.KeepHere(out, gmailanswer.Answer{Archive: state.ArchiveID(out), NotNow: true})
+			// It takes back a yes still waiting for the archive (the B3 adversarial pass, round 2's
+			// G2): the person's latest answer is the one kept.
+			err := gmailanswer.NotNowHere(out, state.ArchiveID(out))
 			if err != nil {
 				fmt.Fprintf(os.Stderr, "warning: MailArchive could not remember your Not now on this computer (%v); it asks again at the next backup you start at a terminal\n", err)
 			}

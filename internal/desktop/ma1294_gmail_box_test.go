@@ -63,7 +63,7 @@ func TestTheGmailQuestionHasItsOwnBoxAndSaysWhatStartsTheNextBackup(t *testing.T
 	}
 
 	for _, out := range []string{run, none, sched} {
-		if _, m := e.post("/api/gmail-answer", map[string]any{"path": out, "answer": "yes"}); m["ok"] != true {
+		if _, m := e.post("/api/gmail-answer", map[string]any{"path": out, "answer": "yes", "archive": state.ArchiveID(out)}); m["ok"] != true {
 			t.Fatalf("Yes on %s: %v", out, m)
 		}
 	}

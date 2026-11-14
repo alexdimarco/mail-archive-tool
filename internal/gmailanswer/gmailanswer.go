@@ -36,6 +36,8 @@ import (
 	"slices"
 	"strings"
 
+	"golang.org/x/text/unicode/norm"
+
 	"mail-archive-tool/internal/job"
 	"mail-archive-tool/internal/schedule"
 	"mail-archive-tool/internal/state"
@@ -76,13 +78,19 @@ func (a Answer) empty() bool { return !a.NotNow && len(a.Yes) == 0 }
 // folderKey is out as this computer's file system tells folders apart: absolute, its links
 // resolved, and on macOS and Windows, whose file systems ignore letter case, in lower case. Two
 // spellings of one folder give one key (A3). A case-sensitive volume on macOS may give two
-// folders one key; the answer's archive id still keeps one archive's answer from the other.
+// folders one key; the answer's archive id still keeps one archive's answer from the other. On
+// macOS, whose file systems treat a name's composed (NFC) and decomposed (NFD) Unicode forms as
+// one name, the key is in the composed form, so both spellings give one key (the B3 adversarial
+// pass, round 2's G7). Windows and Linux tell the two forms apart, and so does the key there.
 func folderKey(out, goos string) string {
 	abs := out
 	if a, err := filepath.Abs(out); err == nil {
 		abs = a
 	}
 	abs = util.ResolveExisting(abs)
+	if goos == "darwin" {
+		abs = norm.NFC.String(abs)
+	}
 	if goos == "darwin" || goos == "windows" {
 		abs = strings.ToLower(abs)
 	}
@@ -171,14 +179,24 @@ func Read(out string) Answer {
 	return a
 }
 
+// latest is a as kept: a Not now is the person's latest answer and takes back any yes still
+// waiting beside it (the B3 adversarial pass, round 2's G2), as a yes takes back a Not now.
+func (a Answer) latest() Answer {
+	if a.NotNow {
+		a.Yes = nil
+	}
+	return a
+}
+
 // Keep keeps a, given in MailArchive Desktop, for the archive at out: in its job file when it has
 // one that reads (the answer file, if any, is then removed), otherwise in the answer file. a must
-// name the archive (Archive, from the record the question was read from). It never writes the
-// archive.
+// name the archive (Archive, from the record the question was read from). A Not now keeps no yes
+// beside it. It never writes the archive.
 func Keep(out string, a Answer) error {
 	if !state.ValidArchiveID(a.Archive) {
 		return ErrNoArchiveID
 	}
+	a = a.latest()
 	if j, p, ok := jobFor(out); ok {
 		j.GmailNotNow, j.GmailYes, j.GmailArchive = a.NotNow, append([]string(nil), a.Yes...), a.Archive
 		if a.empty() {
@@ -199,6 +217,7 @@ func KeepHere(out string, a Answer) error {
 	if !state.ValidArchiveID(a.Archive) {
 		return ErrNoArchiveID
 	}
+	a = a.latest()
 	if a.empty() {
 		return removeFile(out)
 	}
@@ -212,6 +231,25 @@ func KeepHere(out string, a Answer) error {
 		return err
 	}
 	return util.WriteFileAtomic0600Temp(p, data, TempPattern)
+}
+
+// NotNowHere keeps a Not now typed at a terminal for the archive (its id) at out: in the answer
+// file, as KeepHere does, and, being the person's latest answer, it takes back a yes the archive's
+// job file still keeps for that archive (G2), so the next scheduled backup switches nothing. The
+// job file's other answers and settings are left as they are.
+func NotNowHere(out, archive string) error {
+	if err := KeepHere(out, Answer{Archive: archive, NotNow: true}); err != nil {
+		return err
+	}
+	j, p, ok := jobFor(out)
+	if !ok || j.GmailArchive != archive || len(j.GmailYes) == 0 {
+		return nil
+	}
+	j.GmailYes = nil
+	if !j.GmailNotNow {
+		j.GmailArchive = ""
+	}
+	return job.Write(p, j)
 }
 
 // removeFile removes the answer file for out; one already gone is no error.

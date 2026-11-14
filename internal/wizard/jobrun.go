@@ -47,12 +47,28 @@ type RunNow struct {
 	// DeletionsLog is the Desktop's deletion log, which the run asks whether a delete of the
 	// folder did not finish (app.Options.DeletionsLog, MA-1044); "" is MailArchive's own.
 	DeletionsLog string
-	// GmailYes is the yes to the Gmail question the Desktop keeps in memory for this open
-	// encrypted archive (the owner's ruling on F18): the encrypted Run now carries it as the run's
-	// own yes (app.Options.GmailYes). OnGmail is handed the run's Gmail outcome, in memory only,
-	// so the card can ask while the archive stays unlocked. Both are the encrypted Run now's only.
-	GmailYes bool
-	OnGmail  func(app.GmailOutcome)
+	// GmailYesStores is the yes to the Gmail question the Desktop keeps in memory for this open
+	// encrypted archive (the owner's ruling on F18): the stores the question named, which the
+	// encrypted Run now carries as app.Options.GmailYesStores, so an account added since is not
+	// switched with them (the B3 adversarial pass, round 2's G6). OnGmail is handed the run's Gmail
+	// outcome, in memory only, so the card can ask while the archive stays unlocked. Both are the
+	// encrypted Run now's only.
+	GmailYesStores []string
+	OnGmail        func(app.GmailOutcome)
+	// HoldJobFile takes the Desktop's lock on its job files (the one Save settings and the Gmail
+	// answer take) and returns its release: the plaintext Run now spends a used yes, which rewrites
+	// the archive's job file, only while holding it (the B3 adversarial pass, round 2's G8). Nil
+	// takes none (the scheduled run-job is another process).
+	HoldJobFile func() (release func())
+}
+
+// settleUnder spends the yes a backup of out applied (gmailanswer.Settle) while holding hold, when
+// one is given.
+func settleUnder(out string, hold func() (release func())) {
+	if hold != nil {
+		defer hold()()
+	}
+	_ = gmailanswer.Settle(out) // a yes this backup applied is spent (A1)
 }
 
 // runHooks is what optsForJob hands the shared pre-sync hook besides the job: the
@@ -97,7 +113,7 @@ func RunJobInProcess(ctx, stop context.Context, jobPath string, logger *log.Logg
 	opts := optsForJob(j, j.Inputs, logger, runHooks{stop: stop, rn: rn}, runAttended)
 	logger.Printf("Running the scheduled backup now for %s", j.Out)
 	result, runErr := app.Run(ctx, opts, logger, nil)
-	_ = gmailanswer.Settle(j.Out) // a yes this backup applied is spent (A1)
+	settleUnder(j.Out, rn.HoldJobFile) // under Save settings' lock (G8)
 	if runErr != nil {
 		// A partial backup's note says what is not downloaded in full yet too, as a finished
 		// one's does (the 1.6.1 friction review's P6, MA-1156).
@@ -273,9 +289,10 @@ func RunJobInProcessKeyed(ctx, stop context.Context, jobPath string, logger *log
 	}
 	opts := optsForJob(j, j.Inputs, logger, runHooks{stop: stop, rn: rn}, runAttended)
 	opts.Unattended = false
-	// A yes the Desktop keeps for this open archive (F18): the key opens only the archive it was
-	// made for, so the yes cannot reach another archive in the folder (A1's binding).
-	opts.GmailYes = rn.GmailYes
+	// A yes the Desktop keeps for this open archive (F18), for the stores its question named (G6):
+	// the key opens only the archive it was made for, so the yes cannot reach another archive in
+	// the folder (A1's binding).
+	opts.GmailYesStores = append([]string(nil), rn.GmailYesStores...)
 	switch j.ProgramCopies { // the choice the archive was made with, until a run seals it
 	case "on":
 		opts.ProgramCopiesIfUnchosen = app.ProgramCopiesOn

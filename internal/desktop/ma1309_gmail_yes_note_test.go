@@ -36,7 +36,7 @@ func TestTheYesNoteSaysWhatStartsTheBackup(t *testing.T) {
 	if err := schedule.WriteDescriptor(sched, schedule.Descriptor{Version: 1, Name: "s", Interval: "daily", At: "03:00"}); err != nil {
 		t.Fatal(err)
 	}
-	if _, m := e.post("/api/gmail-answer", map[string]any{"path": nope, "answer": "not-now"}); m["note"] != gmailNotNowNote {
+	if _, m := e.post("/api/gmail-answer", map[string]any{"path": nope, "answer": "not-now", "archive": state.ArchiveID(nope)}); m["note"] != gmailNotNowNote {
 		t.Fatalf("positive twin: Not now's note: %v", m)
 	}
 	for out, want := range map[string]string{
@@ -44,7 +44,7 @@ func TestTheYesNoteSaysWhatStartsTheBackup(t *testing.T) {
 		run:   gmailYesWaits + " " + gmailRunNowLead + gmailSwitchFirst + gmailRunNowAct,
 		none:  gmailYesWaits + " " + gmailNoJobLead + gmailSwitchFirst + gmailNoJobAct,
 	} {
-		_, m := e.post("/api/gmail-answer", map[string]any{"path": out, "answer": "yes"})
+		_, m := e.post("/api/gmail-answer", map[string]any{"path": out, "answer": "yes", "archive": state.ArchiveID(out)})
 		if m["ok"] != true || m["note"] != want {
 			t.Fatalf("Yes on %s: note %q, want %q", out, m["note"], want)
 		}
@@ -54,7 +54,7 @@ func TestTheYesNoteSaysWhatStartsTheBackup(t *testing.T) {
 		t.Fatal(err)
 	}
 	gmailWaits(t, none, "second-store")
-	_, m := e.post("/api/gmail-answer", map[string]any{"path": none, "answer": "yes"})
+	_, m := e.post("/api/gmail-answer", map[string]any{"path": none, "answer": "yes", "archive": state.ArchiveID(none)})
 	if want := gmailYesWaits + " " + gmailNoJobLead + gmailNoJobAct; m["note"] != want {
 		t.Fatalf("Yes on the current archive: %q, want %q", m["note"], want)
 	}
@@ -81,7 +81,7 @@ func TestSettingsShowsOneLineAfterNotNowAndYesIsNotPrimary(t *testing.T) {
 	if strings.Contains(page, `class="btn" type="button" data-gmail-answer="yes"`) || !strings.Contains(page, `class="btn secondary" type="button" data-gmail-answer="yes"`) {
 		t.Fatal("Yes is drawn as the primary button")
 	}
-	if _, m := e.post("/api/gmail-answer", map[string]any{"path": out, "answer": "not-now", "from": "settings"}); m["ok"] != true || m["note"] != gmailNotNowSettingsNote {
+	if _, m := e.post("/api/gmail-answer", map[string]any{"path": out, "answer": "not-now", "from": "settings", "archive": state.ArchiveID(out)}); m["ok"] != true || m["note"] != gmailNotNowSettingsNote {
 		t.Fatalf("Not now from Settings: %v", m)
 	}
 	set := settingsGmail(e.page())

@@ -210,7 +210,7 @@ func (d *dashboard) runNowKeyed(j keyedJob, out, jobPath string, lease *keyring.
 	}
 	// The Gmail question for this open archive (F18): a yes kept for it here is carried, and the
 	// run's outcome is kept on its entry, in memory only.
-	rn.GmailYes = d.gmailYesForRunNow(out)
+	rn.GmailYesStores = d.gmailYesStoresForRunNow(out) // the stores the question named (G6)
 	rn.OnGmail = func(g app.GmailOutcome) { d.keepGmailOutcome(out, g) }
 	runNowPause("heal")
 	if lease.NeedsHeal() && !lease.Forked() {

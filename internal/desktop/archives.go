@@ -83,6 +83,9 @@ type ArchiveRow struct {
 	// the line that says a yes given here waits for the next backup. Plaintext archives only.
 	Gmail    string
 	GmailYes string
+	// GmailArchive is the id of the archive the question was read for (a plaintext archive's),
+	// which the page sends with the answer (the B3 adversarial pass, round 2's G5).
+	GmailArchive string
 }
 
 // OffersSwitch reports whether the row draws Switch to this archive: as the row template decides
@@ -204,12 +207,17 @@ func (cfg Config) archiveRows(idx archindex.Index) []ArchiveRow {
 		}
 		plaintextOK := avail && kind != "" && kind != archindex.KindEncrypted && problem == ""
 		gq, gyes := gmailCard(e.Path, plaintextOK, current != "" && cleanPath(e.Path) == current)
+		gid := ""
+		if gq != "" {
+			gid = gmailStoresAt(e.Path, plaintextOK).archive
+		}
 		if avail && kind == archindex.KindEncrypted && problem == "" {
 			gq, gyes = cfg.encryptedGmailCard(e.Path) // while unlocked here only (F18)
 		}
 		rows = append(rows, ArchiveRow{
 			Gmail:           gq,
 			GmailYes:        gyes,
+			GmailArchive:    gid,
 			UnlistWhy:       unlistWhy,
 			DeleteOK:        del.ok,
 			DeleteWhy:       del.why,

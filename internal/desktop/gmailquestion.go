@@ -76,24 +76,32 @@ func (d *dashboard) keepGmailOutcome(out string, g app.GmailOutcome) {
 	if g.Waiting() {
 		e.gmailOff = append([]string(nil), g.Off...)
 	}
-	if len(g.Switched) > 0 {
-		e.gmailYes = false // spent: the run switched the archive on
-	}
+	// A store the run switched on spends the yes for it; the others still wait (G6).
+	e.gmailYes = slices.DeleteFunc(e.gmailYes, func(t string) bool { return slices.Contains(g.Switched, t) })
 }
 
 // gmailYesForRunNow says the open encrypted archive at out has a yes waiting for its Run now.
-func (d *dashboard) gmailYesForRunNow(out string) bool {
+func (d *dashboard) gmailYesForRunNow(out string) bool { return len(d.gmailYesStoresForRunNow(out)) > 0 }
+
+// gmailYesStoresForRunNow is the yes waiting for the open encrypted archive at out's Run now: the
+// stores its question named (G6); none when none waits.
+func (d *dashboard) gmailYesStoresForRunNow(out string) []string {
 	if d.cfg.Keys == nil {
-		return false
+		return nil
 	}
 	e := d.cfg.Keys.get(out)
-	return e != nil && e.gmailYesWaits()
+	if e == nil {
+		return nil
+	}
+	lastSyncMu.Lock()
+	defer lastSyncMu.Unlock()
+	return append([]string(nil), e.gmailYes...)
 }
 
 func (e *keyEntry) gmailYesWaits() bool {
 	lastSyncMu.Lock()
 	defer lastSyncMu.Unlock()
-	return e.gmailYes
+	return len(e.gmailYes) > 0
 }
 
 // encryptedGmailCard is the row's question, or its yes line, for an encrypted archive open in
@@ -109,7 +117,7 @@ func (cfg Config) encryptedGmailCard(out string) (question, yesWaits string) {
 	lastSyncMu.Lock()
 	defer lastSyncMu.Unlock()
 	switch {
-	case e.gmailYes:
+	case len(e.gmailYes) > 0:
 		return "", gmailYesWaitsEncrypted
 	case len(e.gmailOff) > 0 && !e.gmailNotNow:
 		return state.GmailSwitchQuestion(true), ""
@@ -135,9 +143,10 @@ func (d *dashboard) gmailAnswerEncrypted(w http.ResponseWriter, path, answer str
 	}
 	note := gmailNotNowEncryptedNote
 	if answer == "yes" {
-		e.gmailYes, e.gmailNotNow, note = true, false, gmailYesWaitsEncrypted
+		// For the stores the question named (G6).
+		e.gmailYes, e.gmailNotNow, note = append([]string(nil), e.gmailOff...), false, gmailYesWaitsEncrypted
 	} else {
-		e.gmailYes, e.gmailNotNow = false, true
+		e.gmailYes, e.gmailNotNow = nil, true
 	}
 	lastSyncMu.Unlock()
 	writeJSON(w, map[string]any{"ok": true, "note": note})
@@ -161,13 +170,15 @@ func gmailWord(name string) string { return gmailWords[name] }
 // gmailBox is what the page's question box draws (F5): the archive, the question, whether a
 // Not now is kept here (Settings says so beside it), and whether it is Settings' copy (its Not
 // now note says so, U6; after a Not now it is drawn shut behind one line, U10).
+// Archive is the id of the archive the question was read for (a plaintext archive's; "" for an
+// encrypted one): the page sends it with the answer (G5).
 type gmailBox struct {
-	Path, Question       string
-	NotNowKept, Settings bool
+	Path, Archive, Question string
+	NotNowKept, Settings    bool
 }
 
-func gmailAskBox(path, question string, notNowKept, settings bool) gmailBox {
-	return gmailBox{Path: path, Question: question, NotNowKept: notNowKept, Settings: settings}
+func gmailAskBox(path, archive, question string, notNowKept, settings bool) gmailBox {
+	return gmailBox{Path: path, Archive: archive, Question: question, NotNowKept: notNowKept, Settings: settings}
 }
 
 // gmailStores is what the last backup of the plaintext archive at out found about its Gmail
@@ -268,12 +279,13 @@ type gmailSettings struct {
 	YesWaits   string // a yes waits for the next backup
 	On         bool   // a Gmail store of the archive is switched on
 	Path       string
+	Archive    string // the id of the archive the question was read for (G5)
 }
 
 // gmailSettingsFor works out Settings' Gmail lines for the plaintext archive at out.
 func gmailSettingsFor(out string, plaintext bool) gmailSettings {
 	g := gmailStoresAt(out, plaintext)
-	s := gmailSettings{On: len(g.on) > 0, Path: out}
+	s := gmailSettings{On: len(g.on) > 0, Path: out, Archive: g.archive}
 	off := g.anyOff()
 	if len(off) == 0 {
 		return s
@@ -300,7 +312,7 @@ func (d *dashboard) gmailAnswer(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, csrfRefused, http.StatusForbidden)
 		return
 	}
-	var in struct{ Path, Answer, From string }
+	var in struct{ Path, Answer, From, Archive string }
 	if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, 16<<10)).Decode(&in); err != nil {
 		http.Error(w, "bad request", http.StatusBadRequest)
 		return
@@ -336,7 +348,10 @@ func (d *dashboard) gmailAnswer(w http.ResponseWriter, r *http.Request) {
 	}
 	g := gmailStoresAt(path, kind != "" && kind != archindex.KindEncrypted)
 	off := g.anyOff()
-	if len(off) == 0 {
+	// The answer is for the archive the page drew the question for (the B3 adversarial pass, round
+	// 2's G5): a page left open while the folder came to hold another archive (a drive of a rotation
+	// swapped at the same letter) is told to reload, and nothing is kept for the archive there now.
+	if len(off) == 0 || strings.TrimSpace(in.Archive) != g.archive {
 		writeJSON(w, map[string]any{"ok": false, "error": gmailNoQuestion})
 		return
 	}
@@ -363,7 +378,9 @@ func (d *dashboard) gmailAnswer(w http.ResponseWriter, r *http.Request) {
 		current := d.cfg.effectiveOut() != "" && cleanPath(d.cfg.effectiveOut()) == cleanPath(path)
 		note = gmailYesWaitsFor(path, current)
 	} else {
-		kept.NotNow = true
+		// Not now takes back a yes still waiting for this archive (G2): the note says "Nothing
+		// changed", and the next backup then switches nothing.
+		kept.NotNow, kept.Yes = true, nil
 	}
 	if err := gmailanswer.Keep(path, kept); err != nil {
 		writeJSON(w, map[string]any{"ok": false, "error": "MailArchive could not keep your answer: " + err.Error()})
