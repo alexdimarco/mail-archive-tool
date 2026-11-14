@@ -119,8 +119,9 @@ dashboard address `127.0.0.1:8097` no longer reaches MailArchive at all.
 
 **A running MailArchive that is busy is never cut off.** Since the menu-bar release the
 running MailArchive (`mailarchivew.exe start`) also runs the wizard and Run now, so
-`Install-RMM.ps1` first asks each running dashboard to close the graceful way (Restart
-Manager, no force). An idle one finishes and closes. One that is running a backup or
+`Install-RMM.ps1` first asks each running dashboard to close the graceful way, from inside
+its user's own sign-in (a one-time task of that user, removed afterwards; a console window
+may flash there for a moment). An idle one finishes and closes. One that is running a backup or
 another task, or whose wizard is open, says no: the script then stops nothing, does not
 start the install, prints which process is busy and **exits 1618**, so schedule a retry
 (most RMM tools retry 1618 on their own). Only a dashboard from before that release, which

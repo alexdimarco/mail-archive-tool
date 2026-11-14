@@ -1110,6 +1110,83 @@ revert), recorded in the commit; the unfiltered `go test ./...` runs before each
 >   newer version", not a button: on macOS the dialog library's list has no extra button
 >   (found in the S1 Mac lab, `docs/lab/menubar-s1-mac-2026-11-13.md`).
 
+> **S1 fix round 2026-11-13 (the adversarial pass A1–A9 and the friction review F1–F16;
+> the lead's calls and the builder's, for the lead to check).**
+> - **Lead's call, F2:** when the choice is dismissed, or the wizard (from the choice or a
+>   hand-off) ends, with nothing running, no wizard open and no Desktop page opened or asked
+>   for in this run, the program ends. This extends MB-16's first-start Cancel to every
+>   choice; a sign-in copy (`start -background`) whose later choice is dismissed ends too. The
+>   icon slices (S3–S5) revisit this.
+> - **Lead's call, F3:** the "choice is showing" state ends before the picked step runs, so a
+>   click during the wizard is answered in the copy. *Changed by the VM walk:* the dialog
+>   library on Windows registers one window class per dialog kind, so a second list cannot
+>   open while the wizard's list is open in the same process (RegisterClassEx fails and the
+>   choice never shows). So while a wizard of this process is open, a click asks "The wizard
+>   is open. Open MailArchive Desktop in your browser as well?" (a message box, OK/Cancel)
+>   instead of the list; while another process runs the wizard, the list shows as before.
+>   Residual: the newer-version choice (with its Quit item) during an open wizard would still
+>   fail on Windows (rare).
+> - **Lead's call, A4/F5/F9:** an open wizard of this process (it holds the wizard lock) is
+>   work: the Quit question and Shut down ask ("The wizard is open. Quit anyway? The wizard
+>   closes, and its unanswered questions are dropped."), the first choice's dismissal never
+>   ends the program under it, Windows' installer close request is refused. A stop waits for
+>   the wizard's own writes after its export (job file and schedule install), not for a wizard
+>   that only waits for an answer. *Builder's note:* the wizard's own dialogs are not closed
+>   by a stop; on macOS and Linux a dialog left open when the process ends stays on the
+>   screen with nothing behind it (residual, LOW; the choice's own list now closes with the
+>   instance through `zenity.Context`).
+> - **Lead's call, A2:** Install-RMM.ps1 asks each dashboard to close the graceful way and
+>   never forces a copy that refuses (work or a wizard): the script then exits **1618**
+>   before msiexec (builder's pick of code: RMM tools retry it; the lead may prefer another).
+>   *Found on the VM:* Restart Manager classifies the copy as an unknown app (its only window
+>   is hidden), and RmShutdown without force returns 350, so neither the script nor the MSI's
+>   own Restart Manager can ask it. The script therefore runs a one-time interactive task as
+>   the copy's user, in its session, that posts WM_CLOSE to the copy's
+>   `MailArchiveInstanceWindow` and waits up to 30 s. A dashboard with no such window (a copy
+>   from before S1) is still forced, as CC22 needs. *Consequence for MB-7's note:* an MSI run
+>   directly (not through the script) meets a running copy as files in use (a restart to
+>   finish), never a close; L-W1 should confirm.
+> - **Builder's call, A1:** a WM_CLOSE from outside never destroys the hidden window: an idle
+>   copy takes it as the one stop (asking nothing, waiting); a copy running work or an open
+>   wizard refuses it (as it refuses an installer). The loop's own end uses a private message
+>   honoured only after the serving ended; a loop that ends early (a posted WM_QUIT) is a stop
+>   request. `taskkill` without /F also sends WM_CLOSE to the wizard's own dialog windows,
+>   which close as a person's Cancel would (seen on the VM).
+> - **A3:** every launch, `desktop` included, uses the second form's `open` with its sign-in
+>   when the copy lists it; the copy's gate answers before anything shows. Where a sign-in
+>   cannot be read (macOS and Linux; Windows' lock is per session) it fails closed with
+>   "unknown-session" and the launch says it cannot tell. Linux falls back to the kernel's
+>   audit session (`/proc/self/sessionid`) when XDG_SESSION_ID is absent. Whether GNOME-started
+>   apps carry a readable sign-in is the Linux lab (MA-1439, pending): if not, a second click
+>   there gets the "cannot tell" notice instead of the choice.
+> - **A5:** WM_ENDSESSION stops the copy only with SM_SHUTTINGDOWN or ENDSESSION_CLOSEAPP (the
+>   latter can be forged: it narrows, not closes, the gap; that stop still waits). §10.1's
+>   "acts only on its own callback message and TaskbarCreated" now reads: and on the end of
+>   the session as above, and on a close request as a waiting stop.
+> - **A6:** a bounded record of 1024 used nonces; a repeat is 403. The v2 MAC also covers
+>   `quiet`.
+> - **A7:** the copy marks its instance file `closing` when a stop begins and answers
+>   "closing"; a launch waits up to the drain's bound plus 10 s, then becomes the next copy or
+>   says "MailArchive is finishing its work and closing. Open it again in a moment."
+> - **A8:** not provable on the shared VM (a real sign-out would end other jobs' sessions):
+>   left as lab L-W1, pending, named in MA-1424 and R52.
+> - **A9:** the activation token is set in the choice's dialog process environment while it
+>   starts, then removed.
+> - **Words:** the friction review's (F1, F6, F16, R50, the Quit question). The backup's "the
+>   next backup picks up where it left off" was checked in the engine: a cancel commits the
+>   manifest and index before it returns (`internal/app/run.go`, the cancel path; R5, R2), the
+>   run record says "cancelled" (Recent backups: "Cancelled — stopped before it finished"), and
+>   the next run copies only what is missing. The prompt is one line: the newer-installed line,
+>   else "Now: …", else the question. F10's wizard question "What mail do you want to add or
+>   back up?". F14's terminal words. F11: the list needs a pick for OK.
+> - **Not done here:** F7 (renaming the "MailArchive Desktop" shortcuts to "MailArchive") is a
+>   packaging and Help-guide change the friction review sent to the lead or owner; F12's arrow
+>   keys: the dialog library's list is a standard Windows LISTBOX with the keyboard set on it,
+>   which handles the arrows itself (nothing to change); F13 (the keyboard after the launch's
+>   notice) is backlog; F15 is covered by A7. F12 on the VM: no key could be sent, since the
+>   keyboard belonged to the Parallels console window, not the lab's dialog; a real-keyboard
+>   pass stays owed.
+
 ### 12.2 New dependencies (operator decision)
 `github.com/ebitengine/purego` (macOS only, behind a build tag) and `github.com/godbus/dbus/v5`
 (Linux only, behind a build tag). Both pure Go; both go into THIRD-PARTY-NOTICES. (Q7.)
