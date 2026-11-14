@@ -177,8 +177,10 @@ func (m *Manifest) GmailDecision(gmail []string, notNow, attended bool) GmailAsk
 // friction review proposed them (its text (a), F4, F5), checked against the design and adjusted
 // where the review's words were not true: Thunderbird keeps a copy in some folders and not in
 // others (§2.1), so emails "may be" missing, "because Thunderbird does not always keep a copy in
-// each folder". Each is one constant, so the owner's sign-off changes it in one place. The
-// surfaces that show them (the Desktop card and Settings, the terminal) are slice B3's.
+// each folder". The heading, the question, the encrypted add-on and the two buttons are approved
+// by the owner (2026-11-13, design §13 "Owner sign-off"); each is one constant, so a later change
+// is made in one place. The surfaces that show them (the Desktop card and Settings, the terminal)
+// are slice B3's.
 const (
 	GmailQuestionHeading   = "Gmail: show every folder?"
 	GmailQuestion          = "Some Gmail emails may be missing from Sent Mail and your labels in this archive, because Thunderbird does not always keep a copy in each folder. Yes lists each email in every folder it is in, and saves new emails only once. Nothing is deleted. After Yes, every computer that backs up into this archive needs MailArchive 1.8 or newer. This cannot be undone."
@@ -224,7 +226,8 @@ func GmailSwitchQuestion(encrypted bool) string {
 }
 
 // The words of a refusal of a newer format (§7.4 fold f, and its fold-check-5 note for exactly
-// version 8). Both are for the owner's sign-off. TidyUpWords are the B3 friction review's text (b),
+// version 8). TidyUpWords are approved by the owner (2026-11-13, in the U8 form below, "open it"
+// left out because the code can open the archive). They began as the B3 friction review's text (b),
 // checked against the design: "started tidying" and "finish it on that computer", not "is
 // tidying" and "let it finish", because a merge stopped by a changed file (§24) does not finish by
 // itself; "Nothing is lost" holds by §23 and §25 (a copy is deleted only once proven equal to the

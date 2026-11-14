@@ -34,7 +34,8 @@ import (
 var gmailFlagHelp = "Gmail accounts in Thunderbird: Say yes to the Gmail question (\"" + state.GmailQuestionHeading + "\") for this archive without being asked, for scripts. This cannot be undone: " +
 	"every computer that backs up into this archive then needs MailArchive 1.8 or newer. A backup typed at a terminal asks instead; a scheduled one never asks"
 
-// The words around the question at a terminal (for the owner's sign-off).
+// The words around the question at a terminal (the question itself is the owner's approved words,
+// in state; these were not in that sign-off).
 const (
 	gmailHowToAnswer = "Type y and press Enter for Yes. Press Enter for Not now."
 	gmailSaidYes     = "Yes: from this backup on, each Gmail email is stored once and shown in all of its folders."

@@ -208,6 +208,10 @@ func (d *dashboard) runNowKeyed(j keyedJob, out, jobPath string, lease *keyring.
 		c.closeWindow(win)
 		runNowPause("read-start")
 	}
+	// The Gmail question for this open archive (F18): a yes kept for it here is carried, and the
+	// run's outcome is kept on its entry, in memory only.
+	rn.GmailYes = d.gmailYesForRunNow(out)
+	rn.OnGmail = func(g app.GmailOutcome) { d.keepGmailOutcome(out, g) }
 	runNowPause("heal")
 	if lease.NeedsHeal() && !lease.Forked() {
 		if herr := keyring.Heal(lease); herr != nil {

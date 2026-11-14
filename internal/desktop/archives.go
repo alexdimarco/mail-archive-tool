@@ -204,6 +204,9 @@ func (cfg Config) archiveRows(idx archindex.Index) []ArchiveRow {
 		}
 		plaintextOK := avail && kind != "" && kind != archindex.KindEncrypted && problem == ""
 		gq, gyes := gmailCard(e.Path, plaintextOK, current != "" && cleanPath(e.Path) == current)
+		if avail && kind == archindex.KindEncrypted && problem == "" {
+			gq, gyes = cfg.encryptedGmailCard(e.Path) // while unlocked here only (F18)
+		}
 		rows = append(rows, ArchiveRow{
 			Gmail:           gq,
 			GmailYes:        gyes,

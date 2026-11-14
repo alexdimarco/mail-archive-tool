@@ -10,7 +10,9 @@ package desktop
 // job file when it has one, otherwise a small file beside the job files), never in the archive:
 // Yes names the stores, and the archive's next backup switches them on; Not now means the card
 // does not ask again by itself. A scheduled backup never asks and never switches without the yes.
-// An encrypted archive is never asked here (the review's F18, the owner's design call: open).
+// An encrypted archive is asked too (the owner's ruling on F18, 2026-11-13), only while it is
+// unlocked here and after its Run now found a Gmail store off, with the encrypted add-on; its
+// answer is kept in memory on the open archive only, never in a file (O1), and a Lock forgets it.
 
 import (
 	"encoding/json"
@@ -18,6 +20,7 @@ import (
 	"slices"
 	"strings"
 
+	"mail-archive-tool/internal/app"
 	"mail-archive-tool/internal/archindex"
 	"mail-archive-tool/internal/encmark"
 	"mail-archive-tool/internal/gmailanswer"
@@ -27,7 +30,8 @@ import (
 	"mail-archive-tool/internal/state"
 )
 
-// The card's words around the question (for the owner's sign-off).
+// The card's words around the question (the question and its buttons are the owner's approved
+// words, in state; these notes around them were not in that sign-off).
 const (
 	gmailYesWaits   = "Gmail: you said yes. From this archive's next backup on, each Gmail email is stored once and shown in all of its folders."
 	gmailNotNowNote = "Not now. Nothing changed, and MailArchive will not ask again on this computer. To say yes later, make this the current archive and answer the same question in Settings."
@@ -47,6 +51,97 @@ const (
 	// Settings' line after a Not now kept here (F1).
 	gmailNotNowKeptLine = "You said Not now on this computer. You can still say yes here."
 )
+
+// The encrypted archive's words (the owner's ruling on F18): its answer is kept in memory only.
+const (
+	gmailYesWaitsEncrypted   = "Gmail: you said yes. This archive's next Run now, while it stays unlocked here, stores each Gmail email once and shows it in all of its folders. If you lock it first, MailArchive asks again after its next Run now."
+	gmailNotNowEncryptedNote = "Not now. Nothing changed. This computer keeps no answer for an encrypted archive, so MailArchive asks again after you lock it and click Run now."
+	gmailNoQuestionLocked    = "Unlock this encrypted archive and click Run now: its Gmail question is asked only while it is unlocked here."
+)
+
+// keepGmailOutcome keeps an encrypted Run now's Gmail outcome on the open archive's entry, in
+// memory only (F18, O1): the stores it found off ask the question; a store it switched on spends
+// the yes. Nothing is written anywhere.
+func (d *dashboard) keepGmailOutcome(out string, g app.GmailOutcome) {
+	if d.cfg.Keys == nil {
+		return
+	}
+	e := d.cfg.Keys.get(out)
+	if e == nil {
+		return
+	}
+	lastSyncMu.Lock()
+	defer lastSyncMu.Unlock()
+	e.gmailOff = nil
+	if g.Waiting() {
+		e.gmailOff = append([]string(nil), g.Off...)
+	}
+	if len(g.Switched) > 0 {
+		e.gmailYes = false // spent: the run switched the archive on
+	}
+}
+
+// gmailYesForRunNow says the open encrypted archive at out has a yes waiting for its Run now.
+func (d *dashboard) gmailYesForRunNow(out string) bool {
+	if d.cfg.Keys == nil {
+		return false
+	}
+	e := d.cfg.Keys.get(out)
+	return e != nil && e.gmailYesWaits()
+}
+
+func (e *keyEntry) gmailYesWaits() bool {
+	lastSyncMu.Lock()
+	defer lastSyncMu.Unlock()
+	return e.gmailYes
+}
+
+// encryptedGmailCard is the row's question, or its yes line, for an encrypted archive open in
+// this Desktop: asked when its last Run now here found a Gmail store off and nobody answered.
+func (cfg Config) encryptedGmailCard(out string) (question, yesWaits string) {
+	if cfg.Keys == nil {
+		return "", ""
+	}
+	e := cfg.Keys.get(out)
+	if e == nil {
+		return "", ""
+	}
+	lastSyncMu.Lock()
+	defer lastSyncMu.Unlock()
+	switch {
+	case e.gmailYes:
+		return "", gmailYesWaitsEncrypted
+	case len(e.gmailOff) > 0 && !e.gmailNotNow:
+		return state.GmailSwitchQuestion(true), ""
+	}
+	return "", ""
+}
+
+// gmailAnswerEncrypted keeps the answer for an encrypted archive open here, in memory only.
+func (d *dashboard) gmailAnswerEncrypted(w http.ResponseWriter, path, answer string) {
+	var e *keyEntry
+	if d.cfg.Keys != nil {
+		e = d.cfg.Keys.get(path)
+	}
+	if e == nil {
+		writeJSON(w, map[string]any{"ok": false, "error": gmailNoQuestionLocked})
+		return
+	}
+	lastSyncMu.Lock()
+	if len(e.gmailOff) == 0 {
+		lastSyncMu.Unlock()
+		writeJSON(w, map[string]any{"ok": false, "error": gmailNoQuestion})
+		return
+	}
+	note := gmailNotNowEncryptedNote
+	if answer == "yes" {
+		e.gmailYes, e.gmailNotNow, note = true, false, gmailYesWaitsEncrypted
+	} else {
+		e.gmailYes, e.gmailNotNow = false, true
+	}
+	lastSyncMu.Unlock()
+	writeJSON(w, map[string]any{"ok": true, "note": note})
+}
 
 // gmailWords are the question's words for the page (one constant each, in state).
 var gmailWords = map[string]string{
@@ -235,6 +330,10 @@ func (d *dashboard) gmailAnswer(w http.ResponseWriter, r *http.Request) {
 	jobFileMu.Lock()
 	defer jobFileMu.Unlock()
 	kind := archindex.Kind(path)
+	if kind == archindex.KindEncrypted {
+		d.gmailAnswerEncrypted(w, path, in.Answer) // memory only (F18)
+		return
+	}
 	g := gmailStoresAt(path, kind != "" && kind != archindex.KindEncrypted)
 	off := g.anyOff()
 	if len(off) == 0 {

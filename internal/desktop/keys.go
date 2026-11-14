@@ -149,6 +149,14 @@ type keyEntry struct {
 	// entry is open (design-presync-attended §4.7, C-27): memory only, gone with the
 	// entry at any lock. Guarded by lastSyncMu.
 	lastSync string
+
+	// The Gmail question for this open encrypted archive (the owner's ruling on F18,
+	// gmailquestion.go): the Gmail stores its last Run now here found off, and the person's
+	// answer. Memory only, gone with the entry at any lock: nothing beside an encrypted archive,
+	// nor this computer's settings, may say it holds a Gmail account (O1). Guarded by lastSyncMu.
+	gmailOff    []string
+	gmailYes    bool
+	gmailNotNow bool
 }
 
 // buildWait bounds how long Shut down and uninstall wait for a reader being made to

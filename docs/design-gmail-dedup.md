@@ -3645,6 +3645,25 @@ rule is shared with the completeness design; whichever lands first owns it and t
 >   computer, …". For the owner's sign-off.
 > - **U11:** one paragraph on the question in the guide's Thunderbird part.
 
+> **Owner sign-off, 2026-11-13 ("ok to all three", relayed by the lead).** (1) The Gmail
+> question's words as they stand in `internal/state/dedup.go` (heading "Gmail: show every
+> folder?", the body "Some Gmail emails may be missing from Sent Mail and your labels … does not
+> always keep a copy in each folder …", the buttons "Yes, show every folder" and "Not now"):
+> **approved**. (2) The tidy-up words in the U8 form, "… this computer cannot back up into it,
+> open it, or add it. To finish it, open MailArchive on that computer, or install the newest
+> MailArchive here and click Resume tidy-up on this archive's card.", with "open it" dropped only
+> if the code shows the archive can be opened: **approved**; the code shows it can (`mailarchive
+> search` and `serve` read a version-8 archive's index, and its pages open in a browser), so the
+> words in use leave "open it" out (MA-1313). (3) F18, reversing the B3 friction note's "not
+> fixed": **the Desktop asks the Gmail question for an encrypted archive too**, with the encrypted
+> add-on "Emails already saved twice stay as they are: MailArchive cannot tidy an encrypted
+> archive." Built in this round as MA-1315: while the archive is unlocked in this Desktop, after a
+> Run now found a Gmail store off, its row asks; the answer is kept in memory on the open
+> archive's entry only (never in a file: O1), so a Lock forgets it and the question is asked again
+> after the next Run now; a yes is applied by the next Run now of that archive while it stays
+> unlocked (the key opens only the archive it was made for, which is A1's binding for an encrypted
+> archive), and is then spent.
+
 ## 14. Owner questions, each with a recommendation
 
 - **Q1 — Keep `Mail-archive-dimarcotech` or start a new Gmail archive?** Recommended: keep it and use the

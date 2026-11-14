@@ -47,6 +47,12 @@ type RunNow struct {
 	// DeletionsLog is the Desktop's deletion log, which the run asks whether a delete of the
 	// folder did not finish (app.Options.DeletionsLog, MA-1044); "" is MailArchive's own.
 	DeletionsLog string
+	// GmailYes is the yes to the Gmail question the Desktop keeps in memory for this open
+	// encrypted archive (the owner's ruling on F18): the encrypted Run now carries it as the run's
+	// own yes (app.Options.GmailYes). OnGmail is handed the run's Gmail outcome, in memory only,
+	// so the card can ask while the archive stays unlocked. Both are the encrypted Run now's only.
+	GmailYes bool
+	OnGmail  func(app.GmailOutcome)
 }
 
 // runHooks is what optsForJob hands the shared pre-sync hook besides the job: the
@@ -267,6 +273,9 @@ func RunJobInProcessKeyed(ctx, stop context.Context, jobPath string, logger *log
 	}
 	opts := optsForJob(j, j.Inputs, logger, runHooks{stop: stop, rn: rn}, runAttended)
 	opts.Unattended = false
+	// A yes the Desktop keeps for this open archive (F18): the key opens only the archive it was
+	// made for, so the yes cannot reach another archive in the folder (A1's binding).
+	opts.GmailYes = rn.GmailYes
 	switch j.ProgramCopies { // the choice the archive was made with, until a run seals it
 	case "on":
 		opts.ProgramCopiesIfUnchosen = app.ProgramCopiesOn
@@ -280,6 +289,9 @@ func RunJobInProcessKeyed(ctx, stop context.Context, jobPath string, logger *log
 	defer done()
 	logger.Printf("Running the backup now for the encrypted archive %s", j.Out)
 	result, runErr := app.Run(ctx, opts, logger, nil)
+	if rn.OnGmail != nil {
+		rn.OnGmail(result.Gmail) // in memory only (O1)
+	}
 	if runErr != nil {
 		return "", runErr
 	}
