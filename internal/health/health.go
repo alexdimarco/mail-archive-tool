@@ -466,7 +466,15 @@ func Assess(in Input, now time.Time) Report {
 	// wording, and the remedy — never the "no archive here" advice status used
 	// to give (friction #7a). The loader message is control-stripped: a corrupt
 	// manifest can put arbitrary bytes into json's error text.
-	if in.HasManifestFile && !in.HasManifest && in.ManifestLoadErr != nil {
+	// A newer MailArchive part-way through tidying the archive (version 8) is not a damaged
+	// manifest: its own words, as a WARN (the B3 friction review's F9; the builder's call on the
+	// posture: nothing is wrong with the archive, and the step is on the other computer).
+	var newer *state.NewerFormatError
+	switch {
+	case !in.HasManifestFile || in.HasManifest || in.ManifestLoadErr == nil:
+	case errors.As(in.ManifestLoadErr, &newer) && newer.Plain() == state.TidyUpWords:
+		r.warn("manifest_tidying", state.TidyUpWords)
+	default:
 		r.red("manifest_unreadable", fmt.Sprintf("the archive's manifest cannot be read: %s", util.StripControl(in.ManifestLoadErr.Error())))
 	}
 

@@ -102,6 +102,11 @@ func runStatus(args []string) error {
 	if gmailLine != "" {
 		fmt.Println(gmailLine)
 	}
+	// The Gmail question waits (the B3 friction review's F8): for each Gmail store the last
+	// plaintext backup found off, unless this computer keeps a Not now, or a yes for that store.
+	for _, l := range gmailWaitingLines(in.Out, in.LastRun) {
+		fmt.Println(l)
+	}
 	// Earlier restores into Thunderbird that left a folder Thunderbird does not show
 	// (design-restore-thunderbird §7.2 foldcheck2 note P2), whatever archive this is: a
 	// read of restores.log, nothing written. The JSON document is unchanged.

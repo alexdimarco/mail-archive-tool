@@ -1415,6 +1415,9 @@ func (cfg Config) overviewWith(csrf, epoch string, held []heldView) string {
 		ShowBackupOff     bool
 		// Set is the Settings card for this archive's kind (3.3, slice A5).
 		Set settingsCard
+		// Gmail is Settings' Gmail question and lines for the current archive (gmailquestion.go;
+		// the B3 friction review's F1 and F6).
+		Gmail gmailSettings
 		// The Settings card's fixed lines.
 		MoveFirstLine      string
 		SyncFirstLine      string
@@ -1629,6 +1632,10 @@ func (cfg Config) overviewWith(csrf, epoch string, held []heldView) string {
 			// A recorded capture not counted here (Microsoft 365 not set up): never called an
 			// export (MA-878).
 			data.ScheduleKind = "a scheduled Microsoft 365 capture"
+		case rt.kind == backupUnknown && rt.descKind == schedule.KindRunJob:
+			// A record that can't be read, or that a newer MailArchive wrote: its recorded
+			// run-job is still the Desktop's, never "set up at the command line" (F9).
+			data.ScheduleKind = "a backup that re-reads this archive's mail files"
 		default:
 			// A schedule made with `mailarchive schedule` at a terminal: the Desktop can't run
 			// or change it (C-7), so ExportLine says why there is no Run now (MA-942).
@@ -1713,13 +1720,24 @@ func (cfg Config) overviewWith(csrf, epoch string, held []heldView) string {
 	if rt.kind == backupLocal && data.ArchiveNowOff == "" {
 		data.ArchiveNowConfirm = archiveNowConfirm // Archive now turns it mixed (C-7)
 	}
+	// Settings' copy of the Gmail question, and the switched-on lines (F1, F6): plaintext only.
+	// The question and the yes line show once on the page: here only when no row of Your archives
+	// shows them for the current archive, or after a Not now, which the row no longer asks.
+	if data.OutDir != "" && (rt.kind == backupLocal || rt.kind == backupM365) {
+		data.Gmail = gmailSettingsFor(data.OutDir, true)
+		for _, r := range data.Archives {
+			if r.Current && (r.Gmail != "" || r.GmailYes != "") {
+				data.Gmail.Question, data.Gmail.YesWaits = "", ""
+			}
+		}
+	}
 	// Section 4 (part A): a capture is counted and the archive or its schedule is local.
 	// The notice shows in place of the schedule inputs; an installed schedule shows with
 	// Remove only, a run-job's cadence and sync read-only (rev4.1).
 	// Unknown (C-8): the location only, and Remove for an installed schedule.
 	if rt.notice || (rt.kind == backupUnknown && data.OutDir != "") {
 		data.BackupNotice, data.BackupUnknown = rt.notice, !rt.notice
-		data.UnknownLine, data.NoticeLine = unknownKindLine, captureCountedLine
+		data.UnknownLine, data.NoticeLine = unknownLineFor(data.OutDir), captureCountedLine
 		data.ShowInstall, data.ShowRepair, data.ShowLocalCreate, data.ShowLocalEdit, data.ShowBackupOff, data.ShowBrokenRepair = false, false, false, false, false, false
 		data.ShowCaptureRepair, data.BrokenLine = false, ""
 		data.ShowRemove = data.HasSchedule || entry != ""
@@ -1873,7 +1891,7 @@ func residualOS(goos string) string {
 // the server package directly for one predicate.
 func Loopback(addr string) bool { return server.IsLoopback(addr) }
 
-var overviewTmpl = template.Must(template.New("overview").Parse(`<!DOCTYPE html>
+var overviewTmpl = template.Must(template.New("overview").Funcs(template.FuncMap{"gmailWord": gmailWord, "gmailAsk": gmailAskBox}).Parse(`<!DOCTYPE html>
 <html lang="en"><head>
 <meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
 <meta name="csrf" content="{{.CSRF}}"><meta name="drawn-for" content="{{.OutDir}}">{{if .Export}}<meta name="epoch" content="{{.Epoch}}">{{end}}
@@ -1937,7 +1955,9 @@ pre{white-space:pre-wrap;overflow-wrap:anywhere;background:var(--bg);border:1px 
 .archive-row .archive-path{flex:1 1 16rem;min-width:0;overflow-wrap:anywhere}
 .archive-row[data-delete-unfinished]>.row-state{flex-basis:100%}
 .del-name{white-space:nowrap;display:inline-block;max-width:100%;overflow-x:auto;vertical-align:bottom}
-.archive-row.unavailable>.archive-path,.archive-row.unavailable>.archive-kind,.archive-row.unavailable>.row-state{opacity:.6}
+.archive-row.unavailable>.archive-path,.archive-row.unavailable>.archive-kind,.archive-row.unavailable>.row-state:not(:has(.archive-problem)){opacity:.6}
+.gmail-ask{flex-basis:100%;border:1px solid var(--line);border-radius:8px;padding:8px 10px;margin:4px 0}
+.gmail-ask-body{margin:4px 0 8px}
 .archive-row>.note{flex-basis:100%}
 .archive-row>.note{min-width:0}
 .archive-row>.row-why{flex-basis:100%;margin:0;overflow-wrap:anywhere}
@@ -1951,6 +1971,7 @@ pre{white-space:pre-wrap;overflow-wrap:anywhere;background:var(--bg);border:1px 
 .del-actions{display:flex;flex-wrap:wrap;align-items:center;gap:8px;margin-top:10px}
 .name-hint{color:var(--warn);font-size:.85rem}
 .archive-tag{font-size:.84rem;opacity:.75}
+.archive-tag.archive-problem{opacity:1}
 .archive-tag.current{opacity:1;color:var(--accent);font-weight:700}
 .archive-kind{font-size:.78rem;opacity:.75;border:1px solid var(--line);border-radius:6px;padding:1px 7px}
 .archive-gone>*:not(.gone-tag){opacity:.45}
@@ -2130,6 +2151,7 @@ pre{white-space:pre-wrap;overflow-wrap:anywhere;background:var(--bg);border:1px 
       <p class="card-sub" id="settingsMoveNote" hidden>{{.MoveFirstLine}}</p>
       {{if .SwitchLocks}}<p class="card-sub warn" id="switchLocksSettings">{{template "switchLocks" .}}</p>{{end}}
       {{if .Set.Unknown}}<p class="card-sub" id="settingsUnknown">{{.Set.Unknown}}</p>{{end}}
+      {{with .Gmail}}{{if or .Question .YesWaits .On}}<div id="settingsGmail">{{if .Question}}{{template "gmailAsk" (gmailAsk .Path .Question .NotNowKept)}}{{end}}{{if .YesWaits}}<p class="card-sub" id="settingsGmailYes">{{.YesWaits}}</p>{{end}}{{if .On}}<p class="card-sub" id="settingsGmailOn">{{gmailWord "setup"}} {{gmailWord "needs"}}</p>{{end}}</div>{{end}}{{end}}
       {{if .Set.AutoPaused}}<p class="card-sub warn" id="settingsAutoPaused">{{.Set.AutoPaused}}</p>{{end}}
       {{if .Set.Sched}}<div id="schedFields" data-sched-fields data-installed-interval="{{if .Set.Installed}}{{.Set.Interval}}{{end}}" data-installed-at="{{if .Set.Installed}}{{.Set.At}}{{end}}" data-installed-sync="{{if .Set.SyncOn}}1{{end}}" data-must-post="{{if .Set.MustPost}}1{{end}}" data-was-installed="{{if or .Set.Installed .Set.CadenceUnknown}}1{{end}}">
       <div class="row2">
@@ -2392,12 +2414,13 @@ pre{white-space:pre-wrap;overflow-wrap:anywhere;background:var(--bg);border:1px 
           {{if .KindLabel}}<span class="archive-kind">{{.KindLabel}}</span>{{end}}
           {{if .SourceLostSince}}<span class="archive-tag">This archive's source hasn't been reachable since {{.SourceLostSince}} — reconnect the source (its mailbox or mail folder){{if .RunNowOnly}}, then click {{if not .Current}}Switch to this archive and click {{end}}Run now on its Scheduled backup card: its backup runs only when you click Run now.{{else}} to resume backups.{{end}}</span>{{end}}
           {{if .TBBanner}}<span class="archive-tag">{{.TBBanner}}</span>{{end}}
-          {{if .Gmail}}<span class="archive-tag" data-gmail-question>{{.Gmail}}</span> <button class="btn secondary" type="button" data-gmail-answer="yes" data-path="{{.Path}}" title="Switch this archive's Gmail accounts on at its next backup. Every computer that backs up into it then needs MailArchive 1.8 or later.">Yes</button> <button class="btn secondary" type="button" data-gmail-answer="not-now" data-path="{{.Path}}" title="Change nothing. MailArchive will not ask again on this computer.">Not now</button>{{else if .GmailYes}}<span class="archive-tag">{{.GmailYes}}</span>{{end}}
+          {{if .Gmail}}{{template "gmailAsk" (gmailAsk .Path .Gmail false)}}{{else if .GmailYes}}<span class="archive-tag">{{.GmailYes}}</span>{{end}}
           {{if eq .Kind "encrypted"}}<button class="btn secondary" type="button" data-forget-archive data-path="{{.Path}}" title="Stop protecting this folder as an encrypted archive on this computer — for example after you removed the archive on purpose. Nothing in the folder is changed.">Forget this encrypted archive here</button>{{end}}
-          <span class="row-state">{{if .Deleting}}<span class="archive-tag">Being deleted — its result shows on this page when the delete ends.</span>{{else if .Unfinished}}{{if .UnfinishedText}}<span class="archive-tag">{{.UnfinishedText}}</span>{{else}}<span class="archive-tag">Delete not finished: click Delete again</span>{{end}}{{else if .Problem}}<span class="archive-tag">{{.Problem}}</span>{{else if not .Available}}<span class="archive-tag">Not reachable right now — reconnect the drive or folder and it comes back. Nothing was removed.</span>{{else if .Sealed}}<span class="archive-tag">Paused (read-only) — Resume it to make changes.</span> <button class="btn secondary" type="button" data-resume-archive data-path="{{.Path}}" title="Make this archive writable again so backups and changes can resume.">Resume</button>{{else}}{{if .Current}}<span class="archive-tag current">Current archive</span>{{else}}<button class="btn secondary" type="button" data-switch-archive data-path="{{.Path}}" title="Make this the current archive: the one this page shows and changes.">Switch to this archive</button>{{end}} <button class="btn secondary" type="button" data-pause-archive data-path="{{.Path}}" title="Make this archive read-only so nothing can change it. You can Resume it any time; nothing is deleted.">Pause (make read-only)</button>{{end}}</span>
+          <span class="row-state">{{if .Deleting}}<span class="archive-tag">Being deleted — its result shows on this page when the delete ends.</span>{{else if .Unfinished}}{{if .UnfinishedText}}<span class="archive-tag">{{.UnfinishedText}}</span>{{else}}<span class="archive-tag">Delete not finished: click Delete again</span>{{end}}{{else if .Problem}}<span class="archive-tag archive-problem">{{.Problem}}</span>{{else if not .Available}}<span class="archive-tag">Not reachable right now — reconnect the drive or folder and it comes back. Nothing was removed.</span>{{else if .Sealed}}<span class="archive-tag">Paused (read-only) — Resume it to make changes.</span> <button class="btn secondary" type="button" data-resume-archive data-path="{{.Path}}" title="Make this archive writable again so backups and changes can resume.">Resume</button>{{else}}{{if .Current}}<span class="archive-tag current">Current archive</span>{{else}}<button class="btn secondary" type="button" data-switch-archive data-path="{{.Path}}" title="Make this the current archive: the one this page shows and changes.">Switch to this archive</button>{{end}} <button class="btn secondary" type="button" data-pause-archive data-path="{{.Path}}" title="Make this archive read-only so nothing can change it. You can Resume it any time; nothing is deleted.">Pause (make read-only)</button>{{end}}</span>
           {{if not .Deleting}}<button class="btn secondary" type="button" data-unlist-archive data-path="{{.Path}}" title="{{if .UnlistWhy}}{{.UnlistWhy}}{{else}}Take this archive off this list. The folder and its files are kept; you are asked first, and told which scheduled backups would stop.{{end}}"{{if .UnlistWhy}} disabled{{end}}>Remove from list</button> <button class="btn danger" type="button" data-delete-archive data-path="{{.Path}}" title="{{if .DeleteOK}}Permanently delete this archive's files. You see what would be removed first, and type the folder's name to confirm.{{else}}{{.DeleteWhy}}{{end}}"{{if not .DeleteOK}} disabled{{end}}>Delete…</button>{{end}}
           {{if and .ShowUnlistWhy .UnlistWhy (not .Deleting)}}<span class="card-sub row-why" data-unlist-why>Remove from list is not offered for it now. {{.UnlistWhy}}</span>{{end}}
         </li>{{end}}
+{{- define "gmailAsk"}}<div class="gmail-ask" data-gmail-box role="group" aria-label="{{gmailWord "heading"}}"><b class="gmail-ask-head">{{gmailWord "heading"}}</b><p class="gmail-ask-body" data-gmail-question>{{.Question}}</p>{{if .NotNowKept}}<p class="card-sub" data-gmail-notnow-kept>{{gmailWord "notnowkept"}}</p>{{end}}<div class="actions"><button class="btn" type="button" data-gmail-answer="yes" data-path="{{.Path}}">{{gmailWord "yes"}}</button> <button class="btn secondary" type="button" data-gmail-answer="not-now" data-path="{{.Path}}">{{gmailWord "notnow"}}</button></div></div>{{end}}
 {{- define "switchLocks"}}Switching to another archive locks {{.SwitchLocks}}.{{if .EncRemembered}} This computer remembers its key, so it opens again by itself when you switch back.{{else}} When you switch back, unlock it again on its Encryption card.{{end}}{{end}}`))
 
 // dashboardBaseJS wires the action buttons (clear sign-in, settings, archive-now with
@@ -2759,15 +2782,17 @@ const archAction=(sel,path,label,text)=>document.querySelectorAll(sel).forEach(b
 }));
 archAction('[data-pause-archive]','api/pause-archive','Pausing…','Making this archive read-only…');
 archAction('[data-resume-archive]','api/resume-archive','Resuming…','Making this archive writable again…');
-// The Gmail question's Yes and Not now (Q-B): the answer is kept on this computer; the note says what follows.
+// The Gmail question's Yes and Not now (Q-B): the answer is kept on this computer. The note takes
+// the question's place in its own box, where the person is looking, and stays: no reload (F3).
 document.querySelectorAll('[data-gmail-answer]').forEach(b=>b.addEventListener('click',async()=>{
-  noteBeside(b.closest('li'));
-  const n=$('settingsNote'),done=busy(b,'Saving…',n,'Keeping your answer…');
+  const box=b.closest('[data-gmail-box]');
+  const say=t=>{if(!box)return;let n=box.querySelector('[data-gmail-note]');if(!n){n=document.createElement('p');n.className='note';n.setAttribute('data-gmail-note','');n.setAttribute('role','status');box.appendChild(n);}n.hidden=false;n.textContent=t;};
+  const done=busy(b,'Saving…',null,'');
   let keep=false;
   try{const r=await(await fetch('api/gmail-answer',{method:'POST',headers:{'Content-Type':'application/json','X-CSRF-Token':csrf},body:JSON.stringify({path:b.dataset.path,answer:b.dataset.gmailAnswer})})).json();
-    if(n){n.hidden=false;n.textContent=r.ok?r.note:(r.error||'Could not do that.');}
-    if(r.ok){keep=true;setTimeout(()=>reloadPage(),3000);}
-  }catch(e){if(n){n.hidden=false;n.textContent='Error: '+e;}}
+    if(r.ok){keep=true;box.querySelectorAll('[data-gmail-question],[data-gmail-notnow-kept],.actions').forEach(e=>e.remove());}
+    say(r.ok?r.note:(r.error||'Could not do that.'));
+  }catch(e){say('Error: '+e);}
   finally{done(keep);}
 }));
 // Forget every encrypted archive on this computer (K8): only with the word typed.

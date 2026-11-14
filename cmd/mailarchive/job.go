@@ -67,7 +67,7 @@ func exportFlags(fs *flag.FlagSet) *exportOpts {
 	o.list = fs.Bool("list", false, "list the mail stores that would be archived (with a rough size) and exit, without exporting or creating the output directory")
 	o.tbSync = fs.Bool("thunderbird-sync", false, "before archiving, start Thunderbird (hidden on macOS; minimized on Windows), wait until its mail stops arriving, then ask it to quit, so the archive reads fresh mail that had only reached the server. It starts Thunderbird only when no one has used the keyboard or mouse for 2 minutes, so it is meant for scheduled runs: typed at a terminal it skips the sync and archives the mail already on this computer. Starting Thunderbird may send your Outbox, run your filters and show notifications; quitting runs your accounts' on-exit actions, so it can empty Trash (macOS and Windows; opt-in; allowed on any schedule; if Thunderbird is already open it is left alone, never started or quit; a sync problem never stops the archive — it is a warning and the backup still runs)")
 	o.tbProfile = fs.String("thunderbird-profile", "", "with -thunderbird-sync: the Thunderbird profile directory to sync; if omitted it is derived from the inputs and must be one of the profiles Thunderbird lists in its Profile Manager (profiles.ini)")
-	o.gmailFolders = fs.Bool("gmail-folders", false, "Gmail accounts in Thunderbird: answer yes to \""+gmailQuestionShort+"\" for this archive without being asked (for scripts). "+gmailFlagAfter)
+	o.gmailFolders = fs.Bool("gmail-folders", false, gmailFlagHelp)
 	return o
 }
 

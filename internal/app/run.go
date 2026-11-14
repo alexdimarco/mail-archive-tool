@@ -1470,8 +1470,13 @@ func recordRun(opts Options, lr state.LastRun, result *Result, err *error, logge
 		}
 		// The Gmail question waits for the person (Q-B): plaintext only, never beside an
 		// encrypted archive (O1).
-		if !lr.Encrypted && opts.Key == nil && result.Gmail.Waiting() {
-			lr.GmailOff = result.Gmail.Off
+		if !lr.Encrypted && opts.Key == nil {
+			if result.Gmail.Waiting() {
+				lr.GmailOff = result.Gmail.Off
+			} else if len(result.Gmail.Off) > 0 {
+				lr.GmailHeld = result.Gmail.Off // held back by a Not now: Settings still asks (F1)
+			}
+			lr.GmailOn = result.Gmail.On
 		}
 		if lr.Encrypted && result.IndexBehind {
 			// The backup finished, but its search index misses messages until a later
@@ -1802,12 +1807,18 @@ func runFile(ctx context.Context, lr *localRun, path string, copyFirst, followLi
 		// which reader opens it is unchanged here).
 		var tb *tbStore
 		switch {
-		case tbCheckOff || !src.local:
+		case !src.local:
+		case tbCheckOff && source.IsMboxReader(reader):
+			// The check is off (a test seam): the Gmail switch is still decided, as below.
+			if !gmailDetectOff && planTB(path).facts.Gmail == thunderbird.GmailYes {
+				lr.gmail.store(exp.Manifest, token)
+			}
+		case tbCheckOff:
 		case source.IsMboxReader(reader):
 			tb = planTB(path)
 			opts.Counts = tb.counts
 			// A Gmail store: the switch is decided before any of its mail is read (Q-B).
-			if tb.facts.Gmail == thunderbird.GmailYes {
+			if !gmailDetectOff && tb.facts.Gmail == thunderbird.GmailYes {
 				lr.gmail.store(exp.Manifest, token)
 			}
 		default:

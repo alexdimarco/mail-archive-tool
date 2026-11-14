@@ -33,9 +33,9 @@ func existingGmailArchive(t *testing.T) (store, out string) {
 	t.Helper()
 	_, store = imapProfile(t, "imap.gmail.com", map[string]string{"is_gmail": "true"}, gmailFolders(6)...)
 	out = tmpDir(t)
-	tbCheckOff = true
+	gmailDetectOff = true // an older MailArchive did not look at the account (was tbCheckOff, which no longer turns Gmail detection off)
 	runTB(t, Options{Inputs: []string{store}, Out: out})
-	tbCheckOff = false
+	gmailDetectOff = false
 	if v, on := manifestOnDisk(t, out); v != 6 || len(on) != 0 {
 		t.Fatalf("the existing archive is version %d with %v switched on, want 6 and none", v, on)
 	}

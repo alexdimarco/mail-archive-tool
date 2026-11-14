@@ -173,13 +173,46 @@ func (m *Manifest) GmailDecision(gmail []string, notNow, attended bool) GmailAsk
 	return GmailAskPerson
 }
 
-// The switch's words (§7.4 fold c and its F1 note; "1.7" now 1.8, the 2026-11-13 fold). The
-// surfaces that show them (the Desktop card, the terminal) are slice B3's.
+// The switch's words (§7.4 fold c and its F1 note; "1.7" now 1.8, the 2026-11-13 fold), as the B3
+// friction review proposed them (its text (a), F4, F5), checked against the design and adjusted
+// where the review's words were not true: Thunderbird keeps a copy in some folders and not in
+// others (§2.1), so emails "may be" missing, "because Thunderbird does not always keep a copy in
+// each folder". Each is one constant, so the owner's sign-off changes it in one place. The
+// surfaces that show them (the Desktop card and Settings, the terminal) are slice B3's.
 const (
-	GmailQuestion          = "Show Sent Mail and your other Gmail folders in full, and store each email once? Every computer that backs up into this archive then needs MailArchive 1.8 or later."
-	GmailQuestionEncrypted = " Emails this archive already holds more than once stay as they are, because it is encrypted."
+	GmailQuestionHeading   = "Gmail: show every folder?"
+	GmailQuestion          = "Some Gmail emails may be missing from Sent Mail and your labels in this archive, because Thunderbird does not always keep a copy in each folder. Yes lists each email in every folder it is in, and saves new emails only once. Nothing is deleted. After Yes, every computer that backs up into this archive needs MailArchive 1.8 or newer. This cannot be undone."
+	GmailQuestionEncrypted = " Emails already saved twice stay as they are: MailArchive cannot tidy an encrypted archive."
+	GmailYesButton         = "Yes, show every folder"
+	GmailNotNowButton      = "Not now"
 	GmailSetupLine         = "Gmail: each email is stored once and shown in all of its folders."
+	// GmailNeedsLine follows the setup line wherever an archive is switched on (F6): the 1.8
+	// requirement is said, not only asked about.
+	GmailNeedsLine = "Every computer that backs up into this archive needs MailArchive 1.8 or newer."
+	// GmailSwitchedLine is said by the run that switched an archive on (Run now's result, F6),
+	// followed by GmailNeedsLine.
+	GmailSwitchedLine = "Gmail: switched on for this archive. Each email is stored once and shown in all of its folders."
+	// gmailWaitingWords end status's and an unattended run's line when the question waits (F8).
+	gmailWaitingWords = " — answer the Gmail question in MailArchive Desktop, back up once at a terminal, or add -gmail-folders to a backup to say yes (this cannot be undone)."
 )
+
+// ShownFolder is a folder path as Gmail names it to the person: a leading "[Gmail]/" (or "[Google
+// Mail]/", UK accounts) is dropped, so "[Gmail]/All Mail" is "All Mail" (the B3 friction review's
+// F11). Anything else is shown as it is. The reader's script has the same rule (shownFolder).
+func ShownFolder(f string) string {
+	for _, p := range []string{"[Gmail]/", "[Google Mail]/"} {
+		if rest, ok := strings.CutPrefix(f, p); ok && rest != "" {
+			return rest
+		}
+	}
+	return f
+}
+
+// GmailWaitingLine is the line `status` and the summary of a run with nobody to ask say for a
+// Gmail store (a safe store name, a folder at the archive's top) still waiting for the question.
+func GmailWaitingLine(store string) string {
+	return "Gmail: not switched on for " + store + gmailWaitingWords
+}
 
 // GmailSwitchQuestion is Q-B's question for an existing archive; an encrypted one with records
 // gains the sentence that its earlier copies stay (the merge step is plaintext only, F1).
@@ -191,10 +224,14 @@ func GmailSwitchQuestion(encrypted bool) string {
 }
 
 // The words of a refusal of a newer format (§7.4 fold f, and its fold-check-5 note for exactly
-// version 8). Both are for the owner's sign-off.
+// version 8). Both are for the owner's sign-off. TidyUpWords are the B3 friction review's text (b),
+// checked against the design: "started tidying" and "finish it on that computer", not "is
+// tidying" and "let it finish", because a merge stopped by a changed file (§24) does not finish by
+// itself; "Nothing is lost" holds by §23 and §25 (a copy is deleted only once proven equal to the
+// email kept); Resume tidy-up is on the archive's card in the build with slice D2 (§9 S2).
 const (
 	NewerWords  = "This archive needs a newer MailArchive on this computer."
-	TidyUpWords = "A newer MailArchive is part-way through tidying this archive (keeping one copy of each Gmail email). Finish it there, or install that version on this computer and choose Resume tidy-up. Until then this computer does not back up into it."
+	TidyUpWords = "Another computer started tidying this archive with a newer MailArchive (it removes extra copies of Gmail emails). Nothing is lost. Until it finishes, this computer does not back up into it. To finish: finish it on that computer, or install the newest MailArchive here and click Resume tidy-up on this archive's card."
 )
 
 // NewerFormatWords is the plain sentence a refusal of a manifest at version v says: the tidy-up

@@ -171,6 +171,14 @@ type LastRun struct {
 	// such field: it would say the archive holds a Gmail account). A token is the name of a folder
 	// at the archive's top, which a plaintext archive shows anyway.
 	GmailOff []string `json:"gmail_off,omitempty"`
+	// GmailHeld are the Gmail stores the run read that are still off because the person said Not
+	// now (on this computer, or at the terminal in this run): the card does not ask for them, but
+	// Settings still offers the question, so a Not now can be undone (the B3 friction review's F1).
+	// GmailOn are the Gmail stores the run read that are switched on, so Settings says so and that
+	// every computer then needs 1.8 (F6). Both as GmailOff: a plaintext run that ended ok only,
+	// additive, never beside an encrypted archive.
+	GmailHeld []string `json:"gmail_held,omitempty"`
+	GmailOn   []string `json:"gmail_on,omitempty"`
 
 	// Program is an encrypted archive's program step outcome, one of the Program*
 	// codes (program design §4, §8). Absent when the step did not run.

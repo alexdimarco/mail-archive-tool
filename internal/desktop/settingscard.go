@@ -141,7 +141,7 @@ func settingsCardFor(in settingsInputs) settingsCard {
 	case rt.kind == backupEncrypted:
 		return s // the location only (3.2)
 	case rt.kind == backupUnknown:
-		s.Unknown = unknownKindLine // the location only, and why (C-8)
+		s.Unknown = unknownLineFor(out) // the location only, and why (C-8; F9)
 		return s
 	default:
 		localFields := rt.kind == backupLocal || (!rt.captureCounted && (rt.runJob || rt.broken != ""))

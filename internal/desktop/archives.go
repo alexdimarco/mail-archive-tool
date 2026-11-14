@@ -203,7 +203,7 @@ func (cfg Config) archiveRows(idx archindex.Index) []ArchiveRow {
 			unlistWhy = refusalText(err)
 		}
 		plaintextOK := avail && kind != "" && kind != archindex.KindEncrypted && problem == ""
-		gq, gyes := gmailCard(e.Path, plaintextOK)
+		gq, gyes := gmailCard(e.Path, plaintextOK, current != "" && cleanPath(e.Path) == current)
 		rows = append(rows, ArchiveRow{
 			Gmail:           gq,
 			GmailYes:        gyes,

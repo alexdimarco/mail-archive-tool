@@ -114,7 +114,9 @@ func TestALargeArchiveIsANormalRowAndOpens(t *testing.T) {
 	if err := os.MkdirAll(newer, 0o755); err != nil {
 		t.Fatal(err)
 	}
-	if err := os.WriteFile(filepath.Join(newer, manifestName), []byte(`{"version":99,"stores":{"path:/m":"a"}}`), 0o644); err != nil {
+	// A damaged record (amended 2026-11-13: it was a version-99 one, which now says the newer
+	// format's own words, MA-1297; a damaged record is still "cannot be read").
+	if err := os.WriteFile(filepath.Join(newer, manifestName), []byte(`{"version":6,"stores":{damaged`), 0o644); err != nil {
 		t.Fatal(err)
 	}
 	picked = newer

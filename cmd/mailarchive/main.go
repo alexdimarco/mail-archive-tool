@@ -750,7 +750,13 @@ func runSearch(args []string) error {
 		if subject == "" {
 			subject = "(no subject)"
 		}
-		fmt.Printf("%s  %-28.28s  %s\n", date, from, scrubTTY(r.Folder))
+		// A Gmail email in several folders says them all, as the reader does (the B3 friction
+		// review's F17); the stored paths, which -folder takes.
+		folders := scrubTTY(r.Folder)
+		if len(r.Also) > 0 {
+			folders = "In: " + scrubTTY(strings.Join(append([]string{r.Folder}, r.Also...), ", "))
+		}
+		fmt.Printf("%s  %-28.28s  %s\n", date, from, folders)
 		fmt.Printf("    %s\n", subject)
 		if r.Snippet != "" {
 			fmt.Printf("    %s\n", scrubTTY(markTags.ReplaceAllString(r.Snippet, "")))
@@ -2421,6 +2427,15 @@ func printSummaryFor(logger *log.Logger, r app.Result, indexed, keepRaw bool, ou
 	// A plaintext archive's Gmail counts (docs/design-gmail-dedup.md §8.1): counts only.
 	if l := r.Gmail.Counts.Line(); l != "" {
 		logger.Printf("%s", l)
+	}
+	// A run with nobody to ask says the Gmail question waits (the B3 friction review's F8);
+	// never an encrypted archive's run (O1).
+	if r.Gmail.Waiting() && !r.Gmail.Encrypted {
+		for _, t := range r.Gmail.Off {
+			if state.SafeToken(t) {
+				logger.Printf("%s", state.GmailWaitingLine(t))
+			}
+		}
 	}
 	// Exports that were not new messages: a key exported again replaces its
 	// earlier copy, so exported exceeds the growth in manifest and indexed.
