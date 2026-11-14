@@ -67,3 +67,14 @@ func LogonSession() string {
 	}
 	return strconv.FormatUint(uint64(id), 10)
 }
+
+// SessionOf is the Terminal Services session id of the process pid, so `mailarchive quit
+// -pid` finds that copy's instance file from any session of the account (the upgrade
+// script's task may run in another sign-in of the same user; the S1 fix round 2, B1).
+func SessionOf(pid int) (string, error) {
+	var id uint32
+	if err := windows.ProcessIdToSessionId(uint32(pid), &id); err != nil {
+		return "", err
+	}
+	return strconv.FormatUint(uint64(id), 10), nil
+}

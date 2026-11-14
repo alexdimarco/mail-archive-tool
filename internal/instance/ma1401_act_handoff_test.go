@@ -113,8 +113,10 @@ func TestTheSecondFormCarriesItsActionUnderTheMAC(t *testing.T) {
 	}
 
 	// An unknown action, and fields out of bounds, are a 400 even with a good proof.
+	// (Amended 2026-11-13, the S1 fix round 2: "quit" is now a known action, so the
+	// unknown one is "reboot"; amended, not weakened.)
 	for name, f := range map[string][4]string{
-		"unknown action":      {"quit", "", "", ""},
+		"unknown action":      {"reboot", "", "", ""},
 		"long token":          {ActChoose, "", "", strings.Repeat("t", 257)},
 		"separator in token":  {ActChoose, "", "", "a|b"},
 		"control in version":  {ActChoose, "v1\n", "", ""},

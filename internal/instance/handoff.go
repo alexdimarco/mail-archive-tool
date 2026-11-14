@@ -76,6 +76,22 @@ type Handoff struct {
 	// sign-in); a refusal of one is answered 503, since the first form has no reason.
 	Gate func(ActRequest) string
 
+	// Quit answers ActCanQuit (stop false: would the instance quit now?) and ActQuit (stop
+	// true: quit now if it would). It returns ok, or why not: ReasonBusy while work runs or
+	// a wizard is open, ReasonClosing when it is already stopping (the S1 fix round 2, B1,
+	// B2, B7: the upgrade script asks through `mailarchive quit`, never by window
+	// messages). It shows nothing, so neither the sign-in gate nor the one-a-second limit
+	// applies; it needs a proven request like every action. nil answers ReasonCantShow.
+	Quit func(stop bool) (ok bool, reason string)
+
+	// FirstFormQuiet answers every first-form request as a quiet one: a link for the
+	// launcher to show in its own session, never a browser opened by the instance. Set
+	// where one instance serves every sign-in of the account (macOS, Linux): the first form
+	// carries no sign-in, so the instance cannot tell whether the launch is at its screen,
+	// and an older launcher gets a link it shows, not a refusal it would wait out (the S1
+	// fix round 2, B9).
+	FirstFormQuiet bool
+
 	mu   sync.Mutex
 	last time.Time
 	// seen remembers the nonces of proven requests, oldest first, at most maxSeen of
@@ -138,11 +154,16 @@ const (
 	ActChoose = "choose"
 	// ActWizard runs the wizard in the instance.
 	ActWizard = "wizard"
+	// ActCanQuit asks whether the instance would quit now, stopping nothing; ActQuit asks
+	// it to quit now, which it does only when nothing runs (`mailarchive quit`; the S1 fix
+	// round 2, B1, B2, B7).
+	ActCanQuit = "can-quit"
+	ActQuit    = "quit"
 )
 
 // KnownActs is what an instance of this version advertises in its file (Info.Acts):
 // a launcher sends the second form only to an instance that lists the action (MB-3).
-var KnownActs = []string{ActOpen, ActChoose, ActWizard}
+var KnownActs = []string{ActOpen, ActChoose, ActWizard, ActCanQuit, ActQuit}
 
 // Why an action was not shown (MB-3 item 4, MB-9, the fold's third contradiction).
 const (
@@ -161,6 +182,9 @@ const (
 	// ReasonClosing: the instance is stopping and waits for its work; the launcher
 	// waits for it to end and then starts a fresh copy (the S1 fix round, A7).
 	ReasonClosing = "closing"
+	// ReasonBusy: the instance runs work or has its wizard open, so it will not quit
+	// without a person's own answer (ActCanQuit, ActQuit; R52).
+	ReasonBusy = "busy"
 )
 
 // ActRequest is a verified request with an action, as the instance's Act sees it.
@@ -197,7 +221,7 @@ func validField(s string, max int) bool {
 
 func validReason(r string) bool {
 	switch r {
-	case "", ReasonAlreadyOpen, ReasonCantShow, ReasonOtherSession, ReasonUnknownSession, ReasonClosing:
+	case "", ReasonAlreadyOpen, ReasonCantShow, ReasonOtherSession, ReasonUnknownSession, ReasonClosing, ReasonBusy:
 		return true
 	}
 	return false
@@ -276,10 +300,31 @@ func (h *Handoff) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// The quit request (B1, B2, B7): it shows nothing on any screen, so the sign-in gate
+	// and the one-a-second limit do not apply; the instance answers whether it would quit,
+	// or quits, only when nothing runs.
+	if v2 && (req.Act == ActCanQuit || req.Act == ActQuit) {
+		ok, reason := false, ReasonCantShow
+		if h.Quit != nil {
+			ok, reason = h.Quit(req.Act == ActQuit)
+		}
+		switch {
+		case ok:
+			reason = ""
+		case reason == "" || !validReason(reason):
+			reason = ReasonCantShow
+		}
+		writeReply(w, handoffReply{Shown: ok, Reason: reason, P: MAC(h.Key, "handoff-shown2", req.N, req.Act, strconv.FormatBool(ok), reason)})
+		return
+	}
+	// A first-form request carries no sign-in: where one instance serves every sign-in of
+	// the account it is answered as a quiet one, a link for the launch's own session (B9).
+	quiet := req.Quiet || (!v2 && h.FirstFormQuiet)
+
 	// The gate, before anything is opened or shown, and before the second is counted:
 	// another or an unknown sign-in, or a closing instance, gets its reason (A3, A7).
 	if h.Gate != nil {
-		ar := ActRequest{Quiet: req.Quiet}
+		ar := ActRequest{Quiet: quiet}
 		if v2 {
 			ar = ActRequest{Act: req.Act, Version: req.Ver, Session: req.Sess, Token: req.Tok, Quiet: req.Quiet}
 		}
@@ -337,7 +382,7 @@ func (h *Handoff) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	}
 
 	opened, link := false, ""
-	if !req.Quiet && h.Open != nil {
+	if !quiet && h.Open != nil {
 		l, tok := h.Mint(localweb.OpenerTTL)
 		if h.Open(l) == nil {
 			wait := h.Wait

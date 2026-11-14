@@ -25,3 +25,7 @@ func defaultOwnerReader(path string) (string, []string, error) {
 // LogonSession is the logon-session id of this process: POSIX systems keep one
 // per login and this version records none.
 func LogonSession() string { return "" }
+
+// SessionOf is the logon session of the process pid: "" here, where the lock and the
+// instance file are per account.
+func SessionOf(pid int) (string, error) { return "", nil }
