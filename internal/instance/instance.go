@@ -355,7 +355,10 @@ var ErrUnusable = errors.New("instance file unusable")
 // its check here (this package sits beneath it); until then it refuses nothing.
 var RefuseSettingsWrite = func(path, kind string) error { return nil }
 
-// Write records info at path atomically, 0600, in a directory made 0700.
+// Write records info at path atomically, 0600, in a directory made 0700; on Windows the
+// file is created with a Medium integrity label that no lower integrity can read
+// (writeSecret; the menu-bar S1 adversarial re-check r3, C1): K yields a Desktop session,
+// so a Low-integrity process of this account (a sandbox) must not read it.
 func Write(path string, info Info) error {
 	if err := RefuseSettingsWrite(path, "the Desktop instance file"); err != nil {
 		return err
@@ -365,8 +368,12 @@ func Write(path string, info Info) error {
 	if err != nil {
 		return err
 	}
-	return util.WriteFileAtomic0600(path, append(b, '\n'))
+	return writeSecret(path, append(b, '\n'))
 }
+
+// writeSecret is how an instance file is written: util.WriteSecretFileAtomic0600 (a var
+// only so MA-1427's test can check that it is, on every OS).
+var writeSecret = util.WriteSecretFileAtomic0600
 
 // Read returns the instance file at path: a missing file wraps os.ErrNotExist; one
 // that is a link or not a regular file, group- or other-readable on Unix, larger

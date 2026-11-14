@@ -1308,6 +1308,24 @@ revert), recorded in the commit; the unfiltered `go test ./...` runs before each
 >   over the shared VM's own MailArchive would change it): L-W1 below. Linux: the entry keeps its
 >   file name, so the install line replaces it in place. MA-1431 and MA-1080 are amended.
 
+> **S1 fix round 3, 2026-11-14 (the re-check `docs/review-menubar-s1-adversarial-r3.md`, C1–C5;
+> the lead's direction, and the builder's calls, for the lead to check).**
+> - **C1 — the instance file on Windows gets a Medium no-read-up label.** Every instance file
+>   (the desktop's per session, and a `serve`'s; the only files that hold K — the settings file,
+>   the logs, the locks and the job files hold no key, and Desktop's session secrets live only in
+>   memory and the browser's cookie) is written by a new `util.WriteSecretFileAtomic0600`: on
+>   Windows its temporary file is created by `CreateFile` with the security descriptor
+>   `S:(ML;;NRNWNX;;;ME)` (only a SACL label; owner and DACL come from the folder and token as
+>   before), and the rename keeps it. A system that will not set the label makes the write fail
+>   (the copy then says it could not record itself), never a readable key. *VM, as SYSTEM (no one
+>   signed in), a lab copy started at Medium integrity with a LOCALAPPDATA-like ACL:* the file
+>   shows `Mandatory Label\Medium Mandatory Level:(NW,NR,NX)`; at Medium the probe and
+>   `quit -check` reach the copy; at Low the probe's read and `quit -check` are "Access is
+>   denied", the copy untouched; `quit` at Medium then quits it. The same lab with the **shipped
+>   v1.7.1** (built from the tag): a Low process reads K, the quiet hand-off returns a link, and
+>   its redemption gives a Desktop session (status 200) — the exposure ships today (lead: patch
+>   decision). Owed: the same with a real user's token (L-W1).
+
 ### 12.2 New dependencies (operator decision)
 `github.com/ebitengine/purego` (macOS only, behind a build tag) and `github.com/godbus/dbus/v5`
 (Linux only, behind a build tag). Both pure Go; both go into THIRD-PARTY-NOTICES. (Q7.)

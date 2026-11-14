@@ -31,11 +31,33 @@ func WriteFileAtomic0600(path string, data []byte) error {
 // pattern (os.CreateTemp syntax), so a writer inside an archive can use the
 // `.mailarchive-*.tmp` name that export.SweepOrphans reaps after a crash.
 func WriteFileAtomic0600Temp(path string, data []byte, pattern string) error {
+	return writeAtomic(path, data, pattern, createTemp)
+}
+
+// WriteSecretFileAtomic0600 is WriteFileAtomic0600 for a file whose content lets its reader
+// act as this account's MailArchive (the instance file's hand-off key K, which yields a
+// Desktop session): on Windows the file is also created with a Medium mandatory integrity
+// label that forbids reading, writing and running it from a lower integrity level
+// (secretFileLabel), set in the security descriptor the file is created with — never by a
+// later step — so a Low-integrity process of the same account (a sandbox) cannot read it,
+// not even for a moment (the menu-bar S1 adversarial re-check r3, C1). The rename keeps
+// the label. Elsewhere it is WriteFileAtomic0600: Unix has no integrity levels.
+func WriteSecretFileAtomic0600(path string, data []byte) error {
+	return writeAtomic(path, data, ".tmp-*", createSecretTemp)
+}
+
+// secretFileLabel is the security descriptor a secret file is created with on Windows: no
+// owner, group or DACL of its own (they come from the folder and the token, as for any
+// file), and a SACL holding one mandatory label, Medium (ME), with no-read-up,
+// no-write-up and no-execute-up (NR, NW, NX).
+const secretFileLabel = "S:(ML;;NRNWNX;;;ME)"
+
+func writeAtomic(path string, data []byte, pattern string, create func(dir, pattern string) (*os.File, error)) error {
 	dir := filepath.Dir(path)
 	if err := os.MkdirAll(dir, 0o700); err != nil {
 		return fmt.Errorf("create dir %s: %w", dir, err)
 	}
-	tmp, err := createTemp(dir, pattern)
+	tmp, err := create(dir, pattern)
 	if err != nil {
 		return fmt.Errorf("temp file in %s: %w", dir, err)
 	}
