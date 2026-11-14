@@ -9,7 +9,9 @@ package app
 // (container.ErrLockLost); a plaintext save writes by path, so the run proves it here first.
 
 import (
+	"errors"
 	"fmt"
+	"os"
 	"time"
 
 	"mail-archive-tool/internal/state"
@@ -19,6 +21,11 @@ import (
 // still holds its archive between saves, so a long walk stops writing message files into another
 // archive soon after a swap. A var so a test can make it due at every message.
 var archiveRecheckEvery = 10 * time.Second
+
+// afterWalkForTest, when a test sets it, is called once a local run has walked every source,
+// before its last proof and its pages and README. Production code never sets it (runPause's
+// steps are pinned by other tests, so this is a seam of its own).
+var afterWalkForTest func()
 
 // archiveChangedFor says the folder opts.Out no longer holds the archive a plaintext run began
 // with (began, the id its "running" record carries): its record carries another id, or carries
@@ -54,17 +61,31 @@ func newArchiveGuard(opts Options, stillHeld func() error, changed func() bool) 
 }
 
 // prove returns why the run must write nothing more into its folder, nil when it may go on: the
-// folder holds another archive, or the lock file is no longer the run's. Always nil for an
-// encrypted run, whose saves prove the lock themselves.
+// folder is gone (a drive pulled with none in its place: the run-fatal "unavailable" its next
+// write would meet, never "another archive"), the folder holds another archive, or the lock file
+// is no longer the run's. Always nil for an encrypted run, whose saves prove the lock themselves.
 func (g *archiveGuard) prove() error {
 	if !g.plaintext {
 		return nil
 	}
 	g.proved = time.Now()
+	if _, err := os.Lstat(g.out); err != nil {
+		return unavailable(g.out, err)
+	}
 	if g.changed != nil && g.changed() {
 		return archiveChangedDuringError(g.out)
 	}
 	return g.stillHeld()
+}
+
+// proofStop is the run's error when prove (or a checkpoint's lock check) stopped it: the archive
+// location gone stays its run-fatal refusal; anything else is a lost lock.
+func proofStop(err error) error {
+	var fatal *RunFatalError
+	if errors.As(err, &fatal) {
+		return err
+	}
+	return withKind(state.FailLockLost, err)
 }
 
 // due says a plaintext walk should prove again now, between saves.

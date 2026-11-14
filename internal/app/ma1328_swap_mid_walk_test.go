@@ -113,9 +113,13 @@ func TestAFolderSwappedDuringTheWalkGetsNoManifestAndTheRunFails(t *testing.T) {
 				}
 			}
 			var progress ProgressFunc
-			if c.pause == "" {
+			switch c.pause {
+			case "":
 				progress = func(export.Stats) { swap() }
-			} else {
+			case "walk-done":
+				afterWalkForTest = swap
+				defer func() { afterWalkForTest = nil }()
+			default:
 				restore := OverrideRunPauseForTest(func(point string) {
 					if point == c.pause {
 						swap()

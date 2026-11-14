@@ -1094,7 +1094,7 @@ func Run(ctx context.Context, opts Options, logger *log.Logger, onProgress Progr
 	}
 	if ctx.Err() != nil {
 		if perr := proof.prove(); perr != nil { // before any save (round 3's H1)
-			return result, withKind(state.FailLockLost, perr)
+			return result, proofStop(perr)
 		}
 		saveErr = commit(nil, idx, manifest, logger)
 		stopOnLostLock(saveErr, &lockLost)
@@ -1114,13 +1114,16 @@ func Run(ctx context.Context, opts Options, logger *log.Logger, onProgress Progr
 			// files already written are reconciled by the next incremental run
 			// (index-before-manifest ordering leaves no orphaned manifest rows).
 			// (INT-CC-2/R5.)
-			return result, withKind(state.FailLockLost, lockLost)
+			return result, proofStop(lockLost) // a lost lock, or the archive location gone (H1)
 		}
 		// Before the save, the folder is proved to still hold this run's archive and the lock to
 		// be its own (round 3's H1): a plaintext save writes by path, and a store's walk may be the
-		// whole run.
+		// whole run. A source that ended on the archive's own fault says so first.
 		if perr := proof.prove(); perr != nil {
-			return result, withKind(state.FailLockLost, perr)
+			if errors.As(runErr, &fatal) {
+				return result, fatal
+			}
+			return result, proofStop(perr)
 		}
 		saveErr = commit(nil, idx, manifest, logger)
 		stopOnLostLock(saveErr, &lockLost)
@@ -1151,10 +1154,15 @@ func Run(ctx context.Context, opts Options, logger *log.Logger, onProgress Progr
 			logger.Printf("error: %s: %v%s", f, runErr, dataFileRemedyFor(f, runErr))
 		}
 	}
-	pauseAt("walk-done")
+	if afterWalkForTest != nil {
+		afterWalkForTest()
+	}
 	// And before the pages and the README (round 3's H1).
 	if perr := proof.prove(); perr != nil {
-		return result, withKind(state.FailLockLost, perr)
+		if fatal != nil {
+			return result, fatal
+		}
+		return result, proofStop(perr)
 	}
 	// Thunderbird completeness (slice C2): once every store is walked, so its folder cache is
 	// read after the walk, once per profile (TC-21). It reads; it writes nothing here.

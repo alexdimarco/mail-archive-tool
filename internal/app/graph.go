@@ -531,15 +531,19 @@ func RunGraph(ctx context.Context, g GraphOptions, opts Options, logger *log.Log
 			// Write no shared state (manifest/index/README); the deferred recordRun
 			// marks the run failed and the next incremental run reconciles the
 			// message files already written (INT-CC-2/R5).
-			return result, withKind(state.FailLockLost, lockLost)
+			return result, proofStop(lockLost) // a lost lock, or the archive location gone (H1)
 		}
 		if sealed != nil && runErr == nil {
 			// The mailbox's walk finished: its records' LastSeen is sealed relative to
 			// this run's stamp from here on (P2b-C12).
 			sealed.WalkDone(manifest.Token(state.MailboxSourceID(mbx), mbx), runAt)
 		}
-		if perr := proof.prove(); perr != nil { // before the save (H1)
-			return result, withKind(state.FailLockLost, perr)
+		if perr := proof.prove(); perr != nil { // before the save (H1); the archive's own fault first
+			var vf *RunFatalError
+			if errors.As(runErr, &vf) {
+				return result, vf
+			}
+			return result, proofStop(perr)
 		}
 		saveErr = commit(hist, idx, manifest, logger)
 		stopOnLostLock(saveErr, &lockLost)
@@ -612,7 +616,10 @@ func RunGraph(ctx context.Context, g GraphOptions, opts Options, logger *log.Log
 	// The footer is fsync'd before the manifest advances one last time (crash
 	// order, §3.5).
 	if perr := proof.prove(); perr != nil { // before the footer, the last save and the pages (H1)
-		return result, withKind(state.FailLockLost, perr)
+		if volumeFatal != nil {
+			return result, volumeFatal
+		}
+		return result, proofStop(perr)
 	}
 	if failures == 0 && hist != nil && !runPartial(manifest, exp, opts.Out, runAt) {
 		if werr := hist.WriteRunFooter(runAt.UnixNano(), time.Now().UTC()); werr != nil {
