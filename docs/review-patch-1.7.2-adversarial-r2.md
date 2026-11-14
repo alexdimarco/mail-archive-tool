@@ -295,3 +295,18 @@ creation, so W3's network form used the VM's own SMB share, as round 1 did.
   (shown at the engine, `app.Run`, which the Desktop calls).
 - A Microsoft 365 capture's checks during an outage while it writes (its first write and its saves
   share the local run's proof; round 1's and the committed tests cover a capture with nothing new).
+
+## Final round (2026-11-14, the patch builder; added beside the re-check, nothing above changed)
+
+The lead's calls, one final round on `patch-1.7.2`, with the research note's L0
+(`docs/research-windows-secret-store.md` on `research-windows-secrets`) as a release blocker:
+
+| Finding | Outcome |
+|---|---|
+| L0 | Safety net (MA-1453): when Windows will not set the instance file's Medium no-read-up label, the file is written exactly as 1.7.1 wrote it (owner-only, unlabelled) and the Desktop's log says so in one plain line; MailArchive Desktop still starts. Only when that plain write fails too does it refuse to start, as a dialog (G8's words). Shown on every OS with the refusal stood in for, and on Windows with a real one (a Low-integrity child refused the Medium label). Whether a signed-in person's Medium program sets the label (L0 itself) still needs a signed-in person: nobody was signed in to the VM during the round, so it was not run. What the lab did show, as SYSTEM: Windows refuses a label above the writer's own integrity with "A required privilege is not held by the client." (ERROR_PRIVILEGE_NOT_HELD), the error the fallback knows; the Low child's file was written, read back as an instance file, and the warning given. If L0 fails for a person, 1.7.2 now behaves for them as 1.7.1 did. |
+| Q1 | Words: the notes say plainly that a dropout meeting a backup while it writes new mail, between checks, still stops it at once, as before. No code change. |
+| Q2 | Fixed (MA-1454): the wait listens to the run's context; a Cancel, Ctrl-C or the Desktop's Shut down ends it at once, the cancel is never kept as the folder's answer, and the run is recorded cancelled where the folder still holds its archive. |
+| Q3 | Fixed (MA-1455): a lock file "not found" is "deleted" only when the folder's parent can be looked at and a fresh listing of the folder succeeds without it; otherwise it is "could not read" and waited on. Not reproduced on a real share (the lab cannot make one drop). |
+| Q4 | Accepted, as recommended: closes with Gmail de-dup's archive id. |
+| Q5 | Fixed (MA-1456): one log line as a wait starts ("waiting up to 30 seconds for the archive folder to be reachable again… (SYSTEM'S WORDS)") and one as it ends. |
+| CI time | See the round's report: `ci.yml` and `release.yml` run `go test ./... -timeout 20m`; the round measured `internal/app` and `internal/desktop` on this branch against `main`. |

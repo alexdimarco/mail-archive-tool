@@ -316,3 +316,23 @@ the second pass at 1 s. The Windows script and the program are in
 `/Users/alex.dimarco/repositories/.winlab/fric2/` (`walk-win.ps1`, `dump-res.ps1`); the results
 stay in the VM at `C:\fric2lab\res`. The `V:` mapping was removed by the script's `finally`. The
 Mac Desktop was shut down from its own API; no browser, dialog or notice opened.
+
+## Final round (2026-11-14, the patch builder; added beside the re-walk, nothing above changed)
+
+The lead's calls, one final round on `patch-1.7.2`:
+
+| Finding | Outcome |
+|---|---|
+| G1 | Adopted: the three stop sentences no longer open with "Backup stopped: "; each is a clause the surfaces lead into (MA-1447's amendment). |
+| G2 | Adopted: "Details: the lock file was replaced during the run." (or "removed"), no path (`lockfile.LostError.Short`). |
+| G3 | Adopted both parts: the notes name both endings; the sentence is the proposed one, the system's words after "Details:" (MA-1457, amends MA-320). |
+| G4 | Adopted as proposed, plus one sentence the adversarial re-check's Q1 asks for: "A dropout that meets a backup while it writes new mail, between checks, still stops it at once, as before." |
+| G5 | Adopted: the `Last run:` line says "→ did not finish"; the run's own "could not record this run" warning says the same (MA-1448's amendment). The `Last verify:` line, which pairs with its own "never finished" WARN, is unchanged. |
+| G6 | Adopted: "warning: this backup's result was not written into FOLDER: the folder there is no longer this archive's." |
+| G7 | Adopted (MA-1449's amendment). |
+| G8 | Adopted as a refusal (dialog and stderr) in the proposed voice; since the research note's L0, these words are shown only when no usable start file could be written: a label Windows will not set now falls back to the file 1.7.1 wrote (MA-1453). |
+| G9 | Adopted in the notes: "click **Shut down** in MailArchive Desktop and open it again". |
+| G10 | Pre-existing, not in this patch. Follow-up: with the archive unreachable, Status & health should say only that, not "re-install the schedule". |
+| G11 | Pre-existing, not in this patch. Follow-up: `verify` could group unexpected files by folder, and the note's "old-binary excursion" wants plain words. |
+
+The notes' Windows bullet also says, since L0's safety net, that the key file is protected "where Windows allows (otherwise the file is kept as before)". The section is about 350 words, over the target, to keep Q1's and L0's sentences true.
