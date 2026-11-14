@@ -3747,6 +3747,80 @@ rule is shared with the completeness design; whichever lands first owns it and t
 >   (each red on the base too). Every new and amended test passes there, the `subst` drive-letter
 >   test included (no mapping left); the two rename tests skip on Windows by design.
 
+> **Folded 2026-11-14 [B3 adversarial round 3 fixes] (the builder's record of the fix round after
+> `docs/review-gmail-dedup-b3-adversarial-r3.md`, H1 to H6; a design change only where it says
+> so).** Rows MA-1328 to MA-1335 registered (neither main nor menubar uses them; menubar keeps
+> MA-1400 to MA-1439). Each finding, with the builder's call:
+>
+> - **H1 (MED): proved before every save, not once.** The overwrite is not this slice's alone: a
+>   throw-away probe on v1.7.1 (`1a6d437`, main) shows an incremental run with nothing new, its
+>   folder swapped mid-walk, ending ok, the other archive's manifest replaced by its own and its
+>   record "ok". So the fix is in two parts. The part a release before 1.8 can take: a plaintext run
+>   (`app.Run`, and the Microsoft 365 capture `app.RunGraph`) proves its lock its own before every
+>   save of its progress (after each source or mailbox, at a checkpoint, on a cancel, and before
+>   the pages and README), not only at a checkpoint after 1,000 or more messages (MA-1329). The
+>   part that needs this slice's archive id: the same proof checks the folder's record still
+>   carries the id the run began with (MA-1328). Either failing stops the run as `lock_lost`
+>   ("… now holds another archive than the one this backup began with (its drive was changed, or
+>   the folder was moved, during the backup): this backup stopped and recorded nothing in it. Run
+>   the backup again", or the lock's own words), nothing more is written there, and the deferred
+>   record ends a run that would have been ok as that lost lock. Between saves the walk proves the
+>   same on time, at most every 10 seconds (MA-1330). A folder that is gone with nothing in its
+>   place is not "another archive": it stays MA-320's run-fatal "unavailable". The deferred
+>   record's check and the after-walk proof each cover the swap after the last save (the
+>   after-walk subtest goes red only with both off). Message files written before the stopping
+>   proof stay where they were written, as after any lost lock (R5).
+> - **H2: the wait under no id ends at every backup past the manifest** (MA-1331, amending
+>   MA-1320). The builder's call over a fingerprint of the folder (a device and inode, a volume
+>   serial on Windows): an id-less archive cannot be told from another at the folder, and the cost
+>   is the safe side, a 3-day alert that can come later for an id-less drive in a rotation, never
+>   sooner and never "since" another archive's date.
+> - **H3: the wait's alert is a streak of its own** (MA-1332): the alert record keeps `waiting`;
+>   a failure for another reason after it begins a new streak with its own email and notice; a wait
+>   alert inside a real failure's streak sends nothing and keeps it real. Both scheduled paths
+>   report through `backupalert.Report`, so neither caller changed. `state.TidyingElsewhere` now
+>   holds the test `app.TidyingElsewhere` calls.
+> - **H4: found by the call graph, read from the syntax** (MA-1333, amending MA-1327). Roots are
+>   the packages whose own code calls an os per-user folder function or reads a per-user folder
+>   variable; every test package that is or depends on one needs a TestMain calling `testhome.Run`
+>   or `Check`, read from the Go syntax. The two checks are `internal/testhome/reach`, a package of
+>   their own (in `internal/testhome` they made `assureblock` a reaching package); they match by
+>   shape and name, so they need none of MA-621's pinned tokens and MA-621's set is unchanged.
+>   Fifteen packages gained a checked throw-away home (the row names them); `job`'s is in its
+>   external test package, `presync`'s Windows stand-in now starts from the shared TestMain.
+> - **H5: the Yes is bound to the accounts asked about** (MA-1334, amending MA-1323): the
+>   question's row carries `data-gmail-asked`, a digest of the accounts off when the page was drawn;
+>   a Yes with another, or none, is refused, "This archive's Gmail question changed since this page
+>   was drawn. Reload the page." (new words, for the friction review). The encrypted card the same.
+>   So G6's note now holds from the drawing: an account added since the page was drawn is never
+>   switched by that page's Yes.
+> - **H6: a Not now in the run holds for the rest of it** (MA-1335): `gmailRun.store` drops the
+>   kept yes for the rest of the run at a Not now or no answer. A store the kept yes switched
+>   earlier in the same run, before the question was asked about another, stays switched: the
+>   person had said yes for it, and the switch cannot be undone. The terminal's Not now words do
+>   not say so (left for the friction review).
+> - **Existing tests changed, each named for the lead:** the Desktop's Yes requests in MA-1236's,
+>   MA-1294's, MA-1295's, MA-1307's, MA-1309's, MA-1315's, MA-1318's and MA-1324's tests carry the
+>   fingerprint as the page now does, and MA-1323's markup check includes `data-gmail-asked` (no
+>   assertion weakened). No covers marker removed, no gate, suppression or baseline touched.
+> - **Runs at `6cdaf70` (2026-11-14).** Mac, `go test -count=1 -p 4 -timeout 60m ./...`
+>   unfiltered: 61 of 62 packages pass; `internal/app` red on two copy-export tests,
+>   `TestRetryReadsTheRunRecord` (the load flake round 2 saw) and
+>   `TestCancelIsSeenInsideAZipsExtraction`, each 3 of 3 alone, on paths this round did not
+>   change. Linux (Docker `golang:1.26`, user 1000): every package passes but the two known
+>   container reds, desktop's MA-272 and `internal/source` killed for memory (assureblock's one
+>   red there was the builder's scratch copy of the review's probes inside the worktree, which the
+>   covers scan walks; moved out, assureblock passes). Windows VM (as SYSTEM, the lab share as
+>   `\\Mac\winlab`, Go 1.26.11, `GOTOOLCHAIN=local`), the touched packages, compared by name with
+>   `a7dac7e` run the same way: no test red on this round and green on the base but
+>   `TestAWedgedRunIsFinishedAsPartialAfterARestart` (desktop, a copy export's timing: 26 s in the
+>   loaded run, green alone); presync's mode check, schedule's link case, and app's and desktop's
+>   reds that need a signed-in session are red on both. Every new and amended test passes there,
+>   the `subst` drive-letter tests included (no mapping left); the rename forms skip by design.
+>   The review's round-3 probes pass against this code on macOS and on Windows (the drive-letter
+>   probe included); its round-2 `TestB3AdvR2NotNowKeepsAWaitingYes` now meets H5's refusal,
+>   since it posts a Yes without the fingerprint the page now sends.
+
 ## 14. Owner questions, each with a recommendation
 
 - **Q1 — Keep `Mail-archive-dimarcotech` or start a new Gmail archive?** Recommended: keep it and use the
