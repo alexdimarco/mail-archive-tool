@@ -1,20 +1,27 @@
 package app
 
-// Proving, before a plaintext run writes its progress, that its folder still holds the archive it
-// began with (the B3 adversarial pass, round 3's H1). A drive of a rotation can be swapped at the
-// same path or letter, or the folder renamed, at any moment of a run: while it waits for
-// Thunderbird, while it walks its sources (minutes for a large store, even when nothing is new), or
-// after. The lock file goes with the old folder, so the folder at the run's path then holds another
-// archive, or none. An encrypted archive's saves prove the lock at their own commit point
-// (container.ErrLockLost); a plaintext save writes by path, so the run proves it here first.
+// Proving, before a run writes its progress, that its folder still holds the archive it began with
+// (the B3 adversarial pass, round 3's H1). A drive of a rotation can be swapped at the same path or
+// letter, or the folder renamed, at any moment of a run: while it waits for Thunderbird, while it
+// walks its sources (minutes for a large store, even when nothing is new), or after. The lock file
+// goes with the old folder, so the folder at the run's path then holds another archive, or none.
+// A plaintext save writes by path, so the run proves it first; so do its pages, README and report
+// in the run's tail (round 4's J1). An encrypted archive's saves prove the lock at their own commit
+// point (container.ErrLockLost), but its sealed message files, its record and its run history are
+// written by path between them, so an encrypted run proves the same (round 4's J2).
 
 import (
 	"errors"
 	"fmt"
+	"log"
 	"os"
 	"time"
 
+	"mail-archive-tool/internal/export"
+	"mail-archive-tool/internal/index"
+	"mail-archive-tool/internal/pages"
 	"mail-archive-tool/internal/state"
+	"mail-archive-tool/internal/vault"
 )
 
 // archiveRecheckEvery is how often, at most, a plaintext run's walk proves again that its folder
@@ -27,13 +34,22 @@ var archiveRecheckEvery = 10 * time.Second
 // steps are pinned by other tests, so this is a seam of its own).
 var afterWalkForTest func()
 
+// tailForTest, when a test sets it, is called at the start of a run's tail, which writes its
+// folder pages, README and report (the B3 adversarial pass, round 4's J1): in a local run once it
+// has passed the proof that follows its walk, in a Microsoft 365 capture once it has made its last
+// manifest save. Production code never sets it.
+var tailForTest func()
+
 // archiveChangedFor says the folder opts.Out no longer holds the archive a plaintext run began
 // with (began, the id its "running" record carries): its record carries another id, or carries
 // none while the run's lock file is gone or replaced too (an archive an older MailArchive wrote).
-// Never for an encrypted archive: its record has no id, and its key opens only its own archive.
+// An encrypted run's is encryptedArchiveChangedFor: its record has no id.
 func archiveChangedFor(opts Options, began string, stillHeld func() error) func() bool {
+	if opts.Key != nil {
+		return encryptedArchiveChangedFor(opts, stillHeld)
+	}
 	return func() bool {
-		if opts.Key != nil || began == "" {
+		if began == "" {
 			return false
 		}
 		id := state.ArchiveID(opts.Out)
@@ -44,30 +60,47 @@ func archiveChangedFor(opts Options, began string, stillHeld func() error) func(
 	}
 }
 
-// archiveGuard proves, before every save of a plaintext run's progress and on time during its
-// walk, that its folder still holds its archive and that the lock is still its own.
+// encryptedArchiveChangedFor says the folder opts.Out no longer holds the encrypted archive the
+// run's key opens (the B3 adversarial pass, round 4's J2): the vault there names another archive,
+// or the folder holds no vault MailArchive can read while the run's lock file is gone or replaced
+// too. The vault's archive id is read without the key (vault.Detect): it is not trusted, only
+// compared, and the lock is proved beside it, so a copy of the same archive is told by its lock.
+// It needs no archive id in the record, so a release before 1.8 can take it.
+func encryptedArchiveChangedFor(opts Options, stillHeld func() error) func() bool {
+	want := opts.Key.ArchiveID()
+	return func() bool {
+		if info, ok, err := vault.Detect(opts.Out); err == nil && ok {
+			return info.ArchiveID != want
+		}
+		return stillHeld() != nil
+	}
+}
+
+// archiveGuard proves, before every save of a run's progress and on time during its walk, that
+// its folder still holds its archive and that the lock is still its own. An encrypted run proves
+// it too (round 4's J2): between its sealed saves it writes its sealed message files by path.
 type archiveGuard struct {
 	out       string
-	plaintext bool
 	stillHeld func() error
 	// changed says the folder holds another archive (archiveChangedFor); nil where the run keeps
 	// no archive id, when the lock alone is the proof.
 	changed func() bool
 	proved  time.Time
+	// everyWrite: an encrypted run, which proves after every message it writes (dueAfter); written
+	// is how many it had written at its last such proof.
+	everyWrite bool
+	written    int
 }
 
 func newArchiveGuard(opts Options, stillHeld func() error, changed func() bool) *archiveGuard {
-	return &archiveGuard{out: opts.Out, plaintext: opts.Key == nil, stillHeld: stillHeld, changed: changed, proved: time.Now()}
+	return &archiveGuard{out: opts.Out, stillHeld: stillHeld, changed: changed, proved: time.Now(), everyWrite: opts.Key != nil}
 }
 
 // prove returns why the run must write nothing more into its folder, nil when it may go on: the
 // folder is gone (a drive pulled with none in its place: the run-fatal "unavailable" its next
 // write would meet, never "another archive"), the folder holds another archive, or the lock file
-// is no longer the run's. Always nil for an encrypted run, whose saves prove the lock themselves.
+// is no longer the run's.
 func (g *archiveGuard) prove() error {
-	if !g.plaintext {
-		return nil
-	}
 	g.proved = time.Now()
 	if _, err := os.Lstat(g.out); err != nil {
 		return unavailable(g.out, err)
@@ -88,9 +121,46 @@ func proofStop(err error) error {
 	return withKind(state.FailLockLost, err)
 }
 
-// due says a plaintext walk should prove again now, between saves.
+// due says a walk should prove again now, between saves.
 func (g *archiveGuard) due() bool {
-	return g.plaintext && time.Since(g.proved) >= archiveRecheckEvery
+	return time.Since(g.proved) >= archiveRecheckEvery
+}
+
+// dueAfter is due for a walk that has written stats so far: an encrypted run proves again after
+// every message it wrote too (round 4's J2), so another archive swapped in receives at most the
+// sealed files of the one message in flight, not a whole store's until the save. Its proof is a
+// few small reads beside the message's sealed writes; a message only skipped writes nothing and
+// asks no proof. A plaintext run proves on time, as round 3's H1 settled.
+func (g *archiveGuard) dueAfter(stats export.Stats) bool {
+	if written := stats.Exported + stats.Filled; g.everyWrite && written != g.written {
+		g.written = written
+		return true
+	}
+	return g.due()
+}
+
+// writePages writes the folder pages of the run's tail, by path, proving first, on time between
+// pages, and again before the root page that lists the archive's folders (the B3 adversarial pass,
+// round 4's J1). It returns the proof's error when one stopped it: nothing more may be written
+// into the folder. A page that could not be written is a warning, as it always was.
+func (g *archiveGuard) writePages(idx *index.Index, logger *log.Logger, gaps int) error {
+	if err := g.prove(); err != nil {
+		return err
+	}
+	var stop error
+	err := pages.GenerateChecked(g.out, idx, logger, gaps, func(rel string) error {
+		if rel == pages.RootPage || g.due() {
+			stop = g.prove()
+		}
+		return stop
+	})
+	if stop != nil {
+		return stop
+	}
+	if err != nil && logger != nil {
+		logger.Printf("warning: folder pages: %v", err)
+	}
+	return nil
 }
 
 // archiveChangedDuringError is a run's stop when its folder came to hold another archive after

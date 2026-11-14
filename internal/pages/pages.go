@@ -96,7 +96,23 @@ func StampedGaps(outDir string) (int, bool) {
 // page so a later run knows when to regenerate it (FC24). EVERY caller passes it
 // — a run, a Graph run, reindex and rebuild — so none can drop the banner.
 func Generate(outDir string, ix *index.Index, logger *log.Logger, gaps int) error {
+	return GenerateChecked(outDir, ix, logger, gaps, nil)
+}
+
+// RootPage is the root index page's archive-relative path: the page that lists every folder.
+const RootPage = "index.html"
+
+// GenerateChecked is Generate with check asked before each page is written, by its
+// archive-relative path (RootPage last): a non-nil answer stops it there, and that error is
+// returned, so nothing more is written. A backup proves with it that the folder still holds its
+// archive (the B3 adversarial pass, round 4's J1). A nil check asks nothing.
+func GenerateChecked(outDir string, ix *index.Index, logger *log.Logger, gaps int, check func(rel string) error) error {
 	n, err := build(ix, gaps, false, func(rel string, page []byte) error {
+		if check != nil {
+			if err := check(rel); err != nil {
+				return err
+			}
+		}
 		full := filepath.Join(outDir, filepath.FromSlash(rel))
 		if err := os.MkdirAll(filepath.Dir(full), 0o755); err != nil {
 			return err
@@ -212,7 +228,7 @@ func build(ix *index.Index, gaps int, encrypted bool, emit func(rel string, page
 	if err != nil {
 		return 0, err
 	}
-	if err := emit("index.html", page); err != nil {
+	if err := emit(RootPage, page); err != nil {
 		return 0, err
 	}
 	return len(folders), nil

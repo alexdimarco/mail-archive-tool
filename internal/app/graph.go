@@ -19,7 +19,6 @@ import (
 	"mail-archive-tool/internal/index"
 	"mail-archive-tool/internal/lockfile"
 	"mail-archive-tool/internal/model"
-	"mail-archive-tool/internal/pages"
 	"mail-archive-tool/internal/seal"
 	"mail-archive-tool/internal/state"
 )
@@ -259,6 +258,15 @@ func RunGraph(ctx context.Context, g GraphOptions, opts Options, logger *log.Log
 		if manifest, err = state.Load(mpath); err != nil {
 			return Result{}, withKind(state.FailManifestUnreadable, err)
 		}
+		// Again once the manifest has loaded, before the history header, the index or any save, as
+		// a local run proves (the B3 adversarial pass, round 4's J3): the folder still holds the
+		// archive this capture began with, and the lock is still its own.
+		if archiveChanged() {
+			return Result{}, withKind(state.FailLockLost, archiveChangedError(opts.Out))
+		}
+		if err := lock.StillHeld(); err != nil {
+			return Result{}, withKind(state.FailLockLost, err)
+		}
 		endTidyWait(opts.Out, begun.Archive) // past the manifest (G4)
 	}
 	manifestBefore := manifest.Len()
@@ -424,7 +432,11 @@ func RunGraph(ctx context.Context, g GraphOptions, opts Options, logger *log.Log
 		manifest.MarkCollapsed(collapseTokens...)
 		// Persist the collapsed manifest + marker now, AFTER the index re-key, so a
 		// crash before the walk's end-of-run save leaves a consistent collapsed
-		// archive (the manifest never lagging the index).
+		// archive (the manifest never lagging the index). Proved first, as every save of
+		// the capture is: the collapse reads every duplicate pair's files (round 4's J3).
+		if perr := proof.prove(); perr != nil {
+			return Result{}, proofStop(perr)
+		}
 		if err := manifest.Save(); err != nil {
 			return Result{}, withKind(state.FailManifestSave, fmt.Errorf("save manifest after identity collapse: %w", err))
 		}
@@ -495,7 +507,7 @@ func RunGraph(ctx context.Context, g GraphOptions, opts Options, logger *log.Log
 		// its progress and re-checks its lock.
 		processed := exp.Stats.Exported + exp.Stats.SkippedManifest + lr.faults
 		if processed-lastCheckpoint < effectiveEvery(floor, manifest.Len()) {
-			if lockLost == nil && proof.due() { // on time between saves (H1)
+			if lockLost == nil && proof.dueAfter(exp.Stats) { // on time between saves (H1); after each write, encrypted (J2)
 				lockLost = proof.prove()
 			}
 			return
@@ -558,7 +570,10 @@ func RunGraph(ctx context.Context, g GraphOptions, opts Options, logger *log.Log
 		interrupted := ctx.Err() != nil
 		if interrupted && runErr != nil {
 			result.gapsRecovered, result.gapsClosedGone = lr.recovered, lr.closedGone
-			finish(opts.Out, &result, exp, manifest, idx, indexErrors, true, logger)
+			// The README and the report are proved first (the B3 adversarial pass, round 4's J1).
+			if perr := finishChecked(opts.Out, &result, exp, manifest, idx, indexErrors, true, logger, proof.prove); perr != nil {
+				return result, proofStop(perr)
+			}
 			if saveErr != nil {
 				return result, manifestSaveFailure(mpath, saveErr)
 			}
@@ -627,18 +642,33 @@ func RunGraph(ctx context.Context, g GraphOptions, opts Options, logger *log.Log
 		}
 	}
 	saveErr = commit(hist, idx, manifest, logger)
+	if tailForTest != nil {
+		tailForTest()
+	}
 	if hErr := healLateDamage(si, sealed, manifest, units, logger); hErr != nil && saveErr == nil {
 		saveErr = hErr
 	}
+	// stopIn ends the capture when a proof of its tail failed: the archive's own fault, when a
+	// mailbox ended on it, says so first.
+	stopIn := func(perr error) (Result, error) {
+		if volumeFatal != nil {
+			return result, volumeFatal
+		}
+		return result, proofStop(perr)
+	}
 	// An encrypted archive has no folder pages: they are its folder tree, subjects and
 	// senders in cleartext (phase2a §3); MailArchive's reader renders them (Phase 3).
+	// The pages, the README and the report are written by path after the last save, so the
+	// folder is proved to still hold this archive before each (round 4's J1).
 	if gaps := gapBannerCount(manifest); exp.Units == nil && idx != nil && opts.Pages && !allFailed && pagesNeeded(opts.Out, exp.Stats.Exported, gaps) {
-		if pErr := pages.Generate(opts.Out, idx, logger, gaps); pErr != nil {
-			logger.Printf("warning: folder pages: %v", pErr)
+		if perr := proof.writePages(idx, logger, gaps); perr != nil {
+			return stopIn(perr)
 		}
 	}
 	result.gapsRecovered, result.gapsClosedGone = lr.recovered, lr.closedGone
-	finish(opts.Out, &result, exp, manifest, idx, indexErrors, !allFailed, logger)
+	if perr := finishChecked(opts.Out, &result, exp, manifest, idx, indexErrors, !allFailed, logger, proof.prove); perr != nil {
+		return stopIn(perr)
+	}
 	if sealed != nil {
 		// No index write may follow the run's last seal (phase2b §6).
 		if gErr := guardLateIndexWrite(si, sealed, manifest, logger); gErr != nil && saveErr == nil {
