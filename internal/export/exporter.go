@@ -480,6 +480,11 @@ func (e *Exporter) Export(store string, folderPath []string, m *model.Message) (
 		Store:          store,
 		Folder:         folderKey,
 	}
+	// A switched-on Gmail store's page names the folder its "This folder" link leads to, in
+	// Gmail's own name (GD-18b, the B3 friction review's F10); every other page keeps its words.
+	if e.Manifest != nil && e.Manifest.DedupOn(store) {
+		ctx.FolderName = state.ShownFolder(strings.Join(writeFolderPath, "/"))
+	}
 	// The zip's name can be offered before inline embedding is known: the page
 	// links it only beside the attachments it lists — those NOT embedded
 	// inline (renderHeader) — which is exactly when the zip below is written

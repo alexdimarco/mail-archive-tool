@@ -91,7 +91,10 @@ function fmtDate(s){if(!s)return '';const d=new Date(s);return isNaN(d)?'':d.toI
 function esc(s){return (s||'').replace(/[&<>]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;'}[c]));}
 // inFolders names every folder a result is in: its own folder alone, or, for a Gmail email also
 // in other folders, "In: " its own folder first, then the others (docs/design-gmail-dedup.md §8.3).
-function inFolders(m){return (m.also&&m.also.length)?'In: '+[m.folder].concat(m.also).map(esc).join(', '):esc(m.folder);}
+// shownFolder names a Gmail folder as Gmail does, "All Mail", never "[Gmail]/All Mail" (the B3
+// friction review's F11; state.ShownFolder is the same rule).
+function shownFolder(f){return (f||'').replace(/^\[(Gmail|Google Mail)\]\//,'');}
+function inFolders(m){return (m.also&&m.also.length)?'In: '+[m.folder].concat(m.also).map(shownFolder).map(esc).join(', '):esc(shownFolder(m.folder));}
 
 // busy shows that Prev or Next is working (MA-872): the button is disabled and marked
 // aria-busy, its label becomes the working label and the results line says what is loading.
@@ -135,7 +138,7 @@ async function facets(){
   const d=await(await fetch('api/facets')).json();
   if(d.error){$('#count').textContent=d.error;return;}
   $('#count').textContent=(d.total||0).toLocaleString()+' messages indexed'+(d.notice?' — '+d.notice:'');
-  for(const f of (d.folders||[])){const o=document.createElement('option');o.value=f.folder;o.textContent=f.folder+' ('+f.count+')';$('#folder').appendChild(o);}
+  for(const f of (d.folders||[])){const o=document.createElement('option');o.value=f.folder;o.textContent=shownFolder(f.folder)+' ('+f.count+')';$('#folder').appendChild(o);}
   for(const y of (d.years||[])){const o=document.createElement('option');o.value=y;o.textContent=y;$('#year').appendChild(o);}
 }
 let t;const go=()=>{offset=0;search();};

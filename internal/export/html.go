@@ -97,6 +97,12 @@ type RenderContext struct {
 	// zero context, and unused for a message that carries no read gap.
 	Store  string
 	Folder string
+
+	// FolderName is the folder the "This folder" link leads to, in Gmail's own name ("All
+	// Mail"), set only for a record of a switched-on Gmail store (design GD-18b, the B3 friction
+	// review's F10): the link then says "This folder: All Mail". Empty everywhere else, so every
+	// other page keeps "This folder" and its bytes.
+	FolderName string
 }
 
 // RenderResult is a rendered page plus what the renderer learned about it.
@@ -2182,7 +2188,11 @@ func renderHeader(m *model.Message, ctx RenderContext, consumed map[int]bool) st
 			if ctx.RootRel != "" {
 				b.WriteString(` · `)
 			}
-			b.WriteString(`<a href="` + html.EscapeString(ctx.FolderIndexRel) + `">This folder</a>`)
+			label := "This folder"
+			if ctx.FolderName != "" {
+				label += ": " + ctx.FolderName
+			}
+			b.WriteString(`<a href="` + html.EscapeString(ctx.FolderIndexRel) + `">` + html.EscapeString(label) + `</a>`)
 		}
 		b.WriteString(`</div>`)
 	}

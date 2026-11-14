@@ -67,7 +67,8 @@ func TestTheReaderFindsAnEmailUnderEveryFolderItIsIn(t *testing.T) {
 	if res.Total != 1 || res.Results[0].Subject != "Receipt" || !reflect.DeepEqual(res.Results[0].Also, []string{"INBOX", "Sent Mail"}) {
 		t.Fatalf("Sent Mail: %+v", res)
 	}
-	if !strings.Contains(appJS, `'In: '+[m.folder].concat(m.also).map(esc).join(', ')`) || !strings.Contains(appJS, `'<span class="pill">'+inFolders(m)+'</span>'`) {
+	// Amended 2026-11-13: each folder is named by shownFolder first (F11, MA-1299).
+	if !strings.Contains(appJS, `'In: '+[m.folder].concat(m.also).map(shownFolder).map(esc).join(', ')`) || !strings.Contains(appJS, `'<span class="pill">'+inFolders(m)+'</span>'`) {
 		t.Fatal("the reader's page does not show a hit's folders with In:, escaped")
 	}
 }
