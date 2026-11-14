@@ -3456,6 +3456,109 @@ rule is shared with the completeness design; whichever lands first owns it and t
 >   Settings' copy of the question; the encrypted card's question; a terminal Not now remembered
 >   without a job file; `mailarchive-gui`'s own runs asking; GD-21 (c) and the workspace tree (B4).
 
+> **Folded 2026-11-13 [B3 friction fixes] (the builder's record of the fix round after
+> `docs/review-gmail-dedup-b3-friction.md`; not a design change except where it says so).** Rows
+> MA-1292 to MA-1301 registered; MA-1236 and MA-1222 amended. Each finding, with the builder's call:
+>
+> - **The words (texts (a) and (b), F4), checked against this design before use.** Both are one
+>   constant each in `internal/state/dedup.go`, for the owner's sign-off, which has not been given.
+>   Two parts of (a) were not true and were changed, as little as possible: "Some Gmail emails *are*
+>   missing" became "*may be* missing", and "because Thunderbird *keeps only one copy of each*"
+>   became "because Thunderbird *does not always keep a copy in each folder*": §1 and §2.1 say
+>   Thunderbird keeps a second copy in some folders and not in others (which is why the archive also
+>   holds duplicates), so "only one copy of each" is false and a given archive may miss none. Checked
+>   and true: Yes cannot be undone (§7.4 (d), Q-C; on the Desktop the yes waits in this computer's
+>   settings until the next backup and nothing offers to take it back); "Nothing is deleted" for the
+>   Yes itself (it adds `DedupStores` only; capture-time and listed memberships write and delete no
+>   file, §18 last bullet; deletion is only the separate merge step's, behind its own plan). Not
+>   true *in this build*: "Yes lists each email in every folder it is in, and saves new emails only
+>   once" needs slices D1 and M1, so, as the review said, B3 must not ship ahead of them. In (b) two
+>   words changed: "is tidying" became "started tidying", and "let it finish on that computer" became
+>   "finish it on that computer", because a merge stopped by a changed file (§24) stays stopped
+>   until someone resumes it. Checked and true: "Nothing is lost" (§23 and §25 (1): a copy is deleted
+>   only once re-hashed equal to the email kept; the named exceptions are outside programs);
+>   "Resume tidy-up on this archive's card" is where §9's S2 puts it in the D2 build. The encrypted
+>   add-on is used as given ("saved twice" leaves out "three times", but is not false).
+> - **F1 (Settings' copy): built.** A plaintext run keeps the stores a Not now holds back as
+>   `gmail_held` (beside B3's `gmail_off`, so the row still asks no more) and the switched-on ones as
+>   `gmail_on`. Settings shows the same question box for the current archive whenever its row does
+>   not (after a Not now, with "You said Not now on this computer. You can still say yes here."), so
+>   the question never shows twice on one page.
+> - **F2 (no backup settings): fixed by keeping the answer where every archive has a place on this
+>   computer** (`internal/gmailanswer`): the job file when the archive has one (as B3), otherwise
+>   `<key>.gmail-answer` beside the job files, the per-archive naming the alert files already use;
+>   not `.json`, so the job scan never reads it; uninstall removes it. Every reader joins the two.
+>   The builder's call: not the Desktop settings file, which has no cross-process lock and which the
+>   terminal would then have to write.
+> - **F3: fixed.** The note replaces the question inside its box; no automatic reload.
+> - **F5: fixed.** The question has its own box, headed "Gmail: show every folder?", buttons "Yes,
+>   show every folder" and "Not now". With two Gmail archives the box still shows on both rows.
+> - **F6: fixed.** Settings says the setup line and "Every computer that backs up into this archive
+>   needs MailArchive 1.8 or newer." for a switched-on archive; the Run now result of the run that
+>   switched it on says "Gmail: switched on for this archive. …" and the 1.8 line. Not on the row
+>   (the builder's call: the row already carries enough).
+> - **F7: proved and fixed.** A test proves the question is asked while the backup holds the
+>   archive's lock. The terminal waits 2 minutes, then backs up as Not now for that run, says so, and
+>   does not remember it (no answer is not an answer). Scheduled and other non-terminal runs never
+>   ask (unchanged) and are kept out by a waiting question for at most those 2 minutes. An answered
+>   terminal Not now is remembered on this computer (F2's file), never for an encrypted archive (O1),
+>   and the words now say it will not ask again. Not done: asking before the lock is taken (the
+>   question needs the store's Gmail detection, which runs inside the run; a larger change).
+> - **F8: fixed.** `status` and the summary of a run with nobody to ask say "Gmail: not switched on
+>   for STORE — answer the Gmail question in MailArchive Desktop, back up once at a terminal, or add
+>   -gmail-folders to a backup to say yes (this cannot be undone)." Never for an encrypted run.
+> - **F9: fixed, with the builder's call on `status`'s posture.** The Scheduled backup card,
+>   Settings, Save settings' refusal and Add another archive (Desktop and terminal) say the newer
+>   format's words (the tidy-up words for 8); a recorded run-job of an unreadable archive is "a
+>   backup that re-reads this archive's mail files". `status` gives version 8 a WARN of its own
+>   (`manifest_tidying`) instead of "RED: the archive's manifest cannot be read"; version 9 stays RED.
+>   A refused scheduled backup's last-run line is still the run's failure (its own posture).
+> - **F10: fixed for switched-on Gmail stores only.** The message page's link says "This folder:
+>   All Mail" when the record's store is switched on; every other page keeps "This folder", so no
+>   other archive's page bytes change. Pages written before the switch keep their words (frozen).
+> - **F11: fixed.** "(saved in All Mail)", the reader's "In:" line, pill and Folder filter drop a
+>   leading "[Gmail]/" or "[Google Mail]/" (`state.ShownFolder` and the reader's `shownFolder`); the
+>   filter's value is unchanged.
+> - **F12: fixed.** "Gmail: 19 emails saved; 4 of them are also listed in another folder without a
+>   second copy." The line does not say why 19 differs from Thunderbird's count beside it: before
+>   D2's tidy-up the 19 include Thunderbird's extra copies, which the line cannot word honestly in
+>   a few words; left for D2's words.
+> - **F13: fixed.** The terminal says the yes once (the run logs "you said yes" only for a yes given
+>   before the run); the question goes to standard error, and is asked only when stdin, stdout and
+>   stderr are each a terminal.
+> - **F14: fixed.** The flag's help starts "Say yes to the Gmail question (\"Gmail: show every
+>   folder?\") … without being asked" and says it cannot be undone. Name kept.
+> - **F15: fixed.** After Yes the line says what starts the next backup: Run now (after Switch to
+>   this archive on a row that is not current), or How often in Settings for an archive with no
+>   backup settings here; nothing more for a scheduled one.
+> - **F16: fixed.** The row's problem text is drawn at full contrast. Checked by the page's
+>   structure (the class and the CSS), not by eye on Windows.
+> - **F17: fixed.** `search` prints "In: HOME, OTHER…" for a Gmail email in several folders. The
+>   builder's call: the names stay the stored folder paths (what `-folder` takes), not F11's shown
+>   names.
+> - **F18: not fixed** (the owner's design call, O1): an encrypted archive is still never asked on
+>   the Desktop; only a terminal backup asks it.
+> - **Existing tests changed with the behaviour, each named for the lead:** MA-1236's card test (with
+>   no job file the answer is now kept, not refused; the yes line now starts with B3's words);
+>   MA-1216's state test (the question's and encrypted sentence's new words); MA-1222's count-line
+>   tests (F12's words) and reader script test (F11's `shownFolder`); MA-1034's two "record cannot
+>   be read" tests (Desktop and terminal), whose fixture was a version-99 manifest, now use a damaged
+>   one (a version-99 manifest now says F9's newer-format words). The test seam `tbCheckOff` no
+>   longer turns the Gmail switch off; a new seam, `gmailDetectOff`, makes "an archive an older
+>   MailArchive made" in MA-1236's helpers. Without that, MA-1173/MA-1180's "the check changes
+>   nothing archived" compared a switched-on run with one that was not, and F10's page words made
+>   them differ. No covers marker removed, no gate or baseline touched.
+> - **Runs at 7bb200b (2026-11-13).** Mac, `go test -count=1 -p 4 -timeout 60m ./...` unfiltered:
+>   all 55 packages pass. Linux (Docker `golang:1.26`, the repo recipe): every package passes but
+>   the two known container reds, `internal/desktop`'s MA-272 (no scheduler) and `internal/source`
+>   killed for memory. Windows VM (touched packages, Go 1.26.11, `GOTOOLCHAIN=local`), compared by
+>   name with ce06fce run the same way: gmailanswer, uninstall, state, health, pages, server, wizard
+>   pass; export's one red (a path separator in a units refusal), cmd/mailarchive's 4 and desktop's
+>   recovery-file red are the baseline's own; app's reds are a subset of the baseline's;
+>   desktop's `TestReconciliationIsOffTheRequestPath` (red 2 of 3 on ce06fce too) and
+>   `TestAWedgedRunIsFinishedAsPartialAfterARestart` (passes 3 of 3 alone) were each red once in a
+>   loaded run.
+
 ## 14. Owner questions, each with a recommendation
 
 - **Q1 — Keep `Mail-archive-dimarcotech` or start a new Gmail archive?** Recommended: keep it and use the
