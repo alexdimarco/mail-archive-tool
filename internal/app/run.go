@@ -748,7 +748,10 @@ func Run(ctx context.Context, opts Options, logger *log.Logger, onProgress Progr
 	// folder renamed, in that time, and nothing of this archive's may then be written into the
 	// other (1.7.2).
 	proof := newArchiveGuard(opts, lock.StillHeld)
-	proof.recorded = func() (string, [32]byte, bool) { return recordedFile(opts, mpath, manifest, sealed) }
+	// What binds the run to its archive's folder once its lock is no longer its own (endUnheld):
+	// armed only by the first proof that follows the manifest's load, so the bytes it names were
+	// read while the folder was the run's (a manifest read after a swap is the other archive's).
+	binding := func() (string, [32]byte, bool) { return recordedFile(opts, mpath, manifest, sealed) }
 	// The opt-in Thunderbird pre-sync runs here, after the lock and the run's
 	// start and before any source is read; nil unless a caller opts in, and it
 	// never fails the run (design thunderbird-presync §4.1). Its warnings join
@@ -829,6 +832,9 @@ func Run(ctx context.Context, opts Options, logger *log.Logger, onProgress Progr
 	if perr := proof.prove(); perr != nil {
 		return Result{}, proofStop(perr)
 	}
+	if manifest != nil { // an encrypted run's, opened under the lock before the wait
+		proof.recorded = binding
+	}
 	runAt := begun.Started
 
 	// On -auto, warn up front when a live Exchange/IMAP .ost is about to be read
@@ -871,6 +877,7 @@ func Run(ctx context.Context, opts Options, logger *log.Logger, onProgress Progr
 		if perr := proof.prove(); perr != nil {
 			return Result{}, proofStop(perr)
 		}
+		proof.recorded = binding
 	}
 	manifestBefore := manifest.Len()
 

@@ -221,7 +221,6 @@ func RunGraph(ctx context.Context, g GraphOptions, opts Options, logger *log.Log
 	// (archiveguard.go): a drive of a rotation swapped at the same path mid-capture gets nothing of
 	// this archive's (1.7.2).
 	proof := newArchiveGuard(opts, lock.StillHeld)
-	proof.recorded = func() (string, [32]byte, bool) { return recordedFile(opts, mpath, manifest, sealed) }
 	defer func() {
 		// A capture whose lock is no longer its own is not this archive's success, and its
 		// failure is recorded only in a folder that still holds the archive it last read or
@@ -249,12 +248,15 @@ func RunGraph(ctx context.Context, g GraphOptions, opts Options, logger *log.Log
 		if manifest, err = state.Load(mpath); err != nil {
 			return Result{}, withKind(state.FailManifestUnreadable, err)
 		}
-		// Again once the manifest has loaded, before the history header, the index or any save,
-		// as a local run proves: the folder is still this capture's.
-		if perr := proof.prove(); perr != nil {
-			return Result{}, proofStop(perr)
-		}
 	}
+	// Again once the manifest has loaded (an encrypted capture's was opened under the lock), before
+	// the history header, the index or any save, as a local run proves: the folder is still this
+	// capture's. Only then does the manifest's digest bind the capture to its archive's folder
+	// (endUnheld): a manifest read after a swap is the other archive's.
+	if perr := proof.prove(); perr != nil {
+		return Result{}, proofStop(perr)
+	}
+	proof.recorded = func() (string, [32]byte, bool) { return recordedFile(opts, mpath, manifest, sealed) }
 	manifestBefore := manifest.Len()
 
 	exp := &export.Exporter{

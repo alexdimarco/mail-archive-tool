@@ -8,6 +8,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"runtime"
 	"strings"
@@ -134,6 +135,69 @@ func TestAReplaceOrRemovalAfterASwapIsProvedFirst(t *testing.T) {
 				}))
 		})
 	}
+}
+
+// covers: MA-1440, R5
+// K1's Windows form: the drive letter moves to another drive's folder (subst stands in for a USB
+// drive pulled and another given its letter) after the first message of a Full run that
+// re-exports every message under a new name; the other drive's own old-named files are neither
+// removed nor written again. Positive twin: TestAReplaceOrRemovalAfterASwapIsProvedFirst's, which
+// runs everywhere.
+func TestADriveLetterMovedBeforeAReplaceGetsNothingReplaced(t *testing.T) {
+	if runtime.GOOS != "windows" {
+		t.Skip("Windows only (subst names a drive letter)")
+	}
+	const letter = "T:"
+	if _, err := os.Stat(letter + `\`); err == nil {
+		t.Skip(letter + " is in use on this computer")
+	}
+	old := archiveRecheckEvery
+	archiveRecheckEvery = time.Hour
+	t.Cleanup(func() { archiveRecheckEvery = old })
+	drive1, drive2 := t.TempDir(), t.TempDir()
+	subst := func(args ...string) {
+		if out, err := exec.Command("subst", args...).CombinedOutput(); err != nil {
+			t.Fatalf("subst %v: %v %s", args, err, out)
+		}
+	}
+	subst(letter, drive1)
+	t.Cleanup(func() { _ = exec.Command("subst", letter, "/D").Run() })
+	out := letter + `\MailArchive`
+	outB := filepath.Join(drive2, "MailArchive")
+	_, store := imapProfile(t, "imap.k1w.example", nil, tbFolder{path: "INBOX", flags: tbcomplete.FlagInbox, listed: 6, msgs: tbMsgs("k1w", 6)})
+	for _, o := range []string{out, outB} {
+		if _, err := Run(context.Background(), Options{Inputs: []string{store}, Out: o}, discard(), nil); err != nil {
+			t.Fatalf("first backup into %s: %v", o, err)
+		}
+		ma1440RenameRecords(t, o)
+	}
+	before := ma1336Files(t, outB)
+	swapped := false
+	_, err := Run(context.Background(), Options{Inputs: []string{store}, Out: out, Mode: export.Full}, discard(), func(export.Stats) {
+		if !swapped {
+			swapped = true
+			subst(letter, "/D")
+			subst(letter, drive2)
+		}
+	})
+	if !swapped {
+		t.Fatal("premise: the walk was not reached")
+	}
+	rc, msg := ma1328LockLost(err)
+	assure.Refused(t, rc, msg, assure.Names(lockfile.Name, "during the run", "run again"),
+		assure.NoSideEffect(func() bool {
+			var lost []string
+			for _, d := range ma1336Changed(before, ma1336Files(t, outB)) {
+				if !strings.HasPrefix(d, "added ") {
+					lost = append(lost, d)
+				}
+			}
+			if len(lost) > 0 {
+				t.Logf("drive 2's own files removed or written again: %v", lost)
+				return false
+			}
+			return true
+		}))
 }
 
 // covers: MA-1440, R5

@@ -117,6 +117,7 @@ func TestAFolderSwappedDuringTheWalkGetsNoManifestAndTheRunFails(t *testing.T) {
 		pause string // a pause point to swap at; "" swaps at the walk's first message
 	}{
 		{"during-the-presync", export.Incremental, "presync"},
+		{"at-the-sweep", export.Incremental, "sweep"},
 		{"at-the-index-open", export.Incremental, "index-open"},
 		{"mid-walk-incremental", export.Incremental, ""},
 		{"mid-walk-full", export.Full, ""},
@@ -135,6 +136,7 @@ func TestAFolderSwappedDuringTheWalkGetsNoManifestAndTheRunFails(t *testing.T) {
 			}
 			opts := Options{Inputs: []string{storeA}, Out: outA, Index: true, Pages: true, Mode: c.mode}
 			var progress ProgressFunc
+			logger := discard()
 			switch c.pause {
 			case "":
 				progress = func(export.Stats) { swap() }
@@ -143,6 +145,22 @@ func TestAFolderSwappedDuringTheWalkGetsNoManifestAndTheRunFails(t *testing.T) {
 				// after the load stops the run before it opens the index or walks, so nothing at
 				// all is written into the other archive, message files included.
 				opts.BeforeRead = func(context.Context, []string) BeforeReadResult { swap(); return BeforeReadResult{} }
+			case "sweep":
+				// After the proof that follows the pre-sync and before the manifest's load: the
+				// sweep of a crashed run's leftovers (it walks the whole archive) logs its count,
+				// and the swap comes then. The run reads the other archive's manifest; the proof
+				// after the load stops it, and nothing at all is written there, its record
+				// included (the digest the run keeps of a manifest is its binding only once a
+				// proof has followed the load).
+				stale := filepath.Join(outA, ".mailarchive-stale.tmp")
+				if err := os.WriteFile(stale, []byte("x"), 0o600); err != nil {
+					t.Fatal(err)
+				}
+				old := time.Now().Add(-time.Hour)
+				if err := os.Chtimes(stale, old, old); err != nil {
+					t.Fatal(err)
+				}
+				logger = log.New(&ma1337Logger{marker: "orphaned", at: swap}, "", 0)
 			case "walk-done":
 				afterWalkForTest = swap
 				defer func() { afterWalkForTest = nil }()
@@ -154,14 +172,14 @@ func TestAFolderSwappedDuringTheWalkGetsNoManifestAndTheRunFails(t *testing.T) {
 				})
 				defer restore()
 			}
-			_, err := Run(context.Background(), opts, discard(), progress)
+			_, err := Run(context.Background(), opts, logger, progress)
 			if !swapped {
 				t.Fatal("premise: the swap was not reached")
 			}
 			rc, msg := ma1328LockLost(err)
 			assure.Refused(t, rc, msg, assure.Names(filepath.Join(outA, lockfile.Name), "during the run", "run again"),
 				assure.NoSideEffect(func() bool {
-					if c.pause == "presync" && !ma1336Untouched(t, outA, all) {
+					if (c.pause == "presync" || c.pause == "sweep") && !ma1336Untouched(t, outA, all) {
 						return false
 					}
 					return ma1328Untouched(t, outA, before)
