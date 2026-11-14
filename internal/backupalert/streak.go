@@ -46,7 +46,8 @@ type streakRecord struct {
 	// Waiting: this streak was opened by the alert of a wait for another computer's tidy-up (state.
 	// TidyingElsewhere), worded as a wait. It is a streak of its own: a failure for another reason
 	// after it begins a new streak, with its own email and notice (the B3 adversarial pass, round
-	// 3's H3); a wait's alert after a real failure is that failure's streak, told already.
+	// 3's H3); a wait's alert after a real failure is that failure's streak, told already, and
+	// sends nothing, even when the real failure's email is still owed (round 4's J4).
 	Waiting bool `json:"waiting,omitempty"`
 }
 
@@ -154,11 +155,15 @@ func Report(settingsPath string, store graphconfig.SecretStore, key, out, result
 		if same && prev.Failing {
 			return Outcome{} // this failing streak was told already
 		}
+		if wait && same && prev.Noticed && !prev.Waiting {
+			// A wait inside a real failure's streak whose email is still owed (it could not be sent):
+			// the wait's email must not stand for it, so nothing is sent and the record is kept as it
+			// is; the real failure's email is tried again at its next failure (round 4's J4). Its
+			// notice was raised.
+			return Outcome{}
+		}
 		o := Outcome{Notify: !(same && prev.Noticed)}
 		rec := streakRecord{Failing: true, Noticed: true, Since: time.Now().UTC(), Waiting: wait}
-		if same && (prev.Failing || prev.Noticed) {
-			rec.Waiting = prev.Waiting // a wait inside a real failure's streak keeps it a real one
-		}
 		if cfg.ShouldSend(ResultFailed) && !deliver(settingsPath, cfg, store, out, ResultFailed, runErr, 0, logger) {
 			rec.Failing = false // not delivered: the next failure tries the email again, not the notice
 			if same && !prev.Since.IsZero() {
