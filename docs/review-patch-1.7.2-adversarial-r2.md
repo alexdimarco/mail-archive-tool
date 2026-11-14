@@ -310,3 +310,5 @@ The lead's calls, one final round on `patch-1.7.2`, with the research note's L0
 | Q4 | Accepted, as recommended: closes with Gmail de-dup's archive id. |
 | Q5 | Fixed (MA-1456): one log line as a wait starts ("waiting up to 30 seconds for the archive folder to be reachable again… (SYSTEM'S WORDS)") and one as it ends. |
 | CI time | See the round's report: `ci.yml` and `release.yml` run `go test ./... -timeout 20m`; the round measured `internal/app` and `internal/desktop` on this branch against `main`. |
+
+*Corrected 2026-11-14 by the patch builder, after the scoped final check (its security-1 and wording-2): "the Desktop's log says so" in the L0 row above is true only of the program's standard error, which the Start menu's program (no console) shows nowhere. The last round (MA-1458) records the fallback in the instance file and shows one information line in Status & health and `status`, so it can be seen, and the signed-in L0 check can be read off the dashboard. The same round narrowed the fallback to the label's own refusal with one retry for anything else, and lets Watch write the label again (MA-1459).*
