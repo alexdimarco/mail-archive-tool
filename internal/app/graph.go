@@ -216,8 +216,21 @@ func RunGraph(ctx context.Context, g GraphOptions, opts Options, logger *log.Log
 			}
 		}()
 	}
+	// A capture refused because another computer is tidying the archive (version 8) is a skip, not
+	// a failed run, as a local run's is (the B3 UX walk's U2; the B3 adversarial pass, round 2's
+	// G4): its "running" record is put back as it was, with no failure, history entry or streak.
+	idBefore := state.ArchiveID(opts.Out)
+	putBackRecord := state.SnapshotLastRun(opts.Out)
 	begun := beginRun(opts)
-	defer recordRun(opts, begun, &result, &err, logger)
+	defer func() {
+		if opts.Key == nil && TidyingElsewhere(err) {
+			if perr := putBackRecord(); perr != nil && logger != nil {
+				logger.Printf("warning: could not put back this archive's last-run record (%v)", perr)
+			}
+			return
+		}
+		recordRun(opts, begun, &result, &err, logger)
+	}()
 
 	// What a crashed earlier capture may have left behind (R5): stale temps — a
 	// half-written page, zip or manifest. Only temps, never zips: a capture's
@@ -230,6 +243,7 @@ func RunGraph(ctx context.Context, g GraphOptions, opts Options, logger *log.Log
 		if manifest, err = state.Load(mpath); err != nil {
 			return Result{}, withKind(state.FailManifestUnreadable, err)
 		}
+		endTidyWait(opts.Out, begun.Archive, idBefore) // past the manifest (G4)
 	}
 	manifestBefore := manifest.Len()
 

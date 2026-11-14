@@ -754,8 +754,26 @@ func Run(ctx context.Context, opts Options, logger *log.Logger, onProgress Progr
 	// archive (version 8) is a skip, not a failed run, so its "running" record is put back as it
 	// was, with no failure, history entry or streak (the B3 UX walk's U2, the lead's call;
 	// TidyingElsewhere). Everything before the refusal runs as before (the pre-sync, the sweeps).
+	idBefore := state.ArchiveID(opts.Out)
 	putBackRecord := state.SnapshotLastRun(opts.Out)
 	begun := beginRun(opts)
+	// archiveChanged says the folder no longer holds the archive this run began with (the B3
+	// adversarial pass, round 2's G1): the pre-sync below waits minutes for Thunderbird, and in
+	// that time a drive of a rotation may be swapped at the same path or the folder renamed. The
+	// lock file goes with the old folder, so nothing else tells the run before a checkpoint. It is
+	// another archive when the folder's record carries another id, or carries none while this run's
+	// lock is gone too (an archive an older MailArchive made). Plaintext only: an encrypted
+	// archive's record has no id, and its key opens only the archive it was made for.
+	archiveChanged := func() bool {
+		if opts.Key != nil || begun.Archive == "" {
+			return false
+		}
+		id := state.ArchiveID(opts.Out)
+		if id == begun.Archive {
+			return false
+		}
+		return id != "" || lock.StillHeld() != nil
+	}
 	// The opt-in Thunderbird pre-sync runs here, after the lock and the run's
 	// start and before any source is read; nil unless a caller opts in, and it
 	// never fails the run (design thunderbird-presync §4.1). Its warnings join
@@ -798,6 +816,14 @@ func Run(ctx context.Context, opts Options, logger *log.Logger, onProgress Progr
 	}
 	rec := begun
 	defer func() {
+		// Nothing is written into a folder that now holds another archive: neither this run's
+		// record (it carries this archive's id) nor the skip's put-back (G1).
+		if archiveChanged() {
+			if logger != nil {
+				logger.Printf("warning: %s no longer holds the archive this backup began with; nothing was recorded in it", opts.Out)
+			}
+			return
+		}
 		if opts.Key == nil && TidyingElsewhere(err) {
 			if perr := putBackRecord(); perr != nil && logger != nil {
 				logger.Printf("warning: could not put back this archive's last-run record (%v)", perr)
@@ -856,6 +882,19 @@ func Run(ctx context.Context, opts Options, logger *log.Logger, onProgress Progr
 		if manifest, err = state.Load(mpath); err != nil {
 			return Result{}, withKind(state.FailManifestUnreadable, err)
 		}
+		// Again once the manifest has loaded, under the lock, before any Gmail store is switched
+		// or anything written (G1): the folder still holds the archive this run began with, and
+		// the lock is still this run's. Otherwise the run stops here, and its deferred record
+		// writes nothing into a folder that now holds another archive.
+		if archiveChanged() {
+			return Result{}, withKind(state.FailLockLost, archiveChangedError(opts.Out))
+		}
+		if err := lock.StillHeld(); err != nil {
+			return Result{}, withKind(state.FailLockLost, err)
+		}
+		// Past the manifest: this archive's wait for another computer's tidy-up has ended,
+		// whatever started this run (the B3 adversarial pass, round 2's G4).
+		endTidyWait(opts.Out, begun.Archive, idBefore)
 	}
 	manifestBefore := manifest.Len()
 
@@ -981,7 +1020,13 @@ func Run(ctx context.Context, opts Options, logger *log.Logger, onProgress Progr
 	// fault counts as processed for the checkpoint gate below, so a stretch of
 	// nothing but faults still saves and still re-checks the lock (FC12).
 	lr := &localRun{exp: exp, out: opts.Out, snapDir: snapDir, runAt: runAt, logger: logger, lock: lock}
-	lr.gmail = newGmailRun(manifest, opts, begun.Archive, logger)
+	// The yes is checked against the id the folder's record carries now, after the manifest load,
+	// as well as the one the run began with (G1): it is applied only when the two are the same.
+	archiveNow := ""
+	if begun.Archive != "" && state.ArchiveID(opts.Out) == begun.Archive {
+		archiveNow = begun.Archive
+	}
+	lr.gmail = newGmailRun(manifest, opts, archiveNow, logger)
 	for _, p := range opts.OutlookExported {
 		if lr.outlookFresh == nil {
 			lr.outlookFresh = map[string]bool{}
@@ -1158,6 +1203,12 @@ func Run(ctx context.Context, opts Options, logger *log.Logger, onProgress Progr
 // this run did is recorded and the next run repeats it. It names the file and
 // the remedy; recordRun finalizes the last-run record failed with it, so
 // `status` reports RED instead of a green "ok".
+// archiveChangedError is a run's refusal when its folder came to hold another archive while it
+// waited (the B3 adversarial pass, round 2's G1): nothing was read into it or written.
+func archiveChangedError(out string) error {
+	return fmt.Errorf("the archive folder %s now holds another archive than the one this backup began with (its drive was changed, or the folder was moved, while the backup waited): nothing was written into it. Run the backup again", out)
+}
+
 // stopOnLostLock ends the run as a lost lock when a sealed save found the lock gone
 // at its commit point (container.ErrLockLost), as a checkpoint's own check does —
 // so no more is written into an archive another program may now own (CON-3).

@@ -241,6 +241,11 @@ const (
 	TidyUpWords = "Another computer started tidying this archive with a newer MailArchive (it removes extra copies of Gmail emails). Nothing is lost. Until it finishes, this computer cannot back up into it or add it. To finish it, open MailArchive on that computer, or install the newest MailArchive here and click Resume tidy-up on this archive's card."
 )
 
+// TidySkippedLead begins a scheduled backup's line when another computer is tidying the archive:
+// the run-job's, a `mailarchive schedule` job's and the scheduled Microsoft 365 capture's alike
+// (the B3 adversarial pass, round 2's G4).
+const TidySkippedLead = "Skipped, not failed: "
+
 // TidyWaitSinceLine is said after the tidy-up words when this computer's scheduled backups have
 // waited for the tidy-up since t (the B3 UX walk's U2).
 func TidyWaitSinceLine(t time.Time) string {

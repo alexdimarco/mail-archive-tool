@@ -11,6 +11,7 @@ import (
 	"errors"
 	"log"
 
+	"mail-archive-tool/internal/gmailanswer"
 	"mail-archive-tool/internal/state"
 )
 
@@ -133,6 +134,22 @@ func (g *gmailRun) store(m *state.Manifest, token string) {
 func TidyingElsewhere(err error) bool {
 	var newer *state.NewerFormatError
 	return errors.As(err, &newer) && newer.Plain() == state.TidyUpWords
+}
+
+// endTidyWait ends this computer's wait for another computer's tidy-up of the plaintext archive at
+// out, once a run of it got past the manifest (the B3 adversarial pass, round 2's G4): the wait is
+// kept by archive id (G3), so the run ends the wait of the id it began with, and, when the archive's
+// record carried no id before this run gave it one, the wait kept under no id. Best effort, and
+// nothing is written when no wait is kept: every caller of the engine (the scheduled run-job, a
+// `mailarchive schedule` job, a backup at a terminal, the Desktop's Run now and capture) ends it.
+func endTidyWait(out, archive, idBefore string) {
+	if archive == "" {
+		return // an encrypted archive's run: it is never tidied, and keeps no wait
+	}
+	_ = gmailanswer.ClearTidyWaitFor(out, archive)
+	if idBefore == "" {
+		_ = gmailanswer.ClearTidyWaitFor(out, "")
+	}
 }
 
 // appendToken adds t to list once (a store read twice in a run is one store).

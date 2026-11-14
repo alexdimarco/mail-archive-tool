@@ -17,6 +17,7 @@ import (
 	"mail-archive-tool/internal/app"
 	"mail-archive-tool/internal/backupalert"
 	"mail-archive-tool/internal/export"
+	"mail-archive-tool/internal/gmailanswer"
 	"mail-archive-tool/internal/graph"
 	"mail-archive-tool/internal/schedule"
 	"mail-archive-tool/internal/seal"
@@ -161,6 +162,22 @@ func HeadlessCapture(cfg Config, logw io.Writer) error {
 	// ago: skip quietly, naming it (R3C-12). Nothing was recorded.
 	if line, quiet := app.ScheduledLockSkip(out, err, time.Now()); quiet {
 		logger.Printf("%s", line)
+		return nil
+	}
+	// Another computer is tidying the archive (version 8): a skip, not a failure, as the scheduled
+	// local backup's is (the B3 UX walk's U2; the B3 adversarial pass, round 2's G4). The engine put
+	// the archive's record back as it was. No alert for the first 3 days of the wait; from then on
+	// each waiting capture reports to the alert streak, which sends one email, worded as a wait.
+	if app.TidyingElsewhere(err) {
+		logger.Printf("%s%s", state.TidySkippedLead, state.TidyUpWords)
+		w, nerr := gmailanswer.NoteTidyWait(out, time.Now())
+		if nerr != nil {
+			logger.Printf("warning: when this wait began could not be kept on this computer (%v)", nerr)
+			return nil
+		}
+		if w.Due(time.Now()) {
+			cfg.reportRun(key, out, alert.ResultFailed, fmt.Errorf("%w %s", err, state.TidyWaitSinceLine(w.Since)), 0, logger)
+		}
 		return nil
 	}
 	// Refused because the folder holds no archive (the emptied-folder guard under the lock, or

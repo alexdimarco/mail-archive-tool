@@ -353,8 +353,8 @@ func RunHeadless(path string) int {
 		tidyWaitSkip(key, j, runErr, logger)
 		return 0
 	}
-	// Past the manifest: a wait for another computer's tidy-up has ended.
-	_ = gmailanswer.ClearTidyWait(j.Out)
+	// A wait for another computer's tidy-up is ended by the engine once a run of the archive gets
+	// past the manifest, whatever started it (the B3 adversarial pass, round 2's G4).
 	// Refused because the folder holds no archive — the emptied-folder guard, or the folder
 	// gone (archive_absent), or a delete of it that did not finish (MA-1044): what this run
 	// wrote there before its lock goes too, the PSTs (a plaintext copy of the mailbox), the PST
@@ -427,16 +427,13 @@ func RunHeadless(path string) int {
 	return 0
 }
 
-// tidySkippedLine is a scheduled run's line when another computer is tidying the archive.
-const tidySkippedLine = "Skipped, not failed: "
-
 // tidyWaitSkip handles a scheduled run that met an archive another computer is tidying (the B3
 // UX walk's U2): it says so in the run log and on standard error, keeps on this computer when the
 // wait began, and once the wait has lasted 3 days reports it to the backup alert's failure streak,
 // which sends one email and one Desktop notice for it (and the recovery once a backup goes
 // through). Before that, no alert: the tidy-up is the other computer's and nothing is wrong here.
 func tidyWaitSkip(key string, j job.Job, runErr error, logger *log.Logger) {
-	line := tidySkippedLine + state.TidyUpWords
+	line := state.TidySkippedLead + state.TidyUpWords
 	logger.Printf("%s", line)
 	fmt.Fprintln(os.Stderr, "mailarchive run-job: "+line)
 	w, err := gmailanswer.NoteTidyWait(j.Out, time.Now())

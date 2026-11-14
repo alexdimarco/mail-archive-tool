@@ -444,6 +444,9 @@ func runExport(args []string) error {
 	// A yes this computer kept for the archive is spent once this backup switched its stores on
 	// (A1): cleared here, best effort (gmailanswer.Read leaves spent stores out anyway).
 	_ = gmailanswer.Settle(opts.Out)
+	if scheduledTidySkip(logger, *o.unattended, opts.Out, runErr) {
+		return nil
+	}
 	// The "Done. …" summary (and its -raw/verification lines) belongs to a run
 	// that reached completion — a clean finish, a saved interrupt, or a partial
 	// run (its walk finished; the "Not captured" block says what it could not
@@ -1893,9 +1896,29 @@ func runGraph(args []string) (err error) {
 	}
 
 	result, runErr := app.RunGraph(ctx, gopts, opts, logger)
+	if scheduledTidySkip(logger, *o.unattended, *o.out, runErr) {
+		return nil
+	}
 	printSummaryLed(logger, result, *o.index, *o.keepRaw, *o.out, summaryLead(runErr))
 	err = deleteRefusalAtTerminal(graphOutcome(logger, runErr), *o.out, "")
 	return err
+}
+
+// scheduledTidySkip handles a scheduled backup (a `mailarchive schedule` job: -unattended) that met
+// another computer's tidy-up of the archive, as the run-job does (the B3 UX walk's U2; the B3
+// adversarial pass, round 2's G4): a skip, not a failure. It says so, keeps on this computer when
+// the wait began (so `status` says since when), and reports true: the job exits 0. Such a job has
+// no email alerts of its own. A backup typed at a terminal is not a skip (it exits 1, "Not backed
+// up:"), and keeps no wait.
+func scheduledTidySkip(logger *log.Logger, unattended bool, out string, runErr error) bool {
+	if !unattended || !app.TidyingElsewhere(runErr) {
+		return false
+	}
+	logger.Printf("%s%s", state.TidySkippedLead, state.TidyUpWords)
+	if _, err := gmailanswer.NoteTidyWait(out, time.Now()); err != nil {
+		logger.Printf("warning: when this wait began could not be kept on this computer (%v)", err)
+	}
+	return true
 }
 
 // printsSummary says whether a run that returned runErr reached completion, so
