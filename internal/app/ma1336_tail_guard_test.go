@@ -131,7 +131,7 @@ func TestAFolderSwappedInTheRunsTailGetsNoPagesOrReadme(t *testing.T) {
 				t.Fatal("premise: the tail was not reached")
 			}
 			rc, msg := ma1328LockLost(err)
-			assure.Refused(t, rc, msg, assure.Names(filepath.Join(outA, lockfile.Name), "during the run", "run again"),
+			assure.Refused(t, rc, msg, assure.Names(filepath.Join(outA, lockfile.Name), "during the run", "Backup stopped: the archive folder changed during the backup", "then run the backup again"),
 				assure.NoSideEffect(func() bool { return ma1336Untouched(t, outA, before) }))
 		})
 	}
@@ -176,7 +176,7 @@ func TestADriveLetterMovedInTheRunsTailGetsNoPages(t *testing.T) {
 		t.Fatal("premise: the tail was not reached")
 	}
 	rc, msg := ma1328LockLost(err)
-	assure.Refused(t, rc, msg, assure.Names(lockfile.Name, "during the run", "run again"),
+	assure.Refused(t, rc, msg, assure.Names(lockfile.Name, "during the run", "Backup stopped: the archive folder changed during the backup", "then run the backup again"),
 		assure.NoSideEffect(func() bool { return ma1336Untouched(t, outB, before) }))
 }
 
@@ -346,7 +346,7 @@ func TestACaptureWhoseFolderIsSwappedOutsideItsWalkWritesNothingIntoTheOther(t *
 				t.Fatal("premise: the swap was not reached")
 			}
 			rc, msg := ma1328LockLost(err)
-			assure.Refused(t, rc, msg, assure.Names(filepath.Join(outA, lockfile.Name), "during the run", "run again"),
+			assure.Refused(t, rc, msg, assure.Names(filepath.Join(outA, lockfile.Name), "during the run", "Backup stopped: the archive folder changed during the backup", "then run the backup again"),
 				assure.NoSideEffect(func() bool { return ma1336Untouched(t, outA, before) }))
 		})
 	}

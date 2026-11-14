@@ -141,12 +141,51 @@ func (l *Lock) StillHeld() error {
 	// in-place overwrite that kept the same inode was previously invisible.
 	data, err := os.ReadFile(l.path)
 	if err != nil {
-		return fmt.Errorf("lock %s was removed during the run (%v): stopping so two runs cannot overlap; run again", l.path, err)
+		return &LostError{Path: l.path, Err: err}
 	}
 	if !bytes.Contains(data, []byte("nonce="+l.nonce)) {
-		return fmt.Errorf("lock %s was replaced during the run: stopping so two runs cannot overlap; run again", l.path)
+		return &LostError{Path: l.path}
 	}
 	return nil
+}
+
+// LostError is StillHeld's answer when the lock file at its path is no longer this holder's,
+// or could not be read to tell. Err is why it could not be read; nil when it was read and holds
+// another holder's mark (it was replaced). Its text is what StillHeld always said. A caller that
+// must tell "not ours" from "could not read" asks Removed, Replaced and Unreadable (the 1.7.2
+// archive guard, the patch review's P1).
+type LostError struct {
+	Path string
+	Err  error
+}
+
+func (e *LostError) Error() string {
+	if e.Err != nil {
+		return fmt.Sprintf("lock %s was removed during the run (%v): stopping so two runs cannot overlap; run again", e.Path, e.Err)
+	}
+	return fmt.Sprintf("lock %s was replaced during the run: stopping so two runs cannot overlap; run again", e.Path)
+}
+
+func (e *LostError) Unwrap() error { return e.Err }
+
+// Removed says the lock file is not there: a definite answer that the lock is not this holder's.
+func (e *LostError) Removed() bool { return e.Err != nil && errors.Is(e.Err, os.ErrNotExist) }
+
+// Replaced says the lock file was read and holds another holder's mark: a definite answer.
+func (e *LostError) Replaced() bool { return e.Err == nil }
+
+// Unreadable says the lock file could not be read for another reason (a permission, an I/O error,
+// a network folder reconnecting): no answer about whose it is.
+func (e *LostError) Unreadable() bool { return e.Err != nil && !e.Removed() }
+
+// Short is the lock's sentence without the system's error and without the advice: "lock PATH was
+// removed during the run" or "… was replaced during the run" (the words a person's message keeps
+// after "Details:", the 1.7.2 friction review's F1 and F6).
+func (e *LostError) Short() string {
+	if e.Replaced() {
+		return fmt.Sprintf("lock %s was replaced during the run", e.Path)
+	}
+	return fmt.Sprintf("lock %s was removed during the run", e.Path)
 }
 
 // acquireGrace and probeGrace are how long a refused tryLock is retried before the lock

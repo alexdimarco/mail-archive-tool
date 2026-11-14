@@ -728,6 +728,11 @@ func hashFile(full string, limit int64) (string, int64, error) {
 	return hex.EncodeToString(h.Sum(nil)), n, nil
 }
 
+// unexpectedNote is verify's one line on `unexpected` files: what can leave them, among them the
+// new message files a backup wrote into this folder in the seconds before it noticed its drive had
+// been swapped (the 1.7.2 friction review's F8).
+const unexpectedNote = "note: `unexpected` files are under a store directory but owned by no record — a leftover from an old-binary excursion, a file added by hand, or message files another archive's backup wrote here before it noticed its drive had been swapped; compare bytes before deleting anything."
+
 // VerifySummary renders the report as the lines `verify` prints (stdout), in
 // verify's plain voice: a coverage line, the per-category counts, a bounded
 // sample of the problems, the `verify -record` remedy when anything is
@@ -760,7 +765,7 @@ func VerifySummary(r Report) []string {
 		}
 	}
 	if r.Unexpected > 0 {
-		out = append(out, "note: `unexpected` files are under a store directory but owned by no record — a leftover from an old-binary excursion, or a file added by hand; compare bytes before deleting anything.")
+		out = append(out, unexpectedNote)
 	}
 	if r.Unrecorded > 0 {
 		out = append(out, fmt.Sprintf("WARN: %d file(s) carry no recorded fixity — run `mailarchive verify -record -out %q` to baseline them (records the bytes as they are now, not proof they were pristine)", r.Unrecorded, r.Out))

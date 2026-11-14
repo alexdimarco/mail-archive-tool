@@ -44,6 +44,9 @@ type RunFatalError struct {
 	// scratch says the failing drive is MailArchive's working folder (an encrypted
 	// archive's -copy-first snapshot), not the archive's.
 	scratch bool
+	// gone says the archive's location itself could not be reached (unavailable), not a
+	// full or read-only drive.
+	gone bool
 }
 
 func (e *RunFatalError) Error() string { return e.Msg }
@@ -91,7 +94,7 @@ func runFatalFor(out string, kind export.FatalKind, err error) *RunFatalError {
 // unavailable is the refusal for an archive location that is gone (a removed
 // drive, a dropped share, a root deleted under the run).
 func unavailable(out string, cause error) *RunFatalError {
-	return &RunFatalError{Err: cause, Msg: cleanText(fmt.Sprintf("the archive location %s is unavailable (%v) — reconnect the drive or share and re-run. %s", out, cause, keptNote))}
+	return &RunFatalError{gone: true, Err: cause, Msg: cleanText(fmt.Sprintf("the archive location %s is unavailable (%v) — reconnect the drive or share and re-run. %s", out, cause, keptNote))}
 }
 
 // writtenPath is the file or directory an export error names ("" if none).
@@ -200,7 +203,9 @@ func (lr *localRun) probe(s *sourceRun) error {
 			if lr.onLockLost != nil {
 				lr.onLockLost(err)
 			}
-			return unavailable(lr.out, err)
+			fatal := unavailable(lr.out, err)
+			fatal.gone = false // the folder is there: its lock is not the run's
+			return fatal
 		}
 	}
 	return nil
@@ -443,6 +448,11 @@ func (s *sourceRun) handle(ctx context.Context, abort func() error, folderPath [
 		return nil
 	}
 
+	// The run's own proof before the write found the folder unavailable: its words as they are.
+	var proved *RunFatalError
+	if errors.As(exportErr, &proved) {
+		return proved
+	}
 	tokenDir := filepath.Join(lr.out, s.token)
 	if kind := export.FatalKindAt(exportErr, lr.out, tokenDir); kind != export.FatalNone {
 		return runFatalFor(lr.out, kind, exportErr)

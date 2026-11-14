@@ -52,6 +52,18 @@ func WriteSecretFileAtomic0600(path string, data []byte) error {
 // no-write-up and no-execute-up (NR, NW, NX).
 const secretFileLabel = "S:(ML;;NRNWNX;;;ME)"
 
+// SecretCreateRefused says err is WriteSecretFileAtomic0600's refusal to create a secret file
+// with its protecting label (on Windows, createSecretTemp's "createsecret" error: a file system
+// that keeps no labels, or a process below Medium integrity), and gives the folder and the
+// system's own words: such a secret is not written at all.
+func SecretCreateRefused(err error) (dir string, cause error, ok bool) {
+	var pe *os.PathError
+	if errors.As(err, &pe) && pe.Op == "createsecret" {
+		return filepath.Dir(pe.Path), pe.Err, true
+	}
+	return "", nil, false
+}
+
 func writeAtomic(path string, data []byte, pattern string, create func(dir, pattern string) (*os.File, error)) error {
 	dir := filepath.Dir(path)
 	if err := os.MkdirAll(dir, 0o700); err != nil {

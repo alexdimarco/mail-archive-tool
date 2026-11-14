@@ -368,6 +368,12 @@ type Report struct {
 // (F9; P3-8 friction: status mixed local time and UTC unlabelled).
 const localStamp = "2006-01-02 15:04 MST"
 
+// runNeverFinishedWords is the RED of a backup whose "running" record is still there with no
+// process behind it (run_never_finished): it was stopped, the computer went down, or, since 1.7.2,
+// it stopped because its drive was swapped or disconnected and so could not write how it ended
+// into this folder (the 1.7.2 friction review's F3). %s is when it started.
+const runNeverFinishedWords = "the backup started %s did not finish and could not record how it ended: MailArchive was stopped, the computer shut down or restarted, or this archive's drive was disconnected or swapped during the backup. Run the backup again."
+
 func (r *Report) warn(code, msg string) {
 	if r.Posture != "RED" {
 		r.Posture = "WARN"
@@ -745,7 +751,7 @@ func assessKeyless(r *Report, in Input, now time.Time) {
 			case alive:
 				r.red("run_stuck", fmt.Sprintf("a run started %s is still running (pid %d) — longer than the schedule period; check the log", lr.Started.Local().Format(localStamp), lr.PID))
 			default:
-				r.red("run_never_finished", fmt.Sprintf("the run started %s never finished (pid %d is gone: crash, kill, or power loss) — check the log and run again", lr.Started.Local().Format(localStamp), lr.PID))
+				r.red("run_never_finished", fmt.Sprintf(runNeverFinishedWords, lr.Started.Local().Format(localStamp)))
 			}
 		case state.RunCancelled:
 			r.warn("run_cancelled", fmt.Sprintf("the last backup (%s) was cancelled; what it saved is kept, and the next backup finishes what it left", lr.Started.Local().Format(localStamp)))

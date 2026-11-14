@@ -44,6 +44,18 @@ type unsafeTokenError struct{ msg string }
 func (e *unsafeTokenError) Error() string        { return e.msg }
 func (e *unsafeTokenError) Is(target error) bool { return target == ErrUnsafeToken }
 
+// ErrArchiveGone matches (errors.Is) an exporter with KeepOutDir finding its OutDir not there
+// when it would make a message's folder inside it (the 1.7.2 friction review's F5): run-fatal, the
+// archive location gone, never a folder's own fault.
+var ErrArchiveGone = errors.New("the archive folder is not there")
+
+// archiveGoneError is ErrArchiveGone with the system's own words for the missing folder.
+type archiveGoneError struct{ err error }
+
+func (e *archiveGoneError) Error() string        { return e.err.Error() }
+func (e *archiveGoneError) Unwrap() error        { return e.err }
+func (e *archiveGoneError) Is(target error) bool { return target == ErrArchiveGone }
+
 // IsRunFatal reports whether err stops the whole run instead of costing one folder
 // or one item (fault-isolation §4.6, FC12): the archive's volume is full (ENOSPC,
 // EDQUOT), read-only (EROFS), gone or failing (EIO, ENXIO, ENODEV, ENOTCONN, ESTALE,
@@ -76,6 +88,9 @@ func FatalKindAt(err error, roots ...string) FatalKind {
 	}
 	if errors.Is(err, ErrUnsafeToken) {
 		return FatalToken
+	}
+	if errors.Is(err, ErrArchiveGone) {
+		return FatalGone
 	}
 	var en syscall.Errno
 	if !errors.As(err, &en) {

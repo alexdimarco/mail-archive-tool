@@ -24,6 +24,7 @@ import (
 	"mail-archive-tool/internal/instance"
 	"mail-archive-tool/internal/localweb"
 	"mail-archive-tool/internal/seal"
+	"mail-archive-tool/internal/util"
 )
 
 // launchEnv is what a launch needs from its surroundings: the per-account state
@@ -152,6 +153,17 @@ func stripControl(s string) string {
 
 func noStateDirText(err error) string {
 	return fmt.Sprintf("MailArchive Desktop cannot start: it has no private folder of your account to keep its own state in (%v). Do this: sign out and back in so your profile folder is set, then start MailArchive again.", err)
+}
+
+// instanceStartError is the Desktop's start failure when its instance file (its private start
+// file, which holds the hand-off key) could not be written. When Windows would not create it with
+// the label that keeps sandboxed programs from reading it (util.SecretCreateRefused), it says so in
+// plain words (the 1.7.2 friction review's F11); otherwise it says what it always said.
+func instanceStartError(err error) error {
+	if dir, cause, ok := util.SecretCreateRefused(err); ok {
+		return fmt.Errorf("MailArchive Desktop could not start: Windows would not protect its private start file in %s (%w). That folder must be on this computer's own drive.", stripControl(dir), cause)
+	}
+	return fmt.Errorf("could not record this instance: %w", err)
 }
 
 // launchOpts is what a launch was asked for.
@@ -487,7 +499,7 @@ func serveInstance(ctx context.Context, h *instance.Holder, o *launchOpts, env *
 	if err := h.Publish(info); err != nil {
 		ln.Close()
 		readerLn.Close()
-		return fmt.Errorf("could not record this instance: %w", err)
+		return instanceStartError(err)
 	}
 	stopWatch := h.Watch(env.WatchEvery, func(s string) { fmt.Fprintln(env.Stderr, "mailarchive desktop: "+s) })
 	defer stopWatch()

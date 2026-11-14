@@ -3,6 +3,7 @@ package app
 import (
 	"context"
 	"errors"
+	"fmt"
 	"os"
 	"path/filepath"
 	"runtime"
@@ -98,30 +99,58 @@ func TestAHealthyRunIsNeverStoppedByItsProofs(t *testing.T) {
 	ma1329Healthy(t, "a Microsoft 365 capture", outG, capture(outG, full, discard()))
 }
 
-// covers: MA-1329, R5
-// A proof that fails is asked again before it counts (archiveProofRetries), so a moment in which a
-// healthy archive's folder or lock file cannot be read (a network folder reconnecting, a scanner)
-// is not a lost lock; one that keeps failing is. Positive twins first: a lock that stays unreadable
-// stops the run as a lost lock ("permission denied"), and a proof whose answer stays no is no after
-// every retry. Then: a proof that fails once and is then yes is yes; and a real run whose lock file
-// is unreadable for a moment (made unreadable at one message, readable again 20 ms later, with the
-// proof due at every message) ends ok.
+// ma1329Wait makes a proof that cannot read give up after wait instead of its 30 s, for a test of
+// the run-fatal ending that need not wait it out (MA-1444's own tests keep the 30 s).
+func ma1329Wait(t *testing.T, wait time.Duration) {
+	t.Helper()
+	old := archiveUnreadableFor
+	archiveUnreadableFor = wait
+	t.Cleanup(func() { archiveUnreadableFor = old })
+}
+
+// covers: MA-1329, MA-1444, R5
+// A proof that could not read is asked again before it counts, so a moment in which a healthy
+// archive's folder or lock file cannot be read (a network folder reconnecting, a scanner) is not a
+// failure; one that stays unreadable ends as the archive location being unavailable, and a lock
+// that was read and is not the run's stops the proof at its first ask (the patch review's P1).
+// Positive twins first: a lock file holding another run's mark is no at the first ask, and no
+// again at once without another ask; a lock file gone from a folder that is there is no at the
+// first ask; a folder that is not there, and a lock file that stays unreadable, end as the
+// run-fatal "unavailable" after the wait (here made short), not as a lost lock. Then: a lock that
+// cannot be read once and is then the run's is yes; a lock "not found" while its folder vanishes
+// is asked again, as a folder that cannot be read; and a real run whose lock file is unreadable for
+// a moment (made unreadable at one message, readable again 20 ms later, with the proof due before
+// every write) ends ok, while one whose lock file stays unreadable ends "unavailable".
 func TestAMomentsUnreadableLockIsAskedAgain(t *testing.T) {
+	ma1329Wait(t, 300*time.Millisecond)
 	dir := tmpDir(t)
-	denied := errors.New("lock was removed during the run (permission denied)")
+	lockPath := filepath.Join(dir, lockfile.Name)
+	replaced := &lockfile.LostError{Path: lockPath}
 	asks := 0
-	always := &archiveGuard{out: dir, stillHeld: func() error { asks++; return denied }}
-	if err := always.prove(); !errors.Is(err, denied) || asks != len(archiveProofRetries)+1 {
-		t.Fatalf("twin: a proof whose answer stays no gave %v after %d asks, want it after %d", err, asks, len(archiveProofRetries)+1)
+	other := &archiveGuard{out: dir, stillHeld: func() error { asks++; return replaced }}
+	if err := other.prove(); !errors.Is(err, replaced) || asks != 1 {
+		t.Fatalf("twin: a lock holding another run's mark gave %v after %d asks, want it after 1", err, asks)
 	}
+	if err := other.prove(); !errors.Is(err, replaced) || asks != 1 {
+		t.Fatalf("twin: asked again, the stopped proof gave %v after %d asks in all, want its answer at once", err, asks)
+	}
+	removed := &lockfile.LostError{Path: lockPath, Err: os.ErrNotExist}
 	asks = 0
-	if err := always.lockGone(); !errors.Is(err, denied) || asks != len(archiveProofRetries)+1 {
-		t.Fatalf("twin: the record's question gave %v after %d asks", err, asks)
+	deleted := &archiveGuard{out: dir, stillHeld: func() error { asks++; return removed }}
+	if err := deleted.prove(); !errors.Is(err, removed) || asks != 1 {
+		t.Fatalf("twin: a lock file gone from a folder that is there gave %v after %d asks, want it after 1", err, asks)
 	}
-	gone := &archiveGuard{out: filepath.Join(dir, "pulled"), stillHeld: func() error { return nil }}
 	var fatal *RunFatalError
-	if err := gone.prove(); !errors.As(err, &fatal) || !strings.Contains(err.Error(), "is unavailable") {
-		t.Fatalf("twin: a folder that is not there gave %v, want the run-fatal \"unavailable\"", err)
+	began := time.Now()
+	gone := &archiveGuard{out: filepath.Join(dir, "pulled"), stillHeld: func() error { return nil }}
+	if err := gone.prove(); !errors.As(err, &fatal) || !strings.Contains(err.Error(), "is unavailable") || !strings.Contains(err.Error(), "reconnect the drive or share") || time.Since(began) < 300*time.Millisecond {
+		t.Fatalf("twin: a folder that is not there gave %v after %v, want the run-fatal \"unavailable\" after the wait", err, time.Since(began))
+	}
+	denied := &lockfile.LostError{Path: lockPath, Err: os.ErrPermission}
+	asks = 0
+	stays := &archiveGuard{out: dir, stillHeld: func() error { asks++; return denied }}
+	if err := stays.prove(); !errors.As(err, &fatal) || !strings.Contains(err.Error(), "is unavailable") || strings.Contains(err.Error(), "during the run") || asks < 2 {
+		t.Fatalf("twin: a lock file that stays unreadable gave %v after %d asks, want the run-fatal \"unavailable\" after asking again", err, asks)
 	}
 	asks = 0
 	once := &archiveGuard{out: dir, stillHeld: func() error {
@@ -132,7 +161,23 @@ func TestAMomentsUnreadableLockIsAskedAgain(t *testing.T) {
 		return nil
 	}}
 	if err := once.prove(); err != nil || asks != 2 {
-		t.Fatalf("a proof that failed once gave %v after %d asks, want yes after 2", err, asks)
+		t.Fatalf("a proof that could not read once gave %v after %d asks, want yes after 2", err, asks)
+	}
+	vanishing := filepath.Join(dir, "vanishing")
+	if err := os.Mkdir(vanishing, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	asks = 0
+	dropped := &archiveGuard{out: vanishing, stillHeld: func() error {
+		asks++
+		if asks == 1 {
+			_ = os.Remove(vanishing) // the share drops between the folder's look and the lock's
+			return removed
+		}
+		return nil
+	}}
+	if err := dropped.prove(); !errors.As(err, &fatal) || asks != 1 {
+		t.Fatalf("a lock \"not found\" while its folder vanished gave %v after %d asks, want it asked as a folder that cannot be read", err, asks)
 	}
 
 	if runtime.GOOS == "windows" {
@@ -168,8 +213,11 @@ func TestAMomentsUnreadableLockIsAskedAgain(t *testing.T) {
 		return outA, err
 	}
 	_, err := unreadable(t, 0)
-	rc, msg := ma1328LockLost(err)
-	assure.Refused(t, rc, msg, assure.Names(lockfile.Name, "permission denied", "run again"))
+	rc := 0
+	if errors.As(err, &fatal) && FailureKind(err) == state.FailArchiveUnwritable {
+		rc = 1
+	}
+	assure.Refused(t, rc, fmt.Sprint(err), assure.Code(1), assure.Names(lockfile.Name, "permission denied", "is unavailable", "reconnect the drive or share and re-run"))
 	out, err := unreadable(t, 20*time.Millisecond)
 	ma1329Healthy(t, "a run whose lock file was unreadable for a moment", out, err)
 }

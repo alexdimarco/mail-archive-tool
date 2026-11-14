@@ -9,6 +9,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"io/fs"
 	"log"
 	"os"
 	"path/filepath"
@@ -148,6 +149,22 @@ type Exporter struct {
 	// archive's units are never asked about: their names are drawn at random per archive, so
 	// none is another archive's.
 	BeforeReplace func(path string) error
+
+	// BeforeMessageWrite, if set, is asked once per message right before the exporter writes
+	// anything of it (its folder, page, original, attachments or sealed units); a message only
+	// skipped asks nothing. A non-nil answer: Export writes nothing of the message and returns
+	// the answer, unwrapped, so the walk stops. A run proves with it that its folder is still its
+	// own while it writes, and never while it only reads (the 1.7.2 archive guard; the patch
+	// review's P1).
+	BeforeMessageWrite func() error
+
+	// KeepOutDir, when set, forbids the exporter to make OutDir itself: a message's folder is made
+	// only inside an OutDir that is there. Once a run has begun on its archive, a missing OutDir is
+	// a drive disconnected or swapped, or the folder moved or renamed, and making it again would
+	// leave the run's new files in an empty stand-in (the 1.7.2 friction review's F5); Export then
+	// returns an error that is ErrArchiveGone, which the run words as the archive location being
+	// unavailable.
+	KeepOutDir bool
 
 	// BeforeWrite, if set, is called with the path of each file the exporter is
 	// about to write (the page and the preserved original); a non-nil error is that
@@ -417,6 +434,11 @@ func (e *Exporter) Export(store string, folderPath []string, m *model.Message) (
 	}
 	dirParts := append([]string{e.OutDir, store}, writeFolderPath...)
 	dir := filepath.Join(dirParts...)
+	if e.BeforeMessageWrite != nil {
+		if err := e.BeforeMessageWrite(); err != nil {
+			return false, err
+		}
+	}
 	// An encrypted archive has no folder tree on disk: dir stays the LOGICAL folder
 	// the record's Path is computed in, and the message's units go to units/
 	// (phase2a §3). Its unit is the record's own when the final key already has one,
@@ -441,7 +463,7 @@ func (e *Exporter) Export(store string, folderPath []string, m *model.Message) (
 				return false, &ItemError{msg: "draw a unit", Err: err}
 			}
 		}
-	} else if err := os.MkdirAll(dir, 0o755); err != nil {
+	} else if err := e.makeDir(dir); err != nil {
 		return false, &FolderError{Dir: dir, Err: err}
 	}
 	var sealed state.SealedSet
@@ -1037,6 +1059,21 @@ func (e *Exporter) flushDeletes() {
 		}
 	}
 	e.pendingDeletes = nil
+}
+
+// makeDir makes a message's folder dir (os.MkdirAll), except that with KeepOutDir it never makes
+// OutDir itself: when dir is not there and OutDir is not either, it returns an error that is
+// ErrArchiveGone (the friction review's F5).
+func (e *Exporter) makeDir(dir string) error {
+	if e.KeepOutDir {
+		if fi, err := os.Stat(dir); err == nil && fi.IsDir() {
+			return nil
+		}
+		if _, err := os.Stat(e.OutDir); err != nil && errors.Is(err, fs.ErrNotExist) {
+			return &archiveGoneError{err: err}
+		}
+	}
+	return os.MkdirAll(dir, 0o755)
 }
 
 // writeDigest is writeFileAtomicDigest behind the BeforeWrite seam.

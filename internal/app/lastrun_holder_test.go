@@ -83,7 +83,7 @@ func TestRunningExportIsJudgedByTheLockHolder(t *testing.T) {
 			continue
 		}
 		never := assure.Reached(t, reasonFor(now, "run_never_finished"), "the run_never_finished RED with "+who)
-		if now.Posture != "RED" || !strings.Contains(never, "run again") {
+		if now.Posture != "RED" || !strings.Contains(never, "Run the backup again") { // MA-1448's words
 			t.Errorf("holder %q: posture %s, reason %q — want RED naming the remedy", tc.holder, now.Posture, never)
 		}
 		if r := reasonFor(now, "run_in_progress"); r != "" {

@@ -536,6 +536,11 @@ func (w *mailboxWalk) exportOne(ref graph.MessageRef, f graph.Folder, folderKey 
 		return nil
 	}
 
+	// The run's own proof before the write found the folder unavailable: its words as they are.
+	var proved *RunFatalError
+	if errors.As(exportErr, &proved) {
+		return &walkAbort{proved}
+	}
 	tokenDir := filepath.Join(lr.out, w.token)
 	if kind := export.FatalKindAt(exportErr, lr.out, tokenDir); kind != export.FatalNone {
 		return &walkAbort{runFatalFor(lr.out, kind, exportErr)}

@@ -741,13 +741,14 @@ func Run(ctx context.Context, opts Options, logger *log.Logger, onProgress Progr
 	// record replaces it (completeness design TC-19: fingerprints carried forward).
 	tbPrev := previousThunderbird(opts)
 	begun := beginRun(opts)
-	// Before every save of the run's progress, on time during its walk and before each write of
-	// its tail, the folder is proved to still be this run's: there, and its lock file still this
-	// run's own (archiveguard.go). The pre-sync below waits minutes for Thunderbird and the walk
-	// reads for minutes; a drive of a rotation may be swapped at the same path or letter, or the
-	// folder renamed, in that time, and nothing of this archive's may then be written into the
-	// other (1.7.2).
+	// Before every save of the run's progress, before its writes during its walk and before each
+	// write of its tail, the folder is proved to still be this run's: there, and its lock file
+	// still this run's own (archiveguard.go). The pre-sync below waits minutes for Thunderbird and
+	// the walk reads for minutes; a drive of a rotation may be swapped at the same path or letter,
+	// or the folder renamed, in that time, and nothing of this archive's may then be written into
+	// the other (1.7.2). The "running" record just written binds the run to its folder.
 	proof := newArchiveGuard(opts, lock.StillHeld)
+	proof.noteBegun()
 	// What binds the run to its archive's folder once its lock is no longer its own (endUnheld):
 	// armed only by the first proof that follows the manifest's load, so the bytes it names were
 	// read while the folder was the run's (a manifest read after a swap is the other archive's).
@@ -795,17 +796,20 @@ func Run(ctx context.Context, opts Options, logger *log.Logger, onProgress Progr
 	rec := begun
 	defer func() {
 		// A run whose lock is no longer its own is not this archive's success: one that would
-		// otherwise end ok, or partly ok, ends as that lost lock (or "unavailable", the folder
-		// gone). Its failure is recorded only in a folder that still holds the archive it last
-		// read or wrote; nothing at all goes into one that may hold another archive now (a drive
-		// swapped at the same path or letter, the folder moved) or that another run took over
-		// (1.7.2; endUnheld).
+		// otherwise end ok, or partly ok, or that stopped on its lost lock, ends in the plain
+		// words of what it found (or "unavailable", the folder not reachable). Its failure is
+		// recorded only in a folder that still holds the archive it began in; nothing at all
+		// goes into one that may hold another archive now (a drive swapped at the same path or
+		// letter, the folder moved) or that another run took over (1.7.2; endUnheld).
 		if end, here := proof.endUnheld(); end != nil {
-			if err == nil || errors.Is(err, ErrPartial) {
+			if replacesEnd(err) {
 				err = end
 			}
 			if !here {
-				lockGoneWarning(logger, opts.Out, "backup")
+				var fatal *RunFatalError
+				if !errors.As(end, &fatal) {
+					stoppedWarning(logger, opts.Out)
+				}
 				return
 			}
 		}
@@ -848,9 +852,15 @@ func Run(ctx context.Context, opts Options, logger *log.Logger, onProgress Progr
 	}
 
 	// What a crashed earlier run may have left behind (R5): stale temps and
-	// orphan zips. Only files older than this run's start are touched.
-	if n := export.SweepOrphans(opts.Out, time.Now(), logger, programSweepSkip(opts)...); n > 0 {
+	// orphan zips. Only files older than this run's start are touched, and each
+	// removal is proved first: the sweep walks the whole folder by path, and after a
+	// swap that is the other archive's (1.7.2; the patch review's P5).
+	n, serr := export.SweepOrphansChecked(opts.Out, time.Now(), logger, func(string) error { return proof.prove() }, programSweepSkip(opts)...)
+	if n > 0 {
 		logger.Printf("swept %d orphaned temp/zip file(s) from an interrupted run", n)
+	}
+	if serr != nil {
+		return Result{}, proofStop(serr)
 	}
 	// An encrypted archive's snapshots live in its scratch folder: a crashed run's are
 	// reaped there, and the folder is removed (when empty) on every exit.
@@ -890,6 +900,8 @@ func Run(ctx context.Context, opts Options, logger *log.Logger, onProgress Progr
 		KeepRaw:  opts.KeepRaw,
 		RunAt:    runAt,
 		Units:    units,
+		// The run began on a folder that is there: it never makes it again (F5).
+		KeepOutDir: true,
 	}
 
 	if exporterSetup != nil {
@@ -1003,9 +1015,11 @@ func Run(ctx context.Context, opts Options, logger *log.Logger, onProgress Progr
 	checkpoint := func(stats export.Stats) {
 		processed := stats.Exported + lr.faults
 		if processed-lastCheckpoint < effectiveEvery(floor, manifest.Len()) {
-			// Between saves, a walk proves on time that its folder still holds its archive, so a
-			// long walk stops soon after a swap (round 3's H1); an encrypted walk after every
-			// message it wrote too (round 4's J2).
+			// Between saves, an encrypted walk proves after every message it wrote (round 4's
+			// J2). Nothing is proved on a timer while a walk only reads (the patch review's P1): a
+			// plaintext walk proves right before its next write once 10 s have passed
+			// (exp.BeforeMessageWrite), so a long walk that writes stops soon after a swap
+			// (round 3's H1).
 			if lockLost == nil && proof.dueAfter(stats) {
 				lockLost = proof.prove()
 			}
@@ -1014,12 +1028,9 @@ func Run(ctx context.Context, opts Options, logger *log.Logger, onProgress Progr
 		lastCheckpoint = processed
 		// The lock file is the run's guarantee of exclusivity; if it was removed
 		// or replaced under us, another run may now hold a fresh one. Stop
-		// rather than race it (R5). A plaintext run proves first that the folder still
-		// holds its archive (round 3's H1).
+		// rather than race it (R5). The proof asks the lock, after the folder still
+		// holding its archive (round 3's H1).
 		err := proof.prove()
-		if err == nil {
-			err = lock.StillHeld()
-		}
 		if err != nil && lockLost == nil {
 			lockLost = err
 			return
@@ -1037,9 +1048,11 @@ func Run(ctx context.Context, opts Options, logger *log.Logger, onProgress Progr
 		}
 	}
 	// Right before a file already in the folder is written over or removed, the folder is proved
-	// at once, not on time: a removal or an overwrite is what the other archive's own next backup
-	// could not undo (the round-5 review's K1; new files keep the 10 s bound).
+	// at once: a removal or an overwrite is what the other archive's own next backup could not
+	// undo (the round-5 review's K1). New files are proved before a message's first write once
+	// 10 s have passed since the last proof (the patch review's P1).
 	exp.BeforeReplace = proof.replaceGuard(&lockLost)
+	exp.BeforeMessageWrite = proof.writeGuard(&lockLost)
 	result = Result{Files: len(files), ManifestBefore: manifestBefore, FillableFrom: fillableFrom(files)}
 	var failures int
 	var firstFailed string
@@ -1083,6 +1096,11 @@ func Run(ctx context.Context, opts Options, logger *log.Logger, onProgress Progr
 				onProgress(stats)
 			}
 		}, func() error { return lockLost })
+		// A walk that found the folder gone: no proof waits for it again.
+		var ended *RunFatalError
+		if errors.As(runErr, &ended) {
+			proof.gone(ended)
+		}
 		if lockLost != nil {
 			// The lock was removed or replaced mid-run: another run may now own
 			// this archive. Do NOT write shared state (manifest/index/README) into

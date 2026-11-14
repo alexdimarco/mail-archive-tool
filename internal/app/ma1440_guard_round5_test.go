@@ -119,7 +119,7 @@ func TestAReplaceOrRemovalAfterASwapIsProvedFirst(t *testing.T) {
 				t.Fatal("premise: the walk was not reached")
 			}
 			rc, msg := ma1328LockLost(err)
-			assure.Refused(t, rc, msg, assure.Names(filepath.Join(outA, lockfile.Name), "during the run", "run again"),
+			assure.Refused(t, rc, msg, assure.Names(filepath.Join(outA, lockfile.Name), "during the run", "Backup stopped: the archive folder changed during the backup", "then run the backup again"),
 				assure.NoSideEffect(func() bool {
 					var lost []string
 					for _, d := range ma1336Changed(before, ma1336Files(t, outA)) {
@@ -184,7 +184,7 @@ func TestADriveLetterMovedBeforeAReplaceGetsNothingReplaced(t *testing.T) {
 		t.Fatal("premise: the walk was not reached")
 	}
 	rc, msg := ma1328LockLost(err)
-	assure.Refused(t, rc, msg, assure.Names(lockfile.Name, "during the run", "run again"),
+	assure.Refused(t, rc, msg, assure.Names(lockfile.Name, "during the run", "Backup stopped: the archive folder changed during the backup", "then run the backup again"),
 		assure.NoSideEffect(func() bool {
 			var lost []string
 			for _, d := range ma1336Changed(before, ma1336Files(t, outB)) {
@@ -263,7 +263,7 @@ func TestACapturesReplaceAfterASwapIsProvedFirst(t *testing.T) {
 		t.Fatal("premise: the listing was not reached")
 	}
 	rc, msg := ma1328LockLost(err)
-	assure.Refused(t, rc, msg, assure.Names(filepath.Join(outA, lockfile.Name), "during the run", "run again"),
+	assure.Refused(t, rc, msg, assure.Names(filepath.Join(outA, lockfile.Name), "during the run", "Backup stopped: the archive folder changed during the backup", "then run the backup again"),
 		assure.NoSideEffect(func() bool {
 			var lost []string
 			for _, d := range ma1336Changed(before, ma1336Files(t, outA)) {
@@ -458,7 +458,7 @@ func TestALockLostInItsOwnArchiveIsRecordedThere(t *testing.T) {
 			_, noticeErr := os.Stat(filepath.Join(opts.Out, state.AttentionName))
 			rc, msg := ma1328LockLost(err)
 			if strings.HasSuffix(c, "-another-run-saved") {
-				assure.Refused(t, rc, msg, assure.Names(lockfile.Name, "during the run", "run again"),
+				assure.Refused(t, rc, msg, assure.Names(lockfile.Name, "during the run", "Backup stopped: the archive folder changed during the backup", "then run the backup again"),
 					assure.NoSideEffect(func() bool {
 						if st != state.LastRunPresent || lr.Status != state.RunRunning || history(t, opts.Out) != histBefore || noticeErr == nil {
 							t.Logf("recorded in a folder another run saved since: record %q, history %d -> %d, notice %v", lr.Status, histBefore, history(t, opts.Out), noticeErr == nil)
@@ -468,7 +468,7 @@ func TestALockLostInItsOwnArchiveIsRecordedThere(t *testing.T) {
 					}))
 				return
 			}
-			assure.Refused(t, rc, msg, assure.Names(lockfile.Name, "during the run", "run again"))
+			assure.Refused(t, rc, msg, assure.Names(lockfile.Name, "during the run", "Backup stopped: MailArchive's lock file in the archive folder", "Your archive is fine", "Run the backup again"))
 			if st != state.LastRunPresent || lr.Status != state.RunFailed {
 				t.Fatalf("the run's own archive was not recorded failed: %q (%v)", lr.Status, st)
 			}
@@ -524,7 +524,7 @@ func TestAnEncryptedRunSwappedDuringItsPresyncWritesNothing(t *testing.T) {
 		t.Fatal("premise: the pre-sync was not reached")
 	}
 	rc, msg := ma1328LockLost(err)
-	assure.Refused(t, rc, msg, assure.Names(lockfile.Name, "during the run", "run again"),
+	assure.Refused(t, rc, msg, assure.Names(lockfile.Name, "during the run", "Backup stopped: the archive folder changed during the backup", "then run the backup again"),
 		assure.NoSideEffect(func() bool {
 			if !ma1336Untouched(t, outA, before) {
 				return false

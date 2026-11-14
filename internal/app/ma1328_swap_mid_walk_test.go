@@ -23,8 +23,10 @@ import (
 )
 
 // The 1.7.2 back-port of the archive guard (Gmail de-dup B3's adversarial rounds 3 and 4, H1 and
-// J1 to J3). 1.7 keeps no archive id, so the run is bound to its folder by its lock alone: the
-// refusals are in the lock's own words ("lock … was removed/replaced during the run … run again").
+// J1 to J3). 1.7 keeps no archive id, so the run is bound to its folder by its lock alone. The
+// refusals are in plain words, the lock's own sentence after "Details:" (the friction review's F1,
+// MA-1447): "Backup stopped: the archive folder changed during the backup. … then run the backup
+// again. Details: lock … was removed/replaced during the run."
 
 // ma1328Bytes is the file at out/name, as bytes; "" when it is not there.
 func ma1328Bytes(t *testing.T, out, name string) string {
@@ -177,7 +179,7 @@ func TestAFolderSwappedDuringTheWalkGetsNoManifestAndTheRunFails(t *testing.T) {
 				t.Fatal("premise: the swap was not reached")
 			}
 			rc, msg := ma1328LockLost(err)
-			assure.Refused(t, rc, msg, assure.Names(filepath.Join(outA, lockfile.Name), "during the run", "run again"),
+			assure.Refused(t, rc, msg, assure.Names(filepath.Join(outA, lockfile.Name), "during the run", "Backup stopped: the archive folder changed during the backup", "then run the backup again"),
 				assure.NoSideEffect(func() bool {
 					if (c.pause == "presync" || c.pause == "sweep") && !ma1336Untouched(t, outA, all) {
 						return false
@@ -226,7 +228,7 @@ func TestADriveLetterMovedDuringTheWalkGetsNoManifest(t *testing.T) {
 		t.Fatal("premise: the walk was not reached")
 	}
 	rc, msg := ma1328LockLost(err)
-	assure.Refused(t, rc, msg, assure.Names(lockfile.Name, "during the run", "run again"),
+	assure.Refused(t, rc, msg, assure.Names(lockfile.Name, "during the run", "Backup stopped: the archive folder changed during the backup", "then run the backup again"),
 		assure.NoSideEffect(func() bool { return ma1328Untouched(t, outB, before) }))
 }
 
@@ -264,7 +266,7 @@ func TestALockLostDuringASmallRunSavesNoManifest(t *testing.T) {
 		t.Fatal("premise: the walk was not reached")
 	}
 	rc, msg := ma1328LockLost(err)
-	assure.Refused(t, rc, msg, assure.Names(lockfile.Name, "was replaced during the run", "run again"),
+	assure.Refused(t, rc, msg, assure.Names(lockfile.Name, "was replaced during the run", "was changed during the backup", "Run the backup again once any other backup of it has finished"),
 		assure.NoSideEffect(func() bool { return ma1328Bytes(t, out, ".mailarchive-manifest.json") == m1 }))
 }
 
@@ -369,6 +371,6 @@ func TestACaptureWhoseFolderIsSwappedWritesNothingIntoTheOther(t *testing.T) {
 		t.Fatal("premise: the listing was not reached")
 	}
 	rc, msg := ma1328LockLost(err)
-	assure.Refused(t, rc, msg, assure.Names(filepath.Join(outA, lockfile.Name), "during the run", "run again"),
+	assure.Refused(t, rc, msg, assure.Names(filepath.Join(outA, lockfile.Name), "during the run", "Backup stopped: the archive folder changed during the backup", "then run the backup again"),
 		assure.NoSideEffect(func() bool { return ma1328Untouched(t, outA, before) }))
 }
