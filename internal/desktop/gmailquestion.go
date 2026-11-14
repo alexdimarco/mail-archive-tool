@@ -30,9 +30,13 @@ import (
 // The card's words around the question (for the owner's sign-off).
 const (
 	gmailYesWaits   = "Gmail: you said yes. From this archive's next backup on, each Gmail email is stored once and shown in all of its folders."
-	gmailYesNote    = "Yes. From this archive's next backup on, each Gmail email is stored once and shown in all of its folders."
 	gmailNotNowNote = "Not now. Nothing changed, and MailArchive will not ask again on this computer. To say yes later, make this the current archive and answer the same question in Settings."
-	gmailNoQuestion = "There is no Gmail question for this archive now. Reload the page."
+	// gmailNotNowSettingsNote is Not now given in Settings, where the person already is (U6).
+	gmailNotNowSettingsNote = "Not now. Nothing changed. You can say yes here any time."
+	// After a Not now, Settings shows one short line with a button that opens the question (U10).
+	gmailCollapsedLine   = "Gmail folders: not switched on."
+	gmailCollapsedButton = "Turn on…"
+	gmailNoQuestion      = "There is no Gmail question for this archive now. Reload the page."
 	// What starts the next backup, after gmailYesWaits (F15): an archive with no schedule never
 	// backs up by itself.
 	gmailRunNowLead  = "Nothing backs it up by itself: "
@@ -52,27 +56,34 @@ var gmailWords = map[string]string{
 	"notnowkept": gmailNotNowKeptLine,
 	"setup":      state.GmailSetupLine,
 	"needs":      state.GmailNeedsLine,
+	"collapsed":  gmailCollapsedLine,
+	"open":       gmailCollapsedButton,
 }
 
 // gmailWord is the template's way to the question's words.
 func gmailWord(name string) string { return gmailWords[name] }
 
-// gmailBox is what the page's question box draws (F5): the archive, the question, and whether a
-// Not now is kept here (Settings says so beside it).
+// gmailBox is what the page's question box draws (F5): the archive, the question, whether a
+// Not now is kept here (Settings says so beside it), and whether it is Settings' copy (its Not
+// now note says so, U6; after a Not now it is drawn shut behind one line, U10).
 type gmailBox struct {
-	Path, Question string
-	NotNowKept     bool
+	Path, Question       string
+	NotNowKept, Settings bool
 }
 
-func gmailAskBox(path, question string, notNowKept bool) gmailBox {
-	return gmailBox{Path: path, Question: question, NotNowKept: notNowKept}
+func gmailAskBox(path, question string, notNowKept, settings bool) gmailBox {
+	return gmailBox{Path: path, Question: question, NotNowKept: notNowKept, Settings: settings}
 }
 
 // gmailStores is what the last backup of the plaintext archive at out found about its Gmail
 // stores: off (waiting for the person), held (off, held back by a Not now) and on. Each a safe
 // store name, read as every card line is (bounded, never through a link). None for an encrypted
-// archive, a record of an encrypted one, or a backup that did not end ok.
-type gmailStores struct{ off, held, on []string }
+// archive, a record of an encrypted one, or a backup that did not end ok. archive is the id that
+// record carries: an answer is kept for that archive only (the B3 adversarial pass's A1).
+type gmailStores struct {
+	off, held, on []string
+	archive       string
+}
 
 func gmailStoresAt(out string, plaintext bool) gmailStores {
 	var g gmailStores
@@ -80,7 +91,7 @@ func gmailStoresAt(out string, plaintext bool) gmailStores {
 		return g
 	}
 	lr, st, _ := state.ReadLastRun(out)
-	if st != state.LastRunPresent || lr.Status != state.RunOK || lr.Encrypted {
+	if st != state.LastRunPresent || lr.Status != state.RunOK || lr.Encrypted || lr.Archive == "" {
 		return g
 	}
 	safe := func(in []string) []string {
@@ -92,7 +103,7 @@ func gmailStoresAt(out string, plaintext bool) gmailStores {
 		}
 		return keep
 	}
-	return gmailStores{off: safe(lr.GmailOff), held: safe(lr.GmailHeld), on: safe(lr.GmailOn)}
+	return gmailStores{off: safe(lr.GmailOff), held: safe(lr.GmailHeld), on: safe(lr.GmailOn), archive: lr.Archive}
 }
 
 // anyOff is every store still off, waiting or held.
@@ -194,7 +205,7 @@ func (d *dashboard) gmailAnswer(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, csrfRefused, http.StatusForbidden)
 		return
 	}
-	var in struct{ Path, Answer string }
+	var in struct{ Path, Answer, From string }
 	if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, 16<<10)).Decode(&in); err != nil {
 		http.Error(w, "bad request", http.StatusBadRequest)
 		return
@@ -204,19 +215,43 @@ func (d *dashboard) gmailAnswer(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, map[string]any{"ok": false, "error": "The answer is Yes or Not now."})
 		return
 	}
-	release, ok := d.holdAgainstDelete(w, path, pausingRefusal)
-	if !ok {
+	// The settings hold, as Remove from list takes (the B3 adversarial pass's A6): refused while
+	// an uninstall removes the settings this writes, or a delete of the folder runs; and while it
+	// runs, neither an uninstall's Remove nor a delete of the folder begins.
+	release, why := d.running.holdSettings(path, answeringRefusal)
+	if why != "" {
+		writeJSON(w, map[string]any{"ok": false, "error": why})
 		return
 	}
 	defer release()
+	// A delete of it that did not finish: no answer is kept for a half-deleted folder (A6, as
+	// Pause and Resume refuse, MA-1015).
+	if why := d.unfinishedActionRefusal(path, "your answer was not kept"); why != "" {
+		writeJSON(w, map[string]any{"ok": false, "error": why})
+		return
+	}
+	// One writer of the archive's job file at a time in this Desktop: Save settings reads, then
+	// writes it, and so does Keep (A6).
+	jobFileMu.Lock()
+	defer jobFileMu.Unlock()
 	kind := archindex.Kind(path)
-	off := gmailOffAt(path, kind != "" && kind != archindex.KindEncrypted)
+	g := gmailStoresAt(path, kind != "" && kind != archindex.KindEncrypted)
+	off := g.anyOff()
 	if len(off) == 0 {
 		writeJSON(w, map[string]any{"ok": false, "error": gmailNoQuestion})
 		return
 	}
+	// The answer is for the archive whose record the question was read from (A1): what this
+	// computer kept for another archive in the folder is not carried into it.
 	kept := gmailanswer.Read(path)
+	if kept.Archive != g.archive {
+		kept = gmailanswer.Answer{}
+	}
+	kept.Archive = g.archive
 	note := gmailNotNowNote
+	if in.From == "settings" {
+		note = gmailNotNowSettingsNote // the person is in Settings already (the B3 UX walk's U6)
+	}
 	if in.Answer == "yes" {
 		for _, t := range off {
 			if !slices.Contains(kept.Yes, t) {
@@ -224,7 +259,10 @@ func (d *dashboard) gmailAnswer(w http.ResponseWriter, r *http.Request) {
 			}
 		}
 		kept.NotNow = false
-		note = gmailYesNote
+		// What starts the backup that applies it, said now, as the row says after a reload (the
+		// B3 UX walk's U1).
+		current := d.cfg.effectiveOut() != "" && cleanPath(d.cfg.effectiveOut()) == cleanPath(path)
+		note = gmailYesWaitsFor(path, current)
 	} else {
 		kept.NotNow = true
 	}

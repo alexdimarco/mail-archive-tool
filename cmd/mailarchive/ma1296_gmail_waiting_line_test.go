@@ -37,13 +37,13 @@ func TestStatusAndAnUnattendedRunSayTheGmailQuestionWaits(t *testing.T) {
 	if got, code := statusOf(t, dir); code != 0 || !strings.Contains(got, line) {
 		t.Fatalf("status (exit %d) does not say %q:\n%s", code, line, got)
 	}
-	if err := gmailanswer.KeepHere(dir, gmailanswer.Answer{Yes: []string{"imap.gmail.com"}}); err != nil {
+	if err := gmailanswer.KeepHere(dir, gmailanswer.Answer{Archive: lr.Archive, Yes: []string{"imap.gmail.com"}}); err != nil {
 		t.Fatal(err)
 	}
 	if got, _ := statusOf(t, dir); strings.Contains(got, line) {
 		t.Fatalf("status says the question waits after a yes kept here:\n%s", got)
 	}
-	if err := gmailanswer.KeepHere(dir, gmailanswer.Answer{NotNow: true}); err != nil {
+	if err := gmailanswer.KeepHere(dir, gmailanswer.Answer{Archive: lr.Archive, NotNow: true}); err != nil {
 		t.Fatal(err)
 	}
 	if got, _ := statusOf(t, dir); strings.Contains(got, line) {

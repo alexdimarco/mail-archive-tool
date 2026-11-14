@@ -8,6 +8,7 @@ import (
 	"path/filepath"
 	"runtime"
 	"strings"
+	"sync"
 
 	"mail-archive-tool/internal/job"
 	"mail-archive-tool/internal/schedule"
@@ -147,6 +148,10 @@ func underPath(dir, p string) bool {
 // recreate is a broken run-job's Repair (its job file missing): its reply says the file was made
 // again and that the sync is off (section 5, C-9).
 func (d *dashboard) scheduleInstallLocal(w http.ResponseWriter, in scheduleRequest, out string, recreate bool) {
+	// Its read of the job file and its write are one step against the Gmail answer's, which
+	// writes the same file (the B3 adversarial pass's A6).
+	jobFileMu.Lock()
+	defer jobFileMu.Unlock()
 	name := schedule.DefaultNameFor(out)
 	jobPath, err := job.PathFor(name)
 	if err != nil {
@@ -316,6 +321,12 @@ func (d *dashboard) scheduleInstallLocal(w http.ResponseWriter, in scheduleReque
 // writeJob is the one writer of a job file (job.Write); a seam, so a test can make the write
 // fail after the scheduler step (section 9, step 3).
 var writeJob = job.Write
+
+// jobFileMu serializes this Desktop's read-modify-writes of a local archive's job file: Save
+// settings (scheduleInstallLocal) and the Gmail answer (gmailAnswer), so neither loses the other's
+// change (the B3 adversarial pass's A6). Another program's writes (the wizard) are not covered;
+// the wizard carries the answer over when it rewrites a job file (A7).
+var jobFileMu sync.Mutex
 
 // syncSwitched is told, once the job file is written, that this archive's Thunderbird
 // sync was switched on or off: switched off, the archive's sync streak is removed, so

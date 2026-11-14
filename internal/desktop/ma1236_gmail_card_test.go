@@ -21,7 +21,8 @@ import (
 func gmailWaits(t *testing.T, out string, off ...string) {
 	t.Helper()
 	now := time.Now().UTC()
-	if err := state.WriteLastRun(out, state.LastRun{Status: state.RunOK, Started: now, Finished: now, GmailOff: off}); err != nil {
+	// The archive's own id, as a backup run's record carries it (A1): kept, or given now.
+	if err := state.WriteLastRun(out, state.LastRun{Status: state.RunOK, Started: now, Finished: now, GmailOff: off, Archive: state.ArchiveIDOrNew(out)}); err != nil {
 		t.Fatal(err)
 	}
 }
@@ -89,7 +90,8 @@ func TestTheCardAsksTheGmailQuestionAndKeepsTheAnswerHere(t *testing.T) {
 	}
 
 	// Yes: the record's safe stores, kept for the next backup.
-	if _, m := e.post("/api/gmail-answer", map[string]any{"path": out, "answer": "yes"}); m["ok"] != true || m["note"] != gmailYesNote {
+	// The note says what starts that backup, as the row does after a reload (U1, MA-1294's words).
+	if _, m := e.post("/api/gmail-answer", map[string]any{"path": out, "answer": "yes"}); m["ok"] != true || m["note"] != gmailYesWaitsFor(out, false) {
 		t.Fatalf("Yes: %v", m)
 	}
 	j, err := job.Read(jp)

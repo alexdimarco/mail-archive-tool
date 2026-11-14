@@ -40,6 +40,7 @@ import (
 	"mail-archive-tool/internal/archdelete"
 	"mail-archive-tool/internal/encmark"
 	"mail-archive-tool/internal/export"
+	"mail-archive-tool/internal/gmailanswer"
 	"mail-archive-tool/internal/graphconfig"
 	"mail-archive-tool/internal/health"
 	"mail-archive-tool/internal/index"
@@ -418,12 +419,13 @@ func runExport(args []string) error {
 		}
 	}
 
-	// The Gmail question (Q-B): asked only of a person at this terminal, never in a
-	// scheduled run, and not after a Not now this computer keeps for the archive.
-	setGmailQuestion(&opts, *o.unattended)
-
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
+
+	// The Gmail question (Q-B): asked only of a person at this terminal, never in a
+	// scheduled run, and not after a Not now this computer keeps for the archive. Ctrl-C
+	// (ctx) ends the question, and the run then stops as interrupted (A4).
+	setGmailQuestionCtx(ctx, &opts, *o.unattended)
 
 	// Thunderbird IMAP prep: enable offline storage and/or wait for a sync so
 	// on-demand mail is actually present locally before we read it.
@@ -439,6 +441,9 @@ func runExport(args []string) error {
 	}
 
 	result, runErr := exportEngine(ctx, opts, logger, nil)
+	// A yes this computer kept for the archive is spent once this backup switched its stores on
+	// (A1): cleared here, best effort (gmailanswer.Read leaves spent stores out anyway).
+	_ = gmailanswer.Settle(opts.Out)
 	// The "Done. …" summary (and its -raw/verification lines) belongs to a run
 	// that reached completion — a clean finish, a saved interrupt, or a partial
 	// run (its walk finished; the "Not captured" block says what it could not
@@ -2433,7 +2438,7 @@ func printSummaryFor(logger *log.Logger, r app.Result, indexed, keepRaw bool, ou
 	if r.Gmail.Waiting() && !r.Gmail.Encrypted {
 		for _, t := range r.Gmail.Off {
 			if state.SafeToken(t) {
-				logger.Printf("%s", state.GmailWaitingLine(t))
+				logger.Printf("%s", state.GmailWaitingLine(gmailStoreShown(t))) // A5
 			}
 		}
 	}

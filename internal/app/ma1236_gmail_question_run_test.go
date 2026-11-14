@@ -101,7 +101,7 @@ func TestTheBackupRunAsksTheGmailQuestionOnlyOfAPerson(t *testing.T) {
 		t.Fatal("the last-run record says the question waits after Not now")
 	}
 	// A yes for another store only (the card's yes names stores) switches nothing.
-	res = runTB(t, Options{Inputs: []string{store}, Out: out, GmailYesStores: []string{"another-store"}, Unattended: true})
+	res = runTB(t, Options{Inputs: []string{store}, Out: out, GmailYesStores: []string{"another-store"}, GmailYesFor: state.ArchiveID(out), Unattended: true})
 	if v, _ := manifestOnDisk(t, out); v != 6 || len(res.Gmail.Switched) != 0 {
 		t.Fatalf("a yes for another store: version %d, outcome %+v", v, res.Gmail)
 	}
@@ -129,6 +129,9 @@ func TestTheBackupRunAsksTheGmailQuestionOnlyOfAPerson(t *testing.T) {
 	for _, o := range []Options{{GmailYes: true}, {GmailYesStores: offStore}} {
 		store, out = existingGmailArchive(t)
 		o.Inputs, o.Out, o.Unattended = []string{store}, out, true
+		if len(o.GmailYesStores) > 0 {
+			o.GmailYesFor = state.ArchiveID(out) // the card's yes names its archive (MA-1302)
+		}
 		res = runTB(t, o)
 		if v, on := manifestOnDisk(t, out); v != 7 || len(on) != 1 || len(res.Gmail.Switched) != 1 {
 			t.Fatalf("the yes given before the run (%+v): version %d, on %v, outcome %+v", o, v, on, res.Gmail)

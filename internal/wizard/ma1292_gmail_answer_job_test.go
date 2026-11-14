@@ -23,17 +23,18 @@ func TestAJobRunCarriesTheGmailAnswerKeptBesideTheJobFiles(t *testing.T) {
 	t.Setenv("APPDATA", filepath.Join(home, "AppData", "Roaming"))
 	logger := log.New(io.Discard, "", 0)
 	out := filepath.Join(home, "archive")
+	id := lastRunWithID(t, out) // every answer names its archive (MA-1302)
 	j := job.Job{Out: out, Mode: "incremental"}
 	if o := optsForJob(j, nil, logger, runHooks{}, runScheduled); len(o.GmailYesStores) != 0 || o.GmailNotNow {
 		t.Fatalf("positive twin: %v %v", o.GmailYesStores, o.GmailNotNow)
 	}
-	if err := gmailanswer.KeepHere(out, gmailanswer.Answer{Yes: []string{"gmail-store"}}); err != nil {
+	if err := gmailanswer.KeepHere(out, gmailanswer.Answer{Archive: id, Yes: []string{"gmail-store"}}); err != nil {
 		t.Fatal(err)
 	}
 	if o := optsForJob(j, nil, logger, runHooks{}, runAttended); !reflect.DeepEqual(o.GmailYesStores, []string{"gmail-store"}) {
 		t.Fatalf("the yes kept beside the job files is not carried: %v", o.GmailYesStores)
 	}
-	if err := gmailanswer.KeepHere(out, gmailanswer.Answer{NotNow: true}); err != nil {
+	if err := gmailanswer.KeepHere(out, gmailanswer.Answer{Archive: id, NotNow: true}); err != nil {
 		t.Fatal(err)
 	}
 	if o := optsForJob(j, nil, logger, runHooks{}, runScheduled); !o.GmailNotNow {

@@ -171,9 +171,13 @@ type Options struct {
 	// that is off, before that store is read; it returns true for Yes. A scheduled run sets
 	// none of them, so it never asks and never switches an existing archive.
 	// GmailYesStores is the yes for the named store tokens only (the card's yes, given for the
-	// stores its archive's last backup found off).
+	// stores its archive's last backup found off). GmailYesFor is the archive that yes was given
+	// for (state.LastRun.Archive, gmailanswer.Answer.Archive): the run applies GmailYesStores only
+	// when the archive it holds the lock of carries that id, so a yes kept for one archive never
+	// switches another that later sits in the same folder (the B3 adversarial pass's A1).
 	GmailYes       bool
 	GmailYesStores []string
+	GmailYesFor    string
 	GmailNotNow    bool
 	AskGmail       func(question string) bool
 }
@@ -963,7 +967,7 @@ func Run(ctx context.Context, opts Options, logger *log.Logger, onProgress Progr
 	// fault counts as processed for the checkpoint gate below, so a stretch of
 	// nothing but faults still saves and still re-checks the lock (FC12).
 	lr := &localRun{exp: exp, out: opts.Out, snapDir: snapDir, runAt: runAt, logger: logger, lock: lock}
-	lr.gmail = newGmailRun(manifest, opts, logger)
+	lr.gmail = newGmailRun(manifest, opts, begun.Archive, logger)
 	for _, p := range opts.OutlookExported {
 		if lr.outlookFresh == nil {
 			lr.outlookFresh = map[string]bool{}
@@ -1299,7 +1303,8 @@ func newRunRecord(opts Options) state.LastRun {
 	if opts.Mode == export.Full {
 		mode = "full"
 	}
-	return state.LastRun{Status: state.RunRunning, Started: time.Now().UTC(), PID: os.Getpid(), Exe: exe, Mode: mode, Job: canonicalJob(opts, mode), NoIndex: !opts.Index, Warnings: opts.Warnings}
+	return state.LastRun{Status: state.RunRunning, Started: time.Now().UTC(), PID: os.Getpid(), Exe: exe, Mode: mode, Job: canonicalJob(opts, mode), NoIndex: !opts.Index, Warnings: opts.Warnings,
+		Archive: state.ArchiveIDOrNew(opts.Out)} // the archive's own id, carried or given now (A1)
 }
 
 // RecordRefusedRun records a scheduled run that refused before it began — its

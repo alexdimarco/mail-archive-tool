@@ -180,6 +180,14 @@ type LastRun struct {
 	GmailHeld []string `json:"gmail_held,omitempty"`
 	GmailOn   []string `json:"gmail_on,omitempty"`
 
+	// Archive is the plaintext archive's own id (archiveid.go): a random number a backup run
+	// gives the archive the first time and every later record carries, so an answer this
+	// computer keeps for the archive is never applied to another archive that later sits in the
+	// same folder (the B3 adversarial pass's A1). Additive: an older binary drops it, and the
+	// next run gives a new one, which only means a kept answer is asked again. Never beside an
+	// encrypted archive (encryptedLastRun has no such field).
+	Archive string `json:"archive,omitempty"`
+
 	// Program is an encrypted archive's program step outcome, one of the Program*
 	// codes (program design §4, §8). Absent when the step did not run.
 	Program string `json:"program,omitempty"`
@@ -247,6 +255,9 @@ const (
 // it best effort: a refusal that persists is returned, never fails a run.
 func WriteLastRun(out string, r LastRun) error {
 	r.Version = 1
+	if !r.Encrypted && !ValidArchiveID(r.Archive) {
+		r.Archive = ArchiveID(out) // carried, so no writer drops the archive's id
+	}
 	data, err := marshalLastRun(r)
 	if err != nil {
 		return err
@@ -397,6 +408,9 @@ func ReadLastRun(out string) (LastRun, LastRunState, error) {
 	}
 	// A planted record's kinds are said only when they are counts (design-plain-failure-words).
 	r.Partial = r.Partial.sane()
+	if r.Encrypted || !ValidArchiveID(r.Archive) {
+		r.Archive = "" // a planted or damaged id is no id
+	}
 	r.FillableFrom = FillableFrom(r.FillableFrom) // a closed set (MA-1157)
 	// The sync's strings too (design-presync-attended §4.2, C-37): every surface shows
 	// its name only through a closed map, and none of them is echoed raw.

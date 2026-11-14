@@ -80,14 +80,12 @@ func runStatus(args []string) error {
 	// status computes it here and passes it in. File presence only: it Lstats
 	// each record's .eml, never hashing and never reading message bytes; posture
 	// is unchanged (informational).
-	gmailLine := ""
+	// The Gmail lines (counts, and the question waiting) are health's reasons, so the text, the
+	// JSON and the Desktop say them alike (the B3 UX walk's U7).
 	if in.HasManifest {
 		if m, lerr := state.Load(filepath.Join(in.Out, ".mailarchive-manifest.json")); lerr == nil {
 			withEML, total := app.ExtractableCount(in.Out, m)
 			in.Extractable = health.Extractable{WithEML: withEML, Total: total}
-			// The Gmail counts (docs/design-gmail-dedup.md §8.1): a plaintext archive's only
-			// (an encrypted one's manifest does not load here), counts only.
-			gmailLine = state.GmailCountsOf(m).Line()
 		}
 	}
 	rep := health.Assess(in, time.Now())
@@ -98,14 +96,6 @@ func runStatus(args []string) error {
 	}
 	for _, line := range health.Summary(in, rep) {
 		fmt.Println(line)
-	}
-	if gmailLine != "" {
-		fmt.Println(gmailLine)
-	}
-	// The Gmail question waits (the B3 friction review's F8): for each Gmail store the last
-	// plaintext backup found off, unless this computer keeps a Not now, or a yes for that store.
-	for _, l := range gmailWaitingLines(in.Out, in.LastRun) {
-		fmt.Println(l)
 	}
 	// Earlier restores into Thunderbird that left a folder Thunderbird does not show
 	// (design-restore-thunderbird §7.2 foldcheck2 note P2), whatever archive this is: a

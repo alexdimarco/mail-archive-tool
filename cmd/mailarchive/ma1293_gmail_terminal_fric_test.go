@@ -64,7 +64,9 @@ func TestTheTerminalQuestionHasATimeLimitAndANotNowIsRemembered(t *testing.T) {
 	oldIn := gmailInput
 	t.Cleanup(func() { gmailInput = oldIn })
 
-	// An answered Not now, with no job file: remembered here; the next run asks nothing.
+	// An answered Not now, with no job file: remembered here; the next run asks nothing. The
+	// question is asked inside the run, whose running record names the archive (A1).
+	runningRecord(t, out)
 	gmailInput = func() io.Reader { return strings.NewReader("\n") }
 	opts := app.Options{Out: out}
 	setGmailQuestion(&opts, false)
@@ -109,13 +111,14 @@ func TestTheTerminalQuestionHasATimeLimitAndANotNowIsRemembered(t *testing.T) {
 
 	// A yes kept here (the Desktop card's, no job file) is carried into the terminal's run.
 	out4 := filepath.Join(home, "archive4")
-	if err := gmailanswer.Keep(out4, gmailanswer.Answer{Yes: []string{"gmail-store"}}); err != nil {
+	id4 := runningRecord(t, out4)
+	if err := gmailanswer.Keep(out4, gmailanswer.Answer{Archive: id4, Yes: []string{"gmail-store"}}); err != nil {
 		t.Fatal(err)
 	}
 	opts = app.Options{Out: out4}
 	setGmailQuestion(&opts, false)
-	if len(opts.GmailYesStores) != 1 || opts.GmailYesStores[0] != "gmail-store" {
-		t.Fatalf("the yes kept here is not carried: %v", opts.GmailYesStores)
+	if len(opts.GmailYesStores) != 1 || opts.GmailYesStores[0] != "gmail-store" || opts.GmailYesFor != id4 {
+		t.Fatalf("the yes kept here is not carried, for its archive: %v %q", opts.GmailYesStores, opts.GmailYesFor)
 	}
 
 	// The flag's help.
@@ -127,6 +130,20 @@ func TestTheTerminalQuestionHasATimeLimitAndANotNowIsRemembered(t *testing.T) {
 			t.Fatalf("the -gmail-folders help does not say %q: %q", must, help)
 		}
 	}
+}
+
+// runningRecord writes the "running" record a backup run writes under its lock before it asks,
+// naming the archive by a new id, and returns the id.
+func runningRecord(t *testing.T, out string) string {
+	t.Helper()
+	if err := os.MkdirAll(out, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	id := state.NewArchiveID()
+	if err := state.WriteLastRun(out, state.LastRun{Status: state.RunRunning, Started: time.Now().UTC(), Archive: id}); err != nil {
+		t.Fatal(err)
+	}
+	return id
 }
 
 func fileExists(p string) bool {

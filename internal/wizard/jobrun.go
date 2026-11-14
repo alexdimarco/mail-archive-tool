@@ -7,7 +7,6 @@ import (
 	"log"
 	"path/filepath"
 	"runtime"
-	"slices"
 	"strconv"
 	"strings"
 	"time"
@@ -92,6 +91,7 @@ func RunJobInProcess(ctx, stop context.Context, jobPath string, logger *log.Logg
 	opts := optsForJob(j, j.Inputs, logger, runHooks{stop: stop, rn: rn}, runAttended)
 	logger.Printf("Running the scheduled backup now for %s", j.Out)
 	result, runErr := app.Run(ctx, opts, logger, nil)
+	_ = gmailanswer.Settle(j.Out) // a yes this backup applied is spent (A1)
 	if runErr != nil {
 		// A partial backup's note says what is not downloaded in full yet too, as a finished
 		// one's does (the 1.6.1 friction review's P6, MA-1156).
@@ -383,14 +383,13 @@ func optsForJob(j job.Job, inputs []string, logger *log.Logger, hooks runHooks, 
 	// card switches those stores on at this run; a Not now asks nothing. A job run never asks.
 	// Also the answer kept beside the job files (gmailanswer), given before this archive had a
 	// job file, or typed at a terminal (the B3 friction review's F2 and F7).
+	// Read joins the job file's answer and the answer file's, each only while the archive in the
+	// folder is the one it was given for; the run checks that again under its lock (GmailYesFor;
+	// the B3 adversarial pass's A1).
 	kept := gmailanswer.Read(j.Out)
-	opts.GmailYesStores = append([]string(nil), j.GmailYes...)
-	for _, t := range kept.Yes {
-		if !slices.Contains(opts.GmailYesStores, t) {
-			opts.GmailYesStores = append(opts.GmailYesStores, t)
-		}
-	}
-	opts.GmailNotNow = j.GmailNotNow || kept.NotNow
+	opts.GmailYesStores = append([]string(nil), kept.Yes...)
+	opts.GmailYesFor = kept.Archive
+	opts.GmailNotNow = kept.NotNow
 	opts.PresyncWanted = j.ThunderbirdSync != nil
 	opts.PresyncAttended = mode == runAttended
 	opts.OnReadStart = hooks.rn.OnReadStart

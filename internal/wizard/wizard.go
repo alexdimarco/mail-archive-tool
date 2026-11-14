@@ -38,6 +38,7 @@ import (
 	"mail-archive-tool/internal/dialogfront"
 	"mail-archive-tool/internal/encmark"
 	"mail-archive-tool/internal/export"
+	"mail-archive-tool/internal/gmailanswer"
 	"mail-archive-tool/internal/health"
 	"mail-archive-tool/internal/job"
 	"mail-archive-tool/internal/nowindow"
@@ -338,6 +339,7 @@ func RunHeadless(path string) int {
 	opts.ArchiveAtEntry = atEntry
 	logger.Printf("Scheduled job %q: exporting to %s", j.Name, j.Out)
 	result, runErr := headlessEngine(ctx, opts, logger, nil)
+	_ = gmailanswer.Settle(j.Out) // a yes this backup applied is spent (the B3 adversarial pass's A1)
 	// Another run holds the archive (the previous hourly backup, a verify, a rebuild) and
 	// started under a day ago: skip quietly, naming it (R3C-12). Nothing was recorded.
 	if line, quiet := app.ScheduledLockSkip(j.Out, runErr, time.Now()); quiet {
@@ -2255,7 +2257,14 @@ func installOffered(c wizardChoice, iv schedule.Interval, at, exe, deletionsLog 
 	}
 	spec := installSpec(c.out, name, jobPath, iv, at, exe)
 	var writeErr error
-	err = guardedInstall(deletionsLog, c.out, spec, func() error { writeErr = job.Write(jobPath, jobFor(name, c)); return writeErr })
+	err = guardedInstall(deletionsLog, c.out, spec, func() error {
+		j := jobFor(name, c)
+		// The Gmail answer the job file there holds is kept when it is written afresh (the B3
+		// adversarial pass's A7).
+		gmailanswer.CarryInto(c.out, &j)
+		writeErr = job.Write(jobPath, j)
+		return writeErr
+	})
 	switch {
 	case err == nil:
 		return spec, nil

@@ -56,10 +56,21 @@ type gmailRun struct {
 	out      GmailOutcome
 }
 
-func newGmailRun(m *state.Manifest, opts Options, logger *log.Logger) gmailRun {
+// archive is the id the archive this run holds the lock of carries (its running record's,
+// state.LastRun.Archive; "" for an encrypted archive): the card's yes (GmailYesStores) is applied
+// only when it was given for this archive (Options.GmailYesFor), checked here, under the lock,
+// whatever the caller read before it (the B3 adversarial pass's A1).
+func newGmailRun(m *state.Manifest, opts Options, archive string, logger *log.Logger) gmailRun {
 	g := gmailRun{fresh: m.Len() == 0, encrypted: opts.Key != nil, yes: opts.GmailYes, notNow: opts.GmailNotNow, ask: opts.AskGmail, logger: logger}
 	g.out.NotNow = opts.GmailNotNow // an answer kept on this computer: nothing waits to be asked
-	for _, t := range opts.GmailYesStores {
+	yesStores := opts.GmailYesStores
+	if len(yesStores) > 0 && (archive == "" || opts.GmailYesFor != archive) {
+		yesStores = nil
+		if logger != nil && !g.encrypted {
+			logger.Printf("Gmail: the yes this computer keeps for this folder was given for another archive; it is not used, and the question waits")
+		}
+	}
+	for _, t := range yesStores {
 		if g.yesFor == nil {
 			g.yesFor = map[string]bool{}
 		}
@@ -84,7 +95,9 @@ func (g *gmailRun) store(m *state.Manifest, token string) {
 			// Gmail accounts is written beside it (§8.1 fold, GD-3). Nor for a yes typed at the
 			// terminal in this run, which the terminal has just said (the B3 friction review's F13).
 			if g.logger != nil && !g.encrypted && !g.answered {
-				g.logger.Printf("Gmail: %s — from now on each email is stored once and shown in all of its folders", why)
+				// With the 1.8 line, so a new Gmail archive made at a terminal says it too (the B3
+				// UX walk's U9).
+				g.logger.Printf("Gmail: %s — from now on each email is stored once and shown in all of its folders. %s", why, state.GmailNeedsLine)
 			}
 		}
 	}

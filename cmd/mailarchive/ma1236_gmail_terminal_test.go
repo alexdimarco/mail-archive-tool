@@ -18,8 +18,8 @@ import (
 // covers: MA-1236, R45
 // The Gmail question at a terminal (slice B3's terminal surface): the question's exact words,
 // then how to answer; "y" or "yes" in any case is Yes and says what follows; an empty line, any
-// other answer or the end of the input is Not now and says nothing changed and how to say yes
-// later. The run's options: a person at a terminal gets the question; a scheduled run
+// other answer is Not now and says nothing changed and how to say yes later; the end of the input
+// is no answer (Not now for that backup only, MA-1303). The run's options: a person at a terminal gets the question; a scheduled run
 // (-unattended) and a run whose input or output is not a terminal never do; a Not now this
 // computer keeps for the archive (the Desktop's, in its job file) is passed to the run, which
 // then asks nothing; `-gmail-folders` is the yes for scripts. Positive twin first (a person at
@@ -39,8 +39,13 @@ func TestTheTerminalAsksTheGmailQuestionOnlyOfAPerson(t *testing.T) {
 			t.Fatalf("answer %q: the question's words are not shown: %q", c.in, s)
 		}
 		want := gmailSaidNotNow
-		if c.yes {
+		switch {
+		case c.yes:
 			want = gmailSaidYes
+		case c.in == "":
+			// The end of the input is no answer: Not now for this backup only (amended for the B3
+			// adversarial pass's A4; MA-1303).
+			want = gmailNoAnswer
 		}
 		if !strings.Contains(s, want) {
 			t.Fatalf("answer %q: %q does not say %q", c.in, s, want)
@@ -78,7 +83,9 @@ func TestTheTerminalAsksTheGmailQuestionOnlyOfAPerson(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := jobfile.Write(p, jobfile.Job{Name: "a", Out: out, Mode: "incremental", GmailNotNow: true}); err != nil {
+	// Kept for the archive in the folder (its record's id; the B3 adversarial pass's A1).
+	id := runningRecord(t, out)
+	if err := jobfile.Write(p, jobfile.Job{Name: "a", Out: out, Mode: "incremental", GmailNotNow: true, GmailArchive: id}); err != nil {
 		t.Fatal(err)
 	}
 	opts = app.Options{Out: out}

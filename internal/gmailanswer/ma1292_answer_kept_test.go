@@ -7,10 +7,27 @@ import (
 	"runtime"
 	"strings"
 	"testing"
+	"time"
 
 	"mail-archive-tool/internal/job"
 	"mail-archive-tool/internal/schedule"
+	"mail-archive-tool/internal/state"
 )
+
+// backedUp makes out an archive folder whose last backup ended ok, as a run records it, and
+// returns the archive's id.
+func backedUp(t *testing.T, out string) string {
+	t.Helper()
+	if err := os.MkdirAll(out, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	id := state.NewArchiveID()
+	now := time.Now().UTC()
+	if err := state.WriteLastRun(out, state.LastRun{Status: state.RunOK, Started: now, Finished: now, Archive: id}); err != nil {
+		t.Fatal(err)
+	}
+	return id
+}
 
 // isolate points this computer's settings folder at a throw-away home.
 func isolate(t *testing.T) string {
@@ -34,9 +51,9 @@ func isolate(t *testing.T) string {
 func TestTheGmailAnswerIsKeptOnThisComputerForEveryArchive(t *testing.T) {
 	home := isolate(t)
 	out := filepath.Join(home, "archive")
-	if err := os.MkdirAll(out, 0o700); err != nil {
-		t.Fatal(err)
-	}
+	// The archive's record of a backup, with its own id (amended for the B3 adversarial pass's
+	// A1: every answer names the archive it was given for).
+	id := backedUp(t, out)
 	if a := Read(out); a.NotNow || len(a.Yes) != 0 {
 		t.Fatalf("positive twin: no answer kept, yet %+v", a)
 	}
@@ -44,12 +61,13 @@ func TestTheGmailAnswerIsKeptOnThisComputerForEveryArchive(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if strings.HasSuffix(p, ".json") || filepath.Base(p) != schedule.DefaultNameFor(out)+Suffix {
+	// Named by the folder as the file system tells folders apart (A3).
+	if strings.HasSuffix(p, ".json") || filepath.Base(p) != schedule.DefaultNameFor(folderKey(out, runtime.GOOS))+Suffix {
 		t.Fatalf("the answer file is %s", p)
 	}
 
 	// No job file: the Desktop's answer goes to the answer file.
-	if err := Keep(out, Answer{Yes: []string{"gmail-store"}}); err != nil {
+	if err := Keep(out, Answer{Archive: id, Yes: []string{"gmail-store"}}); err != nil {
 		t.Fatal(err)
 	}
 	if a := Read(out); a.NotNow || !reflect.DeepEqual(a.Yes, []string{"gmail-store"}) {
@@ -58,11 +76,11 @@ func TestTheGmailAnswerIsKeptOnThisComputerForEveryArchive(t *testing.T) {
 	if fi, err := os.Stat(p); err != nil || (runtime.GOOS != "windows" && fi.Mode().Perm() != 0o600) {
 		t.Fatalf("the answer file: %v %v", fi, err)
 	}
-	if entries, _ := os.ReadDir(out); len(entries) != 0 {
+	if entries, _ := os.ReadDir(out); len(entries) != 1 {
 		t.Fatalf("keeping the answer wrote into the archive: %v", entries)
 	}
 	// A terminal Not now.
-	if err := KeepHere(out, Answer{NotNow: true}); err != nil {
+	if err := KeepHere(out, Answer{Archive: id, NotNow: true}); err != nil {
 		t.Fatal(err)
 	}
 	if a := Read(out); !a.NotNow {
@@ -78,7 +96,7 @@ func TestTheGmailAnswerIsKeptOnThisComputerForEveryArchive(t *testing.T) {
 		t.Fatal("a Not now kept in the answer file is lost beside a job file")
 	}
 	// The Desktop's yes now goes to the job file, and the answer file goes.
-	if err := Keep(out, Answer{Yes: []string{"gmail-store"}}); err != nil {
+	if err := Keep(out, Answer{Archive: id, Yes: []string{"gmail-store"}}); err != nil {
 		t.Fatal(err)
 	}
 	if j, err := job.Read(jp); err != nil || j.GmailNotNow || !reflect.DeepEqual(j.GmailYes, []string{"gmail-store"}) {
@@ -93,6 +111,7 @@ func TestTheGmailAnswerIsKeptOnThisComputerForEveryArchive(t *testing.T) {
 
 	// A damaged answer file, and a link, read as no answer.
 	other := filepath.Join(home, "other")
+	otherID := backedUp(t, other)
 	op, _ := Path(other)
 	if err := os.WriteFile(op, []byte("{not json"), 0o600); err != nil {
 		t.Fatal(err)
@@ -102,7 +121,7 @@ func TestTheGmailAnswerIsKeptOnThisComputerForEveryArchive(t *testing.T) {
 	}
 	if runtime.GOOS != "windows" {
 		target := filepath.Join(home, "target")
-		os.WriteFile(target, []byte(`{"version":1,"not_now":true}`), 0o600)
+		os.WriteFile(target, []byte(`{"version":1,"archive":"`+otherID+`","not_now":true}`), 0o600)
 		os.Remove(op)
 		if err := os.Symlink(target, op); err != nil {
 			t.Fatal(err)

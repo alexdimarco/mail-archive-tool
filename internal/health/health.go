@@ -109,6 +109,18 @@ type Input struct {
 	// caller (`status`) computes it via app.ExtractableCount and sets it here;
 	// it is display-only and never changes the posture.
 	Extractable Extractable
+
+	// The Gmail lines (docs/design-gmail-dedup.md §8.1 and the B3 friction review's F8), from one
+	// source for `status`, `status -json` and the Desktop's Status & health view (the B3 UX walk's
+	// U7): GmailCounts are the plaintext manifest's switched-on Gmail counts; GmailWaiting the
+	// Gmail stores whose question waits (gmailWaiting). Gather fills both; neither changes the
+	// posture.
+	GmailCounts  state.GmailCounts
+	GmailWaiting []string
+	// TidyWaitSince is when this computer's scheduled backups began to wait for another
+	// computer's tidy-up of this archive (a version-8 manifest; the B3 UX walk's U2), zero when
+	// none is recorded here.
+	TidyWaitSince time.Time
 	// DeleteUnfinished: MailArchive's deletion log has a delete of this folder that did not
 	// finish (design-archive-delete §5.4), set by the caller — status, the Desktop's Status &
 	// health — since health reads no deletion log (the 1.5.3 friction review's B2).
@@ -1007,6 +1019,7 @@ func assessKeyless(r *Report, in Input, now time.Time) {
 		}
 	}
 	assessVerifyEntry(r, in)
+	r.gmailNotes(in) // the Gmail lines, one source for text, JSON and the Desktop (U7)
 	r.worstFirst()
 }
 
@@ -2012,6 +2025,8 @@ func Gather(out, nameOverride string) Input {
 			in.FillableParseGap, in.FillableOnlyParseGap = m.FillableParseGapCounts()
 			// The capture-gap ledger, with each store's source id and last run, so a
 			// gap can be told attempted from not attempted (FC14).
+			in.GmailCounts = state.GmailCountsOf(m)
+			in.GmailWaiting = gmailWaiting(out, in.LastRun, in.LastRunState, m.DedupOn)
 			in.Gaps = m.CaptureGapsSorted()
 			in.GapSource = map[string]string{}
 			in.GapLastRun = map[string]time.Time{}

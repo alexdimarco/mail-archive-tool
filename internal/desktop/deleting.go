@@ -342,6 +342,9 @@ const (
 	deletingUninstall = "A delete is running (%s). Uninstall when its result shows on this page: uninstalling now would remove the deletion log that delete writes. Nothing was removed."
 	// An uninstall's Remove that stopped after it began removing (CON-06).
 	uninstallUnfinishedText = "An uninstall of MailArchive did not finish on this computer, and some of its settings may already be removed, so nothing was deleted or changed. Run Uninstall again to finish it, or install MailArchive again first."
+	// A Gmail answer being kept for the folder when Delete permanently is clicked (the B3
+	// adversarial pass's A6).
+	answeringRefusal = "Your answer to the Gmail question for this archive is being saved. Click Delete permanently again when that ends; nothing was deleted."
 	// Remove from list running when Delete permanently is clicked (CON-06).
 	unlistingRefusal = "This archive is being removed from Your archives, so nothing was deleted."
 	// Remove from list running when an uninstall's Remove is clicked (CON-06).

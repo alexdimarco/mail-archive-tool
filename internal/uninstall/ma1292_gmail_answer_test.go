@@ -6,6 +6,7 @@ import (
 	"testing"
 
 	"mail-archive-tool/internal/gmailanswer"
+	"mail-archive-tool/internal/state"
 )
 
 // covers: MA-1292, R37
@@ -18,7 +19,8 @@ func TestUninstallRemovesTheGmailAnswersKeptHere(t *testing.T) {
 	t.Setenv("HOME", home)
 	t.Setenv("XDG_CONFIG_HOME", filepath.Join(home, ".config"))
 	t.Setenv("APPDATA", filepath.Join(home, "AppData", "Roaming"))
-	if err := gmailanswer.KeepHere(filepath.Join(home, "archive"), gmailanswer.Answer{NotNow: true}); err != nil {
+	// Every answer names its archive (the B3 adversarial pass's A1); none is read here.
+	if err := gmailanswer.KeepHere(filepath.Join(home, "archive"), gmailanswer.Answer{Archive: state.NewArchiveID(), NotNow: true}); err != nil {
 		t.Fatal(err)
 	}
 	p, err := gmailanswer.Path(filepath.Join(home, "archive"))

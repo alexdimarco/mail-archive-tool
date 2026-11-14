@@ -30,7 +30,7 @@ func TestTheLastRunRecordKeepsTheGmailStoresHeldAndOn(t *testing.T) {
 	}
 	held := lr.GmailHeld
 
-	res = runTB(t, Options{Inputs: []string{store}, Out: out, GmailYesStores: held})
+	res = runTB(t, Options{Inputs: []string{store}, Out: out, GmailYesStores: held, GmailYesFor: lr.Archive}) // given for this archive (MA-1302)
 	if !reflect.DeepEqual(res.Gmail.On, held) || !reflect.DeepEqual(res.Gmail.Switched, held) {
 		t.Fatalf("the yes: outcome on %v, switched %v", res.Gmail.On, res.Gmail.Switched)
 	}

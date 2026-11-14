@@ -9,6 +9,7 @@ import (
 	"strings"
 
 	"mail-archive-tool/internal/archindex"
+	"mail-archive-tool/internal/gmailanswer"
 	"mail-archive-tool/internal/job"
 	"mail-archive-tool/internal/schedule"
 	"mail-archive-tool/internal/util"
@@ -75,6 +76,14 @@ func removeNameFiles(names, spellings []string, settingsDir string) (string, err
 			continue
 		}
 		seen[k] = true
+		// The Gmail answer this computer keeps for the folder (the B3 adversarial pass's A1): a
+		// yes left behind would be read for whatever archive later sits there. Its name folds
+		// the spelling as the file system does (gmailanswer.Path), so each spelling finds it.
+		if p, err := gmailanswer.Path(s); err == nil {
+			if err := removeIfThere(p); err != nil {
+				return p, err
+			}
+		}
 		for _, d := range alertDirs {
 			for _, suffix := range []string{alertStreakSuffix, syncAlertSuffix, deleteRefusedSuffix} {
 				if err := removeIfThere(filepath.Join(d, k+suffix)); err != nil {

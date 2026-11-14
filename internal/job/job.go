@@ -60,6 +60,10 @@ type Job struct {
 	// reads them. Kept on this computer until then; a store the next backup does not find Gmail
 	// is never switched. Additive.
 	GmailYes []string `json:"gmail_yes,omitempty"`
+	// GmailArchive is the archive (its id, state.LastRun.Archive) GmailNotNow and GmailYes were
+	// given for: they are read only while the archive in the folder carries that id (the B3
+	// adversarial pass's A1). Additive; answers with none are never read.
+	GmailArchive string `json:"gmail_archive,omitempty"`
 }
 
 // ThunderbirdSync is the GUI job's Thunderbird pre-sync setting (design §4.2.5).
