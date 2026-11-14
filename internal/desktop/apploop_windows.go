@@ -24,8 +24,11 @@ import (
 // (MB-17). The S1 fix round: an installer's close request (ENDSESSION_CLOSEAPP) is
 // refused while work or a wizard runs (A2); WM_ENDSESSION stops the copy only when the
 // session really ends or Restart Manager asks (A5); a WM_CLOSE from outside is a stop
-// request that waits and never takes the window down, and a loop that ends early is one
-// too (A1). The icon in the notification area comes with slice S3.
+// request that waits and never takes the window down (A1). The S1 fix round 2 (B3): a
+// posted WM_QUIT is the same close request — refused while busy, the loop going on — and
+// a WM_ENDSESSION close request with no allowed query before it is ignored. The upgrade
+// script no longer uses window messages at all: it runs `mailarchive quit` (B1, B2). The
+// icon in the notification area comes with slice S3.
 
 var (
 	user32                     = windows.NewLazySystemDLL("user32.dll")
@@ -127,6 +130,24 @@ var sessionEnding = func() bool {
 // window down.
 var serveEnded atomic.Bool
 
+// closeAppAllowed is set when this copy allowed a close request (WM_QUERYENDSESSION with
+// ENDSESSION_CLOSEAPP, answered while idle) and taken by the WM_ENDSESSION that follows
+// it: a WM_ENDSESSION with ENDSESSION_CLOSEAPP and no allowed query before it is a forgery
+// (Restart Manager never sends one after a refused query, and cannot ask this copy at all,
+// its only window being hidden), so it is ignored (the S1 fix round 2, B3).
+var closeAppAllowed atomic.Bool
+
+// closeRequest is a close request from outside — WM_CLOSE (`taskkill` without /F) or a
+// posted WM_QUIT that ended the loop early — answered as every outside stop is: an idle
+// copy takes it as the one stop, asking nothing and waiting for anything that starts
+// meanwhile; one that runs work or has its wizard open refuses it and keeps running, as
+// it refuses an installer (A1, A2; WM_QUIT since the S1 fix round 2, B3).
+func closeRequest(ev LoopEvents) {
+	if ev.Close != nil && (ev.Busy == nil || !ev.Busy()) {
+		go ev.Close()
+	}
+}
+
 func wndProc(hwnd, msg, wParam, lParam uintptr) uintptr {
 	loopMu.Lock()
 	ev := loopEvents
@@ -134,36 +155,43 @@ func wndProc(hwnd, msg, wParam, lParam uintptr) uintptr {
 	switch msg {
 	case wmQueryEndSession:
 		busy := ev.Busy != nil && ev.Busy()
-		if busy && lParam&endsessionCloseApp != 0 {
-			// An installer or the upgrade script asks this copy to close while it runs
-			// work or an open wizard: it stays, and the installer leaves it running (it
-			// never cuts work short; the S1 adversarial pass, A2).
-			return 0
+		if lParam&endsessionCloseApp != 0 {
+			if busy {
+				// An installer asks this copy to close while it runs work or an open
+				// wizard: it stays, and the installer leaves it running (it never cuts
+				// work short; the S1 adversarial pass, A2).
+				closeAppAllowed.Store(false)
+				return 0
+			}
+			closeAppAllowed.Store(true)
+			return 1
 		}
 		if busy {
 			procShutdownBlockReasonCrt.Call(hwnd, uintptr(unsafe.Pointer(windows.StringToUTF16Ptr(shutdownBlockWords))))
 		}
 		return 1 // allow: the stop happens in WM_ENDSESSION
 	case wmEndSession:
-		// Only a session that is really ending, or Restart Manager's close request, stops
-		// the copy; the same message from another program at another time does nothing
-		// (A5; ENDSESSION_CLOSEAPP can be sent by anyone, so this narrows, not closes, the
-		// gap, and that stop still waits for the work).
-		if wParam != 0 && ev.EndSession != nil && (lParam&endsessionCloseApp != 0 || sessionEnding()) {
-			ev.EndSession(endSessionBound)
+		// Only a session that is really ending, or Restart Manager's close request that
+		// this copy allowed a moment before (and is still idle for), stops the copy; the
+		// same message from another program at another time, or a close request with no
+		// allowed query before it, does nothing (A5; B3).
+		allowed := closeAppAllowed.Swap(false)
+		if wParam != 0 && ev.EndSession != nil {
+			switch {
+			case sessionEnding():
+				ev.EndSession(endSessionBound)
+			case lParam&endsessionCloseApp != 0 && allowed && (ev.Busy == nil || !ev.Busy()):
+				ev.EndSession(endSessionBound)
+			}
 		}
 		procShutdownBlockReasonDst.Call(hwnd)
 		return 0
 	case wmCommand:
 		return 0 // MB-17: no command reaches the instance through a posted message
 	case wmClose:
-		// A close request from outside (`taskkill` without /F, the upgrade script): the
-		// window never goes, so the end of the session still reaches the copy (A1). An idle
-		// copy takes it as the one stop, asking nothing; one that runs work or an open
-		// wizard refuses it and keeps running, as it refuses an installer (A2).
-		if ev.Close != nil && (ev.Busy == nil || !ev.Busy()) {
-			go ev.Close()
-		}
+		// A close request from outside (`taskkill` without /F): the window never goes, so
+		// the end of the session still reaches the copy (A1).
+		closeRequest(ev)
 		return 0
 	case wmLoopEnd:
 		if serveEnded.Load() {
@@ -219,17 +247,22 @@ func windowsLoop(serve func() error, ev LoopEvents) error {
 		var m winMsg
 		for {
 			r, _, _ := procGetMessageW.Call(uintptr(unsafe.Pointer(&m)), 0, 0, 0)
-			if int32(r) <= 0 {
+			if int32(r) < 0 {
 				break
+			}
+			if r == 0 {
+				if serveEnded.Load() {
+					break // the loop's own end (wmLoopEnd took the window down)
+				}
+				// A WM_QUIT another program posted before the serving ended: the window
+				// is still there, so the loop goes on hearing the end of the session, and
+				// the WM_QUIT is a close request like WM_CLOSE — refused while work or a
+				// wizard runs, the one waiting stop when idle (A1; the S1 fix round 2, B3).
+				closeRequest(ev)
+				continue
 			}
 			procTranslateMessage.Call(uintptr(unsafe.Pointer(&m)))
 			procDispatchMessageW.Call(uintptr(unsafe.Pointer(&m)))
-		}
-		// The loop ended before the serving did (a WM_QUIT another program posted): no
-		// window hears the end of the session any more, so this is a stop request that
-		// waits for the work, never a copy left deaf to sign-out (A1).
-		if !serveEnded.Load() && ev.Close != nil {
-			ev.Close()
 		}
 	}()
 	h := <-hwndc

@@ -19,6 +19,9 @@ import (
 // Amended 2026-11-13 (the S1 fix round; amended, not weakened): WM_ENDSESSION stops the
 // copy only when the session really ends or Restart Manager asks (ENDSESSION_CLOSEAPP;
 // A5), and an installer's close request is refused while work or a wizard runs (A2).
+// Amended 2026-11-13 (the S1 fix round 2, B3; amended, not weakened): Restart Manager's
+// WM_ENDSESSION stops the copy only after the copy allowed its query, and only while
+// still idle; a lone one is ignored.
 func TestMA1435_TheHiddenWindowIsNoDialogAndTakesNoCommand(t *testing.T) {
 	served := make(chan struct{})
 	ended := 0
@@ -64,9 +67,28 @@ func TestMA1435_TheHiddenWindowIsNoDialogAndTakesNoCommand(t *testing.T) {
 		t.Errorf("WM_ENDSESSION at a real sign-out: %d, stops %d; want the one stop", r, ended)
 	}
 	ending = false
-	if wndProc(0, wmEndSession, 1, endsessionCloseApp); ended != 2 {
-		t.Errorf("Restart Manager's WM_ENDSESSION did not stop the copy")
+	// The S1 fix round 2 (B3): Restart Manager's close request stops the copy only after
+	// the copy allowed its query; a lone WM_ENDSESSION with ENDSESSION_CLOSEAPP (a forgery:
+	// Restart Manager never sends one without the query) does nothing.
+	if wndProc(0, wmEndSession, 1, endsessionCloseApp); ended != 1 {
+		t.Errorf("a lone WM_ENDSESSION(ENDSESSION_CLOSEAPP), with no query before it, stopped the copy")
 	}
+	if r := wndProc(0, wmQueryEndSession, 0, endsessionCloseApp); r != 1 {
+		t.Fatalf("an installer's close request while idle answered %d, want 1", r)
+	}
+	if wndProc(0, wmEndSession, 1, endsessionCloseApp); ended != 2 {
+		t.Errorf("Restart Manager's WM_ENDSESSION after the allowed query did not stop the copy")
+	}
+	if wndProc(0, wmEndSession, 1, endsessionCloseApp); ended != 2 {
+		t.Errorf("a second WM_ENDSESSION(ENDSESSION_CLOSEAPP) reused the query allowed before the first")
+	}
+	// Allowed while idle, busy by the time the WM_ENDSESSION comes: it stays.
+	wndProc(0, wmQueryEndSession, 0, endsessionCloseApp)
+	busy = true
+	if wndProc(0, wmEndSession, 1, endsessionCloseApp); ended != 2 {
+		t.Errorf("a WM_ENDSESSION(ENDSESSION_CLOSEAPP) stopped the copy once work had started")
+	}
+	busy = false
 	if r := wndProc(0, wmEndSession, 0, endsessionCloseApp); ended != 2 || r != 0 {
 		t.Errorf("WM_ENDSESSION with the end cancelled stopped the instance")
 	}
@@ -80,6 +102,8 @@ func TestMA1435_TheHiddenWindowIsNoDialogAndTakesNoCommand(t *testing.T) {
 // once it is idle, asks the one stop; the window stays in place either way, still
 // answering the end of the session; a WM_QUIT posted to it, which ends its loop, is a
 // stop request too.
+// Amended 2026-11-13 (the S1 fix round 2, B3; amended, not weakened): a posted WM_QUIT is
+// refused while busy exactly as WM_CLOSE is, and the loop goes on answering.
 func TestMA1435_ACloseFromOutsideIsAStopThatKeepsTheWindow(t *testing.T) {
 	var closes atomic.Int32
 	err := windowsLoop(func() error { time.Sleep(150 * time.Millisecond); return nil },
@@ -132,8 +156,23 @@ func TestMA1435_ACloseFromOutsideIsAStopThatKeepsTheWindow(t *testing.T) {
 		t.Errorf("a WM_CLOSE from outside destroyed the hidden window")
 	}
 	const wmQuit = 0x0012
+	// The S1 fix round 2 (B3): a posted WM_QUIT is the same close request. While busy it
+	// is refused and the loop goes on (the window still answers); while idle it is the one
+	// waiting stop.
+	busy.Store(true)
 	procPostMessageW.Call(h, wmQuit, 0, 0)
-	waitFor("the stop the lost loop asks", func() bool { return closes.Load() == 2 })
+	time.Sleep(300 * time.Millisecond)
+	if closes.Load() != 1 {
+		t.Errorf("a WM_QUIT posted while busy stopped the copy")
+	}
+	if ok, _, _ := procIsWindow.Call(h); ok == 0 {
+		t.Fatalf("a WM_QUIT posted while busy took the hidden window down")
+	}
+	busy.Store(false)
+	procSendMessage.Call(h, wmClose, 0, 0)
+	waitFor("the loop still answering after the WM_QUIT", func() bool { return closes.Load() == 2 })
+	procPostMessageW.Call(h, wmQuit, 0, 0)
+	waitFor("the stop a WM_QUIT asks while idle", func() bool { return closes.Load() == 3 })
 	close(release)
 	if err := <-done; err != nil {
 		t.Errorf("the loop: %v", err)
