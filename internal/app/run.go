@@ -747,7 +747,7 @@ func Run(ctx context.Context, opts Options, logger *log.Logger, onProgress Progr
 	// the walk reads for minutes; a drive of a rotation may be swapped at the same path or letter,
 	// or the folder renamed, in that time, and nothing of this archive's may then be written into
 	// the other (1.7.2). The "running" record just written binds the run to its folder.
-	proof := newArchiveGuard(opts, lock.StillHeld)
+	proof := newArchiveGuard(ctx, opts, logger, lock.StillHeld)
 	proof.noteBegun()
 	// What binds the run to its archive's folder once its lock is no longer its own (endUnheld):
 	// armed only by the first proof that follows the manifest's load, so the bytes it names were
@@ -801,17 +801,8 @@ func Run(ctx context.Context, opts Options, logger *log.Logger, onProgress Progr
 		// recorded only in a folder that still holds the archive it began in; nothing at all
 		// goes into one that may hold another archive now (a drive swapped at the same path or
 		// letter, the folder moved) or that another run took over (1.7.2; endUnheld).
-		if end, here := proof.endUnheld(); end != nil {
-			if replacesEnd(err) {
-				err = end
-			}
-			if !here {
-				var fatal *RunFatalError
-				if !errors.As(end, &fatal) {
-					stoppedWarning(logger, opts.Out)
-				}
-				return
-			}
+		if !proof.closeOut(&err) {
+			return
 		}
 		recordRun(opts, rec, &result, &err, logger)
 	}()
@@ -1624,7 +1615,7 @@ func recordRun(opts Options, lr state.LastRun, result *Result, err *error, logge
 		if runtime.GOOS == "windows" {
 			hint = " (a sharing violation: exclude the archive folder from antivirus real-time scanning)"
 		}
-		logger.Printf("warning: could not record this run in %s (%v): `mailarchive status` may show this run as \"never finished\" or still show the previous result, whatever this log says about how it ended — run again once the file can be written%s", filepath.Join(opts.Out, state.LastRunName), werr, hint)
+		logger.Printf("warning: could not record this run in %s (%v): `mailarchive status` may show this run as \"did not finish\" or still show the previous result, whatever this log says about how it ended — run again once the file can be written%s", filepath.Join(opts.Out, state.LastRunName), werr, hint)
 	}
 	// Add this run to the archive's rolling history (MA-701), best effort like the
 	// last-run write above: the dashboard and `status` read it to show recent runs, not

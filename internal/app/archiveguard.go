@@ -29,6 +29,7 @@ package app
 // the run as the archive location being unavailable.
 
 import (
+	"context"
 	"crypto/sha256"
 	"errors"
 	"fmt"
@@ -36,6 +37,7 @@ import (
 	"log"
 	"os"
 	"path/filepath"
+	"slices"
 	"time"
 
 	"mail-archive-tool/internal/container"
@@ -94,10 +96,16 @@ type archiveGuard struct {
 	beganKnown bool
 	// lost is the answer of the proof that stopped the run: nothing after it asks, or waits, again.
 	lost error
+	// ctx is the run's: a cancel (Cancel, Ctrl-C, MailArchive Desktop's Shut down) ends a wait at
+	// once (the 1.7.2 re-check's Q2). nil in a test that builds a guard by hand: never cancelled.
+	ctx context.Context
+	// logger hears when a proof starts and stops waiting for the folder (the re-check's Q5); nil
+	// says nothing.
+	logger *log.Logger
 }
 
-func newArchiveGuard(opts Options, stillHeld func() error) *archiveGuard {
-	return &archiveGuard{out: opts.Out, stillHeld: stillHeld, proved: time.Now(), everyWrite: opts.Key != nil}
+func newArchiveGuard(ctx context.Context, opts Options, logger *log.Logger, stillHeld func() error) *archiveGuard {
+	return &archiveGuard{out: opts.Out, stillHeld: stillHeld, proved: time.Now(), everyWrite: opts.Key != nil, ctx: ctx, logger: logger}
 }
 
 // noteBegun keeps the digest of the "running" last-run record the run has just written into its
@@ -110,35 +118,89 @@ func (g *archiveGuard) noteBegun() {
 }
 
 // prove returns why the run must write nothing more into its folder, nil when it may go on. A
-// definite answer (settle) is kept: every proof after it gives it at once.
+// definite answer (settle) is kept: every proof after it gives it at once. A cancel is the run's
+// own answer, returned as it is and never kept.
 func (g *archiveGuard) prove() error {
 	if g.lost != nil {
 		return g.lost
 	}
 	if err := g.settle(); err != nil {
-		g.lost = err
+		if !cancelled(err) {
+			g.lost = err
+		}
 		return err
 	}
 	g.proved = time.Now()
 	return nil
 }
 
+// cancelled says err is a run's cancel (its context's), not an answer about its folder.
+func cancelled(err error) bool {
+	return errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded)
+}
+
 // settle asks until it has an answer: nil (the folder is there and its lock file is the run's),
 // the lock's error (read, and not the run's), or, once archiveUnreadableFor has passed with
-// nothing but "could not read", the run-fatal "unavailable" of a folder that cannot be reached.
+// nothing but "could not read", the run-fatal "unavailable" of a folder that cannot be reached. A
+// cancel of the run ends the wait at once and is the answer (the re-check's Q2), so a Cancel or a
+// Shut down during it is seen at once and the run is recorded cancelled. The wait is told in the
+// run's log as it starts and as it ends (Q5).
 func (g *archiveGuard) settle() error {
 	deadline := time.Now().Add(archiveUnreadableFor)
+	var began time.Time
 	for i := 0; ; i++ {
 		unreadable, err := g.ask()
 		if !unreadable {
+			if !began.IsZero() {
+				g.say("the archive folder can be reached again after %s.", time.Since(began).Round(time.Second))
+			}
 			return err
+		}
+		if began.IsZero() {
+			if g.ctx != nil && g.ctx.Err() != nil {
+				return g.ctx.Err() // a run already cancelled does not start a wait
+			}
+			began = time.Now()
+			g.say("waiting up to %s for the archive folder to be reachable again… (%v)", waitWords(), err)
 		}
 		left := time.Until(deadline)
 		if left <= 0 {
+			g.say("the archive folder was still not reachable after %s.", waitWords())
 			return unavailable(g.out, err)
 		}
-		time.Sleep(min(archiveProofPauses[min(i, len(archiveProofPauses)-1)], left))
+		pause := time.NewTimer(min(archiveProofPauses[min(i, len(archiveProofPauses)-1)], left))
+		select {
+		case <-g.done():
+			pause.Stop()
+			g.say("stopped waiting for the archive folder: the backup was cancelled.")
+			return g.ctx.Err()
+		case <-pause.C:
+		}
 	}
+}
+
+// done is the run's cancel channel; nil, which never fires, for a guard with no context.
+func (g *archiveGuard) done() <-chan struct{} {
+	if g.ctx == nil {
+		return nil
+	}
+	return g.ctx.Done()
+}
+
+// say writes one line of the wait into the run's log.
+func (g *archiveGuard) say(format string, args ...any) {
+	if g.logger != nil {
+		g.logger.Printf(format, args...)
+	}
+}
+
+// waitWords is archiveUnreadableFor in words: "30 seconds".
+func waitWords() string {
+	s := int(archiveUnreadableFor.Round(time.Second) / time.Second)
+	if s <= 1 {
+		return "a second"
+	}
+	return fmt.Sprintf("%d seconds", s)
 }
 
 // ask is one look: nil when the folder is the run's; otherwise why not, and unreadable when the
@@ -158,13 +220,35 @@ func (g *archiveGuard) ask() (unreadable bool, err error) {
 		return true, lost.Err
 	}
 	if lost.Removed() {
-		// A lock file not found is an answer only while its folder is there: a share that
-		// dropped between the two looks says "not found" of both.
-		if _, serr := os.Stat(g.out); serr != nil {
-			return true, serr
+		if unreadable, rerr := g.recheckRemoved(lost.Path); unreadable {
+			return true, rerr
 		}
 	}
 	return false, err
+}
+
+// recheckRemoved looks again before a lock file "not found" counts as deleted (the 1.7.2
+// re-check's Q3): over a network a client can say "not found" of what it cannot reach just now,
+// and answer a look at the folder itself from its cache. So the folder's parent must be there, the
+// folder must be listed afresh (a listing goes to the drive or share), and the lock file must be
+// missing from that listing; otherwise the answer is "could not read", and the proof waits.
+func (g *archiveGuard) recheckRemoved(lockPath string) (unreadable bool, err error) {
+	if _, err := os.Stat(filepath.Dir(g.out)); err != nil {
+		return true, err
+	}
+	f, err := os.Open(g.out)
+	if err != nil {
+		return true, err
+	}
+	defer f.Close()
+	names, err := f.Readdirnames(-1)
+	if err != nil && !errors.Is(err, io.EOF) {
+		return true, err
+	}
+	if slices.Contains(names, filepath.Base(lockPath)) {
+		return true, fmt.Errorf("%s is listed in its folder but could not be found", lockPath)
+	}
+	return false, nil
 }
 
 // gone tells the guard that the run's walk already ended on its folder's being unavailable (a
@@ -187,7 +271,8 @@ func (g *archiveGuard) gone(fatal *RunFatalError) {
 // recorded a lost lock (a lock file removed from under a run, with no swap, is "failed", never a
 // crash). Not here, nothing is written into the folder: no record, run history entry,
 // BACKUP-NEEDS-ATTENTION.txt or streak; it may hold another archive, or another run that took the
-// lock and records its own.
+// lock and records its own. A run cancelled while its folder cannot be read ends cancelled, and
+// is recorded so only where the folder still holds its archive.
 func (g *archiveGuard) endUnheld() (end error, here bool) {
 	err := g.prove()
 	if err == nil {
@@ -195,10 +280,32 @@ func (g *archiveGuard) endUnheld() (end error, here bool) {
 	}
 	here = g.sameArchive()
 	var fatal *RunFatalError
-	if errors.As(err, &fatal) {
+	if errors.As(err, &fatal) || cancelled(err) {
 		return err, here
 	}
 	return stoppedError(g.out, err, here), here
+}
+
+// closeOut is the deferred record's step of Run and RunGraph: it asks endUnheld, puts its end into
+// *err where the run would otherwise have ended ok, partly ok, on a lost lock or on its folder being
+// unavailable, logs the warning of a run whose folder is there but no longer its own (F4, G6), and
+// says whether the run's record may be written into the folder.
+func (g *archiveGuard) closeOut(err *error) bool {
+	end, here := g.endUnheld()
+	if end == nil {
+		return true
+	}
+	if replacesEnd(*err) {
+		*err = end
+	}
+	if here {
+		return true
+	}
+	var fatal *RunFatalError
+	if !errors.As(end, &fatal) && !cancelled(end) {
+		stoppedWarning(g.logger, g.out)
+	}
+	return false
 }
 
 // sameArchive says the folder still holds the archive this run began in: its last-run record is
@@ -258,7 +365,7 @@ func recordedFile(opts Options, mpath string, manifest *state.Manifest, sealed *
 // deferred record puts plainly, endUnheld).
 func proofStop(err error) error {
 	var fatal *RunFatalError
-	if errors.As(err, &fatal) {
+	if errors.As(err, &fatal) || cancelled(err) {
 		return err
 	}
 	return withKind(state.FailLockLost, err)
@@ -335,13 +442,14 @@ func (g *archiveGuard) writeGuard(lost *error) func() error {
 }
 
 // The words of a backup stopped because its folder is no longer its own (the 1.7.2 friction
-// review's F1 and F6), here only: plain words first, by what the run found at its end, then the
-// lock's own sentence after "Details:", without the system's error.
+// review's F1 and F6, and its re-walk's G1, G2 and G6), here only: plain words by what the run
+// found at its end, a clause the surfaces lead into ("Backup failed: …", "Reason: …"), then a short
+// "Details:" without the lock file's path or the system's error.
 const (
-	stoppedChangedWords   = "Backup stopped: the archive folder changed during the backup. Another drive or folder is now at %s (a drive was swapped or disconnected, or the folder was moved or renamed), or another backup took it over. Nothing more was saved there. Connect the drive that holds this archive, then run the backup again. Details: %s."
-	stoppedDeletedWords   = "Backup stopped: MailArchive's lock file in the archive folder (%s) was deleted during the backup, by a person or by a cleaning or sync app. Your archive is fine. Run the backup again. If this keeps happening, stop that app from cleaning the archive folder. Details: %s."
-	stoppedRewrittenWords = "Backup stopped: MailArchive's lock file in the archive folder (%s) was changed during the backup: another backup of this archive may have started, or another app wrote to the file. Your archive is fine. Run the backup again once any other backup of it has finished. Details: %s."
-	stoppedWarningWords   = "warning: the folder at %s changed during this backup (another drive or folder is there now, or another backup took it over), so this backup's result was not written into it."
+	stoppedChangedWords   = "the archive folder changed during the backup. Another drive or folder is now at %s (a drive was swapped or disconnected, or the folder was moved or renamed), or another backup took it over. Nothing more was saved there. Connect the drive that holds this archive, then run the backup again. Details: %s."
+	stoppedDeletedWords   = "MailArchive's lock file in the archive folder (%s) was deleted during the backup, by a person or by a cleaning or sync app. Your archive is fine. Run the backup again. If this keeps happening, stop that app from cleaning the archive folder. Details: %s."
+	stoppedRewrittenWords = "MailArchive's lock file in the archive folder (%s) was changed during the backup: another backup of this archive may have started, or another app wrote to the file. Your archive is fine. Run the backup again once any other backup of it has finished. Details: %s."
+	stoppedWarningWords   = "warning: this backup's result was not written into %s: the folder there is no longer this archive's."
 )
 
 // stoppedErr is a backup stopped because its lock is no longer its own: its words (Error) are the

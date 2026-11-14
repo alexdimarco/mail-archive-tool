@@ -120,7 +120,7 @@ func TestTheCrashSweepProvesBeforeEachRemoval(t *testing.T) {
 		t.Fatal("premise: the sweep removed nothing")
 	}
 	rc, msg := ma1328LockLost(err)
-	assure.Refused(t, rc, msg, assure.Names(filepath.Join(outA, lockfile.Name), "Backup stopped: the archive folder changed during the backup"),
+	assure.Refused(t, rc, msg, assure.Names(outA, "the archive folder changed during the backup"),
 		assure.NoSideEffect(func() bool { return ma1336Untouched(t, outA, before) }))
 }
 
@@ -173,7 +173,7 @@ func TestACapturesCrashSweepProvesBeforeEachRemoval(t *testing.T) {
 		t.Fatal("premise: the sweep removed nothing")
 	}
 	rc, msg := ma1328LockLost(err)
-	assure.Refused(t, rc, msg, assure.Names(filepath.Join(outA, lockfile.Name), "Backup stopped: the archive folder changed during the backup"),
+	assure.Refused(t, rc, msg, assure.Names(outA, "the archive folder changed during the backup"),
 		assure.NoSideEffect(func() bool { return ma1336Untouched(t, outA, before) }))
 }
 
@@ -181,7 +181,7 @@ func TestACapturesCrashSweepProvesBeforeEachRemoval(t *testing.T) {
 // F5: once a run has begun on an archive, nothing it does makes the archive's own folder again: a
 // folder moved away mid-run with nothing in its place, its parent writable (a folder renamed, a
 // mount point the person owns), ends the run as the archive location being unavailable
-// ("reconnect the drive or share"), with no folder made at the old path and the moved folder
+// ("if you swapped drives, put this archive's drive back"), with no folder made at the old path and the moved folder
 // whole. 1.7.2's first build made the folder again and wrote the run's new message files there.
 // Positive twin first: a brand-new archive's first run makes its folder.
 func TestAFolderMovedAwayMidRunIsNeverMadeAgain(t *testing.T) {
@@ -218,7 +218,7 @@ func TestAFolderMovedAwayMidRunIsNeverMadeAgain(t *testing.T) {
 	if FailureKind(err) == state.FailArchiveUnwritable {
 		rc = 1
 	}
-	assure.Refused(t, rc, fmt.Sprint(err), assure.Code(1), assure.Names(out, "is unavailable", "reconnect the drive or share and re-run"),
+	assure.Refused(t, rc, fmt.Sprint(err), assure.Code(1), assure.Names(out, "is unavailable", "connect the drive or network share that holds this archive (if you swapped drives, put this archive's drive back), then run the backup again"),
 		assure.NoSideEffect(func() bool {
 			_, made := os.Lstat(out)
 			_, whole := os.Stat(filepath.Join(out+"-moved", ".mailarchive-manifest.json"))
@@ -232,8 +232,10 @@ func TestAFolderMovedAwayMidRunIsNeverMadeAgain(t *testing.T) {
 // system's error: another drive or folder now at its path (here a folder swapped in after the
 // walk; nothing recorded there, and the log's warning says the result was not written into it);
 // its own lock file deleted (not on Windows, which will not delete an open file); its own lock
-// file changed. Each word of each sentence is pinned here. Positive twin first: the same run with
-// nothing changed ends ok.
+// file changed. Each word of each sentence is pinned here. Since the friction re-walk (G1, G2, G6)
+// each is a clause the surfaces lead into ("Backup failed: …", "Reason: …"), with no "Backup
+// stopped:" of its own, its "Details:" names no path, and the warning no longer restates the cause.
+// Positive twin first: the same run with nothing changed ends ok.
 func TestAStoppedBackupSaysWhatHappenedInPlainWords(t *testing.T) {
 	outA, outB := tmpDir(t), tmpDir(t)
 	storeA := ma1336TwoArchives(t, outA, outB)
@@ -265,9 +267,9 @@ func TestAStoppedBackupSaysWhatHappenedInPlainWords(t *testing.T) {
 				t.Fatal(werr)
 			}
 		})
-		want := "Backup stopped: MailArchive's lock file in the archive folder (.mailarchive.lock) was changed during the backup: another backup of this archive may have started, or another app wrote to the file. Your archive is fine. Run the backup again once any other backup of it has finished. Details: lock " + lockIn(out) + " was replaced during the run."
+		want := "MailArchive's lock file in the archive folder (.mailarchive.lock) was changed during the backup: another backup of this archive may have started, or another app wrote to the file. Your archive is fine. Run the backup again once any other backup of it has finished. Details: the lock file was replaced during the run."
 		rc, msg := ma1328LockLost(err)
-		assure.Refused(t, rc, msg, assure.Names(want),
+		assure.Refused(t, rc, msg, assure.Names(want), assure.Forbid(lockIn(out), "Backup stopped", "panic", "goroutine"),
 			assure.NoSideEffect(func() bool { return lr.Status == state.RunFailed && lr.Error == want }))
 	})
 	if runtime.GOOS == "windows" {
@@ -279,9 +281,9 @@ func TestAStoppedBackupSaysWhatHappenedInPlainWords(t *testing.T) {
 				t.Fatal(rerr)
 			}
 		})
-		want := "Backup stopped: MailArchive's lock file in the archive folder (.mailarchive.lock) was deleted during the backup, by a person or by a cleaning or sync app. Your archive is fine. Run the backup again. If this keeps happening, stop that app from cleaning the archive folder. Details: lock " + lockIn(out) + " was removed during the run."
+		want := "MailArchive's lock file in the archive folder (.mailarchive.lock) was deleted during the backup, by a person or by a cleaning or sync app. Your archive is fine. Run the backup again. If this keeps happening, stop that app from cleaning the archive folder. Details: the lock file was removed during the run."
 		rc, msg := ma1328LockLost(err)
-		assure.Refused(t, rc, msg, assure.Names(want), assure.Forbid("no such file", "panic", "goroutine"),
+		assure.Refused(t, rc, msg, assure.Names(want), assure.Forbid("no such file", lockIn(out), "Backup stopped", "panic", "goroutine"),
 			assure.NoSideEffect(func() bool { return lr.Status == state.RunFailed && lr.Error == want }))
 	})
 	t.Run("another-folder", func(t *testing.T) {
@@ -301,10 +303,10 @@ func TestAStoppedBackupSaysWhatHappenedInPlainWords(t *testing.T) {
 		if !swapped {
 			t.Fatal("premise: the walk's end was not reached")
 		}
-		want := "Backup stopped: the archive folder changed during the backup. Another drive or folder is now at " + outA + " (a drive was swapped or disconnected, or the folder was moved or renamed), or another backup took it over. Nothing more was saved there. Connect the drive that holds this archive, then run the backup again. Details: lock " + lockIn(outA) + " was replaced during the run."
-		warning := "warning: the folder at " + outA + " changed during this backup (another drive or folder is there now, or another backup took it over), so this backup's result was not written into it.\n"
+		want := "the archive folder changed during the backup. Another drive or folder is now at " + outA + " (a drive was swapped or disconnected, or the folder was moved or renamed), or another backup took it over. Nothing more was saved there. Connect the drive that holds this archive, then run the backup again. Details: the lock file was replaced during the run."
+		warning := "warning: this backup's result was not written into " + outA + ": the folder there is no longer this archive's.\n"
 		rc, msg := ma1328LockLost(err)
-		assure.Refused(t, rc, msg, assure.Names(want),
+		assure.Refused(t, rc, msg, assure.Names(want), assure.Forbid(lockIn(outA), "Backup stopped", "panic", "goroutine"),
 			assure.NoSideEffect(func() bool {
 				if !strings.Contains(logs.String(), warning) {
 					t.Logf("the log lacks the warning %q:\n%s", warning, logs.String())
@@ -353,7 +355,7 @@ func TestTheRunningRecordBindsANewArchiveAndTellsSameBytesApart(t *testing.T) {
 		t.Fatal("premise: the walk was not reached")
 	}
 	rc, msg := ma1328LockLost(err)
-	assure.Refused(t, rc, msg, assure.Names("Backup stopped: MailArchive's lock file in the archive folder", "Your archive is fine"),
+	assure.Refused(t, rc, msg, assure.Names("MailArchive's lock file in the archive folder", "Your archive is fine"),
 		assure.NoSideEffect(func() bool {
 			lr, st, _ := state.ReadLastRun(out)
 			h, _ := state.ReadRunHistory(out)
@@ -394,7 +396,7 @@ func TestTheRunningRecordBindsANewArchiveAndTellsSameBytesApart(t *testing.T) {
 		t.Fatal("premise: the walk was not reached")
 	}
 	rc, msg = ma1328LockLost(err)
-	assure.Refused(t, rc, msg, assure.Names("Backup stopped: the archive folder changed during the backup"),
+	assure.Refused(t, rc, msg, assure.Names("the archive folder changed during the backup"),
 		assure.NoSideEffect(func() bool {
 			lr, _, _ := state.ReadLastRun(outA)
 			h, _ := state.ReadRunHistory(outA)

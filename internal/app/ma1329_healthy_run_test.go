@@ -143,7 +143,7 @@ func TestAMomentsUnreadableLockIsAskedAgain(t *testing.T) {
 	var fatal *RunFatalError
 	began := time.Now()
 	gone := &archiveGuard{out: filepath.Join(dir, "pulled"), stillHeld: func() error { return nil }}
-	if err := gone.prove(); !errors.As(err, &fatal) || !strings.Contains(err.Error(), "is unavailable") || !strings.Contains(err.Error(), "reconnect the drive or share") || time.Since(began) < 300*time.Millisecond {
+	if err := gone.prove(); !errors.As(err, &fatal) || !strings.Contains(err.Error(), "is unavailable") || !strings.Contains(err.Error(), "if you swapped drives, put this archive's drive back") || time.Since(began) < 300*time.Millisecond {
 		t.Fatalf("twin: a folder that is not there gave %v after %v, want the run-fatal \"unavailable\" after the wait", err, time.Since(began))
 	}
 	denied := &lockfile.LostError{Path: lockPath, Err: os.ErrPermission}
@@ -217,7 +217,7 @@ func TestAMomentsUnreadableLockIsAskedAgain(t *testing.T) {
 	if errors.As(err, &fatal) && FailureKind(err) == state.FailArchiveUnwritable {
 		rc = 1
 	}
-	assure.Refused(t, rc, fmt.Sprint(err), assure.Code(1), assure.Names(lockfile.Name, "permission denied", "is unavailable", "reconnect the drive or share and re-run"))
+	assure.Refused(t, rc, fmt.Sprint(err), assure.Code(1), assure.Names(lockfile.Name, "permission denied", "is unavailable", "connect the drive or network share that holds this archive (if you swapped drives, put this archive's drive back), then run the backup again"))
 	out, err := unreadable(t, 20*time.Millisecond)
 	ma1329Healthy(t, "a run whose lock file was unreadable for a moment", out, err)
 }

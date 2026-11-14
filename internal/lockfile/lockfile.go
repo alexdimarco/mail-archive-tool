@@ -178,14 +178,15 @@ func (e *LostError) Replaced() bool { return e.Err == nil }
 // a network folder reconnecting): no answer about whose it is.
 func (e *LostError) Unreadable() bool { return e.Err != nil && !e.Removed() }
 
-// Short is the lock's sentence without the system's error and without the advice: "lock PATH was
-// removed during the run" or "… was replaced during the run" (the words a person's message keeps
-// after "Details:", the 1.7.2 friction review's F1 and F6).
+// Short is the lock's sentence without its path, the system's error or the advice: "the lock file
+// was removed during the run" or "… was replaced during the run" (the words a person's message
+// keeps after "Details:", the 1.7.2 friction review's F1 and F6 and its re-walk's G2: the archive's
+// path is beside the message on every surface).
 func (e *LostError) Short() string {
 	if e.Replaced() {
-		return fmt.Sprintf("lock %s was replaced during the run", e.Path)
+		return "the lock file was replaced during the run"
 	}
-	return fmt.Sprintf("lock %s was removed during the run", e.Path)
+	return "the lock file was removed during the run"
 }
 
 // acquireGrace and probeGrace are how long a refused tryLock is retried before the lock

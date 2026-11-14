@@ -2444,10 +2444,11 @@ func Summary(in Input, rep Report) []string {
 		lr := in.LastRun
 		// A "running" record reads as running only while it can belong to a
 		// run in progress (runRunning, the rule Assess judges it by); otherwise
-		// the run that wrote it never finished, as the RED below says.
+		// the run that wrote it did not finish, in the RED's own words below (the
+		// 1.7.2 friction re-walk's G5).
 		how := lr.Status
 		if lr.Status == state.RunRunning && !runRunning(in) {
-			how = "never finished"
+			how = "did not finish"
 		}
 		partial := lr.Status == state.RunFailed && lr.Partial != nil && !lr.Encrypted
 		if partial {

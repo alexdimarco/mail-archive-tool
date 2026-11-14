@@ -92,10 +92,16 @@ func runFatalFor(out string, kind export.FatalKind, err error) *RunFatalError {
 }
 
 // unavailable is the refusal for an archive location that is gone (a removed
-// drive, a dropped share, a root deleted under the run).
+// drive, a dropped share, a root deleted under the run, or, since 1.7.2 never makes
+// the folder again, a drive swapped with a gap between the two). The system's words
+// come last, after "Details:" (the 1.7.2 friction re-walk's G3).
 func unavailable(out string, cause error) *RunFatalError {
-	return &RunFatalError{gone: true, Err: cause, Msg: cleanText(fmt.Sprintf("the archive location %s is unavailable (%v) — reconnect the drive or share and re-run. %s", out, cause, keptNote))}
+	return &RunFatalError{gone: true, Err: cause, Msg: cleanText(fmt.Sprintf(unavailableWords, out, keptNote, cause))}
 }
+
+// unavailableWords is the run-fatal sentence of an archive location that cannot be reached: the
+// folder, the kept-messages note, the system's words.
+const unavailableWords = "the archive location %s is unavailable — connect the drive or network share that holds this archive (if you swapped drives, put this archive's drive back), then run the backup again. %s Details: %v."
 
 // writtenPath is the file or directory an export error names ("" if none).
 func writtenPath(err error) string {

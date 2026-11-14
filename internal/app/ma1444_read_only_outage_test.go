@@ -218,7 +218,7 @@ func TestACaptureProvesBeforeItsWrites(t *testing.T) {
 	}
 	n, err := pagesAdded(0)
 	rc, msg := ma1328LockLost(err)
-	assure.Refused(t, rc, msg, assure.Names("Backup stopped: the archive folder changed during the backup"),
+	assure.Refused(t, rc, msg, assure.Names("the archive folder changed during the backup"),
 		assure.NoSideEffect(func() bool {
 			if n != 0 {
 				t.Logf("the capture added %d message pages to the other archive", n)
@@ -265,7 +265,7 @@ func TestALockThatStaysUnreadableEndsUnavailableAfterTheWait(t *testing.T) {
 		rc = 1
 	}
 	t.Logf("ended after %v: %v", took.Round(time.Millisecond), err)
-	assure.Refused(t, rc, fmt.Sprint(err), assure.Code(1), assure.Names(lockPath, "permission denied", "is unavailable", "reconnect the drive or share and re-run"),
+	assure.Refused(t, rc, fmt.Sprint(err), assure.Code(1), assure.Names(lockPath, "permission denied", "is unavailable", "connect the drive or network share that holds this archive (if you swapped drives, put this archive's drive back), then run the backup again"),
 		assure.Forbid("during the run", "panic", "goroutine"),
 		assure.NoSideEffect(func() bool {
 			lr, st, _ := state.ReadLastRun(outA)
@@ -319,7 +319,7 @@ func TestALinkedArchiveFolderWhoseDriveIsPulledIsUnavailable(t *testing.T) {
 			if FailureKind(err) == state.FailArchiveUnwritable {
 				rc = 1
 			}
-			assure.Refused(t, rc, fmt.Sprint(err), assure.Code(1), assure.Names(link, "is unavailable", "reconnect the drive or share and re-run"),
+			assure.Refused(t, rc, fmt.Sprint(err), assure.Code(1), assure.Names(link, "is unavailable", "connect the drive or network share that holds this archive (if you swapped drives, put this archive's drive back), then run the backup again"),
 				assure.Forbid("during the run", "panic", "goroutine"),
 				assure.NoSideEffect(func() bool {
 					_, serr := os.Lstat(drive)

@@ -264,8 +264,19 @@ var RefuseSettingsWrite = func(path, kind string) error { return nil }
 // Write records info at path atomically, 0600, in a directory made 0700; on Windows the
 // file is created with a Medium integrity label that no lower integrity can read
 // (writeSecret; the menu-bar S1 adversarial re-check r3, C1): K yields a Desktop session,
-// so a Low-integrity process of this account (a sandbox) must not read it.
-func Write(path string, info Info) error {
+// so a Low-integrity process of this account (a sandbox) must not read it. When Windows
+// will not set that label, the file is written as 1.7.1 wrote it (WriteNoting).
+func Write(path string, info Info) error { return WriteNoting(path, info, nil) }
+
+// WriteNoting is Write that tells note, in one plain sentence, when Windows would not set
+// the label (util.SecretCreateRefused: a file system that keeps no labels, a network
+// folder, or an account whose programs may not set it, which Microsoft's documentation
+// leaves open for a person's own programs; the 1.7.2 research note's L0). The file is then
+// written exactly as 1.7.1 wrote it, owner-only and unlabelled, so MailArchive Desktop
+// still starts: 1.7.2 is never worse than 1.7.1 there. It returns an error only when no
+// usable file was written; that error is still the label's refusal
+// (util.SecretCreateRefused), with why the plain write failed too.
+func WriteNoting(path string, info Info, note func(string)) error {
 	if err := RefuseSettingsWrite(path, "the Desktop instance file"); err != nil {
 		return err
 	}
@@ -274,12 +285,43 @@ func Write(path string, info Info) error {
 	if err != nil {
 		return err
 	}
-	return writeSecret(path, append(b, '\n'))
+	data := append(b, '\n')
+	err = writeSecret(path, data)
+	dir, cause, refused := util.SecretCreateRefused(err)
+	if !refused {
+		return err
+	}
+	if perr := writePlain(path, data); perr != nil {
+		return fmt.Errorf("%w; written without the label it failed too: %v", err, perr)
+	}
+	if note != nil {
+		note(UnlabelledNote(dir, cause))
+	}
+	return nil
+}
+
+// UnlabelledNote is the warning of an instance file Windows would not label: written as
+// before 1.7.2, readable by any program running under this account.
+func UnlabelledNote(dir string, cause error) string {
+	return fmt.Sprintf("warning: Windows would not protect MailArchive Desktop's private start file in %s (%v), so it was written as before 1.7.2: a sandboxed program running under your account may be able to read it.", dir, cause)
 }
 
 // writeSecret is how an instance file is written: util.WriteSecretFileAtomic0600 (a var
-// only so MA-1427's test can check that it is, on every OS).
-var writeSecret = util.WriteSecretFileAtomic0600
+// only so MA-1427's test can check that it is, on every OS). writePlain is how it is
+// written when Windows will not label it: util.WriteFileAtomic0600, as 1.7.1 wrote it.
+var (
+	writeSecret = util.WriteSecretFileAtomic0600
+	writePlain  = util.WriteFileAtomic0600
+)
+
+// SetWritersForTest replaces writeSecret and writePlain for a test in another package (the
+// Desktop's start when Windows will not label its start file) and returns their restore.
+// Production code never calls it.
+func SetWritersForTest(secret, plain func(path string, data []byte) error) (restore func()) {
+	oldSecret, oldPlain := writeSecret, writePlain
+	writeSecret, writePlain = secret, plain
+	return func() { writeSecret, writePlain = oldSecret, oldPlain }
+}
 
 // Read returns the instance file at path: a missing file wraps os.ErrNotExist; one
 // that is a link or not a regular file, group- or other-readable on Unix, larger

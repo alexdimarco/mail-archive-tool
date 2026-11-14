@@ -92,20 +92,20 @@ func TestRunningExportIsJudgedByTheLockHolder(t *testing.T) {
 		if r := reasonFor(later, "run_stuck"); r != "" || reasonFor(later, "run_never_finished") == "" {
 			t.Errorf("holder %q: past the period the record is %v, want run_never_finished and never run_stuck", tc.holder, later.Codes)
 		}
-		if !strings.HasSuffix(line, "→ never finished") {
-			t.Errorf("holder %q: Summary %q above %q, want the run shown as never finished", tc.holder, line, never)
+		if !strings.HasSuffix(line, "→ did not finish") { // MA-1448's words since 1.7.2 (G5)
+			t.Errorf("holder %q: Summary %q above %q, want the run shown as did not finish", tc.holder, line, never)
 		}
 	}
 
 	// With the lock free the run that wrote the record is gone: the same RED,
-	// and the same "never finished" on the Last run line.
+	// and the same "did not finish" on the Last run line.
 	in := health.Gather(out, "")
 	if in.LockHeld {
 		t.Fatalf("the archive lock is still held (verb %q) after every holder released it", in.LockVerb)
 	}
 	rep := health.Assess(in, time.Now())
 	never := assure.Reached(t, reasonFor(rep, "run_never_finished"), "the run_never_finished RED with the lock free")
-	if line := summaryLine(in, rep, "Last run:"); !strings.HasSuffix(line, "→ never finished") {
-		t.Errorf("lock free: Summary %q above %q, want the run shown as never finished", line, never)
+	if line := summaryLine(in, rep, "Last run:"); !strings.HasSuffix(line, "→ did not finish") {
+		t.Errorf("lock free: Summary %q above %q, want the run shown as did not finish", line, never)
 	}
 }

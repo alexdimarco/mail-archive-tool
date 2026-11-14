@@ -190,7 +190,7 @@ func TestArchiveRemovedMidWalkIsRunFatal(t *testing.T) {
 	})
 	res, err := runLocal(t, out, src)
 	code, msg := refusalOf(err)
-	assure.Refused(t, code, msg, assure.Code(1), assure.Names(out, "is unavailable", "reconnect the drive or share and re-run"))
+	assure.Refused(t, code, msg, assure.Code(1), assure.Names(out, "is unavailable", "connect the drive or network share that holds this archive (if you swapped drives, put this archive's drive back), then run the backup again"))
 	if errors.Is(err, ErrPartial) || res.Partial || res.Gaps.FolderGaps != 0 || res.Gaps.ItemGaps != 0 {
 		t.Errorf("partial %v, gaps %+v: a vanished archive is not a partial outcome and records no folder-unwritable rows", res.Partial, res.Gaps)
 	}
@@ -356,7 +356,7 @@ func TestRunFatalWordingByCause(t *testing.T) {
 	}{
 		{export.FatalFull, []string{"the archive drive is full", "free space on the drive that holds " + out}},
 		{export.FatalReadOnly, []string{"the archive location " + out + " is read-only", "make it writable"}},
-		{export.FatalGone, []string{"the archive location " + out + " is unavailable", "reconnect the drive or share and re-run"}},
+		{export.FatalGone, []string{"the archive location " + out + " is unavailable", "connect the drive or network share that holds this archive (if you swapped drives, put this archive's drive back), then run the backup again"}},
 	}
 	for _, c := range cases {
 		err := runFatalFor(out, c.kind, &fs.PathError{Op: "write", Path: "/archive/s/x.html", Err: syscall.EIO})

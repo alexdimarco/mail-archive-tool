@@ -17,6 +17,9 @@ import (
 type Holder struct {
 	Dir     string
 	Session string
+	// Note, when set, hears the warning of an instance file Windows would not label, written
+	// as 1.7.1 wrote it (WriteNoting).
+	Note func(string)
 
 	lock *lockfile.Lock
 	info *Info
@@ -83,7 +86,7 @@ func (h *Holder) RemoveStale() { os.Remove(h.FilePath()) }
 // Publish writes the instance file and remembers it, so Watch can rewrite it.
 func (h *Holder) Publish(info Info) error {
 	h.info = &info
-	return Write(h.FilePath(), info)
+	return WriteNoting(h.FilePath(), info, h.Note)
 }
 
 // Watch re-checks the lock every interval (lockfile.StillHeld) and rewrites the
@@ -108,7 +111,7 @@ func (h *Holder) Watch(interval time.Duration, log func(string)) (stop func()) {
 					continue
 				}
 				if _, err := os.Lstat(h.FilePath()); err != nil && h.info != nil {
-					if err := Write(h.FilePath(), *h.info); err != nil {
+					if err := WriteNoting(h.FilePath(), *h.info, h.Note); err != nil {
 						log("could not rewrite the instance file: " + err.Error())
 					}
 				}

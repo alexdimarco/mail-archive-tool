@@ -220,23 +220,14 @@ func RunGraph(ctx context.Context, g GraphOptions, opts Options, logger *log.Log
 	// each write of its tail, the folder is proved to still be this capture's, as a local run's is
 	// (archiveguard.go): a drive of a rotation swapped at the same path mid-capture gets nothing of
 	// this archive's (1.7.2). The "running" record just written binds the capture to its folder.
-	proof := newArchiveGuard(opts, lock.StillHeld)
+	proof := newArchiveGuard(ctx, opts, logger, lock.StillHeld)
 	proof.noteBegun()
 	defer func() {
 		// A capture whose lock is no longer its own is not this archive's success, and its
 		// failure is recorded only in a folder that still holds the archive it began in
 		// (endUnheld), as a local run's.
-		if end, here := proof.endUnheld(); end != nil {
-			if replacesEnd(err) {
-				err = end
-			}
-			if !here {
-				var fatal *RunFatalError
-				if !errors.As(end, &fatal) {
-					stoppedWarning(logger, opts.Out)
-				}
-				return
-			}
+		if !proof.closeOut(&err) {
+			return
 		}
 		recordRun(opts, begun, &result, &err, logger)
 	}()

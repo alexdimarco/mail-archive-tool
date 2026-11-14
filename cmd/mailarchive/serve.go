@@ -214,7 +214,10 @@ func publishServe(env *linkEnv, out, served, keyHex string) func() {
 	path := filepath.Join(dir, instance.ServeFileName(out))
 	abs, _ := filepath.Abs(out)
 	info := instance.Info{PID: os.Getpid(), Exe: exe, Started: env.Now(), Session: instance.LogonSession(), Dashboard: u, Key: keyHex, Out: abs}
-	if err := instance.Write(path, info); err != nil {
+	// Windows refusing the file's label is a warning, the file written as 1.7.1 wrote it (the
+	// 1.7.2 research note's L0).
+	note := func(s string) { fmt.Fprintln(env.Stderr, s) }
+	if err := instance.WriteNoting(path, info, note); err != nil {
 		fmt.Fprintf(env.Stderr, "note: `mailarchive serve -link` will not work for this run: %v\n", err)
 		return nil
 	}

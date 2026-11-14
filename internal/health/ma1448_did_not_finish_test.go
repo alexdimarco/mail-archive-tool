@@ -13,7 +13,8 @@ import (
 // says, in plain words, what can leave it so (the 1.7.2 friction review's F3): MailArchive
 // stopped, the computer shut down or restarted, or this archive's drive disconnected or swapped
 // during the backup (1.7.2 then writes nothing into the folder it began in, which went with that
-// drive), and what to do. It no longer blames a crash, a kill or power loss alone, nor names a pid.
+// drive), and what to do. It no longer blames a crash, a kill or power loss alone, nor names a pid;
+// and the Last run line above it says "did not finish" too (the friction re-walk's G5).
 // Positive twin first: the same record with its run still holding the lock is a run in progress,
 // not RED.
 func TestABackupThatDidNotFinishSaysWhatCanCauseIt(t *testing.T) {
@@ -40,5 +41,10 @@ func TestABackupThatDidNotFinishSaysWhatCanCauseIt(t *testing.T) {
 	}
 	if !hasCode(rep, "run_never_finished") {
 		t.Errorf("the reason code is not run_never_finished: %v", rep.Codes)
+	}
+	// The Last run line above it says the same, not "never finished" (the friction re-walk's G5).
+	summary := strings.Join(Summary(in, rep), "\n")
+	if !strings.Contains(summary, "→ did not finish") || strings.Contains(summary, "→ never finished") {
+		t.Errorf("the Last run line does not say the backup did not finish:\n%s", summary)
 	}
 }

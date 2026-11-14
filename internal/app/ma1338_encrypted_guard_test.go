@@ -9,7 +9,6 @@ import (
 
 	"mail-archive-tool/internal/assure"
 	"mail-archive-tool/internal/export"
-	"mail-archive-tool/internal/lockfile"
 	"mail-archive-tool/internal/state"
 )
 
@@ -86,7 +85,7 @@ func TestAnEncryptedRunWhoseFolderIsSwappedRecordsNothingInTheOther(t *testing.T
 				t.Errorf("the walk read %d messages after its folder came to hold another archive", n)
 			}
 			rc, msg := ma1328LockLost(err)
-			assure.Refused(t, rc, msg, assure.Names(lockfile.Name, "during the run", "Backup stopped: the archive folder changed during the backup", "then run the backup again"),
+			assure.Refused(t, rc, msg, assure.Names("Details: the lock file was", "during the run", "the archive folder changed during the backup", "then run the backup again"),
 				assure.NoSideEffect(func() bool {
 					if len(outside) > 0 {
 						t.Logf("written into the other archive: %v", outside)

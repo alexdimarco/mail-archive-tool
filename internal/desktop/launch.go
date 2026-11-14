@@ -84,10 +84,15 @@ func osEnv() *launchEnv {
 	}
 }
 
-// refusedError is a refusal that has already been shown to the user.
-type refusedError struct{ text string }
+// refusedError is a refusal that has already been shown to the user; err, when set, is its
+// cause, kept in the chain.
+type refusedError struct {
+	text string
+	err  error
+}
 
 func (e *refusedError) Error() string { return e.text }
+func (e *refusedError) Unwrap() error { return e.err }
 
 // RefusalShown reports whether err is a refusal Launch has already shown the user
 // (via a dialog, and stderr). A caller that prints errors itself must not print
@@ -100,7 +105,7 @@ func RefusalShown(err error) bool {
 
 func refuse(env *launchEnv, text string) error {
 	env.ShowRefusal(text)
-	return &refusedError{text}
+	return &refusedError{text: text}
 }
 
 // The §7.6 refusal texts of the desktop (what / why / what to do).
@@ -156,14 +161,23 @@ func noStateDirText(err error) string {
 }
 
 // instanceStartError is the Desktop's start failure when its instance file (its private start
-// file, which holds the hand-off key) could not be written. When Windows would not create it with
-// the label that keeps sandboxed programs from reading it (util.SecretCreateRefused), it says so in
-// plain words (the 1.7.2 friction review's F11); otherwise it says what it always said.
-func instanceStartError(err error) error {
+// file, which holds the hand-off key) could not be written at all. When Windows would not create
+// it with the label that keeps sandboxed programs from reading it (util.SecretCreateRefused) and
+// writing it as 1.7.1 did failed too (instance.WriteNoting), the person is told in plain words, as
+// a refusal: a dialog as well as stderr, since the Start menu's program has no console (the 1.7.2
+// friction review's F11, its re-walk's G8). A label refused with the plain write working is not a
+// failure: the Desktop starts (the research note's L0). Otherwise it says what it always said.
+func instanceStartError(env *launchEnv, err error) error {
 	if dir, cause, ok := util.SecretCreateRefused(err); ok {
-		return fmt.Errorf("MailArchive Desktop could not start: Windows would not protect its private start file in %s (%w). That folder must be on this computer's own drive.", stripControl(dir), cause)
+		env.ShowRefusal(startFileText(dir, cause))
+		return &refusedError{text: startFileText(dir, cause), err: err}
 	}
 	return fmt.Errorf("could not record this instance: %w", err)
+}
+
+// startFileText is the G8 refusal of a private start file that could not be written.
+func startFileText(dir string, cause error) string {
+	return fmt.Sprintf("MailArchive Desktop cannot start: Windows would not protect its private start file in %s (%v). Do this: start MailArchive Desktop from the Start menu. If this message comes back, that folder is on a drive that cannot protect it, such as a network drive; it must be on this computer's own drive.", stripControl(dir), cause)
 }
 
 // launchOpts is what a launch was asked for.
@@ -496,10 +510,13 @@ func serveInstance(ctx context.Context, h *instance.Holder, o *launchOpts, env *
 		PID: os.Getpid(), Exe: exe, Started: time.Now(), Config: o.cfgPath, Out: o.out, Session: env.Session,
 		Dashboard: ln.Addr().String(), Reader: readerLn.Addr().String(), Key: keyHex, Former: former, Version: env.Version, Ended: ended,
 	}
+	// Windows refusing the start file's label is a warning in the Desktop's log, never a refusal to
+	// start: the file is then written as 1.7.1 wrote it (the research note's L0).
+	h.Note = func(s string) { fmt.Fprintln(env.Stderr, "mailarchive desktop: "+s) }
 	if err := h.Publish(info); err != nil {
 		ln.Close()
 		readerLn.Close()
-		return instanceStartError(err)
+		return instanceStartError(env, err)
 	}
 	stopWatch := h.Watch(env.WatchEvery, func(s string) { fmt.Fprintln(env.Stderr, "mailarchive desktop: "+s) })
 	defer stopWatch()
