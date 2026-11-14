@@ -312,9 +312,18 @@ func TestMA1430_OneWizardPerAccount(t *testing.T) {
 // choice is asked of it. An instance that advertises the actions but refuses the second
 // form (403) gets the first form once: Desktop opens and the launch ends at once — never
 // the 15-second wait and the "not responding" refusal.
+//
+// Amended 2026-11-13 (the S1 fix round 2, B9; amended, not weakened): this version's copy,
+// standing in for an older one below, would answer a first-form open with a link where
+// one copy serves every sign-in (macOS, Linux); an older copy never did, so the stand-in
+// answers it as an older copy does (sessionsSeparate, which turns that rule off). What is
+// proven is unchanged: the launcher sends the first form and asks no choice.
 func TestMA1402_TheFormIsChosenByCapability(t *testing.T) {
 	s := installFrontSeams(t)
 	s.pick = pickDesktop // a Desktop page opened in this run keeps the instance running (F2)
+	origSep := sessionsSeparate
+	sessionsSeparate = true
+	t.Cleanup(func() { sessionsSeparate = origSep })
 	g := newDRig(t)
 	g.startInstance(g.env(g.rec), "-background")
 	if _, err := g.secondStart(nil); err != nil {
