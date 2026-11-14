@@ -527,12 +527,29 @@ func (d *dashboard) shutdown(w http.ResponseWriter, r *http.Request) {
 	}
 	// Shut down is the person's own stop: while work runs it asks first, Keep running
 	// being the default (design-menubar MB-2 item 3, the fold's second contradiction).
-	// The page asks, then sends confirm=1 for Quit.
-	if q := d.quitQuestion(); q != "" && r.URL.Query().Get("confirm") != "1" {
+	// The page's first click sends check=1, which stops nothing and answers the question
+	// when work runs, so the question comes first, in place of the plain "click again"
+	// (the S1 friction review, F4); Quit sends confirm=1, which is checked again: work
+	// that ended meanwhile is said, not asked about.
+	q := d.quitQuestion()
+	if r.URL.Query().Get("check") == "1" {
+		if q != "" {
+			writeJSON(w, map[string]any{"ok": false, "ask": true, "question": q, "keep": keepRunningLabel, "quit": quitLabel})
+			return
+		}
+		writeJSON(w, map[string]any{"ok": false, "ask": false})
+		return
+	}
+	confirmed := r.URL.Query().Get("confirm") == "1"
+	if q != "" && !confirmed {
 		writeJSON(w, map[string]any{"ok": false, "ask": true, "question": q, "keep": keepRunningLabel, "quit": quitLabel})
 		return
 	}
-	writeJSON(w, map[string]any{"ok": true, "message": "MailArchive Desktop is stopping. You can close this tab; your archives and schedules are untouched."})
+	msg := "MailArchive Desktop is stopping. You can close this tab; your archives and schedules are untouched."
+	if confirmed && q == "" {
+		msg = shutdownNothingRanText
+	}
+	writeJSON(w, map[string]any{"ok": true, "message": msg})
 	if f, ok := w.(http.Flusher); ok {
 		f.Flush()
 	}
@@ -2548,29 +2565,37 @@ if(ab)ab.addEventListener('click',async()=>{
 // process has to be found and killed. Two clicks (arm, then confirm) guard against
 // an accidental stop; a stop never touches an archive.
 const sd=$('shutdownBtn');
+const sdStopped=(msg)=>{document.body.innerHTML='<div style="max-width:40rem;margin:4rem auto;text-align:center"><h1>MailArchive Desktop has stopped.</h1></div>';
+  const p=document.createElement('p');p.id='shutdownDone';p.textContent=msg||'You can close this tab. Your archives and schedules are untouched — reopen MailArchive any time.';
+  const box=document.body.firstElementChild||document.body;box.appendChild(p);};
+// The Quit question while work runs (design-menubar MB-2), with Keep running the default.
+const sdAsk=(n,d)=>{sd.dataset.armed='';sd.textContent='Shut down';
+  n.hidden=false;n.textContent='';const p=document.createElement('p');p.textContent=d.question;n.appendChild(p);
+  const keep=document.createElement('button');keep.type='button';keep.className='btn';keep.id='shutdownKeep';keep.textContent=d.keep||'Keep running';
+  const quit=document.createElement('button');quit.type='button';quit.className='btn secondary';quit.id='shutdownQuit';quit.textContent=d.quit||'Quit';
+  n.appendChild(keep);n.appendChild(document.createTextNode(' '));n.appendChild(quit);keep.focus();
+  keep.addEventListener('click',()=>{n.hidden=true;n.textContent='';sd.focus();});
+  quit.addEventListener('click',async()=>{keep.disabled=true;const qd=busy(quit,'Shutting down…',null,'');
+    try{const q=await(await post('api/shutdown?confirm=1')).json();if(q.ok){sdStopped(q.message);return;}qd();n.textContent=q.error||'Could not shut down.';}catch(e){sdStopped();}});};
 if(sd)sd.addEventListener('click',async()=>{
   const n=$('shutdownNote');
-  if(sd.dataset.armed!=='1'){sd.dataset.armed='1';sd.textContent='Confirm shut down';
+  if(sd.dataset.armed!=='1'){
+    // The S1 friction review, F4: when work runs, the first click asks the question at once,
+    // in place of "click again"; with nothing running, the two clicks stay.
+    let c=null;try{c=await(await post('api/shutdown?check=1')).json();}catch(e){}
+    if(c&&c.ask&&n){sdAsk(n,c);return;}
+    sd.dataset.armed='1';sd.textContent='Confirm shut down';
     // Friction P3 (settled 2026-11-07): a running restore into Thunderbird is named, with what
     // Shut down does to it (the Lock reply's words).
     let rtb=false;try{const a=await(await fetch('api/activity')).json();rtb=!!(a&&a.restore&&a.restore.running);}catch(e){}
     if(n){n.hidden=false;n.textContent=(rtb?'A restore into Thunderbird is running: shutting down stops it, and nothing is added to Thunderbird. ':'')+'Click again to stop MailArchive Desktop. You can reopen it any time; your archives and schedules are untouched.';}return;}
   const done=busy(sd,'Shutting down…',n,'Stopping MailArchive Desktop…');
-  const stopped=()=>{document.body.innerHTML='<div style="max-width:40rem;margin:4rem auto;text-align:center"><h1>MailArchive Desktop has stopped.</h1><p>You can close this tab. Your archives and schedules are untouched — reopen MailArchive any time.</p></div>';};
   try{const d=await(await post('api/shutdown')).json();
-    if(!d.ok&&d.ask&&n){done();sd.dataset.armed='';sd.textContent='Shut down';
-      // Work is running (design-menubar MB-2): the question, with Keep running the default.
-      n.hidden=false;n.textContent='';const p=document.createElement('p');p.textContent=d.question;n.appendChild(p);
-      const keep=document.createElement('button');keep.type='button';keep.className='btn';keep.textContent=d.keep||'Keep running';
-      const quit=document.createElement('button');quit.type='button';quit.className='btn secondary';quit.textContent=d.quit||'Quit';
-      n.appendChild(keep);n.appendChild(document.createTextNode(' '));n.appendChild(quit);keep.focus();
-      keep.addEventListener('click',()=>{n.hidden=true;n.textContent='';});
-      quit.addEventListener('click',async()=>{keep.disabled=true;const qd=busy(quit,'Shutting down…',null,'');
-        try{const q=await(await post('api/shutdown?confirm=1')).json();if(q.ok){stopped();return;}qd();n.textContent=q.error||'Could not shut down.';}catch(e){stopped();}});
-      return;}
+    // Work began between the two clicks: the question, as above.
+    if(!d.ok&&d.ask&&n){done();sdAsk(n,d);return;}
     if(!d.ok){done();sd.dataset.armed='';sd.textContent='Shut down';if(n){n.hidden=false;n.textContent=d.error||'Could not shut down.';}return;}
-    stopped();
-  }catch(e){stopped();}
+    sdStopped();
+  }catch(e){sdStopped();}
 });
 
 // Make a new archive… (the "No archive chosen yet" card and the Add another archive

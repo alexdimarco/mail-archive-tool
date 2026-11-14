@@ -39,14 +39,19 @@ func handoffAct(ctx context.Context, dir string, info instance.Info, key []byte,
 	switch rep.Reason {
 	case instance.ReasonAlreadyOpen:
 		if act == instance.ActWizard {
-			env.ShowNotice(instance.WizardOpenText)
+			env.tell(instance.WizardOpenText)
 		} else {
-			env.ShowNotice(choiceOpenText)
+			env.tell(choiceOpenText)
 		}
 		return true, nil
 	case instance.ReasonOtherSession:
-		env.ShowNotice(otherSessionText) // R50: in this session, never on the other screen
+		env.tell(otherSessionText) // R50: in this session, never on the other screen
 		return true, nil
+	case instance.ReasonUnknownSession:
+		env.tell(unknownSessionText) // R50, fail closed (A3)
+		return true, nil
+	case instance.ReasonClosing:
+		return false, errClosing // wait for it to end, then become the next copy (A7)
 	}
 	return false, nil // ReasonCantShow
 }
@@ -118,5 +123,5 @@ func handOffWizard(ctx context.Context, env *launchEnv) bool {
 		window = instance.DefaultWait
 	}
 	done, _ := handoffAct(ctx, dir, info, key, instance.ActWizard, env, window, func() bool { return instance.LockIsHeld(dir, env.Session) })
-	return done
+	return done // a closing copy: the wizard runs here, under the wizard lock
 }

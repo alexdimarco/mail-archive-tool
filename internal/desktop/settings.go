@@ -11,6 +11,7 @@ import (
 	"strings"
 	"sync"
 
+	"mail-archive-tool/internal/archindex"
 	"mail-archive-tool/internal/encmark"
 	"mail-archive-tool/internal/graphconfig"
 	"mail-archive-tool/internal/util"
@@ -213,6 +214,22 @@ func (cfg Config) effectiveOut() string {
 		return o
 	}
 	return strings.TrimSpace(cfg.Out)
+}
+
+// hasAnyArchive reports whether an archive is set up, for the launcher choice's default
+// item (§6.1): Desktop's current archive, any archive in the known-archives list, or the
+// archive the wizard made last — so a wizard that just made one changes the default
+// (the S1 friction review, F8).
+func (cfg Config) hasAnyArchive() bool {
+	if cfg.effectiveOut() != "" {
+		return true
+	}
+	if cfg.IndexPath != "" {
+		if idx, err := archindex.ReadFile(cfg.IndexPath); err == nil && len(idx.Entries) > 0 {
+			return true
+		}
+	}
+	return cfg.LastArchive != nil && cfg.LastArchive() != ""
 }
 
 // settingsDirs are the folders MailArchive Desktop keeps its settings and

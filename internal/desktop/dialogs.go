@@ -15,6 +15,10 @@ import (
 // dialogTitle is the title of every dialog the desktop shows.
 const dialogTitle = "MailArchive Desktop"
 
+// noLinkDialogText is the log line when the browser did not open and no dialog can show
+// its link (no display or dialog tool, MB-9).
+const noLinkDialogText = "mailarchive desktop: the browser did not open, and no dialog can show its link here (no display or dialog tool). Open MailArchive from your desktop session."
+
 // showRefusal shows a refusal where the user will see it. The binary is a
 // -H=windowsgui build with no console, so a refusal printed to stderr alone is
 // invisible: it also goes to a native dialog (MessageBox on Windows, an osascript
@@ -31,10 +35,23 @@ func showNotice(text string) {
 	_ = zenity.Info(text, zenity.Title(dialogTitle))
 }
 
+// tellNotice shows a hand-off's outcome (the choice or the wizard already open, another
+// or an unknown sign-in, a copy closing) on stderr and in a dialog headed "MailArchive",
+// the name of the window it points to (the S1 friction review, F6).
+func tellNotice(text string) {
+	fmt.Fprintln(os.Stderr, text)
+	_ = zenity.Info(text, zenity.Title(choiceTitle))
+}
+
 // showLink shows a fresh one-time link in a dialog with a Copy button, for a
 // browser that did not open or a launch that asked for a link [CC20]. The link is
-// in the dialog and nowhere else: not on stderr, which may be a log.
+// in the dialog and nowhere else: not on stderr, which may be a log. Where no dialog
+// can show, the log says so instead of naming one (the S1 friction review, F14).
 func showLink(link string) {
+	if !canShowDialogs() {
+		fmt.Fprintln(os.Stderr, noLinkDialogText)
+		return
+	}
 	fmt.Fprintln(os.Stderr, "mailarchive desktop: a dialog shows a link to open the dashboard in your browser")
 	_, err := zenity.Entry("Your browser did not open. Copy this link into your browser:",
 		zenity.Title(dialogTitle), zenity.EntryText(link), zenity.OKLabel("Copy"), zenity.CancelLabel("Close"))

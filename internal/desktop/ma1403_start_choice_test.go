@@ -8,6 +8,7 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"sync"
 	"testing"
@@ -32,6 +33,8 @@ type frontSeams struct {
 	choiceHold chan struct{}
 	opened     []func() error
 	canShow    bool
+	// tokens is the activation token in the environment while each choice showed.
+	tokens []string
 }
 
 func installFrontSeams(t *testing.T) *frontSeams {
@@ -41,9 +44,10 @@ func installFrontSeams(t *testing.T) *frontSeams {
 	t.Cleanup(func() {
 		chooseDialog, infoDialog, quitQuestionDialog, runWizardIn, canShowDialogs = oc, oi, oq, ow, os_
 	})
-	chooseDialog = func(v choiceView) (string, error) {
+	chooseDialog = func(_ context.Context, v choiceView) (string, error) {
 		s.mu.Lock()
 		s.views = append(s.views, v)
+		s.tokens = append(s.tokens, os.Getenv(activationEnv))
 		p, h := s.pick, s.choiceHold
 		s.mu.Unlock()
 		if h != nil {
@@ -124,7 +128,12 @@ func (g *dRig) secondStart(env *launchEnv, extra ...string) (*recorder, error) {
 // instance's own fresh link; a `start -background` while it runs does nothing at all.
 func TestMA1403_ASecondStartShowsTheChoiceInTheRunningCopy(t *testing.T) {
 	s := installFrontSeams(t)
-	s.pick = pickWizard // the first choice: Run the wizard (a Cancel would stop it, MB-16)
+	// The first choice: the wizard, held open for the whole test (a Cancel, or a wizard
+	// that ended with nothing opened, would stop it: MB-16 as F2 extends it).
+	s.pick = pickWizard
+	wizardOpen := make(chan struct{})
+	s.hold = wizardOpen
+	t.Cleanup(func() { close(wizardOpen) })
 	g := newDRig(t)
 	g.startInstance(g.env(g.rec))
 
@@ -140,7 +149,7 @@ func TestMA1403_ASecondStartShowsTheChoiceInTheRunningCopy(t *testing.T) {
 	if o, _, _ := g.rec.snapshot(); len(o) != 0 {
 		t.Errorf("start opened the browser %q; it shows the choice instead", o)
 	}
-	if v, _, _, _ := s.snap(); v[0].DefaultItem != choiceDesktopItem || v[0].Quit || len(v[0].Lines) != 0 {
+	if v, _, _, _ := s.snap(); v[0].DefaultItem != choiceDesktopItem || v[0].Quit || v[0].Line != "" {
 		t.Errorf("the first choice %+v: want Desktop the default (an archive is set up), no Quit, no lines", v[0])
 	}
 
@@ -279,12 +288,14 @@ func TestMA1430_OneWizardPerAccount(t *testing.T) {
 // the 15-second wait and the "not responding" refusal.
 func TestMA1402_TheFormIsChosenByCapability(t *testing.T) {
 	s := installFrontSeams(t)
+	s.pick = pickDesktop // a Desktop page opened in this run keeps the instance running (F2)
 	g := newDRig(t)
 	g.startInstance(g.env(g.rec), "-background")
 	if _, err := g.secondStart(nil); err != nil {
 		t.Fatal(err)
 	}
 	waitUntil(t, "the choice", func() bool { v, _, _, _ := s.snap(); return len(v) == 1 })
+	waitUntil(t, "Desktop from the choice", func() bool { o, _, _ := g.rec.snapshot(); return len(o) == 1 })
 
 	// An instance file with no actions: rewrite it as an older version would have.
 	info, _ := instance.Read(instance.FilePathIn(g.dir, ""))
@@ -363,17 +374,31 @@ func TestMA1402_TheFormIsChosenByCapability(t *testing.T) {
 // so.
 func TestMA1427_TheLaunchIsToldInItsOwnSession(t *testing.T) {
 	s := installFrontSeams(t)
+	// The rule is proven on every platform; on Windows the lock is already per sign-in,
+	// so there the instance never compares (sessionsSeparate, checked below).
+	if (runtime.GOOS == "windows") != sessionsSeparate {
+		t.Errorf("sessionsSeparate is %v on %s", sessionsSeparate, runtime.GOOS)
+	}
+	origSep := sessionsSeparate
+	sessionsSeparate = false
+	t.Cleanup(func() { sessionsSeparate = origSep })
 	g := newDRig(t)
+	g.guiSession = "100"
 	envI := g.env(g.rec)
-	envI.GUISession = "100"
 	g.startInstance(envI, "-background")
 
+	s.mu.Lock()
+	s.pick = pickDesktop // a Desktop page opened in this run keeps the instance running (F2)
+	s.mu.Unlock()
 	same := g.env(&recorder{})
-	same.GUISession = "100"
 	if _, err := g.secondStart(same); err != nil {
 		t.Fatal(err)
 	}
 	waitUntil(t, "the choice for the same sign-in", func() bool { v, _, _, _ := s.snap(); return len(v) == 1 })
+	waitUntil(t, "Desktop from it", func() bool { o, _, _ := g.rec.snapshot(); return len(o) == 1 })
+	s.mu.Lock()
+	s.pick = pickNone
+	s.mu.Unlock()
 
 	time.Sleep(1100 * time.Millisecond)
 	other := g.env(&recorder{})
@@ -436,11 +461,11 @@ func TestMA1427_TheLaunchIsToldInItsOwnSession(t *testing.T) {
 	s.mu.Unlock()
 	close(held)
 
-	f := &front{life: NewLifecycle(context.Background()), dir: g.dir}
+	f := &front{life: NewLifecycle(context.Background()), dir: g.dir, session: "100"}
 	f.mu.Lock()
 	f.choosing = true
 	f.mu.Unlock()
-	if shown, reason := f.act(instance.ActRequest{Act: instance.ActChoose}); shown || reason != instance.ReasonAlreadyOpen {
+	if shown, reason := f.act(instance.ActRequest{Act: instance.ActChoose, Session: "100"}); shown || reason != instance.ReasonAlreadyOpen {
 		t.Errorf("a choose while the choice is open: %v %q, want already-open", shown, reason)
 	}
 }
@@ -470,18 +495,31 @@ func TestMA1434_CancelAndQuitOnTheChoice(t *testing.T) {
 		t.Errorf("the stopped instance still holds the lock")
 	}
 
-	// A later Cancel leaves it running.
+	// A later Cancel, once a Desktop page was opened in this run, leaves it running
+	// (amended by the S1 fix round's F2: a Cancel with nothing opened ends it, proven in
+	// TestMA1434_TheChoiceOrTheWizardEndingIdleEndsTheProgram).
 	h := newDRig(t)
 	envH := h.env(h.rec)
 	envH.Version = "v1.8.0"
 	h.startInstance(envH, "-background")
+	s.mu.Lock()
+	s.pick = pickDesktop
+	s.mu.Unlock()
 	if _, err := h.secondStart(nil); err != nil {
 		t.Fatal(err)
 	}
-	waitUntil(t, "the later choice", func() bool { v, _, _, _ := s.snap(); return len(v) >= 2 })
+	waitUntil(t, "Desktop opened from the later choice", func() bool { o, _, _ := h.rec.snapshot(); return len(o) == 1 })
+	s.mu.Lock()
+	s.pick = pickNone
+	s.mu.Unlock()
+	time.Sleep(1100 * time.Millisecond)
+	if _, err := h.secondStart(nil); err != nil {
+		t.Fatal(err)
+	}
+	waitUntil(t, "the later choice", func() bool { v, _, _, _ := s.snap(); return len(v) >= 3 })
 	time.Sleep(200 * time.Millisecond)
 	if !instance.LockIsHeld(h.dir, "") {
-		t.Fatalf("a Cancel on a later choice stopped the instance")
+		t.Fatalf("a Cancel on a later choice stopped the instance after a Desktop page was opened")
 	}
 	info, _ := instance.Read(instance.FilePathIn(h.dir, ""))
 	if words := instance.RunningWords(info); !strings.Contains(words, "version v1.8.0") || !strings.Contains(words, "shows no icon yet") {
@@ -506,7 +544,7 @@ func TestMA1434_CancelAndQuitOnTheChoice(t *testing.T) {
 	h.cancel = nil
 	v, _, q, _ := s.snap()
 	last := v[len(v)-1]
-	if !last.Quit || len(last.Lines) == 0 || last.Lines[0] != newerInstalledText {
+	if !last.Quit || last.Line != newerInstalledText || last.Text() != "A newer MailArchive is installed." {
 		t.Errorf("the choice for a newer launcher: %+v, want the newer-installed line and Quit", last)
 	}
 	if len(q) != 0 {

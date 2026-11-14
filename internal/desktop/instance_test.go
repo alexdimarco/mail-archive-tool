@@ -86,6 +86,7 @@ type dRig struct {
 	session      string
 	prefix       string // the session's path prefix, learned by cookieFromLink
 	version      string // the build version this launch stamps and compares (§4.5.3)
+	guiSession   string // the sign-in every launch of the rig sends and compares (R50)
 
 	exportDir string // the Extraction workspace's state directory ("" = none: it writes nothing)
 	policyOff bool   // the machine policy that turns the workspace off
@@ -93,7 +94,7 @@ type dRig struct {
 
 func newDRig(t *testing.T) *dRig {
 	t.Helper()
-	g := &dRig{t: t, dir: filepath.Join(t.TempDir(), "state"), rec: &recorder{arrive: true}, version: buildVersion()}
+	g := &dRig{t: t, dir: filepath.Join(t.TempDir(), "state"), rec: &recorder{arrive: true}, version: buildVersion(), guiSession: "41"}
 	root := t.TempDir()
 	g.cfgPath = filepath.Join(root, "graph-config.json")
 	g.out = filepath.Join(root, "archive")
@@ -127,6 +128,9 @@ func (g *dRig) env(rec *recorder) *launchEnv {
 		},
 		WatchEvery: 50 * time.Millisecond, Window: 2 * time.Second,
 		ExportDir: func() string { return g.exportDir }, WorkspaceOff: func() bool { return g.policyOff },
+		// One sign-in for every launch of the rig, as one person at one screen has (R50:
+		// an unknown sign-in shows nothing, the S1 fix round's A3).
+		GUISession: g.guiSession,
 	}
 }
 

@@ -15,6 +15,7 @@ import (
 	"runtime"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"mail-archive-tool/internal/alert"
@@ -89,7 +90,29 @@ type launchEnv struct {
 	// BundleVersion is the version of the program on disk, for MB-14's line on macOS's
 	// reopen; nil where there is no bundle to read.
 	BundleVersion func() string
+	// Tell shows a hand-off's outcome in this launch's own session (the choice or the
+	// wizard already open, another or an unknown sign-in, a copy closing), headed
+	// "MailArchive" (the S1 friction review, F6). nil uses ShowNotice.
+	Tell func(text string)
 }
+
+// tell shows text through Tell, or ShowNotice when no Tell is set.
+func (e *launchEnv) tell(text string) {
+	if e.Tell != nil {
+		e.Tell(text)
+		return
+	}
+	e.ShowNotice(text)
+}
+
+// closingWait is how long a launch keeps waiting for a running copy that is closing
+// (its instance file says so, or it answered "closing"): the drain's bound, the servers'
+// shutdown and a margin, so a launch during a stop becomes the next copy instead of
+// telling the person to kill the one that is protecting its work (A7).
+var closingWait = DrainBudget + 10*time.Second
+
+// errClosing is a hand-off attempt that met a copy which is closing: not handled yet.
+var errClosing = errors.New("the running MailArchive is closing")
 
 // AppLoop runs serve while the operating system's event loop for the instance runs on
 // the calling thread, routing the system's requests to ev, and returns serve's error.
@@ -104,9 +127,14 @@ type LoopEvents struct {
 	// process to end. It stops without asking and waits for running work up to bound
 	// (MB-2 items 1 and 3), then returns.
 	EndSession func(bound time.Duration)
-	// Busy reports whether the instance runs work now (Windows blocks the shutdown with
-	// a reason while it does).
+	// Busy reports whether the instance runs work now, an open wizard included (Windows
+	// blocks the shutdown with a reason while it does, and an installer's close request
+	// is refused: the S1 fix round, A2).
 	Busy func() bool
+	// Close: a close request from outside (Windows' WM_CLOSE, what `taskkill` without /F
+	// sends), or the loss of the event loop: the one stop, asking nothing; the serving
+	// then waits for running work (the S1 fix round, A1). It returns at once.
+	Close func()
 }
 
 // appLoop is the platform's AppLoop, set by loop_darwin.go and loop_windows.go; the
@@ -132,7 +160,7 @@ func osEnv() *launchEnv {
 		WatchEvery: time.Minute, Window: instance.DefaultWait,
 		ExportDir: StateDir, WorkspaceOff: workspacePolicyOff,
 		GUISession: instance.GUISession(), AllowForeground: allowForeground,
-		BundleVersion: bundleVersionOnDisk,
+		BundleVersion: bundleVersionOnDisk, Tell: tellNotice,
 	}
 	if appLoopOn {
 		env.Loop = appLoop
@@ -158,6 +186,13 @@ func refuse(env *launchEnv, text string) error {
 	env.ShowRefusal(text)
 	return &refusedError{text}
 }
+
+// The `start` verb's terminal words (the S1 friction review, F14): what it is, and its
+// one refusal, which the dispatcher prints after "mailarchive: " (so no second prefix).
+const (
+	startUsageText = "Usage: mailarchive start [flags]\n\nOpens MailArchive as its app icon does: it asks whether to add or back up mail step by step or to open MailArchive Desktop in your browser, or, when MailArchive already runs for your account, asks that copy to.\n\nFlags:"
+	startArgsText  = "start takes no arguments, only flags (got %q); run mailarchive start -h"
+)
 
 // The §7.6 refusal texts of the desktop (what / why / what to do).
 func portBusyText(addr string) string {
@@ -226,6 +261,19 @@ type launchOpts struct {
 	start, background bool
 }
 
+// desktopOpens reports whether this launch, once it is the instance, opens or shows
+// a Desktop page itself (the desktop verb with no -no-browser, a -copy-link, or a
+// `start` where no dialog can show): such a run never ends as idle (F2).
+func (o *launchOpts) desktopOpens() bool {
+	switch {
+	case o.start && o.background:
+		return false
+	case o.start:
+		return !canShowDialogs()
+	}
+	return o.copyLink || !o.noBrowser
+}
+
 // launch is MailArchive Desktop (design §4.C4): a scheduled `-capture` runs one
 // headless capture and returns; otherwise the account's lock decides — the holder
 // is the account's one instance of this configuration, and serves; any other
@@ -248,6 +296,16 @@ func launchMode(ctx context.Context, args []string, env *launchEnv, start bool) 
 		name = "mailarchive start"
 	}
 	fs := flag.NewFlagSet(name, flag.ContinueOnError)
+	if env.Stderr != nil {
+		fs.SetOutput(env.Stderr)
+	}
+	if start {
+		// What `start` is, before its flags (the S1 friction review, F14).
+		fs.Usage = func() {
+			fmt.Fprintln(fs.Output(), startUsageText)
+			fs.PrintDefaults()
+		}
+	}
 	addr := fs.String("addr", "127.0.0.1:0", "loopback address for the dashboard (must be loopback; port 0 takes any free port)")
 	readerAddr := fs.String("reader-addr", "127.0.0.1:0", "loopback address for the archive reader (must be loopback; port 0 takes any free port)")
 	out := fs.String("out", "", "archive directory to manage")
@@ -271,7 +329,7 @@ func launchMode(ctx context.Context, args []string, env *launchEnv, start bool) 
 		return err
 	}
 	if start && fs.NArg() > 0 {
-		return fmt.Errorf("mailarchive start takes no arguments but its flags (got %q); run mailarchive start -h", fs.Arg(0))
+		return fmt.Errorf(startArgsText, fs.Arg(0))
 	}
 	set := map[string]bool{}
 	fs.Visit(func(f *flag.Flag) { set[f.Name] = true })
@@ -350,6 +408,7 @@ func launchMode(ctx context.Context, args []string, env *launchEnv, start bool) 
 // and, if the lock falls free meanwhile, becomes the instance itself [CC21].
 func runInstance(ctx context.Context, dir string, o *launchOpts, env *launchEnv) error {
 	deadline := time.Now().Add(env.Window)
+	closing := false
 	for {
 		h, err := instance.Acquire(dir, env.Session)
 		if err == nil {
@@ -362,7 +421,19 @@ func runInstance(ctx context.Context, dir string, o *launchOpts, env *launchEnv)
 		if handled {
 			return herr
 		}
+		if errors.Is(herr, errClosing) && !closing {
+			// The running copy is closing and waits for its work: wait for it to end,
+			// then become the next copy (A7).
+			closing = true
+			if d := time.Now().Add(closingWait); d.After(deadline) {
+				deadline = d
+			}
+		}
 		if time.Now().After(deadline) {
+			if closing {
+				env.tell(closingText)
+				return nil
+			}
 			pid := instance.HolderPID(dir, env.Session)
 			return refuse(env, wedgedText(pid))
 		}
@@ -389,6 +460,10 @@ func handoff(ctx context.Context, dir string, o *launchOpts, env *launchEnv, dea
 	// forged, does not name who holds the lock.
 	if pid := instance.HolderPID(dir, env.Session); pid != 0 && pid != info.PID {
 		return false, nil
+	}
+	if info.Closing {
+		// It is stopping and waits for its work (A7): not handled yet, keep waiting.
+		return false, errClosing
 	}
 	if !samePathLaunch(info.Config, o.cfgPath) {
 		return true, refuse(env, otherConfigText(info.Config))
@@ -419,13 +494,41 @@ func handoff(ctx context.Context, dir string, o *launchOpts, env *launchEnv, dea
 				return true, herr
 			}
 			if herr != nil {
-				return false, nil // not reached yet: the caller tries again until its deadline
+				// Not reached yet, or closing: the caller tries again until its deadline.
+				return false, closingOrNil(herr)
 			}
-			// Refused once (MB-3 item 2) or "can't show here" (MB-9): today's open.
+			// Refused once (MB-3 item 2) or "can't show here" (MB-9): Desktop opens.
 		}
 	}
 	quiet := o.noBrowser || o.copyLink
-	rep, cerr := instance.Reach(ctx, info.Dashboard, key, quiet, window, stillHeld)
+	var rep instance.Reply
+	var cerr error
+	if info.HasAct(instance.ActOpen) {
+		// The second form's open carries this launch's sign-in, so a copy of another or
+		// an unknown sign-in opens nothing on its screen (R50, for `desktop` too: the S1
+		// adversarial pass, A3); a copy that refuses the form gets the first form once.
+		ar := instance.ActRequest{Version: env.Version, Session: env.GUISession}
+		rep, cerr = instance.ReachOpen(ctx, info.Dashboard, key, quiet, ar, window, stillHeld)
+		switch {
+		case errors.Is(cerr, instance.ErrRefused):
+			rep, cerr = instance.Reach(ctx, info.Dashboard, key, quiet, window, stillHeld)
+		case cerr != nil:
+			return false, nil
+		case rep.Reason == instance.ReasonClosing:
+			return false, errClosing
+		case rep.Reason == instance.ReasonOtherSession:
+			env.tell(otherSessionText)
+			return true, nil
+		case rep.Reason == instance.ReasonUnknownSession:
+			env.tell(unknownSessionText)
+			return true, nil
+		case rep.Reason != "":
+			// No other reason answers an open; a squatter cannot forge one (MAC).
+			return false, nil
+		}
+	} else {
+		rep, cerr = instance.Reach(ctx, info.Dashboard, key, quiet, window, stillHeld)
+	}
 	if cerr != nil {
 		return false, nil
 	}
@@ -442,6 +545,14 @@ func handoff(ctx context.Context, dir string, o *launchOpts, env *launchEnv, dea
 		env.ShowNotice(otherVersionText(info.Exe, info.PID))
 	}
 	return true, nil
+}
+
+// closingOrNil keeps errClosing and drops any other not-yet-reached error.
+func closingOrNil(err error) error {
+	if errors.Is(err, errClosing) {
+		return errClosing
+	}
+	return nil
 }
 
 // scheduledCapture runs one scheduled capture (HeadlessCapture) logging to lp, the log its
@@ -599,22 +710,28 @@ func serveInstance(ctx context.Context, h *instance.Holder, o *launchOpts, env *
 	wizard.BindExports(life.Context())
 	life.OnDrain(wizard.WaitExports)
 	// The launcher choice and the in-process wizard (design-menubar §6, slice S1).
+	// desktopAsked records that a Desktop page was opened or asked for in this run, so a
+	// browser still on its way never lets the instance end as idle (F2).
+	var desktopAsked atomic.Bool
 	openDesktop := func() {
+		desktopAsked.Store(true)
 		if env.Open(sess.Link(origin, localweb.OpenerTTL)) != nil {
 			env.ShowLink(sess.Link(origin, localweb.LinkTTL))
 		}
 	}
 	f := &front{
 		life: life, dir: h.Dir, session: env.GUISession, version: env.Version, open: openDesktop,
-		busy: func() string { return d.quitQuestion() },
+		task:     func() string { return d.nowTask() },
+		question: func() string { return d.quitQuestion() },
 		idle: func() bool {
 			n, _ := sess.Opened()
-			return n == 0 && d.quitQuestion() == ""
+			return n == 0 && !desktopAsked.Load() && d.quitQuestion() == ""
 		},
-		hasArchives:   func() bool { return dcfg.effectiveOut() != "" },
+		hasArchives:   dcfg.hasAnyArchive,
 		bundleVersion: env.BundleVersion,
 	}
 	handoffH.Act = f.act
+	handoffH.Gate = f.gate
 	// DisableGeneralOptionsHandler: net/http would answer OPTIONS * before the Host guard (AC8).
 	dash := &http.Server{Handler: dashboardHandler(dcfg, ln.Addr(), sess, handoffH), ReadHeaderTimeout: 10 * time.Second, IdleTimeout: 2 * time.Minute, DisableGeneralOptionsHandler: true}
 	rmx.cfg = dcfg
@@ -634,6 +751,15 @@ func serveInstance(ctx context.Context, h *instance.Holder, o *launchOpts, env *
 	}
 	stopWatch := h.Watch(env.WatchEvery, func(s string) { fmt.Fprintln(env.Stderr, "mailarchive desktop: "+s) })
 	defer stopWatch()
+	// Once a stop begins, the instance file says so, so a launch during the drain waits
+	// for this copy to end instead of calling it "not responding" (A7).
+	go func() {
+		<-life.Context().Done()
+		h.MarkClosing()
+	}()
+	if o.desktopOpens() {
+		desktopAsked.Store(true) // the desktop verb opens its page itself (F2)
+	}
 
 	serve := func() error {
 		defer closeHolder()
@@ -655,7 +781,8 @@ func serveInstance(ctx context.Context, h *instance.Holder, o *launchOpts, env *
 			case <-time.After(bound):
 			}
 		},
-		Busy: func() bool { return d.quitQuestion() != "" },
+		Busy:  func() bool { return d.quitQuestion() != "" },
+		Close: life.Stop,
 	})
 }
 
@@ -684,7 +811,7 @@ func serveUntilStopped(ln, readerLn net.Listener, dash, reader *http.Server, rm 
 		// The sign-in launch: nothing shows (design-menubar §7.3).
 	case o.start && canShowDialogs():
 		// An app icon or shortcut: the launcher choice in place of the browser (§6.1).
-		f.offerChoice(false, true)
+		f.offerChoice(false, "")
 	case o.copyLink:
 		go env.ShowLink(sess.Link(origin, localweb.LinkTTL))
 	case !o.noBrowser:

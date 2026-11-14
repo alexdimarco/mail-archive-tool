@@ -209,7 +209,7 @@ func TestMA1422_ShutDownAsksWhileWorkRuns(t *testing.T) {
 	archive := filepath.Join(t.TempDir(), "Work mail")
 	finished := holdCancellable(t, d, t.TempDir(), 200*time.Millisecond)
 	body := post(d, "http://127.0.0.1:8097/api/shutdown")
-	if !strings.Contains(body, `"ask":true`) || !strings.Contains(body, "MailArchive is busy (a task is running). Quit anyway?") ||
+	if !strings.Contains(body, `"ask":true`) || !strings.Contains(body, "A task is running. Quit anyway?") ||
 		!strings.Contains(body, `"keep":"Keep running"`) || !strings.Contains(body, `"quit":"Quit"`) || strings.Contains(body, filepath.Base(archive)) {
 		t.Fatalf("Shut down while a job runs: %s, want the question with Keep running and Quit", body)
 	}

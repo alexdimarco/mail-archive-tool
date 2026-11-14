@@ -1,6 +1,7 @@
 package desktop
 
 import (
+	"context"
 	"errors"
 	"os"
 	"os/exec"
@@ -11,20 +12,19 @@ import (
 
 // zenityChoose shows the launcher choice (design-menubar §6.1): the same native list
 // the wizard's first step uses, so no new UI technology. Cancel (or closing the
-// window) is pickNone; the Quit button (MB-14) is pickQuit.
-func zenityChoose(v choiceView) (string, error) {
-	opts := []zenity.Option{zenity.Title(choiceTitle), zenity.DefaultItems(v.DefaultItem)}
+// window) is pickNone; the Quit item (MB-14) is pickQuit. OK needs a picked item, so
+// OK with nothing picked is never read as Cancel (the S1 friction review, F11); the
+// window closes when the instance stops (ctx), so no dialog is left on the screen
+// with nothing behind it.
+func zenityChoose(ctx context.Context, v choiceView) (string, error) {
+	opts := []zenity.Option{zenity.Title(choiceTitle), zenity.DefaultItems(v.DefaultItem), zenity.DisallowEmpty(), zenity.Context(ctx)}
 	items := []string{choiceWizardItem, choiceDesktopItem}
 	if v.Quit {
 		// Quit is a third item, not an extra button: macOS's list has no extra button
 		// (zenity: "unsupported option: extra button", the S1 Mac lab, 2026-11-13).
 		items = append(items, choiceQuitItem)
 	}
-	text := choiceText
-	if len(v.Lines) > 0 {
-		text = v.Text()
-	}
-	pick, err := textThenListOn(runtime.GOOS, text, choiceText, items, opts...)
+	pick, err := textThenListOn(runtime.GOOS, v.Text(), choiceText, items, opts...)
 	switch {
 	case errors.Is(err, zenity.ErrCanceled):
 		return pickNone, nil

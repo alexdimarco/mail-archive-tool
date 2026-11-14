@@ -1590,6 +1590,44 @@ const scenarios = {
     doc.getElementById('rtbBtn').click(); await wait(40);
     check(!doc.getElementById('rtbWhatStep').hidden && doc.getElementById('rtbBack').hidden, 'P1 twin: one profile, no Change profile');
   },
+
+  // Shut down while work runs (design-menubar MB-2; the S1 friction review's F4, MA-1422): the
+  // first click asks the server (check=1, which stops nothing); with work running the Quit
+  // question shows at once, Keep running first and holding the keyboard, in place of "click
+  // again"; Keep running puts it away and the keyboard back on Shut down; Quit asks again with
+  // confirm=1 and says what the server answered (work that ended meanwhile). Positive twin
+  // first: with nothing running the first click arms, as before, and stops nothing.
+  async shutdownAsks() {
+    page([['E:\\Cur', 'current']], 'E:\\Cur');
+    doc.body.append(el('button', { class: 'btn secondary', id: 'shutdownBtn', type: 'button' }, 'Shut down'), el('div', { class: 'note', id: 'shutdownNote', hidden: '' }));
+    replies['api/activity'] = { running: false, job: '0' };
+    replies['api/shutdown?check=1'] = { ok: false, ask: false };
+    boot(); await wait(30);
+    const sd = doc.getElementById('shutdownBtn'), sn = doc.getElementById('shutdownNote');
+    const stops = () => posts.filter(p => p.path === 'api/shutdown' || p.path === 'api/shutdown?confirm=1').length;
+    sd.click(); await wait(20);
+    check(sd.textContent === 'Confirm shut down' && sn.textContent.startsWith('Click again to stop MailArchive Desktop.') && stops() === 0,
+      'twin: with nothing running, the first click arms and stops nothing', sn.textContent);
+    sd.dataset.armed = ''; sd.textContent = 'Shut down'; sn.hidden = true;
+
+    const q = 'A backup is running. Quit anyway? The backup stops; the next backup picks up where it left off.';
+    replies['api/shutdown?check=1'] = { ok: false, ask: true, question: q, keep: 'Keep running', quit: 'Quit' };
+    sd.click(); await wait(20);
+    const keep = doc.getElementById('shutdownKeep'), quit = doc.getElementById('shutdownQuit');
+    check(!!keep && !!quit && !sn.hidden && sn.textContent.startsWith(q) && sd.textContent === 'Shut down' && stops() === 0,
+      'F4: with work running, the first click shows the question and stops nothing', sn.textContent);
+    check(doc.activeElement === keep && keep.textContent === 'Keep running' && sn.children.indexOf(keep) < sn.children.indexOf(quit),
+      'F4: Keep running comes first and has the keyboard');
+    keep.click(); await wait(10);
+    check(sn.hidden && doc.activeElement === sd && stops() === 0, 'F4: Keep running puts the question away, the keyboard back on Shut down');
+
+    sd.click(); await wait(20);
+    replies['api/shutdown?confirm=1'] = { ok: true, message: 'Nothing was running any more, so MailArchive stopped. Your archives and schedules are untouched.' };
+    doc.getElementById('shutdownQuit').click(); await wait(30);
+    const done = doc.getElementById('shutdownDone');
+    check(stops() === 1 && posts.some(p => p.path === 'api/shutdown?confirm=1') && !!done && done.textContent.startsWith('Nothing was running any more'),
+      'F4: Quit asks again with confirm=1 and says what the server answered', done && done.textContent);
+  },
 };
 
 (async () => {
