@@ -3821,6 +3821,77 @@ rule is shared with the completeness design; whichever lands first owns it and t
 >   probe included); its round-2 `TestB3AdvR2NotNowKeepsAWaitingYes` now meets H5's refusal,
 >   since it posts a Yes without the fingerprint the page now sends.
 
+> **Folded 2026-11-14 [B3 adversarial round 4 fixes] (the builder's record of the fix round after
+> `docs/review-gmail-dedup-b3-adversarial-r4.md`, J1 to J5, all LOW; a design change only where it
+> says so).** Rows MA-1336 to MA-1340 registered (neither main nor menubar uses them; menubar keeps
+> MA-1400 to MA-1439). Each finding, with the builder's call:
+>
+> - **J1: the tail proves before each write batch** (MA-1336, MA-1337). After the last save a run
+>   writes its folder pages, root `index.html`, README and report by path. The run (and the
+>   capture) now proves right before the pages, on time between pages and again before the root
+>   page (`pages.GenerateChecked` stops at the first page its check refuses), and right before the
+>   README and before the report (`finishChecked`, the cancel paths too). A refused proof ends the
+>   run as MA-1328's lost lock and nothing more is written. The design's "the after-walk proof
+>   covers the swap after the last save" now holds for the pages, README and report as well.
+> - **J2: an encrypted run proves too** (MA-1338, a design change). Its binding is its key, which
+>   its saves prove at their commit point, and its lock. A first version also compared the vault's
+>   archive id (`vault.Detect`); MA-726's gate (`TestNoProductionCodeCanReachTheEncryptedPathYet`)
+>   refuses a production call of `vault.Detect` outside the unlock path, and moving a file onto its
+>   allow-list is an operator decision, so the builder took the review's own fix instead: a keyed
+>   run whose lock is no longer its own records nothing in the folder, whichever archive is there
+>   now, and is stopped in the lock's words. The same guard as a plaintext run's, before every
+>   save, on time, and, since an encrypted run's sealed files are written by path between its
+>   saves, after every message it writes (a message only skipped asks no proof). So a swapped
+>   folder receives no record, run history entry, `BACKUP-NEEDS-ATTENTION.txt` or sealed manifest,
+>   and at most the sealed files of the one message in flight (a write by path after the last
+>   proof cannot be refused; the review saw the other archive's own next backup remove such
+>   files). Changed behaviour: a run of the same encrypted archive whose lock another run took no
+>   longer records its lost lock there (the run holding the lock records its own). The builder's
+>   call: a plaintext walk stays on time (round 3's H1 settled its 10-second bound); aligning it
+>   with the per-message proof is the lead's call. If the operator wants the vault id compared
+>   (so the words can say "another archive"), that is the allow-list decision.
+> - **J3: the capture checks after its manifest load and proves before its collapse save**
+>   (MA-1337): the post-load check `Run` has (before its tidy-up wait ends, its history header,
+>   its index), and a proof right before the one-time v3 to v5 identity collapse's manifest save.
+> - **J4: a wait never tells a real failure whose email is owed** (MA-1339, amends MA-1332). Inside
+>   a real failure's streak whose email could not be sent, a tidy-up wait's alert sends nothing and
+>   leaves the alert record as it was; the real failure's email goes at its next failure once
+>   sending works. The builder's call over sending the real failure's own email at the wait's
+>   alert: the alert record keeps no failure text, so "nothing" is the review's other option.
+> - **J5: the guard must run first, and more lookups make a root** (MA-1340, amends MA-1333).
+>   `reach.CallsGuard` counts only a `testhome.Run` that is a statement of TestMain's body (the
+>   call, an assignment or declaration of it, or an argument of the statement's call), reached
+>   before any statement of the body that runs the tests or ends TestMain; a branch of its own
+>   that runs the tests (a child helper's, as `cmd/mailarchive`'s pty leader) is not the run's.
+>   `testhome.Check` alone no longer counts (it reports after the tests ran): MA-1333's "Check in
+>   TestMain" case now expects false, the one existing expectation changed. `ComputesUserFolder`
+>   adds `os/user`'s account lookups, `os.ExpandEnv` and `os.Expand`, `os.Getenv`, `os.LookupEnv`
+>   and `syscall.Getenv` of a constant or a list (a lookup whose argument is not a literal counts
+>   when a string literal of the file names a per-user variable), and Windows' known-folder and
+>   profile lookups. `internal/presync` becomes a root; the 32 reaching packages are the same.
+> - **Also: `internal/presync`'s `TestWatchdogAbandonedSessionStartsNoQuitAndLatchesTheLock`**
+>   waits at most two minutes at each of its three waits and fails by name (MA-921 unchanged, no
+>   assertion changed), instead of hanging a loaded run for 60 minutes.
+> - **For a back-port to 1.7.1 (the lead's note):** the guard pieces need no Gmail de-dup: the lock
+>   proof and the tail, the capture's pre-walk proofs, and the encrypted lock binding. The
+>   plaintext archive-id check (MA-1328's id part, J5's test hygiene and J4's tidy-up wait) need
+>   B3. The builder's report to the lead lists the commits and hunks.
+> - **Runs at `c9facf8` (2026-11-14).** Mac, `go test -count=1 -p 4 -timeout 60m ./...`
+>   unfiltered: all 62 packages pass. Linux (Docker `golang:1.26`, user 1000, unfiltered): every
+>   package passes but the two known container reds, desktop's MA-272
+>   (`TestScheduledBackupCardSaysNotInstalledOnlyForAnArchive`) and `internal/source` killed for
+>   memory. (The first Linux run, at `ece6ad9`, also went red on `internal/vault`'s MA-726 gate;
+>   `c9facf8` answers it.) Windows VM (as SYSTEM, the lab share as `\\Mac\winlab`, Go 1.26.11,
+>   `GOTOOLCHAIN=local`), the touched packages (`app`, `pages`, `backupalert`, `testhome/reach`,
+>   `presync`, `wizard`), compared by name with `1b84d10` run the same way: no test red on the fix
+>   and green on the base; `app` red on the same 21 tests on both (copy-export and sealed-index
+>   tests that need a signed-in session, as in round 3), `presync` on the same one
+>   (`TestPresyncNoWritesToThunderbird`). On Windows the new drive-letter test passes (no `subst`
+>   mapping left) and the rename forms skip after their positive twins. The review's round-3 and
+>   round-4 probes (build tag `b3adv`, kept out of the branch) pass on macOS but
+>   `TestB3AdvR4EncryptedSwapMidWalk`, whose check is "nothing at all": it now sees one sealed unit,
+>   the message in flight (was 17), and B's record "ok".
+
 ## 14. Owner questions, each with a recommendation
 
 - **Q1 — Keep `Mail-archive-dimarcotech` or start a new Gmail archive?** Recommended: keep it and use the
