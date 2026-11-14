@@ -4,13 +4,14 @@ import "testing"
 
 // covers: MA-1333, R37
 // The checks assureblock's meta-test finds the packages with read calls, not text (the B3
-// adversarial pass, round 3's H4). Positive twins first: a TestMain that calls testhome.Run (or
-// Check, or under another import name) passes, and code that calls os.UserHomeDir, os.UserCacheDir
+// adversarial pass, round 3's H4). Positive twins first: a TestMain that calls testhome.Run (under
+// any import name) passes, and code that calls os.UserHomeDir, os.UserCacheDir
 // or the config-folder function, or reads APPDATA, LOCALAPPDATA, HOME or an XDG folder variable
 // through os.Getenv or os.LookupEnv, under any name it imports os as, is a root. Fail-closed twins:
 // a testhome.Run named only in a comment or a string, called outside TestMain, or on something
 // else named testhome does not pass; a comment or a string naming a lookup, or a Getenv of another
-// variable, is not a root.
+// variable, is not a root. (Amended by MA-1340: testhome.Check alone no longer passes, since it
+// reports only after the tests ran.)
 func TestTheThrowAwayHomeCheckReadsCallsNotText(t *testing.T) {
 	const head = "package p\n\nimport (\n\t\"os\"\n\t\"testing\"\n\n\t\"mail-archive-tool/internal/testhome\"\n)\n\n"
 	for _, c := range []struct {
@@ -19,7 +20,7 @@ func TestTheThrowAwayHomeCheckReadsCallsNotText(t *testing.T) {
 		want bool
 	}{
 		{"a call in TestMain", head + "func TestMain(m *testing.M) { os.Exit(testhome.Run(\"/x\", m)) }\n", true},
-		{"Check in TestMain", head + "func TestMain(m *testing.M) { os.Exit(testhome.Check(\"/x\", m.Run())) }\n", true},
+		{"Check alone in TestMain (MA-1340: it reports only after the tests ran)", head + "func TestMain(m *testing.M) { os.Exit(testhome.Check(\"/x\", m.Run())) }\n", false},
 		{"another import name", "package p\n\nimport (\n\t\"os\"\n\t\"testing\"\n\n\th \"mail-archive-tool/internal/testhome\"\n)\n\nfunc TestMain(m *testing.M) { os.Exit(h.Run(\"/x\", m)) }\n", true},
 		{"a comment only", head + "// TestMain calls testhome.Run(root, m).\nfunc TestMain(m *testing.M) { os.Exit(m.Run()) }\n\nvar _ = testhome.Contained\n", false},
 		{"a string only", head + "func TestMain(m *testing.M) { _ = \"testhome.Run(\"; os.Exit(m.Run()) }\n\nvar _ = testhome.Contained\n", false},
