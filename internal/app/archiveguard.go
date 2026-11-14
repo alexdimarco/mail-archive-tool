@@ -152,7 +152,7 @@ func (g *archiveGuard) settle() error {
 		unreadable, err := g.ask()
 		if !unreadable {
 			if !began.IsZero() {
-				g.say("the archive folder can be reached again after %s.", time.Since(began).Round(time.Second))
+				g.say("the archive folder can be reached again after %s.", durationWords(time.Since(began)))
 			}
 			return err
 		}
@@ -172,6 +172,13 @@ func (g *archiveGuard) settle() error {
 		select {
 		case <-g.done():
 			pause.Stop()
+			// One more look, without waiting (the 1.7.2 final check's security-2): a folder
+			// that is back answers as any proof does, so a run whose lock is still its own
+			// goes on to its own cancel, which saves its progress first.
+			if unreadable, err := g.ask(); !unreadable {
+				g.say("the archive folder can be reached again after %s.", durationWords(time.Since(began)))
+				return err
+			}
 			g.say("stopped waiting for the archive folder: the backup was cancelled.")
 			return g.ctx.Err()
 		case <-pause.C:
@@ -192,6 +199,19 @@ func (g *archiveGuard) say(format string, args ...any) {
 	if g.logger != nil {
 		g.logger.Printf(format, args...)
 	}
+}
+
+// durationWords is how long a wait took, in words: "less than a second", "1 second", "4
+// seconds" (the final check's wording-9).
+func durationWords(d time.Duration) string {
+	s := int(d.Round(time.Second) / time.Second)
+	switch {
+	case d < time.Second:
+		return "less than a second"
+	case s == 1:
+		return "1 second"
+	}
+	return fmt.Sprintf("%d seconds", s)
 }
 
 // waitWords is archiveUnreadableFor in words: "30 seconds".
@@ -293,6 +313,14 @@ func (g *archiveGuard) endUnheld() (end error, here bool) {
 func (g *archiveGuard) closeOut(err *error) bool {
 	end, here := g.endUnheld()
 	if end == nil {
+		// The lock is the run's after all: a run that stopped on a lock it could not read at the
+		// time (the walk's own probe, lockfile.StillHeld's raw sentence) says what it met, the
+		// archive location unreachable for a moment, in the plain sentence, never the lock's
+		// internal one (the 1.7.2 final check's wording-6).
+		var lost *lockfile.LostError
+		if FailureKind(*err) == state.FailLockLost && errors.As(*err, &lost) && lost.Err != nil && !isStopped(*err) {
+			*err = unavailable(g.out, lost.Err)
+		}
 		return true
 	}
 	if replacesEnd(*err) {
@@ -442,14 +470,16 @@ func (g *archiveGuard) writeGuard(lost *error) func() error {
 }
 
 // The words of a backup stopped because its folder is no longer its own (the 1.7.2 friction
-// review's F1 and F6, and its re-walk's G1, G2 and G6), here only: plain words by what the run
-// found at its end, a clause the surfaces lead into ("Backup failed: …", "Reason: …"), then a short
-// "Details:" without the lock file's path or the system's error.
+// review's F1 and F6, its re-walk's G1, G2 and G6, the final check's wording-7 and wording-13),
+// here only: plain words by what the run found at its end, a clause the surfaces lead into
+// ("Backup failed: …", "Reason: …"); the folder-changed sentence ends on a short "Details:" (what
+// was found), without the lock file's path or the system's error; the two own-lock sentences say
+// it all in their lead and have none.
 const (
 	stoppedChangedWords   = "the archive folder changed during the backup. Another drive or folder is now at %s (a drive was swapped or disconnected, or the folder was moved or renamed), or another backup took it over. Nothing more was saved there. Connect the drive that holds this archive, then run the backup again. Details: %s."
-	stoppedDeletedWords   = "MailArchive's lock file in the archive folder (%s) was deleted during the backup, by a person or by a cleaning or sync app. Your archive is fine. Run the backup again. If this keeps happening, stop that app from cleaning the archive folder. Details: %s."
-	stoppedRewrittenWords = "MailArchive's lock file in the archive folder (%s) was changed during the backup: another backup of this archive may have started, or another app wrote to the file. Your archive is fine. Run the backup again once any other backup of it has finished. Details: %s."
-	stoppedWarningWords   = "warning: this backup's result was not written into %s: the folder there is no longer this archive's."
+	stoppedDeletedWords   = "MailArchive's lock file in the archive folder (%s) was deleted during the backup, by a person or by a cleaning or sync app. Your archive is fine. Run the backup again. If this keeps happening, stop that app from cleaning the archive folder."
+	stoppedRewrittenWords = "MailArchive's lock file in the archive folder (%s) was changed during the backup: another backup of this archive may have started, or another app wrote to the file. Your archive is fine. Run the backup again once any other backup of it has finished."
+	stoppedWarningWords   = "warning: this backup's result was not written into %s: another drive or folder is there now, or another backup took it over."
 )
 
 // stoppedErr is a backup stopped because its lock is no longer its own: its words (Error) are the
@@ -461,6 +491,26 @@ type stoppedErr struct {
 
 func (e *stoppedErr) Error() string { return e.msg }
 func (e *stoppedErr) Unwrap() error { return e.err }
+
+// lockCause is what a failed lock check met, for a sentence's "Details:": the system's error
+// when the lock file could not be read, the lock's short sentence otherwise; never the lock's
+// internal sentence (the final check's wording-6).
+func lockCause(err error) error {
+	var le *lockfile.LostError
+	if !errors.As(err, &le) {
+		return err
+	}
+	if le.Err != nil {
+		return le.Err
+	}
+	return errors.New(le.Short())
+}
+
+// isStopped says err already carries a stopped backup's plain words.
+func isStopped(err error) bool {
+	var s *stoppedErr
+	return errors.As(err, &s)
+}
 
 // stoppedError words lost, the reason a proof found the run's lock no longer its own, for the
 // person: here, the folder is this run's own archive whose lock file was deleted or changed;
@@ -477,9 +527,9 @@ func stoppedError(out string, lost error, here bool) error {
 	case !here:
 		msg = fmt.Sprintf(stoppedChangedWords, out, details)
 	case removed:
-		msg = fmt.Sprintf(stoppedDeletedWords, lockfile.Name, details)
+		msg = fmt.Sprintf(stoppedDeletedWords, lockfile.Name)
 	default:
-		msg = fmt.Sprintf(stoppedRewrittenWords, lockfile.Name, details)
+		msg = fmt.Sprintf(stoppedRewrittenWords, lockfile.Name)
 	}
 	return withKind(state.FailLockLost, &stoppedErr{msg: cleanText(msg), err: lost})
 }

@@ -24,7 +24,6 @@ import (
 	"mail-archive-tool/internal/instance"
 	"mail-archive-tool/internal/localweb"
 	"mail-archive-tool/internal/seal"
-	"mail-archive-tool/internal/util"
 )
 
 // launchEnv is what a launch needs from its surroundings: the per-account state
@@ -160,24 +159,28 @@ func noStateDirText(err error) string {
 	return fmt.Sprintf("MailArchive Desktop cannot start: it has no private folder of your account to keep its own state in (%v). Do this: sign out and back in so your profile folder is set, then start MailArchive again.", err)
 }
 
-// instanceStartError is the Desktop's start failure when its instance file (its private start
-// file, which holds the hand-off key) could not be written at all. When Windows would not create
-// it with the label that keeps sandboxed programs from reading it (util.SecretCreateRefused) and
-// writing it as 1.7.1 did failed too (instance.WriteNoting), the person is told in plain words, as
-// a refusal: a dialog as well as stderr, since the Start menu's program has no console (the 1.7.2
-// friction review's F11, its re-walk's G8). A label refused with the plain write working is not a
-// failure: the Desktop starts (the research note's L0). Otherwise it says what it always said.
+// instanceStartError is the Desktop's start failure when its instance file (its private key
+// file, which holds the hand-off key) could not be written. When neither the protected write
+// nor the 1.7.1 one worked (instance.KeyFileError), the person is told in plain words, as a
+// refusal: a dialog as well as stderr, since the Start menu's program has no console (the 1.7.2
+// friction review's F11, its re-walk's G8, the final check's wording-1). A label refused with the
+// plain write working is not a failure: the Desktop starts (the research note's L0). Otherwise
+// it says what it always said.
 func instanceStartError(env *launchEnv, err error) error {
-	if dir, cause, ok := util.SecretCreateRefused(err); ok {
-		env.ShowRefusal(startFileText(dir, cause))
-		return &refusedError{text: startFileText(dir, cause), err: err}
+	var kf *instance.KeyFileError
+	if errors.As(err, &kf) {
+		text := keyFileText(kf.Dir, kf.Plain)
+		env.ShowRefusal(text)
+		return &refusedError{text: text, err: err}
 	}
 	return fmt.Errorf("could not record this instance: %w", err)
 }
 
-// startFileText is the G8 refusal of a private start file that could not be written.
-func startFileText(dir string, cause error) string {
-	return fmt.Sprintf("MailArchive Desktop cannot start: Windows would not protect its private start file in %s (%v). Do this: start MailArchive Desktop from the Start menu. If this message comes back, that folder is on a drive that cannot protect it, such as a network drive; it must be on this computer's own drive.", stripControl(dir), cause)
+// keyFileText is the refusal of a private key file that could not be saved at all: the
+// protected write and the 1.7.1 one both failed, so the account cannot write to the folder; it
+// names the error of the write that failed last (the 1.7.2 final check's wording-1).
+func keyFileText(dir string, cause error) string {
+	return fmt.Sprintf("MailArchive Desktop cannot start: it could not save its private key file in %s (%s). Do this: start MailArchive Desktop from the Start menu. If this message comes back, your Windows account cannot write to that folder: restart the computer and try again, and if it still comes back, ask whoever looks after this computer to check that folder.", stripControl(dir), instance.SystemWords(cause))
 }
 
 // launchOpts is what a launch was asked for.

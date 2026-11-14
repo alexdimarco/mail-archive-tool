@@ -266,7 +266,7 @@ func TestALockLostDuringASmallRunSavesNoManifest(t *testing.T) {
 		t.Fatal("premise: the walk was not reached")
 	}
 	rc, msg := ma1328LockLost(err)
-	assure.Refused(t, rc, msg, assure.Names(lockfile.Name, "was replaced during the run", "was changed during the backup", "Run the backup again once any other backup of it has finished"),
+	assure.Refused(t, rc, msg, assure.Names(lockfile.Name, "was changed during the backup: another backup of this archive may have started", "Run the backup again once any other backup of it has finished"),
 		assure.NoSideEffect(func() bool { return ma1328Bytes(t, out, ".mailarchive-manifest.json") == m1 }))
 }
 

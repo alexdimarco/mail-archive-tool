@@ -234,8 +234,9 @@ func TestAFolderMovedAwayMidRunIsNeverMadeAgain(t *testing.T) {
 // its own lock file deleted (not on Windows, which will not delete an open file); its own lock
 // file changed. Each word of each sentence is pinned here. Since the friction re-walk (G1, G2, G6)
 // each is a clause the surfaces lead into ("Backup failed: …", "Reason: …"), with no "Backup
-// stopped:" of its own, its "Details:" names no path, and the warning no longer restates the cause.
-// Positive twin first: the same run with nothing changed ends ok.
+// stopped:" of its own, and the folder-changed "Details:" names no path; since the final check
+// (wording-13, wording-7) the two own-lock sentences have no "Details:" at all, and the warning
+// names both causes. Positive twin first: the same run with nothing changed ends ok.
 func TestAStoppedBackupSaysWhatHappenedInPlainWords(t *testing.T) {
 	outA, outB := tmpDir(t), tmpDir(t)
 	storeA := ma1336TwoArchives(t, outA, outB)
@@ -267,9 +268,9 @@ func TestAStoppedBackupSaysWhatHappenedInPlainWords(t *testing.T) {
 				t.Fatal(werr)
 			}
 		})
-		want := "MailArchive's lock file in the archive folder (.mailarchive.lock) was changed during the backup: another backup of this archive may have started, or another app wrote to the file. Your archive is fine. Run the backup again once any other backup of it has finished. Details: the lock file was replaced during the run."
+		want := "MailArchive's lock file in the archive folder (.mailarchive.lock) was changed during the backup: another backup of this archive may have started, or another app wrote to the file. Your archive is fine. Run the backup again once any other backup of it has finished."
 		rc, msg := ma1328LockLost(err)
-		assure.Refused(t, rc, msg, assure.Names(want), assure.Forbid(lockIn(out), "Backup stopped", "panic", "goroutine"),
+		assure.Refused(t, rc, msg, assure.Names(want), assure.Forbid(lockIn(out), "Backup stopped", "Details:", "panic", "goroutine"),
 			assure.NoSideEffect(func() bool { return lr.Status == state.RunFailed && lr.Error == want }))
 	})
 	if runtime.GOOS == "windows" {
@@ -281,9 +282,9 @@ func TestAStoppedBackupSaysWhatHappenedInPlainWords(t *testing.T) {
 				t.Fatal(rerr)
 			}
 		})
-		want := "MailArchive's lock file in the archive folder (.mailarchive.lock) was deleted during the backup, by a person or by a cleaning or sync app. Your archive is fine. Run the backup again. If this keeps happening, stop that app from cleaning the archive folder. Details: the lock file was removed during the run."
+		want := "MailArchive's lock file in the archive folder (.mailarchive.lock) was deleted during the backup, by a person or by a cleaning or sync app. Your archive is fine. Run the backup again. If this keeps happening, stop that app from cleaning the archive folder."
 		rc, msg := ma1328LockLost(err)
-		assure.Refused(t, rc, msg, assure.Names(want), assure.Forbid("no such file", lockIn(out), "Backup stopped", "panic", "goroutine"),
+		assure.Refused(t, rc, msg, assure.Names(want), assure.Forbid("no such file", lockIn(out), "Backup stopped", "Details:", "panic", "goroutine"),
 			assure.NoSideEffect(func() bool { return lr.Status == state.RunFailed && lr.Error == want }))
 	})
 	t.Run("another-folder", func(t *testing.T) {
@@ -304,7 +305,7 @@ func TestAStoppedBackupSaysWhatHappenedInPlainWords(t *testing.T) {
 			t.Fatal("premise: the walk's end was not reached")
 		}
 		want := "the archive folder changed during the backup. Another drive or folder is now at " + outA + " (a drive was swapped or disconnected, or the folder was moved or renamed), or another backup took it over. Nothing more was saved there. Connect the drive that holds this archive, then run the backup again. Details: the lock file was replaced during the run."
-		warning := "warning: this backup's result was not written into " + outA + ": the folder there is no longer this archive's.\n"
+		warning := "warning: this backup's result was not written into " + outA + ": another drive or folder is there now, or another backup took it over.\n"
 		rc, msg := ma1328LockLost(err)
 		assure.Refused(t, rc, msg, assure.Names(want), assure.Forbid(lockIn(outA), "Backup stopped", "panic", "goroutine"),
 			assure.NoSideEffect(func() bool {

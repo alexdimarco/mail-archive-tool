@@ -217,7 +217,7 @@ func publishServe(env *linkEnv, out, served, keyHex string) func() {
 	// Windows refusing the file's label is a warning, the file written as 1.7.1 wrote it (the
 	// 1.7.2 research note's L0).
 	note := func(s string) { fmt.Fprintln(env.Stderr, s) }
-	if err := instance.WriteNoting(path, info, note); err != nil {
+	if _, err := instance.WriteNoting(path, info, note); err != nil {
 		fmt.Fprintf(env.Stderr, "note: `mailarchive serve -link` will not work for this run: %v\n", err)
 		return nil
 	}

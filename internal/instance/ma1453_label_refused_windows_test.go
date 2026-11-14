@@ -88,18 +88,18 @@ func TestMA1453_WindowsRefusingTheLabelStillLeavesAUsableFile(t *testing.T) {
 		keyHex, _ := NewKey()
 		var note string
 		raw := writeSecret(p+".probe", []byte("x"))
-		_, _, refused := util.SecretCreateRefused(raw)
-		err := WriteNoting(p, Info{PID: os.Getpid(), Dashboard: "127.0.0.1:1", Key: keyHex}, func(s string) { note = s })
+		_, cause, refused := util.SecretCreateRefused(raw)
+		labelled, err := WriteNoting(p, Info{PID: os.Getpid(), Dashboard: "127.0.0.1:1", Key: keyHex}, func(s string) { note = s })
 		got, rerr := Read(p)
-		fmt.Printf("LOWWRITE integrity=%s labelrefused=%v err=%v read=%v keyok=%v note=%q\n", integrityOf(), refused, err, rerr, rerr == nil && got.Key == keyHex, note)
+		fmt.Printf("LOWWRITE integrity=%s labelrefused=%v labelcode=%v labelled=%v err=%v read=%v keyok=%v recorded=%v note=%q\n", integrityOf(), refused, util.LabelRefused(cause), labelled, err, rerr, rerr == nil && got.Key == keyHex, got.Unlabelled, note)
 		return
 	}
 	dir := t.TempDir()
 	keyHex, _ := NewKey()
 	var said []string
 	twin := filepath.Join(dir, "medium", FileName)
-	if err := WriteNoting(twin, Info{PID: os.Getpid(), Dashboard: "127.0.0.1:1", Key: keyHex}, func(s string) { said = append(said, s) }); err != nil || len(said) != 0 || !noReadUp(labelOf(t, twin)) {
-		t.Fatalf("twin: at this process's integrity the write gave %v, said %q, label %q", err, said, labelOf(t, twin))
+	if labelled, err := WriteNoting(twin, Info{PID: os.Getpid(), Dashboard: "127.0.0.1:1", Key: keyHex}, func(s string) { said = append(said, s) }); err != nil || !labelled || len(said) != 0 || !noReadUp(labelOf(t, twin)) {
+		t.Fatalf("twin: at this process's integrity the write gave %v %v, said %q, label %q", labelled, err, said, labelOf(t, twin))
 	}
 	lowDir := filepath.Join(dir, "low")
 	if err := os.MkdirAll(lowDir, 0o700); err != nil {
@@ -109,7 +109,7 @@ func TestMA1453_WindowsRefusingTheLabelStillLeavesAUsableFile(t *testing.T) {
 	path := filepath.Join(lowDir, FileName)
 	got := writeAtLow(t, path)
 	t.Logf("the Low child: %s; the file's label: %s", got, labelOf(t, path))
-	for _, want := range []string{"integrity=S-1-16-4096", "labelrefused=true", "err=<nil>", "read=<nil>", "keyok=true", `note="warning: Windows would not protect MailArchive Desktop's private start file in `} {
+	for _, want := range []string{"integrity=S-1-16-4096", "labelrefused=true", "labelcode=true", "labelled=false", "err=<nil>", "read=<nil>", "keyok=true", "recorded=true", `note="warning: Windows would not protect MailArchive's private key file in `} {
 		if !strings.Contains(got, want) {
 			t.Errorf("the Low child's write: %s, want %s", got, want)
 		}

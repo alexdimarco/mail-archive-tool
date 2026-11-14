@@ -77,6 +77,10 @@ type Input struct {
 	// DesktopEnded, when set, is the older instance the running MailArchive Desktop
 	// ended at start (§4.5.2, MA-638); its line names the pid and program.
 	DesktopEnded *instance.Ended
+	// DesktopUnlabelled says the running MailArchive Desktop's private key file was written
+	// as 1.7.1 wrote it, because Windows would not protect it (instance.Info.Unlabelled; the
+	// 1.7.2 final check's security-1): one information line says so.
+	DesktopUnlabelled bool
 
 	// HasManifestFile is true when a manifest file exists on disk (even if it
 	// cannot be loaded); HasManifest is true only when it loaded. A present-but-
@@ -701,6 +705,11 @@ func assessKeyless(r *Report, in Input, now time.Time) {
 		if txt := instance.EndedNotice(in.DesktopEnded); txt != "" {
 			r.warn("desktop_ended_older", txt)
 		}
+	}
+	// The running Desktop's private key file kept as in 1.7.1: information, never a warning
+	// (it works as 1.7.1 did), so the person and the signed-in L0 check can see it (MA-1458).
+	if in.DesktopUnlabelled {
+		r.note("desktop_key_unprotected", instance.UnlabelledNotice)
 	}
 
 	// Last run.
@@ -1929,6 +1938,7 @@ func Gather(out, nameOverride string) Input {
 	in := Input{Out: out, GOOS: runtime.GOOS, PIDAlive: procs.Alive}
 	in.DesktopFormer = instance.Former()
 	in.DesktopEnded = instance.EndedRecord()
+	in.DesktopUnlabelled = instance.Unlabelled()
 	in.ThisHost, _ = os.Hostname()
 	if _, err := os.Stat(out); errors.Is(err, os.ErrNotExist) {
 		in.OutAbsent = true // the location is gone (an unplugged drive, a deleted folder): not a new archive (OP-3)

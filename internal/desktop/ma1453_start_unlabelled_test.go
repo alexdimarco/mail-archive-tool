@@ -9,6 +9,7 @@ import (
 	"path/filepath"
 	"strings"
 	"sync"
+	"syscall"
 	"testing"
 	"time"
 
@@ -33,6 +34,16 @@ func (l *ma1453Log) String() string {
 	l.mu.Lock()
 	defer l.mu.Unlock()
 	return l.buf.String()
+}
+
+// privilegeNotHeld is ERROR_PRIVILEGE_NOT_HELD (1314) with the words Windows gives it, on any
+// system: what util.LabelRefused knows as the label's own refusal.
+type privilegeNotHeld struct{}
+
+func (privilegeNotHeld) Error() string { return "A required privilege is not held by the client." }
+func (privilegeNotHeld) Is(target error) bool {
+	en, ok := target.(syscall.Errno)
+	return ok && en == 1314
 }
 
 // ma1453Start launches g's instance with its stderr kept in logs and returns once it serves, or the
@@ -75,8 +86,9 @@ func TestADesktopWhoseStartFileWindowsWillNotLabelStillStarts(t *testing.T) {
 	}
 	g.stop()
 
+	// ERROR_PRIVILEGE_NOT_HELD, the label's own refusal (MA-1459), by number, with Windows' words.
 	refuse := func(path string, _ []byte) error {
-		return fmt.Errorf("temp file in %s: %w", filepath.Dir(path), &os.PathError{Op: "createsecret", Path: filepath.Join(filepath.Dir(path), ".tmp-0123456789abcdef"), Err: errors.New("A required privilege is not held by the client.")})
+		return fmt.Errorf("temp file in %s: %w", filepath.Dir(path), &os.PathError{Op: "createsecret", Path: filepath.Join(filepath.Dir(path), ".tmp-0123456789abcdef"), Err: privilegeNotHeld{}})
 	}
 	restore := instance.SetWritersForTest(refuse, util.WriteFileAtomic0600)
 	defer restore()
@@ -85,10 +97,10 @@ func TestADesktopWhoseStartFileWindowsWillNotLabelStillStarts(t *testing.T) {
 	if err := ma1453Start(t, g, logs); err != nil {
 		t.Fatalf("a start file Windows would not label stopped the Desktop: %v (dialogs %q)", err, g.rec.refusals)
 	}
-	if got, err := instance.Read(instance.FilePathIn(g.dir, g.session)); err != nil || got.Key == "" {
-		t.Fatalf("the start file written without the label is not usable: %+v %v", got, err)
+	if got, err := instance.Read(instance.FilePathIn(g.dir, g.session)); err != nil || got.Key == "" || !got.Unlabelled {
+		t.Fatalf("the start file written without the label is not usable, or does not record it: %+v %v", got, err)
 	}
-	want := "mailarchive desktop: warning: Windows would not protect MailArchive Desktop's private start file in " + g.dir + " (A required privilege is not held by the client.), so it was written as before 1.7.2: a sandboxed program running under your account may be able to read it."
+	want := "mailarchive desktop: warning: Windows would not protect MailArchive's private key file in " + g.dir + " (A required privilege is not held by the client), so it was saved as MailArchive 1.7.1 saved it: everything works as usual, but a sandboxed program running under your account may be able to read it."
 	if !strings.Contains(logs.String(), want) {
 		t.Fatalf("the Desktop's log lacks %q:\n%s", want, logs.String())
 	}
@@ -106,7 +118,7 @@ func TestADesktopWhoseStartFileWindowsWillNotLabelStillStarts(t *testing.T) {
 	if RefusalShown(err) {
 		rc = 2
 	}
-	assure.Refused(t, rc, fmt.Sprint(err), assure.Names("MailArchive Desktop cannot start: Windows would not protect its private start file in "+g.dir, "Do this: start MailArchive Desktop from the Start menu"),
+	assure.Refused(t, rc, fmt.Sprint(err), assure.Names("MailArchive Desktop cannot start: it could not save its private key file in "+g.dir+" (Access is denied). Do this: start MailArchive Desktop from the Start menu"),
 		assure.NoSideEffect(func() bool {
 			_, serr := os.Stat(instance.FilePathIn(g.dir, g.session))
 			return errors.Is(serr, os.ErrNotExist)

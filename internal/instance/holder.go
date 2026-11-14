@@ -83,17 +83,21 @@ func FilePathIn(dir, session string) string {
 // after taking the lock and before binding [CC21].
 func (h *Holder) RemoveStale() { os.Remove(h.FilePath()) }
 
-// Publish writes the instance file and remembers it, so Watch can rewrite it.
+// Publish writes the instance file and remembers it, so Watch can rewrite it; it remembers too
+// whether Windows labelled it (Info.Unlabelled), so Watch can try the label again.
 func (h *Holder) Publish(info Info) error {
+	labelled, err := WriteNoting(h.FilePath(), info, h.Note)
+	info.Unlabelled = err == nil && !labelled
 	h.info = &info
-	return WriteNoting(h.FilePath(), info, h.Note)
+	return err
 }
 
 // Watch re-checks the lock every interval (lockfile.StillHeld) and rewrites the
 // instance file when it has gone missing — a purge, a clean-up, a user's tidy —
-// so a later launch's retry finds it [CC21]. A lock that is no longer ours is
-// reported to log and the file is left alone: another process owns the name.
-// The returned func stops it.
+// so a later launch's retry finds it [CC21]; a file Windows would not label is
+// written with its label again at each interval until Windows allows it. A lock
+// that is no longer ours is reported to log and the file is left alone: another
+// process owns the name. The returned func stops it.
 func (h *Holder) Watch(interval time.Duration, log func(string)) (stop func()) {
 	h.stop = make(chan struct{})
 	done := make(chan struct{})
@@ -110,10 +114,21 @@ func (h *Holder) Watch(interval time.Duration, log func(string)) (stop func()) {
 					log(err.Error())
 					continue
 				}
-				if _, err := os.Lstat(h.FilePath()); err != nil && h.info != nil {
-					if err := WriteNoting(h.FilePath(), *h.info, h.Note); err != nil {
+				if h.info == nil {
+					continue
+				}
+				if _, err := os.Lstat(h.FilePath()); err != nil {
+					labelled, err := WriteNoting(h.FilePath(), *h.info, h.Note)
+					if err != nil {
 						log("could not rewrite the instance file: " + err.Error())
+						continue
 					}
+					h.info.Unlabelled = !labelled
+				} else if h.info.Unlabelled && RetryProtected(h.FilePath(), *h.info) {
+					// A file the fallback wrote gets its label as soon as Windows allows it
+					// (the 1.7.2 final check's security-3).
+					h.info.Unlabelled = false
+					log("the private key file is protected now")
 				}
 			}
 		}

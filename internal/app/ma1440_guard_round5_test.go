@@ -468,7 +468,7 @@ func TestALockLostInItsOwnArchiveIsRecordedThere(t *testing.T) {
 					}))
 				return
 			}
-			assure.Refused(t, rc, msg, assure.Names(lockfile.Name, "during the run", "MailArchive's lock file in the archive folder", "Your archive is fine", "Run the backup again"))
+			assure.Refused(t, rc, msg, assure.Names(lockfile.Name, "during the backup", "MailArchive's lock file in the archive folder", "Your archive is fine", "Run the backup again"))
 			if st != state.LastRunPresent || lr.Status != state.RunFailed {
 				t.Fatalf("the run's own archive was not recorded failed: %q (%v)", lr.Status, st)
 			}

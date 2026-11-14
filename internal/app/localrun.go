@@ -96,12 +96,18 @@ func runFatalFor(out string, kind export.FatalKind, err error) *RunFatalError {
 // the folder again, a drive swapped with a gap between the two). The system's words
 // come last, after "Details:" (the 1.7.2 friction re-walk's G3).
 func unavailable(out string, cause error) *RunFatalError {
-	return &RunFatalError{gone: true, Err: cause, Msg: cleanText(fmt.Sprintf(unavailableWords, out, keptNote, cause))}
+	return &RunFatalError{gone: true, Err: cause, Msg: cleanText(fmt.Sprintf(unavailableWords, out, keptNote, systemWords(cause)))}
 }
 
 // unavailableWords is the run-fatal sentence of an archive location that cannot be reached: the
 // folder, the kept-messages note, the system's words.
-const unavailableWords = "the archive location %s is unavailable — connect the drive or network share that holds this archive (if you swapped drives, put this archive's drive back), then run the backup again. %s Details: %v."
+const unavailableWords = "the archive location %s is unavailable — connect the drive or network share that holds this archive (if you swapped drives, put this archive's drive back), then run the backup again. %s Details: %s."
+
+// systemWords is err's text without the full stop Windows ends its messages with, for a sentence
+// that adds its own (the 1.7.2 final check's wording-8: "…path specified.." on Windows).
+func systemWords(err error) string {
+	return strings.TrimSuffix(fmt.Sprint(err), ".")
+}
 
 // writtenPath is the file or directory an export error names ("" if none).
 func writtenPath(err error) string {
@@ -209,7 +215,7 @@ func (lr *localRun) probe(s *sourceRun) error {
 			if lr.onLockLost != nil {
 				lr.onLockLost(err)
 			}
-			fatal := unavailable(lr.out, err)
+			fatal := unavailable(lr.out, lockCause(err))
 			fatal.gone = false // the folder is there: its lock is not the run's
 			return fatal
 		}
