@@ -32,7 +32,7 @@ func TestTheGmailAnswerTakesTheSettingsGuards(t *testing.T) {
 
 	// A delete of the folder that did not finish.
 	sp, _ := gmailanswer.Path(stopped)
-	_, s := e.post("/api/gmail-answer", map[string]any{"path": stopped, "answer": "yes", "archive": state.ArchiveID(stopped)})
+	_, s := e.post("/api/gmail-answer", gmailYesBody(stopped))
 	assure.Refused(t, http.StatusOK, replyErr(s), assure.Code(http.StatusOK),
 		assure.Names("Delete not finished", "your answer was not kept", "nothing was changed"),
 		assure.NoSideEffect(func() bool { _, err := os.Lstat(sp); return s["ok"] == false && os.IsNotExist(err) }))
@@ -43,7 +43,7 @@ func TestTheGmailAnswerTakesTheSettingsGuards(t *testing.T) {
 	if _, why := e.d.running.block(uninstallingText); why != "" {
 		t.Fatal(why)
 	}
-	_, u := e.post("/api/gmail-answer", map[string]any{"path": other, "answer": "yes", "archive": state.ArchiveID(other)})
+	_, u := e.post("/api/gmail-answer", gmailYesBody(other))
 	assure.Refused(t, http.StatusOK, replyErr(u), assure.Code(http.StatusOK), assure.Names(uninstallingText),
 		assure.NoSideEffect(func() bool { after, _ := os.ReadFile(op); return u["ok"] == false && string(after) == string(before) }))
 	e.d.running.mu.Lock()
@@ -54,7 +54,7 @@ func TestTheGmailAnswerTakesTheSettingsGuards(t *testing.T) {
 	jobFileMu.Lock()
 	done := make(chan map[string]any, 1)
 	go func() {
-		_, m := e.post("/api/gmail-answer", map[string]any{"path": other, "answer": "yes", "archive": state.ArchiveID(other)})
+		_, m := e.post("/api/gmail-answer", gmailYesBody(other))
 		done <- m
 	}()
 	select {

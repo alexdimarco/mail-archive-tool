@@ -15,6 +15,8 @@ package desktop
 // answer is kept in memory on the open archive only, never in a file (O1), and a Lock forgets it.
 
 import (
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"net/http"
 	"slices"
@@ -41,6 +43,9 @@ const (
 	gmailCollapsedLine   = "Gmail folders: not switched on."
 	gmailCollapsedButton = "Turn on…"
 	gmailNoQuestion      = "There is no Gmail question for this archive now. Reload the page."
+	// gmailQuestionChanged refuses a Yes from a page drawn for other Gmail accounts than the ones
+	// off now (round 3's H5): reloaded, the page asks about them all.
+	gmailQuestionChanged = "This archive's Gmail question changed since this page was drawn. Reload the page."
 	// What starts the next backup, after gmailYesWaits (F15): an archive with no schedule never
 	// backs up by itself.
 	gmailRunNowLead  = "Nothing backs it up by itself: "
@@ -127,8 +132,9 @@ func (cfg Config) encryptedGmailCard(out string) (question, yesWaits string) {
 	return "", ""
 }
 
-// gmailAnswerEncrypted keeps the answer for an encrypted archive open here, in memory only.
-func (d *dashboard) gmailAnswerEncrypted(w http.ResponseWriter, path, answer string) {
+// gmailAnswerEncrypted keeps the answer for an encrypted archive open here, in memory only. A Yes
+// covers the stores the page asked about (asked, their fingerprint) only (H5).
+func (d *dashboard) gmailAnswerEncrypted(w http.ResponseWriter, path, answer, asked string) {
 	var e *keyEntry
 	if d.cfg.Keys != nil {
 		e = d.cfg.Keys.get(path)
@@ -141,6 +147,11 @@ func (d *dashboard) gmailAnswerEncrypted(w http.ResponseWriter, path, answer str
 	if len(e.gmailOff) == 0 {
 		lastSyncMu.Unlock()
 		writeJSON(w, map[string]any{"ok": false, "error": gmailNoQuestion})
+		return
+	}
+	if answer == "yes" && strings.TrimSpace(asked) != gmailAsked(e.gmailOff) {
+		lastSyncMu.Unlock()
+		writeJSON(w, map[string]any{"ok": false, "error": gmailQuestionChanged})
 		return
 	}
 	note := gmailNotNowEncryptedNote
@@ -173,14 +184,45 @@ func gmailWord(name string) string { return gmailWords[name] }
 // Not now is kept here (Settings says so beside it), and whether it is Settings' copy (its Not
 // now note says so, U6; after a Not now it is drawn shut behind one line, U10).
 // Archive is the id of the archive the question was read for (a plaintext archive's; "" for an
-// encrypted one): the page sends it with the answer (G5).
+// encrypted one): the page sends it with the answer (G5). Asked is the fingerprint of the Gmail
+// stores it was drawn for (gmailAsked), which the page sends too (round 3's H5).
 type gmailBox struct {
-	Path, Archive, Question string
-	NotNowKept, Settings    bool
+	Path, Archive, Asked, Question string
+	NotNowKept, Settings           bool
 }
 
-func gmailAskBox(path, archive, question string, notNowKept, settings bool) gmailBox {
-	return gmailBox{Path: path, Archive: archive, Question: question, NotNowKept: notNowKept, Settings: settings}
+func gmailAskBox(path, archive, asked, question string, notNowKept, settings bool) gmailBox {
+	return gmailBox{Path: path, Archive: archive, Asked: asked, Question: question, NotNowKept: notNowKept, Settings: settings}
+}
+
+// gmailAsked is the fingerprint of the Gmail stores a question is drawn for (the B3 adversarial
+// pass, round 3's H5): the page carries it beside the archive's id and sends it with a Yes, which
+// then covers those stores only; when the stores off now are others (an account added to
+// Thunderbird since the page was drawn), the Yes is refused and the page is told to reload. A
+// digest of the set, so the page names no store (an encrypted archive's stores included).
+func gmailAsked(stores []string) string {
+	set := slices.Clone(stores)
+	slices.Sort(set)
+	sum := sha256.Sum256([]byte(strings.Join(slices.Compact(set), "\n")))
+	return hex.EncodeToString(sum[:12])
+}
+
+// encryptedGmailAsked is the fingerprint of the stores the open encrypted archive at out's question
+// is drawn for (its last Run now's, kept in memory); "" when none is kept.
+func (cfg Config) encryptedGmailAsked(out string) string {
+	if cfg.Keys == nil {
+		return ""
+	}
+	e := cfg.Keys.get(out)
+	if e == nil {
+		return ""
+	}
+	lastSyncMu.Lock()
+	defer lastSyncMu.Unlock()
+	if len(e.gmailOff) == 0 {
+		return ""
+	}
+	return gmailAsked(e.gmailOff)
 }
 
 // gmailStores is what the last backup of the plaintext archive at out found about its Gmail
@@ -282,6 +324,7 @@ type gmailSettings struct {
 	On         bool   // a Gmail store of the archive is switched on
 	Path       string
 	Archive    string // the id of the archive the question was read for (G5)
+	Asked      string // the fingerprint of the stores it was drawn for (H5)
 }
 
 // gmailSettingsFor works out Settings' Gmail lines for the plaintext archive at out.
@@ -294,7 +337,7 @@ func gmailSettingsFor(out string, plaintext bool) gmailSettings {
 	}
 	kept := gmailanswer.Read(out)
 	if gmailUnanswered(off, kept) {
-		s.Question, s.NotNowKept = state.GmailSwitchQuestion(false), kept.NotNow
+		s.Question, s.NotNowKept, s.Asked = state.GmailSwitchQuestion(false), kept.NotNow, gmailAsked(off)
 		return s
 	}
 	s.YesWaits = gmailYesWaitsFor(out, true)
@@ -314,7 +357,7 @@ func (d *dashboard) gmailAnswer(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, csrfRefused, http.StatusForbidden)
 		return
 	}
-	var in struct{ Path, Answer, From, Archive string }
+	var in struct{ Path, Answer, From, Archive, Asked string }
 	if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, 16<<10)).Decode(&in); err != nil {
 		http.Error(w, "bad request", http.StatusBadRequest)
 		return
@@ -345,7 +388,7 @@ func (d *dashboard) gmailAnswer(w http.ResponseWriter, r *http.Request) {
 	defer jobFileMu.Unlock()
 	kind := archindex.Kind(path)
 	if kind == archindex.KindEncrypted {
-		d.gmailAnswerEncrypted(w, path, in.Answer) // memory only (F18)
+		d.gmailAnswerEncrypted(w, path, in.Answer, in.Asked) // memory only (F18)
 		return
 	}
 	g := gmailStoresAt(path, kind != "" && kind != archindex.KindEncrypted)
@@ -355,6 +398,13 @@ func (d *dashboard) gmailAnswer(w http.ResponseWriter, r *http.Request) {
 	// swapped at the same letter) is told to reload, and nothing is kept for the archive there now.
 	if len(off) == 0 || strings.TrimSpace(in.Archive) != g.archive {
 		writeJSON(w, map[string]any{"ok": false, "error": gmailNoQuestion})
+		return
+	}
+	// A Yes is for the Gmail stores the page asked about (round 3's H5): one drawn before a later
+	// backup found another store off is told to reload, so the person is asked about them all.
+	// Not now keeps no yes, so it needs no such check.
+	if in.Answer == "yes" && strings.TrimSpace(in.Asked) != gmailAsked(off) {
+		writeJSON(w, map[string]any{"ok": false, "error": gmailQuestionChanged})
 		return
 	}
 	// The answer is for the archive whose record the question was read from (A1): what this

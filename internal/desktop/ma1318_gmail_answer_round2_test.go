@@ -15,7 +15,11 @@ import (
 // archive id the page drew the question for.
 func gmailPost(e *delEnv, out, answer string) map[string]any {
 	e.t.Helper()
-	_, m := e.post("/api/gmail-answer", map[string]any{"path": out, "answer": answer, "archive": state.ArchiveID(out)})
+	body := map[string]any{"path": out, "answer": answer, "archive": state.ArchiveID(out)}
+	if answer == "yes" {
+		body = gmailYesBody(out) // with the fingerprint of the accounts asked about (MA-1334)
+	}
+	_, m := e.post("/api/gmail-answer", body)
 	return m
 }
 
@@ -63,7 +67,7 @@ func TestAStalePagesAnswerIsRefused(t *testing.T) {
 	gmailWaits(t, out, "imap.gmail.com")
 	idA := state.ArchiveID(out)
 	assure.Reached(t, idA, "archive A's id")
-	if page := e.page(); !strings.Contains(page, `<div class="actions" data-gmail-archive="`+idA+`"><button class="btn secondary" type="button" data-gmail-answer="yes" data-path="`+out+`">`) {
+	if page := e.page(); !strings.Contains(page, `<div class="actions" data-gmail-archive="`+idA+`" data-gmail-asked="`+gmailAsked(gmailOffAt(out, true))+`"><button class="btn secondary" type="button" data-gmail-answer="yes" data-path="`+out+`">`) {
 		t.Fatal("the card's question box does not carry the archive's id beside its buttons")
 	}
 	at := strings.Index(dashboardJS, "querySelectorAll('[data-gmail-answer]')")

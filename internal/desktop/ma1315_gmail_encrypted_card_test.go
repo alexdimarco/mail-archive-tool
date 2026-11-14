@@ -73,7 +73,7 @@ func TestTheDesktopAsksTheGmailQuestionForAnUnlockedEncryptedArchive(t *testing.
 	}
 
 	// Yes: kept in memory only, applied by the next Run now, then spent.
-	if _, m := e.post("/api/gmail-answer", map[string]any{"path": sealed, "answer": "yes"}); m["ok"] != true || m["note"] != gmailYesWaitsEncrypted {
+	if _, m := e.post("/api/gmail-answer", map[string]any{"path": sealed, "answer": "yes", "asked": e.d.cfg.encryptedGmailAsked(sealed)}); m["ok"] != true || m["note"] != gmailYesWaitsEncrypted {
 		t.Fatalf("Yes: %v", m)
 	}
 	if !en.gmailYesWaits() {

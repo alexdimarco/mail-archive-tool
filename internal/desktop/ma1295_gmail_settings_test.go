@@ -62,7 +62,7 @@ func TestSettingsKeepsTheGmailQuestionAndSaysWhenGmailIsOn(t *testing.T) {
 	if set := settingsGmail(e.page()); !strings.Contains(set, state.GmailQuestion) {
 		t.Fatalf("after the next backup Settings no longer asks: %q", set)
 	}
-	if _, m := e.post("/api/gmail-answer", map[string]any{"path": out, "answer": "yes", "archive": state.ArchiveID(out)}); m["ok"] != true || m["note"] != gmailYesWaitsFor(out, true) {
+	if _, m := e.post("/api/gmail-answer", gmailYesBody(out)); m["ok"] != true || m["note"] != gmailYesWaitsFor(out, true) {
 		t.Fatalf("Yes from Settings: %v", m)
 	}
 	if a := gmailanswer.Read(out); a.NotNow || len(a.Yes) != 1 || a.Yes[0] != "gmail-store" {

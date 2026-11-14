@@ -44,7 +44,7 @@ func TestTheYesNoteSaysWhatStartsTheBackup(t *testing.T) {
 		run:   gmailYesWaits + " " + gmailRunNowLead + gmailSwitchFirst + gmailRunNowAct,
 		none:  gmailYesWaits + " " + gmailNoJobLead + gmailSwitchFirst + gmailNoJobAct,
 	} {
-		_, m := e.post("/api/gmail-answer", map[string]any{"path": out, "answer": "yes", "archive": state.ArchiveID(out)})
+		_, m := e.post("/api/gmail-answer", gmailYesBody(out))
 		if m["ok"] != true || m["note"] != want {
 			t.Fatalf("Yes on %s: note %q, want %q", out, m["note"], want)
 		}
@@ -54,7 +54,7 @@ func TestTheYesNoteSaysWhatStartsTheBackup(t *testing.T) {
 		t.Fatal(err)
 	}
 	gmailWaits(t, none, "second-store")
-	_, m := e.post("/api/gmail-answer", map[string]any{"path": none, "answer": "yes", "archive": state.ArchiveID(none)})
+	_, m := e.post("/api/gmail-answer", gmailYesBody(none))
 	if want := gmailYesWaits + " " + gmailNoJobLead + gmailNoJobAct; m["note"] != want {
 		t.Fatalf("Yes on the current archive: %q, want %q", m["note"], want)
 	}
