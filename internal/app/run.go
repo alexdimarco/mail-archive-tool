@@ -754,7 +754,6 @@ func Run(ctx context.Context, opts Options, logger *log.Logger, onProgress Progr
 	// archive (version 8) is a skip, not a failed run, so its "running" record is put back as it
 	// was, with no failure, history entry or streak (the B3 UX walk's U2, the lead's call;
 	// TidyingElsewhere). Everything before the refusal runs as before (the pre-sync, the sweeps).
-	idBefore := state.ArchiveID(opts.Out)
 	putBackRecord := state.SnapshotLastRun(opts.Out)
 	begun := beginRun(opts)
 	// archiveChanged says the folder no longer holds the archive this run began with (the B3
@@ -764,16 +763,11 @@ func Run(ctx context.Context, opts Options, logger *log.Logger, onProgress Progr
 	// another archive when the folder's record carries another id, or carries none while this run's
 	// lock is gone too (an archive an older MailArchive made). Plaintext only: an encrypted
 	// archive's record has no id, and its key opens only the archive it was made for.
-	archiveChanged := func() bool {
-		if opts.Key != nil || begun.Archive == "" {
-			return false
-		}
-		id := state.ArchiveID(opts.Out)
-		if id == begun.Archive {
-			return false
-		}
-		return id != "" || lock.StillHeld() != nil
-	}
+	archiveChanged := archiveChangedFor(opts, begun.Archive, lock.StillHeld)
+	// The same proof, with the lock's, before every save of the run's progress and on time during
+	// its walk (round 3's H1): a swap after the check below is caught before anything of this
+	// archive's is written into the other.
+	proof := newArchiveGuard(opts, lock.StillHeld, archiveChanged)
 	// The opt-in Thunderbird pre-sync runs here, after the lock and the run's
 	// start and before any source is read; nil unless a caller opts in, and it
 	// never fails the run (design thunderbird-presync §4.1). Its warnings join
@@ -817,10 +811,15 @@ func Run(ctx context.Context, opts Options, logger *log.Logger, onProgress Progr
 	rec := begun
 	defer func() {
 		// Nothing is written into a folder that now holds another archive: neither this run's
-		// record (it carries this archive's id) nor the skip's put-back (G1).
+		// record (it carries this archive's id) nor the skip's put-back (G1). A run that would
+		// otherwise end ok, or partly ok, ends as a lost lock: it is not this archive's success
+		// (round 3's H1).
 		if archiveChanged() {
 			if logger != nil {
 				logger.Printf("warning: %s no longer holds the archive this backup began with; nothing was recorded in it", opts.Out)
+			}
+			if err == nil || errors.Is(err, ErrPartial) {
+				err = withKind(state.FailLockLost, archiveChangedDuringError(opts.Out))
 			}
 			return
 		}
@@ -894,7 +893,7 @@ func Run(ctx context.Context, opts Options, logger *log.Logger, onProgress Progr
 		}
 		// Past the manifest: this archive's wait for another computer's tidy-up has ended,
 		// whatever started this run (the B3 adversarial pass, round 2's G4).
-		endTidyWait(opts.Out, begun.Archive, idBefore)
+		endTidyWait(opts.Out, begun.Archive)
 	}
 	manifestBefore := manifest.Len()
 
@@ -1036,13 +1035,23 @@ func Run(ctx context.Context, opts Options, logger *log.Logger, onProgress Progr
 	checkpoint := func(stats export.Stats) {
 		processed := stats.Exported + lr.faults
 		if processed-lastCheckpoint < effectiveEvery(floor, manifest.Len()) {
+			// Between saves, a plaintext walk proves on time that its folder still holds its
+			// archive, so a long walk stops soon after a swap (round 3's H1).
+			if lockLost == nil && proof.due() {
+				lockLost = proof.prove()
+			}
 			return
 		}
 		lastCheckpoint = processed
 		// The lock file is the run's guarantee of exclusivity; if it was removed
 		// or replaced under us, another run may now hold a fresh one. Stop
-		// rather than race it (R5).
-		if err := lock.StillHeld(); err != nil && lockLost == nil {
+		// rather than race it (R5). A plaintext run proves first that the folder still
+		// holds its archive (round 3's H1).
+		err := proof.prove()
+		if err == nil {
+			err = lock.StillHeld()
+		}
+		if err != nil && lockLost == nil {
 			lockLost = err
 			return
 		}
@@ -1084,6 +1093,9 @@ func Run(ctx context.Context, opts Options, logger *log.Logger, onProgress Progr
 		opts.OnReadStart()
 	}
 	if ctx.Err() != nil {
+		if perr := proof.prove(); perr != nil { // before any save (round 3's H1)
+			return result, withKind(state.FailLockLost, perr)
+		}
 		saveErr = commit(nil, idx, manifest, logger)
 		stopOnLostLock(saveErr, &lockLost)
 		return cancelled()
@@ -1103,6 +1115,12 @@ func Run(ctx context.Context, opts Options, logger *log.Logger, onProgress Progr
 			// (index-before-manifest ordering leaves no orphaned manifest rows).
 			// (INT-CC-2/R5.)
 			return result, withKind(state.FailLockLost, lockLost)
+		}
+		// Before the save, the folder is proved to still hold this run's archive and the lock to
+		// be its own (round 3's H1): a plaintext save writes by path, and a store's walk may be the
+		// whole run.
+		if perr := proof.prove(); perr != nil {
+			return result, withKind(state.FailLockLost, perr)
 		}
 		saveErr = commit(nil, idx, manifest, logger)
 		stopOnLostLock(saveErr, &lockLost)
@@ -1132,6 +1150,11 @@ func Run(ctx context.Context, opts Options, logger *log.Logger, onProgress Progr
 			}
 			logger.Printf("error: %s: %v%s", f, runErr, dataFileRemedyFor(f, runErr))
 		}
+	}
+	pauseAt("walk-done")
+	// And before the pages and the README (round 3's H1).
+	if perr := proof.prove(); perr != nil {
+		return result, withKind(state.FailLockLost, perr)
 	}
 	// Thunderbird completeness (slice C2): once every store is walked, so its folder cache is
 	// read after the walk, once per profile (TC-21). It reads; it writes nothing here.

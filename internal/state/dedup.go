@@ -1,6 +1,7 @@
 package state
 
 import (
+	"errors"
 	"fmt"
 	"sort"
 	"strings"
@@ -245,6 +246,15 @@ const (
 // the run-job's, a `mailarchive schedule` job's and the scheduled Microsoft 365 capture's alike
 // (the B3 adversarial pass, round 2's G4).
 const TidySkippedLead = "Skipped, not failed: "
+
+// TidyingElsewhere reports whether err is (or wraps) a refusal of an archive another computer is
+// tidying: a manifest at version 8, a merge part-way (TidyUpWords). app.TidyingElsewhere is this;
+// the backup alert reads it too, so the wait's alert keeps out of the failure streak (the B3
+// adversarial pass, round 3's H3).
+func TidyingElsewhere(err error) bool {
+	var newer *NewerFormatError
+	return errors.As(err, &newer) && newer.Plain() == TidyUpWords
+}
 
 // TidyWaitSinceLine is said after the tidy-up words when this computer's scheduled backups have
 // waited for the tidy-up since t (the B3 UX walk's U2).

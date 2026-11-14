@@ -8,7 +8,6 @@ package app
 // from this run's first message of that store.
 
 import (
-	"errors"
 	"log"
 
 	"mail-archive-tool/internal/gmailanswer"
@@ -126,7 +125,10 @@ func (g *gmailRun) store(m *state.Manifest, token string) {
 			switchOn("you said yes")
 			return
 		}
-		g.out.NotNow = true
+		// Not now (or no answer) in this run holds for the rest of it: a yes kept from before is not
+		// applied to a store read later, as "Nothing changed" says (the B3 adversarial pass, round
+		// 3's H6). A store this run already switched before the question stays switched.
+		g.out.NotNow, g.yesFor = true, nil
 	}
 	g.out.Off = append(g.out.Off, token)
 }
@@ -134,25 +136,26 @@ func (g *gmailRun) store(m *state.Manifest, token string) {
 // TidyingElsewhere reports whether err is a run's refusal of an archive another computer is
 // tidying (a manifest at version 8, a merge part-way: state.TidyUpWords). Such a run wrote no
 // record: it is a skip, not a failure (the B3 UX walk's U2, the lead's call).
-func TidyingElsewhere(err error) bool {
-	var newer *state.NewerFormatError
-	return errors.As(err, &newer) && newer.Plain() == state.TidyUpWords
-}
+func TidyingElsewhere(err error) bool { return state.TidyingElsewhere(err) }
 
 // endTidyWait ends this computer's wait for another computer's tidy-up of the plaintext archive at
 // out, once a run of it got past the manifest (the B3 adversarial pass, round 2's G4): the wait is
-// kept by archive id (G3), so the run ends the wait of the id it began with, and, when the archive's
-// record carried no id before this run gave it one, the wait kept under no id. Best effort, and
-// nothing is written when no wait is kept: every caller of the engine (the scheduled run-job, a
-// `mailarchive schedule` job, a backup at a terminal, the Desktop's Run now and capture) ends it.
-func endTidyWait(out, archive, idBefore string) {
+// kept by archive id (G3), so the run ends the wait of the id it began with, and always the wait
+// kept under no id (round 3's H2). An archive whose record carries no id cannot be told from
+// another such archive at the folder, nor from the same archive after another computer gave it an
+// id, so its wait never outlives a backup that reaches the folder's manifest: an id-less archive
+// that meets a tidy-up again starts its wait again. The cost, chosen over a wait "since" a date
+// that belongs to another archive: with two drives in turn at one path, an id-less drive's wait
+// starts again after each backup of the other, so its 3-day alert can come later, never sooner;
+// `status` says the tidy-up at each skip. Best effort, and nothing is written when no wait is kept:
+// every caller of the engine (the scheduled run-job, a `mailarchive schedule` job, a backup at a
+// terminal, the Desktop's Run now and capture) ends it.
+func endTidyWait(out, archive string) {
 	if archive == "" {
 		return // an encrypted archive's run: it is never tidied, and keeps no wait
 	}
 	_ = gmailanswer.ClearTidyWaitFor(out, archive)
-	if idBefore == "" {
-		_ = gmailanswer.ClearTidyWaitFor(out, "")
-	}
+	_ = gmailanswer.ClearTidyWaitFor(out, "")
 }
 
 // appendToken adds t to list once (a store read twice in a run is one store).

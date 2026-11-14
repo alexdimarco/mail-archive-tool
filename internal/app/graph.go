@@ -219,10 +219,26 @@ func RunGraph(ctx context.Context, g GraphOptions, opts Options, logger *log.Log
 	// A capture refused because another computer is tidying the archive (version 8) is a skip, not
 	// a failed run, as a local run's is (the B3 UX walk's U2; the B3 adversarial pass, round 2's
 	// G4): its "running" record is put back as it was, with no failure, history entry or streak.
-	idBefore := state.ArchiveID(opts.Out)
 	putBackRecord := state.SnapshotLastRun(opts.Out)
 	begun := beginRun(opts)
+	// Before every save of the capture's progress, and on time during its walk, the folder is
+	// proved to still hold the archive the capture began with and the lock to be its own, as a
+	// local run's is (the B3 adversarial pass, round 3's H1): a drive of a rotation swapped at the
+	// same path mid-capture gets nothing of this archive's.
+	archiveChanged := archiveChangedFor(opts, begun.Archive, lock.StillHeld)
+	proof := newArchiveGuard(opts, lock.StillHeld, archiveChanged)
 	defer func() {
+		// Nothing is recorded in a folder that now holds another archive, and the capture is not
+		// this archive's success (H1).
+		if archiveChanged() {
+			if logger != nil {
+				logger.Printf("warning: %s no longer holds the archive this capture began with; nothing was recorded in it", opts.Out)
+			}
+			if err == nil || errors.Is(err, ErrPartial) {
+				err = withKind(state.FailLockLost, archiveChangedDuringError(opts.Out))
+			}
+			return
+		}
 		if opts.Key == nil && TidyingElsewhere(err) {
 			if perr := putBackRecord(); perr != nil && logger != nil {
 				logger.Printf("warning: could not put back this archive's last-run record (%v)", perr)
@@ -243,7 +259,7 @@ func RunGraph(ctx context.Context, g GraphOptions, opts Options, logger *log.Log
 		if manifest, err = state.Load(mpath); err != nil {
 			return Result{}, withKind(state.FailManifestUnreadable, err)
 		}
-		endTidyWait(opts.Out, begun.Archive, idBefore) // past the manifest (G4)
+		endTidyWait(opts.Out, begun.Archive) // past the manifest (G4)
 	}
 	manifestBefore := manifest.Len()
 
@@ -479,10 +495,17 @@ func RunGraph(ctx context.Context, g GraphOptions, opts Options, logger *log.Log
 		// its progress and re-checks its lock.
 		processed := exp.Stats.Exported + exp.Stats.SkippedManifest + lr.faults
 		if processed-lastCheckpoint < effectiveEvery(floor, manifest.Len()) {
+			if lockLost == nil && proof.due() { // on time between saves (H1)
+				lockLost = proof.prove()
+			}
 			return
 		}
 		lastCheckpoint = processed
-		if err := lock.StillHeld(); err != nil && lockLost == nil {
+		err := proof.prove() // the folder still holds this archive (H1)
+		if err == nil {
+			err = lock.StillHeld()
+		}
+		if err != nil && lockLost == nil {
 			lockLost = err
 			return
 		}
@@ -514,6 +537,9 @@ func RunGraph(ctx context.Context, g GraphOptions, opts Options, logger *log.Log
 			// The mailbox's walk finished: its records' LastSeen is sealed relative to
 			// this run's stamp from here on (P2b-C12).
 			sealed.WalkDone(manifest.Token(state.MailboxSourceID(mbx), mbx), runAt)
+		}
+		if perr := proof.prove(); perr != nil { // before the save (H1)
+			return result, withKind(state.FailLockLost, perr)
 		}
 		saveErr = commit(hist, idx, manifest, logger)
 		stopOnLostLock(saveErr, &lockLost)
@@ -585,6 +611,9 @@ func RunGraph(ctx context.Context, g GraphOptions, opts Options, logger *log.Log
 	// trust it. A run with any mailbox failure or any gap leaves no footer (§4.8.3).
 	// The footer is fsync'd before the manifest advances one last time (crash
 	// order, §3.5).
+	if perr := proof.prove(); perr != nil { // before the footer, the last save and the pages (H1)
+		return result, withKind(state.FailLockLost, perr)
+	}
 	if failures == 0 && hist != nil && !runPartial(manifest, exp, opts.Out, runAt) {
 		if werr := hist.WriteRunFooter(runAt.UnixNano(), time.Now().UTC()); werr != nil {
 			logger.Printf("warning: history run footer: %v", werr)
