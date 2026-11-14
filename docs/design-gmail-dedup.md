@@ -3455,6 +3455,17 @@ rule is shared with the completeness design; whichever lands first owns it and t
 >   Mail's page still leads back to All Mail, which the §8.3 fold's back-link rule forbids);
 >   Settings' copy of the question; the encrypted card's question; a terminal Not now remembered
 >   without a job file; `mailarchive-gui`'s own runs asking; GD-21 (c) and the workspace tree (B4).
+> - **Runs (2026-11-13, at the verification commit).** Mac, `go test -count=1 -p 4 -timeout 60m
+>   ./...` unfiltered: 53 of 54 packages pass; `internal/app` hit the hour under load (a Linux
+>   container ran beside it) with one timing test red, which passes alone, and the package
+>   passes whole when run alone (21 minutes). Linux (Docker `golang:1.26`, the repo recipe): 52
+>   pass; `internal/desktop`'s only red is MA-272 (no scheduler in the container) and
+>   `internal/source` is killed for memory, both as unchanged main 1a6d437 in the same container
+>   (B2's record). Windows VM (`GOTOOLCHAIN=local`; index, pages, server, state, job, wizard,
+>   app, desktop, `cmd/mailarchive`): pages, server, state, job and wizard pass; index, app,
+>   desktop and `cmd/mailarchive` fail by exactly the names unchanged main 1a6d437 fails by on
+>   the VM (index's package panics in a temp-folder cleanup before B3's tests, as on main), and
+>   every B3 test passes there run alone (index 9, app 6, desktop 1, `cmd/mailarchive` 2).
 
 ## 14. Owner questions, each with a recommendation
 
