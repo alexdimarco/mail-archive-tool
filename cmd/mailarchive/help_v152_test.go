@@ -38,9 +38,11 @@ func TestTheHelpSaysWhatThisVersionDoes(t *testing.T) {
 
 	// Amended 2026-11-07 (Restore to Thunderbird, slice R6): the list gains restore-thunderbird,
 	// so it still names every verb. Amended 2026-11-13 (design-menubar slice S1): the list gains
-	// start, the verb every app icon and shortcut now runs.
+	// start, the verb every app icon and shortcut now runs. Amended 2026-11-13 (the menu-bar S1
+	// fix round 2, B1/B2): the list gains quit, the verb the upgrade script asks a running
+	// copy through.
 	err := runExport(nil)
-	if err == nil || err.Error() != "-out is required (or use a subcommand: start, desktop, wizard, run-job, setup, serve, search, reindex, schedule, graph, status, verify, extract, decrypt, restore-thunderbird, pause, resume, uninstall, delete-archive, unlist-archive, add-archive, change-password, new-recovery-key, restore-key-file, forget-key, forget-archive, repair-record, encrypt)" {
+	if err == nil || err.Error() != "-out is required (or use a subcommand: start, quit, desktop, wizard, run-job, setup, serve, search, reindex, schedule, graph, status, verify, extract, decrypt, restore-thunderbird, pause, resume, uninstall, delete-archive, unlist-archive, add-archive, change-password, new-recovery-key, restore-key-file, forget-key, forget-archive, repair-record, encrypt)" {
 		t.Errorf("no -out: %v", err)
 	}
 
