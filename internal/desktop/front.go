@@ -174,13 +174,21 @@ func (f *front) gate(r instance.ActRequest) string {
 // quitRequest answers a proven quit request (instance.Handoff.Quit; `mailarchive quit`, the
 // upgrade script; the S1 fix round 2, B1, B2, B7): a copy that is closing says so; one that
 // runs work or has its wizard open says "busy" and keeps running, as it refuses an
-// installer (R52: only a person's own answer stops work); an idle one would quit, and with
-// stop it does: the one stop, which waits for whatever starts meanwhile.
+// installer (R52: only a person's own answer stops work); so does one whose choice window is
+// open, since the person is in the middle of choosing (the S1 fix round 3, C5); an idle
+// one would quit, and with stop it does: the one stop, which waits for whatever starts
+// meanwhile.
 func (f *front) quitRequest(stop bool) (bool, string) {
 	if f.closing() {
 		return false, instance.ReasonClosing
 	}
 	if f.question != nil && f.question() != "" {
+		return false, instance.ReasonBusy
+	}
+	f.mu.Lock()
+	choosing := f.choosing
+	f.mu.Unlock()
+	if choosing {
 		return false, instance.ReasonBusy
 	}
 	if stop {

@@ -1344,6 +1344,15 @@ revert), recorded in the commit; the unfiltered `go test ./...` runs before each
 >   program named. *Builder's call:* the record's own `exe` is not trusted for this (a later
 >   `run-job` of the same program could hold a reused pid; the lock check is what rules that out,
 >   and the name check what rules out a foreign program).
+> - **C5 — an open choice is busy for `quit` (builder's call, as the lead allowed).** Closing it
+>   is not harmless: on Windows the choice is a window of the copy itself and vanishes under the
+>   person's hand; a pick of the wizard or of Desktop a moment later is lost without a word; and
+>   the upgrade can simply try again (1618). So `can-quit`/`quit` answer "busy" while
+>   `f.choosing` is set (which also covers the "The wizard is open. Open MailArchive Desktop in
+>   your browser as well?" box), and the verb's busy words say "its wizard or its choice window
+>   is open". *Not changed:* Windows' own close requests (WM_CLOSE, an installer's
+>   ENDSESSION_CLOSEAPP) and Desktop's Shut down still count only work and the wizard, as
+>   before (outside C5's scope; the lead may want them aligned).
 
 ### 12.2 New dependencies (operator decision)
 `github.com/ebitengine/purego` (macOS only, behind a build tag) and `github.com/godbus/dbus/v5`

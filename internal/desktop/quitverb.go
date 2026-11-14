@@ -40,11 +40,11 @@ const (
 
 // The verb's words: one line for each outcome.
 const (
-	quitUsageText        = "Usage: mailarchive quit [-check] [-pid N] [-wait 30s] [-end-older]\n\nAsks your account's running MailArchive to quit, as Shut down does when nothing is running. It never stops work: while a backup or another task runs, or its wizard is open, it says so and keeps running.\nExit status: 0 it quit (with -check: it would quit now), 1 it could not be asked, 2 it is not running, 3 it is busy or still finishing its work.\n\nFlags:"
+	quitUsageText        = "Usage: mailarchive quit [-check] [-pid N] [-wait 30s] [-end-older]\n\nAsks your account's running MailArchive to quit, as Shut down does when nothing is running. It never stops work: while a backup or another task runs, or its wizard or its choice window is open, it says so and keeps running.\nExit status: 0 it quit (with -check: it would quit now), 1 it could not be asked, 2 it is not running, 3 it is busy or still finishing its work.\n\nFlags:"
 	quitDoneText         = "MailArchive (process %d) has quit."
 	quitWouldText        = "MailArchive (process %d) would quit now: nothing is running."
 	quitAlreadyText      = "MailArchive (process %d) is already quitting."
-	quitBusyText         = "MailArchive (process %d) is busy: it is running a backup or another task, or its wizard is open. It keeps running. To quit it anyway, use Shut down in MailArchive Desktop."
+	quitBusyText         = "MailArchive (process %d) is busy: it is running a backup or another task, or its wizard or its choice window is open. It keeps running. To quit it anyway, use Shut down in MailArchive Desktop."
 	quitNotRunningText   = "MailArchive is not running for your account."
 	quitNotThisPIDText   = "Process %d is not your account's running MailArchive."
 	quitCouldNotAskText  = "MailArchive could not be asked to quit: %s."
