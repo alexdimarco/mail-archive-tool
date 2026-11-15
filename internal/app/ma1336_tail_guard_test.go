@@ -79,14 +79,25 @@ func ma1336TwoArchives(t *testing.T, outA, outB string) (storeA string) {
 	return storeA
 }
 
+// ma1336Untouched says nothing at all in the other archive, now at out, was added, removed or
+// written again; it logs what was.
+func ma1336Untouched(t *testing.T, out string, before map[string]string) bool {
+	t.Helper()
+	if d := ma1336Changed(before, ma1336Files(t, out)); len(d) > 0 {
+		t.Logf("written into the other archive: %v", d)
+		return false
+	}
+	return true
+}
+
 // covers: MA-1336, R5, R45
-// The B3 adversarial pass, round 4's J1: the folder comes to hold another archive after the proof
-// that follows the walk, in the run's tail, which writes the folder pages, the root index.html,
-// the README and the report by path. The tail proves again before each of those writes (and on
-// time between pages), so the run stops as a lost lock, with words that say so, and writes nothing
-// at all into the other archive. Both batches: a full run, whose pages are written again, and an
-// incremental run with nothing new, whose pages are not, so its README comes first. Positive twin
-// first: without the swap the full run ends ok and writes A's pages again.
+// J1: the folder comes to hold another archive after the proof that follows the walk, in the run's
+// tail, which writes the folder pages, the root index.html, the README and the report by path. The
+// tail proves again before each of those writes (and on time between pages), so the run stops as a
+// lost lock, in the lock's words, and writes nothing at all into the other archive. Both batches: a
+// full run, whose pages are written again, and an incremental run with nothing new, whose pages are
+// not, so its README comes first. Positive twin first: without the swap the full run ends ok and
+// writes A's pages again.
 func TestAFolderSwappedInTheRunsTailGetsNoPagesOrReadme(t *testing.T) {
 	ma1316Settings(t)
 	outA, outB := tmpDir(t), tmpDir(t)
@@ -121,14 +132,8 @@ func TestAFolderSwappedInTheRunsTailGetsNoPagesOrReadme(t *testing.T) {
 				t.Fatal("premise: the tail was not reached")
 			}
 			rc, msg := ma1328LockLost(err)
-			assure.Refused(t, rc, msg, assure.Names(outA, "another archive", "Run the backup again"),
-				assure.NoSideEffect(func() bool {
-					if d := ma1336Changed(before, ma1336Files(t, outA)); len(d) > 0 {
-						t.Logf("written into the other archive: %v", d)
-						return false
-					}
-					return true
-				}))
+			assure.Refused(t, rc, msg, assure.Names(outA, "Details: the lock file was", "during the run", "the archive folder changed during the backup", "then run the backup again"),
+				assure.NoSideEffect(func() bool { return ma1336Untouched(t, outA, before) }))
 		})
 	}
 }
@@ -173,14 +178,8 @@ func TestADriveLetterMovedInTheRunsTailGetsNoPages(t *testing.T) {
 		t.Fatal("premise: the tail was not reached")
 	}
 	rc, msg := ma1328LockLost(err)
-	assure.Refused(t, rc, msg, assure.Names("another archive", "Run the backup again"),
-		assure.NoSideEffect(func() bool {
-			if d := ma1336Changed(before, ma1336Files(t, outB)); len(d) > 0 {
-				t.Logf("written into the other archive: %v", d)
-				return false
-			}
-			return true
-		}))
+	assure.Refused(t, rc, msg, assure.Names("Details: the lock file was", "during the run", "the archive folder changed during the backup", "then run the backup again"),
+		assure.NoSideEffect(func() bool { return ma1336Untouched(t, outB, before) }))
 }
 
 // ma1337Logger is a capture's logger that calls at once when a line holding marker is written: a
@@ -256,9 +255,9 @@ func ma1337OwingCollapse(t *testing.T) string {
 // manifest's load, before the capture writes its history header or opens its index; (2) while it
 // makes the one-time v3 to v5 identity collapse of an old archive, before that collapse's manifest
 // save; (3) in its tail, after its last manifest save, before its folder pages, README and report.
-// Each time the capture proves first, stops as a lost lock with words that say so, and writes
-// nothing at all into the other archive. Positive twins first: the same captures without the swap
-// end ok, and the old archive's collapse is made and logged.
+// Each time the capture proves first, stops as a lost lock in the lock's words, and writes nothing
+// at all into the other archive. Positive twins first: the same captures without the swap end ok,
+// and the old archive's collapse is made and logged.
 func TestACaptureWhoseFolderIsSwappedOutsideItsWalkWritesNothingIntoTheOther(t *testing.T) {
 	ma1316Settings(t)
 	_, srv := newFakeGraphServer()
@@ -286,7 +285,7 @@ func TestACaptureWhoseFolderIsSwappedOutsideItsWalkWritesNothingIntoTheOther(t *
 		name string
 		outA func(t *testing.T) string
 		opts Options
-		at   string // a log line to swap at; "" swaps at the tail
+		at   string // a log line to swap at; "walk-done" swaps after the last mailbox; "" at the tail
 	}{
 		{"after-the-manifest-load", func(t *testing.T) string {
 			out := filepath.Join(tmpDir(t), "archive")
@@ -304,6 +303,13 @@ func TestACaptureWhoseFolderIsSwappedOutsideItsWalkWritesNothingIntoTheOther(t *
 			return out
 		}, full, "orphaned temp"},
 		{"at-the-identity-collapse", ma1337OwingCollapse, Options{Mode: export.Incremental}, "collapsed"},
+		{"after-the-walk", func(t *testing.T) string {
+			out := filepath.Join(tmpDir(t), "archive")
+			if err := capture(out, full, quiet); err != nil {
+				t.Fatal(err)
+			}
+			return out
+		}, full, "walk-done"},
 		{"in-the-tail", func(t *testing.T) string {
 			out := filepath.Join(tmpDir(t), "archive")
 			if err := capture(out, full, quiet); err != nil {
@@ -328,25 +334,24 @@ func TestACaptureWhoseFolderIsSwappedOutsideItsWalkWritesNothingIntoTheOther(t *
 				}
 			}
 			logger := quiet
-			if c.at != "" {
-				logger = log.New(&ma1337Logger{marker: c.at, at: swap}, "", 0)
-			} else {
+			switch c.at {
+			case "":
 				tailForTest = swap
 				defer func() { tailForTest = nil }()
+			case "walk-done":
+				// Every mailbox walked and saved: the footer and the last save come next.
+				afterWalkForTest = swap
+				defer func() { afterWalkForTest = nil }()
+			default:
+				logger = log.New(&ma1337Logger{marker: c.at, at: swap}, "", 0)
 			}
 			err := capture(outA, c.opts, logger)
 			if !swapped {
 				t.Fatal("premise: the swap was not reached")
 			}
 			rc, msg := ma1328LockLost(err)
-			assure.Refused(t, rc, msg, assure.Names(outA, "another archive", "Run the backup again"),
-				assure.NoSideEffect(func() bool {
-					if d := ma1336Changed(before, ma1336Files(t, outA)); len(d) > 0 {
-						t.Logf("written into the other archive: %v", d)
-						return false
-					}
-					return true
-				}))
+			assure.Refused(t, rc, msg, assure.Names(outA, "Details: the lock file was", "during the run", "the archive folder changed during the backup", "then run the backup again"),
+				assure.NoSideEffect(func() bool { return ma1336Untouched(t, outA, before) }))
 		})
 	}
 }

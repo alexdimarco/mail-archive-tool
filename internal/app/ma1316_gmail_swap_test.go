@@ -3,11 +3,13 @@ package app
 import (
 	"context"
 	"encoding/json"
+	"log"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"runtime"
 	"testing"
+	"time"
 
 	"mail-archive-tool/internal/assure"
 	"mail-archive-tool/internal/export"
@@ -89,10 +91,11 @@ func ma1316Record(t *testing.T, out string) string {
 // covers: MA-1316, R45, R5
 // The B3 adversarial pass, round 2's G1: the folder's archive is replaced while the run waits in
 // its Thunderbird pre-sync (a drive of a rotation swapped at the same path, here a folder renamed).
-// The run checks again, once the manifest has loaded and under its lock, that the folder still
-// holds the archive it began with: it does not, so the run is refused with words that say so, the
-// yes kept for A is not applied to B, and nothing is written into B (its record keeps B's own id).
-// Positive twin first: without the swap the same run switches A.
+// The run proves again, once the pre-sync's wait is over and before the manifest's load, that the
+// folder is still its own (1.7.2's guard, merged in: its lock file there still holds this run's
+// nonce): it is not, so the run stops as a lost lock with words that say so, the yes kept for A is
+// not applied to B, and nothing is written into B (its record keeps B's own id). Positive twin
+// first: without the swap the same run switches A.
 func TestAYesIsNotAppliedWhenTheFolderChangesDuringThePresync(t *testing.T) {
 	ma1316Settings(t)
 	_, outA, _, twin := ma1316YesFor(t)
@@ -134,7 +137,7 @@ func TestAYesIsNotAppliedWhenTheFolderChangesDuringThePresync(t *testing.T) {
 	if FailureKind(err) == state.FailLockLost {
 		rc = 2
 	}
-	assure.Refused(t, rc, msg, assure.Names(outA, "another archive", "nothing was written", "Run the backup again"),
+	assure.Refused(t, rc, msg, assure.Names(outA, "the archive folder changed during the backup", "Nothing more was saved there", "then run the backup again", "Details: the lock file was"),
 		assure.NoSideEffect(func() bool {
 			v, on := manifestOnDisk(t, outA)
 			return v == 6 && len(on) == 0 && ma1316Record(t, outA) == recB && state.ArchiveID(outA) == idB
@@ -203,7 +206,7 @@ func TestAYesIsNotAppliedWhenTheDriveLetterChangesDuringThePresync(t *testing.T)
 	if FailureKind(err) == state.FailLockLost {
 		rc = 2
 	}
-	assure.Refused(t, rc, msg, assure.Names("another archive", "Run the backup again"),
+	assure.Refused(t, rc, msg, assure.Names("the archive folder changed during the backup", "Nothing more was saved there", "then run the backup again", "Details: the lock file was"),
 		assure.NoSideEffect(func() bool {
 			v, on := manifestOnDisk(t, outB)
 			return v == 6 && len(on) == 0 && ma1316Record(t, outB) == recB && state.ArchiveID(outB) == idB
@@ -211,14 +214,18 @@ func TestAYesIsNotAppliedWhenTheDriveLetterChangesDuringThePresync(t *testing.T)
 }
 
 // covers: MA-1317, R45, R5
-// G1 on the version-8 skip path: the archive swapped in while the pre-sync waits is at version 8
-// (another computer tidying it). The skip's put-back writes the record it kept before the run
-// only while the folder still holds the archive it began with: here it does not, so B's record is
-// left exactly as it was (B's own id), and B's next run never reads A's yes as its own. Positive
-// twin first: without the swap, the skip puts A's own record back as it was.
+// G1 on the version-8 skip path: the archive swapped in is at version 8 (another computer tidying
+// it). The skip's put-back writes the record it kept before the run only while the folder still
+// holds the archive it began with: here it does not, so B's record is left exactly as it was (B's
+// own id), and B's next run never reads A's yes as its own. Two points of the swap (1.7.2's guard,
+// merged in, proves the folder once the pre-sync's wait is over): during the pre-sync, where that
+// proof stops the run as a lost lock before it reads B's manifest; and at the sweep that follows it,
+// before the manifest's load, where the run meets B's tidy-up and skips, and the put-back is the
+// write the guard must hold back. Positive twin first: without the swap, the skip puts A's own
+// record back as it was.
 func TestATidyUpSkipNeverPutsOneArchivesRecordIntoAnother(t *testing.T) {
 	ma1316Settings(t)
-	storeA, outA, idA, opts := ma1316YesFor(t)
+	_, outA, _, opts := ma1316YesFor(t)
 	ma1316SetVersion(t, outA, 8)
 	recA := ma1316Record(t, outA)
 	twin := opts
@@ -226,41 +233,64 @@ func TestATidyUpSkipNeverPutsOneArchivesRecordIntoAnother(t *testing.T) {
 	if _, err := Run(context.Background(), twin, discard(), nil); !TidyingElsewhere(err) || ma1316Record(t, outA) != recA {
 		t.Fatalf("positive twin: the skip did not put A's record back as it was (%v)", err)
 	}
-	ma1316SetVersion(t, outA, 6)
-
-	outB := ma1316OtherArchive(t, storeA)
-	idB := state.ArchiveID(outB)
-	ma1316SetVersion(t, outB, 8)
-	recB := ma1316Record(t, outB)
-	aside := outA + "-drive1"
-	opts.BeforeRead = func(context.Context, []string) BeforeReadResult {
-		if err := os.Rename(outA, aside); err != nil {
-			t.Fatal(err)
-		}
-		if err := os.Rename(outB, outA); err != nil {
-			t.Fatal(err)
-		}
-		return BeforeReadResult{}
-	}
 	if runtime.GOOS == "windows" {
 		t.Skip("Windows will not rename a folder whose lock file is open; the put-back's check is the same one TestAYesIsNotAppliedWhenTheDriveLetterChangesDuringThePresync proves there")
 	}
-	_, err := Run(context.Background(), opts, discard(), nil)
-	if !TidyingElsewhere(err) {
-		t.Fatalf("the run met B's tidy-up: %v", err)
-	}
-	if got := state.ArchiveID(outA); got != idB || ma1316Record(t, outA) != recB {
-		t.Fatalf("the skip wrote into B's folder: its record's id is %q (A %q, B %q)", got, idA, idB)
-	}
-	// The other computer finishes B's tidy-up (the stamp back to what this build reads): what this
-	// computer reads for the folder now is not A's yes, and B's next run leaves it at version 6.
-	ma1316SetVersion(t, outA, 6)
-	kept := gmailanswer.Read(outA)
-	if len(kept.Yes) != 0 {
-		t.Fatalf("A's yes is read for B: %+v", kept)
-	}
-	runTB(t, Options{Inputs: []string{storeA}, Out: outA, Unattended: true, GmailYesStores: kept.Yes, GmailYesFor: kept.Archive, GmailNotNow: kept.NotNow})
-	if v, on := manifestOnDisk(t, outA); v != 6 || len(on) != 0 {
-		t.Fatalf("B was switched (version %d, on %v) by the yes given for A", v, on)
+	for _, at := range []string{"during-the-presync", "at-the-sweep"} {
+		t.Run(at, func(t *testing.T) {
+			ma1316Settings(t)
+			storeA, outA, idA, opts := ma1316YesFor(t)
+			outB := ma1316OtherArchive(t, storeA)
+			idB := state.ArchiveID(outB)
+			ma1316SetVersion(t, outB, 8)
+			recB := ma1316Record(t, outB)
+			aside := outA + "-drive1"
+			swap := func() {
+				if err := os.Rename(outA, aside); err != nil {
+					t.Fatal(err)
+				}
+				if err := os.Rename(outB, outA); err != nil {
+					t.Fatal(err)
+				}
+			}
+			logger := discard()
+			if at == "during-the-presync" {
+				opts.BeforeRead = func(context.Context, []string) BeforeReadResult { swap(); return BeforeReadResult{} }
+			} else {
+				// A crashed run's leftover in A: the sweep after the pre-sync's proof logs it, and
+				// the swap comes then, before the manifest's load.
+				stale := filepath.Join(outA, ".mailarchive-stale.tmp")
+				if err := os.WriteFile(stale, []byte("x"), 0o600); err != nil {
+					t.Fatal(err)
+				}
+				old := time.Now().Add(-time.Hour)
+				if err := os.Chtimes(stale, old, old); err != nil {
+					t.Fatal(err)
+				}
+				logger = log.New(&ma1337Logger{marker: "orphaned", at: swap}, "", 0)
+			}
+			_, err := Run(context.Background(), opts, logger, nil)
+			switch {
+			case at == "at-the-sweep" && !TidyingElsewhere(err):
+				t.Fatalf("premise: the run did not meet B's tidy-up: %v", err)
+			case at == "during-the-presync" && FailureKind(err) != state.FailLockLost:
+				t.Fatalf("premise: the proof after the pre-sync did not stop the run: %v", err)
+			}
+			if got := state.ArchiveID(outA); got != idB || ma1316Record(t, outA) != recB {
+				t.Fatalf("the run wrote into B's folder: its record's id is %q (A %q, B %q)", got, idA, idB)
+			}
+			// The other computer finishes B's tidy-up (the stamp back to what this build reads):
+			// what this computer reads for the folder now is not A's yes, and B's next run leaves
+			// it at version 6.
+			ma1316SetVersion(t, outA, 6)
+			kept := gmailanswer.Read(outA)
+			if len(kept.Yes) != 0 {
+				t.Fatalf("A's yes is read for B: %+v", kept)
+			}
+			runTB(t, Options{Inputs: []string{storeA}, Out: outA, Unattended: true, GmailYesStores: kept.Yes, GmailYesFor: kept.Archive, GmailNotNow: kept.NotNow})
+			if v, on := manifestOnDisk(t, outA); v != 6 || len(on) != 0 {
+				t.Fatalf("B was switched (version %d, on %v) by the yes given for A", v, on)
+			}
+		})
 	}
 }

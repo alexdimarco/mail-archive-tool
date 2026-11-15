@@ -3,6 +3,7 @@
 package state
 
 import (
+	"crypto/sha256"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -328,6 +329,13 @@ func (r Record) Unknown() bool {
 // identity).
 type Manifest struct {
 	path string
+
+	// fileSum is the SHA-256 of the bytes this manifest last read from its file (Load) or
+	// wrote to it (Save), fileKnown whether there were any: a run whose lock is no longer its
+	// own compares the file with it to tell whether its folder still holds its archive
+	// (FileDigest; the 1.7.2 archive guard).
+	fileSum   [32]byte
+	fileKnown bool
 
 	mu      sync.Mutex
 	Version int `json:"version"`
@@ -725,7 +733,23 @@ func Load(path string) (*Manifest, error) {
 	if err != nil {
 		return nil, fmt.Errorf("read manifest: %w", err)
 	}
-	return parseManifest(path, path, data)
+	m, err := parseManifest(path, path, data)
+	if err != nil {
+		return nil, err
+	}
+	m.fileSum, m.fileKnown = sha256.Sum256(data), true
+	return m, nil
+}
+
+// FileDigest is the SHA-256 of the bytes this manifest last read from its file or wrote to it,
+// and false when it did neither (a new archive's manifest, not yet saved; a snapshot; an
+// encrypted archive's, whose record is its sealed store's). A run whose lock is no longer its own
+// compares the file with it: the same bytes mean the folder still holds the archive the run read
+// or wrote (the 1.7.2 archive guard).
+func (m *Manifest) FileDigest() ([32]byte, bool) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	return m.fileSum, m.fileKnown
 }
 
 // LoadFrom parses the bytes of the manifest called name, which the caller read itself
@@ -2269,6 +2293,7 @@ func (m *Manifest) save() error {
 	if err := replaceFile(tmpName, m.path); err != nil {
 		return fmt.Errorf("replace manifest: %w", err)
 	}
+	m.fileSum, m.fileKnown = sha256.Sum256(data), true
 	if d, err := os.Open(dir); err == nil {
 		_ = d.Sync() // best effort: not every filesystem supports fsync on a directory
 		d.Close()

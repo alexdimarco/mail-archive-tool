@@ -111,45 +111,80 @@ func SweepOrphans(out string, before time.Time, logger *log.Logger, skip ...stri
 	return SweepTemps(out, before, logger, skip...) + SweepOrphanZips(out, logger, skip...)
 }
 
+// SweepOrphansChecked is SweepOrphans for a run that must prove its folder is still its own before
+// it removes anything (the 1.7.2 archive guard; the patch review's P5): check is asked right before
+// each removal, and a non-nil answer stops the sweep there, removes nothing more, and is returned.
+func SweepOrphansChecked(out string, before time.Time, logger *log.Logger, check func(path string) error, skip ...string) (int, error) {
+	n, err := sweep(out, logger, tempOrphan(before), check, skip...)
+	if err != nil {
+		return n, err
+	}
+	m, err := sweep(out, logger, zipOrphan, check, skip...)
+	return n + m, err
+}
+
+// SweepTempsChecked is SweepTemps with check asked right before each removal, as
+// SweepOrphansChecked.
+func SweepTempsChecked(out string, before time.Time, logger *log.Logger, check func(path string) error, skip ...string) (int, error) {
+	return sweep(out, logger, tempOrphan(before), check, skip...)
+}
+
 // SweepTemps removes in-flight files a crashed run left under out — temp files
 // (tempPrefix…tmp: content, pages, the manifest, the vault) and -copy-first
 // snapshots (SnapshotPrefix…, a whole copy of the source mailbox) — whose
 // modification time is before `before` (the current run's start, so a file this
 // run is still writing is never touched). Nothing else is ever deleted.
 func SweepTemps(out string, before time.Time, logger *log.Logger, skip ...string) int {
-	return sweep(out, logger, func(path, name string, d fs.DirEntry) bool {
+	n, _ := sweep(out, logger, tempOrphan(before), nil, skip...)
+	return n
+}
+
+// tempOrphan accepts SweepTemps' files: temps and snapshots older than before.
+func tempOrphan(before time.Time) func(path, name string, d fs.DirEntry) bool {
+	return func(path, name string, d fs.DirEntry) bool {
 		if !(strings.HasPrefix(name, tempPrefix) && strings.HasSuffix(name, ".tmp")) && !strings.HasPrefix(name, SnapshotPrefix) {
 			return false
 		}
 		info, err := d.Info()
 		return err == nil && info.ModTime().Before(before)
-	}, skip...)
+	}
 }
 
 // SweepOrphanZips removes attachment zips whose sibling .html does not exist (a
 // crash between the zip rename and the html rename, or a message re-exported
 // under a new name). Nothing else is ever deleted.
 func SweepOrphanZips(out string, logger *log.Logger, skip ...string) int {
-	return sweep(out, logger, func(path, name string, _ fs.DirEntry) bool {
-		if !strings.HasSuffix(name, zipSuffix) {
-			return false
-		}
-		_, err := os.Stat(strings.TrimSuffix(path, zipSuffix) + ".html")
-		return err != nil
-	}, skip...)
+	n, _ := sweep(out, logger, zipOrphan, nil, skip...)
+	return n
+}
+
+// zipOrphan accepts SweepOrphanZips' files: attachment zips with no page beside them.
+func zipOrphan(path, name string, _ fs.DirEntry) bool {
+	if !strings.HasSuffix(name, zipSuffix) {
+		return false
+	}
+	_, err := os.Stat(strings.TrimSuffix(path, zipSuffix) + ".html")
+	return err != nil
 }
 
 // sweep removes every regular file under out that orphan accepts, never under a
 // folder in skip: an encrypted archive's program folder, whose own step sweeps its
-// temporary files through its handle (program design R11).
-func sweep(out string, logger *log.Logger, orphan func(path, name string, d fs.DirEntry) bool, skip ...string) int {
+// temporary files through its handle (program design R11). check, when set, is asked
+// right before each removal; its refusal stops the sweep and is returned.
+func sweep(out string, logger *log.Logger, orphan func(path, name string, d fs.DirEntry) bool, check func(path string) error, skip ...string) (int, error) {
 	removed := 0
+	var refused error
 	filepath.WalkDir(out, func(path string, d fs.DirEntry, err error) error {
 		if err == nil && d.IsDir() && slices.Contains(skip, path) {
 			return filepath.SkipDir
 		}
 		if err != nil || d.IsDir() || !orphan(path, d.Name(), d) {
 			return nil
+		}
+		if check != nil {
+			if refused = check(path); refused != nil {
+				return filepath.SkipAll
+			}
 		}
 		if rmErr := os.Remove(path); rmErr == nil {
 			removed++
@@ -159,7 +194,7 @@ func sweep(out string, logger *log.Logger, orphan func(path, name string, d fs.D
 		}
 		return nil
 	})
-	return removed
+	return removed, refused
 }
 
 // zipSuffix is the attachment archive's name suffix, shared with baseName users.

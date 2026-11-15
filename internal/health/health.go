@@ -78,6 +78,10 @@ type Input struct {
 	// DesktopEnded, when set, is the older instance the running MailArchive Desktop
 	// ended at start (§4.5.2, MA-638); its line names the pid and program.
 	DesktopEnded *instance.Ended
+	// DesktopUnlabelled says the running MailArchive Desktop's private key file was written
+	// as 1.7.1 wrote it, because Windows would not protect it (instance.Info.Unlabelled; the
+	// 1.7.2 final check's security-1): one information line says so.
+	DesktopUnlabelled bool
 
 	// HasManifestFile is true when a manifest file exists on disk (even if it
 	// cannot be loaded); HasManifest is true only when it loaded. A present-but-
@@ -380,6 +384,12 @@ type Report struct {
 // verify lines beside it are UTC — so no time in status is read in the wrong zone
 // (F9; P3-8 friction: status mixed local time and UTC unlabelled).
 const localStamp = "2006-01-02 15:04 MST"
+
+// runNeverFinishedWords is the RED of a backup whose "running" record is still there with no
+// process behind it (run_never_finished): it was stopped, the computer went down, or, since 1.7.2,
+// it stopped because its drive was swapped or disconnected and so could not write how it ended
+// into this folder (the 1.7.2 friction review's F3). %s is when it started.
+const runNeverFinishedWords = "the backup started %s did not finish and could not record how it ended: MailArchive was stopped, the computer shut down or restarted, or this archive's drive was disconnected or swapped during the backup. Run the backup again."
 
 func (r *Report) warn(code, msg string) {
 	if r.Posture != "RED" {
@@ -723,6 +733,11 @@ func assessKeyless(r *Report, in Input, now time.Time) {
 			r.warn("desktop_ended_older", txt)
 		}
 	}
+	// The running Desktop's private key file kept as in 1.7.1: information, never a warning
+	// (it works as 1.7.1 did), so the person and the signed-in L0 check can see it (MA-1458).
+	if in.DesktopUnlabelled {
+		r.note("desktop_key_unprotected", instance.UnlabelledNotice)
+	}
 
 	// Last run.
 	period := 24 * time.Hour
@@ -772,7 +787,7 @@ func assessKeyless(r *Report, in Input, now time.Time) {
 			case alive:
 				r.red("run_stuck", fmt.Sprintf("a run started %s is still running (pid %d) — longer than the schedule period; check the log", lr.Started.Local().Format(localStamp), lr.PID))
 			default:
-				r.red("run_never_finished", fmt.Sprintf("the run started %s never finished (pid %d is gone: crash, kill, or power loss) — check the log and run again", lr.Started.Local().Format(localStamp), lr.PID))
+				r.red("run_never_finished", fmt.Sprintf(runNeverFinishedWords, lr.Started.Local().Format(localStamp)))
 			}
 		case state.RunCancelled:
 			r.warn("run_cancelled", fmt.Sprintf("the last backup (%s) was cancelled; what it saved is kept, and the next backup finishes what it left", lr.Started.Local().Format(localStamp)))
@@ -1951,6 +1966,7 @@ func Gather(out, nameOverride string) Input {
 	in := Input{Out: out, GOOS: runtime.GOOS, PIDAlive: procs.Alive}
 	in.DesktopFormer = instance.Former()
 	in.DesktopEnded = instance.EndedRecord()
+	in.DesktopUnlabelled = instance.Unlabelled()
 	in.ThisHost, _ = os.Hostname()
 	if _, err := os.Stat(out); errors.Is(err, os.ErrNotExist) {
 		in.OutAbsent = true // the location is gone (an unplugged drive, a deleted folder): not a new archive (OP-3)
@@ -2471,10 +2487,11 @@ func Summary(in Input, rep Report) []string {
 		lr := in.LastRun
 		// A "running" record reads as running only while it can belong to a
 		// run in progress (runRunning, the rule Assess judges it by); otherwise
-		// the run that wrote it never finished, as the RED below says.
+		// the run that wrote it did not finish, in the RED's own words below (the
+		// 1.7.2 friction re-walk's G5).
 		how := lr.Status
 		if lr.Status == state.RunRunning && !runRunning(in) {
-			how = "never finished"
+			how = "did not finish"
 		}
 		partial := lr.Status == state.RunFailed && lr.Partial != nil && !lr.Encrypted
 		if partial {

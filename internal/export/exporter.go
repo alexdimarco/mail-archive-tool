@@ -9,6 +9,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"io/fs"
 	"log"
 	"os"
 	"path/filepath"
@@ -138,6 +139,32 @@ type Exporter struct {
 	// an unchanged re-observation costs no history/index write. It is the no-mid
 	// analogue of the pre-download fast-path's move recording.
 	OnManifestSkip func(key string, folderPath []string, moved bool)
+
+	// BeforeReplace, if set, is asked right before a plaintext archive's file that is already
+	// there is written over (a re-capture, a Full run, a fill) or removed (a message re-exported
+	// under a new name, a stale zip): a non-nil answer leaves that file as it is, and Export
+	// returns the answer, unwrapped, so the walk stops. A run proves with it that its folder is
+	// still its own before every change the folder's own next backup could not undo (the 1.7.2
+	// archive guard; the round-5 review's K1). A new file is not asked about. An encrypted
+	// archive's units are never asked about: their names are drawn at random per archive, so
+	// none is another archive's.
+	BeforeReplace func(path string) error
+
+	// BeforeMessageWrite, if set, is asked once per message right before the exporter writes
+	// anything of it (its folder, page, original, attachments or sealed units); a message only
+	// skipped asks nothing. A non-nil answer: Export writes nothing of the message and returns
+	// the answer, unwrapped, so the walk stops. A run proves with it that its folder is still its
+	// own while it writes, and never while it only reads (the 1.7.2 archive guard; the patch
+	// review's P1).
+	BeforeMessageWrite func() error
+
+	// KeepOutDir, when set, forbids the exporter to make OutDir itself: a message's folder is made
+	// only inside an OutDir that is there. Once a run has begun on its archive, a missing OutDir is
+	// a drive disconnected or swapped, or the folder moved or renamed, and making it again would
+	// leave the run's new files in an empty stand-in (the 1.7.2 friction review's F5); Export then
+	// returns an error that is ErrArchiveGone, which the run words as the archive location being
+	// unavailable.
+	KeepOutDir bool
 
 	// BeforeWrite, if set, is called with the path of each file the exporter is
 	// about to write (the page and the preserved original); a non-nil error is that
@@ -407,6 +434,11 @@ func (e *Exporter) Export(store string, folderPath []string, m *model.Message) (
 	}
 	dirParts := append([]string{e.OutDir, store}, writeFolderPath...)
 	dir := filepath.Join(dirParts...)
+	if e.BeforeMessageWrite != nil {
+		if err := e.BeforeMessageWrite(); err != nil {
+			return false, err
+		}
+	}
 	// An encrypted archive has no folder tree on disk: dir stays the LOGICAL folder
 	// the record's Path is computed in, and the message's units go to units/
 	// (phase2a §3). Its unit is the record's own when the final key already has one,
@@ -431,7 +463,7 @@ func (e *Exporter) Export(store string, folderPath []string, m *model.Message) (
 				return false, &ItemError{msg: "draw a unit", Err: err}
 			}
 		}
-	} else if err := os.MkdirAll(dir, 0o755); err != nil {
+	} else if err := e.makeDir(dir); err != nil {
 		return false, &FolderError{Dir: dir, Err: err}
 	}
 	var sealed state.SealedSet
@@ -517,6 +549,9 @@ func (e *Exporter) Export(store string, folderPath []string, m *model.Message) (
 		fx.EML, sealed.EML = &d, s
 		e.Stats.RawWritten++
 	} else if writeRaw {
+		if err := e.mayReplace(filepath.Join(dir, rawName)); err != nil {
+			return false, err
+		}
 		d, err := e.writeDigest(filepath.Join(dir, rawName), m.Raw)
 		if err != nil {
 			return false, &ItemError{Path: filepath.Join(dir, rawName), msg: "write " + rawName, Err: err}
@@ -602,6 +637,9 @@ func (e *Exporter) Export(store string, folderPath []string, m *model.Message) (
 			gaps = append(gaps, name)
 		}
 	} else if hasArchivable(m.Attachments, inlineConsumed) {
+		if err := e.mayReplace(zipPath); err != nil {
+			return false, err
+		}
 		zr, zerr := WriteZip(zipPath, m.Attachments, inlineConsumed)
 		if zerr != nil {
 			// A failed archive should not abort the whole export, but it is
@@ -629,6 +667,9 @@ func (e *Exporter) Export(store string, folderPath []string, m *model.Message) (
 			gaps = append(gaps, name)
 		}
 	} else {
+		if err := e.mayReplace(zipPath); err != nil {
+			return false, err
+		}
 		os.Remove(zipPath) // a re-capture with nothing archivable must not keep a stale zip
 	}
 
@@ -643,6 +684,9 @@ func (e *Exporter) Export(store string, folderPath []string, m *model.Message) (
 		}
 		fx.HTML, sealed.HTML = &hd, s
 	} else {
+		if err := e.mayReplace(htmlPath); err != nil {
+			return false, err
+		}
 		hd, err := e.writeDigest(htmlPath, htmlBytes)
 		if err != nil {
 			return false, &ItemError{Path: htmlPath, msg: "write " + htmlPath, Err: err}
@@ -793,12 +837,17 @@ func (e *Exporter) Export(store string, folderPath []string, m *model.Message) (
 	// logical Path names no file (P2a-C2).
 	if _, safe := util.ValidRecordedPath(prev.Path); e.Units == nil && seen && safe && prev.Path != relSlash && !adoptingLegacy {
 		old := filepath.Join(e.OutDir, filepath.FromSlash(prev.Path))
-		os.Remove(old)
-		os.Remove(strings.TrimSuffix(old, ".html") + zipSuffix)
+		gone := []string{old, strings.TrimSuffix(old, ".html") + zipSuffix}
 		if writeRaw {
 			// The original goes only when this run wrote a new one beside the new
 			// page: otherwise it is the record's only copy of the message (R20, MC8).
-			os.Remove(strings.TrimSuffix(old, ".html") + ".eml")
+			gone = append(gone, strings.TrimSuffix(old, ".html")+".eml")
+		}
+		for _, p := range gone {
+			if err := e.mayReplace(p); err != nil {
+				return false, err
+			}
+			os.Remove(p)
 		}
 	}
 
@@ -1017,7 +1066,35 @@ func (e *Exporter) flushDeletes() {
 	e.pendingDeletes = nil
 }
 
+// makeDir makes a message's folder dir (os.MkdirAll), except that with KeepOutDir it never makes
+// OutDir itself: when dir is not there and OutDir is not either, it returns an error that is
+// ErrArchiveGone (the friction review's F5).
+func (e *Exporter) makeDir(dir string) error {
+	if e.KeepOutDir {
+		if fi, err := os.Stat(dir); err == nil && fi.IsDir() {
+			return nil
+		}
+		if _, err := os.Stat(e.OutDir); err != nil && errors.Is(err, fs.ErrNotExist) {
+			return &archiveGoneError{err: err}
+		}
+	}
+	return os.MkdirAll(dir, 0o755)
+}
+
 // writeDigest is writeFileAtomicDigest behind the BeforeWrite seam.
+// mayReplace asks BeforeReplace about path when a file is already there (it would be written
+// over or removed); nil when there is no hook, nothing there yet (a new file), or the hook
+// agrees.
+func (e *Exporter) mayReplace(path string) error {
+	if e.BeforeReplace == nil {
+		return nil
+	}
+	if _, err := os.Lstat(path); err != nil {
+		return nil
+	}
+	return e.BeforeReplace(path)
+}
+
 func (e *Exporter) writeDigest(dst string, data []byte) (state.FileDigest, error) {
 	if e.BeforeWrite != nil {
 		if err := e.BeforeWrite(dst); err != nil {

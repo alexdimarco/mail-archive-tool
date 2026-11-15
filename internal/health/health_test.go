@@ -59,7 +59,7 @@ func TestPosture(t *testing.T) {
 			in.LastRun.Status = state.RunFailed
 			in.LastRun.Error = "token: AADSTS7000215 invalid client secret"
 		}, "RED", "rotate"},
-		{"never finished (lock free, pid reused)", func(in *Input) { in.LastRun.Status = state.RunRunning; in.LockHeld = false }, "RED", "never finished"},
+		{"never finished (lock free, pid reused)", func(in *Input) { in.LastRun.Status = state.RunRunning; in.LockHeld = false }, "RED", "did not finish and could not record how it ended"}, // MA-1448's words
 		{"in progress (lock held)", func(in *Input) {
 			in.LastRun.Status = state.RunRunning
 			in.LastRun.Started = now.Add(-10 * time.Minute)

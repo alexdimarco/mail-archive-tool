@@ -772,19 +772,18 @@ func Run(ctx context.Context, opts Options, logger *log.Logger, onProgress Progr
 	// TidyingElsewhere). Everything before the refusal runs as before (the pre-sync, the sweeps).
 	putBackRecord := state.SnapshotLastRun(opts.Out)
 	begun := beginRun(opts)
-	// archiveChanged says the folder no longer holds the archive this run began with (the B3
-	// adversarial pass, round 2's G1): the pre-sync below waits minutes for Thunderbird, and in
-	// that time a drive of a rotation may be swapped at the same path or the folder renamed. The
-	// lock file goes with the old folder, so nothing else tells the run before a checkpoint. It is
-	// another archive when the folder's record carries another id, or carries none while this run's
-	// lock is gone too (an archive an older MailArchive made). An encrypted archive's record has no
-	// id: its lock alone tells, and a keyed run whose lock is no longer its own records nothing
-	// there (round 4's J2).
-	archiveChanged := archiveChangedFor(opts, begun.Archive, lock.StillHeld)
-	// The same proof, with the lock's, before every save of the run's progress and on time during
-	// its walk (round 3's H1): a swap after the check below is caught before anything of this
-	// archive's is written into the other.
-	proof := newArchiveGuard(opts, lock.StillHeld, archiveChanged)
+	// Before every save of the run's progress, before its writes during its walk and before each
+	// write of its tail, the folder is proved to still be this run's: there, and its lock file
+	// still this run's own (archiveguard.go). The pre-sync below waits minutes for Thunderbird and
+	// the walk reads for minutes; a drive of a rotation may be swapped at the same path or letter,
+	// or the folder renamed, in that time, and nothing of this archive's may then be written into
+	// the other (1.7.2). The "running" record just written binds the run to its folder.
+	proof := newArchiveGuard(ctx, opts, logger, lock.StillHeld)
+	proof.noteBegun()
+	// What binds the run to its archive's folder once its lock is no longer its own (endUnheld):
+	// armed only by the first proof that follows the manifest's load, so the bytes it names were
+	// read while the folder was the run's (a manifest read after a swap is the other archive's).
+	binding := func() (string, [32]byte, bool) { return recordedFile(opts, mpath, manifest, sealed) }
 	// The opt-in Thunderbird pre-sync runs here, after the lock and the run's
 	// start and before any source is read; nil unless a caller opts in, and it
 	// never fails the run (design thunderbird-presync §4.1). Its warnings join
@@ -827,17 +826,14 @@ func Run(ctx context.Context, opts Options, logger *log.Logger, onProgress Progr
 	}
 	rec := begun
 	defer func() {
-		// Nothing is written into a folder that now holds another archive: neither this run's
-		// record (it carries this archive's id) nor the skip's put-back (G1). A run that would
-		// otherwise end ok, or partly ok, ends as a lost lock: it is not this archive's success
-		// (round 3's H1).
-		if archiveChanged() {
-			if logger != nil {
-				logger.Printf("warning: %s no longer holds the archive this backup began with; nothing was recorded in it", opts.Out)
-			}
-			if err == nil || errors.Is(err, ErrPartial) {
-				err = withKind(state.FailLockLost, changedEnd(opts, lock.StillHeld))
-			}
+		// A run whose lock is no longer its own is not this archive's success: one that would
+		// otherwise end ok, or partly ok, or that stopped on its lost lock, ends in the plain
+		// words of what it found (or "unavailable", the folder not reachable). Its failure is
+		// recorded only in a folder that still holds the archive it began in; nothing at all
+		// goes into one that may hold another archive now (a drive swapped at the same path or
+		// letter, the folder moved) or that another run took over (1.7.2; endUnheld): neither
+		// this run's record nor the skip's put-back below (G1).
+		if !proof.closeOut(&err) {
 			return
 		}
 		if opts.Key == nil && TidyingElsewhere(err) {
@@ -862,6 +858,16 @@ func Run(ctx context.Context, opts Options, logger *log.Logger, onProgress Progr
 	if ctx.Err() != nil {
 		return result, context.Canceled
 	}
+	// Once the pre-sync's wait is over, before the sweeps or anything else is read or written, the
+	// folder is proved to still be this run's, encrypted or not (an encrypted run's manifest was
+	// loaded before the wait, so the proof after the load below is a plaintext run's only: the
+	// round-5 review's K4).
+	if perr := proof.prove(); perr != nil {
+		return Result{}, proofStop(perr)
+	}
+	if manifest != nil { // an encrypted run's, opened under the lock before the wait
+		proof.recorded = binding
+	}
 	runAt := begun.Started
 
 	// On -auto, warn up front when a live Exchange/IMAP .ost is about to be read
@@ -875,9 +881,15 @@ func Run(ctx context.Context, opts Options, logger *log.Logger, onProgress Progr
 	}
 
 	// What a crashed earlier run may have left behind (R5): stale temps and
-	// orphan zips. Only files older than this run's start are touched.
-	if n := export.SweepOrphans(opts.Out, time.Now(), logger, programSweepSkip(opts)...); n > 0 {
+	// orphan zips. Only files older than this run's start are touched, and each
+	// removal is proved first: the sweep walks the whole folder by path, and after a
+	// swap that is the other archive's (1.7.2; the patch review's P5).
+	n, serr := export.SweepOrphansChecked(opts.Out, time.Now(), logger, func(string) error { return proof.prove() }, programSweepSkip(opts)...)
+	if n > 0 {
 		logger.Printf("swept %d orphaned temp/zip file(s) from an interrupted run", n)
+	}
+	if serr != nil {
+		return Result{}, proofStop(serr)
 	}
 	// An encrypted archive's snapshots live in its scratch folder: a crashed run's are
 	// reaped there, and the folder is removed (when empty) on every exit.
@@ -898,16 +910,15 @@ func Run(ctx context.Context, opts Options, logger *log.Logger, onProgress Progr
 		if manifest, err = state.Load(mpath); err != nil {
 			return Result{}, withKind(state.FailManifestUnreadable, err)
 		}
-		// Again once the manifest has loaded, under the lock, before any Gmail store is switched
-		// or anything written (G1): the folder still holds the archive this run began with, and
-		// the lock is still this run's. Otherwise the run stops here, and its deferred record
-		// writes nothing into a folder that now holds another archive.
-		if archiveChanged() {
-			return Result{}, withKind(state.FailLockLost, archiveChangedError(opts.Out))
+		// Again once the manifest has loaded, before any Gmail store is switched, the index opened
+		// or anything written: the folder is still this run's (a swap during the pre-sync, which
+		// waits minutes, is caught here, before the run reads another archive's manifest as its own
+		// any further; G1). Otherwise the run stops here, and its deferred record writes nothing
+		// into a folder that may hold another archive.
+		if perr := proof.prove(); perr != nil {
+			return Result{}, proofStop(perr)
 		}
-		if err := lock.StillHeld(); err != nil {
-			return Result{}, withKind(state.FailLockLost, err)
-		}
+		proof.recorded = binding
 		// Past the manifest: this archive's wait for another computer's tidy-up has ended,
 		// whatever started this run (the B3 adversarial pass, round 2's G4).
 		endTidyWait(opts.Out, begun.Archive)
@@ -923,6 +934,8 @@ func Run(ctx context.Context, opts Options, logger *log.Logger, onProgress Progr
 		KeepRaw:  opts.KeepRaw,
 		RunAt:    runAt,
 		Units:    units,
+		// The run began on a folder that is there: it never makes it again (F5).
+		KeepOutDir: true,
 	}
 
 	if exporterSetup != nil {
@@ -1052,9 +1065,11 @@ func Run(ctx context.Context, opts Options, logger *log.Logger, onProgress Progr
 	checkpoint := func(stats export.Stats) {
 		processed := stats.Exported + lr.faults
 		if processed-lastCheckpoint < effectiveEvery(floor, manifest.Len()) {
-			// Between saves, a walk proves on time that its folder still holds its archive, so a
-			// long walk stops soon after a swap (round 3's H1); an encrypted walk after every
-			// message it wrote too (round 4's J2).
+			// Between saves, an encrypted walk proves after every message it wrote (round 4's
+			// J2). Nothing is proved on a timer while a walk only reads (the patch review's P1): a
+			// plaintext walk proves right before its next write once 10 s have passed
+			// (exp.BeforeMessageWrite), so a long walk that writes stops soon after a swap
+			// (round 3's H1).
 			if lockLost == nil && proof.dueAfter(stats) {
 				lockLost = proof.prove()
 			}
@@ -1063,12 +1078,9 @@ func Run(ctx context.Context, opts Options, logger *log.Logger, onProgress Progr
 		lastCheckpoint = processed
 		// The lock file is the run's guarantee of exclusivity; if it was removed
 		// or replaced under us, another run may now hold a fresh one. Stop
-		// rather than race it (R5). A plaintext run proves first that the folder still
-		// holds its archive (round 3's H1).
+		// rather than race it (R5). The proof asks the lock, after the folder still
+		// holding its archive (round 3's H1).
 		err := proof.prove()
-		if err == nil {
-			err = lock.StillHeld()
-		}
 		if err != nil && lockLost == nil {
 			lockLost = err
 			return
@@ -1085,6 +1097,12 @@ func Run(ctx context.Context, opts Options, logger *log.Logger, onProgress Progr
 			lockLost = err
 		}
 	}
+	// Right before a file already in the folder is written over or removed, the folder is proved
+	// at once: a removal or an overwrite is what the other archive's own next backup could not
+	// undo (the round-5 review's K1). New files are proved before a message's first write once
+	// 10 s have passed since the last proof (the patch review's P1).
+	exp.BeforeReplace = proof.replaceGuard(&lockLost)
+	exp.BeforeMessageWrite = proof.writeGuard(&lockLost)
 	result = Result{Files: len(files), ManifestBefore: manifestBefore, FillableFrom: fillableFrom(files)}
 	var failures int
 	var firstFailed string
@@ -1128,6 +1146,11 @@ func Run(ctx context.Context, opts Options, logger *log.Logger, onProgress Progr
 				onProgress(stats)
 			}
 		}, func() error { return lockLost })
+		// A walk that found the folder gone: no proof waits for it again.
+		var ended *RunFatalError
+		if errors.As(runErr, &ended) {
+			proof.gone(ended)
+		}
 		if lockLost != nil {
 			// The lock was removed or replaced mid-run: another run may now own
 			// this archive. Do NOT write shared state (manifest/index/README) into
@@ -1268,12 +1291,6 @@ func Run(ctx context.Context, opts Options, logger *log.Logger, onProgress Progr
 // this run did is recorded and the next run repeats it. It names the file and
 // the remedy; recordRun finalizes the last-run record failed with it, so
 // `status` reports RED instead of a green "ok".
-// archiveChangedError is a run's refusal when its folder came to hold another archive while it
-// waited (the B3 adversarial pass, round 2's G1): nothing was read into it or written.
-func archiveChangedError(out string) error {
-	return fmt.Errorf("the archive folder %s now holds another archive than the one this backup began with (its drive was changed, or the folder was moved, while the backup waited): nothing was written into it. Run the backup again", out)
-}
-
 // stopOnLostLock ends the run as a lost lock when a sealed save found the lock gone
 // at its commit point (container.ErrLockLost), as a checkpoint's own check does —
 // so no more is written into an archive another program may now own (CON-3).
@@ -1672,7 +1689,7 @@ func recordRun(opts Options, lr state.LastRun, result *Result, err *error, logge
 		if runtime.GOOS == "windows" {
 			hint = " (a sharing violation: exclude the archive folder from antivirus real-time scanning)"
 		}
-		logger.Printf("warning: could not record this run in %s (%v): `mailarchive status` may show this run as \"never finished\" or still show the previous result, whatever this log says about how it ended — run again once the file can be written%s", filepath.Join(opts.Out, state.LastRunName), werr, hint)
+		logger.Printf("warning: could not record this run in %s (%v): `mailarchive status` may show this run as \"did not finish\" or still show the previous result, whatever this log says about how it ended — run again once the file can be written%s", filepath.Join(opts.Out, state.LastRunName), werr, hint)
 	}
 	// Add this run to the archive's rolling history (MA-701), best effort like the
 	// last-run write above: the dashboard and `status` read it to show recent runs, not

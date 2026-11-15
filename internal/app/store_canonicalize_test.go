@@ -152,7 +152,7 @@ func TestLockLossMidWalkStopsWithoutRewriting(t *testing.T) {
 	if err == nil {
 		t.Fatal("run did not report the lock loss")
 	}
-	if !strings.Contains(err.Error(), lockfile.Name) || !strings.Contains(err.Error(), "during the run") {
+	if !strings.Contains(err.Error(), lockfile.Name) || !strings.Contains(err.Error(), "was changed during the backup") { // MA-1447's words since 1.7.2
 		t.Errorf("lock-loss error does not name the lock and cause: %v", err)
 	}
 	// No scaffold: finish() was not called after the loss.

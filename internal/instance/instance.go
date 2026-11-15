@@ -21,9 +21,11 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io/fs"
 	"os"
 	"path/filepath"
 	"runtime"
+	"strings"
 	"time"
 
 	"mail-archive-tool/internal/procs"
@@ -137,6 +139,11 @@ type Info struct {
 	Version string `json:"version,omitempty"`
 	// Ended, when set, is the older instance this launch ended (§4.5.2, MA-638).
 	Ended *Ended `json:"ended,omitempty"`
+	// Unlabelled says Windows would not give this file the label that keeps sandboxed
+	// programs from reading it, so it was written as 1.7.1 wrote it (WriteNoting): `status`
+	// and Status & health say so in one line (the 1.7.2 final check's security-1).
+	// Optional: an older reader ignores it.
+	Unlabelled bool `json:"unlabelled,omitempty"`
 }
 
 // What a desktop start found at MailArchive's former address 127.0.0.1:8097
@@ -261,17 +268,158 @@ var ErrUnusable = errors.New("instance file unusable")
 // its check here (this package sits beneath it); until then it refuses nothing.
 var RefuseSettingsWrite = func(path, kind string) error { return nil }
 
-// Write records info at path atomically, 0600, in a directory made 0700.
+// Write records info at path atomically, 0600, in a directory made 0700; on Windows the
+// file is created with a Medium integrity label that no lower integrity can read
+// (writeSecret; the menu-bar S1 adversarial re-check r3, C1): K yields a Desktop session,
+// so a Low-integrity process of this account (a sandbox) must not read it. When Windows
+// will not set that label, the file is written as 1.7.1 wrote it (WriteNoting).
 func Write(path string, info Info) error {
+	_, err := WriteNoting(path, info, nil)
+	return err
+}
+
+// WriteNoting is Write that tells note, in one plain sentence, when Windows would not set
+// the label (util.SecretCreateRefused: a file system that keeps no labels, a network
+// folder, or an account whose programs may not set it, which Microsoft's documentation
+// leaves open for a person's own programs; the 1.7.2 research note's L0). The file is then
+// written exactly as 1.7.1 wrote it, owner-only and unlabelled, with Unlabelled recorded in
+// it, so MailArchive Desktop still starts: 1.7.2 is never worse than 1.7.1 there. An error
+// that is not the label's own refusal (util.LabelRefused: a sharing violation, a full disk)
+// is asked about once more first, so a passing fault does not cost the protection for the
+// Desktop's whole life (the final check's security-3); when it stays and the plain write
+// works, the folder can be written and only the protected write cannot, which is the same
+// fallback. labelled says the file carries the label. It returns an error only when no usable
+// file was written: a *KeyFileError when both writes failed.
+func WriteNoting(path string, info Info, note func(string)) (labelled bool, err error) {
 	if err := RefuseSettingsWrite(path, "the Desktop instance file"); err != nil {
-		return err
+		return false, err
 	}
 	info.V = infoVersion
+	info.Unlabelled = false
+	data, err := infoBytes(info)
+	if err != nil {
+		return false, err
+	}
+	err = writeSecret(path, data)
+	dir, cause, refused := util.SecretCreateRefused(err)
+	if !refused {
+		return err == nil, err
+	}
+	if !util.LabelRefused(cause) {
+		err = writeSecret(path, data)
+		if err == nil {
+			return true, nil
+		}
+		if dir, cause, refused = util.SecretCreateRefused(err); !refused {
+			return false, err
+		}
+	}
+	info.Unlabelled = true
+	plain, err := infoBytes(info)
+	if err != nil {
+		return false, err
+	}
+	if perr := writePlain(path, plain); perr != nil {
+		return false, &KeyFileError{Dir: dir, Protected: cause, Plain: perr}
+	}
+	if note != nil {
+		note(UnlabelledNote(dir, cause))
+	}
+	return false, nil
+}
+
+// infoBytes is info as the instance file holds it.
+func infoBytes(info Info) ([]byte, error) {
 	b, err := json.Marshal(info)
 	if err != nil {
-		return err
+		return nil, err
 	}
-	return util.WriteFileAtomic0600(path, append(b, '\n'))
+	return append(b, '\n'), nil
+}
+
+// RetryProtected writes info at path with its label once more, for a file the fallback wrote
+// (Holder.Watch, the final check's security-3): true when the protected write worked and the
+// file now carries the label; otherwise the file is left as it is.
+func RetryProtected(path string, info Info) bool {
+	info.V, info.Unlabelled = infoVersion, false
+	data, err := infoBytes(info)
+	return err == nil && writeSecret(path, data) == nil
+}
+
+// KeyFileError is WriteNoting's failure to leave any usable private key file: the protected
+// write failed (Protected, the system's words) and writing it as 1.7.1 did failed too (Plain):
+// the folder cannot be written at all.
+type KeyFileError struct {
+	Dir              string
+	Protected, Plain error
+}
+
+// Error gives each write's system words only (the 1.7.2 last check's words-1).
+func (e *KeyFileError) Error() string {
+	return fmt.Sprintf("could not save the private key file in %s: the protected save failed (%s), and saving it the 1.7.1 way failed too (%s)", e.Dir, SystemWords(e.Protected), SystemWords(e.Plain))
+}
+
+func (e *KeyFileError) Unwrap() []error { return []error{e.Protected, e.Plain} }
+
+// UnlabelledNote is the warning of a private key file Windows would not label: written as
+// 1.7.1 wrote it, readable by any program running under this account (the final check's
+// wording-10: the name the notes use, right for a `serve`'s file too, and the system's words
+// without their own full stop).
+func UnlabelledNote(dir string, cause error) string {
+	return fmt.Sprintf("warning: Windows would not protect MailArchive's private key file in %s (%s), so it was saved as MailArchive 1.7.1 saved it: everything works as usual, but a sandboxed program running under your account may be able to read it.", dir, SystemWords(cause))
+}
+
+// SystemWords is the system's own words in err, without the full stop Windows ends its messages
+// with, for a sentence that goes on after it (the final check's wording-8): a file write's error
+// is unwrapped to what the system said, without the write's "temp file in …", its paths and its
+// temp file's name (the last check's words-1).
+func SystemWords(err error) string {
+	var pe *fs.PathError
+	var le *os.LinkError
+	switch {
+	case errors.As(err, &pe) && pe.Err != nil:
+		err = pe.Err
+	case errors.As(err, &le) && le.Err != nil:
+		err = le.Err
+	}
+	return strings.TrimSuffix(fmt.Sprint(err), ".")
+}
+
+// UnlabelledNotice is the one plain line `status` and Status & health show while the running
+// MailArchive Desktop's private key file could not be protected (security-1, wording-2).
+const UnlabelledNotice = "On this computer Windows would not protect MailArchive Desktop's private key file, so it is kept as in 1.7.1: a sandboxed program running under your account may be able to read it."
+
+// Unlabelled says the running desktop instance of this account wrote its private key file as
+// 1.7.1 did (Info.Unlabelled), for `status` and Status & health; false when none runs.
+func Unlabelled() bool {
+	dir, err := Dir()
+	if err != nil {
+		return false
+	}
+	return UnlabelledIn(dir, LogonSession())
+}
+
+// UnlabelledIn is Unlabelled for the instance file of a session in dir.
+func UnlabelledIn(dir, session string) bool {
+	info, err := Read(FilePathIn(dir, session))
+	return err == nil && procs.Alive(info.PID) && info.Unlabelled
+}
+
+// writeSecret is how an instance file is written: util.WriteSecretFileAtomic0600 (a var
+// only so MA-1427's test can check that it is, on every OS). writePlain is how it is
+// written when Windows will not label it: util.WriteFileAtomic0600, as 1.7.1 wrote it.
+var (
+	writeSecret = util.WriteSecretFileAtomic0600
+	writePlain  = util.WriteFileAtomic0600
+)
+
+// SetWritersForTest replaces writeSecret and writePlain for a test in another package (the
+// Desktop's start when Windows will not label its start file) and returns their restore.
+// Production code never calls it.
+func SetWritersForTest(secret, plain func(path string, data []byte) error) (restore func()) {
+	oldSecret, oldPlain := writeSecret, writePlain
+	writeSecret, writePlain = secret, plain
+	return func() { writeSecret, writePlain = oldSecret, oldPlain }
 }
 
 // Read returns the instance file at path: a missing file wraps os.ErrNotExist; one

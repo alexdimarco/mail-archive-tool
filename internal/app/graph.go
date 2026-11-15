@@ -220,22 +220,18 @@ func RunGraph(ctx context.Context, g GraphOptions, opts Options, logger *log.Log
 	// G4): its "running" record is put back as it was, with no failure, history entry or streak.
 	putBackRecord := state.SnapshotLastRun(opts.Out)
 	begun := beginRun(opts)
-	// Before every save of the capture's progress, and on time during its walk, the folder is
-	// proved to still hold the archive the capture began with and the lock to be its own, as a
-	// local run's is (the B3 adversarial pass, round 3's H1): a drive of a rotation swapped at the
-	// same path mid-capture gets nothing of this archive's.
-	archiveChanged := archiveChangedFor(opts, begun.Archive, lock.StillHeld)
-	proof := newArchiveGuard(opts, lock.StillHeld, archiveChanged)
+	// Before every save of the capture's progress, before its writes during its walk and before
+	// each write of its tail, the folder is proved to still be this capture's, as a local run's is
+	// (archiveguard.go): a drive of a rotation swapped at the same path mid-capture gets nothing of
+	// this archive's (1.7.2). The "running" record just written binds the capture to its folder.
+	proof := newArchiveGuard(ctx, opts, logger, lock.StillHeld)
+	proof.noteBegun()
 	defer func() {
-		// Nothing is recorded in a folder that now holds another archive, and the capture is not
-		// this archive's success (H1).
-		if archiveChanged() {
-			if logger != nil {
-				logger.Printf("warning: %s no longer holds the archive this capture began with; nothing was recorded in it", opts.Out)
-			}
-			if err == nil || errors.Is(err, ErrPartial) {
-				err = withKind(state.FailLockLost, changedEnd(opts, lock.StillHeld))
-			}
+		// A capture whose lock is no longer its own is not this archive's success, and its
+		// failure is recorded only in a folder that still holds the archive it began in
+		// (endUnheld), as a local run's: neither its record nor the skip's put-back below is
+		// written into one that may hold another archive (H1).
+		if !proof.closeOut(&err) {
 			return
 		}
 		if opts.Key == nil && TidyingElsewhere(err) {
@@ -249,25 +245,32 @@ func RunGraph(ctx context.Context, g GraphOptions, opts Options, logger *log.Log
 
 	// What a crashed earlier capture may have left behind (R5): stale temps — a
 	// half-written page, zip or manifest. Only temps, never zips: a capture's
-	// zip-without-page is not the local runs' crash signature (2a-P).
-	if n := export.SweepTemps(opts.Out, time.Now(), logger, programSweepSkip(opts)...); n > 0 {
+	// zip-without-page is not the local runs' crash signature (2a-P). Each removal is
+	// proved first (the patch review's P5).
+	n, serr := export.SweepTempsChecked(opts.Out, time.Now(), logger, func(string) error { return proof.prove() }, programSweepSkip(opts)...)
+	if n > 0 {
 		logger.Printf("swept %d orphaned temp file(s) from an interrupted run", n)
+	}
+	if serr != nil {
+		return Result{}, proofStop(serr)
 	}
 
 	if manifest == nil {
 		if manifest, err = state.Load(mpath); err != nil {
 			return Result{}, withKind(state.FailManifestUnreadable, err)
 		}
-		// Again once the manifest has loaded, before the history header, the index or any save, as
-		// a local run proves (the B3 adversarial pass, round 4's J3): the folder still holds the
-		// archive this capture began with, and the lock is still its own.
-		if archiveChanged() {
-			return Result{}, withKind(state.FailLockLost, archiveChangedError(opts.Out))
-		}
-		if err := lock.StillHeld(); err != nil {
-			return Result{}, withKind(state.FailLockLost, err)
-		}
-		endTidyWait(opts.Out, begun.Archive) // past the manifest (G4)
+	}
+	// Again once the manifest has loaded (an encrypted capture's was opened under the lock), before
+	// the history header, the index or any save, as a local run proves (the B3 adversarial pass,
+	// round 4's J3): the folder is still this capture's. Only then does the manifest's digest bind
+	// the capture to its archive's folder (endUnheld): a manifest read after a swap is the other
+	// archive's.
+	if perr := proof.prove(); perr != nil {
+		return Result{}, proofStop(perr)
+	}
+	proof.recorded = func() (string, [32]byte, bool) { return recordedFile(opts, mpath, manifest, sealed) }
+	if opts.Key == nil { // the plaintext manifest loaded above, past the proof (G4)
+		endTidyWait(opts.Out, begun.Archive)
 	}
 	manifestBefore := manifest.Len()
 
@@ -288,6 +291,8 @@ func RunGraph(ctx context.Context, g GraphOptions, opts Options, logger *log.Log
 		// keeps the folder-scoped key.
 		DedupMailboxWide: true,
 		Units:            units,
+		// The capture began on a folder that is there: it never makes it again (F5).
+		KeepOutDir: true,
 	}
 	if exporterSetup != nil {
 		exporterSetup(exp)
@@ -496,6 +501,11 @@ func RunGraph(ctx context.Context, g GraphOptions, opts Options, logger *log.Log
 			lockLost = err
 		}
 	}
+	// Right before a file already in the folder is written over or removed, the folder is proved
+	// at once (the round-5 review's K1), and before a message's first write once 10 s have passed
+	// since the last proof (the patch review's P1), as a local run's.
+	exp.BeforeReplace = proof.replaceGuard(&lockLost)
+	exp.BeforeMessageWrite = proof.writeGuard(&lockLost)
 	checkpoint := func() {
 		// Gate on messages PROCESSED (written + skipped-as-already-archived), not
 		// just Exported: a migration or steady-state run is nearly all skips
@@ -507,16 +517,16 @@ func RunGraph(ctx context.Context, g GraphOptions, opts Options, logger *log.Log
 		// its progress and re-checks its lock.
 		processed := exp.Stats.Exported + exp.Stats.SkippedManifest + lr.faults
 		if processed-lastCheckpoint < effectiveEvery(floor, manifest.Len()) {
-			if lockLost == nil && proof.dueAfter(exp.Stats) { // on time between saves (H1); after each write, encrypted (J2)
+			// After each write of an encrypted capture (J2); never on a timer while the capture
+			// only lists and skips (the patch review's P1): a plaintext capture proves before its
+			// next write instead (exp.BeforeMessageWrite).
+			if lockLost == nil && proof.dueAfter(exp.Stats) {
 				lockLost = proof.prove()
 			}
 			return
 		}
 		lastCheckpoint = processed
-		err := proof.prove() // the folder still holds this archive (H1)
-		if err == nil {
-			err = lock.StillHeld()
-		}
+		err := proof.prove() // the folder still holds this archive and the lock is the capture's (H1)
 		if err != nil && lockLost == nil {
 			lockLost = err
 			return
@@ -538,6 +548,11 @@ func RunGraph(ctx context.Context, g GraphOptions, opts Options, logger *log.Log
 	var runBreaker *RunBreakerError
 	for i, mbx := range g.Mailboxes {
 		runErr := runGraphMailbox(ctx, lr, client, manifest, hist, idx, mbx, filter, g.BreakerTimeBound, checkpoint, func() error { return lockLost })
+		// A walk that found the folder gone: no proof waits for it again.
+		var ended *RunFatalError
+		if errors.As(runErr, &ended) {
+			proof.gone(ended)
+		}
 		if lockLost != nil {
 			// Lock removed/replaced mid-run: another run may own this archive now.
 			// Write no shared state (manifest/index/README); the deferred recordRun
@@ -616,6 +631,9 @@ func RunGraph(ctx context.Context, g GraphOptions, opts Options, logger *log.Log
 				lastTrip = trip
 			}
 		}
+	}
+	if afterWalkForTest != nil {
+		afterWalkForTest()
 	}
 
 	// When no mailbox succeeded, do not write the browsable scaffold

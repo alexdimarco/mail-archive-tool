@@ -16,11 +16,11 @@ import (
 )
 
 // covers: MA-1336, R45
-// The folder pages are written one by one with a check asked before each (the B3 adversarial
-// pass, round 4's J1): a backup proves with it that the folder still holds its archive. When the
-// check answers no, nothing more is written, the root page included, and that answer is
-// returned. Positive twin first: a check that always answers yes asks before every page, the
-// root page last, and every page is written.
+// The folder pages are written one by one with a check asked before each (the archive guard's
+// tail, J1): a backup proves with it that the folder is still its own. When the check answers no,
+// nothing more is written, the root page included, and that answer is returned. Positive twin
+// first: a check that always answers yes asks before every page, the root page last, and every
+// page is written.
 func TestFolderPagesStopWritingWhenTheCheckSaysNo(t *testing.T) {
 	ix, err := index.Open(filepath.Join(t.TempDir(), "search.db"))
 	if err != nil {
@@ -57,7 +57,7 @@ func TestFolderPagesStopWritingWhenTheCheckSaysNo(t *testing.T) {
 	}
 
 	out := t.TempDir()
-	stop := errors.New("the archive folder now holds another archive")
+	stop := errors.New("lock was replaced during the run")
 	calls := 0
 	err = GenerateChecked(out, ix, quiet, 0, func(rel string) error {
 		calls++
@@ -70,7 +70,7 @@ func TestFolderPagesStopWritingWhenTheCheckSaysNo(t *testing.T) {
 	if err != nil {
 		rc = 1
 	}
-	assure.Refused(t, rc, fmt.Sprint(err), assure.Code(1), assure.Names("another archive"),
+	assure.Refused(t, rc, fmt.Sprint(err), assure.Code(1), assure.Names("was replaced during the run"),
 		assure.NoSideEffect(func() bool {
 			_, rootErr := os.Stat(filepath.Join(out, RootPage))
 			return errors.Is(err, stop) && written(out) == 1 && os.IsNotExist(rootErr)
