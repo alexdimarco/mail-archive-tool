@@ -60,7 +60,7 @@ var failureText = map[string]string{
 	FailArchiveAbsent:             "the archive's drive or folder is not there — connect it",
 	FailScratch:                   "MailArchive's working folder for copies of the mail is full or could not be written",
 	FailArchiveBusy:               "another backup of this archive was running",
-	FailLockLost:                  "another program took over the archive during the backup",
+	FailLockLost:                  "the backup stopped because the archive folder changed during the backup (its drive was swapped or disconnected, or the folder was moved), or because another program changed or deleted MailArchive's lock file there — if you swapped drives, put this archive's drive back, then run the backup again",
 	FailManifestUnreadable:        "the archive's record of its messages could not be read",
 	FailManifestSave:              "the backup's progress could not be saved",
 	FailInventory:                 "this backup's file list could not be saved; the next backup retries",

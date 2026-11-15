@@ -18,7 +18,7 @@ import (
 // A last-run record the run could not write is logged, not dropped (g7
 // friction F12): when Windows file sharing refuses the finalizing write past the
 // retry budget, the run still ends as its log says, but status shows the
-// "running" record as RED "never finished" (or the previous result). The log now
+// "running" record as RED "did not finish" (or the previous result). The log now
 // carries one warning naming the record, why status may disagree, and the remedy
 // (exclude the archive folder from real-time scanning). Positive twin: a run whose
 // record is written logs no such warning.
@@ -46,7 +46,7 @@ func TestFailedLastRunWriteIsLogged(t *testing.T) {
 	if err != nil {
 		t.Fatalf("a refused record write must not fail the run: %v", err)
 	}
-	for _, want := range []string{"could not record this run", state.LastRunName, "sharing violation", "never finished", "whatever this log says"} {
+	for _, want := range []string{"could not record this run", state.LastRunName, "sharing violation", "did not finish", "whatever this log says"} { // MA-1448's words since 1.7.2 (G5)
 		if !strings.Contains(logs, want) {
 			t.Fatalf("the log lacks %q:\n%s", want, logs)
 		}

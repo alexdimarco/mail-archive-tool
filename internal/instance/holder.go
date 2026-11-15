@@ -19,6 +19,9 @@ import (
 type Holder struct {
 	Dir     string
 	Session string
+	// Note, when set, hears the warning of an instance file Windows would not label, written
+	// as 1.7.1 wrote it (WriteNoting).
+	Note func(string)
 
 	lock *lockfile.Lock
 	stop chan struct{}
@@ -114,7 +117,11 @@ func (h *Holder) MarkClosing() {
 		return
 	}
 	h.info.Closing = true
-	_ = Write(h.FilePath(), *h.info)
+	// Through the 1.7.2 writer like every write of this file: labelled when Windows allows
+	// it, as 1.7.1 wrote it otherwise, and Watch's retry knows which.
+	if labelled, err := WriteNoting(h.FilePath(), *h.info, h.Note); err == nil {
+		h.info.Unlabelled = !labelled
+	}
 }
 
 // FilePath is the instance file's path.
@@ -131,19 +138,23 @@ func FilePathIn(dir, session string) string {
 // after taking the lock and before binding [CC21].
 func (h *Holder) RemoveStale() { os.Remove(h.FilePath()) }
 
-// Publish writes the instance file and remembers it, so Watch can rewrite it.
+// Publish writes the instance file and remembers it, so Watch can rewrite it; it remembers too
+// whether Windows labelled it (Info.Unlabelled), so Watch can try the label again.
 func (h *Holder) Publish(info Info) error {
 	h.mu.Lock()
 	defer h.mu.Unlock()
+	labelled, err := WriteNoting(h.FilePath(), info, h.Note)
+	info.Unlabelled = err == nil && !labelled
 	h.info = &info
-	return Write(h.FilePath(), info)
+	return err
 }
 
 // Watch re-checks the lock every interval (lockfile.StillHeld) and rewrites the
 // instance file when it has gone missing — a purge, a clean-up, a user's tidy —
-// so a later launch's retry finds it [CC21]. A lock that is no longer ours is
-// reported to log and the file is left alone: another process owns the name.
-// The returned func stops it.
+// so a later launch's retry finds it [CC21]; a file Windows would not label is
+// written with its label again at each interval until Windows allows it. A lock
+// that is no longer ours is reported to log and the file is left alone: another
+// process owns the name. The returned func stops it.
 func (h *Holder) Watch(interval time.Duration, log func(string)) (stop func()) {
 	h.stop = make(chan struct{})
 	done := make(chan struct{})
@@ -161,11 +172,7 @@ func (h *Holder) Watch(interval time.Duration, log func(string)) (stop func()) {
 					continue
 				}
 				h.mu.Lock()
-				if _, err := os.Lstat(h.FilePath()); err != nil && h.info != nil && !h.closed {
-					if err := Write(h.FilePath(), *h.info); err != nil {
-						log("could not rewrite the instance file: " + err.Error())
-					}
-				}
+				h.keepFile(log)
 				h.mu.Unlock()
 			}
 		}
@@ -177,6 +184,27 @@ func (h *Holder) Watch(interval time.Duration, log func(string)) (stop func()) {
 			close(h.stop)
 		}
 		<-done
+	}
+}
+
+// keepFile is one Watch tick's care of the instance file, under h.mu, while the lock is
+// ours and the holder has not let go (Close): a missing file is written again through the
+// 1.7.2 writer, and a file the fallback wrote gets its label as soon as Windows allows it
+// (the 1.7.2 final check's security-3).
+func (h *Holder) keepFile(log func(string)) {
+	if h.info == nil || h.closed {
+		return
+	}
+	if _, err := os.Lstat(h.FilePath()); err != nil {
+		labelled, err := WriteNoting(h.FilePath(), *h.info, h.Note)
+		if err != nil {
+			log("could not rewrite the instance file: " + err.Error())
+			return
+		}
+		h.info.Unlabelled = !labelled
+	} else if h.info.Unlabelled && RetryProtected(h.FilePath(), *h.info) {
+		h.info.Unlabelled = false
+		log("the private key file is protected now")
 	}
 }
 

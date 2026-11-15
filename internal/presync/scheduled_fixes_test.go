@@ -583,6 +583,21 @@ func (r *realLockEnv) releaseLock(path string) {
 	r.fakeEnv.releaseLock(path)
 }
 
+// waitBoundedFor is how long waitBounded waits: far beyond the few hundred milliseconds a session
+// takes alone, so only a session that will never get there fails it.
+var waitBoundedFor = 2 * time.Minute
+
+// waitBounded waits for ch to close, and fails the test with why when it has not within
+// waitBoundedFor, instead of waiting for ever.
+func waitBounded(t *testing.T, ch <-chan struct{}, why string) {
+	t.Helper()
+	select {
+	case <-ch:
+	case <-time.After(waitBoundedFor):
+		t.Fatalf("%s: still waiting after %v", why, waitBoundedFor)
+	}
+}
+
 // lockFree reports whether a new session would get the profile lock now.
 func lockFree(t *testing.T, path string) bool {
 	t.Helper()
@@ -617,6 +632,13 @@ func TestWatchdogAbandonedSessionStartsNoQuitAndLatchesTheLock(t *testing.T) {
 			f := syncingFake()
 			f.quitAll = true
 			atS8, unblock := make(chan struct{}), make(chan struct{})
+			// Every wait below is bounded, so a session that never gets where the test holds it
+			// fails the test by name instead of hanging the package until the run's time limit
+			// (found when a loaded unfiltered run hung here for 60 minutes); a test that fails
+			// lets the held session go, so it does not hold the lock after.
+			var unblockOnce sync.Once
+			release := func() { unblockOnce.Do(func() { close(unblock) }) }
+			t.Cleanup(release)
 			var once sync.Once
 			f.probeHook = func(name string) {
 				if name == "idle" && f.started {
@@ -637,7 +659,7 @@ func TestWatchdogAbandonedSessionStartsNoQuitAndLatchesTheLock(t *testing.T) {
 				sres = runSession(context.Background(), d)
 				return sres.result()
 			})
-			<-atS8
+			waitBounded(t, atS8, "the session never reached S8, where this test holds it (under load it may have missed the watchdog's 300 ms budget and ended before S8)")
 			if res.Outcome != OutcomeInternalError {
 				t.Errorf("the watchdog returned %q at its budget, want internal-error", res.Outcome.Name)
 			}
@@ -653,11 +675,11 @@ func TestWatchdogAbandonedSessionStartsNoQuitAndLatchesTheLock(t *testing.T) {
 				if lockFree(t, lockPath) {
 					t.Error("the lock was freed by the caller alone while the abandoned session still ran")
 				}
-				close(unblock)
-				<-sessionDone
+				release()
+				waitBounded(t, sessionDone, "the abandoned session never returned once let go")
 			} else {
-				close(unblock)
-				<-sessionDone
+				release()
+				waitBounded(t, sessionDone, "the abandoned session never returned once let go")
 				time.Sleep(100 * time.Millisecond) // let the watchdog's goroutine record the return
 				if lockFree(t, lockPath) {
 					t.Error("the lock was freed by the session's return alone, before the caller's read ended")

@@ -15,6 +15,7 @@ import (
 	"fmt"
 	"os"
 	"strings"
+	"sync"
 	"time"
 )
 
@@ -26,6 +27,9 @@ var ErrHeld = errors.New("held by another run")
 
 // Lock is a held lock.
 type Lock struct {
+	// mu guards f: a run's archive guard may give up a slow StillHeld at a cancel (1.7.2,
+	// MA-1460) and let it finish while the run releases the lock.
+	mu    sync.Mutex
 	f     *os.File
 	path  string
 	nonce string // this holder's random identity, stamped into the file content
@@ -118,7 +122,12 @@ const maxVerbLen = 24
 // process holds it, which is why holders are always re-verified by locking,
 // never by reading.
 func (l *Lock) Release() error {
-	if l == nil || l.f == nil {
+	if l == nil {
+		return nil
+	}
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	if l.f == nil {
 		return nil
 	}
 	err := unlock(l.f)
@@ -127,11 +136,19 @@ func (l *Lock) Release() error {
 	return err
 }
 
+// holding says the lock has not been released. The file is read after it, outside mu, so a slow
+// read never holds up a Release.
+func (l *Lock) holding() bool {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	return l.f != nil
+}
+
 // StillHeld verifies the held lock is still the file at its path: if the lock
 // file was removed or replaced (another process could then hold a fresh one),
 // it returns an error naming that, so the run can stop rather than race.
 func (l *Lock) StillHeld() error {
-	if l == nil || l.f == nil {
+	if l == nil || !l.holding() {
 		return errors.New("lock not held")
 	}
 	// Compare CONTENT, not inode/file-id. On Windows an open file can be neither
@@ -141,12 +158,52 @@ func (l *Lock) StillHeld() error {
 	// in-place overwrite that kept the same inode was previously invisible.
 	data, err := os.ReadFile(l.path)
 	if err != nil {
-		return fmt.Errorf("lock %s was removed during the run (%v): stopping so two runs cannot overlap; run again", l.path, err)
+		return &LostError{Path: l.path, Err: err}
 	}
 	if !bytes.Contains(data, []byte("nonce="+l.nonce)) {
-		return fmt.Errorf("lock %s was replaced during the run: stopping so two runs cannot overlap; run again", l.path)
+		return &LostError{Path: l.path}
 	}
 	return nil
+}
+
+// LostError is StillHeld's answer when the lock file at its path is no longer this holder's,
+// or could not be read to tell. Err is why it could not be read; nil when it was read and holds
+// another holder's mark (it was replaced). Its text is what StillHeld always said. A caller that
+// must tell "not ours" from "could not read" asks Removed, Replaced and Unreadable (the 1.7.2
+// archive guard, the patch review's P1).
+type LostError struct {
+	Path string
+	Err  error
+}
+
+func (e *LostError) Error() string {
+	if e.Err != nil {
+		return fmt.Sprintf("lock %s was removed during the run (%v): stopping so two runs cannot overlap; run again", e.Path, e.Err)
+	}
+	return fmt.Sprintf("lock %s was replaced during the run: stopping so two runs cannot overlap; run again", e.Path)
+}
+
+func (e *LostError) Unwrap() error { return e.Err }
+
+// Removed says the lock file is not there: a definite answer that the lock is not this holder's.
+func (e *LostError) Removed() bool { return e.Err != nil && errors.Is(e.Err, os.ErrNotExist) }
+
+// Replaced says the lock file was read and holds another holder's mark: a definite answer.
+func (e *LostError) Replaced() bool { return e.Err == nil }
+
+// Unreadable says the lock file could not be read for another reason (a permission, an I/O error,
+// a network folder reconnecting): no answer about whose it is.
+func (e *LostError) Unreadable() bool { return e.Err != nil && !e.Removed() }
+
+// Short is the lock's sentence without its path, the system's error or the advice: "the lock file
+// was removed during the run" or "… was replaced during the run" (the words a person's message
+// keeps after "Details:", the 1.7.2 friction review's F1 and F6 and its re-walk's G2: the archive's
+// path is beside the message on every surface).
+func (e *LostError) Short() string {
+	if e.Replaced() {
+		return "the lock file was replaced during the run"
+	}
+	return "the lock file was removed during the run"
 }
 
 // acquireGrace and probeGrace are how long a refused tryLock is retried before the lock

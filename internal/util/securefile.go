@@ -8,6 +8,7 @@ import (
 	"path/filepath"
 	"runtime"
 	"sync"
+	"syscall"
 )
 
 // createTemp and syncDirFn are the temp-create and directory-sync steps of the
@@ -51,6 +52,33 @@ func WriteSecretFileAtomic0600(path string, data []byte) error {
 // file), and a SACL holding one mandatory label, Medium (ME), with no-read-up,
 // no-write-up and no-execute-up (NR, NW, NX).
 const secretFileLabel = "S:(ML;;NRNWNX;;;ME)"
+
+// LabelRefused says cause, the system's error under a SecretCreateRefused error, is Windows
+// refusing the label itself: ERROR_PRIVILEGE_NOT_HELD (1314, what a program gets when the label is
+// above what it may set), ERROR_NOT_SUPPORTED (50) or ERROR_INVALID_PARAMETER (87) (what a file
+// system that keeps no labels may give). Any other error (a sharing violation, a full disk) is not
+// about the label, and a writer asks once more before it gives the protection up (the 1.7.2 final
+// check's security-3). The codes are compared by number, so a test on any system can stand one in.
+func LabelRefused(cause error) bool {
+	for _, code := range []syscall.Errno{1314, 50, 87} {
+		if errors.Is(cause, code) {
+			return true
+		}
+	}
+	return false
+}
+
+// SecretCreateRefused says err is WriteSecretFileAtomic0600's refusal to create a secret file
+// with its protecting label (on Windows, createSecretTemp's "createsecret" error: a file system
+// that keeps no labels, or a process below Medium integrity), and gives the folder and the
+// system's own words: such a secret is not written at all.
+func SecretCreateRefused(err error) (dir string, cause error, ok bool) {
+	var pe *os.PathError
+	if errors.As(err, &pe) && pe.Op == "createsecret" {
+		return filepath.Dir(pe.Path), pe.Err, true
+	}
+	return "", nil, false
+}
 
 func writeAtomic(path string, data []byte, pattern string, create func(dir, pattern string) (*os.File, error)) error {
 	dir := filepath.Dir(path)

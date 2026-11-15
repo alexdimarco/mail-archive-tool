@@ -86,6 +86,8 @@ type Store struct {
 	opts LoadOptions
 
 	ptr       Pointer             // the last committed pointer (Gen 0: none yet)
+	ptrSum    [32]byte            // SHA-256 of the record pointer file's bytes last read at open or written at a commit
+	ptrKnown  bool                // whether ptrSum holds such bytes (RecordDigest)
 	attempted uint64              // the highest generation a rename was attempted at
 	sections  map[uint32][32]byte // plaintext digest per manifest section position
 	reseal    map[uint32]bool     // positions loaded from their second copy
@@ -269,6 +271,9 @@ func (s *Store) readPointers() (best Pointer, found, newer bool, err error) {
 		raw, fi, rerr := readFile(s.out, name, MaxPointerSize)
 		if errors.Is(rerr, fs.ErrNotExist) {
 			continue
+		}
+		if rerr == nil && name == PointerName {
+			s.ptrSum, s.ptrKnown = sha256.Sum256(raw), true
 		}
 		if rerr == nil {
 			if _, gen, perr := Peek(raw); errors.Is(perr, ErrNewerFormat) {
@@ -864,6 +869,13 @@ func (s *Store) writeEnvelope() error {
 	return writeFile(s.out, EnvelopeName, b, time.Time{})
 }
 
+// RecordDigest is the SHA-256 of the record pointer file's (PointerName's) bytes as this store
+// last read them at open or wrote them at a commit, and false when it did neither (a new
+// archive's first commit not made yet). A run whose lock is no longer its own compares the file
+// with it: the same bytes mean the folder still holds the archive the run read or wrote (the
+// 1.7.2 archive guard). Nothing is decrypted to compare.
+func (s *Store) RecordDigest() ([32]byte, bool) { return s.ptrSum, s.ptrKnown }
+
 // Commit is the sealed save (state.Persister): changed sections sealed twice
 // under fresh names, the lock re-proved, the pointer renamed into place [COMMIT],
 // the mirror, then the inventory. Nothing is deleted (P2b-C9).
@@ -953,6 +965,7 @@ func (s *Store) Commit(v state.View) error {
 	}
 	// [COMMIT]: the primary pointer names the new record.
 	landed = true
+	s.ptrSum, s.ptrKnown = sha256.Sum256(raw), true
 	prevLive := s.prevLive
 	s.ptr, s.sections, s.reseal, s.commits, s.fixedTime = p, digests, map[uint32]bool{}, s.commits+1, mt
 	s.walkDone = map[string]time.Time{}
