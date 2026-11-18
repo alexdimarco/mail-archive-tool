@@ -262,8 +262,14 @@ func dropSharedNames(n int, name func(int) *string) {
 // a documented limit (LOW, the lead's call of 2026-11-09), since Unicode gives no normalisation for
 // them and two real Thunderbird accounts rarely differ that way.
 func tbNameKey(s string) string {
-	s = norm.NFKC.String(CleanFolderName(s))
-	return norm.NFKC.String(cases.Fold().String(s))
+	return TBTextKey(CleanFolderName(s))
+}
+
+// TBTextKey is the comparison tbNameKey makes, on s as given: NFKC, Unicode case folding and NFKC
+// again, with no cleaning and no cap. The wizard's list of found mailboxes compares its whole rows
+// by it (MA-1464): a row longer than TBNameMax must still differ from one that adds " (2)" to it.
+func TBTextKey(s string) string {
+	return norm.NFKC.String(cases.Fold().String(norm.NFKC.String(s)))
 }
 
 // tbFallbackKeys are the words an account with no name is said by, as tbNameKey keys them.
