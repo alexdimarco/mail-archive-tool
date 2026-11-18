@@ -374,3 +374,82 @@ Files are in `/Users/alex.dimarco/repositories/mail-archive-tool/.claude/worktre
 | R2-04 | Documented residual | MA-1462 names it: a profile copied whole into a second Thunderbird folder, both copies changed the same day, reads alike but for " (2)"; on Windows a long row's end, where the date sits, is not drawn (MA-1467). | — | — |
 | PRV-01 addendum | Recorded | MA-1462's exposure sentence now names the "last changed" dates too. | — | — |
 | MAP-01a/b on macOS | No change | As the reviewer says, those two attack tests feed a Linux answer into a macOS run, where the rule is off by design; the rule itself is proven with `transcoded` set. | — | — |
+
+---
+
+## Final look, round 3 (the reviewer, 2026-11-18)
+
+*The same reviewer re-ran its attack files on commit 615ecb0 (the round-2 fold and the friction
+re-walk's fold) and tried to break the new "Older copy:" and ASCII-uniqueness code. Its report,
+word for word:*
+
+**Verdict: NOT CLEAN (0 HIGH, 1 MEDIUM, 1 LOW, 2 INFO).** R2-01, R2-02 and R2-03 are closed. Two new problems come from the "Older copy:" logic: it calls mailboxes copies when they are not (R3-02), and a file dated in the future makes the copy in use read as the older one (R3-01). No product code was changed.
+
+## Re-run on 615ecb0
+
+One run of `go -C <copy> test -count=1 -run TestAtk -v ./internal/wizard/`, exit 1. I started it only after the other session's `go test -p 4` had ended. Free memory was 56%. That session was compiling a Windows test binary and starting the VM at the time, and its note expected the reviewer's targeted tests alongside.
+
+- **Turned green:**
+  - R2-01: 19,083 counts under the race, none read outside the store; FS-01: 3,958 counts.
+  - R2-02, after the new call shape `answerMayBeTranscoded("linux")`: José's "?" answer gives José's store, and All's gives All.
+  - R2-03: a time ahead of the clock now carries its year ("Dec 25, 2026").
+  - SPF-01, 03, 04 and 05, and every held test from rounds 1 and 2.
+- **Two adjustments beyond call shapes, said openly:**
+  - R2-02's per-locale loop is gone, because the function no longer reads the locale.
+  - R2-03's check was too narrow (it wanted "today" or "later"); it now checks the substance, that the words carry the year.
+- **Still red:**
+  - **SPF-02**, the "one profile copied whole, changed the same day" case: the two rows differ only by " (2)". This is documented as the last resort (R3-04).
+  - **MAP-01a and MAP-01b** are test artifacts on macOS, not product faults. Both feed a Linux-style answer to a macOS run. MAP-01b also builds Linux labels, which now carry the extra " (2)" for rows alike in ASCII, then answers the macOS list with them. The Linux path itself is checked by R2-02, which is green.
+  - **FS-04** (the older Evolution named-pipe hang), as expected.
+
+## Findings
+
+### R3-02 (MEDIUM): "Older copy:" is said of mailboxes that are not copies
+
+- **Claim:** any two Thunderbird rows from two profiles whose words read alike get the label, by date alone (`picker.go:508-510`). But rows that read alike are often different mailboxes:
+  - Every profile has its own Local Folders, named "Local Folders", holding its own mail. Feed accounts are the same.
+  - Two different Gmail accounts said by their folder both read "imap.gmail.com".
+- **Reproduction:** `TestAtkR3_02_TwoProfilesOwnMailboxesAreCalledCopies`, RED:
+  - `"Older copy: Local Folders (5.0 MB, last changed Mar 9)"`: a work profile's own Local Folders with 5 MB of its own mail.
+  - `"Older copy: imap.gmail.com (9.0 MB, last changed Mar 9)"`: a different account.
+  - Positive twin, green: one profile alone gets no such label.
+- **Why MEDIUM:** MailArchive's own words falsely call a distinct mailbox a duplicate, in a case anyone with two profiles hits (Local Folders). That invites leaving it out of a single-row pick. The row still maps to its own mailbox, and "All of them" still includes it.
+- **Fix:** say "Older copy:" only when both rows are the same account by its settings (the same type, other than none or rss, the same hostname and the same name, read with certainty). Never say it for Local Folders, feeds, or rows said by their folder. Otherwise keep round 2's neutral "last changed" and profile words.
+
+### R3-01 (LOW): a stale copy holding one file dated in the future makes the copy in use the "Older copy:"
+
+- **Claim:** "newest" is the latest file time, summaries and .dat files included (`picker.go:286`). A copy is older than any copy with a later time (`:491-510`), and the newest sorts first (`:652`). A time after now counts as later.
+- **Reproduction:** `TestAtkR3_01_ACopyDatedAheadOfTheClockCallsTheCopyInUseOlder`, RED. With the stale copy's INBOX.msf dated 2031, the rows are `"qzsam.walker@gmail.com (6.3 MB, last changed Jan 1, 2031)"` (the stale copy, first) and `"Older copy: qzsam.walker@gmail.com (14 MB, last changed today)"` (the copy in use). Positive twin, green: with the stale copy dated 2024, it is the older copy.
+- **Weight:** needs a planted time or a profile carried over from a computer whose clock ran ahead. A person following the label backs up the stale copy, and later runs keep doing so.
+- **Fix:** treat times after now as unknown when choosing the newest copy and the older ones.
+
+### R3-03 (INFO, by design): a summary file rewritten today dates a stale copy
+
+`TestAtkR3Info_ASummaryWrittenTodayDatesAStaleCopy` (log only): the stale copy's INBOX.msf written today makes it lead, and the copy in use, last changed yesterday, becomes `"Older copy: … (14 MB, last changed yesterday)"`. This is the R2-F4 design. It needs write access to the stale profile, or a program that opened it.
+
+### R3-04 (INFO, documented residual)
+
+One profile copied whole and changed the same day: no profile words, only " (2)", as MA-1462 states.
+
+## Held
+
+- **`TestAtkR3Held_OlderCopyWordsAndASCIIUniqueness`:**
+  - "Older copy", in any case or with look-alike letters ("0lder copy", "Oider c0py", "older  copy"), as an account name, folder or Evolution store, never starts a row with "Older copy:".
+  - Across 800 random Linux lists, every row's ASCII form is its own and differs from the All row's. Each row's exact and ASCII answers give that row.
+  - "Older copy:" appears only on a Thunderbird row with a later row of the same words, and rows that read alike come newest first.
+- **Earlier held tests:** the R2 held tests (prefixes, right-to-left, look-alikes, storeUnused) and all round-1 held tests are green. The FS-02 and FS-03 timings are unchanged.
+- **Windows path handling (read, not run):** `root.Lstat` on the slash paths that `fs.WalkDir` gives works on Windows, because `os.Root` splits on both "/" and "\" (Go 1.26.0 `os/path_windows.go:19-22`, `os/root.go:301-330`).
+- **"Thunderbird is a program only through its mail accounts" (`picker.go:455-465`):** checked by reading, plus the fold's own Local Folders and Outlook test.
+
+New attack file: `/Users/alex.dimarco/repositories/mail-archive-tool/.claude/worktrees/picker-adv/internal/wizard/zz_attack_picker_r3_test.go`. I also edited `/Users/alex.dimarco/repositories/mail-archive-tool/.claude/worktrees/picker-adv/internal/wizard/zz_attack_picker_r2_test.go` as described. Both are untracked with no covers marker.
+
+Counters: date 2026-11-18. Register: finding. Touched: those two files only. Persona: none. Source reached: `picker.go` at 615ecb0 and the Go 1.26.0 Windows path source. Not run: Linux, Windows.
+
+## Fold, round 3 (the lead, 2026-11-18)
+
+| ID | Verdict | Change | Tombstone test | Mutation |
+|---|---|---|---|---|
+| R3-02 | Fixed as suggested | "Older copy:" only for copies of one account: rows said by the account's name (read with certainty), of a mail account (never type none or rss: Local Folders, feeds), whose settings name the same server (`pickRow.host`, from `ReadStoreFacts`' account), in two profiles. Rows that merely read alike keep the neutral "last changed" and profile words. | `TestOnlyCopiesOfOneAccountAreCalledOlder`: each profile's own Local Folders, two accounts said by one folder name, one name on two servers; positive twin, one account in two profiles | P1, P4 |
+| R3-01 | Fixed as suggested | A time after now is not known: it makes no copy the newest and none older, and sorts as no time. Its words still carry the year (R2-03). | `TestOnlyCopiesOfOneAccountAreCalledOlder` (a stale copy whose summary is dated 2031) | P2, P3 |
+| R3-03 | By design; recorded | MA-1462 says it: a stale copy whose summary another program rewrote today reads as newest (R2-F4's trade; it needs another program to open the stale profile, or write access to it). | — | — |
+| R3-04 | Documented residual | As MA-1462 states. | — | — |

@@ -148,10 +148,13 @@ type pickRow struct {
 	// evolution: an Evolution store (source.IsEvolutionStore), said as Evolution's when another
 	// program's mailboxes are listed too.
 	evolution bool
-	size      int64     // bytes on this computer (storeSize)
-	sized     bool      // size was counted
-	floor     bool      // the count stopped early: size is at least
-	changed   time.Time // when the newest of the files counted last changed; zero when none was
+	// host is the server of the Thunderbird account that owns exactly this folder, as its settings
+	// say ("" when none can be told): two rows are copies of one account only when it is the same.
+	host    string
+	size    int64     // bytes on this computer (storeSize)
+	sized   bool      // size was counted
+	floor   bool      // the count stopped early: size is at least
+	changed time.Time // when the newest file in the folder last changed; zero when none was
 }
 
 // gatherPickRows reads what the list says of each mailbox found, in found's order. The sizes are
@@ -185,7 +188,7 @@ func gatherPickRow(p string, deadline time.Time, entryMax int) pickRow {
 		kind, isMatch := thunderbird.NoAccountKindOf(err)
 		switch {
 		case f.Account != nil && f.Whole:
-			r.name = f.Name
+			r.name, r.host = f.Name, f.Account.Hostname
 			switch f.Account.Type {
 			case "none", "rss":
 				r.group = groupTBLocal
@@ -487,8 +490,7 @@ func pickIdents(rows []pickRow, now time.Time) []pickIdent {
 			profiles[k][r.profile] = true
 		}
 	}
-	sameDay := map[string][]int{}    // (row words, changed words) → those rows, of two profiles
-	newest := map[string]time.Time{} // row words → the newest copy's time
+	sameDay := map[string][]int{} // (row words, changed words) → those rows, of two profiles
 	for i, r := range rows {
 		if r.tb && len(profiles[head(i)]) > 1 {
 			if !r.changed.IsZero() {
@@ -496,17 +498,40 @@ func pickIdents(rows []pickRow, now time.Time) []pickIdent {
 			}
 			k := head(i) + "\x00" + out[i].changed
 			sameDay[k] = append(sameDay[k], i)
-			if r.changed.After(newest[head(i)]) {
-				newest[head(i)] = r.changed
+		}
+	}
+	// A copy of one account that changed on an earlier day than its newest copy starts "Older copy:
+	// ", which Windows never cuts (the friction re-walk's R2-F1); the list puts the newest first.
+	// Copies of one account only: rows said by the account's name, of a mail account (never Local
+	// Folders or feeds), whose settings name the same server, in two profiles; rows that merely read
+	// alike, such as each profile's own Local Folders or two accounts said by one folder name, are
+	// different mailboxes and keep the neutral words (the adversarial pass round 3's R3-02). A time
+	// after now is not known, so it makes no copy the newest and none older (R3-01). A folder no
+	// account uses is never a copy here (it has no account).
+	known := func(t time.Time) bool { return !t.IsZero() && !t.After(now) }
+	copyOf := func(i int) (string, bool) {
+		r := rows[i]
+		if !r.tb || out[i].kind != identName || r.group != groupTBMail || r.host == "" || !known(r.changed) {
+			return "", false
+		}
+		return head(i) + "\x00" + state.TBTextKey(r.host), true
+	}
+	copies := map[string]map[string]bool{} // copy key → the profiles holding it
+	newest := map[string]time.Time{}       // copy key → its newest copy's time
+	for i := range rows {
+		if k, ok := copyOf(i); ok {
+			if copies[k] == nil {
+				copies[k] = map[string]bool{}
+			}
+			copies[k][rows[i].profile] = true
+			if rows[i].changed.After(newest[k]) {
+				newest[k] = rows[i].changed
 			}
 		}
 	}
-	// A copy changed on an earlier day than the newest copy of the same words starts "Older copy: ",
-	// which Windows never cuts (the friction re-walk's R2-F1); the list puts the newest first. A
-	// folder no account uses keeps its own start (rowHead says that first).
-	for i, r := range rows {
-		if r.tb && !r.changed.IsZero() && len(profiles[head(i)]) > 1 {
-			if n := newest[head(i)]; out[i].changed != pickChangedWords(n, now) && r.changed.Before(n) {
+	for i := range rows {
+		if k, ok := copyOf(i); ok && len(copies[k]) > 1 {
+			if n := newest[k]; out[i].changed != pickChangedWords(n, now) && rows[i].changed.Before(n) {
 				out[i].older = true
 			}
 		}
@@ -634,10 +659,18 @@ func pickRowText(r pickRow, id pickIdent, goos string) string {
 // " (3)" and so on (MA-1464). When the mailboxes found belong to more than one of Outlook,
 // Thunderbird and Evolution, Outlook's and Evolution's rows start with their program's name.
 func pickList(rows []pickRow, goos string) (labels, paths []string) {
-	idents := pickIdents(rows, pickNow())
+	now := pickNow()
+	idents := pickIdents(rows, now)
 	order := make([]int, len(rows))
 	for i := range order {
 		order[i] = i
+	}
+	// A time after now is not known (R3-01): it sorts as no time.
+	known := func(t time.Time) time.Time {
+		if t.After(now) {
+			return time.Time{}
+		}
+		return t
 	}
 	sort.SliceStable(order, func(a, b int) bool {
 		ra, rb := rows[order[a]], rows[order[b]]
@@ -647,9 +680,9 @@ func pickList(rows []pickRow, goos string) (labels, paths []string) {
 		if ka, kb := state.TBTextKey(idents[order[a]].text), state.TBTextKey(idents[order[b]].text); ka != kb {
 			return ka < kb
 		}
-		// Copies of one account: the newest first, so the one in use leads (R2-F1).
-		if !ra.changed.Equal(rb.changed) {
-			return ra.changed.After(rb.changed)
+		// Rows that read alike: the newest first, so the copy in use leads (R2-F1).
+		if ta, tb := known(ra.changed), known(rb.changed); !ta.Equal(tb) {
+			return ta.After(tb)
 		}
 		return ra.path < rb.path
 	})

@@ -606,6 +606,89 @@ func TestOneAddressInTwoProfilesSaysWhichChangedLast(t *testing.T) {
 	}
 }
 
+// covers: MA-1462
+// "Older copy:" is said only of copies of one account: rows said by the account's name, of a mail
+// account, whose settings name the same server, in two profiles. Rows that merely read alike are
+// different mailboxes and keep the neutral date words (the adversarial pass round 3's R3-02): each
+// profile's own Local Folders, two accounts said by one folder name, and one name on two servers. A
+// time after now is not known, so a copy dated ahead of the clock makes the copy in use neither older
+// nor second (R3-01). Positive twin first: one account in two profiles, the old copy untouched since
+// 2024, is the older copy.
+func TestOnlyCopiesOfOneAccountAreCalledOlder(t *testing.T) {
+	now := time.Date(2026, 11, 18, 12, 0, 0, 0, time.UTC)
+	old := pickNow
+	pickNow = func() time.Time { return now }
+	t.Cleanup(func() { pickNow = old })
+	date := func(store string, when time.Time) {
+		t.Helper()
+		for _, f := range []string{"INBOX", "INBOX.msf"} {
+			if err := os.Chtimes(filepath.Join(store, f), when, when); err != nil {
+				t.Fatal(err)
+			}
+		}
+	}
+	march := time.Date(2026, 3, 9, 8, 0, 0, 0, time.UTC)
+	two := func(t *testing.T, a []string, relA string, b []string, relB string, sizeA, sizeB int64) []string {
+		t.Helper()
+		root := t.TempDir()
+		pa := pickProfile(t, root, "a1b2c3d4.default-release", a, pickStore{relA, sizeA})
+		pb := pickProfile(t, root, "x7y8z9w0.default", b, pickStore{relB, sizeB})
+		found := []string{filepath.Join(pa, filepath.FromSlash(relA)), filepath.Join(pb, filepath.FromSlash(relB))}
+		date(found[0], now.Add(-time.Hour))
+		date(found[1], march)
+		got, _ := labelsOf(t, found)
+		return got
+	}
+	account := func(host, name string) []string {
+		lines := []string{`user_pref("mail.accountmanager.accounts", "account1");`}
+		return append(lines, pickServer("1", "imap", host, "ImapMail/"+host, name)...)
+	}
+
+	gmail := "ImapMail/imap.gmail.com"
+	got := two(t, account("imap.gmail.com", "qzsam.walker@gmail.com"), gmail, account("imap.gmail.com", "qzsam.walker@gmail.com"), gmail, 14_000_000, 6_300_000)
+	want := []string{"qzsam.walker@gmail.com (14 MB, last changed today)", "Older copy: qzsam.walker@gmail.com (6.3 MB, last changed Mar 9)"}
+	if !reflect.DeepEqual(got, want) {
+		t.Fatalf("positive twin: one account in two profiles:\n got %q\nwant %q", got, want)
+	}
+
+	localFolders := []string{`user_pref("mail.accountmanager.accounts", "account1");`}
+	localFolders = append(localFolders, pickServer("1", "none", "Local Folders", "Mail/Local Folders", "Local Folders")...)
+	for _, c := range []struct {
+		what string
+		got  []string
+		want []string
+	}{
+		{"each profile's own Local Folders", two(t, localFolders, "Mail/Local Folders", localFolders, "Mail/Local Folders", 0, 5_000_000),
+			[]string{"Local Folders (empty, last changed today)", "Local Folders (5.0 MB, last changed Mar 9)"}},
+		{"two accounts said by one folder name", two(t, account("imap.gmail.com", ""), gmail, account("imap.gmail.com", ""), gmail, 14_000_000, 9_000_000),
+			[]string{"imap.gmail.com (14 MB, last changed today)", "imap.gmail.com (9.0 MB, last changed Mar 9)"}},
+		{"one name on two servers", two(t, account("imap.qz-a.example", "Work"), "ImapMail/imap.qz-a.example", account("imap.qz-b.example", "Work"), "ImapMail/imap.qz-b.example", 14_000_000, 9_000_000),
+			[]string{"Work (14 MB, last changed today)", "Work (9.0 MB, last changed Mar 9)"}},
+	} {
+		if !reflect.DeepEqual(c.got, c.want) {
+			t.Errorf("%s: never an older copy:\n got %q\nwant %q", c.what, c.got, c.want)
+		}
+	}
+
+	// The stale copy holds a summary dated 2031: that time is not known, so neither copy is the
+	// older one, and the copy in use still comes first.
+	root := t.TempDir()
+	inUse := pickProfile(t, root, "a1b2c3d4.default-release", account("imap.gmail.com", "qzsam.walker@gmail.com"), pickStore{"ImapMail/imap.gmail.com", 14_000_000})
+	stale := pickProfile(t, root, "0a0a0a0a.default", account("imap.gmail.com", "qzsam.walker@gmail.com"), pickStore{"ImapMail/imap.gmail.com", 6_300_000})
+	found := []string{filepath.Join(inUse, "ImapMail", "imap.gmail.com"), filepath.Join(stale, "ImapMail", "imap.gmail.com")}
+	date(found[0], now.Add(-time.Hour))
+	date(found[1], march)
+	ahead := time.Date(2031, 1, 1, 9, 0, 0, 0, time.UTC)
+	if err := os.Chtimes(filepath.Join(found[1], "INBOX.msf"), ahead, ahead); err != nil {
+		t.Fatal(err)
+	}
+	got, paths := labelsOf(t, found)
+	want = []string{"qzsam.walker@gmail.com (14 MB, last changed today)", "qzsam.walker@gmail.com (6.3 MB, last changed Jan 1, 2031)"}
+	if !reflect.DeepEqual(got, want) || paths[0] != found[0] {
+		t.Errorf("a copy dated ahead of the clock:\n got %q (%q)\nwant %q", got, paths, want)
+	}
+}
+
 // covers: MA-1463
 // A folder no live Thunderbird account uses now, which the list says is not in Thunderbird, is not
 // asked to prepare its download, since no account would download into it (the friction review's F3):
