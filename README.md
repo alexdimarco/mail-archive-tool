@@ -138,7 +138,9 @@ MailArchive Desktop, not the wizard). It walks you through:
    replaced), *Repair the scheduled backup*, which re-installs it from this copy
    of the program.
 1. **Source** — **Auto-detect my mailboxes** (Outlook, Thunderbird and Evolution
-   stores; pick one, or *All of them (and any added later)*), or choose a type:
+   stores, each listed by the name its mail program shows — for Thunderbird
+   usually the email address — with how much of it is on this computer; pick
+   one, or *All of them (and any added later)*), or choose a type:
    Outlook `.pst`/`.ost` file, Thunderbird/mbox folder, Evolution store (Linux),
    a single mbox file, or — on Windows with classic Outlook — **Outlook account
    (via Outlook app)**, which has Outlook export each account to a `.pst` first

@@ -38,6 +38,9 @@ const (
 	pickAgain = "Nothing was chosen. Choose one line in the list, then click OK."
 	// notInThunderbird starts the row of a Thunderbird folder no account uses now (MA-1463).
 	notInThunderbird = "Not in Thunderbird now: "
+	// olderCopy starts the row of an account's copy, in a second Thunderbird profile, that changed on
+	// an earlier day than another copy (MA-1462; the friction re-walk's R2-F1).
+	olderCopy = "Older copy: "
 	// pickTries is how many times the list is shown before the wizard stops, when its answer
 	// keeps naming no row (a dialog program that answers nothing, never a person clicking).
 	pickTries = 10
@@ -73,7 +76,7 @@ func pickAutoInputs(found []string) ([]string, bool, error) {
 	rows := gatherPickRows(found, time.Now().Add(sizeBudget), sizeEntryMax)
 	labels, paths := pickList(rows, runtime.GOOS)
 	items := append([]string{allOfThem}, labels...)
-	transcoded := answerMayBeTranscoded(runtime.GOOS, os.Getenv)
+	transcoded := answerMayBeTranscoded(runtime.GOOS)
 	for try := 1; ; try++ {
 		answer, err := listDialog(pickPrompt, items, zenity.Title(appTitle), zenity.DefaultItems(allOfThem), zenity.DisallowEmpty())
 		if err != nil {
@@ -230,9 +233,9 @@ func storeUnused(store string) bool {
 // goes through an os.Root opened on the folder, so a folder below swapped for a link while it counts
 // is never followed out of the store (the adversarial pass's FS-01). The count stops after entryMax
 // entries or at deadline (checked at each entry), and then says at least (floor); something below
-// that cannot be read is left out and makes the count at least too. newest is when the newest of the
-// files counted last changed (zero when none was), which tells apart two copies of one account
-// (pickIdents).
+// that cannot be read is left out and makes the count at least too. newest is when the newest file
+// in the folder last changed, its summaries included (zero when there was none), which tells apart
+// two copies of one account (pickIdents).
 func storeSize(dir string, deadline time.Time, entryMax int) (n int64, newest time.Time, floor, ok bool) {
 	fi, err := os.Lstat(dir)
 	if err != nil || !fi.IsDir() || !time.Now().Before(deadline) {
@@ -267,19 +270,27 @@ func storeSize(dir string, deadline time.Time, entryMax int) (n int64, newest ti
 				return filepath.SkipDir
 			}
 		case d.Type().IsRegular():
-			switch strings.ToLower(filepath.Ext(d.Name())) {
-			case ".msf", ".dat":
-				return nil
-			}
-			info, err := d.Info()
+			// Each size and time is read through the root too, by the file's path inside it, never
+			// by its whole path again: a folder above it swapped for a link after it was listed is
+			// refused, not followed (the adversarial pass round 2's R2-01; d.Info() looks the file up
+			// by its joined path).
+			info, err := root.Lstat(p)
 			if err != nil {
 				floor = true
 				return nil
 			}
-			n += info.Size()
+			// The newest time is every file's, summaries included: Thunderbird rewrites a folder's
+			// .msf as it uses the folder, so the copy in use reads newest even when it keeps no mail
+			// on this computer (the friction re-walk's R2-F4). Summaries and .dat files are not mail,
+			// so they are left out of the size.
 			if t := info.ModTime(); t.After(newest) {
 				newest = t
 			}
+			switch strings.ToLower(filepath.Ext(d.Name())) {
+			case ".msf", ".dat":
+				return nil
+			}
+			n += info.Size()
 		}
 		return nil
 	})
@@ -290,7 +301,9 @@ func storeSize(dir string, deadline time.Time, entryMax int) (n int64, newest ti
 }
 
 // pickChangedWords says when t was, seen from now, as a date a person reads: "today", "yesterday",
-// "Nov 3" within now's year, "Mar 2, 2024" before it (in now's time zone).
+// "Nov 3" earlier in now's year, and "Mar 2, 2024" otherwise, a day after today included, so a time
+// ahead of the clock is never read as a past day of this year (the adversarial pass round 2's
+// R2-03). In now's time zone.
 func pickChangedWords(t, now time.Time) string {
 	t = t.In(now.Location())
 	same := func(a, b time.Time) bool {
@@ -303,7 +316,7 @@ func pickChangedWords(t, now time.Time) string {
 		return "today"
 	case same(t, now.AddDate(0, 0, -1)):
 		return "yesterday"
-	case t.Year() == now.Year():
+	case t.Year() == now.Year() && t.Before(now):
 		return t.Format("Jan 2")
 	}
 	return t.Format("Jan 2, 2006")
@@ -360,9 +373,11 @@ type pickIdent struct {
 	own  bool // text is MailArchive's own words ("Folder with no name"), which need no lead word
 	lead bool // a lead word is needed whatever text is (it reads like another row's account name)
 	// changed and hint tell apart Thunderbird rows of two profiles said the same way: when the
-	// copy's mail last changed ("today"), and, when that is the same too, the profile's folder name.
+	// copy last changed ("today"), and, when that is the same too, the profile's folder name. older:
+	// the copy changed on an earlier day than another copy's, so its row starts "Older copy: ".
 	changed string
 	hint    string
+	older   bool
 	// prefix is "Outlook: " or "Evolution: " when another program's mailboxes are listed too
 	// (pickList): the same address kept by two programs then reads apart (the friction review's F1).
 	prefix string
@@ -435,10 +450,12 @@ func pickIdents(rows []pickRow, now time.Time) []pickIdent {
 	// When the mailboxes found belong to more than one of Outlook, Thunderbird and Evolution,
 	// Outlook's and Evolution's rows start with their program's name (the friction review's F1, the
 	// adversarial pass's SPF-03).
+	// Thunderbird counts for its mail accounts only: a Local Folders alone (a Thunderbird never set
+	// up) cannot be taken for an Outlook file (the friction re-walk's R2-F3).
 	programs := map[string]bool{}
 	for _, r := range rows {
 		switch {
-		case r.tb:
+		case r.tb && r.group == groupTBMail:
 			programs["Thunderbird"] = true
 		case r.group == groupOutlook:
 			programs["Outlook"] = true
@@ -470,7 +487,8 @@ func pickIdents(rows []pickRow, now time.Time) []pickIdent {
 			profiles[k][r.profile] = true
 		}
 	}
-	sameDay := map[string][]int{} // (row words, changed words) → those rows, of two profiles
+	sameDay := map[string][]int{}    // (row words, changed words) → those rows, of two profiles
+	newest := map[string]time.Time{} // row words → the newest copy's time
 	for i, r := range rows {
 		if r.tb && len(profiles[head(i)]) > 1 {
 			if !r.changed.IsZero() {
@@ -478,6 +496,19 @@ func pickIdents(rows []pickRow, now time.Time) []pickIdent {
 			}
 			k := head(i) + "\x00" + out[i].changed
 			sameDay[k] = append(sameDay[k], i)
+			if r.changed.After(newest[head(i)]) {
+				newest[head(i)] = r.changed
+			}
+		}
+	}
+	// A copy changed on an earlier day than the newest copy of the same words starts "Older copy: ",
+	// which Windows never cuts (the friction re-walk's R2-F1); the list puts the newest first. A
+	// folder no account uses keeps its own start (rowHead says that first).
+	for i, r := range rows {
+		if r.tb && !r.changed.IsZero() && len(profiles[head(i)]) > 1 {
+			if n := newest[head(i)]; out[i].changed != pickChangedWords(n, now) && r.changed.Before(n) {
+				out[i].older = true
+			}
 		}
 	}
 	for _, idx := range sameDay {
@@ -486,16 +517,22 @@ func pickIdents(rows []pickRow, now time.Time) []pickIdent {
 		}
 		// The part of each profile's folder name after its first dot; where two of those are the
 		// same too (two *.default-release profiles), the whole folder name (the adversarial pass's
-		// SPF-02). Rows still alike after that get " (2)" (pickList).
-		short := map[string]int{}
+		// SPF-02); where even the whole names match (one profile copied whole into a second
+		// Thunderbird folder), no profile words, which would tell nothing (the friction re-walk's
+		// R2-F5). Rows still alike after that get " (2)" (pickList).
+		short, whole := map[string]int{}, map[string]int{}
 		for _, i := range idx {
 			short[profileHint(rows[i].profile, false)]++
+			whole[profileHint(rows[i].profile, true)]++
 		}
 		for _, i := range idx {
-			out[i].hint = profileHint(rows[i].profile, false)
-			if short[out[i].hint] > 1 {
-				out[i].hint = profileHint(rows[i].profile, true)
+			h := profileHint(rows[i].profile, false)
+			if short[h] > 1 {
+				if h = profileHint(rows[i].profile, true); whole[h] > 1 {
+					h = ""
+				}
 			}
+			out[i].hint = h
 		}
 	}
 	return out
@@ -517,7 +554,7 @@ func profileHint(profile string, whole bool) string {
 
 // reservedStarts are the words, as TBTextKey keys them, that only MailArchive's own rows start
 // with: the All row's, a folder no account uses now, the lead words, and the programs' prefixes.
-var reservedStarts = []string{"all of them", "not in thunderbird", "account ", "folder ", "file ", "outlook:", "evolution:"}
+var reservedStarts = []string{"all of them", "not in thunderbird", "account ", "folder ", "file ", "outlook:", "evolution:", "older copy"}
 
 // lookAlike folds the ASCII characters that read as one another in a list row (1, i and | as l; 0
 // as o), so "AII of them" and "A11 of them" start like the All row too (the adversarial pass's
@@ -558,6 +595,8 @@ func rowHead(r pickRow, id pickIdent) string {
 	switch {
 	case r.unused:
 		return notInThunderbird + id.text
+	case id.older:
+		return olderCopy + id.text
 	case id.prefix != "":
 		return id.prefix + id.text
 	case !id.own && (id.lead || needsLead(id.text)):
@@ -608,16 +647,26 @@ func pickList(rows []pickRow, goos string) (labels, paths []string) {
 		if ka, kb := state.TBTextKey(idents[order[a]].text), state.TBTextKey(idents[order[b]].text); ka != kb {
 			return ka < kb
 		}
+		// Copies of one account: the newest first, so the one in use leads (R2-F1).
+		if !ra.changed.Equal(rb.changed) {
+			return ra.changed.After(rb.changed)
+		}
 		return ra.path < rb.path
 	})
+	// Where the answer may come back with "?" for each character outside ASCII (Linux and the BSDs),
+	// rows are made unique by that form too, so every row's answer fits that row alone and none is
+	// left that cannot be chosen (the friction re-walk's R2-F7).
+	transcoded := answerMayBeTranscoded(goos)
 	used := map[string]bool{state.TBTextKey(allOfThem): true, state.TBTextKey(allOfThemBare): true}
+	usedASCII := map[string]bool{asciiForm(allOfThem): true, asciiForm(allOfThemBare): true}
 	for _, i := range order {
 		text := pickRowText(rows[i], idents[i], goos)
 		unique := text
-		for n := 2; used[state.TBTextKey(unique)]; n++ {
+		for n := 2; used[state.TBTextKey(unique)] || transcoded && usedASCII[asciiForm(unique)]; n++ {
 			unique = fmt.Sprintf("%s (%d)", text, n)
 		}
 		used[state.TBTextKey(unique)] = true
+		usedASCII[asciiForm(unique)] = true
 		labels = append(labels, unique)
 		paths = append(paths, rows[i].path)
 	}
@@ -684,22 +733,15 @@ func asciiForm(s string) string {
 	}, s)
 }
 
-// answerMayBeTranscoded reports whether, on goos with the environment getenv, the list's answer may
-// come back in a character set that is not UTF-8: on Linux and the BSDs, where the dialog program
-// prints it, when the locale (LC_ALL, else LC_CTYPE, else LANG; none is "C") does not name UTF-8.
-func answerMayBeTranscoded(goos string, getenv func(string) string) bool {
+// answerMayBeTranscoded reports whether, on goos, the list's answer may come back in a character set
+// that is not UTF-8: on Linux and the BSDs, where the dialog program prints it, whatever the locale's
+// name says. GLib goes by the character set the C library actually loaded, which a locale named UTF-8
+// but not installed, or one named only "UTF-8", leaves at ASCII (the adversarial pass round 2's
+// R2-02), and MailArchive, in pure Go, cannot ask the C library which it is.
+func answerMayBeTranscoded(goos string) bool {
 	switch goos {
 	case "linux", "freebsd", "openbsd", "netbsd", "dragonfly":
-	default:
-		return false
+		return true
 	}
-	locale := "C"
-	for _, v := range []string{"LC_ALL", "LC_CTYPE", "LANG"} {
-		if s := getenv(v); s != "" {
-			locale = s
-			break
-		}
-	}
-	l := strings.ToLower(locale)
-	return !strings.Contains(l, "utf-8") && !strings.Contains(l, "utf8")
+	return false
 }

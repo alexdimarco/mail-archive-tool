@@ -94,6 +94,7 @@ func TestEveryRowIsOneSourceNeverTheAllRowNeverAnOption(t *testing.T) {
 		{"Folder x", "Account Folder x (1.4 MB)"},
 		{"Outlook: qz.ost", "Account Outlook: qz.ost (1.4 MB)"},
 		{"evolution: qz", "Account evolution: qz (1.4 MB)"},
+		{"Older copy: qz", "Account Older copy: qz (1.4 MB)"},
 		// A digit first, then a right-to-left letter: the row would run right to left (SPF-01).
 		{"1שלום@qz.example", "Account 1שלום@qz.example (1.4 MB)"},
 		{"2024 مرحبا", "Account 2024 مرحبا (1.4 MB)"},
@@ -149,9 +150,10 @@ func TestEveryRowIsOneSourceNeverTheAllRowNeverAnOption(t *testing.T) {
 // folding (an answer in NFD for a row in NFC, or in other letter case), of which only one row can
 // match; the All row also by its words without the arrow. "" and any other text map to no row.
 // Where the dialog program may have printed the answer in a character set of ASCII alone (Linux
-// and the BSDs with a locale that does not name UTF-8, GLib 2.84 and older: the adversarial pass's
-// MAP-01), an answer with "?" for each character outside ASCII is the row it fits only when it fits
-// exactly one: the All row ("? All of them …") is then picked, and two rows it fits give no row.
+// and the BSDs, whatever the locale's name: GLib 2.84 and older, the adversarial pass's MAP-01 and
+// round 2's R2-02), an answer with "?" for each character outside ASCII is the row it fits only
+// when it fits exactly one: the All row ("? All of them …") is then picked, and two rows it fits
+// give no row.
 // Positive twin first: each row's exact text gives that row.
 func TestTheAnswerMapsBackToItsRow(t *testing.T) {
 	labels := []string{"café@qz.example (2.0 MB)", "Work (empty)"}
@@ -180,24 +182,29 @@ func TestTheAnswerMapsBackToItsRow(t *testing.T) {
 			t.Errorf("%q (transcoded %v): %d %v %v, want %d %v %v", c.answer, c.transcoded, j, all, ok, c.row, c.all, c.wantOK)
 		}
 	}
-	env := func(m map[string]string) func(string) string { return func(k string) string { return m[k] } }
-	for _, c := range []struct {
-		goos string
-		vars map[string]string
-		want bool
-	}{
-		{"linux", map[string]string{"LANG": "en_CA.UTF-8"}, false},
-		{"linux", map[string]string{"LANG": "de_DE.utf8"}, false},
-		{"linux", map[string]string{}, true},
-		{"linux", map[string]string{"LANG": "C"}, true},
-		{"linux", map[string]string{"LC_ALL": "C", "LANG": "en_CA.UTF-8"}, true},
-		{"freebsd", map[string]string{"LC_CTYPE": "en_US.ISO8859-1", "LANG": "en_US.UTF-8"}, true},
-		{"darwin", map[string]string{}, false},
-		{"windows", map[string]string{}, false},
-	} {
-		if got := answerMayBeTranscoded(c.goos, env(c.vars)); got != c.want {
-			t.Errorf("%s %v: transcoded %v, want %v", c.goos, c.vars, got, c.want)
+	// On Linux and the BSDs, whatever the locale's name: GLib goes by the character set the C library
+	// loaded, which a locale named UTF-8 but not installed leaves at ASCII (round 2's R2-02). macOS's
+	// list (JXA) and Windows' (in the program) give the row as written.
+	for goos, want := range map[string]bool{"linux": true, "freebsd": true, "openbsd": true, "netbsd": true, "dragonfly": true, "darwin": false, "windows": false} {
+		if got := answerMayBeTranscoded(goos); got != want {
+			t.Errorf("%s: transcoded %v, want %v", goos, got, want)
 		}
+	}
+	// There, rows alike once each character outside ASCII is "?" are made unique by that form too,
+	// so every row's answer fits it alone (the friction re-walk's R2-F7); elsewhere they stay as they
+	// are.
+	cyr := []pickRow{tbRow("/qz/p1.default", "imap.a.example", "Письма"), tbRow("/qz/p1.default", "imap.b.example", "Работа")}
+	onLinux, _ := pickList(cyr, "linux")
+	if !reflect.DeepEqual(onLinux, []string{"Account Письма (1.4 MB)", "Account Работа (1.4 MB) (2)"}) {
+		t.Fatalf("two names alike in ASCII on Linux: %q", onLinux)
+	}
+	for i, l := range onLinux {
+		if j, all, ok := pickChoice(asciiForm(l), onLinux, true); !ok || all || j != i {
+			t.Errorf("row %q as GLib prints it in ASCII maps to %d %v %v, want %d", l, j, all, ok, i)
+		}
+	}
+	if onMac, _ := pickList(cyr, "darwin"); !reflect.DeepEqual(onMac, []string{"Account Письма (1.4 MB)", "Account Работа (1.4 MB)"}) {
+		t.Errorf("the same names on macOS: %q", onMac)
 	}
 	for _, c := range []struct {
 		answer string
@@ -304,6 +311,22 @@ func TestTheSizeCountsTheMailOnThisComputer(t *testing.T) {
 	}
 	if m := thunderbird.TotalSize(thunderbird.MboxFiles(maildir)); m != 0 {
 		t.Errorf("the model: MboxFiles gives a maildir store %d, the reason it is not used", m)
+	}
+
+	// The newest time is every file's, the summaries' included, while the size leaves them out: a
+	// copy whose mail file is old but whose summary Thunderbird rewrote today is dated today (the
+	// friction re-walk's R2-F4).
+	dated := t.TempDir()
+	pickFile(t, filepath.Join(dated, "INBOX"), 300)
+	pickFile(t, filepath.Join(dated, "INBOX.msf"), 999)
+	mail, summary := time.Date(2023, 1, 5, 9, 0, 0, 0, time.UTC), time.Date(2026, 11, 18, 9, 0, 0, 0, time.UTC)
+	for p, when := range map[string]time.Time{"INBOX": mail, "INBOX.msf": summary} {
+		if err := os.Chtimes(filepath.Join(dated, p), when, when); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if n, newest, _, ok := storeSize(dated, later, sizeEntryMax); n != 300 || !ok || !newest.Equal(summary) {
+		t.Errorf("a summary newer than its mail: %d bytes, newest %v; want 300 and %v", n, newest, summary)
 	}
 
 	if n, _, floor, ok := storeSize(mbox, later, 3); !floor || !ok || n > 600 {

@@ -253,3 +253,145 @@ older than this change and are listed with what each waits on.
 | F12 | Needs the owner's word | Naming the account in the IMAP question (and asking in the list's order) changes two pinned wiring checks: MA-947's `choice := zenity.Question(` with `imapPrepQuestion` and MA-1267's `p, err := prepareThunderbirdGUI(in, &changed)`. The repo's rule is that a pinned test changes only with a human's word, so it is proposed for the next release with the reviewer's words. F3 already removes the question for folders no account uses. | — | — |
 | F13 | The lead's design call, later | Moving the Outlook-app question after the list changes what "All of them" means beside Outlook's profile export. | — | — |
 | F14 | Backlog | — | — | — |
+
+---
+
+## Re-walk after the fold (the reviewer, 2026-11-18)
+
+*The same reviewer re-walked the cells the fold changed, on commit 2217a76. Its report, word for
+word:*
+
+**Verdict: SHIPPABLE.** The fold fixes F1, F3 and F9 on every system, and F2 on the Mac and Linux. Two new medium findings are both Windows estimates that belong with F4's pending screenshot: on Windows the "last changed" date is cut off the row, and the new "Outlook: " start can make two Outlook files look the same.
+
+# Friction re-walk after the fold (2217a76)
+
+Reviewer: the same independent Claude agent as the first walk, not the fold's author. Walked 18 November 2026 on the Mac, in this review's own worktree, checked out detached at 2217a76.
+
+Read for this round:
+- `git diff 9e3feae 2217a76`: `picker.go`, the question loop in `wizard.go`, `source.IsEvolutionStore`, the fold's tests, the catalog and the release notes;
+- the fold table in `docs/review-picker-names-friction.md`;
+- items SPF-01 to SPF-05, MAP-01 and FS-01 in `docs/review-picker-names-adversarial.md`.
+
+**Summary.** On the Mac and Linux, the person can now tell the copy they use apart from an old one. The leftover folder of a removed account no longer gets a pointless question. The Desktop's give-up words are true.
+
+On Windows, the date that tells the copies apart comes after the size, which is the part of the row Windows cuts (estimate). So F2 does not yet reach the biggest user group. The fold table's sentence "F2's words help where the cut leaves the start of each row" does not hold: in every two-profile row walked on Windows, the date was cut.
+
+The fold also added a few new costs, all low or estimates: see R2-F1 to R2-F7.
+
+## Header
+
+| | |
+|---|---|
+| Reviewed commit | 2217a76 (detached), on top of 9e3feae; worktree `.claude/worktrees/picker-fric` |
+| Method | The same walk file, `internal/wizard/zz_friction_picker_test.go` (untracked, not committed), updated as follows. `pickChoice` gets its third argument; on Linux each row is also tried as a non-UTF-8 locale would print it (`asciiForm`, transcoded). The list's clock `pickNow` is fixed at 18 Nov 2026 12:00 local time. File dates are set with `os.Chtimes` so the "last changed" words are realistic. The All-of-them count skips `storeUnused` folders, as the loop now does. Five new cells. No dialog opened, nothing built or run, invented addresses only. Windows widths are the same estimate as before (241-pixel list, recalled Segoe UI widths) |
+| Commands and exit status | `git checkout --detach 2217a76`, `git diff --stat 9e3feae 2217a76`, `git diff 9e3feae 2217a76 -- …`, `git status --short`: exit 0. Another session's full suite (`go test -p 4 ./...`, process 42258) was running when I came to compile, so nothing of mine ran until it ended: I waited with a background wait and `caffeinate -w 42258` (both exit 0). Then `pgrep -l -x go`: 1 (none running). `sysctl -n vm.loadavg`: 0 (5.44). `memory_pressure -Q`: 0 (56% free). `go vet ./internal/wizard/`: 0. `go test -count=1 -run 'TestZZ<NN>' -v ./internal/wizard/` for NN = 04, 05, 06, 07, 14, 19, 15, 16, 17, 18, 20, 01, 02, 03, 08, 09, 10, 11, 12, 13: 20 runs, one at a time, each exit 0, PASS |
+| Cells walked | 22: all 17 from the first walk, plus 5 new (R2-a to R2-e) |
+| Functioning | 12 fully: C1, C3, C3b (estimate), C4, C6a, C7, C8, C11, C12, C14 (its usual state), C15, R2-b. 10 partly: C2, C5 (Windows, estimate), C6b, C9, C10, C13, R2-a (estimate), R2-c, R2-d, R2-e. 0 not. (First walk: 7 fully, 8 partly, 2 not) |
+| High-friction cells | 6. C3 and C10 come from the windows before and after the list (F13, F12), unchanged by this change. C5 on Windows and R2-a are estimates. R2-d and R2-e are rare setups. (First walk: 5) |
+
+## 1. The re-walked cells
+
+Rows are copied as printed; "➤ All of them (and any added later)" is first in every list and left out below. Linux's words equal the Mac's in every cell, so they are given once. Windows rows marked "shows …" are cut there (estimate).
+
+| Cell and the rows printed | Functions? | Finding | New friction |
+|---|---|---|---|
+| **C3. Windows, Outlook and Thunderbird.** Windows: `Outlook: archive.pst (3.9 GB)` · `Outlook: Outlook.pst (763 MB)` · `Outlook: qzsamantha.walker@gmail.com.pst (1.0 GB)` (shows "Outlook: qzsamantha.walker@gmail.com.ps") · `Outlook: samantha.walker@qzcontoso.example.ost (2.7 GB)` (shows "Outlook: samantha.walker@qzcontoso.exa") · `qzsamantha.walker@gmail.com (7.2 GB)` · `samantha.walker@qzcontoso.example (1.8 GB)` (shows "…example (1.8 ") · `Local Folders (empty)`. Mac and Linux: the same words, with 4.2 GB, 800 MB, 1.1 GB, 2.9 GB, 7.7 GB and 1.9 GB. Each row picked through `pickAutoInputs` gave its own folder | Yes (estimate on Windows) | **F1 fixed**: each Outlook row says it is Outlook's, at the start of the row | Long Outlook rows now lose their ".ost"/".pst" and their size on Windows (R2-F2). F13's question still comes first (not changed) |
+| **C3b. The same, with longer addresses.** Windows: `Outlook: qzsamantha.walker.consulting@gmail.com.pst (1.0 GB)` (shows "Outlook: qzsamantha.walker.consulting@g") · `Outlook: samantha.walker@mail.qzuniversity.example.ost (2.7 GB)` (shows "Outlook: samantha.walker@mail.qzuniversit") · `qzsamantha.walker.consulting@gmail.com (7.2 GB)` (shows "qzsamantha.walker.consulting@gmail.com ") · `samantha.walker@mail.qzuniversity.example (1.8 GB)` (shows "samantha.walker@mail.qzuniversity.exampl"), plus archive.pst, Outlook.pst and Local Folders as in C3 | Yes (estimate) | **F1 fixed**: the two pairs that looked the same in the first walk now differ at the start | — |
+| **C4. Linux, Thunderbird and Evolution.** `qzsam.walker@gmail.com (3.0 GB)` · `sam@qzname.example (300 MB)` · `Local Folders (empty)` · `Evolution: On This Computer (4.0 MB)` · `Evolution: sam@qzname.example (200 MB)`. Clicking OK with nothing selected: 2 lists and 1 note, then the row gave its own folder | Yes | **F1 fixed**. "Evolution: On This Computer" is also clearer than before | — |
+| **C5. One address in two profiles, the old copy untouched since 2024.** Mac and Linux: `qzsam.walker@gmail.com (14 GB, last changed today)` · `qzsam.walker@gmail.com (6.3 GB, last changed Mar 2, 2024)` · `sam@qzname.example (480 MB)` · `Local Folders (empty, last changed today)` · `Local Folders (300 MB, last changed Mar 2, 2024)`. Windows: "qzsam.walker@gmail.com (13 GB, last chan" and "qzsam.walker@gmail.com (5.9 GB, last cha"; with a longer address, both rows show only "qzsamantha.walker.consulting@gmail.com ". Both changed today (Mac): `qzsam.walker@gmail.com (14 GB, last changed today, profile default-release)` · `qzsam.walker@gmail.com (6.3 GB, last changed today, profile default)` · `Local Folders (empty, last changed today, profile default-release)` · `Local Folders (300 MB, last changed today, profile default)` | Mac and Linux yes; Windows partly (estimate) | **F2 fixed on the Mac and Linux.** Not on Windows: the date is cut on every two-profile row walked there | R2-F1 (Windows). The same-day rows are long, but are told apart |
+| **C6a. An account removed and added again.** All three systems: `qzsam.walker@gmail.com (nothing downloaded yet)` · `Local Folders (empty)` · `Not in Thunderbird now: imap.gmail.com (6.3 GB)` (Windows says 5.9 GB). `storeUnused` is true for the leftover. "All of them" now asks 1 IMAP question (for imap.gmail-1.com), not 2 | Yes | **F3 fixed** | — |
+| **C6b. The same with three live Google accounts.** Unchanged: `imap.gmail.com (6.3 GB)` · `qzsam.walker@gmail.com (14 GB)` · `qzwalker.family@gmail.com (nothing downloaded yet)` · `sam@qzwalkerdesign.example (1.2 GB)` · `Local Folders (empty)`. `storeUnused` is false, so the leftover is still asked, as the fold intends | Partly | F6: "not taken" in the fold | — |
+| **C14. Ubuntu's snap copy of one profile.** Usual state (Linux): `qzsam.walker@gmail.com (6.3 GB, last changed Apr 20, 2024)` (the old ~/.thunderbird copy, listed first) · `qzsam.walker@gmail.com (6.4 GB, last changed today)` (the snap's) · `Local Folders (empty, last changed Apr 20, 2024)` · `Local Folders (empty, last changed today)`. Day of the move: `qzsam.walker@gmail.com (6.3 GB, last changed today, profile m4n5b6v7.default-release)` · `qzsam.walker@gmail.com (6.4 GB, last changed today, profile m4n5b6v7.default-release)` · `Local Folders (empty, last changed today, profile m4n5b6v7.default-release)` · `Local Folders (empty, last changed today, profile m4n5b6v7.default-release) (2)` | Yes in the usual state; partly on the day of the move | **F2 fixed** where this case lives (Linux) | R2-F5 (the day of the move). The old copy is listed first (R2-F1) |
+| **C15. MailArchive Desktop, "Make a new archive…".** Rows as in C1 (unchanged). A list that keeps answering nothing: 10 lists, 9 notes, and the Desktop line "Could not add an archive: The list of mailboxes did not say which one was chosen, so nothing was exported. Try again, and click one line in the list before you click OK." | Yes | **F9 fixed** | — |
+| **R2-a (new). Windows: one address in an .ost, an older .pst and Thunderbird.** Short address, all rows fit: `Outlook: qzsam@qzco.example.ost (2.7 GB)` · `Outlook: qzsam@qzco.example.pst (1.5 GB)` · `qzsam@qzco.example (1.8 GB)` · `Local Folders (empty)`. Real-length address: `Outlook: samantha.walker@qzcontoso.example.ost (2.7 GB)` and `Outlook: samantha.walker@qzcontoso.example.pst (1.5 GB)` both show only "Outlook: samantha.walker@qzcontoso.exa". By the same estimate, before the fold they showed "…example.ost (" and "…example.pst (" | Partly (estimate) | — | R2-F2 |
+| **R2-b (new). Windows: Outlook, and a Thunderbird never set up (only an empty Local Folders).** `Outlook: archive.pst (3.9 GB)` · `Outlook: qzsamantha.walker@gmail.com.pst (1.0 GB)` (shows "…gmail.com.ps") · `Outlook: samantha.walker@qzcontoso.example.ost (2.7 GB)` (shows "…qzcontoso.exa") · `Local Folders (empty)`. With Outlook alone, there is no "Outlook: " | Yes | — | R2-F3 |
+| **R2-c (new). A hand-edited profile beside a normal one** (Mac): `imap.gmail.com (6.3 GB)` · `Folder Local Folders (300 MB)` · `qzsam.walker@gmail.com (3.0 GB)` · `Local Folders (empty)` | Partly | — | R2-F6 |
+| **R2-d (new). Linux with a locale that does not name UTF-8:** `Account Élise Walker (900 MB)` · `Account Письма (700 MB)` · `Account Работа (700 MB)` · `Local Folders (empty)`. Both Cyrillic rows come back as "Account ?????? (700 MB)", which maps to no row. The All row ("? All of them (and any added later)") and the other rows still map | Partly | — | R2-F7 |
+| **R2-e (new). The copy in use keeps no mail on this computer** (Thunderbird set not to keep messages; its summary files rewritten today) beside an old copy with mail (Mac): `qzsam.walker@gmail.com (nothing downloaded yet, last changed Jan 5, 2023)` (the copy in use) · `qzsam.walker@gmail.com (6.3 GB, last changed Mar 2, 2024)` (the old copy) · `Local Folders (empty, last changed Jan 5, 2023)` · `Local Folders (300 MB, last changed Mar 2, 2024)` | Partly | — | R2-F4 |
+| **Unchanged:** C1, C2, C7, C8, C9, C10, C11, C12 and C13, row for row as in the first walk, on all three systems. C10 still gives five identical IMAP questions (F12, waiting on the owner) | as before | — | None. The look-alike folding (SPF-05) and the right-to-left check (SPF-01) added a lead word to no ordinary name walked (C7, C11) |
+
+## 2. New findings
+
+Grades as before: medium = fix before the public release; low = the lead's call. All of these are Type III (buildable).
+
+**R2-F1 (medium; Windows, estimate). On Windows the "last changed" date is cut, so F2 does not reach the biggest user group.**
+- Where: `internal/wizard/picker.go:573-589` (`pickRowText`).
+- What the person sees: the date sits after the size, which is the part Windows cuts first: "qzsam.walker@gmail.com (13 GB, last chan" next to "qzsam.walker@gmail.com (5.9 GB, last cha". With a real-length address the two rows show the same text. The copies are also listed by folder path, so the old one can come first (C14).
+- Fix: start every copy except the most recently changed one with "Older copy: " (add "older copy" to `reservedStarts`), and list the newest copy first. On the same day, keep today's profile words.
+  - `qzsam.walker@gmail.com (14 GB, last changed today)`
+  - `Older copy: qzsam.walker@gmail.com (6.3 GB, last changed Mar 2, 2024)`
+
+  On Windows the second shows "Older copy: qzsam.walker@gmail.com (5.9", so the word that matters is at the start. This relies on R2-F4, so that "newest" really is the copy in use.
+
+**R2-F2 (medium; Windows, estimate; caused by the fold). "Outlook: " can make two Outlook files of one address look the same.**
+- Where: `internal/wizard/picker.go:449-458`.
+- What the person sees: the start costs 9 characters. An .ost and an older .pst of one real-length address both show "Outlook: samantha.walker@qzcontoso.exa", where before the fold ".ost (" and ".pst (" showed. More Outlook rows also lose their size (C3, R2-b).
+- Fix, with F4 once the screenshot gives the real width: cut an Outlook file's name before its extension, keeping ".ost" or ".pst" and the brackets. At this estimate's 38 characters:
+  - `Outlook: samantha.walke….ost (2.7 GB)`
+  - `Outlook: samantha.walke….pst (1.5 GB)`
+
+**R2-F3 (low). A Thunderbird that was never set up puts "Outlook: " on every Outlook row.**
+- Where: `internal/wizard/picker.go:438-448`. Cell R2-b.
+- Why it matters: an empty Local Folders makes Thunderbird count as a second program. No Thunderbird row can then be mistaken for an Outlook row, so the start only costs width on Windows.
+- Fix: count Thunderbird only for a mail account's row, not for Local Folders or feeds alone (`case r.tb && r.group != groupTBLocal:`). The rows then read as they do for Outlook alone: `archive.pst (3.9 GB)` … `Local Folders (empty)`.
+
+**R2-F4 (low). The date can point at the wrong copy.**
+- Where: `internal/wizard/picker.go:263-283` (`storeSize`'s newest time leaves out .msf and .dat files). Cell R2-e.
+- What happens: the date comes from mail files only. In a copy still in use, those can be empty and years old: an account set not to keep mail here, or a Local Folders nobody uses. Thunderbird meanwhile rewrites that copy's summary files. So the copy in use reads "nothing downloaded yet, last changed Jan 5, 2023", the old copy reads "6.3 GB, last changed Mar 2, 2024", and the old copy looks newer. The same thing gives "Local Folders (empty, last changed …)", which states a date for mail that is not there.
+- Fix: take the date from the newest of all the folder's files, summaries and .dat files included (still left out of the size), and give no date where no file was found. Not checked in a running Thunderbird: that it rewrites a folder's summary whenever it syncs that folder. MA-1467's lab step should look. The rows then read:
+  - `qzsam.walker@gmail.com (nothing downloaded yet, last changed today)`
+  - `qzsam.walker@gmail.com (6.3 GB, last changed Mar 2, 2024)`
+
+**R2-F5 (low). On the day of a snap move, the tie-breaker adds words that tell nothing.**
+- Where: `internal/wizard/picker.go:483-500`. Cell C14.
+- What the person sees: both copies have the same whole folder name, so both rows end "profile m4n5b6v7.default-release" (32 characters with no use), and the two Local Folders differ only by " (2)".
+- Fix: when even the whole names match, say where each profile is kept: `(6.4 GB, last changed today, in the snap)` and `(6.3 GB, last changed today, outside the snap)`. With R2-F4 the snap's copy should read "today" from its first sync, so this tie should be rare.
+
+**R2-F6 (low). "Folder Local Folders" loses the profile words.**
+- Where: `internal/wizard/picker.go:419-433` and `:460-482`. Cell R2-c.
+- What the person sees: the SPF-04 lead word makes the two Local Folders rows start differently, so the profile rule never treats them as alike. "Folder Local Folders (300 MB)" sits among the accounts with nothing saying it is another profile's.
+- Fix: keep the lead word, but give the date (and, on the same day, the profile) words when two Thunderbird rows of different profiles differ only by that lead word:
+  - `Folder Local Folders (300 MB, last changed Mar 2, 2024)`
+  - `Local Folders (empty, last changed today)`
+
+  Rare: it needs a second profile that cannot be read with certainty.
+
+**R2-F7 (low; Linux with a locale that is not UTF-8). Two rows can become impossible to choose.**
+- Where: `internal/wizard/picker.go:597-625` (the uniqueness pass) and `:635-660`. Cell R2-d.
+- What happens: rows that differ only in letters outside ASCII, with the same size, come back alike ("Account ?????? (700 MB)"). Following MAP-01's rule, they map to no row. The person gets "Nothing was chosen…", which is untrue, and after 10 tries the step ends. Neither mailbox can be picked alone.
+- Fix: on Linux and the BSDs, also make rows unique by their ASCII form, adding " (2)" as for rows alike: `Account Письма (700 MB)` and `Account Работа (700 MB) (2)`. Every row then comes back as exactly one row.
+
+## 3. Not checked
+
+- **No real screen.** All Windows cuts are the same estimate as the first walk, and F4, R2-F1 and R2-F2 all wait on MA-1467's screenshot.
+- **Thunderbird's own behaviour**, which R2-F4's fix assumes: that it rewrites the summary file of a folder it syncs. Also whether Ubuntu's snap move keeps the copied files' times (C14).
+- **The dialog module's code** (outside the repo, not read), the owner's profile (not read), and the full suite (another session ran one during this walk; mine was not run).
+
+## About this review
+
+- **Date worked on:** 18 November 2026.
+- **Register:** a finding (a friction re-walk), with proposals. The severities and the Windows widths are my judgement and an estimate, and are labelled so where they appear.
+- **Drew on:** the fold's diff, its tests, the fold table and the adversarial review, all read in this worktree. Every quoted row is the program's own output from the walk. Not reached: a real screen, the dialog module's code, the owner's profile.
+- **Smallest check for the owner:** the Windows screenshot already being taken. Have it show one list with two copies of one address, and an .ost and a .pst of one long address. That settles R2-F1 and R2-F2 together with F4.
+- **Counters:**
+  - Register: finding.
+  - Borrowed lines: the program's words only.
+  - Drift: none from the request; one wait for another session's test run, by the one-run-at-a-time rule.
+  - Touched: the untracked walk file in this review's own worktree; nothing committed.
+  - Persona: none.
+  - Source reached: the fold's code and tests, yes; a real screen, no; the module's code, no; the owner's profile, no.
+
+## Fold, round 2 (the lead, 2026-11-18)
+
+Built on top of the adversarial pass's round-2 fold, each with its own test and mutation in the
+round-3 sweep (results in the commit's message).
+
+| Finding | Verdict | Change, or what it waits on | Test | Mutation |
+|---|---|---|---|---|
+| R2-F1 | Fixed, as proposed | A copy changed on an earlier day than another copy of the same words starts "Older copy: ", which Windows never cuts; the newest copy is listed first. Copies changed the same day keep the date and profile words, with no "Older copy". "Older copy" is a reserved row start. | `TestOneAddressInTwoProfilesSaysWhichChangedLast`; `TestEveryRowIsOneSourceNeverTheAllRowNeverAnOption` ("Older copy: qz") | O1, O2, O7, O8 |
+| R2-F2 | Waits on MA-1467, with F4 | The cut before the extension needs the real width. | — | — |
+| R2-F3 | Fixed, as proposed | Thunderbird counts as a program for its mail accounts only, so Outlook's files beside an empty Local Folders carry no "Outlook: ". | `TestTwoProgramsSayWhichIsWhich` | O3 |
+| R2-F4 | Fixed, as proposed | A copy's date is its newest file's, Thunderbird's summaries and .dat files included (they stay out of the size). Not checked in a running Thunderbird, as the reviewer notes: that it rewrites a folder's summary whenever it syncs the folder; MA-1467's lab step should look. | `TestTheSizeCountsTheMailOnThisComputer`; `TestOneAddressInTwoProfilesSaysWhichChangedLast` (the copy in use dated by its summary) | O4 |
+| R2-F5 | Fixed, more simply than proposed | Where even the whole profile folder names match, no profile words are said (they would tell nothing); the date and " (2)" are left. Naming where each profile is kept ("in the snap") is later work. | `TestOneAddressInTwoProfilesSaysWhichChangedLast` | O6 |
+| R2-F6 | Backlog | Rare: it needs a second profile that cannot be read with certainty. | — | — |
+| R2-F7 | Fixed, as proposed | On Linux and the BSDs, rows alike once each character outside ASCII is "?" get " (2)" too, so every row's answer fits it alone. | `TestTheAnswerMapsBackToItsRow` | O5 |

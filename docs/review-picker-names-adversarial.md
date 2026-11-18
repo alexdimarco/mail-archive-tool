@@ -246,3 +246,131 @@ attack files stay in the review copy, not committed.
 Found while folding, outside this change: the mbox reader leaves out every file ending .dat, .json,
 .sqlite or .html (`source.isMailboxCandidate`), so a Thunderbird mail folder named, say, "Notes.dat"
 is never archived and nothing says so. That is an R1 question for its own row.
+
+---
+
+## Re-verification, round 2 (the reviewer, 2026-11-18)
+
+*The same reviewer re-ran its attack files on the fold, commit 2217a76, and tried to break the
+fold's new code. Its report, word for word:*
+
+**Verdict: NOT CLEAN (0 HIGH, 0 MEDIUM, 2 LOW, 2 INFO).** The fold closes SPF-01, SPF-03, SPF-04, SPF-05 and FS-01 as tested, but two LOW gaps remain:
+- **R2-01:** the new root-bound size walk still reads each file's size by its path, so a swapped folder is still followed.
+- **R2-02:** the "?" rule decides from the locale's name, not the locale Linux actually loaded.
+
+No product code was changed by this pass.
+
+## 1. Round-1 attack tests on 2217a76
+
+I changed only the call shapes (`storeSize` now returns four values, `pickChoice` takes `false` for the third argument). One run of `go -C <copy> test -count=1 -run TestAtk -v ./internal/wizard/` exited 1.
+
+**Turned green:**
+- SPF-01, SPF-03 and SPF-05.
+- SPF-04, both sub-tests.
+- FS-01: 2,527 counts under the swap race, none followed the link.
+- The round-1 held tests stayed green, and the FS-02 and FS-03 timings are unchanged (40 rows 0.83 s; 3,000 rows alike 0.71 s).
+
+**Still red, with why:**
+- **SPF-02, one of its two cases.** "Two `*.default-release` profiles in one Profiles folder" is green: the whole folder names now differ. "One profile copied whole into a second Thunderbird folder, both changed today" is red. The rows are `"qzsam@gmail.com (1.4 MB, last changed today, profile abcd1234.default-release)"` and the same with `" (2)"`. That is the fold's stated last resort (see R2-04).
+- **MAP-01a and MAP-01b, on this Mac only.** They go through `pickAutoInputs`, which turns the "?" rule on only for Linux and the BSDs (`answerMayBeTranscoded(runtime.GOOS, …)`, `picker.go:76`). These tests feed a Linux-style answer into a macOS run, where a real dialog never answers that way. The fold's rule itself holds when called with `transcoded` set to true: R2-02's positive twin with LANG=C gives All for "? All of them…" and gives no row for the José/Jos? pair.
+- **FS-04 (older Evolution named-pipe hang):** red, as expected; not folded.
+
+The fold's own 14 picker tests all passed here (exit 0). `GOOS=linux go vet ./internal/wizard/` with every attack file also passed (exit 0).
+
+## 2. Findings
+
+### R2-01 (LOW): the root-bound walk still reads each file's size by its path, so a folder swapped after it is listed is followed
+
+- **Claim:** `storeSize` lists folders through the `os.Root` (`picker.go:252`), but reads sizes and times with `d.Info()` (`picker.go:274`).
+  - In Go 1.26.0, `unixDirent.Info` is `lstat(d.parent + "/" + d.name)` (`src/os/file_unix.go:457-461`).
+  - The folder's name there is the joined path string the Root gave it (`src/os/root_unix.go:106`; `rootFS.ReadDir` at `src/os/root.go:375-397`).
+  - So the lookup goes through the path again. If `z.sbd` becomes a link after it is listed, each file of the same name in the link's target is read.
+- **Reproduction:** `TestAtkR2FS01_EachFilesSizeIsLookedUpByItsPath`, RED.
+  - Setup: `z.sbd` holds 1,000 files of 1 byte; a folder outside the store holds the same 1,000 names at 1,000,000 bytes each (sparse, no disk used), dated 2031.
+  - The first count under the swap race read 313,000,430 bytes (the store holds 1,005). Its newest file time was 2031, so the "last changed" words take the outside time too.
+  - Positive twins, green: 1,005 bytes with nothing swapped; 5 bytes with the link left in place.
+- **Why the fold's tombstone missed it:** `TestAFolderSwappedForALinkIsNotFollowed` puts a file named `BIG` outside, a name the store does not have.
+- **Weight:** as for FS-01. Only metadata is read: sizes and file times, no file contents. It needs write access to the store plus a race. It makes MA-1466's "never followed out of the store" untrue again.
+- **Fix:** read each file through the Root by its path inside it: `root.Lstat(p)` instead of `d.Info()`. `root.Lstat` refuses a path that leaves the root. Give the tombstone same-named outside files, as this test does.
+
+### R2-02 (LOW, Linux): the "?" rule decides from the locale's name; GLib decides from the locale the C library actually loaded
+
+- **Claim:** `answerMayBeTranscoded` (`picker.go:690-705`) treats a locale whose name contains "UTF-8" as untranscoded. GLib instead goes by the C library's actual character set, `nl_langinfo(CODESET)` (GLib 2.80.0 `glib/gcharset.c:189-192` and `203-214`; on Unix the console character set is the same thing, `:435`). That is "the C locale if no locale has been loaded by setlocale()". The `CHARSET` environment variable overrides both (`:120-130`).
+  - Cases where the name says UTF-8 but the loaded character set is ASCII:
+    - a UTF-8 locale that is named but never installed (glibc's setlocale fails, and GTK warns "Locale not supported by C library");
+    - `LC_CTYPE=UTF-8` as macOS sends it over ssh, which is not a Linux locale name.
+  - In both, GLib 2.84 and older print "?" (MAP-01's premise), while `pickChoice` matches exactly.
+- **Reproduction:** `TestAtkR2MAP02_ALocaleNamedUTF8ThatIsNotLoaded`, RED for `LANG=en_GB.UTF-8` and `LC_CTYPE=UTF-8`.
+  - The All row's answer "? All of them (and any added later)" gives no row, so All cannot be chosen.
+  - Picking `"José@qz.example (1.4 MB)"`, answered `"Jos?@qz.example (1.4 MB)"`, gives the other profile's store.
+  - Positive twins, green: with LANG=C, All maps and the pair gives no row.
+  - The premise comes from GLib's source. glibc's failing setlocale was not run here.
+- **Fix:** on Linux and the BSDs, apply the "?" rule to every answer that holds "?", whatever the locale's name. The only cost: a row holding its own "?" that another row also fits is asked again, which is already the fold's behaviour in an ASCII locale. Asking the C library itself would need cgo, and the repo is pure Go.
+
+### R2-03 (INFO): "last changed" says a time after now as a past day
+
+- **Claim:** `pickChangedWords` (`picker.go:294-310`) says a file time later this year as, for example, "Dec 25", which reads as last Christmas when today is Nov 18. A later year comes out as a plain date ("Jan 2, 2031").
+- **Weight:** the copy-in-use hint ("the one that changes") can be steered by anyone who can set a copy's file times, or by a clock that was wrong. It only changes the words shown.
+- **Reproduction:** `TestAtkR2SPF03_ATimeAfterNowIsSaidAsThePast`, RED. Positive twins green: today, yesterday, a day earlier this year, and a later hour today.
+- **Fix:** say any time after now as "today", or leave it as is. Builder's call.
+
+### R2-04 (INFO, documented residual): two profiles' rows can still read alike
+
+- **Linux:** one profile copied whole, with the same folder name in two Thunderbird folders, both changed the same day, reads alike apart from " (2)". This is the last resort MA-1462 itself describes (round-1 SPF-02, second case, red). Naming the place each profile sits in would close it.
+- **Windows:** two `*.default-release` profiles holding one address with one size, both changed the same day, differ only after "last changed …". The roughly 38-character cut hides that part (MA-1467), so on screen the rows look identical.
+
+## Held
+
+- **`TestAtkR2Held_PrefixesHintsDirectionAndQuestionMarks`** — 600 random hostile lists, with prefixed, hinted and right-to-left rows present (positive twin):
+  - "Outlook: " and "Evolution: " appear only on Outlook and Evolution rows.
+  - No row runs right to left, and every row starts with an ordinary letter or digit.
+  - Look-alike reserved words get a lead word: "0utlook:", "Evo1ution:", "Fi1e ", "AII of them".
+  - No two rows are one text, and each row's own text maps to itself.
+  - A row's answer as GLib prints it in an ASCII locale gives that row or none: never another row, never All. All's ASCII answer gives All.
+- **`TestAtkR2Held_StoreUnusedOnlyForCertainLeftovers`:**
+  - A live folder whose setting is in capitals, or whose name is in another Unicode form (NFD, setting in NFC), is never called unused, on macOS.
+  - A hand-edited prefs.js, or a folder outside any profile, is never called unused.
+  - A real leftover is unused (positive twin).
+- **`storeUnused` in the prep loop:** by reading `wizard.go:858-864`. An unused IMAP store skips only the offline-download question and falls into no other case. "All of them" inputs go through the same loop.
+- **Round-1 held tests, unchanged and green:**
+  - `TestAtkSPFHeld_RandomHostileNames`
+  - `TestAtkSPFHeld_HostileNamesWrittenIntoPrefsJS`
+  - `TestAtkMAPHeld_EveryAnswerMapsToItsOwnRowOrNone`
+  - `TestAtkFSHeld_LinksLoopsAndPipesAreNotFollowedOrOpened`
+  - `TestAtkFSHeld_PipedSettingsFilesDoNotHoldTheListBack`
+  - `TestAtkPRVHeld_TheWordsShownAreKeptNowhere`
+- **PRV-01's facts still hold, one item added:** the "last changed" dates now also go into the Linux dialog program's arguments.
+
+## Header
+
+- **Reviewed:** `2217a76`, detached in `.claude/worktrees/picker-adv`; the fold is `git diff 9e3feae 2217a76 -- internal/`. Date: 2026-11-18. Go 1.26.0 darwin/arm64.
+- **Commands and exit status:**
+  - `git checkout --detach 2217a76`: 0. The three `git diff` commands: 0.
+  - Round-1 `-run TestAtk`: 1 (as listed above).
+  - `-run TestAtkR2`: 1 (R2-01, R2-02, R2-03 red; both held tests green).
+  - The fold's 14 picker tests: 0. `GOOS=linux … vet`: 0.
+  - `curl` downloads: 0.
+- **Sources outside the repo, read with `curl` into the gitignored `.claude/worktrees/zz-src/`:**
+  - Go go1.26.0: `src/os/file_unix.go`, `root.go`, `root_unix.go`, `dir_unix.go`, `dir_darwin.go`.
+  - GLib 2.80.0: `glib/gcharset.c`.
+  - Not read: the module cache, which is in the owner's home folder.
+- **Not checked:** Linux, glibc's setlocale and Windows were not run; no dialog was opened.
+- **Counters:** Register: finding (re-verification report). Borrowed lines: short attributed source quotes. Drift: none I can point to. Touched: in the review copy, the call shapes in my four round-1 attack files and a new untracked `internal/wizard/zz_attack_picker_r2_test.go` (no covers marker); no product file. Persona: none.
+
+Files are in `/Users/alex.dimarco/repositories/mail-archive-tool/.claude/worktrees/picker-adv/internal/wizard/`:
+- `zz_attack_picker_r2_test.go`
+- `zz_attack_picker_spf_test.go`
+- `zz_attack_picker_map_test.go`
+- `zz_attack_picker_fs_test.go`
+- `zz_attack_picker_prv_test.go`
+
+## Fold, round 2 (the lead, 2026-11-18)
+
+| ID | Verdict | Change | Tombstone test | Mutation |
+|---|---|---|---|---|
+| R2-01 | Fixed as suggested | Each file's size and time is read through the root by its path inside it (`root.Lstat(p)`), never by its joined path (`d.Info()`). A first version also left out a result that was not a regular file; no test can reach that branch without a race, and its mutation (R4) survived, so the branch was removed rather than shipped untested: `root.Lstat` does not follow a link, so such an entry adds at most its own few bytes. | `TestAFolderSwappedForALinkIsNotFollowed`, given the reviewer's sharper setup: the same 1,000 names outside the store, 1,000,000 bytes each and dated 2031; no count may exceed the store's 1,005 bytes or take a 2031 time; plus a structural check | R1 |
+| R2-02 | Fixed as suggested | `answerMayBeTranscoded` is true on Linux and the BSDs whatever the locale's name, since GLib goes by the character set the C library loaded and pure Go cannot ask it. The cost, stated in MA-1465: a row spelled with its own "?" that another row also fits is asked again there. | `TestTheAnswerMapsBackToItsRow` | N9, N10, R2 |
+| R2-03 | Fixed | A day after today is said with its year ("Dec 25, 2026"), never as a past day of this year; a later hour today is still "today". | `TestOneAddressInTwoProfilesSaysWhichChangedLast` (the date table) | R3 |
+| R2-04 | Documented residual | MA-1462 names it: a profile copied whole into a second Thunderbird folder, both copies changed the same day, reads alike but for " (2)"; on Windows a long row's end, where the date sits, is not drawn (MA-1467). | — | — |
+| PRV-01 addendum | Recorded | MA-1462's exposure sentence now names the "last changed" dates too. | — | — |
+| MAP-01a/b on macOS | No change | As the reviewer says, those two attack tests feed a Linux answer into a macOS run, where the rule is off by design; the rule itself is proven with `transcoded` set. | — | — |

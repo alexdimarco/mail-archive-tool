@@ -7,7 +7,6 @@ import (
 	"path/filepath"
 	"reflect"
 	"runtime"
-	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -471,6 +470,12 @@ func TestTwoProgramsSayWhichIsWhich(t *testing.T) {
 	if labels, _ := pickList(outlook, "windows"); !reflect.DeepEqual(labels, []string{"archive.pst (3.6 GB)", "samantha.walker@qzcontoso.example.ost (2.5 GB)"}) {
 		t.Fatalf("positive twin: Outlook's files alone carry no program's name: %q", labels)
 	}
+	// A Thunderbird never set up, with only an empty Local Folders, is not a second program: no
+	// Thunderbird row can be taken for an Outlook file (the friction re-walk's R2-F3).
+	local := pickRow{path: `C:\qz\Profiles\p.default\Mail\Local Folders`, group: groupTBLocal, kind: identFolder, folder: "Local Folders", tb: true, profile: `C:\qz\Profiles\p.default`, name: "Local Folders", sized: true}
+	if labels, _ := pickList(append(append([]pickRow(nil), outlook...), local), "windows"); !reflect.DeepEqual(labels, []string{"archive.pst (3.6 GB)", "samantha.walker@qzcontoso.example.ost (2.5 GB)", "Local Folders (empty)"}) {
+		t.Errorf("Outlook beside an empty Local Folders alone: %q", labels)
+	}
 	mixed := append(append([]pickRow(nil), outlook...), tbRow("/qz/p.default", "outlook.office365.com", "samantha.walker@qzcontoso.example"), tbRow("/qz/p.default", "imap.qz.example", "Outlook: work"))
 	labels, _ := pickList(mixed, "windows")
 	want = []string{
@@ -507,26 +512,49 @@ func TestOneAddressInTwoProfilesSaysWhichChangedLast(t *testing.T) {
 		t.Fatalf("positive twin: one profile: %q", got)
 	}
 	stale := pickProfile(t, root, "x7y8z9w0.default", lines, pickStore{"ImapMail/imap.gmail.com", 6_300_000})
-	touch := func(store string, when time.Time) {
+	// Every file's time is set, the summary's too: the newest of them dates a copy (R2-F4).
+	touchFile := func(path string, when time.Time) {
 		t.Helper()
-		if err := os.Chtimes(filepath.Join(store, "INBOX"), when, when); err != nil {
+		if err := os.Chtimes(path, when, when); err != nil {
 			t.Fatal(err)
 		}
 	}
+	touch := func(store string, when time.Time) {
+		t.Helper()
+		touchFile(filepath.Join(store, "INBOX"), when)
+		touchFile(filepath.Join(store, "INBOX.msf"), when)
+	}
 	found := []string{filepath.Join(inUse, "ImapMail", "imap.gmail.com"), filepath.Join(stale, "ImapMail", "imap.gmail.com")}
-	touch(found[0], now.Add(-2*time.Hour))
+	touch(found[0], now.Add(-30*time.Minute))
 	touch(found[1], time.Date(2024, 3, 2, 10, 0, 0, 0, time.UTC))
 	got, paths := labelsOf(t, found)
-	want := []string{"qzsam.walker@gmail.com (14 MB, last changed today)", "qzsam.walker@gmail.com (6.3 MB, last changed Mar 2, 2024)"}
+	want := []string{"qzsam.walker@gmail.com (14 MB, last changed today)", "Older copy: qzsam.walker@gmail.com (6.3 MB, last changed Mar 2, 2024)"}
 	if !reflect.DeepEqual(got, want) || !reflect.DeepEqual(paths, found) {
-		t.Fatalf("two profiles, the old one untouched since 2024:\n got %q\nwant %q", got, want)
+		t.Fatalf("two profiles, the old one untouched since 2024 (the newest first, the old one an older copy):\n got %q\nwant %q", got, want)
 	}
+
+	// The newest copy comes first even when the old one's folder sorts first by its path (R2-F1).
+	first := pickProfile(t, root, "0a0a0a0a.default", lines, pickStore{"ImapMail/imap.gmail.com", 6_300_000})
+	byPath := []string{filepath.Join(first, "ImapMail", "imap.gmail.com"), found[0]}
+	touch(byPath[0], time.Date(2024, 3, 2, 10, 0, 0, 0, time.UTC))
+	if got, paths := labelsOf(t, byPath); !reflect.DeepEqual(got, want) || paths[0] != found[0] {
+		t.Fatalf("the newest copy first, whatever the paths:\n got %q (%q)\nwant %q", got, paths, want)
+	}
+
+	// The copy in use keeps no mail here (its mail file untouched since 2023), but Thunderbird
+	// rewrote its summary today: it is still the newest copy (the friction re-walk's R2-F4).
+	touchFile(filepath.Join(found[0], "INBOX"), time.Date(2023, 1, 5, 9, 0, 0, 0, time.UTC))
+	got, _ = labelsOf(t, found)
+	if !reflect.DeepEqual(got, want) {
+		t.Fatalf("the copy in use dated by its summary:\n got %q\nwant %q", got, want)
+	}
+	touch(found[0], now.Add(-30*time.Minute))
 
 	touch(found[1], now.Add(-time.Hour))
 	got, _ = labelsOf(t, found)
 	want = []string{"qzsam.walker@gmail.com (14 MB, last changed today, profile default-release)", "qzsam.walker@gmail.com (6.3 MB, last changed today, profile default)"}
 	if !reflect.DeepEqual(got, want) {
-		t.Fatalf("both changed today:\n got %q\nwant %q", got, want)
+		t.Fatalf("both changed today (no older copy):\n got %q\nwant %q", got, want)
 	}
 
 	// Two *.default-release profiles changed the same day: their whole folder names.
@@ -540,16 +568,22 @@ func TestOneAddressInTwoProfilesSaysWhichChangedLast(t *testing.T) {
 	}
 
 	// A profile copied whole into a second Thunderbird folder (the snap's): the same folder name in
-	// both. Its date tells the copy in use; on the same day only " (2)" is left.
+	// both. Its date tells the copy in use; on the same day no profile words, which would tell
+	// nothing (R2-F5), and " (2)" is left.
 	snap := pickProfile(t, filepath.Join(t.TempDir(), "snap"), "a1b2c3d4.default-release", lines, pickStore{"ImapMail/imap.gmail.com", 14_000_000})
 	found = []string{found[0], filepath.Join(snap, "ImapMail", "imap.gmail.com")}
 	touch(found[1], time.Date(2026, 3, 9, 8, 0, 0, 0, time.UTC))
 	got, _ = labelsOf(t, found)
-	if !slices.Contains(got, "qzsam.walker@gmail.com (14 MB, last changed today)") || !slices.Contains(got, "qzsam.walker@gmail.com (14 MB, last changed Mar 9)") {
-		t.Fatalf("a profile copied whole: %q", got)
+	want = []string{"qzsam.walker@gmail.com (14 MB, last changed today)", "Older copy: qzsam.walker@gmail.com (14 MB, last changed Mar 9)"}
+	if !reflect.DeepEqual(got, want) {
+		t.Fatalf("a profile copied whole:\n got %q\nwant %q", got, want)
 	}
 	touch(found[1], now.Add(-time.Hour))
 	got, _ = labelsOf(t, found)
+	want = []string{"qzsam.walker@gmail.com (14 MB, last changed today)", "qzsam.walker@gmail.com (14 MB, last changed today) (2)"}
+	if !reflect.DeepEqual(got, want) {
+		t.Fatalf("a copied profile changed the same day:\n got %q\nwant %q", got, want)
+	}
 	rowInvariants(t, "a copied profile changed the same day", got)
 
 	for _, c := range []struct {
@@ -561,6 +595,10 @@ func TestOneAddressInTwoProfilesSaysWhichChangedLast(t *testing.T) {
 		{time.Date(2026, 11, 3, 9, 0, 0, 0, time.UTC), "Nov 3"},
 		{time.Date(2024, 3, 2, 9, 0, 0, 0, time.UTC), "Mar 2, 2024"},
 		{time.Date(2027, 1, 1, 9, 0, 0, 0, time.UTC), "Jan 1, 2027"},
+		// A time ahead of the clock is never said as a past day of this year (round 2's R2-03).
+		{time.Date(2026, 12, 25, 9, 0, 0, 0, time.UTC), "Dec 25, 2026"},
+		{time.Date(2026, 11, 19, 9, 0, 0, 0, time.UTC), "Nov 19, 2026"},
+		{time.Date(2026, 11, 18, 23, 0, 0, 0, time.UTC), "today"},
 	} {
 		if got := pickChangedWords(c.t, now); got != c.want {
 			t.Errorf("%v: %q, want %q", c.t, got, c.want)
