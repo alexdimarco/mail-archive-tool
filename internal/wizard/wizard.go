@@ -858,7 +858,9 @@ func localArchiveFlowHooks(chosen func(out string), finished func(), check func(
 		fi, statErr := os.Stat(in)
 		switch {
 		case statErr != nil:
-		case fi.IsDir() && thunderbird.IsImapStore(in):
+		case fi.IsDir() && thunderbird.IsImapStore(in) && !storeUnused(in):
+			// A folder no live account uses (the list says "Not in Thunderbird now") is not asked
+			// about: no account would download into it (MA-1463; the friction review's F3).
 			p, err := prepareThunderbirdGUI(in, &changed)
 			if err != nil {
 				return err

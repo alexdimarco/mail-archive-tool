@@ -7,6 +7,7 @@ import (
 	"path/filepath"
 	"reflect"
 	"runtime"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -409,5 +410,213 @@ func TestAnAnswerTheListDoesNotHoldIsAskedAgain(t *testing.T) {
 	}
 	if !strings.Contains(string(src), "listDialog(pickPrompt, items, zenity.Title(appTitle), zenity.DefaultItems(allOfThem), zenity.DisallowEmpty())") {
 		t.Errorf("pickAutoInputs no longer asks with its prompt, All preselected and DisallowEmpty")
+	}
+	// The give-up words are true in the wizard and in MailArchive Desktop's Make a new archive…
+	// alike (the friction review's F9): they name the next step, never "start MailArchive again".
+	if w := errNoPick.Error(); !strings.Contains(w, "click one line in the list before you click OK") || strings.Contains(w, "Start MailArchive") {
+		t.Errorf("the give-up words: %q", w)
+	}
+}
+
+// evolutionStore makes an Evolution account's cache store (a Camel disk cache) under home, whose
+// settings file names it display, with an INBOX message of n bytes, and returns the store.
+func evolutionStore(t *testing.T, home, uid, display string, n int64) string {
+	t.Helper()
+	store := filepath.Join(home, ".cache", "evolution", "mail", uid)
+	cur := filepath.Join(store, "folders", "INBOX", "cur")
+	if err := os.MkdirAll(cur, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	pickFile(t, filepath.Join(cur, "1.eml"), n)
+	src := filepath.Join(home, ".config", "evolution", "sources")
+	if err := os.MkdirAll(src, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(src, uid+".source"), []byte("[Data Source]\nDisplayName="+display+"\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	return store
+}
+
+// covers: MA-1462
+// One address kept by two mail programs reads apart: when the mailboxes found belong to more than
+// one of Outlook, Thunderbird and Evolution, Outlook's rows start "Outlook: " and Evolution's
+// "Evolution: " (the friction review's F1, the adversarial pass's SPF-03); Thunderbird's rows stay as
+// they are, and a Thunderbird account named "Outlook: …" starts with "Account ". Positive twin first:
+// an Evolution store alone says its display name with no program's name.
+func TestTwoProgramsSayWhichIsWhich(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	t.Setenv("USERPROFILE", home)
+	evo := evolutionStore(t, home, "1f2e3d4c", "sam@qzname.example", 200_000_000)
+	alone, _ := labelsOf(t, []string{evo})
+	if !reflect.DeepEqual(alone, []string{"sam@qzname.example (200 MB)"}) {
+		t.Fatalf("positive twin: an Evolution store alone: %q", alone)
+	}
+
+	lines := []string{`user_pref("mail.accountmanager.accounts", "account1");`}
+	lines = append(lines, pickServer("1", "imap", "mail.qzname.example", "ImapMail/mail.qzname.example", "sam@qzname.example")...)
+	stores := []pickStore{{"ImapMail/mail.qzname.example", 300_000_000}}
+	p := pickProfile(t, t.TempDir(), "p.default", lines, stores...)
+	got, paths := labelsOf(t, append(storesOf(p, stores), evo))
+	want := []string{"sam@qzname.example (300 MB)", "Evolution: sam@qzname.example (200 MB)"}
+	if !reflect.DeepEqual(got, want) || paths[1] != evo {
+		t.Fatalf("Thunderbird and Evolution:\n got %q\nwant %q", got, want)
+	}
+
+	outlook := []pickRow{
+		{path: `C:\qz\samantha.walker@qzcontoso.example.ost`, group: groupOutlook, kind: identFile, folder: "samantha.walker@qzcontoso.example.ost", size: 2_700_000_000, sized: true},
+		{path: `C:\qz\archive.pst`, group: groupOutlook, kind: identFile, folder: "archive.pst", size: 3_900_000_000, sized: true},
+	}
+	if labels, _ := pickList(outlook, "windows"); !reflect.DeepEqual(labels, []string{"archive.pst (3.6 GB)", "samantha.walker@qzcontoso.example.ost (2.5 GB)"}) {
+		t.Fatalf("positive twin: Outlook's files alone carry no program's name: %q", labels)
+	}
+	mixed := append(append([]pickRow(nil), outlook...), tbRow("/qz/p.default", "outlook.office365.com", "samantha.walker@qzcontoso.example"), tbRow("/qz/p.default", "imap.qz.example", "Outlook: work"))
+	labels, _ := pickList(mixed, "windows")
+	want = []string{
+		"Outlook: archive.pst (3.6 GB)",
+		"Outlook: samantha.walker@qzcontoso.example.ost (2.5 GB)",
+		"Account Outlook: work (1.3 MB)",
+		"samantha.walker@qzcontoso.example (1.3 MB)",
+	}
+	if !reflect.DeepEqual(labels, want) {
+		t.Errorf("Outlook and Thunderbird:\n got %q\nwant %q", labels, want)
+	}
+	rowInvariants(t, "Outlook and Thunderbird", labels)
+}
+
+// covers: MA-1462
+// One address kept in two Thunderbird profiles (an old profile kept beside the one in use, or a
+// profile copied whole, as Ubuntu's move to the Thunderbird snap did) says, on each row, when that
+// copy's mail last changed: the copy in use is the one that changes (the friction review's F2). Two
+// on the same day also say their profile's folder name, the whole name when the short ones match
+// (the adversarial pass's SPF-02); rows still alike get " (2)". Positive twin first: one profile
+// says no date.
+func TestOneAddressInTwoProfilesSaysWhichChangedLast(t *testing.T) {
+	now := time.Date(2026, 11, 18, 12, 0, 0, 0, time.UTC)
+	old := pickNow
+	pickNow = func() time.Time { return now }
+	t.Cleanup(func() { pickNow = old })
+
+	lines := []string{`user_pref("mail.accountmanager.accounts", "account1");`}
+	lines = append(lines, pickServer("1", "imap", "imap.gmail.com", "ImapMail/imap.gmail.com", "qzsam.walker@gmail.com")...)
+	stores := []pickStore{{"ImapMail/imap.gmail.com", 14_000_000}}
+	root := t.TempDir()
+	inUse := pickProfile(t, root, "a1b2c3d4.default-release", lines, stores...)
+	if got, _ := labelsOf(t, storesOf(inUse, stores)); !reflect.DeepEqual(got, []string{"qzsam.walker@gmail.com (14 MB)"}) {
+		t.Fatalf("positive twin: one profile: %q", got)
+	}
+	stale := pickProfile(t, root, "x7y8z9w0.default", lines, pickStore{"ImapMail/imap.gmail.com", 6_300_000})
+	touch := func(store string, when time.Time) {
+		t.Helper()
+		if err := os.Chtimes(filepath.Join(store, "INBOX"), when, when); err != nil {
+			t.Fatal(err)
+		}
+	}
+	found := []string{filepath.Join(inUse, "ImapMail", "imap.gmail.com"), filepath.Join(stale, "ImapMail", "imap.gmail.com")}
+	touch(found[0], now.Add(-2*time.Hour))
+	touch(found[1], time.Date(2024, 3, 2, 10, 0, 0, 0, time.UTC))
+	got, paths := labelsOf(t, found)
+	want := []string{"qzsam.walker@gmail.com (14 MB, last changed today)", "qzsam.walker@gmail.com (6.3 MB, last changed Mar 2, 2024)"}
+	if !reflect.DeepEqual(got, want) || !reflect.DeepEqual(paths, found) {
+		t.Fatalf("two profiles, the old one untouched since 2024:\n got %q\nwant %q", got, want)
+	}
+
+	touch(found[1], now.Add(-time.Hour))
+	got, _ = labelsOf(t, found)
+	want = []string{"qzsam.walker@gmail.com (14 MB, last changed today, profile default-release)", "qzsam.walker@gmail.com (6.3 MB, last changed today, profile default)"}
+	if !reflect.DeepEqual(got, want) {
+		t.Fatalf("both changed today:\n got %q\nwant %q", got, want)
+	}
+
+	// Two *.default-release profiles changed the same day: their whole folder names.
+	second := pickProfile(t, root, "e5f6g7h8.default-release", lines, pickStore{"ImapMail/imap.gmail.com", 6_300_000})
+	found = []string{found[0], filepath.Join(second, "ImapMail", "imap.gmail.com")}
+	touch(found[1], now.Add(-time.Hour))
+	got, _ = labelsOf(t, found)
+	want = []string{"qzsam.walker@gmail.com (14 MB, last changed today, profile a1b2c3d4.default-release)", "qzsam.walker@gmail.com (6.3 MB, last changed today, profile e5f6g7h8.default-release)"}
+	if !reflect.DeepEqual(got, want) {
+		t.Fatalf("two default-release profiles:\n got %q\nwant %q", got, want)
+	}
+
+	// A profile copied whole into a second Thunderbird folder (the snap's): the same folder name in
+	// both. Its date tells the copy in use; on the same day only " (2)" is left.
+	snap := pickProfile(t, filepath.Join(t.TempDir(), "snap"), "a1b2c3d4.default-release", lines, pickStore{"ImapMail/imap.gmail.com", 14_000_000})
+	found = []string{found[0], filepath.Join(snap, "ImapMail", "imap.gmail.com")}
+	touch(found[1], time.Date(2026, 3, 9, 8, 0, 0, 0, time.UTC))
+	got, _ = labelsOf(t, found)
+	if !slices.Contains(got, "qzsam.walker@gmail.com (14 MB, last changed today)") || !slices.Contains(got, "qzsam.walker@gmail.com (14 MB, last changed Mar 9)") {
+		t.Fatalf("a profile copied whole: %q", got)
+	}
+	touch(found[1], now.Add(-time.Hour))
+	got, _ = labelsOf(t, found)
+	rowInvariants(t, "a copied profile changed the same day", got)
+
+	for _, c := range []struct {
+		t    time.Time
+		want string
+	}{
+		{time.Date(2026, 11, 18, 0, 1, 0, 0, time.UTC), "today"},
+		{time.Date(2026, 11, 17, 23, 59, 0, 0, time.UTC), "yesterday"},
+		{time.Date(2026, 11, 3, 9, 0, 0, 0, time.UTC), "Nov 3"},
+		{time.Date(2024, 3, 2, 9, 0, 0, 0, time.UTC), "Mar 2, 2024"},
+		{time.Date(2027, 1, 1, 9, 0, 0, 0, time.UTC), "Jan 1, 2027"},
+	} {
+		if got := pickChangedWords(c.t, now); got != c.want {
+			t.Errorf("%v: %q, want %q", c.t, got, c.want)
+		}
+	}
+}
+
+// covers: MA-1463
+// A folder no live Thunderbird account uses now, which the list says is not in Thunderbird, is not
+// asked to prepare its download, since no account would download into it (the friction review's F3):
+// storeUnused says so only when the strict match says so for certain, and the wizard's loop over the
+// chosen mailboxes skips the question for it. Anything less certain (two accounts that could own it,
+// a file read without certainty, no profile) is asked about as before. Positive twin first: the live
+// account's folder is not unused.
+func TestAFolderNoAccountUsesIsNotAskedToPrepare(t *testing.T) {
+	stores := []pickStore{{"ImapMail/imap.gmail-1.com", 1_400_000}, {"ImapMail/imap.gmail.com", 6_300_000}}
+	one := []string{`user_pref("mail.accountmanager.accounts", "account1");`}
+	one = append(one, pickServer("1", "imap", "imap.gmail.com", "ImapMail/imap.gmail-1.com", "qzsam.walker@gmail.com")...)
+	p := pickProfile(t, t.TempDir(), "p.default", one, stores...)
+	live, leftover := filepath.Join(p, "ImapMail", "imap.gmail-1.com"), filepath.Join(p, "ImapMail", "imap.gmail.com")
+	if storeUnused(live) {
+		t.Fatalf("positive twin: the live account's folder is said unused")
+	}
+	if !storeUnused(leftover) {
+		t.Errorf("the leftover beside the live account is not said unused")
+	}
+
+	two := []string{`user_pref("mail.accountmanager.accounts", "account1,account2");`}
+	two = append(two, pickServer("1", "imap", "imap.gmail.com", "ImapMail/imap.gmail-1.com", "")...)
+	two = append(two, pickServer("2", "imap", "imap.gmail.com", "ImapMail/imap.gmail-2.com", "")...)
+	q := pickProfile(t, t.TempDir(), "p.default", two, append(stores, pickStore{"ImapMail/imap.gmail-2.com", 0})...)
+	if storeUnused(filepath.Join(q, "ImapMail", "imap.gmail.com")) {
+		t.Errorf("a leftover two live accounts' host could fit is said unused")
+	}
+
+	odd := pickProfile(t, t.TempDir(), "p.default", append(append([]string(nil), one...), `user_pref("mail.server.server1.name", "x"); // a comment`), stores...)
+	if storeUnused(filepath.Join(odd, "ImapMail", "imap.gmail.com")) {
+		t.Errorf("a folder of a profile read without certainty is said unused")
+	}
+	outside := filepath.Join(t.TempDir(), "ImapMail", "imap.gmail.com")
+	if err := os.MkdirAll(outside, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if storeUnused(outside) {
+		t.Errorf("a folder outside any profile is said unused")
+	}
+
+	// Structural: the loop asks the question only for a folder storeUnused does not name, with the
+	// run's changes carried as MA-1267 pins.
+	src, err := os.ReadFile("wizard.go")
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, wired := range []string{"case fi.IsDir() && thunderbird.IsImapStore(in) && !storeUnused(in):", "p, err := prepareThunderbirdGUI(in, &changed)"} {
+		if !strings.Contains(string(src), wired) {
+			t.Errorf("the wizard's question loop: %q is gone from wizard.go", wired)
+		}
 	}
 }

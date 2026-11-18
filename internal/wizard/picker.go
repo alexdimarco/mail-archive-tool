@@ -14,6 +14,7 @@ import (
 	"unicode/utf8"
 
 	"github.com/ncruces/zenity"
+	"golang.org/x/text/unicode/bidi"
 
 	"mail-archive-tool/internal/source"
 	"mail-archive-tool/internal/state"
@@ -52,8 +53,13 @@ const (
 // answer of them is the All row too.
 var allOfThemBare = strings.TrimPrefix(allOfThem, "➤ ")
 
-// errNoPick ends the wizard when the list keeps answering with no row: nothing is exported.
-var errNoPick = errors.New("The list of mailboxes did not say which one was chosen, so nothing was exported. Start MailArchive again and choose one line in the list.")
+// errNoPick ends the step when the list keeps answering with no row: nothing is exported. Its words
+// are true both in the wizard and in MailArchive Desktop's Make a new archive… (the friction
+// review's F9).
+var errNoPick = errors.New("The list of mailboxes did not say which one was chosen, so nothing was exported. Try again, and click one line in the list before you click OK.")
+
+// pickNow is the list's clock, for the "last changed" words (a test sets it).
+var pickNow = time.Now
 
 // pickAutoInputs lets the person choose one of the auto-detected mailboxes, or all of them. "All
 // of them" is remembered as auto-discovery, so a scheduled run picks up accounts added later.
@@ -67,12 +73,13 @@ func pickAutoInputs(found []string) ([]string, bool, error) {
 	rows := gatherPickRows(found, time.Now().Add(sizeBudget), sizeEntryMax)
 	labels, paths := pickList(rows, runtime.GOOS)
 	items := append([]string{allOfThem}, labels...)
+	transcoded := answerMayBeTranscoded(runtime.GOOS, os.Getenv)
 	for try := 1; ; try++ {
 		answer, err := listDialog(pickPrompt, items, zenity.Title(appTitle), zenity.DefaultItems(allOfThem), zenity.DisallowEmpty())
 		if err != nil {
 			return nil, false, err
 		}
-		if i, all, ok := pickChoice(answer, labels); ok && all {
+		if i, all, ok := pickChoice(answer, labels, transcoded); ok && all {
 			return found, true, nil
 		} else if ok {
 			return []string{paths[i]}, false, nil
@@ -135,9 +142,13 @@ type pickRow struct {
 	// downloads: the account's mail is downloaded over time from a server (IMAP, Exchange), so an
 	// empty folder means nothing is downloaded yet.
 	downloads bool
-	size      int64 // bytes on this computer (storeSize)
-	sized     bool  // size was counted
-	floor     bool  // the count stopped early: size is at least
+	// evolution: an Evolution store (source.IsEvolutionStore), said as Evolution's when another
+	// program's mailboxes are listed too.
+	evolution bool
+	size      int64     // bytes on this computer (storeSize)
+	sized     bool      // size was counted
+	floor     bool      // the count stopped early: size is at least
+	changed   time.Time // when the newest of the files counted last changed; zero when none was
 }
 
 // gatherPickRows reads what the list says of each mailbox found, in found's order. The sizes are
@@ -161,7 +172,7 @@ func gatherPickRow(p string, deadline time.Time, entryMax int) pickRow {
 			r.group = groupOutlook
 		}
 		if li, err := os.Lstat(p); err == nil && li.Mode().IsRegular() {
-			r.size, r.sized = li.Size(), true
+			r.size, r.sized, r.changed = li.Size(), true, li.ModTime()
 		}
 		return r
 	}
@@ -183,32 +194,64 @@ func gatherPickRow(p string, deadline time.Time, entryMax int) pickRow {
 		default:
 			r.downloads = thunderbird.IsImapStore(p)
 		}
-	} else if s, err := source.Open(p); err == nil {
-		if name := strings.TrimSpace(s.StoreName()); name != "" {
-			r.folder = name
+	} else {
+		r.evolution = source.IsEvolutionStore(p)
+		if s, err := source.Open(p); err == nil {
+			if name := strings.TrimSpace(s.StoreName()); name != "" {
+				r.folder = name
+			}
+			_ = s.Close()
 		}
-		_ = s.Close()
 	}
-	r.size, r.floor, r.sized = storeSize(p, deadline, entryMax)
+	r.size, r.changed, r.floor, r.sized = storeSize(p, deadline, entryMax)
 	return r
+}
+
+// storeUnused reports whether no live Thunderbird account uses the folder store, as the strict
+// match says for certain (NoAccountNone, MA-1463): the list says such a folder is not in Thunderbird
+// now, and the wizard does not ask to prepare its download, since no account downloads into it (the
+// friction review's F3). Anything less certain (no profile, two accounts that could own it, a file
+// read without certainty) is not "unused", so the question is asked as before.
+func storeUnused(store string) bool {
+	profile, ok := thunderbird.FindProfileDir(store)
+	if !ok {
+		return false
+	}
+	f, err := thunderbird.ReadStoreFacts(profile, store)
+	kind, isMatch := thunderbird.NoAccountKindOf(err)
+	return f.Account == nil && isMatch && kind == thunderbird.NoAccountNone
 }
 
 // storeSize counts how much mail the mailbox folder dir keeps on this computer (MA-1466): every
 // regular file under it, at any depth, except Thunderbird's summary files (.msf) and its .dat
 // settings files, and nothing inside a folder of Windows Search's copies (<mailbox>.mozmsgs, one
 // file per message, which Thunderbird keeps when Windows Search may index mail). It follows no link:
-// a folder that is itself a link, or that cannot be read, is not counted (ok false). The count stops
-// after entryMax entries or at deadline, or when something below cannot be read, and then says at
-// least (floor).
-func storeSize(dir string, deadline time.Time, entryMax int) (n int64, floor, ok bool) {
-	if fi, err := os.Lstat(dir); err != nil || !fi.IsDir() || !time.Now().Before(deadline) {
-		return 0, false, false
+// a folder that is itself a link, or that cannot be read, is not counted (ok false), and the walk
+// goes through an os.Root opened on the folder, so a folder below swapped for a link while it counts
+// is never followed out of the store (the adversarial pass's FS-01). The count stops after entryMax
+// entries or at deadline (checked at each entry), and then says at least (floor); something below
+// that cannot be read is left out and makes the count at least too. newest is when the newest of the
+// files counted last changed (zero when none was), which tells apart two copies of one account
+// (pickIdents).
+func storeSize(dir string, deadline time.Time, entryMax int) (n int64, newest time.Time, floor, ok bool) {
+	fi, err := os.Lstat(dir)
+	if err != nil || !fi.IsDir() || !time.Now().Before(deadline) {
+		return 0, time.Time{}, false, false
+	}
+	root, err := os.OpenRoot(dir)
+	if err != nil {
+		return 0, time.Time{}, false, false
+	}
+	defer root.Close()
+	// The folder opened is the one looked at: swapped for a link in between, it is not counted.
+	if ri, err := root.Stat("."); err != nil || !os.SameFile(fi, ri) {
+		return 0, time.Time{}, false, false
 	}
 	errStop := errors.New("stop counting")
 	entries := 0
-	err := filepath.WalkDir(dir, func(p string, d fs.DirEntry, err error) error {
+	err = fs.WalkDir(root.FS(), ".", func(p string, d fs.DirEntry, err error) error {
 		if err != nil {
-			if p == dir {
+			if p == "." {
 				return err
 			}
 			floor = true
@@ -220,7 +263,7 @@ func storeSize(dir string, deadline time.Time, entryMax int) (n int64, floor, ok
 		}
 		switch {
 		case d.IsDir():
-			if p != dir && strings.HasSuffix(strings.ToLower(d.Name()), ".mozmsgs") {
+			if p != "." && strings.HasSuffix(strings.ToLower(d.Name()), ".mozmsgs") {
 				return filepath.SkipDir
 			}
 		case d.Type().IsRegular():
@@ -234,13 +277,36 @@ func storeSize(dir string, deadline time.Time, entryMax int) (n int64, floor, ok
 				return nil
 			}
 			n += info.Size()
+			if t := info.ModTime(); t.After(newest) {
+				newest = t
+			}
 		}
 		return nil
 	})
 	if err != nil && !errors.Is(err, errStop) {
-		return 0, false, false
+		return 0, time.Time{}, false, false
 	}
-	return n, floor, true
+	return n, newest, floor, true
+}
+
+// pickChangedWords says when t was, seen from now, as a date a person reads: "today", "yesterday",
+// "Nov 3" within now's year, "Mar 2, 2024" before it (in now's time zone).
+func pickChangedWords(t, now time.Time) string {
+	t = t.In(now.Location())
+	same := func(a, b time.Time) bool {
+		ay, am, ad := a.Date()
+		by, bm, bd := b.Date()
+		return ay == by && am == bm && ad == bd
+	}
+	switch {
+	case same(t, now):
+		return "today"
+	case same(t, now.AddDate(0, 0, -1)):
+		return "yesterday"
+	case t.Year() == now.Year():
+		return t.Format("Jan 2")
+	}
+	return t.Format("Jan 2, 2006")
 }
 
 // pickSizeWords says n bytes as the computer's own file browser does: in MB, GB or TB, with one
@@ -291,22 +357,31 @@ func pickSizeOf(r pickRow, goos string) string {
 type pickIdent struct {
 	text string
 	kind identKind
-	own  bool   // text is MailArchive's own words ("Folder with no name"), which need no lead word
-	hint string // the profile's folder name, when a row of another profile is said the same way
+	own  bool // text is MailArchive's own words ("Folder with no name"), which need no lead word
+	lead bool // a lead word is needed whatever text is (it reads like another row's account name)
+	// changed and hint tell apart Thunderbird rows of two profiles said the same way: when the
+	// copy's mail last changed ("today"), and, when that is the same too, the profile's folder name.
+	changed string
+	hint    string
+	// prefix is "Outlook: " or "Evolution: " when another program's mailboxes are listed too
+	// (pickList): the same address kept by two programs then reads apart (the friction review's F1).
+	prefix string
 }
 
 // pickIdents is what each row says its mailbox by (MA-1462):
 //
 //   - a Thunderbird account by the name Thunderbird shows for it, cleaned and capped
 //     (CleanFolderName). The name is not used, and the folder's name is, when it spells MailArchive's
-//     no-name words or another account of the same profile has it too (MA-1287, TBDistinctNames), or
-//     when it reads like the folder of another Thunderbird row, which that row may be said by;
+//     no-name words or another account of the same profile has it too (MA-1287, TBDistinctNames);
 //   - any other mailbox by its folder's or file's own name, or its reader's store name, cleaned,
-//     else "Folder with no name" or "File with no name".
+//     else "Folder with no name" or "File with no name". One that reads like an account's name on
+//     another row gets its lead word ("Folder …"), so the account keeps its name.
 //
 // Thunderbird rows of two profiles said the same way (one address kept in an old profile and a new
-// one) each say their profile's folder name (hint).
-func pickIdents(rows []pickRow) []pickIdent {
+// one, or a profile copied whole, as Ubuntu's move to the Thunderbird snap did) each say when that
+// copy's mail last changed, and, where two say the same day, their profile's folder name too (the
+// friction review's F2: the copy in use is the one that changes).
+func pickIdents(rows []pickRow, now time.Time) []pickIdent {
 	names := make([]string, len(rows))
 	byProfile := map[string][]int{}
 	for i, r := range rows {
@@ -325,27 +400,6 @@ func pickIdents(rows []pickRow) []pickIdent {
 			names[i] = accts[j].Name
 		}
 	}
-	folderKey := func(r pickRow) string { return state.TBTextKey(state.CleanFolderName(r.folder)) }
-	folders := map[string]int{}
-	for _, r := range rows {
-		if r.tb {
-			folders[folderKey(r)]++
-		}
-	}
-	for i, r := range rows {
-		if names[i] == "" {
-			continue
-		}
-		k := state.TBTextKey(names[i])
-		others := folders[k]
-		if k == folderKey(r) {
-			others-- // its own folder: said either way, it reads the same
-		}
-		if others > 0 {
-			names[i] = ""
-		}
-	}
-
 	out := make([]pickIdent, len(rows))
 	for i, r := range rows {
 		if names[i] != "" {
@@ -362,29 +416,97 @@ func pickIdents(rows []pickRow) []pickIdent {
 		}
 	}
 
+	// A row said by its folder's or file's name that reads like an account's name on another row
+	// starts with its lead word ("Folder qzsam@gmail.com"), which only MailArchive's own rows can
+	// start with, so the account keeps its name and the two still read apart (the adversarial
+	// pass's SPF-04).
+	named := map[string]bool{}
+	for i := range out {
+		if out[i].kind == identName {
+			named[state.TBTextKey(out[i].text)] = true
+		}
+	}
+	for i := range out {
+		if out[i].kind != identName && !out[i].own && named[state.TBTextKey(out[i].text)] {
+			out[i].lead = true
+		}
+	}
+
+	// When the mailboxes found belong to more than one of Outlook, Thunderbird and Evolution,
+	// Outlook's and Evolution's rows start with their program's name (the friction review's F1, the
+	// adversarial pass's SPF-03).
+	programs := map[string]bool{}
+	for _, r := range rows {
+		switch {
+		case r.tb:
+			programs["Thunderbird"] = true
+		case r.group == groupOutlook:
+			programs["Outlook"] = true
+		case r.evolution:
+			programs["Evolution"] = true
+		}
+	}
+	if len(programs) > 1 {
+		for i, r := range rows {
+			switch {
+			case r.group == groupOutlook:
+				out[i].prefix = "Outlook: "
+			case r.evolution:
+				out[i].prefix = "Evolution: "
+			}
+		}
+	}
+
+	// Thunderbird rows of two profiles whose words read alike (compared as the rows start, lead word
+	// and all) say more.
+	head := func(i int) string { return state.TBTextKey(rowHead(rows[i], out[i])) }
 	profiles := map[string]map[string]bool{}
 	for i, r := range rows {
 		if r.tb {
-			k := state.TBTextKey(out[i].text)
+			k := head(i)
 			if profiles[k] == nil {
 				profiles[k] = map[string]bool{}
 			}
 			profiles[k][r.profile] = true
 		}
 	}
+	sameDay := map[string][]int{} // (row words, changed words) → those rows, of two profiles
 	for i, r := range rows {
-		if r.tb && len(profiles[state.TBTextKey(out[i].text)]) > 1 {
-			out[i].hint = profileHint(r.profile)
+		if r.tb && len(profiles[head(i)]) > 1 {
+			if !r.changed.IsZero() {
+				out[i].changed = pickChangedWords(r.changed, now)
+			}
+			k := head(i) + "\x00" + out[i].changed
+			sameDay[k] = append(sameDay[k], i)
+		}
+	}
+	for _, idx := range sameDay {
+		if len(idx) < 2 {
+			continue
+		}
+		// The part of each profile's folder name after its first dot; where two of those are the
+		// same too (two *.default-release profiles), the whole folder name (the adversarial pass's
+		// SPF-02). Rows still alike after that get " (2)" (pickList).
+		short := map[string]int{}
+		for _, i := range idx {
+			short[profileHint(rows[i].profile, false)]++
+		}
+		for _, i := range idx {
+			out[i].hint = profileHint(rows[i].profile, false)
+			if short[out[i].hint] > 1 {
+				out[i].hint = profileHint(rows[i].profile, true)
+			}
 		}
 	}
 	return out
 }
 
-// profileHint is the name a Thunderbird profile's folder is told apart by: the part after its first
-// dot ("default-release" for x1y2z3ab.default-release), cleaned, as the folder itself is named.
-func profileHint(profile string) string {
+// profileHint is the name a Thunderbird profile's folder is told apart by, cleaned, as the folder
+// itself is named: the part after its first dot ("default-release" for x1y2z3ab.default-release),
+// or, with whole, the folder's whole name.
+func profileHint(profile string, whole bool) string {
 	base := filepath.Base(profile)
-	if _, rest, ok := strings.Cut(base, "."); ok && strings.TrimSpace(rest) != "" {
+	if _, rest, ok := strings.Cut(base, "."); ok && !whole && strings.TrimSpace(rest) != "" {
 		base = rest
 	}
 	if h := state.CleanFolderName(base); h != "" {
@@ -394,45 +516,71 @@ func profileHint(profile string) string {
 }
 
 // reservedStarts are the words, as TBTextKey keys them, that only MailArchive's own rows start
-// with: the All row's, a folder no account uses now, and the lead words.
-var reservedStarts = []string{"all of them", "not in thunderbird", "account ", "folder ", "file "}
+// with: the All row's, a folder no account uses now, the lead words, and the programs' prefixes.
+var reservedStarts = []string{"all of them", "not in thunderbird", "account ", "folder ", "file ", "outlook:", "evolution:"}
+
+// lookAlike folds the ASCII characters that read as one another in a list row (1, i and | as l; 0
+// as o), so "AII of them" and "A11 of them" start like the All row too (the adversarial pass's
+// SPF-05). Applied to both sides of the comparison.
+var lookAlike = strings.NewReplacer("1", "l", "i", "l", "|", "l", "0", "o")
 
 // needsLead reports whether a row that starts with ident must start with a lead word instead
 // (MA-1464): ident does not start with an ordinary letter or digit (A to Z, a to z, 0 to 9), so it
-// could start like the All row, read as a dialog program's option ("-x"), or turn the row's
-// direction; or it starts with the words of the All row, of a folder no account uses, or of a lead
-// word, compared as MA-1287 compares names.
+// could start like the All row or read as a dialog program's option ("-x"); its first letter that
+// has a direction runs right to left, so it would turn the row ("1שלום", the adversarial pass's
+// SPF-01); or it starts with the words of the All row, of a folder no account uses, of a lead word or
+// of a program's prefix, compared as MA-1287 compares names with look-alike ASCII folded.
 func needsLead(ident string) bool {
 	r, _ := utf8.DecodeRuneInString(ident)
 	if !('a' <= r && r <= 'z' || 'A' <= r && r <= 'Z' || '0' <= r && r <= '9') {
 		return true
 	}
-	k := state.TBTextKey(ident)
+	for _, c := range ident {
+		if p, _ := bidi.LookupRune(c); p.Class() == bidi.L {
+			break
+		} else if p.Class() == bidi.R || p.Class() == bidi.AL {
+			return true
+		}
+	}
+	k := lookAlike.Replace(state.TBTextKey(ident))
 	for _, w := range reservedStarts {
-		if strings.HasPrefix(k, w) {
+		if strings.HasPrefix(k, lookAlike.Replace(w)) {
 			return true
 		}
 	}
 	return false
 }
 
-// pickRowText is one row's words before the uniqueness pass: IDENT, with "Not in Thunderbird now: "
-// before a folder no account uses, or a lead word before one that needs it, then the details in
-// brackets: the profile's folder name when needed, and the size.
-func pickRowText(r pickRow, id pickIdent, goos string) string {
-	head := id.text
+// rowHead is how a row starts: IDENT, after "Not in Thunderbird now: " for a folder no account uses,
+// the program's name when other programs' mailboxes are listed too, or else a lead word when IDENT
+// needs one.
+func rowHead(r pickRow, id pickIdent) string {
 	switch {
 	case r.unused:
-		head = notInThunderbird + head
-	case !id.own && needsLead(head):
-		head = leadWord[id.kind] + head
+		return notInThunderbird + id.text
+	case id.prefix != "":
+		return id.prefix + id.text
+	case !id.own && (id.lead || needsLead(id.text)):
+		return leadWord[id.kind] + id.text
 	}
+	return id.text
+}
+
+// pickRowText is one row's words before the uniqueness pass: IDENT, after "Not in Thunderbird now: "
+// for a folder no account uses, the program's name when other programs' mailboxes are listed too,
+// or else a lead word when IDENT needs one; then the details in brackets: the size, when the mail
+// last changed and the profile's folder name, each when needed.
+func pickRowText(r pickRow, id pickIdent, goos string) string {
+	head := rowHead(r, id)
 	var detail []string
-	if id.hint != "" {
-		detail = append(detail, "profile "+id.hint)
-	}
 	if w := pickSizeOf(r, goos); w != "" {
 		detail = append(detail, w)
+	}
+	if id.changed != "" {
+		detail = append(detail, "last changed "+id.changed)
+	}
+	if id.hint != "" {
+		detail = append(detail, "profile "+id.hint)
 	}
 	if len(detail) == 0 {
 		return head
@@ -444,9 +592,10 @@ func pickRowText(r pickRow, id pickIdent, goos string) string {
 // then A to Z by what each says its mailbox by, ignoring letter case. It gives each row's text and the
 // path it stands for, in that order. No two texts are the same after NFKC and case folding
 // (TBTextKey, whole texts with no cap), and none is the All row's: a text already taken gets " (2)",
-// " (3)" and so on (MA-1464).
+// " (3)" and so on (MA-1464). When the mailboxes found belong to more than one of Outlook,
+// Thunderbird and Evolution, Outlook's and Evolution's rows start with their program's name.
 func pickList(rows []pickRow, goos string) (labels, paths []string) {
-	idents := pickIdents(rows)
+	idents := pickIdents(rows, pickNow())
 	order := make([]int, len(rows))
 	for i := range order {
 		order[i] = i
@@ -479,10 +628,34 @@ func pickList(rows []pickRow, goos string) (labels, paths []string) {
 // its words without the arrow); else the label with exactly that text; else the one whose whole text
 // is the same after NFKC and case folding (TBTextKey), of which there is at most one. ok is false for
 // any other answer, "" included: it names no row, and is never taken as a path.
-func pickChoice(answer string, labels []string) (i int, all, ok bool) {
+//
+// transcoded (answerMayBeTranscoded): the dialog program may have printed the answer in a character
+// set that is not UTF-8, writing "?" for each character outside ASCII (GLib 2.84 and older, the
+// adversarial pass's MAP-01). Then an answer holding "?" is the row it can be read as only when it
+// can be read as exactly one: two rows it fits (the All row among them) give no row, never a guess.
+func pickChoice(answer string, labels []string, transcoded bool) (i int, all, ok bool) {
 	k := state.TBTextKey(strings.TrimSpace(answer))
 	if answer == allOfThem || k == state.TBTextKey(allOfThem) || k == state.TBTextKey(allOfThemBare) {
 		return -1, true, true
+	}
+	if q := strings.TrimSpace(answer); transcoded && strings.Contains(q, "?") {
+		fits := []int{}
+		if asciiForm(allOfThem) == q || asciiForm(allOfThemBare) == q {
+			fits = append(fits, -1)
+		}
+		for i, l := range labels {
+			if asciiForm(l) == q {
+				fits = append(fits, i)
+			}
+		}
+		switch {
+		case len(fits) == 1 && fits[0] == -1:
+			return -1, true, true
+		case len(fits) == 1:
+			return fits[0], false, true
+		case len(fits) > 1:
+			return -1, false, false
+		}
 	}
 	for i, l := range labels {
 		if answer == l {
@@ -498,4 +671,35 @@ func pickChoice(answer string, labels []string) (i int, all, ok bool) {
 		}
 	}
 	return -1, false, false
+}
+
+// asciiForm is s as a dialog program writes it in a character set of ASCII alone: each character
+// outside ASCII as "?".
+func asciiForm(s string) string {
+	return strings.Map(func(r rune) rune {
+		if r > 0x7f {
+			return '?'
+		}
+		return r
+	}, s)
+}
+
+// answerMayBeTranscoded reports whether, on goos with the environment getenv, the list's answer may
+// come back in a character set that is not UTF-8: on Linux and the BSDs, where the dialog program
+// prints it, when the locale (LC_ALL, else LC_CTYPE, else LANG; none is "C") does not name UTF-8.
+func answerMayBeTranscoded(goos string, getenv func(string) string) bool {
+	switch goos {
+	case "linux", "freebsd", "openbsd", "netbsd", "dragonfly":
+	default:
+		return false
+	}
+	locale := "C"
+	for _, v := range []string{"LC_ALL", "LC_CTYPE", "LANG"} {
+		if s := getenv(v); s != "" {
+			locale = s
+			break
+		}
+	}
+	l := strings.ToLower(locale)
+	return !strings.Contains(l, "utf-8") && !strings.Contains(l, "utf8")
 }

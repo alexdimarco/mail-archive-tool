@@ -36,8 +36,10 @@ func rowInvariants(t *testing.T, what string, labels []string) {
 			t.Errorf("%s: row %q reads as %q", what, l, other)
 		}
 		seen[k] = l
-		if j, all, ok := pickChoice(l, labels); !ok || all || j != i {
-			t.Errorf("%s: row %q maps back to %d (all %v, ok %v), want %d", what, l, j, all, ok, i)
+		for _, transcoded := range []bool{false, true} {
+			if j, all, ok := pickChoice(l, labels, transcoded); !ok || all || j != i {
+				t.Errorf("%s: row %q maps back to %d (all %v, ok %v, transcoded %v), want %d", what, l, j, all, ok, transcoded, i)
+			}
 		}
 	}
 }
@@ -90,6 +92,15 @@ func TestEveryRowIsOneSourceNeverTheAllRowNeverAnOption(t *testing.T) {
 		{"Not in Thunderbird now: imap.x.example", "Account Not in Thunderbird now: imap.x.example (1.4 MB)"},
 		{"Account -x", "Account Account -x (1.4 MB)"},
 		{"Folder x", "Account Folder x (1.4 MB)"},
+		{"Outlook: qz.ost", "Account Outlook: qz.ost (1.4 MB)"},
+		{"evolution: qz", "Account evolution: qz (1.4 MB)"},
+		// A digit first, then a right-to-left letter: the row would run right to left (SPF-01).
+		{"1שלום@qz.example", "Account 1שלום@qz.example (1.4 MB)"},
+		{"2024 مرحبا", "Account 2024 مرحبا (1.4 MB)"},
+		// Look-alike ASCII of the All row (SPF-05).
+		{"AII of them (and any added later)", "Account AII of them (and any added later) (1.4 MB)"},
+		{"A11 of them (and any added later)", "Account A11 of them (and any added later) (1.4 MB)"},
+		{"AlI of them", "Account AlI of them (1.4 MB)"},
 		{"q\x00z\u202e@qz\u200b.example", "qz@qz.example (1.4 MB)"},
 		{strings.Repeat("z", 10240), strings.Repeat("z", 80) + "… (1.4 MB)"},
 	} {
@@ -99,11 +110,20 @@ func TestEveryRowIsOneSourceNeverTheAllRowNeverAnOption(t *testing.T) {
 		}
 		rowInvariants(t, "named "+c.name, labels)
 	}
+	// Ordinary names keep no lead word: a digit first with a left-to-right letter after it, a name
+	// starting like "Alison", one with a word "file" in it.
+	for _, n := range []string{"2nd account@qz.example", "Alison@qz.example", "Filed mail", "All mail"} {
+		if labels, _ := pickList([]pickRow{tbRow("/p/x.default", "imap.x.example", n)}, "darwin"); labels[0] != n+" (1.4 MB)" {
+			t.Errorf("an ordinary name %q got %q", n, labels[0])
+		}
+	}
 	for _, c := range []struct {
 		row  pickRow
 		want string
 	}{
 		{pickRow{path: "/m/-x", group: groupOther, kind: identFolder, folder: "-x"}, "Folder -x"},
+		{pickRow{path: "/m/1ש", group: groupOther, kind: identFolder, folder: "7שלום"}, "Folder 7שלום"},
+		{pickRow{path: "/m/1ש.pst", group: groupOutlook, kind: identFile, folder: "1שלום.pst"}, "File 1שלום.pst"},
 		{pickRow{path: "/m/-x.pst", group: groupOutlook, kind: identFile, folder: "-x.pst"}, "File -x.pst"},
 		{pickRow{path: "/m/all", group: groupOther, kind: identFolder, folder: "all of them"}, "Folder all of them"},
 		{pickRow{path: "/m/z", group: groupOther, kind: identFolder, folder: "\u200b"}, "Folder with no name"},
@@ -128,12 +148,55 @@ func TestEveryRowIsOneSourceNeverTheAllRowNeverAnOption(t *testing.T) {
 // The answer maps back to its row: by its exact text; else by its whole text after NFKC and case
 // folding (an answer in NFD for a row in NFC, or in other letter case), of which only one row can
 // match; the All row also by its words without the arrow. "" and any other text map to no row.
+// Where the dialog program may have printed the answer in a character set of ASCII alone (Linux
+// and the BSDs with a locale that does not name UTF-8, GLib 2.84 and older: the adversarial pass's
+// MAP-01), an answer with "?" for each character outside ASCII is the row it fits only when it fits
+// exactly one: the All row ("? All of them …") is then picked, and two rows it fits give no row.
 // Positive twin first: each row's exact text gives that row.
 func TestTheAnswerMapsBackToItsRow(t *testing.T) {
 	labels := []string{"café@qz.example (2.0 MB)", "Work (empty)"}
 	for i, l := range labels {
-		if j, all, ok := pickChoice(l, labels); !ok || all || j != i {
+		if j, all, ok := pickChoice(l, labels, false); !ok || all || j != i {
 			t.Fatalf("positive twin: %q gave %d %v %v", l, j, all, ok)
+		}
+	}
+	for _, c := range []struct {
+		answer      string
+		labels      []string
+		transcoded  bool
+		row         int
+		all, wantOK bool
+	}{
+		{"? All of them (and any added later)", labels, true, -1, true, true},
+		{"? All of them (and any added later)", labels, false, -1, false, false},
+		{"caf?@qz.example (2.0 MB)", labels, true, 0, false, true},
+		{"caf?@qz.example (2.0 MB)", labels, false, -1, false, false},
+		// Two rows the answer fits (a name spelled with "?" beside one with é): no row, never a guess.
+		{"Jos?@qz.example (1.4 MB)", []string{"José@qz.example (1.4 MB)", "Jos?@qz.example (1.4 MB)"}, true, -1, false, false},
+		{"Jos?@qz.example (1.4 MB)", []string{"José@qz.example (1.4 MB)", "Jos?@qz.example (1.4 MB)"}, false, 1, false, true},
+		{"Jos?@qz.example (1.4 MB)", []string{"José@qz.example (1.4 MB)", "Work (empty)"}, true, 0, false, true},
+	} {
+		if j, all, ok := pickChoice(c.answer, c.labels, c.transcoded); j != c.row || all != c.all || ok != c.wantOK {
+			t.Errorf("%q (transcoded %v): %d %v %v, want %d %v %v", c.answer, c.transcoded, j, all, ok, c.row, c.all, c.wantOK)
+		}
+	}
+	env := func(m map[string]string) func(string) string { return func(k string) string { return m[k] } }
+	for _, c := range []struct {
+		goos string
+		vars map[string]string
+		want bool
+	}{
+		{"linux", map[string]string{"LANG": "en_CA.UTF-8"}, false},
+		{"linux", map[string]string{"LANG": "de_DE.utf8"}, false},
+		{"linux", map[string]string{}, true},
+		{"linux", map[string]string{"LANG": "C"}, true},
+		{"linux", map[string]string{"LC_ALL": "C", "LANG": "en_CA.UTF-8"}, true},
+		{"freebsd", map[string]string{"LC_CTYPE": "en_US.ISO8859-1", "LANG": "en_US.UTF-8"}, true},
+		{"darwin", map[string]string{}, false},
+		{"windows", map[string]string{}, false},
+	} {
+		if got := answerMayBeTranscoded(c.goos, env(c.vars)); got != c.want {
+			t.Errorf("%s %v: transcoded %v, want %v", c.goos, c.vars, got, c.want)
 		}
 	}
 	for _, c := range []struct {
@@ -152,7 +215,7 @@ func TestTheAnswerMapsBackToItsRow(t *testing.T) {
 		{"Work", -1, false, false},
 		{"/Users/qz/Library/Thunderbird", -1, false, false},
 	} {
-		if j, all, ok := pickChoice(c.answer, labels); j != c.row || all != c.all || ok != c.ok {
+		if j, all, ok := pickChoice(c.answer, labels, false); j != c.row || all != c.all || ok != c.ok {
 			t.Errorf("%q gave %d %v %v, want %d %v %v", c.answer, j, all, ok, c.row, c.all, c.ok)
 		}
 	}
@@ -179,12 +242,19 @@ func TestNamesFollowTheSharedNameRuleWithinAProfile(t *testing.T) {
 			[]string{"imap.gmail-1.com (1.4 MB)", "imap.gmail-2.com (1.4 MB)"}},
 		{"MailArchive's no-name words", []pickRow{tbRow(p, "imap.gmail-1.com", "the Thunderbird account kept in the folder imap.gmail.com")},
 			[]string{"imap.gmail-1.com (1.4 MB)"}},
+		// A folder named like another row's account name: the account keeps its name, the folder's
+		// row starts with "Folder " (SPF-04).
 		{"a name like another row's folder", []pickRow{tbRow(p, "imap.gmail-1.com", "imap.gmail.com"), tbRow(p, "imap.gmail.com", "")},
-			[]string{"imap.gmail-1.com (1.4 MB)", "imap.gmail.com (1.4 MB)"}},
+			[]string{"imap.gmail.com (1.4 MB)", "Folder imap.gmail.com (1.4 MB)"}},
+		{"a folder named like an address", []pickRow{tbRow(p, "imap.gmail-1.com", "qzsam.walker@gmail.com"), tbRow("/qz/odd.default", "qzsam.walker@gmail.com", "")},
+			[]string{"qzsam.walker@gmail.com (1.4 MB)", "Folder qzsam.walker@gmail.com (1.4 MB)"}},
 		{"a name like its own folder", []pickRow{tbRow(p, "imap.gmail.com", "imap.gmail.com")},
 			[]string{"imap.gmail.com (1.4 MB)"}},
 		{"one address in two profiles", []pickRow{tbRow(p, "imap.gmail.com", "qzsam@gmail.com"), tbRow("/qz/e5f6.default", "imap.gmail.com", "qzsam@gmail.com")},
-			[]string{"qzsam@gmail.com (profile default-release, 1.4 MB)", "qzsam@gmail.com (profile default, 1.4 MB)"}},
+			[]string{"qzsam@gmail.com (1.4 MB, profile default-release)", "qzsam@gmail.com (1.4 MB, profile default)"}},
+		// Two *.default-release profiles: the whole folder names (SPF-02).
+		{"two profiles that end alike", []pickRow{tbRow(p, "imap.gmail.com", "qzsam@gmail.com"), tbRow("/qz/e5f6.default-release", "imap.gmail.com", "qzsam@gmail.com")},
+			[]string{"qzsam@gmail.com (1.4 MB, profile a1b2.default-release)", "qzsam@gmail.com (1.4 MB, profile e5f6.default-release)"}},
 	} {
 		labels, _ := pickList(c.rows, "darwin")
 		if !reflect.DeepEqual(labels, c.want) {
@@ -205,7 +275,7 @@ func TestTheSizeCountsTheMailOnThisComputer(t *testing.T) {
 	later := time.Now().Add(time.Minute)
 	one := t.TempDir()
 	pickFile(t, filepath.Join(one, "INBOX"), 1234)
-	if n, floor, ok := storeSize(one, later, sizeEntryMax); n != 1234 || floor || !ok {
+	if n, _, floor, ok := storeSize(one, later, sizeEntryMax); n != 1234 || floor || !ok {
 		t.Fatalf("positive twin: one mbox file: %d %v %v", n, floor, ok)
 	}
 
@@ -217,7 +287,7 @@ func TestTheSizeCountsTheMailOnThisComputer(t *testing.T) {
 		}
 		pickFile(t, p, n)
 	}
-	if n, floor, ok := storeSize(mbox, later, sizeEntryMax); n != 600 || floor || !ok {
+	if n, _, floor, ok := storeSize(mbox, later, sizeEntryMax); n != 600 || floor || !ok {
 		t.Errorf("nested .sbd folders, .msf, .dat and .mozmsgs left out: %d %v %v, want 600", n, floor, ok)
 	}
 
@@ -229,20 +299,20 @@ func TestTheSizeCountsTheMailOnThisComputer(t *testing.T) {
 		}
 		pickFile(t, p, n)
 	}
-	if n, _, ok := storeSize(maildir, later, sizeEntryMax); n != 60 || !ok {
+	if n, _, _, ok := storeSize(maildir, later, sizeEntryMax); n != 60 || !ok {
 		t.Errorf("a maildir store: %d %v, want 60", n, ok)
 	}
 	if m := thunderbird.TotalSize(thunderbird.MboxFiles(maildir)); m != 0 {
 		t.Errorf("the model: MboxFiles gives a maildir store %d, the reason it is not used", m)
 	}
 
-	if n, floor, ok := storeSize(mbox, later, 3); !floor || !ok || n > 600 {
+	if n, _, floor, ok := storeSize(mbox, later, 3); !floor || !ok || n > 600 {
 		t.Errorf("the entry bound: %d %v %v, want a floor", n, floor, ok)
 	}
-	if _, _, ok := storeSize(mbox, time.Now().Add(-time.Second), sizeEntryMax); ok {
+	if _, _, _, ok := storeSize(mbox, time.Now().Add(-time.Second), sizeEntryMax); ok {
 		t.Errorf("past the deadline a store gets no size")
 	}
-	if _, _, ok := storeSize(filepath.Join(mbox, "missing"), later, sizeEntryMax); ok {
+	if _, _, _, ok := storeSize(filepath.Join(mbox, "missing"), later, sizeEntryMax); ok {
 		t.Errorf("a folder that is not there gets no size")
 	}
 
@@ -253,14 +323,14 @@ func TestTheSizeCountsTheMailOnThisComputer(t *testing.T) {
 	if err := os.Symlink(outside, filepath.Join(linked, "Other.sbd")); err != nil {
 		t.Logf("no links here (%v): the link checks are skipped", err)
 	} else {
-		if n, _, ok := storeSize(linked, later, sizeEntryMax); n != 5 || !ok {
+		if n, _, _, ok := storeSize(linked, later, sizeEntryMax); n != 5 || !ok {
 			t.Errorf("a linked folder below is not followed: %d %v, want 5", n, ok)
 		}
 		link := filepath.Join(t.TempDir(), "store")
 		if err := os.Symlink(outside, link); err != nil {
 			t.Fatal(err)
 		}
-		if _, _, ok := storeSize(link, later, sizeEntryMax); ok {
+		if _, _, _, ok := storeSize(link, later, sizeEntryMax); ok {
 			t.Errorf("a store folder that is itself a link gets no size")
 		}
 	}
@@ -277,7 +347,7 @@ func TestTheSizeCountsTheMailOnThisComputer(t *testing.T) {
 			t.Fatal(err)
 		}
 		t.Cleanup(func() { _ = os.Chmod(sub, 0o755) })
-		if n, floor, ok := storeSize(locked, later, sizeEntryMax); n != 40 || !floor || !ok {
+		if n, _, floor, ok := storeSize(locked, later, sizeEntryMax); n != 40 || !floor || !ok {
 			t.Errorf("a folder below that cannot be read: %d %v %v, want 40 as a floor", n, floor, ok)
 		}
 	}

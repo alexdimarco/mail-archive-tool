@@ -101,6 +101,13 @@ func (r *evolutionReader) walk(w *localWalk) error {
 	return w.drain()
 }
 
+// IsEvolutionStore reports whether dir is an Evolution mail store, as Open reads it first: a Camel
+// disk cache or a Maildir++ store. The wizard's list of found mailboxes says such a row is
+// Evolution's when another program's mailboxes are listed too (MA-1462).
+func IsEvolutionStore(dir string) bool {
+	return isEvolutionCacheStore(dir) || isEvolutionMaildirStore(dir)
+}
+
 // isEvolutionMaildirStore reports whether dir is an Evolution Maildir++ store:
 // a maildir carrying the ..maildir++ marker, or (as a fallback) a maildir that
 // also holds at least one dot-prefixed maildir subfolder.
