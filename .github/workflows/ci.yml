@@ -59,9 +59,15 @@ jobs:
         if: matrix.os == 'ubuntu-latest'
         run: go test -race -count=1 -run 'Encryption|Unlock|Remembered|Locks|Lock|OpenAnArchive|Records|RunNow|KeyRegistry|Hush|Switch|ForgetAll|RecoveryFile|Prepared|Cancel|ShutDown|Confirm|MakesAnEncrypted|Create|Forgetting|Dismiss|PuttingBack|Defaults|Repair|Pause|Reader|UnencryptedCopy|TheCard' ./internal/desktop/
 
+      # zenity is built from its copy in third_party/zenity (a replace), which govulncheck
+      # cannot match to the module's advisories: each scan runs again as if the published
+      # v0.10.12 were used (docs/design-windows-dialog-fit.md §7, MA-1468).
       - name: Vulnerability scan (reachable code)
         if: matrix.os == 'ubuntu-latest'
-        run: go run golang.org/x/vuln/cmd/govulncheck@v1.8.0 ./...
+        run: |
+          go run golang.org/x/vuln/cmd/govulncheck@v1.8.0 ./...
+          go install golang.org/x/vuln/cmd/govulncheck@v1.8.0
+          packaging/vulncheck-published-zenity.sh "$(go env GOPATH)/bin/govulncheck" ./...
 
       # The desktop binary links the OS folder picker (zenity) and, on Windows, its in-process
       # IFileOpenDialog: scan the Windows build of it as well (extraction design XC31, MA-529).
@@ -71,6 +77,7 @@ jobs:
         run: |
           go install golang.org/x/vuln/cmd/govulncheck@v1.8.0
           GOOS=windows "$(go env GOPATH)/bin/govulncheck" ./cmd/mailarchive-desktop
+          GOOS=windows packaging/vulncheck-published-zenity.sh "$(go env GOPATH)/bin/govulncheck" ./cmd/mailarchive-desktop
 
       # The ubuntu job is the gate, and nothing in it built the Windows code or its
       # tests: a Unix-only call in one test file (syscall.Mkfifo) kept every Desktop test

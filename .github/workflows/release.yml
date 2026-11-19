@@ -46,8 +46,16 @@ jobs:
       - name: Test (assurance gates must be green before shipping)
         run: go test ./... -timeout 20m
 
+      # zenity is built from its copy in third_party/zenity, which govulncheck cannot match
+      # to the module's advisories: scan again as if the published v0.10.12 were used, for
+      # the whole module and for the Windows desktop program, whose dialogs are most of what
+      # MailArchive calls in it (docs/design-windows-dialog-fit.md §7, MA-1468).
       - name: Vulnerability scan (a reachable known vulnerability blocks the release)
-        run: go run golang.org/x/vuln/cmd/govulncheck@v1.8.0 ./...
+        run: |
+          go run golang.org/x/vuln/cmd/govulncheck@v1.8.0 ./...
+          go install golang.org/x/vuln/cmd/govulncheck@v1.8.0
+          packaging/vulncheck-published-zenity.sh "$(go env GOPATH)/bin/govulncheck" ./...
+          GOOS=windows packaging/vulncheck-published-zenity.sh "$(go env GOPATH)/bin/govulncheck" ./cmd/mailarchive-desktop
 
       # A release is exactly vMAJOR.MINOR.PATCH: the release-stamp gate and the program
       # copies an encrypted archive keeps rely on it (program design §7). Every tag push

@@ -1,0 +1,17 @@
+{{template "common" .}}
+ObjC.import('stdio')
+ObjC.import('stdlib')
+
+try {
+  var res = app.{{.Operation}}({{json .Options}})
+} catch (e) {
+  if (e.errorNumber === -128) $.exit(1)
+  $.dprintf(2, e)
+  $.exit(-1)
+}
+
+if (Array.isArray(res)) {
+  res.join({{json .Separator}})
+} else {
+  res.toString()
+}
