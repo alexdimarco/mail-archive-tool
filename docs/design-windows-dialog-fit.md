@@ -73,7 +73,9 @@ not a fix.
     (`wizard.go:1716-1745, 1766`; `internal/desktop/dialogs.go:39`);
   - an entry's starting text is shown whole up to the cap; past it, it scrolls
     in its box as before;
-  - every button label is drawn whole.
+  - every button label is drawn whole, unless it is wider than its share of the
+    widest dialog the screen allows; then it is cut, and its button stays inside
+    the dialog (§4.3, Buttons). MailArchive's labels are short fixed words [B1].
 
   A message box's own text is Windows' layout and is outside P1: it is drawn
   whole only while the box fits the work area. MA-1470 records whether Windows
@@ -305,7 +307,10 @@ Then capped.
 **Buttons, in every patched dialog.** Each is as wide as the widest label in its
 row plus 12 on each side, at least 75 (upstream's), all the same width, 24 high,
 8 apart, right-aligned as upstream aligns two; with an extra button the row is
-laid out right to left in upstream's OK, extra, Cancel order.
+laid out right to left in upstream's OK, extra, Cancel order. When the labels would
+need a row wider than the cap, the buttons share the content width equally, so a
+label wider than its share is cut and never pushes a button out of the dialog
+[B1].
 
 **Entry dialog [C5, N14].** As the list dialog without the list and without the
 scrolling prompt. The content width also takes the starting text, measured on one
@@ -480,9 +485,11 @@ words) and:
     upstream's layout.
 
   Positive twins first: the list and entry dialogs and their buttons come out at
-  upstream's sizes for upstream's short words; the progress dialog, whose
-  short-text size changes on purpose, comes out 400 wide with upstream's heights
-  [C21].
+  upstream's widths, control sizes and button positions for upstream's short words;
+  the progress dialog, whose short-text size changes on purpose, comes out 400 wide
+  with upstream's heights [C21]. In each, the prompt label is a quarter line taller
+  than upstream's 16 (the slack, §4.3), and what is below it moves down by that much
+  [B2].
 - **MA-1470 (L, Windows lab: the office test PC, one screen at 150 %, env-gated
   like MA-1113) [C1 to C10, C20, N9, N10, N11].** Real dialogs opened through the
   public API in the main module, measured from outside with Win32 by a
@@ -700,6 +707,14 @@ The fold check of revision 2 (its points folded here):
 | N14 | §4.3 Entry dialog, Never take the keyboard | The keyboard rule is about the dialog window; child controls use `SW_SHOWNA`; the entry has no scrolling prompt |
 | N15 | §3; §4.3 Message boxes | The hook reads and re-flows every button of the row |
 | N16 | §7 | The "12 of 16" re-check also when the Go toolchain moves |
+
+Build notes (2026-11-19), found while building `fit.go` and recorded here for the
+adversarial pass:
+
+| Note | Where | Change |
+|---|---|---|
+| B1 | §2 P1; §4.3 Buttons | `fit_test.go`'s sweep found a label wider than the cap pushing its button outside the dialog. Buttons now share the content width when the labels need more, and P1 states the limit: such a label is cut |
+| B2 | §5 MA-1469 | The positive twins: a prompt label is a quarter line taller than upstream's (C3's slack), so the twins hold upstream's widths, control sizes and button positions, with what is below the prompt moved down by the slack |
 
 Also corrected in revision 2: the progress dialog's 400 is about 75 characters a
 line at 150 %, not about 60 (the rescue's measurement of the screenshots, an

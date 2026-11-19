@@ -20,8 +20,9 @@ program), `.github/` and `testdata/`. Nothing else.
 **Patched files:** none yet. Each one the patch changes is listed in the pins (below)
 with the SHA-256 of its upstream original and of our version, the imports it adds,
 and the lab run it last passed; a change to it must update its record in the same
-change. **Added files:** this `UPSTREAM.md`; `fit.go` and `fit_test.go` (the layout
-arithmetic) arrive with the patch.
+change. **Added files:** this `UPSTREAM.md`; `fit.go`, the layout arithmetic (pure, no
+imports, built everywhere but called only from the Windows files); and `fit_test.go`,
+its tests (MailArchive's MA-1469).
 
 **How it is checked.** `internal/thirdparty/testdata/zenity.pins` lists all 131
 files of the published module with their SHA-256 (copied, patched or left out); the

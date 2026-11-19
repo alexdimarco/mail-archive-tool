@@ -843,7 +843,7 @@ func runGo(t *testing.T, dir string, env []string, args ...string) (string, erro
 	return out.String(), err
 }
 
-// covers: MA-1468
+// covers: MA-1468, MA-1469
 // The copy's own tests pass and its vet is clean, run from the main module: the
 // repository's unfiltered `go test ./...` never enters a nested module, so this test runs
 // `go test ./...` and `go vet ./...` in third_party/zenity, for GOOS windows, darwin and
