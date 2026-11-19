@@ -462,13 +462,15 @@ func copyBuildHash(files map[string][]byte, labTest []byte) string {
 	return "sha256:" + hex.EncodeToString(h.Sum(nil))
 }
 
-// labHashOf is the lab-copy hash of the repository at root, whose copy holds files.
+// labHashOf is the lab-copy hash of the repository at root, whose copy holds files. The lab
+// test is hashed with its line breaks as LF: a Windows checkout writes them as CR LF (the
+// copy keeps its bytes through .gitattributes; the test file does not need to).
 func labHashOf(root string, files map[string][]byte) (string, error) {
 	lab, err := os.ReadFile(filepath.Join(root, filepath.FromSlash(labTestRel)))
 	if err != nil {
 		return "", err
 	}
-	return copyBuildHash(files, lab), nil
+	return copyBuildHash(files, bytes.ReplaceAll(lab, []byte("\r\n"), []byte("\n"))), nil
 }
 
 // checkCopy is MA-1468: it returns every way the repository at root breaks the pins.
@@ -1770,6 +1772,7 @@ func TestTheGuardStepsCannotPassQuietly(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
+			data = bytes.ReplaceAll(data, []byte("\r\n"), []byte("\n")) // a Windows checkout's line breaks
 			out := filepath.Join(dir, filepath.FromSlash(rel))
 			if err := os.MkdirAll(filepath.Dir(out), 0o755); err != nil {
 				t.Fatal(err)
