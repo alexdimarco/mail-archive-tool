@@ -114,3 +114,13 @@ the receipt the pins record.
 
 Not covered by any review agent: the friction re-check's list change (G1, daf68cb), a
 pure change to `fit.go` proven by MA-1469 (27 of 27 mutants) and MA-1470.
+
+**What CI found after the re-verify.** The pull request's first CI run (44488910222)
+failed the copy check on windows-latest only, twice, both over line breaks, which GitHub's
+Windows checkout writes as CR LF outside `third_party/zenity`: the lab test, which RV-03
+put into the `lab-copy` hash, hashed differently there than on the Mac, and the guard-step
+test's edits of the workflows found no LF line to change. Fixed in ac38767 (the lab test is
+hashed with LF line breaks, which leaves the recorded hash as it was; the guard-step test
+reads the workflows with LF line breaks), and checked on an emulated Windows checkout
+before CI ran again. That run's other Windows failures are main's own: the same twelve
+packages fail on main's run 44355838119, as they have since before this change.
