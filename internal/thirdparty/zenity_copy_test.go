@@ -679,8 +679,8 @@ func TestTheZenityCopyCheckRefusesEachChange(t *testing.T) {
 			editFile(t, filepath.Join(dir, copied("LICENSE")), func(b []byte) []byte { b[0] ^= 1; return b })
 			return p
 		}},
-		{"line endings", "list_windows.go differs from the published module only by carriage returns", func(t *testing.T, dir string) pins {
-			editFile(t, filepath.Join(dir, copied("list_windows.go")), func(b []byte) []byte {
+		{"line endings", "list.go differs from the published module only by carriage returns", func(t *testing.T, dir string) pins {
+			editFile(t, filepath.Join(dir, copied("list.go")), func(b []byte) []byte {
 				return bytes.ReplaceAll(b, []byte("\n"), []byte("\r\n"))
 			})
 			return p
@@ -734,16 +734,16 @@ func TestTheZenityCopyCheckRefusesEachChange(t *testing.T) {
 		}},
 	}
 
-	// A patch file, simulated: list_windows.go given one more line and recorded as the
-	// recorder would; the record must hold it, as the positive twin shows, and each change
+	// A patch file, simulated on a file the design never patches: date_windows.go given one
+	// more line and recorded as the recorder would; the record must hold it, as the positive twin shows, and each change
 	// after it must not pass.
-	upstream, err := os.ReadFile(filepath.Join(root, copied("list_windows.go")))
+	upstream, err := os.ReadFile(filepath.Join(root, copied("date_windows.go")))
 	if err != nil {
 		t.Fatal(err)
 	}
 	patched := func(t *testing.T, dir string, extra string) pins {
-		editFile(t, filepath.Join(dir, copied("list_windows.go")), func(b []byte) []byte { return append(b, extra...) })
-		return asPatched(t, p, dir, "list_windows.go", string(upstream))
+		editFile(t, filepath.Join(dir, copied("date_windows.go")), func(b []byte) []byte { return append(b, extra...) })
+		return asPatched(t, p, dir, "date_windows.go", string(upstream))
 	}
 	dir := scratchRepo(t, root)
 	q := patched(t, dir, "\n// a patch\n")
@@ -751,32 +751,32 @@ func TestTheZenityCopyCheckRefusesEachChange(t *testing.T) {
 		t.Fatalf("positive twin: a patch file with its record should pass, got %q", probs)
 	}
 	if probs := checkCopy(dir, p); len(probs) == 0 {
-		t.Fatal("a changed list_windows.go still pinned as copied should not pass")
+		t.Fatal("a changed date_windows.go still pinned as copied should not pass")
 	}
 	cases = append(cases,
-		refusal{"a patch file after its record", "patch file list_windows.go changed since its record", func(t *testing.T, dir string) pins {
+		refusal{"a patch file after its record", "patch file date_windows.go changed since its record", func(t *testing.T, dir string) pins {
 			q := patched(t, dir, "\n// a patch\n")
-			editFile(t, filepath.Join(dir, copied("list_windows.go")), func(b []byte) []byte { return append(b, "// later\n"...) })
+			editFile(t, filepath.Join(dir, copied("date_windows.go")), func(b []byte) []byte { return append(b, "// later\n"...) })
 			return q
 		}},
-		refusal{"a patch file's init function", "patch file list_windows.go declares an init function", func(t *testing.T, dir string) pins {
+		refusal{"a patch file's init function", "patch file date_windows.go declares an init function", func(t *testing.T, dir string) pins {
 			return patched(t, dir, "\nfunc init() {}\n")
 		}},
-		refusal{"a patch file's variable set by a call", "patch file list_windows.go adds package-level variable zzz, set by a call", func(t *testing.T, dir string) pins {
+		refusal{"a patch file's variable set by a call", "patch file date_windows.go adds package-level variable zzz, set by a call", func(t *testing.T, dir string) pins {
 			return patched(t, dir, "\nvar zzz = len(\"x\")\n")
 		}},
-		refusal{"a patch file's lab run", "patch file list_windows.go's record names no passing lab run", func(t *testing.T, dir string) pins {
+		refusal{"a patch file's lab run", "patch file date_windows.go's record names no passing lab run", func(t *testing.T, dir string) pins {
 			q := patched(t, dir, "\n// a patch\n")
-			rec := q.patches["list_windows.go"]
+			rec := q.patches["date_windows.go"]
 			rec.lab = "MA-1470 2026-11-19 a scratch run fail"
-			q.patches["list_windows.go"] = rec
+			q.patches["date_windows.go"] = rec
 			return q
 		}},
-		refusal{"a patch file's imports", "patch file list_windows.go imports", func(t *testing.T, dir string) pins {
+		refusal{"a patch file's imports", "patch file date_windows.go imports", func(t *testing.T, dir string) pins {
 			q := patched(t, dir, "\n// a patch\n")
-			rec := q.patches["list_windows.go"]
+			rec := q.patches["date_windows.go"]
 			rec.upstreamImports = rec.upstreamImports[1:]
-			q.patches["list_windows.go"] = rec
+			q.patches["date_windows.go"] = rec
 			return q
 		}},
 		refusal{"a patch file built for Linux", "patch file list.go builds for linux", func(t *testing.T, dir string) pins {

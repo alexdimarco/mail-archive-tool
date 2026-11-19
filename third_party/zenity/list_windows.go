@@ -52,6 +52,12 @@ type listDialog struct {
 	cancelBtn win.HWND
 	extraBtn  win.HWND
 	font      font
+
+	// MailArchive's patch: the dialog fits its words (fit.go).
+	text      string
+	labels    []string  // the buttons' labels, left to right
+	promptCtl win.HWND  // the scrolling prompt, shown when the prompt is too tall for the room
+	fit       fitDialog // the layout last applied; Upstream keeps upstream's layout
 }
 
 func (dlg *listDialog) setup(text string, opts options) ([]string, error) {
@@ -82,13 +88,32 @@ func (dlg *listDialog) setup(text string, opts options) ([]string, error) {
 		win.CW_USEDEFAULT, win.CW_USEDEFAULT,
 		281, 281, owner, 0, instance, unsafe.Pointer(dlg))
 
+	// MailArchive's patch: decide, before the controls exist, whether this dialog can be
+	// laid out to fit its words; if not, it keeps upstream's layout and label style.
+	dlg.text = text
+	dlg.labels = fitButtonLabels(opts.okLabel, opts.extraButton, opts.cancelLabel)
+	dlg.fit = dlg.measure(getDPI(dlg.wnd))
+	var labelStyle uint32 = _WS_ZEN_LABEL
+	if !dlg.fit.Upstream {
+		labelStyle = _WS_ZEN_FIT_LABEL
+	}
+
 	dlg.textCtl, _ = win.CreateWindowEx(0,
-		strptr("STATIC"), strptr(text), _WS_ZEN_LABEL,
+		strptr("STATIC"), strptr(text), labelStyle,
 		12, 10, 241, 16, dlg.wnd, 0, instance, nil)
+	if !dlg.fit.Upstream {
+		dlg.promptCtl, _ = win.CreateWindowEx(0,
+			strptr("EDIT"), strptr(fitCRLF(text)),
+			win.WS_CHILD|win.ES_MULTILINE|win.ES_READONLY|win.WS_VSCROLL,
+			12, 10, 241, 16, dlg.wnd, 0, instance, nil)
+	}
 
 	var flags uint32 = _WS_ZEN_CONTROL | win.WS_VSCROLL | win.LBS_NOTIFY
 	if dlg.multiple {
 		flags |= win.LBS_EXTENDEDSEL
+	}
+	if !dlg.fit.Upstream {
+		flags |= win.WS_HSCROLL
 	}
 	dlg.listCtl, _ = win.CreateWindowEx(win.WS_EX_CLIENTEDGE,
 		strptr("LISTBOX"), nil, flags,
@@ -124,7 +149,11 @@ func (dlg *listDialog) setup(text string, opts options) ([]string, error) {
 
 	dlg.update()
 	dlg.layout(getDPI(dlg.wnd))
-	centerWindow(dlg.wnd)
+	if dlg.fit.Upstream {
+		centerWindow(dlg.wnd)
+	} else {
+		fitCenterWindow(dlg.wnd)
+	}
 	win.SetFocus(dlg.listCtl)
 	win.ShowWindow(dlg.wnd, win.SW_NORMAL)
 
@@ -156,6 +185,17 @@ func (dlg *listDialog) layout(dpi dpi) {
 	win.SendMessage(dlg.okBtn, win.WM_SETFONT, font, 1)
 	win.SendMessage(dlg.cancelBtn, win.WM_SETFONT, font, 1)
 	win.SendMessage(dlg.extraBtn, win.WM_SETFONT, font, 1)
+	if !dlg.fit.Upstream {
+		// MailArchive's patch: lay out at this DPI; a layout that cannot be measured
+		// keeps the last one.
+		win.SendMessage(dlg.promptCtl, win.WM_SETFONT, font, 1)
+		if f := dlg.measure(dpi); !f.Upstream {
+			dlg.fit = f
+			fitResize(dlg.wnd, f.Window)
+			dlg.apply(f)
+		}
+		return
+	}
 	win.SetWindowPos(dlg.wnd, 0, 0, 0, dpi.scale(281), dpi.scale(281), win.SWP_NOMOVE|win.SWP_NOZORDER)
 	win.SetWindowPos(dlg.textCtl, 0, dpi.scale(12), dpi.scale(10), dpi.scale(241), dpi.scale(16), win.SWP_NOZORDER)
 	win.SetWindowPos(dlg.listCtl, 0, dpi.scale(12), dpi.scale(30), dpi.scale(241), dpi.scale(164), win.SWP_NOZORDER)
@@ -166,6 +206,33 @@ func (dlg *listDialog) layout(dpi dpi) {
 		win.SetWindowPos(dlg.okBtn, 0, dpi.scale(12), dpi.scale(206), dpi.scale(75), dpi.scale(24), win.SWP_NOZORDER)
 		win.SetWindowPos(dlg.extraBtn, 0, dpi.scale(95), dpi.scale(206), dpi.scale(75), dpi.scale(24), win.SWP_NOZORDER)
 		win.SetWindowPos(dlg.cancelBtn, 0, dpi.scale(178), dpi.scale(206), dpi.scale(75), dpi.scale(24), win.SWP_NOZORDER)
+	}
+}
+
+// measure lays the dialog out to fit its words at dpi (MailArchive's patch, fit.go).
+func (dlg *listDialog) measure(dpi dpi) fitDialog {
+	m := fitText{wnd: dlg.wnd, font: win.Handle(dlg.font.forDPI(dpi))}
+	return fitList(fitEnvironment(dlg.wnd, dpi, m), m, dlg.text, dlg.items, dlg.labels)
+}
+
+// apply places the controls as f says, never activating any (MailArchive's patch).
+func (dlg *listDialog) apply(f fitDialog) {
+	show, hide := dlg.textCtl, dlg.promptCtl
+	if f.Scroll {
+		show, hide = dlg.promptCtl, dlg.textCtl
+	}
+	fitPlace(show, f.Prompt)
+	fitShow(show, hide)
+	fitPlace(dlg.listCtl, f.Control)
+	win.SendMessage(dlg.listCtl, win.LB_SETHORIZONTALEXTENT, uintptr(f.Extent), 0)
+	buttons := []win.HWND{dlg.okBtn, dlg.cancelBtn}
+	if dlg.extraBtn != 0 {
+		buttons = []win.HWND{dlg.okBtn, dlg.extraBtn, dlg.cancelBtn}
+	}
+	for i, b := range buttons {
+		if i < len(f.Buttons) {
+			fitPlace(b, f.Buttons[i])
+		}
 	}
 }
 
@@ -204,6 +271,14 @@ func listProc(wnd win.HWND, msg uint32, wparam uintptr, lparam *unsafe.Pointer) 
 		win.DestroyWindow(wnd)
 
 	case win.WM_COMMAND:
+		// MailArchive's patch: a click in the scrolling prompt hands the focus back to
+		// the list, so Enter, Escape, Tab and the arrows work as before.
+		if ctl := win.HWND(uintptr(unsafe.Pointer(lparam))); ctl != 0 && ctl == dlg.promptCtl {
+			if wparam>>16 == win.EN_SETFOCUS {
+				win.SetFocus(dlg.listCtl)
+			}
+			return 0
+		}
 		switch wparam {
 		default:
 			dlg.update()
@@ -236,6 +311,9 @@ func listProc(wnd win.HWND, msg uint32, wparam uintptr, lparam *unsafe.Pointer) 
 
 	case win.WM_DPICHANGED:
 		dlg.layout(dpi(uint32(wparam) >> 16))
+		if !dlg.fit.Upstream {
+			fitSuggested(wnd, (*win.RECT)(unsafe.Pointer(lparam)))
+		}
 
 	default:
 		return win.DefWindowProc(wnd, msg, wparam, unsafe.Pointer(lparam))

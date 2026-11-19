@@ -17,10 +17,17 @@ the rest with no sign (docs/design-windows-dialog-fit.md, §1).
 **Left out** of the copy: every `_test.go`, `cmd/` (the library's command-line
 program), `.github/` and `testdata/`. Nothing else.
 
-**Patched files:** none yet. Each one the patch changes is listed in the pins (below)
-with the SHA-256 of its upstream original and of our version, the imports it adds,
-and the lab run it last passed; a change to it must update its record in the same
-change. **Added files:** this `UPSTREAM.md`; `fit.go`, the layout arithmetic (pure, no
+**Patched files** (each listed in the pins with the SHA-256 of its upstream original and
+of our version, the imports it adds, and the lab run it last passed; a change to one must
+update its record in the same change): `list_windows.go`, `entry_windows.go` and
+`progress_windows.go` (each measures its words and applies fit.go's layout, or keeps
+upstream's when it cannot); `util_windows.go` (the measuring and placing helpers, at its
+end); `internal/win/user32.go` and `internal/win/gdi32.go` (the new calls and constants);
+and `internal/win/zsyscall_windows.go`, regenerated: upstream's generator
+(`golang.org/x/sys/windows/mkwinsyscall` at x/sys v0.17.0, as this module's go.mod
+pins it) reproduces upstream's file byte for byte (checked 2026-11-19), so the new calls
+were added as `//sys` lines and the file regenerated; its diff against upstream only adds
+lines. **Added files:** this `UPSTREAM.md`; `fit.go`, the layout arithmetic (pure, no
 imports, built everywhere but called only from the Windows files); and `fit_test.go`,
 its tests (MailArchive's MA-1469).
 

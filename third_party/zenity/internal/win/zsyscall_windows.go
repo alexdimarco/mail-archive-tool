@@ -55,6 +55,7 @@ var (
 	procCreateFontIndirectW          = modgdi32.NewProc("CreateFontIndirectW")
 	procDeleteObject                 = modgdi32.NewProc("DeleteObject")
 	procGetDeviceCaps                = modgdi32.NewProc("GetDeviceCaps")
+	procSelectObject                 = modgdi32.NewProc("SelectObject")
 	procActivateActCtx               = modkernel32.NewProc("ActivateActCtx")
 	procCreateActCtxW                = modkernel32.NewProc("CreateActCtxW")
 	procDeactivateActCtx             = modkernel32.NewProc("DeactivateActCtx")
@@ -69,6 +70,7 @@ var (
 	procSHCreateItemFromParsingName  = modshell32.NewProc("SHCreateItemFromParsingName")
 	procSHGetPathFromIDListEx        = modshell32.NewProc("SHGetPathFromIDListEx")
 	procShell_NotifyIconW            = modshell32.NewProc("Shell_NotifyIconW")
+	procAdjustWindowRectExForDpi     = moduser32.NewProc("AdjustWindowRectExForDpi")
 	procCallNextHookEx               = moduser32.NewProc("CallNextHookEx")
 	procCreateIconFromResourceEx     = moduser32.NewProc("CreateIconFromResourceEx")
 	procCreateWindowExW              = moduser32.NewProc("CreateWindowExW")
@@ -76,18 +78,24 @@ var (
 	procDestroyIcon                  = moduser32.NewProc("DestroyIcon")
 	procDestroyWindow                = moduser32.NewProc("DestroyWindow")
 	procDispatchMessageW             = moduser32.NewProc("DispatchMessageW")
+	procDrawTextW                    = moduser32.NewProc("DrawTextW")
 	procEnableWindow                 = moduser32.NewProc("EnableWindow")
 	procEnumChildWindows             = moduser32.NewProc("EnumChildWindows")
+	procGetClientRect                = moduser32.NewProc("GetClientRect")
 	procGetDlgItem                   = moduser32.NewProc("GetDlgItem")
 	procGetDpiForWindow              = moduser32.NewProc("GetDpiForWindow")
 	procGetMessageW                  = moduser32.NewProc("GetMessageW")
+	procGetMonitorInfoW              = moduser32.NewProc("GetMonitorInfoW")
 	procGetSystemMetrics             = moduser32.NewProc("GetSystemMetrics")
+	procGetSystemMetricsForDpi       = moduser32.NewProc("GetSystemMetricsForDpi")
 	procGetWindowDC                  = moduser32.NewProc("GetWindowDC")
 	procGetWindowRect                = moduser32.NewProc("GetWindowRect")
 	procGetWindowTextLengthW         = moduser32.NewProc("GetWindowTextLengthW")
 	procGetWindowTextW               = moduser32.NewProc("GetWindowTextW")
 	procIsDialogMessageW             = moduser32.NewProc("IsDialogMessageW")
 	procLoadIconW                    = moduser32.NewProc("LoadIconW")
+	procMapWindowPoints              = moduser32.NewProc("MapWindowPoints")
+	procMonitorFromWindow            = moduser32.NewProc("MonitorFromWindow")
 	procPostQuitMessage              = moduser32.NewProc("PostQuitMessage")
 	procRegisterClassExW             = moduser32.NewProc("RegisterClassExW")
 	procReleaseDC                    = moduser32.NewProc("ReleaseDC")
@@ -153,6 +161,12 @@ func DeleteObject(o Handle) (ok bool) {
 func GetDeviceCaps(dc Handle, index int) (ret int) {
 	r0, _, _ := syscall.Syscall(procGetDeviceCaps.Addr(), 2, uintptr(dc), uintptr(index), 0)
 	ret = int(r0)
+	return
+}
+
+func SelectObject(dc Handle, obj Handle) (ret Handle) {
+	r0, _, _ := syscall.Syscall(procSelectObject.Addr(), 2, uintptr(dc), uintptr(obj), 0)
+	ret = Handle(r0)
 	return
 }
 
@@ -261,6 +275,22 @@ func ShellNotifyIcon(message uint32, data *NOTIFYICONDATA) (ok bool) {
 	return
 }
 
+func AdjustWindowRectExForDpi(rect *RECT, style uint32, menu bool, exStyle uint32, dpi uint32) (err error) {
+	err = procAdjustWindowRectExForDpi.Find()
+	if err != nil {
+		return
+	}
+	var _p0 uint32
+	if menu {
+		_p0 = 1
+	}
+	r1, _, e1 := syscall.Syscall6(procAdjustWindowRectExForDpi.Addr(), 5, uintptr(unsafe.Pointer(rect)), uintptr(style), uintptr(_p0), uintptr(exStyle), uintptr(dpi), 0)
+	if r1 == 0 {
+		err = errnoErr(e1)
+	}
+	return
+}
+
 func CallNextHookEx(hk Handle, code int32, wparam uintptr, lparam unsafe.Pointer) (ret uintptr) {
 	r0, _, _ := syscall.Syscall6(procCallNextHookEx.Addr(), 4, uintptr(hk), uintptr(code), uintptr(wparam), uintptr(lparam), 0, 0)
 	ret = uintptr(r0)
@@ -321,6 +351,12 @@ func DispatchMessage(msg *MSG) (ret uintptr) {
 	return
 }
 
+func DrawText(dc Handle, text *uint16, count int, rect *RECT, format uint32) (ret int) {
+	r0, _, _ := syscall.Syscall6(procDrawTextW.Addr(), 5, uintptr(dc), uintptr(unsafe.Pointer(text)), uintptr(count), uintptr(unsafe.Pointer(rect)), uintptr(format), 0)
+	ret = int(r0)
+	return
+}
+
 func EnableWindow(wnd HWND, enable bool) (ok bool) {
 	var _p0 uint32
 	if enable {
@@ -333,6 +369,14 @@ func EnableWindow(wnd HWND, enable bool) (ok bool) {
 
 func EnumWindows(enumFunc uintptr, lparam unsafe.Pointer) (err error) {
 	r1, _, e1 := syscall.Syscall(procEnumChildWindows.Addr(), 2, uintptr(enumFunc), uintptr(lparam), 0)
+	if r1 == 0 {
+		err = errnoErr(e1)
+	}
+	return
+}
+
+func GetClientRect(wnd HWND, rect *RECT) (err error) {
+	r1, _, e1 := syscall.Syscall(procGetClientRect.Addr(), 2, uintptr(wnd), uintptr(unsafe.Pointer(rect)), 0)
 	if r1 == 0 {
 		err = errnoErr(e1)
 	}
@@ -370,9 +414,30 @@ func GetMessage(msg *MSG, wnd HWND, msgFilterMin uint32, msgFilterMax uint32) (r
 	return
 }
 
+func GetMonitorInfo(monitor Handle, info *MONITORINFO) (err error) {
+	r1, _, e1 := syscall.Syscall(procGetMonitorInfoW.Addr(), 2, uintptr(monitor), uintptr(unsafe.Pointer(info)), 0)
+	if r1 == 0 {
+		err = errnoErr(e1)
+	}
+	return
+}
+
 func GetSystemMetrics(index int) (ret int) {
 	r0, _, _ := syscall.Syscall(procGetSystemMetrics.Addr(), 1, uintptr(index), 0, 0)
 	ret = int(r0)
+	return
+}
+
+func GetSystemMetricsForDpi(index int, dpi uint32) (ret int, err error) {
+	err = procGetSystemMetricsForDpi.Find()
+	if err != nil {
+		return
+	}
+	r0, _, e1 := syscall.Syscall(procGetSystemMetricsForDpi.Addr(), 2, uintptr(index), uintptr(dpi), 0)
+	ret = int(r0)
+	if false {
+		err = errnoErr(e1)
+	}
 	return
 }
 
@@ -420,6 +485,18 @@ func LoadIcon(instance Handle, resource uintptr) (ret Handle, err error) {
 	if ret == 0 {
 		err = errnoErr(e1)
 	}
+	return
+}
+
+func MapWindowPoints(from HWND, to HWND, points *POINT, count uint32) (ret int) {
+	r0, _, _ := syscall.Syscall6(procMapWindowPoints.Addr(), 4, uintptr(from), uintptr(to), uintptr(unsafe.Pointer(points)), uintptr(count), 0, 0)
+	ret = int(r0)
+	return
+}
+
+func MonitorFromWindow(wnd HWND, flags uint32) (ret Handle) {
+	r0, _, _ := syscall.Syscall(procMonitorFromWindow.Addr(), 2, uintptr(wnd), uintptr(flags), 0)
+	ret = Handle(r0)
 	return
 }
 

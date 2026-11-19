@@ -553,7 +553,11 @@ the old DPI's font; the scroll bar at the system DPI; no `WS_HSCROLL`; no
 mutant is a test program cross-built outside the copy with `-o`, run on the PC one
 at a time while its desktop is free (about ten programs in one session). Not
 mutation-proven: a real DPI change between monitors, several monitors, and growth
-over hours.
+over hours. The 2026-11-19 sweep of slice 3 (nine mutants) left two alive, now in
+this list too [B3]: the scroll bar at the system DPI (on the test PC's one screen the
+system DPI is the window's), and no `SWP_NOACTIVATE` (each dialog is already its
+own thread's active window, and a background thread's `SetWindowPos` cannot take
+the foreground, so the flag changes nothing a test can see; it stays, by review).
 
 ## 6. Rollout and the way back
 
@@ -715,6 +719,7 @@ adversarial pass:
 |---|---|---|
 | B1 | §2 P1; §4.3 Buttons | `fit_test.go`'s sweep found a label wider than the cap pushing its button outside the dialog. Buttons now share the content width when the labels need more, and P1 states the limit: such a label is cut |
 | B2 | §5 MA-1469 | The positive twins: a prompt label is a quarter line taller than upstream's (C3's slack), so the twins hold upstream's widths, control sizes and button positions, with what is below the prompt moved down by the slack |
+| B3 | §5 Mutation sweeps | Slice 3's sweep on the test PC killed 7 of 9 glue mutants; the scroll bar at the system DPI and no `SWP_NOACTIVATE` are listed as not mutation-proven, with the reasons. The lab test's own measuring thread must be per-monitor DPI aware (§5 says so): the first run, which was not, read every size scaled down by 1/1.5 |
 
 Also corrected in revision 2: the progress dialog's 400 is about 75 characters a
 line at 150 %, not about 60 (the rescue's measurement of the screenshots, an

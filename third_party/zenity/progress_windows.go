@@ -58,12 +58,22 @@ type progressDialog struct {
 	cancelBtn win.HWND
 	extraBtn  win.HWND
 	font      font
+
+	// MailArchive's patch: the dialog fits its words (fit.go). Only the dialog's own
+	// thread reads or writes these.
+	text   string    // the text last laid out
+	floor  int       // the prompt's height so far: it never shrinks while the dialog is open
+	dpi    dpi       // the DPI of the last layout
+	labels []string  // the buttons' labels, left to right
+	fit    fitDialog // the layout last applied; Upstream keeps upstream's layout
 }
 
 func (d *progressDialog) Text(text string) error {
 	select {
 	default:
 		win.SetWindowText(d.textCtl, strptr(text))
+		// MailArchive's patch: the dialog lays itself out again, on its own thread.
+		win.SendMessage(d.wnd, fitTextChanged, 0, 0)
 		return nil
 	case <-d.done:
 		return d.err
@@ -148,8 +158,24 @@ func (dlg *progressDialog) setup(opts options) error {
 		win.CW_USEDEFAULT, win.CW_USEDEFAULT,
 		281, 133, owner, 0, instance, unsafe.Pointer(dlg))
 
+	// MailArchive's patch: decide, before the controls exist, whether this dialog can be
+	// laid out to fit its words; if not, it keeps upstream's layout and label style.
+	var okLabel, cancelLabel *string
+	if !opts.noCancel || !opts.autoClose {
+		okLabel = opts.okLabel
+	}
+	if !opts.noCancel {
+		cancelLabel = opts.cancelLabel
+	}
+	dlg.labels = fitButtonLabels(okLabel, opts.extraButton, cancelLabel)
+	dlg.fit = dlg.measure(getDPI(dlg.wnd))
+	var labelStyle uint32 = _WS_ZEN_LABEL
+	if !dlg.fit.Upstream {
+		labelStyle = _WS_ZEN_FIT_LABEL
+	}
+
 	dlg.textCtl, _ = win.CreateWindowEx(0,
-		strptr("STATIC"), nil, _WS_ZEN_LABEL,
+		strptr("STATIC"), nil, labelStyle,
 		12, 10, 241, 16, dlg.wnd, 0, instance, nil)
 
 	var flags uint32 = win.WS_CHILD | win.WS_VISIBLE | win.PBS_SMOOTH
@@ -181,7 +207,11 @@ func (dlg *progressDialog) setup(opts options) error {
 	}
 
 	dlg.layout(getDPI(dlg.wnd))
-	centerWindow(dlg.wnd)
+	if dlg.fit.Upstream {
+		centerWindow(dlg.wnd)
+	} else {
+		fitCenterWindow(dlg.wnd)
+	}
 	win.ShowWindow(dlg.wnd, win.SW_NORMAL)
 	if opts.maxValue < 0 {
 		win.SendMessage(dlg.progCtl, win.PBM_SETMARQUEE, 1, 0)
@@ -217,6 +247,21 @@ func (d *progressDialog) layout(dpi dpi) {
 	win.SendMessage(d.okBtn, win.WM_SETFONT, font, 1)
 	win.SendMessage(d.cancelBtn, win.WM_SETFONT, font, 1)
 	win.SendMessage(d.extraBtn, win.WM_SETFONT, font, 1)
+	if !d.fit.Upstream {
+		// MailArchive's patch: lay out at this DPI, the prompt's height so far re-based
+		// to it; a layout that cannot be measured keeps the last one.
+		if d.dpi != 0 && d.dpi != dpi {
+			d.floor = d.floor * int(dpi) / int(d.dpi)
+		}
+		d.dpi = dpi
+		if f := d.measure(dpi); !f.Upstream {
+			d.fit = f
+			d.floor = f.PromptH
+			fitResize(d.wnd, f.Window)
+			d.apply(f)
+		}
+		return
+	}
 	win.SetWindowPos(d.wnd, 0, 0, 0, dpi.scale(281), dpi.scale(133), win.SWP_NOMOVE|win.SWP_NOZORDER)
 	win.SetWindowPos(d.textCtl, 0, dpi.scale(12), dpi.scale(10), dpi.scale(241), dpi.scale(16), win.SWP_NOZORDER)
 	win.SetWindowPos(d.progCtl, 0, dpi.scale(12), dpi.scale(30), dpi.scale(241), dpi.scale(16), win.SWP_NOZORDER)
@@ -238,6 +283,51 @@ func (d *progressDialog) layout(dpi dpi) {
 	if pos == 178 {
 		win.SetWindowPos(d.wnd, 0, 0, 0, dpi.scale(281), dpi.scale(97), win.SWP_NOMOVE|win.SWP_NOZORDER)
 	}
+}
+
+// measure lays the dialog out to fit its words at dpi (MailArchive's patch, fit.go).
+func (d *progressDialog) measure(dpi dpi) fitDialog {
+	m := fitText{wnd: d.wnd, font: win.Handle(d.font.forDPI(dpi))}
+	return fitProgress(fitEnvironment(d.wnd, dpi, m), m, d.text, d.floor, d.labels)
+}
+
+// apply places the controls as f says, never activating any (MailArchive's patch).
+func (d *progressDialog) apply(f fitDialog) {
+	fitPlace(d.textCtl, f.Prompt)
+	fitPlace(d.progCtl, f.Control)
+	var buttons []win.HWND
+	for _, b := range []win.HWND{d.okBtn, d.extraBtn, d.cancelBtn} {
+		if b != 0 {
+			buttons = append(buttons, b)
+		}
+	}
+	for i, b := range buttons {
+		if i < len(f.Buttons) {
+			fitPlace(b, f.Buttons[i])
+		}
+	}
+}
+
+// relayout fits the dialog to the text Text just set, on the dialog's own thread
+// (MailArchive's patch). The window keeps its top-left corner and grows downward,
+// moving up only as far as it must to stay inside its work area, and never shrinks.
+func (d *progressDialog) relayout() {
+	if d.fit.Upstream {
+		return
+	}
+	text := win.GetWindowText(d.textCtl)
+	if text == d.text {
+		return
+	}
+	d.text = text
+	f := d.measure(d.dpi)
+	if f.Upstream {
+		return
+	}
+	d.fit = f
+	d.floor = f.PromptH
+	fitPlace(d.wnd, fitGrow(fitWindowRect(d.wnd), f.Window, fitWorkArea(d.wnd)))
+	d.apply(f)
 }
 
 func progressProc(wnd win.HWND, msg uint32, wparam uintptr, lparam *unsafe.Pointer) uintptr {
@@ -275,6 +365,12 @@ func progressProc(wnd win.HWND, msg uint32, wparam uintptr, lparam *unsafe.Point
 
 	case win.WM_DPICHANGED:
 		dlg.layout(dpi(uint32(wparam) >> 16))
+		if !dlg.fit.Upstream {
+			fitSuggested(wnd, (*win.RECT)(unsafe.Pointer(lparam)))
+		}
+
+	case fitTextChanged:
+		dlg.relayout()
 
 	default:
 		return win.DefWindowProc(wnd, msg, wparam, unsafe.Pointer(lparam))

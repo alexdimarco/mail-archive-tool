@@ -373,3 +373,174 @@ func enableVisualStyles() (cookie uintptr) {
 	}
 	return
 }
+
+// MailArchive's patch: the Windows dialogs fit their words (fit.go; MailArchive's
+// docs/design-windows-dialog-fit.md §4.3). What follows measures and applies; fit.go
+// does the arithmetic.
+
+// _WS_ZEN_FIT_LABEL is the label style of a dialog laid out to fit its words: upstream's,
+// without the ellipsis, so the lines wrap.
+const _WS_ZEN_FIT_LABEL = _WS_ZEN_LABEL &^ win.SS_WORDELLIPSIS
+
+// fitTextChanged tells a progress dialog, on its own thread, that its text changed.
+const fitTextChanged = win.WM_APP + 1
+
+// fitAlphabet gives the dialog font's average character width.
+const fitAlphabet = "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ"
+
+// fitText measures text with a dialog's own font at the window's DPI, with the flags a
+// label draws it with. It runs on the dialog's thread, and takes and releases one window
+// DC for each measurement, putting the DC's own font back first; it never deletes the font.
+type fitText struct {
+	wnd  win.HWND
+	font win.Handle
+}
+
+func (m fitText) measure(text string, width int, format uint32) (w, h int, ok bool) {
+	if text == "" || m.wnd == 0 || m.font == 0 {
+		return 0, 0, false
+	}
+	p, err := syscall.UTF16PtrFromString(text)
+	if err != nil {
+		return 0, 0, false
+	}
+	dc := win.GetWindowDC(m.wnd)
+	if dc == 0 {
+		return 0, 0, false
+	}
+	defer win.ReleaseDC(m.wnd, dc)
+	old := win.SelectObject(dc, m.font)
+	defer win.SelectObject(dc, old)
+	rect := win.RECT{Right: int32(width)}
+	if win.DrawText(dc, p, -1, &rect, format|win.DT_CALCRECT|win.DT_NOPREFIX|win.DT_EXPANDTABS) == 0 {
+		return 0, 0, false
+	}
+	return int(rect.Right - rect.Left), int(rect.Bottom - rect.Top), true
+}
+
+func (m fitText) line(text string) (int, int, bool) {
+	return m.measure(text, 0, win.DT_SINGLELINE)
+}
+
+func (m fitText) wrapped(text string, width int) (int, int, bool) {
+	return m.measure(text, width, win.DT_WORDBREAK|win.DT_EDITCONTROL)
+}
+
+// fitWorkArea is the work area of the monitor wnd is on, in device pixels; zero when it
+// cannot be read, which keeps upstream's layout.
+func fitWorkArea(wnd win.HWND) fitRect {
+	var mi win.MONITORINFO
+	mi.Size = uint32(unsafe.Sizeof(mi))
+	mon := win.MonitorFromWindow(wnd, win.MONITOR_DEFAULTTONEAREST)
+	if mon == 0 || win.GetMonitorInfo(mon, &mi) != nil {
+		return fitRect{}
+	}
+	return fitRect{X: int(mi.Work.Left), Y: int(mi.Work.Top),
+		W: int(mi.Work.Right - mi.Work.Left), H: int(mi.Work.Bottom - mi.Work.Top)}
+}
+
+// fitMetric is a system metric at the window's DPI; where Windows lacks
+// GetSystemMetricsForDpi, the thread is system aware and GetSystemMetrics answers for it.
+func fitMetric(index int, d dpi) int {
+	if v, err := win.GetSystemMetricsForDpi(index, uint32(d)); err == nil {
+		return v
+	}
+	return win.GetSystemMetrics(index)
+}
+
+// fitEnvironment reads what fit.go needs for a dialog window at d. A dialog not yet placed
+// is at 0,0 (a pop-up window's CW_USEDEFAULT), on the primary monitor upstream centres on.
+func fitEnvironment(wnd win.HWND, d dpi, m fitText) fitEnv {
+	e := fitEnv{DPI: int(d), Work: fitWorkArea(wnd)}
+	var r win.RECT
+	if win.AdjustWindowRectExForDpi(&r, _WS_ZEN_DIALOG, false, _WS_EX_ZEN_DIALOG, uint32(d)) == nil {
+		e.Frame = fitSize{W: int(r.Right - r.Left), H: int(r.Bottom - r.Top)}
+	} else {
+		var wr, cr win.RECT
+		if win.GetWindowRect(wnd, &wr) == nil && win.GetClientRect(wnd, &cr) == nil {
+			e.Frame = fitSize{W: int(wr.Right-wr.Left) - int(cr.Right-cr.Left), H: int(wr.Bottom-wr.Top) - int(cr.Bottom-cr.Top)}
+		}
+	}
+	e.VScroll = fitMetric(win.SM_CXVSCROLL, d)
+	e.HScroll = fitMetric(win.SM_CYHSCROLL, d)
+	e.Edge = fitMetric(win.SM_CXEDGE, d)
+	if _, h, ok := m.line("Ag"); ok {
+		e.LineH = h
+	}
+	if w, _, ok := m.line(fitAlphabet); ok {
+		e.AvgChar = (w + len(fitAlphabet) - 1) / len(fitAlphabet)
+	}
+	return e
+}
+
+// fitPlace moves and sizes a control or a dialog window without activating it, so a
+// dialog that changes size never takes the keyboard (R39).
+func fitPlace(wnd win.HWND, r fitRect) {
+	if wnd != 0 {
+		win.SetWindowPos(wnd, 0, r.X, r.Y, r.W, r.H, win.SWP_NOZORDER|win.SWP_NOACTIVATE)
+	}
+}
+
+// fitResize sizes a dialog window where it is, without activating it.
+func fitResize(wnd win.HWND, s fitSize) {
+	win.SetWindowPos(wnd, 0, 0, 0, s.W, s.H, win.SWP_NOMOVE|win.SWP_NOZORDER|win.SWP_NOACTIVATE)
+}
+
+// fitShow shows one of two controls and hides the other, never activating either.
+func fitShow(show, hide win.HWND) {
+	if show != 0 {
+		win.ShowWindow(show, win.SW_SHOWNA)
+	}
+	if hide != 0 {
+		win.ShowWindow(hide, win.SW_HIDE)
+	}
+}
+
+// fitWindowRect is wnd's rectangle on the screen.
+func fitWindowRect(wnd win.HWND) fitRect {
+	var r win.RECT
+	win.GetWindowRect(wnd, &r)
+	return fitRect{X: int(r.Left), Y: int(r.Top), W: int(r.Right - r.Left), H: int(r.Bottom - r.Top)}
+}
+
+// fitCenterWindow centres a laid-out dialog in its monitor's work area (centerWindow uses
+// the whole primary screen).
+func fitCenterWindow(wnd win.HWND) {
+	cur := fitWindowRect(wnd)
+	fitPlace(wnd, fitCenter(fitSize{W: cur.W, H: cur.H}, fitWorkArea(wnd)))
+}
+
+// fitSuggested places a dialog whose DPI changed where Windows suggests, at its newly
+// fitted size, inside its monitor's work area.
+func fitSuggested(wnd win.HWND, suggested *win.RECT) {
+	if suggested == nil {
+		return
+	}
+	cur := fitWindowRect(wnd)
+	r := fitRect{X: int(suggested.Left), Y: int(suggested.Top), W: cur.W, H: cur.H}
+	fitPlace(wnd, fitInside(r, fitWorkArea(wnd)))
+}
+
+// fitCRLF writes every line break as CR LF, the only break an edit control draws.
+func fitCRLF(s string) string {
+	b := make([]byte, 0, len(s))
+	for i := 0; i < len(s); i++ {
+		if s[i] == '\n' && (i == 0 || s[i-1] != '\r') {
+			b = append(b, '\r')
+		}
+		b = append(b, s[i])
+	}
+	return string(b)
+}
+
+// fitButtonLabels are a dialog's button labels, left to right in upstream's order: OK, the
+// extra button, Cancel.
+func fitButtonLabels(ok, extra, cancel *string) []string {
+	var labels []string
+	for _, l := range []*string{ok, extra, cancel} {
+		if l != nil {
+			labels = append(labels, *l)
+		}
+	}
+	return labels
+}

@@ -36,7 +36,7 @@ file: 5b694dcefafd16ab4ff17480a7dbff661e296668846f8fa12ebc46fd07dc49af copied en
 file: 11cbede04601d9d4fbcfb954adba7e816ae1fca5e4d557338825e6ef51455540 copied entry_darwin.go
 file: 1e1689e791cdc2445e4833a4d94f45e38d358b1df7c02126dbf1807d3df6fcde left-out entry_test.go
 file: 8db7afff0b5a5244613ffe94d3b5f49cb6313e5fca92d16bf7d9c032fe2f7914 copied entry_unix.go
-file: 717354c9e2e0507bd765760667d8af785af6285339822630b42b8c4a799b9ae8 copied entry_windows.go
+file: 717354c9e2e0507bd765760667d8af785af6285339822630b42b8c4a799b9ae8 patched entry_windows.go
 file: eb167605ed49ae762b26019785b0ca9b074509fa7c4ee6bcb87e91eacfc5c76d copied file.go
 file: abac2aea03a219faf9bbcff17fbdb6aaf83d88076f834f0f5a883df17f889715 copied file_darwin.go
 file: 1c275f9ac506b53ccc6d61fe6cfb57e8810ea9b3fef38aeb109538cd5cdf372d left-out file_filter_test.go
@@ -48,15 +48,15 @@ file: 0a5b30cc532b08b21a20cf2d4c1d5f0b2f670d3a04cbca632625a90de7fde163 copied go
 file: 489e0f378e01ab062f95ffcef44a354321af1d727dba9f1f464f1537311a57fe copied go.sum
 file: 4779214b25dcf6b75fe90bf9e3ccccd594f3b6898931f78fee696be5126b50d9 copied internal/win/comctl32.go
 file: eec9e633a4555eeb1de38e88609b123bd8da3242a300c31d66fdaf3e04f5d0f4 copied internal/win/comdlg32.go
-file: 4406fee46830dc39c91256f275d6d7d2abaefea7b151f74091cc4aaf2f7a54e4 copied internal/win/gdi32.go
+file: 4406fee46830dc39c91256f275d6d7d2abaefea7b151f74091cc4aaf2f7a54e4 patched internal/win/gdi32.go
 file: 9db72e5cfa9b600c2392758acf760ee7ccfb2e6840a021288cc1dab018c55d8a copied internal/win/generate.go
 file: 7a35628c2e0c650bee07a3b6f13c216b0e0d2bff640969436b808733e7d29663 copied internal/win/kernel32.go
 file: ff0f72b69103945c8de1565489bf36100353d10639a0b97b1c914e3cc5ab706c copied internal/win/ole32.go
 file: 7399149c00176be2f4ec49964b44b6a2cb552a2e31cb3360a3e8a43bf6dc4033 copied internal/win/shell32.go
-file: 2f28f84f08c1fe342741caf9d3b7666d3583ac84a53f75c04d66edba331f16ba copied internal/win/user32.go
+file: 2f28f84f08c1fe342741caf9d3b7666d3583ac84a53f75c04d66edba331f16ba patched internal/win/user32.go
 file: 3ac24917c4859cfd4d350a472031a1ea5ac27ed3eea82667e854dde03a713917 copied internal/win/win32.go
 file: 61ce62ce9a950489befc86e1717601b292c2d06b644e222334adc90e9ca47bd7 copied internal/win/wtsapi32.go
-file: 0c31ca6212db768aa768d751849fc6483beb80e7487567907f9d9801a6c6fcf4 copied internal/win/zsyscall_windows.go
+file: 0c31ca6212db768aa768d751849fc6483beb80e7487567907f9d9801a6c6fcf4 patched internal/win/zsyscall_windows.go
 file: c78318c2dc877dd184297ad7491f5bb28f955721d8bcae522cd2684f014489c3 copied internal/zencmd/markup.go
 file: 28483bcfb923b17e053398d0e2f6721008095ca9419d7c50f0be885c114d8963 left-out internal/zencmd/markup_test.go
 file: 90e0db5eee7fb0b990829538ebf53848042c453f1696902c821ccb692962a7f0 copied internal/zencmd/mnemonic.go
@@ -96,7 +96,7 @@ file: b494e88494af93cdba777fd1d30d3bd28ece7d027d4584b99da1a7d2cc820f36 copied li
 file: f9756dd6f50b92bfb74789575df6866cd617a4a7840ebd1910c38b4a94891d29 copied list_darwin.go
 file: b4ee8b0c4353076ebdba444edfc93b9552a6b6f0b6768ec847932063d3461749 left-out list_test.go
 file: 76edf582f5e082af068545da2f9efb8a702d172d170ca6f61ca3ef26270b5fcc copied list_unix.go
-file: 893189f95ee5ef030b3174c8b62fa25f77aabf647924372e3e75dfd868ae08e5 copied list_windows.go
+file: 893189f95ee5ef030b3174c8b62fa25f77aabf647924372e3e75dfd868ae08e5 patched list_windows.go
 file: a3b48cd912fa5e65c8dbad2707bfb626bc21c85a9cc5191208508c2ad746230d left-out main_test.go
 file: 21b562f3dbd83045c6694b42c96b9cb1324aef68264f8b3588547991bb45b4c7 copied msg.go
 file: a541e1b85e904b68017dafca119d46fb4d2ab68e8a946cbadc22c6643e7e4c68 copied msg_darwin.go
@@ -112,7 +112,7 @@ file: 5160b1be37e5b5fc983733358e0a326ce5d3564a7e160a965880d60e512358c5 copied pr
 file: d21f0e5a8e386b95ed1297a67aafd50621a65d2acb51ea0f82ab7643ec57f055 copied progress_darwin.go
 file: a6ee43c4305e370d4062b5b1e09aa359b72a81255b6f9d9f13c1c8412fcb5bd7 left-out progress_test.go
 file: ae2e4286afcd6f895440d9997aea841f9245113e47a2d6b84fcf8592d3258c1b copied progress_unix.go
-file: 9af7223685510b917df8b1f6c81bb8fd9f0beaecfbe048a7cfd1dba5763d00e9 copied progress_windows.go
+file: 9af7223685510b917df8b1f6c81bb8fd9f0beaecfbe048a7cfd1dba5763d00e9 patched progress_windows.go
 file: ac1634ff1747cebb76296520eeb1a51799d33448ba1f7acfb0e1807aea107635 copied pwd.go
 file: f3c091e4e9944246cf9d6e2291c02e17f358ebb94442e53858622533d34ad680 copied pwd_darwin.go
 file: 9a20c6766435c1cc000132d8b6ba0c6eed311453154e1588924bb8c8d6dcb4f3 left-out pwd_test.go
@@ -134,9 +134,16 @@ file: d49614409612eebf65130f2f5f5e58be334cb12c7eaf984e058f96a5f198e529 left-out 
 file: 0ef1b3aac46abbd7dbf440ff815f5d139857e7e1ade0cc12dc4d0ff3e50f7102 copied util.go
 file: 7f39913c0596d21fd8b2f9f192867da786c3b4bd959cdede6852e890876384d8 copied util_darwin.go
 file: 96835597d3106b66353474e996a5d4ed7779fb5af94923974ba0b84afb7f0c5d left-out util_test.go
-file: 3f1047e751aad8b2bcfe51cfc8fda3bd2af9bce3c876efff42f3d7783632b70f copied util_windows.go
+file: 3f1047e751aad8b2bcfe51cfc8fda3bd2af9bce3c876efff42f3d7783632b70f patched util_windows.go
 file: f433bd565d3115011db39168fa8203f1a6a574478ded80b1550c58ece9eb9ca5 copied zenity.go
 file: 231095db994b7711bc18ab14593bb79544b29406b648ea489a83079441a1870f copied zenity_darwin.go
 file: 8caf050755af35ed0d42e57e5d26fba3682990e8bc9a8b9beda482372bd23236 left-out zenity_test.go
 file: 6f069ae36a40c63929d7e03c76396606219c42c1eb3e0140745b13cc3dfd7af8 copied zenity_unix.go
 file: 4656e2ca3cfbc0ce46172976ebd41aa55148b3e43195994ccc1a433914baed3c copied zenity_windows.go
+patch: entry_windows.go ours=56afaa671a4774389a6c2be38c0bb915f626a7508543f6b9bbd627cd73b5120f upstream-imports=github.com/ncruces/zenity/internal/win,syscall,unsafe adds-imports=- upstream-call-vars=- lab=MA-1470 2026-11-19 Windows 11 Pro 26H2 build 26300, 1920x1080 at 150 %, run 3 pass
+patch: internal/win/gdi32.go ours=60233549bb17f1709f37fc3f6be3ccec64713841f137c8d2a69c6b088fab4436 upstream-imports=- adds-imports=- upstream-call-vars=- lab=MA-1470 2026-11-19 Windows 11 Pro 26H2 build 26300, 1920x1080 at 150 %, run 3 pass
+patch: internal/win/user32.go ours=7378f1ce361a3c15c32901603890e9022353a0c78f5b055c5e16a4474ebd17bc upstream-imports=golang.org/x/sys/windows,syscall,unsafe adds-imports=- upstream-call-vars=- lab=MA-1470 2026-11-19 Windows 11 Pro 26H2 build 26300, 1920x1080 at 150 %, run 3 pass
+patch: internal/win/zsyscall_windows.go ours=abdbad63eeb83f5572a2be41c3c14eec9c0a46dbeec854a19ad445e190cd1302 upstream-imports=golang.org/x/sys/windows,syscall,unsafe adds-imports=- upstream-call-vars=errERROR_IO_PENDING lab=MA-1470 2026-11-19 Windows 11 Pro 26H2 build 26300, 1920x1080 at 150 %, run 3 pass
+patch: list_windows.go ours=98042c23ecd070bfe18ade39cff35530adee3518fcc7e3770b420d0f9df9fcad upstream-imports=github.com/ncruces/zenity/internal/win,syscall,unsafe adds-imports=- upstream-call-vars=- lab=MA-1470 2026-11-19 Windows 11 Pro 26H2 build 26300, 1920x1080 at 150 %, run 3 pass
+patch: progress_windows.go ours=db8603d21860e125292e329e29abac343b7ee8c32b699a14ae506506205006fd upstream-imports=context,github.com/ncruces/zenity/internal/win,sync,syscall,unsafe adds-imports=- upstream-call-vars=- lab=MA-1470 2026-11-19 Windows 11 Pro 26H2 build 26300, 1920x1080 at 150 %, run 3 pass
+patch: util_windows.go ours=7e94fc9e7d80461da52902af69a2422628a03e47768150a282117eea686cc64e upstream-imports=bytes,context,github.com/ncruces/zenity/internal/win,io,os,path/filepath,runtime,strconv,sync,sync/atomic,syscall,unsafe adds-imports=- upstream-call-vars=- lab=MA-1470 2026-11-19 Windows 11 Pro 26H2 build 26300, 1920x1080 at 150 %, run 3 pass

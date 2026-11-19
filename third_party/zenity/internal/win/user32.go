@@ -258,6 +258,35 @@ const (
 	LR_SHARED           = 0x00008000
 )
 
+// MailArchive's patch: what the dialogs need to fit their words (fit.go).
+const (
+	WM_GETFONT             = 0x0031
+	WM_APP                 = 0x8000
+	LB_SETHORIZONTALEXTENT = 0x0194
+	EN_SETFOCUS            = 0x0100
+
+	// Edit control styles
+	ES_MULTILINE = 0x0004
+	ES_READONLY  = 0x0800
+
+	// Get/SetSystemMetrics ids
+	SM_CXVSCROLL = 2
+	SM_CYHSCROLL = 3
+	SM_CXEDGE    = 45
+
+	// MonitorFromWindow flags
+	MONITOR_DEFAULTTOPRIMARY = 1
+	MONITOR_DEFAULTTONEAREST = 2
+
+	// DrawText formats
+	DT_WORDBREAK   = 0x00000010
+	DT_SINGLELINE  = 0x00000020
+	DT_EXPANDTABS  = 0x00000040
+	DT_CALCRECT    = 0x00000400
+	DT_NOPREFIX    = 0x00000800
+	DT_EDITCONTROL = 0x00002000
+)
+
 func MessageBox(hwnd HWND, text *uint16, caption *uint16, boxtype uint32) (ret int32, err error) {
 	return windows.MessageBox(hwnd, text, caption, boxtype)
 }
@@ -336,6 +365,14 @@ type RECT struct {
 	Bottom int32
 }
 
+// https://docs.microsoft.com/en-us/windows/win32/api/winuser/ns-winuser-monitorinfo
+type MONITORINFO struct {
+	Size    uint32
+	Monitor RECT
+	Work    RECT
+	Flags   uint32
+}
+
 // https://docs.microsoft.com/en-us/windows/win32/api/winuser/ns-winuser-wndclassexw
 type WNDCLASSEX struct {
 	Size       uint32
@@ -380,6 +417,7 @@ type CWPRETSTRUCT struct {
 	Wnd     HWND
 }
 
+//sys AdjustWindowRectExForDpi(rect *RECT, style uint32, menu bool, exStyle uint32, dpi uint32) (err error) = user32.AdjustWindowRectExForDpi?
 //sys CallNextHookEx(hk Handle, code int32, wparam uintptr, lparam unsafe.Pointer) (ret uintptr) = user32.CallNextHookEx
 //sys CreateIconFromResourceEx(resBits []byte, icon bool, ver uint32, cx int, cy int, flags int) (ret Handle, err error) = user32.CreateIconFromResourceEx
 //sys CreateWindowEx(exStyle uint32, className *uint16, windowName *uint16, style uint32, x int, y int, width int, height int, parent HWND, menu Handle, instance Handle, param unsafe.Pointer) (ret HWND, err error) = user32.CreateWindowExW
@@ -387,18 +425,24 @@ type CWPRETSTRUCT struct {
 //sys DestroyIcon(icon Handle) (err error) = user32.DestroyIcon
 //sys DestroyWindow(wnd HWND) (err error) = user32.DestroyWindow
 //sys DispatchMessage(msg *MSG) (ret uintptr) = user32.DispatchMessageW
+//sys DrawText(dc Handle, text *uint16, count int, rect *RECT, format uint32) (ret int) = user32.DrawTextW
 //sys EnableWindow(wnd HWND, enable bool) (ok bool) = user32.EnableWindow
 //sys EnumWindows(enumFunc uintptr, lparam unsafe.Pointer) (err error) = user32.EnumChildWindows
+//sys GetClientRect(wnd HWND, rect *RECT) (err error) = user32.GetClientRect
 //sys GetDlgItem(dlg HWND, dlgItemID int) (ret HWND, err error) = user32.GetDlgItem
 //sys GetDpiForWindow(wnd HWND) (ret int, err error) [false] = user32.GetDpiForWindow?
 //sys GetMessage(msg *MSG, wnd HWND, msgFilterMin uint32, msgFilterMax uint32) (ret uintptr, err error) [int32(failretval)==-1] = user32.GetMessageW
+//sys GetMonitorInfo(monitor Handle, info *MONITORINFO) (err error) = user32.GetMonitorInfoW
 //sys GetSystemMetrics(index int) (ret int) = user32.GetSystemMetrics
+//sys GetSystemMetricsForDpi(index int, dpi uint32) (ret int, err error) [false] = user32.GetSystemMetricsForDpi?
 //sys GetWindowDC(wnd HWND) (ret Handle) = user32.GetWindowDC
 //sys GetWindowRect(wnd HWND, cmdShow *RECT) (err error) = user32.GetWindowRect
 //sys getWindowText(wnd HWND, str *uint16, maxCount int) (ret int, err error) = user32.GetWindowTextW
 //sys getWindowTextLength(wnd HWND) (ret int, err error) = user32.GetWindowTextLengthW
 //sys IsDialogMessage(wnd HWND, msg *MSG) (ok bool) = user32.IsDialogMessageW
 //sys LoadIcon(instance Handle, resource uintptr) (ret Handle, err error) = user32.LoadIconW
+//sys MapWindowPoints(from HWND, to HWND, points *POINT, count uint32) (ret int) = user32.MapWindowPoints
+//sys MonitorFromWindow(wnd HWND, flags uint32) (ret Handle) = user32.MonitorFromWindow
 //sys PostQuitMessage(exitCode int) = user32.PostQuitMessage
 //sys RegisterClassEx(cls *WNDCLASSEX) (err error) = user32.RegisterClassExW
 //sys ReleaseDC(wnd HWND, dc Handle) (ok bool) = user32.ReleaseDC
