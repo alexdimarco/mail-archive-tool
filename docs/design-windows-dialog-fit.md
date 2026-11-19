@@ -258,7 +258,9 @@ label's `SS_EDITCONTROL` style would hide with no sign. Labels are drawn without
 `SS_WORDELLIPSIS`. A word that cannot break at a space: the text is measured at
 the label's final width, and a measured width wider than the label widens the
 content, up to the cap, and is measured again; past the cap, the edit-control
-wrap breaks the word.
+wrap breaks the word. [B8: on Windows the measuring (`DT_EDITCONTROL`) breaks such a word inside
+the line, as the label draws it, so the widening does not run: in the lab, a
+70-character word kept the progress dialog at 400.]
 
 **The monitor, the cap and centring [C2].** A dialog belongs to one monitor: at
 open, the one upstream centres on (the primary); after that, the window's own
@@ -274,7 +276,7 @@ content needs, for the window's own styles at its DPI
 its client area read back with `GetClientRect`, and the size corrected once.
 
 **List dialog [C1, C4].** Content width = the largest of: 241 (upstream's, so a
-short menu looks as before); the list's width (below); the widest prompt line, up
+short menu looks as before); the step width, 400, so the wizard's steps whose words need less share one width; it gives way to the cap, where 241 does not [B6]; the list's width (below); the widest prompt line, up
 to 400 (wider lines wrap rather than widen the dialog); the button row (below).
 Then capped.
 
@@ -289,7 +291,7 @@ Then capped.
   before.
 - The prompt: a prompt label (above), as wide as the content; the list starts 4
   below it.
-- A prompt too tall for the room [C1]. When the wrapped prompt would push the
+- A prompt too tall for the room [C1]. When the wrapped prompt would push the dialog past the height cap, the list first gives up its empty rows, down to the rows it holds, and the prompt takes that room [B11]; if it would still push the
   dialog past the height cap, it is shown instead in a read-only multi-line EDIT
   control (`ES_MULTILINE|ES_READONLY|WS_VSCROLL`, no border, no `WS_TABSTOP`, the
   label's font) as tall as the room left under the cap, so the dialog stands
@@ -315,7 +317,7 @@ label wider than its share is cut and never pushes a button out of the dialog
 **Entry dialog [C5, N14].** As the list dialog without the list and without the
 scrolling prompt. The content width also takes the starting text, measured on one
 line plus the edit box's margins, up to the cap. The edit box is as wide as the
-content (at least 241), 24 high, 4 below the prompt.
+content (at least 241, and the step width, 400, the cap permitting [B6]), 24 high, 4 below the prompt.
 
 **Progress dialog [C2, C3, C7].** Its text arrives after it opens (`Text`), so its
 content width is fixed at 400 (wider than upstream's 241: about 75 characters a
@@ -326,7 +328,9 @@ dialog's window procedure, on the dialog's own locked thread, then measures the
 new text, grows the prompt label (with its slack) and the window, and calls
 `SetWindowPos`, with the same layout code as at open and on `WM_DPICHANGED`. The
 label and the window never shrink while the dialog is open, so the window does not
-jump as the wizard's two-second updates change a number. That height is kept per
+jump as the wizard's two-second updates change a number. [B8: Nor does the width shrink: the content's width so far is kept with
+the prompt's height, and both are re-based to a new DPI rounding up, so a round trip
+between two DPIs never shrinks them (adversarial findings CON-03, OUT-05).] That height is kept per
 dialog, with no package-level layout state (Desktop can have two dialogs open),
 and is re-based on `WM_DPICHANGED`. The window grows downward with its top edge
 fixed, moving up only as far as it must to stay inside the work area.
@@ -350,7 +354,13 @@ Nothing else moves. The hook runs the same re-flow again after the box handles
 
 **DPI changes [C2].** On `WM_DPICHANGED` the list, entry and progress dialogs take
 their new position from the rectangle Windows suggests (lParam), measure again at
-the new DPI, lay out again, and keep the result inside that monitor's work area.
+the new DPI, lay out again, and keep the result inside that monitor's work area. [B7: In this order: the work area and the cap are those of the monitor the
+suggested rectangle lies on (`MonitorFromRect`); the controls are placed first, then
+the window in one move to the suggested corner at its fitted size, moved only as far
+as it must to lie inside that work area. The first build resized the window where it
+stood before moving it, so a dialog dragged between screens of different scaling
+could be clamped back onto the screen it was leaving (OUT-01, CON-02). A dialog
+dragged across the edge now moves wholly onto the new screen when its DPI changes.]
 
 **Never take the keyboard [C8, N14].** Every resize or move of a dialog window
 after it is shown uses `SetWindowPos` with `SWP_NOACTIVATE|SWP_NOZORDER` (and
@@ -364,7 +374,11 @@ growing progress window never takes the keyboard from what the person is doing
 created, or whose cap is then smaller than upstream's window at that DPI, or whose
 first measurement of non-empty text fails or returns 0, is created with v0.10.12's
 layout and style, ellipsis label included, and keeps them. After that, a layout
-whose reads or measurements fail keeps the dialog's last layout. The floors (241,
+whose reads or measurements fail keeps the dialog's last layout. [B7: At the same DPI it does,
+as at opening when the second measurement fails; at another DPI, whose fonts are
+already set, the dialog falls back to upstream's layout and label style for good; a
+progress text that cannot be measured keeps the last layout and is measured again
+with the next `Text` (CON-01, OUT-04).] The floors (241,
 75, upstream's heights) always win over the cap. The message-box hook changes
 nothing unless every read succeeded, and widens the box before it moves any
 button.
@@ -438,6 +452,26 @@ words) and:
     ones its record lists; `fit.go` imports nothing; neither declares an `init`
     function; a patch file adds no package-level variable set by a call except
     `zsyscall_windows.go`'s generated `NewProc` lines, and `fit.go` none.
+  - [B9, from the adversarial pass] the eight patchable files are named in MA-1468's
+    own table, each with its original's sha256, imports and variables set by a call:
+    a record must agree with the table and a patch file may import nothing else; no
+    patch file nor `fit.go` carries a compiler directive but build constraints; a
+    pins file with two records for one file does not parse (INS-04);
+  - [B9] `internal/win/zsyscall_windows.go` is exactly what upstream's generator
+    (`mkwinsyscall`, at the copy's x/sys v0.17.0) makes from the `//sys` lines, and
+    the exemption for the generator's lines matches their two shapes exactly
+    (INS-01);
+  - [B9] the go command resolves zenity to the copy (`go list`, so a `go.work` or a
+    vendored copy cannot take its place), and nothing is vendored (INS-02);
+  - [B9] each of MA-1469's tests reports a pass in the copy's `go test -json` run,
+    and `fit_test.go` is there and builds on Windows, macOS and Linux (INS-05);
+  - [B9] the pins keep the `lab-copy` hash of the copy's built files (all but
+    `fit_test.go` and UPSTREAM.md) that the last passing MA-1470 run was built
+    from, written only from that run's receipt, so a patch file or `fit.go` changed
+    since turns MA-1468 red (INS-03);
+  - [B9] both workflows run the published-module scan on the whole module and, for
+    Windows, on `./cmd/mailarchive`, the program Windows ships, and the release
+    checks the copy again just before it builds (INS-06, INS-07).
 
   Positive twin first: a scratch tree made from the pins passes. Then each of
   these turns it red: one byte changed in a copied file; a patch file changed
@@ -493,7 +527,13 @@ words) and:
 - **MA-1470 (L, Windows lab: the office test PC, one screen at 150 %, env-gated
   like MA-1113) [C1 to C10, C20, N9, N10, N11].** Real dialogs opened through the
   public API in the main module, measured from outside with Win32 by a
-  per-monitor-aware thread. Inputs: the walk's rows; a hostile 80-character name;
+  per-monitor-aware thread. [B7, B9: It also checks that a DPI change puts a dialog at the
+  corner Windows suggests when that lies inside the work area, that a progress dialog
+  shrinks for neither a word wider than 400 nor a shorter text, and a typical warning
+  health view as the wizard words it; when every MA-1470 test passes in a program
+  built with the copy's `lab-copy` hash, it writes the receipt the pins' recorder
+  requires; with `MAILARCHIVE_LAB_SHOTS` set it saves the friction review's
+  screenshots, naming the copy that drew them.] Inputs: the walk's rows; a hostile 80-character name;
   right-to-left and zero-width text; a row of 400 characters; a prompt holding a
   120-character path with no spaces, and one holding a word of about 300
   characters with no spaces (past the cap) [N9]; the health view of a scheduled
@@ -543,7 +583,9 @@ words) and:
 screenshots: should the health view wrap wider first, up to the width cap, before
 it scrolls (lines of about 190 characters)? Each wizard step now has its own
 width; should the wizard's list and entry dialogs share one floor, for example
-400?
+400? [B6: Answered by the friction review on 2026-11-19
+(docs/review-windows-dialog-fit-friction.md): no, the health view keeps wrapping at
+400 and scrolls; yes, one floor, the step width of 400.]
 
 **Mutation sweeps [C21, N12].** MA-1469's sweep reaches `fit.go` only, run on the
 Mac and in Linux. The measuring glue is swept through MA-1470 on the test PC,
@@ -634,11 +676,17 @@ The text measured is the text upstream already drew. Mailbox names reach the
 picker cleaned and capped at 80 characters (MA-1198, applied through MA-1462);
 any other text is bounded in width by the cap, and a too-tall list prompt scrolls,
 so long or hostile text cannot push other lines out of reach or make a dialog
-larger than the cap [C1, C21]. Measuring cannot exhaust GDI objects (§4.3,
+larger than the cap [C1, C21]. [B10: Except that a prompt line, row, label or starting text that
+measures 0 wide (only invisible characters) gives the dialog upstream's layout, as
+§4.3's Fallbacks say; MailArchive's callers never pass one: mailbox names lose
+invisible characters (`state.CleanFolderName`), and every other text is MailArchive's
+own (OUT-02).] Measuring cannot exhaust GDI objects (§4.3,
 MA-1470's count), and the arithmetic cannot panic (§4.3, Fallbacks) [C9, C10].
 
 The copy is a supply-chain change. The pins tie every unpatched file to the
-published module's hash, every patch file to a lab-checked record, and the copy's
+published module's hash, every patch file to a lab-checked record, [B9: and to MA-1468's
+own table, the generated file to its generator, the build to the copy, and the lab
+record to the files it ran on,] [B12: The receipt shows the files were consistent, not that a lab run took place: someone with commit access can write one, as they could write the lab text before; it stops the honest mistake of recording an old run (adversarial re-verify RV-10).] and the copy's
 contents, imports and build targets to a fixed list (MA-1468) [C12 to C16, N1, N5];
 govulncheck still matches zenity's advisories, in the three places it runs (§7)
 [C17, N3].
@@ -726,3 +774,17 @@ adversarial pass:
 Also corrected in revision 2: the progress dialog's 400 is about 75 characters a
 line at 150 %, not about 60 (the rescue's measurement of the screenshots, an
 estimate).
+
+The adversarial pass and the friction review (2026-11-19; docs/review-windows-dialog-
+fit-adversarial.md and docs/review-windows-dialog-fit-friction.md):
+
+| Note | Where | Change |
+|---|---|---|
+| B6 | §4.3 List dialog, Entry dialog; §5 friction questions, MA-1469 | The friction review's answer: the wizard's list and entry dialogs share one width, the step width of 400, so a step whose words need less no longer has its own width (its F1: OK moved about 160 pixels between steps); it gives way to the cap, and 241 stays the floor that wins over the cap. The health view keeps wrapping at 400 and scrolls. MA-1469's twins now hold upstream's heights and control heights at 400 wide, OK at 254 and Cancel at 337 |
+| B7 | §4.3 DPI changes, Fallbacks; §5 MA-1470 | Adversarial findings OUT-01 and CON-02 (one defect, LOW): a DPI change reads the monitor of the suggested rectangle, places the controls, then the window in one move; MA-1470 checks the window goes to the suggested corner (a mutant that ignores it fails seven cases), though which monitor's work area it uses cannot be told apart on a one-screen PC. CON-01 and OUT-04 (INFO): the fallbacks at a failed measurement, by mechanism only (no failure can be caused in the lab) |
+| B8 | §4.3 Prompt labels, Progress dialog; §5 MA-1469, MA-1470 | CON-03 and OUT-05 (INFO): the progress dialog's width is kept with its height, re-based rounding up (MA-1469: a round trip never shrinks the floor). The lab showed Windows breaks a word wider than the label inside it, so the width does not change in practice: MA-1470 checks the dialog does not shrink, and the glue mutant that forgets the width survives, as it must |
+| B9 | §5 MA-1468, MA-1470; §8; UPSTREAM.md | INS-01 to INS-07: MA-1468's own table of patchable files, the generated file regenerated, the build's resolution checked, MA-1469's tests each required to pass, the lab run's receipt and `lab-copy` hash, the scans wired and pointed at the program Windows ships, and the release's re-check before it builds. Thirteen mutants of the check and one of the runner each turn it red |
+| B10 | §8 | OUT-02 (INFO): §8's sentence on hostile text names the zero-width exception, which §4.3's Fallbacks already specify; MA-1469 pins it |
+| B11 | §4.3 List dialog (a prompt too tall for the room); §5 MA-1469 | The friction re-check's G1: the typical warning health view scrolled with its reasons out of sight above an action list nine rows tall for three actions. When a list's prompt is too tall for the room, the list first gives up its empty rows, down to the rows it holds (a line each, half a line spare for the list box's rounding to whole rows, its client edges), and the prompt takes that room; it scrolls only if it still does not fit. Ordinary steps keep upstream's list height. MA-1469: 27 of 27 mutants red, three new |
+| B12 | §5 MA-1468, MA-1470; §8; UPSTREAM.md; release | The re-verify of the fixes (63a70d5, 8bfe68b; report's last section): go vet's allowed finding is read with either path separator, so Windows CI is not red for it (RV-01); a lab run filtered to some subtests or skipping some writes no receipt, and every lab run first deletes an earlier receipt (RV-02, RV-03); the `lab-copy` hash covers the lab test too (RV-03); one command hashes, builds and re-hashes the lab program (RV-04); `go list`'s check refuses an `-overlay` or `-toolexec` in GOFLAGS and build-release.sh refuses any GOFLAGS (RV-05); the scan and re-check steps may not continue on error nor be followed by `||`, and the release's re-check must name tests that exist (RV-06, RV-07); a message box's buttons are placed before the box (RV-08); a list falling back to upstream's layout drops its sideways extent (RV-09); §8 states what the receipt proves (RV-10) |
+
