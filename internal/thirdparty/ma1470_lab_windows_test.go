@@ -55,6 +55,7 @@ var (
 	procAllowSetForeground     = labUser32.NewProc("AllowSetForegroundWindow")
 	procSetForegroundWindow    = labUser32.NewProc("SetForegroundWindow")
 	procSetWindowPos           = labUser32.NewProc("SetWindowPos")
+	procGetDpiForWindow        = labUser32.NewProc("GetDpiForWindow")
 	procGetGuiResources        = labUser32.NewProc("GetGuiResources")
 	procSetThreadDpiAwareness  = labUser32.NewProc("SetThreadDpiAwarenessContext")
 	procSelectObject           = labGdi32.NewProc("SelectObject")
@@ -815,8 +816,10 @@ func TestMA1470MeasuringLosesNoGDIObject(t *testing.T) {
 }
 
 // checkMessageBox measures an open message box from outside: every button's label inside
-// its button, the buttons inside the client area and none over another, the box inside
-// its work area within the cap. The box's own text is Windows' layout, outside P1.
+// its button and no button wider than the row needs (the widest label plus 12 on each
+// side, or Windows' own 75, scaled: the first walk found them 1.5 times too wide), the
+// buttons inside the client area and none over another, the box inside its work area
+// within the cap. The box's own text is Windows' layout, outside P1.
 func checkMessageBox(t *testing.T, name string, box uintptr) {
 	t.Helper()
 	cr, wr, work := clientRect(box), windowRect(box), workArea(box)
@@ -834,6 +837,19 @@ func checkMessageBox(t *testing.T, name string, box uintptr) {
 	}
 	if len(buttons) == 0 {
 		t.Errorf("%s: no button found", name)
+	}
+	dpi := int32(call(procGetDpiForWindow, box))
+	up := func(v int32) int32 { return (v*dpi + 95) / 96 }
+	widest := up(75)
+	for _, b := range buttons {
+		if w, _ := measure(b.hwnd, b.text, 0, dtSingleLine); w+2*up(12) > widest {
+			widest = w + 2*up(12)
+		}
+	}
+	for _, b := range buttons {
+		if bw := clientRect(b.hwnd).w(); bw > widest+2 {
+			t.Errorf("%s: button %q is %d wide; the row needs %d at %d DPI", name, b.text, bw, widest, dpi)
+		}
 	}
 	for i, b := range buttons {
 		w, _ := measure(b.hwnd, b.text, 0, dtSingleLine)

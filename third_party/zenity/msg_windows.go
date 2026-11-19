@@ -133,6 +133,12 @@ func hookMessageDialog(opts options) (context.CancelFunc, error) {
 // work area, never past the cap. The box's own text is Windows' layout, untouched. The
 // dialog hook runs it again after the box handles WM_DPICHANGED.
 func fitMessageBox(wnd win.HWND) {
+	// Inside MessageBox's WM_INITDIALOG, the lab read every rectangle at 2/3 of its size
+	// at 150 % (113x40 buttons as 75x27) while the label measured true, and placed buttons
+	// 1.5 times too wide: read and place in physical pixels here, as the labels are measured.
+	if old, _ := win.SetThreadDpiAwarenessContext(win.DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE_V2); old != 0 {
+		defer win.SetThreadDpiAwarenessContext(old)
+	}
 	type button struct {
 		hwnd win.HWND
 		r    fitRect
