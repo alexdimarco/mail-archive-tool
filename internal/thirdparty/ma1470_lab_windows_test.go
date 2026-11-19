@@ -1166,22 +1166,23 @@ func TestMA1470Screenshots(t *testing.T) {
 	lists := []struct {
 		name, prompt string
 		rows         []string
+		def          string // the row the wizard chooses for the person (zenity.DefaultItems)
 	}{
 		{"31-start", "What would you like to do?", []string{
 			"Archive a mail file on this computer (Outlook, Thunderbird, mbox)",
 			"Microsoft 365, folder export, browsing & tools (open MailArchive Desktop)",
 			"Open an archive folder I already have, encrypted or not (in MailArchive Desktop)",
-			"Make a new encrypted archive (in MailArchive Desktop)"}},
+			"Make a new encrypted archive (in MailArchive Desktop)"}, "Archive a mail file on this computer (Outlook, Thunderbird, mbox)"},
 		{"32-kind", "What are you exporting?", []string{"Auto-detect my mailboxes", "Outlook data file (.pst / .ost)",
-			"Outlook account (via Outlook app — for Exchange / .ost)", "Thunderbird / mbox mail folder", "Single mbox file"}},
-		{"34-picker", "Which mailbox do you want to export?", walkRows},
-		{"35-health-typical", typicalHealthView, healthChoices},
-		{"36-health-longest", healthView, healthChoices},
+			"Outlook account (via Outlook app — for Exchange / .ost)", "Thunderbird / mbox mail folder", "Single mbox file"}, "Auto-detect my mailboxes"},
+		{"34-picker", "Which mailbox do you want to export?", walkRows, walkRows[0]},
+		{"35-health-typical", typicalHealthView, healthChoices, healthChoices[0]},
+		{"36-health-longest", healthView, healthChoices, healthChoices[0]},
 	}
 	saved := 0
 	for _, l := range lists {
 		o := open(t, "list", func(ctx context.Context, title string) (string, error) {
-			return zenity.List(l.prompt, l.rows, zenity.Title(title), zenity.Context(ctx))
+			return zenity.List(l.prompt, l.rows, zenity.DefaultItems(l.def), zenity.Title(title), zenity.Context(ctx))
 		})
 		saveShot(t, l.name, o.hwnd)
 		o.close(t, l.name)

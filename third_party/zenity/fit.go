@@ -300,8 +300,18 @@ func fitList(e fitEnv, m fitMeasurer, prompt string, rows, buttons []string) fit
 	}
 	rest := fitUp(fitTop, dpi) + fitUp(fitGap, dpi) + listH + fitUp(fitRowGap, dpi) + fitUp(fitButtonH, dpi) + fitUp(fitMargin, dpi)
 	if room := capS.H - e.Frame.H - rest; promptH > room {
-		d.Scroll = true
-		promptH = fitMax(room, e.LineH)
+		// A prompt too tall for the room: the list first gives up its empty rows, down to
+		// the rows it holds, and the prompt takes that room; it scrolls only if it still
+		// does not fit (the friction review's G1: the health view's three choices sat
+		// under nine rows' height while its reasons were cut).
+		if short := fitRowsH(len(rows), e, d.HBar); short < listH {
+			room += listH - short
+			listH = short
+		}
+		if promptH > room {
+			d.Scroll = true
+			promptH = fitMax(room, e.LineH)
+		}
 	}
 
 	x := fitUp(fitMargin, dpi)
@@ -314,6 +324,17 @@ func fitList(e fitEnv, m fitMeasurer, prompt string, rows, buttons []string) fit
 	d.Client = fitSize{W: content + 2*x, H: y + fitUp(fitButtonH, dpi) + fitUp(fitMargin, dpi)}
 	d.Window = fitSize{W: d.Client.W + e.Frame.W, H: d.Client.H + e.Frame.H}
 	return d
+}
+
+// fitRowsH is the height of a list that shows n rows (at least one) without scrolling:
+// a line each, half a line spare so the list box's rounding to whole rows keeps the last
+// one, both client edges, and the sideways bar when it shows.
+func fitRowsH(n int, e fitEnv, hbar bool) int {
+	h := fitMax(n, 1)*e.LineH + e.LineH/2 + 2*fitMax(e.Edge, 0)
+	if hbar {
+		h += fitMax(e.HScroll, 0)
+	}
+	return h
 }
 
 // fitEntry lays out an entry dialog: a prompt, an edit box holding start, a button row

@@ -279,16 +279,21 @@ func TestFitPromptWraps(t *testing.T) {
 }
 
 // covers: MA-1469, S86
-// A list prompt too tall for the room scrolls: the dialog stands at the cap and the
-// prompt takes exactly the room left; its twin, a prompt that fits, stays a label at its
-// wrapped height (§4.3, A prompt too tall for the room).
+// A list prompt too tall for the room: the list first gives up its empty rows, down to
+// the rows it holds (two rows at 144 DPI: 2 x 24 + 12 + 2 x 3 = 66), and the prompt takes
+// that room (the friction review's G1); a prompt that still does not fit scrolls, the
+// dialog at the cap and the prompt taking exactly the room left; one that fits once the
+// list is short is a label at its wrapped height, under the cap; and its twin, a prompt
+// that fits from the start, leaves the list at upstream's height (§4.3, A prompt too tall
+// for the room).
 func TestFitOverTallPromptScrolls(t *testing.T) {
 	e, m := envAt(144), standAt(144)
 	lines := make([]string, 80)
 	for i := range lines {
 		lines[i] = "Posture: WARN, a reason that names its remedy"
 	}
-	d := fitList(e, m, strings.Join(lines, "\n"), []string{"Continue", "Remove"}, okCancel)
+	two := []string{"Continue", "Remove"}
+	d := fitList(e, m, strings.Join(lines, "\n"), two, okCancel)
 	checkGeometry(t, "an over-tall prompt", e, d)
 	c := fitCap(e.Work)
 	if !d.Scroll || d.Window.H != c.H {
@@ -297,12 +302,25 @@ func TestFitOverTallPromptScrolls(t *testing.T) {
 	if d.PromptH <= d.Prompt.H {
 		t.Errorf("the scrolling prompt %+v should be shorter than its text (%d)", d.Prompt, d.PromptH)
 	}
+	if d.Control.H != 66 {
+		t.Errorf("an over-tall prompt: the list %+v kept its empty rows; want it 66 high, two rows", d.Control)
+	}
+
+	// 45 lines: too tall beside upstream's list (room 1007), short enough beside two rows (1187).
+	mid := strings.Join(lines[:45], "\n")
+	d = fitList(e, m, mid, two, okCancel)
+	checkGeometry(t, "a prompt that fits once the list is short", e, d)
+	_, h, _ := m.wrapped(mid, d.Prompt.W)
+	if d.Scroll || d.Prompt.H != h+fitSlack(m.lineH) || d.Control.H != 66 || d.Window.H >= c.H {
+		t.Errorf("a prompt that fits once the list is short: scroll %v, prompt %+v, list %+v, window %+v; want a label %d high above a two-row list, under the cap",
+			d.Scroll, d.Prompt, d.Control, d.Window, h+fitSlack(m.lineH))
+	}
 
 	short := strings.Join(lines[:5], "\n")
 	d = fitList(e, m, short, []string{"Continue"}, okCancel)
-	_, h, _ := m.wrapped(short, d.Prompt.W)
-	if d.Scroll || d.Prompt.H != h+fitSlack(m.lineH) {
-		t.Errorf("a prompt that fits: scroll %v, prompt %+v; want a label %d high", d.Scroll, d.Prompt, h+fitSlack(m.lineH))
+	_, h, _ = m.wrapped(short, d.Prompt.W)
+	if d.Scroll || d.Prompt.H != h+fitSlack(m.lineH) || d.Control.H != fitUp(164, 144) {
+		t.Errorf("a prompt that fits: scroll %v, prompt %+v, list %+v; want a label %d high above upstream's list", d.Scroll, d.Prompt, d.Control, h+fitSlack(m.lineH))
 	}
 }
 

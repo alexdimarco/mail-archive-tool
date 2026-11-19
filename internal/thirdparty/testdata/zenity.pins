@@ -10,7 +10,7 @@ module: github.com/ncruces/zenity v0.10.12
 h1: h1:o4SErDa0kQijlqG6W4OYYzO6kA0fGu34uegvJGcMLBI=
 go.sum: github.com/ncruces/zenity v0.10.12 h1:o4SErDa0kQijlqG6W4OYYzO6kA0fGu34uegvJGcMLBI=
 go.sum: github.com/ncruces/zenity v0.10.12/go.mod h1:5OZIERViRR2fN0FcJCcisqxI+lYMDGzEDCEwB/+8iao=
-lab-copy: sha256:89f04cfe067b1499f90be9544c5fc32aef0dfc0b5feeb432db8c5a52518ad6f3
+lab-copy: sha256:1f77a47868199966d5196a25fdb2a59861bc6abb0642212145eaded84e190473
 file: b7c5c35b7f9a4fa5fade5d778aee7d762575e3f4c1c3737a55b2cc2d138d46e3 left-out .github/FUNDING.yml
 file: 714f0cdfb30ff028aaacdc3075df963a7730e42437920a1a66b2e1f37117d1df left-out .github/dependabot.yml
 file: 217b23b397938d0693dec80a5613fd5c97d5d21fa83f262c689c22bc92db7db7 left-out .github/workflows/go.yml
