@@ -719,6 +719,7 @@ adversarial pass:
 |---|---|---|
 | B1 | §2 P1; §4.3 Buttons | `fit_test.go`'s sweep found a label wider than the cap pushing its button outside the dialog. Buttons now share the content width when the labels need more, and P1 states the limit: such a label is cut |
 | B2 | §5 MA-1469 | The positive twins: a prompt label is a quarter line taller than upstream's (C3's slack), so the twins hold upstream's widths, control sizes and button positions, with what is below the prompt moved down by the slack |
+| B4 | §5 MA-1470 | Slice 4 on the test PC: the message-box cases pass, and its 2 mutants (no re-flow, no rerun after a DPI change) fail. The lab test now waits until each dialog is shown before measuring and reads a rectangle twice before calling it unreadable (two runs had read a dialog before its layout, once each); the summary-box record measures the text without its trailing blank lines (it first reported a cut that was only those lines). Runs 6 to 8 in a row: all pass |
 | B3 | §5 Mutation sweeps | Slice 3's sweep on the test PC killed 7 of 9 glue mutants; the scroll bar at the system DPI and no `SWP_NOACTIVATE` are listed as not mutation-proven, with the reasons. The lab test's own measuring thread must be per-monitor DPI aware (§5 says so): the first run, which was not, read every size scaled down by 1/1.5 |
 
 Also corrected in revision 2: the progress dialog's 400 is about 75 characters a

@@ -102,6 +102,11 @@ func hookMessageDialog(opts options) (context.CancelFunc, error) {
 				ctl, _ := win.GetDlgItem(wnd, win.IDC_STATIC_OK)
 				win.SendMessage(ctl, win.STM_SETICON, uintptr(icon.handle), 0)
 			}
+
+			// MailArchive's patch: renamed buttons as wide as their labels (fit.go).
+			if opts.okLabel != nil || opts.cancelLabel != nil || opts.extraButton != nil {
+				fitMessageBox(wnd)
+			}
 		}
 	}
 	icon, err := getIcon(opts.icon)
@@ -117,4 +122,67 @@ func hookMessageDialog(opts options) (context.CancelFunc, error) {
 		icon.delete()
 		unhook()
 	}, nil
+}
+
+// fitMessageBox widens a message box's renamed buttons to their labels (MailArchive's
+// patch, fit.go; design §4.3, Message boxes). It reads every button of the box's row,
+// renamed or not, with the font and label each draws, and changes nothing unless every
+// read succeeds and a label needs more than its button. Then every button becomes as
+// wide as the widest need, the row keeps Windows' gap and right margin, and the box grows
+// to the right by what the row lacks, re-centred about its old centre in its monitor's
+// work area, never past the cap. The box's own text is Windows' layout, untouched. The
+// dialog hook runs it again after the box handles WM_DPICHANGED.
+func fitMessageBox(wnd win.HWND) {
+	type button struct {
+		hwnd win.HWND
+		r    fitRect
+		w    int
+	}
+	var row []button
+	for _, id := range []int{win.IDOK, win.IDYES, win.IDNO, win.IDCANCEL} {
+		btn, err := win.GetDlgItem(wnd, id)
+		if err != nil || btn == 0 {
+			continue
+		}
+		var r win.RECT
+		if win.GetWindowRect(btn, &r) != nil {
+			return
+		}
+		pts := [2]win.POINT{{X: r.Left, Y: r.Top}, {X: r.Right, Y: r.Bottom}}
+		win.MapWindowPoints(0, wnd, &pts[0], 2)
+		font := win.Handle(win.SendMessage(btn, win.WM_GETFONT, 0, 0))
+		w, _, ok := fitText{wnd: wnd, font: font}.label(win.GetWindowText(btn))
+		if !ok {
+			return
+		}
+		row = append(row, button{hwnd: btn, w: w,
+			r: fitRect{X: int(pts[0].X), Y: int(pts[0].Y), W: int(pts[1].X - pts[0].X), H: int(pts[1].Y - pts[0].Y)}})
+	}
+	for i := 1; i < len(row); i++ { // left to right
+		for j := i; j > 0 && row[j].r.X < row[j-1].r.X; j-- {
+			row[j], row[j-1] = row[j-1], row[j]
+		}
+	}
+	var client win.RECT
+	work := fitWorkArea(wnd)
+	if len(row) == 0 || win.GetClientRect(wnd, &client) != nil || work.W <= 0 {
+		return
+	}
+	box := fitWindowRect(wnd)
+	clientW := int(client.Right - client.Left)
+	rects := make([]fitRect, len(row))
+	labels := make([]int, len(row))
+	for i, b := range row {
+		rects[i], labels[i] = b.r, b.w
+	}
+	out, grow, ok := fitMessageRow(rects, labels, clientW, work.W*8/10-(box.W-clientW), int(getDPI(wnd)))
+	if !ok {
+		return
+	}
+	if grow > 0 {
+		fitPlace(wnd, fitAbout(box, fitSize{W: box.W + grow, H: box.H}, work))
+	}
+	for i, b := range row {
+		fitPlace(b.hwnd, out[i])
+	}
 }

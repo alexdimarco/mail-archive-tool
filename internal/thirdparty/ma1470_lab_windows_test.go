@@ -54,6 +54,7 @@ var (
 	procGetWindowThreadProcess = labUser32.NewProc("GetWindowThreadProcessId")
 	procAllowSetForeground     = labUser32.NewProc("AllowSetForegroundWindow")
 	procSetForegroundWindow    = labUser32.NewProc("SetForegroundWindow")
+	procSetWindowPos           = labUser32.NewProc("SetWindowPos")
 	procGetGuiResources        = labUser32.NewProc("GetGuiResources")
 	procSetThreadDpiAwareness  = labUser32.NewProc("SetThreadDpiAwarenessContext")
 	procSelectObject           = labGdi32.NewProc("SelectObject")
@@ -79,6 +80,10 @@ const (
 	wmDPIChanged  = 0x02e0
 	vkReturn      = 0x0d
 	vkDown        = 0x28
+	bmClick       = 0x00f5
+	swpNoMove     = 0x0002
+	swpNoZOrder   = 0x0004
+	swpNoActivate = 0x0010
 	sbBottom      = 7
 	mkLButton     = 0x0001
 
@@ -143,9 +148,21 @@ func windowText(h uintptr) string {
 }
 
 func windowRect(h uintptr) rect {
-	var r rect
-	call(procGetWindowRect, h, uintptr(unsafe.Pointer(&r)))
+	r, _ := readWindowRect(h)
 	return r
+}
+
+// readWindowRect reads h's rectangle on the screen, once more after 50 ms if the first
+// read fails (one lab run read a button's as all zeros once, and not again).
+func readWindowRect(h uintptr) (rect, bool) {
+	var r rect
+	for try := 0; try < 2; try++ {
+		if call(procGetWindowRect, h, uintptr(unsafe.Pointer(&r))) != 0 {
+			return r, true
+		}
+		time.Sleep(50 * time.Millisecond)
+	}
+	return rect{}, false
 }
 
 func clientRect(h uintptr) rect {
@@ -154,11 +171,15 @@ func clientRect(h uintptr) rect {
 	return r
 }
 
-// rectIn is a child's rectangle in its parent's client coordinates.
-func rectIn(parent, h uintptr) rect {
-	r := windowRect(h)
+// rectIn is a child's rectangle in its parent's client coordinates; ok is false when
+// it cannot be read.
+func rectIn(parent, h uintptr) (rect, bool) {
+	r, ok := readWindowRect(h)
+	if !ok {
+		return rect{}, false
+	}
 	call(procMapWindowPoints, 0, parent, uintptr(unsafe.Pointer(&r)), 2)
-	return r
+	return r, true
 }
 
 func visible(h uintptr) bool { return call(procIsWindowVisible, h) != 0 }
@@ -173,12 +194,14 @@ type child struct {
 	class string
 	text  string
 	r     rect // in the dialog's client coordinates
+	read  bool // the rectangle could be read
 }
 
 func children(dlg uintptr) []child {
 	var out []child
 	for h := call(procGetWindow, dlg, gwChild); h != 0; h = call(procGetWindow, h, gwHwndNext) {
-		out = append(out, child{hwnd: h, class: className(h), text: windowText(h), r: rectIn(dlg, h)})
+		r, ok := rectIn(dlg, h)
+		out = append(out, child{hwnd: h, class: className(h), text: windowText(h), r: r, read: ok})
 	}
 	return out
 }
@@ -344,6 +367,10 @@ func checkFits(t *testing.T, name string, dlg uintptr) {
 		}
 	}
 	for i, c := range shown {
+		if !c.read {
+			t.Errorf("%s: cannot read the rectangle of %s %q (twice, 50 ms apart)", name, c.class, short(c.text))
+			continue
+		}
 		if c.r.Left < 0 || c.r.Top < 0 || c.r.Right > cr.Right || c.r.Bottom > cr.Bottom {
 			t.Errorf("%s: %s %q at %+v is not inside the client area %+v", name, c.class, short(c.text), c.r, cr)
 		}
@@ -461,7 +488,17 @@ func open(t *testing.T, kind string, run func(ctx context.Context, title string)
 		cancel()
 		t.Fatalf("%s: the dialog %q did not appear within %v", kind, title, labDialogWaitLimit)
 	}
-	time.Sleep(150 * time.Millisecond) // let it draw
+	// The window exists from CreateWindowEx on, before its layout: wait until it is shown
+	// with a client area (the first dialog of a run was once read too early), then let it
+	// draw.
+	for !(visible(o.hwnd) && clientRect(o.hwnd).w() > 0) && time.Now().Before(end) {
+		time.Sleep(20 * time.Millisecond)
+	}
+	if !visible(o.hwnd) || clientRect(o.hwnd).w() <= 0 {
+		cancel()
+		t.Fatalf("%s: the dialog %q was not shown with a client area within %v", kind, title, labDialogWaitLimit)
+	}
+	time.Sleep(150 * time.Millisecond)
 	return o
 }
 
@@ -775,4 +812,148 @@ func TestMA1470MeasuringLosesNoGDIObject(t *testing.T) {
 	if after := steadyGDIObjects(); after > start || mid > start {
 		t.Errorf("Text calls: GDI objects %d, then %d after 1,000 and %d after 2,000", start, mid, after)
 	}
+}
+
+// checkMessageBox measures an open message box from outside: every button's label inside
+// its button, the buttons inside the client area and none over another, the box inside
+// its work area within the cap. The box's own text is Windows' layout, outside P1.
+func checkMessageBox(t *testing.T, name string, box uintptr) {
+	t.Helper()
+	cr, wr, work := clientRect(box), windowRect(box), workArea(box)
+	if wr.Left < work.Left || wr.Top < work.Top || wr.Right > work.Right || wr.Bottom > work.Bottom {
+		t.Errorf("%s: box %+v is not inside the work area %+v", name, wr, work)
+	}
+	if wr.w() > work.w()*8/10 {
+		t.Errorf("%s: box %d wide is past the cap of a %d-wide work area", name, wr.w(), work.w())
+	}
+	var buttons []child
+	for _, c := range children(box) {
+		if strings.EqualFold(c.class, "BUTTON") && visible(c.hwnd) {
+			buttons = append(buttons, c)
+		}
+	}
+	if len(buttons) == 0 {
+		t.Errorf("%s: no button found", name)
+	}
+	for i, b := range buttons {
+		w, _ := measure(b.hwnd, b.text, 0, dtSingleLine)
+		if bw := clientRect(b.hwnd).w(); w+2*4 > bw {
+			t.Errorf("%s: button label %q needs %d, the button is %d wide", name, b.text, w+8, bw)
+		}
+		if b.r.Left < 0 || b.r.Top < 0 || b.r.Right > cr.Right || b.r.Bottom > cr.Bottom {
+			t.Errorf("%s: button %q at %+v is not inside the client area %+v", name, b.text, b.r, cr)
+		}
+		for _, o := range buttons[i+1:] {
+			if b.r.Left < o.r.Right && o.r.Left < b.r.Right && b.r.Top < o.r.Bottom && o.r.Top < b.r.Bottom {
+				t.Errorf("%s: buttons %q %+v and %q %+v overlap", name, b.text, b.r, o.text, o.r)
+			}
+		}
+	}
+}
+
+func question(t *testing.T, kind, text string, opts ...zenity.Option) opened {
+	t.Helper()
+	return open(t, kind, func(ctx context.Context, title string) (string, error) {
+		all := append(append([]zenity.Option(nil), opts...), zenity.Title(title), zenity.Context(ctx))
+		return "", zenity.Question(text, all...)
+	})
+}
+
+func buttonOf(t *testing.T, box uintptr, label string) uintptr {
+	t.Helper()
+	for _, c := range children(box) {
+		if strings.EqualFold(c.class, "BUTTON") && strings.ReplaceAll(c.text, "&&", "&") == label {
+			return c.hwnd
+		}
+	}
+	t.Fatalf("no button %q", label)
+	return 0
+}
+
+// covers: MA-1470, S86
+// Message boxes: the wizard's renamed buttons fit their labels (the backup summary's,
+// the IMAP question's, the Outlook question's, and three buttons with an extra one); for
+// a one-word text the box grew for them; each button still gives its own answer when
+// clicked; after a DPI change (a WM_DPICHANGED sent to the box) buttons narrowed by the
+// test are widened again. It records, without asserting, whether Windows cuts the text
+// of an end-of-backup summary for several accounts (P1 leaves a message box's text to
+// Windows).
+func TestMA1470MessageBoxesFitTheirLabels(t *testing.T) {
+	if !labOn() {
+		t.Skip(labSkip)
+	}
+	perMonitorAware(t)
+
+	plain := question(t, "plain", "Done.")
+	plainW := windowRect(plain.hwnd).w()
+	plain.close(t, "plain")
+	long := question(t, "a one-word text", "Done.", zenity.OKLabel("Open the archive"), zenity.CancelLabel("Close"),
+		zenity.ExtraButton("Export what's changed"))
+	checkMessageBox(t, "a one-word text", long.hwnd)
+	if w := windowRect(long.hwnd).w(); w <= plainW {
+		t.Errorf("a one-word text with long labels: the box is %d wide, not wider than with OK and Cancel (%d)", w, plainW)
+	}
+	long.close(t, "a one-word text")
+
+	for _, c := range []struct{ name, text, ok, cancel string }{
+		{"the backup summary", "Backup finished: 1,204 messages saved in D:\\Mail archive.", "Open the archive", "Close"},
+		{"the IMAP question", "Thunderbird keeps only part of this account's mail on this computer. Prepare a full offline download first?", "Yes, prepare", "No, export what's cached"},
+		{"the Outlook question", "Outlook is installed. Export through the Outlook app, or read the files directly?", "Use the Outlook app", "Read the files directly"},
+	} {
+		o := question(t, c.name, c.text, zenity.OKLabel(c.ok), zenity.CancelLabel(c.cancel))
+		checkMessageBox(t, c.name, o.hwnd)
+		o.close(t, c.name)
+	}
+
+	for _, a := range []struct {
+		label string
+		want  error
+	}{{"Open the archive", nil}, {"Export what's changed", zenity.ErrExtraButton}, {"Close", zenity.ErrCanceled}} {
+		o := question(t, "click "+a.label, "Done.", zenity.OKLabel("Open the archive"), zenity.CancelLabel("Close"),
+			zenity.ExtraButton("Export what's changed"))
+		call(procSetForegroundWindow, o.hwnd)
+		time.Sleep(100 * time.Millisecond)
+		post(buttonOf(t, o.hwnd, a.label), bmClick, 0, 0)
+		if _, err := o.result(t, "click "+a.label); !errors.Is(err, a.want) && !(err == nil && a.want == nil) {
+			t.Errorf("a click on %q answered %v; want %v", a.label, err, a.want)
+		}
+	}
+
+	o := question(t, "DPI", "Done.", zenity.OKLabel("Open the archive"), zenity.CancelLabel("Close"))
+	for _, c := range children(o.hwnd) {
+		if strings.EqualFold(c.class, "BUTTON") {
+			call(procSetWindowPos, c.hwnd, 0, 0, 0, 30, uintptr(c.r.h()), swpNoMove|swpNoZOrder|swpNoActivate)
+		}
+	}
+	r := windowRect(o.hwnd)
+	send(o.hwnd, wmDPIChanged, 192<<16|192, uintptr(unsafe.Pointer(&r)))
+	time.Sleep(200 * time.Millisecond)
+	checkMessageBox(t, "after a DPI change", o.hwnd)
+	o.close(t, "DPI")
+
+	var summary strings.Builder
+	summary.WriteString("Backup finished: 3,912 messages saved in D:\\Mail archive.\n\n")
+	for _, acct := range []string{"qzsam.walker@gmail.com", "qzsam.office@qzcompany.example", "firstname.lastname@mail.qzuniversity.example"} {
+		fmt.Fprintf(&summary, "The Thunderbird account %s: MailArchive cannot tell whether Thunderbird has downloaded all of its mail. "+
+			"Open Thunderbird, let it download the account's mail, then run the backup again. Messages Thunderbird has not downloaded are not in the archive yet.\n\n", acct)
+	}
+	o = question(t, "a summary for three accounts", summary.String(), zenity.OKLabel("Open the archive"), zenity.CancelLabel("Close"))
+	checkMessageBox(t, "a summary for three accounts", o.hwnd)
+	var text child
+	for _, c := range children(o.hwnd) {
+		if strings.EqualFold(c.class, "STATIC") && len(c.text) > len(text.text) {
+			text = c
+		}
+	}
+	if text.hwnd != 0 {
+		cr := clientRect(text.hwnd)
+		_, need := measure(text.hwnd, strings.TrimRight(text.text, "\r\n"), cr.w(), dtWordBreak|dtNoPrefix|dtExpandTabs)
+		verdict := "shown whole"
+		if need > cr.h() {
+			verdict = "CUT by Windows"
+		}
+		t.Logf("record: the summary box's text needs %d pixels and its control is %d high: %s (box %+v, work area %+v)",
+			need, cr.h(), verdict, windowRect(o.hwnd), workArea(o.hwnd))
+	}
+	o.close(t, "a summary for three accounts")
 }

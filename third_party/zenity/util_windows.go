@@ -128,6 +128,15 @@ func newDialogHook(ctx context.Context, icon any, title *string, init func(wnd w
 }
 
 func dialogHookProc(code int32, wparam uintptr, lparam *win.CWPRETSTRUCT) uintptr {
+	// MailArchive's patch: after the dialog handles a DPI change, run its init again, so a
+	// message box re-flows its renamed buttons at the new DPI (fit.go). Only message boxes
+	// pass an init, and renaming again changes nothing.
+	if lparam.Message == win.WM_DPICHANGED {
+		hook := (*dialogHook)(loadBackRef(uintptr(win.GetCurrentThreadId())))
+		if hook != nil && hook.init != nil && uintptr(lparam.Wnd) == atomic.LoadUintptr(&hook.wnd) {
+			hook.init(lparam.Wnd)
+		}
+	}
 	if lparam.Message == win.WM_INITDIALOG {
 		tid := win.GetCurrentThreadId()
 		hook := (*dialogHook)(loadBackRef(uintptr(tid)))
@@ -397,6 +406,7 @@ type fitText struct {
 }
 
 func (m fitText) measure(text string, width int, format uint32) (w, h int, ok bool) {
+	format |= win.DT_CALCRECT
 	if text == "" || m.wnd == 0 || m.font == 0 {
 		return 0, 0, false
 	}
@@ -412,18 +422,24 @@ func (m fitText) measure(text string, width int, format uint32) (w, h int, ok bo
 	old := win.SelectObject(dc, m.font)
 	defer win.SelectObject(dc, old)
 	rect := win.RECT{Right: int32(width)}
-	if win.DrawText(dc, p, -1, &rect, format|win.DT_CALCRECT|win.DT_NOPREFIX|win.DT_EXPANDTABS) == 0 {
+	if win.DrawText(dc, p, -1, &rect, format) == 0 {
 		return 0, 0, false
 	}
 	return int(rect.Right - rect.Left), int(rect.Bottom - rect.Top), true
 }
 
 func (m fitText) line(text string) (int, int, bool) {
-	return m.measure(text, 0, win.DT_SINGLELINE)
+	return m.measure(text, 0, win.DT_SINGLELINE|win.DT_NOPREFIX|win.DT_EXPANDTABS)
 }
 
 func (m fitText) wrapped(text string, width int) (int, int, bool) {
-	return m.measure(text, width, win.DT_WORDBREAK|win.DT_EDITCONTROL)
+	return m.measure(text, width, win.DT_WORDBREAK|win.DT_EDITCONTROL|win.DT_NOPREFIX|win.DT_EXPANDTABS)
+}
+
+// label measures a button's text as the button draws it: on one line, an ampersand
+// marking the next letter as its shortcut.
+func (m fitText) label(text string) (int, int, bool) {
+	return m.measure(text, 0, win.DT_SINGLELINE|win.DT_EXPANDTABS)
 }
 
 // fitWorkArea is the work area of the monitor wnd is on, in device pixels; zero when it

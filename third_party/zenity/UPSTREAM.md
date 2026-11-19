@@ -21,8 +21,9 @@ program), `.github/` and `testdata/`. Nothing else.
 of our version, the imports it adds, and the lab run it last passed; a change to one must
 update its record in the same change): `list_windows.go`, `entry_windows.go` and
 `progress_windows.go` (each measures its words and applies fit.go's layout, or keeps
-upstream's when it cannot); `util_windows.go` (the measuring and placing helpers, at its
-end); `internal/win/user32.go` and `internal/win/gdi32.go` (the new calls and constants);
+upstream's when it cannot); `msg_windows.go` (a message box's renamed buttons widened to
+their labels, `fitMessageBox`); `util_windows.go` (the measuring and placing helpers, at
+its end, and the dialog hook running a message box's init again after a DPI change); `internal/win/user32.go` and `internal/win/gdi32.go` (the new calls and constants);
 and `internal/win/zsyscall_windows.go`, regenerated: upstream's generator
 (`golang.org/x/sys/windows/mkwinsyscall` at x/sys v0.17.0, as this module's go.mod
 pins it) reproduces upstream's file byte for byte (checked 2026-11-19), so the new calls
