@@ -70,14 +70,15 @@ jobs:
           packaging/vulncheck-published-zenity.sh "$(go env GOPATH)/bin/govulncheck" ./...
 
       # The desktop binary links the OS folder picker (zenity) and, on Windows, its in-process
-      # IFileOpenDialog: scan the Windows build of it as well (extraction design XC31, MA-529).
+      # IFileOpenDialog: scan the Windows build of it as well (extraction design XC31, MA-529),
+      # with ./cmd/mailarchive, the program Windows ships (mailarchive.exe, mailarchivew.exe).
       # The tool is installed for the runner, then pointed at the Windows build with GOOS.
       - name: Vulnerability scan (the Windows desktop binary)
         if: matrix.os == 'ubuntu-latest'
         run: |
           go install golang.org/x/vuln/cmd/govulncheck@v1.8.0
-          GOOS=windows "$(go env GOPATH)/bin/govulncheck" ./cmd/mailarchive-desktop
-          GOOS=windows packaging/vulncheck-published-zenity.sh "$(go env GOPATH)/bin/govulncheck" ./cmd/mailarchive-desktop
+          GOOS=windows "$(go env GOPATH)/bin/govulncheck" ./cmd/mailarchive ./cmd/mailarchive-desktop
+          GOOS=windows packaging/vulncheck-published-zenity.sh "$(go env GOPATH)/bin/govulncheck" ./cmd/mailarchive ./cmd/mailarchive-desktop
 
       # The ubuntu job is the gate, and nothing in it built the Windows code or its
       # tests: a Unix-only call in one test file (syscall.Mkfifo) kept every Desktop test

@@ -1,14 +1,16 @@
 # zenity.pins: the published github.com/ncruces/zenity v0.10.12, file by file, and the
 # state of its copy in third_party/zenity (docs/design-windows-dialog-fit.md §4.1, MA-1468).
-# Written only by: go test ./internal/thirdparty -run TestRecordZenityPins -zenity-record
+# Written only by: go test ./internal/thirdparty -run TestRecordZenityPins -zenity-record -zenity-lab-receipt <receipt>
 # Changing an upstream line is an operator decision, as for MA-331's pins. A patch
-# file's record changes with the patch file, naming the lab run it passed.
+# file's record changes with the patch file, from the receipt of the MA-1470 run it passed;
+# lab-copy is the hash of the copy's built files that run was built from.
 recorded: 2026-11-19
 toolchain: go1.26.0
 module: github.com/ncruces/zenity v0.10.12
 h1: h1:o4SErDa0kQijlqG6W4OYYzO6kA0fGu34uegvJGcMLBI=
 go.sum: github.com/ncruces/zenity v0.10.12 h1:o4SErDa0kQijlqG6W4OYYzO6kA0fGu34uegvJGcMLBI=
 go.sum: github.com/ncruces/zenity v0.10.12/go.mod h1:5OZIERViRR2fN0FcJCcisqxI+lYMDGzEDCEwB/+8iao=
+lab-copy: sha256:89f04cfe067b1499f90be9544c5fc32aef0dfc0b5feeb432db8c5a52518ad6f3
 file: b7c5c35b7f9a4fa5fade5d778aee7d762575e3f4c1c3737a55b2cc2d138d46e3 left-out .github/FUNDING.yml
 file: 714f0cdfb30ff028aaacdc3075df963a7730e42437920a1a66b2e1f37117d1df left-out .github/dependabot.yml
 file: 217b23b397938d0693dec80a5613fd5c97d5d21fa83f262c689c22bc92db7db7 left-out .github/workflows/go.yml
@@ -140,11 +142,11 @@ file: 231095db994b7711bc18ab14593bb79544b29406b648ea489a83079441a1870f copied ze
 file: 8caf050755af35ed0d42e57e5d26fba3682990e8bc9a8b9beda482372bd23236 left-out zenity_test.go
 file: 6f069ae36a40c63929d7e03c76396606219c42c1eb3e0140745b13cc3dfd7af8 copied zenity_unix.go
 file: 4656e2ca3cfbc0ce46172976ebd41aa55148b3e43195994ccc1a433914baed3c copied zenity_windows.go
-patch: entry_windows.go ours=56afaa671a4774389a6c2be38c0bb915f626a7508543f6b9bbd627cd73b5120f upstream-imports=github.com/ncruces/zenity/internal/win,syscall,unsafe adds-imports=- upstream-call-vars=- lab=MA-1470 2026-11-19 Windows 11 Pro 26H2 build 26300, 1920x1080 at 150 %, run 9 (oversized-button fix) pass
-patch: internal/win/gdi32.go ours=60233549bb17f1709f37fc3f6be3ccec64713841f137c8d2a69c6b088fab4436 upstream-imports=- adds-imports=- upstream-call-vars=- lab=MA-1470 2026-11-19 Windows 11 Pro 26H2 build 26300, 1920x1080 at 150 %, run 9 (oversized-button fix) pass
-patch: internal/win/user32.go ours=7378f1ce361a3c15c32901603890e9022353a0c78f5b055c5e16a4474ebd17bc upstream-imports=golang.org/x/sys/windows,syscall,unsafe adds-imports=- upstream-call-vars=- lab=MA-1470 2026-11-19 Windows 11 Pro 26H2 build 26300, 1920x1080 at 150 %, run 9 (oversized-button fix) pass
-patch: internal/win/zsyscall_windows.go ours=abdbad63eeb83f5572a2be41c3c14eec9c0a46dbeec854a19ad445e190cd1302 upstream-imports=golang.org/x/sys/windows,syscall,unsafe adds-imports=- upstream-call-vars=errERROR_IO_PENDING lab=MA-1470 2026-11-19 Windows 11 Pro 26H2 build 26300, 1920x1080 at 150 %, run 9 (oversized-button fix) pass
-patch: list_windows.go ours=98042c23ecd070bfe18ade39cff35530adee3518fcc7e3770b420d0f9df9fcad upstream-imports=github.com/ncruces/zenity/internal/win,syscall,unsafe adds-imports=- upstream-call-vars=- lab=MA-1470 2026-11-19 Windows 11 Pro 26H2 build 26300, 1920x1080 at 150 %, run 9 (oversized-button fix) pass
-patch: msg_windows.go ours=ada6a9273c531127e57795644e3243fce4777ee32e6464792c2b57418e239793 upstream-imports=context,github.com/ncruces/zenity/internal/win adds-imports=- upstream-call-vars=- lab=MA-1470 2026-11-19 Windows 11 Pro 26H2 build 26300, 1920x1080 at 150 %, run 9 (oversized-button fix) pass
-patch: progress_windows.go ours=db8603d21860e125292e329e29abac343b7ee8c32b699a14ae506506205006fd upstream-imports=context,github.com/ncruces/zenity/internal/win,sync,syscall,unsafe adds-imports=- upstream-call-vars=- lab=MA-1470 2026-11-19 Windows 11 Pro 26H2 build 26300, 1920x1080 at 150 %, run 9 (oversized-button fix) pass
-patch: util_windows.go ours=426499f2514bd22b6cbd87ca2d529f0ddb7f057056851984d18fd057b0364046 upstream-imports=bytes,context,github.com/ncruces/zenity/internal/win,io,os,path/filepath,runtime,strconv,sync,sync/atomic,syscall,unsafe adds-imports=- upstream-call-vars=- lab=MA-1470 2026-11-19 Windows 11 Pro 26H2 build 26300, 1920x1080 at 150 %, run 9 (oversized-button fix) pass
+patch: entry_windows.go ours=234205ce3c2a24c3528b47217ab6cde8f37becd8f597a2277fcb5953076ef0e4 upstream-imports=github.com/ncruces/zenity/internal/win,syscall,unsafe adds-imports=- upstream-call-vars=- lab=MA-1470 2026-11-19 Windows 11 Professional 26H2 build 26300.9974, 1920x1080 at 150 % pass
+patch: internal/win/gdi32.go ours=60233549bb17f1709f37fc3f6be3ccec64713841f137c8d2a69c6b088fab4436 upstream-imports=- adds-imports=- upstream-call-vars=- lab=MA-1470 2026-11-19 Windows 11 Professional 26H2 build 26300.9974, 1920x1080 at 150 % pass
+patch: internal/win/user32.go ours=0e32fa9a307f7ad87c7e45ed629cc610cc180362a15953c87cdeed7438617be6 upstream-imports=golang.org/x/sys/windows,syscall,unsafe adds-imports=- upstream-call-vars=- lab=MA-1470 2026-11-19 Windows 11 Professional 26H2 build 26300.9974, 1920x1080 at 150 % pass
+patch: internal/win/zsyscall_windows.go ours=f7f9237d218fce125fd75dc47b279196e883d6a6a87737a5a4b1433e9a2b15ee upstream-imports=golang.org/x/sys/windows,syscall,unsafe adds-imports=- upstream-call-vars=errERROR_IO_PENDING lab=MA-1470 2026-11-19 Windows 11 Professional 26H2 build 26300.9974, 1920x1080 at 150 % pass
+patch: list_windows.go ours=001be8903db1e450c37318f129d583965803372053006d981d702755fa4840b8 upstream-imports=github.com/ncruces/zenity/internal/win,syscall,unsafe adds-imports=- upstream-call-vars=- lab=MA-1470 2026-11-19 Windows 11 Professional 26H2 build 26300.9974, 1920x1080 at 150 % pass
+patch: msg_windows.go ours=ada6a9273c531127e57795644e3243fce4777ee32e6464792c2b57418e239793 upstream-imports=context,github.com/ncruces/zenity/internal/win adds-imports=- upstream-call-vars=- lab=MA-1470 2026-11-19 Windows 11 Professional 26H2 build 26300.9974, 1920x1080 at 150 % pass
+patch: progress_windows.go ours=a92b193cac5ac53cba1dfe2a9e1a96fd15bd133e722947f85b5eaf07457c9d37 upstream-imports=context,github.com/ncruces/zenity/internal/win,sync,syscall,unsafe adds-imports=- upstream-call-vars=- lab=MA-1470 2026-11-19 Windows 11 Professional 26H2 build 26300.9974, 1920x1080 at 150 % pass
+patch: util_windows.go ours=93fe11be089e9510257e95026a45726ce0152d43e9744b2d05494f6c5fd17c3e upstream-imports=bytes,context,github.com/ncruces/zenity/internal/win,io,os,path/filepath,runtime,strconv,sync,sync/atomic,syscall,unsafe adds-imports=- upstream-call-vars=- lab=MA-1470 2026-11-19 Windows 11 Professional 26H2 build 26300.9974, 1920x1080 at 150 % pass

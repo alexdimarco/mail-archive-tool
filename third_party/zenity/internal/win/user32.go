@@ -442,6 +442,7 @@ type CWPRETSTRUCT struct {
 //sys IsDialogMessage(wnd HWND, msg *MSG) (ok bool) = user32.IsDialogMessageW
 //sys LoadIcon(instance Handle, resource uintptr) (ret Handle, err error) = user32.LoadIconW
 //sys MapWindowPoints(from HWND, to HWND, points *POINT, count uint32) (ret int) = user32.MapWindowPoints
+//sys MonitorFromRect(rect *RECT, flags uint32) (ret Handle) = user32.MonitorFromRect
 //sys MonitorFromWindow(wnd HWND, flags uint32) (ret Handle) = user32.MonitorFromWindow
 //sys PostQuitMessage(exitCode int) = user32.PostQuitMessage
 //sys RegisterClassEx(cls *WNDCLASSEX) (err error) = user32.RegisterClassExW

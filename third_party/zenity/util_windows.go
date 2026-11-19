@@ -445,9 +445,19 @@ func (m fitText) label(text string) (int, int, bool) {
 // fitWorkArea is the work area of the monitor wnd is on, in device pixels; zero when it
 // cannot be read, which keeps upstream's layout.
 func fitWorkArea(wnd win.HWND) fitRect {
+	return fitMonitorWork(win.MonitorFromWindow(wnd, win.MONITOR_DEFAULTTONEAREST))
+}
+
+// fitWorkAreaAt is the work area of the monitor nearest to r: after a DPI change, the one
+// the rectangle Windows suggests lies on (§4.3, DPI changes).
+func fitWorkAreaAt(r *win.RECT) fitRect {
+	return fitMonitorWork(win.MonitorFromRect(r, win.MONITOR_DEFAULTTONEAREST))
+}
+
+// fitMonitorWork is a monitor's work area in device pixels; zero when it cannot be read.
+func fitMonitorWork(mon win.Handle) fitRect {
 	var mi win.MONITORINFO
 	mi.Size = uint32(unsafe.Sizeof(mi))
-	mon := win.MonitorFromWindow(wnd, win.MONITOR_DEFAULTTONEAREST)
 	if mon == 0 || win.GetMonitorInfo(mon, &mi) != nil {
 		return fitRect{}
 	}
@@ -464,10 +474,11 @@ func fitMetric(index int, d dpi) int {
 	return win.GetSystemMetrics(index)
 }
 
-// fitEnvironment reads what fit.go needs for a dialog window at d. A dialog not yet placed
-// is at 0,0 (a pop-up window's CW_USEDEFAULT), on the primary monitor upstream centres on.
-func fitEnvironment(wnd win.HWND, d dpi, m fitText) fitEnv {
-	e := fitEnv{DPI: int(d), Work: fitWorkArea(wnd)}
+// fitEnvironment reads what fit.go needs for a dialog window at d, in the work area work.
+// A dialog not yet placed is at 0,0 (a pop-up window's CW_USEDEFAULT), on the primary
+// monitor upstream centres on.
+func fitEnvironment(wnd win.HWND, d dpi, m fitText, work fitRect) fitEnv {
+	e := fitEnv{DPI: int(d), Work: work}
 	var r win.RECT
 	if win.AdjustWindowRectExForDpi(&r, _WS_ZEN_DIALOG, false, _WS_EX_ZEN_DIALOG, uint32(d)) == nil {
 		e.Frame = fitSize{W: int(r.Right - r.Left), H: int(r.Bottom - r.Top)}
@@ -526,15 +537,21 @@ func fitCenterWindow(wnd win.HWND) {
 	fitPlace(wnd, fitCenter(fitSize{W: cur.W, H: cur.H}, fitWorkArea(wnd)))
 }
 
-// fitSuggested places a dialog whose DPI changed where Windows suggests, at its newly
-// fitted size, inside its monitor's work area.
-func fitSuggested(wnd win.HWND, suggested *win.RECT) {
-	if suggested == nil {
+// fitPlaceWindow sizes a laid-out dialog window without activating it: where it is, or,
+// after a DPI change, in one move to the top-left corner of the rectangle Windows
+// suggests (at), moved only as far as it must to lie inside work, the work area of the
+// monitor that rectangle lies on (§4.3, DPI changes). Callers place the controls first,
+// so a DPI change that arrives during this move lays the dialog out last.
+func fitPlaceWindow(wnd win.HWND, s fitSize, at *win.RECT, work fitRect) {
+	if at == nil {
+		fitResize(wnd, s)
 		return
 	}
-	cur := fitWindowRect(wnd)
-	r := fitRect{X: int(suggested.Left), Y: int(suggested.Top), W: cur.W, H: cur.H}
-	fitPlace(wnd, fitInside(r, fitWorkArea(wnd)))
+	r := fitRect{X: int(at.Left), Y: int(at.Top), W: s.W, H: s.H}
+	if work.W > 0 && work.H > 0 {
+		r = fitInside(r, work)
+	}
+	fitPlace(wnd, r)
 }
 
 // fitCRLF writes every line break as CR LF, the only break an edit control draws.

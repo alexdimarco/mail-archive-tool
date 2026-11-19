@@ -9,15 +9,23 @@ package thirdparty
 // draws with: every row, prompt line and button label must fit, every control must lie
 // inside its dialog without overlapping another, the dialog must lie inside its work
 // area within the cap, the ink of each label's last line must be on screen, and the
-// answers must be the ones v0.10.12 gives.
+// answers must be the ones v0.10.12 gives. When every MA-1470 test passes in a program
+// built with the copy's lab-copy hash, the run writes its receipt (UPSTREAM.md, Running
+// MA-1470); with MAILARCHIVE_LAB_SHOTS set it also saves screenshots for the friction
+// review.
 
 import (
 	"context"
 	"errors"
 	"fmt"
+	"image"
+	"image/png"
 	"os"
+	"path/filepath"
 	"runtime"
+	"strconv"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 	"unicode/utf16"
@@ -25,6 +33,7 @@ import (
 
 	"github.com/ncruces/zenity"
 	"golang.org/x/sys/windows"
+	"golang.org/x/sys/windows/registry"
 )
 
 var (
@@ -58,6 +67,8 @@ var (
 	procGetDpiForWindow        = labUser32.NewProc("GetDpiForWindow")
 	procGetGuiResources        = labUser32.NewProc("GetGuiResources")
 	procSetThreadDpiAwareness  = labUser32.NewProc("SetThreadDpiAwarenessContext")
+	procGetSystemMetrics       = labUser32.NewProc("GetSystemMetrics")
+	procGetDpiForSystem        = labUser32.NewProc("GetDpiForSystem")
 	procSelectObject           = labGdi32.NewProc("SelectObject")
 	procCreateCompatibleDC     = labGdi32.NewProc("CreateCompatibleDC")
 	procCreateCompatibleBitmap = labGdi32.NewProc("CreateCompatibleBitmap")
@@ -116,6 +127,10 @@ const (
 	labDialogWaitLimit = 10 * time.Second
 
 	dpiPerMonitorV2 = ^uintptr(4) + 1 // DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE_V2 (-4)
+	smCXScreen      = 0
+	smCYScreen      = 1
+
+	labShotsEnv = "MAILARCHIVE_LAB_SHOTS"
 )
 
 type rect struct{ Left, Top, Right, Bottom int32 }
@@ -123,6 +138,11 @@ type rect struct{ Left, Top, Right, Bottom int32 }
 func (r rect) w() int32 { return r.Right - r.Left }
 func (r rect) h() int32 { return r.Bottom - r.Top }
 
+// call, send and post take pointers converted to uintptr in their argument lists, as
+// Windows calls do: //go:uintptrescapes keeps what each points to on the heap and alive
+// until the call returns, as LazyProc.Call itself does (adversarial finding OUT-07).
+//
+//go:uintptrescapes
 func call(p *windows.LazyProc, args ...uintptr) uintptr {
 	r, _, _ := p.Call(args...)
 	return r
@@ -186,8 +206,11 @@ func rectIn(parent, h uintptr) (rect, bool) {
 func visible(h uintptr) bool { return call(procIsWindowVisible, h) != 0 }
 func enabled(h uintptr) bool { return call(procIsWindowEnabled, h) != 0 }
 
+//go:uintptrescapes
 func send(h, msg, w, l uintptr) uintptr { return call(procSendMessageW, h, msg, w, l) }
-func post(h, msg, w, l uintptr)         { call(procPostMessageW, h, msg, w, l) }
+
+//go:uintptrescapes
+func post(h, msg, w, l uintptr) { call(procPostMessageW, h, msg, w, l) }
 
 // child is one control of a dialog.
 type child struct {
@@ -293,7 +316,12 @@ func steadyGDIObjects() uintptr {
 // capture is the dialog's client area as it is drawn, 32-bit pixels, top row first.
 func capture(dlg uintptr) ([]uint32, int32, int32) {
 	cr := clientRect(dlg)
-	w, h := cr.w(), cr.h()
+	return printWindow(dlg, cr.w(), cr.h(), pwClientOnly|pwRenderFull)
+}
+
+// printWindow is window h as it is drawn (flags say which part, w by h pixels), 32-bit
+// pixels, top row first.
+func printWindow(dlg uintptr, w, h int32, flags uintptr) ([]uint32, int32, int32) {
 	screen := call(procGetDC, 0)
 	defer call(procReleaseDC, 0, screen)
 	mem := call(procCreateCompatibleDC, screen)
@@ -301,7 +329,7 @@ func capture(dlg uintptr) ([]uint32, int32, int32) {
 	bmp := call(procCreateCompatibleBitmap, screen, uintptr(w), uintptr(h))
 	defer call(procDeleteObject, bmp)
 	old := call(procSelectObject, mem, bmp)
-	call(procPrintWindow, dlg, mem, pwClientOnly|pwRenderFull)
+	call(procPrintWindow, dlg, mem, flags)
 	call(procSelectObject, mem, old)
 	var bi struct {
 		size                   uint32
@@ -524,6 +552,123 @@ func (o opened) close(t *testing.T, kind string) {
 	}
 }
 
+// labCopyHash is the lab-copy hash of the copy this program was built from, set by the lab
+// build with -ldflags -X (UPSTREAM.md, Running MA-1470); empty in any other build.
+var labCopyHash string
+
+// labTests are MA-1470's tests. When every one passes in a run of a program built with
+// labCopyHash, the run writes its receipt, which the pins' recorder requires
+// (adversarial finding INS-03).
+var labTests = []string{"TestMA1470ListsFitTheirWords", "TestMA1470EntriesAndProgressFitTheirWords",
+	"TestMA1470TheAnswersAreTheSame", "TestMA1470MeasuringLosesNoGDIObject", "TestMA1470MessageBoxesFitTheirLabels"}
+
+var (
+	labMu     sync.Mutex
+	labPassed = map[string]bool{}
+)
+
+// labDone records, when t ends, whether it ran to the end and passed.
+func labDone(t *testing.T) {
+	t.Cleanup(func() {
+		if !t.Failed() && !t.Skipped() {
+			labMu.Lock()
+			labPassed[t.Name()] = true
+			labMu.Unlock()
+		}
+	})
+}
+
+func TestMain(m *testing.M) {
+	code := m.Run()
+	if code == 0 && labOn() {
+		fmt.Println(writeLabReceipt())
+	}
+	os.Exit(code)
+}
+
+// writeLabReceipt writes ma1470-receipt.txt beside the test program when every MA-1470
+// test passed in this run and the program carries its lab-copy hash, and says what it did.
+func writeLabReceipt() string {
+	var missing []string
+	for _, name := range labTests {
+		if !labPassed[name] {
+			missing = append(missing, name)
+		}
+	}
+	switch {
+	case len(missing) > 0:
+		return "MA-1470: no receipt: these lab tests did not run to a pass: " + strings.Join(missing, ", ")
+	case labCopyHash == "":
+		return "MA-1470: every lab test passed, but this program carries no lab-copy hash: build it as UPSTREAM.md says (Running MA-1470) for a receipt"
+	}
+	exe, err := os.Executable()
+	if err != nil {
+		return "MA-1470: no receipt: " + err.Error()
+	}
+	run := fmt.Sprintf("MA-1470 %s %s, %s pass", time.Now().UTC().Format("2006-01-02"), labWindows(), labScreen())
+	body := "# MA-1470's receipt, written by the lab test after every MA-1470 test passed (UPSTREAM.md)\n" +
+		"run: " + run + "\ncopy: " + labCopyHash + "\n"
+	out := filepath.Join(filepath.Dir(exe), "ma1470-receipt.txt")
+	if err := os.WriteFile(out, []byte(body), 0o644); err != nil {
+		return "MA-1470: no receipt: " + err.Error()
+	}
+	return "MA-1470: receipt written to " + out + ": " + run
+}
+
+// labWindows names the Windows the run used, as its registry records it.
+func labWindows() string {
+	k, err := registry.OpenKey(registry.LOCAL_MACHINE, `SOFTWARE\Microsoft\Windows NT\CurrentVersion`, registry.QUERY_VALUE)
+	if err != nil {
+		v := windows.RtlGetVersion()
+		return fmt.Sprintf("Windows %d.%d build %d", v.MajorVersion, v.MinorVersion, v.BuildNumber)
+	}
+	defer k.Close()
+	edition, _, _ := k.GetStringValue("EditionID")
+	display, _, _ := k.GetStringValue("DisplayVersion")
+	build, _, _ := k.GetStringValue("CurrentBuild")
+	ubr, _, _ := k.GetIntegerValue("UBR")
+	product := "Windows 10"
+	if n, _ := strconv.Atoi(build); n >= 22000 {
+		product = "Windows 11"
+	}
+	return fmt.Sprintf("%s %s %s build %s.%d", product, edition, display, build, ubr)
+}
+
+// labScreen is the primary screen's size in pixels and its scaling, read on a thread that
+// is per-monitor DPI aware.
+func labScreen() string {
+	runtime.LockOSThread()
+	defer runtime.UnlockOSThread()
+	if old := call(procSetThreadDpiAwareness, dpiPerMonitorV2); old != 0 {
+		defer call(procSetThreadDpiAwareness, old)
+	}
+	w, h := call(procGetSystemMetrics, smCXScreen), call(procGetSystemMetrics, smCYScreen)
+	return fmt.Sprintf("%dx%d at %d %%", w, h, call(procGetDpiForSystem)*100/96)
+}
+
+// saveShot writes window h, as it is drawn, frame included, to name.png in the folder
+// MAILARCHIVE_LAB_SHOTS names.
+func saveShot(t *testing.T, name string, h uintptr) {
+	t.Helper()
+	wr := windowRect(h)
+	px, w, ht := printWindow(h, wr.w(), wr.h(), pwRenderFull)
+	if len(px) == 0 {
+		t.Fatalf("%s: nothing drawn to save", name)
+	}
+	img := image.NewRGBA(image.Rect(0, 0, int(w), int(ht)))
+	for i, p := range px {
+		img.Pix[4*i], img.Pix[4*i+1], img.Pix[4*i+2], img.Pix[4*i+3] = byte(p>>16), byte(p>>8), byte(p), 0xff
+	}
+	f, err := os.Create(filepath.Join(os.Getenv(labShotsEnv), name+".png"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer f.Close()
+	if err := png.Encode(f, img); err != nil {
+		t.Fatal(err)
+	}
+}
+
 // labSkip is why MA-1470 skips outside the lab.
 const labSkip = "desktop lab: set " + labEnv + "=1 in a signed-in, unlocked Windows session (the office test PC); it opens real dialogs"
 
@@ -578,6 +723,12 @@ var (
 		return b.String()
 	}()
 	link = "http://127.0.0.1:53817/_open?t=" + strings.Repeat("Q", 43)
+	// typicalHealthView is a typical warning health view, as internal/health's Summary
+	// wrote it on 2026-11-19 for a daily backup whose scheduled task is gone and last ran
+	// three days before (the friction review's F2).
+	typicalHealthView = "Backup health — WARN\n\nArchive:    C:\\Users\\Sam\\Documents\\MailArchive\\Thunderbird mail\nMessages:   48213 in manifest · 48213 indexed\nIncomplete: none\nFixity coverage: 0 of 48213 records recorded (run `mailarchive verify -out \"C:\\Users\\Sam\\Documents\\MailArchive\\Thunderbird mail\"` to check the bytes) · run `mailarchive verify -record -out \"C:\\Users\\Sam\\Documents\\MailArchive\\Thunderbird mail\"` to baseline the rest\nHistory:    none recorded — no go-back timeline (a live capture writes it; a one-shot local import has none)\nLast run:   2026-11-16 01:00 EST → ok · exported 0 · filled 0 · took 1h0m0s\nSchedule:   \"mailarchive-1234abcd\" not installed · daily at 02:00 · runs C:\\Program Files\\MailArchive\\mailarchivew.exe · installed 2026-10-02 (UTC) on SAM-LAPTOP\nProgram:    this program\nscheduled:  export\nPosture:    WARN\n  WARN: the last run was 3 days ago, more than twice the daily schedule period — is the machine on and logged in at 02:00?\n  WARN: the schedule \"mailarchive-1234abcd\" is recorded but not present in this host's scheduler — re-run `mailarchive schedule -out \"C:\\Users\\Sam\\Documents\\MailArchive\\Thunderbird mail\" -install`"
+	// healthChoices are the health view's choices in the wizard (internal/wizard/wizard.go).
+	healthChoices = []string{"Continue to the wizard", "Repair the scheduled backup", "Remove the scheduled backup"}
 )
 
 // covers: MA-1470, S86
@@ -588,6 +739,7 @@ func TestMA1470ListsFitTheirWords(t *testing.T) {
 	if !labOn() {
 		t.Skip(labSkip)
 	}
+	labDone(t)
 	perMonitorAware(t)
 	cases := []struct {
 		name, prompt string
@@ -600,6 +752,7 @@ func TestMA1470ListsFitTheirWords(t *testing.T) {
 		{"a long path in the prompt", "The archive is kept in " + longPath + ". Continue?", []string{"Continue", "Stop"}},
 		{"a word past the cap", "Copy this: " + longWord, []string{"Done"}},
 		{"the health view at its longest", healthView, []string{"Continue", "Rebuild the index", "Remove the schedule"}},
+		{"a typical warning health view", typicalHealthView, healthChoices},
 	}
 	for _, c := range cases {
 		c := c
@@ -610,9 +763,18 @@ func TestMA1470ListsFitTheirWords(t *testing.T) {
 			})
 			checkFits(t, c.name, o.hwnd)
 			r := windowRect(o.hwnd)
-			send(o.hwnd, wmDPIChanged, 192<<16|192, uintptr(unsafe.Pointer(&r)))
+			suggested := rect{Left: r.Left + 24, Top: r.Top + 16, Right: r.Right + 24, Bottom: r.Bottom + 16}
+			send(o.hwnd, wmDPIChanged, 192<<16|192, uintptr(unsafe.Pointer(&suggested)))
 			time.Sleep(150 * time.Millisecond)
 			checkFits(t, c.name+" at 192 DPI", o.hwnd)
+			// It goes to the corner Windows suggests, unless that would leave the work area
+			// (checkFits holds it inside); which monitor's work area cannot be told apart on
+			// a one-screen PC.
+			got, work := windowRect(o.hwnd), workArea(o.hwnd)
+			if suggested.Left+got.w() <= work.Right && suggested.Top+got.h() <= work.Bottom &&
+				(got.Left != suggested.Left || got.Top != suggested.Top) {
+				t.Errorf("%s: after a DPI change the dialog is at %+v; want the corner Windows suggested, %d,%d", c.name, got, suggested.Left, suggested.Top)
+			}
 			o.close(t, c.name)
 		})
 	}
@@ -621,12 +783,14 @@ func TestMA1470ListsFitTheirWords(t *testing.T) {
 // covers: MA-1470, S86
 // Entries and progress dialogs fit their words: Desktop's link entry shows its whole
 // link; a progress dialog grows as its text grows (Text from another goroutine), stays
-// fitted, keeps its top-left corner unless the work area moves it, and never takes the
-// keyboard from another window while it grows (R39).
+// fitted, keeps its top-left corner unless the work area moves it, shrinks neither for a
+// word wider than 400 (which Windows breaks inside the label) nor for a shorter text, and
+// never takes the keyboard from another window while it grows (R39).
 func TestMA1470EntriesAndProgressFitTheirWords(t *testing.T) {
 	if !labOn() {
 		t.Skip(labSkip)
 	}
+	labDone(t)
 	perMonitorAware(t)
 	o := open(t, "entry", func(ctx context.Context, title string) (string, error) {
 		return zenity.Entry("Your browser did not open. Copy this link into it:", zenity.EntryText(link), zenity.Title(title), zenity.Context(ctx))
@@ -674,15 +838,27 @@ func TestMA1470EntriesAndProgressFitTheirWords(t *testing.T) {
 	if after.h() <= before.h() || after.Left != before.Left || after.Top != before.Top {
 		t.Errorf("progress grew from %+v to %+v; want it taller with the same top-left corner", before, after)
 	}
-	if now := call(procGetForegroundWindow); now != fg {
-		t.Errorf("the growing progress dialog took the foreground from %x (now %x)", fg, now)
+	// A word wider than 400: Windows breaks it inside the label, as an edit control does
+	// (DT_EDITCONTROL and SS_EDITCONTROL; the 2026-11-19 lab run showed the dialog keeps
+	// its width), so the label must hold it whole and the dialog must not shrink.
+	if err := dlg.Text("Copying " + strings.Repeat("w", 70)); err != nil {
+		t.Fatal(err)
+	}
+	time.Sleep(150 * time.Millisecond)
+	checkFits(t, "progress, a word wider than 400", ph)
+	wide := windowRect(ph)
+	if wide.w() < after.w() || wide.h() < after.h() {
+		t.Errorf("a word wider than 400 shrank the progress dialog from %+v to %+v", after, wide)
 	}
 	if err := dlg.Text("Done."); err != nil {
 		t.Fatal(err)
 	}
 	time.Sleep(100 * time.Millisecond)
-	if again := windowRect(ph); again.h() < after.h() {
-		t.Errorf("a shorter text shrank the progress dialog from %+v to %+v", after, again)
+	if again := windowRect(ph); again.h() < wide.h() || again.w() < wide.w() {
+		t.Errorf("a shorter text shrank the progress dialog from %+v to %+v", wide, again)
+	}
+	if now := call(procGetForegroundWindow); now != fg {
+		t.Errorf("the growing progress dialog took the foreground from %x (now %x)", fg, now)
 	}
 	other.close(t, "the other window")
 }
@@ -697,6 +873,7 @@ func TestMA1470TheAnswersAreTheSame(t *testing.T) {
 	if !labOn() {
 		t.Skip(labSkip)
 	}
+	labDone(t)
 	perMonitorAware(t)
 	rows := []string{"first", "second", "third"}
 	listOf := func(t *testing.T, name, prompt string, rows []string, opts ...zenity.Option) opened {
@@ -773,6 +950,7 @@ func TestMA1470MeasuringLosesNoGDIObject(t *testing.T) {
 	if !labOn() {
 		t.Skip(labSkip)
 	}
+	labDone(t)
 	perMonitorAware(t)
 	openClose := func() {
 		o := open(t, "list", func(ctx context.Context, title string) (string, error) {
@@ -898,6 +1076,7 @@ func TestMA1470MessageBoxesFitTheirLabels(t *testing.T) {
 	if !labOn() {
 		t.Skip(labSkip)
 	}
+	labDone(t)
 	perMonitorAware(t)
 
 	plain := question(t, "plain", "Done.")
@@ -972,4 +1151,55 @@ func TestMA1470MessageBoxesFitTheirLabels(t *testing.T) {
 			need, cr.h(), verdict, windowRect(o.hwnd), workArea(o.hwnd))
 	}
 	o.close(t, "a summary for three accounts")
+}
+
+// covers: MA-1470, S86
+// Screenshots for the friction review (design §5, C22), saved only in the lab with
+// MAILARCHIVE_LAB_SHOTS naming a folder: the wizard's first menu, its kind list, the date
+// window, the walk's mailbox list, and the health view, typical and longest, each with the
+// wizard's own words, and shots.txt naming the copy that drew them (its lab-copy hash).
+func TestMA1470Screenshots(t *testing.T) {
+	if !labOn() || os.Getenv(labShotsEnv) == "" {
+		t.Skip("saves screenshots only in the lab, with " + labShotsEnv + " naming a folder")
+	}
+	perMonitorAware(t)
+	lists := []struct {
+		name, prompt string
+		rows         []string
+	}{
+		{"31-start", "What would you like to do?", []string{
+			"Archive a mail file on this computer (Outlook, Thunderbird, mbox)",
+			"Microsoft 365, folder export, browsing & tools (open MailArchive Desktop)",
+			"Open an archive folder I already have, encrypted or not (in MailArchive Desktop)",
+			"Make a new encrypted archive (in MailArchive Desktop)"}},
+		{"32-kind", "What are you exporting?", []string{"Auto-detect my mailboxes", "Outlook data file (.pst / .ost)",
+			"Outlook account (via Outlook app — for Exchange / .ost)", "Thunderbird / mbox mail folder", "Single mbox file"}},
+		{"34-picker", "Which mailbox do you want to export?", walkRows},
+		{"35-health-typical", typicalHealthView, healthChoices},
+		{"36-health-longest", healthView, healthChoices},
+	}
+	saved := 0
+	for _, l := range lists {
+		o := open(t, "list", func(ctx context.Context, title string) (string, error) {
+			return zenity.List(l.prompt, l.rows, zenity.Title(title), zenity.Context(ctx))
+		})
+		saveShot(t, l.name, o.hwnd)
+		o.close(t, l.name)
+		saved++
+	}
+	o := open(t, "entry", func(ctx context.Context, title string) (string, error) {
+		return zenity.Entry("Only export items newer than\n(e.g. 30d, 4w, 720h, or a date like 2026-07-01).\n\nLeave blank to export everything.",
+			zenity.EntryText(""), zenity.Title(title), zenity.Context(ctx))
+	})
+	saveShot(t, "33-date", o.hwnd)
+	o.close(t, "the date window")
+	saved++
+	note := fmt.Sprintf("MA-1470 screenshots, %s, %s, %s; drawn by the copy whose lab-copy hash is %q\n",
+		time.Now().UTC().Format(time.RFC3339), labWindows(), labScreen(), labCopyHash)
+	if err := os.WriteFile(filepath.Join(os.Getenv(labShotsEnv), "shots.txt"), []byte(note), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if saved != len(lists)+1 {
+		t.Errorf("saved %d screenshots; want %d", saved, len(lists)+1)
+	}
 }

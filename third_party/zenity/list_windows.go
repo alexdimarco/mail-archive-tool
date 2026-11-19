@@ -92,7 +92,7 @@ func (dlg *listDialog) setup(text string, opts options) ([]string, error) {
 	// laid out to fit its words; if not, it keeps upstream's layout and label style.
 	dlg.text = text
 	dlg.labels = fitButtonLabels(opts.okLabel, opts.extraButton, opts.cancelLabel)
-	dlg.fit = dlg.measure(getDPI(dlg.wnd))
+	dlg.fit = dlg.measure(getDPI(dlg.wnd), fitWorkArea(dlg.wnd))
 	var labelStyle uint32 = _WS_ZEN_LABEL
 	if !dlg.fit.Upstream {
 		labelStyle = _WS_ZEN_FIT_LABEL
@@ -148,7 +148,7 @@ func (dlg *listDialog) setup(text string, opts options) ([]string, error) {
 	}
 
 	dlg.update()
-	dlg.layout(getDPI(dlg.wnd))
+	dlg.layout(getDPI(dlg.wnd), nil)
 	if dlg.fit.Upstream {
 		centerWindow(dlg.wnd)
 	} else {
@@ -178,7 +178,7 @@ func (dlg *listDialog) setup(text string, opts options) ([]string, error) {
 	return dlg.out, dlg.err
 }
 
-func (dlg *listDialog) layout(dpi dpi) {
+func (dlg *listDialog) layout(dpi dpi, at *win.RECT) {
 	font := dlg.font.forDPI(dpi)
 	win.SendMessage(dlg.textCtl, win.WM_SETFONT, font, 1)
 	win.SendMessage(dlg.listCtl, win.WM_SETFONT, font, 1)
@@ -186,14 +186,29 @@ func (dlg *listDialog) layout(dpi dpi) {
 	win.SendMessage(dlg.cancelBtn, win.WM_SETFONT, font, 1)
 	win.SendMessage(dlg.extraBtn, win.WM_SETFONT, font, 1)
 	if !dlg.fit.Upstream {
-		// MailArchive's patch: lay out at this DPI; a layout that cannot be measured
-		// keeps the last one.
+		// MailArchive's patch: lay out at this DPI, in the work area of the dialog's
+		// monitor or, after a DPI change, of the monitor Windows suggests (at). A layout
+		// that cannot be measured keeps the last one at the same DPI, and at another DPI
+		// falls back to upstream's layout and label style for good (§4.3, Fallbacks).
 		win.SendMessage(dlg.promptCtl, win.WM_SETFONT, font, 1)
-		if f := dlg.measure(dpi); !f.Upstream {
-			dlg.fit = f
-			fitResize(dlg.wnd, f.Window)
-			dlg.apply(f)
+		work := fitWorkArea(dlg.wnd)
+		if at != nil {
+			work = fitWorkAreaAt(at)
 		}
+		f := dlg.measure(dpi, work)
+		if f.Upstream && dlg.fit.DPI != fitDPI(int(dpi)) {
+			dlg.fit = fitDialog{Upstream: true}
+			fitShow(dlg.textCtl, dlg.promptCtl)
+			win.SetWindowLong(dlg.textCtl, win.GWL_STYLE, int(_WS_ZEN_LABEL))
+			dlg.layout(dpi, nil)
+			return
+		}
+		if f.Upstream {
+			f = dlg.fit
+		}
+		dlg.fit = f
+		dlg.apply(f)
+		fitPlaceWindow(dlg.wnd, f.Window, at, work)
 		return
 	}
 	win.SetWindowPos(dlg.wnd, 0, 0, 0, dpi.scale(281), dpi.scale(281), win.SWP_NOMOVE|win.SWP_NOZORDER)
@@ -209,10 +224,11 @@ func (dlg *listDialog) layout(dpi dpi) {
 	}
 }
 
-// measure lays the dialog out to fit its words at dpi (MailArchive's patch, fit.go).
-func (dlg *listDialog) measure(dpi dpi) fitDialog {
+// measure lays the dialog out to fit its words at dpi in the work area work (MailArchive's
+// patch, fit.go).
+func (dlg *listDialog) measure(dpi dpi, work fitRect) fitDialog {
 	m := fitText{wnd: dlg.wnd, font: win.Handle(dlg.font.forDPI(dpi))}
-	return fitList(fitEnvironment(dlg.wnd, dpi, m), m, dlg.text, dlg.items, dlg.labels)
+	return fitList(fitEnvironment(dlg.wnd, dpi, m, work), m, dlg.text, dlg.items, dlg.labels)
 }
 
 // apply places the controls as f says, never activating any (MailArchive's patch).
@@ -310,10 +326,7 @@ func listProc(wnd win.HWND, msg uint32, wparam uintptr, lparam *unsafe.Pointer) 
 		win.DestroyWindow(wnd)
 
 	case win.WM_DPICHANGED:
-		dlg.layout(dpi(uint32(wparam) >> 16))
-		if !dlg.fit.Upstream {
-			fitSuggested(wnd, (*win.RECT)(unsafe.Pointer(lparam)))
-		}
+		dlg.layout(dpi(uint32(wparam)>>16), (*win.RECT)(unsafe.Pointer(lparam)))
 
 	default:
 		return win.DefWindowProc(wnd, msg, wparam, unsafe.Pointer(lparam))

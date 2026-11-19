@@ -14,12 +14,14 @@ import (
 
 // stand is a stand-in measurer: every character is charW wide and every line lineH
 // high. wrapped breaks lines at spaces and, as an edit control does, inside a word wider
-// than the width, unless noBreak is set. A text in fail fails to measure; zero makes
-// every measurement 0 and neg every measurement negative.
+// than the width, unless noBreak is set. A text in fail fails to measure, and one in
+// zeroWide measures 0 wide and one line high; zero makes every measurement 0 and neg
+// every measurement negative.
 type stand struct {
 	charW, lineH int
 	noBreak      bool
 	fail         map[string]bool
+	zeroWide     map[string]bool
 	zero, neg    bool
 }
 
@@ -27,6 +29,8 @@ func (s stand) result(w, h int, text string) (int, int, bool) {
 	switch {
 	case s.fail[text]:
 		return 0, 0, false
+	case s.zeroWide[text]:
+		return 0, s.lineH, true
 	case s.zero:
 		return 0, 0, true
 	case s.neg:
@@ -118,10 +122,12 @@ func checkGeometry(t *testing.T, name string, e fitEnv, d fitDialog) {
 
 // covers: MA-1469, S86
 // Positive twins first: for upstream's short words at 96 DPI the list and entry dialogs
-// come out at upstream's widths and control sizes, with OK at 95 and Cancel at 178, and
-// every prompt label a quarter line taller than upstream's 16 (the slack, §4.3), which
-// moves what is below it down by that much; the progress dialog, whose size changes on
-// purpose, comes out 400 wide with upstream's heights and the same slack.
+// come out at upstream's heights and control heights, 400 wide (the step width: every
+// wizard step one width, the friction review) where upstream's were 241, with OK at 254
+// and Cancel at 337 ending the row at the right margin, and every prompt label a quarter
+// line taller than upstream's 16 (the slack, §4.3), which moves what is below it down by
+// that much; the progress dialog comes out 400 wide with upstream's heights and the same
+// slack.
 func TestFitPositiveTwins(t *testing.T) {
 	e, m := envAt(96), standAt(96)
 	slack := fitSlack(16)
@@ -131,35 +137,35 @@ func TestFitPositiveTwins(t *testing.T) {
 
 	l := fitList(e, m, "Pick one:", []string{"First", "Second"}, okCancel)
 	checkGeometry(t, "list", e, l)
-	if l.Window.W != 281 || l.Client.W != 265 || l.Window.H != 281+slack {
-		t.Errorf("list window %+v, client %+v; want 281 wide (265 inside) and 281+%d high", l.Window, l.Client, slack)
+	if l.Window.W != 440 || l.Client.W != 424 || l.Window.H != 281+slack {
+		t.Errorf("list window %+v, client %+v; want 440 wide (424 inside) and 281+%d high", l.Window, l.Client, slack)
 	}
-	if l.Prompt != (fitRect{X: 12, Y: 10, W: 241, H: 16 + slack}) {
+	if l.Prompt != (fitRect{X: 12, Y: 10, W: 400, H: 16 + slack}) {
 		t.Errorf("list prompt %+v", l.Prompt)
 	}
-	if l.Control != (fitRect{X: 12, Y: 30 + slack, W: 241, H: 164}) || l.HBar || l.Scroll {
+	if l.Control != (fitRect{X: 12, Y: 30 + slack, W: 400, H: 164}) || l.HBar || l.Scroll {
 		t.Errorf("list %+v (sideways bar %v, scrolling prompt %v)", l.Control, l.HBar, l.Scroll)
 	}
-	want := []fitRect{{X: 95, Y: 206 + slack, W: 75, H: 24}, {X: 178, Y: 206 + slack, W: 75, H: 24}}
+	want := []fitRect{{X: 254, Y: 206 + slack, W: 75, H: 24}, {X: 337, Y: 206 + slack, W: 75, H: 24}}
 	if len(l.Buttons) != 2 || l.Buttons[0] != want[0] || l.Buttons[1] != want[1] {
 		t.Errorf("list buttons %+v; want %+v", l.Buttons, want)
 	}
 
 	en := fitEntry(e, m, "Your name:", "", okCancel)
 	checkGeometry(t, "entry", e, en)
-	if en.Window.W != 281 || en.Window.H != 141+slack || en.Control != (fitRect{X: 12, Y: 30 + slack, W: 241, H: 24}) {
+	if en.Window.W != 440 || en.Window.H != 141+slack || en.Control != (fitRect{X: 12, Y: 30 + slack, W: 400, H: 24}) {
 		t.Errorf("entry window %+v, edit box %+v", en.Window, en.Control)
 	}
-	if len(en.Buttons) != 2 || en.Buttons[0].X != 95 || en.Buttons[1].X != 178 || en.Buttons[0].Y != 66+slack {
+	if len(en.Buttons) != 2 || en.Buttons[0].X != 254 || en.Buttons[1].X != 337 || en.Buttons[0].Y != 66+slack {
 		t.Errorf("entry buttons %+v", en.Buttons)
 	}
 
-	p := fitProgress(e, m, "", 0, []string{"Cancel"})
+	p := fitProgress(e, m, "", fitSize{}, []string{"Cancel"})
 	checkGeometry(t, "progress", e, p)
 	if p.Client.W != 400+24 || p.Prompt.H != 16+slack || p.Control != (fitRect{X: 12, Y: 30 + slack, W: 400, H: 16}) || p.Client.H != 94+slack {
 		t.Errorf("progress client %+v, prompt %+v, bar %+v", p.Client, p.Prompt, p.Control)
 	}
-	bare := fitProgress(e, m, "", 0, nil)
+	bare := fitProgress(e, m, "", fitSize{}, nil)
 	if bare.Client.H != 58+slack || len(bare.Buttons) != 0 {
 		t.Errorf("progress without buttons: client %+v, buttons %+v", bare.Client, bare.Buttons)
 	}
@@ -199,38 +205,55 @@ func TestFitListRows(t *testing.T) {
 }
 
 // covers: MA-1469, S86
-// The floors: the content is never under upstream's 241 and a button never under its 75,
-// whatever the words (§4.3).
+// The floors: a list or an entry whose words need less is the step width, 400 (every
+// wizard step one width, the friction review), which gives way to the cap on a small work
+// area but never goes under upstream's 241, which wins over the cap (by a pixel at 144
+// DPI); a button is never under its 75, whatever the words (§4.3).
 func TestFitFloors(t *testing.T) {
-	e := envAt(96)
 	m := standAt(96)
 	m.charW = 1
-	for _, d := range []fitDialog{
-		fitList(e, m, "a", []string{"b"}, []string{"c", "d"}),
-		fitEntry(e, m, "a", "b", []string{"c", "d"}),
+	at := func(dpi, w, h int) fitEnv {
+		e := envAt(dpi)
+		e.Work = fitRect{W: w, H: h}
+		return e
+	}
+	for _, c := range []struct {
+		name string
+		e    fitEnv
+		want int
+	}{
+		{"a full screen", envAt(96), 400},
+		{"a small work area (a cap of 320 leaves 280)", at(96, 400, 400), 280},
+		{"a cap of upstream's window", at(96, 352, 400), 241},
+		{"a cap of upstream's window at 144 DPI (361 left)", at(144, 527, 600), 362},
 	} {
-		if d.Prompt.W != 241 || d.Control.W != 241 {
-			t.Errorf("tiny words: prompt %+v, control %+v; want 241 wide", d.Prompt, d.Control)
-		}
-		for _, b := range d.Buttons {
-			if b.W != 75 {
-				t.Errorf("tiny label: button %+v; want 75 wide", b)
+		for _, d := range []fitDialog{
+			fitList(c.e, m, "a", []string{"b"}, []string{"c", "d"}),
+			fitEntry(c.e, m, "a", "b", []string{"c", "d"}),
+		} {
+			if d.Upstream || d.Prompt.W != c.want || d.Control.W != c.want {
+				t.Errorf("%s, tiny words: prompt %+v, control %+v; want %d wide", c.name, d.Prompt, d.Control, c.want)
+			}
+			for _, b := range d.Buttons {
+				if b.W != fitUp(75, c.e.DPI) {
+					t.Errorf("%s, tiny label: button %+v; want %d wide", c.name, b, fitUp(75, c.e.DPI))
+				}
 			}
 		}
 	}
 }
 
 // covers: MA-1469, S86
-// A prompt line up to 400 widens the dialog; a longer one wraps at 400 and the label is
-// as tall as the wrapped text plus the slack. A word that cannot break widens the content
+// A prompt line within the step width stays one line at 400; a longer one wraps at 400
+// and the label is as tall as the wrapped text plus the slack. A word that cannot break widens the content
 // up to the cap and is measured again (§4.3, Prompt labels).
 func TestFitPromptWraps(t *testing.T) {
 	e, m := envAt(96), standAt(96)
 	slack := fitSlack(16)
 
 	d := fitList(e, m, strings.Repeat("a", 50), []string{"x"}, okCancel) // 300 pixels
-	if d.Prompt.W != 300 || d.Prompt.H != 16+slack {
-		t.Errorf("a 300-pixel line: prompt %+v; want 300 wide, one line", d.Prompt)
+	if d.Prompt.W != 400 || d.Prompt.H != 16+slack {
+		t.Errorf("a 300-pixel line: prompt %+v; want the step width, 400, one line", d.Prompt)
 	}
 
 	words := strings.TrimSpace(strings.Repeat("word ", 40)) // 199 characters, 1194 pixels
@@ -348,6 +371,9 @@ func TestFitDPIsRoundUp(t *testing.T) {
 			prompt := "Line one\nLine two\nLine three"
 			d := fitList(e, m, prompt, []string{strings.Repeat("r", 33)}, okCancel)
 			checkGeometry(t, "list", e, d)
+			if d.DPI != dpi {
+				t.Errorf("DPI %d: the layout records DPI %d", dpi, d.DPI)
+			}
 			_, h, _ := m.wrapped(prompt, d.Prompt.W)
 			if d.Prompt.H < h || d.Prompt.H < m.lineH {
 				t.Errorf("DPI %d, line %d: prompt %+v shorter than its text (%d)", dpi, m.lineH, d.Prompt, h)
@@ -375,23 +401,41 @@ func TestFitDPIsRoundUp(t *testing.T) {
 
 // covers: MA-1469, S86
 // The progress dialog opens one line high at 400; its text grows the label, which never
-// shrinks while the dialog is open; the window grows downward from where it was and stays
-// inside the work area (§4.3, Progress dialog).
+// shrinks while the dialog is open, in height or, after a word wider than 400, in width
+// (its buttons stay put); the floor carried to another DPI rounds up, so a round trip
+// never shrinks it; the window grows downward from where it was and stays inside the work
+// area (§4.3, Progress dialog).
 func TestFitProgressGrowsAndNeverShrinks(t *testing.T) {
 	e, m := envAt(144), standAt(144)
 	slack := fitSlack(m.lineH)
-	open := fitProgress(e, m, "", 0, []string{"Cancel"})
+	open := fitProgress(e, m, "", fitSize{}, []string{"Cancel"})
 	if open.Prompt.H != m.lineH+slack || open.Control.W != fitUp(400, 144) {
 		t.Errorf("opening: prompt %+v, bar %+v", open.Prompt, open.Control)
 	}
 	four := "Downloaded 12 MB so far (+3 MB).\nWaiting for the sync to finish…\n\nIn Thunderbird: right-click the account → Download / Sync Now."
-	grown := fitProgress(e, m, four, open.PromptH, []string{"Cancel"})
+	grown := fitProgress(e, m, four, fitSize{W: open.Prompt.W, H: open.PromptH}, []string{"Cancel"})
 	if grown.PromptH <= open.PromptH || grown.Window.H <= open.Window.H {
 		t.Errorf("four lines did not grow it: %+v after %+v", grown.Prompt, open.Prompt)
 	}
-	back := fitProgress(e, m, "Done.", grown.PromptH, []string{"Cancel"})
+	back := fitProgress(e, m, "Done.", fitSize{W: grown.Prompt.W, H: grown.PromptH}, []string{"Cancel"})
 	if back.Prompt.H != grown.Prompt.H || back.Window != grown.Window {
 		t.Errorf("a shorter text shrank it: %+v after %+v", back.Window, grown.Window)
+	}
+	nb := m
+	nb.noBreak = true
+	wide := fitProgress(e, nb, strings.Repeat("w", 100), fitSize{W: back.Prompt.W, H: back.PromptH}, []string{"Cancel"})
+	after := fitProgress(e, nb, "Done.", fitSize{W: wide.Prompt.W, H: wide.PromptH}, []string{"Cancel"})
+	if wide.Window.W <= back.Window.W || after.Window != wide.Window || after.Buttons[0] != wide.Buttons[0] {
+		t.Errorf("a 900-pixel word, then a short text: %+v then %+v (button %+v then %+v); want it widened and kept",
+			wide.Window, after.Window, wide.Buttons[0], after.Buttons[0])
+	}
+	if got := fitRebase(106, 144, 96); got != 71 {
+		t.Errorf("a floor of 106 at 144 DPI is %d at 96; want 71 (70.7 rounded up)", got)
+	}
+	for _, v := range []int{1, 105, 106, 641} {
+		if trip := fitRebase(fitRebase(v, 144, 96), 96, 144); trip < v {
+			t.Errorf("a floor of %d came back from 96 DPI as %d", v, trip)
+		}
 	}
 
 	at := fitCenter(open.Window, e.Work)
@@ -423,7 +467,7 @@ func TestFitNothingPastTheCap(t *testing.T) {
 			for _, text := range texts {
 				checkGeometry(t, "list", e, fitList(e, m, text, []string{text, "row"}, []string{text, "Cancel"}))
 				checkGeometry(t, "entry", e, fitEntry(e, m, text, text, []string{text, "Cancel"}))
-				checkGeometry(t, "progress", e, fitProgress(e, m, text, 0, []string{"Cancel"}))
+				checkGeometry(t, "progress", e, fitProgress(e, m, text, fitSize{}, []string{"Cancel"}))
 				nb := m
 				nb.noBreak = true
 				checkGeometry(t, "list, no break", e, fitList(e, nb, text, []string{"row"}, okCancel))
@@ -439,18 +483,19 @@ func TestFitNothingPastTheCap(t *testing.T) {
 // covers: MA-1469, S86
 // fit.go is total (§4.3): empty text, zero rows, DPI 0, zero and negative measurements,
 // and a 0x0 or tiny work area never panic. Empty text and zero rows give the dialog's own
-// floors; a failed or empty measurement, or a work area that cannot be read or is smaller
-// than upstream's window, gives upstream's layout.
+// widths; a failed or empty measurement (one line of the prompt measuring 0 wide
+// included), or a work area that cannot be read or is smaller than upstream's window,
+// gives upstream's layout (§4.3, Fallbacks).
 func TestFitIsTotal(t *testing.T) {
 	e, m := envAt(96), standAt(96)
 
 	d := fitList(e, m, "", nil, nil)
-	if d.Upstream || d.Prompt.H != 16+fitSlack(16) || d.Control.W != 241 || len(d.Buttons) != 0 {
-		t.Errorf("empty text and zero rows: %+v; want one line at the floors", d)
+	if d.Upstream || d.Prompt.H != 16+fitSlack(16) || d.Control.W != 400 || len(d.Buttons) != 0 {
+		t.Errorf("empty text and zero rows: %+v; want one line at the step width", d)
 	}
 	z := e
 	z.DPI = 0
-	if d := fitList(z, m, "Pick", []string{"a"}, okCancel); d.Upstream || d.Prompt.X != 12 {
+	if d := fitList(z, m, "Pick", []string{"a"}, okCancel); d.Upstream || d.Prompt.X != 12 || d.DPI != 96 {
 		t.Errorf("DPI 0 is read as 96: %+v", d)
 	}
 
@@ -467,14 +512,21 @@ func TestFitIsTotal(t *testing.T) {
 	} {
 		upstream("list, a bad measurement", fitList(e, mm, "Pick", []string{"a"}, okCancel))
 		upstream("entry, a bad measurement", fitEntry(e, mm, "Pick", "start", okCancel))
-		upstream("progress, a bad measurement", fitProgress(e, mm, "Copying", 0, okCancel))
+		upstream("progress, a bad measurement", fitProgress(e, mm, "Copying", fitSize{}, okCancel))
+	}
+	zw := standAt(96)
+	zw.zeroWide = map[string]bool{"\u200b": true}
+	upstream("list, a prompt line measuring 0 wide", fitList(e, zw, "Pick\n\u200b", []string{"a"}, okCancel))
+	upstream("list, a row measuring 0 wide", fitList(e, zw, "Pick", []string{"a", "\u200b"}, okCancel))
+	if d := fitList(e, zw, "Pick", []string{"a"}, okCancel); d.Upstream {
+		t.Errorf("its twin, with every text visible, kept upstream's layout")
 	}
 	for _, w := range []fitRect{{}, {W: 100, H: 100}, {W: -5, H: 900}} {
 		bad := e
 		bad.Work = w
 		upstream("list, a bad work area", fitList(bad, m, "Pick", []string{"a"}, okCancel))
 		upstream("entry, a bad work area", fitEntry(bad, m, "Pick", "", okCancel))
-		upstream("progress, a bad work area", fitProgress(bad, m, "", 0, nil))
+		upstream("progress, a bad work area", fitProgress(bad, m, "", fitSize{}, nil))
 	}
 	nl := e
 	nl.LineH = 0

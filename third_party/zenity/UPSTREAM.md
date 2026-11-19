@@ -18,8 +18,9 @@ the rest with no sign (docs/design-windows-dialog-fit.md, §1).
 program), `.github/` and `testdata/`. Nothing else.
 
 **Patched files** (each listed in the pins with the SHA-256 of its upstream original and
-of our version, the imports it adds, and the lab run it last passed; a change to one must
-update its record in the same change): `list_windows.go`, `entry_windows.go` and
+of our version, the imports it adds, and the lab run it last passed, and named in
+MA-1468's own table with its original's imports; a change to one must update its record
+in the same change): `list_windows.go`, `entry_windows.go` and
 `progress_windows.go` (each measures its words and applies fit.go's layout, or keeps
 upstream's when it cannot); `msg_windows.go` (a message box's renamed buttons widened to
 their labels, `fitMessageBox`); `util_windows.go` (the measuring and placing helpers, at
@@ -35,12 +36,35 @@ its tests (MailArchive's MA-1469).
 **How it is checked.** `internal/thirdparty/testdata/zenity.pins` lists all 131
 files of the published module with their SHA-256 (copied, patched or left out); the
 lines reproduce the module's `h1:` hash. MA-1468 (`internal/thirdparty`) holds the
-copy to the pins on every test run and runs this module's own tests and `go vet`
-(for Windows, macOS and Linux). The pins are written only by
+copy to the pins on every test run: only the eight files its own table names may be
+patched, each importing only what the table allows (upstream's imports; a record
+cannot vouch for itself), with no init function, no new variable set by a call and no
+compiler directive but build constraints; `internal/win/zsyscall_windows.go` must be
+exactly what upstream's generator makes from the `//sys` lines; the go command must
+resolve zenity to this folder (`go list`, so a `go.work` or a vendored copy cannot
+take its place); and this module's own tests and `go vet` run (for Windows, macOS and
+Linux), each of MA-1469's tests reporting a pass. The pins also keep the `lab-copy`
+hash: the hash of this folder's built files (all but `fit_test.go` and this file) that
+the last passing MA-1470 run was built from, so a patch file or `fit.go` changed after
+that run turns MA-1468 red until the lab test passes again. The pins are written only by
 
-    go test ./internal/thirdparty -run TestRecordZenityPins -zenity-record [-zenity-lab "<lab run>"]
+    go test ./internal/thirdparty -run TestRecordZenityPins -count=1 -args -zenity-record [-zenity-lab-receipt <ma1470-receipt.txt>]
 
-and changing an upstream line is an operator decision. `go vet` has one known
+and changing an upstream line is an operator decision.
+
+**Running MA-1470 (the Windows lab test).** On the Mac, print the `lab-copy` hash and
+build the Windows test program with it:
+
+    H=$(go test ./internal/thirdparty -v -count=1 -run '^TestZenityLabBuildHash$' -args -zenity-lab-hash | sed -n 's/^lab-copy: //p')
+    GOOS=windows GOARCH=amd64 go test -c -o ma1470.exe -ldflags "-X mail-archive-tool/internal/thirdparty.labCopyHash=$H" ./internal/thirdparty
+
+On the office test PC, in a signed-in, unlocked session, start it from a launcher that
+lets it take the foreground (`AllowSetForegroundWindow`), with
+`MAILARCHIVE_DESKTOP_LAB=1`: `ma1470.exe -test.run TestMA1470 -test.v`. When every
+MA-1470 test has passed, it writes `ma1470-receipt.txt` beside the program: the run
+(date, Windows build, screen and scaling, "pass") and the hash it was built from.
+Bring the receipt back and record it with the command above; the recorder refuses a
+receipt built from other files than the copy now holds. `go vet` has one known
 finding here, upstream's, in the generated function `SHBrowseForFolder`
 (`internal/win/zsyscall_windows.go`, "possible misuse of unsafe.Pointer"); MA-1468
 allows exactly that one and fails if it changes. `.gitattributes` keeps a checkout
@@ -65,7 +89,7 @@ The operator moves the copy. To move it to a new version:
    changes to it.
 4. Run the recorder for the new pins (the constants in
    `internal/thirdparty/zenity_copy_test.go` name the version and its `h1:`).
-5. Run MA-1470 (the Windows lab test) on the office test PC and record the result.
+5. Run MA-1470 (the Windows lab test) on the office test PC and record its receipt.
 6. Read the design's §1 again: does the new version fix the sizes itself, and does
    its Linux list still change?
 

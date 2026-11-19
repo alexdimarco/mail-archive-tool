@@ -95,6 +95,7 @@ var (
 	procIsDialogMessageW             = moduser32.NewProc("IsDialogMessageW")
 	procLoadIconW                    = moduser32.NewProc("LoadIconW")
 	procMapWindowPoints              = moduser32.NewProc("MapWindowPoints")
+	procMonitorFromRect              = moduser32.NewProc("MonitorFromRect")
 	procMonitorFromWindow            = moduser32.NewProc("MonitorFromWindow")
 	procPostQuitMessage              = moduser32.NewProc("PostQuitMessage")
 	procRegisterClassExW             = moduser32.NewProc("RegisterClassExW")
@@ -491,6 +492,12 @@ func LoadIcon(instance Handle, resource uintptr) (ret Handle, err error) {
 func MapWindowPoints(from HWND, to HWND, points *POINT, count uint32) (ret int) {
 	r0, _, _ := syscall.Syscall6(procMapWindowPoints.Addr(), 4, uintptr(from), uintptr(to), uintptr(unsafe.Pointer(points)), uintptr(count), 0, 0)
 	ret = int(r0)
+	return
+}
+
+func MonitorFromRect(rect *RECT, flags uint32) (ret Handle) {
+	r0, _, _ := syscall.Syscall(procMonitorFromRect.Addr(), 2, uintptr(unsafe.Pointer(rect)), uintptr(flags), 0)
+	ret = Handle(r0)
 	return
 }
 

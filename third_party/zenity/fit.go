@@ -38,6 +38,7 @@ type fitEnv struct {
 // keeps v0.10.12's layout and label style (§4.3, Fallbacks), and nothing else is set.
 type fitDialog struct {
 	Upstream bool
+	DPI      int       // the DPI it was laid out at (96 for a DPI of 0 or less)
 	Window   fitSize   // the outer size
 	Client   fitSize   // the client area
 	Prompt   fitRect   // the prompt label, or the scrolling prompt
@@ -56,6 +57,7 @@ const (
 	fitGap       = 4   // between a prompt and the control below it
 	fitRowGap    = 12  // between the content and the button row
 	fitMinW      = 241 // upstream's content width: the floor
+	fitStepW     = 400 // a list's or an entry's width when its words need less, the cap permitting: every wizard step one width (the friction review)
 	fitWrapW     = 400 // a prompt line wider than this wraps rather than widening the dialog
 	fitProgressW = 400 // the progress dialog's content width
 	fitListH     = 164 // upstream's list height
@@ -219,7 +221,8 @@ func fitRow(n, w, right, y, dpi int) []fitRect {
 }
 
 // fitContent is the content width: the widest of what it must hold, capped, and never
-// under upstream's 241 (the floors win over the cap).
+// under upstream's 241 (the floors win over the cap). A list's and an entry's step width,
+// 400, is one of what it must hold, so it gives way to the cap.
 func fitContent(dpi, capContent int, widths ...int) int {
 	c := 0
 	for _, w := range widths {
@@ -284,13 +287,13 @@ func fitList(e fitEnv, m fitMeasurer, prompt string, rows, buttons []string) fit
 	if !ok {
 		return fitDialog{Upstream: true}
 	}
-	content := fitContent(dpi, capContent, listW, fitMin(natural, fitUp(fitWrapW, dpi)), fitRowWidth(len(buttons), btnW, dpi))
+	content := fitContent(dpi, capContent, fitUp(fitStepW, dpi), listW, fitMin(natural, fitUp(fitWrapW, dpi)), fitRowWidth(len(buttons), btnW, dpi))
 	promptH, content, ok := fitPrompt(m, e, prompt, content, capContent)
 	if !ok {
 		return fitDialog{Upstream: true}
 	}
 
-	d := fitDialog{PromptH: promptH, Extent: textArea, HBar: listW > content}
+	d := fitDialog{DPI: fitDPI(dpi), PromptH: promptH, Extent: textArea, HBar: listW > content}
 	listH := fitUp(fitListH, dpi)
 	if d.HBar {
 		listH += fitMax(e.HScroll, 0)
@@ -340,13 +343,13 @@ func fitEntry(e fitEnv, m fitMeasurer, prompt, start string, buttons []string) f
 	if !ok {
 		return fitDialog{Upstream: true}
 	}
-	content := fitContent(dpi, capContent, startW, fitMin(natural, fitUp(fitWrapW, dpi)), fitRowWidth(len(buttons), btnW, dpi))
+	content := fitContent(dpi, capContent, fitUp(fitStepW, dpi), startW, fitMin(natural, fitUp(fitWrapW, dpi)), fitRowWidth(len(buttons), btnW, dpi))
 	promptH, content, ok := fitPrompt(m, e, prompt, content, capContent)
 	if !ok {
 		return fitDialog{Upstream: true}
 	}
 
-	d := fitDialog{PromptH: promptH}
+	d := fitDialog{DPI: fitDPI(dpi), PromptH: promptH}
 	editH := fitUp(fitEditH, dpi)
 	rest := fitUp(fitTop, dpi) + fitUp(fitGap, dpi) + editH + fitUp(fitRowGap, dpi) + fitUp(fitButtonH, dpi) + fitUp(fitMargin, dpi)
 	if room := capS.H - e.Frame.H - rest; promptH > room {
@@ -366,10 +369,11 @@ func fitEntry(e fitEnv, m fitMeasurer, prompt, start string, buttons []string) f
 }
 
 // fitProgress lays out a progress dialog: its text, the bar, and a button row when it
-// has buttons (§4.3, Progress dialog). The content is 400 wide; the prompt is never
-// lower than floor, the height it reached before, so the window grows and never shrinks
-// while it is open; past the room the prompt is cut at the bottom (P1's limit).
-func fitProgress(e fitEnv, m fitMeasurer, text string, floor int, buttons []string) fitDialog {
+// has buttons (§4.3, Progress dialog). The content is 400 wide; the content is never
+// narrower than floor.W nor the prompt lower than floor.H, the width and height they
+// reached before (the cap permitting), so the window grows and never shrinks while it is
+// open; past the room the prompt is cut at the bottom (P1's limit).
+func fitProgress(e fitEnv, m fitMeasurer, text string, floor fitSize, buttons []string) fitDialog {
 	h := fitUpstreamProgressH
 	if len(buttons) == 0 {
 		h = fitUpstreamBareH
@@ -386,14 +390,14 @@ func fitProgress(e fitEnv, m fitMeasurer, text string, floor int, buttons []stri
 		return fitDialog{Upstream: true}
 	}
 	btnW := fitButtonWidth(labels, dpi)
-	content := fitContent(dpi, capContent, fitUp(fitProgressW, dpi), fitRowWidth(len(buttons), btnW, dpi))
+	content := fitContent(dpi, capContent, fitUp(fitProgressW, dpi), fitRowWidth(len(buttons), btnW, dpi), floor.W)
 	promptH, content, ok := fitPrompt(m, e, text, content, capContent)
 	if !ok {
 		return fitDialog{Upstream: true}
 	}
-	promptH = fitMax(promptH, floor)
+	promptH = fitMax(promptH, floor.H)
 
-	d := fitDialog{PromptH: promptH}
+	d := fitDialog{DPI: fitDPI(dpi), PromptH: promptH}
 	barH := fitUp(fitBarH, dpi)
 	rest := fitUp(fitTop, dpi) + fitUp(fitGap, dpi) + barH + fitUp(fitMargin, dpi)
 	if len(buttons) > 0 {
@@ -417,6 +421,13 @@ func fitProgress(e fitEnv, m fitMeasurer, text string, floor int, buttons []stri
 	d.Client = fitSize{W: content + 2*x, H: y + fitUp(fitMargin, dpi)}
 	d.Window = fitSize{W: d.Client.W + e.Frame.W, H: d.Client.H + e.Frame.H}
 	return d
+}
+
+// fitRebase carries a size kept across layouts (a progress dialog's floor) from one DPI
+// to another, rounding up, so a round trip between two DPIs never shrinks it.
+func fitRebase(v, from, to int) int {
+	from, to = fitDPI(from), fitDPI(to)
+	return (v*to + from - 1) / from
 }
 
 // fitInside moves r, never resizing it, as little as it must to lie inside work; a
