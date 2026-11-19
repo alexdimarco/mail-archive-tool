@@ -200,6 +200,7 @@ func (dlg *listDialog) layout(dpi dpi, at *win.RECT) {
 			dlg.fit = fitDialog{Upstream: true}
 			fitShow(dlg.textCtl, dlg.promptCtl)
 			win.SetWindowLong(dlg.textCtl, win.GWL_STYLE, int(_WS_ZEN_LABEL))
+			win.SendMessage(dlg.listCtl, win.LB_SETHORIZONTALEXTENT, 0, 0) // no sideways scroll, as upstream (RV-09)
 			dlg.layout(dpi, nil)
 			return
 		}

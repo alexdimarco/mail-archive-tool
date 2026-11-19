@@ -16,6 +16,13 @@ set -euo pipefail
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "$ROOT"
 
+# The release builds the files its tests and the zenity copy check read: an -overlay or
+# -toolexec in GOFLAGS would build others (adversarial re-verify RV-05, MA-1468).
+if [ -n "$(go env GOFLAGS)" ]; then
+  echo "build-release.sh: GOFLAGS is set ($(go env GOFLAGS)); refusing to build" >&2
+  exit 1
+fi
+
 VERSION="${1:-$(git describe --tags --always 2>/dev/null || echo 0.0.0-dev)}"
 PRODUCT_VERSION="${VERSION#v}"   # leading-v stripped; the MSI binds ProductVersion to this (MA-614)
 DIST="$ROOT/dist"

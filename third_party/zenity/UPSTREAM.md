@@ -44,27 +44,31 @@ exactly what upstream's generator makes from the `//sys` lines; the go command m
 resolve zenity to this folder (`go list`, so a `go.work` or a vendored copy cannot
 take its place); and this module's own tests and `go vet` run (for Windows, macOS and
 Linux), each of MA-1469's tests reporting a pass. The pins also keep the `lab-copy`
-hash: the hash of this folder's built files (all but `fit_test.go` and this file) that
-the last passing MA-1470 run was built from, so a patch file or `fit.go` changed after
-that run turns MA-1468 red until the lab test passes again. The pins are written only by
+hash: the hash of this folder's built files (all but `fit_test.go` and this file) and of the
+lab test that the last passing MA-1470 run was built from, so a patch file, `fit.go` or
+the lab test changed after that run turns MA-1468 red until the lab test passes again. The pins are written only by
 
     go test ./internal/thirdparty -run TestRecordZenityPins -count=1 -args -zenity-record [-zenity-lab-receipt <ma1470-receipt.txt>]
 
 and changing an upstream line is an operator decision.
 
-**Running MA-1470 (the Windows lab test).** On the Mac, print the `lab-copy` hash and
-build the Windows test program with it:
+**Running MA-1470 (the Windows lab test).** On the Mac, build the Windows test program
+with the `lab-copy` hash of this folder's built files and of the lab test
+(`internal/thirdparty/ma1470_lab_windows_test.go`), in one step that refuses the program
+if either changed while it was built:
 
-    H=$(go test ./internal/thirdparty -v -count=1 -run '^TestZenityLabBuildHash$' -args -zenity-lab-hash | sed -n 's/^lab-copy: //p')
-    GOOS=windows GOARCH=amd64 go test -c -o ma1470.exe -ldflags "-X mail-archive-tool/internal/thirdparty.labCopyHash=$H" ./internal/thirdparty
+    go test ./internal/thirdparty -v -count=1 -run '^TestZenityLabBuildHash$' -args -zenity-lab-hash -zenity-lab-build "$PWD/ma1470.exe"
 
 On the office test PC, in a signed-in, unlocked session, start it from a launcher that
 lets it take the foreground (`AllowSetForegroundWindow`), with
-`MAILARCHIVE_DESKTOP_LAB=1`: `ma1470.exe -test.run TestMA1470 -test.v`. When every
-MA-1470 test has passed, it writes `ma1470-receipt.txt` beside the program: the run
-(date, Windows build, screen and scaling, "pass") and the hash it was built from.
-Bring the receipt back and record it with the command above; the recorder refuses a
-receipt built from other files than the copy now holds. `go vet` has one known
+`MAILARCHIVE_DESKTOP_LAB=1`: `ma1470.exe -test.run TestMA1470 -test.v`. A lab run first
+deletes any receipt an earlier run left; when every MA-1470 test has passed whole (a run
+filtered to some subtests, or with `-test.skip`, writes none), it writes
+`ma1470-receipt.txt` beside the program: the run (date, Windows build, screen and
+scaling, "pass") and the hash it was built from. Bring the receipt back and record it
+with the command above; the recorder refuses a receipt built from other files than the
+copy and the lab test now hold. The receipt shows the files were consistent, not who ran
+them: a hand-written one passes as a hand-written lab text would. `go vet` has one known
 finding here, upstream's, in the generated function `SHBrowseForFolder`
 (`internal/win/zsyscall_windows.go`, "possible misuse of unsafe.Pointer"); MA-1468
 allows exactly that one and fails if it changes. `.gitattributes` keeps a checkout

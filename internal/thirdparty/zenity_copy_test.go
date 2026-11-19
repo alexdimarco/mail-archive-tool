@@ -56,6 +56,8 @@ var (
 		"with -zenity-record: the receipt MA-1470 wrote on the test PC after every lab test passed (ma1470-receipt.txt)")
 	zenityLabHash = flag.Bool("zenity-lab-hash", false,
 		"print the copy's lab-copy hash, which the MA-1470 lab build passes with -ldflags -X (UPSTREAM.md)")
+	zenityLabBuild = flag.String("zenity-lab-build", "",
+		"with -zenity-lab-hash: build the MA-1470 lab program for Windows at this path with the hash, refusing if the copy or the lab test changed meanwhile")
 )
 
 // additions are the files in the copy that are not upstream's (design §2 P4): UPSTREAM.md,
@@ -435,11 +437,16 @@ var requireRe = regexp.MustCompile(`(?m)^\s*(?:require\s+)?github\.com/ncruces/z
 // UPSTREAM.md, whose changes need no new lab run.
 func labBuilt(rel string) bool { return rel != "fit_test.go" && rel != "UPSTREAM.md" }
 
+// labTestRel is MA-1470's lab test, which the lab-copy hash covers with the copy: a lab run
+// stands for the copy it built and the test it ran (adversarial re-verify RV-03).
+const labTestRel = "internal/thirdparty/ma1470_lab_windows_test.go"
+
 // copyBuildHash is the "lab-copy" hash: SHA-256 over one "sha256  path" line per built file
-// of the copy, in path order. MA-1470's receipt carries the hash its build was made from,
-// and the pins keep it, so a patch file or fit.go changed after that run turns MA-1468 red
-// until the lab test passes again (adversarial finding INS-03).
-func copyBuildHash(files map[string][]byte) string {
+// of the copy, in path order, then one for the lab test. MA-1470's receipt carries the hash
+// its build was made from, and the pins keep it, so a patch file, fit.go or the lab test
+// changed after that run turns MA-1468 red until the lab test passes again (adversarial
+// finding INS-03, re-verify RV-03).
+func copyBuildHash(files map[string][]byte, labTest []byte) string {
 	paths := make([]string, 0, len(files))
 	for rel := range files {
 		if labBuilt(rel) {
@@ -451,7 +458,17 @@ func copyBuildHash(files map[string][]byte) string {
 	for _, rel := range paths {
 		fmt.Fprintf(h, "%s  %s\n", sha(files[rel]), rel)
 	}
+	fmt.Fprintf(h, "%s  %s\n", sha(labTest), labTestRel)
 	return "sha256:" + hex.EncodeToString(h.Sum(nil))
+}
+
+// labHashOf is the lab-copy hash of the repository at root, whose copy holds files.
+func labHashOf(root string, files map[string][]byte) (string, error) {
+	lab, err := os.ReadFile(filepath.Join(root, filepath.FromSlash(labTestRel)))
+	if err != nil {
+		return "", err
+	}
+	return copyBuildHash(files, lab), nil
 }
 
 // checkCopy is MA-1468: it returns every way the repository at root breaks the pins.
@@ -573,9 +590,11 @@ func checkCopy(root string, p pins, allowed map[string]patchFacts) []string {
 		}
 	}
 	if len(p.patches) > 0 {
-		got := copyBuildHash(have)
-		if lc := p.header["lab-copy"]; len(lc) != 1 || lc[0] != got {
-			add("the copy's built files hash to %s, but the last MA-1470 run that passed was built from %q: a patch file or fit.go changed since; run MA-1470 on the test PC and record its receipt (UPSTREAM.md)", got, lc)
+		got, err := labHashOf(root, have)
+		if err != nil {
+			add("%s: %v (the lab-copy hash covers the lab test)", labTestRel, err)
+		} else if lc := p.header["lab-copy"]; len(lc) != 1 || lc[0] != got {
+			add("the copy's built files and the lab test hash to %s, but the last MA-1470 run that passed was built from %q: a patch file, fit.go or the lab test changed since; run MA-1470 on the test PC and record its receipt (UPSTREAM.md)", got, lc)
 		}
 	}
 	return probs
@@ -735,12 +754,16 @@ type refusal struct {
 func scratchRepo(t *testing.T, root string) string {
 	t.Helper()
 	dst := t.TempDir()
-	for _, name := range []string{"go.mod", ".gitattributes"} {
-		data, err := os.ReadFile(filepath.Join(root, name))
+	for _, name := range []string{"go.mod", ".gitattributes", labTestRel} {
+		data, err := os.ReadFile(filepath.Join(root, filepath.FromSlash(name)))
 		if err != nil {
 			t.Fatal(err)
 		}
-		if err := os.WriteFile(filepath.Join(dst, name), data, 0o644); err != nil {
+		out := filepath.Join(dst, filepath.FromSlash(name))
+		if err := os.MkdirAll(filepath.Dir(out), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(out, data, 0o644); err != nil {
 			t.Fatal(err)
 		}
 	}
@@ -780,8 +803,12 @@ func recordAs(t *testing.T, p pins, scratch, rel string, facts goFacts) pins {
 	if err != nil {
 		t.Fatal(err)
 	}
+	h, err := labHashOf(scratch, files)
+	if err != nil {
+		t.Fatal(err)
+	}
 	q := pins{header: maps.Clone(p.header), patches: maps.Clone(p.patches)}
-	q.header["lab-copy"] = []string{copyBuildHash(files)}
+	q.header["lab-copy"] = []string{h}
 	for _, f := range p.files {
 		if f.path == rel {
 			f.state = "patched"
@@ -934,9 +961,15 @@ func TestTheZenityCopyCheckRefusesEachChange(t *testing.T) {
 			q.files[0].sha = strings.Repeat("0", 64)
 			return q
 		}},
-		{name: "a Windows file changed after the lab run", want: "the copy's built files hash to", change: func(t *testing.T, dir string) pins {
+		{name: "a Windows file changed after the lab run", want: "the copy's built files and the lab test hash to", change: func(t *testing.T, dir string) pins {
 			editFile(t, filepath.Join(dir, copied("fit.go")), func(b []byte) []byte { return append(b, "\n// later\n"...) })
 			return p
+		}},
+		{name: "the lab test changed after the lab run", want: "the copy's built files and the lab test hash to", change: func(t *testing.T, dir string) pins {
+			// pins recorded from a receipt for this scratch copy, then the lab test changed
+			q := rerecord(t, p, dir, "list_windows.go")
+			editFile(t, filepath.Join(dir, filepath.FromSlash(labTestRel)), func(b []byte) []byte { return append(b, "\n// later\n"...) })
+			return q
 		}},
 		{name: "a generator line that calls", want: "patch file internal/win/zsyscall_windows.go adds package-level variable zzz, set by a call", change: func(t *testing.T, dir string) pins {
 			editFile(t, filepath.Join(dir, copied(generatedFile)), func(b []byte) []byte {
@@ -1076,8 +1109,21 @@ func TestTheZenityCopyCheckRefusesEachChange(t *testing.T) {
 	}
 }
 
-// vetLineRe is one finding of go vet: "path.go:line:col: message".
-var vetLineRe = regexp.MustCompile(`^(?:\./)?(\S+\.go):(\d+):\d+: (.+)$`)
+// vetLineRe is one finding of go vet: "path.go:line:col: message", the path relative and
+// written with the host's separators.
+var vetLineRe = regexp.MustCompile(`^(?:\.[/\\])?(\S+\.go):(\d+):\d+: (.+)$`)
+
+// allowedVetFinding reports go vet's one allowed finding in the copy at copyDir: upstream's
+// "possible misuse of unsafe.Pointer" inside the generated SHBrowseForFolder, its path
+// written with either separator (Windows writes backslashes: adversarial re-verify RV-01).
+func allowedVetFinding(copyDir, line string) bool {
+	m := vetLineRe.FindStringSubmatch(line)
+	if m == nil || strings.ReplaceAll(m[1], `\`, "/") != generatedFile || m[3] != "possible misuse of unsafe.Pointer" {
+		return false
+	}
+	n, err := strconv.Atoi(m[2])
+	return err == nil && enclosingFunc(filepath.Join(copyDir, filepath.FromSlash(generatedFile)), n) == "SHBrowseForFolder"
+}
 
 // enclosingFunc names the function of the file at path whose body holds line.
 func enclosingFunc(path string, line int) string {
@@ -1177,13 +1223,9 @@ func TestTheZenityCopyTestsAndVetsClean(t *testing.T) {
 			if line == "" || strings.HasPrefix(line, "#") || strings.HasPrefix(line, "go: downloading ") {
 				continue
 			}
-			if m := vetLineRe.FindStringSubmatch(line); m != nil && m[1] == generatedFile &&
-				m[3] == "possible misuse of unsafe.Pointer" {
-				n, _ := strconv.Atoi(m[2])
-				if enclosingFunc(filepath.Join(copyDir, filepath.FromSlash(m[1])), n) == "SHBrowseForFolder" {
-					allowed++
-					continue
-				}
+			if allowedVetFinding(copyDir, line) {
+				allowed++
+				continue
 			}
 			t.Errorf("go vet (GOOS=%s) in the copy: %s", goos, line)
 		}
@@ -1200,7 +1242,7 @@ func TestTheZenityCopyTestsAndVetsClean(t *testing.T) {
 // readReceipt reads the receipt MA-1470 wrote on the test PC ("run: …" and "copy: …") and
 // returns its run line. It refuses a receipt whose run did not pass, or that was built
 // from other files than the copy now holds (adversarial finding INS-03).
-func readReceipt(path string, have map[string][]byte) (string, error) {
+func readReceipt(path, want string) (string, error) {
 	data, err := os.ReadFile(path)
 	if err != nil {
 		return "", err
@@ -1218,10 +1260,52 @@ func readReceipt(path string, have map[string][]byte) (string, error) {
 	if !labRe.MatchString(run) {
 		return "", fmt.Errorf("the receipt's run line %q is not a passing MA-1470 run", run)
 	}
-	if got := copyBuildHash(have); built != got {
-		return "", fmt.Errorf("the receipt's run was built from %q, but the copy's built files now hash to %s: run MA-1470 again on this copy", built, got)
+	if built != want {
+		return "", fmt.Errorf("the receipt's run was built from %q, but the copy's built files and the lab test now hash to %s: run MA-1470 again on them", built, want)
 	}
 	return run, nil
+}
+
+// funcBodyLine is the line after the opening brace of the function name in the file at path.
+func funcBodyLine(t *testing.T, path, name string) int {
+	t.Helper()
+	fset := token.NewFileSet()
+	f, err := parser.ParseFile(fset, path, nil, parser.SkipObjectResolution)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, d := range f.Decls {
+		if fd, ok := d.(*ast.FuncDecl); ok && fd.Name.Name == name && fd.Body != nil {
+			return fset.Position(fd.Body.Lbrace).Line + 1
+		}
+	}
+	t.Fatalf("%s declares no %s", path, name)
+	return 0
+}
+
+// covers: MA-1468
+// go vet's one allowed finding is recognised whichever separators the host writes its path
+// with: forward slashes (macOS, Linux) and backslashes (Windows; adversarial re-verify
+// RV-01); the same message outside SHBrowseForFolder or in another file, or another message
+// there, is not.
+func TestTheVetExceptionReadsEveryHostsPaths(t *testing.T) {
+	copyDir := filepath.Join(repoRoot(t), filepath.FromSlash(copyRel))
+	n := funcBodyLine(t, filepath.Join(copyDir, filepath.FromSlash(generatedFile)), "SHBrowseForFolder")
+	for _, p := range []string{"internal/win/zsyscall_windows.go", "./internal/win/zsyscall_windows.go",
+		`internal\win\zsyscall_windows.go`, `.\internal\win\zsyscall_windows.go`} {
+		if line := fmt.Sprintf("%s:%d:22: possible misuse of unsafe.Pointer", p, n); !allowedVetFinding(copyDir, line) {
+			t.Errorf("the allowed finding written %q is not recognised", line)
+		}
+	}
+	for _, line := range []string{
+		fmt.Sprintf(`internal\win\zsyscall_windows.go:%d:22: printf format %%d reads arg #1`, n),
+		`internal\win\zsyscall_windows.go:1:1: possible misuse of unsafe.Pointer`,
+		fmt.Sprintf(`internal\win\user32.go:%d:22: possible misuse of unsafe.Pointer`, n),
+	} {
+		if allowedVetFinding(copyDir, line) {
+			t.Errorf("%q is recognised as the allowed finding", line)
+		}
+	}
 }
 
 // covers: MA-1468
@@ -1263,9 +1347,13 @@ func TestRecordZenityPins(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	labCopy, err := labHashOf(root, have)
+	if err != nil {
+		t.Fatal(err)
+	}
 	labRun := ""
 	if *zenityLabReceipt != "" {
-		if labRun, err = readReceipt(*zenityLabReceipt, have); err != nil {
+		if labRun, err = readReceipt(*zenityLabReceipt, labCopy); err != nil {
 			t.Fatal(err)
 		}
 	}
@@ -1325,7 +1413,7 @@ func TestRecordZenityPins(t *testing.T) {
 	fmt.Fprintf(&b, "go.sum: %s %s %s\n", zenityModule, zenityVersion, mod.Sum)
 	fmt.Fprintf(&b, "go.sum: %s %s/go.mod %s\n", zenityModule, zenityVersion, mod.GoModSum)
 	if len(patches) > 0 {
-		fmt.Fprintf(&b, "lab-copy: %s\n", copyBuildHash(have))
+		fmt.Fprintf(&b, "lab-copy: %s\n", labCopy)
 	}
 	for _, f := range files {
 		fmt.Fprintf(&b, "file: %s %s %s\n", f.sha, f.state, f.path)
@@ -1343,22 +1431,47 @@ func TestRecordZenityPins(t *testing.T) {
 }
 
 // covers: MA-1468
-// The MA-1470 lab build's hash: with -zenity-lab-hash this prints the copy's lab-copy
-// hash, which the lab build passes to the test program with -ldflags -X (UPSTREAM.md), so
-// the receipt the program writes after it passes names the copy it was built from.
+// The MA-1470 lab build: with -zenity-lab-hash this prints the lab-copy hash of the copy
+// and the lab test, which the lab build passes to the test program with -ldflags -X
+// (UPSTREAM.md), so the receipt the program writes after it passes names what it was
+// built from. With -zenity-lab-build it also builds that program for Windows, and refuses
+// it if the copy or the lab test changed while it was built (adversarial re-verify RV-04).
 func TestZenityLabBuildHash(t *testing.T) {
 	if !*zenityLabHash {
 		t.Skip("prints the lab-copy hash only when -zenity-lab-hash is given (the MA-1470 lab build, UPSTREAM.md)")
 	}
-	have, err := listFiles(filepath.Join(repoRoot(t), filepath.FromSlash(copyRel)), neverSource)
+	root := repoRoot(t)
+	hash := func() string {
+		have, err := listFiles(filepath.Join(root, filepath.FromSlash(copyRel)), neverSource)
+		if err != nil {
+			t.Fatal(err)
+		}
+		h, err := labHashOf(root, have)
+		if err != nil || len(have) == 0 || !strings.HasPrefix(h, "sha256:") {
+			t.Fatalf("no lab-copy hash for a copy of %d files: %q, %v", len(have), h, err)
+		}
+		return h
+	}
+	h := hash()
+	fmt.Println("lab-copy: " + h)
+	if *zenityLabBuild == "" {
+		return
+	}
+	out, err := filepath.Abs(*zenityLabBuild)
 	if err != nil {
 		t.Fatal(err)
 	}
-	h := copyBuildHash(have)
-	if len(have) == 0 || !strings.HasPrefix(h, "sha256:") {
-		t.Fatalf("no lab-copy hash for a copy of %d files: %q", len(have), h)
+	cmd := exec.Command(goTool(t), "test", "-c", "-o", out, "-ldflags", "-X mail-archive-tool/internal/thirdparty.labCopyHash="+h, "./internal/thirdparty")
+	cmd.Dir = root
+	cmd.Env = append(os.Environ(), "GOOS=windows", "GOARCH=amd64")
+	if msg, err := cmd.CombinedOutput(); err != nil {
+		t.Fatalf("building the lab program: %v\n%s", err, msg)
 	}
-	fmt.Println("lab-copy: " + h)
+	if again := hash(); again != h {
+		os.Remove(out)
+		t.Fatalf("the copy or the lab test changed while the lab program was built (%s, then %s): build it again", h, again)
+	}
+	fmt.Println("built: " + out)
 }
 
 // realPath resolves symbolic links, so two spellings of one folder compare equal.
@@ -1375,6 +1488,9 @@ func realPath(p string) string {
 func checkResolution(t *testing.T, root string, env []string) []string {
 	t.Helper()
 	var probs []string
+	if out, err := runGo(t, root, env, "env", "GOFLAGS"); err != nil || strings.Contains(out, "-overlay") || strings.Contains(out, "-toolexec") {
+		probs = append(probs, fmt.Sprintf("GOFLAGS is %q (%v): an -overlay or -toolexec builds other files than the copy's (adversarial re-verify RV-05)", strings.TrimSpace(out), err))
+	}
 	out, err := runGo(t, root, env, "list", "-m", "-f", "{{.Path}} {{.Version}}{{with .Replace}} => {{.Path}}{{.Version}}{{end}}", zenityModule)
 	if got := strings.TrimSpace(out); err != nil || got != replaceLine {
 		probs = append(probs, fmt.Sprintf("go list -m says the build uses %q (%v); want %q", got, err, replaceLine))
@@ -1446,6 +1562,14 @@ func TestTheBuildUsesTheZenityCopy(t *testing.T) {
 	probs := checkResolution(t, dir, []string{"GOWORK=" + filepath.Join(dir, "go.work")})
 	if !slices.ContainsFunc(probs, func(s string) bool { return strings.Contains(s, "a Windows build compiles zenity from") }) {
 		t.Errorf("a go.work that builds zenity from another folder should be refused, got %q", probs)
+	}
+	overlay := filepath.Join(dir, "overlay.json")
+	if err := os.WriteFile(overlay, []byte(`{"Replace":{}}`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	probs = checkResolution(t, dir, []string{"GOWORK=off", "GOFLAGS=-overlay=" + overlay})
+	if !slices.ContainsFunc(probs, func(s string) bool { return strings.Contains(s, "-overlay or -toolexec") }) {
+		t.Errorf("an -overlay in GOFLAGS should be refused, got %q", probs)
 	}
 }
 
@@ -1560,5 +1684,139 @@ func TestThePublishedZenityIsScanned(t *testing.T) {
 	}
 	if !bytes.Contains(script, []byte(`go list -m -f '{{.Version}}{{with .Replace}} replaced{{end}}' github.com/ncruces/zenity`)) {
 		t.Error("packaging/vulncheck-published-zenity.sh does not check that the go.mod it scans uses the published v0.10.12")
+	}
+	for _, prob := range checkGuardSteps(t, root) {
+		t.Error(prob)
+	}
+}
+
+// workflowSteps splits a workflow into its steps, each from its "- name:" line to the next.
+func workflowSteps(data []byte) []string {
+	var steps []string
+	cur := -1
+	for _, line := range strings.Split(string(data), "\n") {
+		if strings.HasPrefix(strings.TrimSpace(line), "- name:") || strings.HasPrefix(strings.TrimSpace(line), "- uses:") {
+			steps = append(steps, "")
+			cur = len(steps) - 1
+		}
+		if cur >= 0 {
+			steps[cur] += line + "\n"
+		}
+	}
+	return steps
+}
+
+// releaseRecheckRe is the release's re-check of the copy, the tests it runs named.
+var releaseRecheckRe = regexp.MustCompile(`go test -count=1 -run '\^\(([A-Za-z0-9|]+)\)\$' \./internal/thirdparty`)
+
+// checkGuardSteps holds the scan and re-check steps to doing what they say (adversarial
+// re-verify RV-06, RV-07): no such step may continue on error, no such command may be
+// followed by "||", and every test the release's re-check names must exist.
+func checkGuardSteps(t *testing.T, root string) []string {
+	t.Helper()
+	var probs []string
+	guard := []string{"vulncheck-published-zenity.sh", "govulncheck", "go mod verify", "./internal/thirdparty"}
+	for _, wf := range []string{".github/workflows/ci.yml", ".github/workflows/release.yml"} {
+		data, err := os.ReadFile(filepath.Join(root, filepath.FromSlash(wf)))
+		if err != nil {
+			return append(probs, err.Error())
+		}
+		for _, step := range workflowSteps(data) {
+			if !slices.ContainsFunc(guard, func(g string) bool { return strings.Contains(step, g) }) {
+				continue
+			}
+			if strings.Contains(step, "continue-on-error") {
+				probs = append(probs, fmt.Sprintf("%s: a scan or check step may continue on error: %q", wf, strings.SplitN(step, "\n", 2)[0]))
+			}
+			for _, line := range strings.Split(step, "\n") {
+				if strings.Contains(line, "||") && slices.ContainsFunc(guard, func(g string) bool { return strings.Contains(line, g) }) {
+					probs = append(probs, fmt.Sprintf("%s: a scan or check command is followed by ||: %q", wf, strings.TrimSpace(line)))
+				}
+			}
+		}
+	}
+	release, err := os.ReadFile(filepath.Join(root, ".github", "workflows", "release.yml"))
+	if err != nil {
+		return append(probs, err.Error())
+	}
+	m := releaseRecheckRe.FindSubmatch(release)
+	if m == nil {
+		return append(probs, "release.yml does not re-check the copy just before it builds")
+	}
+	declared, err := declaredTests(filepath.Join(root, "internal", "thirdparty", "zenity_copy_test.go"))
+	if err != nil {
+		return append(probs, err.Error())
+	}
+	for _, name := range strings.Split(string(m[1]), "|") {
+		if !slices.Contains(declared, name) {
+			probs = append(probs, fmt.Sprintf("release.yml's re-check runs %s, which zenity_copy_test.go does not declare: it would run nothing", name))
+		}
+	}
+	return probs
+}
+
+// covers: MA-1468
+// The scan and re-check steps cannot pass quietly (adversarial re-verify RV-06, RV-07),
+// positive twin first: copies of the real workflows pass; a scan step that may continue on
+// error, a scan followed by "|| true", and a release re-check naming a test that does not
+// exist are each refused.
+func TestTheGuardStepsCannotPassQuietly(t *testing.T) {
+	root := repoRoot(t)
+	scratch := func(t *testing.T, edit func(wf string, b []byte) []byte) string {
+		t.Helper()
+		dir := t.TempDir()
+		for _, rel := range []string{".github/workflows/ci.yml", ".github/workflows/release.yml", "internal/thirdparty/zenity_copy_test.go"} {
+			data, err := os.ReadFile(filepath.Join(root, filepath.FromSlash(rel)))
+			if err != nil {
+				t.Fatal(err)
+			}
+			out := filepath.Join(dir, filepath.FromSlash(rel))
+			if err := os.MkdirAll(filepath.Dir(out), 0o755); err != nil {
+				t.Fatal(err)
+			}
+			if err := os.WriteFile(out, edit(rel, data), 0o644); err != nil {
+				t.Fatal(err)
+			}
+		}
+		return dir
+	}
+	if probs := checkGuardSteps(t, scratch(t, func(_ string, b []byte) []byte { return b })); len(probs) != 0 {
+		t.Fatalf("positive twin: copies of the real workflows should pass, got %q", probs)
+	}
+	once := func(b []byte, old, new string) []byte {
+		if !bytes.Contains(b, []byte(old)) {
+			t.Fatalf("no %q to change", old)
+		}
+		return bytes.Replace(b, []byte(old), []byte(new), 1)
+	}
+	for _, c := range []struct {
+		name, want string
+		edit       func(wf string, b []byte) []byte
+	}{
+		{"a scan step that may fail", "may continue on error", func(wf string, b []byte) []byte {
+			if wf != ".github/workflows/ci.yml" {
+				return b
+			}
+			return once(b, "      - name: Vulnerability scan (reachable code)\n", "      - name: Vulnerability scan (reachable code)\n        continue-on-error: true\n")
+		}},
+		{"a scan followed by || true", "followed by ||", func(wf string, b []byte) []byte {
+			if wf != ".github/workflows/release.yml" {
+				return b
+			}
+			return once(b, `packaging/vulncheck-published-zenity.sh "$(go env GOPATH)/bin/govulncheck" ./...`, `packaging/vulncheck-published-zenity.sh "$(go env GOPATH)/bin/govulncheck" ./... || true`)
+		}},
+		{"a re-check of a test that does not exist", "which zenity_copy_test.go does not declare", func(wf string, b []byte) []byte {
+			if wf != ".github/workflows/release.yml" {
+				return b
+			}
+			return once(b, "TestTheBuildUsesTheZenityCopy|", "TestTheBuildUsesTheZenityCopyRenamed|")
+		}},
+	} {
+		t.Run(c.name, func(t *testing.T) {
+			probs := checkGuardSteps(t, scratch(t, c.edit))
+			if !slices.ContainsFunc(probs, func(s string) bool { return strings.Contains(s, c.want) }) {
+				t.Errorf("want a refusal containing %q, got %q", c.want, probs)
+			}
+		})
 	}
 }

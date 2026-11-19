@@ -17,6 +17,7 @@ package thirdparty
 import (
 	"context"
 	"errors"
+	"flag"
 	"fmt"
 	"image"
 	"image/png"
@@ -579,6 +580,12 @@ func labDone(t *testing.T) {
 }
 
 func TestMain(m *testing.M) {
+	if labOn() {
+		// A receipt left by an earlier run never stands for this one (adversarial re-verify RV-03).
+		if out, err := labReceiptPath(); err == nil {
+			os.Remove(out)
+		}
+	}
 	code := m.Run()
 	if code == 0 && labOn() {
 		fmt.Println(writeLabReceipt())
@@ -586,8 +593,31 @@ func TestMain(m *testing.M) {
 	os.Exit(code)
 }
 
+// labReceiptPath is where the receipt is written: ma1470-receipt.txt beside the test program.
+func labReceiptPath() (string, error) {
+	exe, err := os.Executable()
+	if err != nil {
+		return "", err
+	}
+	return filepath.Join(filepath.Dir(exe), "ma1470-receipt.txt"), nil
+}
+
+// labFiltered says why a run is not a whole MA-1470 run: one filtered to some subtests
+// (a -test.run pattern with a slash) or skipping some (-test.skip) still passes every test
+// it ran, but not every case (adversarial re-verify RV-02); "" for a whole run.
+func labFiltered() string {
+	if f := flag.Lookup("test.run"); f != nil && strings.Contains(f.Value.String(), "/") {
+		return "-test.run " + f.Value.String() + " picks subtests"
+	}
+	if f := flag.Lookup("test.skip"); f != nil && f.Value.String() != "" {
+		return "-test.skip " + f.Value.String() + " skips some"
+	}
+	return ""
+}
+
 // writeLabReceipt writes ma1470-receipt.txt beside the test program when every MA-1470
-// test passed in this run and the program carries its lab-copy hash, and says what it did.
+// test passed whole in this run and the program carries its lab-copy hash, and says what
+// it did.
 func writeLabReceipt() string {
 	var missing []string
 	for _, name := range labTests {
@@ -598,17 +628,18 @@ func writeLabReceipt() string {
 	switch {
 	case len(missing) > 0:
 		return "MA-1470: no receipt: these lab tests did not run to a pass: " + strings.Join(missing, ", ")
+	case labFiltered() != "":
+		return "MA-1470: no receipt: not a whole run (" + labFiltered() + ")"
 	case labCopyHash == "":
 		return "MA-1470: every lab test passed, but this program carries no lab-copy hash: build it as UPSTREAM.md says (Running MA-1470) for a receipt"
-	}
-	exe, err := os.Executable()
-	if err != nil {
-		return "MA-1470: no receipt: " + err.Error()
 	}
 	run := fmt.Sprintf("MA-1470 %s %s, %s pass", time.Now().UTC().Format("2006-01-02"), labWindows(), labScreen())
 	body := "# MA-1470's receipt, written by the lab test after every MA-1470 test passed (UPSTREAM.md)\n" +
 		"run: " + run + "\ncopy: " + labCopyHash + "\n"
-	out := filepath.Join(filepath.Dir(exe), "ma1470-receipt.txt")
+	out, err := labReceiptPath()
+	if err != nil {
+		return "MA-1470: no receipt: " + err.Error()
+	}
 	if err := os.WriteFile(out, []byte(body), 0o644); err != nil {
 		return "MA-1470: no receipt: " + err.Error()
 	}

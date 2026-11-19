@@ -185,10 +185,13 @@ func fitMessageBox(wnd win.HWND) {
 	if !ok {
 		return
 	}
-	if grow > 0 {
-		fitPlace(wnd, fitAbout(box, fitSize{W: box.W + grow, H: box.H}, work))
-	}
+	// The buttons first, then the box, as the other dialogs place their controls before
+	// their window: a DPI change during the box's move runs this again, last (adversarial
+	// re-verify RV-08).
 	for i, b := range row {
 		fitPlace(b.hwnd, out[i])
+	}
+	if grow > 0 {
+		fitPlace(wnd, fitAbout(box, fitSize{W: box.W + grow, H: box.H}, work))
 	}
 }
