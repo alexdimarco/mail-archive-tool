@@ -272,7 +272,9 @@ func runExport(args []string) error {
 	// all) refuses here, naming the problem, having created nothing. -list
 	// previews the discovered stores and stops. -outlook supplies its own inputs
 	// later, so an empty set is not yet a refusal in that case.
-	discovered, err := app.DiscoverInputs(inputs, *o.auto)
+	// A listed input that is gone and that the run would skip (-auto, MA-1471) refuses nothing
+	// here: app.Run says the skip, once, in its summary (design-1.7.5-fixes §1.5).
+	discovered, _, err := app.DiscoverInputs(inputs, *o.auto)
 	if err == nil {
 		// An opt-in that names no input would be read as no opt-in, so it is refused here.
 		err = app.FollowLinksRefusal(o.followLinks, discovered)
@@ -2085,7 +2087,9 @@ func parseMode(s string) (export.Mode, error) {
 // prepareThunderbird enables offline download and/or waits for a sync on each
 // Thunderbird IMAP store among the inputs, so on-demand mail is present locally.
 func prepareThunderbird(ctx context.Context, inputs []string, auto, enableOffline, syncWait bool, logger *log.Logger) error {
-	files, err := app.DiscoverInputs(inputs, auto)
+	// The skipped inputs are discarded on purpose: this prepares stores that exist, and the run
+	// itself reports what it skipped (design-1.7.5-fixes §1.2, MA-1471).
+	files, _, err := app.DiscoverInputs(inputs, auto)
 	if err != nil {
 		return err
 	}

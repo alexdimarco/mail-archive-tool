@@ -16,6 +16,7 @@ import (
 	"strings"
 	"time"
 
+	"mail-archive-tool/internal/autoplace"
 	"mail-archive-tool/internal/container"
 	"mail-archive-tool/internal/delmark"
 	"mail-archive-tool/internal/encmark"
@@ -328,6 +329,30 @@ type Result struct {
 	// email's flag can be set in it. A scheduled run's alert layer sends them
 	// (backupalert.ReportTBBehind), then MarkTBNoticesSent sets the flags. In memory only.
 	TBNotices []state.TBNotice
+
+	// Skipped are the listed inputs this run did not find and skipped (DiscoverInputs,
+	// design-1.7.5-fixes §1.2, MA-1471), in list order, on every return after discovery: the
+	// summaries say them from here (§1.3). In memory only; for an encrypted archive this is the
+	// only place their paths and names are kept.
+	Skipped []SkippedInput
+}
+
+// SkippedInput is one listed input a run skipped because it is gone (MA-1471): its path as
+// listed, the account's name when the profile's settings still name an account for that folder
+// ("" otherwise), and when it was first found gone (MA-1472).
+type SkippedInput struct {
+	Path  string
+	Name  string
+	Since time.Time
+}
+
+// Label is how the run's words name a skipped input: "NAME (PATH)", or PATH alone when no name
+// is known.
+func (s SkippedInput) Label() string {
+	if s.Name == "" {
+		return s.Path
+	}
+	return s.Name + " (" + s.Path + ")"
 }
 
 // finish fills the manifest-derived fields of a Result and regenerates the
@@ -628,7 +653,17 @@ func Run(ctx context.Context, opts Options, logger *log.Logger, onProgress Progr
 			return Result{}, err
 		}
 	}
-	files, err := DiscoverInputs(opts.Inputs, opts.Auto)
+	files, gone, err := DiscoverInputs(opts.Inputs, opts.Auto)
+	if err == nil && len(gone) > 0 {
+		// A listed mailbox that is gone was skipped (MA-1471): said straight after discovery, in
+		// the log the run's "Reading" lines go to, and handed back on every return from here.
+		// That the others were backed up is said only by the summaries of a run that finished.
+		skipped := skippedInputs(gone)
+		for _, s := range skipped {
+			logger.Printf("Not found, so skipped: %s. It is no longer on this computer; the mail already saved from it stays in the archive.", s.Label())
+		}
+		defer func() { result.Skipped = skipped }()
+	}
 	if err == nil && len(files) == 0 {
 		err = withKind(state.FailNoSources, errors.New("no input mail sources found (a .pst/.ost file, an mbox file, or a mail directory; or enable auto-discovery)"))
 	} else if err != nil {
@@ -1964,9 +1999,17 @@ func snapshot(src, dir string) (string, func(), error) {
 // DiscoverInputs expands the given files/directories and, if auto is set, the
 // default Outlook, Thunderbird, and Evolution locations into a deduplicated list
 // of data files/stores.
-func DiscoverInputs(inputs []string, auto bool) ([]string, error) {
+//
+// With auto set, a listed input that is gone is skipped instead of refused when
+// autoplace.GoneSkippable accepts it (it is gone, not a dangling link; it lies where
+// auto-discovery looks; its parent folder is still there, as a real folder, in that
+// place) and a mailbox remains after the skips: skipped lists them, in list order
+// (design-1.7.5-fixes §1.2, MA-1471). Otherwise a gone input refuses as before, with
+// the typed sourceUnreachableError naming the first listed input the rule does not
+// skip, or, when only "a mailbox remains" fails, the first gone one. Every caller gets
+// skipped: one that does not report it discards it on purpose, saying why.
+func DiscoverInputs(inputs []string, auto bool) (files, skipped []string, err error) {
 	seen := map[string]bool{}
-	var files []string
 	add := func(p string) {
 		abs, err := filepath.Abs(p)
 		if err != nil {
@@ -1982,9 +2025,13 @@ func DiscoverInputs(inputs []string, auto bool) ([]string, error) {
 		info, err := os.Stat(in)
 		if err != nil {
 			if errors.Is(err, fs.ErrNotExist) {
-				return nil, &sourceUnreachableError{path: in}
+				if auto && autoplace.GoneSkippable(in) {
+					skipped = append(skipped, in)
+					continue
+				}
+				return nil, nil, &sourceUnreachableError{path: in}
 			}
-			return nil, fmt.Errorf("input %s: %w", in, err)
+			return nil, nil, fmt.Errorf("input %s: %w", in, err)
 		}
 		if info.IsDir() {
 			if source.IsMailStoreDir(in) {
@@ -1992,7 +2039,7 @@ func DiscoverInputs(inputs []string, auto bool) ([]string, error) {
 			} else {
 				found, err := scanDir(in)
 				if err != nil {
-					return nil, err
+					return nil, nil, err
 				}
 				for _, f := range found {
 					add(f)
@@ -2008,7 +2055,12 @@ func DiscoverInputs(inputs []string, auto bool) ([]string, error) {
 			add(f)
 		}
 	}
-	return files, nil
+	// (d): a mailbox must remain after the skips, or the run refuses as before, naming the
+	// first gone input.
+	if len(skipped) > 0 && len(files) == 0 {
+		return nil, nil, &sourceUnreachableError{path: skipped[0]}
+	}
+	return files, skipped, nil
 }
 
 func scanDir(dir string) ([]string, error) {
@@ -2044,8 +2096,10 @@ func autoDiscover() []string {
 	// Outlook data files. Skip any that can't be parsed — Outlook leaves orphaned
 	// or stub .ost files behind (e.g. from removed accounts) that would otherwise
 	// pad the picker with unreadable entries. A file that is merely locked by a
-	// running Outlook is kept (DataFileReadable is lock-tolerant).
-	for _, g := range outlookGlobs() {
+	// running Outlook is kept (DataFileReadable is lock-tolerant). The patterns live
+	// in internal/autoplace, beside the rule that skips a gone input in their places
+	// (MA-1471), so the two cannot disagree.
+	for _, g := range autoplace.OutlookGlobs() {
 		matches, _ := filepath.Glob(g)
 		for _, m := range matches {
 			if source.DataFileReadable(m) {
@@ -2055,7 +2109,7 @@ func autoDiscover() []string {
 	}
 
 	// Thunderbird and Evolution account/store directories (only real stores).
-	for _, g := range append(thunderbirdGlobs(), evolutionGlobs()...) {
+	for _, g := range append(autoplace.ThunderbirdGlobs(), autoplace.EvolutionGlobs()...) {
 		matches, _ := filepath.Glob(g)
 		for _, m := range matches {
 			if fi, err := os.Stat(m); err == nil && fi.IsDir() && source.IsMailStoreDir(m) {
@@ -2064,56 +2118,6 @@ func autoDiscover() []string {
 		}
 	}
 	return out
-}
-
-func outlookGlobs() []string {
-	var globs []string
-	if la := os.Getenv("LOCALAPPDATA"); la != "" {
-		globs = append(globs, filepath.Join(la, "Microsoft", "Outlook", "*.ost"))
-		globs = append(globs, filepath.Join(la, "Microsoft", "Outlook", "*.pst"))
-	}
-	if up := os.Getenv("USERPROFILE"); up != "" {
-		globs = append(globs, filepath.Join(up, "Documents", "Outlook Files", "*.pst"))
-	}
-	return globs
-}
-
-func thunderbirdGlobs() []string {
-	home, err := os.UserHomeDir()
-	if err != nil {
-		return nil
-	}
-	roots := []string{
-		filepath.Join(home, ".thunderbird"),
-		filepath.Join(home, "snap", "thunderbird", "common", ".thunderbird"),
-		filepath.Join(home, ".mozilla-thunderbird"),
-		filepath.Join(home, "Library", "Thunderbird", "Profiles"),
-	}
-	if ad := os.Getenv("APPDATA"); ad != "" {
-		roots = append(roots, filepath.Join(ad, "Thunderbird", "Profiles"))
-	}
-	var globs []string
-	for _, r := range roots {
-		// Each account under ImapMail/ and Mail/ (incl. "Local Folders") is a store.
-		globs = append(globs, filepath.Join(r, "*", "ImapMail", "*"))
-		globs = append(globs, filepath.Join(r, "*", "Mail", "*"))
-	}
-	return globs
-}
-
-// evolutionGlobs returns the default Evolution store locations: the local
-// Maildir++ store and each IMAP account's disk cache (native and Flatpak paths).
-func evolutionGlobs() []string {
-	home, err := os.UserHomeDir()
-	if err != nil {
-		return nil
-	}
-	return []string{
-		filepath.Join(home, ".local", "share", "evolution", "mail", "local"),
-		filepath.Join(home, ".var", "app", "org.gnome.Evolution", "data", "evolution", "mail", "local"),
-		filepath.Join(home, ".cache", "evolution", "mail", "*"),
-		filepath.Join(home, ".var", "app", "org.gnome.Evolution", "cache", "evolution", "mail", "*"),
-	}
 }
 
 func isDataFile(name string) bool {

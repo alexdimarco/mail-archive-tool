@@ -784,7 +784,9 @@ func localArchiveFlowHooks(chosen func(out string), finished func(), check func(
 		if srcType != srcAuto {
 			break
 		}
-		autoInputs, err = app.DiscoverInputs(nil, true)
+		// The skipped inputs are discarded on purpose: no input is listed here, so none can be
+		// skipped, and the list shows only stores that exist (design-1.7.5-fixes §1.2).
+		autoInputs, _, err = app.DiscoverInputs(nil, true)
 		if err != nil {
 			return err
 		}

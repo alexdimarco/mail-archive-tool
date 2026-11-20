@@ -3,12 +3,13 @@ package app
 import (
 	"context"
 	"errors"
-	"fmt"
 	"log"
 	"path/filepath"
 	"time"
 
+	"mail-archive-tool/internal/autoplace"
 	"mail-archive-tool/internal/state"
+	"mail-archive-tool/internal/thunderbird"
 )
 
 // sourceReach is a run's verdict about whether it REACHED the archive's source (§5.7, S3-C2).
@@ -32,8 +33,10 @@ const (
 // drive briefly unplugged) from a permanent loss (S3-C3).
 type sourceUnreachableError struct{ path string }
 
+// Error is autoplace.GoneText, unchanged, so whatever compares a record's error with an input's
+// refusal (health.GoneMailboxRepairable) compares one text.
 func (e *sourceUnreachableError) Error() string {
-	return fmt.Sprintf("input %s does not exist (check the path, or that the drive holding it is mounted)", e.path)
+	return autoplace.GoneText(e.path)
 }
 
 // classifySourceReach decides, from a finished run's error, whether the run reached the
@@ -71,6 +74,33 @@ func classifySourceReach(err error) (sourceReach, string) {
 func FoundSourceUnreachable(err error) bool {
 	reach, _ := classifySourceReach(err)
 	return reach == sourceUnreachable
+}
+
+// skippedInputs are the inputs DiscoverInputs skipped as gone, each with the account's name when
+// the Thunderbird profile's settings still name an account for that folder (MA-1471), read as the
+// wizard's list reads it (thunderbird.FindProfileDir, ReadStoreFacts), cleaned and capped as the
+// list says it; "" for a folder no account names (an account removed on purpose) or one outside a
+// profile.
+func skippedInputs(gone []string) []SkippedInput {
+	out := make([]SkippedInput, 0, len(gone))
+	for _, p := range gone {
+		out = append(out, SkippedInput{Path: p, Name: goneAccountName(p)})
+	}
+	return out
+}
+
+// goneAccountName is the name Thunderbird shows for the account whose folder the gone input p
+// was, or "".
+func goneAccountName(p string) string {
+	profile, ok := thunderbird.FindProfileDir(p)
+	if !ok {
+		return ""
+	}
+	f, err := thunderbird.ReadStoreFacts(profile, p)
+	if err != nil || f.Account == nil || !f.Whole {
+		return ""
+	}
+	return state.CleanFolderName(f.Name)
 }
 
 // Seams so a test moves the streak without touching a real archive-local file.

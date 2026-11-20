@@ -21,9 +21,9 @@ func TestDiscoverInputs(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	got, err := DiscoverInputs([]string{dataDir}, false)
-	if err != nil {
-		t.Fatal(err)
+	got, skipped, err := DiscoverInputs([]string{dataDir}, false)
+	if err != nil || len(skipped) != 0 {
+		t.Fatal(err, skipped)
 	}
 	assure.Reached(t, got, "data files discovered under a directory")
 	if len(got) != 2 {
@@ -42,7 +42,7 @@ func TestDiscoverInputs(t *testing.T) {
 	if err := os.MkdirAll(filepath.Join(store, "cur"), 0o755); err != nil {
 		t.Fatal(err)
 	}
-	got, err = DiscoverInputs([]string{store}, false)
+	got, _, err = DiscoverInputs([]string{store}, false)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -51,7 +51,7 @@ func TestDiscoverInputs(t *testing.T) {
 	}
 
 	// The same file listed twice is de-duplicated.
-	got, err = DiscoverInputs([]string{filepath.Join(dataDir, "a.pst"), filepath.Join(dataDir, "a.pst")}, false)
+	got, _, err = DiscoverInputs([]string{filepath.Join(dataDir, "a.pst"), filepath.Join(dataDir, "a.pst")}, false)
 	if err != nil {
 		t.Fatal(err)
 	}
