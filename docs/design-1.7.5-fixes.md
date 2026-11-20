@@ -1,8 +1,11 @@
 # 1.7.5: a combined archive keeps going, an empty answer installs nothing, and Delete waits for you
 
-**Status:** DRAFT, revision 1, 2026-11-19, for the pre-code design review
-(`../assurance-kit/process/design-review.md`). Branch `combined-archive-gone-mailbox`, off main
-`ed491c4` (release 1.7.4). Nothing is built yet.
+**Status:** DRAFT, revision 2, 2026-11-20, for the fold check of the pre-code design review
+(`../assurance-kit/process/design-review.md`, procedure step 4). Revision 1 (commit `47f9efd`) was
+reviewed in `docs/review-1.7.5-predesign.md` (commit `34e3baa`): GO WITH CONDITIONS, 30 confirmed
+findings (1 HIGH, 10 MEDIUM, 19 LOW), 4 owner questions. This revision folds every confirmed
+finding (§8 maps each one) and records the owner's four answers (§0). Open items are in §7.
+Branch `combined-archive-gone-mailbox`, off main `ed491c4` (release 1.7.4). Nothing is built yet.
 
 ## 0. The owner's words
 
@@ -15,11 +18,29 @@
   window. Irritating"
 - 2026-11-19: "maybe add an option to forgo the check and delete immediately?" The session
   answered: keep the check, because it is how MailArchive tells the archive's files from anything
-  else in the folder, but take the wait away (part 3.2).
+  else in the folder, but take the wait away (part 3.2). That narrower form had no recorded answer
+  in revision 1; question 1 below is its answer.
+- 2026-11-20, the owner's answers to the review's four questions (`docs/review-1.7.5-predesign.md`,
+  "OWNER QUESTIONS"). Each was answered "Yes (Recommended)":
+  - **Q1.** May **Delete when the check finishes** delete without first showing the list of what
+    it removes, when nothing in that list needs a decision? It still runs the full check, checks
+    again just before deleting, and the server refuses in any other case: a narrow, recorded
+    exception to X14 ("you always see what will be deleted first"). Answer: "Yes (Recommended)".
+    Folded in §3.2 ("X14, amended").
+  - **Q2.** Does a gone mailbox's WARN turn into a note 14 days after it was first found gone,
+    counted between backups, not by the calendar? Answer: "Yes (Recommended)". Folded in §1.3 and
+    MA-1472.
+  - **Q3.** May the encrypted archive's record carry one fixed sentence with no folder name in it
+    ("a mailbox this archive backs up was not found"), so encrypted combined archives get the same
+    skip and still warn? Answer: "Yes (Recommended)". Folded in §1.3, MA-734 (amended) and MA-1478.
+  - **Q4.** With one email account plus Thunderbird's Local Folders, losing that one account keeps
+    backups "succeeding" on Local Folders with a status WARN and no email; the WARN adds "if you
+    didn't remove it, add the account back in Thunderbird". Answer: "Yes (Recommended)". Folded in
+    §1.2 ("The commonest case"), §1.3 and P2.
 
 The three parts are independent: each can be reviewed, built and reverted alone. They ship
 together as 1.7.5 because each is small. The per-mailbox archives the owner also approved
-(questions 2 to 4) are the next release's, with their own design.
+(questions 2 to 4 of 2026-11-19) are the next release's, with their own design.
 
 ## 1. A missing mailbox no longer stops a combined archive
 
@@ -27,11 +48,12 @@ together as 1.7.5 because each is small. The per-mailbox archives the owner also
 
 - "All of them" in the wizard's mailbox list saves every mailbox found AND auto-discovery
   (`internal/wizard/picker.go:85-86`; `jobFor`, `internal/wizard/wizard.go:2235-2241`, writes
-  `Inputs` and `Auto`). This has been so since `bc6e9d0` (2026-09-02).
+  `Inputs` and `Auto`). This has been so since `bc6e9d0` (2026-09-02). The list, and so "All of
+  them", is shown only when two or more mailboxes are found (`picker.go:72-75`).
 - Every run calls `DiscoverInputs(opts.Inputs, opts.Auto)` (`internal/app/run.go:631`). Its loop
-  over the listed inputs returns `sourceUnreachableError` for the first one that does not exist
-  (`run.go:1981-1987`), before auto-discovery runs (`run.go:2006-2010`). The run is refused before
-  any mailbox is read (`run.go:632-642`); an unattended run records it as failed
+  over the listed inputs returns `sourceUnreachableError` for the first one `os.Stat` says does not
+  exist (`run.go:1981-1987`), before auto-discovery runs (`run.go:2006-2010`). The run is refused
+  before any mailbox is read (`run.go:632-642`); an unattended run records it as failed
   (`RecordRefusedRun`). Run now does the same (`internal/wizard/jobrun.go:368-370`). The command
   line's `export` calls the same function up front (`cmd/mailarchive/main.go:275`).
 - That error moves the source-loss streak (`internal/app/sourceloss.go:60-63`). Status warns
@@ -40,116 +62,350 @@ together as 1.7.5 because each is small. The per-mailbox archives the owner also
 - So when one account's folder is gone (an account removed in Thunderbird together with its mail,
   or a leftover folder deleted), every account in that archive stops being backed up. Each run
   sends its failure notice and email, and after 30 days the schedule pauses itself.
-- MailArchive Desktop's rebuild of a local schedule from the last-run record refuses when any
-  listed `-input` is gone (`reconstructLocalJob`, `internal/desktop/localschedule.go:77-109`), so
-  Settings cannot save that archive's schedule again either. Its comment (`localschedule.go:74-75`)
-  and `internal/desktop/localarchive.go:280-283` say an `-auto` job records no `-input`; since
-  `bc6e9d0` that is not so for the wizard's jobs.
+- MailArchive Desktop rebuilds a local schedule from the last-run record in two places only: when
+  Settings creates a schedule for an archive with no job file yet (`localschedule.go:193-197`), and
+  when it checks whether a command-line schedule can be turned into a Desktop one
+  (`internal/desktop/dashboard.go:1659-1675`). That rebuild refuses when any listed `-input` is gone
+  (`reconstructLocalJob`, `internal/desktop/localschedule.go:77-109`), so Settings cannot create
+  that archive's schedule again. An edit, Repair included, keeps the job file as it is and never
+  rebuilds (`localschedule.go:188-192`), so it is not stopped. The rebuild's comment
+  (`localschedule.go:74-75`) and `internal/desktop/localarchive.go:280-283` say an `-auto` job
+  records no `-input`; since `bc6e9d0` that is not so for the wizard's jobs.
 
 ### 1.2 The rule
 
 With auto-discovery on (a scheduled run, Run now, the wizard, or the command line's `-auto`
-together with `-input`), a listed input that does not exist (`fs.ErrNotExist`, as today) is
-**skipped instead of refused** when both of these hold:
+together with `-input`), a listed input is **skipped instead of refused** only when all four of
+these hold:
 
-- **(a) It lies where auto-discovery looks.** Its path matches one of the patterns
-  `autoDiscover` globs (`outlookGlobs`, `thunderbirdGlobs`, `evolutionGlobs`;
-  `run.go:2069-2117`). The comparison uses `filepath.Match` with both sides cleaned, and lower-cased
-  on Windows and macOS, whose file systems ignore case.
-- **(b) At least one mailbox remains** after the skip: a listed input that exists, or one that
+- **(a) It is gone, not unreachable.** `os.Lstat` says it does not exist (`fs.ErrNotExist`).
+  Today's check is `os.Stat` (`run.go:1982-1987`), which follows links, so a link whose target is
+  on an unplugged drive reads as gone. For `os.Lstat` a dangling link exists, so it is not skipped:
+  it refuses as today.
+- **(b) It lies where auto-discovery looks.** Its path, cleaned, matches one of the patterns
+  `autoDiscover` globs (`outlookGlobs`, `thunderbirdGlobs`, `evolutionGlobs`; `run.go:2069-2118`)
+  by `filepath.Match`, the pattern cleaned too. Both sides are lower-cased on Windows only. A macOS
+  volume can be case-sensitive APFS, where `filepath.Glob` would never find a path spelled in
+  another case (`run.go:2049`, `:2060`), so on macOS and Linux the comparison is as spelled.
+  (`state.PathSourceID` still folds case on macOS, `internal/state/manifest.go:490-503`: that
+  answers another question, whether two spellings are one store already recorded.)
+- **(c) Its parent folder is still there, as a real folder, in the same place.** `os.Stat` of the
+  parent says it is a folder, and the parent resolved with `filepath.EvalSymlinks` matches the
+  pattern's folder part (the pattern without its last element) rebuilt on the pattern's root (its
+  leading part with no wildcard) resolved the same way. For a Thunderbird account
+  `PROFILE/ImapMail/ACCOUNT`, the profile's `ImapMail` (or `Mail`) folder must be there. A link at or
+  above the root (a home folder, or a whole `.thunderbird` folder, kept elsewhere) resolves alike on
+  both sides and still counts. A link below the root (a profile folder or an `ImapMail` folder that
+  is a link or a junction) takes the resolved parent outside the place, and the input refuses as
+  today. A parent that cannot be read (an unplugged drive, an offline network share under a
+  redirected `APPDATA`) refuses as today.
+- **(d) At least one mailbox remains** after the skips: a listed input that exists, or a store
   auto-discovery finds this run.
 
-Otherwise the run is refused exactly as today, with the same `sourceUnreachableError` naming the
-first missing listed input:
+Otherwise the run is refused exactly as today, with `sourceUnreachableError`
+(`app/sourceloss.go:33-37`) naming the first listed input that does not meet (a) to (c), or, when
+every gone input meets them and only (d) fails, the first gone one:
 
 - A listed input outside those places (a `.pst` on a USB drive, a mail folder elsewhere) still
-  refuses when it is gone. This is the "unplugged drive" case the owner was told stays caught.
-- When nothing remains (a whole Thunderbird profile gone, the user folder unavailable), the run
-  refuses as today. The source-loss streak, the 3-day warning and the 30-day pause work as today.
+  refuses when it is gone, and so does one reached through a link below the place's root, or one
+  that is a link to something gone. This is the "unplugged drive" case the owner was told stays
+  caught.
+- When a gone input's own group folder is gone too (the profile's `ImapMail` or `Mail` folder, the
+  whole profile, or the user folder), the run refuses as today, whatever else remains: rule (c)
+  fails. When no listed or discovered mailbox remains, it refuses too: rule (d). In both, the
+  source-loss streak, the 3-day warning and the 30-day pause work as today.
 - Without auto-discovery (an archive of one chosen mailbox, or `-input` alone), nothing changes.
 - A listed input that exists but cannot be read stays a plain error, as today (`run.go:1987`).
 
-**Why (a):** a gone input in a place auto-discovery looks is one the same run would back up by
-itself if it came back. Skipping it loses nothing the job's "(and any added later)" did not
-already promise to find.
+**The commonest case, ruled by the owner (Q4).** A Thunderbird profile's Local Folders is a store
+auto-discovery finds (`run.go:2097`), and "All of them" needs two stores found (§1.1). So the
+commonest combined archive is one mail account plus Local Folders. When that account's folder is
+gone and the profile's `ImapMail` folder is still there, rule (d) is met by Local Folders alone:
+the backups keep succeeding on Local Folders, status WARNs (§1.3) with the words the owner asked
+for, and no email is sent. The owner accepted this on 2026-11-20 (§0, Q4). Whether Thunderbird also
+removes `ImapMail` when it removes its last IMAP account is recalled, not read; if it does, rule (c)
+refuses that case as today.
 
-**Where:** one function, used by every path. `DiscoverInputs` keeps its signature and meaning for
-callers that do not report skips (the wizard's list, `prepareThunderbird`). A new
-`DiscoverInputsSkipping(inputs, auto) (files, skipped []string, err error)` holds the rule.
-`DiscoverInputs` calls it and drops `skipped`. `app.Run` and the command line's `export`
-(`main.go:275`) call it and report what they skipped (§1.3).
+**Why (b) and (c):** a gone input whose group folder is still there, in a place auto-discovery
+looks, is one the same run would back up by itself if it came back. Skipping it loses nothing the
+job's "(and any added later)" did not already promise to find. A gone group folder, a link, or a
+place outside auto-discovery can mean something larger is missing, so it refuses.
+
+**Where:** one function holds the rule, and every caller sees the skips. `DiscoverInputs` gains a
+return, `DiscoverInputs(inputs, auto) (files, skipped []string, err error)`, with no wrapper that
+drops the list, so a later caller (the next release's per-mailbox archives) cannot lose it
+without saying so:
+
+- `app.Run` records and reports the skips (§1.3) and returns them in its `Result` (`Skipped`, each
+  with its path, the account's name when it can be read, and its `Since`).
+- The command line's up-front call (`main.go:275`) uses them only for `-list` and `-follow-links`
+  (§1.5).
+- `prepareThunderbird` (`main.go:2088`) and the wizard's list (`wizard.go:787`, which passes no
+  inputs) discard them on purpose (`files, _, err :=`, with a comment saying why): they prepare or
+  list stores that exist, and the run reports the skip. With `auto` on, they now skip a gone input
+  silently, where today they refuse; revision 1 wrongly said `DiscoverInputs` kept its meaning.
+- Rules (a) to (c) are one exported test, `app.GoneSkippable(path)`, which the Desktop's rebuild
+  uses too (§1.4), so the run and the rebuild cannot disagree. `app.GoneSourceID(path)` is the id
+  of a gone input (§1.3).
+- The tests that call `DiscoverInputs` today take the new return; none of their assertions is
+  dropped.
 
 ### 1.3 What the person is told
 
-- **The run log** (a plaintext archive's `mailarchive.log`, or the command line's `-log`): one line
-  per skipped input. "Skipped PATH: it is no longer on this computer. The mail already saved from it
-  stays in the archive; the other mailboxes were backed up."
-- **The last-run record** (plaintext only): one `RunWarning` per skipped input, code
-  `mailbox_gone`. Two additive, optional fields on `RunWarning` carry it: `Path` (the skipped input,
-  as listed) and `Since` (when a run first found it gone). A run copies `Since` from the previous
-  last-run record's `mailbox_gone` warning for the same input, compared by `state.PathSourceID`;
-  otherwise `Since` is the run's start. `Message` keeps a whole sentence, for any reader that does
-  not know the new fields.
+- **The run log.** Straight after discovery, one line per skipped input, in the same log as the
+  run's "Reading PATH (store: …)" lines (`run.go:1856`), so it says nothing that log does not
+  already say: "Not found, so skipped: NAME (PATH). It is no longer on this computer; the mail
+  already saved from it stays in the archive." It no longer says the other mailboxes were backed
+  up: at discovery that has not happened yet. That is said only at the end, in the summaries, of a
+  run that finished. NAME is the account's name when the profile's settings still name an account
+  for that folder, read as the picker reads it (`thunderbird.FindProfileDir` and `ReadStoreFacts`,
+  `picker.go:185-201`), and is left out otherwise (an account removed on purpose). Both read the
+  profile's settings and the path (`internal/thunderbird/thunderbird.go:52-70`,
+  `storefacts.go:82-110`); `matchAccountIn` was not read, so the build confirms that they answer for
+  a folder that is gone, and leaves NAME out where they do not.
+- **The last-run record** (plaintext). One `RunWarning` per skipped input, code `mailbox_gone`.
+  Three additive, optional fields on `RunWarning` (`internal/state/lastrun.go:213-216`), each
+  `omitempty`, so a record without them is written byte for byte as before (MA-734's plaintext
+  twin): `Path` (the input as listed), `Name` (NAME above, or empty) and `Since` (when it was first
+  found gone). `ReadLastRun`'s single cleaning point (`lastrun.go:374-380`, INS2-2) strips control
+  characters from `Path` and `Name` too, beside `Code` and `Message`, so every reader gets them
+  clean, not only `internal/health`. `Message` keeps a whole sentence; no reader shows it for this
+  code (below).
+- **How `Since` is kept: in the run's own warnings, not in a new file.** The skip warnings go into
+  `opts.Warnings` straight after discovery (`run.go:631`), before the out-guard's second check, the
+  lock (`run.go:676`) and `beginRun` (`run.go:743`). `opts.Warnings` already reaches every record
+  the run writes: the "running" record (`newRunRecord`, `run.go:1390`), a refused one
+  (`writeRefusedRun`, `run.go:1445-1459`) and the final one (`recordRun` starts from the running
+  record, `run.go:807`, `:1533`). So a run that is cancelled, killed part way (its running record
+  stays), or refused after discovery keeps every `Since`. Each `Since` is resolved there, once,
+  from what is on disk before this run writes anything:
+  1. the previous last-run record's `mailbox_gone` warning for the same input, compared by
+     `app.GoneSourceID`;
+  2. else, when the source-loss streak's last kind is `local-source-unreachable` (read now, before
+     this run's end resets it, `app/sourceloss.go:86-102`, `state/sourceloss.go:64-73`) and the
+     previous record is a failed run whose error is this input's own refusal
+     (`app/sourceloss.go:35-37`; 1.7.4 names the first gone input in list order), the streak's
+     `FirstUnreachable`: when the archive that was failing first found it gone;
+  3. else this run's start.
+
+  A `Since` later than this run's start becomes this run's start (a clock that was ahead). One
+  before `state.MinPlausibleTime` (2024-01-01, `state/sourceloss.go:93-95`; a clock that was not
+  set) becomes this run's start and is never carried, as the streak does (MA-891). The previous
+  record is read before the lock. That is safe: it is written whole, by a rename
+  (`lastrun.go:231-260`), and a run that holds the lock meanwhile makes this one refuse at the lock,
+  writing nothing (`lockRefusal`, `internal/app/emptied.go:213-220`).
+  **The id of a gone input.** `state.PathSourceID` of a gone path cannot resolve links
+  (`manifest.go:490-503`: `EvalSymlinks` fails, so the path is only cleaned), while a recorded
+  store's id was resolved when the store existed. `app.GoneSourceID(path)` is `state.PathSourceID`
+  of the parent resolved (rule (c) says it is there) joined with the input's last name, so a link
+  above it (on macOS, `/var` is one) resolves as it did when the store was recorded.
+  **Why not a small file beside the source streak**, the review's other choice:
+  `state.PathSourceID` is the path itself (`"path:" + abs`, `manifest.go:490-503`), so such a file
+  would name the archive's mailboxes beside it. It could never be written beside an encrypted
+  archive (A6, P2a-C16), so it would serve plaintext archives only, as the record does. It would
+  also need its own bounded reader, its cleaning, a version, a rule for dropping inputs no longer
+  listed, and its name added to MailArchive's own files for the emptied-folder guard
+  (`emptied.go:34`) and for the encrypted tree's check (`internal/assure/leak/tree.go:39`). What it
+  would add is a `Since` that survives a run whose record lacks the warning: a one-off run into the
+  archive without `-auto`, a record that cannot be read, a run refused before discovery, a
+  downgrade to 1.7.4. Each of those restarts `Since` at a later date, so the WARN lasts longer,
+  never shorter. That direction is accepted.
 - **status and the Desktop's health view** (one status truth, X10). `internal/health` adds
-  `mailbox_gone` to its list of known warning codes and builds the words itself from `Path` and
-  `Since`, cleaned of control characters. It never shows the recorded `Message` for this code.
-  - For 14 days from `Since` it is a WARN: "a mailbox this archive backs up is no longer on this
-    computer: PATH (not found since DATE). Its mail already saved stays in the archive, and the
-    other mailboxes are still backed up. If you removed that account on purpose, nothing needs
-    doing: this becomes a note on DATE+14."
-  - After that it is a note (GREEN): "a mailbox this archive backed up is no longer on this
-    computer: PATH (not found since DATE). Its mail already saved stays in the archive."
-  - A `Since` in the future (a clock that went back) counts as the run's start: the WARN shows,
-    and it is never hidden by a wrong date.
-- **The wizard's summary and the command line's end-of-run summary.** These carry the same count
-  as status (X6): "Not found, so skipped: N mailbox(es). They are no longer on this computer, and
-  the mail already saved from them stays in the archive:", then one path per line.
-- **Notices and emails.** None for a skip: the run succeeded. An archive that was failing because
-  of a gone mailbox recovers on its first 1.7.5 run, and gets the existing recovery notice and
-  email if alerts are on. Status then says which mailbox is gone.
-- **Encrypted archives.** The skip applies to them too. Nothing new is written beside them: their
-  record's frozen allow-list keeps no warnings (`internal/state/encrypted_record.go:136-149`), so
-  status cannot show the skip. The person is told on screen in the attended run's own result (the
-  wizard's summary, or the command line's output). *Conditional:* whether Desktop's Run now result
-  for an encrypted archive can carry the line without writing it anywhere is to be checked in the
-  build. If it cannot, that surface says nothing, and this note says so.
+  `mailbox_gone` to the codes it knows (`internal/health/health.go:778-805`) and builds the words
+  itself from `Path`, `Name` and `Since`. It never shows the recorded `Message` for this code.
+  - **The 14 days (owner, Q2) are counted between backups.** The WARN shows while the last run's
+    start (the record's own `Started`) minus `Since` is under 14 days. It is never compared with
+    now, like the 3 and 30 days (`state/sourceloss.go:23-38`). So a computer that was off for two
+    weeks after the run that found the mailbox gone still shows the WARN at its next backup. A
+    `Since` that is zero, before `MinPlausibleTime`, or after `Started` (a planted or damaged
+    record) counts as no time at all, so the WARN shows. The length is a new constant beside the
+    other two, `state.MailboxGoneNoteAfter = 14 * 24 * time.Hour`, whose comment cites the owner's
+    ruling of 2026-11-20.
+  - The WARN (the friction review owns the final words): "a mailbox this archive backs up is no
+    longer on this computer: NAME (PATH), not found since DATE. Its mail already saved stays in the
+    archive, and the other mailboxes are still backed up. If you removed it on purpose, nothing
+    needs doing: from the first backup on or after DATE+14 this is only a note. If you didn't remove
+    it, add the account back in Thunderbird and the next backup finds it again." For a path in
+    Outlook's or Evolution's place, the last sentence names that program instead.
+  - After that, a note (GREEN): "a mailbox this archive backed up is no longer on this computer:
+    NAME (PATH), not found since DATE. Its mail already saved stays in the archive. This line stays
+    while the archive's backup lists that mailbox; to end it, set the archive up again in the
+    wizard, with the same archive folder, and choose All of them."
+  - **It is permanent until then.** A gone input never leaves the job by itself: an edit never
+    rebuilds (`localschedule.go:188-192`), and §1.4 keeps it. So the run log line, the summaries'
+    lines and the note repeat on every run. The note's last sentence says how to end it; there is
+    no new button (§5).
+  - **A downgraded status** (1.7.4 or older) shows nothing for this warning: health shows only the
+    codes it knows (`health.go:778-805`), and nothing reads `Message` for a code it does not know.
+    Revision 1's reason for keeping `Message` ("for any reader that does not know the new fields")
+    is dropped; the release notes say it (§4).
+- **The summaries** (X6: the same count as status). The wizard's summary (`exportSummaryFor`,
+  `wizard.go:1937`), the command line's end-of-run summary (`printSummaryFor`, `main.go:2404`,
+  printed only for a run that reached its end, `main.go:444`), the plaintext Run now note
+  (`runNowSummaryFor`, `jobrun.go:132`) and the encrypted one (`encryptedSummaryFor`,
+  `jobrun.go:298`) each add, from `Result.Skipped`: "Not found, so skipped: N mailbox(es). They are
+  no longer on this computer, and the mail already saved from them stays in the archive; the other
+  mailboxes were backed up:", then one "NAME (PATH)" per line, then "If you didn't remove one on
+  purpose, add its account back in Thunderbird." These are said at the end of a run that finished,
+  so "were backed up" is true when it is said.
+- **Notices and emails.** None for a skip: the run succeeded (owner, Q4: "no email"). An archive
+  that was failing because of a gone mailbox recovers on its first 1.7.5 run and gets the existing
+  recovery notice and email if alerts are on; status then says which mailbox is gone. An archive
+  1.7.4 already stopped makes no run by itself (next item).
+- **Archives 1.7.4 already stopped.** An archive 1.7.4 auto-paused has no live scheduler entry
+  (`AutoPauseIfDue`, `internal/wizard/pause.go:124-147`), so no 1.7.5 run comes by itself, and
+  today's words ask to "reconnect the source" (`health.go:511`, `dashboard.go:2392`,
+  `internal/desktop/settingscard.go:205-206`), which a person who removed the account on purpose
+  cannot do. For an archive whose plaintext last-run record has `-auto` in its job (`canonicalJob`,
+  `run.go:1493-1500`) and whose streak's last kind is `local-source-unreachable`, those three places
+  say instead (the friction review owns the final words): "This archive's source hasn't been
+  reachable since DATE. If a mail account was removed, click Repair (or Run now): this version
+  skips a mailbox that is gone and backs up the others. Repair starts the schedule again; Run now
+  backs up once. Otherwise reconnect the source (its mailbox or mail folder)." One helper decides
+  it for all three, beside `sourceLostSince` (`internal/desktop/archives.go:263`), reading the
+  record bounded and never through a link as `tbBanner` does (`archives.go:248-256`), so the three
+  agree. Every other archive keeps today's words, which their tests pin (`wording_v152_test.go:31`,
+  `ma949_manual_backup_test.go:551-553`). The 1.7.5 auto-pause email and log line (`wizard.go:392`,
+  `:461`) keep "reconnect the source": 1.7.5 pauses an `-auto` archive only after runs the skip did
+  not apply to (a gone group folder, a link, a place outside, nothing left), where Repair alone
+  would fail again (open item O2). An encrypted archive's record has no job and its streak no kind
+  (A6; `app/sourceloss.go:91-93`), so its words stay as today; the release notes tell those owners
+  to click Repair (§4). When such an archive runs again, its first `Since` comes from the streak
+  (rule 2 above), not from the day of the upgrade.
+- **Encrypted archives** (owner, Q3). The skip applies to them too. Their record stays the frozen
+  allow-list (`encryptedLastRun`, `internal/state/encrypted_record.go:141-149`) plus the one field
+  the owner allowed: `mailbox_gone`, a boolean written only when it is true, meaning this run
+  skipped a mailbox. `LastRun.MailboxGone` is set by `newRunRecord`'s encrypted branch
+  (`run.go:1376-1384`) from the run's own skip warnings, which stay in memory and are never written
+  beside the archive. A boolean can carry nothing else: no path, no name, no count, no date.
+  `marshalLastRun` (`encrypted_record.go:153-165`) writes it, and MA-734's key check
+  (`internal/state/encrypted_record_test.go:69-74`) gains this one key, with the owner's ruling
+  (MA-734, amended, §1.6).
+  - status and the Desktop's health view show it as a WARN in one fixed sentence,
+    `state.MailboxGoneText`, beside the program line (`health.go:557-570`); the friction review owns
+    the final words: "a mailbox this archive backs up was not found, so it was skipped and the
+    others were backed up; click Run now in MailArchive Desktop to see which one".
+  - The attended surfaces name the mailbox, in memory only. Revision 1 left Desktop's Run now as a
+    condition; it is settled. The wizard's summary and the Desktop's Run now note for an encrypted
+    archive both come from `encryptedSummaryFor` (`jobrun.go:279`, `:298-321`), which already
+    carries lines held only in memory: the Thunderbird lines, "from the run's result in memory only
+    (O1): the Desktop clears the whole note at Lock or a switch (C-15), and nothing of it is written
+    beside the archive" (`jobrun.go:123-129`, `:291-297`). The skip lines join them the same way.
+  - The encrypted WARN does not turn into a note after 14 days. The owner allowed one fixed
+    sentence, and a fade needs a first-found date beside the archive. So it stays a WARN on every
+    backup that skips (open item O1).
 
 ### 1.4 The Desktop's schedule rebuild
 
-In `reconstructLocalJob` (`localschedule.go:77-109`), for a job with `-auto`, a reconstructed
-`-input` that is gone (its `Lstat` says it does not exist) and that lies where auto-discovery looks
-(§1.2 (a)) is dropped from the rebuilt job's inputs instead of refusing the rebuild. Every other
-check stays for every input that exists: not a link, not a special file, not under the archive's
-`_outlook-pst`, and one of the archive's own manifest stores (adversarial finding A2). A gone input
-outside those places, or any gone input of a job without `-auto`, refuses as today. The two stale
-comments are corrected.
+The rebuild runs only for a Settings create (no job file yet) and for the command-line-schedule
+conversion check (§1.1). In `reconstructLocalJob` (`localschedule.go:77-109`), for a job with
+`-auto`, a reconstructed `-input` that `lstatSource` (`localschedule.go:113`) says does not exist
+and that `app.GoneSkippable` accepts (§1.2 (a) to (c)) is **kept** in the rebuilt job, not
+dropped. It must still be one of the archive's own recorded stores: `ids[app.GoneSourceID(in)]`
+against `manifestStoreIDs` (`localschedule.go:54`; adversarial finding A2). The run-time rule then
+skips it and warns on every run (§1.3).
 
-### 1.5 Rows
+- Every other check stays for every input that exists: not a link, not a special file, not under
+  the archive's `_outlook-pst`, and one of the archive's recorded stores (A2).
+- The rebuild refuses, as today, when no listed input exists. Dropping gone inputs, as revision 1
+  had it, could rebuild a pure `-auto` job whose runs then fail as "no input mail sources found"
+  (`run.go:632-633`), a failure that leaves the streak (`app/sourceloss.go:49-66`): no 3-day warning
+  and no 30-day pause. Keeping the inputs, and refusing when none exists, keeps the streak working
+  and keeps every gone mailbox warned.
+- It also refuses, as today, for a gone input that `app.GoneSkippable` does not accept (outside the
+  place, a link, a gone group folder) and for any gone input of a job without `-auto`.
+- The two stale comments (`localschedule.go:74-75`, `localarchive.go:280-283`) are corrected: since
+  `bc6e9d0`, the wizard's `-auto` jobs list their inputs.
+
+### 1.5 The command line
+
+- **One place reports the skips:** `app.Run`'s `Result.Skipped`, through `printSummaryFor` (§1.3).
+  The up-front discovery (`main.go:275`) reports none of its own, so the terminal never prints two
+  lists that could disagree if a folder goes between the two discoveries.
+- **`-list`** (`main.go:280-282`, `listStores`, `main.go:555`) prints the stores found, then one
+  "Not found, so skipped: PATH" line per skipped input.
+- **`-follow-links`** (`main.go:276-279`): an opt-in is checked against the inputs found plus the
+  skipped ones. So an opt-in that names a skipped input is no longer refused with words that do not
+  fit ("is not one of the inputs being archived", `FollowLinksRefusal`, `run.go:240-254`) and a
+  kind that leaves the streak. It reads nothing this run, since the input is not read.
+  Command-line schedules keep their `-follow-links` (`cmd/mailarchive/job.go:295-297`), so this
+  matters on every scheduled run. The schedule's own check when it is made (`job.go:266`, against
+  the listed inputs) is unchanged. The review's words were "the listed inputs minus the skipped
+  ones"; this design checks "found plus skipped" so that an opt-in for a store found only by
+  auto-discovery, which works today, is not newly refused (open item O3).
+- `export -auto -input X`, with X skipped under §1.2, now exits 0 where it refused; the release
+  notes say so (§4).
+
+### 1.6 Rows
 
 - **MA-103, amended** (owner, 2026-11-19; nothing weakened for a plain `-input`): "… a missing
-  `-input` path is refused …, except with `-auto`, where a missing listed input in a place
-  auto-discovery looks is skipped, and warned, while another mailbox remains (MA-1471)".
-- **MA-688, amended:** the typed error is returned for such an input only when nothing remains.
-- **MA-1471** (new): the rule in §1.2, through `DiscoverInputsSkipping`, for `app.Run`, Run now,
-  the scheduled run and the command line. It also covers the run log's line and both summaries.
-- **MA-1472** (new): the record's `mailbox_gone` warning, `Since` carried from run to run, and
-  status's WARN turning into a note after 14 days, the same in the Desktop's health view.
-- **MA-1473** (new): the rebuild drops a gone input that lies where auto-discovery looks, under
-  `-auto` only, and keeps A2's checks for every input that exists.
+  `-input` path is refused …, except with `-auto`, where a listed input that is gone (`Lstat`),
+  lies where auto-discovery looks, and whose parent folder is still there as a folder in that place
+  is skipped, and warned, while another mailbox remains (MA-1471)".
+- **MA-688, amended:** the typed error is returned for a gone input §1.2 does not skip, and when
+  nothing remains. A skipped input is not an error, so its run reaches the source and resets the
+  streak (owner, Q4).
+- **MA-734, amended** (owner, 2026-11-20, Q3; nothing else widened): the encrypted record's
+  allow-list is "version, status, started, finished, error kind, program, the encrypted flag, and
+  `mailbox_gone` (a boolean, written only when true: a mailbox this archive backs up was not
+  found)". The existing key check gains that one key; MA-1478 proves it names no path.
+- **MA-1471** (new): the rule in §1.2, through `DiscoverInputs`, for `app.Run`, Run now, the
+  scheduled run and the command line. Positive twin first: an "All of them" archive with one
+  account folder gone and its `ImapMail` there is skipped while another remains, including the
+  Local Folders case of Q4. Each refusal through `assure.Refused` (the typed error, the input
+  named, nothing read, the streak moved): a dangling link; a gone group folder (a whole profile);
+  a profile reached through a link below the place's root; an input outside the places; on macOS
+  and Linux an input spelled in another case; nothing remaining. It also covers the run log's line
+  and the four summaries' lines from `Result.Skipped`, the plaintext Run now note among them.
+- **MA-1472** (new): the plaintext record's `mailbox_gone` warning (`Path`, `Name`, `Since`), cleaned
+  at `ReadLastRun`; `Since` resolved by the three rules, clamped to this run's start, never before
+  `MinPlausibleTime`; kept by a refused run after discovery, a cancelled run and a killed run's
+  running record; health's WARN while the last run's start minus `Since` is under 14 days and a
+  note after, never compared with now (a record whose last run is 15 days after `Since` but read
+  "today" a year later is a note, one 13 days after is a WARN whatever today is); the same in the
+  Desktop's health view.
+- **MA-1473** (new): the rebuild keeps a gone input that `app.GoneSkippable` accepts, under `-auto`
+  only and only when it is a recorded store by `app.GoneSourceID`; refuses when no listed input
+  exists; keeps A2's checks for every input that exists. Run for a Settings create and for the
+  conversion check.
+- **MA-1478** (new): encrypted archives (owner, Q3): the skip applies; the record carries
+  `mailbox_gone: true` and nothing else new (its bytes hold no path, no account name, no count,
+  no date); status and the health view WARN in the fixed sentence; the wizard's summary and the Run
+  now note name the mailbox from the result in memory, and nothing of it is written beside the
+  archive; the WARN does not fade (O1).
+- **MA-1479** (new): the words for a source-lost or auto-paused `-auto` archive (plaintext record
+  with `-auto`, streak kind `local-source-unreachable`) in status, the Your-archives banner and the
+  Settings card say Repair or Run now; every other archive keeps today's pinned words.
+- **MA-1480** (new): the command line: one report of the skips (from `Result.Skipped`); `-list`
+  prints them; a `-follow-links` opt-in naming a skipped input is not refused, while one naming
+  nothing found or skipped still is (positive twin first).
 
 ## 2. An empty answer to "Keep this archive current?" installs nothing
 
-- `offerSchedule` (`wizard.go:2120-2134`) installs a daily backup for any answer except the exact
+- `offerSchedule` (`wizard.go:2111-2134`) installs a daily backup for any answer except the exact
   "No — just this once". On Linux, zenity can answer a list with nothing selected: it exits 0 with
-  empty text (`third_party/zenity/list_unix.go:7-27`, `util.go:93-108`). MA-1465 already handles
-  that case for the mailbox list. This is read in the code and not run.
-- **Change:** only the exact daily row or weekly row installs. Any other answer, the empty one
-  included, installs nothing (R14: schedules are opt-in).
+  empty text (`third_party/zenity/list_unix.go:7-27`, `util.go:93-108`), and no row is selected to
+  begin with, since `list_unix.go` passes no default row. So OK with nothing chosen is a natural
+  click there. MA-1465 already handles that case for the mailbox list. This is read in the code and
+  not run.
+- **Change:** only the exact daily row or weekly row installs. The question is asked through the
+  `listDialog` seam (`internal/wizard/listtext.go:13`) with `zenity.DisallowEmpty()`, as the mailbox
+  list is (`picker.go:81`; Windows and macOS keep OK off with nothing selected). Any answer that is
+  not one of the three rows, the empty one included, shows MA-1465's note ("Nothing was chosen.
+  Choose one line in the list, then click OK.", `pickAgain`, `picker.go:38`) and asks the question
+  again, as the mailbox list does (`picker.go:80-98`), up to `pickTries` (10) times. After the tenth
+  it ends with a line and installs nothing: "No scheduled backup was set up: the list did not say
+  which line was chosen. To set one up, open Settings in MailArchive Desktop, or run the wizard
+  again." (the friction review owns the words). Cancel and "No — just this once" install nothing,
+  as today (R14: schedules are opt-in).
 - The wizard's other lists already fall to their safe default on an empty answer: export mode goes
   to Incremental (`wizard.go:903`), mail app open goes to No (`:925`), keep `.eml` goes to No
   (`:939`), follow links goes to none (`followLinksFor`, `:1090-1095`), and the Thunderbird sync
   goes to No (`:2147`). The build re-checks the full list.
-- **MA-1474** (new).
+- **MA-1474** (new): positive twin first (the daily row installs). An empty answer, and any text
+  that is not a row, show the note and the question again; ten of them end with the line and no
+  schedule; Cancel and No install nothing. Through the `listDialog` seam, with `assure.Refused`
+  (no scheduler entry, no job file).
 
 ## 3. Delete waits for you
 
@@ -160,34 +416,95 @@ Today a delete plan is held for 10 minutes from when it is ready (`pendingLife`,
 person who steps away comes back to "That delete is no longer waiting — click Delete… again;
 nothing was deleted.", and then waits through the check again.
 
-**Change:** a delete plan waits up to 24 hours (a new `deletePlanLife`). Every other kind of held
-item keeps `pendingLife`'s 10 minutes: a new or changed key, a recovery key to put back, a forget,
-an unencrypted copy, a restore to Thunderbird, and a new encrypted archive. Several of those hold
-keys. A delete plan still ends at once when it is used, when a new plan of the same folder replaces
-it, when the current archive is switched (by its own kind), and at Shut down.
+**Change:** a delete plan waits up to 24 hours (a new `deletePlanLife`) while a panel shows it.
+Every other kind of held item keeps `pendingLife`'s 10 minutes: a new or changed key, a recovery
+key to put back, a forget, an unencrypted copy, a restore to Thunderbird, and a new encrypted
+archive. Several of those hold keys. The store's single `life` field (`pending.go:131-140`, used by
+`put`'s timer at `:161`) becomes one life per kind: `put` takes the delete plans' field for a delete
+plan and the other field for every other kind, each set from its constant. So MA-972's expiry check
+(`ma972_delete_token_test.go:73-76`) keeps its short override, now on the delete plans' field, and
+still proves that a delete plan expires and is refused "no longer waiting".
 
-**Why this is safe:** the 10 minutes never guarded what is deleted. At Delete the plan is checked
-again under the archive lock (`docs/design-archive-delete.md` §3.1 step 2). The folder must be the
-same by identity. The manifest or vault must be unchanged in size, time and SHA-256. The schedule
-entries and the unrecorded list must be unchanged, the scratch listing must still be allowed, and
-none of §7's refusals may be new. Any difference refuses with "This archive changed since you
-clicked Delete. Click Delete again." and removes nothing. A plan kept longer can only be refused
-more often; it can never delete more. The token stays one-use and kind-filtered, behind the page's
-CSRF token and the typed name.
+A delete plan ends at once:
 
-*To check in the build:* that the deletion record (§8.1) says when the check was made, not only
-when the delete ran, so a record of a delete hours after its check is not misleading. If it does
-not, the record gains the check's time.
+- when it is used, when a new plan of the same row replaces it (`deletePlanKey`,
+  `internal/desktop/archivedelete.go:75-78`; `put`, `pending.go:154-160`), when the current archive
+  is switched (by its own kind), and at Shut down, as today;
+- **new:** when the person clicks Cancel on its panel, or another Delete… closes its panel. The page
+  posts its token to a new guarded route, `/api/archive/delete/discard {token}`, which calls
+  `pending.discard(token, isDeletePlan)` (`pending.go:211-217`): only a delete plan's token is
+  taken, and any other kind's is left where it is (del-s3a-A4-02);
+- **new:** when a check's reply reaches a panel that was cancelled or closed during the check: the
+  page opens nothing and posts that reply's token to the same route;
+- **new, best effort:** when the page goes away (a reload, a closed tab), it posts the discard of
+  every delete plan it holds, from a `pagehide` handler, as a keepalive request through the same
+  guarded route.
+
+So the 24 hours apply only to a plan a panel still shows. A plan whose page went away without
+saying so (a browser that was killed, a lost connection, a computer that slept and was shut down)
+waits out its 24 hours. That is bounded: at most one plan per row, since a new plan of the row
+replaces it, and every plan ends at a switch and at Shut down. Two things here are recalled, not
+read: that browsers send a keepalive request from `pagehide`, and whether Go's timers count a
+computer's sleep. If either does not hold, a plan is held longer; it can never delete more (below).
+
+**A backup in between refuses the plan.** The re-check under the lock compares the manifest's size,
+time and SHA-256 and every name to remove (`samePlan`, `internal/archdelete/execute.go:372-377`).
+Any backup that saves mail between the check and Delete changes those. So a plan held across the
+archive's own scheduled backup is refused with "This archive changed since you clicked Delete.
+Click Delete again.", and its token is spent; with an hourly schedule a held plan in practice lasts
+under an hour. The refusal is found only after the second walk (below), and writes its started and
+refused lines to `deletions.log` and a held record, as today (MA-964, MA-984). The page then asks for
+the plan again by itself: the held result shows as today, and the row's panel opens again with
+"Checking what Delete would remove…" and the typed name put back, so the person needs one more
+click when the new plan shows. The delete's reply marks this case (`changed: true`, from
+`archdelete.CaseChanged`), so the page asks again only then.
+
+**Every delete walks the folder twice.** At Delete, the plan is made again in full under the lock
+(`execute.go:340`): the same walk, and the same SHA-256 of the manifest, as the check. So a large
+archive's delete pays for the check twice, and **Delete when the check finishes** pays twice back
+to back. This change does not add the second walk; the second walk is what makes the delete safe
+(next paragraph). The panel's words say it (§3.2), and the lab sizes its archive for it (§4).
+
+**Why holding a plan longer is safe**, restated from `samePlan` (`execute.go:372-377`). Under the
+archive lock the plan is made again (`execute.go:340`), and it must equal the held one in: the
+folder's identity, the kind, the re-run state, this computer's record of an encrypted archive, the
+gone-note, the anchor file (the manifest or the vault: its name, size, time and SHA-256), every
+name to remove, every unrecorded copy's name, the schedules to stop, and those it would not remove.
+Any difference is refused and removes nothing. It does not compare the synced line, the paused
+flag, the kept files, files another program holds, the litter, the folders or the captured values.
+Delete acts only on what the held plan names (`internal/archdelete/archdelete.go:148`). So the
+claim is narrower than revision 1's "can never delete more": **Delete never removes a name the plan
+did not list, however long the plan was held** (P12). A plan kept longer can only be refused more
+often. The token stays one-use and kind-filtered, behind the page's CSRF token and the typed name,
+which the server checks (`archivedelete.go:579`).
+
+**The deletion record.** Revision 1 left open whether the record says when the check was made. It
+does not: it says the delete's own time (`internal/archdelete/record.go:120`), and the plan carries
+no time (`archdelete.go:149`). No line is added: every name it lists was checked again under the
+lock at that time (above), so a record of a delete made hours after its first check does not
+mislead about what was removed.
 
 - **MA-972, amended:** "… a one-use, kind-filtered token … gone after 24 hours for a delete plan
-  (ten minutes for the other kinds) …".
-- **MA-1475** (new): a delete plan's life, and every other kind's.
+  (ten minutes for every other kind), at once when its panel's Cancel, a panel closed for another,
+  a check's reply to a cancelled panel, or the page going away posts its discard (MA-971) …". The
+  expiry check still runs, on the delete plans' own life field; nothing weakened.
+- **MA-971, amended:** five delete routes, not four: `/api/archive/delete/discard {token}` is
+  registered through `d.api` like the others (POST only, `GuardLocalPOST`, the page's epoch, the
+  64 KiB cap, `no-store` and `nosniff`). It takes only a delete plan's token, answers ok whether or
+  not the plan was still waiting, and changes nothing else. `/api/archive/delete` gains `armed` and
+  `row` (MA-1476). Nothing weakened: the four routes' guards are unchanged and the fifth has the
+  same ones.
+- **MA-1475** (new): a delete plan's life, and every other kind's (each from its own field);
+  the discard route ends a delete plan and leaves any other kind's token waiting; a plan held across
+  a backup that saved mail is refused "This archive changed since you clicked Delete. Click Delete
+  again.", removes nothing, and its reply carries `changed: true`. Positive twin first: a plan
+  held past ten minutes (by the field) and unchanged deletes.
 
 ### 3.2 Delete without waiting
 
 The owner asked for a way not to wait for the check. The check itself stays: it is what tells the
 archive's own files from the person's, finds the schedules to stop, and notes a synced folder.
-Only the waiting goes.
+Only the waiting goes, by the owner's ruling of 2026-11-20 (§0, Q1).
 
 **What the person sees.** Clicking Delete… on a row opens the panel at once, before the check
 ends:
@@ -197,25 +514,38 @@ ends:
   deleted yet." While the check runs, the minutes so far are shown.
 - "Folder: PATH"
 - "Type the folder's name, NAME, to delete it (capital letters count)", with the text box ready.
-- **Delete when the check finishes** (danger style; enabled once the typed name matches) and
-  **Cancel**.
+- **Delete when the check finishes** (danger style; enabled once the typed name matches the row's
+  name, below) and **Cancel**.
 
-Clicking **Delete when the check finishes** changes the panel's line to: "MailArchive deletes this
-archive as soon as the check finishes, unless the check finds something you should see first.
-Keep this page open." When the check ends:
+Clicking **Delete when the check finishes** changes the panel's line to: "When the check finishes,
+MailArchive checks once more, then deletes this archive, unless the check finds something you
+should see first. Keep this page open." The minutes keep counting through both checks. When the
+check ends:
 
-- **If the plan is plain** (below) and the typed name matches the plan's name
-  (`archdelete.NameMatches`), the page sends the delete at once, exactly as **Delete permanently**
-  does. It shows the result and **Save deletion record** as today (MA-984).
+- **If the plan is armable** (below) and the typed name matches the plan's name by
+  `archdelete.NameMatches`, the page sends the delete at once with `armed: true` and the panel's
+  row. The server decides whether it runs (below). The page shows the result and **Save deletion
+  record** as today (MA-984).
 - **Otherwise** the full plan is shown as today, with a first line: "The check found something to
-  look at before deleting. Read it, then click Delete permanently." The typed name is kept. Nothing
+  look at before deleting. Read it, then click Delete permanently." When only the name did not
+  match, the plan is shown with the box's "doesn't match yet" hint. The typed name is kept. Nothing
   is deleted until **Delete permanently** is clicked.
 
 If the person does not click it, the panel fills with the plan when the check ends, as today, with
 the typed name kept.
 
-**Plain** is computed on the server, in `planView`, as a new field `plain`. It is true only when
-none of these is in the plan:
+**The name, by one rule.** The row's Delete… button gains `data-delete-name`: the last element of
+the row's path, as the page is drawn. No folder is read to draw the page, so an unplugged drive
+cannot slow it. That name only enables the button early. What decides is one rule,
+`NameMatches(typed, the plan's name)` (`execute.go:33-39`): on the page when the check ends (the
+page's `delNameMatches` mirrors it), and again on the server (`archivedelete.go:579`). Revision 1's
+second rule ("does not fire when the names differ in letter case or form") is dropped:
+`NameMatches` already folds Unicode form and never folds case, so a name that differs only in form
+fires and one that differs in case does not, by the one rule.
+
+**Armable, computed and enforced on the server.** `armable(plan)` is one function in
+`internal/desktop`, beside `planView` (`archivedelete.go:438-505`). It is true only when none of
+these is in the plan:
 
 - mail copies the archive did not record (the "Also delete these files" box needs an answer);
 - a synced-folder line;
@@ -226,74 +556,317 @@ none of these is in the plan:
 - an encrypted archive (its key line).
 
 Files that are not the archive's (`kept`) and a paused archive do not stop it: Delete keeps such
-files, and the result names them.
+files, and the result names them. The field is named `armable`, not `plain`: `planView` already
+sends `kind: "plain"`, meaning unencrypted (`archivedelete.go:469`;
+`internal/archdelete/archdelete.go:36-46`).
 
-**The name before the check.** The row's Delete… button gains `data-delete-name`: the last element
-of the row's path, as the page is drawn. No folder is read to draw the page, so an unplugged drive
-cannot slow it. The plan's own name (`onDiskName`) can differ in letter case or form. When it does,
-the armed delete does not fire: the plan is shown, and the box is checked again against the plan's
-name.
+`planView` sends `armable: armable(plan)`. The delete route (`deleteAction`,
+`archivedelete.go:563-640`) gains two fields: `armed` (true only from **Delete when the check
+finishes**) and `row` (the row the panel was opened for: the panel's own Delete… button's
+`data-path`, kept when the panel opened, never a value taken from the reply). After the token and
+the typed name are checked (`archivedelete.go:573-582`) and before anything begins (`tryBegin`,
+`:586`), an armed request is refused, **keeping the token and deleting nothing** (no started line,
+no lock, no row changed), unless both hold:
+
+- the row it names, matched by the same `d.cfg.matchRow` the plan route used
+  (`archivedelete.go:114-117`, `:384`), is the held plan's own row (`heldPlan.row`, `:68-71`); and
+- `armable` of the held plan, the same function `planView` used, is true.
+
+The refusal words (the friction review owns the final words): "The check found something to look at
+before deleting, so nothing was deleted. Read the plan, then click Delete permanently."; for the
+other row: "This delete was asked from another row's panel, so nothing was deleted. Click Delete…
+on the archive's own row." The page then shows the plan. So a slip in the page script, a stale
+cached page, or a check's reply routed to the wrong panel (two archives whose folders share a name)
+can at most show a refusal. It cannot delete, unseen, a plan that needed a decision, or another
+row's archive. **Delete permanently** sends no `armed`, so it is checked exactly as today. MA-1476
+proves both refusals in Go with `assure.Refused`.
+
+**MA-1476's key check.** `armable` must not drift from `planView` as lines are added. The test lists
+every key the plan route's reply carries (`planView`'s, and the route's own: `ok`, `token`, `row`,
+`logLine`, `planText`, `planName`, `armable`) and classifies each as armable-blocking or
+armable-neutral. A plan with any blocking key set is not armable, one with only neutral keys set
+is, and the test fails on any key it has not classified. So a later line that needs a decision
+cannot leave `armable` true without the test saying so.
+
+**Why the armed request stays on the page, not on the server.** The review suggested, as better
+still, that the server hold the typed name with the plan request and delete when the check ends,
+so that a reload or a sleep would not lose it. It is not chosen, for two reasons. (1) With the
+page-held form, closing the page or losing its connection during the check deletes nothing: that is
+the person's way to stop it, and a server-held request would delete with no page open to show the
+result or to be stopped. (2) It needs a held item for a plan not yet made, a second kind of
+waiting the store does not have. What the page-held form loses on a reload or a sleep is one more
+click and one more check, never a wrong delete, and with the server's refusal above it fails
+closed.
 
 **What it never does:**
 
-- It never deletes on a plan the person did not type the name for.
+- It never deletes on a plan the person did not type the name for: the server checks it.
+- It never deletes on a plan that is not armable, or for another row: the server refuses it.
 - It never deletes on a refusal, or on the "finished elsewhere" question (MA-1057): those are shown
   as today.
-- It never deletes after Cancel. Cancel during the check closes the panel. The check's reply, when
-  it comes, opens nothing, and its plan waits unused until it ends (§3.1).
-- A reload the page starts itself is held while a delete waits for its check (as for a delete
-  waiting for its reply, MA-986). The waiting panel is marked `data-delete-waiting`, so another
-  row's Delete… does not close it. Its check's reply is handled by its own panel even after a later
-  Delete… or Remove from list (today, a later click drops an earlier reply, `delSeq`).
+- It never deletes after Cancel. Cancel during the check closes the panel; the check's reply, when
+  it comes, opens nothing, and its plan is discarded (§3.1).
+- A reload the page starts itself is held while an armed panel waits for its check (as for a
+  delete waiting for its reply, MA-986). The armed panel is marked `data-delete-waiting` from the
+  click, so another row's Delete… does not close it, and its check's reply fills its own panel, never
+  another (today a later click drops an earlier reply, `delSeq`, `deletescript.go:283-289`).
+  An un-armed panel behaves as today: another Delete… closes it, and its reply opens nothing and
+  discards its plan (MA-986, amended).
 - When the page is closed or loses its connection during the check, nothing is deleted.
 
-**Look before writing (X14).** This is a scoped exception the owner asked for. The check still runs
-in full. The delete still carries out exactly the checked plan, checked again under the lock. Only
-showing the plan first is skipped, only when the person asks, and only when nothing in the plan
-needs their decision. The deletion record still says everything that was removed and kept.
+**R36** ("An archive is deleted only by the person's explicit decision … for one named archive,
+which the person starts and confirms at that moment"): the person starts it (Delete… on one row),
+types its name and clicks **Delete when the check finishes**. The delete follows the check in the
+same open page, and the owner accepted that on 2026-11-20 (§0, Q1). Nothing handed to the program
+and no unattended run can start it, and closing the page ends it.
 
-- **MA-1476** (new): `plain`, and what makes a plan not plain.
-- **MA-1477** (new): the page's half. The panel opens at once; the name can be typed during the
-  check; **Delete when the check finishes** fires only on a plain plan whose name matches;
-  otherwise the plan is shown. A waiting panel survives another Delete…, reloads are held, and
-  Cancel during the check deletes nothing. These are structural tests on the page script, plus the
-  friction review's walk.
+**Look before deleting (X14), amended by the owner's word.** The Delete… button's tooltip
+(`dashboard.go:2396`) says "You see what would be removed first", which an armed delete makes
+untrue. It becomes (the friction review owns the final words): "Permanently delete this archive's
+files. MailArchive first checks what would be removed, and you type the folder's name to confirm.
+You see that list before anything is deleted, unless you choose Delete when the check finishes and
+nothing in the list needs your decision."
+
+- **X14, amended** (owner, 2026-11-20, question 1: "Yes (Recommended)"): "Delete… in Your archives
+  may delete without first showing its plan, only when the person typed the folder's name and
+  clicked Delete when the check finishes, and only when the plan is armable: nothing in it needs a
+  decision (no unrecorded copies, synced folder, schedules to check by hand, files another program
+  holds, unfinished earlier delete or encrypted key), computed on the server by the same function
+  the panel's reply uses and refused by the delete route otherwise. The full check still runs, the
+  plan is made again and compared under the archive's lock before anything is removed, and the
+  deletion record says everything removed and kept. Every other dashboard action keeps X14 as
+  written."
+- **MA-986, amended** (nothing weakened: one panel opens per click, and every other panel still
+  closes as today): an armed panel is marked `data-delete-waiting` from the click until its
+  delete's reply, so another row's Delete… or Remove from list leaves it, and its check's reply
+  fills that panel, never one opened meanwhile; an un-armed panel closed for another posts its
+  plan's discard, and its check's late reply opens nothing and posts the discard of the plan it
+  names; reloads the page starts itself are held while an armed panel waits.
+- **MA-1476** (new): the server's half. `armable` is false for each blocking line and true with only
+  kept files and a paused archive; `planView` sends it as `armable`; the key check above.
+  `deleteAction` refuses an armed request whose held plan is not armable, and one whose row is not
+  the held plan's row, through `assure.Refused`: the words, nothing removed, no `deletions.log`
+  line, the row still listed, the token still waiting. Positive twins first: an armable plan armed
+  from its own row deletes; **Delete permanently** (no `armed`) of a plan that is not armable still
+  deletes after its name is typed, as today.
+- **MA-1477** (new): the page's half, run under Node against the page-script harness
+  (`internal/desktop/testdata/pagescript/harness.js`), as MA-986's tests are. The panel opens at once
+  with the checking line and its minutes; the name can be typed during the check; **Delete when the
+  check finishes** is enabled by `data-delete-name` and changes the line to "checks once more, then
+  deletes"; at the reply, the delete is sent with `armed: true` and the panel's own row only when
+  the reply says armable and the name matches the plan's; otherwise the plan is shown with its first
+  line and the typed name kept; a server refusal of an armed delete shows the plan and its words; an
+  armed panel survives another Delete… and receives only its own reply; reloads are held while it
+  waits; Cancel, a closed un-armed panel, a cancelled check's late reply and `pagehide` post the
+  discard; a `changed` refusal shows the held result and asks for the plan again with the typed
+  name. The live walk is the friction review's and the lab's.
 
 ## 4. Reviews owed and the order of work
 
-1. This note: the 10-lens pre-code design review. It is security-relevant: it changes what feeds
-   source loss and auto-pause, and the confirmation of a destructive action.
+1. This note: revision 2, for the fold check (`design-review.md`, procedure step 4: each condition
+   re-verified). The owner's four answers are recorded (§0). The open items (§7) go to the fold
+   check, and O1 to the owner.
 2. Build, test first. Every row gets a prove-fail → prove-pass by mutation, recorded in its commit.
 3. After the build: the adversarial pass (one pass over all three parts) and the friction review
-   (every new word, and the waiting delete walked).
-4. Windows lab on the office test PC. A combined archive made with "All of them" over a test
-   Thunderbird profile made of folders only (no Thunderbird installed), with one account folder
-   removed: Run now, a scheduled run, and Settings saving the schedule. Then a Delete of a large
-   archive with **Delete when the check finishes**. A local macOS walk. Linux's empty answer
-   cannot be run here, which is said.
-5. CI on all three systems, then release 1.7.5 (owner, 2026-11-19: "make it so").
+   (every new word: the WARN and note, the encrypted sentence, the Repair words, MA-1474's repeat,
+   the panel, the refusals and the tooltip; and the waiting delete walked). The adversarial pass
+   also carries the half of the review's rescue step that was not run: the search for a deeper
+   weakness the lenses missed (review header).
+4. Windows lab on the office test PC (its brief and self-test first; the builds in `C:\Tests`). A
+   test Thunderbird profile made of folders only (no Thunderbird installed) in the test account's
+   own AppData, with two IMAP account folders and Local Folders:
+   - "All of them", then one account folder removed: Run now and a scheduled run skip it and say
+     so (the log, the Run now note, status's WARN and its DATE). Then the profile's `ImapMail`
+     folder removed: refused as today. Then the profile folder replaced by a junction to a folder
+     elsewhere, with an account folder removed in it: what the rule does on Windows is written down
+     (P1's condition), and with the junction's target removed it refuses.
+   - Settings creating the schedule on an archive whose schedule was removed first (no job file),
+     so it reaches the rebuild (on 1.7.4 it refuses; on 1.7.5 it saves, the gone input kept). An
+     archive that still has its job file proves nothing here.
+   - An archive auto-paused by 1.7.4 (its streak record set to span 30 days, then one 1.7.4
+     scheduled run with the account folder gone pauses it), then 1.7.5 installed: status, the
+     banner and the Settings card say Repair; Repair, then a run, skips and warns with DATE from
+     the streak.
+   - An encrypted "All of them" archive with an account folder removed: a scheduled run succeeds,
+     status WARNs in the fixed sentence, Run now's note names the mailbox, and the record holds no
+     path.
+   - A Delete with **Delete when the check finishes** of an archive sized by one timed check first
+     so that its check takes at least two minutes on the test PC (the file count and the minutes
+     go in the lab's log); the minutes keep counting through both checks. Then a second archive
+     planned, a backup run into it, then **Delete permanently**: refused as changed, and the page
+     asks for the plan again with the name kept.
+   - Clean-up: the deleted archive confirmed gone (removed by hand if a step stopped), the second
+     archive, the test profile folders and the junction, every schedule the lab installed, and the
+     builds in `C:\Tests` removed; the lab's own log kept.
+
+   A local macOS walk of the first, second and fifth items. Linux's empty answer cannot be run
+   here, which is said; MA-1474 proves the wizard's handling through the seam.
+5. **Release notes** (new step), saying:
+   - an "All of them" archive keeps backing up when one mailbox's folder is gone, and status warns
+     which one for 14 days of backups, then keeps a note;
+   - the command line's `export -auto -input X`, with X gone in a place auto-discovery looks, now
+     exits 0 and says it skipped X, where it refused;
+   - an archive 1.7.4 stopped (auto-paused) because a mail account was removed: click Repair on
+     its Scheduled backup card (an encrypted archive's words still say reconnect; Repair works);
+   - delete plans wait up to 24 hours, a backup in between still refuses the plan, and **Delete
+     when the check finishes** is new;
+   - going back to 1.7.4: its status shows nothing for a skipped mailbox and its runs refuse again;
+     a 1.7.4 Desktop beside 1.7.5 scheduled runs, or the other way round, can show different
+     signals until both are 1.7.5; an encrypted archive's record gains one field, which an older
+     MailArchive ignores.
+6. CI on all three systems, then release 1.7.5 (owner, 2026-11-19: "make it so").
 
 ## 5. Not in this change
 
 - Per-mailbox archives: the next release, with their own design.
 - An email or system notice when a mailbox is first found gone; a "Stop looking for it" button.
-- Making the delete check itself faster.
+- A first-found date for an encrypted archive, so its WARN fades (open item O1).
+- A delete armed and held on the server (§3.2 says why not).
+- Making the delete check itself faster, or doing without the second walk.
 
 ## 6. Claims, each with its condition
 
-- **P1.** With `-auto`, one gone mailbox where auto-discovery looks no longer refuses the run
-  while another remains. *Proven by MA-1471 once built.*
-- **P2.** When nothing remains, when the input is outside those places, or without `-auto`, the
-  run is refused as today and the streak moves as today. *Proven by MA-1471 and MA-688.*
-- **P3.** The person is told: a WARN for 14 days, then a note, the same in status and the
-  Desktop's health view. *Proven by MA-1472.* For encrypted archives, only on screen in the
-  attended run's result. *Conditional on the build's check (§1.3).*
-- **P4.** Settings can save such an archive's schedule again, and A2's checks hold for every input
-  that exists. *Proven by MA-1473.*
-- **P5.** An empty answer to the schedule question installs nothing. *Proven by MA-1474 for the
-  wizard's handling of the answer; conditional on Linux zenity giving exit 0 and empty text for OK
-  with nothing selected, which is read in the code and not run.*
-- **P6.** A delete plan waits 24 hours; every other kind waits 10 minutes. *Proven by MA-1475.*
-- **P7.** **Delete when the check finishes** deletes only on a plain plan whose name the typed
-  text matches; otherwise the plan is shown. *Proven structurally by MA-1476 and MA-1477; the
-  page's live behaviour by the friction walk and the Windows lab.*
+- **P1.** With `-auto`, a gone listed input in a place auto-discovery looks, whose parent folder is
+  still there as a folder in that place, is skipped while another mailbox remains. *Proven by
+  MA-1471 once built. Conditional, on Windows only, on how `filepath.EvalSymlinks` treats a junction
+  (recalled, not read: Go changed how it resolves Windows mount points). If it does not resolve
+  one, a profile folder that is a junction counts as inside the place, so an account gone in it is
+  skipped while the junction's target is there; with the target gone the parent cannot be read and
+  the run refuses. The lab's junction case settles which.*
+- **P2.** When the gone input is outside those places, reached through a link below the place's
+  root, a link itself, or its group folder is gone; when nothing remains; or without `-auto`; the
+  run is refused as today and the streak moves as today. *Proven by MA-1471 and MA-688.* The
+  owner's ruled case (Q4): one account plus Local Folders, the account's folder gone and `ImapMail`
+  there, keeps succeeding on Local Folders with a WARN and no email. *Proven by MA-1471's Local
+  Folders case; conditional on Thunderbird keeping `ImapMail` when it removes an account (recalled,
+  not read): if it removes it, that case refuses as today.*
+- **P3.** A plaintext archive's skip is a WARN while the last run's start minus `Since` is under 14
+  days, then a note, in status and the Desktop's health view alike, never measured against now.
+  *Proven by MA-1472.*
+- **P4.** `Since` survives a cancelled run, a killed run's running record and a refusal after
+  discovery; a clock that was ahead or not set never moves it earlier. Any other record without the
+  warning (a one-off run without `-auto`, an unreadable record, a refusal before discovery, a
+  downgrade) restarts it at a later date, never an earlier one. *Proven by MA-1472.*
+- **P5.** An encrypted archive skips the same way; its record carries only `mailbox_gone: true`
+  (no path, name, count or date); status WARNs in one fixed sentence; the wizard's summary and Run
+  now's note name the mailbox in memory only. *Proven by MA-1478 and MA-734 (amended).* Its WARN
+  does not fade (O1).
+- **P6.** A plaintext `-auto` archive that 1.7.4 auto-paused is told that Repair or Run now works.
+  *Proven by MA-1479.* An encrypted one is told only by the release notes.
+- **P7.** A Settings create (no job file yet) and the command-line-schedule conversion can rebuild
+  such an archive's job, keeping a gone input only when it is a recorded store and refusing when no
+  listed input exists; A2's checks hold for every input that exists. *Proven by MA-1473.* An edit,
+  Repair included, was never stopped (§1.1).
+- **P8.** The command line reports the skips once, `-list` shows them, and a `-follow-links` opt-in
+  for a skipped input is not refused. *Proven by MA-1480.*
+- **P9.** An answer to the schedule question that is not the exact daily or weekly row installs
+  nothing, and an empty one asks again. *Proven by MA-1474 for the wizard's handling of the answer;
+  conditional on Linux zenity giving exit 0 and empty text for OK with nothing selected, which is
+  read in the code and not run.*
+- **P10.** A delete plan waits 24 hours while a panel shows it, and ends at Cancel, at a panel
+  closed for another, at a cancelled check's late reply, and when its page goes away; every other
+  kind waits 10 minutes. *Proven by MA-1475 (the server) and MA-1477 (the page). Conditional on
+  browsers sending a keepalive request from `pagehide`, and on Go's timers counting sleep (both
+  recalled, not read): where they do not, a plan is held longer, at most one per row.*
+- **P11.** A backup between the check and Delete refuses the held plan, and the page asks for it
+  again by itself, keeping the typed name. *Proven by MA-1475 (the refusal and its `changed` mark)
+  and MA-1477 (the page asking again).*
+- **P12.** Delete never removes a name the plan did not list, however long the plan was held.
+  *Proven by MA-964 (the re-check under the lock refuses a plan after a backup recorded another
+  message, `internal/archdelete/ma964_execute_test.go:229-258`, and Delete keeps files that are not
+  the archive's), MA-981 (the encrypted archive's record compared) and MA-1475's case of a plan that
+  outlives a backup.*
+- **P13.** **Delete when the check finishes** deletes only when the server finds the held plan
+  armable, by the same function the panel's reply used, and belonging to the row the panel was
+  opened for, and the typed name matches; otherwise it is refused, with the token kept and nothing
+  deleted. *Proven by MA-1476, in Go with `assure.Refused`.* The page's live behaviour: MA-1477
+  under the Node harness, the friction walk and the Windows lab.
+
+## 7. Open items
+
+- **O1 (for the owner): the encrypted WARN does not fade.** The owner ruled that a gone mailbox's
+  WARN turns into a note after 14 days (Q2), and that an encrypted record may carry one fixed
+  sentence (Q3). A fade needs the first-found date beside the archive, which is more than one fixed
+  sentence and widens MA-734's frozen allow-list again. This design does not choose that quietly:
+  an encrypted archive's WARN stays a WARN on every backup that skips. The question: may the
+  encrypted record also carry the first-found time (a time, no path or name), so it fades like a
+  plaintext archive's? Until answered, it stays a WARN.
+- **O2 (for the fold check): the 1.7.5 auto-pause email and log keep "reconnect the source".** The
+  review's condition named "the auto-pause words" with the source-lost words. The words a person
+  with a 1.7.4-paused archive sees in 1.7.5 (status, the banner, the Settings card) change (§1.3).
+  The auto-pause email and log line that 1.7.5 itself sends come only after runs the skip did not
+  apply to, where Repair alone would fail again, so changing them would tell that person something
+  untrue.
+- **O3 (for the fold check): `-follow-links` is checked against "found plus skipped".** The review's
+  words were "the listed inputs minus the skipped ones". Both stop a skipped opt-in from refusing;
+  the review's form would also newly refuse an opt-in for a store found only by auto-discovery,
+  which works today (§1.5).
+- **O4 (for the fold check): MA-986 is amended.** Its "an earlier one's slower reply opening
+  nothing" now has one exception, an armed panel's own reply (§3.2). Nothing is weakened, but a
+  pinned page behaviour changes, so it is listed.
+
+## 8. Fold table
+
+Each finding of `docs/review-1.7.5-predesign.md`, by id: confirmed ones with where they are
+folded, duplicates with the group that folds them, refuted ones as refuted.
+
+| Finding | Verdict | Folded in |
+|---|---|---|
+| L1-01 | CONFIRMED, MEDIUM, owner | owner ruling Q4; §1.2 "The commonest case", §1.3 WARN words, P2 |
+| L1-02 | CONFIRMED, MEDIUM, owner | owner ruling Q2; §1.3 "The 14 days", `MailboxGoneNoteAfter`, MA-1472, P3 |
+| L1-03 | CONFIRMED, MEDIUM, owner | owner ruling Q1; §0, §3.2 "X14, amended" and the tooltip |
+| L1-04 | CONFIRMED, LOW | §1.1 last bullet, §1.4 first sentence, P7, §4 lab (no job file) |
+| L2-01 | REFUTED | not folded |
+| L2-02 | CONFIRMED, HIGH | §3.2 "Armable, computed and enforced on the server" and "Why the armed request stays on the page", MA-1476, P13 |
+| L2-03 | CONFIRMED, LOW | §3.2: the field is `armable` |
+| L2-04 | CONFIRMED, LOW | §1.2 "Where", §1.5 "One place reports", MA-1480 |
+| L3-01 | CONFIRMED, LOW | §1.3 "The 14 days … counted between backups", P3 |
+| L3-02 | CONFIRMED, MEDIUM | §1.3 "How `Since` is kept", MA-1472, P4 |
+| L3-03 | CONFIRMED, LOW | §3.1 (the discard route, the late reply, `pagehide`), MA-971 and MA-972 amended, MA-1475, P10 |
+| L3-04 | CONFIRMED, LOW | §1.3 "It is permanent until then" and the note's last sentence |
+| L4-01 | CONFIRMED, MEDIUM | §1.3 "Archives 1.7.4 already stopped" and `Since` rule 2, MA-1479, §4 lab and release notes, P6, O2 |
+| L4-02 | CONFIRMED, MEDIUM, owner | owner ruling Q3; §1.3 "Encrypted archives", MA-734 amended, MA-1478, P5, O1 |
+| L4-03 | CONFIRMED, MEDIUM | §3.1 "A backup in between refuses the plan", MA-1475, MA-1477, P11 |
+| L4-04 | CONFIRMED, LOW | §2 (MA-1465's note and the question again), MA-1474, P9 |
+| L4-05 | CONFIRMED, LOW | §1.3 the run log (no claim at discovery), NAME, the summaries, the WARN's last sentence |
+| L4-06 | CONFIRMED, LOW | §3.2 "The name, by one rule" |
+| L5-01 | DUPLICATE of L3-02 | group L3-02: §1.3 "How `Since` is kept" (read before `beginRun`) |
+| L5-02 | CONFIRMED, MEDIUM | §1.4, MA-1473, P7 |
+| L5-03 | CONFIRMED, LOW | §1.5 `-follow-links` and `-list`, MA-1480, O3 |
+| L5-04 | CONFIRMED, LOW | §1.3 the record (`ReadLastRun` cleans `Path` and `Name`) |
+| L5-05 | REFUTED | not folded |
+| L5-06 | DUPLICATE of L3-03 | group L3-03: §3.1 (and MA-972's expiry check kept, on its own field) |
+| L5-07 | DUPLICATE of L1-03 | group L1-03: §3.2 the tooltip, "X14, amended" |
+| L5-08 | CONFIRMED, LOW | §3.2 "MA-1476's key check" |
+| L6-01 | CONFIRMED, MEDIUM | §1.2 rules (a) and (c); §1.4 (one test, `app.GoneSkippable`) |
+| L6-02 | CONFIRMED, MEDIUM | §1.2 rule (c) and the reworded "group folder gone" bullet |
+| L6-03 | DUPLICATE of L2-02 | group L2-02: §3.2, MA-1476 |
+| L6-04 | CONFIRMED, LOW | §1.3 (`MinPlausibleTime`), MA-1472 |
+| L6-05 | CONFIRMED, LOW | §1.2 rule (b): case folded on Windows only |
+| L7-01 | DUPLICATE of L5-02 | group L5-02: §1.4 |
+| L7-02 | DUPLICATE of L3-02 | group L3-02: §1.3 (`opts.Warnings` straight after discovery) |
+| L7-03 | DUPLICATE of L6-04 | group L6-04: §1.3 |
+| L7-04 | DUPLICATE of L2-02 | group L2-02: §3.2 (the row binding) |
+| L7-05 | DUPLICATE of L5-03 | group L5-03: §1.5 |
+| L7-06 | DUPLICATE of L6-05 | group L6-05: §1.2 rule (b) |
+| L7-07 | DUPLICATE of L5-04 | group L5-04: §1.3 the record |
+| L7-08 | CONFIRMED, LOW | §1.3 the summaries (`runNowSummaryFor`), MA-1471 |
+| L8-01 | DUPLICATE of L4-01 | group L4-01: §1.3 "Archives 1.7.4 already stopped" |
+| L8-02 | DUPLICATE of L4-01 | group L4-01: §1.3 `Since` rule 2 |
+| L8-03 | CONFIRMED, LOW | §4 step 5 (release notes) |
+| L9-01 | DUPLICATE of L3-03 | group L3-03: §3.1 |
+| L9-02 | CONFIRMED, LOW | §3.1 "Every delete walks the folder twice", §3.2 panel words, §4 lab (size and clean-up) |
+| L10-01 | DUPLICATE of L1-04 | group L1-04: §4 lab (an archive with no job file) |
+| L10-02 | DUPLICATE of L2-04 | group L2-04: §1.2 "Where" (they now skip silently) |
+| L10-03 | CONFIRMED, LOW | §3.1 "Why holding a plan longer is safe", P12, MA-1475 |
+| L10-04 | DUPLICATE of L9-02 | group L9-02: §3.2 "checks once more, then deletes" |
+| L10-05 | DUPLICATE of L1-03 | group L1-03: §0, §3.2 |
+| L10-06 | REFUTED | not folded |
+| L10-07 | REFUTED | not folded |
+| L10-08 | DUPLICATE of L8-03 | group L8-03: §1.3 "A downgraded status", §4 step 5 |
+| L10-09 | CONFIRMED, LOW | §1.3 "Encrypted archives" (Run now settled), P5 |
+| L10-10 | DUPLICATE of L3-01 | group L3-01: §1.3 |
+| L10-11 | DUPLICATE of L6-02 | group L6-02: §1.2 |
+
+Tally: 30 confirmed folded (4 of them by the owner's rulings Q1 to Q4 as well as in the text), 21
+duplicates folded through their groups, 4 refuted and not folded.
