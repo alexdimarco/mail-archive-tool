@@ -569,6 +569,11 @@ func Assess(in Input, now time.Time) Report {
 				r.note(lr.Program, state.ProgramText(lr.Program))
 			}
 		}
+		// A mailbox it backs up that is gone, skipped (MA-1478): fixed sentences whose only
+		// variable is the date the record holds.
+		if lr := in.LastRun; in.LastRunState == state.LastRunPresent && lr.Encrypted && lr.MailboxGone {
+			encryptedMailboxGone(&r, lr)
+		}
 	} else {
 		assessContents(&r, in, now)
 	}
@@ -801,6 +806,11 @@ func assessKeyless(r *Report, in Input, now time.Time) {
 				// codes (presync_no_activity, presync_already_running, …) are deliberately
 				// absent, so they stay GREEN.
 				r.warn(w.Code, w.Message)
+			case state.MailboxGoneCode:
+				// A mailbox a combined archive backs up that is gone, skipped (MA-1471): status's
+				// own words from Path, Name and Since, never the recorded Message; a WARN for 14
+				// days of backups, then a note (MA-1472).
+				mailboxGone(r, lr, w)
 			}
 		}
 		// How much of each Thunderbird account Thunderbird had downloaded (the completeness

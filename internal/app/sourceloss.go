@@ -89,6 +89,115 @@ func skippedInputs(gone []string) []SkippedInput {
 	return out
 }
 
+// resolveGoneSince sets each skipped input's Since: when it was first found gone (MA-1472),
+// resolved once, straight after discovery, from what is on disk before this run writes anything
+// (docs/design-1.7.5-fixes.md §1.3):
+//
+//  1. the previous last-run record's mailbox_gone warning for the same input, compared by
+//     autoplace.GoneSourceID;
+//  2. else, when the source-loss streak's last kind is local-source-unreachable and the previous
+//     record is a failed run whose error is this input's own refusal (autoplace.GoneText), the
+//     streak's FirstUnreachable: when the archive that was failing first found it gone;
+//  3. else this run's start.
+//
+// A time later than start (a clock that was ahead) becomes start, and one before
+// state.MinPlausibleTime (a clock that was not set) becomes start and is never carried. The
+// previous record is read before the lock: it is written whole, by a rename, and a run that holds
+// the lock meanwhile makes this one refuse at the lock, writing nothing. An encrypted archive's
+// record keeps no paths: its one time is resolveEncryptedGone's.
+func resolveGoneSince(out string, skipped []SkippedInput, start time.Time) {
+	prev, st, _ := state.ReadLastRun(out)
+	plain := st == state.LastRunPresent && !prev.Encrypted
+	streak, serr := readSourceStreak(out)
+	for i := range skipped {
+		var since time.Time
+		found := false
+		if plain {
+			id := autoplace.GoneSourceID(skipped[i].Path)
+			for _, w := range prev.Warnings {
+				if w.Code == state.MailboxGoneCode && w.Path != "" && autoplace.GoneSourceID(w.Path) == id {
+					since, found = w.Since, true
+					break
+				}
+			}
+			if !found && serr == nil && streak.LastKind == "local-source-unreachable" &&
+				prev.Status == state.RunFailed && prev.Error == autoplace.GoneText(skipped[i].Path) {
+				since = streak.FirstUnreachable
+			}
+		}
+		skipped[i].Since = clampGoneSince(since, start)
+	}
+}
+
+// maxGoneCount is the most mailboxes a record's mailbox_gone_count is believed for: a count past
+// it is not one any run could hold (a planted or damaged record), so it counts as 1.
+const maxGoneCount = 1_000_000
+
+// resolveEncryptedGone sets every skipped input's Since to the ENCRYPTED archive's one first-found
+// time (MA-1478; owner, 2026-11-20, Q5 and Q6), resolved once, straight after discovery, from what
+// is on disk before this run writes anything: when this run skips more mailboxes than the previous
+// record's mailbox_gone_count, one went since that record, so the time restarts at start;
+// otherwise (rule 1) the previous record's mailbox_gone_since; else (rule 3) start. Rule 2 does not
+// apply: an encrypted record keeps no error text and its streak no kind. A previous record with no
+// count, or a count below 1 or past maxGoneCount, counts as 1, the least its mailbox_gone says. The
+// same clamps as clampGoneSince.
+func resolveEncryptedGone(out string, skipped []SkippedInput, start time.Time) {
+	var since time.Time
+	if prev, st, _ := state.ReadLastRun(out); st == state.LastRunPresent && prev.Encrypted && prev.MailboxGone {
+		count := prev.MailboxGoneCount
+		if count < 1 || count > maxGoneCount {
+			count = 1
+		}
+		if len(skipped) <= count {
+			since = prev.MailboxGoneSince
+		}
+	}
+	since = clampGoneSince(since, start)
+	for i := range skipped {
+		skipped[i].Since = since
+	}
+}
+
+// goneOf is how many mailbox_gone warnings ws holds and the first one's Since: an encrypted
+// run's record keeps only these (newRunRecord), never the warnings themselves.
+func goneOf(ws []state.RunWarning) (n int, since time.Time) {
+	for _, w := range ws {
+		if w.Code == state.MailboxGoneCode {
+			if n == 0 {
+				since = w.Since
+			}
+			n++
+		}
+	}
+	return n, since
+}
+
+// clampGoneSince is since as a first-found time a record may keep: start for a time that is
+// zero, before state.MinPlausibleTime, or after start.
+func clampGoneSince(since, start time.Time) time.Time {
+	if since.IsZero() || since.Before(state.MinPlausibleTime) || since.After(start) {
+		return start
+	}
+	return since
+}
+
+// goneWarnings are the run's mailbox_gone warnings, one per skipped input, which join the run's
+// own warnings straight after discovery so every record the run writes keeps them: the running
+// record, a refused one, a cancelled or failed one, and the final one (MA-1472). The Message is a
+// whole sentence; status never shows it for this code, and builds its words from Path, Name and
+// Since.
+func goneWarnings(skipped []SkippedInput) []state.RunWarning {
+	out := make([]state.RunWarning, 0, len(skipped))
+	for _, s := range skipped {
+		out = append(out, state.RunWarning{
+			Code:    state.MailboxGoneCode,
+			Message: "Not found, so skipped: " + s.Label() + ". It is no longer on this computer; the mail already saved from it stays in the archive.",
+			Path:    s.Path, Name: s.Name, Since: s.Since,
+		})
+	}
+	return out
+}
+
 // goneAccountName is the name Thunderbird shows for the account whose folder the gone input p
 // was, or "".
 func goneAccountName(p string) string {

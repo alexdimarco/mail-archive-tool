@@ -659,6 +659,14 @@ func Run(ctx context.Context, opts Options, logger *log.Logger, onProgress Progr
 		// the log the run's "Reading" lines go to, and handed back on every return from here.
 		// That the others were backed up is said only by the summaries of a run that finished.
 		skipped := skippedInputs(gone)
+		// When each was first found gone, kept in the run's own warnings, which every record the
+		// run writes from here carries (MA-1472). A fresh slice: the caller's is never written.
+		if start := time.Now().UTC(); opts.Key != nil || encryptedAt(opts.Out) {
+			resolveEncryptedGone(opts.Out, skipped, start) // one time for the archive (MA-1478)
+		} else {
+			resolveGoneSince(opts.Out, skipped, start)
+		}
+		opts.Warnings = append(append([]state.RunWarning(nil), opts.Warnings...), goneWarnings(skipped)...)
 		for _, s := range skipped {
 			logger.Printf("Not found, so skipped: %s. It is no longer on this computer; the mail already saved from it stays in the archive.", s.Label())
 		}
@@ -1415,7 +1423,14 @@ func newRunRecord(opts Options) state.LastRun {
 		if st == state.LastRunPresent {
 			program = prev.Program
 		}
-		return state.LastRun{Status: state.RunRunning, Started: time.Now().UTC(), Encrypted: true, Program: program}
+		lr := state.LastRun{Status: state.RunRunning, Started: time.Now().UTC(), Encrypted: true, Program: program}
+		// A mailbox this run skipped because it is gone: that one was, the time one was first
+		// found gone and how many, from the run's warnings in memory, never their paths or names
+		// (MA-1478; owner, Q3, Q5 and Q6).
+		if n, since := goneOf(opts.Warnings); n > 0 {
+			lr.MailboxGone, lr.MailboxGoneSince, lr.MailboxGoneCount = true, since, n
+		}
+		return lr
 	}
 	exe, _ := os.Executable()
 	mode := "incremental"

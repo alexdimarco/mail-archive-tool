@@ -138,14 +138,22 @@ func ProgramWarns(code string) bool {
 // (P2a-C16) — and, by the program design's §8, the program step's outcome from its
 // closed list. Counts, the job, the program path, warnings and error text are never
 // written beside an encrypted archive.
+//
+// Amended 2026-11-20 by the owner's rulings Q3, Q5 and Q6 (docs/design-1.7.5-fixes.md §1.3,
+// MA-734 amended, MA-1478): only beside mailbox_gone, which is written only when true (this run
+// skipped a mailbox that is gone), the time one was first found gone and how many were skipped:
+// a time and a number, never a path or a name.
 type encryptedLastRun struct {
-	Version   int       `json:"version"`
-	Status    string    `json:"status"`
-	Started   time.Time `json:"started"`
-	Finished  time.Time `json:"finished,omitempty"`
-	ErrorKind string    `json:"error_kind,omitempty"`
-	Program   string    `json:"program,omitempty"`
-	Encrypted bool      `json:"encrypted"`
+	Version          int       `json:"version"`
+	Status           string    `json:"status"`
+	Started          time.Time `json:"started"`
+	Finished         time.Time `json:"finished,omitempty"`
+	ErrorKind        string    `json:"error_kind,omitempty"`
+	Program          string    `json:"program,omitempty"`
+	Encrypted        bool      `json:"encrypted"`
+	MailboxGone      bool      `json:"mailbox_gone,omitempty"`
+	MailboxGoneSince time.Time `json:"mailbox_gone_since,omitzero"`
+	MailboxGoneCount int       `json:"mailbox_gone_count,omitempty"`
 }
 
 // marshalLastRun is the bytes WriteLastRun writes: r as it is, or — for an
@@ -158,10 +166,36 @@ func marshalLastRun(r LastRun) ([]byte, error) {
 	if _, known := programText[program]; !known {
 		program = "" // only the closed list is ever written
 	}
-	return json.MarshalIndent(encryptedLastRun{
+	e := encryptedLastRun{
 		Version: r.Version, Status: r.Status, Started: r.Started, Finished: r.Finished,
 		ErrorKind: r.ErrorKind, Program: program, Encrypted: true,
-	}, "", "  ")
+	}
+	// A gone mailbox: that one was, a time and a number, only beside mailbox_gone (owner, Q3, Q5
+	// and Q6; MA-1478).
+	if r.MailboxGone {
+		e.MailboxGone, e.MailboxGoneSince, e.MailboxGoneCount = true, r.MailboxGoneSince, r.MailboxGoneCount
+	}
+	return json.MarshalIndent(e, "", "  ")
+}
+
+// The fixed sentences status and the Desktop's health view say for an encrypted archive whose
+// last run skipped a mailbox that is gone (docs/design-1.7.5-fixes.md §1.3, MA-1478): the only
+// variable is the date the record holds; no path or name is known beside the archive.
+
+// MailboxGoneText is the WARN after a run that ended ok.
+func MailboxGoneText(date string) string {
+	return "a mailbox this archive backs up has not been found since " + date + ", so it was skipped and the others were backed up; click Run now in MailArchive Desktop to see which one"
+}
+
+// MailboxGoneShortText is the WARN after any other run: whether the others were backed up is its
+// own outcome's to say.
+func MailboxGoneShortText(date string) string {
+	return "a mailbox this archive backs up has not been found since " + date + ", so it was skipped; click Run now in MailArchive Desktop to see which one"
+}
+
+// MailboxGoneNoteText is the note once the WARN's 14 days of backups are over.
+func MailboxGoneNoteText(date string) string {
+	return "a mailbox this archive backed up has not been found since " + date + "; its mail already saved stays in the archive. Click Run now in MailArchive Desktop to see which one. This line stays while the archive's backup lists that mailbox; to end it, set the archive up again in the wizard, with the same archive folder, choose All of them, and answer Yes to keeping it current."
 }
 
 // encryptedAttention is the attention notice of an encrypted archive: the time and
