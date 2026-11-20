@@ -471,3 +471,100 @@ I found nothing for:
 - the job-file format (unchanged)
 - the encrypted run log (Run now logs to the Desktop's activity log; the command line's -log stays outside the archive)
 Not reached: the page-script test harness and how the page routes check replies (only the existing delSeq and delClose code), whether the Desktop server has a write timeout on long plan requests, and how the Thunderbird sync works out its profile when an input is skipped. Nothing was run.
+
+---
+
+## Fold check of revision 2 (2026-11-20)
+
+L1-01 | FOLDED | §0 Q4, §1.2 "The commonest case", the WARN words, and P2. P2's condition (that Thunderbird keeps the ImapMail folder) sits next to the claim.
+L1-02 | PARTIAL | The ruling is in §0, §1.3 and the `MailboxGoneNoteAfter` comment. But the MA-1472 row text in §1.6 does not cite "owner, 2026-11-20, Q2", and the condition asked for the answer in §0 and in MA-1472.
+L1-03 | FOLDED | §0 Q1; "X14, amended" with the exact scope (armed, armable only, full check, re-check under the lock); new tooltip words.
+L1-04 | FOLDED | §1.1 narrowed, §1.4's first sentence, P7, and the §4 lab step on an archive with no job file.
+L2-02 | FOLDED | Read against the code: deleteAction gets the token (`get`) and checks the name (archivedelete.go:573-582) before `tryBegin` (:586). The armed check goes in that gap, keeping the token and deleting nothing, and compares `matchRow(row)` with `heldPlan.row` plus `armable(heldPlan)`. MA-1476 proves it with assure.Refused, and the "why not server-held" reason is given.
+L2-03 | FOLDED | The field is named `armable`.
+L2-04 | FOLDED | DiscoverInputs returns the skipped list with no dropping wrapper; app.Run's `Result.Skipped` is the one report; other callers discard it on purpose.
+L3-01 | FOLDED | Counted as the last run's start minus Since, never against now. One explanatory sentence contradicts the rule (see R4).
+L3-02 | FOLDED | The skeptic's "at minimum" form: warnings go into opts.Warnings right after discovery (run.go:631), before the lock (:676) and beginRun (:743). The future-Since clamp is there, and MA-1472 covers cancelled, killed and refused-after-discovery runs.
+L3-03 | FOLDED | Discard route limited to delete plans (`pending.discard(token, isDeletePlan)`, pending.go:211-217), sent on Cancel, on a closed panel, on a late reply and on pagehide. The leftover case is admitted (accepted below).
+L3-04 | FOLDED | "Permanent until then" is stated, with a way to end it. The remedy's words are incomplete (R8).
+L4-01 | FOLDED | Words changed on the three surfaces, Since rule 2, the lab case, the release note. The email and log words are kept per O2 (accepted). See R1.
+L4-02 | FOLDED | Q3 is applied as a boolean `mailbox_gone`, with MA-734 amended, MA-1478 and P5. A6 itself is not named as amended (R6).
+L4-03 | FOLDED | The limit is stated in §3.1 and P11; the reply carries `changed: true`; the page asks for the plan again and keeps the typed name.
+L4-04 | FOLDED | MA-1465's note and the question again, up to 10 times, then a closing line; MA-1474. There is a gap for answers that come back in plain ASCII (R5).
+L4-05 | FOLDED | No "were backed up" at discovery; the account name when it can be read; "add the account back".
+L4-06 | FOLDED | One rule: NameMatches against the plan's name (execute.go:37-39).
+L5-02 | FOLDED | §1.4 keeps a gone input that `GoneSkippable` accepts, only when `ids[GoneSourceID]` shows it is a recorded store, and refuses when no listed input exists; MA-1473.
+L5-03 | FOLDED | `-list` prints the skips; `-follow-links` checks "found plus skipped" (O3, accepted); the DiscoverInputs sentence is corrected.
+L5-04 | FOLDED | ReadLastRun cleans Path and Name too.
+L5-08 | FOLDED | MA-1476 classifies every key planView and the route send, and fails on any key it has not classified.
+L6-01 | FOLDED | Rule (a) uses Lstat; rule (c) requires the parent to resolve inside the resolved auto-discovery place; one `GoneSkippable` serves both the run and the rebuild.
+L6-02 | FOLDED | Rule (c) refuses when the group folder is gone, whatever else remains; the sentence is reworded.
+L6-04 | FOLDED | A Since before `MinPlausibleTime` becomes this run's start and is never carried; health treats a zero, implausible or after-Started Since as a WARN.
+L6-05 | FOLDED | Case is folded on Windows only.
+L7-08 | FOLDED | The plaintext Run now note (`runNowSummaryFor`) is in §1.3 and MA-1471.
+L8-03 | FOLDED | §4 step 5 names all five release-note items.
+L9-02 | FOLDED | The double walk is stated; the lab check is at least 2 minutes, with the file count and minutes logged; clean-up is listed.
+L10-03 | FOLDED | The re-check list now matches `samePlan` (execute.go:372-377) exactly; the claim is narrowed; P12 is proven by MA-964 (ma964_execute_test.go:229-258), MA-981 and MA-1475.
+L10-09 | FOLDED | Settled through `encryptedSummaryFor` (jobrun.go:291-298); P5.
+L5-01→L3-02 | FOLDED | The previous record is read before beginRun.
+L5-06→L3-03 | FOLDED | One life field per kind; MA-972's 30 ms override (ma972_delete_token_test.go:73-76) moves to the delete plans' field.
+L5-07→L1-03 | FOLDED | Tooltip and X14 amendment.
+L6-03→L2-02 | FOLDED | Server refusal of an armed delete.
+L7-01→L5-02 | FOLDED | The rebuild keeps the input.
+L7-02→L3-02 | FOLDED | MA-1472 covers a killed run and a run refused after discovery.
+L7-03→L6-04 | FOLDED |
+L7-04→L2-02 | FOLDED | Row binding.
+L7-05→L5-03 | FOLDED |
+L7-06→L6-05 | FOLDED |
+L7-07→L5-04 | FOLDED |
+L8-01→L4-01 | FOLDED | Together with O2.
+L8-02→L4-01 | FOLDED | Since rule 2, narrowed (see R9).
+L9-01→L3-03 | FOLDED |
+L10-01→L1-04 | FOLDED |
+L10-02→L2-04 | FOLDED |
+L10-04→L9-02 | FOLDED | "checks once more, then deletes"; the minutes keep counting.
+L10-05→L1-03 | FOLDED |
+L10-08→L8-03 | FOLDED |
+L10-10→L3-01 | FOLDED |
+L10-11→L6-02 | FOLDED |
+L2-01, L5-05, L10-06, L10-07 are refuted in the review and not judged here.
+
+OPEN ITEMS AND ADMITTED NARROWINGS
+- O2 ACCEPT. In 1.7.5 a pause needs a run that itself found the source unreachable (pause.go:124-127; app/sourceloss.go:71-74). A skippable gone mailbox resets the streak (state/sourceloss.go:64-71). So 1.7.5 pauses only after refusals that Repair cannot cure, and "reconnect the source" is true there. The 1.7.4 person's email has already been sent. What they see in 1.7.5 is status, the banner and the card, and those do change. The same reasoning makes R1 a problem.
+- O3 ACCEPT. Today the opt-in is checked against `discovered`, which includes auto-discovered stores (main.go:275-278; run.go:2006-2010). "Listed minus skipped" would newly refuse an opt-in for a store found only by auto-discovery. A skipped input is never read, so no link goes silently unread.
+- O4 ACCEPT. MA-986's one-panel rule already makes an exception for a panel waiting for its delete: `delClose` skips `data-delete-waiting` (deletescript.go:43-45). The armed panel extends that exception, and a misrouted reply now fails closed at the server (MA-1476).
+- A plan whose page went away without saying so still waits 24 h: ACCEPT. There is at most one plan per row (`deletePlanKey` and `put`, pending.go:154-160), and every plan ends at a switch and at Shut down. `samePlan` means a held plan cannot widen a delete. A page heartbeat would bring back the owner's timeout complaint after sleep.
+- Since kept in the record rather than a separate file: ACCEPT. The skeptic offered this minimum. A separate file would name the mailboxes beside the archive (PathSourceID is "path:"+abs, manifest.go:490-503) and cannot exist beside an encrypted archive (A6). Every gap it leaves restarts Since later, so the WARN lasts longer, not shorter.
+- Armed request held on the page, not the server: ACCEPT. The skeptic allowed it with a stated reason, and the reason holds: closing the page during the check stops it, and the server's refusal makes page slips fail closed.
+- Since rule 2 narrowed to "the previous record names this input": ACCEPT. It stops one input's streak date being given to another. The leftover imprecision is R9.
+- Encrypted archives that 1.7.4 paused keep today's words and are told only by the release notes: ACCEPT. Their record has no job and their streak no kind (run.go:1375-1384; app/sourceloss.go:91-93). Telling them more would widen A6 again, which is the owner's call.
+
+REGRESSIONS
+- R1 MEDIUM | §1.3 "Archives 1.7.4 already stopped", MA-1479, P6. The new Repair words appear for any archive with `-auto` in its job and streak kind `local-source-unreachable`. 1.7.5's own refusals also set that kind (MA-688 amended): a gone group folder, a link, a place outside, nothing left. Those are exactly the cases where O2 says Repair "would fail again" and saying so would be untrue. The new words also replace two pinned forms of the banner: the one for a Run-now-only archive and "click Switch to this archive first" for a row that is not current (/Users/alex.dimarco/repositories/mail-archive-tool/.claude/worktrees/picker-review/internal/desktop/dashboard.go:2392, pinned at /Users/alex.dimarco/repositories/mail-archive-tool/.claude/worktrees/picker-review/internal/desktop/ma949_manual_backup_test.go:551-553). They also change the words MA-692 and MA-693 pin (/Users/alex.dimarco/repositories/mail-archive-tool/.claude/worktrees/picker-review/docs/scenario-catalog.md:1090-1091), and neither row is listed as amended. Fix: show the Repair words only when the input named in the failed record's error would be skipped now under rules (a) to (c), and today's words otherwise. Keep MA-949's Run-now-only and Switch-first forms. List MA-692, MA-693 and MA-949 as amended.
+- R2 MEDIUM | §3.2 "What it never does" and the R36 paragraph. "It never deletes after Cancel" and "closing the page ends it" hold only until the delete is sent. After that, the second walk takes minutes with the panel up and the minutes still counting "through both checks". Today's Cancel stays live: it removes the panel and says "Nothing was deleted." (/Users/alex.dimarco/repositories/mail-archive-tool/.claude/worktrees/picker-review/internal/desktop/deletescript.go:251). `busy()` disables only the Delete button (/Users/alex.dimarco/repositories/mail-archive-tool/.claude/worktrees/picker-review/internal/desktop/dashboard.go:2434-2441). `runDelete` is not tied to the request, so closing the page does not stop it (/Users/alex.dimarco/repositories/mail-archive-tool/.claude/worktrees/picker-review/internal/desktop/archivedelete.go:614). This already exists in the shipped page and in revision 1. It counts here because the design as written states these two guarantees, and the armed flow makes this window the normal case. Fix: once the delete is sent (armed or not), remove Cancel and say the delete can no longer be stopped; narrow both claims to "until the delete is sent"; add this to MA-1477.
+- R3 LOW | §1.3, "one helper … beside sourceLostSince". `internal/desktop` imports `internal/health` (/Users/alex.dimarco/repositories/mail-archive-tool/.claude/worktrees/picker-review/internal/desktop/maintenance.go:14). So status's code (/Users/alex.dimarco/repositories/mail-archive-tool/.claude/worktrees/picker-review/internal/health/health.go:505-512) cannot call a helper placed in desktop. Health also cannot import app, because app's package tests import health (/Users/alex.dimarco/repositories/mail-archive-tool/.claude/worktrees/picker-review/internal/app/p38_test.go). As written, status would need its own copy of the helper, the two-truths risk X10 forbids. Fix: put the helper in `internal/health`, which already reads the streak and the record, and have the banner and the card call it.
+- R4 LOW | §1.3 "The 14 days". The sentence "So a computer that was off for two weeks after the run that found the mailbox gone still shows the WARN at its next backup" contradicts the rule. That next backup's start minus Since is 14 days or more, so it shows a note; MA-1472's own example agrees. Fix: reword to "shows the WARN until its next backup". If the WARN must survive the computer being off, that is a new rule for the owner.
+- R5 LOW | §2. "Only the exact daily or weekly row installs", and every other answer gets "Nothing was chosen". On Linux and the BSDs the dialog may return the rows in plain ASCII, with "—" as "?" (/Users/alex.dimarco/repositories/mail-archive-tool/.claude/worktrees/picker-review/internal/wizard/picker.go:768-780, the R2-02 finding). A person who chose "Yes — every day" is then told "Nothing was chosen" ten times and gets no schedule. Today it is worse: a mangled "No" installs a daily backup. Fix: match the three rows by the mailbox list's existing `pickChoice` rule, and add a mangled answer to MA-1474.
+- R6 LOW | §1.3 encrypted, §1.6 MA-734. `mailbox_gone` widens the frozen leak budget A6 (/Users/alex.dimarco/repositories/mail-archive-tool/.claude/worktrees/picker-review/docs/design-encrypted-archives.md:410-416) and the phase 2a allow-list line (/Users/alex.dimarco/repositories/mail-archive-tool/.claude/worktrees/picker-review/docs/design-encrypted-archives-phase2a.md:145). The owner allowed it, but only MA-734 is listed as amended. Fix: add "A6 and phase2a §145, amended (owner, Q3)" to §1.6.
+- R7 LOW | §1.3 WARN words. Because of the L3-02 fold, running, cancelled and refused records now carry `mailbox_gone`. Health shows record warnings whatever the run's status (/Users/alex.dimarco/repositories/mail-archive-tool/.claude/worktrees/picker-review/internal/health/health.go:778). So "the other mailboxes are still backed up", and the encrypted "the others were backed up", would appear beside a failed or cancelled run. Fix: say that clause only when the record's status is ok.
+- R8 LOW | §1.3 note's remedy. "Set the archive up again in the wizard … choose All of them" ends the note only if the person also answers Yes to the schedule question, because only that rewrites the job file (installOffered, /Users/alex.dimarco/repositories/mail-archive-tool/.claude/worktrees/picker-review/internal/wizard/wizard.go:2186-2198). Fix: add "and answer Yes to keeping it current".
+- R9 LOW | §1.3 Since rule 2. 1.7.4 names only the first gone input in list order. If another input's refusal started the streak days earlier, this input gets that earlier date, so its WARN is shorter. Upgrade-only and bounded. Fix: say so in §1.3.
+- Checked with nothing found: MA-1471 to MA-1480 are unused in the catalog and on main, gmail-dedup, menubar, windows-installer and keep-local. P1 to P13 each say which row proves them or what they depend on. The other new code citations hold. Two are imprecise: settingscard.go:205-206 says "Backups stopped … since DATE", not "reconnect the source"; and wording_v152_test.go:31 is in internal/wizard and pins the pause email's words, not the banner.
+
+VERDICT: CLEARED AFTER THESE FIXES. Must fix: (1) the owner citation in MA-1472 (L1-02); (2) R1; (3) R2; (4) R3. Text fixes to make in the same revision: R4 to R9. All are design-text edits. None needs a lens re-run, and the lead can confirm them.
+
+SOURCES: Worked on 2026-11-20. Register: finding (fold check), read-only; nothing built, run or edited.
+- Read in full: design-review.md, docs/review-1.7.5-predesign.md, and the design at 9978a26 (sha256 badba138… confirmed), plus revision 1 (47f9efd) through `git show`.
+- Code read in internal/app: run.go (discovery, lock, beginRun, newRunRecord, the refused-run record, canonicalJob, recordRun, DiscoverInputs, autoDiscover and its patterns, FollowLinksRefusal), sourceloss.go, emptied.go.
+- Code read in internal/state: sourceloss.go, lastrun.go, encrypted_record.go and its test, manifest.go (PathSourceID).
+- Code read elsewhere: internal/assure/leak/tree.go; internal/health/health.go (imports, :490-580, :722-805).
+- Code read in internal/desktop: archives.go, dashboard.go (:1650-1680, :2385-2441), settingscard.go, localschedule.go, the MA-869 test, pending.go, the MA-972 test, archivedelete.go, deletescript.go (:240-300), the MA-949 test.
+- Code read in internal/archdelete: execute.go, archdelete.go, record.go, the MA-964 test.
+- Code read in internal/wizard: picker.go, listtext.go, wizard.go (offerSchedule, installOffered, the pause words, jobFor), jobrun.go, pause.go.
+- Also read: internal/thunderbird FindProfileDir and ReadStoreFacts; cmd/mailarchive main.go (:265-300, :440-447, :553-558) and job.go.
+- Docs read: catalog rows MA-103, 688, 692, 693, 734, 871, 890, 971, 972, 981, 986; ux-contract X6, X10, X14; A6 in design-encrypted-archives.md.
+- Not reached: matchAccountIn, the page-script harness, the delShowHeld code; how Windows `EvalSymlinks` treats junctions; whether browsers send keepalive from pagehide; whether Go timers count sleep (these last three the design itself marks recalled, not read).
+- The smallest check for you: R2 can be seen on 1.7.4 today by clicking Cancel while a large archive's Delete permanently is still running.
+- Counters: Borrowed lines none; Drift none noticed; Touched nothing; Persona none; Source reached: design, review and code as listed, yes.
+
+Applied in revision 3 (commit this commit): L1-02, MA-1472's row now cites "owner, 2026-11-20, Q2"; R1, the Repair words show only when the input the failed record names would be skipped now under rules (a) to (c) and no other listed input would refuse the run, every other archive keeps today's words, MA-949's Run-now-only and Switch-first forms are kept, and MA-692, MA-693 and MA-949 are listed as amended; R2, once a delete is sent (armed or not) the panel removes Cancel and says it can no longer be stopped, "never deletes after Cancel" and "closing the page ends it" now hold "until the delete is sent", and MA-1477 and a new P14 cover it; R3, the one helper is `health.GoneMailboxRepairable` in `internal/health`, called by status, the banner and the Settings card, and the skip rule it needs moved from `internal/app` to a new leaf package, `internal/autoplace`, because health cannot import app; R4, "shows the WARN until its next backup"; R5, the schedule question's rows are matched by the mailbox list's `pickChoice` rule, and MA-1474 adds mangled answers; R6, A6 and phase 2a's allow-list line are listed as amended (owner, Q3 and Q5); R7, "the other mailboxes are still backed up" and the encrypted "the others were backed up" only after a run that ended ok; R8, the note's remedy adds "and answer Yes to keeping it current"; R9, the upgrade-only imprecision of `Since` rule 2 is stated. The owner's answer to O1 (Q5, "Yes (Recommended)") is recorded in §0 and designed in §1.3: the encrypted record keeps `mailbox_gone_since`, a time only, so its WARN fades after 14 days; one date for every gone mailbox is a stated limit, raised to the owner as O5. The design's fold table maps each fix to its section.
