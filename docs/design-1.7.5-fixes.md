@@ -11,6 +11,12 @@ them and records the owner's fifth answer (§0, Q5), which closes O1. §8 maps e
 every fix. Open items are in §7. Branch `combined-archive-gone-mailbox`, off main `ed491c4`
 (release 1.7.4). Nothing is built yet.
 
+**Revision 3.1, 2026-11-20:** revision 3 with the owner's sixth answer recorded (§0, Q6): an
+encrypted archive's record also keeps how many mailboxes are gone, a number only, so a new loss
+restarts its warning. It closes O5 (§7). Folded in §1.3 ("Encrypted archives"), §1.6 (MA-734, A6
+and phase 2a's allow-list line, MA-1478), §5, P5 and §8. Revision 3's text is kept; each change is
+written beside what it changes.
+
 ## 0. The owner's words
 
 - 2026-11-19, after the report that a combined archive stops when one account's folder is gone:
@@ -48,6 +54,14 @@ every fix. Open items are in §7. Branch `combined-archive-gone-mailbox`, off ma
     with no folder or account name. May it keep that date?" Answer: "Yes (Recommended)". Folded in
     §1.3 ("Encrypted archives"), §1.6 (MA-734, A6 and phase 2a's allow-list line, amended;
     MA-1478), P5, and §7 (O1 closed). What one date cannot tell apart is O5.
+- 2026-11-20, the owner's answer to revision 3's open item O5, "Yes (Recommended)":
+  - **Q6.** "Encrypted combined archives keep one "first found gone" date for the whole archive
+    (your earlier yes). Rare case: a second mailbox goes missing while the first is still gone. It
+    then inherits the first one's old date, so status may show only the quiet note instead of a
+    warning for the new loss. May the encrypted archive also keep a count of how many mailboxes are
+    gone (a number only, no names), so a new loss restarts the warning?" Answer: "Yes
+    (Recommended)". Folded in §1.3 ("Encrypted archives": `mailbox_gone_count`), §1.6 (MA-734, A6
+    and phase 2a's allow-list line, amended again; MA-1478), §5, P5, §7 (O5 closed) and §8.
 
 The three parts are independent: each can be reviewed, built and reverted alone. They ship
 together as 1.7.5 because each is small. The per-mailbox archives the owner also approved
@@ -377,6 +391,9 @@ without saying so:
   - `mailbox_gone_since` (Q5), written only beside `mailbox_gone`: the time a mailbox was first
     found gone. A time only: no path, no name, and no count of mailboxes beyond what the boolean
     already says.
+  - *Amended by revision 3.1 (owner, Q6):* `mailbox_gone_count`, written only beside
+    `mailbox_gone`: how many mailboxes this run skipped, a number only (no path, no name). The
+    "no count" above is replaced by this one count, at the owner's word.
 
   `LastRun` gains `MailboxGone` (`omitempty`) and `MailboxGoneSince` (`omitzero`), which a
   plaintext record never sets, so a plaintext record is written byte for byte as before (MA-734's
@@ -385,7 +402,10 @@ without saying so:
   `marshalLastRun` (`encrypted_record.go:153-165`) copies them into `encryptedLastRun` only when
   `MailboxGone` is true, and MA-734's key check (`internal/state/encrypted_record_test.go:71`)
   gains these two keys, with the owner's rulings (MA-734, A6 and phase 2a's allow-list line,
-  amended, §1.6).
+  amended, §1.6). *Revision 3.1 (owner, Q6):* `LastRun` also gains `MailboxGoneCount`
+  (`omitempty`), set the same way (the number of this run's skip warnings), copied only when
+  `MailboxGone` is true, and the key check gains `mailbox_gone_count` too; a plaintext record never
+  sets it.
   - **How the time is kept** (owner, Q5): by the plaintext `Since`'s rules, resolved once,
     straight after discovery, from what is on disk before this run writes anything, and kept in
     the skip warnings in memory, so the running, cancelled, killed and refused-after-discovery
@@ -396,6 +416,14 @@ without saying so:
        refusal can be tied to a mailbox. Leaving it out makes a WARN last longer, never shorter,
        the direction accepted for `Since`;
     3. else this run's start.
+
+    *Revision 3.1 (owner, Q6), before rule 1:* when this run skips more mailboxes than the previous
+    record's `mailbox_gone_count` says were gone, a mailbox went since that record, so
+    `mailbox_gone_since` restarts at this run's start and rule 1 does not carry the older time. A
+    previous record with `mailbox_gone` and no count, or a count below 1 (a planted or damaged
+    record), counts as 1, the least its `mailbox_gone` says; a count past what any run could hold
+    (above 1,000,000) counts as unreadable, so as 1 too. A count that falls or stays the same keeps
+    rule 1's time.
 
     The same clamps: a time later than this run's start becomes this run's start, and one before
     `state.MinPlausibleTime` becomes this run's start and is never carried. Counted the same way:
@@ -423,6 +451,15 @@ without saying so:
     plaintext archive WARNs for it for 14 days of its own. The note still says a mailbox is gone
     and how to see which. Telling the two apart needs more than a date beside the archive, which
     Q5's wording does not allow; this design does not add it.
+    *Revision 3.1 (owner, Q6): settled by the count.* A second loss while the first is still gone
+    raises the count, so the date restarts and the second loss WARNs for 14 days of its own, as a
+    plaintext archive's does (the whole archive's date restarts, so the first loss's note becomes a
+    WARN again for those days; the WARN names no mailbox either way). What one count cannot tell
+    apart: one mailbox coming back in the same run that another goes (the count stays), or the run
+    that finds the second gone being one whose record is not kept (a refusal before discovery). The
+    first carries the older date, so the new loss may show only as the note, which still says a
+    mailbox is gone and how to see which; the second restarts the date at a later run, the
+    direction accepted for `Since`.
   - The attended surfaces name the mailbox, in memory only. Revision 1 left Desktop's Run now as a
     condition; it is settled. The wizard's summary and the Desktop's Run now note for an encrypted
     archive both come from `encryptedSummaryFor` (`jobrun.go:279`, `:298-321`), which already
@@ -490,6 +527,10 @@ skips it and warns on every run (§1.3).
   found) and, only beside it, `mailbox_gone_since` (the time a mailbox was first found gone: a time
   only)". The existing key check (`internal/state/encrypted_record_test.go:71`) gains those two
   keys; MA-1478 proves the record names no path, account name or count.
+  *Amended again by revision 3.1 (owner, 2026-11-20, Q6):* the allow-list also holds, only beside
+  `mailbox_gone`, `mailbox_gone_count` (how many mailboxes the run skipped: a number only); the key
+  check gains it; MA-1478 proves the record names no path or account name, and that its only number
+  about mailboxes is that count.
 - **A6 (`docs/design-encrypted-archives.md`) and phase 2a's allow-list line, amended** (owner,
   2026-11-20, Q3 and Q5; fold check R6). A6 (`design-encrypted-archives.md:410-416`) lists what
   an encrypted archive's cleartext status files carry; it gains "and, in the last-run record
@@ -498,7 +539,10 @@ skips it and warns on every run (§1.3).
   lastverify and the attention files (`design-encrypted-archives-phase2a.md:145`) gains "; in
   lastrun only, `mailbox_gone` and `mailbox_gone_since` (owner, Q3 and Q5)". Both amendments are
   written beside the original text, with the owner's rulings named; the original is not rewritten.
-  The run history and the attention notice are unchanged.
+  The run history and the attention notice are unchanged. *Revision 3.1 (owner, Q6):* A6's line
+  also says "and how many mailboxes it skipped, a number only", and phase 2a's says "`mailbox_gone`,
+  `mailbox_gone_since` and `mailbox_gone_count` (owner, Q3, Q5 and Q6)", each written beside the
+  revision 3 amendment.
 - **MA-692, amended** (fold check R1; nothing weakened: today's words, and the test that pins them,
   stay for every archive the helper says no to): the Your-archives banner for a source-lost
   archive says Repair or Run now only when `health.GoneMailboxRepairable` says a run would now get
@@ -540,7 +584,11 @@ skips it and warns on every run (§1.3).
   the record's `Started` minus that time is under 14 days and say the note after, never compared
   with now (the same 13- and 15-day cases as MA-1472); "the others were backed up" only after a run
   that ended ok; the wizard's summary and the Run now note name the mailbox from the result in
-  memory, and nothing of it is written beside the archive.
+  memory, and nothing of it is written beside the archive. *Amended by revision 3.1 (owner, Q6):*
+  the record also carries `mailbox_gone_count`, and its bytes hold no path and no account name; a
+  run that skips more mailboxes than the previous record's count restarts `mailbox_gone_since` at
+  its own start (positive twin first: the same count, or a lower one, carries the earlier time), and
+  a previous record with no count, or one below 1, counts as 1.
 - **MA-1479** (new): the words for a source-lost or auto-paused archive in status, the
   Your-archives banner and the Settings card, all from `health.GoneMailboxRepairable`
   (`internal/health`, one truth, X10). Positive twin first: a plaintext record with `-auto`, failed
@@ -885,7 +933,8 @@ nothing in the list needs your decision."
 1. This note: revision 3. The fold check of revision 2 cleared it after its fixes, all of them
    design-text edits that need no lens re-run; the lead confirms them (`design-review.md`,
    procedure step 4). The owner's five answers are recorded (§0). O5 (§7) goes to the owner; it
-   does not hold up the build, since the design takes Q5 as worded.
+   does not hold up the build, since the design takes Q5 as worded. *Revision 3.1:* the owner
+   answered O5 (§0, Q6), and the build includes the count.
 2. Build, test first. Every row gets a prove-fail → prove-pass by mutation, recorded in its commit.
 3. After the build: the adversarial pass (one pass over all three parts) and the friction review
    (every new word: the WARN and note, the encrypted sentences and note, the Repair words in all
@@ -912,7 +961,8 @@ nothing in the list needs your decision."
    - An encrypted "All of them" archive with an account folder removed: a scheduled run succeeds,
      status WARNs in the fixed sentence with its date, Run now's note names the mailbox, and the
      record holds no path or name: only `mailbox_gone` and `mailbox_gone_since` beside the
-     allow-list.
+     allow-list (*revision 3.1:* and `mailbox_gone_count`; a second account folder removed while
+     the first is still gone raises it and restarts the date).
    - A Delete with **Delete when the check finishes** of an archive sized by one timed check first
      so that its check takes at least two minutes on the test PC (the file count and the minutes
      go in the lab's log); the minutes keep counting through both checks, and once the delete is
@@ -939,7 +989,8 @@ nothing in the list needs your decision."
    - going back to 1.7.4: its status shows nothing for a skipped mailbox and its runs refuse again;
      a 1.7.4 Desktop beside 1.7.5 scheduled runs, or the other way round, can show different
      signals until both are 1.7.5; an encrypted archive's record gains two fields, which an older
-     MailArchive ignores (`ReadLastRun` is a plain `json.Unmarshal`, `lastrun.go:366`).
+     MailArchive ignores (`ReadLastRun` is a plain `json.Unmarshal`, `lastrun.go:366`)
+     (*revision 3.1:* three fields, the count among them).
 6. CI on all three systems, then release 1.7.5 (owner, 2026-11-19: "make it so").
 
 ## 5. Not in this change
@@ -948,6 +999,8 @@ nothing in the list needs your decision."
 - An email or system notice when a mailbox is first found gone; a "Stop looking for it" button.
 - A first-found date per mailbox for an encrypted archive, so a second gone mailbox gets a WARN of
   its own (open item O5). The one date the owner allowed (Q5) is in this change.
+  *Revision 3.1 (owner, Q6):* the count is in this change, so a second gone mailbox does get a WARN
+  of its own (§1.3); a date per mailbox is still not.
 - A delete armed and held on the server (§3.2 says why not).
 - Making the delete check itself faster, or doing without the second walk.
 
@@ -982,6 +1035,11 @@ nothing in the list needs your decision."
   now's note name the mailbox in memory only. *Proven by MA-1478 and MA-734 (amended).*
   *Conditional on one gone mailbox at a time (O5): a second one lost while the first is still gone
   carries the first one's time, so it may show only the note.*
+  *Revision 3.1 (owner, Q6), replacing that condition:* the record also carries
+  `mailbox_gone_count`, a number only, and a run that skips more mailboxes than the previous record
+  says restarts the time, so a second loss WARNs for 14 days of its own. *Proven by MA-1478 and
+  MA-734 (amended again). Conditional on the count rising: a mailbox that comes back in the same run
+  another goes keeps the count, so that new loss carries the older time.*
 - **P6.** A plaintext `-auto` archive that 1.7.4 auto-paused is told that Repair or Run now works
   only when it does: when the input its failed record names would be skipped now, and no other
   listed input would refuse the run. Every other archive keeps today's words, MA-949's
@@ -1062,6 +1120,9 @@ nothing in the list needs your decision."
   if the owner wants it: may the encrypted record also keep how many mailboxes are gone (a count,
   which Q5's wording left out), so that when the count grows the date starts again and the second
   loss WARNs for 14 days?
+  *CLOSED by revision 3.1 (owner, 2026-11-20, Q6: "Yes (Recommended)").* The record keeps
+  `mailbox_gone_count`; when it grows the date starts again (§1.3, "Encrypted archives"). Its edge,
+  a mailbox that comes back in the same run another goes, is stated there and in P5.
 
 ## 8. Fold table
 
@@ -1147,6 +1208,7 @@ CLEARED AFTER THESE FIXES. Each fix, and where revision 3 applies it:
 | R8 | LOW, text | §1.3 the note's remedy ("and answer Yes to keeping it current"); MA-1472 |
 | R9 | LOW, text | §1.3 "What rule 2 cannot tell" |
 | O1 (owner, Q5) | closed | §0 Q5; §1.3 "Encrypted archives" (`mailbox_gone_since`); §1.6 MA-734, A6 and phase 2a amended, MA-1478; §4; §5; P5; §7 (O1 closed, O5 opened) |
+| O5 (owner, Q6; revision 3.1) | closed | §0 Q6; §1.3 "Encrypted archives" (`mailbox_gone_count`, the restart rule, what one count cannot tell apart); §1.6 MA-734, A6 and phase 2a amended again, MA-1478; §5; P5; §7 (O5 closed) |
 
 Also corrected while applying them: `RunWarning.Since` is `omitzero`, not `omitempty`
 (`omitempty` does not leave out a zero time, so revision 2's "byte for byte as before" would not
