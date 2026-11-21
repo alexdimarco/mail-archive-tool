@@ -32,11 +32,17 @@ const (
 // message stays the operator-facing one; the type lets classifySourceReach recognise it
 // (S3-C2) so the streak climbs, and the streak's run count then sorts a transient absence (a
 // drive briefly unplugged) from a permanent loss (S3-C3).
-type sourceUnreachableError struct{ path string }
+//
+// movedTo, when set, is where Thunderbird now keeps the gone input's account, which was moved with
+// its Local Directory setting, not removed (MA-1481; the owner's Q7): the words say so.
+type sourceUnreachableError struct{ path, movedTo string }
 
 // Error is autoplace.GoneText, unchanged, so whatever compares a record's error with an input's
-// refusal (health.GoneMailboxRepairable) compares one text.
+// refusal (health.GoneMailboxRepairable) compares one text; for a moved account, autoplace.MovedText.
 func (e *sourceUnreachableError) Error() string {
+	if e.movedTo != "" {
+		return autoplace.MovedText(e.path, e.movedTo)
+	}
 	return autoplace.GoneText(e.path)
 }
 

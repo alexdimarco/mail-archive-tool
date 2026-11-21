@@ -588,6 +588,55 @@ func findAccount(profileDir, storeDir string) (*Account, prefSettings, error) {
 	return acct, s, err
 }
 
+// MovedTo reports, for the store folder storeDir of the profile profileDir, which is gone, the
+// folder a live account's settings now name for it, when Thunderbird still gives that account the
+// store's place by its hostname (C0c's match found it by hostname, not by a folder setting) and
+// every folder setting the account has names another place: the account was moved with its Local
+// Directory setting, not removed (the 1.7.5 adversarial pass's INS-02; the owner's ruling of
+// 2026-11-20, Q7: "Stop the backup (Recommended)"). The folder is the account's directory setting,
+// else its directory-rel resolved, with control characters stripped. False when no live account is
+// matched that way, when the matched account has no folder setting (nothing says it moved), or when
+// prefs.js or user.js cannot be read with certainty.
+func MovedTo(profileDir, storeDir string) (string, bool) {
+	s, _, err := readPrefs(profileDir)
+	if err != nil {
+		return "", false
+	}
+	store, err := filepath.Abs(storeDir)
+	if err != nil {
+		return "", false
+	}
+	profile, err := filepath.Abs(profileDir)
+	if err != nil {
+		return "", false
+	}
+	acct, err := matchAccountIn(s, profile, store, runtime.GOOS)
+	if err != nil || acct == nil {
+		return "", false
+	}
+	p := func(field string) string { return unquote(s.vals["mail.server."+acct.ServerKey+"."+field]) }
+	var folders []string
+	if rel, ok := strings.CutPrefix(p("directory-rel"), "[ProfD]"); ok {
+		folders = append(folders, profile+"/"+rel)
+	}
+	dir := p("directory")
+	if dir != "" {
+		folders = append(folders, dir)
+	}
+	if len(folders) == 0 {
+		return "", false
+	}
+	for _, f := range folders {
+		if samePath(f, store, runtime.GOOS) {
+			return "", false // its folder setting still names the store: deleted by hand, not moved
+		}
+	}
+	if dir == "" {
+		dir = filepath.Clean(filepath.FromSlash(folders[0]))
+	}
+	return StripControl(dir), true
+}
+
 // matchAccount is FindAccountForStore's rule on parsed prefs, for goos.
 func matchAccount(prefs map[string]string, profile, store, goos string) (*Account, error) {
 	return matchAccountIn(prefSettings{vals: prefs}, profile, store, goos)

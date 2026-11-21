@@ -3,7 +3,8 @@
 // auto-discovery on (docs/design-1.7.5-fixes.md §1.2, MA-1471). The run (app.DiscoverInputs),
 // the Desktop's schedule rebuild and status all call it, so they cannot disagree. It imports only
 // the standard library and internal/state, so internal/health can call it (health cannot import
-// internal/app, whose own tests import health).
+// internal/app, whose own tests import health). Amended by the 1.7.5 adversarial pass (INS-02,
+// Q7): it also imports internal/thunderbird, a leaf of its own, to tell a moved account.
 package autoplace
 
 import (
@@ -17,6 +18,7 @@ import (
 	"sync/atomic"
 
 	"mail-archive-tool/internal/state"
+	"mail-archive-tool/internal/thunderbird"
 )
 
 // NonLocal reports a path on another computer or one that is not a plain local path: a network
@@ -134,8 +136,37 @@ const (
 //     that is a link) takes the parent outside the place.
 //
 // Whether a mailbox remains after the skips (rule (d)) is the caller's to say.
+//
+// Added by the 1.7.5 adversarial pass (INS-02; the owner's ruling of 2026-11-20, Q7: "Stop the
+// backup (Recommended)"): a Thunderbird account moved with its Local Directory setting, not
+// removed (MovedTo), is never skipped, so the run stops as 1.7.4 did.
 func GoneSkippable(path string) bool {
-	return goneSkippable(path, patterns(), runtime.GOOS)
+	if !goneSkippable(path, patterns(), runtime.GOOS) {
+		return false
+	}
+	_, moved := MovedTo(path)
+	return !moved
+}
+
+// MovedTo reports, for a gone input in a Thunderbird profile, the folder its account was moved to:
+// Thunderbird's settings still list a live account for the input's folder (by its hostname) whose
+// folder setting names another place (thunderbird.MovedTo; MA-1481). False for an input in no
+// profile, for an account removed from the list, and for one whose folder setting still names the
+// input (its folder deleted by hand: the owner's Q4 case, skipped).
+func MovedTo(path string) (string, bool) {
+	look(path)
+	profile, ok := thunderbird.FindProfileDir(path)
+	if !ok {
+		return "", false
+	}
+	return thunderbird.MovedTo(profile, path)
+}
+
+// MovedText is the words of a moved account's refusal (MA-1481): the old folder is gone, where
+// Thunderbird now keeps the account's mail, and the two ways to back that mail up. It names folders
+// only, never the account's name, since a refusal reaches log files (MA-1288).
+func MovedText(path, movedTo string) string {
+	return fmt.Sprintf("input %s does not exist: Thunderbird still lists its account, now kept in %s (its Local Directory setting was changed), so this backup stopped instead of skipping it. To back that mail up again, set the account's Local Directory back to its folder in the Thunderbird profile, or back up %s as an archive of its own (Make a new archive…, then Thunderbird / mbox mail folder).", path, movedTo, movedTo)
 }
 
 // ProgramOf names the mail program whose place path lies in, by the patterns auto-discovery

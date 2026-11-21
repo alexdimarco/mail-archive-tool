@@ -2024,7 +2024,9 @@ func snapshot(src, dir string) (string, func(), error) {
 // (design-1.7.5-fixes §1.2, MA-1471). Otherwise a gone input refuses as before, with
 // the typed sourceUnreachableError naming the first listed input the rule does not
 // skip, or, when only "a mailbox remains" fails, the first gone one. Every caller gets
-// skipped: one that does not report it discards it on purpose, saying why.
+// skipped: one that does not report it discards it on purpose, saying why. A gone input
+// whose Thunderbird account was moved, not removed, is never skipped, and its refusal says
+// where the account went (autoplace.MovedTo, MA-1481).
 func DiscoverInputs(inputs []string, auto bool) (files, skipped []string, err error) {
 	seen := map[string]bool{}
 	add := func(p string) {
@@ -2045,6 +2047,13 @@ func DiscoverInputs(inputs []string, auto bool) (files, skipped []string, err er
 				if auto && autoplace.GoneSkippable(in) {
 					skipped = append(skipped, in)
 					continue
+				}
+				if auto {
+					// A Thunderbird account moved, not removed: stopped as 1.7.4 did, in words that say
+					// where it went (MA-1481; the owner, 2026-11-20, Q7: "Stop the backup").
+					if dir, moved := autoplace.MovedTo(in); moved {
+						return nil, nil, &sourceUnreachableError{path: in, movedTo: dir}
+					}
 				}
 				return nil, nil, &sourceUnreachableError{path: in}
 			}
