@@ -125,26 +125,40 @@ func othersKept(lr state.LastRun) string {
 //
 // Any other archive keeps today's words.
 func GoneMailboxRepairable(out string) bool {
+	_, ok := GoneMailboxRepairableInput(out)
+	return ok
+}
+
+// GoneMailboxRepairableInput is GoneMailboxRepairable with the gone mailbox it is about: the
+// listed input the record refused on, which the words name (the 1.7.5 friction review's F10).
+func GoneMailboxRepairableInput(out string) (string, bool) {
+	if named, ok := goneMailboxRepairable(out); ok {
+		return named, true
+	}
+	return "", false
+}
+
+func goneMailboxRepairable(out string) (string, bool) {
 	if out == "" || encmark.MustMinimise(out) {
-		return false
+		return "", false
 	}
 	if s, err := state.ReadSourceStreak(out); err != nil || s.LastKind != "local-source-unreachable" {
-		return false
+		return "", false
 	}
 	lr, st, _ := state.ReadLastRun(out)
 	if st != state.LastRunPresent || lr.Encrypted || lr.Status != state.RunFailed {
-		return false
+		return "", false
 	}
 	auto, inputs := jobInputs(lr.Job)
 	if !auto {
-		return false
+		return "", false
 	}
 	// The record is untrusted (C-17): a listed path that is not a plain local one (a network or
 	// device path, or one not absolute) is never looked at, so the answer is no before any file
 	// check (MA-869; the 1.7.5 adversarial pass's OUT-01 and INS-01).
 	for _, in := range inputs {
 		if autoplace.NonLocal(in) {
-			return false
+			return "", false
 		}
 	}
 	named := ""
@@ -155,17 +169,17 @@ func GoneMailboxRepairable(out string) bool {
 		}
 	}
 	if named == "" || !autoplace.GoneSkippable(named) {
-		return false
+		return "", false
 	}
 	there := 0
 	for _, in := range inputs {
 		if _, err := autoplace.Stat(in); err == nil {
 			there++
 		} else if !autoplace.GoneSkippable(in) {
-			return false
+			return "", false
 		}
 	}
-	return there > 0
+	return named, there > 0
 }
 
 // jobInputs reads a recorded job's -auto and its listed -inputs, in order.

@@ -218,9 +218,16 @@ var sourceWait = 2 * time.Second
 // its answer comes from looks at the mail paths the archive's record names, and drawing the page
 // never waits on their storage. An answer that does not come in time is no, so the page keeps
 // today's words.
-func goneRepairable(out string) bool {
-	v, ok := withinSourceWait(func() bool { return health.GoneMailboxRepairable(out) })
-	return ok && v
+func goneRepairable(out string) bool { return goneRepairInput(out) != "" }
+
+// goneRepairInput is goneRepairable with the gone mailbox it is about (the 1.7.5 friction review's
+// F10: the words name it); "" for no, and for an answer that does not come in time.
+func goneRepairInput(out string) string {
+	v, ok := withinSourceWait(func() string { named, _ := health.GoneMailboxRepairableInput(out); return named })
+	if !ok {
+		return ""
+	}
+	return v
 }
 
 // withinSourceWait runs f, a check that touches a mail source's storage, and gives its result

@@ -207,7 +207,8 @@ func settingsCardFor(in settingsInputs) settingsCard {
 				// Only where a Repair would get past the gone mailbox (status's own helper, MA-1479),
 				// asked within sourceWait (MA-869, OUT-01).
 				if goneRepairable(out) {
-					s.AutoPaused += " If a mail account was removed, click Repair: this version skips a mailbox that is gone and backs up the others."
+					// Where Repair is, and "MailArchive now" for "this version" (the friction review's F10).
+					s.AutoPaused += " If a mail account was removed, click Repair on the Scheduled backup card: MailArchive now skips a mailbox that is gone and backs up the others."
 				}
 			}
 		}

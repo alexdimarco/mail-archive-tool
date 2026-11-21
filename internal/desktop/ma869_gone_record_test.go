@@ -47,6 +47,12 @@ func pausedStopped(t *testing.T, errText string, jobArgs, mine []string) string 
 // within limit fails the test.
 func drawGone(t *testing.T, out string, limit time.Duration) (page, healthView string) {
 	t.Helper()
+	return drawGoneWith(t, out, limit, false)
+}
+
+// drawGoneWith is drawGone with the archive's scheduler entry there when installed (a Repair done).
+func drawGoneWith(t *testing.T, out string, limit time.Duration, installed bool) (page, healthView string) {
+	t.Helper()
 	idxPath := filepath.Join(t.TempDir(), archindex.Name)
 	if err := archindex.WriteFile(idxPath, archindex.Index{Version: archindex.Version, Entries: []archindex.Entry{{Path: out}}}); err != nil {
 		t.Fatal(err)
@@ -55,7 +61,10 @@ func drawGone(t *testing.T, out string, limit time.Duration) (page, healthView s
 	if err := SaveSettings(settings, Settings{Out: out}); err != nil {
 		t.Fatal(err)
 	}
-	fake := &backupFake{tasks: map[string]bool{}}
+	fake := &backupFake{tasks: map[string]bool{out: installed}}
+	if !installed {
+		fake.tasks = map[string]bool{}
+	}
 	h := DashboardHandler(Config{Out: out, GOOS: "darwin", Exe: "/opt/mailarchive", SettingsPath: settings, IndexPath: idxPath,
 		BackupInstalledFor: fake.installedFor, RemoveBackupFor: fake.removeFor, EntryState: fake.entryState})
 	get := func(path string) (string, bool) {

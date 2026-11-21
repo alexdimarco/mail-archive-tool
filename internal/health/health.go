@@ -22,6 +22,7 @@ import (
 	"mail-archive-tool/internal/job"
 	"mail-archive-tool/internal/lockfile"
 	"mail-archive-tool/internal/procs"
+	"mail-archive-tool/internal/autoplace"
 	"mail-archive-tool/internal/schedule"
 	"mail-archive-tool/internal/state"
 	"mail-archive-tool/internal/util"
@@ -64,12 +65,12 @@ type Input struct {
 	// unattended, launchd/schtasks need a login). Empty defaults to the host.
 	GOOS string
 
-	// GoneRepairable, when set, is GoneMailboxRepairable's answer for Out, asked by the caller
-	// within its own time limit: the Desktop's health view asks it inside withinSourceWait, so
-	// drawing the page never waits on a mail source's storage (MA-869, C-17; the 1.7.5 adversarial
-	// pass's OUT-01). Assess then uses it and looks at no path the record names. Nil: Assess asks
-	// the helper itself (status).
-	GoneRepairable *bool
+	// GoneRepair, when set, is GoneMailboxRepairableInput's answer for Out ("" for no, else the
+	// gone mailbox), asked by the caller within its own time limit: the Desktop's health view asks
+	// it inside withinSourceWait, so drawing the page never waits on a mail source's storage
+	// (MA-869, C-17; the 1.7.5 adversarial pass's OUT-01). Assess then uses it and looks at no path
+	// the record names. Nil: Assess asks the helper itself (status).
+	GoneRepair *string
 
 	// OutUnderSync names the cloud-sync service (e.g. "OneDrive") when the
 	// archive sits inside a synced folder; "" when it does not.
@@ -372,6 +373,9 @@ type Report struct {
 	// now is the time the report was assessed at, so the JSON judges the capture
 	// gaps' stuck threshold at the same instant the reasons did.
 	now time.Time
+	// goneAsked and goneNamed memoize goneRepair, so status asks the Repair helper once.
+	goneAsked bool
+	goneNamed string
 }
 
 // localStamp is how status writes a local time: with its zone named, since the
@@ -442,9 +446,25 @@ func IntervalOf(iv string) time.Duration {
 	}
 }
 
+// goneRepair is the gone mailbox a Repair would now get past (GoneMailboxRepairableInput, MA-1479),
+// "" for none: asked once, and only when a line needs it; the caller's answer when it gave one
+// (in.GoneRepair, the Desktop's bounded ask).
+func (r *Report) goneRepair(in Input) string {
+	if !r.goneAsked {
+		r.goneAsked = true
+		if in.GoneRepair != nil {
+			r.goneNamed = *in.GoneRepair
+		} else {
+			r.goneNamed, _ = GoneMailboxRepairableInput(in.Out)
+		}
+	}
+	return r.goneNamed
+}
+
 // Assess applies the posture rules, failing closed on missing evidence.
 func Assess(in Input, now time.Time) Report {
 	r := Report{Posture: "GREEN", now: now}
+	goneRepair := func() string { return r.goneRepair(in) }
 
 	// A delete of this archive that did not finish (§5.4; the 1.5.3 friction review's B2): the
 	// folder may be partly deleted, and the remedy is to finish it. Said alone: every other reason
@@ -515,18 +535,20 @@ func Assess(in Input, now time.Time) Report {
 			if !s.FirstUnreachable.IsZero() {
 				since = s.FirstUnreachable.Format("Jan 2, 2006")
 			}
-			repairable := in.GoneRepairable != nil && *in.GoneRepairable
-			if in.GoneRepairable == nil {
-				repairable = GoneMailboxRepairable(in.Out)
-			}
-			if repairable {
-				// A mail account removed: this version skips its gone folder, so Repair (or Run now)
-				// backs up the others (MA-1479); said only where a run would get past it.
+			if named := goneRepair(); named != "" {
+				// A mail account removed: MailArchive now skips its gone folder, so Repair (or Run
+				// now) backs up the others (MA-1479); said only where a run would get past it, naming
+				// the missing mailbox (the friction review's F10). With its scheduled entry there (a
+				// Repair done, or not yet paused), the next backup skips it by itself (F2).
 				click := "click Repair (or Run now)"
 				if manualBackup(in) {
 					click = "click Run now"
 				}
-				r.warn("source_lost", fmt.Sprintf("this archive's source has not been reachable since %s — if a mail account was removed, %s on the archive's Scheduled backup card in MailArchive Desktop: this version skips a mailbox that is gone and backs up the others; otherwise reconnect the source (its mailbox or mail folder) to resume backups", since, click))
+				if in.HasDescriptor && !manualBackup(in) && in.SchedState == schedule.Installed {
+					r.warn("source_lost", fmt.Sprintf("this archive's source has not been reachable since %s (the missing mailbox: %s) — its scheduled backup is set, and MailArchive now skips a mailbox that is gone, so the next backup backs up the others; to back up now, click Run now on the archive's Scheduled backup card in MailArchive Desktop", since, named))
+				} else {
+					r.warn("source_lost", fmt.Sprintf("this archive's source has not been reachable since %s (the missing mailbox: %s) — if a mail account was removed, %s on the archive's Scheduled backup card in MailArchive Desktop: MailArchive now skips a mailbox that is gone and backs up the others; otherwise reconnect the source (its mailbox or mail folder) to resume backups", since, named, click))
+				}
 			} else {
 				r.warn("source_lost", fmt.Sprintf("this archive's source has not been reachable since %s — reconnect the source (its mailbox or mail folder) to resume backups", since))
 			}
@@ -772,7 +794,15 @@ func assessKeyless(r *Report, in Input, now time.Time) {
 				r.red("run_failed", fmt.Sprintf("the last backup (%s) did not save everything: %s", lr.Started.Local().Format(localStamp), strings.Join(state.PartialSentences(*p), " ")))
 				break
 			}
-			r.red("run_failed", fmt.Sprintf("the last run (%s) FAILED: %s", lr.Started.Local().Format(localStamp), runErrorText(in, lr)))
+			text := runErrorText(in, lr)
+			// A refusal on a gone mailbox a Repair would now get past: its drive advice is dropped,
+			// since the WARN below says a removed account is fine (the 1.7.5 friction review's F10).
+			if !lr.Encrypted && strings.HasSuffix(lr.Error, " does not exist (check the path, or that the drive holding it is mounted)") {
+				if named := r.goneRepair(in); named != "" && lr.Error == autoplace.GoneText(named) {
+					text = "input " + named + " does not exist"
+				}
+			}
+			r.red("run_failed", fmt.Sprintf("the last run (%s) FAILED: %s", lr.Started.Local().Format(localStamp), text))
 			// A breaker trip is recorded by kind as an outage; its text (the server's
 			// last words, the mailbox's name) is not read for needles (S3-AC5).
 			if lr.ErrorKind != state.ErrKindServiceUnavailable && looksLikeAuthFailure(lr.Error) {

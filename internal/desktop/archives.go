@@ -46,6 +46,12 @@ type ArchiveRow struct {
 	// the gone mailbox the archive's last run refused on (health.GoneMailboxRepairable, MA-1479):
 	// the banner then says to click Repair (or Run now) first, in MA-949's forms.
 	SourceLostRepair bool
+	// SourceLostMailbox is the missing mailbox the Repair words name (the 1.7.5 friction review's
+	// F10), beside SourceLostRepair. SourceLostSet: this is the current archive and its scheduled
+	// entry is there (a Repair done, or not yet paused), so the banner says the next backup skips
+	// it by itself and Run now backs up at once (F2).
+	SourceLostMailbox string
+	SourceLostSet     bool
 	// Problem is, for a folder this computer recorded as an encrypted archive that no
 	// longer holds it — emptied, replanted, a link, its key files gone — that case's
 	// own words (design-encrypted-archives-phase3 §4.5): shown in place of Switch and
@@ -193,6 +199,10 @@ func (cfg Config) archiveRows(idx archindex.Index) []ArchiveRow {
 			problem = recordedProblem(e.Path)
 		}
 		lostSince := sourceLostSince(e.Path)
+		goneMailbox := ""
+		if lostSince != "" {
+			goneMailbox = goneRepairInput(e.Path)
+		}
 		del := cfg.deleteRowFacts(e.Path, rc, avail && kind != "" && problem == "")
 		unlistWhy := ""
 		// The route's own refusal (MA-1016), through the page's memo of the file system.
@@ -214,8 +224,9 @@ func (cfg Config) archiveRows(idx archindex.Index) []ArchiveRow {
 			SourceLostSince: lostSince,
 			RunNowOnly:      lostSince != "" && runNowOnlyRecorded(e.Path),
 			// Status's own helper, so the banner and status agree (X10, MA-1479), asked within
-			// sourceWait (MA-869, OUT-01).
-			SourceLostRepair: lostSince != "" && goneRepairable(e.Path),
+			// sourceWait (MA-869, OUT-01), naming the missing mailbox (F10).
+			SourceLostRepair:  goneMailbox != "",
+			SourceLostMailbox: goneMailbox,
 			Problem:          problem,
 			TBBanner:         tbBanner(e.Path, avail && kind != "" && kind != archindex.KindEncrypted && problem == ""),
 		})

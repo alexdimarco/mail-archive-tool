@@ -2,6 +2,7 @@ package desktop
 
 import (
 	"context"
+	"fmt"
 	"io"
 	"log"
 	"os"
@@ -25,17 +26,25 @@ import (
 // Your-archives banner and the Settings card say Repair or Run now only when
 // health.GoneMailboxRepairable says a run would now get past the gone mailbox.
 
+// Amended 2026-11-20 by the 1.7.5 friction review (F10), each restated word for word at the same
+// strength: the Repair forms name the missing mailbox ("(the missing mailbox: PATH)", PATH the input
+// the record refused on, filled in by fmt.Sprintf), say "MailArchive now skips" for "this version
+// skips", and the Settings card says where Repair is ("click Repair on the Scheduled backup card").
+// The words were: "…since Oct 12, 2026 — if a mail account was removed, … : this version skips a
+// mailbox that is gone and backs up the others; …", "…since Oct 12, 2026. If a mail account was
+// removed, … : this version skips …", and "If a mail account was removed, click Repair: this version
+// skips a mailbox that is gone and backs up the others." Today's words are unchanged.
 const (
 	todaysStatus  = "this archive's source has not been reachable since Oct 12, 2026 — reconnect the source (its mailbox or mail folder) to resume backups"
-	repairStatus  = "this archive's source has not been reachable since Oct 12, 2026 — if a mail account was removed, click Repair (or Run now) on the archive's Scheduled backup card in MailArchive Desktop: this version skips a mailbox that is gone and backs up the others; otherwise reconnect the source (its mailbox or mail folder) to resume backups"
-	runNowStatus  = "this archive's source has not been reachable since Oct 12, 2026 — if a mail account was removed, click Run now on the archive's Scheduled backup card in MailArchive Desktop: this version skips a mailbox that is gone and backs up the others; otherwise reconnect the source (its mailbox or mail folder) to resume backups"
-	repairBanner  = "This archive's source hasn't been reachable since Oct 12, 2026. If a mail account was removed, click Repair (or Run now) on its Scheduled backup card: this version skips a mailbox that is gone and backs up the others. Repair starts the schedule again; Run now backs up once. Otherwise reconnect the source (its mailbox or mail folder) to resume backups."
-	runNowBanner  = "This archive's source hasn't been reachable since Oct 12, 2026. If a mail account was removed, click Run now on its Scheduled backup card: this version skips a mailbox that is gone and backs up the others; its backup runs only when you click Run now. Otherwise reconnect the source (its mailbox or mail folder)."
-	switchRepair  = "This archive's source hasn't been reachable since Oct 12, 2026. If a mail account was removed, click Switch to this archive, then click Repair (or Run now) on its Scheduled backup card: this version skips a mailbox that is gone and backs up the others. Repair starts the schedule again; Run now backs up once. Otherwise reconnect the source (its mailbox or mail folder) to resume backups."
-	switchRunNow  = "This archive's source hasn't been reachable since Oct 12, 2026. If a mail account was removed, click Switch to this archive, then click Run now on its Scheduled backup card: this version skips a mailbox that is gone and backs up the others; its backup runs only when you click Run now. Otherwise reconnect the source (its mailbox or mail folder)."
+	repairStatus  = "this archive's source has not been reachable since Oct 12, 2026 (the missing mailbox: %s) — if a mail account was removed, click Repair (or Run now) on the archive's Scheduled backup card in MailArchive Desktop: MailArchive now skips a mailbox that is gone and backs up the others; otherwise reconnect the source (its mailbox or mail folder) to resume backups"
+	runNowStatus  = "this archive's source has not been reachable since Oct 12, 2026 (the missing mailbox: %s) — if a mail account was removed, click Run now on the archive's Scheduled backup card in MailArchive Desktop: MailArchive now skips a mailbox that is gone and backs up the others; otherwise reconnect the source (its mailbox or mail folder) to resume backups"
+	repairBanner  = "This archive's source hasn't been reachable since Oct 12, 2026 (the missing mailbox: %s). If a mail account was removed, click Repair (or Run now) on its Scheduled backup card: MailArchive now skips a mailbox that is gone and backs up the others. Repair starts the schedule again; Run now backs up once. Otherwise reconnect the source (its mailbox or mail folder) to resume backups."
+	runNowBanner  = "This archive's source hasn't been reachable since Oct 12, 2026 (the missing mailbox: %s). If a mail account was removed, click Run now on its Scheduled backup card: MailArchive now skips a mailbox that is gone and backs up the others; its backup runs only when you click Run now. Otherwise reconnect the source (its mailbox or mail folder)."
+	switchRepair  = "This archive's source hasn't been reachable since Oct 12, 2026 (the missing mailbox: %s). If a mail account was removed, click Switch to this archive, then click Repair (or Run now) on its Scheduled backup card: MailArchive now skips a mailbox that is gone and backs up the others. Repair starts the schedule again; Run now backs up once. Otherwise reconnect the source (its mailbox or mail folder) to resume backups."
+	switchRunNow  = "This archive's source hasn't been reachable since Oct 12, 2026 (the missing mailbox: %s). If a mail account was removed, click Switch to this archive, then click Run now on its Scheduled backup card: MailArchive now skips a mailbox that is gone and backs up the others; its backup runs only when you click Run now. Otherwise reconnect the source (its mailbox or mail folder)."
 	todaysBanner  = "This archive's source hasn't been reachable since Oct 12, 2026 — reconnect the source (its mailbox or mail folder) to resume backups."
 	todaysRunNow  = "This archive's source hasn't been reachable since Oct 12, 2026 — reconnect the source (its mailbox or mail folder), then click Run now on its Scheduled backup card: its backup runs only when you click Run now."
-	settingsAdded = "If a mail account was removed, click Repair: this version skips a mailbox that is gone and backs up the others."
+	settingsAdded = "If a mail account was removed, click Repair on the Scheduled backup card: MailArchive now skips a mailbox that is gone and backs up the others."
 )
 
 // goneHome is a home whose Thunderbird profile, where auto-discovery looks, keeps account folders
@@ -163,12 +172,12 @@ func TestTheRepairWordsShowOnlyWhereARunWouldGetPastTheGoneMailbox(t *testing.T)
 		if !health.GoneMailboxRepairable(out) {
 			t.Fatalf("positive twin %s, current %v: the helper says no", c.interval, c.current)
 		}
-		if got := statusOf(out); !strings.Contains(got, "WARN: "+c.status) {
-			t.Errorf("positive twin %s: status:\n%s\nwant %q", c.interval, got, c.status)
+		if want := fmt.Sprintf(c.status, b); !strings.Contains(statusOf(out), "WARN: "+want) {
+			t.Errorf("positive twin %s: status:\n%s\nwant %q", c.interval, statusOf(out), want)
 		}
 		page, row := bannerOf(t, out, c.current)
-		if !row.SourceLostRepair || !strings.Contains(page, c.banner) {
-			t.Errorf("positive twin %s, current %v: the banner (row %+v) lacks %q", c.interval, c.current, row, c.banner)
+		if want := fmt.Sprintf(c.banner, b); !row.SourceLostRepair || !strings.Contains(page, want) {
+			t.Errorf("positive twin %s, current %v: the banner (row %+v) lacks %q", c.interval, c.current, row, want)
 		}
 	}
 
