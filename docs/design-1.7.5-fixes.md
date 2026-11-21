@@ -191,6 +191,17 @@ these hold:
   words differ by which rule decided and never name the account (MA-1288 holds: a refusal reaches log
   files; the brief's "Thunderbird still has NAME" form is flagged for the lead). *(RV2-06)* A run's
   rule 1 also requires the warning's path to lie in an auto-discovery place.
+  *Revision 4.3 (the re-verify, round 3's RV3-01, MEDIUM, and RV3-02, LOW; the lead's calls):* the
+  names live in every plaintext record, not only an ok run's: a small list beside the completeness
+  entries (`thunderbird_names`: store id and name), carried from the previous record into the
+  running record and so into a refused, failed or cancelled run's, so a moved account stops every
+  scheduled run and Run now, not only the first after the move. An ok run with entries of its own
+  keeps them there, written as before. Encrypted records keep none (Q3, Q5, Q6). And "named, and no
+  live account has it" now goes to the server-name rule instead of "removed", so an account moved
+  and renamed at once stops; the traded case returns (a removed account beside exactly one
+  same-server account wholly off the profile stops). *(RV3-04)* An encrypted archive's record names
+  no account, so the server-name rule always decides for it (§5's known limit). *(RF3-03)* The
+  same-server words say "…a Thunderbird account on the same mail server, or Local Folders, …".
   *Revision 4.1 (Windows CI at 1ba95c8):* a listed input that cannot be examined (`os.Stat` fails
   with anything but "does not exist") is refused with the same typed refusal, so it is recorded
   failed and the streak moves; it was an untyped refusal (Windows gives ERROR_DIRECTORY for a dangling
@@ -623,6 +634,9 @@ skips it and warns on every run (§1.3).
   `-auto`.
 - The two stale comments (`localschedule.go:74-75`, `localarchive.go:280-283`) are corrected: since
   `bc6e9d0`, the wizard's `-auto` jobs list their inputs.
+- *Revision 4.3 (the re-verify, round 3's RV3-03):* `autoplace.GoneSkippable` is asked with the
+  account names the archive's record keeps (`GoneSkippableAs` with `RecordedName`), as the run asks
+  it, so the rebuild keeps what the run skips and refuses what it stops for.
 
 ### 1.5 The command line
 
@@ -643,6 +657,9 @@ skips it and warns on every run (§1.3).
   auto-discovery, which works today, is not newly refused (open item O3).
 - `export -auto -input X`, with X skipped under §1.2, now exits 0 where it refused; the release
   notes say so (§4).
+- *Revision 4.3 (the re-verify, round 3's RV3-03):* `-enable-offline` and `-sync-wait`'s discovery
+  (`prepareThunderbird`) is given the archive folder and asks with its record's names
+  (`app.DiscoverInputsFor` with `app.RecordedNamesAt`), as the run and the up-front check do.
 
 ### 1.6 Rows
 
@@ -858,6 +875,9 @@ and an earlier result says when a later delete of the folder ended.
 its key open (`Captured.KeyOpen`); a plan made while its archive was locked waits through another
 archive's idle lock. The guide and the README say "A plan waits up to a day (for an encrypted
 archive, until it is locked), …".
+*Revision 4.3 (RF3-02):* those words now say "A plan waits up to a day, but a backup in the meantime
+makes MailArchive check again. For an encrypted archive that was unlocked when it was checked,
+locking any archive ends the plan.", since any archive's lock ends such a plan, not only its own.
 
 **Every delete walks the folder twice.** At Delete, the plan is made again in full under the lock
 (`execute.go:340`): the same walk, and the same SHA-256 of the manifest, as the check. So a large
@@ -1480,3 +1500,13 @@ per "-N" spelling), RV2-06 (rule 1's places check), RV2-02 (only a plan read wit
 at a lock; MA-1475 and MA-1004 amended), RF2-02 to RF2-06 (words; RF-07's card words now pinned by a
 committed test). Not built: RV2-04, RV2-05 (the fold says why). Flagged: RF2-01's "Thunderbird still
 has NAME" form conflicts with MA-1288 and is built without the name.
+
+## 12. Revision 4.3: the re-verify, round 3
+
+Built from `docs/review-1.7.5-reverify-r3.md` (the lead's fold), each marked *Revision 4.3* beside its
+text: RV3-01 (every plaintext record keeps the folders' names, a small list beside the completeness
+entries; MA-1481 amended), RV3-02 (no live account with the recorded name asks the server-name rule;
+the traded case it brings back written in MA-1481), RV3-03 (the command line's prep and the
+Desktop's rebuild ask with the record's names; MA-1473 amended), RV3-04 (an encrypted archive's
+known limit, in §5, MA-1481 and the README), RF3-02 and RF3-03 (words; MA-1004's pin restated).
+Not built: RV3-05 (no change, the fold's call); RF3-01 is superseded by the RV3-01 fix.
