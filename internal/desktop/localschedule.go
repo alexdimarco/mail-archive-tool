@@ -3,12 +3,14 @@ package desktop
 import (
 	"encoding/json"
 	"errors"
+	"io/fs"
 	"net/http"
 	"os"
 	"path/filepath"
 	"runtime"
 	"strings"
 
+	"mail-archive-tool/internal/autoplace"
 	"mail-archive-tool/internal/job"
 	"mail-archive-tool/internal/schedule"
 	"mail-archive-tool/internal/state"
@@ -71,8 +73,12 @@ func manifestStoreIDs(out string) map[string]bool {
 // that is NOT a symbolic link or special file, does NOT resolve under <out>/_outlook-pst
 // (an Outlook-app archive's deleted scratch PSTs), and IS one of the archive's own
 // manifest store roots — so a tampered record can never aim the installed backup at an
-// outside store. An -auto job carries no -input (it re-discovers at run time, the tool's
-// own logic). ok=false → the Desktop shows no create control and points at the wizard. It
+// outside store. An -auto job re-discovers at run time, the tool's own logic; since bc6e9d0
+// (2026-09-02) the wizard's "All of them" jobs list their inputs as well (corrected
+// 2026-11-20; this comment first said an -auto job carries no -input). For such a job a listed
+// input that is gone where the run's own rule skips it (autoplace.GoneSkippable), and that is
+// one of the archive's recorded stores, is kept, while at least one listed input is there
+// (MA-1473). ok=false → the Desktop shows no create control and points at the wizard. It
 // sets no pre-sync; the caller adds the toggle.
 func reconstructLocalJob(out string) (job.Job, bool) {
 	args, ok := lastRunJobArgs(out)
@@ -87,6 +93,7 @@ func reconstructLocalJob(out string) (job.Job, bool) {
 	if len(j.Inputs) > 0 {
 		ids := manifestStoreIDs(out)
 		scratch := canonPath(filepath.Join(out, "_outlook-pst"))
+		there := 0
 		for _, in := range j.Inputs {
 			// A network or non-local path is not checked at all (C-17, MA-869): no file check
 			// reaches another host, and such a backup is not rebuilt from here.
@@ -94,6 +101,13 @@ func reconstructLocalJob(out string) (job.Job, bool) {
 				return job.Job{}, false
 			}
 			fi, err := lstatSource(in) // Lstat, NOT Stat: never follow a symlink the record names (A2)
+			if err != nil && errors.Is(err, fs.ErrNotExist) && j.Auto && autoplace.GoneSkippable(in) && ids[autoplace.GoneSourceID(in)] {
+				// A mailbox of an -auto job that is gone where the run's own rule skips it, and one
+				// of the archive's recorded stores (A2): kept, so the run skips it and warns on every
+				// run (docs/design-1.7.5-fixes.md §1.4, MA-1473). Dropping it could leave a job whose
+				// runs fail as "no sources", which the source streak never counts.
+				continue
+			}
 			if err != nil || fi.Mode()&os.ModeSymlink != 0 || (!fi.IsDir() && !fi.Mode().IsRegular()) {
 				return job.Job{}, false // vanished, a symlink, or a special file
 			}
@@ -103,6 +117,10 @@ func reconstructLocalJob(out string) (job.Job, bool) {
 			if !ids[state.PathSourceID(in)] {
 				return job.Job{}, false // not one of the archive's own recorded sources (A2)
 			}
+			there++
+		}
+		if there == 0 {
+			return job.Job{}, false // no listed input is there: refused, as before
 		}
 	}
 	return j, true

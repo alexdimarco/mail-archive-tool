@@ -280,7 +280,10 @@ func (cfg Config) offer() string {
 // localArchiveThunderbirdSourced reports whether the archive at out was made from a
 // Thunderbird store — read from the MANIFEST's local store ids ("path:<dir>"), NOT
 // from LastRun.Job (which records no -input for an -auto run, so keying on it would
-// hide the toggle for the common auto-discovered case — design TP-D correction 4). A
+// hide the toggle for the common auto-discovered case — design TP-D correction 4;
+// corrected 2026-11-20, docs/design-1.7.5-fixes.md §1.4: since bc6e9d0 the wizard's
+// -auto jobs list their inputs too, and a command-line -auto run may list none, so the
+// manifest is still the one place every store is named). A
 // store path under a Thunderbird profile (thunderbird.FindProfileDir ascends to a
 // prefs.js) means the pre-sync toggle is worth offering for this archive. A manifest
 // that cannot be read, or a store whose profile is not present on this machine, is
