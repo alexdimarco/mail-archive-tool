@@ -82,7 +82,7 @@ const delChangedArmedText='No need to click Delete again. Something changed afte
 const delChangedText='No need to click Delete again. Something changed after the check (a backup, say), so nothing was deleted. MailArchive is checking again below, with your typed name kept: click Delete permanently when the new plan shows.';
 const delLaterText='A later delete of this folder ended: see its result.';
 // delLaterNote marks every result already shown for row: a later delete of that folder ended (RF-02).
-function delLaterNote(row){document.querySelectorAll('[data-held-id]').forEach(h=>{if(h.dataset.row===row&&!h.querySelector('[data-later]')){const p=delEl('p',delLaterText,'card-sub');p.setAttribute('data-later','');h.querySelector('.del-actions').before(p);}});}
+function delLaterNote(row){document.querySelectorAll('[data-held-id]').forEach(h=>{if(h.dataset.row===row&&!h.querySelector('[data-later]')){const p=delEl('p',delLaterText,'card-sub');p.setAttribute('data-later','');const a=h.querySelector('.del-actions');if(a)a.before(p);else h.append(p);}});}
 // The minutes a check has run, in words.
 function delMinutes(ms){const m=Math.floor(ms/60000);return m<1?'Under a minute so far.':m===1?'1 minute so far.':m+' minutes so far.';}
 // The prompt for the folder's name before the check answers: planView's typeLine for the row's name.
@@ -399,7 +399,8 @@ function delPanel(b,typed,rearm){
         delAfterDelete(d);delPlan(b,b.closest('li'),false,input.value,again);return;}
       // Its own panel goes, never another row's opened meanwhile (del-s3b leftover 1).
       // The result is brought into view (B14): on a narrow layout it sat at the top of the card, out of sight.
-      if(d.id){done(true);w.remove();delLaterNote(d.row);const hv=delShowHeld(d);delAfterDelete(d);if(hv.scrollIntoView)hv.scrollIntoView({block:'nearest'});return;}
+      if(d.id)delLaterNote(d.row); // RF-02: earlier results of the row say a later delete ended
+      if(d.id){done(true);w.remove();const hv=delShowHeld(d);delAfterDelete(d);if(hv.scrollIntoView)hv.scrollIntoView({block:'nearest'});return;}
       // Refused before it began: nothing was deleted, so Cancel comes back; an armed delete refused
       // shows the plan, with the refusal's words below (MA-1476).
       if(fromArm)show('');
