@@ -386,7 +386,7 @@ function delPanel(b,typed,rearm){
       // the typed name put back, so one more click deletes; an armed delete's panel opens armed again,
       // once (Q9): a re-armed one refused as changed again asks un-armed.
       if(d.id&&d.changed){done(true);w.remove();const hv=delShowHeld(d);hv.querySelector('.del-actions').before(delEl('p',delChangedText,'warn'));
-        delAfterDelete(d);delPlan(b,b.closest('li'),false,input.value,fromArm&&!rearmed);return;}
+        delAfterDelete(d);delPlan(b,b.closest('li'),false,input.value,fromArm&&!rearmed&&d.sameArchive===true);return;}
       // Its own panel goes, never another row's opened meanwhile (del-s3b leftover 1).
       // The result is brought into view (B14): on a narrow layout it sat at the top of the card, out of sight.
       if(d.id){done(true);w.remove();const hv=delShowHeld(d);delAfterDelete(d);if(hv.scrollIntoView)hv.scrollIntoView({block:'nearest'});return;}

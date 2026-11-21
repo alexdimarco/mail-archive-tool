@@ -726,6 +726,10 @@ func (d *dashboard) deleteAction(w http.ResponseWriter, r *http.Request) {
 		// itself, the typed name kept. Only this refusal is marked.
 		if res.Refusal.Case == archdelete.CaseChanged {
 			out["changed"] = true
+			// Whether it is still the same folder the plan was made for (its file identity, as the
+			// plan recorded it): the page re-arms only then (the 1.7.5 re-verify's RV-03, within the
+			// owner's Q9, which named a backup in between).
+			out["sameArchive"] = it.deletePlan.plan.StillSameFolder()
 		}
 	}
 	// Refused before its started line, the plan's one-use token is spent: Delete permanently can

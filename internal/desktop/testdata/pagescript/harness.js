@@ -1845,7 +1845,7 @@ const scenarios = {
     delays['api/archive/delete/plan'] = 40;
     replies['api/archive/delete'] = () => (++d === 1
       ? result({ ok: false, id: 'H1', row: 'D:\\Mail\\Busy', folder: 'D:\\Mail\\Busy', status: 'refused after start',
-        lines: ['This archive changed since you clicked Delete. Click Delete again.'], rows: ['D:\\Mail\\Busy'], error: 'changed', changed: true })
+        lines: ['This archive changed since you clicked Delete. Click Delete again.'], rows: ['D:\\Mail\\Busy'], error: 'changed', changed: true, sameArchive: true })
       : result({ id: 'H2', row: 'D:\\Mail\\Busy', folder: 'D:\\Mail\\Busy', rowRemoved: true, rows: ['D:\\Mail\\Busy'] }));
     row.querySelector('[data-delete-archive]').click(); await wait(10);
     const w = row.querySelector('.delete-panel'), inp = w.querySelector('input');
@@ -1943,6 +1943,30 @@ const scenarios = {
     await wait(120);
     check(leave().join(',') === 'TOK2', 'a refusal before the delete began gives the token back, and leaving then discards it');
   },
+  // An armed delete refused as changed where the folder is no longer the same one (the server's
+  // sameArchive false: replaced by another of the same name during the check) is asked for again
+  // UN-armed, so the other folder is never deleted unseen (the 1.7.5 re-verify's RV-03). Positive twin
+  // first: the first delete is sent armed.
+  async rearmReplaced() {
+    page([['D:\\Mail\\Busy', 'other'], ['E:\\Cur', 'current']], 'E:\\Cur');
+    boot(); await wait(30);
+    const row = doc.querySelectorAll('.archive-row')[0];
+    let n = 0;
+    replies['api/archive/delete/plan'] = x => Object.assign(plan(x.path, 'Busy', 'T' + (++n)), { armable: true });
+    delays['api/archive/delete/plan'] = 40;
+    replies['api/archive/delete'] = result({ ok: false, id: 'H1', row: 'D:\\Mail\\Busy', folder: 'D:\\Mail\\Busy', status: 'refused after start',
+      lines: ['This archive changed since you clicked Delete. Click Delete again.'], rows: ['D:\\Mail\\Busy'], error: 'changed', changed: true, sameArchive: false });
+    row.querySelector('[data-delete-archive]').click(); await wait(10);
+    const w = row.querySelector('.delete-panel'), inp = w.querySelector('input');
+    inp.value = 'Busy'; inp.fire('input'); byText(w, 'Delete when the check finishes').click();
+    await wait(50);
+    const dels = () => posts.filter(p => p.path === 'api/archive/delete');
+    check(dels().length === 1 && dels()[0].body.armed === true, 'the positive twin: the first delete is sent armed', JSON.stringify(dels().map(p => p.body)));
+    await wait(80);
+    const w2 = row.querySelector('.delete-panel'), go = w2 && byText(w2, 'Delete permanently');
+    check(dels().length === 1 && !!w2 && !w2.hasAttribute('data-delete-waiting') && !!go && w2.querySelector('input').value === 'Busy',
+      'a folder no longer the same one is asked for again un-armed: shown with Delete permanently, nothing more sent', JSON.stringify({ dels: dels().length }));
+  },
   // A re-armed delete refused as changed again asks for the plan once more UN-armed, so it cannot
   // loop (Q9): the third plan is shown with Delete permanently and nothing more is sent. Positive twin
   // first: the re-armed panel sends its delete armed.
@@ -1954,7 +1978,7 @@ const scenarios = {
     replies['api/archive/delete/plan'] = x => Object.assign(plan(x.path, 'Busy', 'T' + (++n)), { armable: true });
     delays['api/archive/delete/plan'] = 40;
     replies['api/archive/delete'] = () => result({ ok: false, id: 'H' + (++d), row: 'D:\\Mail\\Busy', folder: 'D:\\Mail\\Busy', status: 'refused after start',
-      lines: ['This archive changed since you clicked Delete. Click Delete again.'], rows: ['D:\\Mail\\Busy'], error: 'changed', changed: true });
+      lines: ['This archive changed since you clicked Delete. Click Delete again.'], rows: ['D:\\Mail\\Busy'], error: 'changed', changed: true, sameArchive: true });
     row.querySelector('[data-delete-archive]').click(); await wait(10);
     const w = row.querySelector('.delete-panel'), inp = w.querySelector('input');
     inp.value = 'Busy'; inp.fire('input'); byText(w, 'Delete when the check finishes').click();
