@@ -236,6 +236,9 @@ type RunWarning struct {
 	// review's F4). Amended beside the fields above: Name may now also come from the previous
 	// record (F3), where Listed is false. Additive and left out when false.
 	Listed bool `json:"listed,omitempty"`
+	// SettingsUnsure: the profile's Thunderbird settings could not be read for certain, so a move
+	// could not be told; status says so (the 1.7.5 re-verify's RV-04). Additive, left out when false.
+	SettingsUnsure bool `json:"settings_unsure,omitempty"`
 }
 
 // MailboxGoneCode is the warning a plaintext run records for each listed input it skipped

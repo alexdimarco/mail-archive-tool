@@ -93,7 +93,12 @@ func skippedInputs(gone []string) []SkippedInput {
 	out := make([]SkippedInput, 0, len(gone))
 	for _, p := range gone {
 		name := goneAccountName(p)
-		out = append(out, SkippedInput{Path: p, Name: name, Listed: name != ""})
+		s := SkippedInput{Path: p, Name: name, Listed: name != ""}
+		// Settings that cannot be read for certain tell no move (the re-verify's RV-04): said.
+		if profile, ok := thunderbird.FindProfileDir(p); ok && thunderbird.SettingsUncertain(profile) {
+			s.SettingsUnsure = true
+		}
+		out = append(out, s)
 	}
 	return out
 }
@@ -279,7 +284,7 @@ func goneWarnings(skipped []SkippedInput) []state.RunWarning {
 		out = append(out, state.RunWarning{
 			Code:    state.MailboxGoneCode,
 			Message: "Not found, so skipped: " + s.Label() + ". It is no longer on this computer; the mail already saved from it stays in the archive.",
-			Path:    s.Path, Name: s.Name, Since: s.Since, Listed: s.Listed,
+			Path:    s.Path, Name: s.Name, Since: s.Since, Listed: s.Listed, SettingsUnsure: s.SettingsUnsure,
 		})
 	}
 	return out

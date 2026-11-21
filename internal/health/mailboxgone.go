@@ -67,7 +67,16 @@ func goneRemedy(w state.RunWarning) string {
 	case autoplace.ProgramOf(w.Path) == autoplace.Outlook && strings.EqualFold(filepath.Ext(w.Path), ".pst"):
 		return "If you moved this file, put it back in " + filepath.Dir(w.Path) + ", or click Make a new archive… in MailArchive Desktop and choose it in its new place."
 	}
-	return "If you didn't remove it, " + addBackIn(w.Path) + " and the next backup finds it again."
+	return "If you didn't remove it, " + addBackIn(w.Path) + " and the next backup finds it again." + unsureLine(w)
+}
+
+// unsureLine is the sentence for a gone mailbox whose profile's settings could not be read for
+// certain, so a move could not be told (the 1.7.5 re-verify's RV-04, its words); "" otherwise.
+func unsureLine(w state.RunWarning) string {
+	if !w.SettingsUnsure {
+		return ""
+	}
+	return " If you moved this account to another folder in Thunderbird, MailArchive could not tell from its settings."
 }
 
 // noteDay is the day the WARN names as the first on which a backup is only a note (the 1.7.5
@@ -233,7 +242,7 @@ func mailboxGone(r *Report, lr state.LastRun, w state.RunWarning) {
 	if !mailboxGoneWarns(w.Since, lr.Started) {
 		// The friction review's F11: the note names the button that ends it (it said "set the
 		// archive up again in the wizard").
-		r.note("mailbox_gone_note", fmt.Sprintf("a mailbox this archive backed up is no longer on this computer: %s, not found since %s. Its mail already saved stays in the archive. This line stays while the archive's backup lists that mailbox; to end it, click Make a new archive… in MailArchive Desktop, choose All of them and this same archive folder, and answer Yes to keeping it current.", label, date))
+		r.note("mailbox_gone_note", fmt.Sprintf("a mailbox this archive backed up is no longer on this computer: %s, not found since %s. Its mail already saved stays in the archive. This line stays while the archive's backup lists that mailbox; to end it, click Make a new archive… in MailArchive Desktop, choose All of them and this same archive folder, and answer Yes to keeping it current.", label, date)+unsureLine(w))
 		return
 	}
 	// "The other mailboxes are still backed up" only after a run that ended ok: the warning reaches

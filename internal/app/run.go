@@ -348,6 +348,9 @@ type SkippedInput struct {
 	// and status says to let Thunderbird download it (the 1.7.5 friction review's F4). Name may also
 	// come from the previous record (F3), where Listed is false.
 	Listed bool
+	// SettingsUnsure: the profile's Thunderbird settings could not be read for certain, so whether
+	// the account was moved could not be told (the 1.7.5 re-verify's RV-04); status says so.
+	SettingsUnsure bool
 }
 
 // Label is how the run's words name a skipped input: "NAME (PATH)", or PATH alone when no name
