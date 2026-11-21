@@ -1950,6 +1950,11 @@ func exportSummaryFor(out string, keepRaw bool, r app.Result, goos string) strin
 		}
 		b.WriteString("\n")
 	}
+	// A listed mailbox that is gone was skipped (MA-1471): said here, at the end of a run that
+	// finished, from the result in memory.
+	if sk := app.SkippedLines(r.Skipped, true); len(sk) > 0 {
+		b.WriteString(strings.Join(sk, "\n") + "\n\n")
+	}
 	fmt.Fprintf(b,
 		"Newly downloaded this run: %d\n"+
 			"Exported:                  %d\n"+

@@ -3,6 +3,7 @@ package app
 import (
 	"context"
 	"errors"
+	"fmt"
 	"log"
 	"path/filepath"
 	"time"
@@ -87,6 +88,45 @@ func skippedInputs(gone []string) []SkippedInput {
 		out = append(out, SkippedInput{Path: p, Name: goneAccountName(p)})
 	}
 	return out
+}
+
+// SkippedLines are the end-of-run summaries' words for the inputs a run that finished skipped
+// (docs/design-1.7.5-fixes.md §1.3, MA-1471; X6: the count status says): how many, that they are
+// gone and their saved mail stays, and that the other mailboxes were backed up (true when said:
+// only a run that finished is summed up); then one line per input, "NAME (PATH)"; then what to do
+// if one was not removed on purpose, naming the mail program whose place they lie in when they all
+// lie in one's. names false says each by its path alone: a summary written to a log file never
+// holds the name Thunderbird shows for an account (MA-1288). None when nothing was skipped. The
+// wizard's summary, Run now's notes (plaintext and encrypted, in memory only) and the command
+// line's summary all say these.
+func SkippedLines(skipped []SkippedInput, names bool) []string {
+	n := len(skipped)
+	if n == 0 {
+		return nil
+	}
+	lines := []string{fmt.Sprintf("Not found, so skipped: %d mailboxes. They are no longer on this computer, and the mail already saved from them stays in the archive; the other mailboxes were backed up:", n)}
+	if n == 1 {
+		lines[0] = "Not found, so skipped: 1 mailbox. It is no longer on this computer, and the mail already saved from it stays in the archive; the other mailboxes were backed up:"
+	}
+	program := autoplace.ProgramOf(skipped[0].Path)
+	for _, s := range skipped {
+		label := s.Path
+		if names && s.Name != "" {
+			label = s.Label()
+		}
+		lines = append(lines, label)
+		if autoplace.ProgramOf(s.Path) != program {
+			program = ""
+		}
+	}
+	where := "in its mail program"
+	if program != "" {
+		where = "in " + program
+	}
+	if n == 1 {
+		return append(lines, "If you didn't remove it on purpose, add its account back "+where+".")
+	}
+	return append(lines, "If you didn't remove one on purpose, add its account back "+where+".")
 }
 
 // resolveGoneSince sets each skipped input's Since: when it was first found gone (MA-1472),

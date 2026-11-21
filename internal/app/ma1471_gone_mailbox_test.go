@@ -29,7 +29,9 @@ type goneFix struct {
 }
 
 // goneAddress is the account name the fixture's prefs.js gives the account on host.
-func goneAddress(host string) string { return "qz-" + strings.ReplaceAll(host, ".", "-") + "@example.com" }
+func goneAddress(host string) string {
+	return "qz-" + strings.ReplaceAll(host, ".", "-") + "@example.com"
+}
 
 // goneProfileAt writes a profile named name under root holding an IMAP account folder per host,
 // named in prefs.js by goneAddress, and Local Folders when local is set.
@@ -74,13 +76,14 @@ func goneRun(t *testing.T, opts Options) (Result, error, *bytes.Buffer) {
 	return res, err, &buf
 }
 
-// covers: MA-1471, R1, R18
+// covers: MA-1471, MA-1288, R1, R18
 // Positive twin of the rule: an "All of them" archive (its listed mailboxes plus auto-discovery)
 // with one account folder gone and the profile's ImapMail folder still there skips that folder
 // while another mailbox remains. The run ends ok, backs up the others, says the skip in its log
-// straight after discovery ("Not found, so skipped: NAME (PATH). …", NAME as Thunderbird names the
-// account, read from the profile's settings for the folder that is gone), and hands it back in
-// Result.Skipped. A refusal it no longer is: the source-loss streak resets.
+// straight after discovery ("Not found, so skipped: PATH. …": the log is a scheduled run's log
+// file too, which never holds an account's name, MA-1288), and hands it back in Result.Skipped
+// with NAME as Thunderbird names the account, read from the profile's settings for the folder that
+// is gone. A refusal it no longer is: the source-loss streak resets.
 func TestAGoneMailboxIsSkippedWhileAnotherRemains(t *testing.T) {
 	f := goneFixture(t, false, "imap.qza.example", "imap.qzb.example")
 	a, b := f.stores["imap.qza.example"], f.stores["imap.qzb.example"]
@@ -99,9 +102,13 @@ func TestAGoneMailboxIsSkippedWhileAnotherRemains(t *testing.T) {
 	if len(skipped) != 1 || skipped[0].Path != b || skipped[0].Name != goneAddress("imap.qzb.example") {
 		t.Fatalf("Result.Skipped = %+v, want the gone folder %s named %s", skipped, b, goneAddress("imap.qzb.example"))
 	}
-	want := "Not found, so skipped: " + goneAddress("imap.qzb.example") + " (" + b + "). It is no longer on this computer; the mail already saved from it stays in the archive."
+	want := "Not found, so skipped: " + b + ". It is no longer on this computer; the mail already saved from it stays in the archive."
 	if !strings.Contains(logged.String(), want) {
 		t.Fatalf("the run log must say the skip: want %q in\n%s", want, logged)
+	}
+	// The run's log is a scheduled run's log file too: it never holds the account's name (MA-1288).
+	if strings.Contains(logged.String(), goneAddress("imap.qzb.example")) {
+		t.Fatalf("the run log names the account:\n%s", logged)
 	}
 	if strings.Contains(logged.String(), "were backed up") || strings.Contains(logged.String(), "are still backed up") {
 		t.Fatalf("at discovery nothing is backed up yet; the log must not say so:\n%s", logged)

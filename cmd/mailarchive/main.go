@@ -273,14 +273,17 @@ func runExport(args []string) error {
 	// previews the discovered stores and stops. -outlook supplies its own inputs
 	// later, so an empty set is not yet a refusal in that case.
 	// A listed input that is gone and that the run would skip (-auto, MA-1471) refuses nothing
-	// here: app.Run says the skip, once, in its summary (design-1.7.5-fixes §1.5).
-	discovered, _, err := app.DiscoverInputs(inputs, *o.auto)
+	// here, and this check reports none of its own: app.Run says the skip, once, in its summary
+	// (design-1.7.5-fixes §1.5, MA-1480), so the terminal never shows two lists that could disagree.
+	discovered, skipped, err := app.DiscoverInputs(inputs, *o.auto)
 	if err == nil {
-		// An opt-in that names no input would be read as no opt-in, so it is refused here.
-		err = app.FollowLinksRefusal(o.followLinks, discovered)
+		// An opt-in that names no input would be read as no opt-in, so it is refused here. It is
+		// checked against the inputs found plus the skipped ones: an opt-in for a skipped input
+		// reads nothing this run, and is not refused in words that do not fit (MA-1480).
+		err = app.FollowLinksRefusal(o.followLinks, append(append([]string(nil), discovered...), skipped...))
 	}
 	if err == nil && *o.list {
-		return listStores(discovered)
+		return listStores(discovered, skipped)
 	}
 	if err == nil && len(discovered) == 0 && !*o.outlook {
 		err = errors.New("no input mail sources found: pass -input PATH (a .pst/.ost file, an mbox file, or a mail directory), or -auto to discover Outlook/Thunderbird/Evolution stores")
@@ -553,8 +556,15 @@ func dirSize(dir string) int64 {
 }
 
 // listStores prints, one per line, the mail stores an export would archive with
-// a rough on-disk size — the -list preview. It creates nothing and exits 0.
-func listStores(files []string) error {
+// a rough on-disk size — the -list preview — then one "Not found, so skipped: PATH"
+// line per listed input the run would skip because it is gone (MA-1480). It creates
+// nothing and exits 0.
+func listStores(files, skipped []string) error {
+	defer func() {
+		for _, s := range skipped {
+			fmt.Println("Not found, so skipped: " + s)
+		}
+	}()
 	if len(files) == 0 {
 		fmt.Println("No mail stores found to archive.")
 		return nil
@@ -2440,6 +2450,11 @@ func printSummaryFor(logger *log.Logger, r app.Result, indexed, keepRaw bool, ou
 		for _, l := range state.TBLines(accts, more, state.TBSay{Scheduled: app.TBScheduled(out), Surface: state.TBSurfaceCommandLine}) {
 			logger.Printf("  %s", l)
 		}
+	}
+	// A listed mailbox that is gone was skipped (MA-1471, MA-1480): the command line's one report of
+	// it, from the run's own result; each by its name only on a terminal (MA-1288).
+	for _, l := range app.SkippedLines(r.Skipped, summaryOnScreen(logger)) {
+		logger.Printf("%s", l)
 	}
 	printNotCaptured(logger, r)
 	// An index that holds fewer messages than the manifest (search.db lost or

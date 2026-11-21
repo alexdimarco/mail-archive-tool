@@ -667,8 +667,10 @@ func Run(ctx context.Context, opts Options, logger *log.Logger, onProgress Progr
 			resolveGoneSince(opts.Out, skipped, start)
 		}
 		opts.Warnings = append(append([]state.RunWarning(nil), opts.Warnings...), goneWarnings(skipped)...)
+		// By its path alone: this log is a scheduled run's log file too, and no log file holds the
+		// name Thunderbird shows for an account (MA-1288); the summaries name it on screen.
 		for _, s := range skipped {
-			logger.Printf("Not found, so skipped: %s. It is no longer on this computer; the mail already saved from it stays in the archive.", s.Label())
+			logger.Printf("Not found, so skipped: %s. It is no longer on this computer; the mail already saved from it stays in the archive.", s.Path)
 		}
 		defer func() { result.Skipped = skipped }()
 	}
