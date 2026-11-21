@@ -202,6 +202,15 @@ these hold:
   same-server account wholly off the profile stops). *(RV3-04)* An encrypted archive's record names
   no account, so the server-name rule always decides for it (§5's known limit). *(RF3-03)* The
   same-server words say "…a Thunderbird account on the same mail server, or Local Folders, …".
+  *Revision 4.4 (the re-verify, round 4's RV4-01, LOW, RV4-02, INFO, and RF4-03):* the Desktop's
+  record of a Microsoft 365 capture refused at start (`recordStartFailure`) keeps the names of the
+  plaintext record it replaces, so "never skipped quietly after one stop" holds; it was the one
+  record writer that bypassed `newRunRecord`. Before the server-name rule, a live account whose
+  folder setting still names the gone folder is skipped (deleted by hand, Q4), also when renamed
+  meanwhile. The traded case, in RF4-03's words as they now stand: an account removed in
+  Thunderbird stops the backup (the same-server words) instead of being skipped, when exactly one of
+  the other accounts on its mail server keeps all its mail outside the profile; accounts on that
+  server kept in the profile do not change this.
   *Revision 4.1 (Windows CI at 1ba95c8):* a listed input that cannot be examined (`os.Stat` fails
   with anything but "does not exist") is refused with the same typed refusal, so it is recorded
   failed and the streak moves; it was an untyped refusal (Windows gives ERROR_DIRECTORY for a dangling
@@ -878,6 +887,9 @@ archive, until it is locked), …".
 *Revision 4.3 (RF3-02):* those words now say "A plan waits up to a day, but a backup in the meantime
 makes MailArchive check again. For an encrypted archive that was unlocked when it was checked,
 locking any archive ends the plan.", since any archive's lock ends such a plan, not only its own.
+*Revision 4.4 (RF4-02):* "… For an encrypted archive that was unlocked when it was checked, the plan
+also ends when any archive locks: when you click Lock, when you switch archives, or by itself after
+30 minutes of no one using MailArchive Desktop.", since an archive also locks by itself.
 
 **Every delete walks the folder twice.** At Delete, the plan is made again in full under the lock
 (`execute.go:340`): the same walk, and the same SHA-256 of the manifest, as the check. So a large
@@ -1227,6 +1239,11 @@ nothing in the list needs your decision."
   server's name alone: with several accounts on one mail server, a moved account can be skipped
   instead of stopping the backup. Check status after moving one. (The same words are in MA-1481 and
   the README.)
+  *Revision 4.4 (RF4-01):* the limit has a second case, now in the words: "An encrypted archive
+  keeps no account names, so for it MailArchive goes by the mail server's name alone: a moved
+  account can be skipped instead of stopping the backup when several accounts use one mail server,
+  or when the account's server name was changed after it was set up. Check status after moving
+  one." (also in MA-1481 and the README).
 
 ## 6. Claims, each with its condition
 
@@ -1510,3 +1527,12 @@ the traded case it brings back written in MA-1481), RV3-03 (the command line's p
 Desktop's rebuild ask with the record's names; MA-1473 amended), RV3-04 (an encrypted archive's
 known limit, in §5, MA-1481 and the README), RF3-02 and RF3-03 (words; MA-1004's pin restated).
 Not built: RV3-05 (no change, the fold's call); RF3-01 is superseded by the RV3-01 fix.
+
+## 13. Revision 4.4: the re-verify, round 4 (the rounds close)
+
+Built from `docs/review-1.7.5-reverify-r4.md` (the lead's fold: nothing MEDIUM or above, the rounds
+close), each marked *Revision 4.4* beside its text: RV4-01 (`recordStartFailure` keeps the names),
+RV4-02 (a folder setting that still names the gone folder is asked before the server-name rule),
+RF4-01 (the encrypted limit's second case), RF4-02 (how an archive locks), RF4-03 (the traded case's
+words and the README's line). RF4-03's words leave out the reviewer's "or renamed there while its
+folder is missing", since RV4-02 now skips that case.
