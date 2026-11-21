@@ -182,20 +182,28 @@ func marshalLastRun(r LastRun) ([]byte, error) {
 // last run skipped a mailbox that is gone (docs/design-1.7.5-fixes.md §1.3, MA-1478): the only
 // variable is the date the record holds; no path or name is known beside the archive.
 
+//
+// Amended by the 1.7.5 friction review (F1): Run now is greyed out while an encrypted archive is
+// locked, so each sentence says to unlock it on its Encryption card first; and the wizard refuses
+// to set up an encrypted archive's folder again without its key, so the note no longer sends the
+// person there (it said "to end it, set the archive up again in the wizard, with the same archive
+// folder, choose All of them, and answer Yes to keeping it current."). Ending the note is the
+// "Stop looking for it" button design §5 keeps for a later release.
+
 // MailboxGoneText is the WARN after a run that ended ok.
 func MailboxGoneText(date string) string {
-	return "a mailbox this archive backs up has not been found since " + date + ", so it was skipped and the others were backed up; click Run now in MailArchive Desktop to see which one"
+	return "a mailbox this archive backs up has not been found since " + date + ", so it was skipped and the others were backed up; unlock it on its Encryption card in MailArchive Desktop, then click Run now to see which one"
 }
 
 // MailboxGoneShortText is the WARN after any other run: whether the others were backed up is its
 // own outcome's to say.
 func MailboxGoneShortText(date string) string {
-	return "a mailbox this archive backs up has not been found since " + date + ", so it was skipped; click Run now in MailArchive Desktop to see which one"
+	return "a mailbox this archive backs up has not been found since " + date + ", so it was skipped; unlock it on its Encryption card in MailArchive Desktop, then click Run now to see which one"
 }
 
 // MailboxGoneNoteText is the note once the WARN's 14 days of backups are over.
 func MailboxGoneNoteText(date string) string {
-	return "a mailbox this archive backed up has not been found since " + date + "; its mail already saved stays in the archive. Click Run now in MailArchive Desktop to see which one. This line stays while the archive's backup lists that mailbox; to end it, set the archive up again in the wizard, with the same archive folder, choose All of them, and answer Yes to keeping it current."
+	return "a mailbox this archive backed up has not been found since " + date + "; its mail already saved stays in the archive. Unlock it on its Encryption card in MailArchive Desktop, then click Run now to see which one. This line stays while the archive's backup still lists that mailbox."
 }
 
 // encryptedAttention is the attention notice of an encrypted archive: the time and

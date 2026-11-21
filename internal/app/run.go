@@ -344,6 +344,10 @@ type SkippedInput struct {
 	Path  string
 	Name  string
 	Since time.Time
+	// Listed: the profile's settings still name an account for the folder, so Name came from them
+	// and status says to let Thunderbird download it (the 1.7.5 friction review's F4). Name may also
+	// come from the previous record (F3), where Listed is false.
+	Listed bool
 }
 
 // Label is how the run's words name a skipped input: "NAME (PATH)", or PATH alone when no name

@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"log"
 	"path/filepath"
+	"strings"
 	"time"
 
 	"mail-archive-tool/internal/autoplace"
@@ -91,7 +92,8 @@ func FoundSourceUnreachable(err error) bool {
 func skippedInputs(gone []string) []SkippedInput {
 	out := make([]SkippedInput, 0, len(gone))
 	for _, p := range gone {
-		out = append(out, SkippedInput{Path: p, Name: goneAccountName(p)})
+		name := goneAccountName(p)
+		out = append(out, SkippedInput{Path: p, Name: name, Listed: name != ""})
 	}
 	return out
 }
@@ -129,7 +131,21 @@ func SkippedLines(skipped []SkippedInput, names bool) []string {
 	if program != "" {
 		where = "in " + program
 	}
-	if n == 1 {
+	// The 1.7.5 friction review's F4 and F9, as status says them: accounts Thunderbird still lists
+	// are told to let it download their mail; an Outlook data file (.pst) moved away, to put it back
+	// or choose it in its new place.
+	listed := program == autoplace.Thunderbird
+	for _, s := range skipped {
+		listed = listed && s.Listed
+	}
+	switch {
+	case listed && n == 1:
+		return append(lines, "Thunderbird still lists this account: open Thunderbird and let it download the account's mail; the next backup finds it again.")
+	case listed:
+		return append(lines, "Thunderbird still lists these accounts: open Thunderbird and let it download their mail; the next backup finds them again.")
+	case n == 1 && program == autoplace.Outlook && strings.EqualFold(filepath.Ext(skipped[0].Path), ".pst"):
+		return append(lines, "If you moved this file, put it back in "+filepath.Dir(skipped[0].Path)+", or click Make a new archive… in MailArchive Desktop and choose it in its new place.")
+	case n == 1:
 		return append(lines, "If you didn't remove it on purpose, add its account back "+where+".")
 	}
 	return append(lines, "If you didn't remove one on purpose, add its account back "+where+".")
@@ -173,8 +189,16 @@ func resolveGoneSince(out string, skipped []SkippedInput, start time.Time) {
 				// pass's INS-01).
 				if w.Code == state.MailboxGoneCode && w.Path != "" && !autoplace.NonLocal(w.Path) && autoplace.GoneSourceID(w.Path) == id {
 					since, found = w.Since, true
+					// The friction review's F3: a name the settings no longer give is carried from
+					// the previous warning (cleaned at read).
+					if skipped[i].Name == "" {
+						skipped[i].Name = w.Name
+					}
 					break
 				}
+			}
+			if skipped[i].Name == "" {
+				skipped[i].Name = recordedAccountName(prev, skipped[i].Path)
 			}
 			if !found && serr == nil && streak.LastKind == "local-source-unreachable" &&
 				prev.Status == state.RunFailed && prev.Error == autoplace.GoneText(skipped[i].Path) {
@@ -255,10 +279,33 @@ func goneWarnings(skipped []SkippedInput) []state.RunWarning {
 		out = append(out, state.RunWarning{
 			Code:    state.MailboxGoneCode,
 			Message: "Not found, so skipped: " + s.Label() + ". It is no longer on this computer; the mail already saved from it stays in the archive.",
-			Path:    s.Path, Name: s.Name, Since: s.Since,
+			Path:    s.Path, Name: s.Name, Since: s.Since, Listed: s.Listed,
 		})
 	}
 	return out
+}
+
+// recordedAccountName is the name the previous plaintext record prev gave the account whose store
+// is the gone input p (the 1.7.5 friction review's F3): an account removed on purpose in
+// Thunderbird is gone from its settings, but the last backup that read it recorded its name beside
+// the store's id (state.TBAccount, storeID: a hash of the profile and the store's path, computable
+// for a folder that is gone). "" when p is in no profile or no entry has its id. Said on screen and
+// in status, never in a log file (MA-1288).
+func recordedAccountName(prev state.LastRun, p string) string {
+	if len(prev.Thunderbird) == 0 {
+		return ""
+	}
+	profile, ok := thunderbird.FindProfileDir(p)
+	if !ok {
+		return ""
+	}
+	id := storeID(profile, p)
+	for _, e := range prev.Thunderbird {
+		if e.StoreID == id && e.Name != "" {
+			return state.CleanFolderName(e.Name)
+		}
+	}
+	return ""
 }
 
 // goneAccountName is the name Thunderbird shows for the account whose folder the gone input p

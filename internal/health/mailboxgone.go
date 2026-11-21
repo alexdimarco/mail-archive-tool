@@ -2,6 +2,8 @@ package health
 
 import (
 	"fmt"
+	"path/filepath"
+	"strings"
 	"time"
 
 	"mail-archive-tool/internal/autoplace"
@@ -51,6 +53,57 @@ func addBackIn(path string) string {
 		return "add the account back in " + p
 	}
 	return "put it back where it was"
+}
+
+// goneRemedy is the WARN's last sentence for the gone mailbox w (the 1.7.5 friction review's F4 and
+// F9, beside addBackIn's words, which stay for the rest): an account Thunderbird still listed when
+// the run looked is told to let Thunderbird download its mail; an Outlook data file (.pst) moved
+// away is told to put it back in its folder or choose it in its new place; any other, "If you
+// didn't remove it, " and addBackIn's words.
+func goneRemedy(w state.RunWarning) string {
+	switch {
+	case w.Listed && autoplace.ProgramOf(w.Path) == autoplace.Thunderbird:
+		return "Thunderbird still lists this account: open Thunderbird and let it download the account's mail; the next backup finds it again."
+	case autoplace.ProgramOf(w.Path) == autoplace.Outlook && strings.EqualFold(filepath.Ext(w.Path), ".pst"):
+		return "If you moved this file, put it back in " + filepath.Dir(w.Path) + ", or click Make a new archive… in MailArchive Desktop and choose it in its new place."
+	}
+	return "If you didn't remove it, " + addBackIn(w.Path) + " and the next backup finds it again."
+}
+
+// noteDay is the day the WARN names as the first on which a backup is only a note (the 1.7.5
+// adversarial pass's CON-01): the first local day every moment of which is MailboxGoneNoteAfter or
+// more after since, so a backup on that day is never still a WARN. since plus 14 days falling at
+// local midnight names that day; otherwise the next.
+func noteDay(since time.Time) time.Time {
+	t := since.Add(state.MailboxGoneNoteAfter).Local()
+	day := time.Date(t.Year(), t.Month(), t.Day(), 0, 0, 0, 0, t.Location())
+	if t.After(day) {
+		day = day.AddDate(0, 0, 1)
+	}
+	return day
+}
+
+// othersKept is the WARN's clause for what is still backed up, after a run that ended ok (the 1.7.5
+// friction review's F12): "Local Folders" when the only input the job lists that no gone warning
+// names is a profile's Local Folders, else "the other mailboxes". Read from the record alone.
+func othersKept(lr state.LastRun) string {
+	_, inputs := jobInputs(lr.Job)
+	gone := map[string]bool{}
+	for _, w := range lr.Warnings {
+		if w.Code == state.MailboxGoneCode {
+			gone[w.Path] = true
+		}
+	}
+	var left []string
+	for _, in := range inputs {
+		if !gone[in] {
+			left = append(left, in)
+		}
+	}
+	if len(left) == 1 && filepath.Base(left[0]) == "Local Folders" {
+		return "Local Folders is still backed up"
+	}
+	return "the other mailboxes are still backed up"
 }
 
 // GoneMailboxRepairable reports whether a Repair or a Run now would now get past the gone mailbox
@@ -149,6 +202,12 @@ func encryptedMailboxGone(r *Report, lr state.LastRun) {
 // mailboxGone says one mailbox_gone warning of the plaintext record lr: a WARN while it is under
 // 14 days old by the record's own start, a note after.
 func mailboxGone(r *Report, lr state.LastRun, w state.RunWarning) {
+	// A warning with no path (a 1.7.4 program's write-back drops it, or a damaged record) is said in
+	// a fixed sentence, never a broken one (the 1.7.5 adversarial pass's CON-03).
+	if w.Path == "" {
+		r.warn(state.MailboxGoneCode, "a mailbox this archive backs up was not found, so it was skipped; its record does not say which. Click Run now in MailArchive Desktop to see which one.")
+		return
+	}
 	label := w.Path
 	if w.Name != "" {
 		label = w.Name + " (" + w.Path + ")"
@@ -156,15 +215,18 @@ func mailboxGone(r *Report, lr state.LastRun, w state.RunWarning) {
 	since := goneDay(w.Since, lr.Started)
 	date := since.Local().Format(mailboxGoneDate)
 	if !mailboxGoneWarns(w.Since, lr.Started) {
-		r.note("mailbox_gone_note", fmt.Sprintf("a mailbox this archive backed up is no longer on this computer: %s, not found since %s. Its mail already saved stays in the archive. This line stays while the archive's backup lists that mailbox; to end it, set the archive up again in the wizard, with the same archive folder, choose All of them, and answer Yes to keeping it current.", label, date))
+		// The friction review's F11: the note names the button that ends it (it said "set the
+		// archive up again in the wizard").
+		r.note("mailbox_gone_note", fmt.Sprintf("a mailbox this archive backed up is no longer on this computer: %s, not found since %s. Its mail already saved stays in the archive. This line stays while the archive's backup lists that mailbox; to end it, click Make a new archive… in MailArchive Desktop, choose All of them and this same archive folder, and answer Yes to keeping it current.", label, date))
 		return
 	}
 	// "The other mailboxes are still backed up" only after a run that ended ok: the warning reaches
-	// the running, cancelled and failed records too, whose own outcome is said beside it (R7).
+	// the running, cancelled and failed records too, whose own outcome is said beside it (R7);
+	// "Local Folders" when it alone is left (F12).
 	kept := "Its mail already saved stays in the archive."
 	if lr.Status == state.RunOK {
-		kept = "Its mail already saved stays in the archive, and the other mailboxes are still backed up."
+		kept = "Its mail already saved stays in the archive, and " + othersKept(lr) + "."
 	}
-	note := since.Add(state.MailboxGoneNoteAfter).Local().Format(mailboxGoneDate)
-	r.warn(state.MailboxGoneCode, fmt.Sprintf("a mailbox this archive backs up is no longer on this computer: %s, not found since %s. %s If you removed it on purpose, nothing needs doing: from the first backup on or after %s this is only a note. If you didn't remove it, %s and the next backup finds it again.", label, date, kept, note, addBackIn(w.Path)))
+	note := noteDay(since).Format(mailboxGoneDate)
+	r.warn(state.MailboxGoneCode, fmt.Sprintf("a mailbox this archive backs up is no longer on this computer: %s, not found since %s. %s If you removed it on purpose, nothing needs doing: from the first backup on or after %s this is only a note. %s", label, date, kept, note, goneRemedy(w)))
 }

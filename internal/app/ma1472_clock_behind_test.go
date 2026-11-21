@@ -32,7 +32,12 @@ func TestAClockBehindNeverMovesTheFirstFoundDateEarlier(t *testing.T) {
 	status := func(lr state.LastRun) string {
 		return strings.Join(health.Assess(health.Input{Out: tmpDir(t), Encrypted: lr.Encrypted, LastRunState: state.LastRunPresent, LastRun: lr}, lr.Started).Reasons, "\n")
 	}
-	noteDay := first.Add(state.MailboxGoneNoteAfter).Local().Format("Jan 2, 2006")
+	// The first local day every backup of which is 14 days on (CON-01's rule).
+	x := first.Add(state.MailboxGoneNoteAfter).Local()
+	if x.Hour() != 0 || x.Minute() != 0 || x.Second() != 0 || x.Nanosecond() != 0 {
+		x = x.AddDate(0, 0, 1)
+	}
+	noteDay := x.Format("Jan 2, 2006")
 
 	// Plaintext.
 	out := tmpDir(t)

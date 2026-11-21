@@ -146,11 +146,17 @@ func TestOneAccountPlusLocalFoldersKeepsGoing(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Local Folders remains, so the run must skip the gone account: %v", err)
 	}
-	if len(res.Skipped) != 1 || res.Skipped[0].Path != acct || res.Skipped[0].Name != "" {
-		t.Fatalf("Result.Skipped = %+v, want %s with no name (its account is gone from the settings)", res.Skipped, acct)
+	// Amended 2026-11-20 by the 1.7.5 friction review (F3; the lead's brief: "F3's name comes from the
+	// previous record's Thunderbird entry with the same store_id, and goes on screen and in status,
+	// never in a log file"): an account gone from the settings was said with no name; now the name
+	// the previous backup recorded for that store is kept, not marked listed. Asserted at the same
+	// strength: the exact name, from the record and not the settings, and the log still says the
+	// path alone and never the name (MA-1288).
+	if len(res.Skipped) != 1 || res.Skipped[0].Path != acct || res.Skipped[0].Name != goneAddress("imap.qzone.example") || res.Skipped[0].Listed {
+		t.Fatalf("Result.Skipped = %+v, want %s named from the previous record, not listed (its account is gone from the settings)", res.Skipped, acct)
 	}
-	if want := "Not found, so skipped: " + acct + ". It is no longer on this computer"; !strings.Contains(logged.String(), want) {
-		t.Fatalf("a folder no account names is said by its path: want %q in\n%s", want, logged)
+	if want := "Not found, so skipped: " + acct + ". It is no longer on this computer"; !strings.Contains(logged.String(), want) || strings.Contains(logged.String(), goneAddress("imap.qzone.example")) {
+		t.Fatalf("a folder no account names is said by its path, never by the recorded name: want %q in\n%s", want, logged)
 	}
 }
 

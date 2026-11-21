@@ -34,7 +34,18 @@ func TestStatusSaysAGoneMailboxForFourteenDaysOfBackupsThenANote(t *testing.T) {
 	path := filepath.Join(home, ".thunderbird", "abcd1234.default-release", "ImapMail", "imap.qzb.example")
 	since := time.Date(2026, 11, 2, 2, 0, 0, 0, time.UTC)
 	w := state.RunWarning{Code: state.MailboxGoneCode, Message: "PLANTED MESSAGE", Path: path, Name: "qzsam@example.com", Since: since}
-	date, after := since.Local().Format("Jan 2, 2006"), since.Add(14*24*time.Hour).Local().Format("Jan 2, 2006")
+	// Amended 2026-11-20 by the 1.7.5 adversarial pass (CON-01): the day named is the first local day
+	// every backup of which is 14 days or more after since (it was since plus 14 days, whose own day
+	// could still WARN), worked out here on its own: the day of since+14d, or the next day when
+	// since+14d is not at local midnight. The whole WARN stays pinned word for word.
+	firstNoteDay := func(s time.Time) string {
+		x := s.Add(14 * 24 * time.Hour).Local()
+		if x.Hour() != 0 || x.Minute() != 0 || x.Second() != 0 || x.Nanosecond() != 0 {
+			x = x.AddDate(0, 0, 1)
+		}
+		return x.Format("Jan 2, 2006")
+	}
+	date, after := since.Local().Format("Jan 2, 2006"), firstNoteDay(since)
 	warn := "WARN: a mailbox this archive backs up is no longer on this computer: qzsam@example.com (" + path + "), not found since " + date + ". Its mail already saved stays in the archive, and the other mailboxes are still backed up. If you removed it on purpose, nothing needs doing: from the first backup on or after " + after + " this is only a note. If you didn't remove it, add the account back in Thunderbird and the next backup finds it again."
 
 	day13, day15 := since.Add(13*24*time.Hour), since.Add(15*24*time.Hour)
@@ -50,7 +61,10 @@ func TestStatusSaysAGoneMailboxForFourteenDaysOfBackupsThenANote(t *testing.T) {
 		t.Fatalf("13 days by the record, read a year later, is still a WARN:\n%s", got)
 	}
 	// 15 days by the record: a note, whatever now is.
-	note := "a mailbox this archive backed up is no longer on this computer: qzsam@example.com (" + path + "), not found since " + date + ". Its mail already saved stays in the archive. This line stays while the archive's backup lists that mailbox; to end it, set the archive up again in the wizard, with the same archive folder, choose All of them, and answer Yes to keeping it current."
+	// Amended 2026-11-20 by the 1.7.5 friction review (F11): the note names the button that ends it;
+	// it said "set the archive up again in the wizard, with the same archive folder, choose All of
+	// them, and answer Yes to keeping it current." Pinned word for word as before.
+	note := "a mailbox this archive backed up is no longer on this computer: qzsam@example.com (" + path + "), not found since " + date + ". Its mail already saved stays in the archive. This line stays while the archive's backup lists that mailbox; to end it, click Make a new archive… in MailArchive Desktop, choose All of them and this same archive folder, and answer Yes to keeping it current."
 	for _, now := range []time.Time{day15, day15.Add(365 * 24 * time.Hour)} {
 		got, rep := goneReport(t, state.RunOK, day15, w, now)
 		if !strings.Contains(got, "\n"+note) || strings.Contains(got, "WARN: a mailbox") || rep.has(state.MailboxGoneCode) || !rep.has("mailbox_gone_note") {
@@ -82,7 +96,7 @@ func TestStatusSaysAGoneMailboxForFourteenDaysOfBackupsThenANote(t *testing.T) {
 	ahead.Since = day15.Add(30 * 24 * time.Hour)
 	if got, rep := goneReport(t, state.RunOK, day15, ahead, day15); !rep.has(state.MailboxGoneCode) || rep.has("mailbox_gone_note") ||
 		!strings.Contains(got, "not found since "+ahead.Since.Local().Format("Jan 2, 2006")) ||
-		!strings.Contains(got, "on or after "+ahead.Since.Add(state.MailboxGoneNoteAfter).Local().Format("Jan 2, 2006")) {
+		!strings.Contains(got, "on or after "+firstNoteDay(ahead.Since)) {
 		t.Fatalf("a since after the run's start WARNs, dated as recorded (Q8):\n%s", got)
 	}
 	// No name: the path alone; a place another program keeps names that program.

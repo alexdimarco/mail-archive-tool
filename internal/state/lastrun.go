@@ -231,6 +231,11 @@ type RunWarning struct {
 	Path  string    `json:"path,omitempty"`
 	Name  string    `json:"name,omitempty"`
 	Since time.Time `json:"since,omitzero"`
+	// Listed: Thunderbird's settings still list an account for the folder when the run looked,
+	// so status says to let Thunderbird download it, not to add it back (the 1.7.5 friction
+	// review's F4). Amended beside the fields above: Name may now also come from the previous
+	// record (F3), where Listed is false. Additive and left out when false.
+	Listed bool `json:"listed,omitempty"`
 }
 
 // MailboxGoneCode is the warning a plaintext run records for each listed input it skipped
