@@ -55,6 +55,9 @@ const delCheckingText='Checking what Delete would remove… This can take a few 
 const delArmedText='When the check finishes, MailArchive checks once more, then deletes this archive, unless the check finds something you should see first. Keep this page open.';
 const delFoundText='The check found something to look at before deleting. Read it, then click Delete permanently.';
 const delDeletingText='Deleting this archive. It can no longer be stopped. Keep this page open until its result shows here…';
+// Said under a delete refused because a backup ran between the check and Delete (changed, MA-1475),
+// while the page checks again by itself (the friction review's F5).
+const delChangedText='A backup ran after the check, so MailArchive is checking again below. Nothing was deleted; your typed name is kept.';
 // The minutes a check has run, in words.
 function delMinutes(ms){const m=Math.floor(ms/60000);return m<1?'Under a minute so far.':m===1?'1 minute so far.':m+' minutes so far.';}
 // The prompt for the folder's name before the check answers: planView's typeLine for the row's name.
@@ -222,7 +225,11 @@ function delAfterDelete(d){
 // Save this plan, then Delete permanently, as before; or, armed by Delete when the check finishes,
 // with nothing in the plan to decide and the plan's name typed, it sends the delete at once, and the
 // server decides (MA-1476).
-function delPanel(b,typed){
+// rearm (the owner's ruling of 2026-11-20, Q9: "Re-check, then delete (Recommended)"): the panel
+// asked for again after an armed delete was refused as changed opens armed, once; its own armed
+// delete refused as changed again asks once more un-armed, so it cannot loop. The server checks it
+// as any armed delete (armable, the typed name, the row).
+function delPanel(b,typed,rearm){
   const w=document.createElement('div');w.className='note delete-panel';w.setAttribute('role','group');w.setAttribute('aria-label','Delete this archive');
   // The row this panel is for, from its own Delete… button as it opened: an armed delete names it,
   // never a value from a reply (MA-1476). Its name as the page was drawn only enables the button early.
@@ -323,11 +330,16 @@ function delPanel(b,typed){
   };
   // Delete when the check finishes (1.7.5 §3.2): nothing is sent now. The panel waits for its check,
   // marked waiting from this click, so another Delete… leaves it and the page's reloads are held.
-  arm.addEventListener('click',()=>{
+  const armNow=()=>{
     if(armed||p)return;
     armed=true;delInFlight++;w.setAttribute('data-delete-waiting','');
     arm.disabled=true;checking.textContent=delArmedText;
-  });
+  };
+  arm.addEventListener('click',armNow);
+  // Asked for again after an armed delete a backup made stale (Q9): armed again at once, when the
+  // typed name put back still matches the row's.
+  const rearmed=!!rearm&&delNameMatches(input.value,early);
+  if(rearmed)armNow();
   // Cancel, until the delete is sent: the panel closes and its plan is discarded (1.7.5 §3.1); a check
   // still running discards its plan when it answers (delPlan).
   cancel.addEventListener('click',async()=>{
@@ -349,9 +361,11 @@ function delPanel(b,typed){
     try{const d=await(fromArm?delPost('api/archive/delete',{token:p.token,typed:input.value,unrecorded:false,drawnFor:drawnFor,armed:true,row:row}):delPost('api/archive/delete',{token:p.token,typed:input.value,unrecorded:!!(box&&box.checked),drawnFor:drawnFor}));
       if(d.id||d.planUsed){delTokens.delete(token);token='';}
       // A backup saved mail between the check and Delete (changed, MA-1475): the result shows as
-      // before, and the plan is asked for again by itself, the typed name put back, so one more click
-      // deletes.
-      if(d.id&&d.changed){done(true);w.remove();delShowHeld(d);delAfterDelete(d);delPlan(b,b.closest('li'),false,input.value);return;}
+      // before, saying the page checks again below (F5), and the plan is asked for again by itself,
+      // the typed name put back, so one more click deletes; an armed delete's panel opens armed again,
+      // once (Q9): a re-armed one refused as changed again asks un-armed.
+      if(d.id&&d.changed){done(true);w.remove();const hv=delShowHeld(d);hv.querySelector('.del-actions').before(delEl('p',delChangedText,'warn'));
+        delAfterDelete(d);delPlan(b,b.closest('li'),false,input.value,fromArm&&!rearmed);return;}
       // Its own panel goes, never another row's opened meanwhile (del-s3b leftover 1).
       // The result is brought into view (B14): on a narrow layout it sat at the top of the card, out of sight.
       if(d.id){done(true);w.remove();const hv=delShowHeld(d);delAfterDelete(d);if(hv.scrollIntoView)hv.scrollIntoView({block:'nearest'});return;}
@@ -383,15 +397,15 @@ function delElsewhereAsk(b,li,p){
   return w;
 }
 // typed, when given, is put back in the new panel's box: a plan asked for again after a backup
-// changed the archive (1.7.5 §3.1).
-async function delPlan(b,li,elsewhere,typed){
+// changed the archive (1.7.5 §3.1); rearm then opens it armed (Q9, delPanel).
+async function delPlan(b,li,elsewhere,typed,rearm){
   const my=++delSeq;
   delClose();
   noteBeside(li);
   const n=$('settingsNote'),done=busy(b,'Checking…');if(n)n.hidden=true;
   // The panel opens at once, before the check ends (1.7.5 §3.2): its own line says what is happening,
   // and the folder's name can be typed meanwhile.
-  li.append(delPanel(b,typed));
+  li.append(delPanel(b,typed,rearm));
   const w=li.lastElementChild,t=w.querySelector('input');if(t)t.focus();
   try{const p=await(elsewhere?delPost('api/archive/delete/plan',{path:b.dataset.path,elsewhere:true}):delPost('api/archive/delete/plan',{path:b.dataset.path}));
     done();
