@@ -2115,29 +2115,66 @@ func scheduleRunsNoteFor(goos string) string {
 	return ""
 }
 
+// The schedule question's rows (MA-1474).
+const (
+	scheduleNo     = "No — just this once"
+	scheduleDaily  = "Yes — every day at 2:00 AM"
+	scheduleWeekly = "Yes — every week, Sunday at 3:00 AM"
+)
+
+// noScheduleLine ends the schedule question when its answer keeps naming no row (MA-1474).
+const noScheduleLine = "No scheduled backup was set up: the list did not say which line was chosen. To set one up, open Settings in MailArchive Desktop, or run the wizard again."
+
+// askSchedule asks "Keep this archive current automatically?" and says what to install (MA-1474):
+// only the answer that is the daily or the weekly row, by the mailbox list's one row rule
+// (rowChoice), installs. Any other answer, the empty one included (Linux's list can be answered with
+// nothing selected), shows MA-1465's note and the question again, up to pickTries times, then ends
+// with noScheduleLine and installs nothing. Cancel and "No — just this once" install nothing (R14).
+// The question goes through the listDialog seam with No preselected and an empty pick refused
+// where the dialog can (Windows, macOS). goos is the system whose dialog program printed the answer
+// (answerMayBeTranscoded); offerSchedule passes runtime.GOOS.
+func askSchedule(goos string) (iv schedule.Interval, at string, install bool, err error) {
+	rows := []string{scheduleNo, scheduleDaily, scheduleWeekly}
+	choices := [][]string{{scheduleNo}, {scheduleDaily}, {scheduleWeekly}}
+	transcoded := answerMayBeTranscoded(goos)
+	for try := 1; ; try++ {
+		// The question is this platform's fixed words (MA-1286's scan: only runtime.GOOS may choose
+		// them); goos decides only how the answer is read.
+		answer, err := listDialog(scheduleQuestionFor(runtime.GOOS), rows, zenity.Title(appTitle), zenity.DefaultItems(scheduleNo), zenity.DisallowEmpty())
+		if err != nil {
+			if errors.Is(err, zenity.ErrCanceled) {
+				return "", "", false, nil
+			}
+			return "", "", false, err
+		}
+		if i, ok := rowChoice(answer, choices, transcoded); ok {
+			switch i {
+			case 1:
+				return schedule.Daily, "02:00", true, nil
+			case 2:
+				return schedule.Weekly, "03:00", true, nil
+			}
+			return "", "", false, nil
+		}
+		if try >= pickTries {
+			return "", "", false, noticeClosed(messageDialog(noScheduleLine, zenity.Title(appTitle)))
+		}
+		// Closing the note with its close button asks again too, as OK does (MA-1209's rule).
+		if err := noticeClosed(messageDialog(pickAgain, zenity.Title(appTitle))); err != nil {
+			return "", "", false, err
+		}
+	}
+}
+
 func offerSchedule(c wizardChoice) error {
-	const no = "No — just this once"
-	const daily = "Yes — every day at 2:00 AM"
-	const weekly = "Yes — every week, Sunday at 3:00 AM"
 	// A folder whose delete did not finish is not offered a schedule (MA-1036): refused before
 	// the question; the install asks again.
 	if err := archdelete.ActionRefusal("", c.out, scheduledBackup+" was not installed"); err != nil {
 		return err
 	}
-	pick, err := zenity.List(scheduleQuestionFor(runtime.GOOS),
-		[]string{no, daily, weekly}, zenity.Title(appTitle), zenity.DefaultItems(no))
-	if err != nil {
-		if errors.Is(err, zenity.ErrCanceled) {
-			return nil
-		}
+	iv, at, install, err := askSchedule(runtime.GOOS)
+	if err != nil || !install {
 		return err
-	}
-	if pick == no {
-		return nil
-	}
-	iv, at := schedule.Daily, "02:00"
-	if pick == weekly {
-		iv, at = schedule.Weekly, "03:00"
 	}
 
 	// §4.2.6: when a Thunderbird store is among the inputs (and this platform has
@@ -2185,7 +2222,8 @@ func offerSchedule(c wizardChoice) error {
 	if c.tbSync {
 		syncLine = scheduleSyncLine
 	}
-	return zenity.Info(fmt.Sprintf("Scheduled: %s at %s.\n\nArchive: %s\nLog: %s%s\n\nOpen the MailArchive wizard (mailarchive wizard) any time to check the backup's health.%s",
+	// Through the messageDialog seam (zenity.Info): a test of the question never opens it (MA-1474).
+	return messageDialog(fmt.Sprintf("Scheduled: %s at %s.\n\nArchive: %s\nLog: %s%s\n\nOpen the MailArchive wizard (mailarchive wizard) any time to check the backup's health.%s",
 		iv, at, c.out, spec.Log, syncLine, note), zenity.Title(appTitle))
 }
 

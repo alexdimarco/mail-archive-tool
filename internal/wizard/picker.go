@@ -716,43 +716,69 @@ func pickList(rows []pickRow, goos string) (labels, paths []string) {
 // adversarial pass's MAP-01). Then an answer holding "?" is the row it can be read as only when it
 // can be read as exactly one: two rows it fits (the All row among them) give no row, never a guess.
 func pickChoice(answer string, labels []string, transcoded bool) (i int, all, ok bool) {
-	k := state.TBTextKey(strings.TrimSpace(answer))
-	if answer == allOfThem || k == state.TBTextKey(allOfThem) || k == state.TBTextKey(allOfThemBare) {
+	// The All row on top, by its text or its words without the arrow, then one row per label: the
+	// one row rule the schedule question uses too (rowChoice, MA-1474).
+	rows := make([][]string, 0, len(labels)+1)
+	rows = append(rows, []string{allOfThem, allOfThemBare})
+	for _, l := range labels {
+		rows = append(rows, []string{l})
+	}
+	r, ok := rowChoice(answer, rows, transcoded)
+	switch {
+	case !ok:
+		return -1, false, false
+	case r == 0:
 		return -1, true, true
 	}
-	if q := strings.TrimSpace(answer); transcoded && strings.Contains(q, "?") {
-		fits := []int{}
-		if asciiForm(allOfThem) == q || asciiForm(allOfThemBare) == q {
-			fits = append(fits, -1)
-		}
-		for i, l := range labels {
-			if asciiForm(l) == q {
-				fits = append(fits, i)
+	return r - 1, false, true
+}
+
+// rowChoice maps a list's answer to the one row it names, the rule both the mailbox list
+// (pickChoice, MA-1465) and the schedule question (askSchedule, MA-1474) use, so the two lists
+// cannot match an answer differently. rows[i] holds the texts that are row i: its own words, then
+// any other words that name it. On a system whose dialog program may print the answer in ASCII
+// alone (transcoded), an answer holding "?" is the row one of whose texts it equals in ASCII form,
+// only when exactly one row fits: two give no row, never a guess. Else the row with exactly that
+// text; else the one whose whole text is the same after NFKC and case folding (TBTextKey). ok is
+// false for any other answer, "" included: it names no row.
+func rowChoice(answer string, rows [][]string, transcoded bool) (int, bool) {
+	q := strings.TrimSpace(answer)
+	if transcoded && strings.Contains(q, "?") {
+		var fits []int
+		for i, texts := range rows {
+			for _, t := range texts {
+				if asciiForm(t) == q {
+					fits = append(fits, i)
+					break
+				}
 			}
 		}
 		switch {
-		case len(fits) == 1 && fits[0] == -1:
-			return -1, true, true
 		case len(fits) == 1:
-			return fits[0], false, true
+			return fits[0], true
 		case len(fits) > 1:
-			return -1, false, false
+			return -1, false
 		}
 	}
-	for i, l := range labels {
-		if answer == l {
-			return i, false, true
+	for i, texts := range rows {
+		for _, t := range texts {
+			if answer == t {
+				return i, true
+			}
 		}
 	}
+	k := state.TBTextKey(q)
 	if k == "" {
-		return -1, false, false
+		return -1, false
 	}
-	for i, l := range labels {
-		if state.TBTextKey(l) == k {
-			return i, false, true
+	for i, texts := range rows {
+		for _, t := range texts {
+			if state.TBTextKey(t) == k {
+				return i, true
+			}
 		}
 	}
-	return -1, false, false
+	return -1, false
 }
 
 // asciiForm is s as a dialog program writes it in a character set of ASCII alone: each character
