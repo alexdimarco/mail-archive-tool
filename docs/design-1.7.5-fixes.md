@@ -179,6 +179,18 @@ these hold:
   Settings that cannot be read for certain still tell no move (Q4), and the warning now says so.
   *(RF-03)* The refusal's words also say where the setting is and how to stop the archive looking
   for the old folder.
+  *Revision 4.2 (the re-verify, round 2's RV2-01; the lead's call, for the owner's setup of several
+  accounts on one mail server):* the archive's previous record decides first. It names each
+  Thunderbird folder's account (`autoplace.RecordedName`: its entry by `store_id`, else its
+  gone-mailbox warning). Named, and exactly one live account has that name with a folder setting
+  that is not the gone folder: moved, stop. Named, and no live account has it: removed, skip. Two or
+  more share it, or no name is recorded: the server-name rule, now the fallback, with Thunderbird's
+  "-N" before the last dot ("imap.gmail-1.com") and at the end, and "exactly one same-server account
+  wholly outside the profile". The traded case shrinks to records that name no account. The run, the
+  command line's up-front check and the Repair helper ask it with the same record. *(RF2-01)* The
+  words differ by which rule decided and never name the account (MA-1288 holds: a refusal reaches log
+  files; the brief's "Thunderbird still has NAME" form is flagged for the lead). *(RV2-06)* A run's
+  rule 1 also requires the warning's path to lie in an auto-discovery place.
   *Revision 4.1 (Windows CI at 1ba95c8):* a listed input that cannot be examined (`os.Stat` fails
   with anything but "does not exist") is refused with the same typed refusal, so it is recorded
   failed and the streak moves; it was an untyped refusal (Windows gives ERROR_DIRECTORY for a dangling
@@ -842,6 +854,10 @@ whether the plan's folder is still the same folder on disk (its recorded file id
 re-arms only then, so a folder replaced by another of the same name is never deleted unseen. *(RF-02)*
 Its words now differ for a re-armed and an un-armed re-check ("No need to click Delete again. …"),
 and an earlier result says when a later delete of the folder ended.
+*Revision 4.2 (RV2-02):* RV-06 narrowed: a lock ends only an encrypted plan that read values with
+its key open (`Captured.KeyOpen`); a plan made while its archive was locked waits through another
+archive's idle lock. The guide and the README say "A plan waits up to a day (for an encrypted
+archive, until it is locked), …".
 
 **Every delete walks the folder twice.** At Delete, the plan is made again in full under the lock
 (`execute.go:340`): the same walk, and the same SHA-256 of the manifest, as the check. So a large
@@ -1449,3 +1465,13 @@ moved account); the whole `./internal/app` and `./internal/desktop` runs on CI.
 
 Owed: a focused re-verify of these fixes; RV-01's Windows-only tests and RF-03's walk (Windows CI and
 the lab).
+
+## 11. Revision 4.2: the re-verify, round 2
+
+Built from `docs/review-1.7.5-reverify-r2.md` (the lead's fold), each marked *Revision 4.2* beside its
+text: RV2-01 and RF2-01 (the recorded name first; the server-name fallback with both "-N" spellings
+and the one-outside rule; MA-1481 amended, the traded case as it now stands), RV2-03 (a tombstone
+per "-N" spelling), RV2-06 (rule 1's places check), RV2-02 (only a plan read with its key open ends
+at a lock; MA-1475 and MA-1004 amended), RF2-02 to RF2-06 (words; RF-07's card words now pinned by a
+committed test). Not built: RV2-04, RV2-05 (the fold says why). Flagged: RF2-01's "Thunderbird still
+has NAME" form conflicts with MA-1288 and is built without the name.
