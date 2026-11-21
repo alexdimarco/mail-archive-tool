@@ -318,21 +318,18 @@ func goneWarnings(skipped []SkippedInput) []state.RunWarning {
 // the store's id (state.TBAccount, storeID: a hash of the profile and the store's path, computable
 // for a folder that is gone). "" when p is in no profile or no entry has its id. Said on screen and
 // in status, never in a log file (MA-1288).
+//
+// Amended by the 1.7.5 re-verify, round 3 (RV3-01): also from the names a record whose run had no
+// completeness entries of its own carried (state.TBNameOf), so a refused run's record still names it.
 func recordedAccountName(prev state.LastRun, p string) string {
-	if len(prev.Thunderbird) == 0 {
+	if len(prev.Thunderbird) == 0 && len(prev.ThunderbirdNames) == 0 {
 		return ""
 	}
 	profile, ok := thunderbird.FindProfileDir(p)
 	if !ok {
 		return ""
 	}
-	id := storeID(profile, p)
-	for _, e := range prev.Thunderbird {
-		if e.StoreID == id && e.Name != "" {
-			return state.CleanFolderName(e.Name)
-		}
-	}
-	return ""
+	return state.TBNameOf(prev, storeID(profile, p))
 }
 
 // goneAccountName is the name Thunderbird shows for the account whose folder the gone input p

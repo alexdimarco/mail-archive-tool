@@ -228,6 +228,66 @@ func saneTB(in []TBAccount) (out []TBAccount, cut int) {
 	return in, cut
 }
 
+// TBName is one Thunderbird folder's account name beside its store's id (LastRun.ThunderbirdNames;
+// the 1.7.5 re-verify, round 3's RV3-01). A hash, never the path.
+type TBName struct {
+	StoreID string `json:"store_id"`
+	Name    string `json:"name"`
+}
+
+// saneTBNames is a record's carried names as read back: at most TBAccountsMax, each cleaned as the
+// completeness record's names are, a name two entries share cleared (as TBDistinctNames does), and an
+// entry with no id or no name left out.
+func saneTBNames(in []TBName) []TBName {
+	if len(in) > TBAccountsMax {
+		in = in[:TBAccountsMax]
+	}
+	for i := range in {
+		in[i].StoreID, in[i].Name = util.StripControl(in[i].StoreID), CleanFolderName(in[i].Name)
+	}
+	dropSharedNames(len(in), func(i int) *string { return &in[i].Name })
+	var out []TBName
+	for _, e := range in {
+		if e.StoreID != "" && e.Name != "" {
+			out = append(out, e)
+		}
+	}
+	return out
+}
+
+// TBNamesOf is the names the plaintext record r hands on to the next run's records (RV3-01): its
+// completeness entries' names when it has entries, else the names it carried. nil for an
+// encrypted record, which keeps no names (Q3, Q5, Q6).
+func TBNamesOf(r LastRun) []TBName {
+	if r.Encrypted {
+		return nil
+	}
+	if len(r.Thunderbird) == 0 {
+		return append([]TBName(nil), r.ThunderbirdNames...)
+	}
+	var out []TBName
+	for _, e := range r.Thunderbird {
+		if e.StoreID != "" && e.Name != "" {
+			out = append(out, TBName{StoreID: e.StoreID, Name: e.Name})
+		}
+	}
+	return out
+}
+
+// TBNameOf is the account name the plaintext record r keeps for the store whose id is id (RV3-01),
+// cleaned; "" for none.
+func TBNameOf(r LastRun, id string) string {
+	if id == "" {
+		return ""
+	}
+	for _, e := range TBNamesOf(r) {
+		if e.StoreID == id {
+			return CleanFolderName(e.Name)
+		}
+	}
+	return ""
+}
+
 // TBDistinctNames clears the name of every account that shares it with another, and of every
 // account whose name spells the words an account with no name is said by (TBNameIsFallback), so two
 // accounts are never said as one: each is then said by its folder (MA-1284, MA-1287). Names are

@@ -1446,7 +1446,18 @@ func newRunRecord(opts Options) state.LastRun {
 	if opts.Mode == export.Full {
 		mode = "full"
 	}
-	return state.LastRun{Status: state.RunRunning, Started: time.Now().UTC(), PID: os.Getpid(), Exe: exe, Mode: mode, Job: canonicalJob(opts, mode), NoIndex: !opts.Index, Warnings: opts.Warnings}
+	lr := state.LastRun{Status: state.RunRunning, Started: time.Now().UTC(), PID: os.Getpid(), Exe: exe, Mode: mode, Job: canonicalJob(opts, mode), NoIndex: !opts.Index, Warnings: opts.Warnings}
+	// Each Thunderbird folder's account name, carried from the previous record into this one and so
+	// into every record the run writes from it (running, refused, failed, cancelled; an ok run with
+	// completeness entries of its own keeps the names there instead): a moved account is then still
+	// told from a removed one after a stopped backup (the 1.7.5 re-verify, round 3's RV3-01). In the
+	// record only, never in a log file (MA-1288).
+	if opts.Out != "" {
+		if prev, st, _ := state.ReadLastRun(opts.Out); st == state.LastRunPresent {
+			lr.ThunderbirdNames = state.TBNamesOf(prev)
+		}
+	}
+	return lr
 }
 
 // RecordRefusedRun records a scheduled run that refused before it began — its
@@ -1614,6 +1625,7 @@ func recordRun(opts Options, lr state.LastRun, result *Result, err *error, logge
 		if !lr.Encrypted && opts.Key == nil && len(result.Thunderbird) > 0 {
 			lr.Thunderbird = tbRecords(result.Thunderbird, result.tbPrev, lr.Finished)
 			lr.ThunderbirdMore = tbRecordsMore(result.Thunderbird)
+			lr.ThunderbirdNames = nil // this run's own entries keep the names (RV3-01): written as before
 		}
 		if lr.Encrypted && result.IndexBehind {
 			// The backup finished, but its search index misses messages until a later

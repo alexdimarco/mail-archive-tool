@@ -162,6 +162,16 @@ type LastRun struct {
 	// lead from the record takes each one left out as unknown (tbcomplete.RunLeadWith), never
 	// as complete.
 	ThunderbirdMore int `json:"thunderbird_more,omitempty"`
+	// ThunderbirdNames is each Thunderbird folder's account name beside its store's id, in a record
+	// whose run has no completeness entries of its own (a running, refused, failed or cancelled run,
+	// or an ok one that assessed none): carried from the previous record (TBNamesOf), so a moved
+	// account is still told from a removed one after a stopped backup (the 1.7.5 re-verify, round
+	// 3's RV3-01; MA-1481). A small list beside Thunderbird, not a copy of it: every surface reads
+	// Thunderbird as this run's completeness. Plaintext records only: the encrypted writer's
+	// allow-list never writes it (the owner's Q3, Q5 and Q6). Names stay in the record and never
+	// reach a log file (MA-1288). Additive: an older reader ignores it (1.7.4 reads the record with
+	// json.Unmarshal).
+	ThunderbirdNames []TBName `json:"thunderbird_names,omitempty"`
 
 	// Program is an encrypted archive's program step outcome, one of the Program*
 	// codes (program design §4, §8). Absent when the step did not run.
@@ -441,6 +451,7 @@ func ReadLastRun(out string) (LastRun, LastRunState, error) {
 	var cut int
 	r.Thunderbird, cut = saneTB(r.Thunderbird)
 	r.ThunderbirdMore = min(max(0, r.ThunderbirdMore), 1<<20) + cut // planted: never negative, never wrapped
+	r.ThunderbirdNames = saneTBNames(r.ThunderbirdNames)
 	return r, LastRunPresent, nil
 }
 

@@ -242,15 +242,15 @@ func TestTheRecordedNameDecidesAMoveAmongAccountsOnOneServer(t *testing.T) {
 	if err := os.RemoveAll(b); err != nil {
 		t.Fatal(err)
 	}
-	// The third account keeps its mail off the profile (moved long ago), so the server-name rule alone
-	// would decide both cases below the wrong way: it would stop for the removed account (one
-	// same-server account outside) and skip the moved one (two outside). The recorded name decides.
-	away3 := filepath.Join(tmpDir(t), "QZUSB", "QZGmail3")
-	tbStoreAt(t, away3, tbFolder{path: "INBOX", listed: 2, msgs: tbMsgs("imap.qzg-2.example", 2)})
-	c3 := accts[2]
-	c3.dirRel, c3.dir = "", away3
+	// Amended 2026-11-21 by the re-verify, round 3 (RV3-02; the lead's call), at the same strength,
+	// beside its text: a removed account matches no live account by the record's name, so the
+	// server-name rule now decides it. The positive twin is the removed account with the third
+	// account in the profile: skipped. (It read: "The third account keeps its mail off the profile
+	// …, so the server-name rule alone would decide both cases below the wrong way: it would stop for
+	// the removed account … and skip the moved one …", with the removed account skipped beside the
+	// third off the profile. That is now the traded case, asserted below as a stop.)
 	// Positive twin: the second account removed in Thunderbird: skipped, named from the record.
-	tbWrite(t, prefs, tbPrefsJS(accts[0], c3))
+	tbWrite(t, prefs, tbPrefsJS(accts[0], accts[2]))
 	res, err, _ := goneRun(t, Options{Inputs: inputs, Auto: true, Out: out, Unattended: true})
 	if err != nil || len(res.Skipped) != 1 || res.Skipped[0].Name != "qzb@qzg.example" {
 		t.Fatalf("positive twin: a removed account among three on one server is skipped: %+v %v", res.Skipped, err)
@@ -268,7 +268,24 @@ func TestTheRecordedNameDecidesAMoveAmongAccountsOnOneServer(t *testing.T) {
 	if !health.GoneMailboxRepairable(stopped) {
 		t.Fatal("positive twin: the Repair helper says Repair for the removed account")
 	}
-	// The same account still in Thunderbird, moved to another folder.
+	// The third account keeps its mail off the profile (moved long ago).
+	away3 := filepath.Join(tmpDir(t), "QZUSB", "QZGmail3")
+	tbStoreAt(t, away3, tbFolder{path: "INBOX", listed: 2, msgs: tbMsgs("imap.qzg-2.example", 2)})
+	c3 := accts[2]
+	c3.dirRel, c3.dir = "", away3
+	// The traded case RV3-02 brings back (MA-1481): the removed account beside exactly one
+	// same-server account whose mail is all off the profile stops the backup, in the words of a move
+	// the server-name rule found; the Repair helper agrees.
+	tbWrite(t, prefs, tbPrefsJS(accts[0], c3))
+	if health.GoneMailboxRepairable(stopped) {
+		t.Error("the Repair helper says Repair in the traded case, where the run stops")
+	}
+	if _, _, terr := DiscoverInputsFor(inputs, true, RecordedNamesAt(out)); terr == nil || !strings.Contains(terr.Error(), "a Thunderbird account on the same mail server") {
+		t.Errorf("the traded case: a removed account beside one same-server account off the profile stops: %v", terr)
+	}
+	// The same account still in Thunderbird, moved to another folder. With the third account off the
+	// profile too, the server-name rule alone would skip it (two same-server accounts outside): the
+	// recorded name decides.
 	away := filepath.Join(tmpDir(t), "QZUSB", "QZGmail2")
 	tbStoreAt(t, away, tbFolder{path: "INBOX", listed: 2, msgs: tbMsgs("imap.qzg-1.example", 2)})
 	m := accts[1]

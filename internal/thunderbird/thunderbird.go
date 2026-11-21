@@ -603,7 +603,9 @@ func findAccount(profileDir, storeDir string) (*Account, prefSettings, error) {
 // archive's previous record gave this folder (cleaned by clean, as the live names are compared).
 // That is the primary rule: exactly one live account with that name and a folder setting that is not
 // the gone folder → moved (to that account's folder); no live account with that name → removed (not
-// moved); two or more → the server-name rule below. The server-name rule is only the fallback (a
+// moved); two or more → the server-name rule below. (Amended by the 1.7.5 re-verify, round 3's
+// RV3-02: no live account with that name → the server-name rule too, so an account moved and renamed
+// at once still stops the backup.) The server-name rule is only the fallback (a
 // record that names no account): the folder's name, or that name without a "-N" at its end or just
 // before its last dot (Thunderbird spells a second account's folder "imap.gmail-1.com"); among the
 // live accounts with that server name, moved when exactly one has every folder setting outside this
@@ -685,7 +687,11 @@ func movedHow(profileDir, storeDir, recordedName string, clean func(string) stri
 		}
 		switch len(named) {
 		case 0:
-			return "", false // removed: no live account has the name
+			// No live account has the name: removed, or renamed as it was moved (both are on one
+			// settings page in Thunderbird). The server-name rule decides (the 1.7.5 re-verify, round
+			// 3's RV3-02, the reviewer's choice 2, Q7's direction: a loud stop beats a quiet loss). It
+			// brings back the traded case: a removed account beside exactly one same-server account
+			// whose mail is all off the profile stops the backup.
 		case 1:
 			folders, dir := folderOf(named[0])
 			if len(folders) == 0 {
@@ -699,7 +705,7 @@ func movedHow(profileDir, storeDir, recordedName string, clean func(string) stri
 			*byName = true
 			return dir, true
 		}
-		// Two or more live accounts share the name: the server-name rule decides.
+		// None, or two or more live accounts share the name: the server-name rule decides.
 	}
 
 	// The fallback: the server-name rule.

@@ -220,13 +220,12 @@ func RecordedName(prev state.LastRun, path string) string {
 	if prev.Encrypted {
 		return ""
 	}
-	if len(prev.Thunderbird) > 0 {
+	// Its completeness entries' names, else the names a record whose run had none of its own carried
+	// (the 1.7.5 re-verify, round 3's RV3-01: a stopped backup's record keeps them).
+	if len(prev.Thunderbird) > 0 || len(prev.ThunderbirdNames) > 0 {
 		if profile, ok := thunderbird.FindProfileDir(path); ok {
-			id := StoreID(profile, path)
-			for _, e := range prev.Thunderbird {
-				if e.StoreID == id && e.Name != "" {
-					return state.CleanFolderName(e.Name)
-				}
+			if n := state.TBNameOf(prev, StoreID(profile, path)); n != "" {
+				return n
 			}
 		}
 	}
