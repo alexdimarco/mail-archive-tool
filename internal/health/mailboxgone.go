@@ -76,7 +76,9 @@ func unsureLine(w state.RunWarning) string {
 	if !w.SettingsUnsure {
 		return ""
 	}
-	return " If you moved this account to another folder in Thunderbird, MailArchive could not tell from its settings."
+	// The re-verify, round 2's RF2-03 words (it said only "…MailArchive could not tell from its
+	// settings.").
+	return " If you moved this account to another folder in Thunderbird, MailArchive could not tell from Thunderbird's settings, so that folder is not backed up: back it up as an archive of its own (Make a new archive…, then Thunderbird / mbox mail folder)."
 }
 
 // noteDay is the day the WARN names as the first on which a backup is only a note (the 1.7.5
@@ -244,7 +246,7 @@ func mailboxGone(r *Report, lr state.LastRun, w state.RunWarning) {
 	if !mailboxGoneWarns(w.Since, lr.Started) {
 		// The friction review's F11: the note names the button that ends it (it said "set the
 		// archive up again in the wizard").
-		r.note("mailbox_gone_note", fmt.Sprintf("a mailbox this archive backed up is no longer on this computer: %s, not found since %s. Its mail already saved stays in the archive. This line stays while the archive's backup lists that mailbox; to end it, click Make a new archive… in MailArchive Desktop, choose All of them and this same archive folder, and answer Yes to keeping it current. Then check How often in Settings: this sets the schedule again.", label, date)+unsureLine(w))
+		r.note("mailbox_gone_note", fmt.Sprintf("a mailbox this archive backed up is no longer on this computer: %s, not found since %s. Its mail already saved stays in the archive. This line stays while the archive's backup lists that mailbox; to end it, click Make a new archive… in MailArchive Desktop, choose All of them and this same archive folder, and answer Yes to keeping it current. Making it again sets its schedule afresh, so then check How often in Settings.", label, date)+unsureLine(w)) // RF2-04's words
 		return
 	}
 	// "The other mailboxes are still backed up" only after a run that ended ok: the warning reaches

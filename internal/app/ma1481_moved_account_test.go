@@ -353,7 +353,8 @@ func TestSettingsThatCannotBeReadForCertainSaySo(t *testing.T) {
 	if err := os.RemoveAll(b); err != nil {
 		t.Fatal(err)
 	}
-	const unsure = "If you moved this account to another folder in Thunderbird, MailArchive could not tell from its settings."
+	// Amended 2026-11-21 (RF2-03), word for word: what to do follows.
+	const unsure = "If you moved this account to another folder in Thunderbird, MailArchive could not tell from Thunderbird's settings, so that folder is not backed up: back it up as an archive of its own (Make a new archive…, then Thunderbird / mbox mail folder)."
 	status := func() string { return strings.Join(health.Assess(health.Gather(out, ""), time.Now()).Reasons, "\n") }
 	tbWrite(t, prefs, tbPrefsJS(acctA)) // removed on purpose, plain settings
 	if res, err, _ := goneRun(t, Options{Inputs: []string{a, b}, Auto: true, Out: out, Unattended: true}); err != nil || len(res.Skipped) != 1 || res.Skipped[0].SettingsUnsure || strings.Contains(status(), unsure) {

@@ -2036,8 +2036,9 @@ const delWords = {
   // Amended 2026-11-20 by the 1.7.5 re-verify (RF-02), word for word: changed (it was 'A backup ran
   // after the check, so MailArchive is checking again below. Nothing was deleted; your typed name is
   // kept.') is now the armed form; changedPerm the other; later the line on an earlier result.
-  changed: 'No need to click Delete again. Something changed after the check (a backup, say), so nothing was deleted yet. MailArchive is checking again below and then deletes the archive, unless it finds something you should decide first.',
-  changedPerm: 'No need to click Delete again. Something changed after the check (a backup, say), so nothing was deleted. MailArchive is checking again below, with your typed name kept: click Delete permanently when the new plan shows.',
+  // Amended 2026-11-21 (RF2-06), word for word: "Delete…", the row button's own name.
+  changed: 'No need to click Delete… again. Something changed after the check (a backup, say), so nothing was deleted yet. MailArchive is checking again below and then deletes the archive, unless it finds something you should decide first.',
+  changedPerm: 'No need to click Delete… again. Something changed after the check (a backup, say), so nothing was deleted. MailArchive is checking again below, with your typed name kept: click Delete permanently when the new plan shows.',
   later: 'A later delete of this folder ended: see its result.',
 };
 

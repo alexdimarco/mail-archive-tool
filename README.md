@@ -119,8 +119,9 @@ with a rough size, and exits without exporting or creating the output directory.
 With `-auto` (an "All of them" archive), a listed mailbox whose folder is gone
 is skipped while the others are backed up; `status` warns for 14 days of
 backups, then keeps a note. A missing profile, a missing ImapMail or Mail
-folder, a link, a mailbox outside the usual places, or a Thunderbird account
-moved to another folder still stops the backup.
+folder, a link, or a mailbox outside the usual places still stops the backup,
+and so does a Thunderbird account moved to another folder when Thunderbird's
+settings show the move.
 
 ## The wizard (`mailarchive wizard`)
 

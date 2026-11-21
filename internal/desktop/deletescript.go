@@ -78,8 +78,8 @@ const delDeletingText='Deleting this archive. It can no longer be stopped. Keep 
 // checking again below. Nothing was deleted; your typed name is kept."): one after an armed delete
 // that is checked again armed (Q9), one after any other; and a line on an earlier result when a later
 // delete of the same folder ends.
-const delChangedArmedText='No need to click Delete again. Something changed after the check (a backup, say), so nothing was deleted yet. MailArchive is checking again below and then deletes the archive, unless it finds something you should decide first.';
-const delChangedText='No need to click Delete again. Something changed after the check (a backup, say), so nothing was deleted. MailArchive is checking again below, with your typed name kept: click Delete permanently when the new plan shows.';
+const delChangedArmedText='No need to click Delete… again. Something changed after the check (a backup, say), so nothing was deleted yet. MailArchive is checking again below and then deletes the archive, unless it finds something you should decide first.';
+const delChangedText='No need to click Delete… again. Something changed after the check (a backup, say), so nothing was deleted. MailArchive is checking again below, with your typed name kept: click Delete permanently when the new plan shows.';
 const delLaterText='A later delete of this folder ended: see its result.';
 // delLaterNote marks every result already shown for row: a later delete of that folder ended (RF-02).
 function delLaterNote(row){document.querySelectorAll('[data-held-id]').forEach(h=>{if(h.dataset.row===row&&!h.querySelector('[data-later]')){const p=delEl('p',delLaterText,'card-sub');p.setAttribute('data-later','');const a=h.querySelector('.del-actions');if(a)a.before(p);else h.append(p);}});}
