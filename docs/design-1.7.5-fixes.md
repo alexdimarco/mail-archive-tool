@@ -1202,6 +1202,11 @@ nothing in the list needs your decision."
   note now names the button that ends a plaintext one (Make a new archive…), and an encrypted note
   says only how long it stays. Whether a backup that saves nothing should leave a waiting delete plan
   alone (F5's deeper choice) is the owner's, after its own adversarial pass.
+- *Revision 4.3, a known limit (the re-verify, round 3's RV3-04, INFO):* an encrypted archive's
+  record names no account (the owner's Q3, Q5 and Q6), so for it MailArchive goes by the mail
+  server's name alone: with several accounts on one mail server, a moved account can be skipped
+  instead of stopping the backup. Check status after moving one. (The same words are in MA-1481 and
+  the README.)
 
 ## 6. Claims, each with its condition
 

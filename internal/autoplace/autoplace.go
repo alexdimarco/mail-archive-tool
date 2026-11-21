@@ -269,7 +269,9 @@ func MovedText(path, movedTo string) string {
 // MovedSameServerText is the refusal's words when only the server-name rule found the move (the
 // record named no account): the re-verify, round 2's RF2-01 words as the reviewer wrote them.
 func MovedSameServerText(path, movedTo string) string {
-	return fmt.Sprintf("input %s does not exist, so this backup stopped: a Thunderbird account on the same mail server now keeps its mail in %s (its Local Directory setting). If you moved that account there, set its Local Directory back to %s (in Thunderbird: Account Settings, then Server Settings, or Local Folders' own page), or back up %s as an archive of its own (Make a new archive…, then Thunderbird / mbox mail folder). If you removed the account that used %s, or you now back up %s on its own, stop this archive looking for %s (Make a new archive…, then All of them and this same archive folder).", path, movedTo, path, movedTo, path, movedTo, path)
+	// The re-verify, round 3's RF3-03: "or Local Folders", which has no mail server (it read "a
+	// Thunderbird account on the same mail server now keeps its mail in NEW …").
+	return fmt.Sprintf("input %s does not exist, so this backup stopped: a Thunderbird account on the same mail server, or Local Folders, now keeps its mail in %s (its Local Directory setting). If you moved that account there, set its Local Directory back to %s (in Thunderbird: Account Settings, then Server Settings, or Local Folders' own page), or back up %s as an archive of its own (Make a new archive…, then Thunderbird / mbox mail folder). If you removed the account that used %s, or you now back up %s on its own, stop this archive looking for %s (Make a new archive…, then All of them and this same archive folder).", path, movedTo, path, movedTo, path, movedTo, path)
 }
 
 // MovedHowAs is MovedToAs, also saying whether the recorded name decided (for the words).

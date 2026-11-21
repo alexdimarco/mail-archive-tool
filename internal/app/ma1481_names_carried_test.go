@@ -278,7 +278,7 @@ func TestAMovedAndRenamedAccountStops(t *testing.T) {
 		}
 	}
 	assure.Refused(t, code, msg, assure.Code(1),
-		assure.Names("input "+b+" does not exist", away, "a Thunderbird account on the same mail server"),
+		assure.Names("input "+b+" does not exist", away, "a Thunderbird account on the same mail server, or Local Folders, now keeps its mail in"),
 		assure.Forbid("QZ Work (archive drive)"),
 		assure.NoSideEffect(func() bool { return res.Stats.Exported == 0 && len(res.Skipped) == 0 }))
 }

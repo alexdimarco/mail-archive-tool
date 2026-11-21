@@ -121,7 +121,10 @@ is skipped while the others are backed up; `status` warns for 14 days of
 backups, then keeps a note. A missing profile, a missing ImapMail or Mail
 folder, a link, or a mailbox outside the usual places still stops the backup,
 and so does a Thunderbird account moved to another folder when Thunderbird's
-settings show the move.
+settings show the move. An encrypted archive's record names no account, so for
+it MailArchive goes by the mail server's name alone: with several accounts on
+one mail server, a moved account can be skipped instead of stopping the backup.
+Check status after moving one.
 
 ## The wizard (`mailarchive wizard`)
 
@@ -361,9 +364,9 @@ finishes**: when the check ends, MailArchive checks the folder once more (about
 as long again), then deletes it, unless the plan holds something you should
 decide first, which it then shows you. Until the delete
 starts, **Cancel** or closing the page deletes nothing; once it starts it cannot
-be stopped. A plan waits up to a day (for an encrypted archive, until it is
-locked), but a backup in the meantime makes
-MailArchive check again. The result says what was removed and what was
+be stopped. A plan waits up to a day, but a backup in the meantime makes
+MailArchive check again. For an encrypted archive that was unlocked when it was
+checked, locking any archive ends the plan. The result says what was removed and what was
 kept: **Save deletion record** saves it (MailArchive keeps no copy), then click
 **Dismiss**. **Remove from list** takes an archive off Your archives and keeps its
 folder and every file; **Open an archive folder…** brings it back.

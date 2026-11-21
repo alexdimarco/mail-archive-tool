@@ -36,7 +36,9 @@ var helpDeleteSentences = []string{
 	"While it checks, type the folder's name. Then either wait and read the plan, or click Delete when the check finishes: when the check ends, MailArchive checks the folder once more (about as long again), then deletes it, unless the plan holds something you should decide first, which it then shows you. An encrypted archive's plan is always shown first. Until the delete starts, Cancel or closing the page deletes nothing.",
 	// Amended 2026-11-21 by the re-verify, round 2 (RV2-02), word for word: "(for an encrypted
 	// archive, until it is locked)", since a Lock ends a plan that read values with its key.
-	"After reading a plan, type the folder's name exactly as it is shown, then click Delete permanently. A plan waits up to a day (for an encrypted archive, until it is locked), but a backup in the meantime makes MailArchive check again.",
+	// Amended again 2026-11-21 by the re-verify, round 3 (RF3-02), word for word: a plan read while
+	// the encrypted archive was unlocked ends at any archive's lock, the idle lock too, not only its own.
+	"After reading a plan, type the folder's name exactly as it is shown, then click Delete permanently. A plan waits up to a day, but a backup in the meantime makes MailArchive check again. For an encrypted archive that was unlocked when it was checked, locking any archive ends the plan.",
 	"Once the delete starts it cannot be stopped: the panel says so and Cancel goes away.",
 	"The result says what was removed and what was kept. Click Save deletion record to save a copy as a text file: MailArchive keeps no copy after you close the result. Then click Dismiss.",
 	"What Delete removes: the archive's own files (its message pages and attachments, its search index and its records), its scheduled backups, its row under Your archives (for an encrypted archive, only when its folder goes too: see below) and, when nothing else is left in it, the folder. Files of your own in the folder are kept, and the folder with them. Mail copies in the folder that the archive did not record are kept too, unless you tick the box the plan shows for them.",
