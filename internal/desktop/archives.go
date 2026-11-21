@@ -9,6 +9,7 @@ import (
 	"mail-archive-tool/internal/archdelete"
 	"mail-archive-tool/internal/archindex"
 	"mail-archive-tool/internal/encmark"
+	"mail-archive-tool/internal/health"
 	"mail-archive-tool/internal/schedule"
 	"mail-archive-tool/internal/seal"
 	"mail-archive-tool/internal/state"
@@ -42,6 +43,10 @@ type ArchiveRow struct {
 	// only when Run now is clicked (MA-949): nothing resumes by itself, so the banner says to
 	// click Run now once the source is back.
 	RunNowOnly bool
+	// SourceLostRepair is set beside SourceLostSince when a Repair or a Run now would now get past
+	// the gone mailbox the archive's last run refused on (health.GoneMailboxRepairable, MA-1479):
+	// the banner then says to click Repair (or Run now) first, in MA-949's forms.
+	SourceLostRepair bool
 	// Problem is, for a folder this computer recorded as an encrypted archive that no
 	// longer holds it — emptied, replanted, a link, its key files gone — that case's
 	// own words (design-encrypted-archives-phase3 §4.5): shown in place of Switch and
@@ -203,8 +208,10 @@ func (cfg Config) archiveRows(idx archindex.Index) []ArchiveRow {
 			Kind:            kind,
 			SourceLostSince: lostSince,
 			RunNowOnly:      lostSince != "" && runNowOnlyRecorded(e.Path),
-			Problem:         problem,
-			TBBanner:        tbBanner(e.Path, avail && kind != "" && kind != archindex.KindEncrypted && problem == ""),
+			// Status's own helper, so the banner and status agree (X10, MA-1479).
+			SourceLostRepair: lostSince != "" && health.GoneMailboxRepairable(e.Path),
+			Problem:          problem,
+			TBBanner:         tbBanner(e.Path, avail && kind != "" && kind != archindex.KindEncrypted && problem == ""),
 		})
 	}
 	return rows

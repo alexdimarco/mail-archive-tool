@@ -3,6 +3,7 @@ package desktop
 import (
 	"strings"
 
+	"mail-archive-tool/internal/health"
 	"mail-archive-tool/internal/job"
 	"mail-archive-tool/internal/presync"
 	"mail-archive-tool/internal/schedule"
@@ -204,6 +205,10 @@ func settingsCardFor(in settingsInputs) settingsCard {
 			s.MustPost = true // the entry is gone: Save puts it back (3.4)
 			if st, err := state.ReadSourceStreak(out); err == nil && st.AutoPauseDue() {
 				s.AutoPaused = "Backups stopped: this archive's source has been unreachable since " + sinceWords(st) + "."
+				// Only where a Repair would get past the gone mailbox (status's own helper, MA-1479).
+				if health.GoneMailboxRepairable(out) {
+					s.AutoPaused += " If a mail account was removed, click Repair: this version skips a mailbox that is gone and backs up the others."
+				}
 			}
 		}
 	}

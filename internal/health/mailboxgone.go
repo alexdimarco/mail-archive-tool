@@ -2,9 +2,11 @@ package health
 
 import (
 	"fmt"
+	"os"
 	"time"
 
 	"mail-archive-tool/internal/autoplace"
+	"mail-archive-tool/internal/encmark"
 	"mail-archive-tool/internal/state"
 )
 
@@ -38,6 +40,75 @@ func addBackIn(path string) string {
 		return "add the account back in " + p
 	}
 	return "put it back where it was"
+}
+
+// GoneMailboxRepairable reports whether a Repair or a Run now would now get past the gone mailbox
+// an archive's last run refused on (docs/design-1.7.5-fixes.md §1.3, "Archives 1.7.4 already
+// stopped"; MA-1479): status, the Your-archives banner and the Settings card all ask it, so they
+// say Repair only where it works (X10). Yes only when all hold:
+//
+//   - the archive is plaintext: its record is not an encrypted one, and encmark.MustMinimise says
+//     no;
+//   - its source streak's last kind is local-source-unreachable;
+//   - its last-run record (read bounded, never through a link, cleaned) is a failed run with -auto
+//     in its job;
+//   - its error is exactly autoplace.GoneText of one of the job's listed -inputs, and the run's own
+//     rule (autoplace.GoneSkippable) accepts that input now;
+//   - no other listed input would refuse the run: each is there (os.Stat, as the run checks) or
+//     GoneSkippable accepts it, and at least one is there (a store only auto-discovery would find
+//     is not looked for, so then the answer is no).
+//
+// Any other archive keeps today's words.
+func GoneMailboxRepairable(out string) bool {
+	if out == "" || encmark.MustMinimise(out) {
+		return false
+	}
+	if s, err := state.ReadSourceStreak(out); err != nil || s.LastKind != "local-source-unreachable" {
+		return false
+	}
+	lr, st, _ := state.ReadLastRun(out)
+	if st != state.LastRunPresent || lr.Encrypted || lr.Status != state.RunFailed {
+		return false
+	}
+	auto, inputs := jobInputs(lr.Job)
+	if !auto {
+		return false
+	}
+	named := ""
+	for _, in := range inputs {
+		if lr.Error == autoplace.GoneText(in) {
+			named = in
+			break
+		}
+	}
+	if named == "" || !autoplace.GoneSkippable(named) {
+		return false
+	}
+	there := 0
+	for _, in := range inputs {
+		if _, err := os.Stat(in); err == nil {
+			there++
+		} else if !autoplace.GoneSkippable(in) {
+			return false
+		}
+	}
+	return there > 0
+}
+
+// jobInputs reads a recorded job's -auto and its listed -inputs, in order.
+func jobInputs(job []string) (auto bool, inputs []string) {
+	for i := 0; i < len(job); i++ {
+		switch job[i] {
+		case "-auto":
+			auto = true
+		case "-input":
+			if i+1 < len(job) {
+				inputs = append(inputs, job[i+1])
+				i++
+			}
+		}
+	}
+	return auto, inputs
 }
 
 // encryptedMailboxGone says an encrypted record's gone mailbox (MA-1478) in fixed sentences: the

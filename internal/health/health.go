@@ -508,7 +508,17 @@ func Assess(in Input, now time.Time) Report {
 			if !s.FirstUnreachable.IsZero() {
 				since = s.FirstUnreachable.Format("Jan 2, 2006")
 			}
-			r.warn("source_lost", fmt.Sprintf("this archive's source has not been reachable since %s — reconnect the source (its mailbox or mail folder) to resume backups", since))
+			if GoneMailboxRepairable(in.Out) {
+				// A mail account removed: this version skips its gone folder, so Repair (or Run now)
+				// backs up the others (MA-1479); said only where a run would get past it.
+				click := "click Repair (or Run now)"
+				if manualBackup(in) {
+					click = "click Run now"
+				}
+				r.warn("source_lost", fmt.Sprintf("this archive's source has not been reachable since %s — if a mail account was removed, %s on the archive's Scheduled backup card in MailArchive Desktop: this version skips a mailbox that is gone and backs up the others; otherwise reconnect the source (its mailbox or mail folder) to resume backups", since, click))
+			} else {
+				r.warn("source_lost", fmt.Sprintf("this archive's source has not been reachable since %s — reconnect the source (its mailbox or mail folder) to resume backups", since))
+			}
 		}
 	}
 
