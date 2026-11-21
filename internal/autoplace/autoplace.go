@@ -14,9 +14,50 @@ import (
 	"path/filepath"
 	"runtime"
 	"strings"
+	"sync/atomic"
 
 	"mail-archive-tool/internal/state"
 )
+
+// NonLocal reports a path on another computer or one that is not a plain local path: a network
+// (UNC) path, a device path, or one that is not absolute. A mail path named so in an archive's
+// record, which anyone who can write the archive can change, is skipped before any file check, so
+// drawing the Desktop's page, status and a run never reach out to another host (C-17, MA-869).
+// The Desktop (its isRemotePath), status (health.GoneMailboxRepairable) and a run
+// (app.resolveGoneSince) all ask this one rule (the 1.7.5 adversarial pass's OUT-01).
+func NonLocal(p string) bool {
+	p = strings.TrimSpace(p)
+	if strings.HasPrefix(p, `\\`) || strings.HasPrefix(p, "//") {
+		return true
+	}
+	return !filepath.IsAbs(p)
+}
+
+// watch, when set, is called with each path before this package looks at it on disk (and before
+// health's look through Stat): a test sees every path looked at, and can hold a look to stand for
+// stalled storage (MA-869's tombstone for OUT-01). Unset outside tests.
+var watch atomic.Pointer[func(path string)]
+
+// WatchLooksForTest calls f with each path before it is looked at on disk by GoneSkippable,
+// GoneSourceID or Stat, until restore is called. f may block, to stand for stalled storage.
+func WatchLooksForTest(f func(path string)) (restore func()) {
+	prev := watch.Swap(&f)
+	return func() { watch.Store(prev) }
+}
+
+// look tells the watch, if any, that p is about to be looked at.
+func look(p string) {
+	if f := watch.Load(); f != nil {
+		(*f)(p)
+	}
+}
+
+// Stat is os.Stat of a mail path, seen by the same watch as the rule's own looks: health's check
+// that a listed input is there goes through it.
+func Stat(p string) (fs.FileInfo, error) {
+	look(p)
+	return os.Stat(p)
+}
 
 // OutlookGlobs are the patterns auto-discovery globs for Outlook's data files.
 func OutlookGlobs() []string {
@@ -123,6 +164,7 @@ func GoneSourceID(path string) string {
 	if err != nil {
 		abs = filepath.Clean(path)
 	}
+	look(filepath.Dir(abs))
 	if parent, err := filepath.EvalSymlinks(filepath.Dir(abs)); err == nil {
 		return state.PathSourceID(filepath.Join(parent, filepath.Base(abs)))
 	}
@@ -147,6 +189,7 @@ func goneSkippable(path string, pats []string, goos string) bool {
 	if path == "" {
 		return false
 	}
+	look(path)
 	if _, err := os.Lstat(path); !errors.Is(err, fs.ErrNotExist) {
 		return false // (a): there (a dangling link included), or not known to be gone
 	}
@@ -164,6 +207,7 @@ func goneSkippable(path string, pats []string, goos string) bool {
 // folder, and resolved it matches pat's folder part rebuilt on pat's root resolved.
 func parentInPlace(p, pat, goos string) bool {
 	parent := filepath.Dir(p)
+	look(parent)
 	if fi, err := os.Stat(parent); err != nil || !fi.IsDir() {
 		return false
 	}
@@ -175,6 +219,7 @@ func parentInPlace(p, pat, goos string) bool {
 	if root == "" {
 		return false
 	}
+	look(root)
 	resolvedRoot, err := filepath.EvalSymlinks(root)
 	if err != nil {
 		return false

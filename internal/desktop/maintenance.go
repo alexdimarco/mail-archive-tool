@@ -258,6 +258,10 @@ func (d *dashboard) healthAction(w http.ResponseWriter, r *http.Request) {
 	}
 	in := health.Gather(out, "")
 	in.Surface = "desktop" // name the Rebuild button, not a command line
+	// The Repair answer comes from looks at the record's mail paths: asked within sourceWait, so
+	// this view never waits on their storage (MA-869, OUT-01).
+	repairable := goneRepairable(out)
+	in.GoneRepairable = &repairable
 	// A delete of it that did not finish is said here too (the 1.5.3 friction review's B2) — not
 	// one this Desktop is running now, whose started line has no finished line yet (the 1.5.3
 	// friction fixes' adversarial pass, finding 10): its result shows on the page when it ends.

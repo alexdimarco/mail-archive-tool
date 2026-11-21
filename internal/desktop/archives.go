@@ -9,7 +9,6 @@ import (
 	"mail-archive-tool/internal/archdelete"
 	"mail-archive-tool/internal/archindex"
 	"mail-archive-tool/internal/encmark"
-	"mail-archive-tool/internal/health"
 	"mail-archive-tool/internal/schedule"
 	"mail-archive-tool/internal/seal"
 	"mail-archive-tool/internal/state"
@@ -214,8 +213,9 @@ func (cfg Config) archiveRows(idx archindex.Index) []ArchiveRow {
 			Kind:            kind,
 			SourceLostSince: lostSince,
 			RunNowOnly:      lostSince != "" && runNowOnlyRecorded(e.Path),
-			// Status's own helper, so the banner and status agree (X10, MA-1479).
-			SourceLostRepair: lostSince != "" && health.GoneMailboxRepairable(e.Path),
+			// Status's own helper, so the banner and status agree (X10, MA-1479), asked within
+			// sourceWait (MA-869, OUT-01).
+			SourceLostRepair: lostSince != "" && goneRepairable(e.Path),
 			Problem:          problem,
 			TBBanner:         tbBanner(e.Path, avail && kind != "" && kind != archindex.KindEncrypted && problem == ""),
 		})

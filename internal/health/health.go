@@ -64,6 +64,13 @@ type Input struct {
 	// unattended, launchd/schtasks need a login). Empty defaults to the host.
 	GOOS string
 
+	// GoneRepairable, when set, is GoneMailboxRepairable's answer for Out, asked by the caller
+	// within its own time limit: the Desktop's health view asks it inside withinSourceWait, so
+	// drawing the page never waits on a mail source's storage (MA-869, C-17; the 1.7.5 adversarial
+	// pass's OUT-01). Assess then uses it and looks at no path the record names. Nil: Assess asks
+	// the helper itself (status).
+	GoneRepairable *bool
+
 	// OutUnderSync names the cloud-sync service (e.g. "OneDrive") when the
 	// archive sits inside a synced folder; "" when it does not.
 	OutUnderSync string
@@ -508,7 +515,11 @@ func Assess(in Input, now time.Time) Report {
 			if !s.FirstUnreachable.IsZero() {
 				since = s.FirstUnreachable.Format("Jan 2, 2006")
 			}
-			if GoneMailboxRepairable(in.Out) {
+			repairable := in.GoneRepairable != nil && *in.GoneRepairable
+			if in.GoneRepairable == nil {
+				repairable = GoneMailboxRepairable(in.Out)
+			}
+			if repairable {
 				// A mail account removed: this version skips its gone folder, so Repair (or Run now)
 				// backs up the others (MA-1479); said only where a run would get past it.
 				click := "click Repair (or Run now)"

@@ -134,7 +134,8 @@ func SkippedLines(skipped []SkippedInput, names bool) []string {
 // (docs/design-1.7.5-fixes.md §1.3):
 //
 //  1. the previous last-run record's mailbox_gone warning for the same input, compared by
-//     autoplace.GoneSourceID;
+//     autoplace.GoneSourceID; a warning whose path is not a plain local one (autoplace.NonLocal)
+//     is passed over before any look at it (MA-869, OUT-01);
 //  2. else, when the source-loss streak's last kind is local-source-unreachable and the previous
 //     record is a failed run whose error is this input's own refusal (autoplace.GoneText), the
 //     streak's FirstUnreachable: when the archive that was failing first found it gone;
@@ -155,7 +156,10 @@ func resolveGoneSince(out string, skipped []SkippedInput, start time.Time) {
 		if plain {
 			id := autoplace.GoneSourceID(skipped[i].Path)
 			for _, w := range prev.Warnings {
-				if w.Code == state.MailboxGoneCode && w.Path != "" && autoplace.GoneSourceID(w.Path) == id {
+				// The record is untrusted (C-17): a path in it that is not a plain local one is
+				// passed over before GoneSourceID looks at it on disk (MA-869; the 1.7.5 adversarial
+				// pass's INS-01).
+				if w.Code == state.MailboxGoneCode && w.Path != "" && !autoplace.NonLocal(w.Path) && autoplace.GoneSourceID(w.Path) == id {
 					since, found = w.Since, true
 					break
 				}

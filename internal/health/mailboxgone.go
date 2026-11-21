@@ -2,7 +2,6 @@ package health
 
 import (
 	"fmt"
-	"os"
 	"time"
 
 	"mail-archive-tool/internal/autoplace"
@@ -51,7 +50,8 @@ func addBackIn(path string) string {
 //     no;
 //   - its source streak's last kind is local-source-unreachable;
 //   - its last-run record (read bounded, never through a link, cleaned) is a failed run with -auto
-//     in its job;
+//     in its job, and every -input the job lists is a plain local path (autoplace.NonLocal says
+//     no), so no path the record names is looked at unless all are local (MA-869, OUT-01);
 //   - its error is exactly autoplace.GoneText of one of the job's listed -inputs, and the run's own
 //     rule (autoplace.GoneSkippable) accepts that input now;
 //   - no other listed input would refuse the run: each is there (os.Stat, as the run checks) or
@@ -74,6 +74,14 @@ func GoneMailboxRepairable(out string) bool {
 	if !auto {
 		return false
 	}
+	// The record is untrusted (C-17): a listed path that is not a plain local one (a network or
+	// device path, or one not absolute) is never looked at, so the answer is no before any file
+	// check (MA-869; the 1.7.5 adversarial pass's OUT-01 and INS-01).
+	for _, in := range inputs {
+		if autoplace.NonLocal(in) {
+			return false
+		}
+	}
 	named := ""
 	for _, in := range inputs {
 		if lr.Error == autoplace.GoneText(in) {
@@ -86,7 +94,7 @@ func GoneMailboxRepairable(out string) bool {
 	}
 	there := 0
 	for _, in := range inputs {
-		if _, err := os.Stat(in); err == nil {
+		if _, err := autoplace.Stat(in); err == nil {
 			there++
 		} else if !autoplace.GoneSkippable(in) {
 			return false
