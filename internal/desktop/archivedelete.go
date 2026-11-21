@@ -50,6 +50,10 @@ const (
 	notHeldText         = "That result is no longer held: reload the page."
 	deleteTooLargeText  = "That request is too large for MailArchive Desktop (64 KiB), so nothing was changed. Reload the page and try again."
 	deleteNotUnderstood = "That request was not understood — reload the page and try again."
+	// An armed delete's two refusals (docs/design-1.7.5-fixes.md §3.2, MA-1476; the friction review
+	// owns the final words).
+	armedNotArmableText = "The check found something to look at before deleting, so nothing was deleted. Read the plan, then click Delete permanently."
+	armedOtherRowText   = "This delete was asked from another row's panel, so nothing was deleted. Click Delete… on the archive's own row."
 )
 
 // The plan's fixed lines (§3.1, §2, §6, §9).
@@ -488,6 +492,9 @@ func planView(p *archdelete.DeletePlan) map[string]any {
 		"doesNotReach": doesNotReachLine(runtime.GOOS),
 		"logLine":      deleteLogLine,
 		"threeLine":    deleteThreeLine,
+		// Whether Delete when the check finishes may delete it unseen (MA-1476): the function the
+		// delete route refuses an armed delete by. Not "plain", which kind already says.
+		"armable": armable(p),
 	}
 	if p.Paused {
 		m["pausedLine"] = "This archive is paused."
@@ -506,6 +513,24 @@ func planView(p *archdelete.DeletePlan) map[string]any {
 		m["threeLine"] = deleteThreeLine + deleteThreeLineEncrypted
 	}
 	return m
+}
+
+// armable reports whether nothing in the plan needs the person's decision, so Delete when the check
+// finishes may delete it without first showing it (docs/design-1.7.5-fixes.md §3.2; the owner's
+// ruling of 2026-11-20, Q1, a narrow exception to X14; MA-1476). It is false when the plan holds mail
+// copies the archive did not record (the "Also delete" box needs an answer), a synced folder, a
+// schedule to check by hand or the unconfirmed and other-computer notes, files another program
+// holds, the finishing of an earlier delete (its line, its notes, a re-run), or an encrypted archive
+// (its key line). Files that are not the archive's and a paused archive do not stop it: Delete keeps
+// such files, and the result names them. planView sends it, and deleteAction refuses an armed delete
+// by it: one function, so the panel and the server cannot disagree. MA-1476's key check classifies
+// every key of the plan's reply, so a new line that needs a decision cannot leave it true unseen.
+func armable(p *archdelete.DeletePlan) bool {
+	return len(p.Unrecorded) == 0 && p.Synced == "" &&
+		len(p.Schedules.CheckYourself) == 0 && len(p.Schedules.Unconfirmed) == 0 && len(p.Schedules.OtherHost) == 0 &&
+		len(p.Held) == 0 &&
+		p.FinishesLine() == "" && len(p.FinishesNotes()) == 0 && p.Rerun == archdelete.RerunNone &&
+		p.Kind != archdelete.Encrypted
 }
 
 // doesNotReachOn is design-archive-delete §2's "What Delete does not reach" with only this
@@ -567,6 +592,11 @@ func (d *dashboard) deleteAction(w http.ResponseWriter, r *http.Request) {
 		Typed      string `json:"typed"`
 		Unrecorded bool   `json:"unrecorded"`
 		DrawnFor   string `json:"drawnFor"`
+		// Armed is true only from Delete when the check finishes, and Row is the row its panel was
+		// opened for (its own Delete… button's path, never a value from a reply; MA-1476). Delete
+		// permanently sends neither, and is checked exactly as before.
+		Armed bool   `json:"armed"`
+		Row   string `json:"row"`
 	}
 	if !readDeleteBody(w, r, &in) {
 		return
@@ -580,6 +610,22 @@ func (d *dashboard) deleteAction(w http.ResponseWriter, r *http.Request) {
 	if name := it.deletePlan.plan.Name; !archdelete.NameMatches(in.Typed, name) {
 		refuseDelete(w, fmt.Sprintf("The name you typed does not match this folder's name, %s, so nothing was deleted. Type it exactly as shown.", name))
 		return
+	}
+	// An armed delete (docs/design-1.7.5-fixes.md §3.2; the owner's ruling of 2026-11-20, Q1) goes
+	// on only for the held plan of the row its panel was opened for, matched by the plan route's own
+	// rule, and only when nothing in that plan needs a decision, by the function planView told the
+	// panel with. Otherwise it is refused before anything begins: the token kept, no started line, no
+	// lock, no row changed. So a slip in the page, a stale page or a reply routed to the wrong panel
+	// can at most show a refusal (MA-1476).
+	if in.Armed {
+		if row, ok := d.cfg.matchRow(in.Row); !ok || row != it.deletePlan.row {
+			refuseDelete(w, armedOtherRowText)
+			return
+		}
+		if !armable(it.deletePlan.plan) {
+			refuseDelete(w, armedNotArmableText)
+			return
+		}
 	}
 	// Recorded as under way before its first step (MA-979), so an export, a preview, a second
 	// Delete or Remove from list of the folder, and Shut down, are refused until it ends; a
