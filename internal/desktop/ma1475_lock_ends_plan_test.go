@@ -6,6 +6,7 @@ import (
 	"reflect"
 	"strings"
 	"testing"
+	"time"
 
 	"mail-archive-tool/internal/assure"
 	"mail-archive-tool/internal/graphconfig"
@@ -46,6 +47,37 @@ func TestAnyLockEndsEveryEncryptedDeletePlan(t *testing.T) {
 	}
 	if e.d.pending.get(tokE, isDeletePlan) != nil {
 		t.Errorf("the archive was locked as %s, but the delete plan made from its row %s, holding values read with its key, still waits", alt, out)
+	}
+}
+
+// covers: MA-1475, R36, R37
+// A Lock ends only an encrypted plan that read values with its key open (the re-verify, round 2's
+// RV2-02): the idle lock of another archive (30 minutes unused) leaves a delete plan made while its
+// own archive was locked, which holds nothing read with a key, so a person who steps away during a
+// long check is not sent back to it. Positive twins first: the plan waits, and still waits after
+// another archive is unlocked.
+func TestTheIdleLockOfAnotherArchiveKeepsALockedArchivesPlan(t *testing.T) {
+	enc := backedUpEncrypted(t) // the archive to delete, never opened here
+	cur := backedUpEncrypted(t) // the archive in use, opened
+	store := graphconfig.NewFileSecretStore(t.TempDir())
+	e := newDeleteEnv(t, func(w *wsEnv) { w.cfg.Store = store; w.cfg.Keys = newArchiveKeys(store, readerLockedNote) })
+	k := e.cfg.Keys
+	t.Cleanup(func() { k.lockAll(true) })
+	e.list(enc, cur)
+	p := e.plan(enc)
+	tok, _ := p["token"].(string)
+	if tok == "" || e.d.pending.get(tok, isDeletePlan) == nil {
+		t.Fatalf("positive twin: the plan of the locked archive waits: %v", p)
+	}
+	if _, err := k.unlock(cur, keysPassword, keyring.OpenOptions{}); err != nil {
+		t.Fatal(err)
+	}
+	if e.d.pending.get(tok, isDeletePlan) == nil {
+		t.Fatal("positive twin: unlocking another archive leaves the plan waiting")
+	}
+	k.reap(time.Now().Add(31 * time.Minute))
+	if e.d.pending.get(tok, isDeletePlan) == nil {
+		t.Error("the idle lock of another archive ended a delete plan made while its own archive was locked")
 	}
 }
 

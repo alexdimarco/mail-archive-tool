@@ -251,7 +251,8 @@ func (p *pendingSecrets) discard(token string, is func(*pendingItem) bool) {
 func (p *pendingSecrets) discardFor(key string) {
 	p.discardWhere(func(it *pendingItem) bool {
 		return key == "" || it.key == key || it.key == deletePlanKeyOf(key) ||
-			(isDeletePlan(it) && it.deletePlan.plan != nil && it.deletePlan.plan.Kind == archdelete.Encrypted)
+			(isDeletePlan(it) && it.deletePlan.plan != nil && it.deletePlan.plan.Kind == archdelete.Encrypted &&
+				it.deletePlan.plan.Captured.KeyOpen) // RV2-02: only a plan that read values with its key open
 	})
 }
 

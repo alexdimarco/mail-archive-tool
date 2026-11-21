@@ -360,7 +360,8 @@ finishes**: when the check ends, MailArchive checks the folder once more (about
 as long again), then deletes it, unless the plan holds something you should
 decide first, which it then shows you. Until the delete
 starts, **Cancel** or closing the page deletes nothing; once it starts it cannot
-be stopped. A plan waits up to a day, but a backup in the meantime makes
+be stopped. A plan waits up to a day (for an encrypted archive, until it is
+locked), but a backup in the meantime makes
 MailArchive check again. The result says what was removed and what was
 kept: **Save deletion record** saves it (MailArchive keeps no copy), then click
 **Dismiss**. **Remove from list** takes an archive off Your archives and keeps its
