@@ -149,7 +149,7 @@ func SkippedLines(skipped []SkippedInput, names bool) []string {
 	case listed:
 		return append(lines, "Thunderbird still lists these accounts: open Thunderbird and let it download their mail; the next backup finds them again.")
 	case n == 1 && program == autoplace.Outlook && strings.EqualFold(filepath.Ext(skipped[0].Path), ".pst"):
-		return append(lines, "If you moved this file, put it back in "+filepath.Dir(skipped[0].Path)+", or click Make a new archive… in MailArchive Desktop and choose it in its new place.")
+		return append(lines, autoplace.PstMovedText(skipped[0].Path)) // RF-05, as status says it
 	case n == 1:
 		return append(lines, "If you didn't remove it on purpose, add its account back "+where+".")
 	}

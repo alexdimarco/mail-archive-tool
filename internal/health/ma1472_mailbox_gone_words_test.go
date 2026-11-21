@@ -64,7 +64,7 @@ func TestStatusSaysAGoneMailboxForFourteenDaysOfBackupsThenANote(t *testing.T) {
 	// Amended 2026-11-20 by the 1.7.5 friction review (F11): the note names the button that ends it;
 	// it said "set the archive up again in the wizard, with the same archive folder, choose All of
 	// them, and answer Yes to keeping it current." Pinned word for word as before.
-	note := "a mailbox this archive backed up is no longer on this computer: qzsam@example.com (" + path + "), not found since " + date + ". Its mail already saved stays in the archive. This line stays while the archive's backup lists that mailbox; to end it, click Make a new archive… in MailArchive Desktop, choose All of them and this same archive folder, and answer Yes to keeping it current."
+	note := "a mailbox this archive backed up is no longer on this computer: qzsam@example.com (" + path + "), not found since " + date + ". Its mail already saved stays in the archive. This line stays while the archive's backup lists that mailbox; to end it, click Make a new archive… in MailArchive Desktop, choose All of them and this same archive folder, and answer Yes to keeping it current. Then check How often in Settings: this sets the schedule again." // + RF-09's sentence (the 1.7.5 re-verify), word for word
 	for _, now := range []time.Time{day15, day15.Add(365 * 24 * time.Hour)} {
 		got, rep := goneReport(t, state.RunOK, day15, w, now)
 		if !strings.Contains(got, "\n"+note) || strings.Contains(got, "WARN: a mailbox") || rep.has(state.MailboxGoneCode) || !rep.has("mailbox_gone_note") {

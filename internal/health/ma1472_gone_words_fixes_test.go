@@ -105,7 +105,8 @@ func TestTheGoneWarnsRemedyFitsWhatIsKnown(t *testing.T) {
 	pst := filepath.Join(home, "Documents", "Outlook Files", "archive 2019.pst")
 	moved := state.RunWarning{Code: state.MailboxGoneCode, Message: "x", Path: pst, Since: started}
 	if got := report(job(a, pst), moved, started); strings.Contains(got, "add the account back") ||
-		!strings.Contains(got, "If you moved this file, put it back in "+filepath.Dir(pst)+", or click Make a new archive… in MailArchive Desktop and choose it in its new place.") {
+		// Amended 2026-11-20 by the 1.7.5 re-verify (RF-05), word for word at the same strength.
+		!strings.Contains(got, "If you moved this file, put it back in "+filepath.Dir(pst)+" and the next backup finds it again. To back it up from its new place instead, click Make a new archive… in MailArchive Desktop and choose the file there: that makes a separate archive.") {
 		t.Errorf("F9: a .pst moved away:\n%s", got)
 	}
 	later := started.Add(20 * 24 * time.Hour)

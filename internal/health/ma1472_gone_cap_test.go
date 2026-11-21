@@ -33,6 +33,10 @@ func TestStatusSaysAtMostSoManyGoneMailboxes(t *testing.T) {
 	if got, _ := report(3); count(got) != 3 || strings.Contains(got, "not listed here") {
 		t.Fatalf("positive twin: three gone mailboxes are three lines:\n%s", got)
 	}
+	// RF-08 (the 1.7.5 re-verify): one more is said in the singular.
+	if got, _ := report(state.MaxGoneWarnings + 1); !strings.Contains(got, "1 more mailbox this archive backs up is no longer on this computer (not listed here)") {
+		t.Errorf("one past the cap is said in the singular:\n%s", got[len(got)-300:])
+	}
 	got, _ := report(10_000)
 	if n := count(got); n != state.MaxGoneWarnings {
 		t.Errorf("a planted record of 10000 gone mailboxes shows %d lines, want %d", n, state.MaxGoneWarnings)

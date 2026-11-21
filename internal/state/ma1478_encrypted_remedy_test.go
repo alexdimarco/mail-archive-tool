@@ -14,10 +14,13 @@ import (
 func TestTheEncryptedGoneSentencesGiveAdviceThatWorks(t *testing.T) {
 	const day = "Nov 20, 2026"
 	for name, s := range map[string]string{"WARN": MailboxGoneText(day), "short WARN": MailboxGoneShortText(day), "note": MailboxGoneNoteText(day)} {
-		if !strings.Contains(s, "since "+day) || !strings.Contains(s, "click Run now to see which one") {
+		// Amended 2026-11-20 by the 1.7.5 re-verify (RF-04), at the same strength: "to see which one,
+		// unlock this archive on its Encryption card …, then click Run now" (it was "unlock it …, then
+		// click Run now to see which one").
+		if !strings.Contains(s, "since "+day) || !strings.Contains(s, "then click Run now") {
 			t.Fatalf("positive twin, %s: the date and Run now: %q", name, s)
 		}
-		if !strings.Contains(s, "unlock it on its Encryption card in MailArchive Desktop") && !strings.Contains(s, "Unlock it on its Encryption card in MailArchive Desktop") {
+		if !strings.Contains(s, "to see which one, unlock this archive on its Encryption card in MailArchive Desktop") && !strings.Contains(s, "To see which one, unlock this archive on its Encryption card in MailArchive Desktop") {
 			t.Errorf("%s does not say to unlock it first: %q", name, s)
 		}
 		if strings.Contains(s, "wizard") || strings.Contains(s, "set the archive up again") {

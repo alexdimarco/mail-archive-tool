@@ -869,7 +869,12 @@ func assessKeyless(r *Report, in Input, now time.Time) {
 			}
 		}
 		if more := gone - state.MaxGoneWarnings; more > 0 {
-			r.warn(state.MailboxGoneCode, fmt.Sprintf("%d more mailboxes this archive backs up are no longer on this computer (not listed here)", more))
+			// One more is said in the singular (the 1.7.5 re-verify's RF-08).
+			if more == 1 {
+				r.warn(state.MailboxGoneCode, "1 more mailbox this archive backs up is no longer on this computer (not listed here)")
+			} else {
+				r.warn(state.MailboxGoneCode, fmt.Sprintf("%d more mailboxes this archive backs up are no longer on this computer (not listed here)", more))
+			}
 		}
 		// How much of each Thunderbird account Thunderbird had downloaded (the completeness
 		// design §5, §7; slice C3): a plaintext record of a backup that ended ok only.

@@ -18,8 +18,12 @@ import (
 // movedWords are the words a moved account's refusal must hold: the old folder, the new one, that
 // Thunderbird still lists the account, and both ways to back its mail up again.
 func movedWords(old, moved string) []string {
-	return []string{"input " + old + " does not exist", "Thunderbird still lists its account", moved,
-		"Local Directory", "Make a new archive…", "Thunderbird / mbox mail folder"}
+	// Amended 2026-11-20 by the 1.7.5 re-verify (RF-03), at the same strength: "Thunderbird still has
+	// this account" for "Thunderbird still lists its account", and where the setting is, and how to stop
+	// this archive looking for the old folder.
+	return []string{"input " + old + " does not exist", "Thunderbird still has this account", moved,
+		"Local Directory", "(Account Settings, then Server Settings)", "Make a new archive…", "Thunderbird / mbox mail folder",
+		"stop this archive looking for " + old}
 }
 
 // stoppedOn174 plants what 1.7.4 left for an "All of them" archive at out that it stopped on the

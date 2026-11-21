@@ -192,18 +192,22 @@ func marshalLastRun(r LastRun) ([]byte, error) {
 
 // MailboxGoneText is the WARN after a run that ended ok.
 func MailboxGoneText(date string) string {
-	return "a mailbox this archive backs up has not been found since " + date + ", so it was skipped and the others were backed up; unlock it on its Encryption card in MailArchive Desktop, then click Run now to see which one"
+	return "a mailbox this archive backs up has not been found since " + date + ", so it was skipped and the others were backed up; to see which one, unlock this archive on its Encryption card in MailArchive Desktop, then click Run now"
 }
+
+// Amended by the 1.7.5 re-verify (RF-04): "unlock it" read as "unlock the mailbox", so the three say
+// "to see which one, unlock this archive on its Encryption card …, then click Run now" (they said
+// "unlock it on its Encryption card in MailArchive Desktop, then click Run now to see which one").
 
 // MailboxGoneShortText is the WARN after any other run: whether the others were backed up is its
 // own outcome's to say.
 func MailboxGoneShortText(date string) string {
-	return "a mailbox this archive backs up has not been found since " + date + ", so it was skipped; unlock it on its Encryption card in MailArchive Desktop, then click Run now to see which one"
+	return "a mailbox this archive backs up has not been found since " + date + ", so it was skipped; to see which one, unlock this archive on its Encryption card in MailArchive Desktop, then click Run now"
 }
 
 // MailboxGoneNoteText is the note once the WARN's 14 days of backups are over.
 func MailboxGoneNoteText(date string) string {
-	return "a mailbox this archive backed up has not been found since " + date + "; its mail already saved stays in the archive. Unlock it on its Encryption card in MailArchive Desktop, then click Run now to see which one. This line stays while the archive's backup still lists that mailbox."
+	return "a mailbox this archive backed up has not been found since " + date + "; its mail already saved stays in the archive. To see which one, unlock this archive on its Encryption card in MailArchive Desktop, then click Run now. This line stays while the archive's backup still lists that mailbox."
 }
 
 // encryptedAttention is the attention notice of an encrypted archive: the time and

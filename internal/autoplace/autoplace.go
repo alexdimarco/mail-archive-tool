@@ -185,11 +185,23 @@ func MovedTo(path string) (string, bool) {
 	return thunderbird.MovedTo(profile, path)
 }
 
+// PstMovedText is the remedy for an Outlook data file (.pst) moved away, in status and the
+// summaries alike (the 1.7.5 re-verify's RF-05 words; they were "If you moved this file, put it back
+// in FOLDER, or click Make a new archive… in MailArchive Desktop and choose it in its new place.").
+func PstMovedText(path string) string {
+	return "If you moved this file, put it back in " + filepath.Dir(path) + " and the next backup finds it again. To back it up from its new place instead, click Make a new archive… in MailArchive Desktop and choose the file there: that makes a separate archive."
+}
+
 // MovedText is the words of a moved account's refusal (MA-1481): the old folder is gone, where
 // Thunderbird now keeps the account's mail, and the two ways to back that mail up. It names folders
 // only, never the account's name, since a refusal reaches log files (MA-1288).
 func MovedText(path, movedTo string) string {
-	return fmt.Sprintf("input %s does not exist: Thunderbird still lists its account, now kept in %s (its Local Directory setting was changed), so this backup stopped instead of skipping it. To back that mail up again, set the account's Local Directory back to its folder in the Thunderbird profile, or back up %s as an archive of its own (Make a new archive…, then Thunderbird / mbox mail folder).", path, movedTo, movedTo)
+	// The 1.7.5 re-verify's RF-03 words (they were: "…Thunderbird still lists its account, now kept in
+	// NEW (its Local Directory setting was changed), so this backup stopped instead of skipping it. To
+	// back that mail up again, set the account's Local Directory back to its folder in the Thunderbird
+	// profile, or back up NEW as an archive of its own (Make a new archive…, then Thunderbird / mbox
+	// mail folder).").
+	return fmt.Sprintf("input %s does not exist: Thunderbird still has this account, but now keeps its mail in %s (its Local Directory setting was changed), so this backup stopped. To back that mail up again, either set the account's Local Directory back to %s in Thunderbird (Account Settings, then Server Settings); or back up %s as an archive of its own (Make a new archive…, then Thunderbird / mbox mail folder) and stop this archive looking for %s (Make a new archive…, then All of them and this same archive folder).", path, movedTo, path, movedTo, path)
 }
 
 // ProgramOf names the mail program whose place path lies in, by the patterns auto-discovery

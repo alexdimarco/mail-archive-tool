@@ -33,7 +33,8 @@ func TestTheSummarysRemedyFitsWhatIsKnown(t *testing.T) {
 	}
 	pst := filepath.Join(home, "Documents", "Outlook Files", "archive 2019.pst")
 	if got := last([]SkippedInput{{Path: pst}}); strings.Contains(got, "add its account back") ||
-		got != "If you moved this file, put it back in "+filepath.Dir(pst)+", or click Make a new archive… in MailArchive Desktop and choose it in its new place." {
+		// Amended 2026-11-20 by the 1.7.5 re-verify (RF-05), word for word at the same strength.
+		got != "If you moved this file, put it back in "+filepath.Dir(pst)+" and the next backup finds it again. To back it up from its new place instead, click Make a new archive… in MailArchive Desktop and choose the file there: that makes a separate archive." {
 		t.Errorf("F9, a .pst: %q", got)
 	}
 }
