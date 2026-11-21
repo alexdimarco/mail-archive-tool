@@ -3,6 +3,7 @@ package health
 import (
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"sync"
 	"testing"
@@ -84,7 +85,15 @@ func TestStatusNeverLooksAtANetworkPathPlantedInTheRecord(t *testing.T) {
 	}
 
 	t.Chdir(t.TempDir())
-	for _, host := range []string{`\\evil-host\share\Mail`, "//evil-host/share/Mail"} {
+	hosts := []string{`\\evil-host\share\Mail`, "//evil-host/share/Mail"}
+	// Amended 2026-11-20 by the 1.7.5 re-verify (RV-01): on Windows, three more spellings of a
+	// network share; and on every system a local path outside the places auto-discovery looks,
+	// which the helper now refuses before any look on disk.
+	if runtime.GOOS == "windows" {
+		hosts = append(hosts, `\/evil-host/share/Mail`, `/\evil-host\share\Mail`, `\??\UNC\evil-host\share\Mail`)
+	}
+	hosts = append(hosts, filepath.Join(filepath.VolumeName(home)+string(filepath.Separator), "qz-evil-host-outside", "Mail"))
+	for _, host := range hosts {
 		madeHere := os.MkdirAll(host, 0o755) == nil // a relative folder on macOS and Linux
 		for name, c := range map[string]struct {
 			refused string

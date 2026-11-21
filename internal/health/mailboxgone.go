@@ -156,8 +156,10 @@ func goneMailboxRepairable(out string) (string, bool) {
 	// The record is untrusted (C-17): a listed path that is not a plain local one (a network or
 	// device path, or one not absolute) is never looked at, so the answer is no before any file
 	// check (MA-869; the 1.7.5 adversarial pass's OUT-01 and INS-01).
+	// Amended by the 1.7.5 re-verify (RV-01): and every listed input lies where auto-discovery
+	// looks (autoplace.InPlace, a pure match), also checked before any look on disk.
 	for _, in := range inputs {
-		if autoplace.NonLocal(in) {
+		if autoplace.NonLocal(in) || !autoplace.InPlace(in) {
 			return "", false
 		}
 	}

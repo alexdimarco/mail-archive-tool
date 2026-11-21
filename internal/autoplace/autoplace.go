@@ -29,10 +29,33 @@ import (
 // (app.resolveGoneSince) all ask this one rule (the 1.7.5 adversarial pass's OUT-01).
 func NonLocal(p string) bool {
 	p = strings.TrimSpace(p)
-	if strings.HasPrefix(p, `\\`) || strings.HasPrefix(p, "//") {
+	return nonLocal(p, runtime.GOOS, filepath.VolumeName(p), filepath.IsAbs(p))
+}
+
+// nonLocal is NonLocal's rule as a pure function, fed the path's volume part and whether it is
+// absolute (so it is tested on every system). Amended by the 1.7.5 re-verify (RV-01): on Windows a
+// path is local only when its volume is a drive letter ("C:"), since Windows reads "\/host/…",
+// "/\host\…" and "\??\UNC\host\…" as a network share too.
+func nonLocal(p, goos, vol string, abs bool) bool {
+	if strings.HasPrefix(p, `\\`) || strings.HasPrefix(p, "//") || !abs {
 		return true
 	}
-	return !filepath.IsAbs(p)
+	if goos == "windows" {
+		return !(len(vol) == 2 && vol[1] == ':' && ('a' <= vol[0]|0x20 && vol[0]|0x20 <= 'z'))
+	}
+	return false
+}
+
+// InPlace reports, with no look on disk, whether path lies where auto-discovery looks (rule (b)):
+// the Repair helper asks it of every input a record lists before any file check (RV-01).
+func InPlace(path string) bool {
+	p := filepath.Clean(path)
+	for _, pat := range patterns() {
+		if match(filepath.Clean(pat), p, runtime.GOOS) {
+			return true
+		}
+	}
+	return false
 }
 
 // watch, when set, is called with each path before this package looks at it on disk (and before

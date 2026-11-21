@@ -4,6 +4,7 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"sync"
 	"testing"
@@ -137,7 +138,13 @@ func TestAPlantedNetworkPathInAStoppedRecordIsNeverLookedAt(t *testing.T) {
 			strings.Contains(page, "If a mail account was removed, click Repair (or Run now) on its Scheduled backup card"), cardOf(page, "sec-settings"), hv)
 	}
 
-	for _, host := range []string{`\\evil-host\share\Mail`, "//evil-host/share/Mail"} {
+	hosts := []string{`\\evil-host\share\Mail`, "//evil-host/share/Mail"}
+	// Amended 2026-11-20 by the 1.7.5 re-verify (RV-01): on Windows (its CI and the lab), three more
+	// spellings Windows reads as a network share.
+	if runtime.GOOS == "windows" {
+		hosts = append(hosts, `\/evil-host/share/Mail`, `/\evil-host\share\Mail`, `\??\UNC\evil-host\share\Mail`)
+	}
+	for _, host := range hosts {
 		for name, c := range map[string]struct {
 			refused string
 			inputs  []string
