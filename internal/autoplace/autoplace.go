@@ -225,6 +225,15 @@ func goneSkippable(path string, pats []string, goos string) bool {
 		return false // (a): there (a dangling link included), or not known to be gone
 	}
 	p := filepath.Clean(path)
+	// (a) again on the cleaned path: a trailing separator, "/." or "link/.." make the system follow
+	// the last link, so a dangling link spelled so reads as gone (the 1.7.5 adversarial pass's
+	// INS-03). Skipped only when both spellings say it does not exist.
+	if p != path {
+		look(p)
+		if _, err := os.Lstat(p); !errors.Is(err, fs.ErrNotExist) {
+			return false
+		}
+	}
 	for _, pat := range pats {
 		pat = filepath.Clean(pat)
 		if match(pat, p, goos) && parentInPlace(p, pat, goos) {

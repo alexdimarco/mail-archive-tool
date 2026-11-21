@@ -161,7 +161,13 @@ func resolveGoneSince(out string, skipped []SkippedInput, start time.Time) {
 		found := false
 		if plain {
 			id := autoplace.GoneSourceID(skipped[i].Path)
+			read := 0 // at most state.MaxGoneWarnings of a planted record's warnings (INS-06)
 			for _, w := range prev.Warnings {
+				if w.Code == state.MailboxGoneCode {
+					if read++; read > state.MaxGoneWarnings {
+						break
+					}
+				}
 				// The record is untrusted (C-17): a path in it that is not a plain local one is
 				// passed over before GoneSourceID looks at it on disk (MA-869; the 1.7.5 adversarial
 				// pass's INS-01).

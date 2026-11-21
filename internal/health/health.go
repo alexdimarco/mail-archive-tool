@@ -801,6 +801,7 @@ func assessKeyless(r *Report, in Input, now time.Time) {
 		// file, the archive and the remedy. Only the codes defined here are shown
 		// (the record is writable by anyone who can write the archive), and they
 		// come from the last run alone, so a run without the problem clears them.
+		gone := 0 // mailbox_gone warnings said: at most state.MaxGoneWarnings (INS-06)
 		for _, w := range lr.Warnings {
 			switch w.Code {
 			case "credential_in_archive", "config_in_archive":
@@ -830,9 +831,15 @@ func assessKeyless(r *Report, in Input, now time.Time) {
 			case state.MailboxGoneCode:
 				// A mailbox a combined archive backs up that is gone, skipped (MA-1471): status's
 				// own words from Path, Name and Since, never the recorded Message; a WARN for 14
-				// days of backups, then a note (MA-1472).
-				mailboxGone(r, lr, w)
+				// days of backups, then a note (MA-1472). At most state.MaxGoneWarnings are said; a
+				// planted record's rest is one count (the 1.7.5 adversarial pass's INS-06).
+				if gone++; gone <= state.MaxGoneWarnings {
+					mailboxGone(r, lr, w)
+				}
 			}
+		}
+		if more := gone - state.MaxGoneWarnings; more > 0 {
+			r.warn(state.MailboxGoneCode, fmt.Sprintf("%d more mailboxes this archive backs up are no longer on this computer (not listed here)", more))
 		}
 		// How much of each Thunderbird account Thunderbird had downloaded (the completeness
 		// design §5, §7; slice C3): a plaintext record of a backup that ended ok only.

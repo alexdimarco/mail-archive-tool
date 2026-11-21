@@ -238,6 +238,12 @@ type RunWarning struct {
 // never shows the recorded Message for it.
 const MailboxGoneCode = "mailbox_gone"
 
+// MaxGoneWarnings is how many of a record's mailbox_gone warnings status says and a run reads when
+// it carries first-found dates (the 1.7.5 adversarial pass's INS-06): a planted or damaged record
+// may hold thousands; status says the rest as one count. As the completeness record caps its
+// accounts.
+const MaxGoneWarnings = 64
+
 // MailboxGoneNoteAfter is how long a gone mailbox's WARN lasts before it becomes a note: the
 // owner's ruling of 2026-11-20 (docs/design-1.7.5-fixes.md §0, Q2), 14 days counted between
 // backups, the last run's start minus when the mailbox was first found gone, never compared with
@@ -407,7 +413,11 @@ func ReadLastRun(out string) (LastRun, LastRunState, error) {
 	for i := range r.Warnings {
 		r.Warnings[i].Code, r.Warnings[i].Message = util.StripControl(r.Warnings[i].Code), util.StripControl(r.Warnings[i].Message)
 		// A gone mailbox's path and account name are said by status (MA-1472): cleaned here too.
-		r.Warnings[i].Path, r.Warnings[i].Name = util.StripControl(r.Warnings[i].Path), util.StripControl(r.Warnings[i].Name)
+		// Amended by the 1.7.5 adversarial pass (INS-06): the name as the completeness record's
+		// account names are (CleanFolderName: no bidi overrides or invisible characters, capped), the
+		// path with no bidi override.
+		r.Warnings[i].Path = util.StripBidi(util.StripControl(r.Warnings[i].Path))
+		r.Warnings[i].Name = CleanFolderName(util.StripControl(r.Warnings[i].Name))
 	}
 	// A planted record's kinds are said only when they are counts (design-plain-failure-words).
 	r.Partial = r.Partial.sane()
