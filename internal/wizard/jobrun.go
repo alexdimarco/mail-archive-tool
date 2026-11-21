@@ -145,6 +145,7 @@ func runNowSummaryFor(r app.Result, scheduled bool) string {
 		lines = append(lines, lead+messagesNew(added)+" archived.")
 	}
 	lines = append(lines, tbNoteLines(r, scheduled)...)
+	lines = append(lines, app.SkippedLines(r.Skipped, true)...) // a gone mailbox skipped (MA-1471)
 	if s.Filled > 0 {
 		lines = append(lines, messages(s.Filled)+" an earlier backup could not fully download "+guiVerb(s.Filled, "is", "are")+" now complete.")
 	}
@@ -311,7 +312,9 @@ func encryptedSummaryFor(result app.Result, scheduled bool) string {
 	if n := result.Stats.Exported; n > 0 {
 		s = lead + messages(n) + " added or updated. They are sealed in the encrypted archive; open it in MailArchive Desktop to read them."
 	}
-	tb := tbNoteLines(result, scheduled)
+	// A gone mailbox skipped (MA-1471, MA-1478) is named here, from the run's result in memory
+	// only, as the Thunderbird lines are (O1): the record beside the archive keeps only that one was.
+	tb := append(tbNoteLines(result, scheduled), app.SkippedLines(result.Skipped, true)...)
 	if len(tb) > 0 {
 		s += "\n" + strings.Join(tb, "\n")
 	}

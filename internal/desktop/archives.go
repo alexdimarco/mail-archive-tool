@@ -42,6 +42,16 @@ type ArchiveRow struct {
 	// only when Run now is clicked (MA-949): nothing resumes by itself, so the banner says to
 	// click Run now once the source is back.
 	RunNowOnly bool
+	// SourceLostRepair is set beside SourceLostSince when a Repair or a Run now would now get past
+	// the gone mailbox the archive's last run refused on (health.GoneMailboxRepairable, MA-1479):
+	// the banner then says to click Repair (or Run now) first, in MA-949's forms.
+	SourceLostRepair bool
+	// SourceLostMailbox is the missing mailbox the Repair words name (the 1.7.5 friction review's
+	// F10), beside SourceLostRepair. SourceLostSet: this is the current archive and its scheduled
+	// entry is there (a Repair done, or not yet paused), so the banner says the next backup skips
+	// it by itself and Run now backs up at once (F2).
+	SourceLostMailbox string
+	SourceLostSet     bool
 	// Problem is, for a folder this computer recorded as an encrypted archive that no
 	// longer holds it — emptied, replanted, a link, its key files gone — that case's
 	// own words (design-encrypted-archives-phase3 §4.5): shown in place of Switch and
@@ -86,6 +96,12 @@ type ArchiveRow struct {
 func (r ArchiveRow) OffersSwitch() bool {
 	return !r.Deleting && !r.Unfinished && r.Problem == "" && r.Available && !r.Sealed && !r.Current
 }
+
+// DeleteName is the folder's name the row's Delete… button carries (data-delete-name): the last
+// element of its path as the page is drawn, no folder read, so an unplugged drive cannot slow the page
+// (docs/design-1.7.5-fixes.md §3.2, MA-1477). It only enables Delete when the check finishes early;
+// what decides is archdelete.NameMatches against the plan's own name, on the page and on the server.
+func (r ArchiveRow) DeleteName() string { return filepath.Base(r.Path) }
 
 // KindLabel is the short, plain-words form of Kind for the archive list ("" when
 // the archive's kind is unknown, e.g. the folder is unavailable).
@@ -183,6 +199,10 @@ func (cfg Config) archiveRows(idx archindex.Index) []ArchiveRow {
 			problem = recordedProblem(e.Path)
 		}
 		lostSince := sourceLostSince(e.Path)
+		goneMailbox := ""
+		if lostSince != "" {
+			goneMailbox = goneRepairInput(e.Path)
+		}
 		del := cfg.deleteRowFacts(e.Path, rc, avail && kind != "" && problem == "")
 		unlistWhy := ""
 		// The route's own refusal (MA-1016), through the page's memo of the file system.
@@ -203,8 +223,12 @@ func (cfg Config) archiveRows(idx archindex.Index) []ArchiveRow {
 			Kind:            kind,
 			SourceLostSince: lostSince,
 			RunNowOnly:      lostSince != "" && runNowOnlyRecorded(e.Path),
-			Problem:         problem,
-			TBBanner:        tbBanner(e.Path, avail && kind != "" && kind != archindex.KindEncrypted && problem == ""),
+			// Status's own helper, so the banner and status agree (X10, MA-1479), asked within
+			// sourceWait (MA-869, OUT-01), naming the missing mailbox (F10).
+			SourceLostRepair:  goneMailbox != "",
+			SourceLostMailbox: goneMailbox,
+			Problem:          problem,
+			TBBanner:         tbBanner(e.Path, avail && kind != "" && kind != archindex.KindEncrypted && problem == ""),
 		})
 	}
 	return rows

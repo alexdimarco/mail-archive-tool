@@ -409,10 +409,12 @@ func (d *dashboard) router() localweb.Router {
 	mux.HandleFunc("/api/job/skip-program", d.api(d.skipProgramAction))
 	mux.HandleFunc("/api/runnow-stopwait", d.api(d.stopWaitAction))
 	mux.HandleFunc("/api/runnow-sync", d.api(d.runNowSyncAction))
-	// Delete an archive and Remove from list (design-archive-delete §3, slice 3): the four
-	// routes, each a guarded POST through d.api [C20, R4:NF-R4-THREE-ROUTES].
+	// Delete an archive and Remove from list (design-archive-delete §3, slice 3): the five
+	// routes, each a guarded POST through d.api [C20, R4:NF-R4-THREE-ROUTES]; the fifth, discard,
+	// ends a delete plan the page no longer shows (docs/design-1.7.5-fixes.md §3.1, MA-1475).
 	mux.HandleFunc("/api/archive/delete/plan", d.api(d.deletePlanAction))
 	mux.HandleFunc("/api/archive/delete", d.api(d.deleteAction))
+	mux.HandleFunc("/api/archive/delete/discard", d.api(d.deleteDiscardAction))
 	mux.HandleFunc("/api/archive/delete/dismiss", d.api(d.deleteDismissAction))
 	mux.HandleFunc("/api/archive/unlist", d.api(d.unlistAction))
 	// Restore to Thunderbird (design-restore-thunderbird §7.3, slice R7): four guarded POSTs
@@ -1511,6 +1513,9 @@ func (cfg Config) overviewWith(csrf, epoch string, held []heldView) string {
 		// nor Archive now for it, saying "Delete not finished: click Delete again" in their place
 		// (§3.1 "Where the result sits", MA-982).
 		CurrentUnfinished bool
+		// GoneRepair: the current archive is one a Repair gets past its gone mailbox (MA-1479), so
+		// Repair's reply says what happens next (the 1.7.5 friction review's F2).
+		GoneRepair bool
 		// Backup alerts card (MA-699): the saved email-alert config, prefilled. The password
 		// is never sent to the page — only whether one is stored.
 		AlertEnabled     bool
@@ -1605,6 +1610,15 @@ func (cfg Config) overviewWith(csrf, epoch string, held []heldView) string {
 		rt = routeFor(data.OutDir)
 	}
 	entry, entrySt := cfg.backupTask() // the scheduler has an entry for it, recorded or not
+	// The current archive a Repair gets past its gone mailbox (MA-1479): with its scheduled entry
+	// there (a Repair done, or not yet paused), its banner says the next backup skips it by itself;
+	// Repair's reply says so too (the 1.7.5 friction review's F2).
+	for i := range data.Archives {
+		if a := &data.Archives[i]; a.Current && a.SourceLostRepair {
+			data.GoneRepair = true
+			a.SourceLostSet = !a.RunNowOnly && entry != ""
+		}
+	}
 	if rt.hasDesc {
 		data.HasSchedule = true
 		switch {
@@ -2024,7 +2038,7 @@ pre{white-space:pre-wrap;overflow-wrap:anywhere;background:var(--bg);border:1px 
     </div>{{end}}
     {{if .ShowThisArchive}}<div class="card" id="sec-this-archive">
       <h2>This archive</h2>
-      <p class="card-sub">The archive this page shows. <b>Delete…</b> erases its files, after showing what it would remove{{with index .Archives 0}}{{if .UnlistWhy}}. <span id="thisArchiveUnlistWhy"><b>Remove from list</b> is not offered for it now. {{.UnlistWhy}}</span>{{else}}; <b>Remove from list</b> takes it off MailArchive's list and keeps its files.{{end}}{{end}}</p>
+      <p class="card-sub">The archive this page shows. <b>Delete…</b> erases its files{{with index .Archives 0}}{{if eq .Kind "encrypted"}}, after showing what it would remove{{else}}; you see what it would remove first, unless you choose <b>Delete when the check finishes</b> and nothing in it needs your decision{{end}}{{end}}{{with index .Archives 0}}{{if .UnlistWhy}}. <span id="thisArchiveUnlistWhy"><b>Remove from list</b> is not offered for it now. {{.UnlistWhy}}</span>{{else}}; <b>Remove from list</b> takes it off MailArchive's list and keeps its files.{{end}}{{end}}</p>
       <ul class="archive-list">
         {{range .Archives}}{{template "archiveRow" .}}{{end}}
       </ul>
@@ -2257,7 +2271,7 @@ pre{white-space:pre-wrap;overflow-wrap:anywhere;background:var(--bg);border:1px 
       {{if .ShowInstall}}<p class="card-sub" id="schedNone">{{if .OutDir}}No scheduled backup is set up for this archive yet. A scheduled backup runs a capture automatically, even when this app is closed (as long as you stay signed in to your computer), using your saved Microsoft sign-in.{{else}}Choose an archive location in Settings first; its backup options then show there.{{end}}</p>{{end}}
       {{if .ShowLocalCreate}}<p class="card-sub" id="schedNone">No scheduled backup is set up for this archive yet. A scheduled backup keeps it up to date automatically: it re-reads the mail files this archive was made from and adds anything new. It runs while you are logged in.</p>{{end}}
       {{if and .Set.Sched .OutDir}}<p class="card-sub" id="changeInSettings">{{if .Set.SchedCapture}}How often and time{{else}}How often, time and Thunderbird sync{{end}}: <a href="#sec-settings">Change in Settings</a></p>{{end}}
-      <div style="margin-top:14px">{{if .ShowRepair}}{{if not .ManualBackup}}<button class="btn" id="schedRepair" title="Fix this archive's scheduled backup if it stopped working or points at the wrong place. How often it runs and its Thunderbird sync setting are kept; nothing in the archive changes.">Repair</button> {{end}}{{if .CurrentUnfinished}}<span class="archive-tag" id="runNowUnfinished">Delete not finished: click Delete again</span>{{else}}<button class="btn" id="runBackupBtn" type="button" title="{{.RunNowTitle}}">Run now</button>{{end}} {{end}}{{if .ShowCaptureRepair}}<button class="btn" id="schedRepair" title="Put this archive's scheduled capture back as it was set up: its cadence is kept, and a capture still named for the archive's earlier location is moved to this one. Nothing in the archive changes.">Repair</button> {{end}}{{if .ShowBrokenRepair}}<button class="btn" id="schedRepair" title="Make this archive's backup settings file again from the archive's own record. Thunderbird sync is then off.">Repair</button> {{end}}{{if .EncRunNow}}{{if .CurrentUnfinished}}<span class="archive-tag" id="runNowUnfinished">Delete not finished: click Delete again</span>{{else}}<button class="btn" id="runBackupBtn" type="button" title="{{.EncRunNowTitle}}"{{if not .EncUnlocked}} disabled{{end}}>Run now</button>{{end}} {{end}}{{if .ShowRemove}}<button class="btn secondary" id="schedRemove"{{if .ManualBackup}} data-busy="Removing the backup…"{{end}} title="{{if .ManualBackup}}Delete this archive's backup settings: Run now then has nothing to run until you choose How often again in Settings. Your archive and everything in it are kept.{{else}}Delete this archive's scheduled backup. Your archive and everything in it are kept.{{end}}">Remove</button>{{end}}</div>
+      <div style="margin-top:14px">{{if .ShowRepair}}{{if not .ManualBackup}}<button class="btn" id="schedRepair"{{if .GoneRepair}} data-gone-repair{{end}} title="Fix this archive's scheduled backup if it stopped working or points at the wrong place. How often it runs and its Thunderbird sync setting are kept; nothing in the archive changes.">Repair</button> {{end}}{{if .CurrentUnfinished}}<span class="archive-tag" id="runNowUnfinished">Delete not finished: click Delete again</span>{{else}}<button class="btn" id="runBackupBtn" type="button" title="{{.RunNowTitle}}">Run now</button>{{end}} {{end}}{{if .ShowCaptureRepair}}<button class="btn" id="schedRepair" title="Put this archive's scheduled capture back as it was set up: its cadence is kept, and a capture still named for the archive's earlier location is moved to this one. Nothing in the archive changes.">Repair</button> {{end}}{{if .ShowBrokenRepair}}<button class="btn" id="schedRepair" title="Make this archive's backup settings file again from the archive's own record. Thunderbird sync is then off.">Repair</button> {{end}}{{if .EncRunNow}}{{if .CurrentUnfinished}}<span class="archive-tag" id="runNowUnfinished">Delete not finished: click Delete again</span>{{else}}<button class="btn" id="runBackupBtn" type="button" title="{{.EncRunNowTitle}}"{{if not .EncUnlocked}} disabled{{end}}>Run now</button>{{end}} {{end}}{{if .ShowRemove}}<button class="btn secondary" id="schedRemove"{{if .ManualBackup}} data-busy="Removing the backup…"{{end}} title="{{if .ManualBackup}}Delete this archive's backup settings: Run now then has nothing to run until you choose How often again in Settings. Your archive and everything in it are kept.{{else}}Delete this archive's scheduled backup. Your archive and everything in it are kept.{{end}}">Remove</button>{{end}}</div>
       {{if .RunNowFirstSync}}<p class="card-sub" id="runNowFirstSync">{{.RunNowFirstSync}}</p>{{end}}
       <div class="note steps" id="runBackupNote" hidden></div>
       <div class="note" id="schedState" hidden></div>{{end}}
@@ -2389,11 +2403,11 @@ pre{white-space:pre-wrap;overflow-wrap:anywhere;background:var(--bg);border:1px 
 {{- define "archiveRow"}}<li class="archive-row{{if not .Available}} unavailable{{end}}" data-path="{{.Path}}" data-delete-ok="{{.DeleteOK}}" data-delete-why="{{.DeleteWhy}}"{{if .Unfinished}} data-delete-unfinished{{end}}{{if .Deleting}} data-delete-running{{end}}>
           <span class="mono archive-path">{{.Path}}</span>
           {{if .KindLabel}}<span class="archive-kind">{{.KindLabel}}</span>{{end}}
-          {{if .SourceLostSince}}<span class="archive-tag">This archive's source hasn't been reachable since {{.SourceLostSince}} — reconnect the source (its mailbox or mail folder){{if .RunNowOnly}}, then click {{if not .Current}}Switch to this archive and click {{end}}Run now on its Scheduled backup card: its backup runs only when you click Run now.{{else}} to resume backups.{{end}}</span>{{end}}
+          {{if .SourceLostSince}}<span class="archive-tag">{{if .SourceLostSet}}This archive's source hasn't been reachable since {{.SourceLostSince}} (the missing mailbox: {{.SourceLostMailbox}}). Its scheduled backup is set, and MailArchive now skips a mailbox that is gone, so the next backup backs up the others; to back up now, click Run now on its Scheduled backup card.{{else if .SourceLostRepair}}This archive's source hasn't been reachable since {{.SourceLostSince}} (the missing mailbox: {{.SourceLostMailbox}}). If a mail account was removed, click {{if not .Current}}Switch to this archive, then click {{end}}{{if .RunNowOnly}}Run now on its Scheduled backup card: MailArchive now skips a mailbox that is gone and backs up the others; its backup runs only when you click Run now. Otherwise reconnect the source (its mailbox or mail folder).{{else}}Repair (or Run now) on its Scheduled backup card: MailArchive now skips a mailbox that is gone and backs up the others. Repair starts the schedule again; Run now backs up once. Otherwise reconnect the source (its mailbox or mail folder) to resume backups.{{end}}{{else}}This archive's source hasn't been reachable since {{.SourceLostSince}} — reconnect the source (its mailbox or mail folder){{if .RunNowOnly}}, then click {{if not .Current}}Switch to this archive and click {{end}}Run now on its Scheduled backup card: its backup runs only when you click Run now.{{else}} to resume backups.{{end}}{{end}}</span>{{end}}
           {{if .TBBanner}}<span class="archive-tag">{{.TBBanner}}</span>{{end}}
           {{if eq .Kind "encrypted"}}<button class="btn secondary" type="button" data-forget-archive data-path="{{.Path}}" title="Stop protecting this folder as an encrypted archive on this computer — for example after you removed the archive on purpose. Nothing in the folder is changed.">Forget this encrypted archive here</button>{{end}}
           <span class="row-state">{{if .Deleting}}<span class="archive-tag">Being deleted — its result shows on this page when the delete ends.</span>{{else if .Unfinished}}{{if .UnfinishedText}}<span class="archive-tag">{{.UnfinishedText}}</span>{{else}}<span class="archive-tag">Delete not finished: click Delete again</span>{{end}}{{else if .Problem}}<span class="archive-tag">{{.Problem}}</span>{{else if not .Available}}<span class="archive-tag">Not reachable right now — reconnect the drive or folder and it comes back. Nothing was removed.</span>{{else if .Sealed}}<span class="archive-tag">Paused (read-only) — Resume it to make changes.</span> <button class="btn secondary" type="button" data-resume-archive data-path="{{.Path}}" title="Make this archive writable again so backups and changes can resume.">Resume</button>{{else}}{{if .Current}}<span class="archive-tag current">Current archive</span>{{else}}<button class="btn secondary" type="button" data-switch-archive data-path="{{.Path}}" title="Make this the current archive: the one this page shows and changes.">Switch to this archive</button>{{end}} <button class="btn secondary" type="button" data-pause-archive data-path="{{.Path}}" title="Make this archive read-only so nothing can change it. You can Resume it any time; nothing is deleted.">Pause (make read-only)</button>{{end}}</span>
-          {{if not .Deleting}}<button class="btn secondary" type="button" data-unlist-archive data-path="{{.Path}}" title="{{if .UnlistWhy}}{{.UnlistWhy}}{{else}}Take this archive off this list. The folder and its files are kept; you are asked first, and told which scheduled backups would stop.{{end}}"{{if .UnlistWhy}} disabled{{end}}>Remove from list</button> <button class="btn danger" type="button" data-delete-archive data-path="{{.Path}}" title="{{if .DeleteOK}}Permanently delete this archive's files. You see what would be removed first, and type the folder's name to confirm.{{else}}{{.DeleteWhy}}{{end}}"{{if not .DeleteOK}} disabled{{end}}>Delete…</button>{{end}}
+          {{if not .Deleting}}<button class="btn secondary" type="button" data-unlist-archive data-path="{{.Path}}" title="{{if .UnlistWhy}}{{.UnlistWhy}}{{else}}Take this archive off this list. The folder and its files are kept; you are asked first, and told which scheduled backups would stop.{{end}}"{{if .UnlistWhy}} disabled{{end}}>Remove from list</button> <button class="btn danger" type="button" data-delete-archive data-path="{{.Path}}" data-delete-name="{{.DeleteName}}"{{if eq .Kind "encrypted"}} data-delete-encrypted{{end}} title="{{if .DeleteOK}}{{if eq .Kind "encrypted"}}Permanently delete this archive's files. MailArchive first checks what would be removed, and you type the folder's name to confirm. For an encrypted archive, you always see that list before anything is deleted.{{else}}Permanently delete this archive's files. MailArchive first checks what would be removed, and you type the folder's name to confirm. You see that list before anything is deleted, unless you choose Delete when the check finishes and nothing in the list needs your decision.{{end}}{{else}}{{.DeleteWhy}}{{end}}"{{if not .DeleteOK}} disabled{{end}}>Delete…</button>{{end}}
           {{if and .ShowUnlistWhy .UnlistWhy (not .Deleting)}}<span class="card-sub row-why" data-unlist-why>Remove from list is not offered for it now. {{.UnlistWhy}}</span>{{end}}
         </li>{{end}}
 {{- define "switchLocks"}}Switching to another archive locks {{.SwitchLocks}}.{{if .EncRemembered}} This computer remembers its key, so it opens again by itself when you switch back.{{else}} When you switch back, unlock it again on its Encryption card.{{end}}{{end}}`))
@@ -2989,7 +3003,9 @@ function cardPost(path,done,okWord){
     .catch(e=>{done();if(n){n.hidden=false;n.textContent='Error: '+e;}});
 }
 const sr=$('schedRemove'),srp=$('schedRepair');
-if(srp)srp.addEventListener('click',()=>cardPost('api/schedule-install',busy(srp,'Repairing…',$('schedState'),'Repairing the scheduled backup…'),'Repaired.'));
+// For an archive a Repair gets past its gone mailbox, Repair's reply says what happens next (the
+// 1.7.5 friction review's F2): the banner keeps its words until the next backup.
+if(srp)srp.addEventListener('click',()=>cardPost('api/schedule-install',busy(srp,'Repairing…',$('schedState'),'Repairing the scheduled backup…'),srp.hasAttribute('data-gone-repair')?'Repaired. The next backup skips the missing mailbox; to back up now, click Run now.':'Repaired.'));
 // a backup that runs only when Run now is clicked has no schedule to name: its button carries its
 // own busy words (MA-949)
 if(sr)sr.addEventListener('click',()=>cardPost('api/schedule-remove',busy(sr,'Removing…',$('schedState'),sr.dataset.busy||'Removing the scheduled backup…'),'Removed.'));

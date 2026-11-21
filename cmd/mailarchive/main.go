@@ -272,13 +272,20 @@ func runExport(args []string) error {
 	// all) refuses here, naming the problem, having created nothing. -list
 	// previews the discovered stores and stops. -outlook supplies its own inputs
 	// later, so an empty set is not yet a refusal in that case.
-	discovered, err := app.DiscoverInputs(inputs, *o.auto)
+	// A listed input that is gone and that the run would skip (-auto, MA-1471) refuses nothing
+	// here, and this check reports none of its own: app.Run says the skip, once, in its summary
+	// (design-1.7.5-fixes §1.5, MA-1480), so the terminal never shows two lists that could disagree.
+	// The archive's previous record names each Thunderbird folder's account, which decides first
+	// whether a gone one was moved or removed, as the run decides it (RV2-01).
+	discovered, skipped, err := app.DiscoverInputsFor(inputs, *o.auto, app.RecordedNamesAt(*o.out))
 	if err == nil {
-		// An opt-in that names no input would be read as no opt-in, so it is refused here.
-		err = app.FollowLinksRefusal(o.followLinks, discovered)
+		// An opt-in that names no input would be read as no opt-in, so it is refused here. It is
+		// checked against the inputs found plus the skipped ones: an opt-in for a skipped input
+		// reads nothing this run, and is not refused in words that do not fit (MA-1480).
+		err = app.FollowLinksRefusal(o.followLinks, append(append([]string(nil), discovered...), skipped...))
 	}
 	if err == nil && *o.list {
-		return listStores(discovered)
+		return listStores(discovered, skipped)
 	}
 	if err == nil && len(discovered) == 0 && !*o.outlook {
 		err = errors.New("no input mail sources found: pass -input PATH (a .pst/.ost file, an mbox file, or a mail directory), or -auto to discover Outlook/Thunderbird/Evolution stores")
@@ -424,7 +431,7 @@ func runExport(args []string) error {
 	// Thunderbird IMAP prep: enable offline storage and/or wait for a sync so
 	// on-demand mail is actually present locally before we read it.
 	if *enableOffline || *syncWait {
-		if err := prepareThunderbird(ctx, inputs, *auto, *enableOffline, *syncWait, logger); err != nil {
+		if err := prepareThunderbird(ctx, *out, inputs, *auto, *enableOffline, *syncWait, logger); err != nil {
 			return err
 		}
 	}
@@ -551,8 +558,15 @@ func dirSize(dir string) int64 {
 }
 
 // listStores prints, one per line, the mail stores an export would archive with
-// a rough on-disk size — the -list preview. It creates nothing and exits 0.
-func listStores(files []string) error {
+// a rough on-disk size — the -list preview — then one "Not found, would be skipped: PATH"
+// line per listed input the run would skip because it is gone (MA-1480; "would be", since
+// nothing runs: the 1.7.5 friction review's F14). It creates nothing and exits 0.
+func listStores(files, skipped []string) error {
+	defer func() {
+		for _, s := range skipped {
+			fmt.Println("Not found, would be skipped: " + s)
+		}
+	}()
 	if len(files) == 0 {
 		fmt.Println("No mail stores found to archive.")
 		return nil
@@ -2084,8 +2098,13 @@ func parseMode(s string) (export.Mode, error) {
 
 // prepareThunderbird enables offline download and/or waits for a sync on each
 // Thunderbird IMAP store among the inputs, so on-demand mail is present locally.
-func prepareThunderbird(ctx context.Context, inputs []string, auto, enableOffline, syncWait bool, logger *log.Logger) error {
-	files, err := app.DiscoverInputs(inputs, auto)
+// out is the archive the run writes ("" for none).
+func prepareThunderbird(ctx context.Context, out string, inputs []string, auto, enableOffline, syncWait bool, logger *log.Logger) error {
+	// The skipped inputs are discarded on purpose: this prepares stores that exist, and the run
+	// itself reports what it skipped (design-1.7.5-fixes §1.2, MA-1471). Asked with the account names
+	// the archive at out keeps for its folders, as the run asks (the 1.7.5 re-verify, round 3's
+	// RV3-03): it never refuses where the run skips, nor goes ahead where the run stops.
+	files, _, err := app.DiscoverInputsFor(inputs, auto, app.RecordedNamesAt(out))
 	if err != nil {
 		return err
 	}
@@ -2436,6 +2455,11 @@ func printSummaryFor(logger *log.Logger, r app.Result, indexed, keepRaw bool, ou
 		for _, l := range state.TBLines(accts, more, state.TBSay{Scheduled: app.TBScheduled(out), Surface: state.TBSurfaceCommandLine}) {
 			logger.Printf("  %s", l)
 		}
+	}
+	// A listed mailbox that is gone was skipped (MA-1471, MA-1480): the command line's one report of
+	// it, from the run's own result; each by its name only on a terminal (MA-1288).
+	for _, l := range app.SkippedLines(r.Skipped, summaryOnScreen(logger)) {
+		logger.Printf("%s", l)
 	}
 	printNotCaptured(logger, r)
 	// An index that holds fewer messages than the manifest (search.db lost or

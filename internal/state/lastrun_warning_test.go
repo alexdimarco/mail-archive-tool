@@ -32,7 +32,7 @@ func TestLastRunWarningsRoundTripStripped(t *testing.T) {
 		t.Fatalf("warnings did not round-trip: %+v", lr.Warnings)
 	}
 	if w := lr.Warnings[1]; strings.ContainsAny(w.Code+w.Message, "\x1b\x07\r\n") || w.Code != "config_in_archive[2J" {
-		t.Errorf("control characters survived ReadLastRun: %q", w)
+		t.Errorf("control characters survived ReadLastRun: %q %q", w.Code, w.Message) // fields by name: RunWarning gained a bool (F4), which %q cannot print
 	}
 
 	if err := WriteLastRun(out, LastRun{Status: RunOK, Started: time.Now(), Finished: time.Now()}); err != nil {

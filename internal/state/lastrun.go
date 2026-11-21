@@ -162,6 +162,16 @@ type LastRun struct {
 	// lead from the record takes each one left out as unknown (tbcomplete.RunLeadWith), never
 	// as complete.
 	ThunderbirdMore int `json:"thunderbird_more,omitempty"`
+	// ThunderbirdNames is each Thunderbird folder's account name beside its store's id, in a record
+	// whose run has no completeness entries of its own (a running, refused, failed or cancelled run,
+	// or an ok one that assessed none): carried from the previous record (TBNamesOf), so a moved
+	// account is still told from a removed one after a stopped backup (the 1.7.5 re-verify, round
+	// 3's RV3-01; MA-1481). A small list beside Thunderbird, not a copy of it: every surface reads
+	// Thunderbird as this run's completeness. Plaintext records only: the encrypted writer's
+	// allow-list never writes it (the owner's Q3, Q5 and Q6). Names stay in the record and never
+	// reach a log file (MA-1288). Additive: an older reader ignores it (1.7.4 reads the record with
+	// json.Unmarshal).
+	ThunderbirdNames []TBName `json:"thunderbird_names,omitempty"`
 
 	// Program is an encrypted archive's program step outcome, one of the Program*
 	// codes (program design §4, §8). Absent when the step did not run.
@@ -173,6 +183,16 @@ type LastRun struct {
 	// recognise an encrypted archive itself. Absent (false) on a plaintext record,
 	// whose bytes it leaves unchanged.
 	Encrypted bool `json:"encrypted,omitempty"`
+
+	// MailboxGone, MailboxGoneSince and MailboxGoneCount are an ENCRYPTED archive's record of a
+	// gone mailbox (docs/design-1.7.5-fixes.md §1.3, MA-1478; owner, 2026-11-20, Q3, Q5 and Q6):
+	// this run skipped a mailbox that is gone, the time one was first found gone, and how many it
+	// skipped. No path, no name. Set only by a run of an encrypted archive, from its skip warnings
+	// held in memory; a plaintext record never sets them (its warnings say each mailbox), so it is
+	// written byte for byte as before. encryptedLastRun writes them only when MailboxGone is true.
+	MailboxGone      bool      `json:"mailbox_gone,omitempty"`
+	MailboxGoneSince time.Time `json:"mailbox_gone_since,omitzero"`
+	MailboxGoneCount int       `json:"mailbox_gone_count,omitempty"`
 }
 
 // PresyncRecord is the Thunderbird pre-sync's record in one run (design §4.9.2).
@@ -213,7 +233,40 @@ const (
 type RunWarning struct {
 	Code    string `json:"code"`
 	Message string `json:"message"`
+	// Path, Name and Since are a mailbox_gone warning's (MailboxGoneCode, docs/design-1.7.5-
+	// fixes.md §1.3, MA-1472): the input as the job lists it, the account's name when the
+	// profile's settings still named one ("" otherwise), and when it was first found gone.
+	// Additive and left out when empty, so a warning without them is written byte for byte as
+	// before (Since is omitzero: omitempty does not leave out a zero time).
+	Path  string    `json:"path,omitempty"`
+	Name  string    `json:"name,omitempty"`
+	Since time.Time `json:"since,omitzero"`
+	// Listed: Thunderbird's settings still list an account for the folder when the run looked,
+	// so status says to let Thunderbird download it, not to add it back (the 1.7.5 friction
+	// review's F4). Amended beside the fields above: Name may now also come from the previous
+	// record (F3), where Listed is false. Additive and left out when false.
+	Listed bool `json:"listed,omitempty"`
+	// SettingsUnsure: the profile's Thunderbird settings could not be read for certain, so a move
+	// could not be told; status says so (the 1.7.5 re-verify's RV-04). Additive, left out when false.
+	SettingsUnsure bool `json:"settings_unsure,omitempty"`
 }
+
+// MailboxGoneCode is the warning a plaintext run records for each listed input it skipped
+// because it is gone (MA-1471, MA-1472). Status builds its words from Path, Name and Since, and
+// never shows the recorded Message for it.
+const MailboxGoneCode = "mailbox_gone"
+
+// MaxGoneWarnings is how many of a record's mailbox_gone warnings status says and a run reads when
+// it carries first-found dates (the 1.7.5 adversarial pass's INS-06): a planted or damaged record
+// may hold thousands; status says the rest as one count. As the completeness record caps its
+// accounts.
+const MaxGoneWarnings = 64
+
+// MailboxGoneNoteAfter is how long a gone mailbox's WARN lasts before it becomes a note: the
+// owner's ruling of 2026-11-20 (docs/design-1.7.5-fixes.md §0, Q2), 14 days counted between
+// backups, the last run's start minus when the mailbox was first found gone, never compared with
+// now, as SurfaceAfter and AutoPauseAfter are.
+const MailboxGoneNoteAfter = 14 * 24 * time.Hour
 
 // LastRunState says what ReadLastRun found.
 type LastRunState int
@@ -377,6 +430,12 @@ func ReadLastRun(out string) (LastRun, LastRunState, error) {
 	r.Error, r.Exe, r.Mode = util.StripControl(r.Error), util.StripControl(r.Exe), util.StripControl(r.Mode)
 	for i := range r.Warnings {
 		r.Warnings[i].Code, r.Warnings[i].Message = util.StripControl(r.Warnings[i].Code), util.StripControl(r.Warnings[i].Message)
+		// A gone mailbox's path and account name are said by status (MA-1472): cleaned here too.
+		// Amended by the 1.7.5 adversarial pass (INS-06): the name as the completeness record's
+		// account names are (CleanFolderName: no bidi overrides or invisible characters, capped), the
+		// path with no bidi override.
+		r.Warnings[i].Path = util.StripBidi(util.StripControl(r.Warnings[i].Path))
+		r.Warnings[i].Name = CleanFolderName(util.StripControl(r.Warnings[i].Name))
 	}
 	// A planted record's kinds are said only when they are counts (design-plain-failure-words).
 	r.Partial = r.Partial.sane()
@@ -392,6 +451,7 @@ func ReadLastRun(out string) (LastRun, LastRunState, error) {
 	var cut int
 	r.Thunderbird, cut = saneTB(r.Thunderbird)
 	r.ThunderbirdMore = min(max(0, r.ThunderbirdMore), 1<<20) + cut // planted: never negative, never wrapped
+	r.ThunderbirdNames = saneTBNames(r.ThunderbirdNames)
 	return r, LastRunPresent, nil
 }
 

@@ -37,8 +37,13 @@ func moduleRoot(t *testing.T) string {
 // that same commit — never widened to make the test pass.
 func TestMA621_NoNewPerUserStateLocation(t *testing.T) {
 	pinned := map[string]bool{
-		"cmd/mailarchive/main.go":                     true,
-		"internal/app/run.go":                         true,
+		"cmd/mailarchive/main.go": true,
+		// 1.7.5 (MA-1471, commit 043296d) moved auto-discovery's Outlook patterns, unchanged,
+		// from internal/app/run.go to the new leaf package internal/autoplace, so health can
+		// call the skip rule. The LOCALAPPDATA read finds Outlook's own data files; it is not
+		// a MailArchive state location. Restated in place of run.go, not added: the set is
+		// still eight files.
+		"internal/autoplace/autoplace.go":             true,
 		"internal/graphconfig/config.go":              true,
 		"internal/graphconfig/secretstore_default.go": true,
 		"internal/job/job.go":                         true,

@@ -53,7 +53,7 @@ func TestSyncWaitChangesEveryStoreBeforeStartingThunderbird(t *testing.T) {
 
 	profile, storeA, storeB := twoStoresOneProfile(t)
 	var buf bytes.Buffer
-	if err := prepareThunderbird(context.Background(), []string{storeA, storeB}, false, true, false, log.New(&buf, "", 0)); err != nil || !on(profile, "server1") || !on(profile, "server2") {
+	if err := prepareThunderbird(context.Background(), "", []string{storeA, storeB}, false, true, false, log.New(&buf, "", 0)); err != nil || !on(profile, "server1") || !on(profile, "server2") {
 		t.Fatalf("the positive twin: %v\n%s", err, buf.String())
 	}
 	if n := strings.Count(buf.String(), "START Thunderbird"); n != 1 {
@@ -67,7 +67,7 @@ func TestSyncWaitChangesEveryStoreBeforeStartingThunderbird(t *testing.T) {
 		started = started || strings.Contains(buf.String(), "START Thunderbird")
 		return started
 	}
-	err := prepareThunderbird(context.Background(), []string{storeA, storeB}, false, true, true, log.New(&buf, "", 0))
+	err := prepareThunderbird(context.Background(), "", []string{storeA, storeB}, false, true, true, log.New(&buf, "", 0))
 	logText := buf.String()
 	if err != nil || !on(profile, "server1") || !on(profile, "server2") {
 		t.Fatalf("one run that follows the log's steps leaves an account off: %v\n%s", err, logText)
@@ -85,7 +85,7 @@ func TestSyncWaitChangesEveryStoreBeforeStartingThunderbird(t *testing.T) {
 	before := snapshot(t, profile)
 	tbRunning = func(string) bool { return true }
 	buf.Reset()
-	err = prepareThunderbird(context.Background(), []string{storeA, storeB}, false, true, true, log.New(&buf, "", 0))
+	err = prepareThunderbird(context.Background(), "", []string{storeA, storeB}, false, true, true, log.New(&buf, "", 0))
 	code, msg := 0, ""
 	if err != nil {
 		code, msg = 1, err.Error()

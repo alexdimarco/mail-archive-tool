@@ -6,6 +6,8 @@ import (
 	"strings"
 	"time"
 
+	"mail-archive-tool/internal/autoplace"
+	"mail-archive-tool/internal/health"
 	"mail-archive-tool/internal/job"
 	"mail-archive-tool/internal/schedule"
 )
@@ -200,19 +202,33 @@ func installedSyncWords(path, out string) string {
 // isRemotePath reports a path on another computer or one that is not a plain local path: a
 // network (UNC) path, a device path, or one that is not absolute. A mail source named so in the
 // archive's record — which anyone who can write the archive can change — is skipped before any
-// file check, so drawing the page never reaches out to another host (C-17, MA-869).
+// file check, so drawing the page never reaches out to another host (C-17, MA-869). The rule is
+// autoplace.NonLocal, which status and a run ask too (the 1.7.5 adversarial pass's OUT-01).
 func isRemotePath(p string) bool {
-	p = strings.TrimSpace(p)
-	if strings.HasPrefix(p, `\\`) || strings.HasPrefix(p, "//") {
-		return true
-	}
-	return !filepath.IsAbs(p)
+	return autoplace.NonLocal(p)
 }
 
 // sourceWait bounds how long drawing the page waits on a mail source's storage (C-17, MA-869):
 // the local-backup form checks that the archive's sources are there, and a source on slow or
 // stalled storage must not hold the page.
 var sourceWait = 2 * time.Second
+
+// goneRepairable is health.GoneMailboxRepairable asked within sourceWait, for the banner, the
+// Settings card and the Status & health view (MA-869, C-17; the 1.7.5 adversarial pass's OUT-01):
+// its answer comes from looks at the mail paths the archive's record names, and drawing the page
+// never waits on their storage. An answer that does not come in time is no, so the page keeps
+// today's words.
+func goneRepairable(out string) bool { return goneRepairInput(out) != "" }
+
+// goneRepairInput is goneRepairable with the gone mailbox it is about (the 1.7.5 friction review's
+// F10: the words name it); "" for no, and for an answer that does not come in time.
+func goneRepairInput(out string) string {
+	v, ok := withinSourceWait(func() string { named, _ := health.GoneMailboxRepairableInput(out); return named })
+	if !ok {
+		return ""
+	}
+	return v
+}
 
 // withinSourceWait runs f, a check that touches a mail source's storage, and gives its result
 // when it finishes within sourceWait; otherwise ok is false and the page is drawn without it (f

@@ -83,7 +83,7 @@ func TestMA688_LostLocalSourceClassifiesUnreachable(t *testing.T) {
 	// A gone local source: DiscoverInputs on a missing path returns a typed source-unreachable
 	// error, which the classifier reads as unreachable so the streak climbs (the run count then
 	// sorts transient from permanent, S3-C3).
-	if _, err := DiscoverInputs([]string{filepath.Join(t.TempDir(), "gone-thunderbird")}, false); err == nil {
+	if _, _, err := DiscoverInputs([]string{filepath.Join(t.TempDir(), "gone-thunderbird")}, false); err == nil {
 		t.Fatal("a missing local input must error")
 	} else if r, k := classifySourceReach(err); r != sourceUnreachable || k != "local-source-unreachable" {
 		t.Fatalf("a gone local source must classify as unreachable/local, got %v %q", r, k)

@@ -88,6 +88,18 @@ type Identity struct {
 	FileID uint64 `json:"file_id"`
 }
 
+// StillSameFolder reports whether the folder the plan was made for is still the same folder on
+// disk: its file identity now is the one the plan recorded (the 1.7.5 re-verify's RV-03). A delete
+// refused as changed is re-armed by the page only then: a folder replaced by another of the same name
+// during the check is never deleted unseen.
+func (p *DeletePlan) StillSameFolder() bool {
+	if p == nil || p.Identity == (Identity{}) {
+		return false
+	}
+	id, ok := folderIdentity(p.Folder)
+	return ok && id == p.Identity
+}
+
 // folderIdentity is the identity of the folder at path now; ok is false when it
 // cannot be read (the folder gone, unreachable or not a folder).
 func folderIdentity(path string) (Identity, bool) {
