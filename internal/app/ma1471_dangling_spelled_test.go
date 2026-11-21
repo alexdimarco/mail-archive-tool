@@ -91,4 +91,24 @@ func TestAnInputThatCannotBeExaminedIsRefusedAsUnreachable(t *testing.T) {
 	if _, _, err := DiscoverInputs([]string{a, locked}, true); errors.As(err, &sue) {
 		t.Errorf("a folder that exists but cannot be read is refused as unreachable, a change from today: %v", err)
 	}
+
+	// Added by the lead, 2026-11-21: a permission error when looking is not "gone". An input inside
+	// a folder that cannot be searched (os.Stat fails with a permission error) keeps today's plain
+	// refusal, inconclusive about the source (classifySourceReach: a present-but-unreadable source is
+	// never "gone"), so it never moves the streak toward the 30-day pause and is never told "does
+	// not exist". It is still refused: nothing is backed up from it and nothing is skipped.
+	inside := filepath.Join(locked, "imap.qzc.example")
+	if _, err := os.Stat(inside); !errors.Is(err, os.ErrPermission) {
+		t.Skipf("this system does not refuse a look inside an unsearchable folder with a permission error: %v", err)
+	}
+	files, skipped, err := DiscoverInputs([]string{a, inside}, true)
+	if err == nil || len(files) != 0 || len(skipped) != 0 {
+		t.Fatalf("an input inside an unsearchable folder must still be refused, nothing skipped: %v %v %v", files, skipped, err)
+	}
+	if errors.As(err, &sue) {
+		t.Errorf("a permission error when looking is refused as unreachable (it counts toward the 30-day pause and says \"does not exist\"): %v", err)
+	}
+	if reach, _ := classifySourceReach(err); reach != sourceInconclusive {
+		t.Errorf("a permission error when looking must leave the source streak alone, got reach %v", reach)
+	}
 }

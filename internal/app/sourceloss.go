@@ -6,7 +6,9 @@ import (
 	"fmt"
 	"log"
 	"path/filepath"
+	"runtime"
 	"strings"
+	"syscall"
 	"time"
 
 	"mail-archive-tool/internal/autoplace"
@@ -37,6 +39,19 @@ const (
 // movedTo, when set, is where Thunderbird now keeps the gone input's account, which was moved with
 // its Local Directory setting, not removed (MA-1481; the owner's Q7): the words say so.
 type sourceUnreachableError struct{ path, movedTo string }
+
+// pathLeadsNowhere reports whether a look at a listed input failed because the path, as spelled,
+// leads to nothing: a component that is not a folder (ENOTDIR), or on Windows ERROR_DIRECTORY (267,
+// "The directory name is invalid"), which a dangling link spelled with a trailing "\" gives. A
+// permission error or any other failure to look is not this: it says nothing about whether the
+// source is there (classifySourceReach).
+func pathLeadsNowhere(err error) bool {
+	if errors.Is(err, syscall.ENOTDIR) {
+		return true
+	}
+	var errno syscall.Errno
+	return runtime.GOOS == "windows" && errors.As(err, &errno) && errno == 267
+}
 
 // Error is autoplace.GoneText, unchanged, so whatever compares a record's error with an input's
 // refusal (health.GoneMailboxRepairable) compares one text; for a moved account, autoplace.MovedText.

@@ -2070,7 +2070,16 @@ func DiscoverInputs(inputs []string, auto bool) (files, skipped []string, err er
 			// spelled with a trailing "\" gives ERROR_DIRECTORY, and the run ended untyped. It was the
 			// plain error "input PATH: ERR", also a refusal; an input that exists but cannot be read
 			// passes this check, as before.
-			return nil, nil, &sourceUnreachableError{path: in}
+			// Narrowed by the lead, 2026-11-21: only an error that says the path leads nowhere (a
+			// component that is not a folder: ENOTDIR, or Windows' ERROR_DIRECTORY) is the typed refusal.
+			// A permission error or any other failure to look stays the plain error, inconclusive about
+			// the source (classifySourceReach: a present-but-unreadable source is never "gone"), so it
+			// never moves the streak toward the warning and the 30-day pause, and is never told "does
+			// not exist".
+			if pathLeadsNowhere(err) {
+				return nil, nil, &sourceUnreachableError{path: in}
+			}
+			return nil, nil, fmt.Errorf("input %s: %w", in, err)
 		}
 		if info.IsDir() {
 			if source.IsMailStoreDir(in) {
