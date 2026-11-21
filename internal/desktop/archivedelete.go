@@ -54,6 +54,8 @@ const (
 	// owns the final words).
 	armedNotArmableText = "The check found something to look at before deleting, so nothing was deleted. Read the plan, then click Delete permanently."
 	armedOtherRowText   = "This delete was asked from another row's panel, so nothing was deleted. Click Delete… on the archive's own row."
+	// An armed delete whose own row was removed from the list during its check (OUT-02).
+	armedUnlistedText = "This archive was removed from Your archives while its check ran, so nothing was deleted."
 )
 
 // The plan's fixed lines (§3.1, §2, §6, §9).
@@ -622,7 +624,15 @@ func (d *dashboard) deleteAction(w http.ResponseWriter, r *http.Request) {
 	// lock, no row changed. So a slip in the page, a stale page or a reply routed to the wrong panel
 	// can at most show a refusal (MA-1476).
 	if in.Armed {
-		if row, ok := d.cfg.matchRow(in.Row); !ok || row != it.deletePlan.row {
+		row, ok := d.cfg.matchRow(in.Row)
+		// The held plan's own row, no longer in Your archives: Remove from list took it off while
+		// the check ran, so it is said as that, not as another row's panel (the 1.7.5 adversarial
+		// pass's OUT-02).
+		if !ok && in.Row != "" && in.Row == it.deletePlan.row {
+			refuseDelete(w, armedUnlistedText)
+			return
+		}
+		if !ok || row != it.deletePlan.row {
 			refuseDelete(w, armedOtherRowText)
 			return
 		}
