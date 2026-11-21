@@ -92,6 +92,12 @@ func (r ArchiveRow) OffersSwitch() bool {
 	return !r.Deleting && !r.Unfinished && r.Problem == "" && r.Available && !r.Sealed && !r.Current
 }
 
+// DeleteName is the folder's name the row's Delete… button carries (data-delete-name): the last
+// element of its path as the page is drawn, no folder read, so an unplugged drive cannot slow the page
+// (docs/design-1.7.5-fixes.md §3.2, MA-1477). It only enables Delete when the check finishes early;
+// what decides is archdelete.NameMatches against the plan's own name, on the page and on the server.
+func (r ArchiveRow) DeleteName() string { return filepath.Base(r.Path) }
+
 // KindLabel is the short, plain-words form of Kind for the archive list ("" when
 // the archive's kind is unknown, e.g. the folder is unavailable).
 func (r ArchiveRow) KindLabel() string {

@@ -7,7 +7,8 @@ package desktop
 const dashboardJS = dashboardBaseJS + archiveDeleteJS + restoreTBJS
 
 // archiveDeleteJS is the page's half of Delete and Remove from list (docs/design-archive-delete.md
-// §3.1, §3.2, §8, §8.1, §10; slice 3b, MA-982..MA-986), on slice 3a's four routes. Every panel,
+// §3.1, §3.2, §8, §8.1, §10; slice 3b, MA-982..MA-986), on slice 3a's four routes and 1.7.5's
+// discard (docs/design-1.7.5-fixes.md §3, MA-1475..MA-1477). Every panel,
 // question and result is the page's own, inside the row it is about (beside the row, MA-955),
 // built with createElement and textContent only (X15): never a browser confirm() or prompt()
 // (C19). Words are §3.1's, §3.2's and §8's where they give them; the rest are the builder's.
@@ -25,8 +26,9 @@ const delPageText={unfinished:delUnfinishedText,deleted:'This archive was delete
 // archive, the guide, Security & privacy and Uninstall are not the archive's and stay.
 const delArchiveCards=['sec-m365','sec-export','sec-archive','sec-settings','sec-encsteps','sec-encryption','sec-backup','sec-alerts','sec-history','sec-health','sec-maintenance','sec-restore-tb'];
 // delWait: a reload the page started was held; delInFlight: deletes this page has asked for whose
-// reply has not come; delSeq: the last Delete… or Remove from list clicked (an earlier one's
-// slower reply opens nothing, MA-986).
+// reply has not come, and panels armed by Delete when the check finishes whose check has not answered
+// (1.7.5 §3.2); delSeq: the last Delete… or Remove from list clicked (an earlier one's slower reply
+// opens nothing, MA-986, unless its panel is armed).
 var delWait=false,delInFlight=0,delSeq=0,delBoxSeq=0;
 // reloadPage is every reload the page starts itself (§3.1 After a Delete, MA-984): while a
 // delete's result is held on the page, or a delete asked for here has not answered (its reply
@@ -40,11 +42,36 @@ function delPost(path,body){return fetch(path,{method:'POST',headers:{'Content-T
 function delEl(tag,text,cls){const e=document.createElement(tag);if(text!==undefined&&text!==null)e.textContent=text;if(cls)e.className=cls;return e;}
 function delButton(text,cls){const b=delEl('button',text,cls);b.type='button';return b;}
 // One panel at a time: a delete's panel or Remove from list's question closes any other one — but
-// never the panel of a delete still waiting for its reply (data-delete-waiting), whose "Keep this
-// page open" note and result belong to that delete (del-s3b leftover 1).
-function delClose(){document.querySelectorAll('.delete-panel,.unlist-ask,.elsewhere-ask').forEach(x=>{if(!x.hasAttribute('data-delete-waiting'))x.remove();});}
+// never the panel of a delete still waiting for its reply, or armed and waiting for its check
+// (data-delete-waiting), whose note and result belong to that delete (del-s3b leftover 1; 1.7.5
+// §3.2). A panel closed here ends its plan: its token is discarded (1.7.5 §3.1).
+function delClose(){document.querySelectorAll('.delete-panel,.unlist-ask,.elsewhere-ask').forEach(x=>{if(!x.hasAttribute('data-delete-waiting')){x.remove();if(x.delEnd)x.delEnd();}});}
 // The server's match (archdelete.NameMatches): not empty, both sides NFC, no case folding, no trimming.
 function delNameMatches(typed,name){return typed!==''&&typed.normalize('NFC')===name.normalize('NFC');}
+// Delete waits for you (docs/design-1.7.5-fixes.md §3; the friction review owns the final words): the
+// panel's line while its check runs, once Delete when the check finishes is clicked, when the check
+// found something to look at, and once the delete is sent.
+const delCheckingText='Checking what Delete would remove… This can take a few minutes for a large archive. Nothing is deleted yet.';
+const delArmedText='When the check finishes, MailArchive checks once more, then deletes this archive, unless the check finds something you should see first. Keep this page open.';
+const delFoundText='The check found something to look at before deleting. Read it, then click Delete permanently.';
+const delDeletingText='Deleting this archive. It can no longer be stopped. Keep this page open until its result shows here…';
+// The minutes a check has run, in words.
+function delMinutes(ms){const m=Math.floor(ms/60000);return m<1?'Under a minute so far.':m===1?'1 minute so far.':m+' minutes so far.';}
+// The prompt for the folder's name before the check answers: planView's typeLine for the row's name.
+function delTypeLine(name){return "Type the folder's name, "+name+", to delete it (capital letters count)";}
+// delTypeLabel writes the prompt p (p.typeLine, the folder's name p.name in it) into lab, the name in
+// one piece that never breaks across lines (B14: it broke at a hyphen at phone width), found between
+// its commas, never inside the prompt's own words ("a" in "name").
+function delTypeLabel(lab,p){
+  lab.textContent='';const at0=p.typeLine.indexOf(', '+p.name+', ');const at=at0<0?-1:at0+2;
+  if(at<0)lab.textContent=p.typeLine;
+  else lab.append(document.createTextNode(p.typeLine.slice(0,at)),delEl('span',p.name,'mono del-name'),document.createTextNode(p.typeLine.slice(at+p.name.length)));
+}
+// The delete plans this page holds, by token, until each is used, spent or discarded (1.7.5 §3.1).
+const delTokens=new Set();
+// delDiscard ends a delete plan the page no longer shows: its token posted to the discard route,
+// which takes only a delete plan's (MA-1475). Best effort: a plan not discarded waits out its life.
+function delDiscard(token){if(!token)return Promise.resolve();delTokens.delete(token);return delPost('api/archive/delete/discard',{token:token}).catch(()=>{});}
 // A file saved through the browser, as the fingerprint receipt is: a string as UTF-8, bytes as they are.
 function delSaveFile(name,data){
   const blob=new Blob([data],{type:'text/plain;charset=utf-8'});
@@ -188,85 +215,161 @@ function delAfterDelete(d){
     else if(d.unfinished)delMarkUnfinished(li);});
   if(d.page)delPageArchive(d.page);
 }
-// The plan, beside the row (§3.1): what Delete removes and what it does not reach, Save this plan,
-// then the folder's name typed before Delete permanently can be pressed.
-function delPanel(p){
+// The panel beside the row (§3.1). It opens at once when Delete… is clicked, before the check ends
+// (1.7.5 §3.2): while the check runs it says so, with the minutes so far, the folder and the box for
+// the folder's name, so the name can be typed meanwhile, and offers Delete when the check finishes
+// and Cancel. When the plan comes (delFill) it shows what Delete removes and what it does not reach,
+// Save this plan, then Delete permanently, as before; or, armed by Delete when the check finishes,
+// with nothing in the plan to decide and the plan's name typed, it sends the delete at once, and the
+// server decides (MA-1476).
+function delPanel(b,typed){
   const w=document.createElement('div');w.className='note delete-panel';w.setAttribute('role','group');w.setAttribute('aria-label','Delete this archive');
-  const line=(text,cls)=>{const x=delEl('p',text,cls);w.append(x);return x;};
-  const head=delEl('p');head.append(delEl('b','Delete this archive permanently'));w.append(head);
-  // First, when it finishes a delete that stopped part way (D1): the date it began.
-  if(p.finishesLine)line(p.finishesLine);
-  // Then what the plan knows of that delete's start, or the person's answer that it was finished
-  // elsewhere (design-archive-delete §15.4, MA-1057).
-  (p.finishesNotes||[]).forEach(t=>line(t));
-  // Then, when files of it are still held by another program, that this run would stop there (N17).
-  if(p.heldLine)line(p.heldLine,'warn');
-  line(p.threeLine,'card-sub');
-  line('Folder: '+p.folder,'mono');
-  line('Delete removes '+p.files+(p.files===1?' file':' files')+' ('+p.size+').');
-  if(p.stores.length)line('Mail folders: '+p.stores.map(s=>s.label||s.name).join(', '));
-  (p.scheduleLines||[]).forEach(t=>line(t));
-  if(p.checkYourself.length)line('Not removed, check it yourself: '+p.checkYourself.join(', '),'warn');
-  p.notes.forEach(t=>line(t,'warn'));
-  if(p.pausedLine)line(p.pausedLine);
-  if(p.syncedLine)line(p.syncedLine,'warn');
-  // The kept files by name (B6): the plan sends the first ten.
-  if(p.kept){const kn=p.keptNames||[];line("Kept (not the archive's): "+(kn.length?kn.join(', ')+(p.kept>kn.length?' and '+(p.kept-kn.length)+' more':''):p.kept+(p.kept===1?' file':' files')));}
-  let box=null;
-  if(p.unrecorded){
-    line('Mail copies this archive did not record: '+p.unrecorded);
-    const ul=delEl('ul');p.unrecordedNames.forEach(x=>ul.append(delEl('li',x,'mono')));
-    if(p.unrecorded>p.unrecordedNames.length)ul.append(delEl('li','and '+(p.unrecorded-p.unrecordedNames.length)+' more'));
-    w.append(ul);
-    const lab=delEl('label',null,'checkline');box=document.createElement('input');box.type='checkbox';
-    lab.append(box,document.createTextNode(p.unrecordedBox));w.append(lab);
-  }
-  if(p.keyLine)line(p.keyLine);
-  line(p.doesNotReach);
-  const sa=delEl('div',null,'del-actions');
-  const sv=delButton('Save this plan','btn secondary');sv.title='Save this plan as a text file, for example to have it approved first. Nothing is deleted.';
-  // Said on screen once asked (B13): the browser may save it without asking. The page cannot
-  // know whether it was saved, where, or under what name, so it says only what it asked.
-  const saved=delEl('span',null,'card-sub');saved.setAttribute('role','status');saved.hidden=true;
-  sv.addEventListener('click',()=>{delSaveFile(p.planName,p.planText);saved.hidden=false;saved.textContent='Your browser was asked to save the plan as '+p.planName+' (usually in Downloads). Nothing was deleted.';});
-  sa.append(sv,saved);w.append(sa);
-  line(p.logLine,'card-sub');
+  // The row this panel is for, from its own Delete… button as it opened: an armed delete names it,
+  // never a value from a reply (MA-1476). Its name as the page was drawn only enables the button early.
+  const row=b.dataset.path,early=b.dataset.deleteName||'';
+  const body=delEl('div');
+  const line=(text,cls)=>{const x=delEl('p',text,cls);body.append(x);return x;};
+  const head=delEl('p');head.append(delEl('b','Delete this archive permanently'));w.append(head,body);
+  // While the check runs: what is happening, the minutes so far, and the folder.
+  const checking=line(delCheckingText);checking.setAttribute('role','status');
+  const mins=line(delMinutes(0),'card-sub');
+  line('Folder: '+row,'mono');
   // A delete waiting for its reply keeps its panel while another opens, so each box has an id of
   // its own and its label names it.
   const boxId='delTyped'+(++delBoxSeq);
-  // The folder's name never breaks across lines (B14: it broke at a hyphen at phone width). It
-  // is found between its commas, never inside the prompt's own words ("a" in "name").
-  const lab=delEl('label');const at0=p.typeLine.indexOf(', '+p.name+', ');const at=at0<0?-1:at0+2;
-  if(at<0)lab.textContent=p.typeLine;
-  else lab.append(document.createTextNode(p.typeLine.slice(0,at)),delEl('span',p.name,'mono del-name'),document.createTextNode(p.typeLine.slice(at+p.name.length)));
+  const lab=delEl('label');delTypeLabel(lab,{typeLine:early?delTypeLine(early):"Type the folder's name to delete it (capital letters count)",name:early});
   const input=document.createElement('input');input.type='text';input.id=boxId;input.autocomplete='off';input.spellcheck=false;lab.htmlFor=boxId;
+  if(typed)input.value=typed;
   w.append(lab,input);
   const hint=delEl('span',"doesn't match yet",'name-hint');hint.setAttribute('aria-live','polite');
+  const arm=delButton('Delete when the check finishes','btn danger-fill');arm.disabled=true;
   const go=delButton('Delete permanently','btn danger-fill');go.disabled=true;
   const cancel=delButton('Cancel','btn secondary');
-  const ga=delEl('div',null,'del-actions');ga.append(go,cancel,hint);w.append(ga);
+  const ga=delEl('div',null,'del-actions');ga.append(arm,cancel,hint);w.append(ga);
   const msg=delEl('div',null,'note warnbox');msg.hidden=true;msg.setAttribute('role','alert');w.append(msg);
-  const match=()=>{const ok=delNameMatches(input.value,p.name);go.disabled=!ok;hint.hidden=ok;};
+  // p: the plan, once the check answers; box: its "Also delete" box; token: its token while this
+  // panel holds it; armed: Delete when the check finishes was clicked and the check has not answered.
+  let p=null,box=null,token='',armed=false,ticking=true;
+  // The minutes so far, while the check runs and, armed, through the delete's own check too.
+  const t0=Date.now();
+  const tick=()=>{if(!ticking||!w.isConnected)return;mins.textContent=delMinutes(Date.now()-t0);setTimeout(tick,5000);};
+  setTimeout(tick,5000);
+  const match=()=>{
+    if(!p){const ok=delNameMatches(input.value,early);arm.disabled=armed||!ok;hint.hidden=ok;return;}
+    const ok=delNameMatches(input.value,p.name);go.disabled=!ok;hint.hidden=ok;
+  };
   input.addEventListener('input',match);match();
-  cancel.addEventListener('click',()=>{w.remove();const n=$('settingsNote');if(n){n.hidden=false;n.textContent='Nothing was deleted.';}});
-  go.addEventListener('click',async()=>{
-    const done=busy(go,'Deleting…',msg,'Deleting this archive. Keep this page open until its result shows here…');
-    delInFlight++;w.setAttribute('data-delete-waiting','');
-    try{const d=await delPost('api/archive/delete',{token:p.token,typed:input.value,unrecorded:!!(box&&box.checked),drawnFor:drawnFor});
+  // disarm ends an armed wait without a delete: the panel no longer holds the page's reloads.
+  const disarm=()=>{if(!armed)return;armed=false;delInFlight--;w.removeAttribute('data-delete-waiting');if(delWait&&delInFlight===0&&!document.querySelector('[data-held-id]'))reloadPage();};
+  // endPlan ends this panel's plan (1.7.5 §3.1): its clock stopped, an armed wait released, its
+  // token discarded, once.
+  const endPlan=()=>{ticking=false;disarm();const t=token;token='';return delDiscard(t);};
+  w.delEnd=endPlan;
+  // show draws the plan, as before (§3.1), after first when the armed check found something to look at.
+  const show=first=>{
+    ticking=false;
+    while(body.firstChild)body.removeChild(body.firstChild);
+    if(first)line(first,'warn');
+    // First, when it finishes a delete that stopped part way (D1): the date it began.
+    if(p.finishesLine)line(p.finishesLine);
+    // Then what the plan knows of that delete's start, or the person's answer that it was finished
+    // elsewhere (design-archive-delete §15.4, MA-1057).
+    (p.finishesNotes||[]).forEach(t=>line(t));
+    // Then, when files of it are still held by another program, that this run would stop there (N17).
+    if(p.heldLine)line(p.heldLine,'warn');
+    line(p.threeLine,'card-sub');
+    line('Folder: '+p.folder,'mono');
+    line('Delete removes '+p.files+(p.files===1?' file':' files')+' ('+p.size+').');
+    if(p.stores.length)line('Mail folders: '+p.stores.map(s=>s.label||s.name).join(', '));
+    (p.scheduleLines||[]).forEach(t=>line(t));
+    if(p.checkYourself.length)line('Not removed, check it yourself: '+p.checkYourself.join(', '),'warn');
+    p.notes.forEach(t=>line(t,'warn'));
+    if(p.pausedLine)line(p.pausedLine);
+    if(p.syncedLine)line(p.syncedLine,'warn');
+    // The kept files by name (B6): the plan sends the first ten.
+    if(p.kept){const kn=p.keptNames||[];line("Kept (not the archive's): "+(kn.length?kn.join(', ')+(p.kept>kn.length?' and '+(p.kept-kn.length)+' more':''):p.kept+(p.kept===1?' file':' files')));}
+    box=null;
+    if(p.unrecorded){
+      line('Mail copies this archive did not record: '+p.unrecorded);
+      const ul=delEl('ul');p.unrecordedNames.forEach(x=>ul.append(delEl('li',x,'mono')));
+      if(p.unrecorded>p.unrecordedNames.length)ul.append(delEl('li','and '+(p.unrecorded-p.unrecordedNames.length)+' more'));
+      body.append(ul);
+      const bl=delEl('label',null,'checkline');box=document.createElement('input');box.type='checkbox';
+      bl.append(box,document.createTextNode(p.unrecordedBox));body.append(bl);
+    }
+    if(p.keyLine)line(p.keyLine);
+    line(p.doesNotReach);
+    const sa=delEl('div',null,'del-actions');
+    const sv=delButton('Save this plan','btn secondary');sv.title='Save this plan as a text file, for example to have it approved first. Nothing is deleted.';
+    // Said on screen once asked (B13): the browser may save it without asking. The page cannot
+    // know whether it was saved, where, or under what name, so it says only what it asked.
+    const saved=delEl('span',null,'card-sub');saved.setAttribute('role','status');saved.hidden=true;
+    sv.addEventListener('click',()=>{delSaveFile(p.planName,p.planText);saved.hidden=false;saved.textContent='Your browser was asked to save the plan as '+p.planName+' (usually in Downloads). Nothing was deleted.';});
+    sa.append(sv,saved);body.append(sa);
+    line(p.logLine,'card-sub');
+    // The prompt is the plan's own from now on, and Delete permanently takes the waiting button's place.
+    delTypeLabel(lab,{typeLine:p.typeLine,name:p.name});
+    if(arm.isConnected){ga.prepend(go);arm.remove();}
+    match();
+  };
+  // The plan's reply (from delPlan): armed, with nothing in it to decide and the plan's name typed,
+  // the delete is sent at once and the server decides (MA-1476); otherwise the plan is shown, the
+  // typed name kept, first saying so when the armed check found something to look at.
+  w.delFill=x=>{
+    p=x;token=p.token;delTokens.add(token);
+    if(armed&&p.armable===true&&delNameMatches(input.value,p.name)){delSend(true);return;}
+    show(armed&&p.armable!==true?delFoundText:'');
+    disarm();
+  };
+  // Delete when the check finishes (1.7.5 §3.2): nothing is sent now. The panel waits for its check,
+  // marked waiting from this click, so another Delete… leaves it and the page's reloads are held.
+  arm.addEventListener('click',()=>{
+    if(armed||p)return;
+    armed=true;delInFlight++;w.setAttribute('data-delete-waiting','');
+    arm.disabled=true;checking.textContent=delArmedText;
+  });
+  // Cancel, until the delete is sent: the panel closes and its plan is discarded (1.7.5 §3.1); a check
+  // still running discards its plan when it answers (delPlan).
+  cancel.addEventListener('click',async()=>{
+    const done=busy(cancel,'Cancelling…');
+    await endPlan();
+    done(true);w.remove();const n=$('settingsNote');if(n){n.hidden=false;n.textContent='Nothing was deleted.';}
+  });
+  go.addEventListener('click',()=>delSend(false));
+  // delSend sends the delete: Delete permanently as before, or (fromArm) the armed delete, which names
+  // this panel's own row (MA-1476). Once sent it runs to its end on the server (runDelete is not tied
+  // to this request), so Cancel goes and the line says it can no longer be stopped (the fold check's
+  // R2); a reply refusing it before it began gives Cancel back with its words; a lost connection does
+  // not, since the delete may still be running and its result shows when the page is drawn again.
+  async function delSend(fromArm){
+    const done=fromArm?busy(arm,'Deleting…',checking,delDeletingText):busy(go,'Deleting…',msg,delDeletingText);
+    // An armed panel was counted in flight, and marked waiting, from its click.
+    if(fromArm)armed=false;else delInFlight++;
+    w.setAttribute('data-delete-waiting','');cancel.remove();
+    try{const d=await(fromArm?delPost('api/archive/delete',{token:p.token,typed:input.value,unrecorded:false,drawnFor:drawnFor,armed:true,row:row}):delPost('api/archive/delete',{token:p.token,typed:input.value,unrecorded:!!(box&&box.checked),drawnFor:drawnFor}));
+      if(d.id||d.planUsed){delTokens.delete(token);token='';}
+      // A backup saved mail between the check and Delete (changed, MA-1475): the result shows as
+      // before, and the plan is asked for again by itself, the typed name put back, so one more click
+      // deletes.
+      if(d.id&&d.changed){done(true);w.remove();delShowHeld(d);delAfterDelete(d);delPlan(b,b.closest('li'),false,input.value);return;}
       // Its own panel goes, never another row's opened meanwhile (del-s3b leftover 1).
       // The result is brought into view (B14): on a narrow layout it sat at the top of the card, out of sight.
       if(d.id){done(true);w.remove();const hv=delShowHeld(d);delAfterDelete(d);if(hv.scrollIntoView)hv.scrollIntoView({block:'nearest'});return;}
+      // Refused before it began: nothing was deleted, so Cancel comes back; an armed delete refused
+      // shows the plan, with the refusal's words below (MA-1476).
+      if(fromArm)show('');
+      go.after(cancel);
       // A refusal that spent the plan (planUsed): Delete permanently could only fail now, so it
       // stays disabled and the reply says to click Delete… again (del-s3b conformance gap 3).
       done(!!d.planUsed);if(!d.planUsed)match();msg.hidden=false;msg.textContent=d.error||'Could not delete this archive.';
-    }catch(e){done();match();msg.hidden=false;msg.textContent='Error: '+e;}
+    }catch(e){if(fromArm)show('');done();match();msg.hidden=false;msg.textContent='Error: '+e;}
     finally{delInFlight--;w.removeAttribute('data-delete-waiting');if(delWait&&delInFlight===0&&!document.querySelector('[data-held-id]'))reloadPage();}
-  });
+  }
   return w;
 }
-// Delete… (§3.1 step 1): every other panel closed, the plan route, then the panel inside the row
-// — only for the last Delete… or Remove from list clicked, so no other panel opens meanwhile
-// (MA-986).
+// Delete… (§3.1 step 1): every other panel closed (but an armed one), the panel inside the row at
+// once, then the plan route, whose reply fills it — only for the last Delete… or Remove from list
+// clicked, or an armed panel, so no other panel opens meanwhile (MA-986, amended for 1.7.5 §3.2).
 // Delete again's question when the folder is gone and this computer's delete did not remove it
 // (design-archive-delete §15.8 question 2, MA-1057): in the row, the server's words and its two
 // answers; the first plans again saying it was finished elsewhere, Cancel changes nothing.
@@ -279,20 +382,27 @@ function delElsewhereAsk(b,li,p){
   yes.addEventListener('click',()=>{w.remove();delPlan(b,li,true);});
   return w;
 }
-async function delPlan(b,li,elsewhere){
+// typed, when given, is put back in the new panel's box: a plan asked for again after a backup
+// changed the archive (1.7.5 §3.1).
+async function delPlan(b,li,elsewhere,typed){
   const my=++delSeq;
   delClose();
   noteBeside(li);
-  const n=$('settingsNote'),done=busy(b,'Checking…',n,'Working out what Delete would remove. Nothing is deleted yet…');
+  const n=$('settingsNote'),done=busy(b,'Checking…');if(n)n.hidden=true;
+  // The panel opens at once, before the check ends (1.7.5 §3.2): its own line says what is happening,
+  // and the folder's name can be typed meanwhile.
+  li.append(delPanel(b,typed));
+  const w=li.lastElementChild,t=w.querySelector('input');if(t)t.focus();
   try{const p=await(elsewhere?delPost('api/archive/delete/plan',{path:b.dataset.path,elsewhere:true}):delPost('api/archive/delete/plan',{path:b.dataset.path}));
     done();
-    if(my!==delSeq)return;
-    if(!p.ok&&p.elsewhere){if(n)n.hidden=true;li.append(delElsewhereAsk(b,li,p));return;}
-    if(!p.ok){if(n){n.hidden=false;n.textContent=p.error||'Could not plan the delete.';}return;}
-    if(n)n.hidden=true;
-    li.append(delPanel(p));
-    const t=li.querySelector('.delete-panel input');if(t)t.focus();
-  }catch(e){done();if(my===delSeq&&n){n.hidden=false;n.textContent='Error: '+e;}}
+    // A panel cancelled or closed during its check opens nothing and discards the plan its reply names
+    // (1.7.5 §3.1), as does one a later Delete… or Remove from list made stale (MA-986) — but not an
+    // armed one: it is never closed for another, and its own reply fills it (MA-986, amended).
+    if(!w.isConnected||(my!==delSeq&&!w.hasAttribute('data-delete-waiting'))){if(w.isConnected){w.remove();w.delEnd();}delDiscard(p.token);return;}
+    if(!p.ok&&p.elsewhere){w.remove();w.delEnd();if(n)n.hidden=true;li.append(delElsewhereAsk(b,li,p));return;}
+    if(!p.ok){w.remove();w.delEnd();if(n){n.hidden=false;n.textContent=p.error||'Could not plan the delete.';}return;}
+    w.delFill(p);
+  }catch(e){done();if(w.isConnected){w.remove();w.delEnd();if(n){n.hidden=false;n.textContent='Error: '+e;}}}
 }
 document.querySelectorAll('[data-delete-archive]').forEach(b=>b.addEventListener('click',()=>{
   const li=b.closest('li');
@@ -375,4 +485,8 @@ function delWatch(){
   fetch('api/activity').then(r=>r.json()).then(d=>{if(d.deleting){setTimeout(delWatch,2000);return;}reloadPage();}).catch(()=>setTimeout(delWatch,5000));
 }
 if(document.querySelector('[data-delete-running]'))setTimeout(delWatch,2000);
+// The page going away (a reload, a closed tab) discards every delete plan it holds, as keepalive
+// requests, best effort (1.7.5 §3.1, MA-1475): a plan whose page went away without saying so waits
+// out its life (24 hours), at most one per row.
+if(window.addEventListener)window.addEventListener('pagehide',()=>{delTokens.forEach(t=>{fetch('api/archive/delete/discard',{method:'POST',keepalive:true,headers:{'Content-Type':'application/json','X-CSRF-Token':csrf},body:JSON.stringify({token:t})}).catch(()=>{});});delTokens.clear();});
 `

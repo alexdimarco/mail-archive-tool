@@ -297,8 +297,8 @@ func TestAnArmedDeleteIsRefusedUnlessItsPlanIsArmableAndItsOwnRows(t *testing.T)
 			assure.NoSideEffect(func() bool { return unchanged() && e.d.pending.get(atok, isDeletePlan) != nil }))
 	}
 
-	// The typed name is checked first, as today.
-	r = armed(atok, "other", other)
+	// The typed name is checked first, as today: a wrong name from another row is told the name.
+	r = armed(atok, "other", held)
 	assure.Refused(t, http.StatusOK, replyErr(r), assure.Code(http.StatusOK), assure.Names("does not match", "Other"),
 		assure.NoSideEffect(func() bool { return unchanged() && e.d.pending.get(atok, isDeletePlan) != nil }))
 

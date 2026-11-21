@@ -60,6 +60,7 @@ class El {
   get textContent() { return this.tagName === '#TEXT' ? this.text : this.text + this.children.map(c => c.textContent).join(''); }
   set textContent(v) { this.children.forEach(c => { c.parent = null; }); this.children = []; this.text = String(v); }
   get firstChild() { return this.children[0] || null; }
+  get lastElementChild() { const k = this.children.filter(c => c.tagName !== '#TEXT'); return k[k.length - 1] || null; }
   get nextElementSibling() { const s = this.parent ? this.parent.children : []; return s[s.indexOf(this) + 1] || null; }
   get isConnected() { let n = this; while (n.parent) n = n.parent; return n === doc.root; }
   detach(n) { if (n.parent) { const s = n.parent.children; s.splice(s.indexOf(n), 1); n.parent = null; } }
@@ -145,7 +146,8 @@ function row(path, state) {
   li.append(st);
   if (state !== 'running') {
     li.append(el('button', { class: 'btn secondary', type: 'button', 'data-unlist-archive': '', 'data-path': path }, 'Remove from list'));
-    li.append(el('button', { class: 'btn danger', type: 'button', 'data-delete-archive': '', 'data-path': path }, 'Delete…'));
+    // data-delete-name: the last element of the row's path, as the server draws it (MA-1477).
+    li.append(el('button', { class: 'btn danger', type: 'button', 'data-delete-archive': '', 'data-path': path, 'data-delete-name': path.split(/[\\/]/).pop() }, 'Delete…'));
   }
   return li;
 }
@@ -256,12 +258,17 @@ const reset = () => { doc.body.children.slice().forEach(c => c.remove()); doc.ac
 const posts = [], gets = [], scrolled = [], scrolledTop = [], scrollOpts = [], blobs = [], downloads = [];
 let reloads = 0, reduceMotion = false, storageOff = false;
 const loadListeners = [];
+// pageListeners are the page's other window listeners (pagehide, MA-1477), by event, for the script
+// booted last; clockAhead moves the page's clock (Date.now) ahead, so minutes can pass in a test.
+const pageListeners = {};
+let clockAhead = 0;
+class ClockDate extends Date { static now() { return Date.now() + clockAhead; } }
 const replies = {}, delays = {};
 const NOANSWER = Symbol('no answer');
 const store = {};
 function fetchStub(path, opts) {
   const body = opts && opts.body ? JSON.parse(opts.body) : null;
-  if (opts && opts.method === 'POST') posts.push({ path, body }); else gets.push(path);
+  if (opts && opts.method === 'POST') posts.push({ path, body, keepalive: !!opts.keepalive }); else gets.push(path);
   const r = typeof replies[path] === 'function' ? replies[path](body) : (replies[path] || { ok: true });
   const ms = typeof delays[path] === 'function' ? delays[path](body) : (delays[path] || 0);
   // NOANSWER: the server is gone (killed, crashed): the fetch fails, as a browser's does.
@@ -274,7 +281,7 @@ let ctx = null;
 function boot() {
   ctx = {
     document: doc, fetch: fetchStub, atob: s => Buffer.from(s, 'base64').toString('latin1'),
-    Uint8Array, Blob, JSON, Array, Promise, Object, String, Number, Error, Proxy,
+    Uint8Array, Blob, JSON, Array, Promise, Object, String, Number, Error, Proxy, Date: ClockDate,
     URL: { createObjectURL: b => { blobs.push(b); return 'blob:1'; }, revokeObjectURL() {} },
     location: { reload() { reloads++; }, hash: '' },
     // storageOff: a browser that keeps nothing for the tab (a private window, blocked site data):
@@ -288,7 +295,8 @@ function boot() {
     // The person's motion setting (prefers-reduced-motion), set per scenario.
     matchMedia: q => ({ matches: /prefers-reduced-motion:\s*reduce/.test(q) && reduceMotion, media: q }),
   };
-  ctx.window = ctx; ctx.addEventListener = (ev, f) => { if (ev === 'load') loadListeners.push(f); };
+  Object.keys(pageListeners).forEach(k => delete pageListeners[k]);
+  ctx.window = ctx; ctx.addEventListener = (ev, f) => { if (ev === 'load') loadListeners.push(f); else (pageListeners[ev] = pageListeners[ev] || []).push(f); };
   vm.createContext(ctx);
   vm.runInContext(code, ctx);
   if (extra) vm.runInContext(extra, ctx);
@@ -1590,6 +1598,245 @@ const scenarios = {
     doc.getElementById('rtbBtn').click(); await wait(40);
     check(!doc.getElementById('rtbWhatStep').hidden && doc.getElementById('rtbBack').hidden, 'P1 twin: one profile, no Change profile');
   },
+  // Delete when the check finishes (MA-1477; docs/design-1.7.5-fixes.md §3.2, the owner's ruling of
+  // 2026-11-20, Q1): the panel opens at once with the checking line, its minutes, the folder and the
+  // box; the name can be typed during the check; Delete when the check finishes is enabled by the row's
+  // data-delete-name (capitals counting) and changes the line to "checks once more, then deletes"; the
+  // minutes keep counting; at the reply an armable plan with the plan's name typed is sent with armed:
+  // true and the panel's own row; once sent the panel has no Cancel and says the delete can no longer
+  // be stopped, the minutes counting through the delete's own check; its result shows as before.
+  // Positive twin first: before the delete is sent, Cancel is there and closes the panel with "Nothing
+  // was deleted.".
+  async armedWaits() {
+    page([['D:\\Mail\\Big', 'other'], ['E:\\Cur', 'current']], 'E:\\Cur');
+    boot(); await wait(30);
+    const big = doc.querySelectorAll('.archive-row')[0];
+    // The reply's own row differs from the panel's: the armed delete must name the panel's, never the reply's.
+    replies['api/archive/delete/plan'] = Object.assign(plan('D:\\Mail\\Big', 'Big', 'TOK'), { armable: true, row: 'D:\\Mail\\Elsewhere' });
+    delays['api/archive/delete/plan'] = 300;
+    big.querySelector('[data-delete-archive]').click(); await wait(20);
+    let w = big.querySelector('.delete-panel');
+    const twin = !!w && !!byText(w, 'Cancel');
+    if (twin) { byText(w, 'Cancel').click(); await wait(20); }
+    const n = doc.getElementById('settingsNote');
+    check(twin && !big.querySelector('.delete-panel') && !n.hidden && n.textContent === 'Nothing was deleted.', 'before the delete is sent, Cancel is there and closes the panel, saying nothing was deleted');
+    await wait(320);
+    big.querySelector('[data-delete-archive]').click(); await wait(20);
+    w = big.querySelector('.delete-panel');
+    const ps = () => (w ? w.all().filter(e => e.tagName === 'P').map(e => e.textContent) : []);
+    check(!!w && ps()[1] === delWords.checking && ps().includes('Under a minute so far.') && ps().includes('Folder: D:\\Mail\\Big') && !posts.some(p => p.path === 'api/archive/delete'),
+      'the panel opens at once with the checking line, its minutes and the folder', JSON.stringify(ps()));
+    const arm = w && byText(w, 'Delete when the check finishes'), inp = w && w.querySelector('input'), lab = w && w.querySelector('label');
+    if (!arm || !inp) return;
+    const before = arm.disabled;
+    inp.value = 'big'; inp.fire('input'); const wrongCase = arm.disabled;
+    inp.value = 'Big'; inp.fire('input');
+    check(before && wrongCase && !arm.disabled && doc.activeElement === inp && lab.textContent === "Type the folder's name, Big, to delete it (capital letters count)",
+      "the name can be typed during the check, and the row's name enables Delete when the check finishes, capitals counting", lab && lab.textContent);
+    arm.click(); await wait(5);
+    check(ps()[1] === delWords.armed && arm.disabled && w.hasAttribute('data-delete-waiting'), 'clicking it says MailArchive checks once more, then deletes', JSON.stringify(ps()));
+    clockAhead = 3 * 60000; await wait(40);
+    check(ps().includes('3 minutes so far.'), 'the minutes keep counting', JSON.stringify(ps()));
+    replies['api/archive/delete'] = result({ id: 'HB', row: 'D:\\Mail\\Big', folder: 'D:\\Mail\\Big', rowRemoved: true, rows: ['D:\\Mail\\Big'] });
+    delays['api/archive/delete'] = 300;
+    await wait(300);
+    const del = posts.find(p => p.path === 'api/archive/delete');
+    check(!!del && del.body.armed === true && del.body.row === 'D:\\Mail\\Big' && del.body.token === 'TOK' && del.body.typed === 'Big',
+      "at the reply the delete is sent, armed, with the panel's own row", JSON.stringify(del && del.body));
+    check(!byText(w, 'Cancel') && ps().includes(delWords.deleting), 'once sent, the panel has no Cancel and says the delete can no longer be stopped', JSON.stringify(ps()));
+    clockAhead = 5 * 60000; await wait(40);
+    check(ps().includes('5 minutes so far.'), "the minutes keep counting through the delete's own check", JSON.stringify(ps()));
+    await wait(350);
+    const h = doc.querySelector('[data-held-id="HB"]');
+    check(!big.querySelector('.delete-panel') && !!h && !!byText(h, 'Save deletion record'), 'its result shows, with Save deletion record, as before');
+    clockAhead = 0;
+  },
+  // When the check finds something, or the name typed is not the plan's, or the server refuses the
+  // armed delete (MA-1477, MA-1476): the plan is shown, nothing deleted unseen. A plan that is not
+  // armable shows first "The check found something to look at before deleting. Read it, then click
+  // Delete permanently.", the typed name kept; one whose name does not match shows the box's "doesn't
+  // match yet"; a server refusal of an armed delete shows the plan and the refusal's words, with Cancel
+  // and Delete permanently back.
+  async armedFound() {
+    page([['D:\\Mail\\Odd', 'other'], ['E:\\Cur', 'current']], 'E:\\Cur');
+    boot(); await wait(30);
+    const odd = doc.querySelectorAll('.archive-row')[0];
+    const ps = w => w.all().filter(e => e.tagName === 'P').map(e => e.textContent);
+    const armAndType = async name => {
+      odd.querySelector('[data-delete-archive]').click(); await wait(10);
+      const w = odd.querySelector('.delete-panel'), inp = w.querySelector('input');
+      inp.value = name; inp.fire('input');
+      const arm = byText(w, 'Delete when the check finishes'); if (arm) arm.click();
+      await wait(80); return w;
+    };
+    delays['api/archive/delete/plan'] = 40;
+    replies['api/archive/delete/plan'] = Object.assign(plan('D:\\Mail\\Odd', 'Odd', 'TOK1'), { armable: false, unrecorded: 1, unrecordedNames: ['store/x.html'], unrecordedBox: 'Also delete this 1 file (for retention)' });
+    let w = await armAndType('Odd');
+    check(ps(w)[1] === delWords.found && ps(w).includes('Delete removes 3 files (10 bytes).') && w.querySelector('input[type=text]').value === 'Odd' && !!byText(w, 'Delete permanently') &&
+      !byText(w, 'Delete permanently').disabled && !!byText(w, 'Cancel') && !posts.some(p => p.path === 'api/archive/delete') && !w.hasAttribute('data-delete-waiting'),
+      'a plan that needs a decision is shown, its first line saying so, the name kept, nothing sent', JSON.stringify(ps(w)));
+    replies['api/archive/delete/plan'] = Object.assign(plan('D:\\Mail\\Odd', 'ODD', 'TOK2'), { armable: true });
+    w = await armAndType('Odd');
+    const hint = w.querySelector('.name-hint'), go = byText(w, 'Delete permanently');
+    check(!ps(w).includes(delWords.found) && !!hint && !hint.hidden && !!go && go.disabled && w.querySelector('input').value === 'Odd' && !posts.some(p => p.path === 'api/archive/delete'),
+      "when only the name does not match, the plan is shown with the box's \"doesn't match yet\", nothing sent", JSON.stringify(ps(w)));
+    const refusal = 'The check found something to look at before deleting, so nothing was deleted. Read the plan, then click Delete permanently.';
+    replies['api/archive/delete/plan'] = Object.assign(plan('D:\\Mail\\Odd', 'Odd', 'TOK3'), { armable: true });
+    replies['api/archive/delete'] = { ok: false, error: refusal };
+    w = await armAndType('Odd'); await wait(20);
+    const sent = posts.filter(p => p.path === 'api/archive/delete'), m = w.querySelector('[role=alert]');
+    check(sent.length === 1 && sent[0].body.armed === true && ps(w).includes('Delete removes 3 files (10 bytes).') && !!m && !m.hidden && m.textContent === refusal &&
+      !!byText(w, 'Cancel') && !!byText(w, 'Delete permanently') && !byText(w, 'Delete permanently').disabled && !w.hasAttribute('data-delete-waiting'),
+      'a server refusal of an armed delete shows the plan and its words, with Cancel and Delete permanently back', JSON.stringify({ ps: ps(w), m: m && m.textContent }));
+  },
+  // An armed panel survives another Delete… and receives only its own reply (MA-1477, MA-986
+  // amended): it is marked data-delete-waiting from the click, so opening another row's panel leaves
+  // it, and each check's reply fills its own panel. Reloads the page starts are held while it waits,
+  // and go ahead once it ends without a delete.
+  async armedSurvives() {
+    page([['D:\\Mail\\A', 'other'], ['E:\\Mail\\B', 'other'], ['F:\\Cur', 'current']], 'F:\\Cur');
+    boot(); await wait(30);
+    const [a, b] = doc.querySelectorAll('.archive-row');
+    replies['api/archive/delete/plan'] = x => Object.assign(plan(x.path, x.path === a.dataset.path ? 'A' : 'B', x.path === a.dataset.path ? 'TOK-A' : 'TOK-B'), { armable: false });
+    delays['api/archive/delete/plan'] = x => (x.path === a.dataset.path ? 200 : 20);
+    a.querySelector('[data-delete-archive]').click(); await wait(10);
+    const wa = a.querySelector('.delete-panel'), ia = wa && wa.querySelector('input'), arm = wa && byText(wa, 'Delete when the check finishes');
+    if (!arm) { check(false, 'the armed panel has Delete when the check finishes'); return; }
+    ia.value = 'A'; ia.fire('input'); arm.click(); await wait(5);
+    ctx.reloadPage(); await wait(5);
+    check(reloads === 0, 'a reload the page starts is held while an armed panel waits for its check', 'reloads=' + reloads);
+    b.querySelector('[data-delete-archive]').click(); await wait(60);
+    const wb = b.querySelector('.delete-panel');
+    check(wa.isConnected && wa.closest('li') === a && !!wb && wb.closest('li') === b, "another row's Delete… leaves the armed panel and opens its own");
+    await wait(200);
+    const labOf = w => w.querySelector('label').textContent;
+    check(labOf(wa) === "Type the folder's name, A, to delete it" && wa.all().some(e => e.tagName === 'P' && e.textContent === delWords.found) &&
+      labOf(wb) === "Type the folder's name, B, to delete it" && !wb.all().some(e => e.tagName === 'P' && e.textContent === delWords.found),
+      'each check fills its own panel, never the one opened meanwhile', JSON.stringify({ a: labOf(wa), b: labOf(wb) }));
+    check(reloads === 1, 'the held reload goes ahead once the armed wait ends without a delete', 'reloads=' + reloads);
+  },
+  // An un-armed panel made stale by a later Delete… that first asks about a record not saved (so no
+  // panel is closed for it) opens nothing when its check answers, and its plan is discarded: only the
+  // last Delete… clicked opens (MA-986, MA-1477). Positive twin first: with nothing clicked meanwhile,
+  // the reply fills its panel.
+  async staleAsk() {
+    const held = [result({ id: 'HU', row: 'E:\\Mail\\B', folder: 'E:\\Mail\\B', status: 'not fully deleted', unfinished: true })];
+    page([['D:\\Mail\\A', 'other'], ['E:\\Mail\\B', 'other'], ['F:\\Cur', 'current']], 'F:\\Cur', held);
+    boot(); await wait(30);
+    const [a, b] = doc.querySelectorAll('.archive-row');
+    let n = 0;
+    replies['api/archive/delete/plan'] = x => plan(x.path, 'A', 'S' + (++n));
+    delays['api/archive/delete/plan'] = 60;
+    a.querySelector('[data-delete-archive]').click(); await wait(100);
+    const filled = a.querySelector('.delete-panel');
+    check(!!filled && filled.all().some(e => e.tagName === 'P' && e.textContent === 'Delete removes 3 files (10 bytes).'), 'the positive twin: with nothing clicked meanwhile, the reply fills its panel');
+    byText(filled, 'Cancel').click(); await wait(20);
+    a.querySelector('[data-delete-archive]').click(); await wait(10);
+    b.querySelector('[data-delete-archive]').click(); await wait(100);
+    const h = b.querySelector('[data-held-id="HU"]');
+    const discarded = posts.filter(p => p.path === 'api/archive/delete/discard').map(p => p.body.token).join(',');
+    check(!a.querySelector('.delete-panel') && discarded === 'S1,S2' && !!h && !h.querySelector('.held-ask').hidden,
+      "a panel made stale by a later Delete… opens nothing when its check answers, and its plan is discarded", JSON.stringify({ panel: !!a.querySelector('.delete-panel'), discarded }));
+  },
+  // A plan the page no longer shows is discarded (MA-1477, MA-1475): Cancel posts its discard; a
+  // check cancelled meanwhile opens nothing when it answers, and posts the discard of the plan its
+  // reply names; a panel closed for another posts its plan's discard, or, closed during its check, its
+  // late reply does; and the page going away posts the discard of every plan it holds, as a keepalive
+  // request. Positive twin first: a panel still shown discards nothing.
+  async discards() {
+    page([['D:\\Mail\\A', 'other'], ['E:\\Mail\\B', 'other'], ['F:\\Cur', 'current']], 'F:\\Cur');
+    boot(); await wait(30);
+    const [a, b] = doc.querySelectorAll('.archive-row');
+    let n = 0;
+    replies['api/archive/delete/plan'] = x => plan(x.path, x.path === a.dataset.path ? 'A' : 'B', 'T' + (++n));
+    delays['api/archive/delete/plan'] = 100;
+    const discarded = () => posts.filter(p => p.path === 'api/archive/delete/discard').map(p => p.body.token).join(',');
+    a.querySelector('[data-delete-archive]').click(); await wait(150);
+    check(!!a.querySelector('.delete-panel') && discarded() === '', 'the positive twin: a panel still shown discards nothing', discarded());
+    byText(a.querySelector('.delete-panel'), 'Cancel').click(); await wait(20);
+    check(!a.querySelector('.delete-panel') && discarded() === 'T1', "Cancel posts its plan's discard", discarded());
+    a.querySelector('[data-delete-archive]').click(); await wait(20);
+    byText(a.querySelector('.delete-panel'), 'Cancel').click(); await wait(20);
+    const atOnce = discarded() === 'T1';
+    await wait(150);
+    check(atOnce && discarded() === 'T1,T2' && !a.querySelector('.delete-panel'), "a check cancelled meanwhile opens nothing when it answers, and posts its plan's discard", discarded());
+    a.querySelector('[data-delete-archive]').click(); await wait(150);
+    b.querySelector('[data-delete-archive]').click(); await wait(20);
+    check(!a.querySelector('.delete-panel') && discarded() === 'T1,T2,T3', "a panel closed for another posts its plan's discard", discarded());
+    await wait(150);
+    a.querySelector('[data-delete-archive]').click(); await wait(20);
+    b.querySelector('[data-delete-archive]').click(); await wait(170);
+    check(discarded() === 'T1,T2,T3,T4,T5' && !a.querySelector('.delete-panel') && !!b.querySelector('.delete-panel'),
+      "a panel closed during its check posts its plan's discard when the check answers", discarded());
+    const before = posts.length;
+    (pageListeners.pagehide || []).forEach(f => f({}));
+    const gone = posts.slice(before);
+    check(gone.length === 1 && gone[0].path === 'api/archive/delete/discard' && gone[0].body.token === 'T6' && gone[0].keepalive === true,
+      'the page going away posts the discard of every plan it holds, as a keepalive request', JSON.stringify(gone));
+  },
+  // A backup between the check and Delete (MA-1477, MA-1475): the delete's reply says changed, so
+  // its held result shows as before and the row's panel opens again by itself, checking, the typed
+  // name put back; when the new plan shows, one click deletes. Positive twin first: a refusal not
+  // marked changed shows its result and asks for nothing more.
+  async changedAgain() {
+    page([['D:\\Mail\\Busy', 'other'], ['E:\\Cur', 'current']], 'E:\\Cur');
+    boot(); await wait(30);
+    const row = doc.querySelectorAll('.archive-row')[0];
+    let n = 0;
+    replies['api/archive/delete/plan'] = x => plan(x.path, 'Busy', 'T' + (++n));
+    row.querySelector('[data-delete-archive]').click(); await wait(40);
+    replies['api/archive/delete'] = result({ ok: false, id: 'H1', row: 'D:\\Mail\\Busy', folder: 'D:\\Mail\\Busy', status: 'refused after start',
+      lines: ['A backup of this archive is running. Try again when it ends.'], rows: ['D:\\Mail\\Busy'], error: 'running' });
+    await typeAndDelete(row, 'Busy'); await wait(60);
+    const asked = () => posts.filter(p => p.path === 'api/archive/delete/plan');
+    check(asked().length === 1 && !row.querySelector('.delete-panel') && !!doc.querySelector('[data-held-id="H1"]'), 'the positive twin: a refusal not marked changed shows its result and asks for nothing more');
+    doc.querySelector('[data-held-id="H1"]').dataset.saved = '1';
+    row.querySelector('[data-delete-archive]').click(); await wait(40);
+    replies['api/archive/delete'] = result({ ok: false, id: 'H2', row: 'D:\\Mail\\Busy', folder: 'D:\\Mail\\Busy', status: 'refused after start',
+      lines: ['This archive changed since you clicked Delete. Click Delete again.'], rows: ['D:\\Mail\\Busy'], error: 'changed', changed: true });
+    delays['api/archive/delete/plan'] = 100;
+    await typeAndDelete(row, 'Busy'); await wait(30);
+    const w = row.querySelector('.delete-panel');
+    check(!!doc.querySelector('[data-held-id="H2"]') && asked().length === 3 && asked()[2].body.path === 'D:\\Mail\\Busy' && !!w && w.querySelector('input').value === 'Busy' &&
+      w.all().some(e => e.tagName === 'P' && e.textContent === delWords.checking),
+      'a changed refusal shows its result and asks for the plan again by itself, the typed name put back', JSON.stringify({ asked: asked().length, panel: !!w }));
+    await wait(120);
+    const go = w && byText(w, 'Delete permanently');
+    check(!!go && !go.disabled, 'when the new plan shows, one click deletes');
+  },
+  // Once Delete permanently sends the delete (MA-1477; the fold check's R2): the panel has no Cancel
+  // and its line says the delete can no longer be stopped; a reply refusing the delete before it began
+  // gives Cancel back with its words; a lost connection does not, since the delete may still be
+  // running. Positive twin first: before it is sent, Cancel is there.
+  async sentNoCancel() {
+    page([['D:\\Mail\\P', 'other'], ['E:\\Cur', 'current']], 'E:\\Cur');
+    boot(); await wait(30);
+    const row = doc.querySelectorAll('.archive-row')[0];
+    replies['api/archive/delete/plan'] = plan('D:\\Mail\\P', 'P', 'TOK');
+    row.querySelector('[data-delete-archive]').click(); await wait(40);
+    const w = row.querySelector('.delete-panel');
+    const twin = !!w && !!byText(w, 'Cancel');
+    replies['api/archive/delete'] = { ok: false, error: 'Another delete is running. Try again when it ends.' };
+    delays['api/archive/delete'] = 100;
+    await typeAndDelete(row, 'P'); await wait(20);
+    const alert = w.querySelector('[role=alert]');
+    check(twin && !byText(w, 'Cancel') && !alert.hidden && alert.textContent === delWords.deleting,
+      'once Delete permanently is sent, the panel has no Cancel and says the delete can no longer be stopped', alert.textContent);
+    await wait(120);
+    check(!!byText(w, 'Cancel') && alert.textContent === 'Another delete is running. Try again when it ends.', 'a reply refusing the delete before it began gives Cancel back, with its words', alert.textContent);
+    replies['api/archive/delete'] = NOANSWER; delays['api/archive/delete'] = 20;
+    byText(w, 'Delete permanently').click(); await wait(60);
+    check(!byText(w, 'Cancel') && /^Error: /.test(alert.textContent), 'a lost connection does not give Cancel back: the delete may still be running', alert.textContent);
+  },
+};
+
+// The panel's words while it checks and deletes (MA-1477; docs/design-1.7.5-fixes.md §3.2; the
+// friction review owns the final words).
+const delWords = {
+  checking: 'Checking what Delete would remove… This can take a few minutes for a large archive. Nothing is deleted yet.',
+  armed: 'When the check finishes, MailArchive checks once more, then deletes this archive, unless the check finds something you should see first. Keep this page open.',
+  found: 'The check found something to look at before deleting. Read it, then click Delete permanently.',
+  deleting: 'Deleting this archive. It can no longer be stopped. Keep this page open until its result shows here…',
 };
 
 (async () => {
