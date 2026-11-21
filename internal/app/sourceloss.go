@@ -147,8 +147,8 @@ func SkippedLines(skipped []SkippedInput, names bool) []string {
 //     streak's FirstUnreachable: when the archive that was failing first found it gone;
 //  3. else this run's start.
 //
-// A time later than start (a clock that was ahead) becomes start, and one before
-// state.MinPlausibleTime (a clock that was not set) becomes start and is never carried. The
+// A time before state.MinPlausibleTime (a clock that was not set) becomes start and is never
+// carried; a time later than start is kept as recorded (clampGoneSince, CON-02, Q8). The
 // previous record is read before the lock: it is written whole, by a rename, and a run that holds
 // the lock meanwhile makes this one refuse at the lock, writing nothing. An encrypted archive's
 // record keeps no paths: its one time is resolveEncryptedGone's.
@@ -223,9 +223,16 @@ func goneOf(ws []state.RunWarning) (n int, since time.Time) {
 }
 
 // clampGoneSince is since as a first-found time a record may keep: start for a time that is
-// zero, before state.MinPlausibleTime, or after start.
+// zero or before state.MinPlausibleTime (a clock that was not set).
+//
+// Amended by the 1.7.5 adversarial pass (CON-02; the owner, 2026-11-20, Q8: "Yes, change it
+// (Recommended)"): a time after start is kept as recorded, no longer moved to start. From the
+// records alone a clock that was ahead cannot be told from this run's clock being behind, and
+// moving the date to start in the second case moved it earlier for good, cutting the WARN short.
+// Kept, it can only make the WARN last longer (status counts a time after the run's start as no
+// time, so it WARNs), the direction §1.3 accepts.
 func clampGoneSince(since, start time.Time) time.Time {
-	if since.IsZero() || since.Before(state.MinPlausibleTime) || since.After(start) {
+	if since.IsZero() || since.Before(state.MinPlausibleTime) {
 		return start
 	}
 	return since

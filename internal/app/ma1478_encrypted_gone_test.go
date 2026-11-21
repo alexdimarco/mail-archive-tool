@@ -42,7 +42,8 @@ func plantEncryptedGone(t *testing.T, out string, since time.Time, count int) {
 // count's restart (owner, Q6): the same count, or a lower one, carries the earlier time; a higher
 // count restarts it at this run's start; a previous record with no count counts as 1, and one
 // past 1,000,000 as 1 too; a time ahead of this run's start or before MinPlausibleTime becomes
-// this run's start. Positive twin first: a run that skips nothing records none of it.
+// this run's start. Positive twin first: a run that skips nothing records none of it. (Amended
+// 2026-11-20, CON-02, the owner's Q8: a time ahead of this run's start is kept as recorded.)
 func TestAnEncryptedArchiveKeepsOnlyThatAMailboxIsGoneItsTimeAndCount(t *testing.T) {
 	f := goneFixture(t, false, "imap.qza.example", "imap.qzb.example", "imap.qzc.example")
 	a, b, c := f.stores["imap.qza.example"], f.stores["imap.qzb.example"], f.stores["imap.qzc.example"]
@@ -142,7 +143,16 @@ func TestAnEncryptedArchiveKeepsOnlyThatAMailboxIsGoneItsTimeAndCount(t *testing
 		t.Fatalf("a count past 1,000,000 counts as 1, so two gone restart (%s to %s): %s", from, to, got)
 	}
 	// Clamps: a time ahead of this run, and one before MinPlausibleTime.
-	for _, planted := range []time.Time{time.Now().Add(48 * time.Hour), time.Date(2020, 3, 1, 0, 0, 0, 0, time.UTC)} {
+	// Amended 2026-11-20 by the 1.7.5 adversarial pass (CON-02; the owner, 2026-11-20, Q8: "Yes,
+	// change it (Recommended)"): a time ahead of this run is now kept as recorded (the shared
+	// clampGoneSince), so the 48-hours-ahead case asserts that at the same strength; the 2020 case
+	// stays unchanged.
+	ahead := time.Now().Add(48 * time.Hour).Truncate(time.Second)
+	plantEncryptedGone(t, out, ahead, 2)
+	if got, _, _ := since(t); !got.Equal(ahead) {
+		t.Fatalf("a planted %s ahead of this run must be kept as recorded (Q8): %s", ahead, got)
+	}
+	for _, planted := range []time.Time{time.Date(2020, 3, 1, 0, 0, 0, 0, time.UTC)} {
 		plantEncryptedGone(t, out, planted, 2)
 		if got, from, to := since(t); !between(got, from, to) {
 			t.Fatalf("a planted %s must become this run's start (%s to %s): %s", planted, from, to, got)

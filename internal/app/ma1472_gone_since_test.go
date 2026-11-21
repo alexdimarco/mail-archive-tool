@@ -55,7 +55,8 @@ func between(t, from, to time.Time) bool { return !t.Before(from) && !t.After(to
 // resolved once, straight after discovery: rule 1, the previous record's warning for the same
 // input, carried; rule 3, this run's start. A time later than this run's start (a clock that was
 // ahead) and one before MinPlausibleTime (a clock not set) become this run's start and are never
-// carried. Positive twin first: a run that skipped nothing records no such warning.
+// carried. Positive twin first: a run that skipped nothing records no such warning. (Amended
+// 2026-11-20, CON-02, the owner's Q8: a time later than this run's start is kept as recorded.)
 func TestTheRecordKeepsWhenAMailboxWasFirstFoundGone(t *testing.T) {
 	f := goneFixture(t, false, "imap.qza.example", "imap.qzb.example")
 	a, b := f.stores["imap.qza.example"], f.stores["imap.qzb.example"]
@@ -94,7 +95,23 @@ func TestTheRecordKeepsWhenAMailboxWasFirstFoundGone(t *testing.T) {
 	}
 
 	// A clock that was ahead, and one not set: this run's start, never carried.
-	for _, planted := range []time.Time{time.Now().Add(48 * time.Hour), time.Date(2020, 3, 1, 0, 0, 0, 0, time.UTC), {}} {
+	// Amended 2026-11-20 by the 1.7.5 adversarial pass (CON-02; the owner, 2026-11-20, Q8: "Yes,
+	// change it (Recommended)"): a time ahead of this run's start is now kept as recorded, never
+	// moved to the start, since moving it cut the WARN short when it was this run's clock that was
+	// behind. The 48-hours-ahead case moves below, at the same strength (the exact time carried, by
+	// the next run too); the 2020 and zero cases stay here unchanged.
+	ahead := time.Now().Add(48 * time.Hour).Truncate(time.Second)
+	plantGoneSince(t, out, ahead)
+	for i := 0; i < 2; i++ {
+		if _, err, _ := goneRun(t, opts); err != nil {
+			t.Fatal(err)
+		}
+		lr, _, _ = state.ReadLastRun(out)
+		if got := goneWarningFor(t, lr, b).Since; !got.Equal(ahead) {
+			t.Fatalf("run %d: a planted since %s ahead of this run must be kept as recorded (Q8), got %s", i+1, ahead, got)
+		}
+	}
+	for _, planted := range []time.Time{time.Date(2020, 3, 1, 0, 0, 0, 0, time.UTC), {}} {
 		plantGoneSince(t, out, planted)
 		from = time.Now().UTC()
 		if _, err, _ := goneRun(t, opts); err != nil {

@@ -66,12 +66,24 @@ func TestStatusSaysAGoneMailboxForFourteenDaysOfBackupsThenANote(t *testing.T) {
 		}
 	}
 	// A time that counts as no time: the WARN shows, dated from the run's start.
-	for _, bad := range []time.Time{{}, time.Date(2020, 1, 1, 0, 0, 0, 0, time.UTC), day15.Add(30 * 24 * time.Hour)} {
+	// Amended 2026-11-20 by the 1.7.5 adversarial pass (CON-02; the owner, 2026-11-20, Q8: "Yes,
+	// change it (Recommended)"): a since after the run's start still WARNs, but is now said as
+	// recorded, and its "on or after" day counted from it, since that is when the WARN ends. That
+	// case is asserted below at the same strength (the WARN, and its own two dates); the zero and
+	// 2020 cases stay here unchanged.
+	for _, bad := range []time.Time{{}, time.Date(2020, 1, 1, 0, 0, 0, 0, time.UTC)} {
 		v := w
 		v.Since = bad
 		if got, rep := goneReport(t, state.RunOK, day15, v, day15); !rep.has(state.MailboxGoneCode) || !strings.Contains(got, "not found since "+day15.Local().Format("Jan 2, 2006")) {
 			t.Fatalf("a since of %s counts as no time, so the WARN shows:\n%s", bad, got)
 		}
+	}
+	ahead := w
+	ahead.Since = day15.Add(30 * 24 * time.Hour)
+	if got, rep := goneReport(t, state.RunOK, day15, ahead, day15); !rep.has(state.MailboxGoneCode) || rep.has("mailbox_gone_note") ||
+		!strings.Contains(got, "not found since "+ahead.Since.Local().Format("Jan 2, 2006")) ||
+		!strings.Contains(got, "on or after "+ahead.Since.Add(state.MailboxGoneNoteAfter).Local().Format("Jan 2, 2006")) {
+		t.Fatalf("a since after the run's start WARNs, dated as recorded (Q8):\n%s", got)
 	}
 	// No name: the path alone; a place another program keeps names that program.
 	v := w

@@ -23,6 +23,18 @@ func goneSinceKnown(since, started time.Time) bool {
 	return !since.IsZero() && !since.Before(state.MinPlausibleTime) && !since.After(started)
 }
 
+// goneDay is the first-found time status says the dates from: since as recorded, or the record's
+// own start for a since that is zero or before state.MinPlausibleTime (a clock that was not set).
+// Amended by the 1.7.5 adversarial pass (CON-02; the owner, 2026-11-20, Q8): a since after the
+// run's start is said as recorded, so the "on or after" day is the day the WARN really ends (it
+// WARNs until the run's start is 14 days past since); it was the run's start before.
+func goneDay(since, started time.Time) time.Time {
+	if since.IsZero() || since.Before(state.MinPlausibleTime) {
+		return started
+	}
+	return since
+}
+
 // mailboxGoneWarns reports whether a mailbox first found gone at since is still a WARN in a record
 // whose last run started at started: while started minus since is under
 // state.MailboxGoneNoteAfter (the owner's 14 days, 2026-11-20, Q2), counted between backups and
@@ -123,11 +135,7 @@ func jobInputs(job []string) (auto bool, inputs []string) {
 // WARN while it is under 14 days old by the record's own start ("the others were backed up" only
 // after a run that ended ok), the note after.
 func encryptedMailboxGone(r *Report, lr state.LastRun) {
-	since := lr.MailboxGoneSince
-	if !goneSinceKnown(since, lr.Started) {
-		since = lr.Started
-	}
-	date := since.Local().Format(mailboxGoneDate)
+	date := goneDay(lr.MailboxGoneSince, lr.Started).Local().Format(mailboxGoneDate)
 	switch {
 	case !mailboxGoneWarns(lr.MailboxGoneSince, lr.Started):
 		r.note("mailbox_gone_note", state.MailboxGoneNoteText(date))
@@ -145,10 +153,7 @@ func mailboxGone(r *Report, lr state.LastRun, w state.RunWarning) {
 	if w.Name != "" {
 		label = w.Name + " (" + w.Path + ")"
 	}
-	since := w.Since
-	if !goneSinceKnown(since, lr.Started) {
-		since = lr.Started
-	}
+	since := goneDay(w.Since, lr.Started)
 	date := since.Local().Format(mailboxGoneDate)
 	if !mailboxGoneWarns(w.Since, lr.Started) {
 		r.note("mailbox_gone_note", fmt.Sprintf("a mailbox this archive backed up is no longer on this computer: %s, not found since %s. Its mail already saved stays in the archive. This line stays while the archive's backup lists that mailbox; to end it, set the archive up again in the wizard, with the same archive folder, choose All of them, and answer Yes to keeping it current.", label, date))
