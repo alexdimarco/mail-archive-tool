@@ -556,13 +556,13 @@ func dirSize(dir string) int64 {
 }
 
 // listStores prints, one per line, the mail stores an export would archive with
-// a rough on-disk size — the -list preview — then one "Not found, so skipped: PATH"
-// line per listed input the run would skip because it is gone (MA-1480). It creates
-// nothing and exits 0.
+// a rough on-disk size — the -list preview — then one "Not found, would be skipped: PATH"
+// line per listed input the run would skip because it is gone (MA-1480; "would be", since
+// nothing runs: the 1.7.5 friction review's F14). It creates nothing and exits 0.
 func listStores(files, skipped []string) error {
 	defer func() {
 		for _, s := range skipped {
-			fmt.Println("Not found, so skipped: " + s)
+			fmt.Println("Not found, would be skipped: " + s)
 		}
 	}()
 	if len(files) == 0 {

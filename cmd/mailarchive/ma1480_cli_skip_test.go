@@ -82,9 +82,12 @@ func TestTheCommandLineSkipsAGoneMailboxOnce(t *testing.T) {
 		t.Fatalf("the run's log line must say it once, got %d:\n%s", n, printed)
 	}
 
+	// Amended 2026-11-20 by the 1.7.5 friction review (F14): -list is a preview, so it says "Not
+	// found, would be skipped: PATH" (it said "Not found, so skipped: PATH", though nothing ran).
+	// Pinned at the same strength, word for word, with the old words forbidden.
 	code, printed = cliRun(t, "-auto", "-input", a, "-input", b, "-out", out, "-list")
-	if code != 0 || !strings.Contains(printed, a) || !strings.Contains(printed, "Not found, so skipped: "+b+"\n") {
-		t.Fatalf("-list must print the found stores then the skipped one: exit %d\n%s", code, printed)
+	if code != 0 || !strings.Contains(printed, a) || !strings.Contains(printed, "Not found, would be skipped: "+b+"\n") || strings.Contains(printed, "so skipped") {
+		t.Fatalf("-list must print the found stores then the one it would skip: exit %d\n%s", code, printed)
 	}
 
 	if code, printed := cliRun(t, "-auto", "-input", a, "-input", b, "-out", out, "-follow-links", b); code != 0 || strings.Contains(printed, "is not one of the inputs being archived") {
