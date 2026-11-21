@@ -4,12 +4,50 @@ import (
 	"net/http"
 	"os"
 	"reflect"
+	"strings"
 	"testing"
 
 	"mail-archive-tool/internal/assure"
 	"mail-archive-tool/internal/graphconfig"
 	"mail-archive-tool/internal/keyring"
 )
+
+// covers: MA-1475, R36, R37
+// Any Lock ends every encrypted archive's waiting delete plan (the 1.7.5 re-verify's RV-06): the
+// archive opened under one spelling of its folder (macOS's /private/var for /var) and its row listed
+// under the other, the plan made from the row, which holds values read with the key, does not
+// outlive the Lock. Positive twin first: the plan waits before the Lock, and an unencrypted
+// archive's plan survives it.
+func TestAnyLockEndsEveryEncryptedDeletePlan(t *testing.T) {
+	out := backedUpEncrypted(t)
+	alt := "/private" + out
+	if !strings.HasPrefix(out, "/var/") {
+		alt = out // no second spelling here: the same spelling still proves the rule
+	} else if _, err := os.Stat(alt); err != nil {
+		alt = out
+	}
+	store := graphconfig.NewFileSecretStore(t.TempDir())
+	e := newDeleteEnv(t, func(w *wsEnv) { w.cfg.Store = store; w.cfg.Keys = newArchiveKeys(store, readerLockedNote) })
+	k := e.cfg.Keys
+	t.Cleanup(func() { k.lockAll(true) })
+	e.list(out)
+	x := e.plainArchive("Xplain")
+	if _, err := k.unlock(alt, keysPassword, keyring.OpenOptions{}); err != nil {
+		t.Fatal(err)
+	}
+	pe, px := e.plan(out), e.plan(x)
+	tokE, tokX := pe["token"].(string), px["token"].(string)
+	if e.d.pending.get(tokE, isDeletePlan) == nil || e.d.pending.get(tokX, isDeletePlan) == nil {
+		t.Fatal("positive twin: both plans wait before the Lock")
+	}
+	k.lock(alt)
+	if e.d.pending.get(tokX, isDeletePlan) == nil {
+		t.Error("positive twin: an unencrypted archive's plan survives a Lock")
+	}
+	if e.d.pending.get(tokE, isDeletePlan) != nil {
+		t.Errorf("the archive was locked as %s, but the delete plan made from its row %s, holding values read with its key, still waits", alt, out)
+	}
+}
 
 // covers: MA-1475, MA-972, R36, R37
 // Lock ends an encrypted archive's waiting delete plan (the 1.7.5 adversarial pass's OUT-05 (b) and

@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"mail-archive-tool/internal/app"
+	"mail-archive-tool/internal/archdelete"
 	"mail-archive-tool/internal/keyring"
 	"mail-archive-tool/internal/wizard"
 )
@@ -242,8 +243,16 @@ func (p *pendingSecrets) discard(token string, is func(*pendingItem) bool) {
 // (the message count, the mail's dates, the first run) and waits up to 24 hours, so any lock of
 // the archive ends it; its delete is then refused as no longer waiting. A delete's own lock
 // (LockForDelete) finds its plan already taken from the store, so it ends nothing it uses.
+//
+// Amended by the 1.7.5 re-verify (RV-06): any lock ends every encrypted archive's waiting delete
+// plan, whatever spelling of its folder the plan or the lock used (a row listed as /var/… and the
+// archive opened as /private/var/… have different keys). A plain archive's plan holds nothing read
+// with a key and is kept.
 func (p *pendingSecrets) discardFor(key string) {
-	p.discardWhere(func(it *pendingItem) bool { return key == "" || it.key == key || it.key == deletePlanKeyOf(key) })
+	p.discardWhere(func(it *pendingItem) bool {
+		return key == "" || it.key == key || it.key == deletePlanKeyOf(key) ||
+			(isDeletePlan(it) && it.deletePlan.plan != nil && it.deletePlan.plan.Kind == archdelete.Encrypted)
+	})
 }
 
 // discardExcept ends every item prepared on another archive's card than the one key
