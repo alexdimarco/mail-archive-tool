@@ -2038,7 +2038,7 @@ pre{white-space:pre-wrap;overflow-wrap:anywhere;background:var(--bg);border:1px 
     </div>{{end}}
     {{if .ShowThisArchive}}<div class="card" id="sec-this-archive">
       <h2>This archive</h2>
-      <p class="card-sub">The archive this page shows. <b>Delete…</b> erases its files, after showing what it would remove{{with index .Archives 0}}{{if .UnlistWhy}}. <span id="thisArchiveUnlistWhy"><b>Remove from list</b> is not offered for it now. {{.UnlistWhy}}</span>{{else}}; <b>Remove from list</b> takes it off MailArchive's list and keeps its files.{{end}}{{end}}</p>
+      <p class="card-sub">The archive this page shows. <b>Delete…</b> erases its files; you see what it would remove first unless you choose <b>Delete when the check finishes</b>{{with index .Archives 0}}{{if .UnlistWhy}}. <span id="thisArchiveUnlistWhy"><b>Remove from list</b> is not offered for it now. {{.UnlistWhy}}</span>{{else}}; <b>Remove from list</b> takes it off MailArchive's list and keeps its files.{{end}}{{end}}</p>
       <ul class="archive-list">
         {{range .Archives}}{{template "archiveRow" .}}{{end}}
       </ul>

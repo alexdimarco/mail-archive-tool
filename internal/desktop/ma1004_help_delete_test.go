@@ -20,8 +20,19 @@ var helpDeleteSentences = []string{
 	// Deleting an archive
 	"Delete… erases an archive's files from this computer for good. They are not moved to the Recycle Bin or the Trash, so they cannot be restored from there. Use it for mail you no longer need to keep, for example under a retention rule.",
 	"Each archive has its own Delete… button: on its row under Your archives, or on the This archive card when it is your only archive. When the button cannot be used, point at it to see why.",
-	"Click Delete…: nothing is deleted yet. Beside the archive, MailArchive shows what Delete would remove (how many files, and their size), the scheduled backups it would stop, and how many files in the folder are not the archive's, which are kept. To have the deletion approved first, click Save this plan to save the plan as a text file.",
-	"Type the folder's name exactly as it is shown, then click Delete permanently. Cancel deletes nothing.",
+	// Amended 2026-11-20 by the 1.7.5 friction review (F6), restated word for word at the same
+	// strength: the steps say the check can take minutes and the panel counts them, that the name can
+	// be typed during it, Delete when the check finishes, that a plan waits a day, and that a delete
+	// once started cannot be stopped. They were: "Click Delete…: nothing is deleted yet. Beside the
+	// archive, MailArchive shows what Delete would remove (how many files, and their size), the
+	// scheduled backups it would stop, and how many files in the folder are not the archive's, which
+	// are kept. To have the deletion approved first, click Save this plan to save the plan as a text
+	// file." and "Type the folder's name exactly as it is shown, then click Delete permanently. Cancel
+	// deletes nothing."
+	"Click Delete…: nothing is deleted yet. A panel opens beside the archive while MailArchive checks what Delete would remove; for a large archive this can take several minutes, and the panel counts them. When the check ends, it shows what Delete would remove (how many files, and their size), the scheduled backups it would stop, and how many files in the folder are not the archive's, which are kept. To have the deletion approved first, click Save this plan to save the plan as a text file.",
+	"While it checks, type the folder's name. Then either wait and read the plan, or click Delete when the check finishes: MailArchive deletes as soon as the check ends, unless the plan holds something you should decide first, which it then shows you. Until the delete starts, Cancel or closing the page deletes nothing.",
+	"After reading a plan, type the folder's name exactly as it is shown, then click Delete permanently. A plan waits up to a day, but a backup in the meantime makes MailArchive check again.",
+	"Once the delete starts it cannot be stopped: the panel says so and Cancel goes away.",
 	"The result says what was removed and what was kept. Click Save deletion record to save a copy as a text file: MailArchive keeps no copy after you close the result. Then click Dismiss.",
 	"What Delete removes: the archive's own files (its message pages and attachments, its search index and its records), its scheduled backups, its row under Your archives (for an encrypted archive, only when its folder goes too: see below) and, when nothing else is left in it, the folder. Files of your own in the folder are kept, and the folder with them. Mail copies in the folder that the archive did not record are kept too, unless you tick the box the plan shows for them.",
 	// An encrypted archive, as step 8 and step 9 do it (design §5.3; del-s5-A1-01, A2-01): the
