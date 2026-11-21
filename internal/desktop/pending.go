@@ -20,8 +20,18 @@ import (
 // down. A discarded new recovery key never takes effect, and the recovery file saved
 // for it is voided.
 
-// pendingLife is how long a prepared key change waits for its second step.
+// pendingLife is how long a prepared key change waits for its second step, and every other kind of
+// held item but a delete plan: a new or changed key, a recovery key to put back, a forget, an
+// unencrypted copy, a restore to Thunderbird and a new encrypted archive.
 const pendingLife = 10 * time.Minute
+
+// deletePlanLife is how long a delete plan waits for its typed name (docs/design-1.7.5-fixes.md §3.1,
+// MA-1475; the owner's report of 2026-11-19: a large archive's check can take minutes, and ten
+// minutes later the person had to wait through it again). It ends sooner at its panel's Cancel, a
+// panel closed for another, a check's reply to a panel cancelled meanwhile and the page going away
+// (/api/archive/delete/discard), as well as when it is used, replaced by a new plan of its row, at a
+// switch and at Shut down. A backup in between refuses it when Delete is clicked (samePlan).
+const deletePlanLife = 24 * time.Hour
 
 // pendingItem is one prepared key change.
 type pendingItem struct {
@@ -60,7 +70,7 @@ func isForgetPlan(it *pendingItem) bool  { return it.plan != nil }
 func isCopyPlan(it *pendingItem) bool    { return it.copyPlan != nil }
 func isDeletePlan(it *pendingItem) bool  { return it.deletePlan != nil }
 func isRestorePlan(it *pendingItem) bool { return it.restorePlan != nil }
-func anyKind(*pendingItem) bool          { return true } // its ten minutes are up, whatever it is
+func anyKind(*pendingItem) bool          { return true } // its life is up, whatever it is
 
 // isKeyCancel is what the new recovery key's Cancel ends: a key change, or a new encrypted
 // archive whose questions were answered and whose key is being made (the create flow shares that
@@ -132,11 +142,14 @@ type pendingSecrets struct {
 	mu     sync.Mutex
 	items  map[string]*pendingItem
 	closed bool // Shut down drained it: nothing more is kept
-	life   time.Duration
+	// One life per kind (MA-1475): deleteLife for a delete plan, life for every other kind, each
+	// set from its constant.
+	life       time.Duration
+	deleteLife time.Duration
 }
 
 func newPendingSecrets() *pendingSecrets {
-	return &pendingSecrets{items: map[string]*pendingItem{}, life: pendingLife}
+	return &pendingSecrets{items: map[string]*pendingItem{}, life: pendingLife, deleteLife: deletePlanLife}
 }
 
 // put keeps it under a new token, discarding any other prepared for the same archive.
@@ -158,7 +171,11 @@ func (p *pendingSecrets) put(it *pendingItem) string {
 			delete(p.items, t)
 		}
 	}
-	it.timer = time.AfterFunc(p.life, func() { p.discard(token, anyKind) })
+	life := p.life
+	if isDeletePlan(it) {
+		life = p.deleteLife
+	}
+	it.timer = time.AfterFunc(life, func() { p.discard(token, anyKind) })
 	p.items[token] = it
 	p.mu.Unlock()
 	// Replaced items end off the caller's locks: voiding a recovery file is disk

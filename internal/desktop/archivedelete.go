@@ -32,14 +32,15 @@ import (
 )
 
 // Delete an archive and Remove from list, the Desktop's server side
-// (docs/design-archive-delete.md §3, §5, §7, §8, slice 3; MA-971..MA-977). The four routes
-// are guarded POSTs through d.api; the plan and Remove from list act only on a row of Your
-// archives; a delete runs only through its plan's one-use token; and each delete's result
+// (docs/design-archive-delete.md §3, §5, §7, §8, slice 3; MA-971..MA-977). The five routes (the
+// fifth, discard, since 1.7.5: MA-1475) are guarded POSTs through d.api; the plan and Remove from
+// list act only on a row of Your archives; a delete runs only through its plan's one-use token; and
+// each delete's result
 // and deletion record are held here until the person dismisses it or shuts MailArchive
 // down. What a delete removes, in which order and with which words, is archdelete's: this
 // file only says how its steps reach this computer's scheduler, settings and keys.
 
-// deleteBodyMax caps the four routes' bodies, inside d.api's 1 MiB: a path, a token, a name.
+// deleteBodyMax caps the five routes' bodies, inside d.api's 1 MiB: a path, a token, a name.
 const deleteBodyMax = 64 << 10
 
 // The routes' own refusals (builder's words).
@@ -633,6 +634,12 @@ func (d *dashboard) deleteAction(w http.ResponseWriter, r *http.Request) {
 		"rows": rows, "page": pageAfterDelete(pageArchive, cleared, res)}
 	if res.Refusal != nil {
 		out["error"] = res.Message()
+		// A backup saved mail between the check and Delete (docs/design-1.7.5-fixes.md §3.1,
+		// MA-1475): the re-check under the lock refused the plan, so the page asks for it again by
+		// itself, the typed name kept. Only this refusal is marked.
+		if res.Refusal.Case == archdelete.CaseChanged {
+			out["changed"] = true
+		}
 	}
 	// Refused before its started line, the plan's one-use token is spent: Delete permanently can
 	// only be told the delete is no longer waiting (del-s3b conformance gap 3).
@@ -642,6 +649,22 @@ func (d *dashboard) deleteAction(w http.ResponseWriter, r *http.Request) {
 		out["error"] = planUsedText(msg)
 	}
 	writeJSON(w, out)
+}
+
+// deleteDiscardAction ends a delete plan the page no longer shows (docs/design-1.7.5-fixes.md §3.1,
+// MA-1475, MA-971 amended): its panel's Cancel, a panel closed for another, a check's reply to a
+// panel cancelled or closed meanwhile, and the page going away post its token here. Only a delete
+// plan's token is taken; a token of any other kind is left where it is (del-s3a-A4-02). It answers ok
+// whether or not the plan was still waiting, and changes nothing else.
+func (d *dashboard) deleteDiscardAction(w http.ResponseWriter, r *http.Request) {
+	var in struct {
+		Token string `json:"token"`
+	}
+	if !readDeleteBody(w, r, &in) {
+		return
+	}
+	d.pending.discard(in.Token, isDeletePlan)
+	writeJSON(w, map[string]any{"ok": true})
 }
 
 // runUnfinishedText refuses Archive now and Run now of a current archive whose delete did not

@@ -409,10 +409,12 @@ func (d *dashboard) router() localweb.Router {
 	mux.HandleFunc("/api/job/skip-program", d.api(d.skipProgramAction))
 	mux.HandleFunc("/api/runnow-stopwait", d.api(d.stopWaitAction))
 	mux.HandleFunc("/api/runnow-sync", d.api(d.runNowSyncAction))
-	// Delete an archive and Remove from list (design-archive-delete §3, slice 3): the four
-	// routes, each a guarded POST through d.api [C20, R4:NF-R4-THREE-ROUTES].
+	// Delete an archive and Remove from list (design-archive-delete §3, slice 3): the five
+	// routes, each a guarded POST through d.api [C20, R4:NF-R4-THREE-ROUTES]; the fifth, discard,
+	// ends a delete plan the page no longer shows (docs/design-1.7.5-fixes.md §3.1, MA-1475).
 	mux.HandleFunc("/api/archive/delete/plan", d.api(d.deletePlanAction))
 	mux.HandleFunc("/api/archive/delete", d.api(d.deleteAction))
+	mux.HandleFunc("/api/archive/delete/discard", d.api(d.deleteDiscardAction))
 	mux.HandleFunc("/api/archive/delete/dismiss", d.api(d.deleteDismissAction))
 	mux.HandleFunc("/api/archive/unlist", d.api(d.unlistAction))
 	// Restore to Thunderbird (design-restore-thunderbird §7.3, slice R7): four guarded POSTs
