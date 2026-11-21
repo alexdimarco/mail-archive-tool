@@ -2064,7 +2064,13 @@ func DiscoverInputs(inputs []string, auto bool) (files, skipped []string, err er
 				}
 				return nil, nil, &sourceUnreachableError{path: in}
 			}
-			return nil, nil, fmt.Errorf("input %s: %w", in, err)
+			// An input that cannot be examined (any error but "does not exist", which the skip rule
+			// judges): refused as a gone input the rule does not skip is, typed, so the run is recorded
+			// failed in the refusal's words and the streak moves. Windows CI at 1ba95c8: a dangling link
+			// spelled with a trailing "\" gives ERROR_DIRECTORY, and the run ended untyped. It was the
+			// plain error "input PATH: ERR", also a refusal; an input that exists but cannot be read
+			// passes this check, as before.
+			return nil, nil, &sourceUnreachableError{path: in}
 		}
 		if info.IsDir() {
 			if source.IsMailStoreDir(in) {

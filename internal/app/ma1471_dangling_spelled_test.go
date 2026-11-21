@@ -54,3 +54,41 @@ func TestADanglingLinkSpelledAnotherWayIsRefused(t *testing.T) {
 			assure.NoSideEffect(func() bool { return len(files) == 0 && len(skipped) == 0 }))
 	}
 }
+
+// covers: MA-1471, MA-688, R12, R18
+// A listed input that cannot be examined (os.Stat fails with anything but "does not exist") is
+// refused with the typed source refusal naming it, as a gone input the rule does not skip is, so the
+// run is recorded failed in those words and the streak moves (Windows CI at 1ba95c8: a dangling link
+// spelled with a trailing "\" gives ERROR_DIRECTORY there, and the run ended untyped). Here, with no
+// Windows: a path under a regular file (ENOTDIR). Positive twin first: the archive as it was backs
+// up. Today's behaviour kept: a folder that exists but cannot be read is not refused as unreachable.
+func TestAnInputThatCannotBeExaminedIsRefusedAsUnreachable(t *testing.T) {
+	f := goneFixture(t, false, "imap.qza.example", "imap.qzb.example")
+	a, b := f.stores["imap.qza.example"], f.stores["imap.qzb.example"]
+	out := tmpDir(t)
+	if _, err, _ := goneRun(t, Options{Inputs: []string{a, b}, Auto: true, Out: out}); err != nil {
+		t.Fatalf("positive twin: %v", err)
+	}
+	plain := filepath.Join(tmpDir(t), "qz-a-file")
+	if err := os.WriteFile(plain, []byte("x"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	under := filepath.Join(plain, "x")
+	if _, err := os.Stat(under); err == nil || errors.Is(err, os.ErrNotExist) {
+		t.Skipf("this system does not refuse a path under a file with another error: %v", err)
+	}
+	refusedGone(t, Options{Inputs: []string{a, under}, Auto: true, Out: out}, under)
+
+	locked := filepath.Join(tmpDir(t), "qz-locked")
+	if err := os.MkdirAll(locked, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Chmod(locked, 0); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { os.Chmod(locked, 0o755) })
+	var sue *sourceUnreachableError
+	if _, _, err := DiscoverInputs([]string{a, locked}, true); errors.As(err, &sue) {
+		t.Errorf("a folder that exists but cannot be read is refused as unreachable, a change from today: %v", err)
+	}
+}
