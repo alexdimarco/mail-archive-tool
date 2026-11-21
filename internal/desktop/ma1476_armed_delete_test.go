@@ -76,6 +76,9 @@ var armableKeys = map[string]armableKey{
 	"finishesNotes": {true, func(p *archdelete.DeletePlan) { p.Disagrees = true }},
 	"rerun":         {true, func(p *archdelete.DeletePlan) { p.Rerun = archdelete.RerunNoAnchor }},
 	"keyLine":       {true, func(p *archdelete.DeletePlan) { p.Kind = archdelete.Encrypted }},
+	// Added 2026-11-20 by the 1.7.5 friction review (F7): the closed list of what needs a decision,
+	// sent beside armable (decideReasons).
+	"decide": {true, func(p *archdelete.DeletePlan) { p.Unrecorded = []archdelete.Item{{Rel: "store/x.html"}} }},
 	"kind":          {true, func(p *archdelete.DeletePlan) { p.Kind = archdelete.Encrypted }},
 	// What Delete keeps or simply does, and what every plan says.
 	"kept":       {false, func(p *archdelete.DeletePlan) { p.Kept = []string{"my-notes.txt"} }},

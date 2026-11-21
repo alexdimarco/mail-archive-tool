@@ -502,6 +502,11 @@ func planView(p *archdelete.DeletePlan) map[string]any {
 		// delete route refuses an armed delete by. Not "plain", which kind already says.
 		"armable": armable(p),
 	}
+	// What needs a decision, in F7's closed list, for the panel's first line when an armed check
+	// finds it; sent only when there is something.
+	if r := decideReasons(p); len(r) > 0 {
+		m["decide"] = r
+	}
 	if p.Paused {
 		m["pausedLine"] = "This archive is paused."
 	}
@@ -532,11 +537,33 @@ func planView(p *archdelete.DeletePlan) map[string]any {
 // by it: one function, so the panel and the server cannot disagree. MA-1476's key check classifies
 // every key of the plan's reply, so a new line that needs a decision cannot leave it true unseen.
 func armable(p *archdelete.DeletePlan) bool {
-	return len(p.Unrecorded) == 0 && p.Synced == "" &&
-		len(p.Schedules.CheckYourself) == 0 && len(p.Schedules.Unconfirmed) == 0 && len(p.Schedules.OtherHost) == 0 &&
-		len(p.Held) == 0 &&
-		p.FinishesLine() == "" && len(p.FinishesNotes()) == 0 && p.Rerun == archdelete.RerunNone &&
-		p.Kind != archdelete.Encrypted
+	return len(decideReasons(p)) == 0
+}
+
+// decideReasons are what in the plan needs the person's decision, each in a closed list of words
+// the panel says (the 1.7.5 friction review's F7: "the plan holds something to decide first
+// (REASON)"); armable is true exactly when there is none, so the two cannot disagree.
+func decideReasons(p *archdelete.DeletePlan) []string {
+	var r []string
+	if len(p.Unrecorded) > 0 {
+		r = append(r, "mail copies this archive did not record")
+	}
+	if p.Synced != "" {
+		r = append(r, "a synced folder")
+	}
+	if len(p.Schedules.CheckYourself) > 0 || len(p.Schedules.Unconfirmed) > 0 || len(p.Schedules.OtherHost) > 0 {
+		r = append(r, "scheduled backups to check yourself")
+	}
+	if len(p.Held) > 0 {
+		r = append(r, "files another program has open")
+	}
+	if p.FinishesLine() != "" || len(p.FinishesNotes()) > 0 || p.Rerun != archdelete.RerunNone {
+		r = append(r, "an earlier delete to finish")
+	}
+	if p.Kind == archdelete.Encrypted {
+		r = append(r, "an encrypted archive's key")
+	}
+	return r
 }
 
 // doesNotReachOn is design-archive-delete §2's "What Delete does not reach" with only this

@@ -147,7 +147,10 @@ function row(path, state) {
   if (state !== 'running') {
     li.append(el('button', { class: 'btn secondary', type: 'button', 'data-unlist-archive': '', 'data-path': path }, 'Remove from list'));
     // data-delete-name: the last element of the row's path, as the server draws it (MA-1477).
-    li.append(el('button', { class: 'btn danger', type: 'button', 'data-delete-archive': '', 'data-path': path, 'data-delete-name': path.split(/[\\/]/).pop() }, 'Delete…'));
+    // data-delete-encrypted: an encrypted archive's row, as the server draws it (F8).
+    const del = el('button', { class: 'btn danger', type: 'button', 'data-delete-archive': '', 'data-path': path, 'data-delete-name': path.split(/[\\/]/).pop() }, 'Delete…');
+    if (state === 'encrypted') del.setAttribute('data-delete-encrypted', '');
+    li.append(del);
   }
   return li;
 }
@@ -1861,6 +1864,85 @@ const scenarios = {
       !!doc.querySelector('[data-held-id="H2"]') && !row.querySelector('.delete-panel'),
       'at the new plan the delete is sent armed again, and its result shows', JSON.stringify(dels().map(p => p.body)));
   },
+  // The panel's words (the 1.7.5 friction review's F7): the checking line says the name can be typed
+  // meanwhile; armed, the line says the second check and how to stop; a plan that needs a decision
+  // says what, from the server's closed list; a plan whose only miss is the typed name says that.
+  // Positive twin first: the checking line, then the armed line.
+  async panelWords() {
+    page([['D:\\Mail\\Odd', 'other'], ['E:\\Cur', 'current']], 'E:\\Cur');
+    boot(); await wait(30);
+    const odd = doc.querySelectorAll('.archive-row')[0];
+    const ps = w => w.all().filter(e => e.tagName === 'P').map(e => e.textContent);
+    delays['api/archive/delete/plan'] = 60;
+    replies['api/archive/delete/plan'] = Object.assign(plan('D:\\Mail\\Odd', 'Odd', 'TOK1'), { armable: false, decide: ['mail copies this archive did not record', 'a synced folder'] });
+    odd.querySelector('[data-delete-archive]').click(); await wait(10);
+    let w = odd.querySelector('.delete-panel');
+    check(ps(w).includes(delWords.checking), 'the positive twin: the checking line says the name can be typed meanwhile', JSON.stringify(ps(w)));
+    const inp = w.querySelector('input'); inp.value = 'Odd'; inp.fire('input'); byText(w, 'Delete when the check finishes').click(); await wait(5);
+    check(ps(w).includes(delWords.armed), 'armed, the line says the second check and how to stop', JSON.stringify(ps(w)));
+    await wait(80);
+    check(ps(w)[1] === delWords.foundWhy, 'a plan that needs a decision says what, from the closed list', JSON.stringify(ps(w)));
+    replies['api/archive/delete/plan'] = Object.assign(plan('D:\\Mail\\Odd', 'ODD', 'TOK2'), { armable: true });
+    odd.querySelector('[data-delete-archive]').click(); await wait(10);
+    w = odd.querySelector('.delete-panel');
+    const i2 = w.querySelector('input'); i2.value = 'Odd'; i2.fire('input'); byText(w, 'Delete when the check finishes').click(); await wait(80);
+    check(ps(w)[1] === delWords.name && !posts.some(p => p.path === 'api/archive/delete'), 'a plan whose only miss is the typed name says that, nothing sent', JSON.stringify(ps(w)));
+  },
+  // An encrypted archive's panel offers no Delete when the check finishes, which could never apply,
+  // and says why (F8); its plan then shows with Delete permanently. Positive twin first: a plain
+  // archive's panel offers it.
+  async encryptedNoArm() {
+    page([['D:\\Mail\\Plain', 'other'], ['E:\\Mail\\Enc', 'encrypted'], ['F:\\Cur', 'current']], 'F:\\Cur');
+    boot(); await wait(30);
+    const [plain, enc] = doc.querySelectorAll('.archive-row');
+    replies['api/archive/delete/plan'] = x => plan(x.path, x.path === plain.dataset.path ? 'Plain' : 'Enc', 'T-' + x.path.length);
+    delays['api/archive/delete/plan'] = 40;
+    plain.querySelector('[data-delete-archive]').click(); await wait(10);
+    check(!!byText(plain.querySelector('.delete-panel'), 'Delete when the check finishes'), 'the positive twin: a plain archive\'s panel offers Delete when the check finishes');
+    enc.querySelector('[data-delete-archive]').click(); await wait(10);
+    const w = enc.querySelector('.delete-panel'), ps = w.all().filter(e => e.tagName === 'P').map(e => e.textContent);
+    check(!byText(w, 'Delete when the check finishes') && ps.includes(delWords.encrypted), "an encrypted archive's panel offers no armed delete and says why", JSON.stringify(ps));
+    await wait(60);
+    check(!!byText(w, 'Delete permanently') && !!byText(w, 'Cancel'), 'its plan then shows with Delete permanently and Cancel');
+  },
+  // A check that loses its connection (a laptop that slept, say) says so in plain words, never the
+  // browser's own text (F13). Positive twin first: a refusal the server sends is said in its words.
+  async lostCheck() {
+    page([['D:\\Mail\\L', 'other'], ['E:\\Cur', 'current']], 'E:\\Cur');
+    boot(); await wait(30);
+    const row = doc.querySelectorAll('.archive-row')[0];
+    replies['api/archive/delete/plan'] = { ok: false, error: 'This folder is not in Your archives.' };
+    row.querySelector('[data-delete-archive]').click(); await wait(40);
+    check(doc.getElementById('settingsNote').textContent === 'This folder is not in Your archives.', 'the positive twin: a refusal is said in its own words');
+    replies['api/archive/delete/plan'] = NOANSWER; delays['api/archive/delete/plan'] = 20;
+    row.querySelector('[data-delete-archive]').click(); await wait(60);
+    const t = doc.getElementById('settingsNote').textContent;
+    check(t === delWords.lost && !/Error|TypeError|fetch/.test(t) && !row.querySelector('.delete-panel'), 'a lost connection during the check is said in plain words', t);
+  },
+  // Once a delete is sent the page no longer holds its token, so leaving the page cannot discard a
+  // delete the panel says can no longer be stopped (the adversarial pass's OUT-03); a refusal before
+  // it began gives the token back, and leaving then discards it. Positive twin first: a plan shown
+  // and not sent is discarded when the page goes away.
+  async sentHoldsNoToken() {
+    page([['D:\\Mail\\S', 'other'], ['E:\\Cur', 'current']], 'E:\\Cur');
+    boot(); await wait(30);
+    const row = doc.querySelectorAll('.archive-row')[0];
+    const leave = () => { const before = posts.length; (pageListeners.pagehide || []).forEach(f => f({})); return posts.slice(before).filter(p => p.path === 'api/archive/delete/discard').map(p => p.body.token); };
+    replies['api/archive/delete/plan'] = plan('D:\\Mail\\S', 'S', 'TOK');
+    row.querySelector('[data-delete-archive]').click(); await wait(40);
+    check(leave().join(',') === 'TOK', 'the positive twin: a plan shown and not sent is discarded when the page goes away');
+    page([['D:\\Mail\\S', 'other'], ['E:\\Cur', 'current']], 'E:\\Cur'); // the page drawn again
+    boot(); await wait(30);
+    const row2 = doc.querySelectorAll('.archive-row')[0];
+    replies['api/archive/delete/plan'] = plan('D:\\Mail\\S', 'S', 'TOK2');
+    row2.querySelector('[data-delete-archive]').click(); await wait(40);
+    replies['api/archive/delete'] = { ok: false, error: 'Another delete is running. Try again when it ends.' };
+    delays['api/archive/delete'] = 100;
+    await typeAndDelete(row2, 'S'); await wait(20);
+    check(leave().length === 0, 'a sent delete\'s token is not discarded when the page goes away');
+    await wait(120);
+    check(leave().join(',') === 'TOK2', 'a refusal before the delete began gives the token back, and leaving then discards it');
+  },
   // A re-armed delete refused as changed again asks for the plan once more UN-armed, so it cannot
   // loop (Q9): the third plan is shown with Delete permanently and nothing more is sent. Positive twin
   // first: the re-armed panel sends its delete armed.
@@ -1891,9 +1973,19 @@ const scenarios = {
 // The panel's words while it checks and deletes (MA-1477; docs/design-1.7.5-fixes.md §3.2; the
 // friction review owns the final words).
 const delWords = {
-  checking: 'Checking what Delete would remove… This can take a few minutes for a large archive. Nothing is deleted yet.',
-  armed: 'When the check finishes, MailArchive checks once more, then deletes this archive, unless the check finds something you should see first. Keep this page open.',
-  found: 'The check found something to look at before deleting. Read it, then click Delete permanently.',
+  // Amended 2026-11-20 by the 1.7.5 friction review (F7), each restated word for word: checking was
+  // '… Nothing is deleted yet.' (the sentence about typing meanwhile is added); armed was 'When the
+  // check finishes, MailArchive checks once more, then deletes this archive, unless the check finds
+  // something you should see first. Keep this page open.'; found was 'The check found something to
+  // look at before deleting. Read it, then click Delete permanently.' (here with no reason sent, as
+  // plan() sends none; foundWhy below has them).
+  checking: "Checking what Delete would remove… This can take a few minutes for a large archive. Nothing is deleted yet. You can type the folder's name below meanwhile.",
+  armed: 'When the check finishes, MailArchive deletes this archive, unless the check finds something you should decide first. Just before deleting it checks the folder once more, which takes about as long again. Keep this page open; until the delete starts, Cancel or closing this page deletes nothing.',
+  found: 'Nothing was deleted: the plan holds something to decide first. Read it, then click Delete permanently.',
+  foundWhy: 'Nothing was deleted: the plan holds something to decide first (mail copies this archive did not record and a synced folder). Read it, then click Delete permanently.',
+  name: "Nothing was deleted: the name typed does not match the folder's name, ODD, as it is on this computer (capital letters count). Type it as shown, then click Delete permanently.",
+  encrypted: "An encrypted archive's plan is always shown first, because it names its key.",
+  lost: 'The page lost touch with MailArchive during the check, so nothing was deleted. Click Delete… again.',
   deleting: 'Deleting this archive. It can no longer be stopped. Keep this page open until its result shows here…',
   changed: 'A backup ran after the check, so MailArchive is checking again below. Nothing was deleted; your typed name is kept.',
 };

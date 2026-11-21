@@ -51,9 +51,24 @@ function delNameMatches(typed,name){return typed!==''&&typed.normalize('NFC')===
 // Delete waits for you (docs/design-1.7.5-fixes.md §3; the friction review owns the final words): the
 // panel's line while its check runs, once Delete when the check finishes is clicked, when the check
 // found something to look at, and once the delete is sent.
-const delCheckingText='Checking what Delete would remove… This can take a few minutes for a large archive. Nothing is deleted yet.';
-const delArmedText='When the check finishes, MailArchive checks once more, then deletes this archive, unless the check finds something you should see first. Keep this page open.';
-const delFoundText='The check found something to look at before deleting. Read it, then click Delete permanently.';
+// The 1.7.5 friction review's F7 settled them: the checking line says the name can be typed
+// meanwhile; the armed line says the second check takes about as long again and how to stop; the
+// found line says what was found, from the server's closed list (decide), or that only the typed
+// name did not match. They were: "Checking what Delete would remove… This can take a few minutes
+// for a large archive. Nothing is deleted yet.", "When the check finishes, MailArchive checks once
+// more, then deletes this archive, unless the check finds something you should see first. Keep this
+// page open." and "The check found something to look at before deleting. Read it, then click Delete
+// permanently."
+const delCheckingText="Checking what Delete would remove… This can take a few minutes for a large archive. Nothing is deleted yet. You can type the folder's name below meanwhile.";
+const delArmedText='When the check finishes, MailArchive deletes this archive, unless the check finds something you should decide first. Just before deleting it checks the folder once more, which takes about as long again. Keep this page open; until the delete starts, Cancel or closing this page deletes nothing.';
+function delFoundLine(p){const r=(p&&p.decide)||[];const what=r.length<2?r.join(''):r.slice(0,-1).join(', ')+' and '+r[r.length-1];
+  return 'Nothing was deleted: the plan holds something to decide first'+(what?' ('+what+')':'')+'. Read it, then click Delete permanently.';}
+function delNameLine(name){return "Nothing was deleted: the name typed does not match the folder's name, "+name+", as it is on this computer (capital letters count). Type it as shown, then click Delete permanently.";}
+// An encrypted archive's plan is never armable (its key line), so its panel offers no Delete when
+// the check finishes and says why (the friction review's F8).
+const delEncryptedText="An encrypted archive's plan is always shown first, because it names its key.";
+// A check that lost its connection (a laptop that slept, say): plain words, not the browser's (F13).
+const delLostText='The page lost touch with MailArchive during the check, so nothing was deleted. Click Delete… again.';
 const delDeletingText='Deleting this archive. It can no longer be stopped. Keep this page open until its result shows here…';
 // Said under a delete refused because a backup ran between the check and Delete (changed, MA-1475),
 // while the page checks again by itself (the friction review's F5).
@@ -240,6 +255,8 @@ function delPanel(b,typed,rearm){
   // While the check runs: what is happening, the minutes so far, and the folder.
   const checking=line(delCheckingText);checking.setAttribute('role','status');
   const mins=line(delMinutes(0),'card-sub');
+  const encrypted=b.hasAttribute('data-delete-encrypted');
+  if(encrypted)line(delEncryptedText,'card-sub');
   line('Folder: '+row,'mono');
   // A delete waiting for its reply keeps its panel while another opens, so each box has an id of
   // its own and its label names it.
@@ -252,7 +269,7 @@ function delPanel(b,typed,rearm){
   const arm=delButton('Delete when the check finishes','btn danger-fill');arm.disabled=true;
   const go=delButton('Delete permanently','btn danger-fill');go.disabled=true;
   const cancel=delButton('Cancel','btn secondary');
-  const ga=delEl('div',null,'del-actions');ga.append(arm,cancel,hint);w.append(ga);
+  const ga=delEl('div',null,'del-actions');if(encrypted)ga.append(cancel,hint);else ga.append(arm,cancel,hint);w.append(ga);
   const msg=delEl('div',null,'note warnbox');msg.hidden=true;msg.setAttribute('role','alert');w.append(msg);
   // p: the plan, once the check answers; box: its "Also delete" box; token: its token while this
   // panel holds it; armed: Delete when the check finishes was clicked and the check has not answered.
@@ -316,7 +333,7 @@ function delPanel(b,typed,rearm){
     line(p.logLine,'card-sub');
     // The prompt is the plan's own from now on, and Delete permanently takes the waiting button's place.
     delTypeLabel(lab,{typeLine:p.typeLine,name:p.name});
-    if(arm.isConnected){ga.prepend(go);arm.remove();}
+    if(arm.isConnected){ga.prepend(go);arm.remove();}else if(!go.isConnected)ga.prepend(go);
     match();
   };
   // The plan's reply (from delPlan): armed, with nothing in it to decide and the plan's name typed,
@@ -325,7 +342,7 @@ function delPanel(b,typed,rearm){
   w.delFill=x=>{
     p=x;token=p.token;delTokens.add(token);
     if(armed&&p.armable===true&&delNameMatches(input.value,p.name)){delSend(true);return;}
-    show(armed&&p.armable!==true?delFoundText:'');
+    show(!armed?'':p.armable!==true?delFoundLine(p):delNameLine(p.name));
     disarm();
   };
   // Delete when the check finishes (1.7.5 §3.2): nothing is sent now. The panel waits for its check,
@@ -358,8 +375,12 @@ function delPanel(b,typed,rearm){
     // An armed panel was counted in flight, and marked waiting, from its click.
     if(fromArm)armed=false;else delInFlight++;
     w.setAttribute('data-delete-waiting','');cancel.remove();
+    // Sent: the page no longer holds the token, so leaving the page (pagehide) cannot discard a
+    // delete the panel says can no longer be stopped (the 1.7.5 adversarial pass's OUT-03). A
+    // refusal that kept it (no id, no planUsed) gives it back below.
+    delTokens.delete(token);
     try{const d=await(fromArm?delPost('api/archive/delete',{token:p.token,typed:input.value,unrecorded:false,drawnFor:drawnFor,armed:true,row:row}):delPost('api/archive/delete',{token:p.token,typed:input.value,unrecorded:!!(box&&box.checked),drawnFor:drawnFor}));
-      if(d.id||d.planUsed){delTokens.delete(token);token='';}
+      if(d.id||d.planUsed)token='';else if(token)delTokens.add(token);
       // A backup saved mail between the check and Delete (changed, MA-1475): the result shows as
       // before, saying the page checks again below (F5), and the plan is asked for again by itself,
       // the typed name put back, so one more click deletes; an armed delete's panel opens armed again,
@@ -416,7 +437,7 @@ async function delPlan(b,li,elsewhere,typed,rearm){
     if(!p.ok&&p.elsewhere){w.remove();w.delEnd();if(n)n.hidden=true;li.append(delElsewhereAsk(b,li,p));return;}
     if(!p.ok){w.remove();w.delEnd();if(n){n.hidden=false;n.textContent=p.error||'Could not plan the delete.';}return;}
     w.delFill(p);
-  }catch(e){done();if(w.isConnected){w.remove();w.delEnd();if(n){n.hidden=false;n.textContent='Error: '+e;}}}
+  }catch(e){done();if(w.isConnected){w.remove();w.delEnd();if(n){n.hidden=false;n.textContent=delLostText;}}}
 }
 document.querySelectorAll('[data-delete-archive]').forEach(b=>b.addEventListener('click',()=>{
   const li=b.closest('li');
