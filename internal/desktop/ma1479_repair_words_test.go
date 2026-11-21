@@ -174,9 +174,7 @@ func TestTheRepairWordsShowOnlyWhereARunWouldGetPastTheGoneMailbox(t *testing.T)
 
 	usb := filepath.Join(t.TempDir(), "USB", "Inbox")
 	link := filepath.Join(filepath.Dir(a), "imap.qzlink.example")
-	if err := os.Symlink(filepath.Join(t.TempDir(), "gone-target"), link); err != nil {
-		t.Skipf("this system cannot make a link here: %v", err)
-	}
+	canLink := os.Symlink(filepath.Join(t.TempDir(), "gone-target"), link) == nil // not on every Windows account
 	goneProfile := filepath.Join(filepath.Dir(filepath.Dir(filepath.Dir(a))), "gone.profile", "ImapMail", "imap.qzc.example")
 	for name, c := range map[string]struct {
 		errText string
@@ -193,6 +191,10 @@ func TestTheRepairWordsShowOnlyWhereARunWouldGetPastTheGoneMailbox(t *testing.T)
 		"another streak kind":                   {autoplace.GoneText(b), auto, "m365-unreachable", false},
 		"an encrypted archive":                  {autoplace.GoneText(b), auto, "local-source-unreachable", true},
 	} {
+		if name == "the refused input a link" && !canLink {
+			t.Logf("%s: not run, this system cannot make a link here", name)
+			continue
+		}
 		for _, interval := range []string{"daily", "manual"} {
 			out := stoppedArchive(t, c.errText, c.job, c.kind, interval, c.enc)
 			if health.GoneMailboxRepairable(out) {
