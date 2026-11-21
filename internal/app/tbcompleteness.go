@@ -21,6 +21,7 @@ import (
 	"strings"
 	"time"
 
+	"mail-archive-tool/internal/autoplace"
 	"mail-archive-tool/internal/lockfile"
 	"mail-archive-tool/internal/schedule"
 	"mail-archive-tool/internal/source"
@@ -97,13 +98,8 @@ func holdsMsf(dir string) bool {
 // streak and the record's carry-forward key on it, so two stores with one folder name are never
 // one account (ADV-C2-01). A hash, so no path is written beside the archive.
 func storeID(profile, store string) string {
-	norm := func(p string) string {
-		if p == "" {
-			return ""
-		}
-		return tbcomplete.FolderIdentity(filepath.ToSlash(filepath.Clean(absOrSame(p))))
-	}
-	return fingerprint("tbstore\x00" + norm(profile) + "\x00" + norm(store))
+	// One function with the reader of the names (autoplace.RecordedName, RV2-01): the same hash.
+	return autoplace.StoreID(profile, store)
 }
 
 // planTB is what the check needs of a local source before its walk: its profile and account,

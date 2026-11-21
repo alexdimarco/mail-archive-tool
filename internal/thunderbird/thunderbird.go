@@ -597,7 +597,30 @@ func findAccount(profileDir, storeDir string) (*Account, prefSettings, error) {
 // else its directory-rel resolved, with control characters stripped. False when no live account is
 // matched that way, when the matched account has no folder setting (nothing says it moved), or when
 // prefs.js or user.js cannot be read with certainty.
-func MovedTo(profileDir, storeDir string) (string, bool) {
+//
+// Amended by the 1.7.5 re-verify, round 2 (RV2-01; the lead's call, for the owner's own setup of
+// several accounts on one mail server): recordedName, when not "", is the account name the
+// archive's previous record gave this folder (cleaned by clean, as the live names are compared).
+// That is the primary rule: exactly one live account with that name and a folder setting that is not
+// the gone folder → moved (to that account's folder); no live account with that name → removed (not
+// moved); two or more → the server-name rule below. The server-name rule is only the fallback (a
+// record that names no account): the folder's name, or that name without a "-N" at its end or just
+// before its last dot (Thunderbird spells a second account's folder "imap.gmail-1.com"); among the
+// live accounts with that server name, moved when exactly one has every folder setting outside this
+// profile's ImapMail/ and Mail/.
+func MovedTo(profileDir, storeDir, recordedName string, clean func(string) string) (string, bool) {
+	dir, moved, _ := MovedHow(profileDir, storeDir, recordedName, clean)
+	return dir, moved
+}
+
+// MovedHow is MovedTo, also saying whether the recorded name decided (byName), so the refusal's words
+// can say "the account that used it" or "an account on the same mail server" (RF2-01).
+func MovedHow(profileDir, storeDir, recordedName string, clean func(string) string) (dir string, moved, byName bool) {
+	dir, moved = movedHow(profileDir, storeDir, recordedName, clean, &byName)
+	return dir, moved, byName && moved
+}
+
+func movedHow(profileDir, storeDir, recordedName string, clean func(string) string, byName *bool) (string, bool) {
 	s, _, err := readPrefs(profileDir)
 	if err != nil {
 		return "", false
@@ -632,42 +655,89 @@ func MovedTo(profileDir, storeDir string) (string, bool) {
 	if !samePath(parent, imapRoot, goos) && !samePath(parent, mailRoot, goos) {
 		return "", false
 	}
-	base := ""
-	if i := strings.LastIndexByte(name, '-'); i > 0 && i < len(name)-1 && strings.Trim(name[i+1:], "0123456789") == "" {
-		base = name[:i]
-	}
 	val := func(key string) string { return s.vals[key] }
-	var keys []string
-	for _, key := range liveServers(val) {
+	// folderOf is an account's folder settings (directory-rel resolved, directory) and the one to
+	// name: its directory, else its directory-rel.
+	folderOf := func(key string) ([]string, string) {
+		p := func(field string) string { return unquote(s.vals["mail.server."+key+"."+field]) }
+		var folders []string
+		if rel, ok := strings.CutPrefix(p("directory-rel"), "[ProfD]"); ok {
+			folders = append(folders, profile+"/"+rel)
+		}
+		dir := p("directory")
+		if dir != "" {
+			folders = append(folders, dir)
+		}
+		if dir == "" && len(folders) > 0 {
+			dir = filepath.Clean(filepath.FromSlash(folders[0]))
+		}
+		return folders, StripControl(dir)
+	}
+	live := liveServers(val)
+
+	// The primary rule: the account the previous record named for this folder (RV2-01).
+	if recordedName != "" && clean != nil {
+		var named []string
+		for _, key := range live {
+			if n := accountNameOf(key, s.vals); n != "" && clean(n) == recordedName {
+				named = append(named, key)
+			}
+		}
+		switch len(named) {
+		case 0:
+			return "", false // removed: no live account has the name
+		case 1:
+			folders, dir := folderOf(named[0])
+			if len(folders) == 0 {
+				return "", false // no folder setting: Thunderbird keeps it in the profile
+			}
+			for _, f := range folders {
+				if samePath(f, store, goos) {
+					return "", false // its folder setting still names the gone folder: deleted by hand (Q4)
+				}
+			}
+			*byName = true
+			return dir, true
+		}
+		// Two or more live accounts share the name: the server-name rule decides.
+	}
+
+	// The fallback: the server-name rule.
+	servers := []string{name}
+	if i := strings.LastIndexByte(name, '-'); i > 0 && i < len(name)-1 && strings.Trim(name[i+1:], "0123456789") == "" {
+		servers = append(servers, name[:i]) // "-N" at the end ("Feeds-1", "imap.qzd.example-1")
+	}
+	if d := strings.LastIndexByte(name, '.'); d > 0 {
+		if i := strings.LastIndexByte(name[:d], '-'); i > 0 && i < d-1 && strings.Trim(name[i+1:d], "0123456789") == "" {
+			servers = append(servers, name[:i]+name[d:]) // "-N" just before the last dot ("imap.gmail-1.com")
+		}
+	}
+	var outside []string // same-server accounts whose every folder setting is outside the profile
+	for _, key := range live {
 		h := norm.NFC.String(unquote(val("mail.server." + key + ".hostname")))
-		if h != "" && (sameComponent(h, name, goos) || (base != "" && sameComponent(h, base, goos))) {
-			keys = append(keys, key)
+		same := false
+		for _, sv := range servers {
+			same = same || (h != "" && sameComponent(h, sv, goos))
+		}
+		if !same {
+			continue
+		}
+		folders, _ := folderOf(key)
+		out := len(folders) > 0
+		for _, f := range folders {
+			if within(f, imapRoot, goos) || within(f, mailRoot, goos) {
+				out = false // a folder setting in this profile: not moved off it
+			}
+		}
+		if out {
+			outside = append(outside, key)
 		}
 	}
-	if len(keys) != 1 {
-		return "", false // no live account for it (removed), or more than one (cannot tell)
+	if len(outside) != 1 {
+		return "", false // none moved off the profile (removed beside one kept in it), or more than one (cannot tell)
 	}
-	p := func(field string) string { return unquote(s.vals["mail.server."+keys[0]+"."+field]) }
-	var folders []string
-	if rel, ok := strings.CutPrefix(p("directory-rel"), "[ProfD]"); ok {
-		folders = append(folders, profile+"/"+rel)
-	}
-	dir := p("directory")
-	if dir != "" {
-		folders = append(folders, dir)
-	}
-	if len(folders) == 0 {
-		return "", false // no folder setting: Thunderbird keeps it in the profile
-	}
-	for _, f := range folders {
-		if within(f, imapRoot, goos) || within(f, mailRoot, goos) {
-			return "", false // its folder setting is in this profile: deleted by hand, not moved (Q4)
-		}
-	}
-	if dir == "" {
-		dir = filepath.Clean(filepath.FromSlash(folders[0]))
-	}
-	return StripControl(dir), true
+	_, dir := folderOf(outside[0])
+	return dir, true
 }
 
 // within reports whether p is root or lies under it, compared as samePath compares paths.

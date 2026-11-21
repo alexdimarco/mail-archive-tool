@@ -8,6 +8,8 @@
 package autoplace
 
 import (
+	"crypto/sha256"
+	"encoding/hex"
 	"errors"
 	"fmt"
 	"io/fs"
@@ -18,6 +20,7 @@ import (
 	"sync/atomic"
 
 	"mail-archive-tool/internal/state"
+	"mail-archive-tool/internal/tbcomplete"
 	"mail-archive-tool/internal/thunderbird"
 )
 
@@ -163,26 +166,83 @@ const (
 // Added by the 1.7.5 adversarial pass (INS-02; the owner's ruling of 2026-11-20, Q7: "Stop the
 // backup (Recommended)"): a Thunderbird account moved with its Local Directory setting, not
 // removed (MovedTo), is never skipped, so the run stops as 1.7.4 did.
-func GoneSkippable(path string) bool {
+func GoneSkippable(path string) bool { return GoneSkippableAs(path, "") }
+
+// GoneSkippableAs is GoneSkippable with the account name the archive's previous record gave the
+// input's folder ("" when none: RecordedName), which decides a move first (RV2-01).
+func GoneSkippableAs(path, recordedName string) bool {
 	if !goneSkippable(path, patterns(), runtime.GOOS) {
 		return false
 	}
-	_, moved := MovedTo(path)
+	_, moved := MovedToAs(path, recordedName)
 	return !moved
 }
 
-// MovedTo reports, for a gone input in a Thunderbird profile, the folder its account was moved to:
-// Thunderbird's settings still list a live account for the input's folder (by its hostname) whose
-// folder setting names another place (thunderbird.MovedTo; MA-1481). False for an input in no
-// profile, for an account removed from the list, and for one whose folder setting still names the
-// input (its folder deleted by hand: the owner's Q4 case, skipped).
-func MovedTo(path string) (string, bool) {
+// MovedTo is MovedToAs with no recorded name (the server-name rule alone).
+func MovedTo(path string) (string, bool) { return MovedToAs(path, "") }
+
+// MovedToAs reports, for a gone input in a Thunderbird profile, the folder its account was moved to
+// (thunderbird.MovedTo; MA-1481): by the account the previous record named for the folder when it
+// names one (recordedName), else by the folder's server name. False for an input in no profile, an
+// account removed, and one whose folder setting still names the input (deleted by hand, Q4).
+func MovedToAs(path, recordedName string) (string, bool) {
 	look(path)
 	profile, ok := thunderbird.FindProfileDir(path)
 	if !ok {
 		return "", false
 	}
-	return thunderbird.MovedTo(profile, path)
+	return thunderbird.MovedTo(profile, path, recordedName, state.CleanFolderName)
+}
+
+// StoreID is a Thunderbird store's id in a run's record (state.TBAccount.StoreID): a hash of the
+// profile and the store's path, compared as the OS compares names; computable for a folder that is
+// gone. The completeness check writes it (app) and RecordedName reads it, by this one function.
+func StoreID(profile, store string) string {
+	norm := func(p string) string {
+		if p == "" {
+			return ""
+		}
+		if abs, err := filepath.Abs(p); err == nil {
+			p = abs
+		}
+		return tbcomplete.FolderIdentity(filepath.ToSlash(filepath.Clean(p)))
+	}
+	sum := sha256.Sum256([]byte("tbstore\x00" + norm(profile) + "\x00" + norm(store)))
+	return hex.EncodeToString(sum[:16])
+}
+
+// RecordedName is the account name the plaintext record prev gave the store at path: its Thunderbird
+// entry with the same StoreID, else its gone-mailbox warning for the same input (GoneSourceID; a path
+// not plain local or outside the places is passed over first, never looked at). "" for none, and for
+// an encrypted record (it keeps no names). The run, the command line and the Repair helper all ask it,
+// so they decide a move alike (RV2-01).
+func RecordedName(prev state.LastRun, path string) string {
+	if prev.Encrypted {
+		return ""
+	}
+	if len(prev.Thunderbird) > 0 {
+		if profile, ok := thunderbird.FindProfileDir(path); ok {
+			id := StoreID(profile, path)
+			for _, e := range prev.Thunderbird {
+				if e.StoreID == id && e.Name != "" {
+					return state.CleanFolderName(e.Name)
+				}
+			}
+		}
+	}
+	read := 0
+	for _, w := range prev.Warnings {
+		if w.Code != state.MailboxGoneCode {
+			continue
+		}
+		if read++; read > state.MaxGoneWarnings {
+			break
+		}
+		if w.Name != "" && w.Path != "" && !NonLocal(w.Path) && InPlace(w.Path) && GoneSourceID(w.Path) == GoneSourceID(path) {
+			return w.Name
+		}
+	}
+	return ""
 }
 
 // PstMovedText is the remedy for an Outlook data file (.pst) moved away, in status and the
@@ -201,7 +261,26 @@ func MovedText(path, movedTo string) string {
 	// back that mail up again, set the account's Local Directory back to its folder in the Thunderbird
 	// profile, or back up NEW as an archive of its own (Make a new archive…, then Thunderbird / mbox
 	// mail folder).").
-	return fmt.Sprintf("input %s does not exist: Thunderbird still has this account, but now keeps its mail in %s (its Local Directory setting was changed), so this backup stopped. To back that mail up again, either set the account's Local Directory back to %s in Thunderbird (Account Settings, then Server Settings); or back up %s as an archive of its own (Make a new archive…, then Thunderbird / mbox mail folder) and stop this archive looking for %s (Make a new archive…, then All of them and this same archive folder).", path, movedTo, path, movedTo, path)
+	// The re-verify, round 2's RF2-01: said when the archive's record named the folder's account and
+	// that account now keeps its mail elsewhere. Its name stays out: a refusal reaches log files
+	// (MA-1288). Local Folders keeps its setting on its own page.
+	return fmt.Sprintf("input %s does not exist, so this backup stopped: Thunderbird still has the account that used it, but now keeps its mail in %s (its Local Directory setting). To back that mail up again, either set the account's Local Directory back to %s (in Thunderbird: Account Settings, then Server Settings, or Local Folders' own page); or back up %s as an archive of its own (Make a new archive…, then Thunderbird / mbox mail folder) and stop this archive looking for %s (Make a new archive…, then All of them and this same archive folder).", path, movedTo, path, movedTo, path)
+}
+
+// MovedSameServerText is the refusal's words when only the server-name rule found the move (the
+// record named no account): the re-verify, round 2's RF2-01 words as the reviewer wrote them.
+func MovedSameServerText(path, movedTo string) string {
+	return fmt.Sprintf("input %s does not exist, so this backup stopped: a Thunderbird account on the same mail server now keeps its mail in %s (its Local Directory setting). If you moved that account there, set its Local Directory back to %s (in Thunderbird: Account Settings, then Server Settings, or Local Folders' own page), or back up %s as an archive of its own (Make a new archive…, then Thunderbird / mbox mail folder). If you removed the account that used %s, or you now back up %s on its own, stop this archive looking for %s (Make a new archive…, then All of them and this same archive folder).", path, movedTo, path, movedTo, path, movedTo, path)
+}
+
+// MovedHowAs is MovedToAs, also saying whether the recorded name decided (for the words).
+func MovedHowAs(path, recordedName string) (string, bool, bool) {
+	look(path)
+	profile, ok := thunderbird.FindProfileDir(path)
+	if !ok {
+		return "", false, false
+	}
+	return thunderbird.MovedHow(profile, path, recordedName, state.CleanFolderName)
 }
 
 // ProgramOf names the mail program whose place path lies in, by the patterns auto-discovery

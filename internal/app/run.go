@@ -660,7 +660,7 @@ func Run(ctx context.Context, opts Options, logger *log.Logger, onProgress Progr
 			return Result{}, err
 		}
 	}
-	files, gone, err := DiscoverInputs(opts.Inputs, opts.Auto)
+	files, gone, err := DiscoverInputsFor(opts.Inputs, opts.Auto, RecordedNamesAt(opts.Out))
 	if err == nil && len(gone) > 0 {
 		// A listed mailbox that is gone was skipped (MA-1471): said straight after discovery, in
 		// the log the run's "Reading" lines go to, and handed back on every return from here.
@@ -2035,6 +2035,33 @@ func snapshot(src, dir string) (string, func(), error) {
 // whose Thunderbird account was moved, not removed, is never skipped, and its refusal says
 // where the account went (autoplace.MovedTo, MA-1481).
 func DiscoverInputs(inputs []string, auto bool) (files, skipped []string, err error) {
+	return DiscoverInputsFor(inputs, auto, nil)
+}
+
+// RecordedNamesAt reads the previous last-run record of the archive at out once and gives, for an
+// input, the account name it recorded for that folder (autoplace.RecordedName); nil when out is "".
+// The run and the command line's up-front check pass it to DiscoverInputsFor (RV2-01).
+func RecordedNamesAt(out string) func(string) string {
+	if out == "" {
+		return nil
+	}
+	prev, st, _ := state.ReadLastRun(out)
+	if st != state.LastRunPresent {
+		return nil
+	}
+	return func(in string) string { return autoplace.RecordedName(prev, in) }
+}
+
+// DiscoverInputsFor is DiscoverInputs with nameOf, the account name the archive's previous record
+// gave each input's folder (nil or "" for none), which decides first whether a gone Thunderbird
+// folder's account was moved or removed (autoplace.GoneSkippableAs; the 1.7.5 re-verify's RV2-01).
+func DiscoverInputsFor(inputs []string, auto bool, nameOf func(string) string) (files, skipped []string, err error) {
+	recorded := func(in string) string {
+		if nameOf == nil {
+			return ""
+		}
+		return nameOf(in)
+	}
 	seen := map[string]bool{}
 	add := func(p string) {
 		abs, err := filepath.Abs(p)
@@ -2051,15 +2078,19 @@ func DiscoverInputs(inputs []string, auto bool) (files, skipped []string, err er
 		info, err := os.Stat(in)
 		if err != nil {
 			if errors.Is(err, fs.ErrNotExist) {
-				if auto && autoplace.GoneSkippable(in) {
+				name := ""
+				if auto {
+					name = recorded(in)
+				}
+				if auto && autoplace.GoneSkippableAs(in, name) {
 					skipped = append(skipped, in)
 					continue
 				}
 				if auto {
 					// A Thunderbird account moved, not removed: stopped as 1.7.4 did, in words that say
 					// where it went (MA-1481; the owner, 2026-11-20, Q7: "Stop the backup").
-					if dir, moved := autoplace.MovedTo(in); moved {
-						return nil, nil, &sourceUnreachableError{path: in, movedTo: dir}
+					if dir, moved, byName := autoplace.MovedHowAs(in, name); moved {
+						return nil, nil, &sourceUnreachableError{path: in, movedTo: dir, sameServer: !byName}
 					}
 				}
 				return nil, nil, &sourceUnreachableError{path: in}

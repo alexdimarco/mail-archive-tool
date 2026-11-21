@@ -55,7 +55,9 @@ func TestARunNeverLooksAtANetworkPathPlantedInTheGoneWarnings(t *testing.T) {
 		t.Fatalf("positive twin: the local warning carries its date (got %s; looked at %v)", s[0].Since, looked)
 	}
 
-	for _, host := range []string{`\\evil-host\share\Mail`, "//evil-host/share/Mail", "evil-host/share/Mail"} {
+	// Amended 2026-11-21 by the re-verify, round 2 (RV2-06): also a local path outside the places
+	// auto-discovery looks, passed over before any look, as the Repair helper does since RV-01.
+	for _, host := range []string{`\\evil-host\share\Mail`, "//evil-host/share/Mail", "evil-host/share/Mail", filepath.Join(home, "qz-evil-host-outside", "Mail")} {
 		mu.Lock()
 		looked = nil // each spelling's looks alone
 		mu.Unlock()

@@ -275,7 +275,9 @@ func runExport(args []string) error {
 	// A listed input that is gone and that the run would skip (-auto, MA-1471) refuses nothing
 	// here, and this check reports none of its own: app.Run says the skip, once, in its summary
 	// (design-1.7.5-fixes §1.5, MA-1480), so the terminal never shows two lists that could disagree.
-	discovered, skipped, err := app.DiscoverInputs(inputs, *o.auto)
+	// The archive's previous record names each Thunderbird folder's account, which decides first
+	// whether a gone one was moved or removed, as the run decides it (RV2-01).
+	discovered, skipped, err := app.DiscoverInputsFor(inputs, *o.auto, app.RecordedNamesAt(*o.out))
 	if err == nil {
 		// An opt-in that names no input would be read as no opt-in, so it is refused here. It is
 		// checked against the inputs found plus the skipped ones: an opt-in for a skipped input

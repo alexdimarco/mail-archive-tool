@@ -38,7 +38,11 @@ const (
 //
 // movedTo, when set, is where Thunderbird now keeps the gone input's account, which was moved with
 // its Local Directory setting, not removed (MA-1481; the owner's Q7): the words say so.
-type sourceUnreachableError struct{ path, movedTo string }
+// sameServer: only the server-name rule found the move (RF2-01's other words).
+type sourceUnreachableError struct {
+	path, movedTo string
+	sameServer    bool
+}
 
 // pathLeadsNowhere reports whether a look at a listed input failed because the path, as spelled,
 // leads to nothing: a component that is not a folder (ENOTDIR), or on Windows ERROR_DIRECTORY (267,
@@ -56,6 +60,9 @@ func pathLeadsNowhere(err error) bool {
 // Error is autoplace.GoneText, unchanged, so whatever compares a record's error with an input's
 // refusal (health.GoneMailboxRepairable) compares one text; for a moved account, autoplace.MovedText.
 func (e *sourceUnreachableError) Error() string {
+	if e.movedTo != "" && e.sameServer {
+		return autoplace.MovedSameServerText(e.path, e.movedTo)
+	}
 	if e.movedTo != "" {
 		return autoplace.MovedText(e.path, e.movedTo)
 	}
@@ -207,7 +214,7 @@ func resolveGoneSince(out string, skipped []SkippedInput, start time.Time) {
 				// The record is untrusted (C-17): a path in it that is not a plain local one is
 				// passed over before GoneSourceID looks at it on disk (MA-869; the 1.7.5 adversarial
 				// pass's INS-01).
-				if w.Code == state.MailboxGoneCode && w.Path != "" && !autoplace.NonLocal(w.Path) && autoplace.GoneSourceID(w.Path) == id {
+				if w.Code == state.MailboxGoneCode && w.Path != "" && !autoplace.NonLocal(w.Path) && autoplace.InPlace(w.Path) && autoplace.GoneSourceID(w.Path) == id { // InPlace: RV2-06
 					since, found = w.Since, true
 					// The friction review's F3: a name the settings no longer give is carried from
 					// the previous warning (cleaned at read).

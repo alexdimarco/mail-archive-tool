@@ -21,9 +21,12 @@ func movedWords(old, moved string) []string {
 	// Amended 2026-11-20 by the 1.7.5 re-verify (RF-03), at the same strength: "Thunderbird still has
 	// this account" for "Thunderbird still lists its account", and where the setting is, and how to stop
 	// this archive looking for the old folder.
-	return []string{"input " + old + " does not exist", "Thunderbird still has this account", moved,
-		"Local Directory", "(Account Settings, then Server Settings)", "Make a new archive…", "Thunderbird / mbox mail folder",
-		"stop this archive looking for " + old}
+	// Amended again 2026-11-21 by the re-verify, round 2 (RF2-01), at the same strength: the account
+	// named in the record says "Thunderbird still has the account that used it", and where Local
+	// Folders keeps its setting.
+	return []string{"input " + old + " does not exist, so this backup stopped", "Thunderbird still has the account that used it", moved,
+		"Local Directory", "(in Thunderbird: Account Settings, then Server Settings, or Local Folders' own page)", "Make a new archive…",
+		"Thunderbird / mbox mail folder", "stop this archive looking for " + old}
 }
 
 // stoppedOn174 plants what 1.7.4 left for an "All of them" archive at out that it stopped on the
@@ -207,6 +210,129 @@ func TestAMoveUnderAnotherNameOrUnderMailStopsTheBackup(t *testing.T) {
 	c := tbAcct{n: 4, host: "pop.qzc.example", typ: "pop3", dir: popMoved}
 	tbWrite(t, prefs, tbPrefsJS(acctA, acctB, local, c))
 	refusesAsMoved(t, []string{a, b, pop, f.local}, pop, popMoved)
+}
+
+// covers: MA-1481, MA-1479, R12, R18
+// The owner's own setup (the 1.7.5 re-verify, round 2's RV2-01; the lead's call): three accounts on
+// one mail server, their folders spelled as Thunderbird spells them (imap.qzg.example,
+// imap.qzg-1.example, imap.qzg-2.example). The previous record names each folder's account, and that
+// decides first: the second account removed in Thunderbird is skipped; the same account, still in
+// Thunderbird but moved to another folder, stops the backup (Q7), named from the record (here carried
+// by the skip's warning). The Repair helper agrees: it says Repair for the removed account, not for
+// the moved one. Positive twin first: the removed account is skipped.
+func TestTheRecordedNameDecidesAMoveAmongAccountsOnOneServer(t *testing.T) {
+	f := goneFixture(t, false)
+	host := "imap.qzg.example"
+	folders := []string{"imap.qzg.example", "imap.qzg-1.example", "imap.qzg-2.example"}
+	var accts []tbAcct
+	var inputs []string
+	for i, fd := range folders {
+		dir := filepath.Join(f.profile, "ImapMail", fd)
+		tbStoreAt(t, dir, tbFolder{path: "INBOX", listed: 2, msgs: tbMsgs(fd, 2)})
+		accts = append(accts, tbAcct{n: i + 1, host: host, typ: "imap", dirRel: "ImapMail/" + fd, extra: map[string]string{"name": `"qz` + string(rune('a'+i)) + `@qzg.example"`}})
+		inputs = append(inputs, dir)
+	}
+	prefs := filepath.Join(f.profile, "prefs.js")
+	tbWrite(t, prefs, tbPrefsJS(accts...))
+	out := tmpDir(t)
+	if _, err, _ := goneRun(t, Options{Inputs: inputs, Auto: true, Out: out}); err != nil {
+		t.Fatal(err)
+	}
+	b := inputs[1]
+	if err := os.RemoveAll(b); err != nil {
+		t.Fatal(err)
+	}
+	// The third account keeps its mail off the profile (moved long ago), so the server-name rule alone
+	// would decide both cases below the wrong way: it would stop for the removed account (one
+	// same-server account outside) and skip the moved one (two outside). The recorded name decides.
+	away3 := filepath.Join(tmpDir(t), "QZUSB", "QZGmail3")
+	tbStoreAt(t, away3, tbFolder{path: "INBOX", listed: 2, msgs: tbMsgs("imap.qzg-2.example", 2)})
+	c3 := accts[2]
+	c3.dirRel, c3.dir = "", away3
+	// Positive twin: the second account removed in Thunderbird: skipped, named from the record.
+	tbWrite(t, prefs, tbPrefsJS(accts[0], c3))
+	res, err, _ := goneRun(t, Options{Inputs: inputs, Auto: true, Out: out, Unattended: true})
+	if err != nil || len(res.Skipped) != 1 || res.Skipped[0].Name != "qzb@qzg.example" {
+		t.Fatalf("positive twin: a removed account among three on one server is skipped: %+v %v", res.Skipped, err)
+	}
+	stopped := tmpDir(t)
+	plantStopped := func() {
+		stoppedOn174(t, stopped, inputs, b)
+		lr, _, _ := state.ReadLastRun(stopped)
+		lr.Warnings = []state.RunWarning{{Code: state.MailboxGoneCode, Message: "x", Path: b, Name: "qzb@qzg.example", Since: lr.Started}}
+		if err := state.WriteLastRun(stopped, lr); err != nil {
+			t.Fatal(err)
+		}
+	}
+	plantStopped()
+	if !health.GoneMailboxRepairable(stopped) {
+		t.Fatal("positive twin: the Repair helper says Repair for the removed account")
+	}
+	// The same account still in Thunderbird, moved to another folder.
+	away := filepath.Join(tmpDir(t), "QZUSB", "QZGmail2")
+	tbStoreAt(t, away, tbFolder{path: "INBOX", listed: 2, msgs: tbMsgs("imap.qzg-1.example", 2)})
+	m := accts[1]
+	m.dirRel, m.dir = "", away
+	tbWrite(t, prefs, tbPrefsJS(accts[0], m, c3))
+	if health.GoneMailboxRepairable(stopped) {
+		t.Error("the Repair helper says Repair for a moved account, where the run stops")
+	}
+	if dir, moved := autoplace.MovedToAs(b, "qzb@qzg.example"); !moved || dir != away {
+		t.Errorf("named in the record, the moved account is found: %q %v", dir, moved)
+	}
+	before, _ := os.ReadFile(filepath.Join(out, ".mailarchive-manifest.json"))
+	res, err, _ = goneRun(t, Options{Inputs: inputs, Auto: true, Out: out, Unattended: true})
+	code, msg := 0, ""
+	var sue *sourceUnreachableError
+	if err != nil {
+		code, msg = 1, err.Error()
+		if !errors.As(err, &sue) {
+			code = 3
+		}
+	}
+	// The account's name stays out of the refusal, which the run's log file holds (MA-1288).
+	assure.Refused(t, code, msg, assure.Code(1), assure.Names("input "+b+" does not exist", away, "Thunderbird still has the account that used it"),
+		assure.Forbid("qzb@qzg.example"),
+		assure.NoSideEffect(func() bool {
+			after, _ := os.ReadFile(filepath.Join(out, ".mailarchive-manifest.json"))
+			return bytes.Equal(before, after) && res.Stats.Exported == 0
+		}))
+}
+
+// covers: MA-1481, R12
+// The server-name fallback, for a record that names no account (the re-verify, round 2's RV2-01 (a)
+// and (b), RV2-03): a "-N" at the folder name's end ("imap.qzd.example-1"), just before its last dot
+// ("imap.qzd-1.example", Thunderbird's own spelling) or at the end of a name with no dot ("qzfeeds-1")
+// is the same server; and among the live accounts with that server name, the one moved is found when
+// exactly one has every folder setting outside the profile, even beside another kept in it. Positive
+// twin first: a removed account beside a same-server account kept in the profile is skipped.
+func TestTheServerNameFallbackFindsAMoveBesideASameServerAccount(t *testing.T) {
+	f := goneFixture(t, true, "imap.qza.example")
+	a := f.stores["imap.qza.example"]
+	prefs := filepath.Join(f.profile, "prefs.js")
+	acctA := tbAcct{n: 1, host: "imap.qza.example", typ: "imap", dirRel: "ImapMail/imap.qza.example"}
+	local := tbAcct{n: 3, host: "Local Folders", typ: "none", dirRel: "Mail/Local Folders"}
+	x := filepath.Join(f.profile, "ImapMail", "imap.qzd.example")
+	tbStoreAt(t, x, tbFolder{path: "INBOX", listed: 2, msgs: tbMsgs("imap.qzd.example", 2)})
+	xa := tbAcct{n: 5, host: "imap.qzd.example", typ: "imap", dirRel: "ImapMail/imap.qzd.example"}
+	d1 := filepath.Join(f.profile, "ImapMail", "imap.qzd.example-1")
+	tbWrite(t, prefs, tbPrefsJS(acctA, local, xa))
+	if _, skipped, err := DiscoverInputs([]string{a, x, d1, f.local}, true); err != nil || len(skipped) != 1 {
+		t.Fatalf("positive twin: removed beside a same-server account in the profile is skipped: %v %v", skipped, err)
+	}
+	away := filepath.Join(tmpDir(t), "QZUSB", "QZWork3")
+	tbStoreAt(t, away, tbFolder{path: "INBOX", listed: 2, msgs: tbMsgs("imap.qzd.example", 2)})
+	y := tbAcct{n: 6, host: "imap.qzd.example", typ: "imap", dir: away}
+	tbWrite(t, prefs, tbPrefsJS(acctA, local, xa, y))
+	refusesAsMoved(t, []string{a, x, d1, f.local}, d1, away) // (b), the "-N"-at-the-end spelling
+	tb := filepath.Join(f.profile, "ImapMail", "imap.qzd-1.example")
+	refusesAsMoved(t, []string{a, x, tb, f.local}, tb, away) // (a), Thunderbird's spelling
+	feeds := filepath.Join(f.profile, "Mail", "qzfeeds-1")
+	feedsAway := filepath.Join(tmpDir(t), "QZUSB", "QZFeeds")
+	tbStoreAt(t, feedsAway, tbFolder{path: "Inbox", msgs: tbMsgs("feeds", 2)})
+	fa := tbAcct{n: 7, host: "qzfeeds", typ: "rss", dir: feedsAway}
+	tbWrite(t, prefs, tbPrefsJS(acctA, local, fa))
+	refusesAsMoved(t, []string{a, feeds, f.local}, feeds, feedsAway) // a name with no dot
 }
 
 // covers: MA-1481, MA-1472, R18

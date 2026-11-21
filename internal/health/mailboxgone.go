@@ -179,14 +179,16 @@ func goneMailboxRepairable(out string) (string, bool) {
 			break
 		}
 	}
-	if named == "" || !autoplace.GoneSkippable(named) {
+	// The run's rule with the record's account names, as the run asks it (RV2-01: a moved account,
+	// named in the record, is not one a Repair gets past).
+	if named == "" || !autoplace.GoneSkippableAs(named, autoplace.RecordedName(lr, named)) {
 		return "", false
 	}
 	there := 0
 	for _, in := range inputs {
 		if _, err := autoplace.Stat(in); err == nil {
 			there++
-		} else if !autoplace.GoneSkippable(in) {
+		} else if !autoplace.GoneSkippableAs(in, autoplace.RecordedName(lr, in)) {
 			return "", false
 		}
 	}

@@ -17,7 +17,11 @@ import (
 // makes at most that many looks. Positive twin first: a warning within the cap carries its date.
 func TestARunReadsAtMostSoManyGoneWarnings(t *testing.T) {
 	home := tmpDir(t)
-	parent := filepath.Join(home, "p", "ImapMail")
+	// Amended 2026-11-21 (RV2-06): the planted paths lie where auto-discovery looks, as a run's own
+	// warnings do; a warning outside the places is now passed over before any look. Assertions kept.
+	t.Setenv("HOME", home)
+	t.Setenv("USERPROFILE", home)
+	parent := filepath.Join(home, ".thunderbird", "p", "ImapMail")
 	b := filepath.Join(parent, "imap.qzb.example")
 	first := time.Date(2026, 11, 1, 12, 0, 0, 0, time.UTC)
 	ws := []state.RunWarning{{Code: state.MailboxGoneCode, Message: "x", Path: b, Since: first}}
