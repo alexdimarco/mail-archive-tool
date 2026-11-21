@@ -79,8 +79,12 @@ type heldPlan struct {
 // new plan of the folder replaces the old one and nothing else.
 func deletePlanKey(row string) string {
 	_, k := keyOf(row)
-	return "delete\x00" + k
+	return deletePlanKeyOf(k)
 }
+
+// deletePlanKeyOf is the pending store's key of a delete planned for the folder whose archive key
+// (keyOf) is key: Lock ends it by it (Q10).
+func deletePlanKeyOf(key string) string { return "delete\x00" + key }
 
 // readDeleteBody decodes one of the four routes' JSON bodies, refusing one over the cap with
 // 413 and one it cannot read with 400; ok is false when it has answered.
