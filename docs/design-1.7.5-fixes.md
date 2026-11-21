@@ -17,6 +17,13 @@ restarts its warning. It closes O5 (§7). Folded in §1.3 ("Encrypted archives")
 and phase 2a's allow-list line, MA-1478), §5, P5 and §8. Revision 3's text is kept; each change is
 written beside what it changes.
 
+**Revision 4, 2026-11-20:** the post-build reviews folded and built: the adversarial pass
+(`docs/review-1.7.5-adversarial.md`: OUT-01 with INS-01, INS-03, INS-06, CON-01, CON-03, OUT-02,
+OUT-03, OUT-04's guard; CON-04's correction to R9; INS-05 a known limit; INS-04 the Windows lab's)
+and the friction review (`docs/review-1.7.5-friction.md`: F1 to F14), and the owner's four answers
+to Q7 to Q10 (§0). Each change is written beside what it changes, marked *Revision 4*; §9 lists every
+fix, its commit's subject and its rows. Revision 3.1's text is kept.
+
 ## 0. The owner's words
 
 - 2026-11-19, after the report that a combined archive stops when one account's folder is gone:
@@ -62,6 +69,20 @@ written beside what it changes.
     gone (a number only, no names), so a new loss restarts the warning?" Answer: "Yes
     (Recommended)". Folded in §1.3 ("Encrypted archives": `mailbox_gone_count`), §1.6 (MA-734, A6
     and phase 2a's allow-list line, amended again; MA-1478), §5, P5, §7 (O5 closed) and §8.
+- *Revision 4.* 2026-11-20, the owner's answers to the post-build reviews' four questions
+  (`docs/review-1.7.5-adversarial.md` and `docs/review-1.7.5-friction.md`, the leads' folds), each
+  the recommended answer:
+  - **Q7** (the adversarial pass's INS-02): a Thunderbird account moved with its Local Directory
+    setting, not removed, is skipped quietly; refuse, or skip with true words? Answer: "Stop the
+    backup (Recommended)". Folded in §1.2 (*Revision 4*, rule (e)) and MA-1481.
+  - **Q8** (CON-02): keep a first-found date later than this run's start, which changes one MA-1472
+    test case? Answer: "Yes, change it (Recommended)". Folded in §1.3 (*Revision 4*, beside the
+    clamp) and MA-1472, MA-1478.
+  - **Q9** (the friction review's F5): when an armed delete is refused because a backup ran in
+    between, check again and delete, once? Answer: "Re-check, then delete (Recommended)". Folded in
+    §3.1 (*Revision 4*) and MA-1477.
+  - **Q10** (OUT-05 (b), CON-06): should Lock end a waiting delete plan? Answer: "Yes, Lock ends it
+    (Recommended)". Folded in §3.1 (*Revision 4*) and MA-1475.
 
 The three parts are independent: each can be reviewed, built and reverted alone. They ship
 together as 1.7.5 because each is small. The per-mailbox archives the owner also approved
@@ -126,6 +147,28 @@ these hold:
   redirected `APPDATA`) refuses as today.
 - **(d) At least one mailbox remains** after the skips: a listed input that exists, or a store
   auto-discovery finds this run.
+
+*Revision 4:*
+
+- **(a), amended (the adversarial pass's INS-03).** `os.Lstat` runs on the path as listed and on the
+  path cleaned, and the input is gone only when both say it does not exist: a trailing separator,
+  "/." or "link/.." make the system follow the last link, so a dangling link spelled so would
+  otherwise read as gone.
+- **(e), added (INS-02; the owner's Q7: "Stop the backup (Recommended)").** It was not moved: no live
+  account in the profile's settings owns the folder by its hostname while every folder setting of
+  that account (`directory`, `directory-rel`) names another place (`thunderbird.MovedTo`, through
+  `autoplace.MovedTo` inside `autoplace.GoneSkippable`, so the run, the rebuild and the Repair helper
+  agree). A moved account's run refuses as 1.7.4 did, with `sourceUnreachableError`, whose words
+  (`autoplace.MovedText`) name the old folder, say Thunderbird still lists its account and where it
+  now keeps its mail, and give the two ways to back that mail up; they name folders only, never the
+  account's name (MA-1288). An account removed from the list, one whose folder setting still names
+  the folder (deleted by hand: Q4) and one with no folder setting are skipped as before; a prefs.js
+  or user.js that cannot be read with certainty tells no move. `autoplace` now also imports
+  `internal/thunderbird`, a leaf of its own (MA-1481).
+- **One rule for a non-local path (OUT-01).** `autoplace.NonLocal` holds the Desktop's
+  `isRemotePath` rule (a network or device path, or one not absolute), which the Desktop, status
+  and a run now share (§1.3, *Revision 4*). `GoneSkippable` itself does not ask it: a run's inputs
+  come from the person's own job, not the record.
 
 Otherwise the run is refused exactly as today, with `sourceUnreachableError`
 (`app/sourceloss.go:33-37`) naming the first listed input that does not meet (a) to (c), or, when
@@ -233,6 +276,12 @@ without saying so:
   is bounded by the streak's own start, and it arises on the way up from 1.7.4: a 1.7.5 record
   carries each skipped input's own `Since` (rule 1), so rule 2 is reached only when the previous
   record has none for this input.
+  *Revision 4, corrected (the adversarial pass's CON-04):* "on the way up from 1.7.4" is not the
+  only way. 1.7.5's own refusals at discovery (a gone group folder, a link, a place outside, nothing
+  left; and, since Q7, a moved account) record no skip warnings, so the next run that skips reaches
+  rule 2 too, or rule 3. Its date is then the streak's first date or a later one: a mailbox already
+  a note can WARN again for 14 days from a later date. That is the direction this design accepts
+  (longer, never shorter); no code changes.
 
   A `Since` later than this run's start becomes this run's start (a clock that was ahead). One
   before `state.MinPlausibleTime` (2024-01-01, `state/sourceloss.go:93-95`; a clock that was not
@@ -240,6 +289,19 @@ without saying so:
   record is read before the lock. That is safe: it is written whole, by a rename
   (`lastrun.go:231-260`), and a run that holds the lock meanwhile makes this one refuse at the lock,
   writing nothing (`lockRefusal`, `internal/app/emptied.go:213-220`).
+  *Revision 4 (CON-02; the owner's Q8: "Yes, change it (Recommended)"):* a `Since` later than this
+  run's start is now kept as recorded. From the records alone a clock that was ahead cannot be told
+  from this run's clock being behind, and moving the date to the start in the second case moved it
+  earlier for good and cut the WARN short. Kept, it can only make the WARN last longer: status counts
+  a date after the run's start as no time, so it WARNs, and says its dates from `Since` as recorded.
+  The encrypted record's time shares the clamp. The zero and pre-2024 rules are unchanged.
+  *Revision 4 (OUT-01, with INS-01):* rule 1 passes over a previous warning whose path is not a
+  plain local one (`autoplace.NonLocal`) before `autoplace.GoneSourceID` looks at it, and reads at
+  most `state.MaxGoneWarnings` (64) of a record's warnings (INS-06). *Revision 4 (the friction
+  review's F3):* when the profile's settings no longer name the account (removed on purpose), its
+  name is taken from the previous record's Thunderbird entry with the same `store_id`, then carried
+  from the previous warning; it is said on screen and in status, never in a log file (MA-1288). The
+  warning gains `listed` (omitempty) when the name came from the settings (F4).
   **The id of a gone input.** `state.PathSourceID` of a gone path cannot resolve links
   (`manifest.go:490-503`: `EvalSymlinks` fails, so the path is only cleaned), while a recorded
   store's id was resolved when the store existed. `autoplace.GoneSourceID(path)` is `state.PathSourceID`
@@ -288,6 +350,19 @@ without saying so:
     current." The last part is needed (fold check R8): only that answer rewrites the job file
     (`installOffered`, `internal/wizard/wizard.go:2185-2198`, writes it at `:2195`), and a job file
     the wizard does not rewrite keeps listing the gone mailbox.
+  - *Revision 4, the words as built after the friction review and the adversarial pass:* "on or
+    after DAY" names the first local day every backup of which is 14 days on (CON-01: since plus
+    14 days at local midnight names that day, else the next); a warning with no path says "a mailbox
+    this archive backs up was not found, so it was skipped; its record does not say which. Click Run
+    now in MailArchive Desktop to see which one." (CON-03); "and Local Folders is still backed up"
+    when it alone is left (F12); the last sentence is "Thunderbird still lists this account: open
+    Thunderbird and let it download the account's mail; the next backup finds it again." for a
+    listed account (F4) and "If you moved this file, put it back in FOLDER, or click Make a new
+    archive… in MailArchive Desktop and choose it in its new place." for an Outlook .pst (F9); the
+    note's remedy names the button: "to end it, click Make a new archive… in MailArchive Desktop,
+    choose All of them and this same archive folder, and answer Yes to keeping it current." (F11's
+    words; the "Stop looking for it" button stays in §5). Status says at most 64 gone mailboxes,
+    then one count line (INS-06), and reads Name and Path cleaned (`CleanFolderName`, no bidi).
   - **It is permanent until then.** A gone input never leaves the job by itself: an edit never
     rebuilds (`localschedule.go:188-192`), and §1.4 keeps it. So the run log line, the summaries'
     lines and the note repeat on every run. The note's last sentence says how to end it, including
@@ -339,6 +414,23 @@ without saying so:
       same direction: the new words show in fewer cases, never more.
 
     Otherwise every surface keeps today's words exactly.
+
+    *Revision 4 (the adversarial pass's OUT-01 with INS-01, MEDIUM; MA-869):* the record is
+    untrusted (C-17), so the helper also says no, before any file check, when any `-input` its job
+    lists is not a plain local path (`autoplace.NonLocal`); and the Desktop asks it inside
+    `withinSourceWait` (the banner, the Settings card, and the health view through
+    `health.Input.GoneRepair`), so a stalled look draws the page within `sourceWait` with today's
+    words. A profile under a redirected network `APPDATA` therefore keeps today's words, the safe
+    direction. The helper says no for a moved account too (Q7, through `GoneSkippable`).
+    *Revision 4 (the friction review's F2 and F10):* the words name the missing mailbox ("(the
+    missing mailbox: PATH)", `health.GoneMailboxRepairableInput`), say "MailArchive now skips" for
+    "this version skips", and the Settings card says "click Repair on the Scheduled backup card";
+    status's RED line drops the drive advice where the helper says yes; with the current archive's
+    scheduled entry there again (a Repair done, or not yet paused), the banner and status say "Its
+    scheduled backup is set, and MailArchive now skips a mailbox that is gone, so the next backup
+    backs up the others; to back up now, click Run now …", and Repair's reply says "Repaired. The next
+    backup skips the missing mailbox; to back up now, click Run now." No repair date is kept, so F2's
+    "Repaired on DATE" is said that way.
   - **One helper, in `internal/health` (fold check R3).** Revision 2 put it beside
     `sourceLostSince` in `internal/desktop`; status's code (`health.go:505-512`) could not call it
     there, since desktop imports health (`internal/desktop/maintenance.go:14`), so status would
@@ -445,6 +537,11 @@ without saying so:
     answer Yes to keeping it current." That the wizard's set-up-again rewrites an encrypted
     archive's job file as it does a plaintext one is recalled, not read; the friction walk
     checks it.
+    *Revision 4 (the friction review's F1):* the walk found it does not: the wizard refuses an
+    encrypted archive's folder without its key, and Run now is greyed out while it is locked. The
+    three sentences now say "unlock it on its Encryption card in MailArchive Desktop, then click Run
+    now to see which one", and the note ends "This line stays while the archive's backup still lists
+    that mailbox." with no wizard sentence. Ending it is §5's "Stop looking for it" button.
   - **What one date cannot tell apart (open item O5).** The record keeps one time for the whole
     archive. When a second mailbox goes while the first is still gone, rule 1 carries the first
     one's time, so once that is 14 days old the second loss shows only as the note, where a
@@ -499,7 +596,8 @@ skips it and warns on every run (§1.3).
   The up-front discovery (`main.go:275`) reports none of its own, so the terminal never prints two
   lists that could disagree if a folder goes between the two discoveries.
 - **`-list`** (`main.go:280-282`, `listStores`, `main.go:555`) prints the stores found, then one
-  "Not found, so skipped: PATH" line per skipped input.
+  "Not found, so skipped: PATH" line per skipped input. *Revision 4 (the friction review's F14):*
+  "Not found, would be skipped: PATH", since `-list` is a preview and nothing runs.
 - **`-follow-links`** (`main.go:276-279`): an opt-in is checked against the inputs found plus the
   skipped ones. So an opt-in that names a skipped input is no longer refused with words that do not
   fit ("is not one of the inputs being archived", `FollowLinksRefusal`, `run.go:240-254`) and a
@@ -700,6 +798,22 @@ the plan again by itself: the held result shows as today, and the row's panel op
 "Checking what Delete would remove…" and the typed name put back, so the person needs one more
 click when the new plan shows. The delete's reply marks this case (`changed: true`, from
 `archdelete.CaseChanged`), so the page asks again only then.
+*Revision 4 (the friction review's F5; the owner's Q9: "Re-check, then delete (Recommended)"):*
+under the held result the page says "A backup ran after the check, so MailArchive is checking again
+below. Nothing was deleted; your typed name is kept."; and when the refused delete was armed, the
+plan is asked for again armed, once: its delete is sent armed with the new plan's token and the
+panel's row, which the server checks as any armed delete; a re-armed delete refused as changed
+again asks once more un-armed, so it cannot loop. Whether a bookkeeping-only backup should leave a
+plan alone, or a backup skip an archive whose delete plan waits, stays the owner's deeper choice
+(F5), not built.
+
+*Revision 4 (OUT-05 (b), CON-06; the owner's Q10: "Yes, Lock ends it (Recommended)"):* a plan
+made while an encrypted archive was open holds values read with its key, so any lock of that
+archive (Lock, the idle lock, a switch's, forget-all) also ends its waiting delete plan
+(`pendingSecrets.discardFor` matches `deletePlanKeyOf(key)`); its delete is then refused "no longer
+waiting". A delete's own lock finds its plan already taken. Matched by the archive's key spelling, so
+a row listed under another spelling of the same folder (a link) keeps its plan until its 24 hours, a
+switch or Shut down.
 
 **Every delete walks the folder twice.** At Delete, the plan is made again in full under the lock
 (`execute.go:340`): the same walk, and the same SHA-256 of the manifest, as the check. So a large
@@ -840,6 +954,32 @@ can at most show a refusal. It cannot delete, unseen, a plan that needed a decis
 row's archive. **Delete permanently** sends no `armed`, so it is checked exactly as today. MA-1476
 proves both refusals in Go with `assure.Refused`.
 
+*Revision 4, the panel and the route as built after the reviews:*
+
+- **The words (the friction review's F7).** The checking line adds "You can type the folder's name
+  below meanwhile."; the armed line is "When the check finishes, MailArchive deletes this archive,
+  unless the check finds something you should decide first. Just before deleting it checks the
+  folder once more, which takes about as long again. Keep this page open; until the delete starts,
+  Cancel or closing this page deletes nothing."; an armed check that finds something says "Nothing
+  was deleted: the plan holds something to decide first (REASONS). Read it, then click Delete
+  permanently.", REASONS from a closed list the server sends as `decide` (`decideReasons`, from
+  which `armable` is now made); one whose only miss is the typed name says so. Kept: the deleting
+  line, the tooltip, the other-row refusal.
+- **An encrypted archive (F8).** Its Delete… carries `data-delete-encrypted`; its panel offers no
+  Delete when the check finishes and says "An encrypted archive's plan is always shown first,
+  because it names its key."
+- **A lost connection during the check (F13)** says "The page lost touch with MailArchive during the
+  check, so nothing was deleted. Click Delete… again."
+- **A row removed from the list during an armed check (OUT-02)** is refused "This archive was removed
+  from Your archives while its check ran, so nothing was deleted.", not as another row's panel.
+- **A sent delete's token (OUT-03)** leaves the page's `delTokens` when it is sent, so `pagehide`
+  cannot discard a delete the panel says can no longer be stopped; a refusal that kept it gives it
+  back.
+- **OUT-04's guard (refuted, kept):** the page holds exactly two posts to the delete route, the armed
+  one (`armed:true`, the panel's row) sent only from the plan's reply, and Delete permanently's sent
+  only by its click; a structural test says so.
+- **The guide, the This archive card, the README and X14 (F6)** describe the panel as built.
+
 **MA-1476's key check.** `armable` must not drift from `planView` as lines are added. The test lists
 every key the plan route's reply carries (`planView`'s, and the route's own: `ok`, `token`, `row`,
 `logLine`, `planText`, `planName`, `armable`) and classifies each as armable-blocking or
@@ -950,6 +1090,11 @@ nothing in the list needs your decision."
      folder removed: refused as today. Then the profile folder replaced by a junction to a folder
      elsewhere, with an account folder removed in it: what the rule does on Windows is written down
      (P1's condition), and with the junction's target removed it refuses.
+     *Revision 4 (the adversarial pass's INS-04, left to this lab):* also an `ImapMail` folder that
+     is a junction (below the root), with an account folder removed in it: MA-1471 says it refuses;
+     if Go's `filepath.EvalSymlinks` does not follow the junction, the rule counts it in place and
+     skips, and the lab writes down which. A moved account (Q7, MA-1481) is walked too: its Local
+     Directory pointed at another folder, its old folder removed: the run refuses in its words.
    - Settings creating the schedule on an archive whose schedule was removed first (no job file),
      so it reaches the rebuild (on 1.7.4 it refuses; on 1.7.5 it saves, the gone input kept). An
      archive that still has its job file proves nothing here.
@@ -1003,6 +1148,16 @@ nothing in the list needs your decision."
   of its own (§1.3); a date per mailbox is still not.
 - A delete armed and held on the server (§3.2 says why not).
 - Making the delete check itself faster, or doing without the second walk.
+- *Revision 4, a known limit (the adversarial pass's INS-05, LOW):* a disk mounted at a profile's
+  `ImapMail` (or `Mail`) folder that is missing at boot leaves an empty mount-point folder, which
+  rule (c) takes as the real parent, so every account folder on that disk is skipped as gone while
+  Local Folders remains: the backups go on with a WARN, then a note, as for an account removed. Rule
+  (c) has no device check; telling a mount point from a folder is not in this change. Rare (a
+  second disk mounted inside a Thunderbird profile, with `nofail`).
+- *Revision 4:* the "Stop looking for it" button (the friction review's F11 and F1) stays here; the
+  note now names the button that ends a plaintext one (Make a new archive…), and an encrypted note
+  says only how long it stays. Whether a backup that saves nothing should leave a waiting delete plan
+  alone (F5's deeper choice) is the owner's, after its own adversarial pass.
 
 ## 6. Claims, each with its condition
 
@@ -1028,6 +1183,9 @@ nothing in the list needs your decision."
   discovery; a clock that was ahead or not set never moves it earlier. Any other record without the
   warning (a one-off run without `-auto`, an unreadable record, a refusal before discovery, a
   downgrade) restarts it at a later date, never an earlier one. *Proven by MA-1472.*
+  *Revision 4 (Q8):* nor does a run whose own clock is behind: a recorded date later than its start
+  is kept as recorded. *Proven by MA-1472's and MA-1478's amended cases and
+  `internal/app/ma1472_clock_behind_test.go`.*
 - **P5.** An encrypted archive skips the same way; its record carries only `mailbox_gone: true` and
   `mailbox_gone_since`, a time (no path, name or count); status WARNs in a fixed sentence while the
   record's start minus that time is under 14 days, then says a fixed note, never measured against
@@ -1215,3 +1373,34 @@ Also corrected while applying them: `RunWarning.Since` is `omitzero`, not `omite
 have held, §1.3); the two citations the fold check called imprecise (`settingscard.go:205-206` says
 "Backups stopped … since DATE"; `internal/wizard/wording_v152_test.go:31` pins the pause email's
 words, not the banner) are now cited for what they say (§1.3).
+
+## 9. Revision 4: the post-build reviews, built
+
+Every finding of `docs/review-1.7.5-adversarial.md` and `docs/review-1.7.5-friction.md` the leads'
+folds sent to the build, where it is written here and the commit that built it (branch
+`combined-archive-gone-mailbox`, after `ea42de3`).
+
+| Finding | Severity | Written in | Built in | Rows |
+|---|---|---|---|---|
+| OUT-01 (with INS-01) | MEDIUM | §1.2, §1.3 *Revision 4* | 63b3092 | MA-869, MA-1479, MA-1472 amended |
+| INS-02 (owner, Q7) | MEDIUM | §0, §1.2 rule (e) | 2c830a6 | MA-1481 added, MA-1471 amended |
+| CON-02 (owner, Q8) | LOW | §0, §1.3 beside the clamp | 4e5f091 | MA-1472, MA-1478 amended |
+| OUT-05 (b), CON-06 (owner, Q10) | refuted as defects | §0, §3.1 | a64673a | MA-1475 amended |
+| F5 (owner, Q9) | medium | §0, §3.1 | 94dd0f3 | MA-1477 amended |
+| OUT-02 | LOW | §3.2 | 81308a7 | MA-1476 amended |
+| INS-03 | LOW | §1.2 rule (a) | 7fcac54 | MA-1471 amended |
+| INS-06 | LOW | §1.3 | 7fcac54 | MA-1472 amended |
+| CON-01, CON-03 | LOW | §1.3 the words | ab85cab | MA-1472 amended |
+| F1, F3, F4, F9, F11, F12 | medium, low | §1.3 | ab85cab | MA-1471, MA-1472, MA-1478 amended |
+| F14 | low | §1.5 | 628a00a | MA-1480 amended |
+| F2, F10 | medium, low | §1.3 "Archives 1.7.4 already stopped" | f15e040 | MA-1479 amended |
+| F7, F8, F13, OUT-03, OUT-04 (guard) | medium, low, INFO | §3.2 | 3837e55 | MA-1476, MA-1477 amended |
+| F6 | medium | §3.2 | 7457c4e | MA-1004 amended; X14's line |
+| CON-04 | refuted as a defect | §1.3, R9 corrected | (text only) | none |
+| INS-04 | LOW, not run | §4 step 4 | the Windows lab | MA-1471's junction case |
+| INS-05 | LOW, not run | §5, a known limit | not built | none |
+| OUT-05 (a), CON-05, INS-07 | refuted | not folded (§3.1 accepts (a)) | none | none |
+
+Not built, and why: F5's deeper choice and the "Stop looking for it" button (§5); INS-05 (§5).
+Owed: the friction re-verify of every new word above; the Windows lab (§4 step 4, with INS-04 and a
+moved account); the whole `./internal/app` and `./internal/desktop` runs on CI.
