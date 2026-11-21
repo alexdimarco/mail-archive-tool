@@ -58,7 +58,7 @@ func sameFiles(t *testing.T, dir string, before map[string][]byte) bool {
 func enableOfflineRun(t *testing.T, inputs ...string) (int, string, string) {
 	t.Helper()
 	var buf bytes.Buffer
-	err := prepareThunderbird(context.Background(), inputs, false, true, false, log.New(&buf, "", 0))
+	err := prepareThunderbird(context.Background(), "", inputs, false, true, false, log.New(&buf, "", 0))
 	msg := ""
 	if err != nil {
 		msg = err.Error()

@@ -431,7 +431,7 @@ func runExport(args []string) error {
 	// Thunderbird IMAP prep: enable offline storage and/or wait for a sync so
 	// on-demand mail is actually present locally before we read it.
 	if *enableOffline || *syncWait {
-		if err := prepareThunderbird(ctx, inputs, *auto, *enableOffline, *syncWait, logger); err != nil {
+		if err := prepareThunderbird(ctx, *out, inputs, *auto, *enableOffline, *syncWait, logger); err != nil {
 			return err
 		}
 	}
@@ -2098,10 +2098,13 @@ func parseMode(s string) (export.Mode, error) {
 
 // prepareThunderbird enables offline download and/or waits for a sync on each
 // Thunderbird IMAP store among the inputs, so on-demand mail is present locally.
-func prepareThunderbird(ctx context.Context, inputs []string, auto, enableOffline, syncWait bool, logger *log.Logger) error {
+// out is the archive the run writes ("" for none).
+func prepareThunderbird(ctx context.Context, out string, inputs []string, auto, enableOffline, syncWait bool, logger *log.Logger) error {
 	// The skipped inputs are discarded on purpose: this prepares stores that exist, and the run
-	// itself reports what it skipped (design-1.7.5-fixes §1.2, MA-1471).
-	files, _, err := app.DiscoverInputs(inputs, auto)
+	// itself reports what it skipped (design-1.7.5-fixes §1.2, MA-1471). Asked with the account names
+	// the archive at out keeps for its folders, as the run asks (the 1.7.5 re-verify, round 3's
+	// RV3-03): it never refuses where the run skips, nor goes ahead where the run stops.
+	files, _, err := app.DiscoverInputsFor(inputs, auto, app.RecordedNamesAt(out))
 	if err != nil {
 		return err
 	}

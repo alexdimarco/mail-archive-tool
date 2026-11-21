@@ -78,7 +78,8 @@ func manifestStoreIDs(out string) map[string]bool {
 // 2026-11-20; this comment first said an -auto job carries no -input). For such a job a listed
 // input that is gone where the run's own rule skips it (autoplace.GoneSkippable), and that is
 // one of the archive's recorded stores, is kept, while at least one listed input is there
-// (MA-1473). ok=false → the Desktop shows no create control and points at the wizard. It
+// (MA-1473; since the 1.7.5 re-verify, round 3's RV3-03, asked with the record's account names,
+// autoplace.GoneSkippableAs, as the run asks). ok=false → the Desktop shows no create control and points at the wizard. It
 // sets no pre-sync; the caller adds the toggle.
 func reconstructLocalJob(out string) (job.Job, bool) {
 	args, ok := lastRunJobArgs(out)
@@ -94,6 +95,10 @@ func reconstructLocalJob(out string) (job.Job, bool) {
 		ids := manifestStoreIDs(out)
 		scratch := canonPath(filepath.Join(out, "_outlook-pst"))
 		there := 0
+		// The run's own rule asks with the account names the archive's record keeps for its folders
+		// (the 1.7.5 re-verify, round 3's RV3-03), so the rebuild keeps what the run skips and refuses
+		// what it stops for. Read through ReadLastRun's cleaning; a record it cannot read names none.
+		prev, _, _ := state.ReadLastRun(out)
 		for _, in := range j.Inputs {
 			// A network or non-local path is not checked at all (C-17, MA-869): no file check
 			// reaches another host, and such a backup is not rebuilt from here.
@@ -101,7 +106,7 @@ func reconstructLocalJob(out string) (job.Job, bool) {
 				return job.Job{}, false
 			}
 			fi, err := lstatSource(in) // Lstat, NOT Stat: never follow a symlink the record names (A2)
-			if err != nil && errors.Is(err, fs.ErrNotExist) && j.Auto && autoplace.GoneSkippable(in) && ids[autoplace.GoneSourceID(in)] {
+			if err != nil && errors.Is(err, fs.ErrNotExist) && j.Auto && autoplace.GoneSkippableAs(in, autoplace.RecordedName(prev, in)) && ids[autoplace.GoneSourceID(in)] {
 				// A mailbox of an -auto job that is gone where the run's own rule skips it, and one
 				// of the archive's recorded stores (A2): kept, so the run skips it and warns on every
 				// run (docs/design-1.7.5-fixes.md §1.4, MA-1473). Dropping it could leave a job whose
