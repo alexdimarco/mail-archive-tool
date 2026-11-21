@@ -18,7 +18,7 @@ import (
 // longer holds its token, so leaving the page cannot discard it, while a refusal before it began
 // gives the token back. Positive twins first in each scenario.
 func TestThePanelSaysWhatItFoundAndOffersOnlyWhatCanApply(t *testing.T) {
-	for scenario, want := range map[string]int{"panelWords": 4, "encryptedNoArm": 3, "lostCheck": 2, "sentHoldsNoToken": 3} {
+	for scenario, want := range map[string]int{"foundWords": 4, "encryptedNoArm": 3, "lostCheck": 2, "sentHoldsNoToken": 3} {
 		t.Run(scenario, func(t *testing.T) {
 			if passed := runPageScenario(t, scenario); len(passed) != want {
 				t.Errorf("%s passed %d of its %d checks: %v", scenario, len(passed), want, passed)

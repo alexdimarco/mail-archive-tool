@@ -1867,8 +1867,8 @@ const scenarios = {
   // The panel's words (the 1.7.5 friction review's F7): the checking line says the name can be typed
   // meanwhile; armed, the line says the second check and how to stop; a plan that needs a decision
   // says what, from the server's closed list; a plan whose only miss is the typed name says that.
-  // Positive twin first: the checking line, then the armed line.
-  async panelWords() {
+  // Positive twin first: the checking line, then the armed line. (Not panelWords: MA-1019's.)
+  async foundWords() {
     page([['D:\\Mail\\Odd', 'other'], ['E:\\Cur', 'current']], 'E:\\Cur');
     boot(); await wait(30);
     const odd = doc.querySelectorAll('.archive-row')[0];
