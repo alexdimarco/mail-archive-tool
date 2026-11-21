@@ -692,6 +692,10 @@ func movedHow(profileDir, storeDir, recordedName string, clean func(string) stri
 			// 3's RV3-02, the reviewer's choice 2, Q7's direction: a loud stop beats a quiet loss). It
 			// brings back the traded case: a removed account beside exactly one same-server account
 			// whose mail is all off the profile stops the backup.
+			// Amended by round 4 (RF4-03's words): an account removed in Thunderbird stops the backup
+			// when exactly one of the other accounts on its mail server keeps all its mail outside the
+			// profile; accounts on that server kept in the profile do not change this. One renamed
+			// while its folder is missing is skipped first, below (RV4-02).
 		case 1:
 			folders, dir := folderOf(named[0])
 			if len(folders) == 0 {
@@ -706,6 +710,18 @@ func movedHow(profileDir, storeDir, recordedName string, clean func(string) stri
 			return dir, true
 		}
 		// None, or two or more live accounts share the name: the server-name rule decides.
+	}
+
+	// A live account whose folder setting still names the gone folder was deleted by hand (Q4), also
+	// when it was renamed meanwhile: skipped before the server-name rule (the 1.7.5 re-verify, round
+	// 4's RV4-02; it narrows only toward Q4, since two accounts cannot keep one folder).
+	for _, key := range live {
+		folders, _ := folderOf(key)
+		for _, f := range folders {
+			if samePath(f, store, goos) {
+				return "", false
+			}
+		}
 	}
 
 	// The fallback: the server-name rule.

@@ -245,6 +245,50 @@ func TestEveryPlaintextRecordCarriesTheFolderNames(t *testing.T) {
 }
 
 // covers: MA-1481, R12
+// The re-verify, round 4's RV4-02 (INFO; it narrows toward the owner's Q4): an account whose folder
+// is missing while its folder setting still names that folder was deleted by hand, so it is skipped,
+// also when it was renamed in Thunderbird meanwhile and the record's name matches no live account,
+// and also beside exactly one same-server account kept off the profile (where the server-name rule
+// alone would stop). A live account's folder setting that names the gone folder is asked before the
+// server-name rule. Its counterpart stays: an account moved and renamed stops
+// (TestAMovedAndRenamedAccountStops). The reviewer's test; first its own twin: not renamed, skipped.
+func TestARenamedAccountWhoseFolderWasDeletedByHandIsSkipped(t *testing.T) {
+	const host = "imap.qzg.example"
+	f := goneFixture(t, false)
+	a := filepath.Join(f.profile, "ImapMail", "imap.qzg.example")
+	b := filepath.Join(f.profile, "ImapMail", "imap.qzg-1.example")
+	tbStoreAt(t, a, tbFolder{path: "INBOX", listed: 2, msgs: tbMsgs("qza", 2)})
+	tbStoreAt(t, b, tbFolder{path: "INBOX", listed: 2, msgs: tbMsgs("qzb", 2)})
+	acctA := named(tbAcct{n: 1, host: host, typ: "imap", dirRel: "ImapMail/imap.qzg.example"}, "qza@qzg.example")
+	acctB := named(tbAcct{n: 2, host: host, typ: "imap", dirRel: "ImapMail/imap.qzg-1.example"}, "qzb@qzg.example")
+	acctC, _ := movedOff(t, named(tbAcct{n: 3, host: host, typ: "imap"}, "qzc@qzg.example"), "QZGmail3")
+	prefs := filepath.Join(f.profile, "prefs.js")
+	tbWrite(t, prefs, tbPrefsJS(acctA, acctB, acctC))
+	inputs := []string{a, b}
+	out := tmpDir(t)
+	if _, err, _ := goneRun(t, Options{Inputs: inputs, Auto: true, Out: out}); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.RemoveAll(b); err != nil {
+		t.Fatal(err)
+	}
+	if res, err, _ := goneRun(t, Options{Inputs: inputs, Auto: true, Out: out, Unattended: true}); err != nil || len(res.Skipped) != 1 {
+		t.Fatalf("its own twin: a folder deleted by hand is skipped: %+v %v", res.Skipped, err)
+	}
+	tbWrite(t, prefs, tbPrefsJS(acctA, named(acctB, "QZ Personal"), acctC))
+	for run := 1; run <= 2; run++ {
+		res, err, _ := goneRun(t, Options{Inputs: inputs, Auto: true, Out: out, Unattended: true})
+		if err != nil || len(res.Skipped) != 1 || res.Skipped[0].Path != b {
+			t.Errorf("run %d: a renamed account whose folder was deleted by hand stopped the backup: %v", run, err)
+		}
+	}
+	// With no name recorded at all, the same: the folder setting decides before the server-name rule.
+	if !autoplace.GoneSkippableAs(b, "") {
+		t.Error("with no recorded name, a folder whose setting still names it is not skipped")
+	}
+}
+
+// covers: MA-1481, R12
 // The re-verify, round 3's RV3-02 (LOW; the reviewer's choice 2, Q7's direction): an account moved
 // and renamed at once (both are on one settings page in Thunderbird) matches no live account by the
 // record's name, so the server-name rule is asked, and it stops the backup, in its own words, as

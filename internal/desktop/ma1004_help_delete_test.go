@@ -38,7 +38,9 @@ var helpDeleteSentences = []string{
 	// archive, until it is locked)", since a Lock ends a plan that read values with its key.
 	// Amended again 2026-11-21 by the re-verify, round 3 (RF3-02), word for word: a plan read while
 	// the encrypted archive was unlocked ends at any archive's lock, the idle lock too, not only its own.
-	"After reading a plan, type the folder's name exactly as it is shown, then click Delete permanently. A plan waits up to a day, but a backup in the meantime makes MailArchive check again. For an encrypted archive that was unlocked when it was checked, locking any archive ends the plan.",
+	// Amended again 2026-11-21 by the re-verify, round 4 (RF4-02), word for word: an archive also locks
+	// by itself (a switch, 30 minutes unused), which "locking any archive" did not say.
+	"After reading a plan, type the folder's name exactly as it is shown, then click Delete permanently. A plan waits up to a day, but a backup in the meantime makes MailArchive check again. For an encrypted archive that was unlocked when it was checked, the plan also ends when any archive locks: when you click Lock, when you switch archives, or by itself after 30 minutes of no one using MailArchive Desktop.",
 	"Once the delete starts it cannot be stopped: the panel says so and Cancel goes away.",
 	"The result says what was removed and what was kept. Click Save deletion record to save a copy as a text file: MailArchive keeps no copy after you close the result. Then click Dismiss.",
 	"What Delete removes: the archive's own files (its message pages and attachments, its search index and its records), its scheduled backups, its row under Your archives (for an encrypted archive, only when its folder goes too: see below) and, when nothing else is left in it, the folder. Files of your own in the folder are kept, and the folder with them. Mail copies in the folder that the archive did not record are kept too, unless you tick the box the plan shows for them.",
