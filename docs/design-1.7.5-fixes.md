@@ -24,6 +24,11 @@ and the friction review (`docs/review-1.7.5-friction.md`: F1 to F14), and the ow
 to Q7 to Q10 (§0). Each change is written beside what it changes, marked *Revision 4*; §9 lists every
 fix, its commit's subject and its rows. Revision 3.1's text is kept.
 
+**Revision 4.1, 2026-11-20:** the re-verify of revision 4's fixes (`docs/review-1.7.5-reverify.md`,
+the lead's fold) built: RV-01, RV-02 (the lead's call, the fuller form of Q7), RV-03, RV-04, RV-06,
+RF-01 to RF-10, and Windows CI's untyped refusal at 1ba95c8. Each is marked *Revision 4.1* beside the
+text it changes; §10 lists them. RV-05, RV-07 and RV-08 are not built (the fold says why).
+
 ## 0. The owner's words
 
 - 2026-11-19, after the report that a combined archive stops when one account's folder is gone:
@@ -165,10 +170,27 @@ these hold:
   the folder (deleted by hand: Q4) and one with no folder setting are skipped as before; a prefs.js
   or user.js that cannot be read with certainty tells no move. `autoplace` now also imports
   `internal/thunderbird`, a leaf of its own (MA-1481).
+  *Revision 4.1 (RV-02, the lead's call):* "moved" is now: the gone folder lies directly under this
+  profile's ImapMail/ or Mail/, exactly one live account has its server name (its name, or that name
+  without a "-N" suffix), and none of that account's folder settings lies inside this profile's
+  ImapMail/ or Mail/. So a move to a folder of another name, and a POP account's move from Mail/, stop
+  the backup. Traded, and stated in MA-1481: an account removed on purpose whose only same-server
+  sibling was moved off the profile stops the backup too (fail closed, Q7's direction). *(RV-04)*
+  Settings that cannot be read for certain still tell no move (Q4), and the warning now says so.
+  *(RF-03)* The refusal's words also say where the setting is and how to stop the archive looking
+  for the old folder.
+  *Revision 4.1 (Windows CI at 1ba95c8):* a listed input that cannot be examined (`os.Stat` fails
+  with anything but "does not exist") is refused with the same typed refusal, so it is recorded
+  failed and the streak moves; it was an untyped refusal (Windows gives ERROR_DIRECTORY for a dangling
+  link spelled with a trailing "\").
 - **One rule for a non-local path (OUT-01).** `autoplace.NonLocal` holds the Desktop's
   `isRemotePath` rule (a network or device path, or one not absolute), which the Desktop, status
   and a run now share (§1.3, *Revision 4*). `GoneSkippable` itself does not ask it: a run's inputs
   come from the person's own job, not the record.
+  *Revision 4.1 (RV-01):* on Windows a path is local only when its volume is a drive letter, so
+  "\/host/…", "/\host\…" and "\??\UNC\host\…" are non-local too (`autoplace.nonLocal`, the rule as a
+  pure function of the volume part); and the Repair helper refuses, before any look on disk, a record
+  whose inputs lie outside the places auto-discovery looks (`autoplace.InPlace`).
 
 Otherwise the run is refused exactly as today, with `sourceUnreachableError`
 (`app/sourceloss.go:33-37`) naming the first listed input that does not meet (a) to (c), or, when
@@ -814,6 +836,12 @@ archive (Lock, the idle lock, a switch's, forget-all) also ends its waiting dele
 waiting". A delete's own lock finds its plan already taken. Matched by the archive's key spelling, so
 a row listed under another spelling of the same folder (a link) keeps its plan until its 24 hours, a
 switch or Shut down.
+*Revision 4.1 (RV-06):* that limit is closed: any lock ends every encrypted archive's waiting delete
+plan, whatever spelling; a plain archive's plan is kept. *(RV-03)* The "changed" reply also says
+whether the plan's folder is still the same folder on disk (its recorded file identity), and the page
+re-arms only then, so a folder replaced by another of the same name is never deleted unseen. *(RF-02)*
+Its words now differ for a re-armed and an un-armed re-check ("No need to click Delete again. …"),
+and an earlier result says when a later delete of the folder ended.
 
 **Every delete walks the folder twice.** At Delete, the plan is made again in full under the lock
 (`execute.go:340`): the same walk, and the same SHA-256 of the manifest, as the check. So a large
@@ -1404,3 +1432,20 @@ folds sent to the build, where it is written here and the commit that built it (
 Not built, and why: F5's deeper choice and the "Stop looking for it" button (§5); INS-05 (§5).
 Owed: the friction re-verify of every new word above; the Windows lab (§4 step 4, with INS-04 and a
 moved account); the whole `./internal/app` and `./internal/desktop` runs on CI.
+
+## 10. Revision 4.1: the re-verify's fixes, built
+
+| Finding | Severity | Written in | Built in | Rows |
+|---|---|---|---|---|
+| RV-01 | MEDIUM | §1.2 *Revision 4.1* | fcfe8db | MA-869 amended |
+| RV-02 (the lead's call, Q7's fuller form), RV-04 | MEDIUM, INFO | §1.2 rule (e) *Revision 4.1* | b757401 | MA-1481 amended |
+| Windows CI at 1ba95c8 (untyped refusal) | — | §1.2 *Revision 4.1* | 61da953 | MA-1471 amended |
+| RV-06 | LOW | §3.1 *Revision 4.1* | 6918973 | MA-1475 amended |
+| RV-03 | LOW | §3.1 *Revision 4.1* | e5a0725 | MA-1477 amended |
+| RF-03, RF-04, RF-05, RF-08, RF-09 | low, info | §1.2, §1.3 (words) | 93f1212 | MA-1481 amended |
+| RF-01, RF-02, RF-06, RF-07, RF-10 | medium, low, info | §3.1, §3.2 (words) | 41ea335 | MA-1477, MA-1004 amended |
+| RV-05, RV-07, RV-08 | INFO | not built (the lead's fold) | none | none |
+| RF-11 | info | covered by RV-02 and RV-04 | b757401 | MA-1481 |
+
+Owed: a focused re-verify of these fixes; RV-01's Windows-only tests and RF-03's walk (Windows CI and
+the lab).
