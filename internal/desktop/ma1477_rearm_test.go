@@ -14,7 +14,8 @@ import "testing"
 func TestAnArmedDeleteMadeStaleByABackupIsCheckedAgainOnce(t *testing.T) {
 	// rearmReplaced added 2026-11-20 by the 1.7.5 re-verify (RV-03): the page re-arms only when the
 	// server says it is still the same folder (sameArchive).
-	for scenario, want := range map[string]int{"rearmDeletes": 3, "rearmOnce": 2, "rearmReplaced": 2} {
+	// laterResult added 2026-11-20 by the 1.7.5 re-verify (RF-02).
+	for scenario, want := range map[string]int{"rearmDeletes": 3, "rearmOnce": 2, "rearmReplaced": 2, "laterResult": 2} {
 		t.Run(scenario, func(t *testing.T) {
 			if passed := runPageScenario(t, scenario); len(passed) != want {
 				t.Errorf("%s passed %d of its %d checks: %v", scenario, len(passed), want, passed)

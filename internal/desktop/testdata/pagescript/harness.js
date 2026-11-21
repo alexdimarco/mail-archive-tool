@@ -1943,6 +1943,26 @@ const scenarios = {
     await wait(120);
     check(leave().join(',') === 'TOK2', 'a refusal before the delete began gives the token back, and leaving then discards it');
   },
+  // After Delete permanently a "changed" result says to click Delete permanently when the new plan
+  // shows, and once a later delete of the folder ends, the earlier result says so (the 1.7.5
+  // re-verify's RF-02). Positive twin first: the changed result shows, with its un-armed words.
+  async laterResult() {
+    page([['D:\\Mail\\Busy', 'other'], ['E:\\Cur', 'current']], 'E:\\Cur');
+    boot(); await wait(30);
+    const row = doc.querySelectorAll('.archive-row')[0];
+    let n = 0;
+    replies['api/archive/delete/plan'] = x => plan(x.path, 'Busy', 'T' + (++n));
+    row.querySelector('[data-delete-archive]').click(); await wait(40);
+    replies['api/archive/delete'] = result({ ok: false, id: 'H1', row: 'D:\\Mail\\Busy', folder: 'D:\\Mail\\Busy', status: 'refused after start',
+      lines: ['This archive changed since you clicked Delete. Click Delete again.'], rows: ['D:\\Mail\\Busy'], error: 'changed', changed: true, sameArchive: true });
+    await typeAndDelete(row, 'Busy'); await wait(60);
+    const ps = x => x.all().filter(e => e.tagName === 'P').map(e => e.textContent);
+    const h1 = doc.querySelector('[data-held-id="H1"]');
+    check(!!h1 && ps(h1).includes(delWords.changedPerm) && !ps(h1).includes(delWords.later), 'the positive twin: the changed result says to click Delete permanently when the new plan shows', JSON.stringify(h1 && ps(h1)));
+    replies['api/archive/delete'] = result({ id: 'H2', row: 'D:\\Mail\\Busy', folder: 'D:\\Mail\\Busy', rows: ['D:\\Mail\\Busy'] });
+    await typeAndDelete(row, 'Busy'); await wait(60);
+    check(!!doc.querySelector('[data-held-id="H2"]') && ps(h1).includes(delWords.later), 'once a later delete of the folder ends, the earlier result says so', JSON.stringify(ps(h1)));
+  },
   // An armed delete refused as changed where the folder is no longer the same one (the server's
   // sameArchive false: replaced by another of the same name during the check) is asked for again
   // UN-armed, so the other folder is never deleted unseen (the 1.7.5 re-verify's RV-03). Positive twin
@@ -2008,10 +2028,17 @@ const delWords = {
   found: 'Nothing was deleted: the plan holds something to decide first. Read it, then click Delete permanently.',
   foundWhy: 'Nothing was deleted: the plan holds something to decide first (mail copies this archive did not record and a synced folder). Read it, then click Delete permanently.',
   name: "Nothing was deleted: the name typed does not match the folder's name, ODD, as it is on this computer (capital letters count). Type it as shown, then click Delete permanently.",
-  encrypted: "An encrypted archive's plan is always shown first, because it names its key.",
+  // Amended 2026-11-20 by the 1.7.5 re-verify (RF-06), word for word (it was "An encrypted archive's
+  // plan is always shown first, because it names its key.").
+  encrypted: "For an encrypted archive, the plan is always shown before anything is deleted, because it says what happens to the archive's key on this computer.",
   lost: 'The page lost touch with MailArchive during the check, so nothing was deleted. Click Delete… again.',
   deleting: 'Deleting this archive. It can no longer be stopped. Keep this page open until its result shows here…',
-  changed: 'A backup ran after the check, so MailArchive is checking again below. Nothing was deleted; your typed name is kept.',
+  // Amended 2026-11-20 by the 1.7.5 re-verify (RF-02), word for word: changed (it was 'A backup ran
+  // after the check, so MailArchive is checking again below. Nothing was deleted; your typed name is
+  // kept.') is now the armed form; changedPerm the other; later the line on an earlier result.
+  changed: 'No need to click Delete again. Something changed after the check (a backup, say), so nothing was deleted yet. MailArchive is checking again below and then deletes the archive, unless it finds something you should decide first.',
+  changedPerm: 'No need to click Delete again. Something changed after the check (a backup, say), so nothing was deleted. MailArchive is checking again below, with your typed name kept: click Delete permanently when the new plan shows.',
+  later: 'A later delete of this folder ended: see its result.',
 };
 
 (async () => {

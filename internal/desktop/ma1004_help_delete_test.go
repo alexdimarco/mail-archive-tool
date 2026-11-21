@@ -30,7 +30,10 @@ var helpDeleteSentences = []string{
 	// file." and "Type the folder's name exactly as it is shown, then click Delete permanently. Cancel
 	// deletes nothing."
 	"Click Delete…: nothing is deleted yet. A panel opens beside the archive while MailArchive checks what Delete would remove; for a large archive this can take several minutes, and the panel counts them. When the check ends, it shows what Delete would remove (how many files, and their size), the scheduled backups it would stop, and how many files in the folder are not the archive's, which are kept. To have the deletion approved first, click Save this plan to save the plan as a text file.",
-	"While it checks, type the folder's name. Then either wait and read the plan, or click Delete when the check finishes: MailArchive deletes as soon as the check ends, unless the plan holds something you should decide first, which it then shows you. Until the delete starts, Cancel or closing the page deletes nothing.",
+	// Amended again 2026-11-20 by the 1.7.5 re-verify (RF-01), word for word: the delete checks the
+	// folder once more, about as long again, and an encrypted archive's plan is always shown first (it
+	// said "MailArchive deletes as soon as the check ends").
+	"While it checks, type the folder's name. Then either wait and read the plan, or click Delete when the check finishes: when the check ends, MailArchive checks the folder once more (about as long again), then deletes it, unless the plan holds something you should decide first, which it then shows you. An encrypted archive's plan is always shown first. Until the delete starts, Cancel or closing the page deletes nothing.",
 	"After reading a plan, type the folder's name exactly as it is shown, then click Delete permanently. A plan waits up to a day, but a backup in the meantime makes MailArchive check again.",
 	"Once the delete starts it cannot be stopped: the panel says so and Cancel goes away.",
 	"The result says what was removed and what was kept. Click Save deletion record to save a copy as a text file: MailArchive keeps no copy after you close the result. Then click Dismiss.",

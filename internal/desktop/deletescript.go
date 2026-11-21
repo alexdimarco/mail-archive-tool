@@ -66,13 +66,23 @@ function delFoundLine(p){const r=(p&&p.decide)||[];const what=r.length<2?r.join(
 function delNameLine(name){return "Nothing was deleted: the name typed does not match the folder's name, "+name+", as it is on this computer (capital letters count). Type it as shown, then click Delete permanently.";}
 // An encrypted archive's plan is never armable (its key line), so its panel offers no Delete when
 // the check finishes and says why (the friction review's F8).
-const delEncryptedText="An encrypted archive's plan is always shown first, because it names its key.";
+// The 1.7.5 re-verify's RF-06 words (it was "An encrypted archive's plan is always shown first,
+// because it names its key.").
+const delEncryptedText="For an encrypted archive, the plan is always shown before anything is deleted, because it says what happens to the archive's key on this computer.";
 // A check that lost its connection (a laptop that slept, say): plain words, not the browser's (F13).
 const delLostText='The page lost touch with MailArchive during the check, so nothing was deleted. Click Delete… again.';
 const delDeletingText='Deleting this archive. It can no longer be stopped. Keep this page open until its result shows here…';
 // Said under a delete refused because a backup ran between the check and Delete (changed, MA-1475),
 // while the page checks again by itself (the friction review's F5).
-const delChangedText='A backup ran after the check, so MailArchive is checking again below. Nothing was deleted; your typed name is kept.';
+// The 1.7.5 re-verify's RF-02 words (it was one line, "A backup ran after the check, so MailArchive is
+// checking again below. Nothing was deleted; your typed name is kept."): one after an armed delete
+// that is checked again armed (Q9), one after any other; and a line on an earlier result when a later
+// delete of the same folder ends.
+const delChangedArmedText='No need to click Delete again. Something changed after the check (a backup, say), so nothing was deleted yet. MailArchive is checking again below and then deletes the archive, unless it finds something you should decide first.';
+const delChangedText='No need to click Delete again. Something changed after the check (a backup, say), so nothing was deleted. MailArchive is checking again below, with your typed name kept: click Delete permanently when the new plan shows.';
+const delLaterText='A later delete of this folder ended: see its result.';
+// delLaterNote marks every result already shown for row: a later delete of that folder ended (RF-02).
+function delLaterNote(row){document.querySelectorAll('[data-held-id]').forEach(h=>{if(h.dataset.row===row&&!h.querySelector('[data-later]')){const p=delEl('p',delLaterText,'card-sub');p.setAttribute('data-later','');h.querySelector('.del-actions').before(p);}});}
 // The minutes a check has run, in words.
 function delMinutes(ms){const m=Math.floor(ms/60000);return m<1?'Under a minute so far.':m===1?'1 minute so far.':m+' minutes so far.';}
 // The prompt for the folder's name before the check answers: planView's typeLine for the row's name.
@@ -385,11 +395,11 @@ function delPanel(b,typed,rearm){
       // before, saying the page checks again below (F5), and the plan is asked for again by itself,
       // the typed name put back, so one more click deletes; an armed delete's panel opens armed again,
       // once (Q9): a re-armed one refused as changed again asks un-armed.
-      if(d.id&&d.changed){done(true);w.remove();const hv=delShowHeld(d);hv.querySelector('.del-actions').before(delEl('p',delChangedText,'warn'));
-        delAfterDelete(d);delPlan(b,b.closest('li'),false,input.value,fromArm&&!rearmed&&d.sameArchive===true);return;}
+      if(d.id&&d.changed){done(true);w.remove();const again=fromArm&&!rearmed&&d.sameArchive===true;delLaterNote(d.row);const hv=delShowHeld(d);hv.querySelector('.del-actions').before(delEl('p',again?delChangedArmedText:delChangedText,'warn'));
+        delAfterDelete(d);delPlan(b,b.closest('li'),false,input.value,again);return;}
       // Its own panel goes, never another row's opened meanwhile (del-s3b leftover 1).
       // The result is brought into view (B14): on a narrow layout it sat at the top of the card, out of sight.
-      if(d.id){done(true);w.remove();const hv=delShowHeld(d);delAfterDelete(d);if(hv.scrollIntoView)hv.scrollIntoView({block:'nearest'});return;}
+      if(d.id){done(true);w.remove();delLaterNote(d.row);const hv=delShowHeld(d);delAfterDelete(d);if(hv.scrollIntoView)hv.scrollIntoView({block:'nearest'});return;}
       // Refused before it began: nothing was deleted, so Cancel comes back; an armed delete refused
       // shows the plan, with the refusal's words below (MA-1476).
       if(fromArm)show('');

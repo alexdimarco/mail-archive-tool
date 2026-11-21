@@ -116,6 +116,12 @@ Thunderbird and Evolution on any OS). To see that set before committing to it,
 run `-auto -list`: it prints the stores that would be archived, one per line
 with a rough size, and exits without exporting or creating the output directory.
 
+With `-auto` (an "All of them" archive), a listed mailbox whose folder is gone
+is skipped while the others are backed up; `status` warns for 14 days of
+backups, then keeps a note. A missing profile, a missing ImapMail or Mail
+folder, a link, a mailbox outside the usual places, or a Thunderbird account
+moved to another folder still stops the backup.
+
 ## The wizard (`mailarchive wizard`)
 
 The **wizard** (`mailarchive wizard`) is a small wizard built on native OS dialogs
@@ -350,8 +356,9 @@ and the panel counts them. Type the folder's name meanwhile (capital letters
 count). Then either wait for the plan, which says what would be removed and what
 is kept (**Save this plan** saves it as a text file, for example to have it
 approved), and click **Delete permanently**; or click **Delete when the check
-finishes**: MailArchive deletes as soon as the check ends, unless the plan holds
-something you should decide first, which it then shows you. Until the delete
+finishes**: when the check ends, MailArchive checks the folder once more (about
+as long again), then deletes it, unless the plan holds something you should
+decide first, which it then shows you. Until the delete
 starts, **Cancel** or closing the page deletes nothing; once it starts it cannot
 be stopped. A plan waits up to a day, but a backup in the meantime makes
 MailArchive check again. The result says what was removed and what was
