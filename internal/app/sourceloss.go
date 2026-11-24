@@ -39,9 +39,33 @@ const (
 // movedTo, when set, is where Thunderbird now keeps the gone input's account, which was moved with
 // its Local Directory setting, not removed (MA-1481; the owner's Q7): the words say so.
 // sameServer: only the server-name rule found the move (RF2-01's other words).
+//
+// one: an archive of one listed Thunderbird folder, auto-discovery off, whose account now keeps its
+// mail in movedTo, with the folder still there (C2) or gone (F-08): autoplace.NoLongerUsedText's
+// words (docs/design-per-mailbox-archives.md §11; MA-1504).
 type sourceUnreachableError struct {
 	path, movedTo string
 	sameServer    bool
+	one           bool
+}
+
+// The reason code a plaintext refused record keeps (state.LastRun.SourceReason; revision 2.1's
+// F-03): every moved stop. No name is in it.
+func (e *sourceUnreachableError) sourceReason() string {
+	if e.movedTo != "" {
+		return state.SourceReasonMoved
+	}
+	return ""
+}
+
+// sourceReasonOf is the reason code of a run's refusal cause: "" unless it is a moved account's
+// typed stop.
+func sourceReasonOf(cause error) string {
+	var sue *sourceUnreachableError
+	if errors.As(cause, &sue) {
+		return sue.sourceReason()
+	}
+	return ""
 }
 
 // pathLeadsNowhere reports whether a look at a listed input failed because the path, as spelled,
@@ -60,6 +84,9 @@ func pathLeadsNowhere(err error) bool {
 // Error is autoplace.GoneText, unchanged, so whatever compares a record's error with an input's
 // refusal (health.GoneMailboxRepairable) compares one text; for a moved account, autoplace.MovedText.
 func (e *sourceUnreachableError) Error() string {
+	if e.movedTo != "" && e.one {
+		return autoplace.NoLongerUsedText(e.path, e.movedTo)
+	}
 	if e.movedTo != "" && e.sameServer {
 		return autoplace.MovedSameServerText(e.path, e.movedTo)
 	}

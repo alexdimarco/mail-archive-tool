@@ -725,15 +725,7 @@ func movedHow(profileDir, storeDir, recordedName string, clean func(string) stri
 	}
 
 	// The fallback: the server-name rule.
-	servers := []string{name}
-	if i := strings.LastIndexByte(name, '-'); i > 0 && i < len(name)-1 && strings.Trim(name[i+1:], "0123456789") == "" {
-		servers = append(servers, name[:i]) // "-N" at the end ("Feeds-1", "imap.qzd.example-1")
-	}
-	if d := strings.LastIndexByte(name, '.'); d > 0 {
-		if i := strings.LastIndexByte(name[:d], '-'); i > 0 && i < d-1 && strings.Trim(name[i+1:d], "0123456789") == "" {
-			servers = append(servers, name[:i]+name[d:]) // "-N" just before the last dot ("imap.gmail-1.com")
-		}
-	}
+	servers := serverNamesOf(name)
 	var outside []string // same-server accounts whose every folder setting is outside the profile
 	for _, key := range live {
 		h := norm.NFC.String(unquote(val("mail.server." + key + ".hostname")))
@@ -760,6 +752,93 @@ func movedHow(profileDir, storeDir, recordedName string, clean func(string) stri
 	}
 	_, dir := folderOf(outside[0])
 	return dir, true
+}
+
+// serverNamesOf are the server names a store folder named name may have been made for: the name
+// itself, and the name without Thunderbird's "-N" at its end ("Feeds-1", "imap.qzd.example-1") or just
+// before its last dot ("imap.gmail-1.com"), which Thunderbird adds for a second account on one server.
+func serverNamesOf(name string) []string {
+	servers := []string{name}
+	if i := strings.LastIndexByte(name, '-'); i > 0 && i < len(name)-1 && strings.Trim(name[i+1:], "0123456789") == "" {
+		servers = append(servers, name[:i]) // "-N" at the end ("Feeds-1", "imap.qzd.example-1")
+	}
+	if d := strings.LastIndexByte(name, '.'); d > 0 {
+		if i := strings.LastIndexByte(name[:d], '-'); i > 0 && i < d-1 && strings.Trim(name[i+1:d], "0123456789") == "" {
+			servers = append(servers, name[:i]+name[d:]) // "-N" just before the last dot ("imap.gmail-1.com")
+		}
+	}
+	return servers
+}
+
+// NoLiveOwner reports whether the profile's settings say, for certain, that no live account uses the
+// store folder store (docs/design-per-mailbox-archives.md §11, C2's second condition, as revision
+// 2.1's F-01 corrected it; MA-1504). True only when all hold:
+//
+//   - prefs.js and user.js both read with certainty (MA-1261), and they list accounts;
+//   - store lies directly under this profile's ImapMail/ or Mail/;
+//   - no live account's folder setting (directory, directory-rel) names store;
+//   - every live account whose server name matches the folder's name (the name, or that name without
+//     Thunderbird's "-N", as MovedHow's fallback reads it) has a folder setting, which then names
+//     another folder. One with no folder setting could be keeping its mail there, so nothing is
+//     certain.
+//
+// ReadStoreFacts cannot answer this: with two or more live accounts on one mail server (several
+// Gmail addresses, all on imap.gmail.com) it says NoAccountAmbiguous, not NoAccountNone, for a folder
+// named like their host that none of them uses any more. It reads the settings as ReadStoreFacts
+// does, and leaves ReadStoreFacts and every caller of it unchanged.
+func NoLiveOwner(profileDir, store string) bool {
+	s, _, err := readPrefs(profileDir)
+	if err != nil {
+		return false
+	}
+	if file, _, _ := s.uncertain(); file != "" {
+		return false
+	}
+	st, err := filepath.Abs(store)
+	if err != nil {
+		return false
+	}
+	profile, err := filepath.Abs(profileDir)
+	if err != nil {
+		return false
+	}
+	goos := runtime.GOOS
+	parts := components(st, goos)
+	if len(parts) < 2 {
+		return false
+	}
+	name, parent := parts[len(parts)-1], strings.Join(parts[:len(parts)-1], "/")
+	if !samePath(parent, profile+"/ImapMail", goos) && !samePath(parent, profile+"/Mail", goos) {
+		return false
+	}
+	val := func(key string) string { return s.vals[key] }
+	live := liveServers(val)
+	if len(live) == 0 {
+		return false // no account listed: nothing is known of who uses the folder
+	}
+	servers := serverNamesOf(name)
+	for _, key := range live {
+		p := func(field string) string { return unquote(val("mail.server." + key + "." + field)) }
+		var folders []string
+		if rel, ok := strings.CutPrefix(p("directory-rel"), "[ProfD]"); ok {
+			folders = append(folders, profile+"/"+rel)
+		}
+		if dir := p("directory"); dir != "" {
+			folders = append(folders, dir)
+		}
+		for _, f := range folders {
+			if samePath(f, st, goos) {
+				return false // a live account's folder setting names it
+			}
+		}
+		h := norm.NFC.String(p("hostname"))
+		for _, sv := range servers {
+			if h != "" && sameComponent(h, sv, goos) && len(folders) == 0 {
+				return false // a same-server account with no folder setting: cannot tell
+			}
+		}
+	}
+	return true
 }
 
 // within reports whether p is root or lies under it, compared as samePath compares paths.

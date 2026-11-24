@@ -110,6 +110,14 @@ type LastRun struct {
 	// mailarchive-gui's health views need not print the CLI command and SQLite's
 	// text recorded in Error. Absent on older records and on any other failure.
 	ErrorKind string `json:"error_kind,omitempty"`
+	// SourceReason is why a plaintext run was refused on a Thunderbird folder its account no longer
+	// uses, as a fixed code with no name in it (docs/design-per-mailbox-archives.md §11 "The later
+	// words for both stops", revision 2.1's F-03): SourceReasonMoved (the account now keeps its mail
+	// in another folder) or SourceReasonRemoved (the account is gone). Status, the Your-archives
+	// banner and the 30-day pause read it to say the reason's words in place of "reconnect the
+	// source". Written in a plaintext refused record only; an encrypted record's allow-list never
+	// holds it (MA-734). Additive: absent on every other record, which is written as before.
+	SourceReason string `json:"source_reason,omitempty"`
 	// NoIndex records that the run was told not to build the search index
 	// (-index=false), so `status` does not warn that an archive deliberately
 	// kept without search.db has lost it. Absent (false) on older records.
@@ -440,6 +448,7 @@ func ReadLastRun(out string) (LastRun, LastRunState, error) {
 	// A planted record's kinds are said only when they are counts (design-plain-failure-words).
 	r.Partial = r.Partial.sane()
 	r.FillableFrom = FillableFrom(r.FillableFrom) // a closed set (MA-1157)
+	r.SourceReason = saneSourceReason(r.SourceReason)
 	// The sync's strings too (design-presync-attended §4.2, C-37): every surface shows
 	// its name only through a closed map, and none of them is echoed raw.
 	if p := r.Presync; p != nil {
@@ -453,6 +462,22 @@ func ReadLastRun(out string) (LastRun, LastRunState, error) {
 	r.ThunderbirdMore = min(max(0, r.ThunderbirdMore), 1<<20) + cut // planted: never negative, never wrapped
 	r.ThunderbirdNames = saneTBNames(r.ThunderbirdNames)
 	return r, LastRunPresent, nil
+}
+
+// The LastRun.SourceReason codes (F-03): a closed set, with no name in either.
+const (
+	SourceReasonMoved   = "moved"
+	SourceReasonRemoved = "removed"
+)
+
+// saneSourceReason is a record's source_reason as read: one of the closed set, else "" (a planted or
+// damaged record keeps today's words).
+func saneSourceReason(r string) string {
+	switch r {
+	case SourceReasonMoved, SourceReasonRemoved:
+		return r
+	}
+	return ""
 }
 
 // LastVerify is the archive-local record of the most recent `verify`: written

@@ -274,6 +274,26 @@ func MovedSameServerText(path, movedTo string) string {
 	return fmt.Sprintf("input %s does not exist, so this backup stopped: a Thunderbird account on the same mail server, or Local Folders, now keeps its mail in %s (its Local Directory setting). If you moved that account there, set its Local Directory back to %s (in Thunderbird: Account Settings, then Server Settings, or Local Folders' own page), or back up %s as an archive of its own (Make a new archive…, then Thunderbird / mbox mail folder). If you removed the account that used %s, or you now back up %s on its own, stop this archive looking for %s (Make a new archive…, then All of them and this same archive folder).", path, movedTo, path, movedTo, path, movedTo, path)
 }
 
+// NoLongerUsedText is the words of the stop of an archive of one listed Thunderbird folder, with
+// auto-discovery off, whose account now keeps its mail in another folder (docs/design-per-mailbox-
+// archives.md §11 "When Thunderbird stops using an archive's folder", C2, and revision 2.1's F-08 for
+// the old folder gone; MA-1504). It names folders only, never the account's name, since a refusal
+// reaches log files (MA-1288). The design's draft words, for the friction review.
+func NoLongerUsedText(old, moved string) string {
+	return fmt.Sprintf("Thunderbird no longer uses %s: the account that used it now keeps its mail in %s, so this backup stopped. The mail saved so far stays in this archive. To back up %s, click Make a new archive… and back that account up again (choose it in the list, or choose One archive for each mailbox and the same folder as before); then click Pause (make read-only) on this archive. If Thunderbird should use %s again, set the account's Local Directory back to %s (in Thunderbird: Account Settings, then Server Settings).", old, moved, moved, old, old)
+}
+
+// NoLiveOwner reports whether path is a folder of a Thunderbird profile whose settings say, for
+// certain, that no live account uses it (thunderbird.NoLiveOwner; C2's second condition, F-01).
+func NoLiveOwner(path string) bool {
+	look(path)
+	profile, ok := thunderbird.FindProfileDir(path)
+	if !ok {
+		return false
+	}
+	return thunderbird.NoLiveOwner(profile, path)
+}
+
 // MovedHowAs is MovedToAs, also saying whether the recorded name decided (for the words).
 func MovedHowAs(path, recordedName string) (string, bool, bool) {
 	look(path)

@@ -1517,6 +1517,10 @@ func writeRefusedRun(opts Options, cause error) {
 	lr.Status, lr.Finished, lr.Error = state.RunFailed, lr.Started, cause.Error()
 	if lr.Encrypted {
 		lr.Error, lr.ErrorKind = "", FailureKind(cause)
+	} else {
+		// A moved or removed Thunderbird account's stop keeps its reason, a fixed code, so status, the
+		// banner and the 30-day pause say that reason's words (F-03); plaintext records only.
+		lr.SourceReason = sourceReasonOf(cause)
 	}
 	_ = state.WriteLastRun(opts.Out, lr)
 	// A refused scheduled run is a failure the history should show too (MA-701), best effort.
@@ -2086,12 +2090,16 @@ func DiscoverInputsFor(inputs []string, auto bool, nameOf func(string) string) (
 		}
 	}
 
+	// An archive of one listed folder, auto-discovery off: the previous record's name for its folder
+	// decides whether Thunderbird stopped using it (docs/design-per-mailbox-archives.md §11, C2, F-08;
+	// MA-1504).
+	one := !auto && len(inputs) == 1
 	for _, in := range inputs {
 		info, err := os.Stat(in)
 		if err != nil {
 			if errors.Is(err, fs.ErrNotExist) {
 				name := ""
-				if auto {
+				if auto || one {
 					name = recorded(in)
 				}
 				if auto && autoplace.GoneSkippableAs(in, name) {
@@ -2103,6 +2111,13 @@ func DiscoverInputsFor(inputs []string, auto bool, nameOf func(string) string) (
 					// where it went (MA-1481; the owner, 2026-11-20, Q7: "Stop the backup").
 					if dir, moved, byName := autoplace.MovedHowAs(in, name); moved {
 						return nil, nil, &sourceUnreachableError{path: in, movedTo: dir, sameServer: !byName}
+					}
+				}
+				if one && name != "" {
+					// F-08: the folder gone, and the account the record named now keeps its mail
+					// elsewhere: the moved stop's words, the typed stop as before.
+					if dir, moved, byName := autoplace.MovedHowAs(in, name); moved && byName {
+						return nil, nil, &sourceUnreachableError{path: in, movedTo: dir, one: true}
 					}
 				}
 				return nil, nil, &sourceUnreachableError{path: in}
@@ -2123,6 +2138,17 @@ func DiscoverInputsFor(inputs []string, auto bool, nameOf func(string) string) (
 				return nil, nil, &sourceUnreachableError{path: in}
 			}
 			return nil, nil, fmt.Errorf("input %s: %w", in, err)
+		}
+		// C2 (the owner's Q7 extended, MA-1504): the folder is still there, but Thunderbird no longer
+		// uses it. Stopped, as a moved account's run is, when the record names the folder's account,
+		// the profile's settings say for certain that no live account uses the folder (F-01), and
+		// exactly one live account has that name, with its folder elsewhere.
+		if one && info.IsDir() {
+			if name := recorded(in); name != "" && autoplace.NoLiveOwner(in) {
+				if dir, moved, byName := autoplace.MovedHowAs(in, name); moved && byName {
+					return nil, nil, &sourceUnreachableError{path: in, movedTo: dir, one: true}
+				}
+			}
 		}
 		if info.IsDir() {
 			if source.IsMailStoreDir(in) {
