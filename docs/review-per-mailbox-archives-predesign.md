@@ -46,6 +46,16 @@ shows the mechanism; the Remove Account window's default is not checked.
 
 The fold, condition by condition, is the design's §17 (revision 2).
 
+## Fold check of revision 2
+
+Run 2026-11-24 by a separate read-only agent on revision 2 (commit `41746a9`, sha256
+`ee7ae664ef6d74860789e97fb75fec71c165cec18e1d318916ea023f0ac1d8be`); its report is appendix F.
+Verdict: **CLEARED AFTER THESE FIXES**: F-01 (HIGH: C2's stop never fired with two accounts on one
+mail server, because the settings then read as ambiguous, not "no account"), F-02 to F-05 (MEDIUM),
+citations 1 and 4, and the LOW items F-06 to F-12. All are applied in revision 2.1 (the design's
+§17, second table); the lead checked each against the report, and F-01's code claim against
+`internal/thunderbird/thunderbird.go:840-890`. Conditions met; the build may start.
+
 ## Appendices (verbatim, as each agent wrote them)
 
 The five reports follow unchanged: finder A, finder B, finder C, the skeptic, the rescue. Their own
@@ -523,4 +533,96 @@ No record format, status code, banner or email kind changes. It also helps today
   - Whether a member's install can fail in ways the end note cannot see.
 - My own judgements, labelled as such: the severities in §3; recommending (a′) over a WARN; limiting it to a job with one listed input (it is enough for sets and single rows, and changes nothing for others).
 - Counters: register finding; borrowed lines: the design's and the code's words, quoted; drift: none noticed; touched: this one file; persona: none; sources reached: design yes, skeptic and finders yes, code yes, saved Thunderbird source yes, a running Thunderbird no.
+
+
+### Appendix F. Fold check of revision 2
+
+### Fold check: per-mailbox archives, design revision 2
+
+- Date read with `date`: Tue 24 Nov 2026 11:36 EST.
+- Design checked: `docs/design-per-mailbox-archives.md`, commit `41746a9`, sha256
+  `ee7ae664ef6d74860789e97fb75fec71c165cec18e1d318916ea023f0ac1d8be` (recomputed, matches).
+  Compared with revision 1 (`9962aff`) and the filed review (`docs/review-per-mailbox-archives-predesign.md`,
+  the skeptic's §2 for C1 to C32, the rescue's §1 to §3 for C1, C2, R1, R2).
+- Role: fold check, the procedure's step 4 (`assurance-kit/process/design-review.md:110-115`). Read-only:
+  nothing built, run or tested. The code read is the working tree (main `10fcc2e` code; `41746a9` is docs only).
+- Severity: HIGH = data loss, a security hole, or an archive silently not backed up.
+
+#### 1. Each condition
+
+| Condition | Verdict | Evidence / what is missing |
+|---|---|---|
+| C1 | CARRIED | §11 is the rescue's text word for word; §9 keeps only the Did-not-finish line; MA-1501 is the rescue's row. One path around it remains: R2's plan line (F-05). |
+| C2 | PARTIAL | §11 carries the rescue's rule, words, "nothing changes" list and "single-mailbox archives too"; §14 carries the risk; MA-1504 and MA-1503 exist. Missing: (a) the rule's second condition never holds when two accounts share a mail server, which is the owner's own setup (F-01, HIGH); (b) the 3-day banner and 30-day pause still say "reconnect the source" (F-03); (c) MA-1504 dropped the rescue's "the refusal is typed, so the streak moves" and "the Repair helper says no" (F-12). Dropping the rescue's "removed for good" bullet from "nothing changes" is safe: the three conditions are all required, and MA-1504's twin "no live account with the name" pins it. |
+| C3 | CARRIED | §7 matches by store ids across every child, whatever the name; MA-1494 has the renamed, older-copy and numbered cases. See F-07 (an unreadable child is judged by name). |
+| C4 | CARRIED | §7: "exactly this one mailbox's id" and the job check (Auto off, this one input); MA-1494 "a combined archive at the name is not". See F-11 (a job file that cannot be read). |
+| C5 | PARTIAL | §7, §9, §10 carry it as asked. But §10's fold-and-strike (C10) removes the made-list line the unfinished-folder rule needs, so the rule fails after any Desktop page load (F-02). |
+| C6 | CARRIED | §11 "What a Yes installs"; MA-1497 narrowed. Gap: a job file that exists but cannot be read (F-11). |
+| C7 | CARRIED | §8: asked only for accounts getting a new archive; the plan's last line; MA-1502. |
+| C8 | CARRIED | §3 words, §3's question on the one-archive and single-row paths, §10 notes name the parent, MA-1507. Words issue in F-10. |
+| C9 | CARRIED | §6 uses `checkDecryptPaths` (`ArchivesAbove` plus `knownArchives`, which gains the made-list); MA-1493 "known or not". |
+| C10 | CARRIED | §10 fold once and strike; Unlist, Delete, uninstall; MA-1500. Conflicts with C5 (F-02). |
+| C11 | CARRIED | §10 `AddArchives() ([]Made, error)` with outcomes; §11 install goes on past a failure; MA-1497, MA-1499. |
+| C12 | CARRIED | §7: real directory, opened through the parent's `os.Root`, owner, not writable by others; MA-1494. |
+| C13 | PARTIAL | §11 words for the run's error, status, Run now's note and the failure email; §7 "not found now"; MA-1506. Missing: the row banner is left to the build, the 30-day pause words (`AutoPauseWhy`, `wizard.go:461`: "reconnect the source, then … click Repair") are not changed, and MA-1506 has no positive twin (F-03, F-12). |
+| C14 | PARTIAL | §6 gives wizard words per code and says "walk once, then `Recheck`". The code list misses R-set (citation 1), and "walk once plus `Recheck`" cannot be squared with making each folder with `CreateFolder`, which walks again or loses its handle-first guarantee (F-04). |
+| C15 | CARRIED | Both citations fixed; `mailarchiveOwnDirs` used; `RefuseSettingsWrite` now cited only for the made-list's own write, which is its true use. |
+| C16 | CARRIED | §4: cut, suffix, `suggestFolderName`, `folderNameWhy`, "Mailbox" fallback including "untitled" and "New folder"; MA-1492. Length nit in F-09. |
+| C17 | CHANGED, safe | The required part (the extra device names) is in §4 and MA-1492. The wrapper change was optional in the condition and is declined with a stated limit. Safe as a stated limit: the failure needs three rare things at once (the wrapper used only past 261 characters, cmd's delayed expansion turned on in the registry, and a "!" in the account's name). But the residual is a backup that never starts and writes no log, and two claims in §17 are off: the registry setting can be per user, not only "for everyone" (recalled, not in the repository), and MA-1503 has no "!" step (citation 4). Cheapest close: turn "!" into a space in a set's folder names (§4), which needs no wrapper change. |
+| C18 | CARRIED | §4 "Told apart". No row covers it (suggest a case in MA-1496). |
+| C19 | CARRIED | §4 list matches the skeptic's list; task and LaunchAgent names are hashes (`schedule/descriptor.go:339`); cron holds no log path (checked). Still incomplete (F-10). |
+| C20 | CARRIED | §3 and §9 no longer say "moved"; "joins it at its next backup". |
+| C21 | CARRIED | §8 forms, §9 rule, MA-1495, MA-1496. The §9 example breaks the rule (F-10). |
+| C22 | CARRIED | §9; no row covers it (suggest a case in MA-1496). |
+| C23 | CARRIED | §13. |
+| C24 | CARRIED | §11 guard: installed-and-not-paused only, `ThunderbirdSync.Profile`, Auto covers every profile, unreadable job refuses naming it, network inputs not looked at, bounded wait, Settings card only; MA-1498. |
+| C25 | CARRIED | §10: `util.OpenRegularFileIn` inside an `os.Root`, 64 KB, control-character lines skipped, rename under a lock, no duplicates; MA-1500. Format clash in F-06. |
+| C26 | CARRIED | §14. |
+| C27 | CARRIED | §11 adds the asleep sentence on Windows and macOS; Linux skipped as today's sentence says (`wizard.go:2098-2104`); §14. |
+| C28 | CARRIED | §14: 2 × N. |
+| C29 | CARRIED | §9; MA-1496. |
+| C30 | CARRIED | MA-1503: `schtasks /Run`, wrapper forced by a long program path, Background Items counted, clean-up written down. |
+| C31 | CARRIED | §4 `mime.QEncoding` when any byte is outside ASCII; MA-1508; build step 1. |
+| C32 | CARRIED | §16: the made-list reader lands with Unlist, Delete and uninstall (step 2); `AddArchives` with the handler (step 4). |
+| R1 | CARRIED, words changed (safe) | §10 row line, §11 end note, MA-1505, from `tbBanner`'s record read (`archives.go:272-281`). The words drop the rescue's "first line" for "switch to it to see why": safe. Issues: a backup in progress (status "running") would read "did not finish"; the summary is said to carry the sentence but §9's example does not (F-10). |
+| R2 | PARTIAL | §5, §7, MA-1494. Order against "Its archive" is not stated, MA-1494's older-copy case contradicts it, and "an archive … already holds" can match a combined archive, which the plan then tells the person to Pause (F-05). |
+| QA | CARRIED | §0, §8 (both paths, "Account 1 of 3"), §12, MA-1502; F12 of the 1.7.3 friction review is the right citation (`review-picker-names-friction.md:253`). |
+| A-21 (INFO) | PARTIAL | Hedges removed. §3 still gives MA-1286's rule as "none of `& < > \`"; MA-1286 also covers `"` and `'` (catalog :1614). The words hold none of them, so harmless. |
+| C-21 (INFO) | CARRIED | A promise for the release notes (no release notes yet). |
+
+#### 2. Citations revision 2 added
+
+All of these exist and say what the design says: `checkDecryptPaths` (`internal/app/decryptplan.go:262-302`), `knownArchives` (:307-327: the Desktop's list, its current archive, the last archive; no made-list yet, as §6 says it "gains"), `mailarchiveOwnDirs` (:332), `copyWording` (:368), `ArchivesAbove` (`copyexport_archive.go:206-230`), `Recheck` (`copyexport_dest.go:351`), `suggestFolderName` (`copyexport_folder.go:29-47`, empty gives "New folder"), `folderNameWhy` (:50-62), `CreateFolder` (:71-112), `autoplace.RecordedName` (`autoplace.go:219`), `autoplace.MovedHowAs` (:278), `thunderbird.ReadStoreFacts` (`storefacts.go:82`), `NoAccountNone` (`offline_words.go:159`), `DiscoverInputsFor` (`run.go:2070-2126`), `encmark.MustMinimise` (`encmark.go:438`), `seal.IsSealed` (`seal.go:57`), `util.OpenRegularFileIn` (`openregular.go:93`), `fixedConfigNames` (`uninstall/config.go:30`), `maintenance.go:253-259` (health view on `effectiveOut` only), `archives.go:272-281` (`tbBanner`, record used only for an ok run), `health/mailboxgone.go:163-166` (Auto required), `alert.go:184-209`, `scheduleQuestionFor` (`wizard.go:2098-2104`), `presync/session.go:210`, `.claude/tbsrc/nsMsgIncomingServer.cpp:744-782` (`GetLocalPath`, `CreateUnique` at :774). Row ids MA-1482 to MA-1508 and S90 are unused in the catalog, the code and the `gmail-dedup` and `menubar` branches.
+
+Problems:
+1. §6 "its codes R-e, R-q, R-w, R-f, R-f2 and the encrypted one" leaves out **R-set**, the own-folders refusal (`decryptplan.go:286`), whose words say "for the unencrypted copy". Every refusal `checkDecryptPaths` returns is in the decrypt copy's words (R-e :349-358, R-enc :278, R-f :364); `copyWording` rewords only R-f and R-f2, so "as `copyWording` does" understates the work.
+2. §6 "made with `CreateFolder` … through a handle on the parent opened before the check": true only because `CreateFolder` runs `CheckDestinationOther` after `os.OpenRoot` (`copyexport_folder.go:85-91`). With the set's "walk once, then `Recheck`", see F-04.
+3. §11 C2's second condition cites `ReadStoreFacts`/`NoAccountNone`; the code returns `NoAccountAmbiguous`, not `NoAccountNone`, when two live accounts share the folder's server name (`thunderbird.go:860-874`, `:886-889`; catalog MA-1463 says so). See F-01.
+4. §17 C17 says "the lab (MA-1503) runs a name with `!`"; MA-1503's row has no such step, and the lab can show only the default case unless the test PC's Command Processor setting is changed, which needs the owner's word.
+
+#### 3. New problems
+
+- **F-01 HIGH, §11 "When Thunderbird stops using an archive's folder" (C2).** Condition 2 asks `ReadStoreFacts` for `NoAccountNone`. With two or more accounts on one mail server (several Gmail addresses all have server imap.gmail.com, folders imap.gmail.com, imap.gmail-1.com …), removing and re-adding one puts it in a new folder (imap.gmail-2.com); for the old folder no folder setting matches, but two live accounts have its server name, so the match is `NoAccountAmbiguous` (`thunderbird.go:860-874`). The stop never fires, and the archive named by that address keeps saying "Backup complete" while its account's mail goes elsewhere: C-01's HIGH failure, back for the owner's own three-Gmail setup, and §14 does not state it. MA-1504's fixture has one account on the server, so it cannot see this. *Smallest fix:* condition 2 becomes "the settings, read for certain, give the folder to no live account: no account's folder setting (directory, directory-rel) names it, and no account without a folder setting has its server name"; an ambiguous answer where every same-server account's folder setting names another folder counts as none. Add an MA-1504 twin (two accounts on one server, one re-added at -2) and use two accounts on one server in MA-1503's lab step.
+- **F-02 MEDIUM, §10 vs §7 (C10 against C5).** The Desktop folds the made-list "then removes those lines" (MA-1500: "strikes its lines"). A folder that failed before its first save holds no archive, so `Reconcile` does not add it, but its line is struck all the same. After the next page load, §7's unfinished-folder rule no longer finds it, so the re-run that §10's own note asks for ("choose the same folder") makes "NAME (2)" and leaves the first folder, possibly full of mail pages, an orphan: C5's failure, back in the Desktop flow. *Smallest fix:* strike only lines whose folder now holds an archive or is gone; keep a line whose folder is there with no manifest (the 200-line cap bounds them). Add the case to MA-1500 and MA-1494.
+- **F-03 MEDIUM, §11 (C2 and C13), later surfaces.** Both stops are the typed source refusal, so after 3 days status and the row banner say "this archive's source has not been reachable since DATE — reconnect the source" (`health.go:553`) and at 30 days the pause says "reconnect the source, then … click Repair" (`wizard.go:461`). For C2 the folder is there; for both, Repair says no (`mailboxgone.go:163-166`). The person is sent to a dead end. Revision 2 leaves C13's banner to the build and says nothing for C2. *Smallest fix:* the refused record keeps a fixed reason code (moved, removed) with no name in it, and status, the row banner and the 30-day pause use that reason's words; MA-1504 and MA-1506 assert them.
+- **F-04 MEDIUM, §6 (C14).** "The known archives are walked once per set; before each archive folder is made, the parent is checked again (`Recheck`)" and "each archive folder is made with `CreateFolder` … through a handle on the parent opened before the check" cannot both hold. `CreateFolder` checks the archives it is given after opening its handle (`copyexport_folder.go:85-91`): given the known archives, it walks them all again per folder (what C14 removed); given none, with `Recheck` run before it, a parent swapped for a link to a plaintext archive between `Recheck` and the handle's opening puts the new folder inside that archive, and §6's claim is false. *Smallest fix:* say the make takes the set's checked result (`CopyOutside`) and runs its `Recheck` after opening the handle, in place of a new walk; MA-1493's swap case runs against that.
+- **F-05 MEDIUM, §7 "A saved-once row already kept" (R2).** (1) The plan line "Click Pause on it to stop its backups" goes to whatever "already holds" the row's store id, which can be a combined archive sitting in the parent; pausing it stops its other mailboxes, before any schedule exists, with none of C1's guards. (2) For a saved-once row whose archive matches exactly, "Its archive" (continue) and R2 (leave as it is) both apply, and MA-1494's "older-copy flip … continued" contradicts R2. *Smallest fix:* R2 is checked before "Its archive" for a saved-once row; the Pause advice only for an archive whose store ids are exactly that one id, otherwise "kept as it is in FOLDER" alone; reword MA-1494's older-copy case to match.
+- **F-06 LOW, §10 made-list format.** Each line is "path, a tab, the name", and "a line with a control character … is skipped": a tab is a control character, so read literally every line is skipped. *Fix:* "a control character other than its one tab". Also name the made-list's lock file for uninstall beside `wizard-made.txt` (today's `known-archives.lock` is not named either; whether that leaves the settings folder behind was not checked).
+- **F-07 LOW, §7 "Cannot read now".** Matching is by store id, but this rule looks only at "the child named for this mailbox". A child of another name that cannot be read now (a renamed account's archive) is skipped, and the mailbox gets a second archive and schedule. *Fix:* the plan lists each child that could not be read, and a mailbox with no match makes no new archive while any such child is there (or state the risk).
+- **F-08 LOW, §11 (C2/C13 coverage).** An archive with Auto off whose folder is gone and whose named account now lives elsewhere still gets "input … does not exist (check the path, or that the drive holding it is mounted)": the moved check runs only `if auto` (`run.go:2101-2107`), C2 needs the folder there, C13 needs no live account with the name. *Fix:* run `MovedHowAs` for a gone input when Auto is off and one input is listed; add an MA-1504 twin.
+- **F-09 LOW, §4 and MA-1492.** A 60-character name plus " (2)" is 64 characters; MA-1492 asserts "at most 60". *Fix:* cut to leave room for the number, or say "60 before the number".
+- **F-10 LOW, words a person sees.** (a) §3's question says "holds archives made one for each mailbox" for any folder holding two archives, which may be unrelated: say "already holds N archives". (b) R1's line would say "did not finish" while a backup is running (status "running" exists, `state/lastrun.go:64`): exclude it. (c) §9's example says "4 archives are ready" and omits sam@old.example, which the plan brought up to date and C21's rule counts; nor does it hold the R1 sentence §10 says the summary carries. (d) §11 "They start 10 minutes apart … so they do not all run at once": on a re-run, new archives start at the chosen time beside kept schedules at the same times. (e) §4's cost list leaves out the settings files that also hold the path (`known-archives.json`, `last-archive.txt`, `desktop-settings.json`) and the new made-list, which holds the name twice; and §15 calls the S85 and MA-1288 change "nothing weakened" when it narrows them by the owner's 2026-11-19 ruling (answer 3): say so.
+- **F-11 LOW, §7 and §11 (C4, C6).** A child whose job file exists but cannot be read is neither "a readable job" nor "no job file yet": unstated whether it is continued and whether a Yes installs over it. *Fix:* continue it, never install over it, and the end note says "kept its own schedule (its settings could not be read)".
+- **F-12 LOW, rows.** MA-1504 lacks the rescue's "the refusal is typed, so the streak moves" and "the Repair helper says no"; without the first, an untyped stop (no streak, no banner, no pause) would pass. MA-1506 has no positive twin (the repo's rule for a refusal test). C18 and C22 have no row.
+
+#### 4. Verdict
+
+**CLEARED AFTER THESE FIXES:** F-01 (HIGH), F-02, F-03, F-04, F-05 (MEDIUM), with citation 1 and 4 corrected. The LOW items (F-06 to F-12) are small text changes best made in the same pass; none needs a new review.
+
+#### Method notes (Limen)
+
+- Register: a finding report (the fold check), for the lead.
+- Drew on: revision 2 at the digest above; revision 1 (`git show 9962aff`); the filed review in full; the procedure's step 4; the catalog rows named above; and the code at every new citation (each opened). Not checked: Windows' Command Processor setting scope (recalled); whether uninstall leaves the settings folder when an unknown lock file remains; a real Thunderbird (F-01 rests on the code's match and on catalog MA-1463, not on a live re-add).
+- Smallest check for F-01: read `thunderbird.go:840-889` with two accounts whose `hostname` is imap.gmail.com and folders imap.gmail-1.com and imap.gmail-2.com, for the store imap.gmail.com.
+- Counters: drift none noticed; touched this one file; persona none; sources reached: design yes, review yes, procedure yes, catalog yes, code yes, Thunderbird no.
 
