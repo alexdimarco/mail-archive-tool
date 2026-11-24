@@ -125,3 +125,35 @@ func TestNoLiveOwnerSaysNoAccountUsesTheFolder(t *testing.T) {
 		t.Error("the second account re-added at -2: no live owner of its leftover -1 folder")
 	}
 }
+
+// covers: MA-1506, R12
+// C13's question (docs/design-per-mailbox-archives.md §11 "When the account was removed for good"):
+// how many live accounts have the name an archive's record gave its folder, from the strict read of
+// the settings, compared as MovedHow compares a recorded name. Positive twin first: the account is
+// still there (1). Removed: 0, for certain. Settings that cannot be read for certain, or that list no
+// account, tell nothing.
+func TestLiveNamedCountsTheLiveAccountsWithAName(t *testing.T) {
+	profile, prefs := ownerProfile(t, "imap.gmail.com", "imap.gmail-1.com")
+	clean := func(s string) string { return strings.TrimSpace(s) }
+	a := ownerAcct("1", "imap.gmail.com", "imap.gmail.com", "qza@gmail.example")
+	b := ownerAcct("2", "imap.gmail.com", "imap.gmail-1.com", "qzb@gmail.example")
+	prefs(ownerPrefs(a, b)...)
+	if n, ok := LiveNamed(profile, "qzb@gmail.example", clean); !ok || n != 1 {
+		t.Fatalf("positive twin: the account is still there: %d %v", n, ok)
+	}
+	prefs(ownerPrefs(a)...)
+	if n, ok := LiveNamed(profile, "qzb@gmail.example", clean); !ok || n != 0 {
+		t.Errorf("the account removed: want 0 for certain, got %d %v", n, ok)
+	}
+	prefs(append(ownerPrefs(a), `user_pref("mail.server.server1.name", "x"); // a comment`)...)
+	if _, ok := LiveNamed(profile, "qzb@gmail.example", clean); ok {
+		t.Error("settings that cannot be read for certain must tell nothing")
+	}
+	prefs(a...)
+	if _, ok := LiveNamed(profile, "qzb@gmail.example", clean); ok {
+		t.Error("settings that list no account must tell nothing")
+	}
+	if _, ok := LiveNamed(profile, "", clean); ok {
+		t.Error("no name asked: nothing to tell")
+	}
+}

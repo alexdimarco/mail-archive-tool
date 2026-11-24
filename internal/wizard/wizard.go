@@ -389,8 +389,16 @@ func RunHeadless(path string) int {
 			logger.Printf("auto-pause: %v", perr)
 		}
 		if paused {
-			logger.Printf("auto-paused the scheduled backup: the source has been unreachable for too long; the schedule was stopped (reconnect the source, then click Repair on the archive's Scheduled backup card in MailArchive Desktop)")
-			backupalert.RecordAutoPauseDefault(key, j.Out, errors.New(AutoPauseWhy), logger)
+			// A Thunderbird account's stop whose refused record kept its reason says that reason's
+			// words, in the log and the email, in place of "reconnect the source … Repair", which
+			// cannot help it (docs/design-per-mailbox-archives.md §11, F-03; MA-1506).
+			why := AutoPauseWhyFor(j.Out)
+			if why == AutoPauseWhy {
+				logger.Printf("auto-paused the scheduled backup: the source has been unreachable for too long; the schedule was stopped (reconnect the source, then click Repair on the archive's Scheduled backup card in MailArchive Desktop)")
+			} else {
+				logger.Printf("auto-paused: %s", why)
+			}
+			backupalert.RecordAutoPauseDefault(key, j.Out, errors.New(why), logger)
 		}
 		return 1
 	}
@@ -459,6 +467,17 @@ const scheduleSyncLine = "\nThunderbird: synced before each run. A run skips the
 // AutoPauseWhy is the auto-pause email's reason, the same words for the Desktop's capture and
 // the local job.
 const AutoPauseWhy = "the mailbox or mail folder has been unreachable for 30 days, so its scheduled backup was stopped. Your archive is kept. Do this: reconnect the source, then in MailArchive Desktop click Repair on the archive's Scheduled backup card to start the schedule again."
+
+// AutoPauseWhyFor is the auto-pause email's reason for the local job's archive at out: the words of
+// the reason its last refused run kept (Thunderbird keeps the account's mail in another folder now,
+// or no longer has the account: health.SourceReasonPauseWordsAt; docs/design-per-mailbox-archives.md
+// §11, F-03, MA-1506), else AutoPauseWhy, today's words.
+func AutoPauseWhyFor(out string) string {
+	if why := health.SourceReasonPauseWordsAt(out); why != "" {
+		return why
+	}
+	return AutoPauseWhy
+}
 
 // AutoPauseDeleteWhy is the auto-pause email's reason, and its log line's, for a delete this
 // computer never began (docs/design-archive-delete.md §15.10 slice 6, MA-1058), the same words for

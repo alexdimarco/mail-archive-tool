@@ -2091,8 +2091,8 @@ func DiscoverInputsFor(inputs []string, auto bool, nameOf func(string) string) (
 	}
 
 	// An archive of one listed folder, auto-discovery off: the previous record's name for its folder
-	// decides whether Thunderbird stopped using it (docs/design-per-mailbox-archives.md §11, C2, F-08;
-	// MA-1504).
+	// decides whether Thunderbird stopped using it (docs/design-per-mailbox-archives.md §11, C2, F-08,
+	// C13; MA-1504, MA-1506).
 	one := !auto && len(inputs) == 1
 	for _, in := range inputs {
 		info, err := os.Stat(in)
@@ -2115,9 +2115,13 @@ func DiscoverInputsFor(inputs []string, auto bool, nameOf func(string) string) (
 				}
 				if one && name != "" {
 					// F-08: the folder gone, and the account the record named now keeps its mail
-					// elsewhere: the moved stop's words, the typed stop as before.
+					// elsewhere: the moved stop's words. C13: no live account has that name any more:
+					// the removed account's words. Either way the typed stop, as before.
 					if dir, moved, byName := autoplace.MovedHowAs(in, name); moved && byName {
 						return nil, nil, &sourceUnreachableError{path: in, movedTo: dir, one: true}
+					}
+					if autoplace.RemovedAs(in, name) {
+						return nil, nil, &sourceUnreachableError{path: in, removed: true}
 					}
 				}
 				return nil, nil, &sourceUnreachableError{path: in}

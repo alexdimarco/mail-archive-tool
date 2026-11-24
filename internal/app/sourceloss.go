@@ -42,24 +42,28 @@ const (
 //
 // one: an archive of one listed Thunderbird folder, auto-discovery off, whose account now keeps its
 // mail in movedTo, with the folder still there (C2) or gone (F-08): autoplace.NoLongerUsedText's
-// words (docs/design-per-mailbox-archives.md §11; MA-1504).
+// words. removed: such an archive's folder is gone with its account (C13): autoplace.RemovedText's
+// words (docs/design-per-mailbox-archives.md §11; MA-1504, MA-1506).
 type sourceUnreachableError struct {
 	path, movedTo string
 	sameServer    bool
-	one           bool
+	one, removed  bool
 }
 
-// The reason code a plaintext refused record keeps (state.LastRun.SourceReason; revision 2.1's
-// F-03): every moved stop. No name is in it.
+// The reason codes a plaintext refused record keeps (state.LastRun.SourceReason; revision 2.1's
+// F-03): every moved stop, and C13's removed account. No name is in either.
 func (e *sourceUnreachableError) sourceReason() string {
-	if e.movedTo != "" {
+	switch {
+	case e.removed:
+		return state.SourceReasonRemoved
+	case e.movedTo != "":
 		return state.SourceReasonMoved
 	}
 	return ""
 }
 
-// sourceReasonOf is the reason code of a run's refusal cause: "" unless it is a moved account's
-// typed stop.
+// sourceReasonOf is the reason code of a run's refusal cause: "" unless it is a moved or removed
+// account's typed stop.
 func sourceReasonOf(cause error) string {
 	var sue *sourceUnreachableError
 	if errors.As(cause, &sue) {
@@ -82,8 +86,12 @@ func pathLeadsNowhere(err error) bool {
 }
 
 // Error is autoplace.GoneText, unchanged, so whatever compares a record's error with an input's
-// refusal (health.GoneMailboxRepairable) compares one text; for a moved account, autoplace.MovedText.
+// refusal (health.GoneMailboxRepairable) compares one text; for a moved account, autoplace.MovedText
+// (or, for an archive of one folder, NoLongerUsedText); for a removed one (C13), RemovedText.
 func (e *sourceUnreachableError) Error() string {
+	if e.removed {
+		return autoplace.RemovedText(e.path)
+	}
 	if e.movedTo != "" && e.one {
 		return autoplace.NoLongerUsedText(e.path, e.movedTo)
 	}

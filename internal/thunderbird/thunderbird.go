@@ -841,6 +841,30 @@ func NoLiveOwner(profileDir, store string) bool {
 	return true
 }
 
+// LiveNamed is how many live accounts have the name name, each account's name read as Thunderbird
+// shows it (accountNameOf) and cleaned by clean, as MovedHow compares a recorded name; ok is false
+// when prefs.js or user.js cannot be read with certainty, or lists no account, so nothing is known
+// (docs/design-per-mailbox-archives.md §11 "When the account was removed for good", C13; MA-1506).
+func LiveNamed(profileDir, name string, clean func(string) string) (n int, ok bool) {
+	s, _, err := readPrefs(profileDir)
+	if err != nil || name == "" || clean == nil {
+		return 0, false
+	}
+	if file, _, _ := s.uncertain(); file != "" {
+		return 0, false
+	}
+	live := liveServers(func(key string) string { return s.vals[key] })
+	if len(live) == 0 {
+		return 0, false
+	}
+	for _, key := range live {
+		if a := accountNameOf(key, s.vals); a != "" && clean(a) == name {
+			n++
+		}
+	}
+	return n, true
+}
+
 // within reports whether p is root or lies under it, compared as samePath compares paths.
 func within(p, root, goos string) bool {
 	cp, cr := components(p, goos), components(root, goos)

@@ -535,7 +535,16 @@ func Assess(in Input, now time.Time) Report {
 			if !s.FirstUnreachable.IsZero() {
 				since = s.FirstUnreachable.Format("Jan 2, 2006")
 			}
-			if named := goneRepair(); named != "" {
+			// A Thunderbird account's stop whose refused record kept its reason (moved or removed):
+			// that reason's words, the banner's too, since reconnecting or Repair cannot help there
+			// (docs/design-per-mailbox-archives.md §11, F-03; MA-1506). Plaintext records only.
+			reason := ""
+			if in.LastRunState == state.LastRunPresent && !in.LastRun.Encrypted && !encmark.MustMinimise(in.Out) {
+				reason = in.LastRun.SourceReason
+			}
+			if words := SourceReasonText(reason, s.FirstUnreachable); words != "" {
+				r.warn("source_lost", words)
+			} else if named := goneRepair(); named != "" {
 				// A mail account removed: MailArchive now skips its gone folder, so Repair (or Run
 				// now) backs up the others (MA-1479); said only where a run would get past it, naming
 				// the missing mailbox (the friction review's F10). With its scheduled entry there (a

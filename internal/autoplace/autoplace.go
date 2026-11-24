@@ -283,6 +283,14 @@ func NoLongerUsedText(old, moved string) string {
 	return fmt.Sprintf("Thunderbird no longer uses %s: the account that used it now keeps its mail in %s, so this backup stopped. The mail saved so far stays in this archive. To back up %s, click Make a new archive… and back that account up again (choose it in the list, or choose One archive for each mailbox and the same folder as before); then click Pause (make read-only) on this archive. If Thunderbird should use %s again, set the account's Local Directory back to %s (in Thunderbird: Account Settings, then Server Settings).", old, moved, moved, old, old)
 }
 
+// RemovedText is the words of the stop of an archive of one listed Thunderbird folder, with
+// auto-discovery off, whose folder is gone with its account (docs/design-per-mailbox-archives.md §11
+// "When the account was removed for good", C13; MA-1506), in place of GoneText's. Folders only
+// (MA-1288). The design's draft words, for the friction review.
+func RemovedText(folder string) string {
+	return fmt.Sprintf("Thunderbird no longer has the account that used %s. This archive keeps the mail saved so far. To stop its backups, click Pause (make read-only) on its row.", folder)
+}
+
 // NoLiveOwner reports whether path is a folder of a Thunderbird profile whose settings say, for
 // certain, that no live account uses it (thunderbird.NoLiveOwner; C2's second condition, F-01).
 func NoLiveOwner(path string) bool {
@@ -292,6 +300,23 @@ func NoLiveOwner(path string) bool {
 		return false
 	}
 	return thunderbird.NoLiveOwner(profile, path)
+}
+
+// RemovedAs reports whether the account the archive's previous record named for path's folder
+// (recordedName, RecordedName) is gone from Thunderbird: its profile's settings, read for certain,
+// list accounts and none has that name (C13). False for no recorded name, a path in no profile, and
+// settings that cannot be read for certain.
+func RemovedAs(path, recordedName string) bool {
+	if recordedName == "" {
+		return false
+	}
+	look(path)
+	profile, ok := thunderbird.FindProfileDir(path)
+	if !ok {
+		return false
+	}
+	n, certain := thunderbird.LiveNamed(profile, recordedName, state.CleanFolderName)
+	return certain && n == 0
 }
 
 // MovedHowAs is MovedToAs, also saying whether the recorded name decided (for the words).

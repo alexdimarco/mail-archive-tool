@@ -9,6 +9,7 @@ import (
 	"mail-archive-tool/internal/archdelete"
 	"mail-archive-tool/internal/archindex"
 	"mail-archive-tool/internal/encmark"
+	"mail-archive-tool/internal/health"
 	"mail-archive-tool/internal/schedule"
 	"mail-archive-tool/internal/seal"
 	"mail-archive-tool/internal/state"
@@ -52,6 +53,12 @@ type ArchiveRow struct {
 	// it by itself and Run now backs up at once (F2).
 	SourceLostMailbox string
 	SourceLostSet     bool
+	// SourceLostWords, beside SourceLostSince, are the words for an archive whose last refused run
+	// kept why: Thunderbird keeps its account's mail in another folder now, or no longer has the
+	// account (health.SourceReasonWordsAt, the words status says; docs/design-per-mailbox-archives.md
+	// §11, F-03, MA-1506). Shown in place of the banner's "reconnect the source" forms; "" for any
+	// other archive, which keeps today's words.
+	SourceLostWords string
 	// Problem is, for a folder this computer recorded as an encrypted archive that no
 	// longer holds it — emptied, replanted, a link, its key files gone — that case's
 	// own words (design-encrypted-archives-phase3 §4.5): shown in place of Switch and
@@ -199,9 +206,10 @@ func (cfg Config) archiveRows(idx archindex.Index) []ArchiveRow {
 			problem = recordedProblem(e.Path)
 		}
 		lostSince := sourceLostSince(e.Path)
-		goneMailbox := ""
+		goneMailbox, lostWords := "", ""
 		if lostSince != "" {
 			goneMailbox = goneRepairInput(e.Path)
+			lostWords = health.SourceReasonWordsAt(e.Path) // archive-local records only (F-03)
 		}
 		del := cfg.deleteRowFacts(e.Path, rc, avail && kind != "" && problem == "")
 		unlistWhy := ""
@@ -227,6 +235,7 @@ func (cfg Config) archiveRows(idx archindex.Index) []ArchiveRow {
 			// sourceWait (MA-869, OUT-01), naming the missing mailbox (F10).
 			SourceLostRepair:  goneMailbox != "",
 			SourceLostMailbox: goneMailbox,
+			SourceLostWords:   lostWords,
 			Problem:          problem,
 			TBBanner:         tbBanner(e.Path, avail && kind != "" && kind != archindex.KindEncrypted && problem == ""),
 		})
