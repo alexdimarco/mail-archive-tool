@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"errors"
 	"log"
+	"mime"
 	"os"
 	"path/filepath"
 	"runtime"
@@ -325,8 +326,21 @@ func TestTheSyncEmailWordsComeFromTheClosedMaps(t *testing.T) {
 	ev := g.sent[0]
 	msg := string((alert.Config{From: "b@example.org", To: "t@example.org"}).Message(ev))
 	date := syncT0.Local().Format("Jan 2, 2006")
+	// Amended 2026-11-24 by C31 (MA-1508), at the same strength, beside its text: the subject holds a
+	// dash outside ASCII, so it is now sent as RFC 2047 encoded words; read back as a mail program
+	// reads it, it must be exactly the same words. (The list below read first:
+	// "Subject: MailArchive: Thunderbird not synced for 3 days — " + g.out + "\r\n", in the raw message.)
+	head, _, _ := strings.Cut(msg, "\r\n\r\n")
+	subject := ""
+	for _, line := range strings.Split(head, "\r\n") {
+		if s, ok := strings.CutPrefix(line, "Subject: "); ok {
+			subject, _ = new(mime.WordDecoder).DecodeHeader(s)
+		}
+	}
+	if subject != "MailArchive: Thunderbird not synced for 3 days — "+g.out {
+		t.Errorf("the sync email's subject reads %q:\n%s", subject, msg)
+	}
 	for _, want := range []string{
-		"Subject: MailArchive: Thunderbird not synced for 3 days — " + g.out + "\r\n",
 		"The scheduled backups of " + g.out + " on ",
 		" still ran, but Thunderbird has not been synced before them since " + date + " (2 backups in a row).",
 		"Mail that had only reached the mail server, not this computer, may be missing from the archive.",

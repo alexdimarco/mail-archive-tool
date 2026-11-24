@@ -1,6 +1,7 @@
 package alert
 
 import (
+	"mime"
 	"net"
 	"strconv"
 	"strings"
@@ -48,7 +49,11 @@ func TestTheThunderbirdDownloadEmails(t *testing.T) {
 	}
 	msg := <-got
 	_, body, _ := strings.Cut(msg, "\r\n\r\n")
-	if !strings.Contains(msg, "Subject: MailArchive: Thunderbird still downloading (backups OK) — Mail\r\n") {
+	// Amended 2026-11-24 by C31 (MA-1508), at the same strength, beside its text: the subject holds a
+	// dash outside ASCII, so it is now sent as RFC 2047 encoded words; read back as a mail program
+	// reads it, it must be exactly the same words. (It read: the raw message contains
+	// "Subject: MailArchive: Thunderbird still downloading (backups OK) — Mail\r\n".)
+	if s, _ := sentSubject(t, []byte(msg)); func() string { d, _ := new(mime.WordDecoder).DecodeHeader(s); return d }() != "MailArchive: Thunderbird still downloading (backups OK) — Mail" {
 		t.Errorf("the still-downloading subject:\n%s", msg)
 	}
 	wantStill := "Your backups are working. Thunderbird has not finished downloading one account's mail yet, so the backups have only part of it so far.\r\n\r\n" +

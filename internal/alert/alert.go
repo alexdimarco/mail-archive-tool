@@ -11,6 +11,7 @@ import (
 	"crypto/tls"
 	"errors"
 	"fmt"
+	"mime"
 	"net"
 	"net/smtp"
 	"strconv"
@@ -343,7 +344,7 @@ func (c Config) Message(ev Event) []byte {
 	var m strings.Builder
 	fmt.Fprintf(&m, "From: %s\r\n", header(c.From))
 	fmt.Fprintf(&m, "To: %s\r\n", header(strings.Join(c.Recipients(), ", ")))
-	fmt.Fprintf(&m, "Subject: %s\r\n", header(subject))
+	fmt.Fprintf(&m, "Subject: %s\r\n", subjectHeader(subject))
 	m.WriteString("MIME-Version: 1.0\r\n")
 	m.WriteString("Content-Type: text/plain; charset=utf-8\r\n")
 	m.WriteString("\r\n")
@@ -355,6 +356,20 @@ func (c Config) Message(ev Event) []byte {
 // error message) placed in a header cannot add headers of its own.
 func header(v string) string {
 	return strings.NewReplacer("\r", " ", "\n", " ").Replace(v)
+}
+
+// subjectHeader is the Subject header's value: header's, and, when it holds any byte outside ASCII
+// (an archive folder named for its mailbox, "Søren", or the subjects' own dash), RFC 2047 encoded
+// words (mime.QEncoding), so the header line is ASCII and a mail program reads it back as written
+// (docs/design-per-mailbox-archives.md §4, C31, MA-1508). An ASCII subject is unchanged.
+func subjectHeader(subject string) string {
+	s := header(subject)
+	for i := 0; i < len(s); i++ {
+		if s[i] >= 0x80 {
+			return mime.QEncoding.Encode("utf-8", s)
+		}
+	}
+	return s
 }
 
 // transport sends a prepared message to addr. The default dials real SMTP; a test
