@@ -6,6 +6,7 @@ import (
 	"os"
 	"path/filepath"
 	"reflect"
+	"runtime"
 	"strings"
 	"sync"
 	"testing"
@@ -68,6 +69,8 @@ type flowScript struct {
 	opened    []string
 	progress  []*fakeProgress
 	openedDir []string
+	// answer, when set, answers a list whose text it knows (ok); any other list gets its first row.
+	answer func(text string) (string, bool, error)
 }
 
 func (s *flowScript) install(t *testing.T) {
@@ -80,6 +83,11 @@ func (s *flowScript) install(t *testing.T) {
 	errorDialog = func(text string, _ ...zenity.Option) error { s.notes = append(s.notes, text); return nil }
 	listDialog = func(text string, items []string, _ ...zenity.Option) (string, error) {
 		s.lists = append(s.lists, text)
+		if s.answer != nil {
+			if a, ok, err := s.answer(text); ok {
+				return a, err
+			}
+		}
 		if len(items) == 0 {
 			return "", zenity.ErrCanceled
 		}
@@ -288,8 +296,9 @@ func TestASetIsMadeOneArchiveAfterAnother(t *testing.T) {
 			}
 		}
 	}
-	// The shared answers, once each, after the plan and the download questions.
-	if got := strings.Join(s.lists, "|"); got != "Export mode:|"+"Also keep a copy of each original message (.eml) so you can re-import it into a mail program later? (uses more disk space)|"+followLinksQuestion || s.entries != 1 {
+	// The shared answers, once each, after the plan and the download questions; then only the
+	// schedule question (MA-1497), answered here with its first row, No.
+	if got := strings.Join(s.lists, "|"); got != "Export mode:|"+"Also keep a copy of each original message (.eml) so you can re-import it into a mail program later? (uses more disk space)|"+followLinksQuestion+"|"+setScheduleQuestionFor(runtime.GOOS) || s.entries != 1 {
 		t.Errorf("the shared answers: %q, date window %d", s.lists, s.entries)
 	}
 	if len(s.questions) != 5 || !strings.HasPrefix(s.questions[1], "Account 1 of 3: ann@qz-a.example") {

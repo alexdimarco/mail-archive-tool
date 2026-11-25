@@ -2232,11 +2232,16 @@ func presyncQuestionTextFor(goos string) string {
 // (StartCalendarInterval) and a Windows task (StartWhenAvailable) run a time the computer
 // slept through when it wakes; Linux's cron skips it.
 func scheduleQuestionFor(goos string) string {
-	missed := "A time when the computer is switched off is skipped. If it was asleep, the backup runs when it wakes up."
+	return "Keep this archive current automatically?\n\nA scheduled run repeats exactly this export (incremental: only new mail and any content that was still missing). It runs only while you are signed in. " + scheduleMissedFor(goos)
+}
+
+// scheduleMissedFor is the schedule question's sentence on what happens to a missed time on goos
+// (MA-946), which a set's question says too (docs/design-per-mailbox-archives.md §11, C27).
+func scheduleMissedFor(goos string) string {
 	if goos != "darwin" && goos != "windows" {
-		missed = "A time when the computer is off or asleep is skipped."
+		return "A time when the computer is off or asleep is skipped."
 	}
-	return "Keep this archive current automatically?\n\nA scheduled run repeats exactly this export (incremental: only new mail and any content that was still missing). It runs only while you are signed in. " + missed
+	return "A time when the computer is switched off is skipped. If it was asleep, the backup runs when it wakes up."
 }
 
 // scheduleRunsNoteFor is the end note's line on when the schedule runs, on goos (MA-946);
@@ -2270,13 +2275,21 @@ const noScheduleLine = "No scheduled backup was set up: the list did not say whi
 // where the dialog can (Windows, macOS). goos is the system whose dialog program printed the answer
 // (answerMayBeTranscoded); offerSchedule passes runtime.GOOS.
 func askSchedule(goos string) (iv schedule.Interval, at string, install bool, err error) {
+	return askScheduleBy(goos, func(rows []string) (string, error) {
+		// The question is this platform's fixed words (MA-1286's scan: only runtime.GOOS may choose
+		// them); goos decides only how the answer is read.
+		return listDialog(scheduleQuestionFor(runtime.GOOS), rows, zenity.Title(appTitle), zenity.DefaultItems(scheduleNo), zenity.DisallowEmpty())
+	})
+}
+
+// askScheduleBy is askSchedule's rule (MA-1474) over the question ask shows with the rows: one
+// archive's question and a set's (docs/design-per-mailbox-archives.md §11) read their answers alike.
+func askScheduleBy(goos string, ask func(rows []string) (string, error)) (iv schedule.Interval, at string, install bool, err error) {
 	rows := []string{scheduleNo, scheduleDaily, scheduleWeekly}
 	choices := [][]string{{scheduleNo}, {scheduleDaily}, {scheduleWeekly}}
 	transcoded := answerMayBeTranscoded(goos)
 	for try := 1; ; try++ {
-		// The question is this platform's fixed words (MA-1286's scan: only runtime.GOOS may choose
-		// them); goos decides only how the answer is read.
-		answer, err := listDialog(scheduleQuestionFor(runtime.GOOS), rows, zenity.Title(appTitle), zenity.DefaultItems(scheduleNo), zenity.DisallowEmpty())
+		answer, err := ask(rows)
 		if err != nil {
 			if errors.Is(err, zenity.ErrCanceled) {
 				return "", "", false, nil

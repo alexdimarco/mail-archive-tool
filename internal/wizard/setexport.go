@@ -43,7 +43,28 @@ type Made struct {
 	Outcome MadeOutcome
 	// Reason is why it did not finish (MadeStopped, MadeFailed): one line, the summary's.
 	Reason string
+	// Schedule is what became of its schedule (§11); ScheduleWhy is why its install failed.
+	Schedule    MadeSchedule
+	ScheduleWhy string
 }
+
+// MadeSchedule is what became of one archive's schedule in a set (§11, revision 2's C6 and C11,
+// revision 2.1's F-11).
+type MadeSchedule int
+
+const (
+	// ScheduleNone: no schedule was installed for it in this run (the answer was No or Cancel, the
+	// question was not asked, or it is saved once or did not finish), and it had none of its own.
+	ScheduleNone MadeSchedule = iota
+	// ScheduleInstalled: its own job file and scheduler entry were installed in this run.
+	ScheduleInstalled
+	// ScheduleKept: brought up to date with a job file that reads: its job and entry are as they were.
+	ScheduleKept
+	// ScheduleKeptUnreadable: its job file is there and cannot be read: never installed over (F-11).
+	ScheduleKeptUnreadable
+	// ScheduleFailed: its install failed (ScheduleWhy); the others went on.
+	ScheduleFailed
+)
 
 // MadeOutcome is what became of one archive of a set (§10).
 type MadeOutcome int
@@ -95,7 +116,8 @@ type setArchive struct {
 	prepared bool // its account was just prepared: it runs in Full mode (§8)
 	made     Made
 	res      app.Result
-	log      string // its run log, once its export opened one
+	log      string       // its run log, once its export opened one
+	c        wizardChoice // the answers it was exported with, which its schedule repeats
 }
 
 // setOpen opens a folder for the summary's "Open the folder" (openPath in the product).
@@ -152,8 +174,10 @@ func runSet(ch setChosen, goos string) ([]Made, error) {
 	if err := showSetSummary(p.parent, arcs); err != nil {
 		return madeOf(arcs), err
 	}
+	err = offerSetSchedule(p, arcs)
+	// Once, after the schedule step (C22), whatever its answer.
 	rememberSet(arcs)
-	return madeOf(arcs), nil
+	return madeOf(arcs), err
 }
 
 // setOutlookNote shows today's guidance for an Outlook .ost once, when a set's mailboxes hold one.
@@ -230,6 +254,7 @@ func exportSet(sp *app.SetParent, p setPlan, arcs []*setArchive, all wizardChoic
 		if a.prepared {
 			c.mode = export.Full
 		}
+		a.c = c
 		res, logPath, stopped, runErr, dlgErr := exportSetArchive(c, k+1, m)
 		a.res, a.log = res, logPath
 		switch {
@@ -460,9 +485,16 @@ func firstLine(err error) string {
 	return strings.TrimSuffix(strings.TrimSpace(util.StripControl(line)), ".")
 }
 
-// rememberSet writes last-archive.txt once for the set (§9, C22): its first finished archive that is
-// not saved once; nothing when none finished.
+// rememberSet writes last-archive.txt once for the set, after the schedule step (§9, C22): its first
+// scheduled archive (installed in this run, or keeping its own schedule that reads), or, with none,
+// its first finished archive that is not saved once; nothing when there is neither.
 func rememberSet(arcs []*setArchive) {
+	for _, a := range arcs {
+		if a.made.Schedule == ScheduleInstalled || a.made.Schedule == ScheduleKept {
+			rememberArchive(a.made.Folder)
+			return
+		}
+	}
 	for _, a := range arcs {
 		if a.made.Outcome == MadeFinished && !a.it.row.once {
 			rememberArchive(a.made.Folder)
