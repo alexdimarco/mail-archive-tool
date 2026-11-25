@@ -8,6 +8,7 @@ import (
 	"github.com/ncruces/zenity"
 
 	"mail-archive-tool/internal/app"
+	"mail-archive-tool/internal/state"
 	"mail-archive-tool/internal/util"
 )
 
@@ -87,7 +88,15 @@ func setPlanText(p setPlan) string {
 				asked = append(asked, clean(it.row.listName()))
 			}
 		case outContinue:
-			upToDate = append(upToDate, setUpToDateLead+folder+", for "+clean(it.row.listName())+".")
+			// ", for MAILBOX" only when the archive's folder has another name than the mailbox (a
+			// renamed account's archive, found by what it holds): the Windows lab of MA-1503 (part 2,
+			// 2026-11-25) saw "To bring up to date: qza@qz.example, for qza@qz.example.", the address
+			// said twice, in the commonest case.
+			line := setUpToDateLead + folder
+			if mailbox := clean(it.row.listName()); state.TBTextKey(mailbox) != state.TBTextKey(folder) {
+				line += ", for " + mailbox
+			}
+			upToDate = append(upToDate, line+".")
 		case outPaused:
 			paused = append(paused, "Paused, so "+folder+" is not being backed up now; click Resume (make writable) on its row to back it up again.")
 		case outKept:

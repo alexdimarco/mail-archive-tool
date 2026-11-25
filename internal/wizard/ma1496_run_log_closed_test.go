@@ -39,11 +39,14 @@ func (r *runLogs) install(t *testing.T) {
 	}
 }
 
-// open names each kept log that is still open (a closed file's Stat says os.ErrClosed).
+// open names each kept log that is still open: a closed file's Sync says os.ErrClosed on every system
+// (os wraps the poller's "file closing" as ErrClosed), while an open file's Sync succeeds. Stat was
+// used first and said ErrClosed on macOS and Linux only: on Windows a closed file's Stat gives another
+// error, so every log read as open there (the Windows lab of MA-1503, part 1b, 2026-11-25).
 func (r *runLogs) open() []string {
 	var out []string
 	for _, f := range r.files {
-		if _, err := f.Stat(); !errors.Is(err, os.ErrClosed) {
+		if err := f.Sync(); !errors.Is(err, os.ErrClosed) {
 			out = append(out, f.Name())
 		}
 	}

@@ -46,7 +46,7 @@ sam.walker@contoso.example
 Local Folders
 imap.gmail.com (not in Thunderbird now): saved once and not kept current, since no account uses it
 
-To bring up to date: sam@old.example, for sam@old.example.
+To bring up to date: sam@old.example.
 Not made: Feeds, which is empty.
 Next you are asked whether to prepare a full offline download of: qzsam.walker@gmail.com, sam.walker@contoso.example`
 	// Amended 2026-11-25 (the friction review's F11; nothing weakened): the last line is said as what
@@ -58,6 +58,9 @@ Next you are asked whether to prepare a full offline download of: qzsam.walker@g
 	// here, read as done before anything ran and never named the mailbox; it is now "To bring up to
 	// date: FOLDER, for MAILBOX." (the design's §8 example keeps the old line: the lead's round C
 	// touches the design only for RV-07).
+	// Restated 2026-11-25 (the Windows lab of MA-1503, part 2; compared whole, as before): "To bring up
+	// to date: sam@old.example, for sam@old.example." before; ", for MAILBOX" now follows only a folder
+	// whose name is not the mailbox's (the renamed case below keeps it).
 	if got := setPlanText(example); got != want {
 		t.Fatalf("the design's example:\n got %q\nwant %q", got, want)
 	}
@@ -70,7 +73,9 @@ Next you are asked whether to prepare a full offline download of: qzsam.walker@g
 	none := setPlan{parent: "/m", items: []setItem{planItem("a@x", outContinue, "a@x"), planItem("b@x", outContinue, "b@x")}}
 	// Restated 2026-11-25 (RF-07; compared whole, as before): "…\n\nBrought up to date: a@x (already in
 	// this folder)\nBrought up to date: b@x (already in this folder)" before.
-	if got := setPlanText(none); got != "No new archive: 2 brought up to date in /m.\n\nTo bring up to date: a@x, for a@x.\nTo bring up to date: b@x, for b@x." {
+	// Restated again 2026-11-25 (the Windows lab of MA-1503, part 2; compared whole): "…To bring up to
+	// date: a@x, for a@x.\nTo bring up to date: b@x, for b@x." before.
+	if got := setPlanText(none); got != "No new archive: 2 brought up to date in /m.\n\nTo bring up to date: a@x.\nTo bring up to date: b@x." {
 		t.Errorf("no new archive: %q", got)
 	}
 	// RF-07: the mailbox is named as the list showed it, also when its archive's folder has another
@@ -116,7 +121,7 @@ Next you are asked whether to prepare a full offline download of: qzsam.walker@g
 	// click Pause on its row to stop its backups." before.
 	for _, line := range []string{
 		"MailArchive will make 1 archive in /m:\n\npat@b.example (older copy): saved once and not kept current, since it is an older copy\n\n",
-		"To bring up to date: kim@d.example, for kim@d.example.",
+		"To bring up to date: kim@d.example.", // "…, for kim@d.example." before (the Windows lab, part 2)
 		"Paused, so lee@c.example is not being backed up now; click Resume (make writable) on its row to back it up again.",
 		"imap.old.example (not in Thunderbird now): kept as it is in Old account, since Thunderbird no longer uses that mailbox's folder. To stop its backups, click Pause (make read-only) on its row under Your archives in MailArchive Desktop.",
 		"imap.older.example (not in Thunderbird now): kept as it is in everything\n",
