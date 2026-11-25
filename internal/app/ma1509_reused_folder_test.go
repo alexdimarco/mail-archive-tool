@@ -5,6 +5,7 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"mail-archive-tool/internal/assure"
@@ -86,10 +87,15 @@ func TestAFolderThunderbirdGaveToAnotherAccountStopsItsArchive(t *testing.T) {
 				code = 3 // not the typed refusal: the streak would not move
 			}
 		}
+		// Restated 2026-11-25 (the re-verify of rounds A and B, RF-02: these words reach the failure
+		// email, where "its row" pointed nowhere and "that account" was unclear), beside the old third
+		// needle, kept here: "To back up that account, click Make a new archive… and choose it; to stop
+		// this archive's backups, click Pause (make read-only) on its row." It now reads as below, and
+		// the message ends with it.
 		assure.Refused(t, code, msg, assure.Code(1),
 			assure.Names("Thunderbird now uses "+a+" for a different account than the one this archive was made for, so this backup stopped and nothing was added.",
 				"The mail saved so far stays in this archive.",
-				"To back up that account, click Make a new archive… and choose it; to stop this archive's backups, click Pause (make read-only) on its row."),
+				"To back up the account that uses it now, click Make a new archive… in MailArchive Desktop and choose it; to stop this archive's backups, click Pause (make read-only) on its row under Your archives in MailArchive Desktop."),
 			assure.Forbid(name, other),
 			assure.NoSideEffect(func() bool {
 				after, _ := os.ReadFile(filepath.Join(out, ".mailarchive-manifest.json"))
@@ -99,7 +105,7 @@ func TestAFolderThunderbirdGaveToAnotherAccountStopsItsArchive(t *testing.T) {
 					lr.Status == state.RunFailed && lr.Error == msg && lr.SourceReason == state.SourceReasonReused &&
 					s.ConsecutiveFails == streak.ConsecutiveFails+1 && s.LastKind == "local-source-unreachable"
 			}))
-		if msg != autoplace.ReusedText(a) || bytes.Contains(logged.Bytes(), []byte(name)) || bytes.Contains(logged.Bytes(), []byte(other)) {
+		if msg != autoplace.ReusedText(a) || !strings.HasSuffix(msg, "under Your archives in MailArchive Desktop.") || bytes.Contains(logged.Bytes(), []byte(name)) || bytes.Contains(logged.Bytes(), []byte(other)) {
 			t.Errorf("run %d: the words %q, or the log names an account:\n%s", i, msg, logged)
 		}
 	}

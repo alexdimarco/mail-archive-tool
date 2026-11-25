@@ -30,7 +30,11 @@ func TestThePauseSaysTheReusedWords(t *testing.T) {
 		t.Fatalf("positive twin: a stop with no reason pauses in today's words: %q", got)
 	}
 	dir := archive(state.SourceReasonReused)
-	want := "MailArchive paused this archive's scheduled backup: Thunderbird has used its mail folder for a different account since Oct 12, 2026. Its mail stays in the archive."
+	// Restated 2026-11-25 (the re-verify of rounds A and B, RF-02: the pause email named no next step),
+	// beside the old text, kept here: "MailArchive paused this archive's scheduled backup: Thunderbird
+	// has used its mail folder for a different account since Oct 12, 2026. Its mail stays in the
+	// archive." It now goes on with the next step, compared whole.
+	want := "MailArchive paused this archive's scheduled backup: Thunderbird has used its mail folder for a different account since Oct 12, 2026. Its mail stays in the archive. To back up the account that uses it now, click Make a new archive… in MailArchive Desktop and choose it."
 	if got := AutoPauseWhyFor(dir); got != want || got != health.SourceReasonPauseWordsAt(dir) {
 		t.Errorf("the reused archive's pause: %q, want %q", got, want)
 	}

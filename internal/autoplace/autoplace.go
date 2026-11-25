@@ -393,7 +393,12 @@ func ReusedByID(path, id string) bool {
 // names the folder only, never an account's name (MA-1288). The design's draft words, for the friction
 // review.
 func ReusedText(folder string) string {
-	return fmt.Sprintf("Thunderbird now uses %s for a different account than the one this archive was made for, so this backup stopped and nothing was added. The mail saved so far stays in this archive. To back up that account, click Make a new archive… and choose it; to stop this archive's backups, click Pause (make read-only) on its row.", folder)
+	// Its words reach the failure email, where "its row" points nowhere and "that account" is unclear
+	// (the re-verify of rounds A and B, RF-02, its words): "… To back up the account that uses it now,
+	// click Make a new archive… in MailArchive Desktop and choose it; … on its row under Your archives in
+	// MailArchive Desktop." ("To back up that account, click Make a new archive… and choose it; … on its
+	// row." before).
+	return fmt.Sprintf("Thunderbird now uses %s for a different account than the one this archive was made for, so this backup stopped and nothing was added. The mail saved so far stays in this archive. To back up the account that uses it now, click Make a new archive… in MailArchive Desktop and choose it; to stop this archive's backups, click Pause (make read-only) on its row under Your archives in MailArchive Desktop.", folder)
 }
 
 // MovedHowAs is MovedToAs, also saying whether the recorded name decided (for the words).

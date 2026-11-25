@@ -56,8 +56,10 @@ func SourceReasonPauseText(reason string, since time.Time) string {
 	case state.SourceReasonRemoved:
 		return "MailArchive paused this archive's scheduled backup: Thunderbird has not had its account since " + date + ". Its mail stays in the archive."
 	case state.SourceReasonReused:
-		// Revision 3's reused (MA-1509): the builder's words, in the removed reason's form.
-		return "MailArchive paused this archive's scheduled backup: Thunderbird has used its mail folder for a different account since " + date + ". Its mail stays in the archive."
+		// Revision 3's reused (MA-1509): the builder's words, in the removed reason's form, with a next
+		// step (the re-verify of rounds A and B, RF-02: the first half of the stop's own last sentence;
+		// it ended at "Its mail stays in the archive." before).
+		return "MailArchive paused this archive's scheduled backup: Thunderbird has used its mail folder for a different account since " + date + ". Its mail stays in the archive. To back up the account that uses it now, click Make a new archive… in MailArchive Desktop and choose it."
 	}
 	return ""
 }

@@ -31,7 +31,11 @@ func TestTheReusedReasonsWords(t *testing.T) {
 	if got := SourceReasonWordsAt(dir); got != want {
 		t.Errorf("the banner's words %q", got)
 	}
-	if got, want := SourceReasonPauseWordsAt(dir), "MailArchive paused this archive's scheduled backup: Thunderbird has used its mail folder for a different account since Oct 12, 2026. Its mail stays in the archive."; got != want {
+	// Restated 2026-11-25 (the re-verify of rounds A and B, RF-02: the pause email named no next step),
+	// beside the old text, kept here: "MailArchive paused this archive's scheduled backup: Thunderbird
+	// has used its mail folder for a different account since Oct 12, 2026. Its mail stays in the
+	// archive." It now goes on with the first half of the stop's own last sentence, compared whole.
+	if got, want := SourceReasonPauseWordsAt(dir), "MailArchive paused this archive's scheduled backup: Thunderbird has used its mail folder for a different account since Oct 12, 2026. Its mail stays in the archive. To back up the account that uses it now, click Make a new archive… in MailArchive Desktop and choose it."; got != want {
 		t.Errorf("the pause's words %q, want %q", got, want)
 	}
 	if enc := reasonArchive(t, state.SourceReasonReused, true); SourceReasonWordsAt(enc) != "" || statusLost(t, enc) != reconnect {
