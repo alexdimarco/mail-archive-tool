@@ -266,9 +266,22 @@ func TBNamesOf(r LastRun) []TBName {
 		return append([]TBName(nil), r.ThunderbirdNames...)
 	}
 	var out []TBName
+	unnamed := map[string]bool{}
 	for _, e := range r.Thunderbird {
 		if e.StoreID != "" && e.Name != "" {
 			out = append(out, TBName{StoreID: e.StoreID, Name: e.Name})
+		} else if e.StoreID != "" {
+			unnamed[e.StoreID] = true
+		}
+	}
+	// A one-folder archive's name kept across a run that found no live account for its folder
+	// (docs/design-per-mailbox-archives.md revision 2.2, MA-1504): counted beside the entries only
+	// for a store whose own entry names no account, so an entry's name always wins and a carried name
+	// for a store with no entry is still not read (the RV3-01 rule).
+	for _, n := range r.ThunderbirdNames {
+		if unnamed[n.StoreID] {
+			out = append(out, n)
+			delete(unnamed, n.StoreID)
 		}
 	}
 	return out

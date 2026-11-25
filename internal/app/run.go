@@ -1596,6 +1596,38 @@ func absOrSame(p string) string {
 	return p
 }
 
+// oneFolderNameKept is, for an ok plaintext run of exactly one listed folder with auto-discovery off,
+// the account name the previous record gave that folder (carried, from newRunRecord), kept when this
+// run found no live account for it: its completeness result says no_match and names no account
+// (docs/design-per-mailbox-archives.md revision 2.2, the lead's call on the builder's finding;
+// MA-1504). Without it, a backup between "account removed" and "account added again" would write a
+// record that names none, and C2 could never stop the run after the re-add. A live account's own name
+// refreshes it (nothing is kept). An auto-discovery run never carries one: it finds a re-added
+// account's new folder by itself, and a carried name would make a later removal of the old folder
+// look like a move. nil otherwise.
+func oneFolderNameKept(opts Options, results []tbcomplete.Result, carried []state.TBName) []state.TBName {
+	if opts.Auto || len(opts.Inputs) != 1 || len(carried) == 0 {
+		return nil
+	}
+	in := absOrSame(opts.Inputs[0])
+	profile, ok := findTBProfile(in)
+	if !ok {
+		return nil
+	}
+	id := storeID(profile, in)
+	for _, r := range results {
+		if r.StoreID != id || r.Name != "" || r.Reason != tbcomplete.ReasonNoMatch {
+			continue
+		}
+		for _, n := range carried {
+			if n.StoreID == id && n.Name != "" {
+				return []state.TBName{n}
+			}
+		}
+	}
+	return nil
+}
+
 // recordRun finalizes the last-run record from the run's outcome.
 // writeLastRun is the finalizing record write; a var so a test can refuse it.
 var writeLastRun = state.WriteLastRun
@@ -1627,9 +1659,13 @@ func recordRun(opts Options, lr state.LastRun, result *Result, err *error, logge
 		// design §7, slice C2): a plaintext run that ended ok only. Nothing about it is written
 		// beside an encrypted archive (O1, R44); a run that failed says its failure (§11).
 		if !lr.Encrypted && opts.Key == nil && len(result.Thunderbird) > 0 {
+			carried := lr.ThunderbirdNames // the previous record's names (newRunRecord)
 			lr.Thunderbird = tbRecords(result.Thunderbird, result.tbPrev, lr.Finished)
 			lr.ThunderbirdMore = tbRecordsMore(result.Thunderbird)
 			lr.ThunderbirdNames = nil // this run's own entries keep the names (RV3-01): written as before
+			// …except a one-folder archive's name, kept across a run that found no live account for
+			// its folder (design revision 2.2; MA-1504).
+			lr.ThunderbirdNames = oneFolderNameKept(opts, result.Thunderbird, carried)
 		}
 		if lr.Encrypted && result.IndexBehind {
 			// The backup finished, but its search index misses messages until a later

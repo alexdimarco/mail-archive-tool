@@ -179,6 +179,10 @@ type LastRun struct {
 	// allow-list never writes it (the owner's Q3, Q5 and Q6). Names stay in the record and never
 	// reach a log file (MA-1288). Additive: an older reader ignores it (1.7.4 reads the record with
 	// json.Unmarshal).
+	// Revision 2.2 of docs/design-per-mailbox-archives.md (MA-1504): an ok run of one listed folder
+	// with auto-discovery off, which found no live account for that folder, also keeps here, beside
+	// its entries, the name the previous record gave the folder; TBNamesOf reads it only for a store
+	// whose own entry names no account.
 	ThunderbirdNames []TBName `json:"thunderbird_names,omitempty"`
 
 	// Program is an encrypted archive's program step outcome, one of the Program*

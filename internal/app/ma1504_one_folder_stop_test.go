@@ -218,6 +218,73 @@ func TestTwoAccountsOnOneServerOneReAddedStopsItsArchive(t *testing.T) {
 	refusesNoLongerUsed(t, out, old, readded, "qza@qzg.example")
 }
 
+// covers: MA-1504, R12, R18
+// Revision 2.2 (the lead's call on the builder's finding): the name is kept across a gap. The account
+// removed in Thunderbird with its folder kept, a backup of that one folder runs (ok, nothing stops it)
+// and finds no live account for the folder; its record keeps the name the previous record gave the
+// folder (thunderbird_names), again at the next such backup, so when the account is added again
+// (Thunderbird keeps it at "-1") the next run stops (C2). An auto-discovery run never carries a name:
+// its record names none for the folder, and after the re-add discovery finds the new folder and
+// nothing stops. Positive twin first: the account still owns the folder, renamed, so the name is
+// refreshed, not carried.
+func TestTheFoldersNameIsKeptAcrossABackupThatFindsNoAccount(t *testing.T) {
+	f := goneFixture(t, true, "imap.qza.example")
+	a := f.stores["imap.qza.example"]
+	name := goneAddress("imap.qza.example")
+	prefs := filepath.Join(f.profile, "prefs.js")
+	acct := tbAcct{n: 1, host: "imap.qza.example", typ: "imap", dirRel: "ImapMail/imap.qza.example", extra: map[string]string{"name": `"` + name + `"`}}
+	local := tbAcct{n: 2, host: "Local Folders", typ: "none", dirRel: "Mail/Local Folders"}
+	out := oneFolderArchive(t, a, name)
+	autoOut := tmpDir(t)
+	if _, err, _ := goneRun(t, Options{Inputs: []string{a}, Auto: true, Out: autoOut}); err != nil {
+		t.Fatal(err)
+	}
+	names := func(o string) (string, []state.TBName) {
+		t.Helper()
+		lr, _, _ := state.ReadLastRun(o)
+		return autoplace.RecordedName(lr, a), lr.ThunderbirdNames
+	}
+	if n, _ := names(autoOut); n != name {
+		t.Fatalf("the auto-discovery archive's record must name the folder's account first: %q", n)
+	}
+
+	// Positive twin: the account still owns the folder, renamed: refreshed, nothing carried.
+	renamed := acct
+	renamed.extra = map[string]string{"name": `"qz-renamed@example.com"`}
+	tbWrite(t, prefs, tbPrefsJS(renamed, local))
+	runsOK(t, "the account still owns its folder, renamed", out, false, a)
+	if n, kept := names(out); n != "qz-renamed@example.com" || len(kept) != 0 {
+		t.Fatalf("positive twin: a live account's name is refreshed, not carried: %q %+v", n, kept)
+	}
+	tbWrite(t, prefs, tbPrefsJS(acct, local))
+	runsOK(t, "the account's own name back", out, false, a)
+
+	// The gap: the account removed, its folder kept; backups run, ok, and find no live account.
+	tbWrite(t, prefs, tbPrefsJS(local))
+	for i := 1; i <= 2; i++ {
+		runsOK(t, "a backup in the gap", out, false, a)
+		if n, kept := names(out); n != name || len(kept) != 1 || kept[0].Name != name {
+			t.Fatalf("gap backup %d: the one-folder archive's record must keep the folder's name: %q %+v", i, n, kept)
+		}
+	}
+	runsOK(t, "an auto-discovery backup in the gap", autoOut, true, a)
+	if n, kept := names(autoOut); n != "" || len(kept) != 0 {
+		t.Errorf("an auto-discovery run must never carry a name: %q %+v", n, kept)
+	}
+
+	// The account added again: Thunderbird keeps it in imap.qza.example-1, the old folder stays.
+	newDir := filepath.Join(f.profile, "ImapMail", "imap.qza.example-1")
+	tbStoreAt(t, newDir, tbFolder{path: "INBOX", listed: 1, msgs: tbMsgs("imap.qza.example-1", 1)})
+	again := acct
+	again.n, again.dirRel = 3, "ImapMail/imap.qza.example-1"
+	tbWrite(t, prefs, tbPrefsJS(again, local))
+	runsOK(t, "the auto-discovery archive after the re-add", autoOut, true, a)
+	if files, _, err := DiscoverInputsFor([]string{a}, true, RecordedNamesAt(autoOut)); err != nil || !slices.Contains(files, newDir) {
+		t.Errorf("the auto-discovery archive finds the re-added account's new folder: %v %v", files, err)
+	}
+	refusesNoLongerUsed(t, out, a, newDir, name)
+}
+
 // covers: MA-1504, MA-1481, R12, R18
 // F-08: an archive of one folder, auto-discovery off, whose folder is gone and whose record names
 // its account, which now keeps its mail elsewhere, stops with C2's moved words (the 1.7.5 rule ran
