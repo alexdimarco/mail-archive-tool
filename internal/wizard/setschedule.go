@@ -272,6 +272,9 @@ func setScheduleNote(parent string, arcs []*setArchive, iv schedule.Interval, at
 		case a.made.Schedule == ScheduleFailed:
 			lines = append(lines, "Not scheduled: "+name+" ("+a.made.ScheduleWhy+").")
 		case a.made.Schedule != ScheduleNone:
+		case a.made.Outcome == MadeNotStarted:
+			// The friction review's F10: an archive never started did not "not finish".
+			lines = append(lines, "Not scheduled: "+name+", which was not started.")
 		case a.made.Outcome != MadeFinished:
 			lines = append(lines, "Not scheduled: "+name+", which did not finish.")
 		case a.it.row.once:
@@ -279,6 +282,7 @@ func setScheduleNote(parent string, arcs []*setArchive, iv schedule.Interval, at
 		}
 	}
 	lines = append(lines, existing...)
-	lines = append(lines, setNoteRows)
+	// Then how to back up a mailbox added later (the friction review's F1), the note's last line.
+	lines = append(lines, setNoteRows, fmt.Sprintf(setLaterMailbox, where))
 	return strings.Join(lines, "\n")
 }

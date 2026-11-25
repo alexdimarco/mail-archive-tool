@@ -71,7 +71,10 @@ func TestTheReasonWordsReplaceReconnectTheSource(t *testing.T) {
 		t.Error("positive twin: an encrypted archive's banner and pause keep today's words")
 	}
 
-	moved := "Thunderbird stopped using this archive's mail folder on Oct 12, 2026: its account now keeps its mail in another folder. The mail saved so far stays here. To back that account up, click Make a new archive… and choose it again; then click Pause (make read-only) on this archive."
+	// Amended 2026-11-25 (the friction review's F12; nothing weakened): the moved words also give the
+	// run's own second way; they read "… click Make a new archive… and choose it again; then click
+	// Pause …" before. The 30-day pause's words (an email's) read "Its mail stays here." before.
+	moved := "Thunderbird stopped using this archive's mail folder on Oct 12, 2026: its account now keeps its mail in another folder. The mail saved so far stays here. To back that account up, click Make a new archive… and choose it again (or choose One archive for each mailbox and the same folder as before); then click Pause (make read-only) on this archive."
 	removed := "Thunderbird no longer has the account this archive backs up (since Oct 12, 2026). The mail saved so far stays here. To stop its backups, click Pause (make read-only)."
 	for reason, want := range map[string]string{state.SourceReasonMoved: moved, state.SourceReasonRemoved: removed} {
 		dir := reasonArchive(t, reason, false)
@@ -85,8 +88,8 @@ func TestTheReasonWordsReplaceReconnectTheSource(t *testing.T) {
 
 	// The 30-day pause's words.
 	for reason, want := range map[string]string{
-		state.SourceReasonMoved:   "MailArchive paused this archive's scheduled backup: Thunderbird has not used its mail folder since Oct 12, 2026. Its mail stays here. To back that account up, click Make a new archive… and choose it again.",
-		state.SourceReasonRemoved: "MailArchive paused this archive's scheduled backup: Thunderbird has not had its account since Oct 12, 2026. Its mail stays here.",
+		state.SourceReasonMoved:   "MailArchive paused this archive's scheduled backup: Thunderbird has not used its mail folder since Oct 12, 2026. Its mail stays in the archive. To back that account up, click Make a new archive… and choose it again.",
+		state.SourceReasonRemoved: "MailArchive paused this archive's scheduled backup: Thunderbird has not had its account since Oct 12, 2026. Its mail stays in the archive.",
 		"":                        "",
 	} {
 		if got := SourceReasonPauseWordsAt(reasonArchive(t, reason, false)); got != want {

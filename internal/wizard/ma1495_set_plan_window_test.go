@@ -48,7 +48,11 @@ imap.gmail.com (not in Thunderbird now): saved once and not kept current, since 
 
 Brought up to date: sam@old.example (already in this folder)
 Not made: Feeds, which is empty.
-Asked about a full offline download: qzsam.walker@gmail.com, sam.walker@contoso.example`
+Next you are asked whether to prepare a full offline download of: qzsam.walker@gmail.com, sam.walker@contoso.example`
+	// Amended 2026-11-25 (the friction review's F11; nothing weakened): the last line is said as what
+	// comes next; it read "Asked about a full offline download: …" before. The button says "Bring them
+	// up to date" when the plan makes no new archive and brings some up to date ("Make the archives"
+	// before), and "In this folder, not found now: NAME" says what to do.
 	if got := setPlanText(example); got != want {
 		t.Fatalf("the design's example:\n got %q\nwant %q", got, want)
 	}
@@ -64,6 +68,11 @@ Asked about a full offline download: qzsam.walker@gmail.com, sam.walker@contoso.
 	}
 	if got := setPlanText(setPlan{parent: "/m", items: []setItem{feeds}}); got != "No new archive in /m.\n\nNot made: Feeds, which is empty." {
 		t.Errorf("nothing at all: %q", got)
+	}
+	for p, want := range map[*setPlan]string{&example: setMakeLabel, &one: setMakeLabel, &none: "Bring them up to date", {items: []setItem{feeds}}: setMakeLabel} {
+		if got := setPlanButton(*p); got != want {
+			t.Errorf("the plan's button for %q: %q, want %q", outcomesOf(*p), got, want)
+		}
 	}
 
 	// Every other line kind.
@@ -98,14 +107,14 @@ Asked about a full offline download: qzsam.walker@gmail.com, sam.walker@contoso.
 		"same: not made, since this folder already holds folders named same (2) to (99).",
 		"alike: not made, since 99 other mailboxes have its name.",
 		"shut: could not be read just now",
-		"In this folder, not found now: sam@gone.example",
+		"In this folder, not found now: sam@gone.example; its mail stays in its archive; click Pause on its row to stop its backups.",
 		"Only the first 500 folders in /m were looked at; the others were left out.",
 	} {
 		if !strings.Contains(got, line) {
 			t.Errorf("the plan lacks %q:\n%s", line, got)
 		}
 	}
-	if strings.Contains(got, "Asked about") || strings.Contains(setPlanText(none), "Asked about") {
+	if strings.Contains(got, "full offline download") || strings.Contains(setPlanText(none), "full offline download") {
 		t.Errorf("no account is asked about here: %q", got)
 	}
 	if got := setPlanText(setPlan{parent: "/m\x1b[2J", items: []setItem{planItem("a\x07@x", outNew, "a\x07@x")}}); strings.ContainsAny(got, "\x1b\x07") {
@@ -160,7 +169,9 @@ func TestCancelOnThePlanWritesNothing(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !strings.Contains(string(src), `questionDialog(setPlanText(p), zenity.Title(appTitle), zenity.OKLabel(setMakeLabel), zenity.CancelLabel("Cancel"))`) || setMakeLabel != "Make the archives" {
-		t.Error("the plan is no longer asked through the seam with Make the archives and Cancel")
+	// Amended 2026-11-25 (the friction review's F11): the OK button is setPlanButton's, "Make the
+	// archives" or "Bring them up to date"; it was setMakeLabel itself before.
+	if !strings.Contains(string(src), `questionDialog(setPlanText(p), zenity.Title(appTitle), zenity.OKLabel(setPlanButton(p)), zenity.CancelLabel("Cancel"))`) || setMakeLabel != "Make the archives" || setUpToDateLabel != "Bring them up to date" {
+		t.Error("the plan is no longer asked through the seam with its button and Cancel")
 	}
 }

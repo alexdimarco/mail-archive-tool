@@ -74,6 +74,32 @@ type autoPick struct {
 	// names are the names the list showed, by path (MA-1502): the download question names each
 	// account so. None when no list was shown (one mailbox found).
 	names map[string]string
+	// order is the list's paths in the order it showed them: All of them's download questions are
+	// asked in it (the friction review's F14), its inputs kept in the order found.
+	order []string
+}
+
+// inListOrder is inputs in the order the list showed them (order), each one not in it after them in
+// its own order; inputs itself is not changed.
+func inListOrder(inputs, order []string) []string {
+	at := map[string]int{}
+	for i, p := range order {
+		if _, ok := at[p]; !ok {
+			at[p] = i
+		}
+	}
+	out := append([]string(nil), inputs...)
+	sort.SliceStable(out, func(i, j int) bool {
+		pi, iok := at[out[i]]
+		pj, jok := at[out[j]]
+		switch {
+		case iok && jok:
+			return pi < pj
+		default:
+			return iok && !jok
+		}
+	})
+	return out
 }
 
 // shownNames are the names the list l shows for its mailboxes, by path (MA-1502): each row as it
@@ -133,7 +159,7 @@ func pickAutoChoice(found []string, offerEach bool) (autoPick, error) {
 					}
 				}
 			}
-			return autoPick{inputs: found, auto: true, names: names}, nil
+			return autoPick{inputs: found, auto: true, names: names, order: paths}, nil
 		} else if ok {
 			return autoPick{inputs: []string{paths[i]}, names: names}, nil
 		}

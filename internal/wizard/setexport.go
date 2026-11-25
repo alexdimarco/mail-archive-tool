@@ -132,6 +132,11 @@ type setArchive struct {
 	res      app.Result
 	log      string       // its run log, once its export opened one
 	c        wizardChoice // the answers it was exported with, which its schedule repeats
+	// notMade: a new archive whose folder was never made (or was taken away again), so nothing was
+	// copied (the adversarial pass's CON-10, the friction review's F2); remedy is its own remedy,
+	// when it has one.
+	notMade bool
+	remedy  string
 }
 
 // setOpen opens a folder for the summary's "Open the folder" (openPath in the product).
@@ -199,8 +204,12 @@ func runSet(ch setChosen, goos string) ([]Made, error) {
 	if err := exportSet(ch.parent, p, arcs, all, goos); err != nil {
 		return madeOf(arcs), err
 	}
-	if err := showSetSummary(p.parent, arcs); err != nil {
-		return madeOf(arcs), err
+	// Nothing ran at all (every mailbox paused, kept, or not made): no summary (the friction review's
+	// F11; the plan said it all).
+	if len(arcs) > 0 {
+		if err := showSetSummary(p.parent, arcs); err != nil {
+			return madeOf(arcs), err
+		}
 	}
 	err = offerSetSchedule(p, arcs)
 	// Once, after the schedule step (C22), whatever its answer.
@@ -250,6 +259,11 @@ func exportSet(sp *app.SetParent, p setPlan, arcs []*setArchive, all wizardChoic
 		if a.it.outcome == outNew {
 			made, name, madeID, err := makeSetArchiveFolder(sp, p, a.it, goos)
 			a.made.Name, id = name, madeID
+			if err != nil {
+				// Its folder was never made, or was taken away again: nothing was copied (CON-10).
+				a.notMade = true
+			}
+			var r *app.CopyRefusal
 			switch {
 			case errors.Is(err, errSetFolderChanged):
 				// Made, then not the folder made by the time it was read (INS-02): never written into.
@@ -266,6 +280,13 @@ func exportSet(sp *app.SetParent, p setPlan, arcs []*setArchive, all wizardChoic
 				continue
 			case errors.Is(err, errNoFreeNumber):
 				a.made.Outcome, a.made.Reason = MadeFailed, fmt.Sprintf("this folder already holds folders named %s (2) to (%d)", util.StripControl(a.it.row.name), setNumberMax)
+				continue
+			case errors.As(err, &r) && r.ID == "R-w":
+				// This computer did not let MailArchive write in the parent (F2's words and remedy, which
+				// the summary cut off before).
+				a.made.Outcome, a.made.Reason = MadeFailed, "this computer did not let MailArchive make a folder in "+util.StripControl(p.parent)
+				a.remedy = setWriteRemedy(runtime.GOOS)
+				stop = true
 				continue
 			case err != nil:
 				// About the parent itself (it is gone or changed, cannot be written, or is now inside an
@@ -566,12 +587,37 @@ const (
 	setSummaryOpen = "Open the folder"
 	// setSummaryEnd is R1's sentences after every archive's line.
 	setSummaryEnd = "Each archive is its own folder: you can hand over or delete one without touching the others. Open index.html in any of them to browse. MailArchive Desktop lists them all under Your archives; a row whose last backup did not finish says so."
-	// setUnfinishedEnd follows the reason of an archive that did not finish.
-	setUnfinishedEnd = "The mail copied so far is kept; run this again with the same folder to finish it."
-	// setNotStarted follows the name of an archive that was not started.
-	setNotStarted = "Not started. Run this again with the same folder to back it up."
-	setOnceLead   = "saved once."
+	// setUnfinishedEnd follows the reason of an archive that did not finish, whose folder was made.
+	// Round B (the friction review's F4) moved "run this again with the same folder to finish it",
+	// which said nothing of how, to one closing sentence (setFinishOne, setFinishMany): it read "The
+	// mail copied so far is kept; run this again with the same folder to finish it.".
+	setUnfinishedEnd = "The mail copied so far is kept."
+	// setNotStarted follows the name of an archive that was not started (F4: it read "Not started. Run
+	// this again with the same folder to back it up.").
+	setNotStarted = "Not started."
+	// setNotMadeLead leads the line of an archive whose folder was never made, so nothing was copied
+	// (the adversarial pass's CON-10, the friction review's F2; the builder's form of F2's words).
+	setNotMadeLead = "Not made, so nothing was copied: "
+	// setFinishOne and setFinishMany close the archives' lines when any did not finish, was not
+	// made or was not started (F4's words).
+	setFinishOne  = "To finish it, run this again: choose All of them, then One archive for each mailbox, and this same folder."
+	setFinishMany = "To finish them, run this again: choose All of them, then One archive for each mailbox, and this same folder."
+	// setLaterMailbox is the summary's and the end note's last line (the friction review's F1).
+	setLaterMailbox = "To back up a mailbox you add to Thunderbird later: click Make a new archive…, choose All of them, then One archive for each mailbox, and this same folder, %s."
+	setOnceLead     = "saved once."
 )
+
+// setWriteRemedy is the remedy of a folder this computer did not let MailArchive make (F2's words,
+// with each system's own setting as the wizard's refusal of the parent names it).
+func setWriteRemedy(goos string) string {
+	switch goos {
+	case "windows":
+		return "Allow MailArchive there (Windows Security, Controlled folder access), or run this again and choose another folder."
+	case "darwin":
+		return "Allow MailArchive there (System Settings, Privacy and Security, Files and Folders), or run this again and choose another folder."
+	}
+	return "Allow MailArchive to write there, or run this again and choose another folder."
+}
 
 // setSummaryText is the set's one summary (§9): the lead counts the archives that finished, with
 // singular and zero forms ("1 archive is ready in …", "No archive was finished in …"); then each
@@ -599,6 +645,7 @@ func setSummaryText(parent string, arcs []*setArchive) string {
 		head = fmt.Sprintf("%d archives are ready in %s", finished, where)
 	}
 	var lines []string
+	unfinished := 0
 	for _, a := range arcs {
 		label := util.StripControl(a.made.Name)
 		if a.it.outcome == outContinue {
@@ -618,20 +665,36 @@ func setSummaryText(parent string, arcs []*setArchive) string {
 				lines = append(lines, setTBLines(a.res)...)
 			}
 		case MadeStopped, MadeFailed:
+			unfinished++
+			if a.notMade {
+				line := label + ": " + setNotMadeLead + a.made.Reason + "."
+				if a.remedy != "" {
+					line += " " + a.remedy
+				}
+				lines = append(lines, line)
+				continue
+			}
 			line := label + ": Did not finish: " + a.made.Reason + ". " + setUnfinishedEnd
 			if _, err := os.Stat(a.log); a.made.Outcome == MadeFailed && a.log != "" && err == nil {
 				line += " Log: " + util.StripControl(a.log)
 			}
 			lines = append(lines, line)
 		case MadeNotStarted:
+			unfinished++
 			lines = append(lines, label+": "+setNotStarted)
 		}
+	}
+	switch {
+	case unfinished == 1:
+		lines = append(lines, setFinishOne)
+	case unfinished > 1:
+		lines = append(lines, setFinishMany)
 	}
 	parts := []string{head}
 	if len(lines) > 0 {
 		parts = append(parts, strings.Join(lines, "\n"))
 	}
-	parts = append(parts, setSummaryEnd)
+	parts = append(parts, setSummaryEnd, fmt.Sprintf(setLaterMailbox, where))
 	return strings.Join(parts, "\n\n")
 }
 

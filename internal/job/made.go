@@ -146,13 +146,18 @@ func ReadMade(file string) ([]Made, error) {
 		return nil, madeReadError(file, err)
 	}
 	if len(data) > MadeMaxBytes {
-		return nil, fmt.Errorf("%s (%s) is over its %d-byte bound, so it was not read", madeKind, util.StripControl(file), MadeMaxBytes)
+		return nil, fmt.Errorf("%s (%s) is over its %d-byte bound, so it was not read. %s", madeKind, util.StripControl(file), MadeMaxBytes, madeRemedy)
 	}
 	return parseMade(data), nil
 }
 
+// madeRemedy is what to do about a made-list that cannot be read (the adversarial pass's INS-08: the
+// reason named the file but not the remedy; the builder's words). Only a program that can write the
+// settings folder puts a link, a folder or an oversized file at its name.
+const madeRemedy = "To fix it, move or delete that file (MailArchive makes a new one), then run this again."
+
 func madeReadError(file string, err error) error {
-	return fmt.Errorf("%s (%s) could not be read: %w", madeKind, util.StripControl(file), err)
+	return fmt.Errorf("%s (%s) could not be read: %w. %s", madeKind, util.StripControl(file), err, madeRemedy)
 }
 
 // parseMade is the made-list's lines, as ReadMade keeps them.

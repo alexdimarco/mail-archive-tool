@@ -65,6 +65,9 @@ func setParentWords(err error, parent, name string) string {
 		case "R-set":
 			return fmt.Sprintf("%s is one of the folders MailArchive keeps its settings or working files in, or is inside one, and uninstalling MailArchive removes those, so the new archives cannot go there. Choose a folder of your own.", p)
 		case "R-f2":
+			if w := setUnconfirmedWords(r, p); w != "" {
+				return w
+			}
 			return fmt.Sprintf("MailArchive could not confirm that %s is outside every archive: it, or an archive this computer knows, is on a network share or another kind of mount, or an archive is too large or partly unreadable to check. Nothing was made. Choose a folder on this computer's own drive.", p)
 		case "R-e":
 			return fmt.Sprintf("%s is not a folder MailArchive can use just now: it is not there, it is a file, or it changed while MailArchive was checking it. Nothing was made. Choose the folder again, or another one.", p)
@@ -75,6 +78,29 @@ func setParentWords(err error, parent, name string) string {
 		}
 	}
 	return fmt.Sprintf("MailArchive could not check %s, so nothing was made there. Choose the folder again, or another one.", p)
+}
+
+// setUnconfirmedWords are the wizard's words for an R-f2 refusal that names its archive (the
+// friction review's F9: the one sentence for every cause gave advice that was wrong for most): the
+// archive named, and each cause's own remedy, as the unencrypted copy's own words give them; "" when
+// the refusal names no archive.
+func setUnconfirmedWords(r *app.CopyRefusal, p string) string {
+	if r.Archive == "" {
+		return ""
+	}
+	a := util.StripControl(r.Archive)
+	head := fmt.Sprintf("MailArchive could not confirm that %s is outside the archive %s", p, a)
+	switch {
+	case r.Cause == "walk":
+		return head + ": that archive is too large or partly unreadable to check. Nothing was made. Choose a folder on another drive; if that archive is no longer used, remove it from Your archives in MailArchive Desktop."
+	case r.Cause == "fuse" && r.ArchiveSide:
+		return head + ": that archive is on an sshfs or other FUSE mount, where folders cannot be compared. Nothing was made. Choose a folder on a local drive, or mount that archive's share with your system's SMB or NFS client."
+	case r.Cause == "fuse":
+		return head + ": the folder is on an sshfs, FUSE or overlay mount, where folders cannot be compared. Nothing was made. Choose a folder on a local drive, or one mounted with your system's SMB or NFS client."
+	case r.Cause == "here":
+		return head + ": one of them is reached through a share on this computer, which can show one folder under two names. Nothing was made. Choose the folder by its local path instead."
+	}
+	return head + ": the two are reached through different network shares, which can show one folder under two names. Nothing was made. Choose a folder on a local drive or a USB drive."
 }
 
 // The one-archive and single-row paths' folder question (§3 "A set's parent chosen for one archive",
@@ -113,8 +139,13 @@ func askOutputFolder(guard bool) (string, error) {
 // heldArchivesWords is the question about a folder that directly holds n archives (F-10a: the words
 // do not say how those archives were made, which the wizard cannot tell).
 func heldArchivesWords(folder string, n int) string {
-	return fmt.Sprintf("%s already holds %d archives. An archive made here would hold them inside it, and making one archive for each mailbox in this folder again would then be refused. Choose another folder?", util.StripControl(folder), n)
+	return fmt.Sprintf("%s already holds %d archives. An archive made here would hold them inside it, and making one archive for each mailbox in this folder again would then be refused. Choose another folder?", util.StripControl(folder), n) +
+		" " + heldArchivesAdd
 }
+
+// heldArchivesAdd is the "already holds" question's way to add a mailbox to those archives (the
+// friction review's F1, its words).
+const heldArchivesAdd = "To add a new mailbox to these archives instead, click Choose another folder, then Cancel, and start again: All of them, One archive for each mailbox, and this folder."
 
 // setArchivesIn counts the archive folders directly inside folder, plaintext or encrypted, as §7's
 // child read finds them (only folders that are the person's own are read); 0 when the folder cannot

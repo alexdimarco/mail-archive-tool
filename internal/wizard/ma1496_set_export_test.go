@@ -99,7 +99,9 @@ func (s *flowScript) install(t *testing.T) {
 		switch {
 		case strings.HasPrefix(text, "MailArchive will make"), strings.HasPrefix(text, "No new archive"):
 			return nil
-		case strings.HasPrefix(text, "Account "):
+		case strings.HasPrefix(text, "Account"):
+			// "Account 1 of 3: NAME", or with one account asked "Account: NAME" (the friction
+			// review's F14): No, export what's cached.
 			return zenity.ErrCanceled
 		}
 		return s.summary
@@ -380,10 +382,16 @@ func TestASetIsMadeOneArchiveAfterAnother(t *testing.T) {
 		}
 	}
 	sum = s.summaryOf(t)
+	// Amended 2026-11-25 (the adversarial pass's CON-10 and INS-08, the friction review's F2 and F4;
+	// nothing weakened): its folder was taken away again, so nothing was copied: "Did not finish: …"
+	// and "The mail copied so far is kept; run this again with the same folder to finish it." before;
+	// the made-list's own error now names the file's remedy.
 	for _, w := range []string{
 		"3 archives are ready in " + parent + "\n\n",
-		"ann@qz-a.example: Did not finish: the new folder could not be recorded in the wizard's list of the folders it made",
-		"The mail copied so far is kept; run this again with the same folder to finish it.",
+		"ann@qz-a.example: Not made, so nothing was copied: the new folder could not be recorded in the wizard's list of the folders it made",
+		"(" + f + ") could not be read",
+		"To fix it, move or delete that file (MailArchive makes a new one), then run this again.",
+		"\nTo finish it, run this again: choose All of them, then One archive for each mailbox, and this same folder.\n",
 		"\nbob@qz-b.example (brought up to date): ",
 	} {
 		if !strings.Contains(sum, w) {
@@ -528,7 +536,9 @@ func TestCancelOrAParentErrorStopsTheSetAndAnErrorInOneGoesOn(t *testing.T) {
 		}
 	}
 	sum := s.summaryOf(t)
-	if !strings.Contains(sum, "bob@qz-b.example: Did not finish: "+made[1].Reason+". The mail copied so far is kept; run this again with the same folder to finish it. Log: "+filepath.Join(parent, "bob@qz-b.example", "mailarchive.log")) || !strings.HasPrefix(sum, "4 archives are ready in ") {
+	// (F4: "… The mail copied so far is kept; run this again with the same folder to finish it. Log: …"
+	// before.)
+	if !strings.Contains(sum, "bob@qz-b.example: Did not finish: "+made[1].Reason+". The mail copied so far is kept. Log: "+filepath.Join(parent, "bob@qz-b.example", "mailarchive.log")) || !strings.HasPrefix(sum, "4 archives are ready in ") {
 		t.Errorf("the failed archive's line:\n%s", sum)
 	}
 
@@ -542,9 +552,12 @@ func TestCancelOrAParentErrorStopsTheSetAndAnErrorInOneGoesOn(t *testing.T) {
 	if err == nil && len(made) == 5 && made[0].Outcome == MadeFinished && made[1].Outcome == MadeStopped && len(s.opened) == 2 {
 		code, msg = 1, s.summaryOf(t)
 	}
+	// (F4: each line said how to run it again before: "… kept; run this again with the same folder to
+	// finish it." and "Not started. Run this again with the same folder to back it up.")
 	assure.Refused(t, code, msg, assure.Code(1),
-		assure.Names("1 archive is ready in "+parent, "bob@qz-b.example: Did not finish: the export was cancelled. The mail copied so far is kept; run this again with the same folder to finish it.",
-			"cy@qz-c.example: Not started. Run this again with the same folder to back it up.", "imap.old.example (not in Thunderbird now): Not started."),
+		assure.Names("1 archive is ready in "+parent, "bob@qz-b.example: Did not finish: the export was cancelled. The mail copied so far is kept.",
+			"cy@qz-c.example: Not started.", "imap.old.example (not in Thunderbird now): Not started.",
+			"To finish them, run this again: choose All of them, then One archive for each mailbox, and this same folder."),
 		assure.NoSideEffect(func() bool {
 			for _, p := range later {
 				if _, err := os.Lstat(p); !errors.Is(err, os.ErrNotExist) {
@@ -572,8 +585,9 @@ func TestCancelOrAParentErrorStopsTheSetAndAnErrorInOneGoesOn(t *testing.T) {
 		code, msg = 1, s.summaryOf(t)
 	}
 	assure.Refused(t, code, msg, assure.Code(1),
-		assure.Names("No archive was finished in "+parent, "ann@qz-a.example: Did not finish: "+parent, "bob@qz-b.example: Not started."),
-		assure.Forbid("Log: "),
+		// (CON-10: "ann@qz-a.example: Did not finish: "+parent before; its folder was never made.)
+		assure.Names("No archive was finished in "+parent, "ann@qz-a.example: Not made, so nothing was copied: "+parent, "bob@qz-b.example: Not started."),
+		assure.Forbid("Log: ", "copied so far is kept"),
 		assure.NoSideEffect(func() bool {
 			_, gone := os.Lstat(parent)
 			kids, _ := os.ReadDir(moved)
@@ -642,7 +656,11 @@ Local Folders: Backup complete. 1,204 messages.
 imap.gmail.com (not in Thunderbird now): saved once. 3,311 messages.
 sam@old.example (brought up to date): Backup complete. 2,045 messages.
 
-Each archive is its own folder: you can hand over or delete one without touching the others. Open index.html in any of them to browse. MailArchive Desktop lists them all under Your archives; a row whose last backup did not finish says so.`
+Each archive is its own folder: you can hand over or delete one without touching the others. Open index.html in any of them to browse. MailArchive Desktop lists them all under Your archives; a row whose last backup did not finish says so.
+
+To back up a mailbox you add to Thunderbird later: click Make a new archive…, choose All of them, then One archive for each mailbox, and this same folder, D:\Mail archives.`
+	// Amended 2026-11-25 (the friction review's F1; additive): the summary's last line says how to back
+	// up a mailbox added later; it ended at R1's sentences before.
 	if got := setSummaryText(`D:\Mail archives`, example); got != want {
 		t.Fatalf("the design's example:\n got %q\nwant %q", got, want)
 	}
@@ -653,19 +671,33 @@ Each archive is its own folder: you can hand over or delete one without touching
 	failed := arcOf("c@x", outContinue, MadeFailed, app.Result{})
 	failed.made.Reason = "input /m/c does not exist"
 	notStarted := arcOf("d@x", outNew, MadeNotStarted, app.Result{})
-	one := setSummaryText("/m", []*setArchive{arcOf("a@x", outNew, MadeFinished, app.Result{ManifestSize: 1}), stopped, failed, notStarted})
+	// A new archive whose folder was never made (the adversarial pass's CON-10, the friction review's
+	// F2): nothing was copied, so it never says the mail copied so far is kept; a folder this
+	// computer did not let MailArchive make gives F2's remedy.
+	notMade := arcOf("e@x", outNew, MadeFailed, app.Result{})
+	notMade.made.Reason, notMade.notMade, notMade.remedy = "this computer did not let MailArchive make a folder in /m", true, setWriteRemedy("windows")
+	one := setSummaryText("/m", []*setArchive{arcOf("a@x", outNew, MadeFinished, app.Result{ManifestSize: 1}), stopped, failed, notStarted, notMade})
+	// Amended 2026-11-25 (the friction review's F4; nothing weakened): each line read "… The mail
+	// copied so far is kept; run this again with the same folder to finish it." and "Not started. Run
+	// this again with the same folder to back it up." before; how to run it again is now one closing
+	// sentence that says how.
 	for _, w := range []string{
 		"1 archive is ready in /m\n\na@x: Backup complete. 1 message.\n",
-		"\nb@x: Did not finish: the export was cancelled. The mail copied so far is kept; run this again with the same folder to finish it.\n",
-		"\nc@x (brought up to date): Did not finish: input /m/c does not exist. The mail copied so far is kept; run this again with the same folder to finish it.\n",
-		"\nd@x: Not started. Run this again with the same folder to back it up.\n\n",
+		"\nb@x: Did not finish: the export was cancelled. The mail copied so far is kept.\n",
+		"\nc@x (brought up to date): Did not finish: input /m/c does not exist. The mail copied so far is kept.\n",
+		"\nd@x: Not started.\n",
+		"\ne@x: Not made, so nothing was copied: this computer did not let MailArchive make a folder in /m. Allow MailArchive there (Windows Security, Controlled folder access), or run this again and choose another folder.\n",
+		"\nTo finish them, run this again: choose All of them, then One archive for each mailbox, and this same folder.\n\n",
 	} {
 		if !strings.Contains(one, w) {
 			t.Errorf("the summary lacks %q:\n%s", w, one)
 		}
 	}
-	if none := setSummaryText("/m", []*setArchive{notStarted}); !strings.HasPrefix(none, "No archive was finished in /m\n\n") {
+	if none := setSummaryText("/m", []*setArchive{notStarted}); !strings.HasPrefix(none, "No archive was finished in /m\n\n") || !strings.Contains(none, "\nTo finish it, run this again: choose All of them, then One archive for each mailbox, and this same folder.\n") {
 		t.Errorf("the zero form: %q", none)
+	}
+	if strings.Contains(one, "copied so far is kept; run this again") || strings.Contains(setSummaryText("/m", []*setArchive{notMade}), "copied so far is kept") {
+		t.Errorf("a line still says how to run it again, or a folder never made says mail was kept:\n%s", one)
 	}
 
 	// An archive's own lead and its account lines.

@@ -288,7 +288,9 @@ func NoLongerUsedText(old, moved string) string {
 // "When the account was removed for good", C13; MA-1506), in place of GoneText's. Folders only
 // (MA-1288). The design's draft words, for the friction review.
 func RemovedText(folder string) string {
-	return fmt.Sprintf("Thunderbird no longer has the account that used %s. This archive keeps the mail saved so far. To stop its backups, click Pause (make read-only) on its row.", folder)
+	// Its words reach the failure email, where "its row" points nowhere (the friction review's F12):
+	// "… on its row under Your archives in MailArchive Desktop." ("… on its row." before).
+	return fmt.Sprintf("Thunderbird no longer has the account that used %s. This archive keeps the mail saved so far. To stop its backups, click Pause (make read-only) on its row under Your archives in MailArchive Desktop.", folder)
 }
 
 // NoLiveOwner reports whether path is a folder of a Thunderbird profile whose settings say, for

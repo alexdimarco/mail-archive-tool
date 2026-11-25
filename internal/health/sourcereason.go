@@ -26,7 +26,9 @@ func SourceReasonText(reason string, since time.Time) string {
 	date := since.Format("Jan 2, 2006")
 	switch reason {
 	case state.SourceReasonMoved:
-		return "Thunderbird stopped using this archive's mail folder on " + date + ": its account now keeps its mail in another folder. The mail saved so far stays here. To back that account up, click Make a new archive… and choose it again; then click Pause (make read-only) on this archive."
+		// The friction review's F12: the run's own error's second way, "or choose One archive for each
+		// mailbox and the same folder as before", is said here too.
+		return "Thunderbird stopped using this archive's mail folder on " + date + ": its account now keeps its mail in another folder. The mail saved so far stays here. To back that account up, click Make a new archive… and choose it again (or choose One archive for each mailbox and the same folder as before); then click Pause (make read-only) on this archive."
 	case state.SourceReasonRemoved:
 		return "Thunderbird no longer has the account this archive backs up (since " + date + "). The mail saved so far stays here. To stop its backups, click Pause (make read-only)."
 	}
@@ -41,11 +43,13 @@ func SourceReasonPauseText(reason string, since time.Time) string {
 		return ""
 	}
 	date := since.Format("Jan 2, 2006")
+	// These go out in an email, where "here" points nowhere (the friction review's F12): "Its mail
+	// stays in the archive." ("Its mail stays here." before).
 	switch reason {
 	case state.SourceReasonMoved:
-		return "MailArchive paused this archive's scheduled backup: Thunderbird has not used its mail folder since " + date + ". Its mail stays here. To back that account up, click Make a new archive… and choose it again."
+		return "MailArchive paused this archive's scheduled backup: Thunderbird has not used its mail folder since " + date + ". Its mail stays in the archive. To back that account up, click Make a new archive… and choose it again."
 	case state.SourceReasonRemoved:
-		return "MailArchive paused this archive's scheduled backup: Thunderbird has not had its account since " + date + ". Its mail stays here."
+		return "MailArchive paused this archive's scheduled backup: Thunderbird has not had its account since " + date + ". Its mail stays in the archive."
 	}
 	return ""
 }

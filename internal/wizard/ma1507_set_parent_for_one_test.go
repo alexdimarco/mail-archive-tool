@@ -55,8 +55,11 @@ func TestAFolderHoldingArchivesAsksBeforeOneArchiveIsMadeInIt(t *testing.T) {
 	if err == nil && out == empty && len(s.questions) == 1 && len(s.chooser) == 2 {
 		code, msg = 1, s.questions[0]
 	}
+	// Amended 2026-11-25 (the friction review's F1; additive): the question then says how to add a
+	// mailbox to those archives instead.
 	assure.Refused(t, code, msg, assure.Code(1),
-		assure.Names(held+" already holds 2 archives. An archive made here would hold them inside it, and making one archive for each mailbox in this folder again would then be refused. Choose another folder?"),
+		assure.Names(held+" already holds 2 archives. An archive made here would hold them inside it, and making one archive for each mailbox in this folder again would then be refused. Choose another folder?",
+			"? To add a new mailbox to these archives instead, click Choose another folder, then Cancel, and start again: All of them, One archive for each mailbox, and this folder."),
 		assure.NoSideEffect(func() bool { return reflect.DeepEqual(treeOf(t, held), before) }))
 
 	s = &setScript{folders: []string{held}, answers: []error{nil}}
@@ -76,8 +79,10 @@ func TestAFolderHoldingArchivesAsksBeforeOneArchiveIsMadeInIt(t *testing.T) {
 	}
 
 	// The wiring: the auto-detect paths, held until step 3b; "Choose another folder" the default.
+	// Amended 2026-11-25 (the friction review's F8; additive): never in Make a new encrypted
+	// archive… (keyed), which never offers One archive for each mailbox.
 	for file, wired := range map[string]string{
-		"wizard.go":    "askOutputFolder(perMailboxBuilt && srcType == srcAuto)",
+		"wizard.go":    "askOutputFolder(perMailboxBuilt && srcType == srcAuto && keyed == nil)",
 		"setparent.go": "questionDialog(heldArchivesWords(out, n), zenity.Title(appTitle), zenity.OKLabel(useFolderAnyway), zenity.CancelLabel(chooseAnother), zenity.DefaultCancel())",
 	} {
 		src, err := os.ReadFile(file)

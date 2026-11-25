@@ -143,7 +143,9 @@ func TestThePauseAndTheNoticesSayTheReasonsWords(t *testing.T) {
 	seedDueStreak(t, outB)
 	s, _ := state.ReadSourceStreak(outB)
 	RunHeadless(jobB)
-	wantB := "MailArchive paused this archive's scheduled backup: Thunderbird has not had its account since " + s.FirstUnreachable.Format("Jan 2, 2006") + ". Its mail stays here."
+	// Amended 2026-11-25 (the friction review's F12; nothing weakened): an email's "here" pointed
+	// nowhere; both pauses' words said "Its mail stays here." before.
+	wantB := "MailArchive paused this archive's scheduled backup: Thunderbird has not had its account since " + s.FirstUnreachable.Format("Jan 2, 2006") + ". Its mail stays in the archive."
 	if len(*rec) != 1 || g.lastPause() != wantB {
 		t.Errorf("the removed account's pause: removed %v, reason %q, want %q", *rec, g.lastPause(), wantB)
 	}
@@ -159,7 +161,7 @@ func TestThePauseAndTheNoticesSayTheReasonsWords(t *testing.T) {
 	seedDueStreak(t, outA)
 	s, _ = state.ReadSourceStreak(outA)
 	RunHeadless(jobA)
-	wantA := "MailArchive paused this archive's scheduled backup: Thunderbird has not used its mail folder since " + s.FirstUnreachable.Format("Jan 2, 2006") + ". Its mail stays here. To back that account up, click Make a new archive… and choose it again."
+	wantA := "MailArchive paused this archive's scheduled backup: Thunderbird has not used its mail folder since " + s.FirstUnreachable.Format("Jan 2, 2006") + ". Its mail stays in the archive. To back that account up, click Make a new archive… and choose it again."
 	if len(*rec) != 2 || g.lastPause() != wantA || wantA != health.SourceReasonPauseWordsAt(outA) {
 		t.Errorf("the moved account's pause: removed %v, reason %q, want %q", *rec, g.lastPause(), wantA)
 	}

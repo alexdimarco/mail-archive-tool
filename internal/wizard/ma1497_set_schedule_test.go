@@ -3,6 +3,7 @@ package wizard
 import (
 	"bytes"
 	"errors"
+	"fmt"
 	"os"
 	"path/filepath"
 	"reflect"
@@ -162,10 +163,13 @@ func TestTheSetIsScheduledOnceWithOnlyAnExactYes(t *testing.T) {
 			t.Errorf("a set was asked the Thunderbird sync question: %q", l)
 		}
 	}
+	// Amended 2026-11-25 (the friction review's F1; additive): the end note's last line says how to
+	// back up a mailbox added later; it ended at setNoteRows before.
 	wantNote := "Scheduled: daily from 02:00, one archive every 10 minutes, for 4 archives in " + parent + ".\n" +
 		setNoteLogs + "\n" +
 		"Not scheduled: imap.old.example (not in Thunderbird now), saved once.\n" +
-		setNoteRows
+		setNoteRows + "\n" +
+		"To back up a mailbox you add to Thunderbird later: click Make a new archive…, choose All of them, then One archive for each mailbox, and this same folder, " + parent + "."
 	if note := s.notes[len(s.notes)-1]; note != wantNote {
 		t.Errorf("the end note:\n got %q\nwant %q", note, wantNote)
 	}
@@ -258,7 +262,8 @@ func TestTheSetIsScheduledOnceWithOnlyAnExactYes(t *testing.T) {
 		"ann@qz-a.example kept its own schedule.\n" +
 		"bob@qz-b.example kept its own schedule (its settings could not be read).\n" +
 		"Local Folders kept its own schedule.\n" +
-		setNoteLogs + "\n" + setNoteRows
+		setNoteLogs + "\n" + setNoteRows + "\n" +
+		fmt.Sprintf(setLaterMailbox, parent)
 	// The second parent's archives, made above, are known now and back up these mailboxes too: their
 	// lines (MA-1501) sit before the Desktop's line; the rest is §11's note.
 	var rest, others []string

@@ -892,6 +892,7 @@ func localArchiveFlowHooks(chosen func(out string), finished func(), check func(
 
 	choice := wizardChoice{outlookCOM: useOutlookCOM}
 	var names map[string]string // the name the mailbox list showed for each path (MA-1502)
+	var order []string          // the list's paths in its order: the download questions' (F14)
 	switch {
 	case useOutlookCOM:
 	case srcType == srcAuto:
@@ -912,7 +913,7 @@ func localArchiveFlowHooks(chosen func(out string), finished func(), check func(
 			}
 			return err
 		}
-		choice.inputs, choice.auto, names = pick.inputs, pick.auto, pick.names
+		choice.inputs, choice.auto, names, order = pick.inputs, pick.auto, pick.names, pick.order
 	default:
 		choice.inputs = []string{inputPath}
 	}
@@ -920,7 +921,8 @@ func localArchiveFlowHooks(chosen func(out string), finished func(), check func(
 	// 1a. IMAP prep, for every input that needs it (auto-detected ones too):
 	//     a Thunderbird IMAP account is offered a full offline download; an
 	//     Outlook .ost gets the equivalent guidance.
-	prepared, err := askDownloads(choice.inputs, names)
+	//     Asked in the order the list showed the accounts (the friction review's F14).
+	prepared, err := askDownloads(inListOrder(choice.inputs, order), names)
 	if err != nil {
 		return err
 	}
@@ -929,7 +931,10 @@ func localArchiveFlowHooks(chosen func(out string), finished func(), check func(
 	//    On auto-detect's one-archive and single-row paths, a folder that directly holds two or more
 	//    archives asks first (MA-1507), once the set is built (perMailboxBuilt, step 3b): the
 	//    question's words speak of One archive for each mailbox, which a person cannot choose yet.
-	choice.out, err = askOutputFolder(perMailboxBuilt && srcType == srcAuto)
+	//    Never in Make a new encrypted archive… (keyed): it never offers One archive for each mailbox,
+	//    and its empty-folder check refuses any folder that holds something anyway (the friction
+	//    review's F8).
+	choice.out, err = askOutputFolder(perMailboxBuilt && srcType == srcAuto && keyed == nil)
 	if err != nil {
 		return err
 	}
@@ -1644,7 +1649,12 @@ type prepAsk struct {
 // dropped; the question dialog shows its text without markup.
 func imapPrepQuestionFor(a prepAsk) string {
 	name := util.StripControl(a.name)
-	return fmt.Sprintf("Account %d of %d: %s\n\n", a.i, a.n, name) +
+	head := fmt.Sprintf("Account %d of %d: %s\n\n", a.i, a.n, name)
+	if a.n == 1 {
+		// One account asked: no count (the friction review's F14; "Account 1 of 1: NAME" before).
+		head = "Account: " + name + "\n\n"
+	}
+	return head +
 		strings.TrimSuffix(imapPrepQuestion, imapPrepOffer) +
 		"Prepare a full offline download of " + name + " first?"
 }

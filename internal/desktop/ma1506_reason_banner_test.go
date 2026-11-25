@@ -58,7 +58,9 @@ func TestTheBannerSaysTheReasonsWords(t *testing.T) {
 		t.Fatal("positive twin: the row with no reason shows today's banner")
 	}
 	for _, want := range []string{
-		"Thunderbird stopped using this archive's mail folder on Oct 12, 2026: its account now keeps its mail in another folder. The mail saved so far stays here. To back that account up, click Make a new archive… and choose it again; then click Pause (make read-only) on this archive.",
+		// Amended 2026-11-25 (the friction review's F12; nothing weakened): "… and choose it again;
+		// then click Pause …" before; the run's own second way is now said too.
+		"Thunderbird stopped using this archive's mail folder on Oct 12, 2026: its account now keeps its mail in another folder. The mail saved so far stays here. To back that account up, click Make a new archive… and choose it again (or choose One archive for each mailbox and the same folder as before); then click Pause (make read-only) on this archive.",
 		"Thunderbird no longer has the account this archive backs up (since Oct 12, 2026). The mail saved so far stays here. To stop its backups, click Pause (make read-only).",
 	} {
 		if !strings.Contains(page, `<span class="archive-tag">`+want+`</span>`) {

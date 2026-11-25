@@ -86,8 +86,10 @@ func TestAnAccountRemovedForGoodStopsInItsOwnWords(t *testing.T) {
 			}
 		}
 		assure.Refused(t, code, msg, assure.Code(1),
+			// Amended 2026-11-25 (the friction review's F12; nothing weakened): the words reach the
+			// failure email, so they say where the row is; they ended "… on its row." before.
 			assure.Names("Thunderbird no longer has the account that used "+b+".", "This archive keeps the mail saved so far.",
-				"To stop its backups, click Pause (make read-only) on its row."),
+				"To stop its backups, click Pause (make read-only) on its row under Your archives in MailArchive Desktop."),
 			assure.Forbid(name, "check the path, or that the drive holding it is mounted"),
 			assure.NoSideEffect(func() bool {
 				after, _ := os.ReadFile(filepath.Join(out, ".mailarchive-manifest.json"))

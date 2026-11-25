@@ -1,6 +1,7 @@
 package wizard
 
 import (
+	"os"
 	"path/filepath"
 	"reflect"
 	"strings"
@@ -36,7 +37,8 @@ func accountLines(t *testing.T, questions []string) []string {
 	for _, q := range questions {
 		head, _, _ := strings.Cut(q, "\n\n")
 		_, name, ok := strings.Cut(head, ": ")
-		if !ok || !strings.HasPrefix(head, "Account ") {
+		// "Account 1 of 3: NAME", or with one account asked "Account: NAME" (F14).
+		if !ok || !strings.HasPrefix(head, "Account ") && !strings.HasPrefix(head, "Account: ") {
 			t.Errorf("the question does not start with its account line:\n%s", q)
 		}
 		if !strings.HasSuffix(q, "\n\nPrepare a full offline download of "+name+" first?") {
@@ -70,19 +72,31 @@ func TestTheDownloadQuestionNamesTheAccountAndItsNumber(t *testing.T) {
 	}
 
 	// The one-archive path.
+	// Amended 2026-11-25 (the friction review's F14; nothing weakened): All of them's questions come
+	// in the order the list showed the accounts (the flow asks askDownloads(inListOrder(choice.inputs,
+	// order), names)), its inputs still in the order found; they came in the order found before
+	// ("Account 1 of 6: qzsam.walker@gmail.com", "2: qzsam.work@gmail.com", "3: qzwork@qzwork.example",
+	// "4: qzsam@qzname.example", "5: qz.student@mail.qzuni.example", "6: Work: Gmail"). One account
+	// asked has no count: "Account: NAME" ("Account 1 of 1: NAME" before).
 	s := &setScript{}
 	s.install(t)
-	prepared, err := askDownloads(p.inputs, p.names)
+	if !reflect.DeepEqual(p.inputs, found) {
+		t.Fatalf("All of them's inputs are no longer in the order found: %q", p.inputs)
+	}
+	prepared, err := askDownloads(inListOrder(p.inputs, p.order), p.names)
 	if err != nil || prepared {
 		t.Fatalf("No to each: prepared %v, %v", prepared, err)
 	}
 	want := []string{
-		"Account 1 of 6: qzsam.walker@gmail.com",
-		"Account 2 of 6: qzsam.work@gmail.com",
-		"Account 3 of 6: qzwork@qzwork.example",
+		"Account 1 of 6: qz.student@mail.qzuni.example",
+		"Account 2 of 6: qzsam.walker@gmail.com",
+		"Account 3 of 6: qzsam.work@gmail.com",
 		"Account 4 of 6: qzsam@qzname.example",
-		"Account 5 of 6: qz.student@mail.qzuni.example",
+		"Account 5 of 6: qzwork@qzwork.example",
 		"Account 6 of 6: Work: Gmail",
+	}
+	if src, err := os.ReadFile("wizard.go"); err != nil || !strings.Contains(string(src), "prepared, err := askDownloads(inListOrder(choice.inputs, order), names)") {
+		t.Errorf("the flow no longer asks in the list's order: %v", err)
 	}
 	if got := accountLines(t, assure.Reached(t, s.questions, "the download questions")); !reflect.DeepEqual(got, want) {
 		t.Fatalf("the one-archive path asks:\n%q\nwant\n%q", got, want)
@@ -103,7 +117,7 @@ func TestTheDownloadQuestionNamesTheAccountAndItsNumber(t *testing.T) {
 	if _, err := askDownloads([]string{found[0]}, nil); err != nil {
 		t.Fatal(err)
 	}
-	if got := accountLines(t, s.questions); !reflect.DeepEqual(got, []string{"Account 1 of 1: qzsam.walker@gmail.com"}) {
+	if got := accountLines(t, s.questions); !reflect.DeepEqual(got, []string{"Account: qzsam.walker@gmail.com"}) {
 		t.Errorf("a folder chosen by hand: %q", got)
 	}
 
@@ -133,7 +147,8 @@ func TestTheDownloadQuestionNamesTheAccountAndItsNumber(t *testing.T) {
 		t.Fatalf("a set asks:\n%q\nwant\n%q", lines, setWant)
 	}
 	text := setPlanText(plan)
-	if !strings.HasSuffix(text, "\nAsked about a full offline download: qz.student@mail.qzuni.example, qzsam.walker@gmail.com, qzsam.work@gmail.com, qzsam@qzname.example, qzwork@qzwork.example, Work: Gmail") {
+	// (F11: "\nAsked about a full offline download: …" before.)
+	if !strings.HasSuffix(text, "\nNext you are asked whether to prepare a full offline download of: qz.student@mail.qzuni.example, qzsam.walker@gmail.com, qzsam.work@gmail.com, qzsam@qzname.example, qzwork@qzwork.example, Work: Gmail") {
 		t.Errorf("the plan's last line does not name the accounts asked, as asked:\n%s", text)
 	}
 	if !strings.Contains(text, "\nWork Gmail\n") || !strings.Contains(text, "imap.old.example (not in Thunderbird now): saved once and not kept current, since no account uses it") {
@@ -170,7 +185,7 @@ func TestTheDownloadQuestionNamesTheAccountAndItsNumber(t *testing.T) {
 			t.Errorf("a row saved once, or Local Folders, was asked: %s", q)
 		}
 	}
-	if !strings.HasSuffix(setPlanText(again), "\nAsked about a full offline download: qz.student@mail.qzuni.example, qzsam.work@gmail.com, qzsam@qzname.example, qzwork@qzwork.example") {
+	if !strings.HasSuffix(setPlanText(again), "\nNext you are asked whether to prepare a full offline download of: qz.student@mail.qzuni.example, qzsam.work@gmail.com, qzsam@qzname.example, qzwork@qzwork.example") {
 		t.Errorf("the re-run's plan line:\n%s", setPlanText(again))
 	}
 

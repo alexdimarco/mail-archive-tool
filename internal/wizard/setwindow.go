@@ -18,6 +18,13 @@ import (
 
 const (
 	setMakeLabel = "Make the archives"
+	// setUpToDateLabel is the plan's button when it makes no new archive and brings some up to date
+	// (the friction review's F11).
+	setUpToDateLabel = "Bring them up to date"
+	// setAskedLead leads the plan's line naming the accounts the download question asks about next,
+	// and setNotFoundAdvice follows an archive whose mailbox is not found now (F11's words).
+	setAskedLead      = "Next you are asked whether to prepare a full offline download of: "
+	setNotFoundAdvice = "; its mail stays in its archive; click Pause on its row to stop its backups."
 	// setOnceWords follow a saved-once row's name in the plan.
 	setOnceUnused = ": saved once and not kept current, since no account uses it"
 	setOnceOlder  = ": saved once and not kept current, since it is an older copy"
@@ -116,13 +123,17 @@ func setPlanText(p setPlan) string {
 		rest = append(rest, setUnlookedMany+strings.Join(names, ", "))
 	}
 	for _, g := range p.notFound {
-		rest = append(rest, "In this folder, not found now: "+clean(g))
+		// The friction review's F11: the line now says what to do ("In this folder, not found now:
+		// NAME" before).
+		rest = append(rest, "In this folder, not found now: "+clean(g)+setNotFoundAdvice)
 	}
 	if p.more {
 		rest = append(rest, fmt.Sprintf("Only the first %d folders in %s were looked at; the others were left out.", setChildMax, parent))
 	}
 	if len(asked) > 0 {
-		rest = append(rest, "Asked about a full offline download: "+strings.Join(asked, ", "))
+		// F11: said as what comes next ("Asked about a full offline download: …" before, which read
+		// as if it had happened).
+		rest = append(rest, setAskedLead+strings.Join(asked, ", "))
 	}
 	parts := []string{head}
 	if len(made) > 0 {
@@ -137,7 +148,7 @@ func setPlanText(p setPlan) string {
 // showSetPlan shows the plan in a question box (§8) through the questionDialog seam: true for "Make
 // the archives"; false for Cancel or closing it, which writes nothing.
 func showSetPlan(p setPlan) (bool, error) {
-	err := questionDialog(setPlanText(p), zenity.Title(appTitle), zenity.OKLabel(setMakeLabel), zenity.CancelLabel("Cancel"))
+	err := questionDialog(setPlanText(p), zenity.Title(appTitle), zenity.OKLabel(setPlanButton(p)), zenity.CancelLabel("Cancel"))
 	switch {
 	case err == nil:
 		return true, nil
@@ -145,6 +156,24 @@ func showSetPlan(p setPlan) (bool, error) {
 		return false, nil
 	}
 	return false, err
+}
+
+// setPlanButton is the plan's OK button: "Make the archives", or "Bring them up to date" when the
+// plan makes no new archive and brings at least one up to date (the friction review's F11).
+func setPlanButton(p setPlan) string {
+	upToDate := false
+	for _, it := range p.items {
+		switch it.outcome {
+		case outNew, outUnfinished:
+			return setMakeLabel
+		case outContinue:
+			upToDate = true
+		}
+	}
+	if upToDate {
+		return setUpToDateLabel
+	}
+	return setMakeLabel
 }
 
 // setChosen is what a set's steps before its export chose: the checked parent folder and the plan

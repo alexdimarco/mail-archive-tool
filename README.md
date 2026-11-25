@@ -162,6 +162,20 @@ MailArchive Desktop, not the wizard). It walks you through:
    and Outlook for Mac keep no local files and are archived server-side via
    Microsoft 365 — and asks again rather than guessing.
 2. **Choose** the file or folder (native picker), or the auto-detected store(s).
+   - **One archive for each mailbox** *(after All of them, when two or more
+     mailboxes would each get an archive)* — the wizard asks whether to keep them
+     together in one archive (the default, as before) or give each mailbox its own.
+     With *One archive for each mailbox* you choose **one folder to hold them all**
+     (a folder is made inside it for each mailbox, named by its address), then see
+     a **plan** of every archive it will make, bring up to date or leave, before
+     anything is written. The other questions below are asked once for all of
+     them; the archives are made one after another; one **summary** follows, then
+     one **schedule question** (each archive gets its own scheduled backup, 10
+     minutes apart). A set gets no Thunderbird sync. MailArchive Desktop lists
+     every archive of the set under *Your archives*. A mailbox you add to
+     Thunderbird later is not backed up until you run this again: choose *All of
+     them*, then *One archive for each mailbox*, and the same folder (running it
+     again also brings the others up to date and keeps their schedules).
 3. **IMAP prep** *(when applicable, auto-detected inputs included)* — for a
    Thunderbird IMAP account it offers to enable offline download and walk you
    through *Download/Sync Now* (then exports everything once); for an Outlook

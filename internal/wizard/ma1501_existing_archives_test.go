@@ -84,6 +84,17 @@ func TestTheEndNoteNamesArchivesThatBackUpTheSameMail(t *testing.T) {
 		t.Fatal(err)
 	}
 	known("Outside only", job.Job{Inputs: []string{outside}}, nil)
+	// Amended 2026-11-25 (the friction review's F3, the lead's call; additive): an "All of them" job
+	// that still lists a removed account's folder, not on this computer now, which no set archive can
+	// ever cover: its line names that folder and says its mail stays, and it gets no Pause advice, nor
+	// "Keep it running until each … has its own scheduled backup" when every mailbox of the set is
+	// scheduled. A member that failed now names itself in the advice ("Keep it running until NAME
+	// finishes; then run this again into the same folder."; it read "Keep it running until each of
+	// these mailboxes has its own scheduled backup." before).
+	removed := filepath.Join(t.TempDir(), "ImapMail", "imap.removed.example")
+	withGone := known("With a removed account", job.Job{Auto: true, Inputs: append(append([]string(nil), all...), removed)}, nil)
+	gone1 := " It also lists " + removed + ", which is not on this computer now; its mail already saved stays in it."
+	untilCy := " Keep it running until cy@qz-c.example finishes; then run this again into the same folder."
 
 	together := func(p string) string { return "Your archive " + p + " also backs up these mailboxes, all together." }
 	pause := " " + existingPause
@@ -144,7 +155,8 @@ func TestTheEndNoteNamesArchivesThatBackUpTheSameMail(t *testing.T) {
 		together(combined)+pause,
 		together(autoBare)+keep,
 		together(twoOne)+keep,
-		justBob+" also backs up bob@qz-b.example."+pause)
+		justBob+" also backs up bob@qz-b.example."+pause,
+		together(withGone)+gone1)
 	if l := existingIn([]string{s.summaryOf(t)}); len(l) != 0 {
 		t.Errorf("the summary says an existing archive: %q", l)
 	}
@@ -165,16 +177,16 @@ func TestTheEndNoteNamesArchivesThatBackUpTheSameMail(t *testing.T) {
 	if err := os.Rename(rows[2].path+".kept", rows[2].path); err != nil {
 		t.Fatal(err)
 	}
-	has(elsewhereIn(s.notes), together(combined)+keep, together(autoBare)+keep, together(twoOne)+keep, justBob+" also backs up bob@qz-b.example."+keep)
+	has(elsewhereIn(s.notes), together(combined)+untilCy, together(autoBare)+untilCy, together(twoOne)+untilCy, justBob+" also backs up bob@qz-b.example."+untilCy, together(withGone)+gone1+untilCy)
 	// The first set's own archives, now elsewhere for this one, each back up one of its mailboxes.
-	if l := strings.Join(existingIn(s.notes), "\n"); !strings.Contains(l, filepath.Join(p1, rows[0].name)+" also backs up ann@qz-a.example."+keep) {
+	if l := strings.Join(existingIn(s.notes), "\n"); !strings.Contains(l, filepath.Join(p1, rows[0].name)+" also backs up ann@qz-a.example."+untilCy) {
 		t.Errorf("the first set's archive of ann@qz-a.example is not named:\n%s", l)
 	}
 
 	// A member whose install failed: no Pause advice.
 	p3 := fresh()
 	s, _ = run(p3, scheduleDaily, &setScheduler{fail: map[string]bool{schedule.DefaultNameFor(filepath.Join(p3, rows[2].name)): true}}, nil)
-	has(elsewhereIn(s.notes), together(combined)+keep, together(autoBare)+keep, together(twoOne)+keep, justBob+" also backs up bob@qz-b.example."+keep)
+	has(elsewhereIn(s.notes), together(combined)+keep, together(autoBare)+keep, together(twoOne)+keep, justBob+" also backs up bob@qz-b.example."+keep, together(withGone)+gone1+keep)
 
 	// A re-run into the first parent: its members are passed over, also one known by another
 	// spelling (a link to its folder, outside the parent), which only the plan's exclusion passes.
@@ -195,7 +207,7 @@ func TestTheEndNoteNamesArchivesThatBackUpTheSameMail(t *testing.T) {
 	if m[0].Schedule != ScheduleKept || m[2].Schedule != ScheduleInstalled {
 		t.Fatalf("the re-run: %+v", m)
 	}
-	has(elsewhereIn(s.notes), together(combined)+pause, together(autoBare)+keep, together(twoOne)+keep, justBob+" also backs up bob@qz-b.example."+pause)
+	has(elsewhereIn(s.notes), together(combined)+pause, together(autoBare)+keep, together(twoOne)+keep, justBob+" also backs up bob@qz-b.example."+pause, together(withGone)+gone1)
 	for _, l := range existingIn(s.notes) {
 		if strings.Contains(l, p1) || strings.Contains(l, "another name") {
 			t.Errorf("a member of the set is named: %q", l)
