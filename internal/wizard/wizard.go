@@ -1975,7 +1975,10 @@ func runExport(c wizardChoice) error {
 	if err := app.RefuseKeyless("archive into it", c.out); err != nil {
 		return err
 	}
-	logger := newLogger(c.out)
+	logger, closeLog := newLogger(c.out)
+	// Closed when this export ends, whatever the path (round D): before the summary or the cancel
+	// note waits for the person, and at the latest when runExport returns.
+	defer closeLog()
 
 	// For the Outlook-automation path, show the completeness caveat and confirm
 	// before spending time on a Send/Receive + PST copy.
@@ -1994,7 +1997,7 @@ func runExport(c wizardChoice) error {
 		}
 	}
 
-	dlg, err := zenity.Progress(zenity.Title("Exporting…"), zenity.Pulsate())
+	dlg, err := progressDialog("Exporting…")
 	if err != nil {
 		return err
 	}
@@ -2061,7 +2064,8 @@ func runExport(c wizardChoice) error {
 	_ = dlg.Close()
 
 	if errors.Is(runErr, context.Canceled) {
-		return zenity.Info(
+		closeLog()
+		return messageDialog(
 			fmt.Sprintf("Export cancelled.\n\nExported %d message(s) before stopping.\nProgress was saved — run again to resume.",
 				result.Stats.Exported),
 			zenity.Title(appTitle),
@@ -2081,10 +2085,11 @@ func runExport(c wizardChoice) error {
 	if c.outlookCOM {
 		cleanupOutlookScratch(c.out, true, logger)
 	}
+	closeLog() // the export has ended: nothing more is logged
 
 	// Finish line: show the summary and offer to open the archive, then continue
 	// to the schedule offer exactly as before.
-	open := zenity.Question(exportSummary(c.out, c.keepRaw, result), zenity.Title(appTitle),
+	open := questionDialog(exportSummary(c.out, c.keepRaw, result), zenity.Title(appTitle),
 		zenity.OKLabel("Open the archive"), zenity.CancelLabel("Close"))
 	if open == nil {
 		openPath(filepath.Join(c.out, "index.html"))
@@ -2526,14 +2531,21 @@ func inVolatileDir(exe string) bool {
 	return false
 }
 
+// openRunLog opens an export's run log (runlog.Open). A var only so a test can keep each file an
+// export opened and tell, once the export returned, that it was closed: the file is the real one.
+var openRunLog = runlog.Open
+
 // newLogger writes a run log into the output folder (there is no console in a
 // GUI build), appending with rotation; falls back to discarding output if the
-// file can't be created.
-func newLogger(outDir string) *log.Logger {
+// file can't be created. closeLog closes the log's file (calling it again does nothing): each
+// export calls it when it ends, on every path, so on Windows, where a folder holding an open file
+// cannot be deleted or moved, the archive's folder can be while the wizard or MailArchive Desktop
+// stays open (round D; the Windows lab of MA-1503 found it left open until the garbage collector ran).
+func newLogger(outDir string) (logger *log.Logger, closeLog func()) {
 	if err := os.MkdirAll(outDir, 0o755); err == nil {
-		if f, err := runlog.Open(filepath.Join(outDir, "mailarchive.log")); err == nil {
-			return log.New(f, "", log.LstdFlags)
+		if f, err := openRunLog(filepath.Join(outDir, "mailarchive.log")); err == nil {
+			return log.New(f, "", log.LstdFlags), func() { _ = f.Close() }
 		}
 	}
-	return log.New(io.Discard, "", 0)
+	return log.New(io.Discard, "", 0), func() {}
 }

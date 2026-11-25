@@ -472,7 +472,10 @@ func exportSetArchive(c wizardChoice, n, m int, same func() error) (res app.Resu
 	if err := same(); err != nil {
 		return res, "", false, err, nil
 	}
-	logger := newLogger(c.out)
+	logger, closeLog := newLogger(c.out)
+	// Closed when this archive's export returns, whatever the path (round D), before the next
+	// archive starts: on Windows an open log keeps the person from moving or deleting the folder.
+	defer closeLog()
 	logPath = filepath.Join(c.out, "mailarchive.log")
 
 	dlg, err := progressDialog(fmt.Sprintf("Exporting %d of %d…", n, m))

@@ -11,7 +11,9 @@ import (
 // open (docs/design-per-mailbox-archives.md §3, §6, §8), replaced by recorders in their tests too.
 // entryDialog and errorDialog are the date window's question and its note (askSince), and
 // progressDialog the progress window of a set's exports and of the download wait (§9), so a test of
-// a set's whole flow opens no real window.
+// a set's whole flow opens no real window. The one-archive export (runExport) opens its progress
+// window, its cancel note and its summary through progressDialog, messageDialog and questionDialog
+// too (round D), so a test of its run log opens none either.
 var (
 	messageDialog  = zenity.Info
 	listDialog     = zenity.List
