@@ -122,25 +122,13 @@ func setScheduleLive(out string) (live, manual bool) {
 // Thunderbird sync. The end note (setScheduleNote) follows a Yes. No and Cancel install nothing and
 // show nothing.
 func offerSetSchedule(p setPlan, arcs []*setArchive) error {
+	setKeptSchedules(arcs)
 	var installs []*setArchive
 	rerun := false
 	for _, a := range arcs {
-		if a.it.outcome != outNew {
-			if exists, reads := setJobState(a.made.Folder); exists {
-				rerun = true
-				a.made.Schedule = ScheduleKeptUnreadable
-				if reads {
-					switch live, manual := setScheduleLive(a.made.Folder); {
-					case manual:
-						a.made.Schedule = ScheduleKeptManual
-					case live:
-						a.made.Schedule = ScheduleKept
-					default:
-						a.made.Schedule = ScheduleKeptOff
-					}
-				}
-				continue
-			}
+		if setKept(a.made.Schedule) {
+			rerun = true
+			continue
 		}
 		if a.made.Outcome == MadeFinished && !a.it.row.once {
 			installs = append(installs, a)
@@ -190,6 +178,57 @@ func offerSetSchedule(p setPlan, arcs []*setArchive) error {
 	}
 	// Through the messageDialog seam (zenity.Info).
 	return noticeClosed(messageDialog(note, zenity.Title(appTitle)))
+}
+
+// setKeptSchedules sets, for each archive of arcs continued (brought up to date, or a folder an earlier
+// run made) whose job file is there, what its own schedule is (offerSetSchedule's rule): ScheduleKept,
+// ScheduleKeptOff, ScheduleKeptManual, or ScheduleKeptUnreadable for a job file that cannot be read.
+// An archive whose schedule is already set is left as it is, so runSet may ask it before the summary
+// and offerSetSchedule again after it, and the scheduler is asked once.
+func setKeptSchedules(arcs []*setArchive) {
+	for _, a := range arcs {
+		if a.it.outcome == outNew || a.made.Schedule != ScheduleNone {
+			continue
+		}
+		exists, reads := setJobState(a.made.Folder)
+		if !exists {
+			continue
+		}
+		a.made.Schedule = ScheduleKeptUnreadable
+		if reads {
+			switch live, manual := setScheduleLive(a.made.Folder); {
+			case manual:
+				a.made.Schedule = ScheduleKeptManual
+			case live:
+				a.made.Schedule = ScheduleKept
+			default:
+				a.made.Schedule = ScheduleKeptOff
+			}
+		}
+	}
+}
+
+// setKept reports whether s is a continued archive's own schedule, kept as it is (any of the Kept
+// outcomes).
+func setKept(s MadeSchedule) bool {
+	switch s {
+	case ScheduleKept, ScheduleKeptUnreadable, ScheduleKeptOff, ScheduleKeptManual:
+		return true
+	}
+	return false
+}
+
+// setNothingNew reports whether a Yes to the set's schedule question would install nothing: no
+// archive finished that may be scheduled (not saved once) and has no schedule of its own (its kept
+// schedules already set by setKeptSchedules). offerSetSchedule then asks nothing and shows no end
+// note.
+func setNothingNew(arcs []*setArchive) bool {
+	for _, a := range arcs {
+		if a.made.Schedule == ScheduleNone && a.made.Outcome == MadeFinished && !a.it.row.once {
+			return false
+		}
+	}
+	return true
 }
 
 // setStartAt is the time at ("02:00") plus slot times setApart minutes, around the clock.

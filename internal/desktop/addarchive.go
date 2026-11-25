@@ -178,9 +178,22 @@ func (d *dashboard) addedSet(w http.ResponseWriter, made []wizard.Made, flowErr 
 	}
 	parts := append([]string{lead}, reachless...)
 	parts = append(parts, notDone...)
-	switch len(notDone) {
-	case 0:
-	case 1:
+	// An archive the set carries its own remedy for (this computer did not let MailArchive make a
+	// folder in the parent): the same folder would refuse again, so the note gives that remedy, the
+	// friction review's F2, in place of "choose the same folder" (docs/design-per-mailbox-archives.md
+	// revision 3, round B's leftover).
+	remedy := ""
+	for _, m := range made {
+		if m.Remedy != "" {
+			remedy = util.StripControl(m.Remedy)
+			break
+		}
+	}
+	switch {
+	case len(notDone) == 0:
+	case remedy != "":
+		parts = append(parts, remedy)
+	case len(notDone) == 1:
 		parts = append(parts, fmt.Sprintf(setFinishIt, parent))
 	default:
 		parts = append(parts, fmt.Sprintf(setFinishThem, parent))

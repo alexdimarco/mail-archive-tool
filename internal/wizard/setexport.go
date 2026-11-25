@@ -44,6 +44,11 @@ type Made struct {
 	Outcome MadeOutcome
 	// Reason is why it did not finish (MadeStopped, MadeFailed): one line, the summary's.
 	Reason string
+	// Remedy, when set, is what to do instead of running the set again into the same folder: for a
+	// folder this computer did not let MailArchive make in the parent, the friction review's F2 remedy
+	// (setWriteRemedy), which the Desktop's note says too (docs/design-per-mailbox-archives.md revision
+	// 3, round B's leftover).
+	Remedy string
 	// Schedule is what became of its schedule (§11); ScheduleWhy is why its install failed.
 	Schedule    MadeSchedule
 	ScheduleWhy string
@@ -204,6 +209,10 @@ func runSet(ch setChosen, goos string) ([]Made, error) {
 	if err := exportSet(ch.parent, p, arcs, all, goos); err != nil {
 		return madeOf(arcs), err
 	}
+	// Each continued archive's own schedule is known before the summary, so a re-run that has nothing
+	// new to schedule still says, in its summary, each one that has no scheduled backup now
+	// (docs/design-per-mailbox-archives.md revision 3, round B's leftover of CON-01; MA-1497).
+	setKeptSchedules(arcs)
 	// Nothing ran at all (every mailbox paused, kept, or not made): no summary (the friction review's
 	// F11; the plan said it all).
 	if len(arcs) > 0 {
@@ -286,6 +295,7 @@ func exportSet(sp *app.SetParent, p setPlan, arcs []*setArchive, all wizardChoic
 				// the summary cut off before).
 				a.made.Outcome, a.made.Reason = MadeFailed, "this computer did not let MailArchive make a folder in "+util.StripControl(p.parent)
 				a.remedy = setWriteRemedy(runtime.GOOS)
+				a.made.Remedy = a.remedy // and the Desktop's note (revision 3, round B's leftover)
 				stop = true
 				continue
 			case err != nil:
@@ -626,7 +636,8 @@ func setWriteRemedy(goos string) string {
 // how many messages it holds and the counts the one-archive summary shows with their remedies (only
 // those above zero), then its Thunderbird account lines (none for a row saved once); an archive that
 // did not finish says why (with its log, when there is one), and
-// one not started says so; then R1's sentences.
+// one not started says so; when there is nothing new to schedule (setNothingNew), each continued
+// archive with its own settings but no scheduled backup now says so (revision 3); then R1's sentences.
 func setSummaryText(parent string, arcs []*setArchive) string {
 	finished := 0
 	for _, a := range arcs {
@@ -689,6 +700,19 @@ func setSummaryText(parent string, arcs []*setArchive) string {
 		lines = append(lines, setFinishOne)
 	case unfinished > 1:
 		lines = append(lines, setFinishMany)
+	}
+	// A re-run with nothing new to schedule asks no schedule question and shows no end note, so the
+	// summary says each continued archive that has no scheduled backup now, in the end note's words
+	// (revision 3, round B's leftover of CON-01).
+	if setNothingNew(arcs) {
+		for _, a := range arcs {
+			switch a.made.Schedule {
+			case ScheduleKeptOff:
+				lines = append(lines, util.StripControl(a.made.Name)+setNoteKeptOff)
+			case ScheduleKeptManual:
+				lines = append(lines, util.StripControl(a.made.Name)+setNoteKeptManual)
+			}
+		}
 	}
 	parts := []string{head}
 	if len(lines) > 0 {
