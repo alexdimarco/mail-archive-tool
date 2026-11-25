@@ -222,8 +222,9 @@ func TestTwoAccountsOnOneServerOneReAddedStopsItsArchive(t *testing.T) {
 // F-08: an archive of one folder, auto-discovery off, whose folder is gone and whose record names
 // its account, which now keeps its mail elsewhere, stops with C2's moved words (the 1.7.5 rule ran
 // only with auto-discovery on), recorded with source_reason moved. An auto-discovery run's 1.7.5 moved
-// stop records moved too, both when the record named the account and when the server-name rule found
-// the move. Positive twins first: a gone folder whose record names no account keeps today's words,
+// stop records no reason (revision 2.2; it read "records moved too"), both when the record named the
+// account and when the server-name rule found the move. Positive twins first: a gone folder whose
+// record names no account keeps today's words,
 // with no source_reason; and one whose named account's folder setting still names it (deleted by
 // hand, Q4) too.
 func TestAGoneFolderWhoseAccountMovedStopsWithTheMovedWords(t *testing.T) {
@@ -280,15 +281,20 @@ func TestAGoneFolderWhoseAccountMovedStopsWithTheMovedWords(t *testing.T) {
 			return lr.Status == state.RunFailed && lr.Error == msg && lr.SourceReason == state.SourceReasonMoved &&
 				s.ConsecutiveFails == streak.ConsecutiveFails+1
 		}))
-	// MA-1481, amended: the auto-discovery run's moved stop records moved too, by name and by server.
-	if msg, lr := refusedWith(autoOut, Options{Inputs: []string{a, b}, Auto: true}); msg != autoplace.MovedText(b, usb) || lr.SourceReason != state.SourceReasonMoved {
-		t.Errorf("an auto-discovery run's moved stop: %q, source_reason %q", msg, lr.SourceReason)
+	// Amended 2026-11-24 by design revision 2.2 (the lead's call), beside its text: an auto-discovery
+	// run's 1.7.5 moved stop records NO source_reason, so a combined archive keeps 1.7.5's words (the
+	// moved words' "click Pause on this archive" would pause its every account). The two checks below
+	// read first: "MA-1481, amended: the auto-discovery run's moved stop records moved too, by name and
+	// by server", each asserting lr.SourceReason == state.SourceReasonMoved; they now assert none, with
+	// the 1.7.5 words unchanged.
+	if msg, lr := refusedWith(autoOut, Options{Inputs: []string{a, b}, Auto: true}); msg != autoplace.MovedText(b, usb) || lr.SourceReason != "" {
+		t.Errorf("an auto-discovery run's moved stop keeps 1.7.5's words and records no reason: %q, source_reason %q", msg, lr.SourceReason)
 	}
 	sameServer := tmpDir(t)
 	if err := state.WriteLastRun(sameServer, state.LastRun{Status: state.RunOK, Job: []string{"-out", sameServer, "-auto", "-input", a, "-input", b}}); err != nil {
 		t.Fatal(err)
 	}
-	if msg, lr := refusedWith(sameServer, Options{Inputs: []string{a, b}, Auto: true}); msg != autoplace.MovedSameServerText(b, usb) || lr.SourceReason != state.SourceReasonMoved {
-		t.Errorf("an auto-discovery run's moved stop found by the server name: %q, source_reason %q", msg, lr.SourceReason)
+	if msg, lr := refusedWith(sameServer, Options{Inputs: []string{a, b}, Auto: true}); msg != autoplace.MovedSameServerText(b, usb) || lr.SourceReason != "" {
+		t.Errorf("an auto-discovery run's moved stop found by the server name records no reason: %q, source_reason %q", msg, lr.SourceReason)
 	}
 }

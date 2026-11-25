@@ -51,12 +51,15 @@ type sourceUnreachableError struct {
 }
 
 // The reason codes a plaintext refused record keeps (state.LastRun.SourceReason; revision 2.1's
-// F-03): every moved stop, and C13's removed account. No name is in either.
+// F-03): a one-folder archive's moved stop (C2, F-08), and C13's removed account. No name is in
+// either. Narrowed by revision 2.2 (the lead's call): an auto-discovery run's 1.7.5 moved stop
+// records none, so a combined archive keeps 1.7.5's words; the moved words' "click Pause on this
+// archive" would pause its every account.
 func (e *sourceUnreachableError) sourceReason() string {
 	switch {
 	case e.removed:
 		return state.SourceReasonRemoved
-	case e.movedTo != "":
+	case e.movedTo != "" && e.one:
 		return state.SourceReasonMoved
 	}
 	return ""
