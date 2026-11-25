@@ -91,9 +91,19 @@ func TestTheEndNoteNamesArchivesThatBackUpTheSameMail(t *testing.T) {
 	// scheduled. A member that failed now names itself in the advice ("Keep it running until NAME
 	// finishes; then run this again into the same folder."; it read "Keep it running until each of
 	// these mailboxes has its own scheduled backup." before).
+	// Restated 2026-11-25 (the lead's fold of the re-verify of rounds A and B, F3 / RF-08, the lead's
+	// call revised; beside the old text above, which is kept as written): "it gets no Pause advice ...
+	// when every mailbox of the set is scheduled" is now "it gets the Pause advice": a folder that is not
+	// on this computer is not a live mailbox, so pausing the archive cannot stop a live backup of it.
+	// With every member scheduled its line is gone1 then the Pause advice (gone1 alone before, in the
+	// positive twin and the re-run below); a member that failed, or whose install failed, still gives
+	// "Keep it running until …", never the advice, at the same strength as before.
 	removed := filepath.Join(t.TempDir(), "ImapMail", "imap.removed.example")
 	withGone := known("With a removed account", job.Job{Auto: true, Inputs: append(append([]string(nil), all...), removed)}, nil)
 	gone1 := " It also lists " + removed + ", which is not on this computer now; its mail already saved stays in it."
+	// Added with RF-08: a missing folder beside an input on this computer that is no mailbox of the set
+	// never gets the Pause advice (that input's live backup would stop).
+	goneAndOutside := known("With a removed account and another", job.Job{Inputs: []string{rows[0].path, outside, removed}}, nil)
 	untilCy := " Keep it running until cy@qz-c.example finishes; then run this again into the same folder."
 
 	together := func(p string) string { return "Your archive " + p + " also backs up these mailboxes, all together." }
@@ -156,7 +166,8 @@ func TestTheEndNoteNamesArchivesThatBackUpTheSameMail(t *testing.T) {
 		together(autoBare)+keep,
 		together(twoOne)+keep,
 		justBob+" also backs up bob@qz-b.example."+pause,
-		together(withGone)+gone1)
+		together(withGone)+gone1+pause, // RF-08: together(withGone)+gone1 before
+		together(goneAndOutside)+gone1+keep)
 	if l := existingIn([]string{s.summaryOf(t)}); len(l) != 0 {
 		t.Errorf("the summary says an existing archive: %q", l)
 	}
@@ -177,7 +188,7 @@ func TestTheEndNoteNamesArchivesThatBackUpTheSameMail(t *testing.T) {
 	if err := os.Rename(rows[2].path+".kept", rows[2].path); err != nil {
 		t.Fatal(err)
 	}
-	has(elsewhereIn(s.notes), together(combined)+untilCy, together(autoBare)+untilCy, together(twoOne)+untilCy, justBob+" also backs up bob@qz-b.example."+untilCy, together(withGone)+gone1+untilCy)
+	has(elsewhereIn(s.notes), together(combined)+untilCy, together(autoBare)+untilCy, together(twoOne)+untilCy, justBob+" also backs up bob@qz-b.example."+untilCy, together(withGone)+gone1+untilCy, together(goneAndOutside)+gone1+untilCy)
 	// The first set's own archives, now elsewhere for this one, each back up one of its mailboxes.
 	if l := strings.Join(existingIn(s.notes), "\n"); !strings.Contains(l, filepath.Join(p1, rows[0].name)+" also backs up ann@qz-a.example."+untilCy) {
 		t.Errorf("the first set's archive of ann@qz-a.example is not named:\n%s", l)
@@ -186,7 +197,7 @@ func TestTheEndNoteNamesArchivesThatBackUpTheSameMail(t *testing.T) {
 	// A member whose install failed: no Pause advice.
 	p3 := fresh()
 	s, _ = run(p3, scheduleDaily, &setScheduler{fail: map[string]bool{schedule.DefaultNameFor(filepath.Join(p3, rows[2].name)): true}}, nil)
-	has(elsewhereIn(s.notes), together(combined)+keep, together(autoBare)+keep, together(twoOne)+keep, justBob+" also backs up bob@qz-b.example."+keep, together(withGone)+gone1+keep)
+	has(elsewhereIn(s.notes), together(combined)+keep, together(autoBare)+keep, together(twoOne)+keep, justBob+" also backs up bob@qz-b.example."+keep, together(withGone)+gone1+keep, together(goneAndOutside)+gone1+keep)
 
 	// A re-run into the first parent: its members are passed over, also one known by another
 	// spelling (a link to its folder, outside the parent), which only the plan's exclusion passes.
@@ -207,7 +218,8 @@ func TestTheEndNoteNamesArchivesThatBackUpTheSameMail(t *testing.T) {
 	if m[0].Schedule != ScheduleKept || m[2].Schedule != ScheduleInstalled {
 		t.Fatalf("the re-run: %+v", m)
 	}
-	has(elsewhereIn(s.notes), together(combined)+pause, together(autoBare)+keep, together(twoOne)+keep, justBob+" also backs up bob@qz-b.example."+pause, together(withGone)+gone1)
+	// RF-08: the last line was together(withGone)+gone1 before.
+	has(elsewhereIn(s.notes), together(combined)+pause, together(autoBare)+keep, together(twoOne)+keep, justBob+" also backs up bob@qz-b.example."+pause, together(withGone)+gone1+pause, together(goneAndOutside)+gone1+keep)
 	for _, l := range existingIn(s.notes) {
 		if strings.Contains(l, p1) || strings.Contains(l, "another name") {
 			t.Errorf("a member of the set is named: %q", l)

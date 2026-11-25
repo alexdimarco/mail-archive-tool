@@ -27,8 +27,10 @@ const (
 	existingOne      = "%s also backs up %s."
 	existingPause    = "To stop backing them up twice, click Pause (make read-only) on its row in MailArchive Desktop; its mail stays readable."
 	existingKeep     = "Keep it running until each of these mailboxes has its own scheduled backup."
-	// The friction review's F3 (its words; the lead's call: a folder no set archive covers gives no
-	// Pause advice, only these words).
+	// The friction review's F3 (its words). The lead's call was that a folder no set archive covers
+	// gives no Pause advice, only these words; revised after the re-verify of rounds A and B (RF-08):
+	// such a folder is not on this computer, so it is not a live mailbox, and the Pause advice follows
+	// when every input that is on this computer is a scheduled mailbox of the set.
 	existingMissingOne  = "It also lists %s, which is not on this computer now; its mail already saved stays in it."
 	existingMissingMany = "It also lists %s, which are not on this computer now; their mail already saved stays in it."
 	existingUntilOne    = "Keep it running until %s finishes; then run this again into the same folder."
@@ -43,8 +45,9 @@ const (
 // job with auto-discovery on, or with two or more inputs of which one is a mailbox of the plan, gives
 // "Your archive PATH also backs up these mailboxes, all together."; a job with one input and
 // auto-discovery off, that input a mailbox of the plan, gives "PATH also backs up NAME.". The line
-// goes on with the Pause advice only when every input the job lists is a mailbox of the plan (and it
-// lists one: a job with auto-discovery on and no inputs may find more), every mailbox of the plan
+// goes on with the Pause advice only when every input the job lists is a mailbox of the plan, a
+// folder that is not on this computer aside (named, F3; RF-08), and it lists one (a job with
+// auto-discovery on and no inputs may find more), every mailbox of the plan
 // that may be scheduled (not saved once) has its archive scheduled (installed now, or keeping its own
 // schedule that reads), and no archive of the set failed, stopped or was not started; otherwise with
 // "Keep it running until each of these mailboxes has its own scheduled backup.".
@@ -159,7 +162,7 @@ func existingLines(p setPlan, arcs []*setArchive) []string {
 			continue
 		}
 		// A folder it lists that no set archive can ever cover is named, and its mail is said to stay
-		// (the friction review's F3, the lead's call: such an archive gets no Pause advice).
+		// (the friction review's F3; the Pause advice below, RF-08).
 		switch len(missing) {
 		case 0:
 		case 1:
@@ -168,14 +171,17 @@ func existingLines(p setPlan, arcs []*setArchive) []string {
 			line += " " + fmt.Sprintf(existingMissingMany, strings.Join(missing, ", "))
 		}
 		switch {
-		case all && pauseSafe:
+		case (all || len(missing) > 0 && others == 0) && pauseSafe:
+			// F3, the lead's call revised after the re-verify (RF-08): a folder that is not on this
+			// computer is not a live mailbox, so pausing this archive cannot stop a live backup of it.
+			// When every input that is on this computer is a mailbox of this set and each is scheduled,
+			// the line names the missing folder, says its mail stays, and gives the Pause advice (it
+			// ended at its mail with no advice at all before, so the mail was backed up twice).
 			line += " " + existingPause
 		case len(unfinished) > 0:
 			// F3: say which member to finish first, not "until each … has its own scheduled backup",
 			// when every mailbox but those is scheduled.
 			line += " " + existingUntil(unfinished)
-		case len(missing) > 0 && others == 0 && pauseSafe:
-			// Every other input is a mailbox of this set, scheduled: the line ends at its mail.
 		default:
 			line += " " + existingKeep
 		}
