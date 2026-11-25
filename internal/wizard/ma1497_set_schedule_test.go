@@ -238,8 +238,18 @@ func TestTheSetIsScheduledOnceWithOnlyAnExactYes(t *testing.T) {
 		"bob@qz-b.example kept its own schedule (its settings could not be read).\n" +
 		"Local Folders kept its own schedule.\n" +
 		setNoteLogs + "\n" + setNoteRows
-	if note := s.notes[len(s.notes)-1]; note != wantNote {
-		t.Errorf("the re-run's end note:\n got %q\nwant %q", note, wantNote)
+	// The second parent's archives, made above, are known now and back up these mailboxes too: their
+	// lines (MA-1501) sit before the Desktop's line; the rest is §11's note.
+	var rest, others []string
+	for _, l := range strings.Split(s.notes[len(s.notes)-1], "\n") {
+		if strings.Contains(l, " also backs up ") {
+			others = append(others, l)
+			continue
+		}
+		rest = append(rest, l)
+	}
+	if note := strings.Join(rest, "\n"); note != wantNote || len(others) == 0 {
+		t.Errorf("the re-run's end note:\n got %q (and %q)\nwant %q", note, others, wantNote)
 	}
 	if got := lastArchive(t); got != folder(0) {
 		t.Errorf("last-archive.txt after the re-run: %q", got)

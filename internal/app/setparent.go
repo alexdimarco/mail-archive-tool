@@ -57,6 +57,12 @@ func (e *CopyExportEnv) CheckSetParent(parent string) (*SetParent, error) {
 	return &SetParent{Parent: parent, outside: outside, key: key}, nil
 }
 
+// KnownArchives are the archive folders this computer knows (knownArchives: the Desktop's list, its
+// current archive, the wizard's last one, and each folder of the wizard's made-list), each absolute
+// and clean, unread. The wizard's set reads each one's job file for the end note's lines about
+// existing archives that back up the same mail (docs/design-per-mailbox-archives.md §11, C1).
+func KnownArchives() []string { return knownArchives() }
+
 // setParentChanged is R-e for a parent that is not the folder it was when it was checked.
 func setParentChanged(parent string) *CopyRefusal {
 	return refuse("R-e", fmt.Sprintf("The folder %s changed while MailArchive was checking it — nothing was created. Choose it again.", printable(parent)))

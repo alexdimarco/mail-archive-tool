@@ -148,7 +148,8 @@ func offerSetSchedule(p setPlan, arcs []*setArchive) error {
 		_ = backupalert.ClearStreakDefault(backupalert.KeyFor(a.made.Folder))
 		wrapper = wrapper || spec.Wrapper
 	}
-	note := setScheduleNote(p.parent, arcs, iv, at, runtime.GOOS == "windows" && wrapper)
+	// The lines about existing archives that back up the same mail: after a Yes only (MA-1501).
+	note := setScheduleNote(p.parent, arcs, iv, at, runtime.GOOS == "windows" && wrapper, existingLines(p, arcs))
 	if pn := schedule.ProgramNote(exe, progReason); perr == nil && pn != "" {
 		note += "\n\n" + pn
 	}
@@ -183,8 +184,9 @@ const (
 // 02:00, one archive every 10 minutes, for 3 archives in …"; one archive: "daily at 02:00, for 1
 // archive"; weekly: "weekly on Sunday from 03:00"), each archive that kept its own schedule, the logs
 // and the Thunderbird line (with Windows' console-window line when a wrapper runs), each archive not
-// scheduled and why (saved once; its install failed; it did not finish), then the Desktop's line.
-func setScheduleNote(parent string, arcs []*setArchive, iv schedule.Interval, at string, console bool) string {
+// scheduled and why (saved once; its install failed; it did not finish), the lines about existing
+// archives that back up the same mail (existing, MA-1501), then the Desktop's line.
+func setScheduleNote(parent string, arcs []*setArchive, iv schedule.Interval, at string, console bool, existing []string) string {
 	n := 0
 	for _, a := range arcs {
 		if a.made.Schedule == ScheduleInstalled {
@@ -231,6 +233,7 @@ func setScheduleNote(parent string, arcs []*setArchive, iv schedule.Interval, at
 			lines = append(lines, "Not scheduled: "+name+", saved once.")
 		}
 	}
+	lines = append(lines, existing...)
 	lines = append(lines, setNoteRows)
 	return strings.Join(lines, "\n")
 }
