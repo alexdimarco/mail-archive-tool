@@ -22,7 +22,10 @@ func TestTheNoteForAParentItCouldNotWriteGivesItsRemedy(t *testing.T) {
 		setMade("", "bob@qz-b.example", wizard.MadeFailed, "its folder could not be read", g.parent),
 		setMade("", "cy@qz-c.example", wizard.MadeNotStarted, "", g.parent),
 	}, nil)
-	if !strings.Contains(r.Message, "To finish them, click Make a new archive… again, choose One archive for each mailbox and choose the same folder, "+g.parent+".") {
+	// Restated 2026-11-25 (the re-verify of rounds A and B, RF-09), beside the old needle, kept here:
+	// "To finish them, click Make a new archive… again, choose One archive for each mailbox and choose
+	// the same folder, PARENT." It now names "All of them, then" too; still required whole.
+	if !strings.Contains(r.Message, "To finish them, click Make a new archive… again, choose All of them, then One archive for each mailbox and choose the same folder, "+g.parent+".") {
 		t.Fatalf("positive twin: another failure keeps the same-folder words: %q", r.Message)
 	}
 

@@ -109,9 +109,11 @@ const (
 	setDidNotFinish = "%s did not finish: %s."
 	// setWasNotStarted names an archive that was not started (the builder's words).
 	setWasNotStarted = "%s was not started."
-	// setFinishIt and setFinishThem say how to finish, naming the set's folder (C8).
-	setFinishIt   = "To finish it, click Make a new archive… again, choose One archive for each mailbox and choose the same folder, %s."
-	setFinishThem = "To finish them, click Make a new archive… again, choose One archive for each mailbox and choose the same folder, %s."
+	// setFinishIt and setFinishThem say how to finish, naming the set's folder (C8). The re-verify of
+	// rounds A and B (RF-09): they left out "All of them, then", the step before One archive for each
+	// mailbox ("… again, choose One archive for each mailbox and choose the same folder, %s." before).
+	setFinishIt   = "To finish it, click Make a new archive… again, choose All of them, then One archive for each mailbox and choose the same folder, %s."
+	setFinishThem = "To finish them, click Make a new archive… again, choose All of them, then One archive for each mailbox and choose the same folder, %s."
 	// setThenError follows the notes when the wizard ended with an error after the archives
 	// (the builder's words).
 	setThenError = "The wizard then ended with an error: %s."
