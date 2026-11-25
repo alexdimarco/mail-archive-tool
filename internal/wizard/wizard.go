@@ -907,7 +907,10 @@ func localArchiveFlowHooks(chosen func(out string), finished func(), check func(
 	}
 
 	// 2. Choose the output folder.
-	choice.out, err = zenity.SelectFile(zenity.Title("Select the output folder"), zenity.Directory())
+	//    On auto-detect's one-archive and single-row paths, a folder that directly holds two or more
+	//    archives asks first (MA-1507), once the set is built (perMailboxBuilt, step 3b): the
+	//    question's words speak of One archive for each mailbox, which a person cannot choose yet.
+	choice.out, err = askOutputFolder(perMailboxBuilt && srcType == srcAuto)
 	if err != nil {
 		return err
 	}

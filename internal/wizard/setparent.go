@@ -8,6 +8,7 @@ import (
 	"github.com/ncruces/zenity"
 
 	"mail-archive-tool/internal/app"
+	"mail-archive-tool/internal/archindex"
 	"mail-archive-tool/internal/job"
 	"mail-archive-tool/internal/util"
 )
@@ -72,6 +73,62 @@ func setParentWords(err error, parent, name string) string {
 		}
 	}
 	return fmt.Sprintf("MailArchive could not check %s, so nothing was made there. Choose the folder again, or another one.", p)
+}
+
+// The one-archive and single-row paths' folder question (§3 "A set's parent chosen for one archive",
+// revision 2's C8, revision 2.1's F-10a; MA-1507).
+const (
+	outputFolderTitle = "Select the output folder"
+	useFolderAnyway   = "Use this folder anyway"
+	chooseAnother     = "Choose another folder"
+)
+
+// askOutputFolder asks for one archive's output folder, as the wizard always has. With guard (the
+// one-archive and single-row paths of auto-detect), a folder that directly holds two or more archive
+// folders (§7's child read: setArchivesIn) asks first, before anything is written, in F-10a's words.
+// "Choose another folder", the default (and closing the box), asks the folder question again,
+// nothing written; "Use this folder anyway" takes it. Cancel on the chooser ends the flow as today.
+func askOutputFolder(guard bool) (string, error) {
+	for {
+		out, err := folderDialog(zenity.Title(outputFolderTitle), zenity.Directory())
+		if err != nil || !guard {
+			return out, err
+		}
+		n := setArchivesIn(out)
+		if n < 2 {
+			return out, nil
+		}
+		q := questionDialog(heldArchivesWords(out, n), zenity.Title(appTitle), zenity.OKLabel(useFolderAnyway), zenity.CancelLabel(chooseAnother), zenity.DefaultCancel())
+		switch {
+		case q == nil:
+			return out, nil
+		case !errors.Is(q, zenity.ErrCanceled):
+			return "", q
+		}
+	}
+}
+
+// heldArchivesWords is the question about a folder that directly holds n archives (F-10a: the words
+// do not say how those archives were made, which the wizard cannot tell).
+func heldArchivesWords(folder string, n int) string {
+	return fmt.Sprintf("%s already holds %d archives. An archive made here would hold them inside it, and making one archive for each mailbox in this folder again would then be refused. Choose another folder?", util.StripControl(folder), n)
+}
+
+// setArchivesIn counts the archive folders directly inside folder, plaintext or encrypted, as §7's
+// child read finds them (only folders that are the person's own are read); 0 when the folder cannot
+// be read.
+func setArchivesIn(folder string) int {
+	kids, _, err := readSetChildren(folder)
+	if err != nil {
+		return 0
+	}
+	n := 0
+	for _, c := range kids {
+		if c.looked && c.stores.Answer == archindex.StoresArchive {
+			n++
+		}
+	}
+	return n
 }
 
 // errNotRecorded is makeSetFolder's error for a folder it made but could not record in the made-list:
