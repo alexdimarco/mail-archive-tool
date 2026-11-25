@@ -355,6 +355,11 @@ written (UX contract X14: look before writing). A question box, buttons **"Make 
 > Not made: Feeds, which is empty.
 > Asked about a full offline download: qzsam.walker@gmail.com, sam.walker@contoso.example
 
+*(Example as revision 1 wrote it. The words as built after the post-build reviews (friction F11,
+re-verify RF-07) read "To bring up to date: sam@old.example, for sam@old.example" and "Next you are
+asked whether to prepare a full offline download of: …"; the code and its tests are the record of
+the exact words.)*
+
 The text carries account names and paths. It goes through `messageDialog`/`zenity.Question` as the
 summary does; on Linux those pass `--no-markup` (`third_party/zenity/msg_unix.go:8`), so a name is
 shown as written. Singular and zero forms are written out ("1 archive", "No new archive: 2 brought
