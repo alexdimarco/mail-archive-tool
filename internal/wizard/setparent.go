@@ -145,7 +145,7 @@ var errNotRecorded = errors.New("the new folder could not be recorded in the wiz
 // nothing and records nothing; a folder made but not recorded comes back with its path and
 // errNotRecorded.
 func makeSetFolder(sp *app.SetParent, name, listName string) (string, error) {
-	path, _, err := makeSetFolderAt(sp, name, listName)
+	path, _, err := makeSetFolderAt(sp, name, listName, "")
 	return path, err
 }
 
@@ -165,8 +165,9 @@ var errSetFolderChanged = errors.New("its folder is no longer the folder MailArc
 // folders lets other accounts change it, so a re-run would never look at it and another account
 // could put a link in its place). A restriction the drive cannot take (a FAT or exFAT drive keeps no
 // access list) leaves the folder as Mkdir made it: the export's identity proof still holds, and the
-// plan of a re-run names such a folder as not looked at.
-func makeSetFolderAt(sp *app.SetParent, name, listName string) (string, os.FileInfo, error) {
+// plan of a re-run names such a folder as not looked at. store is the mailbox's store id, which its
+// made-list line keeps (OUT-03; "" keeps none).
+func makeSetFolderAt(sp *app.SetParent, name, listName, store string) (string, os.FileInfo, error) {
 	path, err := setEnv().MakeSetFolder(sp, name)
 	if err != nil {
 		return "", nil, err
@@ -178,7 +179,7 @@ func makeSetFolderAt(sp *app.SetParent, name, listName string) (string, os.FileI
 	_ = restrictSetFolder(path)
 	f, err := job.MadeListFile()
 	if err == nil {
-		err = job.RecordMade(f, path, listName)
+		err = job.RecordMadeStore(f, path, listName, store)
 	}
 	if err != nil {
 		return path, id, fmt.Errorf("%w: %v", errNotRecorded, err)

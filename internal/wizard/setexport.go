@@ -338,7 +338,7 @@ var errNoFreeNumber = errors.New("no free number is left for the folder's name")
 func makeSetArchiveFolder(sp *app.SetParent, p setPlan, it setItem, goos string) (string, string, os.FileInfo, error) {
 	name := it.folder
 	for try := 0; try <= setNumberMax; try++ {
-		path, id, err := makeSetFolderAt(sp, name, it.row.name)
+		path, id, err := makeSetFolderAt(sp, name, it.row.name, state.PathSourceID(it.row.path))
 		if !setNameTaken(err, name) {
 			return path, name, id, err
 		}

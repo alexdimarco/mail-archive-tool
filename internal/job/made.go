@@ -35,11 +35,14 @@ const (
 // madeKind names the made-list in a refusal.
 const madeKind = "the wizard's list of the archive folders it made"
 
-// Made is one line of the made-list: an archive folder the wizard made, and the folder name of the
-// mailbox it was made for (§7's unfinished-folder rule matches by that name).
+// Made is one line of the made-list: an archive folder the wizard made, the folder name of the
+// mailbox it was made for, and that mailbox's store id (the adversarial pass's OUT-03: §7's
+// unfinished-folder rule continues a folder only for that store; a line written before keeps no
+// store id, and the rule then matches it by the name, as it did).
 type Made struct {
-	Path string
-	Name string
+	Path  string
+	Name  string
+	Store string
 }
 
 // MadeListFile is the made-list in MailArchive's settings folder.
@@ -159,11 +162,14 @@ func parseMade(data []byte) []Made {
 		if line == "" {
 			continue
 		}
-		p, name, ok := strings.Cut(line, "\t")
-		if !ok || hasControl(p) || hasControl(name) || !filepath.IsAbs(p) {
+		p, rest, ok := strings.Cut(line, "\t")
+		// A line's third field, the store id, is there from round B of the adversarial pass on; a
+		// line of two fields (written before) is read as it was.
+		name, store, _ := strings.Cut(rest, "\t")
+		if !ok || hasControl(p) || hasControl(name) || hasControl(store) || !filepath.IsAbs(p) {
 			continue
 		}
-		out = withMade(out, Made{Path: filepath.Clean(p), Name: name})
+		out = withMade(out, Made{Path: filepath.Clean(p), Name: name, Store: store})
 	}
 	return out
 }
@@ -190,6 +196,10 @@ func encodeMade(ms []Made) []byte {
 		b.WriteString(m.Path)
 		b.WriteByte('\t')
 		b.WriteString(m.Name)
+		if m.Store != "" {
+			b.WriteByte('\t')
+			b.WriteString(m.Store)
+		}
 		b.WriteByte('\n')
 	}
 	return []byte(b.String())
@@ -199,7 +209,7 @@ func encodeMade(ms []Made) []byte {
 func capMade(ms []Made) []Made {
 	size := len(encodeMade(ms))
 	for len(ms) > MadeMaxLines || size > MadeMaxBytes {
-		size -= len(ms[0].Path) + len(ms[0].Name) + 2
+		size -= len(encodeMade(ms[:1]))
 		ms = ms[1:]
 	}
 	return ms
@@ -213,14 +223,19 @@ func capMade(ms []Made) []Made {
 // RefuseSettingsWrite when the settings folder is inside an encrypted archive. A path that is not
 // absolute, and a path or name holding a control character, are refused (the reader would skip
 // such a line). Nothing is written in the archive folder itself.
-func RecordMade(file, path, name string) error {
+func RecordMade(file, path, name string) error { return RecordMadeStore(file, path, name, "") }
+
+// RecordMadeStore is RecordMade with the mailbox's store id, kept as the line's third field (the
+// adversarial pass's OUT-03), so §7's unfinished-folder rule continues the folder only for that
+// store. A store id holding a control character is refused, as a name is.
+func RecordMadeStore(file, path, name, store string) error {
 	if !filepath.IsAbs(path) {
 		return fmt.Errorf("%s: %q is not an absolute path, so it was not recorded", madeKind, util.StripControl(path))
 	}
-	if hasControl(path) || hasControl(name) {
+	if hasControl(path) || hasControl(name) || hasControl(store) {
 		return fmt.Errorf("%s: the folder %q or its mailbox's name holds a control character, so it was not recorded", madeKind, util.StripControl(path))
 	}
-	m := Made{Path: filepath.Clean(path), Name: name}
+	m := Made{Path: filepath.Clean(path), Name: name, Store: store}
 	if len(encodeMade([]Made{m})) > MadeMaxBytes {
 		return fmt.Errorf("%s: the folder's line is over %d bytes, so it was not recorded", madeKind, MadeMaxBytes)
 	}

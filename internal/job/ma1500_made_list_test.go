@@ -191,6 +191,11 @@ func TestTheMadeListKeepsTheNewest200LinesAnd64KB(t *testing.T) {
 // outside ASCII included); a link at its name is refused, its target never read; a folder at its
 // name is refused; a file over 64 KB is refused, never read whole; a list or a settings folder
 // that is not there is an empty list.
+// Amended 2026-11-25 (the adversarial pass's OUT-03; the lead's fold: "Each made-list line also keeps
+// the mailbox's store id"; nothing weakened): a line's second tab now separates its third field, the
+// store id, so "one with ... a second tab" above now reads "one with a third tab (a fourth field) is
+// skipped", at the same strength: a line of more fields than the list writes is still never read; a
+// line of three fields is kept with its store id, and a line of two (written before) as it was.
 func TestTheMadeListReaderSkipsBadLinesAndRefusesWhatIsNotAFile(t *testing.T) {
 	file, parent := madeFixture(t)
 	if err := os.MkdirAll(filepath.Dir(file), 0o700); err != nil {
@@ -203,6 +208,8 @@ func TestTheMadeListReaderSkipsBadLinesAndRefusesWhatIsNotAFile(t *testing.T) {
 		"relative/qz\tn",
 		filepath.Join(parent, "notab"),
 		filepath.Join(parent, "twotabs") + "\tna\tme",
+		filepath.Join(parent, "threetabs") + "\tna\tme\tx",
+		filepath.Join(parent, "storeesc") + "\tn\tpath:/m\x1b[31m",
 		filepath.Join(parent, "esc\x1b[31m") + "\tn",
 		filepath.Join(parent, "cr") + "\tn\r",
 		filepath.Join(parent, "c1") + "\tn\u0085",
@@ -213,7 +220,7 @@ func TestTheMadeListReaderSkipsBadLinesAndRefusesWhatIsNotAFile(t *testing.T) {
 		t.Fatal(err)
 	}
 	got := readMadeT(t, file)
-	want := []Made{{Path: good, Name: "imap.gmail.com"}, {Path: letters, Name: "Søren"}}
+	want := []Made{{Path: good, Name: "imap.gmail.com"}, {Path: filepath.Join(parent, "twotabs"), Name: "na", Store: "me"}, {Path: letters, Name: "Søren"}}
 	if fmt.Sprint(got) != fmt.Sprint(want) {
 		t.Fatalf("the lines kept: %+v, want %+v", got, want)
 	}

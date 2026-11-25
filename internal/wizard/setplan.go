@@ -7,6 +7,9 @@ import (
 	"os"
 	"path/filepath"
 	"sort"
+	"strings"
+
+	"golang.org/x/text/unicode/norm"
 
 	"mail-archive-tool/internal/app"
 	"mail-archive-tool/internal/archindex"
@@ -308,12 +311,15 @@ func planSet(parent string, rows []setRow, goos string) (setPlan, error) {
 			p.unlooked = append(p.unlooked, c.name)
 		}
 	}
-	made := map[string]string{} // a made-list folder in this parent → its mailbox's name
+	// A made-list folder in this parent, by its name in composed form (OUT-04) → its line. The parent
+	// is compared by identity when its spelling differs (letter case, composed form; the skeptic's
+	// sibling of OUT-04), never by bytes alone.
+	made := map[string]job.Made{}
 	if f, err := job.MadeListFile(); err == nil {
 		if ms, err := job.ReadMade(f); err == nil {
 			for _, m := range ms {
-				if filepath.Dir(m.Path) == filepath.Clean(parent) {
-					made[filepath.Base(m.Path)] = m.Name
+				if setSameParent(filepath.Dir(m.Path), parent, p.parentID) {
+					made[norm.NFC.String(filepath.Base(m.Path))] = m
 				}
 			}
 		}
@@ -361,8 +367,34 @@ func planSet(parent string, rows []setRow, goos string) (setPlan, error) {
 	return p, nil
 }
 
+// setSameParent reports whether dir, a made-list line's folder, is the set's parent: the same
+// spelling; or, when the two are alike but for letter case or composed form, the same folder by
+// identity (parentID, the parent the plan read). Other folders are never looked at, so a line on a
+// drive that is not there costs no wait.
+func setSameParent(dir, parent string, parentID os.FileInfo) bool {
+	dir, parent = filepath.Clean(dir), filepath.Clean(parent)
+	if dir == parent {
+		return true
+	}
+	if parentID == nil || !strings.EqualFold(norm.NFC.String(dir), norm.NFC.String(parent)) {
+		return false
+	}
+	fi, err := os.Stat(dir)
+	return err == nil && os.SameFile(fi, parentID)
+}
+
+// madeFor reports whether a made-list line m is the folder an earlier run made for the mailbox of r
+// (C5): by its store id when the line keeps one (OUT-03: never another mailbox that has its name now);
+// by the mailbox's name, in composed form, for a line written before.
+func madeFor(m job.Made, r setRow) bool {
+	if m.Store != "" {
+		return m.Store == state.PathSourceID(r.path)
+	}
+	return m.Name != "" && norm.NFC.String(m.Name) == norm.NFC.String(r.name)
+}
+
 // planOne decides the outcome of the one mailbox of it (planSet's rules in F-05's order).
-func planOne(it *setItem, parent string, kids []setChild, claimed map[string]bool, made map[string]string, unread bool, used *setNamesUsed, takenNow func(string) bool) {
+func planOne(it *setItem, parent string, kids []setChild, claimed map[string]bool, made map[string]job.Made, unread bool, used *setNamesUsed, takenNow func(string) bool) {
 	r := it.row
 	id := state.PathSourceID(r.path)
 	// A saved-once row already kept (R2, F-05): first, so a leftover's own archive is left as it is.
@@ -405,9 +437,11 @@ func planOne(it *setItem, parent string, kids []setChild, claimed map[string]boo
 		refuseDeleted(it, c.path)
 		return
 	}
-	// A folder the wizard made for it but never finished (C5).
+	// A folder the wizard made for it but never finished (C5; OUT-03: for that store only; OUT-04: the
+	// child's name in composed form, as a drive that lists names decomposed shows it).
 	for _, c := range kids {
-		if c.looked && c.stores.Answer == archindex.StoresNotArchive && c.stores.NoManifest && !claimed[c.name] && made[c.name] == r.name {
+		m, listed := made[norm.NFC.String(c.name)]
+		if c.looked && c.stores.Answer == archindex.StoresNotArchive && c.stores.NoManifest && !claimed[c.name] && listed && madeFor(m, r) {
 			it.outcome, it.folder, it.id = outUnfinished, c.name, c.id
 			claimed[c.name] = true
 			it.ask = setAsks(r)
