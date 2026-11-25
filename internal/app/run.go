@@ -2195,6 +2195,28 @@ func ThunderbirdMovedAway(out, in string) bool {
 	return moved
 }
 
+// ThunderbirdReused reports whether a run of the archive at out, of the one folder in with
+// auto-discovery off, would stop because Thunderbird now uses in for a different account than the one
+// whose identity the archive's record kept (revision 3's reused, INS-03, MA-1509), as the run decides
+// it: not moved away first (movedAway), then autoplace.ReusedByID. The set's plan asks it before
+// continuing an archive or leaving it paused, so the mailbox gets an archive of its own and the old
+// one is kept as it is (the re-verify of rounds A and B, RV-01). False when out has no record that can
+// be read, the record keeps no identity for in, or in is not a folder there.
+func ThunderbirdReused(out, in string) bool {
+	recorded := RecordedNamesAt(out)
+	if recorded == nil {
+		return false
+	}
+	if fi, err := os.Stat(in); err != nil || !fi.IsDir() {
+		return false
+	}
+	rec := recorded(in)
+	if _, moved := movedAway(in, rec); moved {
+		return false
+	}
+	return rec.ID != "" && autoplace.ReusedByID(in, rec.ID)
+}
+
 // DiscoverInputsFor is DiscoverInputs with nameOf, what the archive's previous record kept of each
 // input's folder's account (nil, or "" fields, for none): its name decides first whether a gone
 // Thunderbird folder's account was moved or removed (autoplace.GoneSkippableAs; the 1.7.5 re-verify's

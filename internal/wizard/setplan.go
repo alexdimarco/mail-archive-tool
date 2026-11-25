@@ -258,6 +258,17 @@ type setItem struct {
 	// id (outContinue, outUnfinished, outPaused) is the existing child's folder as the plan read it
 	// (INS-02).
 	id os.FileInfo
+	// reused are the children that held this mailbox's archive whose folder Thunderbird now uses for a
+	// different account (the re-verify of rounds A and B, RV-01): never continued, never taken as this
+	// mailbox's paused archive, left as they are; the mailbox's outcome is decided without them.
+	reused []setReusedChild
+}
+
+// setReusedChild is a child kept as it is because another account uses its mailbox's folder now
+// (RV-01): its name in the parent, and whether it is paused already (no Pause advice then).
+type setReusedChild struct {
+	name   string
+	paused bool
 }
 
 // Why a mailbox is not made (setItem.why).
@@ -417,6 +428,16 @@ func planOne(it *setItem, parent string, kids []setChild, claimed map[string]boo
 	for _, c := range kids {
 		if ids := c.archiveIDs(); len(ids) == 1 && ids[0] == id && !claimed[c.name] {
 			if ok, bad := setJobFits(c.path, r.path); ok {
+				// RV-01 (the re-verify of rounds A and B): Thunderbird gave this folder to another account
+				// since the archive was made (by the identity its record kept, as its run decides it), so
+				// its every run stops as reused. Asked before continuing and before the paused check: it
+				// is never this mailbox's archive, so the mailbox gets one of its own, and the old one is
+				// kept as it is, with the Pause advice when it is not paused already.
+				if app.ThunderbirdReused(c.path, r.path) {
+					it.reused = append(it.reused, setReusedChild{name: c.name, paused: seal.IsSealed(c.path)})
+					claimed[c.name] = true
+					continue
+				}
 				matches = append(matches, c)
 				unreadable[c.name] = bad
 			}

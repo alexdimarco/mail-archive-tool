@@ -32,12 +32,20 @@ const (
 	// never looked at (the adversarial pass's INS-01; the builder's words).
 	setUnlookedOne  = "Left as it is, not looked at (a link, or a folder another account owns or can change): "
 	setUnlookedMany = "Left as they are, not looked at (each a link, or a folder another account owns or can change): "
+	// setReusedKept follows the name of an archive kept as it is because Thunderbird now uses its
+	// mailbox's folder for another account (the re-verify of rounds A and B, RV-01: the lead's words,
+	// "kept as it is … another account uses its folder now; click Pause (make read-only) on its row
+	// under Your archives in MailArchive Desktop"); setReusedPaused, the builder's, when it is paused
+	// already.
+	setReusedKept   = ": kept as it is, since another account uses its folder now; click Pause (make read-only) on its row under Your archives in MailArchive Desktop."
+	setReusedPaused = ": kept as it is, paused, since another account uses its folder now."
 )
 
 // setPlanText is the plan window's text for p (§8): the archives to make in its parent, with
 // singular and zero forms written out ("1 archive", "No new archive: 2 brought up to date"), then
 // one line for each of: an archive brought up to date, a paused one, a saved-once mailbox already
-// kept, another folder that also holds a mailbox's archive, a mailbox not made and why, a folder
+// kept, an archive kept as it is because another account uses its mailbox's folder now (RV-01),
+// another folder that also holds a mailbox's archive, a mailbox not made and why, a folder
 // that could not be read just now, an archive whose mailbox is not found now, folders left out, and
 // the accounts the full offline download is asked about (each by the name the list showed, as the
 // question names it, MA-1502). Names and paths are shown as written, their
@@ -88,6 +96,14 @@ func setPlanText(p setPlan) string {
 		}
 		for _, o := range it.also {
 			also = append(also, clean(o)+" also holds this mailbox's archive: left as it is")
+		}
+		// RV-01: an archive whose mailbox's folder another account uses now, kept as it is.
+		for _, c := range it.reused {
+			if c.paused {
+				kept = append(kept, clean(c.name)+setReusedPaused)
+			} else {
+				kept = append(kept, clean(c.name)+setReusedKept)
+			}
 		}
 	}
 	var head string

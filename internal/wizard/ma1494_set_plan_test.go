@@ -100,6 +100,9 @@ func outcomesOf(p setPlan) []string {
 		if len(it.also) > 0 {
 			s += " also " + strings.Join(it.also, ",")
 		}
+		for _, c := range it.reused {
+			s += fmt.Sprintf(" reused %s paused=%v", c.name, c.paused)
+		}
 		if it.jobUnreadable {
 			s += " (job unreadable)"
 		}
