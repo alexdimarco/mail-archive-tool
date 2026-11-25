@@ -302,8 +302,9 @@ func (e *CopyExportEnv) checkDecryptPaths(parent, out string, archives, settings
 }
 
 // knownArchives are the archive folders this computer knows: the Desktop's list, its
-// current archive and the wizard's last one. The copy is made outside each, by path
-// and by identity, from either front end.
+// current archive, the wizard's last one, and each folder the wizard's made-list names
+// (docs/design-per-mailbox-archives.md §6, C9; MA-1493). The copy, and a set's parent
+// folder, are made outside each, by path and by identity, from either front end.
 var knownArchives = func() []string {
 	var out []string
 	if idx, err := archindex.Read(); err == nil {
@@ -316,6 +317,13 @@ var knownArchives = func() []string {
 	}
 	if f, err := job.LastArchiveFile(); err == nil {
 		out = append(out, job.ReadLastArchive(f))
+	}
+	if f, err := job.MadeListFile(); err == nil {
+		if made, err := job.ReadMade(f); err == nil {
+			for _, m := range made {
+				out = append(out, m.Path)
+			}
+		}
 	}
 	kept := out[:0]
 	for _, a := range out {

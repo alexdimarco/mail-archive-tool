@@ -7,10 +7,13 @@ import (
 )
 
 // messageDialog and listDialog are the dialogs textThenList opens; a test replaces them with
-// recorders.
+// recorders. questionDialog and folderDialog are the question and the folder chooser a set's steps
+// open (docs/design-per-mailbox-archives.md §3, §6, §8), replaced by recorders in their tests too.
 var (
-	messageDialog = zenity.Info
-	listDialog    = zenity.List
+	messageDialog  = zenity.Info
+	listDialog     = zenity.List
+	questionDialog = zenity.Question
+	folderDialog   = zenity.SelectFile
 )
 
 // healthListPrompt is the launch health view's list prompt on Linux and the BSDs, where the health
