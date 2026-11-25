@@ -140,6 +140,9 @@ type pickRow struct {
 	// name is Thunderbird's name for the account that owns exactly this folder (ReadStoreFacts,
 	// MA-1284's one strict read), as written, not cleaned; "" when it cannot be told.
 	name string
+	// acct is that account's type as its settings say it ("none" for Local Folders, "rss" for
+	// feeds, "imap", "pop3" …); "" when it cannot be told. A set uses it (MA-1491).
+	acct string
 	// unused: no live Thunderbird account uses the folder, as the match says for certain (MA-1463).
 	unused bool
 	// downloads: the account's mail is downloaded over time from a server (IMAP, Exchange), so an
@@ -188,7 +191,7 @@ func gatherPickRow(p string, deadline time.Time, entryMax int) pickRow {
 		kind, isMatch := thunderbird.NoAccountKindOf(err)
 		switch {
 		case f.Account != nil && f.Whole:
-			r.name, r.host = f.Name, f.Account.Hostname
+			r.name, r.host, r.acct = f.Name, f.Account.Hostname, f.Account.Type
 			switch f.Account.Type {
 			case "none", "rss":
 				r.group = groupTBLocal
@@ -659,6 +662,23 @@ func pickRowText(r pickRow, id pickIdent, goos string) string {
 // " (3)" and so on (MA-1464). When the mailboxes found belong to more than one of Outlook,
 // Thunderbird and Evolution, Outlook's and Evolution's rows start with their program's name.
 func pickList(rows []pickRow, goos string) (labels, paths []string) {
+	l := listRows(rows, goos)
+	return l.labels, l.paths
+}
+
+// listed is the mailbox list as pickList words and orders it: the rows read from disk, what each
+// says its mailbox by, the rows' indexes in the list's order, and each row's text and path in that
+// order. A set of archives (One archive for each mailbox, MA-1491) is made in this order.
+type listed struct {
+	rows   []pickRow
+	idents []pickIdent
+	order  []int
+	labels []string
+	paths  []string
+}
+
+// listRows is pickList with what it read and the order it chose kept (listed).
+func listRows(rows []pickRow, goos string) listed {
 	now := pickNow()
 	idents := pickIdents(rows, now)
 	order := make([]int, len(rows))
@@ -692,6 +712,7 @@ func pickList(rows []pickRow, goos string) (labels, paths []string) {
 	transcoded := answerMayBeTranscoded(goos)
 	used := map[string]bool{state.TBTextKey(allOfThem): true, state.TBTextKey(allOfThemBare): true}
 	usedASCII := map[string]bool{asciiForm(allOfThem): true, asciiForm(allOfThemBare): true}
+	l := listed{rows: rows, idents: idents, order: order}
 	for _, i := range order {
 		text := pickRowText(rows[i], idents[i], goos)
 		unique := text
@@ -700,10 +721,10 @@ func pickList(rows []pickRow, goos string) (labels, paths []string) {
 		}
 		used[state.TBTextKey(unique)] = true
 		usedASCII[asciiForm(unique)] = true
-		labels = append(labels, unique)
-		paths = append(paths, rows[i].path)
+		l.labels = append(l.labels, unique)
+		l.paths = append(l.paths, rows[i].path)
 	}
-	return labels, paths
+	return l
 }
 
 // pickChoice maps the list's answer back to its row (MA-1465): all for the All row (its text, or
