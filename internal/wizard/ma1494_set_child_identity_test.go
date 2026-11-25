@@ -14,6 +14,7 @@ import (
 
 	"mail-archive-tool/internal/assure"
 	"mail-archive-tool/internal/nowindow"
+	"mail-archive-tool/internal/winsec"
 )
 
 // setLinkTo makes link a link to the folder target: a junction on Windows (cmd's mklink /J, which
@@ -50,8 +51,15 @@ func setFresh(t *testing.T) string {
 // is written in it, and only new folders are; a restriction the drive cannot take leaves the archive
 // going on. With the real restriction, each new folder reads as the person's own (setChildMine, the
 // re-run's own test). The plan names every child it did not look at (a folder others can change, a
-// link), so a " (2)" beside one of their names is never unexplained.
+// link), so a " (2)" beside one of their names is never unexplained. Amended 2026-11-25 (round D, the
+// lead's call revising the review's RV-05 fold; additive): the restriction is now
+// winsec.RestrictFolderToOwnerAndAdmins, which keeps SYSTEM and Administrators beside the owner, so
+// backup software that runs as SYSTEM can copy the archives; the real restriction below still reads
+// as the person's own. Its access list is winsec's tests' (on Windows, the lab's).
 func TestANewSetFolderIsTheOwnersAndThePlanNamesWhatItLeaves(t *testing.T) {
+	if reflect.ValueOf(restrictSetFolder).Pointer() != reflect.ValueOf(winsec.RestrictFolderToOwnerAndAdmins).Pointer() {
+		t.Fatal("the set's new folders are not restricted with winsec.RestrictFolderToOwnerAndAdmins (owner, SYSTEM and Administrators)")
+	}
 	ownSettings(t)
 	rows, _ := setMail(t)
 	parent := setFresh(t)

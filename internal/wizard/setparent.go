@@ -180,10 +180,14 @@ func makeSetFolder(sp *app.SetParent, name, listName string) (string, error) {
 	return path, err
 }
 
-// restrictSetFolder restricts a folder the set just made to its owner (winsec.RestrictFolderToOwner:
-// on Windows an explicit, protected owner-only list, inherited by what is made in it; nothing
-// elsewhere, where the folder is made 0700). A seam, so a test sees which folders it is asked for.
-var restrictSetFolder = winsec.RestrictFolderToOwner
+// restrictSetFolder restricts a folder the set just made to its owner, SYSTEM and Administrators
+// (winsec.RestrictFolderToOwnerAndAdmins: on Windows an explicit, protected list giving those three
+// full control, inherited by what is made in it; nothing elsewhere, where the folder is made 0700).
+// SYSTEM and Administrators are kept so backup software that runs as SYSTEM can copy the archives
+// (round D, the lead's call revising the review's RV-05 fold, which kept the user alone:
+// winsec.RestrictFolderToOwner); setChildMine accepts them, so a re-run still reads the folder as the
+// person's own (INS-01). A seam, so a test sees which folders it is asked for.
+var restrictSetFolder = winsec.RestrictFolderToOwnerAndAdmins
 
 // errSetFolderChanged is an archive folder of the set that is no longer the folder the plan read or
 // the set made (INS-02): nothing is written into it.
@@ -196,7 +200,8 @@ var setMadeChildID = setChildID
 
 // makeSetFolderAt is makeSetFolder, also giving the folder made as read through the parent's handle
 // right after it was made (setChildID), which the export proves again before it writes there
-// (INS-02). Right after it is made and read, the folder is restricted to its owner (INS-01: on
+// (INS-02). Right after it is made and read, the folder is restricted to its owner, SYSTEM and
+// Administrators (restrictSetFolder; INS-01: on
 // Windows a folder made with Mkdir takes its parent's access list, which outside the person's own
 // folders lets other accounts change it, so a re-run would never look at it and another account
 // could put a link in its place). A restriction the drive cannot take (a FAT or exFAT drive keeps no

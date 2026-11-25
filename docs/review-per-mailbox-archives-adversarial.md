@@ -84,6 +84,12 @@ The lead's fold, built as round C, then a narrow re-check, then the Windows lab:
 - **RV-05 (the lead's call): keep the owner-only folders on Windows.** An archive readable only by
   the person who made it is the safer default on a shared computer; handing one over works by
   copying it. The release notes say so.
+  *Revised 2026-11-25 (round D, the lead's call; the text above is kept): the Windows lab found a
+  set's folder listing only the user, with no SYSTEM and no Administrators, so backup software that
+  runs as SYSTEM could not copy a person's archives. Each new set folder is now restricted to its
+  owner, SYSTEM and Administrators (`winsec.RestrictFolderToOwnerAndAdmins`, inheritance off), which
+  `setChildMine` accepts, so INS-01 stays fixed; no other ordinary account can read or change it
+  (MA-1496's round D amendment).*
 - **RV-06:** no change; a user-name edit or a re-add with other capital letters is a loud stop,
   never a silent one.
 - **RV-07:** the design's §14 gains "encrypted one-folder archives keep no account identity, so a
