@@ -21,6 +21,10 @@ const (
 	// setOnceWords follow a saved-once row's name in the plan.
 	setOnceUnused = ": saved once and not kept current, since no account uses it"
 	setOnceOlder  = ": saved once and not kept current, since it is an older copy"
+	// setUnlookedOne and setUnlookedMany lead the line naming the folders in the parent the plan
+	// never looked at (the adversarial pass's INS-01; the builder's words).
+	setUnlookedOne  = "Left as it is, not looked at (a link, or a folder another account owns or can change): "
+	setUnlookedMany = "Left as they are, not looked at (each a link, or a folder another account owns or can change): "
 )
 
 // setPlanText is the plan window's text for p (§8): the archives to make in its parent, with
@@ -98,6 +102,18 @@ func setPlanText(p setPlan) string {
 	rest = append(rest, notMade...)
 	for _, u := range p.unread {
 		rest = append(rest, clean(u)+": could not be read just now")
+	}
+	// Every child never looked at, so a " (2)" beside one of their names is never unexplained (INS-01).
+	switch len(p.unlooked) {
+	case 0:
+	case 1:
+		rest = append(rest, setUnlookedOne+clean(p.unlooked[0]))
+	default:
+		var names []string
+		for _, u := range p.unlooked {
+			names = append(names, clean(u))
+		}
+		rest = append(rest, setUnlookedMany+strings.Join(names, ", "))
 	}
 	for _, g := range p.notFound {
 		rest = append(rest, "In this folder, not found now: "+clean(g))

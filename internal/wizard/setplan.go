@@ -41,6 +41,9 @@ type setChild struct {
 	// it holds was read (stores). Any other child is never read, never matched, never written into.
 	looked bool
 	stores archindex.FolderStores
+	// id is the folder a looked child is, as its open handle said (os.SameFile): the export proves
+	// it again through the parent's handle before it writes anything there (setChildSame, INS-02).
+	id os.FileInfo
 }
 
 // unread reports a child whose read failed and may pass later (§7 "Cannot read now").
@@ -109,9 +112,9 @@ func readSetChildren(parent string) (kids []setChild, more bool, err error) {
 		case fi.Mode().Type() != fs.ModeDir || setReparse(fi):
 			// A link, a junction, a file of another kind: never read, never written into.
 		default:
-			c.looked, c.stores = readSetChild(root, n, fi)
+			c.looked, c.stores, c.id = readSetChild(root, n, fi)
 			if !c.looked {
-				c.stores = archindex.FolderStores{}
+				c.stores, c.id = archindex.FolderStores{}, nil
 			}
 		}
 		kids = append(kids, c)
@@ -121,40 +124,89 @@ func readSetChildren(parent string) (kids []setChild, more bool, err error) {
 
 // readSetChild reads the real directory n inside root, which Lstat found as fi: looked is false for a
 // folder that is not the person's own; else what it holds, cannot-read-now when it cannot be opened
-// or is not the folder found.
-func readSetChild(root *os.Root, n string, fi os.FileInfo) (looked bool, st archindex.FolderStores) {
+// or is not the folder found, and id, the folder it is (its open handle's).
+func readSetChild(root *os.Root, n string, fi os.FileInfo) (looked bool, st archindex.FolderStores, id os.FileInfo) {
 	cannot := archindex.FolderStores{Answer: archindex.StoresCannotRead}
 	// Someone else's folder is never opened, so it never reads as cannot-read-now (which would hold
 	// back every new archive): judged from what Lstat found where that says it (unix), and an open
 	// this user is refused where it does not (Windows).
 	if setForeign(fi) {
-		return false, archindex.FolderStores{}
+		return false, archindex.FolderStores{}, nil
 	}
 	croot, err := root.OpenRoot(n)
 	if err != nil {
 		if setRefusedIsForeign && errors.Is(err, fs.ErrPermission) {
-			return false, archindex.FolderStores{}
+			return false, archindex.FolderStores{}, nil
 		}
-		return true, cannot
+		return true, cannot, nil
 	}
 	defer croot.Close()
 	f, err := croot.Open(".")
 	if err != nil {
-		return true, cannot
+		return true, cannot, nil
 	}
 	defer f.Close()
 	hfi, err := f.Stat()
 	if err != nil || !os.SameFile(fi, hfi) {
-		return true, cannot
+		return true, cannot, nil
 	}
 	if !setChildMine(f, hfi) {
-		return false, archindex.FolderStores{}
+		return false, archindex.FolderStores{}, nil
 	}
 	st = archindex.Stores(filepath.Join(root.Name(), n))
 	if st.Dir == nil || !os.SameFile(st.Dir, hfi) {
-		return true, cannot
+		return true, cannot, nil
 	}
-	return true, st
+	return true, st, hfi
+}
+
+// setChildSame re-proves, through a handle on the set's parent, that the archive folder name in it
+// is still the folder id the plan read or the set made (the adversarial pass's INS-02): the parent
+// is still the folder the plan read (parentID, when known), and name in it is a real directory (not
+// a link, a junction or another reparse point) that is the same folder (os.SameFile), by its own
+// handle too. The set's export asks it right before an archive's run log opens and again right
+// before its export starts; a folder that is not the same is never written into.
+func setChildSame(parent string, parentID os.FileInfo, name string, id os.FileInfo) bool {
+	if id == nil {
+		return false
+	}
+	root, err := os.OpenRoot(parent)
+	if err != nil {
+		return false
+	}
+	defer root.Close()
+	if parentID != nil {
+		rfi, err := root.Stat(".")
+		if err != nil || !os.SameFile(rfi, parentID) {
+			return false
+		}
+	}
+	fi, err := root.Lstat(name)
+	if err != nil || fi.Mode().Type() != fs.ModeDir || setReparse(fi) || !os.SameFile(fi, id) {
+		return false
+	}
+	f, err := root.Open(name)
+	if err != nil {
+		return false
+	}
+	defer f.Close()
+	hfi, err := f.Stat()
+	return err == nil && hfi.IsDir() && os.SameFile(hfi, id)
+}
+
+// setChildID is the folder name in parent is, read through a handle on parent right after the set
+// made it: a real directory, or nil.
+func setChildID(parent, name string) os.FileInfo {
+	root, err := os.OpenRoot(parent)
+	if err != nil {
+		return nil
+	}
+	defer root.Close()
+	fi, err := root.Lstat(name)
+	if err != nil || fi.Mode().Type() != fs.ModeDir || setReparse(fi) {
+		return nil
+	}
+	return fi
 }
 
 // setOutcome is what a set does for one mailbox (§7), in the plan's order.
@@ -198,6 +250,9 @@ type setItem struct {
 	// ask: a new archive of an account whose full offline download is asked about (§8; the question
 	// itself is step 3b's, MA-1502).
 	ask bool
+	// id (outContinue, outUnfinished, outPaused) is the existing child's folder as the plan read it
+	// (INS-02).
+	id os.FileInfo
 }
 
 // Why a mailbox is not made (setItem.why).
@@ -218,6 +273,11 @@ type setPlan struct {
 	unread   []string
 	notFound []string
 	more     bool
+	// unlooked are the children never looked at (a link, a junction, a folder another account owns
+	// or can change): the plan names them, so a " (2)" is never unexplained (INS-01).
+	unlooked []string
+	// parentID is the parent folder the plan read, through its handle (INS-02, OUT-04).
+	parentID os.FileInfo
 }
 
 // planSet decides, for each of rows in their order, what the set does in parent (§7, revision 2.1's
@@ -237,9 +297,15 @@ func planSet(parent string, rows []setRow, goos string) (setPlan, error) {
 	}
 	defer root.Close()
 	p := setPlan{parent: parent, more: more}
+	if pfi, err := root.Stat("."); err == nil {
+		p.parentID = pfi
+	}
 	for _, c := range kids {
 		if c.unread() {
 			p.unread = append(p.unread, c.name)
+		}
+		if !c.looked {
+			p.unlooked = append(p.unlooked, c.name)
 		}
 	}
 	made := map[string]string{} // a made-list folder in this parent → its mailbox's name
@@ -324,7 +390,7 @@ func planOne(it *setItem, parent string, kids []setChild, claimed map[string]boo
 	}
 	if len(matches) > 0 {
 		c := matches[0]
-		it.folder, it.jobUnreadable = c.name, unreadable[c.name]
+		it.folder, it.jobUnreadable, it.id = c.name, unreadable[c.name], c.id
 		for _, o := range matches[1:] {
 			it.also = append(it.also, o.name)
 		}
@@ -342,7 +408,7 @@ func planOne(it *setItem, parent string, kids []setChild, claimed map[string]boo
 	// A folder the wizard made for it but never finished (C5).
 	for _, c := range kids {
 		if c.looked && c.stores.Answer == archindex.StoresNotArchive && c.stores.NoManifest && !claimed[c.name] && made[c.name] == r.name {
-			it.outcome, it.folder = outUnfinished, c.name
+			it.outcome, it.folder, it.id = outUnfinished, c.name, c.id
 			claimed[c.name] = true
 			it.ask = setAsks(r)
 			refuseDeleted(it, c.path)

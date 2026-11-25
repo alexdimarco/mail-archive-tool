@@ -235,10 +235,15 @@ func exportSet(sp *app.SetParent, p setPlan, arcs []*setArchive, all wizardChoic
 			a.made.Outcome = MadeNotStarted
 			continue
 		}
+		id := a.it.id
 		if a.it.outcome == outNew {
-			made, name, err := makeSetArchiveFolder(sp, p, a.it, goos)
-			a.made.Name = name
+			made, name, madeID, err := makeSetArchiveFolder(sp, p, a.it, goos)
+			a.made.Name, id = name, madeID
 			switch {
+			case errors.Is(err, errSetFolderChanged):
+				// Made, then not the folder made by the time it was read (INS-02): never written into.
+				a.made.Outcome, a.made.Reason = MadeFailed, setChangedReason(filepath.Join(p.parent, name))
+				continue
 			case errors.Is(err, errNotRecorded):
 				// Made, but not in the made-list, which the unfinished-folder rule and MailArchive
 				// Desktop read: not exported into, and the empty folder taken away again, so a re-run
@@ -272,7 +277,16 @@ func exportSet(sp *app.SetParent, p setPlan, arcs []*setArchive, all wizardChoic
 			c.mode = export.Full
 		}
 		a.c = c
-		res, logPath, stopped, runErr, dlgErr := exportSetArchive(c, k+1, m)
+		// The folder the plan read or the set made, proved again through the parent's handle right
+		// before the log opens and again right before the export starts (INS-02).
+		folderName := filepath.Base(path)
+		same := func() error {
+			if setChildSame(p.parent, p.parentID, folderName, id) {
+				return nil
+			}
+			return errors.New(setChangedReason(path))
+		}
+		res, logPath, stopped, runErr, dlgErr := exportSetArchive(c, k+1, m, same)
 		a.res, a.log = res, logPath
 		switch {
 		case dlgErr != nil:
@@ -310,20 +324,20 @@ var errNoFreeNumber = errors.New("no free number is left for the folder's name")
 // plan's name before any number with the next free number, as the plan numbers names. It returns the
 // folder made and its final name. Its errors: errNotRecorded (made, not recorded; the path is
 // returned), errNoFreeNumber, or makeSetFolder's refusal, which is about the parent folder.
-func makeSetArchiveFolder(sp *app.SetParent, p setPlan, it setItem, goos string) (string, string, error) {
+func makeSetArchiveFolder(sp *app.SetParent, p setPlan, it setItem, goos string) (string, string, os.FileInfo, error) {
 	name := it.folder
 	for try := 0; try <= setNumberMax; try++ {
-		path, err := makeSetFolder(sp, name, it.row.name)
+		path, id, err := makeSetFolderAt(sp, name, it.row.name)
 		if !setNameTaken(err, name) {
-			return path, name, err
+			return path, name, id, err
 		}
 		next := setFreeName(p, it, goos)
 		if next == "" || next == name {
-			return "", name, errNoFreeNumber
+			return "", name, nil, errNoFreeNumber
 		}
 		name = next
 	}
-	return "", name, errNoFreeNumber
+	return "", name, nil, errNoFreeNumber
 }
 
 // setNameTaken reports whether err is MakeSetFolder's "exists": name is one this computer can use as
@@ -382,8 +396,11 @@ func removeEmptySetFolder(parent, name string) bool {
 // folder, app.Run, with its one input and auto-discovery off. Its progress window is titled
 // "Exporting n of m…" and shows today's counts line, never a name (§9). stopped says the person closed
 // the window (Cancel): the archive keeps what it copied, and the set starts no more. logPath is the
-// run log's, once it was opened. dlgErr is a progress window that could not be opened.
-func exportSetArchive(c wizardChoice, n, m int) (res app.Result, logPath string, stopped bool, runErr, dlgErr error) {
+// run log's, once it was opened. dlgErr is a progress window that could not be opened. same proves
+// the archive's folder is still the one the plan read or the set made (setChildSame, INS-02); it is
+// asked right before the log opens and again right before the export starts, and a folder that is
+// not the same is never written into.
+func exportSetArchive(c wizardChoice, n, m int, same func() error) (res app.Result, logPath string, stopped bool, runErr, dlgErr error) {
 	// Every archive of a set has its folder before its export (made just now, or continued): one gone
 	// since (its parent unplugged or moved) is never made again here, as the run log and app.Run would
 	// make a missing folder, so no archive lands in a decoy folder.
@@ -396,6 +413,9 @@ func exportSetArchive(c wizardChoice, n, m int) (res app.Result, logPath string,
 	if err := app.RefuseKeyless("archive into it", c.out); err != nil {
 		return res, "", false, err, nil
 	}
+	if err := same(); err != nil {
+		return res, "", false, err, nil
+	}
 	logger := newLogger(c.out)
 	logPath = filepath.Join(c.out, "mailarchive.log")
 
@@ -404,6 +424,10 @@ func exportSetArchive(c wizardChoice, n, m int) (res app.Result, logPath string,
 		return res, logPath, false, nil, err
 	}
 	if err := setFolderThere(c.out); err != nil {
+		_ = dlg.Close()
+		return res, logPath, false, err, nil
+	}
+	if err := same(); err != nil {
 		_ = dlg.Close()
 		return res, logPath, false, err, nil
 	}
@@ -447,6 +471,12 @@ func exportSetArchive(c wizardChoice, n, m int) (res app.Result, logPath string,
 	_ = dlg.Complete()
 	_ = dlg.Close()
 	return res, logPath, stopped || errors.Is(runErr, context.Canceled), runErr, nil
+}
+
+// setChangedReason is the summary's reason for an archive whose folder at path is no longer the one
+// the plan read or the set made (INS-02).
+func setChangedReason(path string) string {
+	return fmt.Sprintf("its folder %s is no longer the folder MailArchive checked (it was moved, or something else was put in its place), so nothing was written into it", util.StripControl(path))
 }
 
 // setFolderThere refuses an archive folder of a set that is not there any more (or is no longer a

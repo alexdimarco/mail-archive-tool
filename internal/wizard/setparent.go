@@ -3,6 +3,7 @@ package wizard
 import (
 	"errors"
 	"fmt"
+	"os"
 	"path/filepath"
 
 	"github.com/ncruces/zenity"
@@ -11,6 +12,7 @@ import (
 	"mail-archive-tool/internal/archindex"
 	"mail-archive-tool/internal/job"
 	"mail-archive-tool/internal/util"
+	"mail-archive-tool/internal/winsec"
 )
 
 // A set's parent folder (docs/design-per-mailbox-archives.md §6, revision 2's C9, C14 and C15,
@@ -143,16 +145,43 @@ var errNotRecorded = errors.New("the new folder could not be recorded in the wiz
 // nothing and records nothing; a folder made but not recorded comes back with its path and
 // errNotRecorded.
 func makeSetFolder(sp *app.SetParent, name, listName string) (string, error) {
+	path, _, err := makeSetFolderAt(sp, name, listName)
+	return path, err
+}
+
+// restrictSetFolder restricts a folder the set just made to its owner (winsec.RestrictFolderToOwner:
+// on Windows an explicit, protected owner-only list, inherited by what is made in it; nothing
+// elsewhere, where the folder is made 0700). A seam, so a test sees which folders it is asked for.
+var restrictSetFolder = winsec.RestrictFolderToOwner
+
+// errSetFolderChanged is an archive folder of the set that is no longer the folder the plan read or
+// the set made (INS-02): nothing is written into it.
+var errSetFolderChanged = errors.New("its folder is no longer the folder MailArchive checked")
+
+// makeSetFolderAt is makeSetFolder, also giving the folder made as read through the parent's handle
+// right after it was made (setChildID), which the export proves again before it writes there
+// (INS-02). Right after it is made and read, the folder is restricted to its owner (INS-01: on
+// Windows a folder made with Mkdir takes its parent's access list, which outside the person's own
+// folders lets other accounts change it, so a re-run would never look at it and another account
+// could put a link in its place). A restriction the drive cannot take (a FAT or exFAT drive keeps no
+// access list) leaves the folder as Mkdir made it: the export's identity proof still holds, and the
+// plan of a re-run names such a folder as not looked at.
+func makeSetFolderAt(sp *app.SetParent, name, listName string) (string, os.FileInfo, error) {
 	path, err := setEnv().MakeSetFolder(sp, name)
 	if err != nil {
-		return "", err
+		return "", nil, err
 	}
+	id := setChildID(sp.Parent, name)
+	if id == nil {
+		return "", nil, fmt.Errorf("%w (%s was changed right after it was made)", errSetFolderChanged, util.StripControl(path))
+	}
+	_ = restrictSetFolder(path)
 	f, err := job.MadeListFile()
 	if err == nil {
 		err = job.RecordMade(f, path, listName)
 	}
 	if err != nil {
-		return path, fmt.Errorf("%w: %v", errNotRecorded, err)
+		return path, id, fmt.Errorf("%w: %v", errNotRecorded, err)
 	}
-	return path, nil
+	return path, id, nil
 }
