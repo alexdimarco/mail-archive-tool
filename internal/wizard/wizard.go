@@ -715,12 +715,13 @@ func openDesktopSurface() error {
 // Run sets it to let go of the wizard lock.
 var beforeDesktop func()
 
-func wizard() error { return wizardWith(surfacePrompt, surfaceChoices, openDesktopSurface) }
+func wizard() error { return wizardWith(false, surfaceChoices, openDesktopSurface) }
 
-// wizardWith is the wizard with its first list's items and the way its Desktop items
-// open Desktop: the standalone wizard's (all four, Desktop in this process) or the
-// running MailArchive's (RunIn: no Desktop item, the instance's own link).
-func wizardWith(prompt string, items []string, openDesktop func() error) error {
+// wizardWith is the wizard with its first list's question and items and the way its
+// Desktop items open Desktop: the standalone wizard's (all four, Desktop in this
+// process) or, fromLauncher, the running MailArchive's (RunIn: its own question, no
+// Desktop item, the instance's own link).
+func wizardWith(fromLauncher bool, items []string, openDesktop func() error) error {
 	// 1. First step (MA-651): open the various options. The Desktop item hands off
 	//    IN-PROCESS to MailArchive Desktop (Microsoft 365, folder export, browsing,
 	//    scheduling, the maintenance tools); the local item (the default) stays on
@@ -728,7 +729,7 @@ func wizardWith(prompt string, items []string, openDesktop func() error) error {
 	//    Through the listDialog seam (zenity.List in the product), so a test walks the
 	//    double-click wizard to One archive for each mailbox with no real window (MA-1490),
 	//    and sees the question the launcher's wizard asks instead (MA-1406).
-	switch pick, err := listDialog(prompt, items, zenity.Title(appTitle), zenity.DefaultItems(surfaceLocalItem)); {
+	switch pick, err := firstList(fromLauncher, items); {
 	case err != nil:
 		return err
 	case surfaceOpensDesktop(pick):

@@ -108,6 +108,18 @@ const (
 	launcherPrompt = "What mail do you want to add or back up?"
 )
 
+// firstList asks the wizard's first question over items: the launcher's when
+// fromLauncher, else the standalone wizard's. Each call names its constant, so the
+// list's text is fixed words on Linux and the BSDs (MA-1286's scan checks every
+// listDialog call).
+func firstList(fromLauncher bool, items []string) (string, error) {
+	opts := []zenity.Option{zenity.Title(appTitle), zenity.DefaultItems(surfaceLocalItem)}
+	if fromLauncher {
+		return listDialog(launcherPrompt, items, opts...)
+	}
+	return listDialog(surfacePrompt, items, opts...)
+}
+
 // launcherChoices is the first list of a wizard reached from the launcher choice or a
 // hand-off (Q2, design-menubar §6.2): the "open MailArchive Desktop" item is dropped,
 // since the choice already offers Desktop; the two tasks that finish on a Desktop page
@@ -151,7 +163,7 @@ func RunIn(openDesktop func() error) (code int) {
 		}
 		return openDesktop()
 	}
-	switch err := wizardWith(launcherPrompt, launcherChoices(), open); {
+	switch err := wizardWith(true, launcherChoices(), open); {
 	case err == nil, errors.Is(err, zenity.ErrCanceled):
 		return 0
 	default:
