@@ -362,6 +362,13 @@ type CopyRefusal struct {
 	// Root is the empty export folder an R-d refusal left in place, which the page
 	// reports (design §4.16); empty for every other refusal.
 	Root string
+	// Archive, Cause and ArchiveSide say an R-f2 refusal's archive, why it could not be confirmed
+	// ("here", "fuse", "walk", or "" for two different shares) and whether the cause is on the
+	// archive's side, so a front end with words of its own can name the archive and give each cause
+	// its own remedy (the per-mailbox friction review's F9); empty for every other refusal.
+	Archive     string
+	Cause       string
+	ArchiveSide bool
 }
 
 func (e *CopyRefusal) Error() string { return e.Message }

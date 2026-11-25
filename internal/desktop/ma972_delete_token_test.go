@@ -69,11 +69,12 @@ func TestADeleteRunsOnlyThroughItsPlansToken(t *testing.T) {
 	assure.Refused(t, http.StatusOK, replyErr(m), assure.Code(http.StatusOK), assure.Names("no longer waiting", "nothing was deleted"),
 		assure.NoSideEffect(func() bool { return reflect.DeepEqual(treeState(t, dir2), before2) }))
 
-	// Expired.
-	e.d.pending.life = 30 * time.Millisecond
+	// Expired. Amended 2026-11-20 (docs/design-1.7.5-fixes.md §3.1, MA-972 amended): a delete plan's
+	// life is its own field, deleteLife (24 hours), so the override is on that field.
+	e.d.pending.deleteLife = 30 * time.Millisecond
 	p2 := e.plan(dir2)
 	time.Sleep(150 * time.Millisecond)
-	e.d.pending.life = pendingLife
+	e.d.pending.deleteLife = deletePlanLife
 	m = e.deleteWith(p2["token"].(string), "Second", false)
 	assure.Refused(t, http.StatusOK, replyErr(m), assure.Code(http.StatusOK), assure.Names("no longer waiting"),
 		assure.NoSideEffect(func() bool { return reflect.DeepEqual(treeState(t, dir2), before2) && e.listed(dir2) }))

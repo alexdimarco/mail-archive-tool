@@ -263,10 +263,10 @@ func TestMA1430_OneWizardPerAccount(t *testing.T) {
 	}
 	// Add another archive refuses with the same words.
 	d := newDashboard(Config{SettingsPath: filepath.Join(t.TempDir(), "s.json"), WizardLock: func() (func(), bool) { return wizard.LockWizardIn(g.dir) }})
-	origAdd := addArchiveFn
-	t.Cleanup(func() { addArchiveFn = origAdd })
+	origAdd := addArchivesFn
+	t.Cleanup(func() { addArchivesFn = origAdd })
 	added := false
-	addArchiveFn = func() (string, error) { added = true; return "", nil }
+	addArchivesFn = func() ([]wizard.Made, error) { added = true; return nil, nil } // was: addArchiveFn, return "", nil (MA-1499 renamed the seam)
 	w := httptest.NewRecorder()
 	req := httptest.NewRequest("POST", "http://127.0.0.1:8097/api/add-archive", nil)
 	req.Header.Set("Origin", "http://127.0.0.1:8097")

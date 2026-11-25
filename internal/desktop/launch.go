@@ -376,6 +376,7 @@ func launchMode(ctx context.Context, args []string, env *launchEnv, start bool) 
 	exe, _ := os.Executable() // recorded in a scheduled task so the weekly backup runs this binary
 	dcfg := Config{Out: *out, ConfigPath: cfgPath, Store: store, SettingsPath: settingsPath, Exe: exe, Version: buildVersion(), LastArchive: OfferedArchive}
 	dcfg.IndexPath = indexPathFor(cfgPath) // the Desktop maintains the known-archives index beside desktop-settings.json (SD-6)
+	dcfg.MadeList = madeListPath()         // the stand-alone wizard's made-list, beside last-archive.txt (MA-1500)
 	dcfg.WorkspaceOff = *noWorkspace || (env.WorkspaceOff != nil && env.WorkspaceOff())
 	if env.ExportDir != nil {
 		dcfg.StateDir = env.ExportDir()

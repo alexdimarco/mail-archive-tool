@@ -16,6 +16,7 @@ import (
 	"strings"
 	"time"
 
+	"mail-archive-tool/internal/autoplace"
 	"mail-archive-tool/internal/container"
 	"mail-archive-tool/internal/delmark"
 	"mail-archive-tool/internal/encmark"
@@ -322,12 +323,47 @@ type Result struct {
 	// tbPrev is the previous run's completeness record, read before this run's "running"
 	// record replaced it, for TC-19's carried fingerprints.
 	tbPrev []state.TBAccount
+	// tbIDs are the identities of the accounts that own this run's Thunderbird stores, beside each
+	// store's id (tbIdentities; docs/design-per-mailbox-archives.md revision 3): what a plaintext run
+	// that ends ok records. In memory only.
+	tbIDs []state.TBID
 	// TBNotices are the Thunderbird accounts whose behind-streak this run found due an email
 	// (the "still downloading" or "stopped" email, design §5, slice C5): only accounts this run
 	// found behind, of a plaintext archive, and only when the run wrote the streak record, so the
 	// email's flag can be set in it. A scheduled run's alert layer sends them
 	// (backupalert.ReportTBBehind), then MarkTBNoticesSent sets the flags. In memory only.
 	TBNotices []state.TBNotice
+
+	// Skipped are the listed inputs this run did not find and skipped (DiscoverInputs,
+	// design-1.7.5-fixes §1.2, MA-1471), in list order, on every return after discovery: the
+	// summaries say them from here (§1.3). In memory only; for an encrypted archive this is the
+	// only place their paths and names are kept.
+	Skipped []SkippedInput
+}
+
+// SkippedInput is one listed input a run skipped because it is gone (MA-1471): its path as
+// listed, the account's name when the profile's settings still name an account for that folder
+// ("" otherwise), and when it was first found gone (MA-1472).
+type SkippedInput struct {
+	Path  string
+	Name  string
+	Since time.Time
+	// Listed: the profile's settings still name an account for the folder, so Name came from them
+	// and status says to let Thunderbird download it (the 1.7.5 friction review's F4). Name may also
+	// come from the previous record (F3), where Listed is false.
+	Listed bool
+	// SettingsUnsure: the profile's Thunderbird settings could not be read for certain, so whether
+	// the account was moved could not be told (the 1.7.5 re-verify's RV-04); status says so.
+	SettingsUnsure bool
+}
+
+// Label is how the run's words name a skipped input: "NAME (PATH)", or PATH alone when no name
+// is known.
+func (s SkippedInput) Label() string {
+	if s.Name == "" {
+		return s.Path
+	}
+	return s.Name + " (" + s.Path + ")"
 }
 
 // finish fills the manifest-derived fields of a Result and regenerates the
@@ -628,7 +664,27 @@ func Run(ctx context.Context, opts Options, logger *log.Logger, onProgress Progr
 			return Result{}, err
 		}
 	}
-	files, err := DiscoverInputs(opts.Inputs, opts.Auto)
+	files, gone, err := DiscoverInputsFor(opts.Inputs, opts.Auto, RecordedNamesAt(opts.Out))
+	if err == nil && len(gone) > 0 {
+		// A listed mailbox that is gone was skipped (MA-1471): said straight after discovery, in
+		// the log the run's "Reading" lines go to, and handed back on every return from here.
+		// That the others were backed up is said only by the summaries of a run that finished.
+		skipped := skippedInputs(gone)
+		// When each was first found gone, kept in the run's own warnings, which every record the
+		// run writes from here carries (MA-1472). A fresh slice: the caller's is never written.
+		if start := time.Now().UTC(); opts.Key != nil || encryptedAt(opts.Out) {
+			resolveEncryptedGone(opts.Out, skipped, start) // one time for the archive (MA-1478)
+		} else {
+			resolveGoneSince(opts.Out, skipped, start)
+		}
+		opts.Warnings = append(append([]state.RunWarning(nil), opts.Warnings...), goneWarnings(skipped)...)
+		// By its path alone: this log is a scheduled run's log file too, and no log file holds the
+		// name Thunderbird shows for an account (MA-1288); the summaries name it on screen.
+		for _, s := range skipped {
+			logger.Printf("Not found, so skipped: %s. It is no longer on this computer; the mail already saved from it stays in the archive.", s.Path)
+		}
+		defer func() { result.Skipped = skipped }()
+	}
 	if err == nil && len(files) == 0 {
 		err = withKind(state.FailNoSources, errors.New("no input mail sources found (a .pst/.ost file, an mbox file, or a mail directory; or enable auto-discovery)"))
 	} else if err != nil {
@@ -812,7 +868,8 @@ func Run(ctx context.Context, opts Options, logger *log.Logger, onProgress Progr
 	// The same for the Thunderbird completeness verdicts, set once every source was walked
 	// (nil on any earlier return), and the previous record recordRun carries forward from.
 	var tbResults []tbcomplete.Result
-	defer func() { result.Thunderbird, result.tbPrev = tbResults, tbPrev }()
+	var tbIDs []state.TBID
+	defer func() { result.Thunderbird, result.tbPrev, result.tbIDs = tbResults, tbPrev, tbIDs }()
 	// T16 (design-presync-attended §4.1, C-11): a cancel during the pre-sync, or before
 	// it, stops the run here, before any sweep, index or source. It comes after the
 	// deferred recordRun and Release, so the record ends cancelled, never running, and
@@ -1161,6 +1218,7 @@ func Run(ctx context.Context, opts Options, logger *log.Logger, onProgress Progr
 	// read after the walk, once per profile (TC-21). It reads; it writes nothing here.
 	if fatal == nil {
 		tbResults = assessThunderbird(lr.tb, time.Now())
+		tbIDs = tbIdentities(lr.tb, tbResults)
 	}
 
 	// Browsable folder index pages, built from the finished index. Regenerate
@@ -1380,14 +1438,34 @@ func newRunRecord(opts Options) state.LastRun {
 		if st == state.LastRunPresent {
 			program = prev.Program
 		}
-		return state.LastRun{Status: state.RunRunning, Started: time.Now().UTC(), Encrypted: true, Program: program}
+		lr := state.LastRun{Status: state.RunRunning, Started: time.Now().UTC(), Encrypted: true, Program: program}
+		// A mailbox this run skipped because it is gone: that one was, the time one was first
+		// found gone and how many, from the run's warnings in memory, never their paths or names
+		// (MA-1478; owner, Q3, Q5 and Q6).
+		if n, since := goneOf(opts.Warnings); n > 0 {
+			lr.MailboxGone, lr.MailboxGoneSince, lr.MailboxGoneCount = true, since, n
+		}
+		return lr
 	}
 	exe, _ := os.Executable()
 	mode := "incremental"
 	if opts.Mode == export.Full {
 		mode = "full"
 	}
-	return state.LastRun{Status: state.RunRunning, Started: time.Now().UTC(), PID: os.Getpid(), Exe: exe, Mode: mode, Job: canonicalJob(opts, mode), NoIndex: !opts.Index, Warnings: opts.Warnings}
+	lr := state.LastRun{Status: state.RunRunning, Started: time.Now().UTC(), PID: os.Getpid(), Exe: exe, Mode: mode, Job: canonicalJob(opts, mode), NoIndex: !opts.Index, Warnings: opts.Warnings}
+	// Each Thunderbird folder's account name, carried from the previous record into this one and so
+	// into every record the run writes from it (running, refused, failed, cancelled; an ok run with
+	// completeness entries of its own keeps the names there instead): a moved account is then still
+	// told from a removed one after a stopped backup (the 1.7.5 re-verify, round 3's RV3-01). In the
+	// record only, never in a log file (MA-1288).
+	// The accounts' identities too (docs/design-per-mailbox-archives.md revision 3), as the names are.
+	if opts.Out != "" {
+		if prev, st, _ := state.ReadLastRun(opts.Out); st == state.LastRunPresent {
+			lr.ThunderbirdNames = state.TBNamesOf(prev)
+			lr.ThunderbirdIDs = state.TBIDsOf(prev)
+		}
+	}
+	return lr
 }
 
 // RecordRefusedRun records a scheduled run that refused before it began — its
@@ -1447,6 +1525,10 @@ func writeRefusedRun(opts Options, cause error) {
 	lr.Status, lr.Finished, lr.Error = state.RunFailed, lr.Started, cause.Error()
 	if lr.Encrypted {
 		lr.Error, lr.ErrorKind = "", FailureKind(cause)
+	} else {
+		// A moved or removed Thunderbird account's stop keeps its reason, a fixed code, so status, the
+		// banner and the 30-day pause say that reason's words (F-03); plaintext records only.
+		lr.SourceReason = sourceReasonOf(cause)
 	}
 	_ = state.WriteLastRun(opts.Out, lr)
 	// A refused scheduled run is a failure the history should show too (MA-701), best effort.
@@ -1522,6 +1604,71 @@ func absOrSame(p string) string {
 	return p
 }
 
+// oneFolderNameKept is, for an ok plaintext run of exactly one listed folder with auto-discovery off,
+// the account name the previous record gave that folder (carried, from newRunRecord), kept when this
+// run found no live account for it: its completeness result says no_match and names no account
+// (docs/design-per-mailbox-archives.md revision 2.2, the lead's call on the builder's finding;
+// MA-1504). Without it, a backup between "account removed" and "account added again" would write a
+// record that names none, and C2 could never stop the run after the re-add. A live account's own name
+// refreshes it (nothing is kept). An auto-discovery run never carries one: it finds a re-added
+// account's new folder by itself, and a carried name would make a later removal of the old folder
+// look like a move. nil otherwise.
+func oneFolderNameKept(opts Options, results []tbcomplete.Result, carried []state.TBName) []state.TBName {
+	if opts.Auto || len(opts.Inputs) != 1 || len(carried) == 0 {
+		return nil
+	}
+	in := absOrSame(opts.Inputs[0])
+	profile, ok := findTBProfile(in)
+	if !ok {
+		return nil
+	}
+	id := storeID(profile, in)
+	for _, r := range results {
+		if r.StoreID != id || r.Name != "" || r.Reason != tbcomplete.ReasonNoMatch {
+			continue
+		}
+		for _, n := range carried {
+			if n.StoreID == id && n.Name != "" {
+				return []state.TBName{n}
+			}
+		}
+	}
+	return nil
+}
+
+// oneFolderIDKept is oneFolderNameKept for the account's identity (docs/design-per-mailbox-archives.md
+// revision 3: "carried across a no-owner run as the name is"): for an ok plaintext run of exactly one
+// listed folder with auto-discovery off, the identity the previous record kept for that folder
+// (carried), when this run found no live account for it (its completeness result says no_match) and
+// so has none of its own (own). An auto-discovery run never keeps one. nil otherwise.
+func oneFolderIDKept(opts Options, results []tbcomplete.Result, own, carried []state.TBID) []state.TBID {
+	if opts.Auto || len(opts.Inputs) != 1 || len(carried) == 0 {
+		return nil
+	}
+	in := absOrSame(opts.Inputs[0])
+	profile, ok := findTBProfile(in)
+	if !ok {
+		return nil
+	}
+	id := storeID(profile, in)
+	for _, e := range own {
+		if e.StoreID == id {
+			return nil
+		}
+	}
+	for _, r := range results {
+		if r.StoreID != id || r.Reason != tbcomplete.ReasonNoMatch {
+			continue
+		}
+		for _, c := range carried {
+			if c.StoreID == id {
+				return []state.TBID{c}
+			}
+		}
+	}
+	return nil
+}
+
 // recordRun finalizes the last-run record from the run's outcome.
 // writeLastRun is the finalizing record write; a var so a test can refuse it.
 var writeLastRun = state.WriteLastRun
@@ -1553,8 +1700,17 @@ func recordRun(opts Options, lr state.LastRun, result *Result, err *error, logge
 		// design §7, slice C2): a plaintext run that ended ok only. Nothing about it is written
 		// beside an encrypted archive (O1, R44); a run that failed says its failure (§11).
 		if !lr.Encrypted && opts.Key == nil && len(result.Thunderbird) > 0 {
+			carried := lr.ThunderbirdNames // the previous record's names (newRunRecord)
+			carriedIDs := lr.ThunderbirdIDs
 			lr.Thunderbird = tbRecords(result.Thunderbird, result.tbPrev, lr.Finished)
 			lr.ThunderbirdMore = tbRecordsMore(result.Thunderbird)
+			lr.ThunderbirdNames = nil // this run's own entries keep the names (RV3-01): written as before
+			// …except a one-folder archive's name, kept across a run that found no live account for
+			// its folder (design revision 2.2; MA-1504).
+			lr.ThunderbirdNames = oneFolderNameKept(opts, result.Thunderbird, carried)
+			// Each store's account identity, this run's own, and a one-folder archive's kept as its name
+			// is (design revision 3).
+			lr.ThunderbirdIDs = append(append([]state.TBID(nil), result.tbIDs...), oneFolderIDKept(opts, result.Thunderbird, result.tbIDs, carriedIDs)...)
 		}
 		if lr.Encrypted && result.IndexBehind {
 			// The backup finished, but its search index misses messages until a later
@@ -1964,9 +2120,116 @@ func snapshot(src, dir string) (string, func(), error) {
 // DiscoverInputs expands the given files/directories and, if auto is set, the
 // default Outlook, Thunderbird, and Evolution locations into a deduplicated list
 // of data files/stores.
-func DiscoverInputs(inputs []string, auto bool) ([]string, error) {
+//
+// With auto set, a listed input that is gone is skipped instead of refused when
+// autoplace.GoneSkippable accepts it (it is gone, not a dangling link; it lies where
+// auto-discovery looks; its parent folder is still there, as a real folder, in that
+// place) and a mailbox remains after the skips: skipped lists them, in list order
+// (design-1.7.5-fixes §1.2, MA-1471). Otherwise a gone input refuses as before, with
+// the typed sourceUnreachableError naming the first listed input the rule does not
+// skip, or, when only "a mailbox remains" fails, the first gone one. Every caller gets
+// skipped: one that does not report it discards it on purpose, saying why. A gone input
+// whose Thunderbird account was moved, not removed, is never skipped, and its refusal says
+// where the account went (autoplace.MovedTo, MA-1481).
+func DiscoverInputs(inputs []string, auto bool) (files, skipped []string, err error) {
+	return DiscoverInputsFor(inputs, auto, nil)
+}
+
+// RecordedAccount is what an archive's previous record kept of the account of an input's folder: its
+// name (autoplace.RecordedName) and, since docs/design-per-mailbox-archives.md revision 3, its fixed
+// identity (autoplace.RecordedID). Either may be "".
+type RecordedAccount struct {
+	Name, ID string
+}
+
+// RecordedNamesAt reads the previous last-run record of the archive at out once and gives, for an
+// input, the account name it recorded for that folder (autoplace.RecordedName) and, since revision 3,
+// that account's identity (autoplace.RecordedID); nil when out is "". The run and the command line's
+// up-front check pass it to DiscoverInputsFor (RV2-01).
+func RecordedNamesAt(out string) func(string) RecordedAccount {
+	if out == "" {
+		return nil
+	}
+	prev, st, _ := state.ReadLastRun(out)
+	if st != state.LastRunPresent {
+		return nil
+	}
+	return func(in string) RecordedAccount {
+		return RecordedAccount{Name: autoplace.RecordedName(prev, in), ID: autoplace.RecordedID(prev, in)}
+	}
+}
+
+// movedAway reports, for an archive of the one folder in (there, auto-discovery off) whose previous
+// record kept rec, where its account keeps its mail now when Thunderbird no longer uses in (C2, MA-1504):
+// the settings say for certain that no live account uses the folder (autoplace.NoLiveOwner, F-01), and
+// the account moved: by the identity the record kept (autoplace.MovedByID, revision 3: exactly one live
+// account has it, its folder elsewhere), else, for a record with a name and no identity (every record
+// before revision 3), by that name as revision 2.2 decides it (autoplace.MovedHowAs, decided by the
+// name).
+func movedAway(in string, rec RecordedAccount) (string, bool) {
+	if (rec.ID == "" && rec.Name == "") || !autoplace.NoLiveOwner(in) {
+		return "", false
+	}
+	if rec.ID != "" {
+		return autoplace.MovedByID(in, rec.ID)
+	}
+	dir, moved, byName := autoplace.MovedHowAs(in, rec.Name)
+	return dir, moved && byName
+}
+
+// ThunderbirdMovedAway reports whether a run of the archive at out, of the one folder in with
+// auto-discovery off, would stop because Thunderbird no longer uses in and its account now keeps its
+// mail elsewhere (C2, by the identity the archive's record kept, else by its name: movedAway). The
+// set's plan asks it before continuing an archive, so it never plans "brought up to date" for one
+// whose run would stop (docs/design-per-mailbox-archives.md revision 3, the adversarial pass's
+// CON-06). False when out has no record that can be read, or in is not a folder there.
+func ThunderbirdMovedAway(out, in string) bool {
+	recorded := RecordedNamesAt(out)
+	if recorded == nil {
+		return false
+	}
+	if fi, err := os.Stat(in); err != nil || !fi.IsDir() {
+		return false
+	}
+	_, moved := movedAway(in, recorded(in))
+	return moved
+}
+
+// ThunderbirdReused reports whether a run of the archive at out, of the one folder in with
+// auto-discovery off, would stop because Thunderbird now uses in for a different account than the one
+// whose identity the archive's record kept (revision 3's reused, INS-03, MA-1509), as the run decides
+// it: not moved away first (movedAway), then autoplace.ReusedByID. The set's plan asks it before
+// continuing an archive or leaving it paused, so the mailbox gets an archive of its own and the old
+// one is kept as it is (the re-verify of rounds A and B, RV-01). False when out has no record that can
+// be read, the record keeps no identity for in, or in is not a folder there.
+func ThunderbirdReused(out, in string) bool {
+	recorded := RecordedNamesAt(out)
+	if recorded == nil {
+		return false
+	}
+	if fi, err := os.Stat(in); err != nil || !fi.IsDir() {
+		return false
+	}
+	rec := recorded(in)
+	if _, moved := movedAway(in, rec); moved {
+		return false
+	}
+	return rec.ID != "" && autoplace.ReusedByID(in, rec.ID)
+}
+
+// DiscoverInputsFor is DiscoverInputs with nameOf, what the archive's previous record kept of each
+// input's folder's account (nil, or "" fields, for none): its name decides first whether a gone
+// Thunderbird folder's account was moved or removed (autoplace.GoneSkippableAs; the 1.7.5 re-verify's
+// RV2-01); for an archive of one listed folder, auto-discovery off, its identity decides C2, F-08 and
+// C13 where the record keeps one (docs/design-per-mailbox-archives.md revision 3).
+func DiscoverInputsFor(inputs []string, auto bool, nameOf func(string) RecordedAccount) (files, skipped []string, err error) {
+	recorded := func(in string) RecordedAccount {
+		if nameOf == nil {
+			return RecordedAccount{}
+		}
+		return nameOf(in)
+	}
 	seen := map[string]bool{}
-	var files []string
 	add := func(p string) {
 		abs, err := filepath.Abs(p)
 		if err != nil {
@@ -1978,13 +2241,89 @@ func DiscoverInputs(inputs []string, auto bool) ([]string, error) {
 		}
 	}
 
+	// An archive of one listed folder, auto-discovery off: the previous record's name for its folder
+	// decides whether Thunderbird stopped using it (docs/design-per-mailbox-archives.md §11, C2, F-08,
+	// C13; MA-1504, MA-1506).
+	one := !auto && len(inputs) == 1
 	for _, in := range inputs {
 		info, err := os.Stat(in)
 		if err != nil {
 			if errors.Is(err, fs.ErrNotExist) {
-				return nil, &sourceUnreachableError{path: in}
+				var rec RecordedAccount
+				if auto || one {
+					rec = recorded(in)
+				}
+				name := rec.Name
+				if auto && autoplace.GoneSkippableAs(in, name) {
+					skipped = append(skipped, in)
+					continue
+				}
+				if auto {
+					// A Thunderbird account moved, not removed: stopped as 1.7.4 did, in words that say
+					// where it went (MA-1481; the owner, 2026-11-20, Q7: "Stop the backup").
+					if dir, moved, byName := autoplace.MovedHowAs(in, name); moved {
+						return nil, nil, &sourceUnreachableError{path: in, movedTo: dir, sameServer: !byName}
+					}
+				}
+				switch {
+				case one && rec.ID != "":
+					// Revision 3: the account known by the identity the record kept. F-08: exactly one
+					// live account has it, keeping its mail elsewhere: the moved stop's words. C13: no
+					// live account has it (a renamed account is not removed, INS-05): the removed
+					// account's words. Either way the typed stop, as before.
+					if dir, moved := autoplace.MovedByID(in, rec.ID); moved {
+						return nil, nil, &sourceUnreachableError{path: in, movedTo: dir, one: true}
+					}
+					if autoplace.RemovedByID(in, rec.ID) {
+						return nil, nil, &sourceUnreachableError{path: in, removed: true}
+					}
+				case one && name != "":
+					// A record with a name and no identity (revision 2.2's rules). F-08: the folder gone,
+					// and the account the record named now keeps its mail elsewhere: the moved stop's
+					// words. C13: no live account has that name any more: the removed account's words.
+					// Either way the typed stop, as before.
+					if dir, moved, byName := autoplace.MovedHowAs(in, name); moved && byName {
+						return nil, nil, &sourceUnreachableError{path: in, movedTo: dir, one: true}
+					}
+					if autoplace.RemovedAs(in, name) {
+						return nil, nil, &sourceUnreachableError{path: in, removed: true}
+					}
+				}
+				return nil, nil, &sourceUnreachableError{path: in}
 			}
-			return nil, fmt.Errorf("input %s: %w", in, err)
+			// An input that cannot be examined (any error but "does not exist", which the skip rule
+			// judges): refused as a gone input the rule does not skip is, typed, so the run is recorded
+			// failed in the refusal's words and the streak moves. Windows CI at 1ba95c8: a dangling link
+			// spelled with a trailing "\" gives ERROR_DIRECTORY, and the run ended untyped. It was the
+			// plain error "input PATH: ERR", also a refusal; an input that exists but cannot be read
+			// passes this check, as before.
+			// Narrowed by the lead, 2026-11-21: only an error that says the path leads nowhere (a
+			// component that is not a folder: ENOTDIR, or Windows' ERROR_DIRECTORY) is the typed refusal.
+			// A permission error or any other failure to look stays the plain error, inconclusive about
+			// the source (classifySourceReach: a present-but-unreadable source is never "gone"), so it
+			// never moves the streak toward the warning and the 30-day pause, and is never told "does
+			// not exist".
+			if pathLeadsNowhere(err) {
+				return nil, nil, &sourceUnreachableError{path: in}
+			}
+			return nil, nil, fmt.Errorf("input %s: %w", in, err)
+		}
+		// C2 (the owner's Q7 extended, MA-1504): the folder is still there, but Thunderbird no longer
+		// uses it. Stopped, as a moved account's run is, when the record names the folder's account,
+		// the profile's settings say for certain that no live account uses the folder (F-01), and
+		// exactly one live account is that account, with its folder elsewhere: by the identity the
+		// record kept (revision 3), else by its name (movedAway).
+		if one && info.IsDir() {
+			rec := recorded(in)
+			if dir, moved := movedAway(in, rec); moved {
+				return nil, nil, &sourceUnreachableError{path: in, movedTo: dir, one: true}
+			}
+			// Revision 3's reused (INS-03, MA-1509): the folder is there and a live account owns it, but
+			// not the account whose identity the record kept: Thunderbird gave the folder to another
+			// account. Stopped before anything is read, so no other account's mail is added.
+			if rec.ID != "" && autoplace.ReusedByID(in, rec.ID) {
+				return nil, nil, &sourceUnreachableError{path: in, reused: true}
+			}
 		}
 		if info.IsDir() {
 			if source.IsMailStoreDir(in) {
@@ -1992,7 +2331,7 @@ func DiscoverInputs(inputs []string, auto bool) ([]string, error) {
 			} else {
 				found, err := scanDir(in)
 				if err != nil {
-					return nil, err
+					return nil, nil, err
 				}
 				for _, f := range found {
 					add(f)
@@ -2008,7 +2347,12 @@ func DiscoverInputs(inputs []string, auto bool) ([]string, error) {
 			add(f)
 		}
 	}
-	return files, nil
+	// (d): a mailbox must remain after the skips, or the run refuses as before, naming the
+	// first gone input.
+	if len(skipped) > 0 && len(files) == 0 {
+		return nil, nil, &sourceUnreachableError{path: skipped[0]}
+	}
+	return files, skipped, nil
 }
 
 func scanDir(dir string) ([]string, error) {
@@ -2044,8 +2388,10 @@ func autoDiscover() []string {
 	// Outlook data files. Skip any that can't be parsed — Outlook leaves orphaned
 	// or stub .ost files behind (e.g. from removed accounts) that would otherwise
 	// pad the picker with unreadable entries. A file that is merely locked by a
-	// running Outlook is kept (DataFileReadable is lock-tolerant).
-	for _, g := range outlookGlobs() {
+	// running Outlook is kept (DataFileReadable is lock-tolerant). The patterns live
+	// in internal/autoplace, beside the rule that skips a gone input in their places
+	// (MA-1471), so the two cannot disagree.
+	for _, g := range autoplace.OutlookGlobs() {
 		matches, _ := filepath.Glob(g)
 		for _, m := range matches {
 			if source.DataFileReadable(m) {
@@ -2055,7 +2401,7 @@ func autoDiscover() []string {
 	}
 
 	// Thunderbird and Evolution account/store directories (only real stores).
-	for _, g := range append(thunderbirdGlobs(), evolutionGlobs()...) {
+	for _, g := range append(autoplace.ThunderbirdGlobs(), autoplace.EvolutionGlobs()...) {
 		matches, _ := filepath.Glob(g)
 		for _, m := range matches {
 			if fi, err := os.Stat(m); err == nil && fi.IsDir() && source.IsMailStoreDir(m) {
@@ -2064,56 +2410,6 @@ func autoDiscover() []string {
 		}
 	}
 	return out
-}
-
-func outlookGlobs() []string {
-	var globs []string
-	if la := os.Getenv("LOCALAPPDATA"); la != "" {
-		globs = append(globs, filepath.Join(la, "Microsoft", "Outlook", "*.ost"))
-		globs = append(globs, filepath.Join(la, "Microsoft", "Outlook", "*.pst"))
-	}
-	if up := os.Getenv("USERPROFILE"); up != "" {
-		globs = append(globs, filepath.Join(up, "Documents", "Outlook Files", "*.pst"))
-	}
-	return globs
-}
-
-func thunderbirdGlobs() []string {
-	home, err := os.UserHomeDir()
-	if err != nil {
-		return nil
-	}
-	roots := []string{
-		filepath.Join(home, ".thunderbird"),
-		filepath.Join(home, "snap", "thunderbird", "common", ".thunderbird"),
-		filepath.Join(home, ".mozilla-thunderbird"),
-		filepath.Join(home, "Library", "Thunderbird", "Profiles"),
-	}
-	if ad := os.Getenv("APPDATA"); ad != "" {
-		roots = append(roots, filepath.Join(ad, "Thunderbird", "Profiles"))
-	}
-	var globs []string
-	for _, r := range roots {
-		// Each account under ImapMail/ and Mail/ (incl. "Local Folders") is a store.
-		globs = append(globs, filepath.Join(r, "*", "ImapMail", "*"))
-		globs = append(globs, filepath.Join(r, "*", "Mail", "*"))
-	}
-	return globs
-}
-
-// evolutionGlobs returns the default Evolution store locations: the local
-// Maildir++ store and each IMAP account's disk cache (native and Flatpak paths).
-func evolutionGlobs() []string {
-	home, err := os.UserHomeDir()
-	if err != nil {
-		return nil
-	}
-	return []string{
-		filepath.Join(home, ".local", "share", "evolution", "mail", "local"),
-		filepath.Join(home, ".var", "app", "org.gnome.Evolution", "data", "evolution", "mail", "local"),
-		filepath.Join(home, ".cache", "evolution", "mail", "*"),
-		filepath.Join(home, ".var", "app", "org.gnome.Evolution", "cache", "evolution", "mail", "*"),
-	}
 }
 
 func isDataFile(name string) bool {

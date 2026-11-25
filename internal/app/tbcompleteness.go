@@ -21,6 +21,7 @@ import (
 	"strings"
 	"time"
 
+	"mail-archive-tool/internal/autoplace"
 	"mail-archive-tool/internal/lockfile"
 	"mail-archive-tool/internal/schedule"
 	"mail-archive-tool/internal/source"
@@ -97,13 +98,8 @@ func holdsMsf(dir string) bool {
 // streak and the record's carry-forward key on it, so two stores with one folder name are never
 // one account (ADV-C2-01). A hash, so no path is written beside the archive.
 func storeID(profile, store string) string {
-	norm := func(p string) string {
-		if p == "" {
-			return ""
-		}
-		return tbcomplete.FolderIdentity(filepath.ToSlash(filepath.Clean(absOrSame(p))))
-	}
-	return fingerprint("tbstore\x00" + norm(profile) + "\x00" + norm(store))
+	// One function with the reader of the names (autoplace.RecordedName, RV2-01): the same hash.
+	return autoplace.StoreID(profile, store)
 }
 
 // planTB is what the check needs of a local source before its walk: its profile and account,
@@ -253,6 +249,28 @@ func assessThunderbird(stores []*tbStore, now time.Time) []tbcomplete.Result {
 			continue
 		}
 		out = append(out, r)
+	}
+	return out
+}
+
+// tbIdentities are the identities of the accounts that own the run's stores, each beside its store's
+// id as the run's results key it (docs/design-per-mailbox-archives.md revision 3): one for each result
+// whose store an account owns and whose account has an identity (thunderbird.StoreFacts.Identity, read
+// with its name), in the results' order, at most state.TBAccountsMax.
+func tbIdentities(stores []*tbStore, results []tbcomplete.Result) []state.TBID {
+	byStore := map[string]string{}
+	for _, t := range stores {
+		if t.facts.Account != nil && t.facts.Identity != "" {
+			byStore[storeID(t.profile, t.storeDir())] = t.facts.Identity
+		}
+	}
+	var out []state.TBID
+	seen := map[string]bool{}
+	for _, r := range results {
+		if id := byStore[r.StoreID]; id != "" && !seen[r.StoreID] && len(out) < state.TBAccountsMax {
+			seen[r.StoreID] = true
+			out = append(out, state.TBID{StoreID: r.StoreID, ID: id})
+		}
 	}
 	return out
 }

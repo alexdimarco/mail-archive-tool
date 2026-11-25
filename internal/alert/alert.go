@@ -16,6 +16,7 @@ import (
 	"strconv"
 	"strings"
 	"time"
+	"unicode/utf8"
 )
 
 // Provider presets.
@@ -343,7 +344,7 @@ func (c Config) Message(ev Event) []byte {
 	var m strings.Builder
 	fmt.Fprintf(&m, "From: %s\r\n", header(c.From))
 	fmt.Fprintf(&m, "To: %s\r\n", header(strings.Join(c.Recipients(), ", ")))
-	fmt.Fprintf(&m, "Subject: %s\r\n", header(subject))
+	fmt.Fprintf(&m, "Subject: %s\r\n", subjectHeader(subject))
 	m.WriteString("MIME-Version: 1.0\r\n")
 	m.WriteString("Content-Type: text/plain; charset=utf-8\r\n")
 	m.WriteString("\r\n")
@@ -355,6 +356,78 @@ func (c Config) Message(ev Event) []byte {
 // error message) placed in a header cannot add headers of its own.
 func header(v string) string {
 	return strings.NewReplacer("\r", " ", "\n", " ").Replace(v)
+}
+
+// subjectHeader is the Subject header's value: header's, and, when it holds any byte outside ASCII
+// (an archive folder named for its mailbox, "Søren", or the subjects' own dash), RFC 2047 encoded
+// words (mime.QEncoding), so the header line is ASCII and a mail program reads it back as written
+// (docs/design-per-mailbox-archives.md §4, C31, MA-1508). An ASCII subject is unchanged.
+func subjectHeader(subject string) string {
+	s := header(subject)
+	for i := 0; i < len(s); i++ {
+		if s[i] >= 0x80 {
+			return foldEncoded(s, len("Subject: "))
+		}
+	}
+	return s
+}
+
+// subjectLineMax is the longest line, in octets and without its CRLF, an encoded Subject is folded
+// into (RFC 5322 §2.1.1's 78), and encodedWordMax the longest encoded word (RFC 2047 §2's 75).
+const (
+	subjectLineMax = 78
+	encodedWordMax = 75
+)
+
+// foldEncoded is s as RFC 2047 Q-encoded words in UTF-8, as mime.QEncoding writes them, folded (the
+// adversarial pass's OUT-01): each word holds whole characters and is at most encodedWordMax octets,
+// and the words are joined by CRLF and a space, so that no line is over subjectLineMax octets, the
+// first counting the lead octets before it ("Subject: "). A mail program unfolds the lines and joins
+// the words, so the subject reads back as written. Before, mime.QEncoding joined its words with plain
+// spaces on one line, which a long folder name made longer than a mail server may take.
+func foldEncoded(s string, lead int) string {
+	const pre, post = "=?utf-8?q?", "?="
+	room := func(first bool) int {
+		if first {
+			return min(encodedWordMax, subjectLineMax-lead)
+		}
+		return min(encodedWordMax, subjectLineMax-1) // after the folding space
+	}
+	var words []string
+	var cur strings.Builder
+	limit := room(true)
+	for i := 0; i < len(s); {
+		_, size := utf8.DecodeRuneInString(s[i:])
+		enc := qEncoded(s[i : i+size])
+		if cur.Len() > 0 && len(pre)+cur.Len()+len(enc)+len(post) > limit {
+			words = append(words, pre+cur.String()+post)
+			cur.Reset()
+			limit = room(false)
+		}
+		cur.WriteString(enc)
+		i += size
+	}
+	if cur.Len() > 0 {
+		words = append(words, pre+cur.String()+post)
+	}
+	return strings.Join(words, "\r\n ")
+}
+
+// qEncoded is the bytes of one character in RFC 2047's Q encoding, as mime.QEncoding writes them: a
+// space is "_", printable ASCII other than "=", "?" and "_" is itself, any other byte is "=XX".
+func qEncoded(c string) string {
+	var b strings.Builder
+	for i := 0; i < len(c); i++ {
+		switch x := c[i]; {
+		case x == ' ':
+			b.WriteByte('_')
+		case x >= '!' && x <= '~' && x != '=' && x != '?' && x != '_':
+			b.WriteByte(x)
+		default:
+			fmt.Fprintf(&b, "=%02X", x)
+		}
+	}
+	return b.String()
 }
 
 // transport sends a prepared message to addr. The default dials real SMTP; a test

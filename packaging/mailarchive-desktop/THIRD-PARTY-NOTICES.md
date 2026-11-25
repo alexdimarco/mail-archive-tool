@@ -37,3 +37,7 @@ cache / vendor tree.
 
 SQLite itself (embedded via modernc.org/sqlite, a pure-Go transpilation) is
 public domain. The Go standard library is BSD-3-Clause (The Go Authors).
+
+github.com/ncruces/zenity v0.10.12 is built from a modified copy kept in
+MailArchive's source tree (third_party/zenity; MIT, as above), changed so its
+Windows dialogs fit their words.

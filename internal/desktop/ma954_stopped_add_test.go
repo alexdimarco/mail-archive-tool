@@ -19,9 +19,14 @@ import (
 // is added to the list, the page is not reloaded as for a finished one, and the note
 // says, whole, that it was stopped, what it holds and how to finish it. A folder the
 // copy never reached (no archive in it) is not added, and the note says so.
+//
+// Amended 2026-11-25 (docs/design-per-mailbox-archives.md step 4, MA-1499; nothing
+// weakened): wizard.ErrStoppedEarly is gone; the add flow (now addArchivesFn,
+// wizard.AddArchives) says a stopped copy in its outcome, wizard.MadeStopped, beside the
+// folder. Each case keeps its old answer beside it, and every assertion is unchanged.
 func TestStoppedCopyIsNotReportedAsAdded(t *testing.T) {
-	restore := addArchiveFn
-	defer func() { addArchiveFn = restore }()
+	restore := addArchivesFn
+	defer func() { addArchivesFn = restore }()
 	post := func(d *dashboard) string {
 		req := httptest.NewRequest("POST", "http://127.0.0.1:8097/api/add-archive", nil)
 		req.Header.Set("Origin", "http://127.0.0.1:8097")
@@ -39,7 +44,7 @@ func TestStoppedCopyIsNotReportedAsAdded(t *testing.T) {
 	done := t.TempDir()
 	writeManifest(t, done)
 	idx := filepath.Join(t.TempDir(), archindex.Name)
-	addArchiveFn = func() (string, error) { return done, nil }
+	addArchivesFn = func() ([]wizard.Made, error) { return madeOne(done), nil } // was: return done, nil
 	body := post(newDashboard(Config{SettingsPath: filepath.Join(t.TempDir(), "s.json"), IndexPath: idx}))
 	if !strings.Contains(body, `"ok":true`) || !strings.Contains(body, "Archive added") || len(listed(idx)) != 1 {
 		t.Fatalf("positive twin: a finished copy: %s, listed %v", body, listed(idx))
@@ -49,7 +54,7 @@ func TestStoppedCopyIsNotReportedAsAdded(t *testing.T) {
 	part := t.TempDir()
 	writeManifest(t, part)
 	idx2 := filepath.Join(t.TempDir(), archindex.Name)
-	addArchiveFn = func() (string, error) { return part, wizard.ErrStoppedEarly }
+	addArchivesFn = func() ([]wizard.Made, error) { return madeStopped(part), nil } // was: return part, wizard.ErrStoppedEarly
 	body = assure.Reached(t, post(newDashboard(Config{SettingsPath: filepath.Join(t.TempDir(), "s2.json"), IndexPath: idx2})), "the stopped add's reply")
 	if strings.Contains(body, `"ok":true`) || strings.Contains(body, "Archive added") || !strings.Contains(body, `"stopped":true`) {
 		t.Errorf("a stopped copy is reported as added: %s", body)
@@ -64,7 +69,7 @@ func TestStoppedCopyIsNotReportedAsAdded(t *testing.T) {
 	// Stopped before any mail reached the folder.
 	empty := t.TempDir()
 	idx3 := filepath.Join(t.TempDir(), archindex.Name)
-	addArchiveFn = func() (string, error) { return empty, wizard.ErrStoppedEarly }
+	addArchivesFn = func() ([]wizard.Made, error) { return madeStopped(empty), nil } // was: return empty, wizard.ErrStoppedEarly
 	body = post(newDashboard(Config{SettingsPath: filepath.Join(t.TempDir(), "s3.json"), IndexPath: idx3}))
 	if strings.Contains(body, `"ok":true`) || !strings.Contains(body, stoppedEmptyMessage) {
 		t.Errorf("a copy stopped before any mail: want %q in %s", stoppedEmptyMessage, body)
@@ -77,6 +82,12 @@ func TestStoppedCopyIsNotReportedAsAdded(t *testing.T) {
 	if !strings.Contains(dashboardJS, "n.textContent=d.message||d.error||'Could not add an archive.'") {
 		t.Error("the page does not show the add's message for a stopped copy")
 	}
+}
+
+// madeStopped is what the add flow answers for one archive whose copy was stopped part way into
+// folder (before 2026-11-25: the folder with wizard.ErrStoppedEarly).
+func madeStopped(folder string) []wizard.Made {
+	return []wizard.Made{{Folder: folder, Name: filepath.Base(folder), Outcome: wizard.MadeStopped, Reason: "the export was cancelled"}}
 }
 
 const (

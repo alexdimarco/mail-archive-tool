@@ -44,7 +44,10 @@ func NewCommandLineDelete(store vault.Store, sched archdelete.Scheduler, install
 // (Config.deletionsLogPath), so `-config` on the command-line verbs reaches the same list and log.
 func NewCommandLineDeleteAt(cfgPath string, store vault.Store, sched archdelete.Scheduler, installed func() []schedule.InstalledEntry) *CommandLineDelete {
 	cfg := Config{ConfigPath: cfgPath, SettingsPath: settingsPathFor(cfgPath), IndexPath: indexPathFor(cfgPath),
-		Version: buildVersion(), DeleteScheduler: sched, DeleteInstalled: installed}
+		Version: buildVersion(), DeleteScheduler: sched, DeleteInstalled: installed,
+		// The made-list as the Desktop reads it (MA-1500): its rows as the Desktop draws them, and
+		// Remove from list and Delete strike their folder from it as the Desktop's do.
+		MadeList: madeListPath()}
 	return &CommandLineDelete{cfg: cfg, store: store}
 }
 

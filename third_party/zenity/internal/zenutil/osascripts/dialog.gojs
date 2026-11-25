@@ -1,0 +1,25 @@
+ObjC.import('stdio')
+ObjC.import('stdlib')
+{{template "common" .}}
+
+var opts = {{json .Options}}
+{{- if .IconPath}}
+  opts.withIcon = Path({{json .IconPath}})
+{{- end}}
+
+try {
+  var res = app.{{.Operation}}({{json .Text}}, opts)
+} catch (e) {
+  if (e.errorNumber === -128) $.exit(1)
+  $.dprintf(2, e)
+  $.exit(-1)
+}
+
+if (res.gaveUp) {
+  $.exit(5)
+}
+if (res.buttonReturned === {{json .Extra}}) {
+  $.puts({{json .Extra}})
+  $.exit(1)
+}
+res.textReturned

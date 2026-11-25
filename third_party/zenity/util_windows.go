@@ -1,0 +1,579 @@
+package zenity
+
+import (
+	"bytes"
+	"context"
+	"io"
+	"os"
+	"path/filepath"
+	"runtime"
+	"strconv"
+	"sync"
+	"sync/atomic"
+	"syscall"
+	"unsafe"
+
+	"github.com/ncruces/zenity/internal/win"
+)
+
+const (
+	_WS_ZEN_DIALOG    = win.WS_POPUPWINDOW | win.WS_CLIPSIBLINGS | win.WS_DLGFRAME
+	_WS_EX_ZEN_DIALOG = win.WS_EX_CONTROLPARENT | win.WS_EX_WINDOWEDGE | win.WS_EX_DLGMODALFRAME
+	_WS_ZEN_LABEL     = win.WS_CHILD | win.WS_VISIBLE | win.WS_GROUP | win.SS_WORDELLIPSIS | win.SS_EDITCONTROL | win.SS_NOPREFIX
+	_WS_ZEN_CONTROL   = win.WS_CHILD | win.WS_VISIBLE | win.WS_GROUP | win.WS_TABSTOP
+	_WS_ZEN_BUTTON    = _WS_ZEN_CONTROL
+)
+
+func intptr(i int64) uintptr  { return uintptr(i) }
+func strptr(s string) *uint16 { return syscall.StringToUTF16Ptr(s) }
+
+func setup(wnd win.HWND) context.CancelFunc {
+	if wnd == 0 {
+		win.EnumWindows(syscall.NewCallback(setupEnumCallback), unsafe.Pointer(&wnd))
+	}
+	if wnd == 0 {
+		wnd = win.GetConsoleWindow()
+	}
+	if wnd != 0 {
+		win.SetForegroundWindow(wnd)
+	}
+
+	runtime.LockOSThread()
+
+	var restore uintptr
+	cookie := enableVisualStyles()
+	for dpi := win.DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE_V2; dpi <= win.DPI_AWARENESS_CONTEXT_SYSTEM_AWARE; dpi++ {
+		var err error
+		restore, err = win.SetThreadDpiAwarenessContext(dpi)
+		if restore != 0 || err != nil {
+			break
+		}
+	}
+
+	var icc win.INITCOMMONCONTROLSEX
+	icc.Size = uint32(unsafe.Sizeof(icc))
+	icc.ICC = win.ICC_STANDARD_CLASSES | win.ICC_DATE_CLASSES | win.ICC_PROGRESS_CLASS
+	win.InitCommonControlsEx(&icc)
+
+	return func() {
+		if restore != 0 {
+			win.SetThreadDpiAwarenessContext(restore)
+		}
+		if cookie != 0 {
+			win.DeactivateActCtx(0, cookie)
+		}
+		runtime.UnlockOSThread()
+	}
+}
+
+func setupEnumCallback(wnd win.HWND, lparam *win.HWND) uintptr {
+	var pid uint32
+	win.GetWindowThreadProcessId(wnd, &pid)
+	if int(pid) == os.Getpid() {
+		*lparam = wnd
+		return 0 // stop enumeration
+	}
+	return 1 // continue enumeration
+}
+
+func hookDialog(ctx context.Context, icon any, title *string, init func(wnd win.HWND)) (unhook context.CancelFunc, err error) {
+	if ctx == nil && icon == nil && title == nil && init == nil {
+		return func() {}, nil
+	}
+	if ctx != nil && ctx.Err() != nil {
+		return nil, ctx.Err()
+	}
+	hook, err := newDialogHook(ctx, icon, title, init)
+	if err != nil {
+		return nil, err
+	}
+	return hook.unhook, nil
+}
+
+type dialogHook struct {
+	ctx   context.Context
+	tid   uint32
+	wnd   uintptr
+	hook  win.Handle
+	done  chan struct{}
+	icon  icon
+	title *string
+	init  func(wnd win.HWND)
+}
+
+func newDialogHook(ctx context.Context, icon any, title *string, init func(wnd win.HWND)) (*dialogHook, error) {
+	tid := win.GetCurrentThreadId()
+	hk, err := win.SetWindowsHookEx(win.WH_CALLWNDPROCRET,
+		syscall.NewCallback(dialogHookProc), 0, tid)
+	if hk == 0 {
+		return nil, err
+	}
+	ico, _ := getIcon(icon)
+
+	hook := dialogHook{
+		ctx:   ctx,
+		tid:   tid,
+		hook:  hk,
+		icon:  ico,
+		title: title,
+		init:  init,
+	}
+	if ctx != nil && ctx.Done() != nil {
+		hook.done = make(chan struct{})
+		go hook.wait()
+	}
+
+	saveBackRef(uintptr(tid), unsafe.Pointer(&hook))
+	return &hook, nil
+}
+
+func dialogHookProc(code int32, wparam uintptr, lparam *win.CWPRETSTRUCT) uintptr {
+	// MailArchive's patch: after the dialog handles a DPI change, run its init again, so a
+	// message box re-flows its renamed buttons at the new DPI (fit.go). Only message boxes
+	// pass an init, and renaming again changes nothing.
+	if lparam.Message == win.WM_DPICHANGED {
+		hook := (*dialogHook)(loadBackRef(uintptr(win.GetCurrentThreadId())))
+		if hook != nil && hook.init != nil && uintptr(lparam.Wnd) == atomic.LoadUintptr(&hook.wnd) {
+			hook.init(lparam.Wnd)
+		}
+	}
+	if lparam.Message == win.WM_INITDIALOG {
+		tid := win.GetCurrentThreadId()
+		hook := (*dialogHook)(loadBackRef(uintptr(tid)))
+		atomic.StoreUintptr(&hook.wnd, uintptr(lparam.Wnd))
+		if hook.ctx != nil && hook.ctx.Err() != nil {
+			win.SendMessage(lparam.Wnd, win.WM_SYSCOMMAND, win.SC_CLOSE, 0)
+		} else {
+			if hook.icon.handle != 0 {
+				win.SendMessage(lparam.Wnd, win.WM_SETICON, 0, uintptr(hook.icon.handle))
+			}
+			if hook.title != nil {
+				win.SetWindowText(lparam.Wnd, strptr(*hook.title))
+			}
+			if hook.init != nil {
+				hook.init(lparam.Wnd)
+			}
+		}
+	}
+	return win.CallNextHookEx(0, code, wparam, unsafe.Pointer(lparam))
+}
+
+func (h *dialogHook) unhook() {
+	deleteBackRef(uintptr(h.tid))
+	if h.done != nil {
+		close(h.done)
+	}
+	h.icon.delete()
+	win.UnhookWindowsHookEx(h.hook)
+}
+
+func (h *dialogHook) wait() {
+	select {
+	case <-h.ctx.Done():
+		if wnd := atomic.LoadUintptr(&h.wnd); wnd != 0 {
+			win.SendMessage(win.HWND(wnd), win.WM_SYSCOMMAND, win.SC_CLOSE, 0)
+		}
+	case <-h.done:
+	}
+}
+
+var backRefs struct {
+	sync.Mutex
+	m map[uintptr]unsafe.Pointer
+}
+
+func saveBackRef(id uintptr, ptr unsafe.Pointer) {
+	backRefs.Lock()
+	defer backRefs.Unlock()
+	if backRefs.m == nil {
+		backRefs.m = map[uintptr]unsafe.Pointer{}
+	} else if _, ok := backRefs.m[id]; ok {
+		panic("saveBackRef")
+	}
+	backRefs.m[id] = ptr
+}
+
+func loadBackRef(id uintptr) unsafe.Pointer {
+	backRefs.Lock()
+	defer backRefs.Unlock()
+	return backRefs.m[id]
+}
+
+func deleteBackRef(id uintptr) {
+	backRefs.Lock()
+	defer backRefs.Unlock()
+	delete(backRefs.m, id)
+}
+
+type dpi int
+
+func getDPI(wnd win.HWND) dpi {
+	res, _ := win.GetDpiForWindow(wnd)
+	if res != 0 {
+		return dpi(res)
+	}
+
+	if dc := win.GetWindowDC(wnd); dc != 0 {
+		res = win.GetDeviceCaps(dc, win.LOGPIXELSY)
+		win.ReleaseDC(wnd, dc)
+	}
+
+	if res == 0 {
+		return win.USER_DEFAULT_SCREEN_DPI
+	}
+	return dpi(res)
+}
+
+func (d dpi) scale(dim int) int {
+	if d == 0 {
+		return dim
+	}
+	return dim * int(d) / win.USER_DEFAULT_SCREEN_DPI
+}
+
+type font struct {
+	handle  win.Handle
+	logical win.LOGFONT
+}
+
+func getFont() font {
+	var metrics win.NONCLIENTMETRICS
+	metrics.Size = uint32(unsafe.Sizeof(metrics))
+	win.SystemParametersInfo(win.SPI_GETNONCLIENTMETRICS,
+		unsafe.Sizeof(metrics), unsafe.Pointer(&metrics), 0)
+	return font{logical: metrics.MessageFont}
+}
+
+func (f *font) forDPI(dpi dpi) uintptr {
+	if h := -int32(dpi.scale(12)); f.handle == 0 || f.logical.Height != h {
+		f.delete()
+		f.logical.Height = h
+		f.handle = win.CreateFontIndirect(&f.logical)
+	}
+	return uintptr(f.handle)
+}
+
+func (f *font) delete() {
+	if f.handle != 0 {
+		win.DeleteObject(f.handle)
+		f.handle = 0
+	}
+}
+
+type icon struct {
+	handle  win.Handle
+	destroy bool
+}
+
+func getIcon(i any) (icon icon, err error) {
+	var resource uintptr
+	switch i {
+	case ErrorIcon:
+		resource = win.IDI_ERROR
+	case QuestionIcon:
+		resource = win.IDI_QUESTION
+	case WarningIcon:
+		resource = win.IDI_WARNING
+	case InfoIcon:
+		resource = win.IDI_INFORMATION
+	}
+	if resource != 0 {
+		icon.handle, err = win.LoadIcon(0, resource)
+		return icon, err
+	}
+
+	path, ok := i.(string)
+	if !ok {
+		return icon, nil
+	}
+
+	file, err := os.Open(path)
+	if err != nil {
+		return icon, err
+	}
+	defer file.Close()
+
+	var peek [8]byte
+	_, err = file.ReadAt(peek[:], 0)
+	if err != nil {
+		return icon, err
+	}
+
+	if bytes.Equal(peek[:], []byte("\x89PNG\r\n\x1a\n")) {
+		data, err := io.ReadAll(file)
+		if err != nil {
+			return icon, err
+		}
+		icon.handle, err = win.CreateIconFromResourceEx(
+			data, true, 0x00030000, 0, 0,
+			win.LR_DEFAULTSIZE)
+		if err != nil {
+			return icon, err
+		}
+	} else {
+		instance, err := win.GetModuleHandle(nil)
+		if err != nil {
+			return icon, err
+		}
+		path, err = filepath.Abs(path)
+		if err != nil {
+			return icon, err
+		}
+		var i uint16
+		icon.handle, err = win.ExtractAssociatedIcon(
+			instance, strptr(path), &i)
+		if err != nil {
+			return icon, err
+		}
+	}
+	icon.destroy = true
+	return icon, nil
+}
+
+func (i *icon) delete() {
+	if i.handle != 0 && i.destroy {
+		win.DestroyIcon(i.handle)
+		i.handle = 0
+	}
+}
+
+func centerWindow(wnd win.HWND) {
+	var rect win.RECT
+	win.GetWindowRect(wnd, &rect)
+	x := win.GetSystemMetrics(win.SM_CXSCREEN) - int(rect.Right-rect.Left)
+	y := win.GetSystemMetrics(win.SM_CYSCREEN) - int(rect.Bottom-rect.Top)
+	win.SetWindowPos(wnd, 0, x/2, y/2, 0, 0, win.SWP_NOZORDER|win.SWP_NOSIZE)
+}
+
+func registerClass(instance, icon win.Handle, proc uintptr) (*uint16, error) {
+	name := "WC_" + strconv.FormatUint(uint64(proc), 16)
+
+	var wcx win.WNDCLASSEX
+	wcx.Size = uint32(unsafe.Sizeof(wcx))
+	wcx.WndProc = proc
+	wcx.Icon = icon
+	wcx.Instance = instance
+	wcx.Background = win.COLOR_WINDOW
+	wcx.ClassName = strptr(name)
+
+	if err := win.RegisterClassEx(&wcx); err != nil {
+		return nil, err
+	}
+	return wcx.ClassName, nil
+}
+
+// https://stackoverflow.com/questions/4308503/how-to-enable-visual-styles-without-a-manifest
+func enableVisualStyles() (cookie uintptr) {
+	dir, err := win.GetSystemDirectory()
+	if err != nil {
+		return
+	}
+
+	var ctx win.ACTCTX
+	ctx.Size = uint32(unsafe.Sizeof(ctx))
+	ctx.Flags = win.ACTCTX_FLAG_RESOURCE_NAME_VALID | win.ACTCTX_FLAG_SET_PROCESS_DEFAULT | win.ACTCTX_FLAG_ASSEMBLY_DIRECTORY_VALID
+	ctx.Source = strptr("shell32.dll")
+	ctx.AssemblyDirectory = strptr(dir)
+	ctx.ResourceName = 124
+
+	if hnd, err := win.CreateActCtx(&ctx); err == nil {
+		win.ActivateActCtx(hnd, &cookie)
+		win.ReleaseActCtx(hnd)
+	}
+	return
+}
+
+// MailArchive's patch: the Windows dialogs fit their words (fit.go; MailArchive's
+// docs/design-windows-dialog-fit.md §4.3). What follows measures and applies; fit.go
+// does the arithmetic.
+
+// _WS_ZEN_FIT_LABEL is the label style of a dialog laid out to fit its words: upstream's,
+// without the ellipsis, so the lines wrap.
+const _WS_ZEN_FIT_LABEL = _WS_ZEN_LABEL &^ win.SS_WORDELLIPSIS
+
+// fitTextChanged tells a progress dialog, on its own thread, that its text changed.
+const fitTextChanged = win.WM_APP + 1
+
+// fitAlphabet gives the dialog font's average character width.
+const fitAlphabet = "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ"
+
+// fitText measures text with a dialog's own font at the window's DPI, with the flags a
+// label draws it with. It runs on the dialog's thread, and takes and releases one window
+// DC for each measurement, putting the DC's own font back first; it never deletes the font.
+type fitText struct {
+	wnd  win.HWND
+	font win.Handle
+}
+
+func (m fitText) measure(text string, width int, format uint32) (w, h int, ok bool) {
+	format |= win.DT_CALCRECT
+	if text == "" || m.wnd == 0 || m.font == 0 {
+		return 0, 0, false
+	}
+	p, err := syscall.UTF16PtrFromString(text)
+	if err != nil {
+		return 0, 0, false
+	}
+	dc := win.GetWindowDC(m.wnd)
+	if dc == 0 {
+		return 0, 0, false
+	}
+	defer win.ReleaseDC(m.wnd, dc)
+	old := win.SelectObject(dc, m.font)
+	defer win.SelectObject(dc, old)
+	rect := win.RECT{Right: int32(width)}
+	if win.DrawText(dc, p, -1, &rect, format) == 0 {
+		return 0, 0, false
+	}
+	return int(rect.Right - rect.Left), int(rect.Bottom - rect.Top), true
+}
+
+func (m fitText) line(text string) (int, int, bool) {
+	return m.measure(text, 0, win.DT_SINGLELINE|win.DT_NOPREFIX|win.DT_EXPANDTABS)
+}
+
+func (m fitText) wrapped(text string, width int) (int, int, bool) {
+	return m.measure(text, width, win.DT_WORDBREAK|win.DT_EDITCONTROL|win.DT_NOPREFIX|win.DT_EXPANDTABS)
+}
+
+// label measures a button's text as the button draws it: on one line, an ampersand
+// marking the next letter as its shortcut.
+func (m fitText) label(text string) (int, int, bool) {
+	return m.measure(text, 0, win.DT_SINGLELINE|win.DT_EXPANDTABS)
+}
+
+// fitWorkArea is the work area of the monitor wnd is on, in device pixels; zero when it
+// cannot be read, which keeps upstream's layout.
+func fitWorkArea(wnd win.HWND) fitRect {
+	return fitMonitorWork(win.MonitorFromWindow(wnd, win.MONITOR_DEFAULTTONEAREST))
+}
+
+// fitWorkAreaAt is the work area of the monitor nearest to r: after a DPI change, the one
+// the rectangle Windows suggests lies on (§4.3, DPI changes).
+func fitWorkAreaAt(r *win.RECT) fitRect {
+	return fitMonitorWork(win.MonitorFromRect(r, win.MONITOR_DEFAULTTONEAREST))
+}
+
+// fitMonitorWork is a monitor's work area in device pixels; zero when it cannot be read.
+func fitMonitorWork(mon win.Handle) fitRect {
+	var mi win.MONITORINFO
+	mi.Size = uint32(unsafe.Sizeof(mi))
+	if mon == 0 || win.GetMonitorInfo(mon, &mi) != nil {
+		return fitRect{}
+	}
+	return fitRect{X: int(mi.Work.Left), Y: int(mi.Work.Top),
+		W: int(mi.Work.Right - mi.Work.Left), H: int(mi.Work.Bottom - mi.Work.Top)}
+}
+
+// fitMetric is a system metric at the window's DPI; where Windows lacks
+// GetSystemMetricsForDpi, the thread is system aware and GetSystemMetrics answers for it.
+func fitMetric(index int, d dpi) int {
+	if v, err := win.GetSystemMetricsForDpi(index, uint32(d)); err == nil {
+		return v
+	}
+	return win.GetSystemMetrics(index)
+}
+
+// fitEnvironment reads what fit.go needs for a dialog window at d, in the work area work.
+// A dialog not yet placed is at 0,0 (a pop-up window's CW_USEDEFAULT), on the primary
+// monitor upstream centres on.
+func fitEnvironment(wnd win.HWND, d dpi, m fitText, work fitRect) fitEnv {
+	e := fitEnv{DPI: int(d), Work: work}
+	var r win.RECT
+	if win.AdjustWindowRectExForDpi(&r, _WS_ZEN_DIALOG, false, _WS_EX_ZEN_DIALOG, uint32(d)) == nil {
+		e.Frame = fitSize{W: int(r.Right - r.Left), H: int(r.Bottom - r.Top)}
+	} else {
+		var wr, cr win.RECT
+		if win.GetWindowRect(wnd, &wr) == nil && win.GetClientRect(wnd, &cr) == nil {
+			e.Frame = fitSize{W: int(wr.Right-wr.Left) - int(cr.Right-cr.Left), H: int(wr.Bottom-wr.Top) - int(cr.Bottom-cr.Top)}
+		}
+	}
+	e.VScroll = fitMetric(win.SM_CXVSCROLL, d)
+	e.HScroll = fitMetric(win.SM_CYHSCROLL, d)
+	e.Edge = fitMetric(win.SM_CXEDGE, d)
+	if _, h, ok := m.line("Ag"); ok {
+		e.LineH = h
+	}
+	if w, _, ok := m.line(fitAlphabet); ok {
+		e.AvgChar = (w + len(fitAlphabet) - 1) / len(fitAlphabet)
+	}
+	return e
+}
+
+// fitPlace moves and sizes a control or a dialog window without activating it, so a
+// dialog that changes size never takes the keyboard (R39).
+func fitPlace(wnd win.HWND, r fitRect) {
+	if wnd != 0 {
+		win.SetWindowPos(wnd, 0, r.X, r.Y, r.W, r.H, win.SWP_NOZORDER|win.SWP_NOACTIVATE)
+	}
+}
+
+// fitResize sizes a dialog window where it is, without activating it.
+func fitResize(wnd win.HWND, s fitSize) {
+	win.SetWindowPos(wnd, 0, 0, 0, s.W, s.H, win.SWP_NOMOVE|win.SWP_NOZORDER|win.SWP_NOACTIVATE)
+}
+
+// fitShow shows one of two controls and hides the other, never activating either.
+func fitShow(show, hide win.HWND) {
+	if show != 0 {
+		win.ShowWindow(show, win.SW_SHOWNA)
+	}
+	if hide != 0 {
+		win.ShowWindow(hide, win.SW_HIDE)
+	}
+}
+
+// fitWindowRect is wnd's rectangle on the screen.
+func fitWindowRect(wnd win.HWND) fitRect {
+	var r win.RECT
+	win.GetWindowRect(wnd, &r)
+	return fitRect{X: int(r.Left), Y: int(r.Top), W: int(r.Right - r.Left), H: int(r.Bottom - r.Top)}
+}
+
+// fitCenterWindow centres a laid-out dialog in its monitor's work area (centerWindow uses
+// the whole primary screen).
+func fitCenterWindow(wnd win.HWND) {
+	cur := fitWindowRect(wnd)
+	fitPlace(wnd, fitCenter(fitSize{W: cur.W, H: cur.H}, fitWorkArea(wnd)))
+}
+
+// fitPlaceWindow sizes a laid-out dialog window without activating it: where it is, or,
+// after a DPI change, in one move to the top-left corner of the rectangle Windows
+// suggests (at), moved only as far as it must to lie inside work, the work area of the
+// monitor that rectangle lies on (§4.3, DPI changes). Callers place the controls first,
+// so a DPI change that arrives during this move lays the dialog out last.
+func fitPlaceWindow(wnd win.HWND, s fitSize, at *win.RECT, work fitRect) {
+	if at == nil {
+		fitResize(wnd, s)
+		return
+	}
+	r := fitRect{X: int(at.Left), Y: int(at.Top), W: s.W, H: s.H}
+	if work.W > 0 && work.H > 0 {
+		r = fitInside(r, work)
+	}
+	fitPlace(wnd, r)
+}
+
+// fitCRLF writes every line break as CR LF, the only break an edit control draws.
+func fitCRLF(s string) string {
+	b := make([]byte, 0, len(s))
+	for i := 0; i < len(s); i++ {
+		if s[i] == '\n' && (i == 0 || s[i-1] != '\r') {
+			b = append(b, '\r')
+		}
+		b = append(b, s[i])
+	}
+	return string(b)
+}
+
+// fitButtonLabels are a dialog's button labels, left to right in upstream's order: OK, the
+// extra button, Cancel.
+func fitButtonLabels(ok, extra, cancel *string) []string {
+	var labels []string
+	for _, l := range []*string{ok, extra, cancel} {
+		if l != nil {
+			labels = append(labels, *l)
+		}
+	}
+	return labels
+}

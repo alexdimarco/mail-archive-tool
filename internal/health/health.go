@@ -22,6 +22,7 @@ import (
 	"mail-archive-tool/internal/job"
 	"mail-archive-tool/internal/lockfile"
 	"mail-archive-tool/internal/procs"
+	"mail-archive-tool/internal/autoplace"
 	"mail-archive-tool/internal/schedule"
 	"mail-archive-tool/internal/state"
 	"mail-archive-tool/internal/util"
@@ -63,6 +64,13 @@ type Input struct {
 	// GOOS shapes OS-specific wording (e.g. the staleness question: cron runs
 	// unattended, launchd/schtasks need a login). Empty defaults to the host.
 	GOOS string
+
+	// GoneRepair, when set, is GoneMailboxRepairableInput's answer for Out ("" for no, else the
+	// gone mailbox), asked by the caller within its own time limit: the Desktop's health view asks
+	// it inside withinSourceWait, so drawing the page never waits on a mail source's storage
+	// (MA-869, C-17; the 1.7.5 adversarial pass's OUT-01). Assess then uses it and looks at no path
+	// the record names. Nil: Assess asks the helper itself (status).
+	GoneRepair *string
 
 	// OutUnderSync names the cloud-sync service (e.g. "OneDrive") when the
 	// archive sits inside a synced folder; "" when it does not.
@@ -369,6 +377,9 @@ type Report struct {
 	// now is the time the report was assessed at, so the JSON judges the capture
 	// gaps' stuck threshold at the same instant the reasons did.
 	now time.Time
+	// goneAsked and goneNamed memoize goneRepair, so status asks the Repair helper once.
+	goneAsked bool
+	goneNamed string
 }
 
 // localStamp is how status writes a local time: with its zone named, since the
@@ -439,9 +450,25 @@ func IntervalOf(iv string) time.Duration {
 	}
 }
 
+// goneRepair is the gone mailbox a Repair would now get past (GoneMailboxRepairableInput, MA-1479),
+// "" for none: asked once, and only when a line needs it; the caller's answer when it gave one
+// (in.GoneRepair, the Desktop's bounded ask).
+func (r *Report) goneRepair(in Input) string {
+	if !r.goneAsked {
+		r.goneAsked = true
+		if in.GoneRepair != nil {
+			r.goneNamed = *in.GoneRepair
+		} else {
+			r.goneNamed, _ = GoneMailboxRepairableInput(in.Out)
+		}
+	}
+	return r.goneNamed
+}
+
 // Assess applies the posture rules, failing closed on missing evidence.
 func Assess(in Input, now time.Time) Report {
 	r := Report{Posture: "GREEN", now: now}
+	goneRepair := func() string { return r.goneRepair(in) }
 
 	// A delete of this archive that did not finish (§5.4; the 1.5.3 friction review's B2): the
 	// folder may be partly deleted, and the remedy is to finish it. Said alone: every other reason
@@ -512,7 +539,32 @@ func Assess(in Input, now time.Time) Report {
 			if !s.FirstUnreachable.IsZero() {
 				since = s.FirstUnreachable.Format("Jan 2, 2006")
 			}
-			r.warn("source_lost", fmt.Sprintf("this archive's source has not been reachable since %s — reconnect the source (its mailbox or mail folder) to resume backups", since))
+			// A Thunderbird account's stop whose refused record kept its reason (moved or removed):
+			// that reason's words, the banner's too, since reconnecting or Repair cannot help there
+			// (docs/design-per-mailbox-archives.md §11, F-03; MA-1506). Plaintext records only.
+			reason := ""
+			if in.LastRunState == state.LastRunPresent && !in.LastRun.Encrypted && !encmark.MustMinimise(in.Out) {
+				reason = in.LastRun.SourceReason
+			}
+			if words := SourceReasonText(reason, s.FirstUnreachable); words != "" {
+				r.warn("source_lost", words)
+			} else if named := goneRepair(); named != "" {
+				// A mail account removed: MailArchive now skips its gone folder, so Repair (or Run
+				// now) backs up the others (MA-1479); said only where a run would get past it, naming
+				// the missing mailbox (the friction review's F10). With its scheduled entry there (a
+				// Repair done, or not yet paused), the next backup skips it by itself (F2).
+				click := "click Repair (or Run now)"
+				if manualBackup(in) {
+					click = "click Run now"
+				}
+				if in.HasDescriptor && !manualBackup(in) && in.SchedState == schedule.Installed {
+					r.warn("source_lost", fmt.Sprintf("this archive's source has not been reachable since %s (the missing mailbox: %s) — its scheduled backup is set, and MailArchive now skips a mailbox that is gone, so the next backup backs up the others; to back up now, click Run now on the archive's Scheduled backup card in MailArchive Desktop", since, named))
+				} else {
+					r.warn("source_lost", fmt.Sprintf("this archive's source has not been reachable since %s (the missing mailbox: %s) — if a mail account was removed, %s on the archive's Scheduled backup card in MailArchive Desktop: MailArchive now skips a mailbox that is gone and backs up the others; otherwise reconnect the source (its mailbox or mail folder) to resume backups", since, named, click))
+				}
+			} else {
+				r.warn("source_lost", fmt.Sprintf("this archive's source has not been reachable since %s — reconnect the source (its mailbox or mail folder) to resume backups", since))
+			}
 		}
 	}
 
@@ -572,6 +624,11 @@ func Assess(in Input, now time.Time) Report {
 			} else if !recordRed && lr.Status == state.RunOK {
 				r.note(lr.Program, state.ProgramText(lr.Program))
 			}
+		}
+		// A mailbox it backs up that is gone, skipped (MA-1478): fixed sentences whose only
+		// variable is the date the record holds.
+		if lr := in.LastRun; in.LastRunState == state.LastRunPresent && lr.Encrypted && lr.MailboxGone {
+			encryptedMailboxGone(&r, lr)
 		}
 	} else {
 		assessContents(&r, in, now)
@@ -755,7 +812,15 @@ func assessKeyless(r *Report, in Input, now time.Time) {
 				r.red("run_failed", fmt.Sprintf("the last backup (%s) did not save everything: %s", lr.Started.Local().Format(localStamp), strings.Join(state.PartialSentences(*p), " ")))
 				break
 			}
-			r.red("run_failed", fmt.Sprintf("the last run (%s) FAILED: %s", lr.Started.Local().Format(localStamp), runErrorText(in, lr)))
+			text := runErrorText(in, lr)
+			// A refusal on a gone mailbox a Repair would now get past: its drive advice is dropped,
+			// since the WARN below says a removed account is fine (the 1.7.5 friction review's F10).
+			if !lr.Encrypted && strings.HasSuffix(lr.Error, " does not exist (check the path, or that the drive holding it is mounted)") {
+				if named := r.goneRepair(in); named != "" && lr.Error == autoplace.GoneText(named) {
+					text = "input " + named + " does not exist"
+				}
+			}
+			r.red("run_failed", fmt.Sprintf("the last run (%s) FAILED: %s", lr.Started.Local().Format(localStamp), text))
 			// A breaker trip is recorded by kind as an outage; its text (the server's
 			// last words, the mailbox's name) is not read for needles (S3-AC5).
 			if lr.ErrorKind != state.ErrKindServiceUnavailable && looksLikeAuthFailure(lr.Error) {
@@ -784,6 +849,7 @@ func assessKeyless(r *Report, in Input, now time.Time) {
 		// file, the archive and the remedy. Only the codes defined here are shown
 		// (the record is writable by anyone who can write the archive), and they
 		// come from the last run alone, so a run without the problem clears them.
+		gone := 0 // mailbox_gone warnings said: at most state.MaxGoneWarnings (INS-06)
 		for _, w := range lr.Warnings {
 			switch w.Code {
 			case "credential_in_archive", "config_in_archive":
@@ -810,6 +876,22 @@ func assessKeyless(r *Report, in Input, now time.Time) {
 				// codes (presync_no_activity, presync_already_running, …) are deliberately
 				// absent, so they stay GREEN.
 				r.warn(w.Code, w.Message)
+			case state.MailboxGoneCode:
+				// A mailbox a combined archive backs up that is gone, skipped (MA-1471): status's
+				// own words from Path, Name and Since, never the recorded Message; a WARN for 14
+				// days of backups, then a note (MA-1472). At most state.MaxGoneWarnings are said; a
+				// planted record's rest is one count (the 1.7.5 adversarial pass's INS-06).
+				if gone++; gone <= state.MaxGoneWarnings {
+					mailboxGone(r, lr, w)
+				}
+			}
+		}
+		if more := gone - state.MaxGoneWarnings; more > 0 {
+			// One more is said in the singular (the 1.7.5 re-verify's RF-08).
+			if more == 1 {
+				r.warn(state.MailboxGoneCode, "1 more mailbox this archive backs up is no longer on this computer (not listed here)")
+			} else {
+				r.warn(state.MailboxGoneCode, fmt.Sprintf("%d more mailboxes this archive backs up are no longer on this computer (not listed here)", more))
 			}
 		}
 		// How much of each Thunderbird account Thunderbird had downloaded (the completeness

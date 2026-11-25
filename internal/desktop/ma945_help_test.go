@@ -239,6 +239,10 @@ var helpSentences = []string{
 	// Getting started
 	"MailArchive keeps a copy of your mail in an archive folder on this computer. Each backup adds the mail that is new, and you can read and search the archive in your browser.",
 	"Click Use this archive if the page offers it, or click Open an archive folder… and choose the archive's folder.",
+	// One archive for each mailbox (docs/design-per-mailbox-archives.md; the friction review's F5 and
+	// F1): the choice, the one folder, the plan, one summary and one schedule question, no sync, and
+	// how to back up a mailbox added later.
+	"If you choose All of them, the wizard also asks whether to keep them in one archive or give each mailbox its own: with One archive for each mailbox you choose one folder to hold them all, see a plan of what it will make before anything is written, answer the other questions once, and get one summary and one schedule question. A set of archives gets no Thunderbird sync, and each archive it makes is added to Your archives. To back up a mailbox you add to Thunderbird later: click Make a new archive…, choose All of them, then One archive for each mailbox, and the same folder.",
 	// Make a new archive… (MA-953, the owner's ruling C of 2026-10-31): the page's own button,
 	// the wizard's add flow in process; the new archive is listed, not made current.
 	"Thunderbird, Outlook or other mail files on this computer: click Make a new archive… on this page, and the MailArchive wizard's windows open on your computer. Choose your mail, then a new folder for the archive.",
@@ -307,7 +311,10 @@ type helpPlatform struct {
 var helpSyncSentences = []string{
 	"MailArchive only reads your mail: it never sends, moves, changes or deletes it. The exceptions are the Thunderbird sync, if you turn it on, and the wizard's offer to turn on Thunderbird's offline download (see Thunderbird below).",
 	// The wizard asks about the sync after a Yes to the schedule question (offerSchedule).
-	"For Thunderbird mail the wizard then asks Sync Thunderbird before each scheduled backup? (see Thunderbird below). You can also set How often and the sync later in Settings on this page.",
+	// Amended 2026-11-25 (the per-mailbox friction review's F5; nothing weakened): a set is never
+	// asked, so the sentence says "For one archive of Thunderbird mail"; it read "For Thunderbird
+	// mail the wizard then asks …" before.
+	"For one archive of Thunderbird mail the wizard then asks Sync Thunderbird before each scheduled backup? (see Thunderbird below). You can also set How often and the sync later in Settings on this page.",
 	"Sync Thunderbird before each backup. Thunderbird saves new mail only while it is running. With this setting on, each backup first starts Thunderbird and waits for its mail, so the archive also gets mail that had only reached the mail server. It is off until you turn it on: choose Yes — sync Thunderbird first when the MailArchive wizard asks Sync Thunderbird before each scheduled backup?, or, in Settings, choose How often, tick Sync Thunderbird before each backup, then click Save settings.",
 	// A missed time is caught up on wake (Windows: StartWhenAvailable; macOS: launchd's
 	// StartCalendarInterval, launchd.plist(5)); only a switched-off computer skips it.

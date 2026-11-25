@@ -7,10 +7,24 @@ import (
 )
 
 // messageDialog and listDialog are the dialogs textThenList opens; a test replaces them with
-// recorders.
+// recorders. questionDialog and folderDialog are the question and the folder chooser a set's steps
+// open (docs/design-per-mailbox-archives.md §3, §6, §8), replaced by recorders in their tests too.
+// entryDialog and errorDialog are the date window's question and its note (askSince), and
+// progressDialog the progress window of a set's exports and of the download wait (§9), so a test of
+// a set's whole flow opens no real window. The one-archive export (runExport) opens its progress
+// window, its cancel note and its summary through progressDialog, messageDialog and questionDialog
+// too (round D), so a test of its run log opens none either.
 var (
-	messageDialog = zenity.Info
-	listDialog    = zenity.List
+	messageDialog  = zenity.Info
+	listDialog     = zenity.List
+	questionDialog = zenity.Question
+	folderDialog   = zenity.SelectFile
+	entryDialog    = zenity.Entry
+	errorDialog    = zenity.Error
+	// progressDialog opens a pulsing progress window titled title.
+	progressDialog = func(title string) (zenity.ProgressDialog, error) {
+		return zenity.Progress(zenity.Title(title), zenity.Pulsate())
+	}
 )
 
 // healthListPrompt is the launch health view's list prompt on Linux and the BSDs, where the health

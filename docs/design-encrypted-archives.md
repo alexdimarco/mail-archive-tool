@@ -414,6 +414,11 @@ encrypted archive those cleartext files carry ONLY: last-run time, ok/failed, co
 source-missing count + since-date, auto-paused flag. The job flags, source path, source kind
 and per-run counts move into the encrypted manifest. Disclosed residual (unchanged from the
 resolution): file sizes, file count, timestamps, and the minimised status above.
+*Amended 2026-11-20 (the owner, Q3, Q5 and Q6 of docs/design-1.7.5-fixes.md §0, each "Yes
+(Recommended)"; MA-734 amended, MA-1478): those files also carry, in the last-run record only,
+whether the last run skipped a gone mailbox and the time one was first found gone, and how many
+mailboxes it skipped, a number only: no path, name or other count. The text above is kept as it
+was written.*
 
 **A7 — Vault split + generation + header MAC.** The vault (`.mailarchive-vault.json` +
 `.mailarchive-vault.bak.json`) holds only: format version, archive_id, a monotonic

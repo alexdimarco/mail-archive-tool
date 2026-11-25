@@ -8,6 +8,7 @@ import (
 
 	"mail-archive-tool/internal/archindex"
 	"mail-archive-tool/internal/assure"
+	"mail-archive-tool/internal/wizard"
 )
 
 // pageSpan is the HTML of the page from the element with this id up to the next
@@ -91,11 +92,11 @@ func TestMakeANewArchiveIsOfferedWhereAPersonLooks(t *testing.T) {
 	// Through that path from the fresh Desktop: the wizard's add flow (its seam) makes an
 	// archive; the page then lists it under Your archives with Switch to this archive, and
 	// it is not yet current.
-	restore := addArchiveFn
-	defer func() { addArchiveFn = restore }()
+	restore := addArchivesFn
+	defer func() { addArchivesFn = restore }()
 	made := t.TempDir()
 	writeManifest(t, made)
-	addArchiveFn = func() (string, error) { return made, nil }
+	addArchivesFn = func() ([]wizard.Made, error) { return madeOne(made), nil } // was: return made, nil (MA-1499 renamed the seam)
 	d := newDashboard(cfg)
 	req := httptest.NewRequest("POST", "http://127.0.0.1:8097/api/add-archive", nil)
 	req.Header.Set("Origin", "http://127.0.0.1:8097")

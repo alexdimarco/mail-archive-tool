@@ -51,11 +51,16 @@ func TestScheduleWordsSayWhatSleepDoes(t *testing.T) {
 	}
 
 	// Structural: offerSchedule's dialogs (zenity, not driven in a test) show these words.
+	// Restated 2026-11-20 (docs/design-1.7.5-fixes.md §2, MA-1474): the question is asked by
+	// askSchedule through the listDialog seam, so the first needle, which was
+	// "zenity.List(scheduleQuestionFor(runtime.GOOS),", is now "listDialog(scheduleQuestionFor(
+	// runtime.GOOS)," and offerSchedule's call of askSchedule; MA-1474's test also drives the
+	// question and checks its text.
 	src, err := os.ReadFile("wizard.go")
 	if err != nil {
 		t.Fatal(err)
 	}
-	for _, wired := range []string{"zenity.List(scheduleQuestionFor(runtime.GOOS),", "note := scheduleRunsNoteFor(runtime.GOOS)"} {
+	for _, wired := range []string{"askSchedule(runtime.GOOS)", "listDialog(scheduleQuestionFor(runtime.GOOS),", "note := scheduleRunsNoteFor(runtime.GOOS)"} {
 		if !strings.Contains(string(src), wired) {
 			t.Errorf("offerSchedule does not show the words: %q is gone from wizard.go", wired)
 		}

@@ -43,4 +43,7 @@ github.com/emersion/go-message v0.16.0 and github.com/emersion/go-textwrapper
 mime/quotedprintable, encoding/base64 and internal/byteorder (BSD-3-Clause, The
 Go Authors). They are the frozen parser that decides a message's identity
 (docs/design-mime-fidelity.md, MC27); their licence texts are the LICENSE-*
-files in internal/source/parsev1/.
+files in internal/source/parsev1/. third_party/zenity/ holds a modified copy of
+github.com/ncruces/zenity v0.10.12 (MIT, as above; its LICENSE is kept there),
+changed in the files its UPSTREAM.md lists, so its Windows dialogs fit their words
+(docs/design-windows-dialog-fit.md).

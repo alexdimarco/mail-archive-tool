@@ -16,11 +16,11 @@ import (
 // asks "What would you like to do?". The wizard in the running MailArchive (RunIn) asks
 // "What mail do you want to add or back up?" over the launcher's items.
 func TestMA1406_TheLauncherWizardAsksItsOwnQuestion(t *testing.T) {
-	orig := firstListDialog
-	t.Cleanup(func() { firstListDialog = orig })
+	orig := listDialog
+	t.Cleanup(func() { listDialog = orig })
 	var prompts []string
 	var lists [][]string
-	firstListDialog = func(text string, items []string, _ ...zenity.Option) (string, error) {
+	listDialog = func(text string, items []string, _ ...zenity.Option) (string, error) {
 		prompts = append(prompts, text)
 		lists = append(lists, items)
 		return "", zenity.ErrCanceled

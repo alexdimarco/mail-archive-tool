@@ -15,10 +15,12 @@ import (
 	"mail-archive-tool/internal/assure"
 )
 
-var deleteRoutes = []string{"/api/archive/delete/plan", "/api/archive/delete", "/api/archive/delete/dismiss", "/api/archive/unlist"}
+// Amended 2026-11-20 (docs/design-1.7.5-fixes.md §3.1, MA-971 amended): five routes, the fifth the
+// delete plan's discard, with the same guards.
+var deleteRoutes = []string{"/api/archive/delete/plan", "/api/archive/delete", "/api/archive/delete/discard", "/api/archive/delete/dismiss", "/api/archive/unlist"}
 
 // covers: MA-971, R36, S41
-// The four delete routes are guarded POSTs (design-archive-delete §3.1, §3.2, §11 "Routes";
+// The five delete routes are guarded POSTs (design-archive-delete §3.1, §3.2, §11 "Routes";
 // C20): GET is 405 with Allow: POST; a POST with no token, a wrong token, a foreign Origin or a
 // foreign Host is 403 and refused; a body over the cap is 413; each with the JSON headers. A
 // refused request changes nothing: the archive byte-identical, its row listed, the settings,

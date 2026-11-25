@@ -46,8 +46,17 @@ jobs:
       - name: Test (assurance gates must be green before shipping)
         run: go test ./... -timeout 20m
 
+      # zenity is built from its copy in third_party/zenity, which govulncheck cannot match
+      # to the module's advisories: scan again as if the published v0.10.12 were used, for
+      # the whole module and for the Windows program MailArchive ships (./cmd/mailarchive,
+      # mailarchive.exe and mailarchivew.exe), whose dialogs are most of what MailArchive calls
+      # in it (docs/design-windows-dialog-fit.md §7, MA-1468).
       - name: Vulnerability scan (a reachable known vulnerability blocks the release)
-        run: go run golang.org/x/vuln/cmd/govulncheck@v1.8.0 ./...
+        run: |
+          go run golang.org/x/vuln/cmd/govulncheck@v1.8.0 ./...
+          go install golang.org/x/vuln/cmd/govulncheck@v1.8.0
+          packaging/vulncheck-published-zenity.sh "$(go env GOPATH)/bin/govulncheck" ./...
+          GOOS=windows packaging/vulncheck-published-zenity.sh "$(go env GOPATH)/bin/govulncheck" ./cmd/mailarchive ./cmd/mailarchive-desktop
 
       # A release is exactly vMAJOR.MINOR.PATCH: the release-stamp gate and the program
       # copies an encrypted archive keeps rely on it (program design §7). Every tag push
@@ -59,6 +68,18 @@ jobs:
         run: |
           [[ "${GITHUB_REF_NAME}" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]] || { echo "not an exact release tag: ${GITHUB_REF_NAME}"; exit 1; }
           [ "${GITHUB_REF_NAME}" != "v0.0.0" ] || { echo "v0.0.0 is the dry run's placeholder, never a release"; exit 1; }
+
+      # The copy of zenity is checked again just before the build, from the same checkout:
+      # the copy matches its pins and the generator, the go command builds it, the module
+      # cache matches go.sum, and no file is hidden from git (skip-worktree or
+      # assume-unchanged), so a change made after the tests cannot ship (MA-1468,
+      # adversarial finding INS-07).
+      - name: The zenity copy, just before the build
+        run: |
+          go mod verify
+          go test -count=1 -run '^(TestTheZenityCopyIsThePublishedModule|TestTheBuildUsesTheZenityCopy|TestTheZenityGeneratedFileIsTheGenerators)$' ./internal/thirdparty
+          hidden="$(git ls-files -v | grep -E '^(S|[a-z]) ' || true)"
+          [ -z "$hidden" ] || { echo "files hidden from git status: $hidden"; exit 1; }
 
       - name: Build release artifacts
         run: bash packaging/build-release.sh "${RELEASE_TAG}"

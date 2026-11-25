@@ -32,14 +32,15 @@ import (
 )
 
 // Delete an archive and Remove from list, the Desktop's server side
-// (docs/design-archive-delete.md §3, §5, §7, §8, slice 3; MA-971..MA-977). The four routes
-// are guarded POSTs through d.api; the plan and Remove from list act only on a row of Your
-// archives; a delete runs only through its plan's one-use token; and each delete's result
+// (docs/design-archive-delete.md §3, §5, §7, §8, slice 3; MA-971..MA-977). The five routes (the
+// fifth, discard, since 1.7.5: MA-1475) are guarded POSTs through d.api; the plan and Remove from
+// list act only on a row of Your archives; a delete runs only through its plan's one-use token; and
+// each delete's result
 // and deletion record are held here until the person dismisses it or shuts MailArchive
 // down. What a delete removes, in which order and with which words, is archdelete's: this
 // file only says how its steps reach this computer's scheduler, settings and keys.
 
-// deleteBodyMax caps the four routes' bodies, inside d.api's 1 MiB: a path, a token, a name.
+// deleteBodyMax caps the five routes' bodies, inside d.api's 1 MiB: a path, a token, a name.
 const deleteBodyMax = 64 << 10
 
 // The routes' own refusals (builder's words).
@@ -49,6 +50,12 @@ const (
 	notHeldText         = "That result is no longer held: reload the page."
 	deleteTooLargeText  = "That request is too large for MailArchive Desktop (64 KiB), so nothing was changed. Reload the page and try again."
 	deleteNotUnderstood = "That request was not understood — reload the page and try again."
+	// An armed delete's two refusals (docs/design-1.7.5-fixes.md §3.2, MA-1476; the friction review
+	// owns the final words).
+	armedNotArmableText = "The check found something to look at before deleting, so nothing was deleted. Read the plan, then click Delete permanently."
+	armedOtherRowText   = "This delete was asked from another row's panel, so nothing was deleted. Click Delete… on the archive's own row."
+	// An armed delete whose own row was removed from the list during its check (OUT-02).
+	armedUnlistedText = "This archive was removed from Your archives while its check ran, so nothing was deleted."
 )
 
 // The plan's fixed lines (§3.1, §2, §6, §9).
@@ -74,8 +81,12 @@ type heldPlan struct {
 // new plan of the folder replaces the old one and nothing else.
 func deletePlanKey(row string) string {
 	_, k := keyOf(row)
-	return "delete\x00" + k
+	return deletePlanKeyOf(k)
 }
+
+// deletePlanKeyOf is the pending store's key of a delete planned for the folder whose archive key
+// (keyOf) is key: Lock ends it by it (Q10).
+func deletePlanKeyOf(key string) string { return "delete\x00" + key }
 
 // readDeleteBody decodes one of the four routes' JSON bodies, refusing one over the cap with
 // 413 and one it cannot read with 400; ok is false when it has answered.
@@ -487,6 +498,14 @@ func planView(p *archdelete.DeletePlan) map[string]any {
 		"doesNotReach": doesNotReachLine(runtime.GOOS),
 		"logLine":      deleteLogLine,
 		"threeLine":    deleteThreeLine,
+		// Whether Delete when the check finishes may delete it unseen (MA-1476): the function the
+		// delete route refuses an armed delete by. Not "plain", which kind already says.
+		"armable": armable(p),
+	}
+	// What needs a decision, in F7's closed list, for the panel's first line when an armed check
+	// finds it; sent only when there is something.
+	if r := decideReasons(p); len(r) > 0 {
+		m["decide"] = r
 	}
 	if p.Paused {
 		m["pausedLine"] = "This archive is paused."
@@ -505,6 +524,46 @@ func planView(p *archdelete.DeletePlan) map[string]any {
 		m["threeLine"] = deleteThreeLine + deleteThreeLineEncrypted
 	}
 	return m
+}
+
+// armable reports whether nothing in the plan needs the person's decision, so Delete when the check
+// finishes may delete it without first showing it (docs/design-1.7.5-fixes.md §3.2; the owner's
+// ruling of 2026-11-20, Q1, a narrow exception to X14; MA-1476). It is false when the plan holds mail
+// copies the archive did not record (the "Also delete" box needs an answer), a synced folder, a
+// schedule to check by hand or the unconfirmed and other-computer notes, files another program
+// holds, the finishing of an earlier delete (its line, its notes, a re-run), or an encrypted archive
+// (its key line). Files that are not the archive's and a paused archive do not stop it: Delete keeps
+// such files, and the result names them. planView sends it, and deleteAction refuses an armed delete
+// by it: one function, so the panel and the server cannot disagree. MA-1476's key check classifies
+// every key of the plan's reply, so a new line that needs a decision cannot leave it true unseen.
+func armable(p *archdelete.DeletePlan) bool {
+	return len(decideReasons(p)) == 0
+}
+
+// decideReasons are what in the plan needs the person's decision, each in a closed list of words
+// the panel says (the 1.7.5 friction review's F7: "the plan holds something to decide first
+// (REASON)"); armable is true exactly when there is none, so the two cannot disagree.
+func decideReasons(p *archdelete.DeletePlan) []string {
+	var r []string
+	if len(p.Unrecorded) > 0 {
+		r = append(r, "mail copies this archive did not record")
+	}
+	if p.Synced != "" {
+		r = append(r, "a synced folder")
+	}
+	if len(p.Schedules.CheckYourself) > 0 || len(p.Schedules.Unconfirmed) > 0 || len(p.Schedules.OtherHost) > 0 {
+		r = append(r, "scheduled backups to check yourself")
+	}
+	if len(p.Held) > 0 {
+		r = append(r, "files another program has open")
+	}
+	if p.FinishesLine() != "" || len(p.FinishesNotes()) > 0 || p.Rerun != archdelete.RerunNone {
+		r = append(r, "an earlier delete to finish")
+	}
+	if p.Kind == archdelete.Encrypted {
+		r = append(r, "an encrypted archive's key")
+	}
+	return r
 }
 
 // doesNotReachOn is design-archive-delete §2's "What Delete does not reach" with only this
@@ -566,6 +625,11 @@ func (d *dashboard) deleteAction(w http.ResponseWriter, r *http.Request) {
 		Typed      string `json:"typed"`
 		Unrecorded bool   `json:"unrecorded"`
 		DrawnFor   string `json:"drawnFor"`
+		// Armed is true only from Delete when the check finishes, and Row is the row its panel was
+		// opened for (its own Delete… button's path, never a value from a reply; MA-1476). Delete
+		// permanently sends neither, and is checked exactly as before.
+		Armed bool   `json:"armed"`
+		Row   string `json:"row"`
 	}
 	if !readDeleteBody(w, r, &in) {
 		return
@@ -579,6 +643,30 @@ func (d *dashboard) deleteAction(w http.ResponseWriter, r *http.Request) {
 	if name := it.deletePlan.plan.Name; !archdelete.NameMatches(in.Typed, name) {
 		refuseDelete(w, fmt.Sprintf("The name you typed does not match this folder's name, %s, so nothing was deleted. Type it exactly as shown.", name))
 		return
+	}
+	// An armed delete (docs/design-1.7.5-fixes.md §3.2; the owner's ruling of 2026-11-20, Q1) goes
+	// on only for the held plan of the row its panel was opened for, matched by the plan route's own
+	// rule, and only when nothing in that plan needs a decision, by the function planView told the
+	// panel with. Otherwise it is refused before anything begins: the token kept, no started line, no
+	// lock, no row changed. So a slip in the page, a stale page or a reply routed to the wrong panel
+	// can at most show a refusal (MA-1476).
+	if in.Armed {
+		row, ok := d.cfg.matchRow(in.Row)
+		// The held plan's own row, no longer in Your archives: Remove from list took it off while
+		// the check ran, so it is said as that, not as another row's panel (the 1.7.5 adversarial
+		// pass's OUT-02).
+		if !ok && in.Row != "" && in.Row == it.deletePlan.row {
+			refuseDelete(w, armedUnlistedText)
+			return
+		}
+		if !ok || row != it.deletePlan.row {
+			refuseDelete(w, armedOtherRowText)
+			return
+		}
+		if !armable(it.deletePlan.plan) {
+			refuseDelete(w, armedNotArmableText)
+			return
+		}
 	}
 	// Recorded as under way before its first step (MA-979), so an export, a preview, a second
 	// Delete or Remove from list of the folder, and Shut down, are refused until it ends; a
@@ -633,6 +721,16 @@ func (d *dashboard) deleteAction(w http.ResponseWriter, r *http.Request) {
 		"rows": rows, "page": pageAfterDelete(pageArchive, cleared, res)}
 	if res.Refusal != nil {
 		out["error"] = res.Message()
+		// A backup saved mail between the check and Delete (docs/design-1.7.5-fixes.md §3.1,
+		// MA-1475): the re-check under the lock refused the plan, so the page asks for it again by
+		// itself, the typed name kept. Only this refusal is marked.
+		if res.Refusal.Case == archdelete.CaseChanged {
+			out["changed"] = true
+			// Whether it is still the same folder the plan was made for (its file identity, as the
+			// plan recorded it): the page re-arms only then (the 1.7.5 re-verify's RV-03, within the
+			// owner's Q9, which named a backup in between).
+			out["sameArchive"] = it.deletePlan.plan.StillSameFolder()
+		}
 	}
 	// Refused before its started line, the plan's one-use token is spent: Delete permanently can
 	// only be told the delete is no longer waiting (del-s3b conformance gap 3).
@@ -642,6 +740,22 @@ func (d *dashboard) deleteAction(w http.ResponseWriter, r *http.Request) {
 		out["error"] = planUsedText(msg)
 	}
 	writeJSON(w, out)
+}
+
+// deleteDiscardAction ends a delete plan the page no longer shows (docs/design-1.7.5-fixes.md §3.1,
+// MA-1475, MA-971 amended): its panel's Cancel, a panel closed for another, a check's reply to a
+// panel cancelled or closed meanwhile, and the page going away post its token here. Only a delete
+// plan's token is taken; a token of any other kind is left where it is (del-s3a-A4-02). It answers ok
+// whether or not the plan was still waiting, and changes nothing else.
+func (d *dashboard) deleteDiscardAction(w http.ResponseWriter, r *http.Request) {
+	var in struct {
+		Token string `json:"token"`
+	}
+	if !readDeleteBody(w, r, &in) {
+		return
+	}
+	d.pending.discard(in.Token, isDeletePlan)
+	writeJSON(w, map[string]any{"ok": true})
 }
 
 // runUnfinishedText refuses Archive now and Run now of a current archive whose delete did not
@@ -826,7 +940,8 @@ func (cfg Config) deleteExecDeps(row string, busy func(string) bool, store vault
 func (cfg Config) deleteUnlistDeps(named []string) archdelete.UnlistDeps {
 	x := archdelete.UnlistDeps{Deps: cfg.deleteDeps(nil, nil), Scheduler: cfg.deleteScheduler(),
 		Pointers: &desktopPointers{settings: cfg.SettingsPath}, Named: named}
-	x.SettingsDir, x.ForgetRow = cfg.deleteListSeams()
+	x.SettingsDir, _ = cfg.deleteListSeams()
+	x.ForgetRow = cfg.forgetRow(true)
 	return x
 }
 
@@ -837,11 +952,41 @@ func (cfg Config) deleteListSeams() (string, func(string) error) {
 	if strings.TrimSpace(cfg.SettingsPath) != "" {
 		dir = filepath.Dir(cfg.SettingsPath)
 	}
-	var forget func(string) error
-	if strings.TrimSpace(cfg.IndexPath) != "" {
-		forget = func(row string) error { return archdelete.ForgetRowAt(cfg.IndexPath, row, runtime.GOOS) }
+	return dir, cfg.forgetRow(false)
+}
+
+// forgetRow removes a row from the Desktop's own list (nil with no list), first striking its folder
+// from the stand-alone wizard's made-list (strikeMadeFor, MA-1500), so the next page load does not
+// list it again. For Remove from list (unlist) a strike that cannot be made keeps the row: the
+// folder still holds its archive, which the made-list's line would add back. For a delete's step 9
+// it is only a tidy-up and never keeps the row: the folder is gone, and the page load strikes the
+// line of a folder that is gone.
+func (cfg Config) forgetRow(unlist bool) func(string) error {
+	if strings.TrimSpace(cfg.IndexPath) == "" {
+		return nil
 	}
-	return dir, forget
+	return func(row string) error {
+		if err := cfg.strikeMadeFor(row); err != nil && unlist {
+			return err
+		}
+		return archdelete.ForgetRowAt(cfg.IndexPath, row, runtime.GOOS)
+	}
+}
+
+// strikeMadeFor removes from the made-list every line naming row's folder, in any spelling of it
+// (sameArchiveFolder). A made-list that is not there, or cannot be read, has no line to strike:
+// the page cannot list a row from it either.
+func (cfg Config) strikeMadeFor(row string) error {
+	var strike []string
+	for _, m := range cfg.madeLines() {
+		if sameArchiveFolder(m.Path, row) {
+			strike = append(strike, m.Path)
+		}
+	}
+	if len(strike) == 0 {
+		return nil
+	}
+	return job.StrikeMade(cfg.MadeList, strike)
 }
 
 // desktopPointers are the Desktop's settings and the wizard's note as a delete clears them

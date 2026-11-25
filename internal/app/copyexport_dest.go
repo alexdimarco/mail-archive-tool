@@ -529,7 +529,13 @@ func refusalF2(dest, archive, why string, archiveSide, other bool) *CopyRefusal 
 	default:
 		msg = fmt.Sprintf("MailArchive couldn't confirm that %s is outside your archive (%s) — the two are reached through different network shares, which can show one folder under two names, so nothing was written. Choose a folder on a local drive or a USB drive, or one on the archive's own share outside the archive.", dest, archive)
 	}
-	return refuse("R-f2", msg)
+	r := refuse("R-f2", msg)
+	r.Archive, r.ArchiveSide = archive, archiveSide
+	switch why {
+	case "here", "fuse", "walk":
+		r.Cause = why
+	}
+	return r
 }
 
 // ---- classification of a view ------------------------------------------------

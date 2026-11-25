@@ -119,6 +119,19 @@ Thunderbird and Evolution on any OS). To see that set before committing to it,
 run `-auto -list`: it prints the stores that would be archived, one per line
 with a rough size, and exits without exporting or creating the output directory.
 
+With `-auto` (an "All of them" archive), a listed mailbox whose folder is gone
+is skipped while the others are backed up; `status` warns for 14 days of
+backups, then keeps a note. A missing profile, a missing ImapMail or Mail
+folder, a link, or a mailbox outside the usual places still stops the backup,
+and so does a Thunderbird account moved to another folder when Thunderbird's
+settings show the move. Rarely, a removed account stops it too: when exactly one
+other account on its mail server keeps its mail outside the Thunderbird profile.
+The message says how to go on. An encrypted archive keeps no account names, so
+for it MailArchive goes by the mail server's name alone: a moved account can be
+skipped instead of stopping the backup when several accounts use one mail
+server, or when the account's server name was changed after it was set up.
+Check status after moving one.
+
 ## The wizard (`mailarchive wizard`)
 
 The **wizard** (`mailarchive wizard`) is a small wizard built on native OS dialogs
@@ -141,7 +154,9 @@ MailArchive Desktop, not the wizard). It walks you through:
    replaced), *Repair the scheduled backup*, which re-installs it from this copy
    of the program.
 1. **Source** — **Auto-detect my mailboxes** (Outlook, Thunderbird and Evolution
-   stores; pick one, or *All of them (and any added later)*), or choose a type:
+   stores, each listed by the name its mail program shows — for Thunderbird
+   usually the email address — with how much of it is on this computer; pick
+   one, or *All of them (and any added later)*), or choose a type:
    Outlook `.pst`/`.ost` file, Thunderbird/mbox folder, Evolution store (Linux),
    a single mbox file, or — on Windows with classic Outlook — **Outlook account
    (via Outlook app)**, which has Outlook export each account to a `.pst` first
@@ -150,6 +165,20 @@ MailArchive Desktop, not the wizard). It walks you through:
    and Outlook for Mac keep no local files and are archived server-side via
    Microsoft 365 — and asks again rather than guessing.
 2. **Choose** the file or folder (native picker), or the auto-detected store(s).
+   - **One archive for each mailbox** *(after All of them, when two or more
+     mailboxes would each get an archive)* — the wizard asks whether to keep them
+     together in one archive (the default, as before) or give each mailbox its own.
+     With *One archive for each mailbox* you choose **one folder to hold them all**
+     (a folder is made inside it for each mailbox, named by its address), then see
+     a **plan** of every archive it will make, bring up to date or leave, before
+     anything is written. The other questions below are asked once for all of
+     them; the archives are made one after another; one **summary** follows, then
+     one **schedule question** (each archive gets its own scheduled backup, 10
+     minutes apart). A set gets no Thunderbird sync. MailArchive Desktop lists
+     every archive of the set under *Your archives*. A mailbox you add to
+     Thunderbird later is not backed up until you run this again: choose *All of
+     them*, then *One archive for each mailbox*, and the same folder (running it
+     again also brings the others up to date and keeps their schedules).
 3. **IMAP prep** *(when applicable, auto-detected inputs included)* — for a
    Thunderbird IMAP account it offers to enable offline download and walk you
    through *Download/Sync Now* (then exports everything once); for an Outlook
@@ -345,10 +374,21 @@ or the Trash.
 
 **In MailArchive Desktop:** click **Delete…** on the archive's row under **Your
 archives** (or on the **This archive** card when it is your only archive).
-Nothing is deleted yet: the plan beside the row says what would be removed and
-what is kept, and **Save this plan** saves it as a text file, for example to have
-it approved. Type the folder's name exactly as shown (capital letters count) and
-click **Delete permanently**. The result says what was removed and what was
+Nothing is deleted yet: a panel opens beside the row while MailArchive checks
+what Delete would remove; for a large archive this can take several minutes,
+and the panel counts them. Type the folder's name meanwhile (capital letters
+count). Then either wait for the plan, which says what would be removed and what
+is kept (**Save this plan** saves it as a text file, for example to have it
+approved), and click **Delete permanently**; or click **Delete when the check
+finishes**: when the check ends, MailArchive checks the folder once more (about
+as long again), then deletes it, unless the plan holds something you should
+decide first, which it then shows you. Until the delete
+starts, **Cancel** or closing the page deletes nothing; once it starts it cannot
+be stopped. A plan waits up to a day, but a backup in the meantime makes
+MailArchive check again. For an encrypted archive that was unlocked when it was
+checked, the plan also ends when any archive locks: when you click Lock, when
+you switch archives, or by itself after 30 minutes of no one using MailArchive
+Desktop. The result says what was removed and what was
 kept: **Save deletion record** saves it (MailArchive keeps no copy), then click
 **Dismiss**. **Remove from list** takes an archive off Your archives and keeps its
 folder and every file; **Open an archive folder…** brings it back.

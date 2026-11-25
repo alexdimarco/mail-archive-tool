@@ -108,10 +108,6 @@ const (
 	launcherPrompt = "What mail do you want to add or back up?"
 )
 
-// firstListDialog shows the wizard's first list; a package variable so a test can see
-// the question it asks (an operating-system seam: the native list).
-var firstListDialog = zenity.List
-
 // launcherChoices is the first list of a wizard reached from the launcher choice or a
 // hand-off (Q2, design-menubar §6.2): the "open MailArchive Desktop" item is dropped,
 // since the choice already offers Desktop; the two tasks that finish on a Desktop page

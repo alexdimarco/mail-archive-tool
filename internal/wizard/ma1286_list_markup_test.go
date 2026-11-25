@@ -219,6 +219,10 @@ func TestTheHealthListPromptIsPlainFixedWords(t *testing.T) {
 var fixedPromptFuncs = map[string]func(goos string) string{
 	"scheduleQuestionFor": scheduleQuestionFor,
 	"presyncQuestionText": presyncQuestionTextFor,
+	// A set's schedule question, first time and re-run (docs/design-per-mailbox-archives.md §11;
+	// MA-1497): checked by this scan like the others.
+	"setScheduleQuestionFor":      setScheduleQuestionFor,
+	"setScheduleRerunQuestionFor": setScheduleRerunQuestionFor,
 }
 
 // unixGOOS are the platforms where the ncruces/zenity module runs qarma, zenity or matedialog.

@@ -228,6 +228,141 @@ func saneTB(in []TBAccount) (out []TBAccount, cut int) {
 	return in, cut
 }
 
+// TBName is one Thunderbird folder's account name beside its store's id (LastRun.ThunderbirdNames;
+// the 1.7.5 re-verify, round 3's RV3-01). A hash, never the path.
+type TBName struct {
+	StoreID string `json:"store_id"`
+	Name    string `json:"name"`
+}
+
+// saneTBNames is a record's carried names as read back: at most TBAccountsMax, each cleaned as the
+// completeness record's names are, a name two entries share cleared (as TBDistinctNames does), and an
+// entry with no id or no name left out.
+func saneTBNames(in []TBName) []TBName {
+	if len(in) > TBAccountsMax {
+		in = in[:TBAccountsMax]
+	}
+	for i := range in {
+		in[i].StoreID, in[i].Name = util.StripControl(in[i].StoreID), CleanFolderName(in[i].Name)
+	}
+	dropSharedNames(len(in), func(i int) *string { return &in[i].Name })
+	var out []TBName
+	for _, e := range in {
+		if e.StoreID != "" && e.Name != "" {
+			out = append(out, e)
+		}
+	}
+	return out
+}
+
+// TBNamesOf is the names the plaintext record r hands on to the next run's records (RV3-01): its
+// completeness entries' names when it has entries, else the names it carried. nil for an
+// encrypted record, which keeps no names (Q3, Q5, Q6).
+func TBNamesOf(r LastRun) []TBName {
+	if r.Encrypted {
+		return nil
+	}
+	if len(r.Thunderbird) == 0 {
+		return append([]TBName(nil), r.ThunderbirdNames...)
+	}
+	var out []TBName
+	unnamed := map[string]bool{}
+	for _, e := range r.Thunderbird {
+		if e.StoreID != "" && e.Name != "" {
+			out = append(out, TBName{StoreID: e.StoreID, Name: e.Name})
+		} else if e.StoreID != "" {
+			unnamed[e.StoreID] = true
+		}
+	}
+	// A one-folder archive's name kept across a run that found no live account for its folder
+	// (docs/design-per-mailbox-archives.md revision 2.2, MA-1504): counted beside the entries only
+	// for a store whose own entry names no account, so an entry's name always wins and a carried name
+	// for a store with no entry is still not read (the RV3-01 rule).
+	for _, n := range r.ThunderbirdNames {
+		if unnamed[n.StoreID] {
+			out = append(out, n)
+			delete(unnamed, n.StoreID)
+		}
+	}
+	return out
+}
+
+// TBNameOf is the account name the plaintext record r keeps for the store whose id is id (RV3-01),
+// cleaned; "" for none.
+func TBNameOf(r LastRun, id string) string {
+	if id == "" {
+		return ""
+	}
+	for _, e := range TBNamesOf(r) {
+		if e.StoreID == id {
+			return CleanFolderName(e.Name)
+		}
+	}
+	return ""
+}
+
+// TBID is one Thunderbird folder's account identity beside its store's id (LastRun.ThunderbirdIDs;
+// docs/design-per-mailbox-archives.md revision 3): both are hashes, 32 hex characters, never a path,
+// a name or an address.
+type TBID struct {
+	StoreID string `json:"store_id"`
+	ID      string `json:"id"`
+}
+
+// saneTBIDs is a record's identities as read back: at most TBAccountsMax, each entry's store id and
+// identity 32 lowercase hex characters (anything else is left out: a planted or damaged entry decides
+// nothing), the first entry for a store id kept.
+func saneTBIDs(in []TBID) []TBID {
+	if len(in) > TBAccountsMax {
+		in = in[:TBAccountsMax]
+	}
+	var out []TBID
+	seen := map[string]bool{}
+	for _, e := range in {
+		if !tbHash(e.StoreID) || !tbHash(e.ID) || seen[e.StoreID] {
+			continue
+		}
+		seen[e.StoreID] = true
+		out = append(out, e)
+	}
+	return out
+}
+
+// tbHash reports whether s is one of the record's hashes: 32 lowercase hex characters.
+func tbHash(s string) bool {
+	if len(s) != 32 {
+		return false
+	}
+	for _, c := range s {
+		if (c < '0' || c > '9') && (c < 'a' || c > 'f') {
+			return false
+		}
+	}
+	return true
+}
+
+// TBIDsOf is the identities the plaintext record r hands on to the next run's records (revision 3, as
+// TBNamesOf hands on the names): nil for an encrypted record, which keeps none (MA-734).
+func TBIDsOf(r LastRun) []TBID {
+	if r.Encrypted {
+		return nil
+	}
+	return append([]TBID(nil), r.ThunderbirdIDs...)
+}
+
+// TBIDOf is the identity the plaintext record r keeps for the store whose id is id; "" for none.
+func TBIDOf(r LastRun, id string) string {
+	if id == "" {
+		return ""
+	}
+	for _, e := range TBIDsOf(r) {
+		if e.StoreID == id {
+			return e.ID
+		}
+	}
+	return ""
+}
+
 // TBDistinctNames clears the name of every account that shares it with another, and of every
 // account whose name spells the words an account with no name is said by (TBNameIsFallback), so two
 // accounts are never said as one: each is then said by its folder (MA-1284, MA-1287). Names are
@@ -262,8 +397,14 @@ func dropSharedNames(n int, name func(int) *string) {
 // a documented limit (LOW, the lead's call of 2026-11-09), since Unicode gives no normalisation for
 // them and two real Thunderbird accounts rarely differ that way.
 func tbNameKey(s string) string {
-	s = norm.NFKC.String(CleanFolderName(s))
-	return norm.NFKC.String(cases.Fold().String(s))
+	return TBTextKey(CleanFolderName(s))
+}
+
+// TBTextKey is the comparison tbNameKey makes, on s as given: NFKC, Unicode case folding and NFKC
+// again, with no cleaning and no cap. The wizard's list of found mailboxes compares its whole rows
+// by it (MA-1464): a row longer than TBNameMax must still differ from one that adds " (2)" to it.
+func TBTextKey(s string) string {
+	return norm.NFKC.String(cases.Fold().String(norm.NFKC.String(s)))
 }
 
 // tbFallbackKeys are the words an account with no name is said by, as tbNameKey keys them.

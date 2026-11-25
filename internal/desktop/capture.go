@@ -238,15 +238,26 @@ func (cfg Config) captureOwnFiles() []string {
 // staying GREEN until the run is twice the period late (OP-2, R18). With no
 // archive location there is nowhere to record; the caller returns the error
 // alone. Best effort: a scheduled run must not fail on its own bookkeeping.
+//
+// Amended by the 1.7.5 re-verify, round 4 (RV4-01): a folder a Thunderbird backup also writes keeps
+// its record's Thunderbird folder names through this record, read from the one it replaces when that
+// one is plaintext (state.TBNamesOf; none from an encrypted one), so a moved account still stops the
+// next Thunderbird backup (RV3-01, MA-1481).
 func recordStartFailure(out string, cause error) {
 	if strings.TrimSpace(out) == "" {
 		return
 	}
-	_ = state.WriteLastRun(out, state.LastRun{
+	lr := state.LastRun{
 		Status:  state.RunFailed,
 		Started: time.Now().UTC(),
 		Error:   cause.Error(),
-	})
+	}
+	// The accounts' identities too, as the names (docs/design-per-mailbox-archives.md revision 3).
+	if prev, st, _ := state.ReadLastRun(out); st == state.LastRunPresent {
+		lr.ThunderbirdNames = state.TBNamesOf(prev)
+		lr.ThunderbirdIDs = state.TBIDsOf(prev)
+	}
+	_ = state.WriteLastRun(out, lr)
 }
 
 // logRingMax bounds the in-memory activity log so a long run never grows without

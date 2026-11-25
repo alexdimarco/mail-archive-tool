@@ -82,12 +82,16 @@ func TestARefusalAfterAChangeSaysWhatWasChanged(t *testing.T) {
 	}
 
 	// Structural: prepareThunderbirdGUI keeps the run's changes across the loop's inputs.
+	// Amended 2026-11-25 (MA-1502; nothing weakened): the call also names the account (asks.next),
+	// and a set's download questions (askSetDownloads) carry the one run's changes across its
+	// accounts as the loop does.
 	src, err := os.ReadFile("wizard.go")
 	if err != nil {
 		t.Fatal(err)
 	}
 	for _, wired := range []string{
-		"p, err := prepareThunderbirdGUI(in, &changed)",
+		"var changed []string // the accounts this run's Yes, prepare changed (MA-1267)",
+		"p, err := prepareThunderbirdGUI(in, asks.next(in), &changed)",
 		"profile, acct, refusal := imapPrepAccount(store, *changed)",
 		"noteChange(changed, acct, c)",
 		"afterChange(prepFailWords(e, profile, acct.Hostname), *changed)",
@@ -95,5 +99,12 @@ func TestARefusalAfterAChangeSaysWhatWasChanged(t *testing.T) {
 		if !strings.Contains(string(src), wired) {
 			t.Errorf("the wizard does not carry this run's changes: %q is gone from wizard.go", wired)
 		}
+	}
+	set, err := os.ReadFile("setexport.go")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(set), "func askSetDownloads(p setPlan, changed *[]string)") || !strings.Contains(string(set), "ok, err := prepareThunderbirdGUI(it.row.path, asks.nextAs(it.row.listName()), changed)") {
+		t.Error("a set's download questions do not carry this run's changes: askSetDownloads no longer passes the one changed list on")
 	}
 }

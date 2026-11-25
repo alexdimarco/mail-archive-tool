@@ -588,6 +588,408 @@ func findAccount(profileDir, storeDir string) (*Account, prefSettings, error) {
 	return acct, s, err
 }
 
+// MovedTo reports, for the store folder storeDir of the profile profileDir, which is gone, the
+// folder a live account's settings now name for it, when Thunderbird still gives that account the
+// store's place by its hostname (C0c's match found it by hostname, not by a folder setting) and
+// every folder setting the account has names another place: the account was moved with its Local
+// Directory setting, not removed (the 1.7.5 adversarial pass's INS-02; the owner's ruling of
+// 2026-11-20, Q7: "Stop the backup (Recommended)"). The folder is the account's directory setting,
+// else its directory-rel resolved, with control characters stripped. False when no live account is
+// matched that way, when the matched account has no folder setting (nothing says it moved), or when
+// prefs.js or user.js cannot be read with certainty.
+//
+// Amended by the 1.7.5 re-verify, round 2 (RV2-01; the lead's call, for the owner's own setup of
+// several accounts on one mail server): recordedName, when not "", is the account name the
+// archive's previous record gave this folder (cleaned by clean, as the live names are compared).
+// That is the primary rule: exactly one live account with that name and a folder setting that is not
+// the gone folder → moved (to that account's folder); no live account with that name → removed (not
+// moved); two or more → the server-name rule below. (Amended by the 1.7.5 re-verify, round 3's
+// RV3-02: no live account with that name → the server-name rule too, so an account moved and renamed
+// at once still stops the backup.) The server-name rule is only the fallback (a
+// record that names no account): the folder's name, or that name without a "-N" at its end or just
+// before its last dot (Thunderbird spells a second account's folder "imap.gmail-1.com"); among the
+// live accounts with that server name, moved when exactly one has every folder setting outside this
+// profile's ImapMail/ and Mail/.
+func MovedTo(profileDir, storeDir, recordedName string, clean func(string) string) (string, bool) {
+	dir, moved, _ := MovedHow(profileDir, storeDir, recordedName, clean)
+	return dir, moved
+}
+
+// MovedHow is MovedTo, also saying whether the recorded name decided (byName), so the refusal's words
+// can say "the account that used it" or "an account on the same mail server" (RF2-01).
+func MovedHow(profileDir, storeDir, recordedName string, clean func(string) string) (dir string, moved, byName bool) {
+	dir, moved = movedHow(profileDir, storeDir, recordedName, clean, &byName)
+	return dir, moved, byName && moved
+}
+
+func movedHow(profileDir, storeDir, recordedName string, clean func(string) string, byName *bool) (string, bool) {
+	s, _, err := readPrefs(profileDir)
+	if err != nil {
+		return "", false
+	}
+	store, err := filepath.Abs(storeDir)
+	if err != nil {
+		return "", false
+	}
+	profile, err := filepath.Abs(profileDir)
+	if err != nil {
+		return "", false
+	}
+	// Amended by the 1.7.5 re-verify (RV-02; the lead's call, the fuller form of the owner's Q7): the
+	// match above wanted every folder setting to end in the store's own name and the store directly
+	// under ImapMail/, so a move to a folder of another name, or a POP account's under Mail/, was
+	// skipped quietly. Now: the store lies directly under this profile's ImapMail/ or Mail/; exactly
+	// one live account has its server name (the folder's name, or that name without a "-N" suffix,
+	// which Thunderbird adds for a second account on one server); and none of that account's folder
+	// settings lies inside this profile's ImapMail/ or Mail/. The traded case, a removed account whose
+	// only same-server sibling was moved off the profile, then stops the backup too: it fails closed,
+	// Q7's direction.
+	if file, _, _ := s.uncertain(); file != "" {
+		return "", false
+	}
+	goos := runtime.GOOS
+	parts := components(store, goos)
+	if len(parts) < 2 {
+		return "", false
+	}
+	name, parent := parts[len(parts)-1], strings.Join(parts[:len(parts)-1], "/")
+	imapRoot, mailRoot := profile+"/ImapMail", profile+"/Mail"
+	if !samePath(parent, imapRoot, goos) && !samePath(parent, mailRoot, goos) {
+		return "", false
+	}
+	val := func(key string) string { return s.vals[key] }
+	folderOf := func(key string) ([]string, string) { return folderSettings(s.vals, profile, key) }
+	live := liveServers(val)
+
+	// The primary rule: the account the previous record named for this folder (RV2-01).
+	if recordedName != "" && clean != nil {
+		var named []string
+		for _, key := range live {
+			if n := accountNameOf(key, s.vals); n != "" && clean(n) == recordedName {
+				named = append(named, key)
+			}
+		}
+		switch len(named) {
+		case 0:
+			// No live account has the name: removed, or renamed as it was moved (both are on one
+			// settings page in Thunderbird). The server-name rule decides (the 1.7.5 re-verify, round
+			// 3's RV3-02, the reviewer's choice 2, Q7's direction: a loud stop beats a quiet loss). It
+			// brings back the traded case: a removed account beside exactly one same-server account
+			// whose mail is all off the profile stops the backup.
+			// Amended by round 4 (RF4-03's words): an account removed in Thunderbird stops the backup
+			// when exactly one of the other accounts on its mail server keeps all its mail outside the
+			// profile; accounts on that server kept in the profile do not change this. One renamed
+			// while its folder is missing is skipped first, below (RV4-02).
+		case 1:
+			folders, dir := folderOf(named[0])
+			if len(folders) == 0 {
+				return "", false // no folder setting: Thunderbird keeps it in the profile
+			}
+			for _, f := range folders {
+				if samePath(f, store, goos) {
+					return "", false // its folder setting still names the gone folder: deleted by hand (Q4)
+				}
+			}
+			*byName = true
+			return dir, true
+		}
+		// None, or two or more live accounts share the name: the server-name rule decides.
+	}
+
+	// A live account whose folder setting still names the gone folder was deleted by hand (Q4), also
+	// when it was renamed meanwhile: skipped before the server-name rule (the 1.7.5 re-verify, round
+	// 4's RV4-02; it narrows only toward Q4, since two accounts cannot keep one folder).
+	for _, key := range live {
+		folders, _ := folderOf(key)
+		for _, f := range folders {
+			if samePath(f, store, goos) {
+				return "", false
+			}
+		}
+	}
+
+	// The fallback: the server-name rule.
+	servers := serverNamesOf(name)
+	var outside []string // same-server accounts whose every folder setting is outside the profile
+	for _, key := range live {
+		h := norm.NFC.String(unquote(val("mail.server." + key + ".hostname")))
+		same := false
+		for _, sv := range servers {
+			same = same || (h != "" && sameComponent(h, sv, goos))
+		}
+		if !same {
+			continue
+		}
+		folders, _ := folderOf(key)
+		out := len(folders) > 0
+		for _, f := range folders {
+			if within(f, imapRoot, goos) || within(f, mailRoot, goos) {
+				out = false // a folder setting in this profile: not moved off it
+			}
+		}
+		if out {
+			outside = append(outside, key)
+		}
+	}
+	if len(outside) != 1 {
+		return "", false // none moved off the profile (removed beside one kept in it), or more than one (cannot tell)
+	}
+	_, dir := folderOf(outside[0])
+	return dir, true
+}
+
+// folderSettings is the server key's folder settings in vals (directory-rel with [ProfD] as profile,
+// and directory) and the one to name: its directory, else its directory-rel, control characters
+// stripped (MovedHow's words).
+func folderSettings(vals map[string]string, profile, key string) ([]string, string) {
+	p := func(field string) string { return unquote(vals["mail.server."+key+"."+field]) }
+	var folders []string
+	if rel, ok := strings.CutPrefix(p("directory-rel"), "[ProfD]"); ok {
+		folders = append(folders, profile+"/"+rel)
+	}
+	dir := p("directory")
+	if dir != "" {
+		folders = append(folders, dir)
+	}
+	if dir == "" && len(folders) > 0 {
+		dir = filepath.Clean(filepath.FromSlash(folders[0]))
+	}
+	return folders, StripControl(dir)
+}
+
+// The account's identity (docs/design-per-mailbox-archives.md revision 3; the adversarial pass's
+// INS-03 to INS-06): an archive's record keeps, for each Thunderbird folder it read, the identity of
+// the account that owned it (StoreFacts.Identity, accountIdentityOf), so "moved", "removed" and
+// "reused" are decided by who the account is, not by the name it shows. Each answer reads prefs.js
+// and user.js with the same strict read as the rest of this file, and tells nothing from settings
+// that cannot be read for certain.
+
+// liveWithIdentity is the server keys of the live accounts whose identity is id, from the strict read
+// of profileDir's settings, and the settings and the profile made absolute; ok is false when id is
+// "", the settings cannot be read for certain, or they list no account.
+func liveWithIdentity(profileDir, id string) (keys []string, s prefSettings, profile string, ok bool) {
+	if id == "" {
+		return nil, s, "", false
+	}
+	s, _, err := readPrefs(profileDir)
+	if err != nil {
+		return nil, s, "", false
+	}
+	if file, _, _ := s.uncertain(); file != "" {
+		return nil, s, "", false
+	}
+	profile, err = filepath.Abs(profileDir)
+	if err != nil {
+		return nil, s, "", false
+	}
+	live := liveServers(func(key string) string { return s.vals[key] })
+	if len(live) == 0 {
+		return nil, s, "", false
+	}
+	for _, key := range live {
+		if accountIdentityOf(key, s.vals) == id {
+			keys = append(keys, key)
+		}
+	}
+	return keys, s, profile, true
+}
+
+// LiveWithIdentity is how many live accounts have the identity id; ok is false when id is "", or
+// prefs.js or user.js cannot be read with certainty, or they list no account, so nothing is known
+// (revision 3's "removed": no live account has the recorded identity, so a renamed account is no
+// longer removed, INS-05).
+func LiveWithIdentity(profileDir, id string) (n int, ok bool) {
+	keys, _, _, ok := liveWithIdentity(profileDir, id)
+	return len(keys), ok
+}
+
+// MovedByIdentity reports, for the store folder storeDir of the profile profileDir, the folder in
+// which Thunderbird now keeps the mail of the account whose identity is id (revision 3's "moved", C2
+// and F-08 by identity: INS-04, INS-06): exactly one live account has that identity, it has a folder
+// setting, and none of its folder settings names storeDir (one that still does was deleted by hand,
+// Q4, and is not moved). storeDir lies directly under the profile's ImapMail/ or Mail/, as MovedHow
+// asks. The folder is the account's directory setting, else its directory-rel resolved, with control
+// characters stripped. False when the settings cannot be read for certain. Whether storeDir is gone,
+// or no live account uses it (NoLiveOwner), is the caller's to ask first.
+func MovedByIdentity(profileDir, storeDir, id string) (string, bool) {
+	keys, s, profile, ok := liveWithIdentity(profileDir, id)
+	if !ok || len(keys) != 1 {
+		return "", false
+	}
+	store, err := filepath.Abs(storeDir)
+	if err != nil {
+		return "", false
+	}
+	goos := runtime.GOOS
+	parts := components(store, goos)
+	if len(parts) < 2 {
+		return "", false
+	}
+	if parent := strings.Join(parts[:len(parts)-1], "/"); !samePath(parent, profile+"/ImapMail", goos) && !samePath(parent, profile+"/Mail", goos) {
+		return "", false
+	}
+	folders, dir := folderSettings(s.vals, profile, keys[0])
+	if len(folders) == 0 {
+		return "", false // no folder setting: Thunderbird keeps it in the profile, so nothing says where
+	}
+	for _, f := range folders {
+		if samePath(f, store, goos) {
+			return "", false // its folder setting still names the folder: deleted by hand (Q4)
+		}
+	}
+	return dir, true
+}
+
+// OwnerIdentity is the identity of the live account that owns the store folder storeDir
+// (FindAccountForStore's match, from the same strict read); ok is false when no one account can be
+// told (none, or more than one), the settings cannot be read for certain, or the owner has no
+// identity (revision 3's "reused", INS-03: Thunderbird gave the folder to another account).
+func OwnerIdentity(profileDir, storeDir string) (string, bool) {
+	acct, s, err := findAccount(profileDir, storeDir)
+	if err != nil || acct == nil {
+		return "", false
+	}
+	id := accountIdentityOf(acct.ServerKey, s.vals)
+	return id, id != ""
+}
+
+// serverNamesOf are the server names a store folder named name may have been made for: the name
+// itself, and the name without Thunderbird's "-N" at its end ("Feeds-1", "imap.qzd.example-1") or just
+// before its last dot ("imap.gmail-1.com"), which Thunderbird adds for a second account on one server.
+func serverNamesOf(name string) []string {
+	servers := []string{name}
+	if i := strings.LastIndexByte(name, '-'); i > 0 && i < len(name)-1 && strings.Trim(name[i+1:], "0123456789") == "" {
+		servers = append(servers, name[:i]) // "-N" at the end ("Feeds-1", "imap.qzd.example-1")
+	}
+	if d := strings.LastIndexByte(name, '.'); d > 0 {
+		if i := strings.LastIndexByte(name[:d], '-'); i > 0 && i < d-1 && strings.Trim(name[i+1:d], "0123456789") == "" {
+			servers = append(servers, name[:i]+name[d:]) // "-N" just before the last dot ("imap.gmail-1.com")
+		}
+	}
+	return servers
+}
+
+// NoLiveOwner reports whether the profile's settings say, for certain, that no live account uses the
+// store folder store (docs/design-per-mailbox-archives.md §11, C2's second condition, as revision
+// 2.1's F-01 corrected it; MA-1504). True only when all hold:
+//
+//   - prefs.js and user.js both read with certainty (MA-1261), and they list accounts;
+//   - store lies directly under this profile's ImapMail/ or Mail/;
+//   - no live account's folder setting (directory, directory-rel) names store;
+//   - every live account whose server name matches the folder's name (the name, or that name without
+//     Thunderbird's "-N", as MovedHow's fallback reads it) has a folder setting, which then names
+//     another folder. One with no folder setting could be keeping its mail there, so nothing is
+//     certain.
+//
+// ReadStoreFacts cannot answer this: with two or more live accounts on one mail server (several
+// Gmail addresses, all on imap.gmail.com) it says NoAccountAmbiguous, not NoAccountNone, for a folder
+// named like their host that none of them uses any more. It reads the settings as ReadStoreFacts
+// does, and leaves ReadStoreFacts and every caller of it unchanged.
+func NoLiveOwner(profileDir, store string) bool {
+	s, _, err := readPrefs(profileDir)
+	if err != nil {
+		return false
+	}
+	if file, _, _ := s.uncertain(); file != "" {
+		return false
+	}
+	st, err := filepath.Abs(store)
+	if err != nil {
+		return false
+	}
+	profile, err := filepath.Abs(profileDir)
+	if err != nil {
+		return false
+	}
+	goos := runtime.GOOS
+	parts := components(st, goos)
+	if len(parts) < 2 {
+		return false
+	}
+	name, parent := parts[len(parts)-1], strings.Join(parts[:len(parts)-1], "/")
+	if !samePath(parent, profile+"/ImapMail", goos) && !samePath(parent, profile+"/Mail", goos) {
+		return false
+	}
+	val := func(key string) string { return s.vals[key] }
+	live := liveServers(val)
+	if len(live) == 0 {
+		return false // no account listed: nothing is known of who uses the folder
+	}
+	servers := serverNamesOf(name)
+	for _, key := range live {
+		p := func(field string) string { return unquote(val("mail.server." + key + "." + field)) }
+		var folders []string
+		if rel, ok := strings.CutPrefix(p("directory-rel"), "[ProfD]"); ok {
+			folders = append(folders, profile+"/"+rel)
+		}
+		if dir := p("directory"); dir != "" {
+			folders = append(folders, dir)
+		}
+		for _, f := range folders {
+			if samePath(f, st, goos) {
+				return false // a live account's folder setting names it
+			}
+		}
+		h := norm.NFC.String(p("hostname"))
+		for _, sv := range servers {
+			if h != "" && sameComponent(h, sv, goos) && len(folders) == 0 {
+				return false // a same-server account with no folder setting: cannot tell
+			}
+		}
+	}
+	return true
+}
+
+// LiveNamed is how many live accounts have the name name, each account's name read as Thunderbird
+// shows it (accountNameOf) and cleaned by clean, as MovedHow compares a recorded name; ok is false
+// when prefs.js or user.js cannot be read with certainty, or lists no account, so nothing is known
+// (docs/design-per-mailbox-archives.md §11 "When the account was removed for good", C13; MA-1506).
+func LiveNamed(profileDir, name string, clean func(string) string) (n int, ok bool) {
+	s, _, err := readPrefs(profileDir)
+	if err != nil || name == "" || clean == nil {
+		return 0, false
+	}
+	if file, _, _ := s.uncertain(); file != "" {
+		return 0, false
+	}
+	live := liveServers(func(key string) string { return s.vals[key] })
+	if len(live) == 0 {
+		return 0, false
+	}
+	for _, key := range live {
+		if a := accountNameOf(key, s.vals); a != "" && clean(a) == name {
+			n++
+		}
+	}
+	return n, true
+}
+
+// within reports whether p is root or lies under it, compared as samePath compares paths.
+func within(p, root, goos string) bool {
+	cp, cr := components(p, goos), components(root, goos)
+	if len(cr) == 0 || len(cp) < len(cr) {
+		return false
+	}
+	for i := range cr {
+		if !sameComponent(cp[i], cr[i], goos) {
+			return false
+		}
+	}
+	return true
+}
+
+// SettingsUncertain reports whether the profile's prefs.js or user.js cannot be read for certain
+// (MA-1261: a line Thunderbird never writes, or a file that cannot be read), so MovedTo can tell no
+// move (the 1.7.5 re-verify's RV-04: the run records it, and status says so).
+func SettingsUncertain(profileDir string) bool {
+	s, _, err := readPrefs(profileDir)
+	if err != nil {
+		return true
+	}
+	file, _, _ := s.uncertain()
+	return file != ""
+}
+
 // matchAccount is FindAccountForStore's rule on parsed prefs, for goos.
 func matchAccount(prefs map[string]string, profile, store, goos string) (*Account, error) {
 	return matchAccountIn(prefSettings{vals: prefs}, profile, store, goos)

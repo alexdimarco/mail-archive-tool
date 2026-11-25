@@ -46,6 +46,15 @@ func suggestFolderName(name string) string {
 	return s
 }
 
+// SuggestFolderName is suggestFolderName for the wizard's archive folders named for their
+// mailboxes (docs/design-per-mailbox-archives.md §4 "Made safe", MA-1492): the same cleaning, not
+// a copy of it.
+func SuggestFolderName(name string) string { return suggestFolderName(name) }
+
+// FolderNameWhy is folderNameWhy for the wizard's archive folders named for their mailboxes
+// (docs/design-per-mailbox-archives.md §4 "Made safe", MA-1492).
+func FolderNameWhy(name string) string { return folderNameWhy(name) }
+
 // folderNameWhy says why name is not a folder name this computer can use, or "" when it is.
 func folderNameWhy(name string) string {
 	switch {

@@ -319,7 +319,12 @@ func TestTheCardsRepairAndRemoveReplyStaysAfterTheStateRedraw(t *testing.T) {
 	if n := strings.Count(st, "n.textContent=pre+"); n != 4 || strings.Count(st, "n.textContent=") != 4 {
 		t.Errorf("schedState puts the reply in front of %d of its 4 state lines:\n%s", n, st)
 	}
-	for _, w := range []string{"'Repairing the scheduled backup…'),'Repaired.')", "'Removing the scheduled backup…'),'Removed.')"} {
+	// Amended 2026-11-20 by the 1.7.5 friction review (F2): Repair's reply word is "Repaired.", or,
+	// for an archive a Repair gets past its gone mailbox (data-gone-repair), "Repaired. The next
+	// backup skips the missing mailbox; to back up now, click Run now." Pinned at the same strength:
+	// both reply words, literally, in Repair's own call (it was "'Repairing the scheduled
+	// backup…'),'Repaired.')").
+	for _, w := range []string{"'Repairing the scheduled backup…'),srp.hasAttribute('data-gone-repair')?'Repaired. The next backup skips the missing mailbox; to back up now, click Run now.':'Repaired.')", "'Removing the scheduled backup…'),'Removed.')"} {
 		if !strings.Contains(dashboardJS, w) {
 			t.Errorf("a card button does not name its own reply word %q", w)
 		}

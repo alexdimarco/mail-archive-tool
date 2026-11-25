@@ -160,6 +160,20 @@ const (
 	NoAccountNoList                          // prefs.js lists no account
 )
 
+// NoAccountKindOf is why the match gave no account, read from err as ReadStoreFacts and
+// FindAccountForStore return it, with no file read (the wizard's list of found mailboxes, MA-1463).
+// ok is false when err is not the match's own error: nil, a HandEditedError (a file read without
+// certainty, which the match returns before any kind), a LimitsError or a read error. So
+// NoAccountNone with ok true means both prefs.js and user.js were read with certainty and no live
+// account uses the store.
+func NoAccountKindOf(err error) (kind NoAccountKind, ok bool) {
+	var m *matchError
+	if errors.As(err, &m) {
+		return m.kind, true
+	}
+	return 0, false
+}
+
 // NoAccountError is what the person is told when MailArchive cannot tell which account a store
 // belongs to, so it changes nothing (the C0c pass's OUT-01, MA-1204; words MA-1260). Host is the
 // store folder's name, Why FindAccountForStore's technical reason (naming prefs.js).

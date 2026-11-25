@@ -87,7 +87,7 @@ func TestAnInconclusiveRunAfterAnOldStreakDoesNotAutoPause(t *testing.T) {
 		t.Fatal(err)
 	}
 	gone := filepath.Join(t.TempDir(), "gone")
-	_, rerr := DiscoverInputs([]string{gone}, false)
+	_, _, rerr := DiscoverInputs([]string{gone}, false)
 	RecordRefusedRun(Options{Out: out, Unattended: true}, withKind(state.FailSourceUnreadable, rerr))
 	if s, _ := state.ReadSourceStreak(out); s.ConsecutiveFails != 3 || !s.LastUnreachable.After(old.LastUnreachable) {
 		t.Fatalf("a refused run with its source gone did not extend the streak: %+v", s)

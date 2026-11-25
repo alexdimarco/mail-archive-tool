@@ -18,6 +18,7 @@ import (
 	"path/filepath"
 	"strings"
 
+	"mail-archive-tool/internal/job"
 	"mail-archive-tool/internal/thunderbird"
 	"mail-archive-tool/internal/util"
 )
@@ -43,6 +44,13 @@ var fixedConfigNames = map[string]bool{
 	// The alert layer's delivery mark (backupalert.DeliveredName; the C5 round-3 pass's CAP-R3-A):
 	// removed with the settings files; MA-1291's test keeps the two in step by behaviour.
 	alertDeliveredName: true,
+	// The stand-alone wizard's made-list and its lock file (docs/design-per-mailbox-archives.md §10,
+	// C10; MA-1500): removed with the settings files, and listed in the plan with them.
+	job.MadeListName: true,
+	job.MadeLockName: true,
+	// The lock a set's run holds beside the made-list (the adversarial pass's CON-03): removed
+	// with them.
+	job.MadeSetLockName: true,
 }
 
 // alertDeliveredName is the alert layer's delivery mark, backupalert.DeliveredName.

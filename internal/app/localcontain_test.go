@@ -271,7 +271,7 @@ func TestLocalStoresAreReadUnderContainment(t *testing.T) {
 	}
 	found := make(chan []string, 1)
 	go func() {
-		got, _ := DiscoverInputs([]string{store}, false)
+		got, _, _ := DiscoverInputs([]string{store}, false)
 		found <- got
 	}()
 	select {

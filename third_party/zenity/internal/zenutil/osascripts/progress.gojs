@@ -1,0 +1,29 @@
+{{template "common" .}}
+ObjC.import('stdlib')
+ObjC.import('readline')
+
+{{- if .Total}}
+  Progress.totalUnitCount = {{.Total}}
+{{- end}}
+{{- if .Description}}
+  Progress.description = {{json .Description}}
+{{- end}}
+
+while (true) {
+  try {
+    var s = $.readline('')
+  } catch (e) {
+    if (e.errorNumber === -128) $.exit(1)
+    break
+  }
+
+  if (s.indexOf('#') === 0) {
+    Progress.additionalDescription = s.slice(1)
+    continue
+  }
+
+  var i = parseInt(s)
+  if (i >= 0 && Progress.totalUnitCount > 0) {
+    Progress.completedUnitCount = i
+  }
+}

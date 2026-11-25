@@ -48,7 +48,6 @@ import (
 	"mail-archive-tool/internal/runlog"
 	"mail-archive-tool/internal/schedule"
 	"mail-archive-tool/internal/seal"
-	"mail-archive-tool/internal/source"
 	"mail-archive-tool/internal/state"
 	"mail-archive-tool/internal/tbcomplete"
 	"mail-archive-tool/internal/thunderbird"
@@ -412,8 +411,16 @@ func RunHeadless(path string) int {
 			logger.Printf("auto-pause: %v", perr)
 		}
 		if paused {
-			logger.Printf("auto-paused the scheduled backup: the source has been unreachable for too long; the schedule was stopped (reconnect the source, then click Repair on the archive's Scheduled backup card in MailArchive Desktop)")
-			backupalert.RecordAutoPauseDefault(key, j.Out, errors.New(AutoPauseWhy), logger)
+			// A Thunderbird account's stop whose refused record kept its reason says that reason's
+			// words, in the log and the email, in place of "reconnect the source … Repair", which
+			// cannot help it (docs/design-per-mailbox-archives.md §11, F-03; MA-1506).
+			why := AutoPauseWhyFor(j.Out)
+			if why == AutoPauseWhy {
+				logger.Printf("auto-paused the scheduled backup: the source has been unreachable for too long; the schedule was stopped (reconnect the source, then click Repair on the archive's Scheduled backup card in MailArchive Desktop)")
+			} else {
+				logger.Printf("auto-paused: %s", why)
+			}
+			backupalert.RecordAutoPauseDefault(key, j.Out, errors.New(why), logger)
 		}
 		return 1
 	}
@@ -482,6 +489,17 @@ const scheduleSyncLine = "\nThunderbird: synced before each run. A run skips the
 // AutoPauseWhy is the auto-pause email's reason, the same words for the Desktop's capture and
 // the local job.
 const AutoPauseWhy = "the mailbox or mail folder has been unreachable for 30 days, so its scheduled backup was stopped. Your archive is kept. Do this: reconnect the source, then in MailArchive Desktop click Repair on the archive's Scheduled backup card to start the schedule again."
+
+// AutoPauseWhyFor is the auto-pause email's reason for the local job's archive at out: the words of
+// the reason its last refused run kept (Thunderbird keeps the account's mail in another folder now,
+// or no longer has the account: health.SourceReasonPauseWordsAt; docs/design-per-mailbox-archives.md
+// §11, F-03, MA-1506), else AutoPauseWhy, today's words.
+func AutoPauseWhyFor(out string) string {
+	if why := health.SourceReasonPauseWordsAt(out); why != "" {
+		return why
+	}
+	return AutoPauseWhy
+}
 
 // AutoPauseDeleteWhy is the auto-pause email's reason, and its log line's, for a delete this
 // computer never began (docs/design-archive-delete.md §15.10 slice 6, MA-1058), the same words for
@@ -641,7 +659,7 @@ func logSummary(logger *log.Logger, r app.Result) {
 
 // wizardChoice is what the wizard learned; the schedule step repeats it.
 type wizardChoice struct {
-	finished      func() // AddArchive's hook: called once the export has finished (MA-954)
+	finished      func() // AddArchives' hook: called once the export has finished (MA-954)
 	programCopies string // a new encrypted archive's choice, "on" or "off" (job.Job.ProgramCopies)
 	inputs        []string
 	auto          bool // "all of them" from auto-detect: re-discover at run time
@@ -707,7 +725,10 @@ func wizardWith(prompt string, items []string, openDesktop func() error) error {
 	//    IN-PROCESS to MailArchive Desktop (Microsoft 365, folder export, browsing,
 	//    scheduling, the maintenance tools); the local item (the default) stays on
 	//    the quick path. zenity.List returns ErrCanceled on dismiss → quiet exit.
-	switch pick, err := firstListDialog(prompt, items, zenity.Title(appTitle), zenity.DefaultItems(surfaceLocalItem)); {
+	//    Through the listDialog seam (zenity.List in the product), so a test walks the
+	//    double-click wizard to One archive for each mailbox with no real window (MA-1490),
+	//    and sees the question the launcher's wizard asks instead (MA-1406).
+	switch pick, err := listDialog(prompt, items, zenity.Title(appTitle), zenity.DefaultItems(surfaceLocalItem)); {
 	case err != nil:
 		return err
 	case surfaceOpensDesktop(pick):
@@ -721,63 +742,90 @@ func wizardWith(prompt string, items []string, openDesktop func() error) error {
 	}
 
 	// 3. The local add-an-archive flow, shared with the Desktop's "Add another
-	//    archive" button (AddArchive calls it directly).
+	//    archive" button (AddArchives calls it directly).
 	return localArchiveFlow(nil)
 }
 
-// AddArchive runs the wizard's local add-an-archive flow directly — source choice
+// AddArchives runs the wizard's local add-an-archive flow directly — source choice
 // through export — WITHOUT the first-step surface or the scheduled-archive health
-// check. The Desktop's "Add another archive" button calls it IN PROCESS (desktop
-// imports wizard; MA-612 — never a child), so a running Desktop can create a new
-// local archive through the same native-dialog flow the double-click wizard uses.
-// It returns the new archive's output folder, or "" when the user backed out of a
-// dialog (zenity.ErrCanceled) before choosing one — a cancel is "nothing added", not an
-// error. A folder whose copy did not finish comes back with ErrStoppedEarly (MA-954).
-func AddArchive() (string, error) {
+// check. MailArchive Desktop's Make a new archive… calls it IN PROCESS (desktop
+// imports wizard; MA-612 — never a child), so a running Desktop can create new local
+// archives through the same native-dialog flow the double-click wizard uses.
+//
+// It returns every archive folder the flow made or continued, each with its outcome
+// (docs/design-per-mailbox-archives.md §10, revision 2's C11; MA-1499): the one-archive
+// path gives one Made (its Parent ""); One archive for each mailbox gives one per
+// archive of its set, in the plan's order (each with the set's Parent). A person who
+// backed out of a dialog (zenity.ErrCanceled) before any folder was chosen or made gets
+// none and no error: "nothing added". A copy that did not finish says so in its Outcome
+// (MA-954; it replaces 1.5.2's AddArchive and its ErrStoppedEarly).
+func AddArchives() ([]Made, error) {
 	dialogfront.Arm() // only a Desktop button runs it: its first window was asked for (R39)
 	if refusal, ok := dialogPreflight(runtime.GOOS, dialogToolOnPath(), displayIsSet()); !ok {
-		return "", errors.New(refusal)
+		return nil, errors.New(refusal)
 	}
-	var out string
-	finished := false
-	err := localArchiveFlowHooks(func(o string) { out = o }, func() { finished = true }, nil, nil)
+	var (
+		out      string
+		finished bool
+		set      []Made
+		isSet    bool
+	)
+	err := localArchiveFlowHooks(func(o string) { out = o }, func() { finished = true }, nil, nil, func(m []Made) { set, isSet = m, true })
+	if isSet {
+		return addSetOutcome(set, err)
+	}
 	return addOutcome(out, finished, err)
 }
 
-// ErrStoppedEarly is AddArchive's answer when a folder was chosen but the copy into it
-// did not finish (Cancel on the progress window, or on the Outlook app's "Continue?"):
+// addOutcome is what AddArchives returns for the one-archive path, from the folder the
+// flow chose ("" when none), whether the copy into it finished, and the flow's error
+// (MA-954, MA-1499). A person who backs out before choosing a folder adds nothing. Once
+// the copy finished, closing a later window (the summary or the schedule question) is
+// not a failure. A chosen folder whose copy did not finish (Cancel on the progress
+// window, or on the Outlook app's "Continue?") is MadeStopped, never a plain success:
 // the folder may hold the mail copied so far, and running the wizard again with the
-// same mail and folder finishes it (MA-954).
-var ErrStoppedEarly = errors.New("the copy was stopped before it finished")
-
-// addOutcome is what AddArchive returns, from the folder the flow chose ("" when none),
-// whether the copy into it finished, and the flow's error (MA-954). A person who backs
-// out before choosing a folder adds nothing. Once the copy finished, closing a later
-// window (the summary or the schedule question) is not a failure. A chosen folder whose
-// copy did not finish is ErrStoppedEarly, never a plain success. Pure, so the mapping is
-// testable without a display.
-func addOutcome(out string, finished bool, err error) (string, error) {
+// same mail and folder finishes it. Any other error is passed on, its folder MadeFailed.
+// Pure, so the mapping is testable without a display.
+func addOutcome(out string, finished bool, err error) ([]Made, error) {
 	cancelled := errors.Is(err, zenity.ErrCanceled)
+	one := func(o MadeOutcome, reason string) []Made {
+		return []Made{{Folder: out, Name: filepath.Base(out), Outcome: o, Reason: reason}}
+	}
 	switch {
 	case out == "" && cancelled:
-		return "", nil
+		return nil, nil
 	case out == "":
-		return "", err
+		return nil, err
 	case finished && cancelled:
-		return out, nil
+		return one(MadeFinished, ""), nil
 	case finished:
-		return out, err
+		return one(MadeFinished, ""), err
 	case err == nil || cancelled:
-		return out, ErrStoppedEarly
+		return one(MadeStopped, setCancelled), nil
 	}
-	return out, err
+	return one(MadeFailed, firstLine(err)), err
+}
+
+// addSetOutcome is what AddArchives returns for One archive for each mailbox, from what the
+// set made or continued and the flow's error (§10, C11; MA-1499). Backing out before any
+// folder was made adds nothing; once archives were made, closing a later window (the
+// summary or the schedule question) is not a failure. Any other error is passed on with
+// the archives, which the Desktop still lists.
+func addSetOutcome(made []Made, err error) ([]Made, error) {
+	if errors.Is(err, zenity.ErrCanceled) {
+		err = nil
+	}
+	if len(made) == 0 {
+		return nil, err
+	}
+	return made, err
 }
 
 // localArchiveFlow is the wizard's local path: choose the source, pick the files,
 // prepare IMAP, choose the output folder and options, then export. Shared by the
-// double-click wizard (after its first step and health check) and by AddArchive.
+// double-click wizard (after its first step and health check) and by AddArchives.
 // chosen, when set, is called with the output folder just before the export runs,
-// so a caller (AddArchive) can register the new archive even if the export is later
+// so a caller (AddArchives) can register the new archive even if the export is later
 // cancelled.
 func localArchiveFlow(chosen func(out string)) error { return localArchiveFlowWith(chosen, nil, nil) }
 
@@ -787,13 +835,15 @@ func localArchiveFlow(chosen func(out string)) error { return localArchiveFlowWi
 // keyed, when set, receives the answers in place of the plaintext export, which never
 // runs — the caller makes the key and runs the first backup with it.
 func localArchiveFlowWith(chosen func(out string), check func(out string) error, keyed func(wizardChoice)) error {
-	return localArchiveFlowHooks(chosen, nil, check, keyed)
+	return localArchiveFlowHooks(chosen, nil, check, keyed, nil)
 }
 
-// localArchiveFlowHooks is localArchiveFlowWith with one more hook: finished, when set,
-// is called once the export into the chosen folder has finished (MA-954), so AddArchive
-// can tell a finished copy from one stopped part way.
-func localArchiveFlowHooks(chosen func(out string), finished func(), check func(out string) error, keyed func(wizardChoice)) error {
+// localArchiveFlowHooks is localArchiveFlowWith with two more hooks: finished, when set,
+// is called once the export into the chosen folder has finished (MA-954), so AddArchives
+// can tell a finished copy from one stopped part way; madeSet, when set, is given what One
+// archive for each mailbox made or continued, each with its outcome and its schedule's
+// (docs/design-per-mailbox-archives.md §10, C11), also when the set ends with an error.
+func localArchiveFlowHooks(chosen func(out string), finished func(), check func(out string) error, keyed func(wizardChoice), madeSet func([]Made)) error {
 	// 3. Choose the source type, then pick the file/folder accordingly.
 	choices := []string{srcAuto, srcOutlook}
 	if runtime.GOOS == "windows" {
@@ -812,14 +862,18 @@ func localArchiveFlowHooks(chosen func(out string), finished func(), check func(
 		err        error
 	)
 	for {
-		srcType, err = zenity.List("What are you exporting?", choices, zenity.Title(appTitle), zenity.DefaultItems(srcAuto))
+		// Through the listDialog seam (zenity.List in the product), so the shipped flows' tests reach
+		// One archive for each mailbox with no real window (MA-1490, MA-1499).
+		srcType, err = listDialog("What are you exporting?", choices, zenity.Title(appTitle), zenity.DefaultItems(srcAuto))
 		if err != nil {
 			return err
 		}
 		if srcType != srcAuto {
 			break
 		}
-		autoInputs, err = app.DiscoverInputs(nil, true)
+		// The skipped inputs are discarded on purpose: no input is listed here, so none can be
+		// skipped, and the list shows only stores that exist (design-1.7.5-fixes §1.2).
+		autoInputs, _, err = app.DiscoverInputs(nil, true)
 		if err != nil {
 			return err
 		}
@@ -872,13 +926,29 @@ func localArchiveFlowHooks(chosen func(out string), finished func(), check func(
 	}
 
 	choice := wizardChoice{outlookCOM: useOutlookCOM}
+	var names map[string]string // the name the mailbox list showed for each path (MA-1502)
+	var order []string          // the list's paths in its order: the download questions' (F14)
 	switch {
 	case useOutlookCOM:
 	case srcType == srcAuto:
-		choice.inputs, choice.auto, err = pickAutoInputs(autoInputs)
+		// The question after All of them only in the plaintext flow (keyed == nil: never in Make a
+		// new encrypted archive…, which reaches the list too), and only once the set is built
+		// (perMailboxBuilt, step 3b of docs/design-per-mailbox-archives.md; MA-1490).
+		pick, err := pickAutoChoice(autoInputs, perMailboxBuilt && keyed == nil)
 		if err != nil {
 			return err
 		}
+		if pick.each {
+			// One archive for each mailbox (docs/design-per-mailbox-archives.md §6 to §11): the
+			// parent folder, the plan, the answers, each archive's export, the summary and the
+			// schedule. What it made or continued goes to the caller's hook (step 4's AddArchives).
+			made, err := makeSet(pick.set, runtime.GOOS)
+			if madeSet != nil {
+				madeSet(made)
+			}
+			return err
+		}
+		choice.inputs, choice.auto, names, order = pick.inputs, pick.auto, pick.names, pick.order
 	default:
 		choice.inputs = []string{inputPath}
 	}
@@ -886,29 +956,20 @@ func localArchiveFlowHooks(chosen func(out string), finished func(), check func(
 	// 1a. IMAP prep, for every input that needs it (auto-detected ones too):
 	//     a Thunderbird IMAP account is offered a full offline download; an
 	//     Outlook .ost gets the equivalent guidance.
-	prepared := false
-	ostNoted := false
-	var changed []string // the accounts this run's Yes, prepare changed (MA-1267)
-	for _, in := range choice.inputs {
-		fi, statErr := os.Stat(in)
-		switch {
-		case statErr != nil:
-		case fi.IsDir() && thunderbird.IsImapStore(in):
-			p, err := prepareThunderbirdGUI(in, &changed)
-			if err != nil {
-				return err
-			}
-			prepared = prepared || p
-		case !fi.IsDir() && strings.EqualFold(filepath.Ext(in), ".ost") && !ostNoted:
-			ostNoted = true
-			if err := outlookOfflineNote(); err != nil {
-				return err
-			}
-		}
+	//     Asked in the order the list showed the accounts (the friction review's F14).
+	prepared, err := askDownloads(inListOrder(choice.inputs, order), names)
+	if err != nil {
+		return err
 	}
 
 	// 2. Choose the output folder.
-	choice.out, err = zenity.SelectFile(zenity.Title("Select the output folder"), zenity.Directory())
+	//    On auto-detect's one-archive and single-row paths, a folder that directly holds two or more
+	//    archives asks first (MA-1507), once the set is built (perMailboxBuilt, step 3b): the
+	//    question's words speak of One archive for each mailbox, which a person cannot choose yet.
+	//    Never in Make a new encrypted archive… (keyed): it never offers One archive for each mailbox,
+	//    and its empty-folder check refuses any folder that holds something anyway (the friction
+	//    review's F8).
+	choice.out, err = askOutputFolder(perMailboxBuilt && srcType == srcAuto && keyed == nil)
 	if err != nil {
 		return err
 	}
@@ -918,89 +979,13 @@ func localArchiveFlowHooks(chosen func(out string), finished func(), check func(
 		}
 	}
 
-	// 3. Export mode — not asked when the prep just forced a full re-export
-	//    (asking, then overriding the answer, would be a lie).
-	choice.mode = export.Incremental
-	if prepared {
-		choice.mode = export.Full
-		if err := zenity.Info("Because a full offline download was just prepared, this run exports everything (Full mode) so messages captured earlier without their content are rewritten.\n\nLater runs can be incremental.", zenity.Title(appTitle)); err != nil && !errors.Is(err, zenity.ErrCanceled) {
-			return err
-		}
-	} else {
-		const modeInc = "Incremental — only messages new since the last run (and any still missing content)"
-		const modeFull = "Full — export everything again"
-		modeChoice, err := zenity.List("Export mode:", []string{modeInc, modeFull}, zenity.Title(appTitle), zenity.DefaultItems(modeInc))
-		if err != nil {
-			return err
-		}
-		if modeChoice == modeFull {
-			choice.mode = export.Full
-		}
-	}
-
-	// 4. Optional date window (re-prompt until valid or cancelled).
-	choice.since, err = askSince()
-	if err != nil {
+	// 3. to 5c. The export mode, the date window, the mail app, the .eml copies and the folder links.
+	if err := askAnswers(&choice, srcType, prepared); err != nil {
 		return err
 	}
 
-	// 5. Is the mail app open? Only meaningful for a data FILE, which may be
-	//    locked; folders are read in place and the Outlook-app path needs
-	//    Outlook running anyway.
-	if choice.outlookCOM == false && anyRegularFile(choice.inputs) {
-		openChoice, err := zenity.List(
-			"Is your mail app (Outlook / Thunderbird) currently open?",
-			[]string{"No", "Yes — copy the file first to avoid a lock"},
-			zenity.Title(appTitle), zenity.DefaultItems("No"))
-		if err != nil {
-			return err
-		}
-		choice.copyFirst = strings.HasPrefix(openChoice, "Yes")
-	}
-
-	// 5b. Keep the original messages too? Only sources that carry raw RFC-822
-	//     bytes (mbox/maildir readers) can honour it — a .pst/.ost item and the
-	//     Outlook-app export path have no originals to keep, so they aren't asked.
-	if keepRawWorthAsking(srcType, choice.inputs) {
-		rawChoice, err := zenity.List(
-			"Also keep a copy of each original message (.eml) so you can re-import it into a mail program later? (uses more disk space)",
-			[]string{"No", "Yes — keep the original .eml files too"},
-			zenity.Title(appTitle), zenity.DefaultItems("No"))
-		if err != nil {
-			return err
-		}
-		choice.keepRaw = strings.HasPrefix(rawChoice, "Yes")
-	}
-
-	// 5b2. Read through the folder links of a mail folder? Not by default: a link in the
-	//      store is recorded and not followed, and its gap says to answer this question.
-	//      Asked only when a chosen input is a folder (a link lives in a folder store).
-	if followLinksWorthAsking(srcType, choice.inputs) {
-		linkChoice, err := zenity.List(
-			followLinksQuestion,
-			[]string{followLinksNo, followLinksYes},
-			zenity.Title(appTitle), zenity.DefaultItems(followLinksNo))
-		if err != nil {
-			return err
-		}
-		choice.followLinks = followLinksFor(linkChoice, choice.inputs)
-	}
-
-	// 5c. Include the Deleted Items / Junk Email folders? Excluded by default;
-	//     a click-through excludes them (T7). Only asked for a source whose walk
-	//     can honor the exclusion by resolved well-known-folder id — a live-path
-	//     (Graph) source. The GUI reads only local stores today, so the step is
-	//     suppressed rather than asking a question the local import cannot honor
-	//     (deletedJunkApplies); the pure decision is exercised by the tests.
-	if deletedJunkApplies(srcType) {
-		choice.includeDeleted, choice.includeJunk, err = askDeletedJunk()
-		if err != nil {
-			return err
-		}
-	}
-
 	// 6. Run with a progress dialog, then offer to keep it current. Tell the caller
-	//    the chosen output folder first, so AddArchive can register the new archive
+	//    the chosen output folder first, so AddArchives can register the new archive
 	//    (a cancel during the export still leaves it registered, nothing half-hidden).
 	if keyed != nil {
 		keyed(choice)
@@ -1011,6 +996,97 @@ func localArchiveFlowHooks(chosen func(out string), finished func(), check func(
 	}
 	choice.finished = finished
 	return runExport(choice)
+}
+
+// askAnswers asks the answers an export takes once, into c, for c's inputs from srcType: the export
+// mode, the date window, whether the mail app is open, the .eml copies and the folder links, each as
+// today and with today's defaults. One archive asks them after its output folder; a set asks them
+// once for all its archives (docs/design-per-mailbox-archives.md §8). With prepared (a full offline
+// download was just prepared for every archive), the mode question is not asked and Full mode is
+// said, as today. The questions go through the dialog seams (zenity's in the product).
+func askAnswers(c *wizardChoice, srcType string, prepared bool) error {
+	// 3. Export mode — not asked when the prep just forced a full re-export
+	//    (asking, then overriding the answer, would be a lie).
+	c.mode = export.Incremental
+	if prepared {
+		c.mode = export.Full
+		if err := messageDialog("Because a full offline download was just prepared, this run exports everything (Full mode) so messages captured earlier without their content are rewritten.\n\nLater runs can be incremental.", zenity.Title(appTitle)); err != nil && !errors.Is(err, zenity.ErrCanceled) {
+			return err
+		}
+	} else {
+		const modeInc = "Incremental — only messages new since the last run (and any still missing content)"
+		const modeFull = "Full — export everything again"
+		modeChoice, err := listDialog("Export mode:", []string{modeInc, modeFull}, zenity.Title(appTitle), zenity.DefaultItems(modeInc))
+		if err != nil {
+			return err
+		}
+		if modeChoice == modeFull {
+			c.mode = export.Full
+		}
+	}
+
+	// 4. Optional date window (re-prompt until valid or cancelled).
+	var err error
+	c.since, err = askSince()
+	if err != nil {
+		return err
+	}
+
+	// 5. Is the mail app open? Only meaningful for a data FILE, which may be
+	//    locked; folders are read in place and the Outlook-app path needs
+	//    Outlook running anyway.
+	if c.outlookCOM == false && anyRegularFile(c.inputs) {
+		openChoice, err := listDialog(
+			"Is your mail app (Outlook / Thunderbird) currently open?",
+			[]string{"No", "Yes — copy the file first to avoid a lock"},
+			zenity.Title(appTitle), zenity.DefaultItems("No"))
+		if err != nil {
+			return err
+		}
+		c.copyFirst = strings.HasPrefix(openChoice, "Yes")
+	}
+
+	// 5b. Keep the original messages too? Only sources that carry raw RFC-822
+	//     bytes (mbox/maildir readers) can honour it — a .pst/.ost item and the
+	//     Outlook-app export path have no originals to keep, so they aren't asked.
+	if keepRawWorthAsking(srcType, c.inputs) {
+		rawChoice, err := listDialog(
+			"Also keep a copy of each original message (.eml) so you can re-import it into a mail program later? (uses more disk space)",
+			[]string{"No", "Yes — keep the original .eml files too"},
+			zenity.Title(appTitle), zenity.DefaultItems("No"))
+		if err != nil {
+			return err
+		}
+		c.keepRaw = strings.HasPrefix(rawChoice, "Yes")
+	}
+
+	// 5b2. Read through the folder links of a mail folder? Not by default: a link in the
+	//      store is recorded and not followed, and its gap says to answer this question.
+	//      Asked only when a chosen input is a folder (a link lives in a folder store).
+	if followLinksWorthAsking(srcType, c.inputs) {
+		linkChoice, err := listDialog(
+			followLinksQuestion,
+			[]string{followLinksNo, followLinksYes},
+			zenity.Title(appTitle), zenity.DefaultItems(followLinksNo))
+		if err != nil {
+			return err
+		}
+		c.followLinks = followLinksFor(linkChoice, c.inputs)
+	}
+
+	// 5c. Include the Deleted Items / Junk Email folders? Excluded by default;
+	//     a click-through excludes them (T7). Only asked for a source whose walk
+	//     can honor the exclusion by resolved well-known-folder id — a live-path
+	//     (Graph) source. The GUI reads only local stores today, so the step is
+	//     suppressed rather than asking a question the local import cannot honor
+	//     (deletedJunkApplies); the pure decision is exercised by the tests.
+	if deletedJunkApplies(srcType) {
+		c.includeDeleted, c.includeJunk, err = askDeletedJunk()
+		if err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 // includeDeletedJunk maps the wizard's Deleted-Items/Junk answer to the two
@@ -1583,25 +1659,124 @@ func removeSchedule(out string) error {
 // not say Thunderbird keeps a message only once it is opened: "Keep messages for this account on this
 // computer" is on by default for a new account (observed in the Windows lab of 2026-10-31).
 // What is true is that Thunderbird downloads over time, and only while it is open.
+// imapPrepQuestionFor names the account in it (MA-1502).
 const imapPrepQuestion = "This looks like an IMAP account.\n\n" +
 	"Thunderbird may not have downloaded every message to this computer yet: it downloads mail over time, and only while it is open. " +
 	"A message or attachment it has not downloaded yet is not in this export; a later run adds it once Thunderbird has it.\n\n" +
 	"Yes, prepare makes sure Thunderbird keeps every message on this computer, then waits while it downloads.\n\n" +
-	"Prepare a full offline download first?"
+	imapPrepOffer
+
+// imapPrepOffer is imapPrepQuestion's last line, the offer, which imapPrepQuestionFor names the
+// account in.
+const imapPrepOffer = "Prepare a full offline download first?"
+
+// prepAsk is how the download question names its account (docs/design-per-mailbox-archives.md §8,
+// the owner's QA "Yes, name it" of 2026-11-23; MA-1502): the name the mailbox list showed for it and
+// its place among the accounts this run asks about.
+type prepAsk struct {
+	name string
+	i, n int
+}
+
+// imapPrepQuestionFor is the download question for one account (MA-1502, amending MA-947): "Account 1
+// of 3: NAME", then today's question (imapPrepQuestion) unchanged up to its offer, which names the
+// account: "Prepare a full offline download of NAME first?". The name's control characters are
+// dropped; the question dialog shows its text without markup.
+func imapPrepQuestionFor(a prepAsk) string {
+	name := util.StripControl(a.name)
+	head := fmt.Sprintf("Account %d of %d: %s\n\n", a.i, a.n, name)
+	if a.n == 1 {
+		// One account asked: no count (the friction review's F14; "Account 1 of 1: NAME" before).
+		head = "Account: " + name + "\n\n"
+	}
+	return head +
+		strings.TrimSuffix(imapPrepQuestion, imapPrepOffer) +
+		"Prepare a full offline download of " + name + " first?"
+}
+
+// prepAsks numbers the download questions of one run (MA-1502): n is how many accounts the run asks
+// about (the count says "1 of 3"), names the name the mailbox list showed for each store.
+type prepAsks struct {
+	names map[string]string
+	n, i  int
+}
+
+// next is the question's naming for store, the next account asked: the list's name for it, or, where
+// no list was shown (one mailbox found, a folder chosen by hand), the name the list gives it alone.
+func (a *prepAsks) next(store string) prepAsk {
+	name := a.names[store]
+	if name == "" {
+		name = shownName(store)
+	}
+	return a.nextAs(name)
+}
+
+// nextAs is next for an account the caller names (a set's row, which keeps its list name).
+func (a *prepAsks) nextAs(name string) prepAsk {
+	a.i++
+	if a.i > a.n {
+		a.n = a.i
+	}
+	return prepAsk{name: name, i: a.i, n: a.n}
+}
+
+// imapAskCount is how many of inputs the download question is asked about, by the loop's own rule
+// (askDownloads: a Thunderbird IMAP folder a live account uses; MA-1463).
+func imapAskCount(inputs []string) int {
+	n := 0
+	for _, in := range inputs {
+		if fi, err := os.Stat(in); err == nil && fi.IsDir() && thunderbird.IsImapStore(in) && !storeUnused(in) {
+			n++
+		}
+	}
+	return n
+}
+
+// askDownloads is one archive's IMAP prep, for every input that needs it (auto-detected ones too): a
+// Thunderbird IMAP account is offered a full offline download, its question naming the account as
+// the list showed it (names; MA-1502) with its number among those asked; an Outlook .ost gets the
+// equivalent guidance, once. It reports whether any account was prepared (the export then runs in
+// Full mode).
+func askDownloads(inputs []string, names map[string]string) (bool, error) {
+	prepared := false
+	ostNoted := false
+	var changed []string // the accounts this run's Yes, prepare changed (MA-1267)
+	asks := prepAsks{names: names, n: imapAskCount(inputs)}
+	for _, in := range inputs {
+		fi, statErr := os.Stat(in)
+		switch {
+		case statErr != nil:
+		case fi.IsDir() && thunderbird.IsImapStore(in) && !storeUnused(in):
+			// A folder no live account uses (the list says "Not in Thunderbird now") is not asked
+			// about: no account would download into it (MA-1463; the friction review's F3).
+			p, err := prepareThunderbirdGUI(in, asks.next(in), &changed)
+			if err != nil {
+				return false, err
+			}
+			prepared = prepared || p
+		case !fi.IsDir() && strings.EqualFold(filepath.Ext(in), ".ost") && !ostNoted:
+			ostNoted = true
+			if err := outlookOfflineNote(); err != nil {
+				return false, err
+			}
+		}
+	}
+	return prepared, nil
+}
 
 // prepareThunderbirdGUI offers, for a Thunderbird IMAP account, to enable
 // offline download and guide a full sync so nothing is missed. It returns
 // whether preparation was done (in which case the export should run in Full
-// mode). Non-IMAP stores need no preparation. changed holds the accounts this wizard run has
-// already changed, and gets this store's account when it changes prefs.js, so a later refusal in
-// the same run says what was changed (MA-1267).
-func prepareThunderbirdGUI(store string, changed *[]string) (bool, error) {
+// mode). Non-IMAP stores need no preparation. ask names the account in the question (MA-1502).
+// changed holds the accounts this wizard run has already changed, and gets this store's account
+// when it changes prefs.js, so a later refusal in the same run says what was changed (MA-1267).
+func prepareThunderbirdGUI(store string, ask prepAsk, changed *[]string) (bool, error) {
 	if !thunderbird.IsImapStore(store) {
 		return false, nil
 	}
 
-	choice := zenity.Question(
-		imapPrepQuestion,
+	choice := questionDialog(
+		imapPrepQuestionFor(ask),
 		zenity.Title(appTitle),
 		zenity.OKLabel("Yes, prepare"),
 		zenity.CancelLabel("No, export what's cached"),
@@ -1746,7 +1921,7 @@ func afterChange(words string, changed []string) string {
 // Now in Thunderbird, watching the store size and finishing automatically once
 // it stops growing (or the user closes the dialog).
 func guiWaitForSync(store string) error {
-	dlg, err := zenity.Progress(zenity.Title(appTitle), zenity.Pulsate())
+	dlg, err := progressDialog(appTitle)
 	if err != nil {
 		return err
 	}
@@ -1796,7 +1971,7 @@ func outlookOfflineNote() error {
 // value means "export everything".
 func askSince() (string, error) {
 	for {
-		val, err := zenity.Entry(
+		val, err := entryDialog(
 			"Only export items newer than\n(e.g. 30d, 4w, 720h, or a date like 2026-07-01).\n\nLeave blank to export everything.",
 			zenity.Title("Date window"),
 			zenity.EntryText(""),
@@ -1811,77 +1986,13 @@ func askSince() (string, error) {
 		if _, perr := util.ParseSince(val, time.Now()); perr == nil {
 			return val, nil
 		}
-		if e := zenity.Error(
+		if e := errorDialog(
 			fmt.Sprintf("Couldn't understand %q.\nTry 30d, 4w, 720h, or a date like 2026-07-01.", val),
 			zenity.Title("Invalid date window"),
 		); e != nil {
 			return "", e
 		}
 	}
-}
-
-// pickAutoInputs lets the user choose one of the auto-detected stores, or all
-// of them. "All of them" is remembered as auto-discovery, so a scheduled run
-// picks up accounts added later.
-//
-// The list shows a legible label per store (the .pst/.ost file name, or a mail
-// folder's store name) rather than the raw path: the discovered paths are long
-// and identical up to the point the dialog truncates them, so a raw list is
-// unreadable and indistinguishable.
-func pickAutoInputs(found []string) ([]string, bool, error) {
-	const allOfThem = "➤ All of them (and any added later)"
-	if len(found) == 1 {
-		return found, false, nil
-	}
-
-	labels := make([]string, 0, len(found)+1)
-	labels = append(labels, allOfThem)
-	byLabel := make(map[string]string, len(found))
-	counts := map[string]int{}
-	for _, p := range found {
-		base := autoInputLabel(p)
-		counts[base]++
-		label := base
-		if counts[base] > 1 { // disambiguate identical names
-			label = fmt.Sprintf("%s (%d)", base, counts[base])
-		}
-		byLabel[label] = p
-		labels = append(labels, label)
-	}
-
-	choice, err := zenity.List(
-		"These mailboxes were found. Export which one?",
-		labels,
-		zenity.Title(appTitle),
-		zenity.DefaultItems(allOfThem),
-	)
-	if err != nil {
-		return nil, false, err
-	}
-	if choice == allOfThem {
-		return found, true, nil
-	}
-	if p, ok := byLabel[choice]; ok {
-		return []string{p}, false, nil
-	}
-	return []string{choice}, false, nil // fallback: treat the choice as a path
-}
-
-// autoInputLabel returns a human-readable label for a discovered store: the file
-// name for an Outlook .pst/.ost, or the store name for a mail-store directory
-// (Thunderbird account, Evolution account/local store).
-func autoInputLabel(p string) string {
-	if fi, err := os.Stat(p); err == nil && fi.IsDir() {
-		if s, err := source.Open(p); err == nil {
-			name := strings.TrimSpace(s.StoreName())
-			s.Close()
-			if name != "" {
-				return name
-			}
-		}
-		return filepath.Base(strings.TrimRight(p, string(os.PathSeparator)))
-	}
-	return filepath.Base(p)
 }
 
 // ---- the run and the summary ------------------------------------------------
@@ -1899,7 +2010,10 @@ func runExport(c wizardChoice) error {
 	if err := app.RefuseKeyless("archive into it", c.out); err != nil {
 		return err
 	}
-	logger := newLogger(c.out)
+	logger, closeLog := newLogger(c.out)
+	// Closed when this export ends, whatever the path (round D): before the summary or the cancel
+	// note waits for the person, and at the latest when runExport returns.
+	defer closeLog()
 
 	// For the Outlook-automation path, show the completeness caveat and confirm
 	// before spending time on a Send/Receive + PST copy.
@@ -1918,7 +2032,7 @@ func runExport(c wizardChoice) error {
 		}
 	}
 
-	dlg, err := zenity.Progress(zenity.Title("Exporting…"), zenity.Pulsate())
+	dlg, err := progressDialog("Exporting…")
 	if err != nil {
 		return err
 	}
@@ -1981,8 +2095,7 @@ func runExport(c wizardChoice) error {
 	result, runErr := app.Run(ctx, opts, logger, func(s export.Stats) {
 		ticks++
 		if ticks%20 == 0 {
-			_ = dlg.Text(fmt.Sprintf("exported %d · filled %d · skipped %d · attachments %d",
-				s.Exported, s.Filled, s.SkippedManifest+s.SkippedDate, s.Attachments))
+			_ = dlg.Text(progressCounts(s))
 		}
 	})
 
@@ -1990,7 +2103,8 @@ func runExport(c wizardChoice) error {
 	_ = dlg.Close()
 
 	if errors.Is(runErr, context.Canceled) {
-		return zenity.Info(
+		closeLog()
+		return messageDialog(
 			fmt.Sprintf("Export cancelled.\n\nExported %d message(s) before stopping.\nProgress was saved — run again to resume.",
 				result.Stats.Exported),
 			zenity.Title(appTitle),
@@ -2010,10 +2124,11 @@ func runExport(c wizardChoice) error {
 	if c.outlookCOM {
 		cleanupOutlookScratch(c.out, true, logger)
 	}
+	closeLog() // the export has ended: nothing more is logged
 
 	// Finish line: show the summary and offer to open the archive, then continue
 	// to the schedule offer exactly as before.
-	open := zenity.Question(exportSummary(c.out, c.keepRaw, result), zenity.Title(appTitle),
+	open := questionDialog(exportSummary(c.out, c.keepRaw, result), zenity.Title(appTitle),
 		zenity.OKLabel("Open the archive"), zenity.CancelLabel("Close"))
 	if open == nil {
 		openPath(filepath.Join(c.out, "index.html"))
@@ -2023,6 +2138,13 @@ func runExport(c wizardChoice) error {
 
 	// 7. Keep it current?
 	return offerSchedule(c)
+}
+
+// progressCounts is the export's progress window's counts line (one archive's, and each archive's of
+// a set): the run's counts, never a name.
+func progressCounts(s export.Stats) string {
+	return fmt.Sprintf("exported %d · filled %d · skipped %d · attachments %d",
+		s.Exported, s.Filled, s.SkippedManifest+s.SkippedDate, s.Attachments)
 }
 
 // exportSummary renders the success summary shown after a run. It is a pure
@@ -2048,6 +2170,11 @@ func exportSummaryFor(out string, keepRaw bool, r app.Result, goos string) strin
 			b.WriteString(l + "\n")
 		}
 		b.WriteString("\n")
+	}
+	// A listed mailbox that is gone was skipped (MA-1471): said here, at the end of a run that
+	// finished, from the result in memory.
+	if sk := app.SkippedLines(r.Skipped, true); len(sk) > 0 {
+		b.WriteString(strings.Join(sk, "\n") + "\n\n")
 	}
 	fmt.Fprintf(b,
 		"Newly downloaded this run: %d\n"+
@@ -2190,11 +2317,16 @@ func presyncQuestionTextFor(goos string) string {
 // (StartCalendarInterval) and a Windows task (StartWhenAvailable) run a time the computer
 // slept through when it wakes; Linux's cron skips it.
 func scheduleQuestionFor(goos string) string {
-	missed := "A time when the computer is switched off is skipped. If it was asleep, the backup runs when it wakes up."
+	return "Keep this archive current automatically?\n\nA scheduled run repeats exactly this export (incremental: only new mail and any content that was still missing). It runs only while you are signed in. " + scheduleMissedFor(goos)
+}
+
+// scheduleMissedFor is the schedule question's sentence on what happens to a missed time on goos
+// (MA-946), which a set's question says too (docs/design-per-mailbox-archives.md §11, C27).
+func scheduleMissedFor(goos string) string {
 	if goos != "darwin" && goos != "windows" {
-		missed = "A time when the computer is off or asleep is skipped."
+		return "A time when the computer is off or asleep is skipped."
 	}
-	return "Keep this archive current automatically?\n\nA scheduled run repeats exactly this export (incremental: only new mail and any content that was still missing). It runs only while you are signed in. " + missed
+	return "A time when the computer is switched off is skipped. If it was asleep, the backup runs when it wakes up."
 }
 
 // scheduleRunsNoteFor is the end note's line on when the schedule runs, on goos (MA-946);
@@ -2209,29 +2341,74 @@ func scheduleRunsNoteFor(goos string) string {
 	return ""
 }
 
+// The schedule question's rows (MA-1474).
+const (
+	scheduleNo     = "No — just this once"
+	scheduleDaily  = "Yes — every day at 2:00 AM"
+	scheduleWeekly = "Yes — every week, Sunday at 3:00 AM"
+)
+
+// noScheduleLine ends the schedule question when its answer keeps naming no row (MA-1474).
+const noScheduleLine = "No scheduled backup was set up: the list did not say which line was chosen. To set one up, open Settings in MailArchive Desktop, or run the wizard again."
+
+// askSchedule asks "Keep this archive current automatically?" and says what to install (MA-1474):
+// only the answer that is the daily or the weekly row, by the mailbox list's one row rule
+// (rowChoice), installs. Any other answer, the empty one included (Linux's list can be answered with
+// nothing selected), shows MA-1465's note and the question again, up to pickTries times, then ends
+// with noScheduleLine and installs nothing. Cancel and "No — just this once" install nothing (R14).
+// The question goes through the listDialog seam with No preselected and an empty pick refused
+// where the dialog can (Windows, macOS). goos is the system whose dialog program printed the answer
+// (answerMayBeTranscoded); offerSchedule passes runtime.GOOS.
+func askSchedule(goos string) (iv schedule.Interval, at string, install bool, err error) {
+	return askScheduleBy(goos, func(rows []string) (string, error) {
+		// The question is this platform's fixed words (MA-1286's scan: only runtime.GOOS may choose
+		// them); goos decides only how the answer is read.
+		return listDialog(scheduleQuestionFor(runtime.GOOS), rows, zenity.Title(appTitle), zenity.DefaultItems(scheduleNo), zenity.DisallowEmpty())
+	})
+}
+
+// askScheduleBy is askSchedule's rule (MA-1474) over the question ask shows with the rows: one
+// archive's question and a set's (docs/design-per-mailbox-archives.md §11) read their answers alike.
+func askScheduleBy(goos string, ask func(rows []string) (string, error)) (iv schedule.Interval, at string, install bool, err error) {
+	rows := []string{scheduleNo, scheduleDaily, scheduleWeekly}
+	choices := [][]string{{scheduleNo}, {scheduleDaily}, {scheduleWeekly}}
+	transcoded := answerMayBeTranscoded(goos)
+	for try := 1; ; try++ {
+		answer, err := ask(rows)
+		if err != nil {
+			if errors.Is(err, zenity.ErrCanceled) {
+				return "", "", false, nil
+			}
+			return "", "", false, err
+		}
+		if i, ok := rowChoice(answer, choices, transcoded); ok {
+			switch i {
+			case 1:
+				return schedule.Daily, "02:00", true, nil
+			case 2:
+				return schedule.Weekly, "03:00", true, nil
+			}
+			return "", "", false, nil
+		}
+		if try >= pickTries {
+			return "", "", false, noticeClosed(messageDialog(noScheduleLine, zenity.Title(appTitle)))
+		}
+		// Closing the note with its close button asks again too, as OK does (MA-1209's rule).
+		if err := noticeClosed(messageDialog(pickAgain, zenity.Title(appTitle))); err != nil {
+			return "", "", false, err
+		}
+	}
+}
+
 func offerSchedule(c wizardChoice) error {
-	const no = "No — just this once"
-	const daily = "Yes — every day at 2:00 AM"
-	const weekly = "Yes — every week, Sunday at 3:00 AM"
 	// A folder whose delete did not finish is not offered a schedule (MA-1036): refused before
 	// the question; the install asks again.
 	if err := archdelete.ActionRefusal("", c.out, scheduledBackup+" was not installed"); err != nil {
 		return err
 	}
-	pick, err := zenity.List(scheduleQuestionFor(runtime.GOOS),
-		[]string{no, daily, weekly}, zenity.Title(appTitle), zenity.DefaultItems(no))
-	if err != nil {
-		if errors.Is(err, zenity.ErrCanceled) {
-			return nil
-		}
+	iv, at, install, err := askSchedule(runtime.GOOS)
+	if err != nil || !install {
 		return err
-	}
-	if pick == no {
-		return nil
-	}
-	iv, at := schedule.Daily, "02:00"
-	if pick == weekly {
-		iv, at = schedule.Weekly, "03:00"
 	}
 
 	// §4.2.6: when a Thunderbird store is among the inputs (and this platform has
@@ -2279,7 +2456,8 @@ func offerSchedule(c wizardChoice) error {
 	if c.tbSync {
 		syncLine = scheduleSyncLine
 	}
-	return zenity.Info(fmt.Sprintf("Scheduled: %s at %s.\n\nArchive: %s\nLog: %s%s\n\nOpen the MailArchive wizard (mailarchive wizard) any time to check the backup's health.%s",
+	// Through the messageDialog seam (zenity.Info): a test of the question never opens it (MA-1474).
+	return messageDialog(fmt.Sprintf("Scheduled: %s at %s.\n\nArchive: %s\nLog: %s%s\n\nOpen the MailArchive wizard (mailarchive wizard) any time to check the backup's health.%s",
 		iv, at, c.out, spec.Log, syncLine, note), zenity.Title(appTitle))
 }
 
@@ -2396,14 +2574,21 @@ func inVolatileDir(exe string) bool {
 	return false
 }
 
+// openRunLog opens an export's run log (runlog.Open). A var only so a test can keep each file an
+// export opened and tell, once the export returned, that it was closed: the file is the real one.
+var openRunLog = runlog.Open
+
 // newLogger writes a run log into the output folder (there is no console in a
 // GUI build), appending with rotation; falls back to discarding output if the
-// file can't be created.
-func newLogger(outDir string) *log.Logger {
+// file can't be created. closeLog closes the log's file (calling it again does nothing): each
+// export calls it when it ends, on every path, so on Windows, where a folder holding an open file
+// cannot be deleted or moved, the archive's folder can be while the wizard or MailArchive Desktop
+// stays open (round D; the Windows lab of MA-1503 found it left open until the garbage collector ran).
+func newLogger(outDir string) (logger *log.Logger, closeLog func()) {
 	if err := os.MkdirAll(outDir, 0o755); err == nil {
-		if f, err := runlog.Open(filepath.Join(outDir, "mailarchive.log")); err == nil {
-			return log.New(f, "", log.LstdFlags)
+		if f, err := openRunLog(filepath.Join(outDir, "mailarchive.log")); err == nil {
+			return log.New(f, "", log.LstdFlags), func() { _ = f.Close() }
 		}
 	}
-	return log.New(io.Discard, "", 0)
+	return log.New(io.Discard, "", 0), func() {}
 }

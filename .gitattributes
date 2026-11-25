@@ -8,6 +8,11 @@ testdata/mime/** -text
 internal/source/parsev1.go -text
 internal/source/parsev1/** -text
 
+# The copy of github.com/ncruces/zenity v0.10.12 is pinned by sha256, file by file
+# (MA-1468, docs/design-windows-dialog-fit.md §4.1): a checkout must never rewrite a
+# byte of it either.
+third_party/zenity/** -text
+
 # The P14 golden holds the exact per-message bytes a healthy export produces
 # (MA-329); a Windows checkout must not rewrite its line endings or it will not
 # match the LF output the product generates.

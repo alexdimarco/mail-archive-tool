@@ -613,7 +613,9 @@ type card struct{}
 // own, the wizard's flows a Desktop button runs in-process, and Desktop's two
 // picker seams, which only a button press calls.
 var askingWays = []string{
-	"internal/wizard.Run", "internal/wizard.AddArchive", "internal/wizard.AddEncryptedArchive",
+	// AddArchives was AddArchive until step 4 of docs/design-per-mailbox-archives.md (MA-1499): the
+	// same way in, renamed, still required to start with dialogfront.Arm().
+	"internal/wizard.Run", "internal/wizard.AddArchives", "internal/wizard.AddEncryptedArchive",
 	"internal/wizard.ResumeArchive", "internal/desktop.pickFolder", "internal/desktop.pickFile",
 	// Amended 2026-11-13 (design-menubar slice S1, MB-8 and MB-13: widened, not
 	// duplicated): the running MailArchive's new entry points, each arming first — the

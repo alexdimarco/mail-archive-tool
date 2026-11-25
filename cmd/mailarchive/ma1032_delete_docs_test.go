@@ -52,6 +52,9 @@ var deleteDocControls = map[string][2]string{
 	// question's two buttons, whose labels archdelete gives the page.
 	"It was finished elsewhere": {"internal/archdelete/archdelete.go", `ElsewhereYes = "It was finished elsewhere"`},
 	"Cancel":                    {"internal/archdelete/archdelete.go", `ElsewhereNo  = "Cancel"`},
+	// Added 2026-11-20 (the 1.7.5 friction review's F6: the README names the panel's armed button,
+	// MA-1477), checked the same way: the page script draws it in those words.
+	"Delete when the check finishes": {"internal/desktop/deletescript.go", "delButton('Delete when the check finishes'"},
 }
 
 var (
