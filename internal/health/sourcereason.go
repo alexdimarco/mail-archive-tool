@@ -14,7 +14,8 @@ import (
 // record (state.LastRun.SourceReason). After 3 days status and the Your-archives banner, and at 30
 // days the pause, would say "reconnect the source … click Repair", a dead end for these archives:
 // the folder may be there, and Repair says no. So they say the reason's words instead. A record with
-// no reason keeps today's words. The design's draft words, for the friction review.
+// no reason keeps today's words. The design's draft words, for the friction review. Revision 3 adds a
+// third reason, reused (INS-03, MA-1509): Thunderbird now uses the folder for a different account.
 
 // SourceReasonText is what status and the Your-archives banner say, in place of "reconnect the
 // source", for a source-lost archive whose last refused run kept the reason reason, since the
@@ -31,6 +32,10 @@ func SourceReasonText(reason string, since time.Time) string {
 		return "Thunderbird stopped using this archive's mail folder on " + date + ": its account now keeps its mail in another folder. The mail saved so far stays here. To back that account up, click Make a new archive… and choose it again (or choose One archive for each mailbox and the same folder as before); then click Pause (make read-only) on this archive."
 	case state.SourceReasonRemoved:
 		return "Thunderbird no longer has the account this archive backs up (since " + date + "). The mail saved so far stays here. To stop its backups, click Pause (make read-only)."
+	case state.SourceReasonReused:
+		// Revision 3's reused (INS-03, MA-1509): "Status, the banner and the 30-day pause get this
+		// reason's words as F-03 gives the others"; the builder's words, after the stop's own.
+		return "Thunderbird now uses this archive's mail folder for a different account (since " + date + "), so its backups stopped. The mail saved so far stays here. To back up that account, click Make a new archive… and choose it; to stop this archive's backups, click Pause (make read-only)."
 	}
 	return ""
 }
@@ -50,6 +55,9 @@ func SourceReasonPauseText(reason string, since time.Time) string {
 		return "MailArchive paused this archive's scheduled backup: Thunderbird has not used its mail folder since " + date + ". Its mail stays in the archive. To back that account up, click Make a new archive… and choose it again."
 	case state.SourceReasonRemoved:
 		return "MailArchive paused this archive's scheduled backup: Thunderbird has not had its account since " + date + ". Its mail stays in the archive."
+	case state.SourceReasonReused:
+		// Revision 3's reused (MA-1509): the builder's words, in the removed reason's form.
+		return "MailArchive paused this archive's scheduled backup: Thunderbird has used its mail folder for a different account since " + date + ". Its mail stays in the archive."
 	}
 	return ""
 }

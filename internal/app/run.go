@@ -2274,8 +2274,15 @@ func DiscoverInputsFor(inputs []string, auto bool, nameOf func(string) RecordedA
 		// exactly one live account is that account, with its folder elsewhere: by the identity the
 		// record kept (revision 3), else by its name (movedAway).
 		if one && info.IsDir() {
-			if dir, moved := movedAway(in, recorded(in)); moved {
+			rec := recorded(in)
+			if dir, moved := movedAway(in, rec); moved {
 				return nil, nil, &sourceUnreachableError{path: in, movedTo: dir, one: true}
+			}
+			// Revision 3's reused (INS-03, MA-1509): the folder is there and a live account owns it, but
+			// not the account whose identity the record kept: Thunderbird gave the folder to another
+			// account. Stopped before anything is read, so no other account's mail is added.
+			if rec.ID != "" && autoplace.ReusedByID(in, rec.ID) {
+				return nil, nil, &sourceUnreachableError{path: in, reused: true}
 			}
 		}
 		if info.IsDir() {

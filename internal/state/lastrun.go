@@ -479,17 +479,20 @@ func ReadLastRun(out string) (LastRun, LastRunState, error) {
 	return r, LastRunPresent, nil
 }
 
-// The LastRun.SourceReason codes (F-03): a closed set, with no name in either.
+// The LastRun.SourceReason codes (F-03): a closed set, with no name in any. SourceReasonReused is
+// docs/design-per-mailbox-archives.md revision 3's (INS-03): Thunderbird now uses the archive's folder
+// for a different account.
 const (
 	SourceReasonMoved   = "moved"
 	SourceReasonRemoved = "removed"
+	SourceReasonReused  = "reused"
 )
 
 // saneSourceReason is a record's source_reason as read: one of the closed set, else "" (a planted or
 // damaged record keeps today's words).
 func saneSourceReason(r string) string {
 	switch r {
-	case SourceReasonMoved, SourceReasonRemoved:
+	case SourceReasonMoved, SourceReasonRemoved, SourceReasonReused:
 		return r
 	}
 	return ""

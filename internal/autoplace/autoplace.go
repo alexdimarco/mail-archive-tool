@@ -370,6 +370,32 @@ func RemovedByID(path, id string) bool {
 	return certain && n == 0
 }
 
+// ReusedByID reports whether Thunderbird now uses path's folder for a different account than the one
+// whose identity the archive's record kept for it (id): a live account owns the folder, for certain
+// (thunderbird.OwnerIdentity), and its identity is not id (docs/design-per-mailbox-archives.md
+// revision 3's "reused", the adversarial pass's INS-03). False for no identity, a path in no profile,
+// no owner that can be told, an owner with no identity, and settings that cannot be read for certain.
+func ReusedByID(path, id string) bool {
+	if id == "" {
+		return false
+	}
+	look(path)
+	profile, ok := thunderbird.FindProfileDir(path)
+	if !ok {
+		return false
+	}
+	owner, ok := thunderbird.OwnerIdentity(profile, path)
+	return ok && owner != id
+}
+
+// ReusedText is the words of the stop of an archive of one listed Thunderbird folder, auto-discovery
+// off, whose folder Thunderbird now uses for a different account (revision 3's "reused", INS-03). It
+// names the folder only, never an account's name (MA-1288). The design's draft words, for the friction
+// review.
+func ReusedText(folder string) string {
+	return fmt.Sprintf("Thunderbird now uses %s for a different account than the one this archive was made for, so this backup stopped and nothing was added. The mail saved so far stays in this archive. To back up that account, click Make a new archive… and choose it; to stop this archive's backups, click Pause (make read-only) on its row.", folder)
+}
+
 // MovedHowAs is MovedToAs, also saying whether the recorded name decided (for the words).
 func MovedHowAs(path, recordedName string) (string, bool, bool) {
 	look(path)

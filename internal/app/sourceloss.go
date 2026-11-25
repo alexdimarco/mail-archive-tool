@@ -43,20 +43,25 @@ const (
 // one: an archive of one listed Thunderbird folder, auto-discovery off, whose account now keeps its
 // mail in movedTo, with the folder still there (C2) or gone (F-08): autoplace.NoLongerUsedText's
 // words. removed: such an archive's folder is gone with its account (C13): autoplace.RemovedText's
-// words (docs/design-per-mailbox-archives.md §11; MA-1504, MA-1506).
+// words (docs/design-per-mailbox-archives.md §11; MA-1504, MA-1506). reused: Thunderbird now uses
+// such an archive's folder for a different account than its record's identity (revision 3's INS-03):
+// autoplace.ReusedText's words (MA-1509).
 type sourceUnreachableError struct {
 	path, movedTo string
 	sameServer    bool
 	one, removed  bool
+	reused        bool
 }
 
 // The reason codes a plaintext refused record keeps (state.LastRun.SourceReason; revision 2.1's
-// F-03): a one-folder archive's moved stop (C2, F-08), and C13's removed account. No name is in
-// either. Narrowed by revision 2.2 (the lead's call): an auto-discovery run's 1.7.5 moved stop
+// F-03): a one-folder archive's moved stop (C2, F-08), C13's removed account, and revision 3's
+// reused folder (INS-03). No name is in any. Narrowed by revision 2.2 (the lead's call): an auto-discovery run's 1.7.5 moved stop
 // records none, so a combined archive keeps 1.7.5's words; the moved words' "click Pause on this
 // archive" would pause its every account.
 func (e *sourceUnreachableError) sourceReason() string {
 	switch {
+	case e.reused:
+		return state.SourceReasonReused
 	case e.removed:
 		return state.SourceReasonRemoved
 	case e.movedTo != "" && e.one:
@@ -90,8 +95,12 @@ func pathLeadsNowhere(err error) bool {
 
 // Error is autoplace.GoneText, unchanged, so whatever compares a record's error with an input's
 // refusal (health.GoneMailboxRepairable) compares one text; for a moved account, autoplace.MovedText
-// (or, for an archive of one folder, NoLongerUsedText); for a removed one (C13), RemovedText.
+// (or, for an archive of one folder, NoLongerUsedText); for a removed one (C13), RemovedText; for a
+// folder Thunderbird now uses for another account (INS-03), ReusedText.
 func (e *sourceUnreachableError) Error() string {
+	if e.reused {
+		return autoplace.ReusedText(e.path)
+	}
 	if e.removed {
 		return autoplace.RemovedText(e.path)
 	}

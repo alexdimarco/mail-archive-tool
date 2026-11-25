@@ -840,6 +840,19 @@ func MovedByIdentity(profileDir, storeDir, id string) (string, bool) {
 	return dir, true
 }
 
+// OwnerIdentity is the identity of the live account that owns the store folder storeDir
+// (FindAccountForStore's match, from the same strict read); ok is false when no one account can be
+// told (none, or more than one), the settings cannot be read for certain, or the owner has no
+// identity (revision 3's "reused", INS-03: Thunderbird gave the folder to another account).
+func OwnerIdentity(profileDir, storeDir string) (string, bool) {
+	acct, s, err := findAccount(profileDir, storeDir)
+	if err != nil || acct == nil {
+		return "", false
+	}
+	id := accountIdentityOf(acct.ServerKey, s.vals)
+	return id, id != ""
+}
+
 // serverNamesOf are the server names a store folder named name may have been made for: the name
 // itself, and the name without Thunderbird's "-N" at its end ("Feeds-1", "imap.qzd.example-1") or just
 // before its last dot ("imap.gmail-1.com"), which Thunderbird adds for a second account on one server.
