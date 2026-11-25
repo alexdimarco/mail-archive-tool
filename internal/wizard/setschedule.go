@@ -218,19 +218,6 @@ func setKept(s MadeSchedule) bool {
 	return false
 }
 
-// setNothingNew reports whether a Yes to the set's schedule question would install nothing: no
-// archive finished that may be scheduled (not saved once) and has no schedule of its own (its kept
-// schedules already set by setKeptSchedules). offerSetSchedule then asks nothing and shows no end
-// note.
-func setNothingNew(arcs []*setArchive) bool {
-	for _, a := range arcs {
-		if a.made.Schedule == ScheduleNone && a.made.Outcome == MadeFinished && !a.it.row.once {
-			return false
-		}
-	}
-	return true
-}
-
 // setStartAt is the time at ("02:00") plus slot times setApart minutes, around the clock.
 func setStartAt(at string, slot int) string {
 	var h, m int

@@ -209,9 +209,10 @@ func runSet(ch setChosen, goos string) ([]Made, error) {
 	if err := exportSet(ch.parent, p, arcs, all, goos); err != nil {
 		return madeOf(arcs), err
 	}
-	// Each continued archive's own schedule is known before the summary, so a re-run that has nothing
-	// new to schedule still says, in its summary, each one that has no scheduled backup now
-	// (docs/design-per-mailbox-archives.md revision 3, round B's leftover of CON-01; MA-1497).
+	// Each continued archive's own schedule is known before the summary, so the summary says each one
+	// that has no scheduled backup now, whatever the schedule question then asks or is answered
+	// (docs/design-per-mailbox-archives.md revision 3, round B's leftover of CON-01; the re-verify's
+	// RV-03; MA-1497).
 	setKeptSchedules(arcs)
 	// Nothing ran at all (every mailbox paused, kept, or not made): no summary (the friction review's
 	// F11; the plan said it all).
@@ -636,8 +637,9 @@ func setWriteRemedy(goos string) string {
 // how many messages it holds and the counts the one-archive summary shows with their remedies (only
 // those above zero), then its Thunderbird account lines (none for a row saved once); an archive that
 // did not finish says why (with its log, when there is one), and
-// one not started says so; when there is nothing new to schedule (setNothingNew), each continued
-// archive with its own settings but no scheduled backup now says so (revision 3); then R1's sentences.
+// one not started says so; each continued archive with its own settings but no scheduled backup now
+// says so (revision 3; whatever the schedule question will be asked or answered, RV-03); then R1's
+// sentences.
 func setSummaryText(parent string, arcs []*setArchive) string {
 	finished := 0
 	for _, a := range arcs {
@@ -701,17 +703,17 @@ func setSummaryText(parent string, arcs []*setArchive) string {
 	case unfinished > 1:
 		lines = append(lines, setFinishMany)
 	}
-	// A re-run with nothing new to schedule asks no schedule question and shows no end note, so the
-	// summary says each continued archive that has no scheduled backup now, in the end note's words
-	// (revision 3, round B's leftover of CON-01).
-	if setNothingNew(arcs) {
-		for _, a := range arcs {
-			switch a.made.Schedule {
-			case ScheduleKeptOff:
-				lines = append(lines, util.StripControl(a.made.Name)+setNoteKeptOff)
-			case ScheduleKeptManual:
-				lines = append(lines, util.StripControl(a.made.Name)+setNoteKeptManual)
-			}
+	// The summary says each continued archive that has no scheduled backup now, in the end note's
+	// words, whenever any has that state (the re-verify of rounds A and B, RV-03): a re-run with nothing
+	// new to schedule asks no schedule question and shows no end note, and No or Cancel to the question
+	// shows none either, so the summary is the one place every answer reaches. Round B's leftover of
+	// CON-01 said them only when a Yes would have installed nothing new.
+	for _, a := range arcs {
+		switch a.made.Schedule {
+		case ScheduleKeptOff:
+			lines = append(lines, util.StripControl(a.made.Name)+setNoteKeptOff)
+		case ScheduleKeptManual:
+			lines = append(lines, util.StripControl(a.made.Name)+setNoteKeptManual)
 		}
 	}
 	parts := []string{head}
