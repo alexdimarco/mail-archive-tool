@@ -83,10 +83,38 @@ func setJobState(out string) (exists, reads bool) {
 	return true, err == nil
 }
 
+// setScheduleLive says whether the archive at out has a scheduled backup now (the adversarial pass's
+// CON-01; §11's "installed and not paused"): its record is not "Run now only" (manual), and the host
+// scheduler (queryLiveEntry, schedule.Query) says the entry its record names is installed (the name
+// bound to this archive, schedule.RecordedBackupName; with no record, the name a set installs under,
+// schedule.DefaultNameFor). A record that cannot be read, or whose name is not this archive's, is no
+// scheduled backup. A job file alone never is: an install that failed after the job file was written
+// and an auto-pause both leave one with no entry.
+func setScheduleLive(out string) (live, manual bool) {
+	name := schedule.DefaultNameFor(out)
+	d, err := schedule.ReadDescriptor(out)
+	switch {
+	case err == nil && d.IsManual():
+		return false, true
+	case err == nil:
+		bound, berr := schedule.RecordedBackupName(out)
+		if berr != nil {
+			return false, false
+		}
+		name = bound
+	case !errors.Is(err, fs.ErrNotExist):
+		return false, false
+	}
+	return queryLiveEntry(name) == schedule.Installed, false
+}
+
 // offerSetSchedule is the set's schedule step (§11). An archive continued (brought up to date, or a
 // folder an earlier run made) whose job file is there keeps its job and its scheduler entry exactly
 // as they are, whatever the answer (ScheduleKept, or ScheduleKeptUnreadable when the file cannot be
-// read: never installed over, F-11). The question is asked once, only when a Yes would install a
+// read: never installed over, F-11). It counts as scheduled (ScheduleKept) only when the scheduler
+// says its own entry is installed and its record is not "Run now only" (setScheduleLive, CON-01);
+// otherwise it is ScheduleKeptOff or ScheduleKeptManual, still never installed over, and the end note
+// says it has no scheduled backup now. The question is asked once, only when a Yes would install a
 // schedule for an archive that finished and may be scheduled (not saved once): one made in this run,
 // or one continued with no job file. With an exact Yes row, each such archive gets its own job file
 // and entry through installOffered (named from its own path), the first at the chosen time and each
@@ -102,7 +130,14 @@ func offerSetSchedule(p setPlan, arcs []*setArchive) error {
 				rerun = true
 				a.made.Schedule = ScheduleKeptUnreadable
 				if reads {
-					a.made.Schedule = ScheduleKept
+					switch live, manual := setScheduleLive(a.made.Folder); {
+					case manual:
+						a.made.Schedule = ScheduleKeptManual
+					case live:
+						a.made.Schedule = ScheduleKept
+					default:
+						a.made.Schedule = ScheduleKeptOff
+					}
 				}
 				continue
 			}
@@ -178,6 +213,12 @@ const (
 	setNoteRows  = "MailArchive Desktop lists them all under Your archives; a row whose last backup did not finish says so."
 	setNoteKept  = " kept its own schedule."
 	setNoteKeptX = " kept its own schedule (its settings could not be read)."
+	// setNoteKeptOff and setNoteKeptManual follow the name of an archive brought up to date that has
+	// its own settings but no scheduled backup now (CON-01, the lead's fold's words, with where
+	// Repair is: on the Scheduled backup card of the archive switched to, never on its row; "Run now
+	// only" has no Repair, so its remedy is its own).
+	setNoteKeptOff    = " has its own settings but no scheduled backup now: in MailArchive Desktop, switch to it and click Repair on its Scheduled backup card."
+	setNoteKeptManual = " has its own settings but no scheduled backup now: it is backed up only when you click Run now."
 )
 
 // setScheduleNote is the end note after a Yes (§11): what was scheduled ("Scheduled: daily from
@@ -212,6 +253,10 @@ func setScheduleNote(parent string, arcs []*setArchive, iv schedule.Interval, at
 			lines = append(lines, util.StripControl(a.made.Name)+setNoteKept)
 		case ScheduleKeptUnreadable:
 			lines = append(lines, util.StripControl(a.made.Name)+setNoteKeptX)
+		case ScheduleKeptOff:
+			lines = append(lines, util.StripControl(a.made.Name)+setNoteKeptOff)
+		case ScheduleKeptManual:
+			lines = append(lines, util.StripControl(a.made.Name)+setNoteKeptManual)
 		}
 	}
 	if n > 0 {

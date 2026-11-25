@@ -68,6 +68,15 @@ const (
 	ScheduleKeptUnreadable
 	// ScheduleFailed: its install failed (ScheduleWhy); the others went on.
 	ScheduleFailed
+	// ScheduleKeptOff: brought up to date with a job file that reads, but the scheduler has no entry
+	// for it now (an install that failed after its job file was written, a power cut between the
+	// two, an auto-pause): not scheduled, never installed over (C6), and the end note says so (the
+	// adversarial pass's CON-01).
+	ScheduleKeptOff
+	// ScheduleKeptManual: brought up to date with a job file that reads, whose record says it is
+	// backed up only when the person clicks Run now (MA-949): not scheduled, never installed over
+	// (C6), and the end note says so (CON-01).
+	ScheduleKeptManual
 )
 
 // MadeOutcome is what became of one archive of a set (§10).

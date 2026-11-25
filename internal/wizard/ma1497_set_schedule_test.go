@@ -17,23 +17,44 @@ import (
 	"mail-archive-tool/internal/schedule"
 )
 
-// setScheduler stands in for the host scheduler (installEntry) and for the program a schedule runs
-// (scheduleProgram: a permanent place, so no volatile-folder question): it records each entry
-// installed, and the entries named in fail are refused.
+// setScheduler stands in for the host scheduler (installEntry; and, since the adversarial pass's
+// CON-01, its answer about an entry, queryLiveEntry, and its removal, removeLiveEntry) and for the
+// program a schedule runs (scheduleProgram: a permanent place, so no volatile-folder question): it
+// records each entry installed, and the entries named in fail are refused. The entries installed
+// are setLive, which every setScheduler of one test shares, as one computer's scheduler keeps its
+// entries from one run to the next.
 type setScheduler struct {
 	specs []schedule.Spec
 	fail  map[string]bool
 }
 
+// setLive is the stood-in scheduler's entries while a test runs (nil between tests).
+var setLive map[string]bool
+
 func (r *setScheduler) install(t *testing.T) {
 	t.Helper()
-	oldI, oldP := installEntry, scheduleProgram
-	t.Cleanup(func() { installEntry, scheduleProgram = oldI, oldP })
+	oldI, oldP, oldQ, oldR := installEntry, scheduleProgram, queryLiveEntry, removeLiveEntry
+	t.Cleanup(func() { installEntry, scheduleProgram, queryLiveEntry, removeLiveEntry = oldI, oldP, oldQ, oldR })
+	if setLive == nil {
+		setLive = map[string]bool{}
+		t.Cleanup(func() { setLive = nil })
+	}
 	installEntry = func(s schedule.Spec) error {
 		if r.fail[s.Name] {
 			return errors.New("the scheduler said no")
 		}
 		r.specs = append(r.specs, s)
+		setLive[s.Name] = true
+		return nil
+	}
+	queryLiveEntry = func(name string) schedule.State {
+		if setLive[name] {
+			return schedule.Installed
+		}
+		return schedule.NotInstalled
+	}
+	removeLiveEntry = func(s schedule.Spec) error {
+		delete(setLive, s.Name)
 		return nil
 	}
 	scheduleProgram = func(bool) (string, schedule.Reason, error) {
