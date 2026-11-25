@@ -441,6 +441,11 @@ func TestASetIsMadeOneArchiveAfterAnother(t *testing.T) {
 	// The wiring: the flow's "each" branch runs the set and hands its archives to the caller's
 	// hook; no person reaches it until step 4 (perMailboxBuilt stays false); each archive's export
 	// refuses an unfinished delete and a keyless archive before its run log opens, as runExport does.
+	// Amended 2026-11-25 (step 4, MA-1499; nothing weakened): step 4 is built, so perMailboxBuilt is
+	// now true and a person reaches the set; the pin now holds that the switch is on only with the
+	// Desktop's AddArchives there to list the set (it held "const perMailboxBuilt = false" before).
+	// That the shipped flows reach the set end to end is TestTheShippedFlowsReachOneArchiveForEach
+	// Mailbox's.
 	src, err := os.ReadFile("wizard.go")
 	if err != nil {
 		t.Fatal(err)
@@ -449,8 +454,9 @@ func TestASetIsMadeOneArchiveAfterAnother(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !strings.Contains(string(src), "made, err := makeSet(pick.set, runtime.GOOS)\n\t\t\tif madeSet != nil {\n\t\t\t\tmadeSet(made)") || !strings.Contains(string(setSrc), "const perMailboxBuilt = false") {
-		t.Error("the flow no longer runs the set and hands its archives on, or a person can reach it before step 4")
+	if !strings.Contains(string(src), "made, err := makeSet(pick.set, runtime.GOOS)\n\t\t\tif madeSet != nil {\n\t\t\t\tmadeSet(made)") || !strings.Contains(string(setSrc), "const perMailboxBuilt = true") ||
+		!strings.Contains(string(src), "func AddArchives() ([]Made, error) {") {
+		t.Error("the flow no longer runs the set and hands its archives on, or a person can reach it without AddArchives to list it")
 	}
 	exp, err := os.ReadFile("setexport.go")
 	if err != nil {

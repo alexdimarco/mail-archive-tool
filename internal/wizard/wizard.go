@@ -691,7 +691,9 @@ func wizard() error {
 	//    IN-PROCESS to MailArchive Desktop (Microsoft 365, folder export, browsing,
 	//    scheduling, the maintenance tools); the local item (the default) stays on
 	//    the quick path. zenity.List returns ErrCanceled on dismiss → quiet exit.
-	switch pick, err := zenity.List("What would you like to do?", surfaceChoices, zenity.Title(appTitle), zenity.DefaultItems(surfaceLocalItem)); {
+	//    Through the listDialog seam (zenity.List in the product), so a test walks the
+	//    double-click wizard to One archive for each mailbox with no real window (MA-1490).
+	switch pick, err := listDialog("What would you like to do?", surfaceChoices, zenity.Title(appTitle), zenity.DefaultItems(surfaceLocalItem)); {
 	case err != nil:
 		return err
 	case surfaceOpensDesktop(pick):
@@ -825,7 +827,9 @@ func localArchiveFlowHooks(chosen func(out string), finished func(), check func(
 		err        error
 	)
 	for {
-		srcType, err = zenity.List("What are you exporting?", choices, zenity.Title(appTitle), zenity.DefaultItems(srcAuto))
+		// Through the listDialog seam (zenity.List in the product), so the shipped flows' tests reach
+		// One archive for each mailbox with no real window (MA-1490, MA-1499).
+		srcType, err = listDialog("What are you exporting?", choices, zenity.Title(appTitle), zenity.DefaultItems(srcAuto))
 		if err != nil {
 			return err
 		}

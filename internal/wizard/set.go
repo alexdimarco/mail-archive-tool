@@ -13,13 +13,14 @@ import (
 	"mail-archive-tool/internal/state"
 )
 
-// perMailboxBuilt says a person may reach One archive for each mailbox. The wizard's part of a set is
-// built (the design's build order, step 3b: makeSet, from the parent folder to the schedule's end
-// note), but MailArchive Desktop's Make a new archive… runs this same flow through AddArchive, which
-// registers one folder; until step 4 gives it AddArchives and its notes, the shipped flow never asks
-// the question after All of them (MA-1490), so no part of a set can be reached from it. The tests call
-// each part, and makeSet, directly. Step 4 sets it true.
-const perMailboxBuilt = false
+// perMailboxBuilt says a person may reach One archive for each mailbox. Until step 4 of the design's
+// build order it was false: the wizard's part of a set was built (step 3b: makeSet, from the parent
+// folder to the schedule's end note), but MailArchive Desktop's Make a new archive… ran this same
+// flow through AddArchive, which registered one folder, so the shipped flow never asked the question
+// after All of them (MA-1490). Step 4 gave the Desktop AddArchives and its notes (MA-1499), so it is
+// true: the double-click wizard and Make a new archive… ask the question (never Make a new encrypted
+// archive…, whose flow passes keyed), and auto-detect's one-archive path asks MA-1507's question.
+const perMailboxBuilt = true
 
 // The question after All of them (§3, revision 2's C8 and C20; MA-1490): fixed words with none of
 // & < > \ (MA-1286), shown whole in Windows' scrolling prompt box since 1.7.4.
