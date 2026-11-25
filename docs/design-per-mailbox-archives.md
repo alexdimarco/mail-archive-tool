@@ -33,6 +33,42 @@ that, the design review's conditions are met and the build may start, in §16's 
   `Auto` run gets `moved` too" is withdrawn: that stop keeps 1.7.5's words, which advise running
   All of them again into the same folder. MA-1481's amendment is narrowed to match.
 
+**Revision 3, 2026-11-25 (the lead's fold of the post-build adversarial pass, round A;
+`docs/review-per-mailbox-archives-adversarial.md`):**
+- **A folder's account is known by a fixed identity, not by its shown name** (INS-03 to INS-06).
+  A plaintext record keeps, for each Thunderbird folder it read, `thunderbird_ids`: the store id and
+  an identity of the account that owned it, `sha256(type + "\x00" + user name + "\x00" + server)`,
+  hex, first 32 characters, read from `prefs.js` with the same strict read as the name (never the
+  name or address itself; nothing in an encrypted record). It is carried across a no-owner run as
+  the name is (revision 2.2). The rules of §11 then use the identity where the record has one:
+  - **moved** (C2, F-08): no live account owns the folder for certain (`NoLiveOwner`, or the folder
+    is gone) and exactly one live account has the recorded identity, with its folder elsewhere;
+  - **removed** (C13): the folder is gone and no live account has the recorded identity
+    (so a renamed account is no longer "removed": INS-05);
+  - **reused** (new, INS-03): the folder is there and a live account owns it, but its identity is
+    not the recorded one. The run stops before reading, with `source_reason: reused` and these
+    draft words (folders only, MA-1288): "Thunderbird now uses FOLDER for a different account than
+    the one this archive was made for, so this backup stopped and nothing was added. The mail saved
+    so far stays in this archive. To back up that account, click Make a new archive… and choose
+    it; to stop this archive's backups, click Pause (make read-only) on its row." Status, the
+    banner and the 30-day pause get this reason's words as F-03 gives the others.
+  - A different account that merely has the same shown name no longer looks like a move (INS-06).
+  A record with names but no identity (every record before this release) keeps revision 2.2's
+  name rules until its next ok run writes the identity.
+- **INS-04 (the lead's call):** with the identity, a re-added account under a different shown name
+  is found as moved, and its old archive stops. The pinned positive twin "no live account with the
+  recorded name must not stop" (`internal/app/ma1504_one_folder_stop_test.go:166-169`) is restated
+  beside its old text: it still holds for a record with no identity, and for a record whose
+  identity no live account has.
+- **CON-06:** before continuing a child, the plan asks whether its folder has no live owner and its
+  account moved (by identity, else by name); if so it plans "kept as it is … click Pause", never
+  "run this again".
+- **Round B's two leftovers:** a re-run that has nothing new to schedule still says, in its summary,
+  each continued member that has no scheduled backup now (CON-01's residue); the Desktop's note for
+  a parent it could not write gives F2's remedy, not "choose the same folder".
+- Rows: MA-1504 and MA-1506 amended for the identity; a new row for the reused stop (MA-1509 or the
+  next free one); MA-1497 for the leftover line.
+
 Sources this revision drew on, read on 2026-11-23 and 2026-11-24 unless said otherwise: the code at
 `10fcc2e` (the lines cited); the suggestion workflow of 2026-11-19
 (`.claude/notes/archive-per-account-workflow-2026-11-19.json`, untracked; its checker read the code
