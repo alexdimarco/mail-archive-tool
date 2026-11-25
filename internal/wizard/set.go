@@ -4,6 +4,7 @@ import (
 	"errors"
 	"fmt"
 	"path/filepath"
+	"regexp"
 	"strings"
 	"unicode/utf8"
 
@@ -197,8 +198,43 @@ func setFolderName(r pickRow, id pickIdent) string {
 // dot dropped). The result must pass the copy export's folder-name check (app.FolderNameWhy, which
 // holds util.SanitizeSegment's) and must not be a device name Windows reserves (setReservedName);
 // one that fails, or is empty, "untitled" or "New folder", is setFallbackName. Text from prefs.js is
-// used only so: never joined with a separator here, never resolved.
+// used only so: never joined with a separator here, never resolved. A name that would end in an
+// ending a file manager treats as something other than a folder gets " (mail)" added
+// (setPackageEnding; the adversarial pass's OUT-02, the lead's call).
 func setSafeName(base, suffix string) string {
+	if name := setSafeNameOnce(base, suffix); !setPackageEnding(name) {
+		return name
+	}
+	return setSafeNameOnce(base, suffix+setPackageSuffix)
+}
+
+// setPackageSuffix is added to a folder name that would end in a package or shell-folder ending, so
+// the folder still reads as the address and opens as a folder (OUT-02, the lead's call: this keeps the
+// owner's ruling 3, folders named by the address).
+const setPackageSuffix = " (mail)"
+
+// setPackageEndings are the endings macOS's Finder shows as an app, a document package or a bundle
+// rather than a folder (OUT-02, the lead's list).
+var setPackageEndings = []string{".app", ".bundle", ".pkg", ".rtfd", ".framework", ".plugin", ".kext"}
+
+// setShellFolderRe is the ".{GUID}" ending by which Windows' File Explorer opens a folder as a shell
+// folder (the Recycle Bin, Control Panel …) instead of what it holds.
+var setShellFolderRe = regexp.MustCompile(`\.\{[0-9A-Fa-f]{8}-[0-9A-Fa-f]{4}-[0-9A-Fa-f]{4}-[0-9A-Fa-f]{4}-[0-9A-Fa-f]{12}\}$`)
+
+// setPackageEnding reports whether name ends, in any letter case, in one of setPackageEndings or in a
+// ".{GUID}".
+func setPackageEnding(name string) bool {
+	lower := strings.ToLower(name)
+	for _, e := range setPackageEndings {
+		if strings.HasSuffix(lower, e) {
+			return true
+		}
+	}
+	return setShellFolderRe.MatchString(name)
+}
+
+// setSafeNameOnce is setSafeName before its package-ending rule.
+func setSafeNameOnce(base, suffix string) string {
 	// The row's words are cleaned already (state.CleanFolderName: invisible and bidirectional
 	// controls removed); cleaned again here, so no caller can hand a name that is not.
 	base = state.CleanFolderName(base)
