@@ -99,6 +99,15 @@ type ArchiveRow struct {
 	// archive card row, slice C3): state.TBCardBanner over the plaintext last-run record; "" for
 	// none, for a backup that did not end ok, and always for an encrypted archive (O1).
 	TBBanner string
+	// LastNotDone is set when the archive's last backup did not end ok, from the same read of the
+	// last-run record as TBBanner, and LastNotDoneOn is its date ("Nov 24"; with its year when not
+	// this year; "" when the record holds no time): the row says "Last backup did not finish (DATE):
+	// switch to it to see why." (docs/design-per-mailbox-archives.md §10, R1, revision 2.1's F-10b;
+	// MA-1505). Not set for a backup that ended ok, for a record that says a backup is running, for no
+	// record or one that cannot be read, for the current archive (its health view says why), and
+	// never for an encrypted archive (O1).
+	LastNotDone   bool
+	LastNotDoneOn string
 }
 
 // OffersSwitch reports whether the row draws Switch to this archive: as the row template decides
@@ -285,6 +294,11 @@ func (cfg Config) archiveRows(idx archindex.Index) []ArchiveRow {
 			goneMailbox = goneRepairInput(e.Path)
 			lostWords = health.SourceReasonWordsAt(e.Path) // archive-local records only (F-03)
 		}
+		isCurrent := current != "" && cleanPath(e.Path) == current
+		tb, notDone, notDoneOn := rowLastRun(e.Path, avail && kind != "" && kind != archindex.KindEncrypted && problem == "", time.Now())
+		if isCurrent {
+			notDone = false // the current archive's health view says why (§10)
+		}
 		del := cfg.deleteRowFacts(e.Path, rc, avail && kind != "" && problem == "")
 		unlistWhy := ""
 		// The route's own refusal (MA-1016), through the page's memo of the file system.
@@ -299,7 +313,7 @@ func (cfg Config) archiveRows(idx archindex.Index) []ArchiveRow {
 			UnfinishedText:  del.unfinishedText,
 			Deleting:        del.deleting,
 			Path:            e.Path,
-			Current:         current != "" && cleanPath(e.Path) == current,
+			Current:         isCurrent,
 			Available:       avail && problem == "",
 			Sealed:          seal.IsSealed(e.Path),
 			Kind:            kind,
@@ -311,7 +325,9 @@ func (cfg Config) archiveRows(idx archindex.Index) []ArchiveRow {
 			SourceLostMailbox: goneMailbox,
 			SourceLostWords:   lostWords,
 			Problem:          problem,
-			TBBanner:         tbBanner(e.Path, avail && kind != "" && kind != archindex.KindEncrypted && problem == ""),
+			TBBanner:         tb,
+			LastNotDone:      notDone,
+			LastNotDoneOn:    notDoneOn,
 		})
 	}
 	return rows
@@ -347,20 +363,42 @@ func runNowOnlyRecorded(out string) bool {
 	return json.Unmarshal(data, &d) == nil && d.IsManual()
 }
 
-// tbBanner is the card's Thunderbird line for the archive at out (completeness design §7, slice
-// C3): from its last-run record, read bounded and never through a link (state.ReadLastRun, whose
-// reader cleans every name again), for a plaintext archive whose last backup ended ok. An
-// encrypted archive, or one whose kind cannot be told as plaintext, gets none (O1: nothing is
-// written beside it, and nothing planted there is shown).
-func tbBanner(out string, plaintext bool) string {
+// rowLastRun reads the last-run record of the archive at out once for its row (state.ReadLastRun:
+// bounded, never through a link), for a plaintext archive only (O1). tb is the card's Thunderbird
+// line (completeness design §7, slice C3; until step 4 its own function, tbBanner): from its
+// last-run record, whose reader cleans every name again, for a plaintext archive whose last backup
+// ended ok; an encrypted archive, or one whose kind cannot be told as plaintext, gets none (O1:
+// nothing is written beside it, and nothing planted there is shown). notDone says the last backup
+// did not end ok
+// (docs/design-per-mailbox-archives.md §10, R1; MA-1505), and on is its date, when it ended, else
+// when it started, as "Jan 2" (with its year when it is not now's year; "" when the record holds no
+// time). A record that says a backup is running gives neither (revision 2.1's F-10b): it may be one
+// in progress. Only the record's times reach the page; its status and error text never do.
+func rowLastRun(out string, plaintext bool, now time.Time) (tb string, notDone bool, on string) {
 	if !plaintext || encmark.MustMinimise(out) {
-		return ""
+		return "", false, ""
 	}
 	lr, st, _ := state.ReadLastRun(out)
-	if st != state.LastRunPresent || lr.Status != state.RunOK || lr.Encrypted {
-		return ""
+	if st != state.LastRunPresent || lr.Encrypted {
+		return "", false, ""
 	}
-	return state.TBCardBanner(lr.Thunderbird)
+	switch lr.Status {
+	case state.RunOK:
+		return state.TBCardBanner(lr.Thunderbird), false, ""
+	case state.RunRunning:
+		return "", false, ""
+	}
+	when := lr.Finished
+	if when.IsZero() {
+		when = lr.Started
+	}
+	switch {
+	case when.IsZero():
+		return "", true, ""
+	case when.Local().Year() == now.Local().Year():
+		return "", true, when.Local().Format("Jan 2")
+	}
+	return "", true, when.Local().Format("Jan 2, 2006")
 }
 
 // sourceLostSince returns a "since DATE" string when the archive's SOURCE has been unreachable
