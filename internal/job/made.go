@@ -54,6 +54,41 @@ func MadeListFile() (string, error) {
 // MadeLockPath is the lock file beside the made-list at file.
 func MadeLockPath(file string) string { return filepath.Join(filepath.Dir(file), MadeLockName) }
 
+// MadeSetLockName is the lock file beside the made-list that a set's run holds from its start to its
+// end (the adversarial pass's CON-03): never in the set's parent folder, where MailArchive writes
+// nothing but the archive folders (§6).
+const MadeSetLockName = "wizard-set.lock"
+
+// ErrSetBusy refuses a set's run while another MailArchive window holds the set lock: two sets made
+// at once into one folder would each make the other's archives again, as " (2)" copies with their
+// own schedules.
+var ErrSetBusy = errors.New("Another MailArchive window is making archives now, so nothing was made. When that window has finished, try again.")
+
+// HoldSetLock takes the set lock beside the made-list at file, for the whole of one set's run, and
+// returns its release. Held by another program (another wizard window, MailArchive Desktop's Make a
+// new archive…) it is ErrSetBusy, at once. A settings folder that cannot hold the lock (inside an
+// encrypted archive, not writable) gives a release that does nothing and no error: no set can record
+// a new folder there either (RecordMade is refused the same way), so no two sets can make one
+// mailbox's folder twice.
+func HoldSetLock(file string) (release func(), err error) {
+	none := func() {}
+	if err := RefuseSettingsWrite(file, madeKind); err != nil {
+		return none, nil
+	}
+	dir := filepath.Dir(file)
+	if err := os.MkdirAll(dir, 0o700); err != nil {
+		return none, nil
+	}
+	l, err := lockfile.AcquireAs(filepath.Join(dir, MadeSetLockName), "wizard-set")
+	switch {
+	case errors.Is(err, lockfile.ErrHeld):
+		return none, ErrSetBusy
+	case err != nil:
+		return none, nil
+	}
+	return func() { _ = l.Release() }, nil
+}
+
 // madeLockWait is how long a change of the made-list waits for another program's change of it: a
 // change holds the lock for one read and one write, so a wait this long means the holder is stuck.
 var madeLockWait = 5 * time.Second

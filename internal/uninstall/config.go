@@ -48,6 +48,9 @@ var fixedConfigNames = map[string]bool{
 	// C10; MA-1500): removed with the settings files, and listed in the plan with them.
 	job.MadeListName: true,
 	job.MadeLockName: true,
+	// The lock a set's run holds beside the made-list (the adversarial pass's CON-03): removed
+	// with them.
+	job.MadeSetLockName: true,
 }
 
 // alertDeliveredName is the alert layer's delivery mark, backupalert.DeliveredName.

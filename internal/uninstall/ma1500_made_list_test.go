@@ -32,7 +32,14 @@ func TestUninstallRemovesTheMadeListAndItsLock(t *testing.T) {
 		t.Fatal(err)
 	}
 	lock := job.MadeLockPath(made)
-	files := []string{made, lock}
+	// The set lock a set's run holds beside them (the adversarial pass's CON-03), made by its own
+	// taker and released, as a finished set leaves it.
+	release, err := job.HoldSetLock(made)
+	if err != nil {
+		t.Fatal(err)
+	}
+	release()
+	files := []string{made, lock, filepath.Join(cfg, job.MadeSetLockName)}
 	for _, f := range files {
 		if _, err := os.Lstat(f); err != nil {
 			t.Fatalf("the made-list's writer did not make %s: %v", f, err)

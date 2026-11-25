@@ -16,6 +16,7 @@ import (
 
 	"mail-archive-tool/internal/app"
 	"mail-archive-tool/internal/export"
+	"mail-archive-tool/internal/job"
 	"mail-archive-tool/internal/state"
 	"mail-archive-tool/internal/tbcomplete"
 	"mail-archive-tool/internal/util"
@@ -138,8 +139,18 @@ var setOpen = openPath
 
 // makeSet is One archive for each mailbox, from its parent folder to its end (§6 to §11): the parent
 // folder and the plan (chooseSet), then runSet. Cancel before any folder is made returns no Made and
-// the dialog's error (zenity.ErrCanceled). Each Made carries the set's parent folder (§10, C8).
+// the dialog's error (zenity.ErrCanceled). Each Made carries the set's parent folder (§10, C8). The
+// set lock beside the made-list (job.HoldSetLock) is held from before the folder question to the end
+// (the adversarial pass's CON-03): a second window's set is refused at once with job.ErrSetBusy,
+// before it asks anything, so no two plans are made at once and no mailbox gets two archives.
 func makeSet(rows []setRow, goos string) ([]Made, error) {
+	if f, err := job.MadeListFile(); err == nil {
+		release, err := job.HoldSetLock(f)
+		if err != nil {
+			return nil, err
+		}
+		defer release()
+	}
 	ch, err := chooseSet(rows, goos)
 	if err != nil {
 		return nil, err
