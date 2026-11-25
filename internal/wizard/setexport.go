@@ -142,7 +142,18 @@ type setArchive struct {
 	// when it has one.
 	notMade bool
 	remedy  string
+	// swapped: its folder was no longer the folder the plan read or the set made (INS-02), so nothing
+	// was written into it: the summary says so in its own words (the re-verify of rounds A and B,
+	// RF-06), never that mail copied so far is kept, nor that a folder made was not made.
+	swapped bool
 }
+
+// setChangedError is an archive's error when its folder is no longer the folder the plan read or the
+// set made (INS-02): its words are setChangedReason's, and it is errSetFolderChanged (RF-06).
+type setChangedError struct{ path string }
+
+func (e *setChangedError) Error() string { return setChangedReason(e.path) }
+func (e *setChangedError) Unwrap() error { return errSetFolderChanged }
 
 // setOpen opens a folder for the summary's "Open the folder" (openPath in the product).
 var setOpen = openPath
@@ -278,6 +289,7 @@ func exportSet(sp *app.SetParent, p setPlan, arcs []*setArchive, all wizardChoic
 			case errors.Is(err, errSetFolderChanged):
 				// Made, then not the folder made by the time it was read (INS-02): never written into.
 				a.made.Outcome, a.made.Reason = MadeFailed, setChangedReason(filepath.Join(p.parent, name))
+				a.swapped = true // RF-06: it was made, so not "Not made"
 				continue
 			case errors.Is(err, errNotRecorded):
 				// Made, but not in the made-list, which the unfinished-folder rule and MailArchive
@@ -327,7 +339,7 @@ func exportSet(sp *app.SetParent, p setPlan, arcs []*setArchive, all wizardChoic
 			if setChildSame(p.parent, p.parentID, folderName, id) {
 				return nil
 			}
-			return errors.New(setChangedReason(path))
+			return &setChangedError{path: path}
 		}
 		res, logPath, stopped, runErr, dlgErr := exportSetArchive(c, k+1, m, same)
 		a.res, a.log = res, logPath
@@ -349,6 +361,7 @@ func exportSet(sp *app.SetParent, p setPlan, arcs []*setArchive, all wizardChoic
 			stop = true
 		default:
 			a.made.Outcome, a.made.Reason = MadeFailed, firstLine(runErr)
+			a.swapped = errors.Is(runErr, errSetFolderChanged) // RF-06
 			stop = setParentProblem(p.parent, runErr)
 		}
 	}
@@ -609,6 +622,10 @@ const (
 	// setNotMadeLead leads the line of an archive whose folder was never made, so nothing was copied
 	// (the adversarial pass's CON-10, the friction review's F2; the builder's form of F2's words).
 	setNotMadeLead = "Not made, so nothing was copied: "
+	// setSwappedLead leads the line of a new archive whose folder was made, then found no longer the
+	// folder the set made (INS-02): "Not made" was untrue (the re-verify of rounds A and B, RF-06, its
+	// words).
+	setSwappedLead = "Stopped before copying: "
 	// setFinishOne and setFinishMany close the archives' lines when any did not finish, was not
 	// made or was not started (F4's words).
 	setFinishOne  = "To finish it, run this again: choose All of them, then One archive for each mailbox, and this same folder."
@@ -690,7 +707,11 @@ func setSummaryText(parent string, arcs []*setArchive) string {
 		case MadeStopped, MadeFailed:
 			unfinished++
 			if a.notMade {
-				line := label + ": " + setNotMadeLead + a.made.Reason + "."
+				lead := setNotMadeLead
+				if a.swapped {
+					lead = setSwappedLead // RF-06: made, then swapped
+				}
+				line := label + ": " + lead + a.made.Reason + "."
 				if a.remedy != "" {
 					line += " " + a.remedy
 				}
@@ -698,6 +719,11 @@ func setSummaryText(parent string, arcs []*setArchive) string {
 				continue
 			}
 			line := label + ": Did not finish: " + a.made.Reason + ". " + setUnfinishedEnd
+			if a.swapped {
+				// RF-06: nothing was written into the folder there now, so no "The mail copied so far is
+				// kept." (its archive, moved aside, is as it was).
+				line = label + ": Did not finish: " + a.made.Reason + "."
+			}
 			if _, err := os.Stat(a.log); a.made.Outcome == MadeFailed && a.log != "" && err == nil {
 				line += " Log: " + util.StripControl(a.log)
 			}

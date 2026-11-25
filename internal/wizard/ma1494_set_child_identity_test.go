@@ -213,6 +213,11 @@ func TestASetNeverWritesIntoAFolderSwappedAfterThePlan(t *testing.T) {
 	if sum := s.summaryOf(t); !strings.Contains(sum, rows[0].name+" (brought up to date): Did not finish: "+made[0].Reason) {
 		t.Errorf("the summary does not name the folder:\n%s", sum)
 	}
+	// Added 2026-11-25 (the re-verify of rounds A and B, RF-06): nothing was written into the folder
+	// there now, so its line ends at the reason, never "The mail copied so far is kept.".
+	if sum := s.summaryOf(t); !strings.Contains(sum, "\n"+rows[0].name+" (brought up to date): Did not finish: "+made[0].Reason+".\n") {
+		t.Errorf("RF-06: the swapped archive's line says more than its reason:\n%s", sum)
+	}
 
 	// A new folder swapped right after it is made (in its restriction step).
 	lf := filepath.Join(parent, rows[3].name)
@@ -250,5 +255,47 @@ func TestASetNeverWritesIntoAFolderSwappedAfterThePlan(t *testing.T) {
 			ents, _ := os.ReadDir(drop2)
 			kept, _ := os.ReadDir(lf + " moved")
 			return len(ents) == 0 && len(kept) == 0
+		}))
+	// Added 2026-11-25 (RF-06): nothing was written into the folder there now, so the line ends at its
+	// reason, never "The mail copied so far is kept.".
+	if sum := s.summaryOf(t); !strings.Contains(sum, "\n"+rows[3].name+": Did not finish: "+lfMade.Reason+".\n") {
+		t.Errorf("RF-06: the swapped new folder's line:\n%s", sum)
+	}
+
+	// Added 2026-11-25 (RF-06): a new folder swapped in the instant after it is made, before its
+	// identity is read (stood in through setMadeChildID, fault injection: no test can time it). It was
+	// made, so its line never says "Not made, so nothing was copied:"; it says "Stopped before copying:
+	// REASON." (the re-verifier's words). Nothing is written into it.
+	restrictSetFolder = real
+	if err := os.RemoveAll(lf); err != nil {
+		t.Fatal(err)
+	}
+	realID := setMadeChildID
+	t.Cleanup(func() { setMadeChildID = realID })
+	setMadeChildID = func(parent, name string) os.FileInfo {
+		if name == rows[3].name {
+			return nil
+		}
+		return realID(parent, name)
+	}
+	s = &flowScript{folders: []string{parent}, summary: zenity.ErrCanceled}
+	s.install(t)
+	made, err = makeSet(rows, "darwin")
+	lfMade = Made{}
+	for _, m := range made {
+		if m.Name == rows[3].name {
+			lfMade = m
+		}
+	}
+	code, msg = 0, ""
+	if err == nil && lfMade.Outcome == MadeFailed && !lfMade.New {
+		code, msg = 1, s.summaryOf(t)
+	}
+	assure.Refused(t, code, msg, assure.Code(1),
+		assure.Names(rows[3].name+": Stopped before copying: "+setChangedReason(lf)+"."),
+		assure.Forbid(rows[3].name+": "+setNotMadeLead, rows[3].name+": Did not finish"),
+		assure.NoSideEffect(func() bool {
+			ents, err := os.ReadDir(lf)
+			return err == nil && len(ents) == 0
 		}))
 }

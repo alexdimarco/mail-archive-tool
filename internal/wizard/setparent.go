@@ -189,6 +189,11 @@ var restrictSetFolder = winsec.RestrictFolderToOwner
 // the set made (INS-02): nothing is written into it.
 var errSetFolderChanged = errors.New("its folder is no longer the folder MailArchive checked")
 
+// setMadeChildID reads the folder the set just made (setChildID). A seam for fault injection only: a
+// test stands in a folder swapped in the instant between its making and this read, which no test can
+// time (the re-verify of rounds A and B, RF-06).
+var setMadeChildID = setChildID
+
 // makeSetFolderAt is makeSetFolder, also giving the folder made as read through the parent's handle
 // right after it was made (setChildID), which the export proves again before it writes there
 // (INS-02). Right after it is made and read, the folder is restricted to its owner (INS-01: on
@@ -204,7 +209,7 @@ func makeSetFolderAt(sp *app.SetParent, name, listName, store string) (string, o
 	if err != nil {
 		return "", nil, err
 	}
-	id := setChildID(sp.Parent, name)
+	id := setMadeChildID(sp.Parent, name)
 	if id == nil {
 		return "", nil, fmt.Errorf("%w (%s was changed right after it was made)", errSetFolderChanged, util.StripControl(path))
 	}
