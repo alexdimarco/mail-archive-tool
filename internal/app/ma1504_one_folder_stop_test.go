@@ -12,6 +12,7 @@ import (
 	"mail-archive-tool/internal/autoplace"
 	"mail-archive-tool/internal/health"
 	"mail-archive-tool/internal/state"
+	"mail-archive-tool/internal/thunderbird"
 )
 
 // An archive of one Thunderbird folder, auto-discovery off, whose account Thunderbird no longer keeps
@@ -209,6 +210,11 @@ func TestTwoAccountsOnOneServerOneReAddedStopsItsArchive(t *testing.T) {
 	again := first
 	again.n, again.dirRel = 3, "ImapMail/imap.qzg-2.example"
 	tbWrite(t, prefs, tbPrefsJS(sec, again))
+	// The case F-01 is about: ReadStoreFacts cannot say "none" for the old folder, NoLiveOwner can.
+	_, err := thunderbird.ReadStoreFacts(f.profile, old)
+	if k, ok := thunderbird.NoAccountKindOf(err); !ok || k != thunderbird.NoAccountAmbiguous || !autoplace.NoLiveOwner(old) {
+		t.Fatalf("F-01's case: ReadStoreFacts must say ambiguous (%v %v, %v) and NoLiveOwner no live owner (%v)", k, ok, err, autoplace.NoLiveOwner(old))
+	}
 	refusesNoLongerUsed(t, out, old, readded, "qza@qzg.example")
 }
 
