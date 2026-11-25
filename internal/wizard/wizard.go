@@ -724,7 +724,7 @@ func AddArchive() (string, error) {
 	}
 	var out string
 	finished := false
-	err := localArchiveFlowHooks(func(o string) { out = o }, func() { finished = true }, nil, nil)
+	err := localArchiveFlowHooks(func(o string) { out = o }, func() { finished = true }, nil, nil, nil)
 	return addOutcome(out, finished, err)
 }
 
@@ -771,13 +771,15 @@ func localArchiveFlow(chosen func(out string)) error { return localArchiveFlowWi
 // keyed, when set, receives the answers in place of the plaintext export, which never
 // runs — the caller makes the key and runs the first backup with it.
 func localArchiveFlowWith(chosen func(out string), check func(out string) error, keyed func(wizardChoice)) error {
-	return localArchiveFlowHooks(chosen, nil, check, keyed)
+	return localArchiveFlowHooks(chosen, nil, check, keyed, nil)
 }
 
-// localArchiveFlowHooks is localArchiveFlowWith with one more hook: finished, when set,
+// localArchiveFlowHooks is localArchiveFlowWith with two more hooks: finished, when set,
 // is called once the export into the chosen folder has finished (MA-954), so AddArchive
-// can tell a finished copy from one stopped part way.
-func localArchiveFlowHooks(chosen func(out string), finished func(), check func(out string) error, keyed func(wizardChoice)) error {
+// can tell a finished copy from one stopped part way; madeSet, when set, is given what One
+// archive for each mailbox made or continued, each with its outcome and its schedule's
+// (docs/design-per-mailbox-archives.md §10, C11), also when the set ends with an error.
+func localArchiveFlowHooks(chosen func(out string), finished func(), check func(out string) error, keyed func(wizardChoice), madeSet func([]Made)) error {
 	// 3. Choose the source type, then pick the file/folder accordingly.
 	choices := []string{srcAuto, srcOutlook}
 	if runtime.GOOS == "windows" {
@@ -870,17 +872,14 @@ func localArchiveFlowHooks(chosen func(out string), finished func(), check func(
 			return err
 		}
 		if pick.each {
-			// The parent folder and the plan (step 3a), then the download question for each account
-			// that gets a new archive (MA-1502); making the archives is the rest of step 3b's.
-			ch, err := chooseSet(pick.set, runtime.GOOS)
-			if err != nil {
-				return err
+			// One archive for each mailbox (docs/design-per-mailbox-archives.md §6 to §11): the
+			// parent folder, the plan, the answers, each archive's export, the summary and the
+			// schedule. What it made or continued goes to the caller's hook (step 4's AddArchives).
+			made, err := makeSet(pick.set, runtime.GOOS)
+			if madeSet != nil {
+				madeSet(made)
 			}
-			var changed []string
-			if _, err := askSetDownloads(ch.plan, &changed); err != nil {
-				return err
-			}
-			return errSetNotBuilt
+			return err
 		}
 		choice.inputs, choice.auto, names = pick.inputs, pick.auto, pick.names
 	default:
@@ -909,85 +908,9 @@ func localArchiveFlowHooks(chosen func(out string), finished func(), check func(
 		}
 	}
 
-	// 3. Export mode — not asked when the prep just forced a full re-export
-	//    (asking, then overriding the answer, would be a lie).
-	choice.mode = export.Incremental
-	if prepared {
-		choice.mode = export.Full
-		if err := zenity.Info("Because a full offline download was just prepared, this run exports everything (Full mode) so messages captured earlier without their content are rewritten.\n\nLater runs can be incremental.", zenity.Title(appTitle)); err != nil && !errors.Is(err, zenity.ErrCanceled) {
-			return err
-		}
-	} else {
-		const modeInc = "Incremental — only messages new since the last run (and any still missing content)"
-		const modeFull = "Full — export everything again"
-		modeChoice, err := zenity.List("Export mode:", []string{modeInc, modeFull}, zenity.Title(appTitle), zenity.DefaultItems(modeInc))
-		if err != nil {
-			return err
-		}
-		if modeChoice == modeFull {
-			choice.mode = export.Full
-		}
-	}
-
-	// 4. Optional date window (re-prompt until valid or cancelled).
-	choice.since, err = askSince()
-	if err != nil {
+	// 3. to 5c. The export mode, the date window, the mail app, the .eml copies and the folder links.
+	if err := askAnswers(&choice, srcType, prepared); err != nil {
 		return err
-	}
-
-	// 5. Is the mail app open? Only meaningful for a data FILE, which may be
-	//    locked; folders are read in place and the Outlook-app path needs
-	//    Outlook running anyway.
-	if choice.outlookCOM == false && anyRegularFile(choice.inputs) {
-		openChoice, err := zenity.List(
-			"Is your mail app (Outlook / Thunderbird) currently open?",
-			[]string{"No", "Yes — copy the file first to avoid a lock"},
-			zenity.Title(appTitle), zenity.DefaultItems("No"))
-		if err != nil {
-			return err
-		}
-		choice.copyFirst = strings.HasPrefix(openChoice, "Yes")
-	}
-
-	// 5b. Keep the original messages too? Only sources that carry raw RFC-822
-	//     bytes (mbox/maildir readers) can honour it — a .pst/.ost item and the
-	//     Outlook-app export path have no originals to keep, so they aren't asked.
-	if keepRawWorthAsking(srcType, choice.inputs) {
-		rawChoice, err := zenity.List(
-			"Also keep a copy of each original message (.eml) so you can re-import it into a mail program later? (uses more disk space)",
-			[]string{"No", "Yes — keep the original .eml files too"},
-			zenity.Title(appTitle), zenity.DefaultItems("No"))
-		if err != nil {
-			return err
-		}
-		choice.keepRaw = strings.HasPrefix(rawChoice, "Yes")
-	}
-
-	// 5b2. Read through the folder links of a mail folder? Not by default: a link in the
-	//      store is recorded and not followed, and its gap says to answer this question.
-	//      Asked only when a chosen input is a folder (a link lives in a folder store).
-	if followLinksWorthAsking(srcType, choice.inputs) {
-		linkChoice, err := zenity.List(
-			followLinksQuestion,
-			[]string{followLinksNo, followLinksYes},
-			zenity.Title(appTitle), zenity.DefaultItems(followLinksNo))
-		if err != nil {
-			return err
-		}
-		choice.followLinks = followLinksFor(linkChoice, choice.inputs)
-	}
-
-	// 5c. Include the Deleted Items / Junk Email folders? Excluded by default;
-	//     a click-through excludes them (T7). Only asked for a source whose walk
-	//     can honor the exclusion by resolved well-known-folder id — a live-path
-	//     (Graph) source. The GUI reads only local stores today, so the step is
-	//     suppressed rather than asking a question the local import cannot honor
-	//     (deletedJunkApplies); the pure decision is exercised by the tests.
-	if deletedJunkApplies(srcType) {
-		choice.includeDeleted, choice.includeJunk, err = askDeletedJunk()
-		if err != nil {
-			return err
-		}
 	}
 
 	// 6. Run with a progress dialog, then offer to keep it current. Tell the caller
@@ -1002,6 +925,97 @@ func localArchiveFlowHooks(chosen func(out string), finished func(), check func(
 	}
 	choice.finished = finished
 	return runExport(choice)
+}
+
+// askAnswers asks the answers an export takes once, into c, for c's inputs from srcType: the export
+// mode, the date window, whether the mail app is open, the .eml copies and the folder links, each as
+// today and with today's defaults. One archive asks them after its output folder; a set asks them
+// once for all its archives (docs/design-per-mailbox-archives.md §8). With prepared (a full offline
+// download was just prepared for every archive), the mode question is not asked and Full mode is
+// said, as today. The questions go through the dialog seams (zenity's in the product).
+func askAnswers(c *wizardChoice, srcType string, prepared bool) error {
+	// 3. Export mode — not asked when the prep just forced a full re-export
+	//    (asking, then overriding the answer, would be a lie).
+	c.mode = export.Incremental
+	if prepared {
+		c.mode = export.Full
+		if err := messageDialog("Because a full offline download was just prepared, this run exports everything (Full mode) so messages captured earlier without their content are rewritten.\n\nLater runs can be incremental.", zenity.Title(appTitle)); err != nil && !errors.Is(err, zenity.ErrCanceled) {
+			return err
+		}
+	} else {
+		const modeInc = "Incremental — only messages new since the last run (and any still missing content)"
+		const modeFull = "Full — export everything again"
+		modeChoice, err := listDialog("Export mode:", []string{modeInc, modeFull}, zenity.Title(appTitle), zenity.DefaultItems(modeInc))
+		if err != nil {
+			return err
+		}
+		if modeChoice == modeFull {
+			c.mode = export.Full
+		}
+	}
+
+	// 4. Optional date window (re-prompt until valid or cancelled).
+	var err error
+	c.since, err = askSince()
+	if err != nil {
+		return err
+	}
+
+	// 5. Is the mail app open? Only meaningful for a data FILE, which may be
+	//    locked; folders are read in place and the Outlook-app path needs
+	//    Outlook running anyway.
+	if c.outlookCOM == false && anyRegularFile(c.inputs) {
+		openChoice, err := listDialog(
+			"Is your mail app (Outlook / Thunderbird) currently open?",
+			[]string{"No", "Yes — copy the file first to avoid a lock"},
+			zenity.Title(appTitle), zenity.DefaultItems("No"))
+		if err != nil {
+			return err
+		}
+		c.copyFirst = strings.HasPrefix(openChoice, "Yes")
+	}
+
+	// 5b. Keep the original messages too? Only sources that carry raw RFC-822
+	//     bytes (mbox/maildir readers) can honour it — a .pst/.ost item and the
+	//     Outlook-app export path have no originals to keep, so they aren't asked.
+	if keepRawWorthAsking(srcType, c.inputs) {
+		rawChoice, err := listDialog(
+			"Also keep a copy of each original message (.eml) so you can re-import it into a mail program later? (uses more disk space)",
+			[]string{"No", "Yes — keep the original .eml files too"},
+			zenity.Title(appTitle), zenity.DefaultItems("No"))
+		if err != nil {
+			return err
+		}
+		c.keepRaw = strings.HasPrefix(rawChoice, "Yes")
+	}
+
+	// 5b2. Read through the folder links of a mail folder? Not by default: a link in the
+	//      store is recorded and not followed, and its gap says to answer this question.
+	//      Asked only when a chosen input is a folder (a link lives in a folder store).
+	if followLinksWorthAsking(srcType, c.inputs) {
+		linkChoice, err := listDialog(
+			followLinksQuestion,
+			[]string{followLinksNo, followLinksYes},
+			zenity.Title(appTitle), zenity.DefaultItems(followLinksNo))
+		if err != nil {
+			return err
+		}
+		c.followLinks = followLinksFor(linkChoice, c.inputs)
+	}
+
+	// 5c. Include the Deleted Items / Junk Email folders? Excluded by default;
+	//     a click-through excludes them (T7). Only asked for a source whose walk
+	//     can honor the exclusion by resolved well-known-folder id — a live-path
+	//     (Graph) source. The GUI reads only local stores today, so the step is
+	//     suppressed rather than asking a question the local import cannot honor
+	//     (deletedJunkApplies); the pure decision is exercised by the tests.
+	if deletedJunkApplies(srcType) {
+		c.includeDeleted, c.includeJunk, err = askDeletedJunk()
+		if err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 // includeDeletedJunk maps the wizard's Deleted-Items/Junk answer to the two
@@ -1831,7 +1845,7 @@ func afterChange(words string, changed []string) string {
 // Now in Thunderbird, watching the store size and finishing automatically once
 // it stops growing (or the user closes the dialog).
 func guiWaitForSync(store string) error {
-	dlg, err := zenity.Progress(zenity.Title(appTitle), zenity.Pulsate())
+	dlg, err := progressDialog(appTitle)
 	if err != nil {
 		return err
 	}
@@ -1881,7 +1895,7 @@ func outlookOfflineNote() error {
 // value means "export everything".
 func askSince() (string, error) {
 	for {
-		val, err := zenity.Entry(
+		val, err := entryDialog(
 			"Only export items newer than\n(e.g. 30d, 4w, 720h, or a date like 2026-07-01).\n\nLeave blank to export everything.",
 			zenity.Title("Date window"),
 			zenity.EntryText(""),
@@ -1896,7 +1910,7 @@ func askSince() (string, error) {
 		if _, perr := util.ParseSince(val, time.Now()); perr == nil {
 			return val, nil
 		}
-		if e := zenity.Error(
+		if e := errorDialog(
 			fmt.Sprintf("Couldn't understand %q.\nTry 30d, 4w, 720h, or a date like 2026-07-01.", val),
 			zenity.Title("Invalid date window"),
 		); e != nil {
@@ -1998,8 +2012,7 @@ func runExport(c wizardChoice) error {
 	result, runErr := app.Run(ctx, opts, logger, func(s export.Stats) {
 		ticks++
 		if ticks%20 == 0 {
-			_ = dlg.Text(fmt.Sprintf("exported %d · filled %d · skipped %d · attachments %d",
-				s.Exported, s.Filled, s.SkippedManifest+s.SkippedDate, s.Attachments))
+			_ = dlg.Text(progressCounts(s))
 		}
 	})
 
@@ -2040,6 +2053,13 @@ func runExport(c wizardChoice) error {
 
 	// 7. Keep it current?
 	return offerSchedule(c)
+}
+
+// progressCounts is the export's progress window's counts line (one archive's, and each archive's of
+// a set): the run's counts, never a name.
+func progressCounts(s export.Stats) string {
+	return fmt.Sprintf("exported %d · filled %d · skipped %d · attachments %d",
+		s.Exported, s.Filled, s.SkippedManifest+s.SkippedDate, s.Attachments)
 }
 
 // exportSummary renders the success summary shown after a run. It is a pure

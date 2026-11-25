@@ -13,15 +13,13 @@ import (
 	"mail-archive-tool/internal/state"
 )
 
-// perMailboxBuilt says the set's export, summary and schedule are built (the design's build order,
-// step 3b). Until then the shipped flow never asks the question after All of them (MA-1490), so no
-// part of a set can be reached from it; the tests of step 3a call each part directly. Step 3b sets
-// it true together with the set's export.
+// perMailboxBuilt says a person may reach One archive for each mailbox. The wizard's part of a set is
+// built (the design's build order, step 3b: makeSet, from the parent folder to the schedule's end
+// note), but MailArchive Desktop's Make a new archive… runs this same flow through AddArchive, which
+// registers one folder; until step 4 gives it AddArchives and its notes, the shipped flow never asks
+// the question after All of them (MA-1490), so no part of a set can be reached from it. The tests call
+// each part, and makeSet, directly. Step 4 sets it true.
 const perMailboxBuilt = false
-
-// errSetNotBuilt ends a set's flow after its plan while step 3b is not built. No shipped path
-// reaches it: the question that leads there is not asked while perMailboxBuilt is false.
-var errSetNotBuilt = errors.New("Making one archive for each mailbox is not finished in this version, so nothing was made. Run this again and choose One archive for all of them.")
 
 // The question after All of them (§3, revision 2's C8 and C20; MA-1490): fixed words with none of
 // & < > \ (MA-1286), shown whole in Windows' scrolling prompt box since 1.7.4.
