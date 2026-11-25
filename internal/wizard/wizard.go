@@ -861,10 +861,17 @@ func localArchiveFlowHooks(chosen func(out string), finished func(), check func(
 	switch {
 	case useOutlookCOM:
 	case srcType == srcAuto:
-		choice.inputs, choice.auto, err = pickAutoInputs(autoInputs)
+		// The question after All of them only in the plaintext flow (keyed == nil: never in Make a
+		// new encrypted archive…, which reaches the list too), and only once the set is built
+		// (perMailboxBuilt, step 3b of docs/design-per-mailbox-archives.md; MA-1490).
+		pick, err := pickAutoChoice(autoInputs, perMailboxBuilt && keyed == nil)
 		if err != nil {
 			return err
 		}
+		if pick.each {
+			return errSetNotBuilt
+		}
+		choice.inputs, choice.auto = pick.inputs, pick.auto
 	default:
 		choice.inputs = []string{inputPath}
 	}

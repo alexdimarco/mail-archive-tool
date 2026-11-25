@@ -1,14 +1,69 @@
 package wizard
 
 import (
+	"errors"
 	"fmt"
 	"path/filepath"
 	"strings"
 	"unicode/utf8"
 
+	"github.com/ncruces/zenity"
+
 	"mail-archive-tool/internal/app"
 	"mail-archive-tool/internal/state"
 )
+
+// perMailboxBuilt says the set's export, summary and schedule are built (the design's build order,
+// step 3b). Until then the shipped flow never asks the question after All of them (MA-1490), so no
+// part of a set can be reached from it; the tests of step 3a call each part directly. Step 3b sets
+// it true together with the set's export.
+const perMailboxBuilt = false
+
+// errSetNotBuilt ends a set's flow after its plan while step 3b is not built. No shipped path
+// reaches it: the question that leads there is not asked while perMailboxBuilt is false.
+var errSetNotBuilt = errors.New("Making one archive for each mailbox is not finished in this version, so nothing was made. Run this again and choose One archive for all of them.")
+
+// The question after All of them (§3, revision 2's C8 and C20; MA-1490): fixed words with none of
+// & < > \ (MA-1286), shown whole in Windows' scrolling prompt box since 1.7.4.
+const (
+	eachQuestion = "Keep these mailboxes together in one archive, or give each one its own archive?\n\n" +
+		"One archive: one place to search all your mail. A mailbox you add to Thunderbird later joins it at its next backup.\n\n" +
+		"One archive for each mailbox: each can be searched, paused or deleted on its own, and a problem with one does not stop the others. A mailbox you add to Thunderbird later is not backed up until you run this again, choose One archive for each mailbox, and choose the same folder."
+	// eachOne is today's result, preselected on Windows and macOS.
+	eachOne  = "One archive for all of them"
+	eachMany = "One archive for each mailbox"
+)
+
+// errNoEachPick ends the step when the question keeps answering with no row: nothing is exported.
+var errNoEachPick = errors.New("The question did not say whether to make one archive or one for each mailbox, so nothing was exported. Try again, and click one line before you click OK.")
+
+// askEach asks the question after All of them (MA-1490), through the listDialog seam with One
+// archive preselected and an empty pick refused where the dialog can (Windows, macOS). The answer is
+// read by the one row rule the mailbox list and the schedule question use (rowChoice); one that
+// names no row (Linux's list can be answered with nothing selected) shows MA-1465's note and the
+// question again, up to pickTries times, then ends with errNoEachPick. Cancel ends the flow with
+// the dialog's error, as Cancel on the list does. goos decides only how the answer is read.
+func askEach(goos string) (each bool, err error) {
+	rows := []string{eachOne, eachMany}
+	choices := [][]string{{eachOne}, {eachMany}}
+	transcoded := answerMayBeTranscoded(goos)
+	for try := 1; ; try++ {
+		answer, err := listDialog(eachQuestion, rows, zenity.Title(appTitle), zenity.DefaultItems(eachOne), zenity.DisallowEmpty())
+		if err != nil {
+			return false, err
+		}
+		if i, ok := rowChoice(answer, choices, transcoded); ok {
+			return i == 1, nil
+		}
+		if try >= pickTries {
+			return false, errNoEachPick
+		}
+		// Closing the note with its close button asks again too, as OK does (MA-1209's rule).
+		if err := noticeClosed(messageDialog(pickAgain, zenity.Title(appTitle))); err != nil {
+			return false, err
+		}
+	}
+}
 
 // One archive for each mailbox (docs/design-per-mailbox-archives.md, revision 2.2; S90): after
 // "All of them" the wizard may make one ordinary archive per mailbox, each in its own folder inside

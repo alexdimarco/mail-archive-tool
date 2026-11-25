@@ -70,30 +70,60 @@ var pickNow = time.Now
 // Each row says its mailbox as pickList words it. The answer maps back to its row (pickChoice);
 // an answer that names no row shows a note and the list again, and is never taken as a path.
 func pickAutoInputs(found []string) ([]string, bool, error) {
+	p, err := pickAutoChoice(found, false)
+	return p.inputs, p.auto, err
+}
+
+// autoPick is the mailbox list's answer: the inputs and auto-discovery of one archive, or, after
+// One archive for each mailbox, the set's rows in the list's order (each; MA-1490, MA-1491).
+type autoPick struct {
+	inputs []string
+	auto   bool
+	each   bool
+	set    []setRow
+}
+
+// pickAutoChoice is pickAutoInputs with the question after All of them (MA-1490): asked only when
+// offerEach (the plaintext flow, never Make a new encrypted archive…; the caller decides) and two or
+// more of the list's rows get an archive by §5's rule (setRows). One archive for all of them gives
+// exactly what All of them gives without the question: every path found, auto-discovery on.
+func pickAutoChoice(found []string, offerEach bool) (autoPick, error) {
 	if len(found) == 1 {
-		return found, false, nil
+		return autoPick{inputs: found}, nil
 	}
 	rows := gatherPickRows(found, time.Now().Add(sizeBudget), sizeEntryMax)
-	labels, paths := pickList(rows, runtime.GOOS)
+	l := listRows(rows, runtime.GOOS)
+	labels, paths := l.labels, l.paths
 	items := append([]string{allOfThem}, labels...)
 	transcoded := answerMayBeTranscoded(runtime.GOOS)
 	for try := 1; ; try++ {
 		answer, err := listDialog(pickPrompt, items, zenity.Title(appTitle), zenity.DefaultItems(allOfThem), zenity.DisallowEmpty())
 		if err != nil {
-			return nil, false, err
+			return autoPick{}, err
 		}
 		if i, all, ok := pickChoice(answer, labels, transcoded); ok && all {
-			return found, true, nil
+			if offerEach {
+				if set := setRows(l, runtime.GOOS); setMakes(set) >= 2 {
+					each, err := askEach(runtime.GOOS)
+					if err != nil {
+						return autoPick{}, err
+					}
+					if each {
+						return autoPick{each: true, set: set}, nil
+					}
+				}
+			}
+			return autoPick{inputs: found, auto: true}, nil
 		} else if ok {
-			return []string{paths[i]}, false, nil
+			return autoPick{inputs: []string{paths[i]}}, nil
 		}
 		if try >= pickTries {
-			return nil, false, errNoPick
+			return autoPick{}, errNoPick
 		}
 		// Closing the note with its close button shows the list again too, as OK does (MA-1209's
 		// rule for a one-button notice); any other error stops.
 		if err := noticeClosed(messageDialog(pickAgain, zenity.Title(appTitle))); err != nil {
-			return nil, false, err
+			return autoPick{}, err
 		}
 	}
 }
