@@ -279,11 +279,30 @@ func TestTheSyncSwitchRefusesASecondArchiveForOneProfile(t *testing.T) {
 	sourceWait = 50 * time.Millisecond
 	release := make(chan struct{})
 	t.Cleanup(func() { sourceWait = origWait })
-	findProfile = func(p string) (string, bool) { <-release; return orig(p) }
+	// The stalled look runs in its own goroutine and reads findProfile there: it says when it has
+	// stalled and when it has returned, and findProfile is put back only after both, so the race
+	// detector sees that goroutine's read before the test's write.
+	stalled, returned := make(chan struct{}, 8), make(chan struct{}, 8)
+	findProfile = func(p string) (string, bool) {
+		stalled <- struct{}{}
+		defer func() { returned <- struct{}{} }()
+		<-release
+		return orig(p)
+	}
 	start := time.Now()
 	body = g.post(`{"interval":"weekly","time":"03:00","presync":true}`)
 	took := time.Since(start)
+	select {
+	case <-stalled:
+	case <-time.After(10 * time.Second):
+		t.Fatal("the stalled look was never made (the test proves nothing)")
+	}
 	close(release)
+	select {
+	case <-returned:
+	case <-time.After(10 * time.Second):
+		t.Fatal("the stalled look did not return once released")
+	}
 	findProfile = orig
 	if took > 3*time.Second {
 		t.Errorf("a stalled look held the switch %v", took)

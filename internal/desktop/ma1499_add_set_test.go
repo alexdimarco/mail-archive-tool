@@ -270,6 +270,8 @@ func TestMakeANewArchiveListsEveryArchiveOfASet(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	// A Windows checkout writes the source with "\r\n": read it with "\n" line ends, as written.
+	src = []byte(strings.ReplaceAll(string(src), "\r\n", "\n"))
 	set := string(src)[strings.Index(string(src), "func (d *dashboard) addedSet("):]
 	set = set[:strings.Index(set, "\n}\n")]
 	if strings.Count(set, "registerArchives(") != 1 || strings.Contains(set, "registerArchive(") || strings.Contains(set, "SaveSettings") {
