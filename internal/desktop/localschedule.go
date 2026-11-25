@@ -223,6 +223,15 @@ func (d *dashboard) scheduleInstallLocal(w http.ResponseWriter, in scheduleReque
 		j = rebuilt // a create: rebuilt from the archive's own record
 		j.Name = name
 	}
+	// Switching the sync on is refused, before anything is written, when another archive already
+	// syncs the same Thunderbird profile (docs/design-per-mailbox-archives.md §11, C24; MA-1498).
+	// A sync already on is left as it is.
+	if wantSync && !syncOn {
+		if refusal := d.syncSharedRefusal(out, j); refusal != "" {
+			writeJSON(w, map[string]any{"ok": false, "error": refusal})
+			return
+		}
+	}
 	syncChanged := wantSync != syncOn
 	if syncChanged {
 		if wantSync {

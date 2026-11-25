@@ -102,7 +102,9 @@ func (g *setRig) listed() map[string]archindex.Entry {
 }
 
 // stillCurrent reports whether the Desktop's current archive is still the one it had (MA-696).
-func (g *setRig) stillCurrent() bool { return cleanPath(g.d.cfg.effectiveOut()) == cleanPath(g.current) }
+func (g *setRig) stillCurrent() bool {
+	return cleanPath(g.d.cfg.effectiveOut()) == cleanPath(g.current)
+}
 
 func setMade(folder, name string, o wizard.MadeOutcome, reason, parent string) wizard.Made {
 	return wizard.Made{Folder: folder, Name: name, Outcome: o, Reason: reason, New: folder != "", Parent: parent}
