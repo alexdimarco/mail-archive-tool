@@ -233,7 +233,24 @@ func otherVersion(holder, mine string) bool {
 // otherVersionText is the §4.5.3 notice naming the holder's program (control-
 // stripped) and pid; the launcher shows it and still exits 0.
 func otherVersionText(exe string, pid int) string {
-	return fmt.Sprintf("Another version of MailArchive Desktop is still running for this account (%s, process %d), so the dashboard that opened is that version's. Do this: quit it (on Windows, end process %d in Task Manager; elsewhere, `kill %d`), or sign out and back in, then open MailArchive Desktop again.", stripControl(exe), pid, pid, pid)
+	return otherVersionTextOn(runtime.GOOS, exe, pid)
+}
+
+// otherVersionTextOn is that notice in goos's words: the page's Shut down button first, then the
+// system's own way to end the process. The Windows walk of S1 (2026-11-25) saw the words before,
+// which said "MailArchive Desktop" (the Start menu says MailArchive now), told a Windows user
+// `kill`, and never named the Shut down button on the 1.8.0 page that had just opened.
+func otherVersionTextOn(goos, exe string, pid int) string {
+	var fallback string
+	switch goos {
+	case "windows":
+		fallback = fmt.Sprintf("end process %d in Task Manager", pid)
+	case "darwin":
+		fallback = fmt.Sprintf("quit process %d in Activity Monitor", pid)
+	default:
+		fallback = fmt.Sprintf("run `kill %d` in a terminal", pid)
+	}
+	return fmt.Sprintf("Another version of MailArchive is still running for this account (%s, process %d), so it answered instead of the one you just opened. To use the one you just opened: click Shut down at the top of the MailArchive page in your browser, then open MailArchive again. If that page has no Shut down button, %s, or sign out and back in.", stripControl(exe), pid, fallback)
 }
 
 // stripControl removes control characters from a path before it is shown, so a

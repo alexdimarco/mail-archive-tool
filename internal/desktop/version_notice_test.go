@@ -1,6 +1,7 @@
 package desktop
 
 import (
+	"runtime"
 	"strconv"
 	"strings"
 	"testing"
@@ -26,6 +27,43 @@ func TestMA637_OtherVersion(t *testing.T) {
 		if got := otherVersion(c.holder, c.mine); got != c.want {
 			t.Errorf("otherVersion(%q, %q) = %v, want %v", c.holder, c.mine, got, c.want)
 		}
+	}
+}
+
+// covers: MA-637, S59
+// The notice says what to do in the launcher's own system's words (the Windows walk of S1,
+// 2026-11-25: it said "MailArchive Desktop" though the Start menu now says MailArchive, told a
+// Windows user `kill`, and never named the Shut down button on the page that had just opened,
+// which every 1.8.0 page has). Positive twin first, on every system: it names the holder's
+// program and pid and says to click Shut down, then open MailArchive again. Then the fallback is
+// the system's own (Task Manager, Activity Monitor, `kill`) and never another system's.
+func TestMA637_TheNoticeSaysWhatToDoOnEachSystem(t *testing.T) {
+	exe, pid := `C:\Program Files\MailArchive\mailarchivew.exe`, 9616
+	for _, c := range []struct {
+		goos, fallback string
+		never          []string
+	}{
+		{"windows", "end process 9616 in Task Manager", []string{"kill", "Activity Monitor"}},
+		{"darwin", "quit process 9616 in Activity Monitor", []string{"kill", "Task Manager"}},
+		{"linux", "run `kill 9616` in a terminal", []string{"Task Manager", "Activity Monitor"}},
+	} {
+		got := otherVersionTextOn(c.goos, exe, pid)
+		for _, want := range []string{"Another version of MailArchive is still running", exe, "process 9616", "click Shut down", "then open MailArchive again"} {
+			if !strings.Contains(got, want) {
+				t.Errorf("%s: positive twin: the notice lacks %q: %q", c.goos, want, got)
+			}
+		}
+		if !strings.Contains(got, c.fallback) {
+			t.Errorf("%s: the notice lacks this system's way %q: %q", c.goos, c.fallback, got)
+		}
+		for _, bad := range append(c.never, "MailArchive Desktop") {
+			if strings.Contains(got, bad) {
+				t.Errorf("%s: the notice says %q: %q", c.goos, bad, got)
+			}
+		}
+	}
+	if otherVersionText(exe, pid) != otherVersionTextOn(runtime.GOOS, exe, pid) {
+		t.Errorf("the launcher's notice is not this system's")
 	}
 }
 
