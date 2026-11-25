@@ -283,7 +283,14 @@ func TestASetIsMadeOneArchiveAfterAnother(t *testing.T) {
 		if !holdsOnly(folder(i), rows[i]) {
 			t.Errorf("%s does not hold exactly its one mailbox: %+v", folder(i), archindex.Stores(folder(i)))
 		}
-		if fi, err := os.Stat(folder(i)); err != nil || fi.Mode().Perm() != 0o700 {
+		// Amended 2026-11-25 (round D; unix unchanged): Go reports every folder's mode as 0777 on
+		// Windows, so there the folder's access list is asserted in place of its mode: its owner,
+		// SYSTEM and Administrators alone (setFolderACLWhy).
+		if runtime.GOOS == "windows" {
+			if why := setFolderACLWhy(t, folder(i)); why != "" {
+				t.Errorf("%s: %s", folder(i), why)
+			}
+		} else if fi, err := os.Stat(folder(i)); err != nil || fi.Mode().Perm() != 0o700 {
 			t.Errorf("%s: %v %v", folder(i), fi, err)
 		}
 	}
@@ -600,6 +607,12 @@ func TestCancelOrAParentErrorStopsTheSetAndAnErrorInOneGoesOn(t *testing.T) {
 		}))
 
 	// The parent gone during the second archive's export: the archives after it are not started.
+	// Amended 2026-11-25 (round D; unix unchanged): Windows refuses to rename a folder that holds an
+	// open file, and the second archive's run log is open in the parent then (the Windows lab of
+	// MA-1503: "Access is denied"), so the parent cannot go during an export there.
+	if runtime.GOOS == "windows" {
+		t.Skip("Windows refuses to rename a folder that holds an open file (the second archive's run log), so the parent cannot go during an export there")
+	}
 	parent = fresh()
 	s = &flowScript{summary: zenity.ErrCanceled}
 	ch = plan(parent, s)

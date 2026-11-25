@@ -32,6 +32,22 @@ func setLinkTo(t *testing.T, target, link string) {
 	}
 }
 
+// symlinkOrSkip makes link a symbolic link to target, as the repository's other link tests do
+// (internal/delmark's and internal/archdelete's symlinkOrSkip): an ordinary Windows user may not make
+// one (it needs an administrator or developer mode; the Windows lab of MA-1503 ran as one), so there
+// the test is skipped with that reason. Elsewhere a link that cannot be made fails the test, as before.
+func symlinkOrSkip(t *testing.T, target, link string) {
+	t.Helper()
+	err := os.Symlink(target, link)
+	switch {
+	case err == nil:
+	case runtime.GOOS == "windows":
+		t.Skipf("no symbolic link here: an ordinary Windows user may not make one (%v)", err)
+	default:
+		t.Fatal(err)
+	}
+}
+
 // setFresh is a new, empty parent folder for a set.
 func setFresh(t *testing.T) string {
 	t.Helper()

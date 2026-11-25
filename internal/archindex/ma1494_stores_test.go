@@ -119,6 +119,12 @@ func TestStoresGivesAnArchivesStoreIdsOrSaysWhyNot(t *testing.T) {
 	target := t.TempDir()
 	link := filepath.Join(t.TempDir(), "link")
 	if err := os.Symlink(target, link); err != nil {
+		// Amended 2026-11-25 (round D; nothing weakened elsewhere): an ordinary Windows user may not
+		// make a symbolic link (the Windows lab of MA-1503), so there this last part is skipped with
+		// the reason, as this package's other link checks are (index_test.go); elsewhere it fails.
+		if runtime.GOOS == "windows" {
+			t.Skipf("no symbolic link here: an ordinary Windows user may not make one (%v)", err)
+		}
 		t.Fatal(err)
 	}
 	planted := filepath.Join(dir, "planted")

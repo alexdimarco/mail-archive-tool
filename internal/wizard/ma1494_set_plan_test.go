@@ -142,36 +142,39 @@ func TestASetsPlanFindsEachMailboxsArchiveByWhatItHolds(t *testing.T) {
 		t.Fatalf("planning wrote in the parent: %v", entries)
 	}
 
-	parent := t.TempDir()
-	archiveHolding(t, filepath.Join(parent, "qzsam.walker@gmail.com"), idOf(by["qzsam.walker@gmail.com"]))
-	archiveHolding(t, filepath.Join(parent, "old-name@qzuni.example"), idOf(by["qz.student@mail.qzuni.example"]))
-	archiveHolding(t, filepath.Join(parent, "qzsam.work@gmail.com"), idOf(by["qzsam.work@gmail.com"]), idOf(by["qzsam@qzname.example"]))
-	archiveHolding(t, filepath.Join(parent, "qzwork@qzwork.example"), idOf(by["qzwork@qzwork.example"]))
-	archiveHolding(t, filepath.Join(parent, "qzwork@qzwork.example (2)"), idOf(by["qzwork@qzwork.example"]))
-	archiveHolding(t, filepath.Join(parent, "sam@gone.example"), "path:/nowhere/ImapMail/imap.gone.example")
-	elsewhere := archiveHolding(t, filepath.Join(t.TempDir(), "elsewhere"), idOf(by["Local Folders"]))
-	if err := os.Symlink(elsewhere, filepath.Join(parent, "Local Folders")); err != nil {
-		t.Fatal(err)
-	}
-	before := treeOf(t, parent)
-	p, err = planSet(parent, rows, "darwin")
-	want = []string{
-		"qz.student@mail.qzuni.example: continue old-name@qzuni.example",
-		"qzsam.walker@gmail.com: continue qzsam.walker@gmail.com",
-		"qzsam.work@gmail.com: new qzsam.work@gmail.com (2)",
-		"qzsam@qzname.example: new qzsam@qzname.example",
-		"qzwork@qzwork.example: continue qzwork@qzwork.example also qzwork@qzwork.example (2)",
-		"Local Folders: new Local Folders (2)",
-	}
-	if err != nil || !reflect.DeepEqual(outcomesOf(p), want) {
-		t.Fatalf("a re-run: %v\n got %q\nwant %q", err, outcomesOf(p), want)
-	}
-	if !reflect.DeepEqual(p.notFound, []string{"sam@gone.example"}) || p.unread != nil {
-		t.Errorf("not found now: %q, unread %q", p.notFound, p.unread)
-	}
-	if !reflect.DeepEqual(treeOf(t, parent), before) {
-		t.Errorf("planning changed the parent")
-	}
+	// Amended 2026-11-25 (round D; nothing weakened): the re-run, whose fixture holds a symbolic link,
+	// is its own subtest (symlinkOrSkip), so where a link cannot be made (an ordinary Windows user, the
+	// Windows lab of MA-1503) it alone is skipped, with the reason, and the parts below still run.
+	t.Run("a re-run", func(t *testing.T) {
+		parent := t.TempDir()
+		archiveHolding(t, filepath.Join(parent, "qzsam.walker@gmail.com"), idOf(by["qzsam.walker@gmail.com"]))
+		archiveHolding(t, filepath.Join(parent, "old-name@qzuni.example"), idOf(by["qz.student@mail.qzuni.example"]))
+		archiveHolding(t, filepath.Join(parent, "qzsam.work@gmail.com"), idOf(by["qzsam.work@gmail.com"]), idOf(by["qzsam@qzname.example"]))
+		archiveHolding(t, filepath.Join(parent, "qzwork@qzwork.example"), idOf(by["qzwork@qzwork.example"]))
+		archiveHolding(t, filepath.Join(parent, "qzwork@qzwork.example (2)"), idOf(by["qzwork@qzwork.example"]))
+		archiveHolding(t, filepath.Join(parent, "sam@gone.example"), "path:/nowhere/ImapMail/imap.gone.example")
+		elsewhere := archiveHolding(t, filepath.Join(t.TempDir(), "elsewhere"), idOf(by["Local Folders"]))
+		symlinkOrSkip(t, elsewhere, filepath.Join(parent, "Local Folders"))
+		before := treeOf(t, parent)
+		p, err := planSet(parent, rows, "darwin")
+		want := []string{
+			"qz.student@mail.qzuni.example: continue old-name@qzuni.example",
+			"qzsam.walker@gmail.com: continue qzsam.walker@gmail.com",
+			"qzsam.work@gmail.com: new qzsam.work@gmail.com (2)",
+			"qzsam@qzname.example: new qzsam@qzname.example",
+			"qzwork@qzwork.example: continue qzwork@qzwork.example also qzwork@qzwork.example (2)",
+			"Local Folders: new Local Folders (2)",
+		}
+		if err != nil || !reflect.DeepEqual(outcomesOf(p), want) {
+			t.Fatalf("a re-run: %v\n got %q\nwant %q", err, outcomesOf(p), want)
+		}
+		if !reflect.DeepEqual(p.notFound, []string{"sam@gone.example"}) || p.unread != nil {
+			t.Errorf("not found now: %q, unread %q", p.notFound, p.unread)
+		}
+		if !reflect.DeepEqual(treeOf(t, parent), before) {
+			t.Errorf("planning changed the parent")
+		}
+	})
 
 	// Writable by others: never read, so its name is taken and its mailbox gets the next number.
 	if runtime.GOOS != "windows" {

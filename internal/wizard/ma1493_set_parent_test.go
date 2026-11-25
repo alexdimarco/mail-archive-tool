@@ -173,9 +173,6 @@ func TestASetsParentFolderIsCheckedAndRefusedInTheWizardsWords(t *testing.T) {
 		t.Fatal(err)
 	}
 	link := filepath.Join(root, "link")
-	if err := os.Symlink(inArch, link); err != nil {
-		t.Fatal(err)
-	}
 	own, err := job.Dir()
 	if err != nil {
 		t.Fatal(err)
@@ -183,6 +180,10 @@ func TestASetsParentFolderIsCheckedAndRefusedInTheWizardsWords(t *testing.T) {
 	if err := os.MkdirAll(own, 0o700); err != nil {
 		t.Fatal(err)
 	}
+	// Amended 2026-11-25 (round D; nothing weakened): each case is its own subtest and the link is made
+	// just before its case (symlinkOrSkip), so where a symbolic link cannot be made (an ordinary
+	// Windows user, the Windows lab of MA-1503) only that case is skipped, with the reason, and every
+	// other case still runs. The link was made before the loop, failing the whole test there.
 	for _, c := range []struct {
 		name, folder string
 		words        []string
@@ -195,20 +196,25 @@ func TestASetsParentFolderIsCheckedAndRefusedInTheWizardsWords(t *testing.T) {
 		{"inside an archive only the made-list knows", inKnown, []string{"is an archive, or is inside one"}},
 		{"MailArchive's own settings folder", own, []string{"MailArchive keeps its settings or working files in", "Choose a folder of your own."}},
 	} {
-		before := treeOf(t, root)
-		s := &setScript{folders: []string{c.folder, good}}
-		s.install(t)
-		sp, err := askSetParent()
-		if err != nil || sp == nil || sp.Parent != good || len(s.chooser) != 2 {
-			t.Fatalf("%s: the folder is asked again and the good one taken: %+v %v, chooser %d", c.name, sp, err, len(s.chooser))
-		}
-		code, note := 0, ""
-		if len(s.notes) == 1 {
-			code, note = 1, s.notes[0]
-		}
-		assure.Refused(t, code, note, assure.Code(1), assure.Names(append([]string{c.folder}, c.words...)...),
-			assure.Forbid("unencrypted", "panic", "goroutine"),
-			assure.NoSideEffect(func() bool { return reflect.DeepEqual(treeOf(t, root), before) }))
+		t.Run(c.name, func(t *testing.T) {
+			if c.folder == link {
+				symlinkOrSkip(t, inArch, link)
+			}
+			before := treeOf(t, root)
+			s := &setScript{folders: []string{c.folder, good}}
+			s.install(t)
+			sp, err := askSetParent()
+			if err != nil || sp == nil || sp.Parent != good || len(s.chooser) != 2 {
+				t.Fatalf("%s: the folder is asked again and the good one taken: %+v %v, chooser %d", c.name, sp, err, len(s.chooser))
+			}
+			code, note := 0, ""
+			if len(s.notes) == 1 {
+				code, note = 1, s.notes[0]
+			}
+			assure.Refused(t, code, note, assure.Code(1), assure.Names(append([]string{c.folder}, c.words...)...),
+				assure.Forbid("unencrypted", "panic", "goroutine"),
+				assure.NoSideEffect(func() bool { return reflect.DeepEqual(treeOf(t, root), before) }))
+		})
 	}
 
 	// Cancel on the chooser: nothing.
@@ -259,20 +265,23 @@ func TestASetsParentSwappedForALinkAfterTheCheckIsRefused(t *testing.T) {
 		{"a link into an archive", arch, "is an archive, or is inside one"},
 		{"a link to another folder", other, "it changed while MailArchive was checking it"},
 	} {
-		_ = os.Remove(good)
-		if err := os.Symlink(c.target, good); err != nil {
-			t.Fatal(err)
-		}
-		beforeT, beforeM := treeOf(t, c.target), treeOf(t, moved)
-		p, err := makeSetFolder(sp, "qzsam.walker@gmail.com", "qzsam.walker@gmail.com")
-		code := 0
-		if err != nil && p == "" {
-			code = 1
-		}
-		assure.Refused(t, code, setParentWords(err, good, "qzsam.walker@gmail.com"), assure.Code(1), assure.Names(good, c.words),
-			assure.NoSideEffect(func() bool {
-				return reflect.DeepEqual(treeOf(t, c.target), beforeT) && reflect.DeepEqual(treeOf(t, moved), beforeM) && reflect.DeepEqual(madeLines(t), lines)
-			}))
+		// Amended 2026-11-25 (round D; nothing weakened): each swap is its own subtest (symlinkOrSkip),
+		// so where a symbolic link cannot be made (an ordinary Windows user) the swaps are skipped with
+		// the reason and the words below still run.
+		t.Run(c.name, func(t *testing.T) {
+			_ = os.Remove(good)
+			symlinkOrSkip(t, c.target, good)
+			beforeT, beforeM := treeOf(t, c.target), treeOf(t, moved)
+			p, err := makeSetFolder(sp, "qzsam.walker@gmail.com", "qzsam.walker@gmail.com")
+			code := 0
+			if err != nil && p == "" {
+				code = 1
+			}
+			assure.Refused(t, code, setParentWords(err, good, "qzsam.walker@gmail.com"), assure.Code(1), assure.Names(good, c.words),
+				assure.NoSideEffect(func() bool {
+					return reflect.DeepEqual(treeOf(t, c.target), beforeT) && reflect.DeepEqual(treeOf(t, moved), beforeM) && reflect.DeepEqual(madeLines(t), lines)
+				}))
+		})
 	}
 
 	// Each code has the wizard's words, naming the folder; none is the unencrypted copy's.
