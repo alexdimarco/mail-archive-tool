@@ -64,7 +64,7 @@ func TestNoPickerRowReachesTheDialogProgramAsAnOption(t *testing.T) {
 	labels, _ := pickList(gatherPickRows(found, time.Now().Add(time.Minute), sizeEntryMax), "linux")
 
 	// Positive twin: the fake records exactly the rows given.
-	inputs, auto, err := pickAutoInputs(found)
+	inputs, auto, err := pickListAlone(found)
 	if err != nil || !auto || !reflect.DeepEqual(inputs, found) {
 		t.Fatalf("All of them through the fake program: %q %v %v", inputs, auto, err)
 	}

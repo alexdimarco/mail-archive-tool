@@ -126,6 +126,16 @@ func labelsOf(t *testing.T, found []string) ([]string, []string) {
 	return pickList(gatherPickRows(found, time.Now().Add(time.Minute), sizeEntryMax), "darwin")
 }
 
+// pickListAlone is the mailbox list's answer with the question after All of them off
+// (pickAutoChoice(found, false)): the inputs and auto-discovery of one archive, as the list alone
+// gives them. pickAutoInputs, which returned exactly these, had no caller in the product after step
+// 3a, so the walk of internal/dialogfront took it for an entry of its own (R39); the list's tests now
+// ask pickAutoChoice itself, the flow's one call, with every assertion as it was.
+func pickListAlone(found []string) ([]string, bool, error) {
+	p, err := pickAutoChoice(found, false)
+	return p.inputs, p.auto, err
+}
+
 // pickScript replaces the list and note dialogs for one test: the list gives answers in turn
 // (an error, when one is given, after the answers run out), the note gives noteErrs in turn (nil
 // after them). It records every dialog shown.
@@ -211,7 +221,7 @@ func TestEachRowSaysTheAccountAsThunderbirdShowsIt(t *testing.T) {
 	labels, _ := pickList(gatherPickRows(found, time.Now().Add(time.Minute), sizeEntryMax), runtime.GOOS)
 	s := &pickScript{answers: []string{labels[1]}}
 	s.install(t)
-	inputs, auto, err := pickAutoInputs(found)
+	inputs, auto, err := pickListAlone(found)
 	if err != nil || auto || !reflect.DeepEqual(inputs, []string{found[0]}) {
 		t.Fatalf("picking qzsam.walker@gmail.com gave %q auto=%v %v, want imap.gmail-1.com's store", inputs, auto, err)
 	}
@@ -223,14 +233,14 @@ func TestEachRowSaysTheAccountAsThunderbirdShowsIt(t *testing.T) {
 	}
 	s = &pickScript{answers: []string{allOfThem}}
 	s.install(t)
-	inputs, auto, err = pickAutoInputs(found)
+	inputs, auto, err = pickListAlone(found)
 	if err != nil || !auto || !reflect.DeepEqual(inputs, found) {
 		t.Fatalf("All of them gave %q auto=%v %v, want every store found, auto on", inputs, auto, err)
 	}
 	// One store found: no list, as before.
 	s = &pickScript{}
 	s.install(t)
-	if inputs, auto, err := pickAutoInputs(found[:1]); err != nil || auto || !reflect.DeepEqual(inputs, found[:1]) || len(s.lists) != 0 {
+	if inputs, auto, err := pickListAlone(found[:1]); err != nil || auto || !reflect.DeepEqual(inputs, found[:1]) || len(s.lists) != 0 {
 		t.Fatalf("one store: %q %v %v, lists %d", inputs, auto, err, len(s.lists))
 	}
 }
@@ -315,7 +325,7 @@ func TestThePickersWordsAreWrittenNowhere(t *testing.T) {
 	labels, _ := pickList(gatherPickRows(found, time.Now().Add(time.Minute), sizeEntryMax), runtime.GOOS)
 	s := &pickScript{answers: []string{labels[1]}}
 	s.install(t)
-	inputs, auto, err := pickAutoInputs(found)
+	inputs, auto, err := pickListAlone(found)
 	if err != nil || len(inputs) != 1 {
 		t.Fatalf("pick: %q %v", inputs, err)
 	}
@@ -362,20 +372,20 @@ func TestAnAnswerTheListDoesNotHoldIsAskedAgain(t *testing.T) {
 
 	s := &pickScript{answers: []string{labels[3]}}
 	s.install(t)
-	if inputs, _, err := pickAutoInputs(found); err != nil || !reflect.DeepEqual(inputs, []string{paths[3]}) || len(s.notes) != 0 {
+	if inputs, _, err := pickListAlone(found); err != nil || !reflect.DeepEqual(inputs, []string{paths[3]}) || len(s.notes) != 0 {
 		t.Fatalf("positive twin: a row's answer: %q %v (notes %q)", inputs, err, s.notes)
 	}
 
 	s = &pickScript{answers: []string{"", labels[2]}}
 	s.install(t)
-	inputs, _, err := pickAutoInputs(found)
+	inputs, _, err := pickListAlone(found)
 	if err != nil || !reflect.DeepEqual(inputs, []string{paths[2]}) || !reflect.DeepEqual(s.notes, []string{pickAgain}) || len(s.lists) != 2 {
 		t.Fatalf("an empty answer, then a row: %q %v, notes %q, lists %d", inputs, err, s.notes, len(s.lists))
 	}
 
 	s = &pickScript{answers: []string{"no such row", labels[0]}, noteErrs: []error{zenity.ErrCanceled}}
 	s.install(t)
-	if inputs, _, err := pickAutoInputs(found); err != nil || !reflect.DeepEqual(inputs, []string{paths[0]}) || len(s.lists) != 2 {
+	if inputs, _, err := pickListAlone(found); err != nil || !reflect.DeepEqual(inputs, []string{paths[0]}) || len(s.lists) != 2 {
 		t.Fatalf("closing the note shows the list again: %q %v, lists %d", inputs, err, len(s.lists))
 	}
 
@@ -386,7 +396,7 @@ func TestAnAnswerTheListDoesNotHoldIsAskedAgain(t *testing.T) {
 	}
 	s = &pickScript{answers: []string{"/etc/passwd"}, endErr: zenity.ErrCanceled}
 	s.install(t)
-	inputs, _, err = pickAutoInputs(found)
+	inputs, _, err = pickListAlone(found)
 	note := strings.Join(s.notes, "\n")
 	assure.Refused(t, pickRefusal(inputs, err), note, assure.Code(1), assure.Names("Choose one line in the list"),
 		assure.NoSideEffect(func() bool {
@@ -397,7 +407,7 @@ func TestAnAnswerTheListDoesNotHoldIsAskedAgain(t *testing.T) {
 
 	s = &pickScript{}
 	s.install(t)
-	inputs, _, err = pickAutoInputs(found)
+	inputs, _, err = pickListAlone(found)
 	if !errors.Is(err, errNoPick) || inputs != nil || len(s.lists) != pickTries || len(s.notes) != pickTries-1 {
 		t.Fatalf("a program that answers nothing: %q %v, lists %d, notes %d", inputs, err, len(s.lists), len(s.notes))
 	}
@@ -408,7 +418,7 @@ func TestAnAnswerTheListDoesNotHoldIsAskedAgain(t *testing.T) {
 		t.Fatal(err)
 	}
 	if !strings.Contains(string(src), "listDialog(pickPrompt, items, zenity.Title(appTitle), zenity.DefaultItems(allOfThem), zenity.DisallowEmpty())") {
-		t.Errorf("pickAutoInputs no longer asks with its prompt, All preselected and DisallowEmpty")
+		t.Errorf("pickAutoChoice no longer asks with its prompt, All preselected and DisallowEmpty")
 	}
 	// The give-up words are true in the wizard and in MailArchive Desktop's Make a new archive…
 	// alike (the friction review's F9): they name the next step, never "start MailArchive again".

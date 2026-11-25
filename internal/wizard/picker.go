@@ -64,16 +64,6 @@ var errNoPick = errors.New("The list of mailboxes did not say which one was chos
 // pickNow is the list's clock, for the "last changed" words (a test sets it).
 var pickNow = time.Now
 
-// pickAutoInputs lets the person choose one of the auto-detected mailboxes, or all of them. "All
-// of them" is remembered as auto-discovery, so a scheduled run picks up accounts added later.
-//
-// Each row says its mailbox as pickList words it. The answer maps back to its row (pickChoice);
-// an answer that names no row shows a note and the list again, and is never taken as a path.
-func pickAutoInputs(found []string) ([]string, bool, error) {
-	p, err := pickAutoChoice(found, false)
-	return p.inputs, p.auto, err
-}
-
 // autoPick is the mailbox list's answer: the inputs and auto-discovery of one archive, or, after
 // One archive for each mailbox, the set's rows in the list's order (each; MA-1490, MA-1491).
 type autoPick struct {
@@ -83,10 +73,19 @@ type autoPick struct {
 	set    []setRow
 }
 
-// pickAutoChoice is pickAutoInputs with the question after All of them (MA-1490): asked only when
-// offerEach (the plaintext flow, never Make a new encrypted archive…; the caller decides) and two or
-// more of the list's rows get an archive by §5's rule (setRows). One archive for all of them gives
-// exactly what All of them gives without the question: every path found, auto-discovery on.
+// pickAutoChoice lets the person choose one of the auto-detected mailboxes, or all of them. "All of
+// them" is remembered as auto-discovery, so a scheduled run picks up accounts added later.
+//
+// Each row says its mailbox as pickList words it. The answer maps back to its row (pickChoice); an
+// answer that names no row shows a note and the list again, and is never taken as a path.
+//
+// After All of them it asks the question after All of them (MA-1490) only when offerEach (the
+// plaintext flow, never Make a new encrypted archive…; the caller decides) and two or more of the
+// list's rows get an archive by §5's rule (setRows). One archive for all of them gives exactly what
+// All of them gives without the question: every path found, auto-discovery on. With offerEach false
+// it is the list alone, as it was before the question (the list's tests call it so). The wizard's
+// flow is its one caller in the product, so each dialog it opens is reached through an entry that
+// brings it to the front (R39; internal/dialogfront's walk).
 func pickAutoChoice(found []string, offerEach bool) (autoPick, error) {
 	if len(found) == 1 {
 		return autoPick{inputs: found}, nil
