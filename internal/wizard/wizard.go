@@ -637,7 +637,7 @@ func logSummary(logger *log.Logger, r app.Result) {
 
 // wizardChoice is what the wizard learned; the schedule step repeats it.
 type wizardChoice struct {
-	finished      func() // AddArchive's hook: called once the export has finished (MA-954)
+	finished      func() // AddArchives' hook: called once the export has finished (MA-954)
 	programCopies string // a new encrypted archive's choice, "on" or "off" (job.Job.ProgramCopies)
 	inputs        []string
 	auto          bool // "all of them" from auto-detect: re-discover at run time
@@ -705,63 +705,90 @@ func wizard() error {
 	}
 
 	// 3. The local add-an-archive flow, shared with the Desktop's "Add another
-	//    archive" button (AddArchive calls it directly).
+	//    archive" button (AddArchives calls it directly).
 	return localArchiveFlow(nil)
 }
 
-// AddArchive runs the wizard's local add-an-archive flow directly — source choice
+// AddArchives runs the wizard's local add-an-archive flow directly — source choice
 // through export — WITHOUT the first-step surface or the scheduled-archive health
-// check. The Desktop's "Add another archive" button calls it IN PROCESS (desktop
-// imports wizard; MA-612 — never a child), so a running Desktop can create a new
-// local archive through the same native-dialog flow the double-click wizard uses.
-// It returns the new archive's output folder, or "" when the user backed out of a
-// dialog (zenity.ErrCanceled) before choosing one — a cancel is "nothing added", not an
-// error. A folder whose copy did not finish comes back with ErrStoppedEarly (MA-954).
-func AddArchive() (string, error) {
+// check. MailArchive Desktop's Make a new archive… calls it IN PROCESS (desktop
+// imports wizard; MA-612 — never a child), so a running Desktop can create new local
+// archives through the same native-dialog flow the double-click wizard uses.
+//
+// It returns every archive folder the flow made or continued, each with its outcome
+// (docs/design-per-mailbox-archives.md §10, revision 2's C11; MA-1499): the one-archive
+// path gives one Made (its Parent ""); One archive for each mailbox gives one per
+// archive of its set, in the plan's order (each with the set's Parent). A person who
+// backed out of a dialog (zenity.ErrCanceled) before any folder was chosen or made gets
+// none and no error: "nothing added". A copy that did not finish says so in its Outcome
+// (MA-954; it replaces 1.5.2's AddArchive and its ErrStoppedEarly).
+func AddArchives() ([]Made, error) {
 	dialogfront.Arm() // only a Desktop button runs it: its first window was asked for (R39)
 	if refusal, ok := dialogPreflight(runtime.GOOS, dialogToolOnPath(), displayIsSet()); !ok {
-		return "", errors.New(refusal)
+		return nil, errors.New(refusal)
 	}
-	var out string
-	finished := false
-	err := localArchiveFlowHooks(func(o string) { out = o }, func() { finished = true }, nil, nil, nil)
+	var (
+		out      string
+		finished bool
+		set      []Made
+		isSet    bool
+	)
+	err := localArchiveFlowHooks(func(o string) { out = o }, func() { finished = true }, nil, nil, func(m []Made) { set, isSet = m, true })
+	if isSet {
+		return addSetOutcome(set, err)
+	}
 	return addOutcome(out, finished, err)
 }
 
-// ErrStoppedEarly is AddArchive's answer when a folder was chosen but the copy into it
-// did not finish (Cancel on the progress window, or on the Outlook app's "Continue?"):
+// addOutcome is what AddArchives returns for the one-archive path, from the folder the
+// flow chose ("" when none), whether the copy into it finished, and the flow's error
+// (MA-954, MA-1499). A person who backs out before choosing a folder adds nothing. Once
+// the copy finished, closing a later window (the summary or the schedule question) is
+// not a failure. A chosen folder whose copy did not finish (Cancel on the progress
+// window, or on the Outlook app's "Continue?") is MadeStopped, never a plain success:
 // the folder may hold the mail copied so far, and running the wizard again with the
-// same mail and folder finishes it (MA-954).
-var ErrStoppedEarly = errors.New("the copy was stopped before it finished")
-
-// addOutcome is what AddArchive returns, from the folder the flow chose ("" when none),
-// whether the copy into it finished, and the flow's error (MA-954). A person who backs
-// out before choosing a folder adds nothing. Once the copy finished, closing a later
-// window (the summary or the schedule question) is not a failure. A chosen folder whose
-// copy did not finish is ErrStoppedEarly, never a plain success. Pure, so the mapping is
-// testable without a display.
-func addOutcome(out string, finished bool, err error) (string, error) {
+// same mail and folder finishes it. Any other error is passed on, its folder MadeFailed.
+// Pure, so the mapping is testable without a display.
+func addOutcome(out string, finished bool, err error) ([]Made, error) {
 	cancelled := errors.Is(err, zenity.ErrCanceled)
+	one := func(o MadeOutcome, reason string) []Made {
+		return []Made{{Folder: out, Name: filepath.Base(out), Outcome: o, Reason: reason}}
+	}
 	switch {
 	case out == "" && cancelled:
-		return "", nil
+		return nil, nil
 	case out == "":
-		return "", err
+		return nil, err
 	case finished && cancelled:
-		return out, nil
+		return one(MadeFinished, ""), nil
 	case finished:
-		return out, err
+		return one(MadeFinished, ""), err
 	case err == nil || cancelled:
-		return out, ErrStoppedEarly
+		return one(MadeStopped, setCancelled), nil
 	}
-	return out, err
+	return one(MadeFailed, firstLine(err)), err
+}
+
+// addSetOutcome is what AddArchives returns for One archive for each mailbox, from what the
+// set made or continued and the flow's error (§10, C11; MA-1499). Backing out before any
+// folder was made adds nothing; once archives were made, closing a later window (the
+// summary or the schedule question) is not a failure. Any other error is passed on with
+// the archives, which the Desktop still lists.
+func addSetOutcome(made []Made, err error) ([]Made, error) {
+	if errors.Is(err, zenity.ErrCanceled) {
+		err = nil
+	}
+	if len(made) == 0 {
+		return nil, err
+	}
+	return made, err
 }
 
 // localArchiveFlow is the wizard's local path: choose the source, pick the files,
 // prepare IMAP, choose the output folder and options, then export. Shared by the
-// double-click wizard (after its first step and health check) and by AddArchive.
+// double-click wizard (after its first step and health check) and by AddArchives.
 // chosen, when set, is called with the output folder just before the export runs,
-// so a caller (AddArchive) can register the new archive even if the export is later
+// so a caller (AddArchives) can register the new archive even if the export is later
 // cancelled.
 func localArchiveFlow(chosen func(out string)) error { return localArchiveFlowWith(chosen, nil, nil) }
 
@@ -775,7 +802,7 @@ func localArchiveFlowWith(chosen func(out string), check func(out string) error,
 }
 
 // localArchiveFlowHooks is localArchiveFlowWith with two more hooks: finished, when set,
-// is called once the export into the chosen folder has finished (MA-954), so AddArchive
+// is called once the export into the chosen folder has finished (MA-954), so AddArchives
 // can tell a finished copy from one stopped part way; madeSet, when set, is given what One
 // archive for each mailbox made or continued, each with its outcome and its schedule's
 // (docs/design-per-mailbox-archives.md §10, C11), also when the set ends with an error.
@@ -914,7 +941,7 @@ func localArchiveFlowHooks(chosen func(out string), finished func(), check func(
 	}
 
 	// 6. Run with a progress dialog, then offer to keep it current. Tell the caller
-	//    the chosen output folder first, so AddArchive can register the new archive
+	//    the chosen output folder first, so AddArchives can register the new archive
 	//    (a cancel during the export still leaves it registered, nothing half-hidden).
 	if keyed != nil {
 		keyed(choice)

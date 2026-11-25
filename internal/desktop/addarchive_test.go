@@ -10,7 +10,13 @@ import (
 
 	"mail-archive-tool/internal/archindex"
 	"mail-archive-tool/internal/assure"
+	"mail-archive-tool/internal/wizard"
 )
+
+// madeOne is what the add flow answers for one archive whose copy finished into folder.
+func madeOne(folder string) []wizard.Made {
+	return []wizard.Made{{Folder: folder, Name: filepath.Base(folder), Outcome: wizard.MadeFinished}}
+}
 
 // covers: MA-696
 // The "Your archives" card's "Add another archive" button runs the wizard's local
@@ -20,9 +26,15 @@ import (
 // dialogs are process-global); a failure in the flow is reported. The flow itself is
 // the native-dialog wizard (lab-tier), so it is exercised here through the
 // addArchiveFn seam rather than a real GUI.
+//
+// Amended 2026-11-25 (docs/design-per-mailbox-archives.md step 4, MA-1499; nothing
+// weakened): the seam is now addArchivesFn, wizard.AddArchives, which answers with every
+// folder made and its outcome. Each case below says the same thing at the same strength,
+// its old answer kept beside it: one finished folder for "the folder"; no folder for "".
+// A set's several archives are MA-1499's (ma1499_add_set_test.go).
 func TestMA696_AddAnotherArchive(t *testing.T) {
-	restore := addArchiveFn
-	defer func() { addArchiveFn = restore }()
+	restore := addArchivesFn
+	defer func() { addArchivesFn = restore }()
 
 	guarded := func(d *dashboard) *httptest.ResponseRecorder {
 		req := httptest.NewRequest("POST", "http://127.0.0.1:8097/api/add-archive", nil)
@@ -38,7 +50,7 @@ func TestMA696_AddAnotherArchive(t *testing.T) {
 	newArch := t.TempDir()
 	writeManifest(t, newArch)
 	called := false
-	addArchiveFn = func() (string, error) { called = true; return newArch, nil }
+	addArchivesFn = func() ([]wizard.Made, error) { called = true; return madeOne(newArch), nil } // was: return newArch, nil
 	d := newDashboard(Config{SettingsPath: filepath.Join(t.TempDir(), "s.json"), IndexPath: idx})
 	if body := guarded(d).Body.String(); !strings.Contains(body, `"ok":true`) {
 		t.Fatalf("a created archive must be added, got %s", body)
@@ -59,7 +71,7 @@ func TestMA696_AddAnotherArchive(t *testing.T) {
 
 	// Cancel: the user backs out ("" path) — nothing is added.
 	idx2 := filepath.Join(t.TempDir(), archindex.Name)
-	addArchiveFn = func() (string, error) { return "", nil }
+	addArchivesFn = func() ([]wizard.Made, error) { return nil, nil } // was: return "", nil
 	d2 := newDashboard(Config{SettingsPath: filepath.Join(t.TempDir(), "s2.json"), IndexPath: idx2})
 	if body := guarded(d2).Body.String(); !strings.Contains(body, `"canceled":true`) {
 		t.Fatalf("a cancelled add must report canceled, got %s", body)
@@ -69,7 +81,7 @@ func TestMA696_AddAnotherArchive(t *testing.T) {
 	}
 
 	// Failure in the flow is reported, not swallowed.
-	addArchiveFn = func() (string, error) { return "", errors.New("the wizard could not open its windows") }
+	addArchivesFn = func() ([]wizard.Made, error) { return nil, errors.New("the wizard could not open its windows") } // was: return "", errors.New(…)
 	d3 := newDashboard(Config{SettingsPath: filepath.Join(t.TempDir(), "s3.json"), IndexPath: filepath.Join(t.TempDir(), archindex.Name)})
 	if body := guarded(d3).Body.String(); !strings.Contains(body, `"ok":false`) || !strings.Contains(body, "could not open its windows") {
 		t.Fatalf("a flow error must be reported, got %s", body)
@@ -77,7 +89,7 @@ func TestMA696_AddAnotherArchive(t *testing.T) {
 
 	// Busy: a second add while one is open is refused, and the flow is not entered.
 	entered := false
-	addArchiveFn = func() (string, error) { entered = true; return t.TempDir(), nil }
+	addArchivesFn = func() ([]wizard.Made, error) { entered = true; return madeOne(t.TempDir()), nil } // was: return t.TempDir(), nil
 	d4 := newDashboard(Config{SettingsPath: filepath.Join(t.TempDir(), "s4.json"), IndexPath: filepath.Join(t.TempDir(), archindex.Name)})
 	d4.addBusy.Store(true)
 	if body := guarded(d4).Body.String(); !strings.Contains(body, "already in progress") {

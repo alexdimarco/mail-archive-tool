@@ -46,6 +46,10 @@ type Made struct {
 	// Schedule is what became of its schedule (§11); ScheduleWhy is why its install failed.
 	Schedule    MadeSchedule
 	ScheduleWhy string
+	// Parent is the set's folder, which holds every archive of the set: what the Desktop's notes
+	// name (§10, revision 2's C8). "" for the archive of the one-archive path (AddArchives), which
+	// says only its Folder, Name, Outcome and Reason.
+	Parent string
 }
 
 // MadeSchedule is what became of one archive's schedule in a set (§11, revision 2's C6 and C11,
@@ -125,13 +129,17 @@ var setOpen = openPath
 
 // makeSet is One archive for each mailbox, from its parent folder to its end (§6 to §11): the parent
 // folder and the plan (chooseSet), then runSet. Cancel before any folder is made returns no Made and
-// the dialog's error (zenity.ErrCanceled).
+// the dialog's error (zenity.ErrCanceled). Each Made carries the set's parent folder (§10, C8).
 func makeSet(rows []setRow, goos string) ([]Made, error) {
 	ch, err := chooseSet(rows, goos)
 	if err != nil {
 		return nil, err
 	}
-	return runSet(ch, goos)
+	made, err := runSet(ch, goos)
+	for i := range made {
+		made[i].Parent = ch.plan.parent
+	}
+	return made, err
 }
 
 // runSet makes the set the person agreed to in ch (§8, §9): the download question for each account
