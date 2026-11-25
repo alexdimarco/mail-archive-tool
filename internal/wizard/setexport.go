@@ -613,6 +613,10 @@ const (
 	// made or was not started (F4's words).
 	setFinishOne  = "To finish it, run this again: choose All of them, then One archive for each mailbox, and this same folder."
 	setFinishMany = "To finish them, run this again: choose All of them, then One archive for each mailbox, and this same folder."
+	// setFinishAllowed closes the archives' lines instead when one of them gives a remedy (a folder
+	// this computer did not let MailArchive make in the parent, F2), whose "or choose another folder"
+	// "this same folder" contradicted (the re-verify of rounds A and B, RF-01, its words).
+	setFinishAllowed = "Then run this again: choose All of them, then One archive for each mailbox, and the folder you allowed or a new one."
 	// setLaterMailbox is the summary's and the end note's last line (the friction review's F1).
 	setLaterMailbox = "To back up a mailbox you add to Thunderbird later: click Make a new archive…, choose All of them, then One archive for each mailbox, and this same folder, %s."
 	setOnceLead     = "saved once."
@@ -637,9 +641,11 @@ func setWriteRemedy(goos string) string {
 // how many messages it holds and the counts the one-archive summary shows with their remedies (only
 // those above zero), then its Thunderbird account lines (none for a row saved once); an archive that
 // did not finish says why (with its log, when there is one), and
-// one not started says so; each continued archive with its own settings but no scheduled backup now
-// says so (revision 3; whatever the schedule question will be asked or answered, RV-03); then R1's
-// sentences.
+// one not started says so, then how to finish them (with a remedy shown, "Then run this again: … the
+// folder you allowed or a new one.", RF-01); each continued archive with its own settings but no
+// scheduled backup now says so (revision 3; whatever the schedule question will be asked or answered,
+// RV-03); then, when any archive folder was made or continued (RF-01), R1's sentences and the later
+// mailbox's line.
 func setSummaryText(parent string, arcs []*setArchive) string {
 	finished := 0
 	for _, a := range arcs {
@@ -659,7 +665,11 @@ func setSummaryText(parent string, arcs []*setArchive) string {
 	}
 	var lines []string
 	unfinished := 0
+	remedy, anyFolder := false, false
 	for _, a := range arcs {
+		remedy = remedy || a.remedy != ""
+		// An archive folder is there unless it was a new one never made, or a new one not started.
+		anyFolder = anyFolder || !a.notMade && (a.it.outcome != outNew || a.made.Outcome != MadeNotStarted)
 		label := util.StripControl(a.made.Name)
 		if a.it.outcome == outContinue {
 			label += " (brought up to date)"
@@ -698,6 +708,9 @@ func setSummaryText(parent string, arcs []*setArchive) string {
 		}
 	}
 	switch {
+	case unfinished > 0 && remedy:
+		// RF-01: the remedy said to allow MailArchive there or choose another folder.
+		lines = append(lines, setFinishAllowed)
 	case unfinished == 1:
 		lines = append(lines, setFinishOne)
 	case unfinished > 1:
@@ -720,7 +733,12 @@ func setSummaryText(parent string, arcs []*setArchive) string {
 	if len(lines) > 0 {
 		parts = append(parts, strings.Join(lines, "\n"))
 	}
-	parts = append(parts, setSummaryEnd, fmt.Sprintf(setLaterMailbox, where))
+	// RF-01: with no archive folder made or continued, R1's sentences ("Each archive is its own folder
+	// … Open index.html in any of them") and the later mailbox's "this same folder" point at nothing,
+	// so they are left out.
+	if anyFolder {
+		parts = append(parts, setSummaryEnd, fmt.Sprintf(setLaterMailbox, where))
+	}
 	return strings.Join(parts, "\n\n")
 }
 

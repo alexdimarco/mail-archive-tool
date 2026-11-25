@@ -687,14 +687,39 @@ To back up a mailbox you add to Thunderbird later: click Make a new archive…, 
 		"\nc@x (brought up to date): Did not finish: input /m/c does not exist. The mail copied so far is kept.\n",
 		"\nd@x: Not started.\n",
 		"\ne@x: Not made, so nothing was copied: this computer did not let MailArchive make a folder in /m. Allow MailArchive there (Windows Security, Controlled folder access), or run this again and choose another folder.\n",
-		"\nTo finish them, run this again: choose All of them, then One archive for each mailbox, and this same folder.\n\n",
+		// Restated 2026-11-25 (the re-verify of rounds A and B, RF-01; beside the old text, kept here):
+		// "\nTo finish them, run this again: choose All of them, then One archive for each mailbox, and
+		// this same folder.\n\n" contradicted the remedy's "or … choose another folder" above, so with a
+		// remedy shown the closing sentence is RF-01's, followed as before by R1's sentences.
+		"\nThen run this again: choose All of them, then One archive for each mailbox, and the folder you allowed or a new one.\n\n" + setSummaryEnd,
 	} {
 		if !strings.Contains(one, w) {
 			t.Errorf("the summary lacks %q:\n%s", w, one)
 		}
 	}
-	if none := setSummaryText("/m", []*setArchive{notStarted}); !strings.HasPrefix(none, "No archive was finished in /m\n\n") || !strings.Contains(none, "\nTo finish it, run this again: choose All of them, then One archive for each mailbox, and this same folder.\n") {
+	if strings.Contains(one, setFinishMany) || strings.Contains(one, setFinishOne) {
+		t.Errorf("RF-01: with a remedy shown the summary still says \"this same folder\":\n%s", one)
+	}
+	// Positive twin of the closing sentence: with no remedy, "To finish them …" as before.
+	if twin := setSummaryText("/m", []*setArchive{arcOf("a@x", outNew, MadeFinished, app.Result{ManifestSize: 1}), stopped, failed, notStarted}); !strings.Contains(twin, "\n"+setFinishMany+"\n\n"+setSummaryEnd) {
+		t.Errorf("with no remedy the summary closes as before:\n%s", twin)
+	}
+	// Restated 2026-11-25 (RF-01; beside the old check, kept here): the zero form with nothing made
+	// was checked to contain "\nTo finish it, run this again: choose All of them, then One archive for
+	// each mailbox, and this same folder.\n", R1's sentences following; with no archive folder made or
+	// continued R1's sentences and the later mailbox's line are left out, so the summary now ends with
+	// that sentence, at the same strength.
+	if none := setSummaryText("/m", []*setArchive{notStarted}); !strings.HasPrefix(none, "No archive was finished in /m\n\n") || !strings.HasSuffix(none, "\nTo finish it, run this again: choose All of them, then One archive for each mailbox, and this same folder.") {
 		t.Errorf("the zero form: %q", none)
+	}
+	// RF-01: nothing made, a remedy shown: no "Each archive …", no "this same folder" anywhere.
+	if refused := setSummaryText("/m", []*setArchive{notMade, notStarted}); !strings.HasSuffix(refused, "\n"+setFinishAllowed) || strings.Contains(refused, "Each archive is its own folder") || strings.Contains(refused, "this same folder") {
+		t.Errorf("RF-01: the summary with nothing made:\n%s", refused)
+	}
+	// A continued archive not started is still there: R1's sentences stay.
+	kept := arcOf("f@x", outContinue, MadeNotStarted, app.Result{})
+	if got := setSummaryText("/m", []*setArchive{notMade, kept}); !strings.Contains(got, "\n\n"+setSummaryEnd+"\n\n") {
+		t.Errorf("RF-01: a continued archive is there, so R1's sentences stay:\n%s", got)
 	}
 	if strings.Contains(one, "copied so far is kept; run this again") || strings.Contains(setSummaryText("/m", []*setArchive{notMade}), "copied so far is kept") {
 		t.Errorf("a line still says how to run it again, or a folder never made says mail was kept:\n%s", one)

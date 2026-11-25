@@ -78,6 +78,13 @@ func TestASetRefusedByItsParentCarriesTheRemedy(t *testing.T) {
 	if sum := s.summaryOf(t); !strings.Contains(sum, want) || strings.Contains(sum, "The mail copied so far is kept") {
 		t.Errorf("the summary gives the remedy:\n%s", sum)
 	}
+	// Added 2026-11-25 (the re-verify of rounds A and B, RF-01): the summary no longer contradicts the
+	// remedy ("… or run this again and choose another folder", then "… and this same folder"), and with
+	// nothing made it leaves out R1's sentences and the later mailbox's line.
+	if sum := s.summaryOf(t); !strings.HasSuffix(sum, "\n"+setFinishAllowed) ||
+		strings.Contains(sum, "this same folder") || strings.Contains(sum, "Each archive is its own folder") {
+		t.Errorf("RF-01: the summary after a refused folder:\n%s", sum)
+	}
 	if entries, _ := os.ReadDir(parent); len(entries) != 0 {
 		t.Errorf("nothing was made in the parent: %v", entries)
 	}
