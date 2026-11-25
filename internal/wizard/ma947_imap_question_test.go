@@ -40,13 +40,37 @@ func TestTheIMAPQuestionSaysWhatThunderbirdDoes(t *testing.T) {
 		}
 	}
 
-	// Structural: prepareThunderbirdGUI's dialog (zenity, not driven in a test) shows these
-	// words, with its two answers unchanged.
+	// Amended 2026-11-25 (MA-1502, the owner's QA "Yes, name it"; nothing weakened): the question
+	// shown is imapPrepQuestionFor's, which names the account and its number before these same words
+	// and names the account in the offer. Each pin above holds for it too: the lead after the account
+	// line, every sentence, the offer at the end, the old words absent.
+	named := imapPrepQuestionFor(prepAsk{name: "qzsam.walker@gmail.com", i: 1, n: 3})
+	if !strings.HasPrefix(named, "Account 1 of 3: qzsam.walker@gmail.com\n\nThis looks like an IMAP account.\n\n") || !strings.HasSuffix(named, "\n\nPrepare a full offline download of qzsam.walker@gmail.com first?") {
+		t.Fatalf("the positive twin, named: the question's lead or its offer changed:\n%s", named)
+	}
+	for _, want := range []string{
+		"Thunderbird may not have downloaded every message to this computer yet: it downloads mail over time, and only while it is open.",
+		"A message or attachment it has not downloaded yet is not in this export; a later run adds it once Thunderbird has it.",
+		"Yes, prepare makes sure Thunderbird keeps every message on this computer, then waits while it downloads.",
+	} {
+		if !strings.Contains(named, want) {
+			t.Errorf("the named question does not say %q:\n%s", want, named)
+		}
+	}
+	for _, gone := range []string{"only on demand", "stores mail locally"} {
+		if strings.Contains(named, gone) {
+			t.Errorf("the named question still says %q", gone)
+		}
+	}
+
+	// Structural: prepareThunderbirdGUI's dialog shows these words (named, through the question
+	// seam since MA-1502; before, zenity.Question with imapPrepQuestion), with its two answers
+	// unchanged.
 	src, err := os.ReadFile("wizard.go")
 	if err != nil {
 		t.Fatal(err)
 	}
-	for _, wired := range []string{"choice := zenity.Question(\n\t\timapPrepQuestion,", `zenity.OKLabel("Yes, prepare")`, `zenity.CancelLabel("No, export what's cached")`} {
+	for _, wired := range []string{"choice := questionDialog(\n\t\timapPrepQuestionFor(ask),", `zenity.OKLabel("Yes, prepare")`, `zenity.CancelLabel("No, export what's cached")`} {
 		if !strings.Contains(string(src), wired) {
 			t.Errorf("prepareThunderbirdGUI does not show the words: %q is gone from wizard.go", wired)
 		}

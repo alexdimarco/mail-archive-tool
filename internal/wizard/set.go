@@ -77,8 +77,11 @@ type setRow struct {
 	// get an archive in the list's order. Rows that get no archive keep their name before telling
 	// apart (they are only named in the plan's "Not made" line).
 	name string
-	make bool // it gets an archive (§5)
-	once bool // saved once and never scheduled: a folder no account uses now, or an older copy
+	// shown is the name the list showed for it (its row as it starts, without the details in
+	// brackets): what the download question and the plan's line about it call the account (MA-1502).
+	shown string
+	make  bool // it gets an archive (§5)
+	once  bool // saved once and never scheduled: a folder no account uses now, or an older copy
 	// empty: not made, since it is empty and nothing will arrive (an empty feeds account, folder no
 	// account uses now, or older copy).
 	empty bool
@@ -117,7 +120,7 @@ func setRows(l listed, goos string) []setRow {
 	var made []int
 	for _, i := range l.order {
 		r, id := l.rows[i], l.idents[i]
-		s := setRow{path: r.path, row: r, name: setFolderName(r, id)}
+		s := setRow{path: r.path, row: r, name: setFolderName(r, id), shown: rowHead(r, id)}
 		s.once = r.unused || id.older
 		emptyKind := r.acct == "rss" || r.unused || id.older
 		s.empty = emptyKind && r.sized && !r.floor && r.size == 0
@@ -140,6 +143,15 @@ func setRows(l listed, goos string) []setRow {
 		out[made[j]].name = n
 	}
 	return out
+}
+
+// listName is the name the list showed for the row's mailbox, or its folder's name where none is
+// known (a row made by hand).
+func (r setRow) listName() string {
+	if r.shown != "" {
+		return r.shown
+	}
+	return r.name
 }
 
 // setMakes counts the rows of a set that get an archive.

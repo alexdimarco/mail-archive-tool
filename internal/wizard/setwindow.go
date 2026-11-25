@@ -28,7 +28,8 @@ const (
 // one line for each of: an archive brought up to date, a paused one, a saved-once mailbox already
 // kept, another folder that also holds a mailbox's archive, a mailbox not made and why, a folder
 // that could not be read just now, an archive whose mailbox is not found now, folders left out, and
-// the accounts the full offline download is asked about. Names and paths are shown as written, their
+// the accounts the full offline download is asked about (each by the name the list showed, as the
+// question names it, MA-1502). Names and paths are shown as written, their
 // control characters dropped; the dialogs show the text without markup.
 func setPlanText(p setPlan) string {
 	clean := util.StripControl
@@ -47,7 +48,8 @@ func setPlanText(p setPlan) string {
 			}
 			made = append(made, line)
 			if it.ask {
-				asked = append(asked, name)
+				// Said as the download question will say it: the name the list showed (MA-1502).
+				asked = append(asked, clean(it.row.listName()))
 			}
 		case outContinue:
 			upToDate = append(upToDate, "Brought up to date: "+folder+" (already in this folder)")

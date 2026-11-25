@@ -858,6 +858,7 @@ func localArchiveFlowHooks(chosen func(out string), finished func(), check func(
 	}
 
 	choice := wizardChoice{outlookCOM: useOutlookCOM}
+	var names map[string]string // the name the mailbox list showed for each path (MA-1502)
 	switch {
 	case useOutlookCOM:
 	case srcType == srcAuto:
@@ -869,13 +870,19 @@ func localArchiveFlowHooks(chosen func(out string), finished func(), check func(
 			return err
 		}
 		if pick.each {
-			// The parent folder and the plan (step 3a); making the archives is step 3b's.
-			if _, err := chooseSet(pick.set, runtime.GOOS); err != nil {
+			// The parent folder and the plan (step 3a), then the download question for each account
+			// that gets a new archive (MA-1502); making the archives is the rest of step 3b's.
+			ch, err := chooseSet(pick.set, runtime.GOOS)
+			if err != nil {
+				return err
+			}
+			var changed []string
+			if _, err := askSetDownloads(ch.plan, &changed); err != nil {
 				return err
 			}
 			return errSetNotBuilt
 		}
-		choice.inputs, choice.auto = pick.inputs, pick.auto
+		choice.inputs, choice.auto, names = pick.inputs, pick.auto, pick.names
 	default:
 		choice.inputs = []string{inputPath}
 	}
@@ -883,27 +890,9 @@ func localArchiveFlowHooks(chosen func(out string), finished func(), check func(
 	// 1a. IMAP prep, for every input that needs it (auto-detected ones too):
 	//     a Thunderbird IMAP account is offered a full offline download; an
 	//     Outlook .ost gets the equivalent guidance.
-	prepared := false
-	ostNoted := false
-	var changed []string // the accounts this run's Yes, prepare changed (MA-1267)
-	for _, in := range choice.inputs {
-		fi, statErr := os.Stat(in)
-		switch {
-		case statErr != nil:
-		case fi.IsDir() && thunderbird.IsImapStore(in) && !storeUnused(in):
-			// A folder no live account uses (the list says "Not in Thunderbird now") is not asked
-			// about: no account would download into it (MA-1463; the friction review's F3).
-			p, err := prepareThunderbirdGUI(in, &changed)
-			if err != nil {
-				return err
-			}
-			prepared = prepared || p
-		case !fi.IsDir() && strings.EqualFold(filepath.Ext(in), ".ost") && !ostNoted:
-			ostNoted = true
-			if err := outlookOfflineNote(); err != nil {
-				return err
-			}
-		}
+	prepared, err := askDownloads(choice.inputs, names)
+	if err != nil {
+		return err
 	}
 
 	// 2. Choose the output folder.
@@ -1585,25 +1574,119 @@ func removeSchedule(out string) error {
 // not say Thunderbird keeps a message only once it is opened: "Keep messages for this account on this
 // computer" is on by default for a new account (observed in the Windows lab of 2026-10-31).
 // What is true is that Thunderbird downloads over time, and only while it is open.
+// imapPrepQuestionFor names the account in it (MA-1502).
 const imapPrepQuestion = "This looks like an IMAP account.\n\n" +
 	"Thunderbird may not have downloaded every message to this computer yet: it downloads mail over time, and only while it is open. " +
 	"A message or attachment it has not downloaded yet is not in this export; a later run adds it once Thunderbird has it.\n\n" +
 	"Yes, prepare makes sure Thunderbird keeps every message on this computer, then waits while it downloads.\n\n" +
-	"Prepare a full offline download first?"
+	imapPrepOffer
+
+// imapPrepOffer is imapPrepQuestion's last line, the offer, which imapPrepQuestionFor names the
+// account in.
+const imapPrepOffer = "Prepare a full offline download first?"
+
+// prepAsk is how the download question names its account (docs/design-per-mailbox-archives.md §8,
+// the owner's QA "Yes, name it" of 2026-11-23; MA-1502): the name the mailbox list showed for it and
+// its place among the accounts this run asks about.
+type prepAsk struct {
+	name string
+	i, n int
+}
+
+// imapPrepQuestionFor is the download question for one account (MA-1502, amending MA-947): "Account 1
+// of 3: NAME", then today's question (imapPrepQuestion) unchanged up to its offer, which names the
+// account: "Prepare a full offline download of NAME first?". The name's control characters are
+// dropped; the question dialog shows its text without markup.
+func imapPrepQuestionFor(a prepAsk) string {
+	name := util.StripControl(a.name)
+	return fmt.Sprintf("Account %d of %d: %s\n\n", a.i, a.n, name) +
+		strings.TrimSuffix(imapPrepQuestion, imapPrepOffer) +
+		"Prepare a full offline download of " + name + " first?"
+}
+
+// prepAsks numbers the download questions of one run (MA-1502): n is how many accounts the run asks
+// about (the count says "1 of 3"), names the name the mailbox list showed for each store.
+type prepAsks struct {
+	names map[string]string
+	n, i  int
+}
+
+// next is the question's naming for store, the next account asked: the list's name for it, or, where
+// no list was shown (one mailbox found, a folder chosen by hand), the name the list gives it alone.
+func (a *prepAsks) next(store string) prepAsk {
+	name := a.names[store]
+	if name == "" {
+		name = shownName(store)
+	}
+	return a.nextAs(name)
+}
+
+// nextAs is next for an account the caller names (a set's row, which keeps its list name).
+func (a *prepAsks) nextAs(name string) prepAsk {
+	a.i++
+	if a.i > a.n {
+		a.n = a.i
+	}
+	return prepAsk{name: name, i: a.i, n: a.n}
+}
+
+// imapAskCount is how many of inputs the download question is asked about, by the loop's own rule
+// (askDownloads: a Thunderbird IMAP folder a live account uses; MA-1463).
+func imapAskCount(inputs []string) int {
+	n := 0
+	for _, in := range inputs {
+		if fi, err := os.Stat(in); err == nil && fi.IsDir() && thunderbird.IsImapStore(in) && !storeUnused(in) {
+			n++
+		}
+	}
+	return n
+}
+
+// askDownloads is one archive's IMAP prep, for every input that needs it (auto-detected ones too): a
+// Thunderbird IMAP account is offered a full offline download, its question naming the account as
+// the list showed it (names; MA-1502) with its number among those asked; an Outlook .ost gets the
+// equivalent guidance, once. It reports whether any account was prepared (the export then runs in
+// Full mode).
+func askDownloads(inputs []string, names map[string]string) (bool, error) {
+	prepared := false
+	ostNoted := false
+	var changed []string // the accounts this run's Yes, prepare changed (MA-1267)
+	asks := prepAsks{names: names, n: imapAskCount(inputs)}
+	for _, in := range inputs {
+		fi, statErr := os.Stat(in)
+		switch {
+		case statErr != nil:
+		case fi.IsDir() && thunderbird.IsImapStore(in) && !storeUnused(in):
+			// A folder no live account uses (the list says "Not in Thunderbird now") is not asked
+			// about: no account would download into it (MA-1463; the friction review's F3).
+			p, err := prepareThunderbirdGUI(in, asks.next(in), &changed)
+			if err != nil {
+				return false, err
+			}
+			prepared = prepared || p
+		case !fi.IsDir() && strings.EqualFold(filepath.Ext(in), ".ost") && !ostNoted:
+			ostNoted = true
+			if err := outlookOfflineNote(); err != nil {
+				return false, err
+			}
+		}
+	}
+	return prepared, nil
+}
 
 // prepareThunderbirdGUI offers, for a Thunderbird IMAP account, to enable
 // offline download and guide a full sync so nothing is missed. It returns
 // whether preparation was done (in which case the export should run in Full
-// mode). Non-IMAP stores need no preparation. changed holds the accounts this wizard run has
-// already changed, and gets this store's account when it changes prefs.js, so a later refusal in
-// the same run says what was changed (MA-1267).
-func prepareThunderbirdGUI(store string, changed *[]string) (bool, error) {
+// mode). Non-IMAP stores need no preparation. ask names the account in the question (MA-1502).
+// changed holds the accounts this wizard run has already changed, and gets this store's account
+// when it changes prefs.js, so a later refusal in the same run says what was changed (MA-1267).
+func prepareThunderbirdGUI(store string, ask prepAsk, changed *[]string) (bool, error) {
 	if !thunderbird.IsImapStore(store) {
 		return false, nil
 	}
 
-	choice := zenity.Question(
-		imapPrepQuestion,
+	choice := questionDialog(
+		imapPrepQuestionFor(ask),
 		zenity.Title(appTitle),
 		zenity.OKLabel("Yes, prepare"),
 		zenity.CancelLabel("No, export what's cached"),

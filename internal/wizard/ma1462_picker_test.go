@@ -745,7 +745,8 @@ func TestAFolderNoAccountUsesIsNotAskedToPrepare(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	for _, wired := range []string{"case fi.IsDir() && thunderbird.IsImapStore(in) && !storeUnused(in):", "p, err := prepareThunderbirdGUI(in, &changed)"} {
+	// (The call names the account since MA-1502: asks.next(in), with the same changed list.)
+	for _, wired := range []string{"case fi.IsDir() && thunderbird.IsImapStore(in) && !storeUnused(in):", "p, err := prepareThunderbirdGUI(in, asks.next(in), &changed)"} {
 		if !strings.Contains(string(src), wired) {
 			t.Errorf("the wizard's question loop: %q is gone from wizard.go", wired)
 		}

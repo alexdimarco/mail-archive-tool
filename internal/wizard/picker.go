@@ -71,6 +71,26 @@ type autoPick struct {
 	auto   bool
 	each   bool
 	set    []setRow
+	// names are the names the list showed, by path (MA-1502): the download question names each
+	// account so. None when no list was shown (one mailbox found).
+	names map[string]string
+}
+
+// shownNames are the names the list l shows for its mailboxes, by path (MA-1502): each row as it
+// starts (rowHead), without the details in brackets.
+func shownNames(l listed) map[string]string {
+	m := make(map[string]string, len(l.rows))
+	for i, r := range l.rows {
+		m[r.path] = rowHead(r, l.idents[i])
+	}
+	return m
+}
+
+// shownName is the name the list gives the mailbox at store when it is the only one listed: the
+// download question's name where no list was shown (one mailbox found, or a folder chosen by hand).
+// Its size is not counted.
+func shownName(store string) string {
+	return shownNames(listRows(gatherPickRows([]string{store}, time.Now(), sizeEntryMax), runtime.GOOS))[store]
 }
 
 // pickAutoChoice lets the person choose one of the auto-detected mailboxes, or all of them. "All of
@@ -93,6 +113,7 @@ func pickAutoChoice(found []string, offerEach bool) (autoPick, error) {
 	rows := gatherPickRows(found, time.Now().Add(sizeBudget), sizeEntryMax)
 	l := listRows(rows, runtime.GOOS)
 	labels, paths := l.labels, l.paths
+	names := shownNames(l)
 	items := append([]string{allOfThem}, labels...)
 	transcoded := answerMayBeTranscoded(runtime.GOOS)
 	for try := 1; ; try++ {
@@ -108,13 +129,13 @@ func pickAutoChoice(found []string, offerEach bool) (autoPick, error) {
 						return autoPick{}, err
 					}
 					if each {
-						return autoPick{each: true, set: set}, nil
+						return autoPick{each: true, set: set, names: names}, nil
 					}
 				}
 			}
-			return autoPick{inputs: found, auto: true}, nil
+			return autoPick{inputs: found, auto: true, names: names}, nil
 		} else if ok {
-			return autoPick{inputs: []string{paths[i]}}, nil
+			return autoPick{inputs: []string{paths[i]}, names: names}, nil
 		}
 		if try >= pickTries {
 			return autoPick{}, errNoPick
