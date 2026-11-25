@@ -23,8 +23,18 @@ const (
 	setUpToDateLabel = "Bring them up to date"
 	// setAskedLead leads the plan's line naming the accounts the download question asks about next,
 	// and setNotFoundAdvice follows an archive whose mailbox is not found now (F11's words).
-	setAskedLead      = "Next you are asked whether to prepare a full offline download of: "
-	setNotFoundAdvice = "; its mail stays in its archive; click Pause on its row to stop its backups."
+	setAskedLead = "Next you are asked whether to prepare a full offline download of: "
+	// The re-verify of rounds A and B, RF-04 (its words): F11's "; its mail stays in its archive; click
+	// Pause on its row to stop its backups." did not say where Pause is.
+	setNotFoundAdvice = ". Its mail stays in that archive. To stop its backups, click Pause (make read-only) on its row under Your archives in MailArchive Desktop."
+	// setKeptExact follows "NAME: kept as it is in FOLDER" for an archive that holds exactly this one
+	// store (RF-03, its words): "; Thunderbird no longer uses this folder. Click Pause on it to stop its
+	// backups." before, where "this folder" read as the archive's folder and Pause had no place.
+	setKeptExact = ", since Thunderbird no longer uses that mailbox's folder. To stop its backups, click Pause (make read-only) on its row under Your archives in MailArchive Desktop."
+	// setUpToDateLead leads an archive brought up to date, then ", for MAILBOX." (RF-07, its words): it
+	// read "Brought up to date: FOLDER (already in this folder)" before, as if done before anything ran
+	// (F11's own point), and never named the mailbox.
+	setUpToDateLead = "To bring up to date: "
 	// setOnceWords follow a saved-once row's name in the plan.
 	setOnceUnused = ": saved once and not kept current, since no account uses it"
 	setOnceOlder  = ": saved once and not kept current, since it is an older copy"
@@ -77,12 +87,12 @@ func setPlanText(p setPlan) string {
 				asked = append(asked, clean(it.row.listName()))
 			}
 		case outContinue:
-			upToDate = append(upToDate, "Brought up to date: "+folder+" (already in this folder)")
+			upToDate = append(upToDate, setUpToDateLead+folder+", for "+clean(it.row.listName())+".")
 		case outPaused:
 			paused = append(paused, "Paused, so "+folder+" is not being backed up now; click Resume (make writable) on its row to back it up again.")
 		case outKept:
 			if it.exact {
-				kept = append(kept, name+": kept as it is in "+folder+"; Thunderbird no longer uses this folder. Click Pause on it to stop its backups.")
+				kept = append(kept, name+": kept as it is in "+folder+setKeptExact)
 			} else {
 				kept = append(kept, name+": kept as it is in "+folder)
 			}
@@ -151,7 +161,7 @@ func setPlanText(p setPlan) string {
 	}
 	for _, g := range p.notFound {
 		// The friction review's F11: the line now says what to do ("In this folder, not found now:
-		// NAME" before).
+		// NAME" before); RF-04: and where.
 		rest = append(rest, "In this folder, not found now: "+clean(g)+setNotFoundAdvice)
 	}
 	if p.more {

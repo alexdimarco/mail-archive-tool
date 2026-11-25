@@ -95,7 +95,7 @@ func TestAFolderAnotherAccountUsesNowGetsItsOwnArchiveInASet(t *testing.T) {
 	assure.Refused(t, code, plan, assure.Code(1),
 		assure.Names("MailArchive will make 1 archive in "+parent+":\n\nqzcarol@qzr.example",
 			"qzalice@qzr.example: kept as it is, since another account uses its folder now; click Pause (make read-only) on its row under Your archives in MailArchive Desktop."),
-		assure.Forbid("Paused, so qzalice@qzr.example", "qzalice@qzr.example (already in this folder)"),
+		assure.Forbid("Paused, so qzalice@qzr.example", "qzalice@qzr.example (already in this folder)", setUpToDateLead+"qzalice@qzr.example"),
 		assure.NoSideEffect(func() bool { return reflect.DeepEqual(snapshot(), before) }))
 
 	// The advised Pause: alice's archive is never carol's paused archive. Carol's own is brought up to

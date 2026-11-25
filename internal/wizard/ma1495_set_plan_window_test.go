@@ -46,13 +46,18 @@ sam.walker@contoso.example
 Local Folders
 imap.gmail.com (not in Thunderbird now): saved once and not kept current, since no account uses it
 
-Brought up to date: sam@old.example (already in this folder)
+To bring up to date: sam@old.example, for sam@old.example.
 Not made: Feeds, which is empty.
 Next you are asked whether to prepare a full offline download of: qzsam.walker@gmail.com, sam.walker@contoso.example`
 	// Amended 2026-11-25 (the friction review's F11; nothing weakened): the last line is said as what
 	// comes next; it read "Asked about a full offline download: …" before. The button says "Bring them
 	// up to date" when the plan makes no new archive and brings some up to date ("Make the archives"
 	// before), and "In this folder, not found now: NAME" says what to do.
+	// Restated 2026-11-25 (the re-verify of rounds A and B, RF-07, its words; compared whole, as
+	// before): the design's line "Brought up to date: sam@old.example (already in this folder)", kept
+	// here, read as done before anything ran and never named the mailbox; it is now "To bring up to
+	// date: FOLDER, for MAILBOX." (the design's §8 example keeps the old line: the lead's round C
+	// touches the design only for RV-07).
 	if got := setPlanText(example); got != want {
 		t.Fatalf("the design's example:\n got %q\nwant %q", got, want)
 	}
@@ -63,8 +68,17 @@ Next you are asked whether to prepare a full offline download of: qzsam.walker@g
 		t.Errorf("one archive: %q", got)
 	}
 	none := setPlan{parent: "/m", items: []setItem{planItem("a@x", outContinue, "a@x"), planItem("b@x", outContinue, "b@x")}}
-	if got := setPlanText(none); got != "No new archive: 2 brought up to date in /m.\n\nBrought up to date: a@x (already in this folder)\nBrought up to date: b@x (already in this folder)" {
+	// Restated 2026-11-25 (RF-07; compared whole, as before): "…\n\nBrought up to date: a@x (already in
+	// this folder)\nBrought up to date: b@x (already in this folder)" before.
+	if got := setPlanText(none); got != "No new archive: 2 brought up to date in /m.\n\nTo bring up to date: a@x, for a@x.\nTo bring up to date: b@x, for b@x." {
 		t.Errorf("no new archive: %q", got)
+	}
+	// RF-07: the mailbox is named as the list showed it, also when its archive's folder has another
+	// name (a renamed account's archive, found by what it holds).
+	renamed := planItem("sam@new.example", outContinue, "Old account")
+	renamed.row.shown = "Sam (sam@new.example)"
+	if got := setPlanText(setPlan{parent: "/m", items: []setItem{renamed}}); !strings.Contains(got, "\nTo bring up to date: Old account, for Sam (sam@new.example).") {
+		t.Errorf("RF-07: the line names the mailbox: %q", got)
 	}
 	if got := setPlanText(setPlan{parent: "/m", items: []setItem{feeds}}); got != "No new archive in /m.\n\nNot made: Feeds, which is empty." {
 		t.Errorf("nothing at all: %q", got)
@@ -95,11 +109,16 @@ Next you are asked whether to prepare a full offline download of: qzsam.walker@g
 	all := setPlan{parent: "/m", items: []setItem{older, paused, exact, combined, twin, unread, deleted, full, alike},
 		unread: []string{"shut"}, notFound: []string{"sam@gone.example"}, more: true}
 	got := setPlanText(all)
+	// Restated 2026-11-25 (the re-verify of rounds A and B, RF-07, RF-03 and RF-04, their words; each
+	// line still required whole): "Brought up to date: kim@d.example (already in this folder)", "…:
+	// kept as it is in Old account; Thunderbird no longer uses this folder. Click Pause on it to stop its
+	// backups." and "In this folder, not found now: sam@gone.example; its mail stays in its archive;
+	// click Pause on its row to stop its backups." before.
 	for _, line := range []string{
 		"MailArchive will make 1 archive in /m:\n\npat@b.example (older copy): saved once and not kept current, since it is an older copy\n\n",
-		"Brought up to date: kim@d.example (already in this folder)",
+		"To bring up to date: kim@d.example, for kim@d.example.",
 		"Paused, so lee@c.example is not being backed up now; click Resume (make writable) on its row to back it up again.",
-		"imap.old.example (not in Thunderbird now): kept as it is in Old account; Thunderbird no longer uses this folder. Click Pause on it to stop its backups.",
+		"imap.old.example (not in Thunderbird now): kept as it is in Old account, since Thunderbird no longer uses that mailbox's folder. To stop its backups, click Pause (make read-only) on its row under Your archives in MailArchive Desktop.",
 		"imap.older.example (not in Thunderbird now): kept as it is in everything\n",
 		"kim@d.example (2) also holds this mailbox's archive: left as it is",
 		"sam@e.example: not made this time, since a folder here could not be read; run this again later",
@@ -107,7 +126,7 @@ Next you are asked whether to prepare a full offline download of: qzsam.walker@g
 		"same: not made, since this folder already holds folders named same (2) to (99).",
 		"alike: not made, since 99 other mailboxes have its name.",
 		"shut: could not be read just now",
-		"In this folder, not found now: sam@gone.example; its mail stays in its archive; click Pause on its row to stop its backups.",
+		"In this folder, not found now: sam@gone.example. Its mail stays in that archive. To stop its backups, click Pause (make read-only) on its row under Your archives in MailArchive Desktop.",
 		"Only the first 500 folders in /m were looked at; the others were left out.",
 	} {
 		if !strings.Contains(got, line) {

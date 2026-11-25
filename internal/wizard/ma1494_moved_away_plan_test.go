@@ -96,7 +96,12 @@ func TestAFolderThunderbirdNoLongerUsesIsKeptNotContinued(t *testing.T) {
 		{path: old, name: "qzalice@qzg.example", shown: "qzalice@qzg.example", make: true},
 		{path: second, name: "qzbob@qzg.example", shown: "qzbob@qzg.example", make: true},
 	}
-	const keptLine = "qzalice@qzg.example: kept as it is in qzalice@qzg.example; Thunderbird no longer uses this folder. Click Pause on it to stop its backups."
+	// Restated 2026-11-25 (the re-verify of rounds A and B, RF-03, its words; required whole, as before):
+	// "qzalice@qzg.example: kept as it is in qzalice@qzg.example; Thunderbird no longer uses this folder.
+	// Click Pause on it to stop its backups." before, where "this folder" read as the archive's folder
+	// and Pause had no place. And RF-07: "Brought up to date: FOLDER" is now "To bring up to date:
+	// FOLDER", still forbidden for this archive below.
+	const keptLine = "qzalice@qzg.example: kept as it is in qzalice@qzg.example, since Thunderbird no longer uses that mailbox's folder. To stop its backups, click Pause (make read-only) on its row under Your archives in MailArchive Desktop."
 
 	// Positive twin: alice still owns her folder: brought up to date.
 	p, err := planSet(parent, rows, runtime.GOOS)
@@ -111,7 +116,7 @@ func TestAFolderThunderbirdNoLongerUsesIsKeptNotContinued(t *testing.T) {
 	p, err = planSet(parent, rows, runtime.GOOS)
 	text := setPlanText(p)
 	if got := outcomesOf(p); err != nil || got[0] != "qzalice@qzg.example: kept qzalice@qzg.example exact=true" ||
-		!strings.Contains(text, keptLine) || strings.Contains(text, "Brought up to date: qzalice@qzg.example") {
+		!strings.Contains(text, keptLine) || strings.Contains(text, "Brought up to date: qzalice@qzg.example") || strings.Contains(text, setUpToDateLead+"qzalice@qzg.example") {
 		t.Errorf("CON-06: the archive whose run would stop is kept as it is, with Pause advised: %v %q\n%s", err, got, text)
 	}
 	if got := outcomesOf(p); got[1] != "qzbob@qzg.example: new qzbob@qzg.example" {
