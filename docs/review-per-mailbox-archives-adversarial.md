@@ -63,6 +63,39 @@ lead calls below are recorded.
 - **CON-06.** Before continuing a child, the plan asks whether its folder has no live owner and its
   account moved; if so it plans "kept as it is … click Pause", never "run this again".
 
+## Re-verify of rounds A and B (2026-11-25), and the lead's fold
+
+A fresh agent re-verified both rounds at `ce5b6fbd` (appendix E): NOT READY. Of the 23 confirmed
+findings, 19 closed, 2 partly (OUT-02, INS-01), 2 not folded (CON-09, CON-11, both INFO); of F1 to
+F14, 12 closed, 2 partly (F2, F12). New: RV-01 (MEDIUM, by test), RV-02 (MEDIUM, Windows mechanism),
+RV-03 and RV-04 (LOW, by test), RV-05 (the lead's call), RV-06 to RV-08 (INFO); RF-01 to RF-09.
+
+The lead's fold, built as round C, then a narrow re-check, then the Windows lab:
+- **RV-01:** a set's plan never continues a child whose run would stop as reused (the folder now
+  belongs to another account): the row gets a new archive, and the old one is listed "kept as it
+  is … another account uses its folder now; click Pause (make read-only) on its row under Your
+  archives in MailArchive Desktop".
+- **RV-02:** on a Windows volume without persistent access lists (FAT, exFAT), a child is judged by
+  "a real folder, not a link", not by its owner, and the plan's "another account owns or can change"
+  line is not used there.
+- **RV-03:** the summary names each member with no scheduled backup now whenever any has that state.
+- **RV-04:** `.download` joins the package endings; the builder checks other candidates with `mdls`
+  and adds those macOS treats as packages.
+- **RV-05 (the lead's call): keep the owner-only folders on Windows.** An archive readable only by
+  the person who made it is the safer default on a shared computer; handing one over works by
+  copying it. The release notes say so.
+- **RV-06:** no change; a user-name edit or a re-add with other capital letters is a loud stop,
+  never a silent one.
+- **RV-07:** the design's §14 gains "encrypted one-folder archives keep no account identity, so a
+  folder reused by another account is not caught for them" (the owner's privacy rulings).
+- **RV-08:** CON-09 and CON-11 stay as INFO: a second tab at the exact moment of a fold, and the
+  instant between making a folder and recording it; neither loses mail.
+- **F3 / RF-08 (the lead's call, revised):** a folder that is not on this computer is not a live
+  mailbox, so pausing the combined archive cannot stop a live backup of it. When every live input
+  of the combined archive is covered by a scheduled set archive, its line names the missing folder,
+  says its mail stays in that archive, and gives the Pause advice.
+- **RF-01 to RF-07, RF-09:** the re-verifier's proposed words.
+
 ## Appendices (verbatim; home-folder paths written as "~" for a public repository)
 
 ### Appendix A. Finder OUT
@@ -659,4 +692,184 @@ Of the 24 findings, 16 went red in a test of mine, 7 are settled by reading the 
 - The smallest check you could do: the two Windows lab steps above.
 
 Counters: Register: finding report. Borrowed lines: product words only. Drift: none. Touched: 4 untracked test files. Persona: none. Sources reached: the code at 443c2777, yes; the design, in part; Windows and macOS behaviour, no.
+
+
+### Appendix E. Re-verify of rounds A and B
+
+### Re-verify: per-mailbox archives, fix rounds A and B
+
+**Verdict: NOT READY.** One new MEDIUM problem is confirmed by a test (RV-01). It is cheap to fix, and the fix touches the plan code the Windows lab would test, so fix it first, then run the lab. Of the 23 confirmed findings, 19 are fully closed, 2 only partly (OUT-02, INS-01), and 2 were never fixed (CON-09, CON-11, both INFO). Of F1 to F14, 12 are closed and 2 partly (F2, F12).
+
+#### Header
+- **Date:** 2026-11-25, 06:24 to 06:41 EST, read with `date`.
+- **Commit:** ce5b6fbd, worktree `pma-rv`. Compared with 443c2777.
+- **What I read:**
+  - the lead's fold and Appendix D of `docs/review-per-mailbox-archives-adversarial.md`;
+  - the fold and F1 to F14 of `docs/review-per-mailbox-archives-friction.md`;
+  - design revision 3;
+  - the full diffs of `thunderbird.go`, `storefacts.go`, `state/lastrun.go`, `state/tbcompleteness.go`, `app/run.go`, `app/tbcompleteness.go`, `sourceloss.go`, `autoplace.go`, `health/sourcereason.go`, `alert.go`, `job/made.go`, `archdelete/dellog.go`, `uninstall/config.go`;
+  - in the wizard: `setplan.go`, `setexport.go`, `setschedule.go`, `setexisting.go`, `setparent.go`, `setwindow.go`, `set.go`, `picker.go`, `wizard.go`, `setchild_unix.go`, `setchild_windows.go`;
+  - in the Desktop: `addarchive.go`, `archives.go`, `syncshared.go`, `capture.go`, `help.go`;
+  - also `winsec/owneronly_windows.go`, `lockfile.Probe`, `encryptedLastRun`, `AutoPauseIfDue`, and the README diff;
+  - the skeptic's 4 test files and the branch tests named in the evidence below.
+- **Not read:** the commit messages' prove-fail notes in full, the catalog rows, the Desktop page script.
+- **Commands and exit status:**
+  - Read-only `git log`, `diff`, `show` and `status`: all 0.
+  - About 25 grep and Read calls: all 0, except one zsh glob slip (exit 1), redone with exit 0.
+  - `memory_pressure -Q` before each test run: 62% free every time.
+  - `go test -p 2 -count=1 -v -run TestZZRV` on wizard: 1 (2 red, as intended: RV-01 and RF-01).
+  - The same on app: 0. On alert: 0.
+  - exFAT probe:
+    - `hdiutil create`, `attach -nobrowse` and `detach` of a 32 MB exFAT image inside the worktree: 0. The image and its mount point were removed afterwards.
+    - The wizard probe run against it: 0.
+  - `mdls` on 3 probe folders inside the worktree: 0. Folders removed afterwards.
+  - Wizard `-run TestZZRVCON01AnsweredNo`: 1 (red, as intended: RV-03).
+  - I started a run of every touched package, then stopped it myself before it finished. My meant-to-fail throwaway tests would have muddied it. No result.
+  - The branch's own tests, with `-skip TestZZRV`:
+    - identity and stop tests in app, thunderbird, state and health: 0;
+    - set, kept-schedule, plan, note, sync and subject tests in wizard, desktop, job, alert and uninstall: 0.
+  - `assureblock` with my test files moved aside: 0. They were put back afterwards.
+- **Not touched:** no real dialog, browser, notification or scheduler entry; none of the owner's settings, archives or keychain.
+
+#### Findings
+
+| ID | Verdict | Evidence |
+|---|---|---|
+| CON-01 (HIGH) | CLOSED | `setschedule.go` `setScheduleLive`: a job file alone no longer counts as a schedule. The skeptic's test now passes: cy's note line reads "has its own settings but no scheduled backup now", no Pause advice is given, and the combined archive is told to keep running. A re-run with nothing new to schedule says the same line in its summary. Auto-pause removes the scheduler entry (`pause.go:124-147`), so it also reads as "no scheduled backup now". One gap remains: RV-03. |
+| INS-01 (= CON-02) | PARTLY CLOSED, MECHANISM-ONLY | Each new folder is restricted to its owner (`setparent.go:210`; the branch's seam test passes). The plan now names every folder it did not look at. Still open: Windows FAT and exFAT drives (RV-02). |
+| INS-02 | CLOSED | `setChildSame` checks each folder again, once before the log opens and once before the export starts (`setexport.go`). The skeptic's test now passes: the link's target stays empty. |
+| INS-03 | CLOSED for plaintext one-folder archives | `run.go:2302`, `ReusedByID`. My test with user names in the fixture: the run stops with reason `reused`, the archive's file list is unchanged, and the next run stops again. Not closed inside a set (RV-01). Encrypted archives: RV-07. |
+| INS-04 | CLOSED (lead's call) | The branch test `TestAReAddedAccountUnderAnotherNameStopsByItsIdentity` passes. The pinned twin is restated beside its old text (`ma1504_one_folder_stop_test.go:170-200`); the old text is kept. |
+| INS-05 | CLOSED | My identity test: a renamed account whose folder was deleted gets "does not exist", not "removed". |
+| INS-06 (= CON-05) | CLOSED | My identity test: a different "Work" account on another server no longer stops the old archive as "moved". |
+| INS-07 | CLOSED (code) | `archives.go:216-221`: a gone folder's made-list line is struck only once that folder was listed, or after MailArchive deleted it. |
+| INS-08 | CLOSED (code) | `made.go`: an unreadable made-list now gets the remedy "move or delete that file … then run this again". |
+| CON-03 | CLOSED | `job.HoldSetLock` uses an operating-system lock, which is released if the program crashes. A second window is refused at once, never kept waiting. The branch test passes. |
+| CON-04 | CLOSED (code) | `archives.go:401-407`: when a record says "running" but nothing holds the archive's lock, the row shows its line. |
+| CON-06 | CLOSED | `setplan.go:442`. The branch test passes, both by identity and by name. |
+| CON-08 | CLOSED (code) | `addarchive.go`: the lead counts only archives it could list. A finished archive it could not reach gets its own line. |
+| CON-09 | NOT CLOSED (INFO) | Not in the lead's fold. `archives.go:253` still reads the made-list before taking the lock. |
+| CON-10 | CLOSED | My write-refused test: a folder never made now reads "Not made, so nothing was copied". For swapped folders, see RF-06. |
+| CON-11 | NOT CLOSED (INFO) | Not in the fold. `setparent.go:202-217` makes the folder, reads it back, restricts it, then records it. The gap before it is recorded is slightly longer than before. |
+| OUT-01 | CLOSED | `alert.go` `foldEncoded`. My test (4 cases, including 60 emoji): every header line is 78 octets or fewer, and the Subject decodes back to what was written. |
+| OUT-02 | PARTLY CLOSED | `.app`, `.rtfd`, `.{GUID}` and `.APP` now get " (mail)" added. `.download` does not (RV-04). How Explorer shows `.{GUID}` folders: MECHANISM-ONLY, lab step below. |
+| OUT-03 (= CON-07) | CLOSED | Each made-list line now keeps its store id (`setplan.go:391-396`). My test: bob no longer continues ann's folder; ann still does; a two-field line from before is still read. |
+| OUT-04 | CLOSED | Names are compared in composed form (NFC), and the parent by identity (`setSameParent`). The skeptic's test passes on APFS. |
+| F1 | CLOSED | The summary's last line, the end note's last line, and the added sentence in the "already holds" question. (The same folder is still named after a refused folder: RF-01.) |
+| F2 | PARTLY CLOSED | The remedy is now in the summary and the Desktop note. But the summary then says "run this again … this same folder" (RF-01). |
+| F3 | CLOSED | The missing folder is named, and the member that has not finished is named. A combined archive that lists only a missing folder gets no advice at all (lead's call; RF-08). |
+| F4, F5, F6, F7, F8, F10, F13, F14 | CLOSED | Read in the code. The branch tests for each pass. |
+| F9 | CLOSED | `setUnconfirmedWords` names the archive and gives each cause its own remedy. |
+| F11 | CLOSED | The plan's words for "not found" still do not say where to click (RF-04). |
+| F12 | PARTLY CLOSED | Fixed for "moved" and "removed". The new "reused" words repeat the same problem (RF-02). |
+
+#### New problems
+
+**RV-01 — MEDIUM, confirmed by a test. Thunderbird gives a removed account's folder to a new account, inside a set: the new account never gets an archive.**
+- **Where:** `setplan.go:415-448`.
+- **The sequence:**
+  1. qzalice's archive is part of a set.
+  2. qzalice's account is removed in Thunderbird, with its mail data.
+  3. qzcarol is added on the same server and gets the same folder.
+  4. qzalice's archive now stops with the "reused" words. That is correct.
+  5. The set's re-run plans carol's mailbox into alice's archive: "No new archive: 1 brought up to date … Brought up to date: qzalice@qzr.example". The run stops again. "Run this again" repeats forever.
+  6. After the advised Pause, the plan says "Paused, so qzalice@qzr.example is not being backed up now". Carol's address appears nowhere, and every set re-run is silent about her mailbox.
+- **Why MEDIUM, not HIGH:** the stop itself is loud and its words give a way that works (choose the account on its own). It turns silent only after the Pause.
+- **Smallest fix:** in `planOne`, before continuing and before the paused check, ask whether the matched child's run would stop as reused (`autoplace.ReusedByID` on its recorded identity). If it would, skip that child for this row: plan a new archive for carol, and list alice's archive as "kept as it is … another account uses its folder now; click Pause".
+- **Red test:** `TestZZRVReusedFolderInASet`.
+
+**RV-02 — MEDIUM, MECHANISM-ONLY (Windows), probably there before the fixes too. On a FAT or exFAT drive (common on USB sticks), every re-run makes a second copy of every archive.**
+- **Where:** `setchild_windows.go:21-36`, `setparent.go:210`.
+- **What goes wrong:**
+  - These drives keep no access list, so the owner-only restriction fails silently (its error is ignored on purpose).
+  - Windows then reports a "world" owner for every folder. `setChildMine` says the set's own folders are not the person's, so the plan never looks at them and makes "NAME (2)" for each mailbox, each with its own schedule.
+  - The plan's line "a folder another account owns or can change" is also untrue there.
+- **macOS exFAT is fine:** I checked with a real exFAT image on this Mac. The re-run brought all 4 archives up to date.
+- **Smallest fix:** on a volume without persistent access lists (`GetVolumeInformationByHandle`, `FILE_PERSISTENT_ACLS`), judge a child by "is a real folder", not by its owner. Or refuse such a parent, with words that say why.
+- **Lab step:** make a set on an exFAT USB stick, run it again, and expect "Brought up to date" for each.
+
+**RV-03 — LOW, confirmed by a test. CON-01's leftover when a re-run makes something new and the schedule question is answered No or Cancel.**
+- **Where:** `setexport.go:707`.
+- **What goes wrong:** the member with no scheduled backup is never mentioned. The summary shows the line only when there is nothing new to schedule, and No shows no end note. No Pause advice is given, so the HIGH harm cannot happen.
+- **Fix:** add the "no scheduled backup now" lines to the summary whenever any member has that state.
+- **Test:** `TestZZRVCON01AnsweredNo`.
+
+**RV-04 — LOW, confirmed. OUT-02's list misses `.download`.**
+- **Where:** `set.go:218`.
+- **What goes wrong:** `.download` is a real domain ending. `mdls` on this Mac says a folder named `me@shop.download` is a package (`com.apple.package`), so Finder shows it as a single item, not a folder.
+- **Fix:** add `.download` to the list. Consider `.band` too; I did not check `.band`.
+
+**RV-05 — LOW, MECHANISM-ONLY (Windows), the lead's call. The owner-only access list blocks handing an archive over.**
+- **Where:** `owneronly_windows.go:28`.
+- **What goes wrong:**
+  - The restriction gives access to the person alone, and new files inside inherit that.
+  - The summary promises "you can hand over … one". On another Windows account or computer, an NTFS drive's set archive opens only after an administrator takes ownership. A single archive has no such limit.
+  - Also, the restriction is applied by path, so it follows a junction planted in the instant after the folder is made. The worst case is that the person's own folder becomes owner-only. INFO.
+- **Lab step:** run `icacls` on one set child and confirm that only claude-test is listed.
+
+**RV-06 — INFO, MECHANISM-ONLY. How the identity behaves when the user name changes.**
+- The identity is built from the fields `userName` and `hostname`.
+- My test: editing the account's login (Thunderbird stores it as `realuserName`, `realhostname`, as I understand it) keeps the identity. The backup runs.
+- If `userName` itself is rewritten, the archive stops with "a different account" words. My test confirms that stop. It is a false stop, but loud, and nothing is lost.
+- The user name is not lower-cased, so an account re-added with different capital letters reads as "removed".
+- **Lab step:** change the user name in Thunderbird's Account Settings, then read `prefs.js`.
+
+**RV-07 — INFO.**
+- Encrypted one-folder archives keep no identity (the owner's privacy rulings). INS-03 stays open for them. The design's kept risks should say so.
+- On upgrade, old records keep the name rules until their first ok run, which then writes the identity of whoever owns the folder at that moment.
+
+**RV-08 — INFO.** The fold says every confirmed finding is fixed, but CON-09 and CON-11 were not folded.
+
+**Checked and fine:**
+- The set lock is released if the program crashes. A Desktop window and a wizard window never both wait: the second is refused at once.
+- An older two-field made-list line is still read.
+- Encrypted records never carry `thunderbird_ids`: their record format allows no such field.
+- An ok run while the settings could not be read for certain (a `user.js` present) kept the identity (my test).
+- `setChildSame` uses the same same-folder check the plan already relied on. I found no new false refusal on case-folding drives. Network shares: MECHANISM-ONLY.
+
+#### Friction
+
+- **RF-01: the summary contradicts itself after a refused folder (my test).**
+  - Now: "Allow MailArchive there (…), or run this again and choose another folder." Then: "To finish them, run this again: … and this same folder." Then the "Each archive is its own folder … Open index.html" lines, with nothing made.
+  - Proposed: when a remedy is shown, end with "Then run this again: choose All of them, then One archive for each mailbox, and the folder you allowed or a new one." Leave out the "Each archive…" lines when no archive was made.
+- **RF-02: the reused stop's words (`autoplace.go:395`) reach the failure email.** There, "its row" points nowhere, and "that account" is unclear.
+  - Proposed: "…To back up the account that uses it now, click Make a new archive… in MailArchive Desktop and choose it; to stop this archive's backups, click Pause (make read-only) on its row under Your archives in MailArchive Desktop."
+  - The reused pause email names no next step. Add the first half of the sentence above.
+- **RF-03: the CON-06 plan line (`setwindow.go:71`).**
+  - Now: "…kept as it is in FOLDER; Thunderbird no longer uses this folder. Click Pause on it…". "This folder" reads as the archive's folder, and it does not say where Pause is.
+  - Proposed: "NAME: kept as it is in FOLDER, since Thunderbird no longer uses that mailbox's folder. To stop its backups, click Pause (make read-only) on its row under Your archives in MailArchive Desktop."
+- **RF-04: the plan's "not found" line (`setwindow.go:27`).**
+  - Now: "; its mail stays in its archive; click Pause on its row to stop its backups."
+  - Proposed: ". Its mail stays in that archive. To stop its backups, click Pause (make read-only) on its row under Your archives in MailArchive Desktop."
+- **RF-05: the "no scheduled backup now" lines (`setschedule.go:259-260`).** Name the buttons.
+  - "…: in MailArchive Desktop, click Switch to this archive on its row, then Repair on its Scheduled backup card."
+  - "…: it is backed up only when you click Run now on its Scheduled backup card in MailArchive Desktop."
+- **RF-06: a swapped folder (INS-02).**
+  - A continued archive reads: "…so nothing was written into it. The mail copied so far is kept." Drop the second sentence for this reason.
+  - A new folder reads "Not made, so nothing was copied:" although the folder was made. Use "Stopped before copying:".
+- **RF-07: the plan's "Brought up to date: FOLDER (already in this folder)".** It reads as done before anything ran (F11's own point), and it never names the mailbox (this hid carol in RV-01).
+  - Proposed: "To bring up to date: FOLDER, for MAILBOX."
+- **RF-08 (lead's call, F3):** a combined archive that lists only a missing folder now ends with no advice at all, so the person keeps backing up twice with no guidance.
+- **RF-09:** the Desktop's "To finish it, click Make a new archive… again, choose One archive for each mailbox…" leaves out "All of them, then". This was there before the fixes.
+
+#### Windows lab steps to add
+- Steps for RV-02 (exFAT stick) and RV-05 (`icacls`) above.
+- The skeptic's two original steps (INS-01, OUT-02).
+- The user-name edit for RV-06.
+
+#### Throwaway tests (untracked)
+- `~/repositories/mail-archive-tool/.claude/worktrees/pma-rv/internal/wizard/zz_rv_pma_test.go`
+  - 3 tests are meant to fail: ReusedFolderInASet, WriteRefusedSummary, CON01AnsweredNo.
+  - The exFAT probe skips unless `ZZRV_EXFAT` is set.
+- `~/repositories/mail-archive-tool/.claude/worktrees/pma-rv/internal/app/zz_rv_pma_test.go`
+- `~/repositories/mail-archive-tool/.claude/worktrees/pma-rv/internal/alert/zz_rv_pma_test.go`
+- Delete all three before any unfiltered `go test ./...`. They have no covers markers, so the covers meta-test would fail.
+
+**How this was done:**
+- This is a finding report: my own judgement, with test output as evidence.
+- I ran no test at 443c2777. "Red before" comes from the skeptic's record of the same tests.
+- Not checked on a real machine: Windows access lists on FAT drives, Explorer, Thunderbird's own prefs writes, mail servers.
+- The smallest check you could do: the exFAT re-run on the test PC.
+
+Counters: Register: finding report. Borrowed lines: product words only. Drift: none. Touched: 3 untracked test files; temporary probe folders and an exFAT image, all removed. Persona: none. Sources reached: the code at ce5b6fbd, yes; the design, revision 3 only; Windows behaviour, no; macOS package typing, yes (mdls).
 
