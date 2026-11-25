@@ -2177,6 +2177,24 @@ func movedAway(in string, rec RecordedAccount) (string, bool) {
 	return dir, moved && byName
 }
 
+// ThunderbirdMovedAway reports whether a run of the archive at out, of the one folder in with
+// auto-discovery off, would stop because Thunderbird no longer uses in and its account now keeps its
+// mail elsewhere (C2, by the identity the archive's record kept, else by its name: movedAway). The
+// set's plan asks it before continuing an archive, so it never plans "brought up to date" for one
+// whose run would stop (docs/design-per-mailbox-archives.md revision 3, the adversarial pass's
+// CON-06). False when out has no record that can be read, or in is not a folder there.
+func ThunderbirdMovedAway(out, in string) bool {
+	recorded := RecordedNamesAt(out)
+	if recorded == nil {
+		return false
+	}
+	if fi, err := os.Stat(in); err != nil || !fi.IsDir() {
+		return false
+	}
+	_, moved := movedAway(in, recorded(in))
+	return moved
+}
+
 // DiscoverInputsFor is DiscoverInputs with nameOf, what the archive's previous record kept of each
 // input's folder's account (nil, or "" fields, for none): its name decides first whether a gone
 // Thunderbird folder's account was moved or removed (autoplace.GoneSkippableAs; the 1.7.5 re-verify's

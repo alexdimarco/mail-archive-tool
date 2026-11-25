@@ -226,7 +226,9 @@ const (
 	outUnfinished
 	// outPaused: its archive in folder is paused: left as it is, no schedule.
 	outPaused
-	// outKept: a saved-once row whose store an archive in folder already holds: left as it is (R2).
+	// outKept: a saved-once row whose store an archive in folder already holds: left as it is (R2);
+	// or, since revision 3 (CON-06), an archive in folder whose mailbox's folder Thunderbird no longer
+	// uses, its account keeping its mail elsewhere: left as it is, never continued.
 	outKept
 	// outNotMade: nothing is made or continued for it; why says why.
 	outNotMade
@@ -431,6 +433,14 @@ func planOne(it *setItem, parent string, kids []setChild, claimed map[string]boo
 		}
 		if seal.IsSealed(c.path) {
 			it.outcome = outPaused
+			return
+		}
+		// CON-06 (docs/design-per-mailbox-archives.md revision 3): a folder Thunderbird no longer uses,
+		// whose account now keeps its mail elsewhere (by the identity the archive's record kept, else by
+		// its name), would only stop at its run, and "run this again" would repeat: kept as it is, and
+		// the plan says to click Pause on it (outKept, exact: its archive holds exactly this one store).
+		if app.ThunderbirdMovedAway(c.path, r.path) {
+			it.outcome, it.exact = outKept, true
 			return
 		}
 		it.outcome = outContinue
