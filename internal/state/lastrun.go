@@ -184,6 +184,16 @@ type LastRun struct {
 	// its entries, the name the previous record gave the folder; TBNamesOf reads it only for a store
 	// whose own entry names no account.
 	ThunderbirdNames []TBName `json:"thunderbird_names,omitempty"`
+	// ThunderbirdIDs is, for each Thunderbird folder a plaintext run read, the fixed identity of the
+	// account that owned it, beside the store's id (docs/design-per-mailbox-archives.md revision 3; the
+	// adversarial pass's INS-03 to INS-06): a hash of the account's type, user name and server, never
+	// the name or address itself. An ok run writes its own; every other record a run writes carries the
+	// previous record's (TBIDsOf), and an ok run of one listed folder with auto-discovery off that found
+	// no live account for that folder keeps the previous one for it, as ThunderbirdNames is kept
+	// (revision 2.2). "Moved", "removed" and "reused" are decided by it where the record has one; a
+	// record without one keeps revision 2.2's name rules. Plaintext records only: the encrypted
+	// writer's allow-list never writes it (MA-734). Additive: an older reader ignores it.
+	ThunderbirdIDs []TBID `json:"thunderbird_ids,omitempty"`
 
 	// Program is an encrypted archive's program step outcome, one of the Program*
 	// codes (program design §4, §8). Absent when the step did not run.
@@ -465,6 +475,7 @@ func ReadLastRun(out string) (LastRun, LastRunState, error) {
 	r.Thunderbird, cut = saneTB(r.Thunderbird)
 	r.ThunderbirdMore = min(max(0, r.ThunderbirdMore), 1<<20) + cut // planted: never negative, never wrapped
 	r.ThunderbirdNames = saneTBNames(r.ThunderbirdNames)
+	r.ThunderbirdIDs = saneTBIDs(r.ThunderbirdIDs)
 	return r, LastRunPresent, nil
 }
 

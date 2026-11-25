@@ -1,6 +1,8 @@
 package thunderbird
 
 import (
+	"crypto/sha256"
+	"encoding/hex"
 	"errors"
 	"fmt"
 	"os"
@@ -8,6 +10,8 @@ import (
 	"runtime"
 	"strconv"
 	"strings"
+
+	"golang.org/x/text/unicode/norm"
 )
 
 // Limits are an account's own limits on what Thunderbird downloads to this computer
@@ -48,6 +52,10 @@ type StoreFacts struct {
 	// Name is Account's name as Thunderbird shows it in its folder pane and Account Settings
 	// (accountNameOf), as written, not yet cleaned; "" when it cannot be told for certain.
 	Name string
+	// Identity is Account's fixed identity (accountIdentityOf: a hash of its type, user name and
+	// server, never the name or address itself), from the same read; "" when it cannot be told for
+	// certain (docs/design-per-mailbox-archives.md revision 3).
+	Identity string
 	// Limits are Account's limits, read for an imap account only.
 	Limits Limits
 	// OtherStores are the folders every other live account's settings name as its own
@@ -121,6 +129,7 @@ func ReadStoreFacts(profileDir, input string) (StoreFacts, error) {
 	}
 	f.Gmail = gmailOf(acct, s.vals)
 	f.Name = accountNameOf(acct.ServerKey, s.vals)
+	f.Identity = accountIdentityOf(acct.ServerKey, s.vals)
 	if acct.Type == "imap" {
 		lim, lerr := limitsOf(acct.ServerKey, s.vals)
 		if lerr != nil {
@@ -175,6 +184,37 @@ func accountNameOf(key string, vals map[string]string) string {
 		return unquote(v)
 	}
 	return ""
+}
+
+// accountIdentityOf is the server key's fixed identity (docs/design-per-mailbox-archives.md revision
+// 3, the adversarial pass's INS-03 to INS-06): sha256(type + "\x00" + user name + "\x00" + server),
+// hex, its first 32 characters. Each of the three is read as accountNameOf reads the name, the strict
+// read: the server's own setting ("type", "userName", "hostname"), else mail.server.default's, as
+// nsMsgIncomingServer::GetStringValue takes them, and only a quoted text is a value. The user name and
+// server are compared in composed form (NFC), the server also in lower case, as Thunderbird compares
+// host names (SetHostname, case-blind). "" when any of the three is empty or cannot be told for
+// certain: no identity is safer than one two accounts could share. A hash, so neither the name nor
+// the address is ever written.
+func accountIdentityOf(key string, vals map[string]string) string {
+	get := func(field string) string {
+		for _, k := range []string{"mail.server." + key + "." + field, "mail.server.default." + field} {
+			v, ok := vals[k]
+			if !ok {
+				continue
+			}
+			if !strings.HasPrefix(v, `"`) {
+				return ""
+			}
+			return unquote(v)
+		}
+		return ""
+	}
+	typ, user, host := get("type"), get("userName"), get("hostname")
+	if typ == "" || user == "" || host == "" {
+		return ""
+	}
+	sum := sha256.Sum256([]byte(typ + "\x00" + norm.NFC.String(user) + "\x00" + strings.ToLower(norm.NFC.String(host))))
+	return hex.EncodeToString(sum[:])[:32]
 }
 
 // limitsOf reads the account key's limits from vals, each setting with its type checked.

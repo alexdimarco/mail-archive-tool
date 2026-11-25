@@ -301,6 +301,68 @@ func TBNameOf(r LastRun, id string) string {
 	return ""
 }
 
+// TBID is one Thunderbird folder's account identity beside its store's id (LastRun.ThunderbirdIDs;
+// docs/design-per-mailbox-archives.md revision 3): both are hashes, 32 hex characters, never a path,
+// a name or an address.
+type TBID struct {
+	StoreID string `json:"store_id"`
+	ID      string `json:"id"`
+}
+
+// saneTBIDs is a record's identities as read back: at most TBAccountsMax, each entry's store id and
+// identity 32 lowercase hex characters (anything else is left out: a planted or damaged entry decides
+// nothing), the first entry for a store id kept.
+func saneTBIDs(in []TBID) []TBID {
+	if len(in) > TBAccountsMax {
+		in = in[:TBAccountsMax]
+	}
+	var out []TBID
+	seen := map[string]bool{}
+	for _, e := range in {
+		if !tbHash(e.StoreID) || !tbHash(e.ID) || seen[e.StoreID] {
+			continue
+		}
+		seen[e.StoreID] = true
+		out = append(out, e)
+	}
+	return out
+}
+
+// tbHash reports whether s is one of the record's hashes: 32 lowercase hex characters.
+func tbHash(s string) bool {
+	if len(s) != 32 {
+		return false
+	}
+	for _, c := range s {
+		if (c < '0' || c > '9') && (c < 'a' || c > 'f') {
+			return false
+		}
+	}
+	return true
+}
+
+// TBIDsOf is the identities the plaintext record r hands on to the next run's records (revision 3, as
+// TBNamesOf hands on the names): nil for an encrypted record, which keeps none (MA-734).
+func TBIDsOf(r LastRun) []TBID {
+	if r.Encrypted {
+		return nil
+	}
+	return append([]TBID(nil), r.ThunderbirdIDs...)
+}
+
+// TBIDOf is the identity the plaintext record r keeps for the store whose id is id; "" for none.
+func TBIDOf(r LastRun, id string) string {
+	if id == "" {
+		return ""
+	}
+	for _, e := range TBIDsOf(r) {
+		if e.StoreID == id {
+			return e.ID
+		}
+	}
+	return ""
+}
+
 // TBDistinctNames clears the name of every account that shares it with another, and of every
 // account whose name spells the words an account with no name is said by (TBNameIsFallback), so two
 // accounts are never said as one: each is then said by its folder (MA-1284, MA-1287). Names are

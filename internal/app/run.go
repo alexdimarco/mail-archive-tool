@@ -323,6 +323,10 @@ type Result struct {
 	// tbPrev is the previous run's completeness record, read before this run's "running"
 	// record replaced it, for TC-19's carried fingerprints.
 	tbPrev []state.TBAccount
+	// tbIDs are the identities of the accounts that own this run's Thunderbird stores, beside each
+	// store's id (tbIdentities; docs/design-per-mailbox-archives.md revision 3): what a plaintext run
+	// that ends ok records. In memory only.
+	tbIDs []state.TBID
 	// TBNotices are the Thunderbird accounts whose behind-streak this run found due an email
 	// (the "still downloading" or "stopped" email, design §5, slice C5): only accounts this run
 	// found behind, of a plaintext archive, and only when the run wrote the streak record, so the
@@ -864,7 +868,8 @@ func Run(ctx context.Context, opts Options, logger *log.Logger, onProgress Progr
 	// The same for the Thunderbird completeness verdicts, set once every source was walked
 	// (nil on any earlier return), and the previous record recordRun carries forward from.
 	var tbResults []tbcomplete.Result
-	defer func() { result.Thunderbird, result.tbPrev = tbResults, tbPrev }()
+	var tbIDs []state.TBID
+	defer func() { result.Thunderbird, result.tbPrev, result.tbIDs = tbResults, tbPrev, tbIDs }()
 	// T16 (design-presync-attended §4.1, C-11): a cancel during the pre-sync, or before
 	// it, stops the run here, before any sweep, index or source. It comes after the
 	// deferred recordRun and Release, so the record ends cancelled, never running, and
@@ -1213,6 +1218,7 @@ func Run(ctx context.Context, opts Options, logger *log.Logger, onProgress Progr
 	// read after the walk, once per profile (TC-21). It reads; it writes nothing here.
 	if fatal == nil {
 		tbResults = assessThunderbird(lr.tb, time.Now())
+		tbIDs = tbIdentities(lr.tb, tbResults)
 	}
 
 	// Browsable folder index pages, built from the finished index. Regenerate
@@ -1452,9 +1458,11 @@ func newRunRecord(opts Options) state.LastRun {
 	// completeness entries of its own keeps the names there instead): a moved account is then still
 	// told from a removed one after a stopped backup (the 1.7.5 re-verify, round 3's RV3-01). In the
 	// record only, never in a log file (MA-1288).
+	// The accounts' identities too (docs/design-per-mailbox-archives.md revision 3), as the names are.
 	if opts.Out != "" {
 		if prev, st, _ := state.ReadLastRun(opts.Out); st == state.LastRunPresent {
 			lr.ThunderbirdNames = state.TBNamesOf(prev)
+			lr.ThunderbirdIDs = state.TBIDsOf(prev)
 		}
 	}
 	return lr
@@ -1628,6 +1636,39 @@ func oneFolderNameKept(opts Options, results []tbcomplete.Result, carried []stat
 	return nil
 }
 
+// oneFolderIDKept is oneFolderNameKept for the account's identity (docs/design-per-mailbox-archives.md
+// revision 3: "carried across a no-owner run as the name is"): for an ok plaintext run of exactly one
+// listed folder with auto-discovery off, the identity the previous record kept for that folder
+// (carried), when this run found no live account for it (its completeness result says no_match) and
+// so has none of its own (own). An auto-discovery run never keeps one. nil otherwise.
+func oneFolderIDKept(opts Options, results []tbcomplete.Result, own, carried []state.TBID) []state.TBID {
+	if opts.Auto || len(opts.Inputs) != 1 || len(carried) == 0 {
+		return nil
+	}
+	in := absOrSame(opts.Inputs[0])
+	profile, ok := findTBProfile(in)
+	if !ok {
+		return nil
+	}
+	id := storeID(profile, in)
+	for _, e := range own {
+		if e.StoreID == id {
+			return nil
+		}
+	}
+	for _, r := range results {
+		if r.StoreID != id || r.Reason != tbcomplete.ReasonNoMatch {
+			continue
+		}
+		for _, c := range carried {
+			if c.StoreID == id {
+				return []state.TBID{c}
+			}
+		}
+	}
+	return nil
+}
+
 // recordRun finalizes the last-run record from the run's outcome.
 // writeLastRun is the finalizing record write; a var so a test can refuse it.
 var writeLastRun = state.WriteLastRun
@@ -1660,12 +1701,16 @@ func recordRun(opts Options, lr state.LastRun, result *Result, err *error, logge
 		// beside an encrypted archive (O1, R44); a run that failed says its failure (§11).
 		if !lr.Encrypted && opts.Key == nil && len(result.Thunderbird) > 0 {
 			carried := lr.ThunderbirdNames // the previous record's names (newRunRecord)
+			carriedIDs := lr.ThunderbirdIDs
 			lr.Thunderbird = tbRecords(result.Thunderbird, result.tbPrev, lr.Finished)
 			lr.ThunderbirdMore = tbRecordsMore(result.Thunderbird)
 			lr.ThunderbirdNames = nil // this run's own entries keep the names (RV3-01): written as before
 			// …except a one-folder archive's name, kept across a run that found no live account for
 			// its folder (design revision 2.2; MA-1504).
 			lr.ThunderbirdNames = oneFolderNameKept(opts, result.Thunderbird, carried)
+			// Each store's account identity, this run's own, and a one-folder archive's kept as its name
+			// is (design revision 3).
+			lr.ThunderbirdIDs = append(append([]state.TBID(nil), result.tbIDs...), oneFolderIDKept(opts, result.Thunderbird, result.tbIDs, carriedIDs)...)
 		}
 		if lr.Encrypted && result.IndexBehind {
 			// The backup finished, but its search index misses messages until a later

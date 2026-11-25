@@ -244,6 +244,20 @@ func RecordedName(prev state.LastRun, path string) string {
 	return ""
 }
 
+// RecordedID is the identity of the account the plaintext record prev kept for the store at path
+// (state.TBIDOf by StoreID; docs/design-per-mailbox-archives.md revision 3): "" for none, for a path in
+// no profile, and for an encrypted record (it keeps none).
+func RecordedID(prev state.LastRun, path string) string {
+	if prev.Encrypted || len(prev.ThunderbirdIDs) == 0 {
+		return ""
+	}
+	profile, ok := thunderbird.FindProfileDir(path)
+	if !ok {
+		return ""
+	}
+	return state.TBIDOf(prev, StoreID(profile, path))
+}
+
 // PstMovedText is the remedy for an Outlook data file (.pst) moved away, in status and the
 // summaries alike (the 1.7.5 re-verify's RF-05 words; they were "If you moved this file, put it back
 // in FOLDER, or click Make a new archive… in MailArchive Desktop and choose it in its new place.").

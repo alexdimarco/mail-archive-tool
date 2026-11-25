@@ -252,8 +252,10 @@ func recordStartFailure(out string, cause error) {
 		Started: time.Now().UTC(),
 		Error:   cause.Error(),
 	}
+	// The accounts' identities too, as the names (docs/design-per-mailbox-archives.md revision 3).
 	if prev, st, _ := state.ReadLastRun(out); st == state.LastRunPresent {
 		lr.ThunderbirdNames = state.TBNamesOf(prev)
+		lr.ThunderbirdIDs = state.TBIDsOf(prev)
 	}
 	_ = state.WriteLastRun(out, lr)
 }
