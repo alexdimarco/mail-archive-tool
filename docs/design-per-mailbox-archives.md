@@ -692,6 +692,8 @@ pinned wiring checks MA-947 and MA-1267 (the 1.7.3 friction review's F12). No qu
   answer it.
 - *Rev 2, C27:* after a night asleep, a set's missed backups may all start together at wake
   (Windows and macOS); the question says so.
+- *Rev 3, the re-verify's RV-07:* encrypted one-folder archives keep no account identity, so a
+  folder reused by another account is not caught for them (the owner's privacy rulings).
 
 ## 15. Rows
 
