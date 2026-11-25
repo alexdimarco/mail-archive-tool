@@ -706,9 +706,17 @@ reason's words; every other record keeps today's); MA-947 and MA-1267 (QA).
    C13's words, the record's `source_reason` and the later words it chooses (MA-1504, MA-1506); the
    alert subject encoding (MA-1508).
 2. The made-list's writer and reader, together with Unlist, Delete and uninstall learning about it
-   (MA-1500); `archindex.Stores`.
-3. The wizard: the question, names, rows, parent check, §7, the plan, the download question, the
-   set's export, summary and schedule (MA-1490 to MA-1497, MA-1501, MA-1502, MA-1507).
+   (MA-1500). *(`archindex.Stores` moved to step 3 by the lead, 2026-11-24: its only caller is §7.)*
+   *Built 2026-11-24 (`72b91f41`, `84215cbf`, `6377c899`). The lead accepted the builder's
+   readings: "gone" means nothing at the folder's path while its parent folder is there (a folder
+   on an unplugged drive keeps its line); a line is struck only after Your archives was saved
+   without error and lists that folder as an archive; Remove from list keeps its row when its line
+   cannot be struck (the line would bring it back); a folder recorded again replaces its old line;
+   the reader also refuses a link at the file's name and a file over 64 KB; the command line's
+   delete verbs read the made-list too.*
+3. The wizard: the question, names, rows, parent check, §7 with `archindex.Stores`, the plan, the
+   download question, the set's export, summary and schedule (MA-1490 to MA-1497, MA-1501, MA-1502,
+   MA-1507).
 4. The Desktop: `AddArchives`, the handler, the rows' last-backup line, the Settings guard
    (MA-1498, MA-1499, MA-1505).
 
