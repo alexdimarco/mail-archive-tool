@@ -17,6 +17,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"io/fs"
 	"os"
 	"path/filepath"
 	"strings"
@@ -270,14 +271,61 @@ func OutlookOnly(folder string) bool {
 }
 
 func inspectAll(folder string) recognised {
+	r, _ := inspectRead(folder)
+	return r
+}
+
+// readFail is why inspectRead kept no verdict on a folder: there is no manifest at all, or a read
+// failed and may pass later. readOK means its recognised holds the verdict, ok or not.
+type readFail int
+
+const (
+	readOK readFail = iota
+	readNone
+	readFailed
+)
+
+// folderFail is the readFail of an error opening folder itself: nothing there, or a file that is
+// not a folder, is readNone; anything else (a permission refused, an I/O error) may pass later,
+// readFailed.
+func folderFail(folder string, err error) readFail {
+	if errors.Is(err, fs.ErrNotExist) {
+		return readNone
+	}
+	if fi, serr := os.Stat(folder); serr == nil && !fi.IsDir() {
+		return readNone
+	}
+	return readFailed
+}
+
+// manifestFail is the readFail of a manifest that could not be opened inside root: nothing at its
+// name is readNone; something there that is not a regular file (a link, a pipe, a folder) is a
+// verdict, readOK (not an archive this build reads); anything else may pass later, readFailed.
+func manifestFail(root *os.Root, err error) readFail {
+	var nr *util.NotRegularError
+	if errors.As(err, &nr) {
+		return readOK
+	}
+	fi, lerr := root.Lstat(manifestName)
+	switch {
+	case lerr == nil && !fi.Mode().IsRegular():
+		return readOK
+	case lerr != nil && errors.Is(lerr, fs.ErrNotExist):
+		return readNone
+	}
+	return readFailed
+}
+
+// inspectRead is inspectAll with why it kept no verdict (readFail), which Stores tells apart.
+func inspectRead(folder string) (recognised, readFail) {
 	folder = strings.TrimSpace(folder)
 	if folder == "" {
-		return recognised{}
+		return recognised{}, readNone
 	}
 	// An encrypted archive is an archive: listed, labelled, never greyed out as
 	// broken because its manifest is not a plaintext one (C10, phase2a §5).
 	if enc, _, _ := encmark.Here(folder); enc {
-		return recognised{kind: KindEncrypted, ok: true}
+		return recognised{kind: KindEncrypted, ok: true}, readOK
 	}
 	key := filepath.Clean(folder)
 	// Reads of the same folder at once walk it once: a later one waits, holding no file open,
@@ -285,37 +333,119 @@ func inspectAll(folder string) recognised {
 	defer walkAlone(key)()
 	root, err := os.OpenRoot(folder)
 	if err != nil {
-		return recognised{}
+		return recognised{}, folderFail(folder, err)
 	}
 	defer root.Close()
 	f, err := util.OpenRegularFileIn(root, manifestName)
 	if err != nil {
-		return recognised{}
+		return recognised{}, manifestFail(root, err)
 	}
 	defer f.Close()
 	man, err := f.Stat()
 	if err != nil {
-		return recognised{}
+		return recognised{}, readFailed
 	}
 	dir, err := statOpen(root)
 	if err != nil {
-		return recognised{}
+		return recognised{}, readFailed
 	}
 	if r, ok := remembered(key, dir, man); ok {
-		return r
+		return r, readOK
 	}
 	if man.Size() > manifestCap {
 		r := recognised{dir: dir, man: man}
 		remember(key, r)
-		return r
+		return r, readOK
 	}
 	stores, kind, err := scanStores(manifestReader(f))
 	if err != nil && readError(err) {
-		return recognised{} // a read that failed may pass next time: not kept
+		return recognised{}, readFailed // a read that failed may pass next time: not kept
 	}
 	r := recognised{dir: dir, man: man, kind: kind, ok: err == nil, outlook: err == nil && outlookFrom(stores)}
+	if err == nil {
+		r.ids = idsFrom(stores)
+	}
 	remember(key, r)
-	return r
+	return r, readOK
+}
+
+// StoresAnswer is what Stores says of a folder (docs/design-per-mailbox-archives.md §7, C3, C4;
+// MA-1494): its store ids, not an archive, or cannot be read now.
+type StoresAnswer int
+
+const (
+	// StoresArchive: an archive, with its store ids (none for an encrypted archive, whose stores are
+	// sealed).
+	StoresArchive StoresAnswer = iota + 1
+	// StoresNotArchive: no manifest this build reads (none at all, or one it does not read).
+	StoresNotArchive
+	// StoresCannotRead: a read that failed and may pass later.
+	StoresCannotRead
+)
+
+// FolderStores is Stores' answer for one folder.
+type FolderStores struct {
+	Answer StoresAnswer
+	// IDs are the archive's store ids as a snapshot reads them (state.SnapshotStoreID: lexical,
+	// never resolved on disk), sorted, each once; for StoresArchive.
+	IDs []string
+	// Encrypted: an encrypted archive, an archive whose store ids are sealed.
+	Encrypted bool
+	// NoManifest: StoresNotArchive because no manifest is there at all.
+	NoManifest bool
+	// Dir is the folder as it was opened, read from its handle, for a caller's identity check; nil
+	// when it could not be opened.
+	Dir os.FileInfo
+}
+
+// Stores says what archive, if any, folder is (docs/design-per-mailbox-archives.md §7, C3; MA-1494),
+// from the bounded, safe walk inspect does (the manifest opened inside an os.Root on the folder, its
+// stores kept under recognise.go's bounds, each id read lexically, never state.Load by path; SD-1,
+// SD-2): its store ids, not an archive, or cannot be read now. The folder must be the same one
+// throughout: a folder swapped between the reads is cannot-be-read-now.
+func Stores(folder string) FolderStores {
+	folder = strings.TrimSpace(folder)
+	if folder == "" {
+		return FolderStores{Answer: StoresNotArchive, NoManifest: true}
+	}
+	root, err := os.OpenRoot(folder)
+	if err != nil {
+		if folderFail(folder, err) == readNone {
+			return FolderStores{Answer: StoresNotArchive, NoManifest: true}
+		}
+		return FolderStores{Answer: StoresCannotRead}
+	}
+	defer root.Close()
+	dir, err := statOpen(root)
+	if err != nil {
+		return FolderStores{Answer: StoresCannotRead}
+	}
+	out := FolderStores{Dir: dir}
+	enc, _, merr := encmark.Here(folder)
+	switch {
+	case enc:
+		out.Answer, out.Encrypted = StoresArchive, true
+		return out
+	case merr != nil:
+		out.Answer = StoresCannotRead
+		return out
+	}
+	r, fail := inspectRead(folder)
+	switch {
+	case fail == readFailed:
+		out.Answer = StoresCannotRead
+	case fail == readNone:
+		out.Answer, out.NoManifest = StoresNotArchive, true
+	case r.dir != nil && !os.SameFile(r.dir, dir):
+		out.Answer = StoresCannotRead
+	case r.ok && r.kind == KindEncrypted:
+		out.Answer, out.Encrypted = StoresArchive, true
+	case r.ok:
+		out.Answer, out.IDs = StoresArchive, append([]string(nil), r.ids...)
+	default:
+		out.Answer = StoresNotArchive
+	}
+	return out
 }
 
 // manifestReader is the open manifest as the walk reads it: the file itself. A var only so a test

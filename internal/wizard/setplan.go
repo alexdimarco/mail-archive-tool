@@ -1,0 +1,405 @@
+package wizard
+
+import (
+	"errors"
+	"io"
+	"io/fs"
+	"os"
+	"path/filepath"
+	"sort"
+
+	"mail-archive-tool/internal/app"
+	"mail-archive-tool/internal/archindex"
+	"mail-archive-tool/internal/job"
+	"mail-archive-tool/internal/schedule"
+	"mail-archive-tool/internal/seal"
+	"mail-archive-tool/internal/state"
+	"mail-archive-tool/internal/thunderbird"
+)
+
+// A folder that is already there (docs/design-per-mailbox-archives.md §7, revision 2's C3, C4, C5,
+// C12, C13 and R2, revision 2.1's F-05, F-07 and F-11; MA-1494). Running the same choice into the
+// same parent again is how a person adds mailboxes found since and brings the others up to date, so
+// before naming anything the wizard reads each folder directly inside the parent and finds each
+// mailbox's archive by what it holds, never by its name. The plan (setPlan) is what the set's
+// export (step 3b) makes, continues or leaves.
+
+const (
+	// setChildMax is how many folders directly inside a set's parent are looked at; more are left
+	// out, and the plan says so.
+	setChildMax = 500
+	// setEntryMax bounds the entries read from the parent to find them (files are not looked at).
+	setEntryMax = 100_000
+)
+
+// setChild is one folder directly inside a set's parent, as the child read found it.
+type setChild struct {
+	name string // its name in the parent
+	path string // the parent's path joined with it
+	// looked: a real directory (not a link, junction or other reparse point), opened through the
+	// parent's os.Root, owned by the person running the wizard and writable by no one else, so what
+	// it holds was read (stores). Any other child is never read, never matched, never written into.
+	looked bool
+	stores archindex.FolderStores
+}
+
+// unread reports a child whose read failed and may pass later (§7 "Cannot read now").
+func (c setChild) unread() bool { return c.looked && c.stores.Answer == archindex.StoresCannotRead }
+
+// archiveIDs are the store ids of a child that is a plaintext archive; nil for any other.
+func (c setChild) archiveIDs() []string {
+	if !c.looked || c.stores.Answer != archindex.StoresArchive || c.stores.Encrypted {
+		return nil
+	}
+	return c.stores.IDs
+}
+
+// readSetChildren reads the folders directly inside parent (§7, C3, C12), sorted by name: at most
+// setChildMax are looked at, and more reports that others were left out. Each is read only when it
+// is a real directory, through the parent's os.Root, owned by this user and writable by no one else
+// (setChildMine, on the open folder), and the folder read is the folder checked (its identity is the
+// one archindex.Stores opened): what it holds is archindex.Stores' answer. A child that cannot be
+// looked at now (its facts not readable, swapped while it was read) is cannot-read-now.
+func readSetChildren(parent string) (kids []setChild, more bool, err error) {
+	root, err := os.OpenRoot(parent)
+	if err != nil {
+		return nil, false, err
+	}
+	defer root.Close()
+	d, err := root.Open(".")
+	if err != nil {
+		return nil, false, err
+	}
+	var names []string
+	entries := 0
+	for {
+		ents, rerr := d.ReadDir(1000)
+		for _, e := range ents {
+			if !e.Type().IsRegular() { // a file is not a folder: not looked at
+				names = append(names, e.Name())
+			}
+		}
+		entries += len(ents)
+		if errors.Is(rerr, io.EOF) || len(ents) == 0 {
+			break
+		}
+		if rerr != nil {
+			d.Close()
+			return nil, false, rerr
+		}
+		if entries >= setEntryMax {
+			more = true
+			break
+		}
+	}
+	d.Close()
+	sort.Strings(names)
+	if len(names) > setChildMax {
+		names, more = names[:setChildMax], true
+	}
+	cannot := archindex.FolderStores{Answer: archindex.StoresCannotRead}
+	for _, n := range names {
+		c := setChild{name: n, path: filepath.Join(parent, n)}
+		fi, lerr := root.Lstat(n)
+		switch {
+		case lerr != nil && errors.Is(lerr, fs.ErrNotExist):
+			continue // gone since it was listed
+		case lerr != nil:
+			c.looked, c.stores = true, cannot
+		case fi.Mode().Type() != fs.ModeDir || setReparse(fi):
+			// A link, a junction, a file of another kind: never read, never written into.
+		default:
+			c.looked, c.stores = readSetChild(root, n, fi)
+			if !c.looked {
+				c.stores = archindex.FolderStores{}
+			}
+		}
+		kids = append(kids, c)
+	}
+	return kids, more, nil
+}
+
+// readSetChild reads the real directory n inside root, which Lstat found as fi: looked is false for a
+// folder that is not the person's own; else what it holds, cannot-read-now when it cannot be opened
+// or is not the folder found.
+func readSetChild(root *os.Root, n string, fi os.FileInfo) (looked bool, st archindex.FolderStores) {
+	cannot := archindex.FolderStores{Answer: archindex.StoresCannotRead}
+	croot, err := root.OpenRoot(n)
+	if err != nil {
+		return true, cannot
+	}
+	defer croot.Close()
+	f, err := croot.Open(".")
+	if err != nil {
+		return true, cannot
+	}
+	defer f.Close()
+	hfi, err := f.Stat()
+	if err != nil || !os.SameFile(fi, hfi) {
+		return true, cannot
+	}
+	if !setChildMine(f, hfi) {
+		return false, archindex.FolderStores{}
+	}
+	st = archindex.Stores(filepath.Join(root.Name(), n))
+	if st.Dir == nil || !os.SameFile(st.Dir, hfi) {
+		return true, cannot
+	}
+	return true, st
+}
+
+// setOutcome is what a set does for one mailbox (§7), in the plan's order.
+type setOutcome int
+
+const (
+	// outNew: a new folder is made for it, named folder (§4, with the next free number).
+	outNew setOutcome = iota + 1
+	// outContinue: its archive in folder is continued with the answers given now ("brought up to
+	// date").
+	outContinue
+	// outUnfinished: a folder the wizard made for it but never finished (no manifest; the made-list
+	// names it for this mailbox in this parent) is continued (C5).
+	outUnfinished
+	// outPaused: its archive in folder is paused: left as it is, no schedule.
+	outPaused
+	// outKept: a saved-once row whose store an archive in folder already holds: left as it is (R2).
+	outKept
+	// outNotMade: nothing is made or continued for it; why says why.
+	outNotMade
+)
+
+// setItem is one mailbox of a set's plan.
+type setItem struct {
+	row     setRow
+	outcome setOutcome
+	// folder is the folder's name in the parent: the new folder's final name, or the existing
+	// child's.
+	folder string
+	// exact (outKept): that archive holds exactly this one store, so the plan advises Pause on it.
+	exact bool
+	// jobUnreadable (outContinue): its job file is there and cannot be read: continued, and a Yes to
+	// the schedule never installs over that job (F-11; step 3b).
+	jobUnreadable bool
+	// also are the other children that hold this mailbox's archive too: left as they are.
+	also []string
+	// why (outNotMade) is one of the notMade… reasons.
+	why string
+	// delWhy (outNotMade, notMadeDelete) is the unfinished delete's own words.
+	delWhy string
+	// ask: a new archive of an account whose full offline download is asked about (§8; the question
+	// itself is step 3b's, MA-1502).
+	ask bool
+}
+
+// Why a mailbox is not made (setItem.why).
+const (
+	notMadeEmpty    = "empty"     // §5: an empty feeds account, folder no account uses, older copy
+	notMadeUnread   = "unread"    // §7: a folder here could not be read just now
+	notMadeDelete   = "delete"    // §7: a folder whose delete did not finish
+	notMadeNoNumber = "no number" // §4: every number to setNumberMax is taken
+	notMadeNoName   = "no name"   // §4: a hundred mailboxes named alike
+)
+
+// setPlan is what a set will do in its parent (§7, §8): each mailbox's outcome in the plan's order,
+// the children that could not be read just now, the archives whose mailbox is not found now, and
+// whether more folders were in the parent than were looked at.
+type setPlan struct {
+	parent   string
+	items    []setItem
+	unread   []string
+	notFound []string
+	more     bool
+}
+
+// planSet decides, for each of rows in their order, what the set does in parent (§7, revision 2.1's
+// F-05 order): a saved-once row already kept; its archive (continued, or left if paused); a folder
+// the wizard made but never finished; nothing new while a child cannot be read now; otherwise a new
+// folder, named by §4 and taking the next free number past anything already in the parent; never
+// into a folder whose delete did not finish. It writes nothing. goos decides how names are told
+// apart (setToldApart's rule).
+func planSet(parent string, rows []setRow, goos string) (setPlan, error) {
+	kids, more, err := readSetChildren(parent)
+	if err != nil {
+		return setPlan{}, err
+	}
+	root, err := os.OpenRoot(parent)
+	if err != nil {
+		return setPlan{}, err
+	}
+	defer root.Close()
+	p := setPlan{parent: parent, more: more}
+	for _, c := range kids {
+		if c.unread() {
+			p.unread = append(p.unread, c.name)
+		}
+	}
+	made := map[string]string{} // a made-list folder in this parent → its mailbox's name
+	if f, err := job.MadeListFile(); err == nil {
+		if ms, err := job.ReadMade(f); err == nil {
+			for _, m := range ms {
+				if filepath.Dir(m.Path) == filepath.Clean(parent) {
+					made[filepath.Base(m.Path)] = m.Name
+				}
+			}
+		}
+	}
+	used := setNamesUsed{transcoded: answerMayBeTranscoded(goos), keys: map[string]bool{}, ascii: map[string]bool{}}
+	for _, c := range kids {
+		used.add(c.name) // anything already in the parent is never written into
+	}
+	takenNow := func(name string) bool { // something at name now, looked at or not
+		_, err := root.Lstat(name)
+		return !errors.Is(err, fs.ErrNotExist)
+	}
+	found := map[string]bool{}
+	for _, r := range rows {
+		found[state.PathSourceID(r.path)] = true
+	}
+	claimed := map[string]bool{}
+	for _, r := range rows {
+		it := setItem{row: r}
+		switch {
+		case r.empty:
+			it.outcome, it.why = outNotMade, notMadeEmpty
+		case r.unnamed:
+			it.outcome, it.why = outNotMade, notMadeNoName
+		default:
+			planOne(&it, parent, kids, claimed, made, len(p.unread) > 0, &used, takenNow)
+		}
+		p.items = append(p.items, it)
+	}
+	// An archive here whose mailbox is no longer found (C13): a plaintext archive none of whose
+	// stores is a mailbox of this list.
+	for _, c := range kids {
+		ids := c.archiveIDs()
+		if len(ids) == 0 {
+			continue
+		}
+		listed := false
+		for _, id := range ids {
+			listed = listed || found[id]
+		}
+		if !listed {
+			p.notFound = append(p.notFound, c.name)
+		}
+	}
+	return p, nil
+}
+
+// planOne decides the outcome of the one mailbox of it (planSet's rules in F-05's order).
+func planOne(it *setItem, parent string, kids []setChild, claimed map[string]bool, made map[string]string, unread bool, used *setNamesUsed, takenNow func(string) bool) {
+	r := it.row
+	id := state.PathSourceID(r.path)
+	// A saved-once row already kept (R2, F-05): first, so a leftover's own archive is left as it is.
+	if r.once {
+		for _, c := range kids {
+			if ids := c.archiveIDs(); containsID(ids, id) {
+				it.outcome, it.folder, it.exact = outKept, c.name, len(ids) == 1
+				claimed[c.name] = true
+				return
+			}
+		}
+	}
+	// Its archive: exactly this one store, and a job file, when there is one, with auto-discovery off
+	// and this one input (C3, C4); the first by name is continued, the others left (F-11: a job that
+	// cannot be read does not stop the match).
+	var matches []setChild
+	unreadable := map[string]bool{}
+	for _, c := range kids {
+		if ids := c.archiveIDs(); len(ids) == 1 && ids[0] == id && !claimed[c.name] {
+			if ok, bad := setJobFits(c.path, r.path); ok {
+				matches = append(matches, c)
+				unreadable[c.name] = bad
+			}
+		}
+	}
+	if len(matches) > 0 {
+		c := matches[0]
+		it.folder, it.jobUnreadable = c.name, unreadable[c.name]
+		for _, o := range matches[1:] {
+			it.also = append(it.also, o.name)
+		}
+		for _, o := range matches {
+			claimed[o.name] = true
+		}
+		if seal.IsSealed(c.path) {
+			it.outcome = outPaused
+			return
+		}
+		it.outcome = outContinue
+		refuseDeleted(it, c.path)
+		return
+	}
+	// A folder the wizard made for it but never finished (C5).
+	for _, c := range kids {
+		if c.looked && c.stores.Answer == archindex.StoresNotArchive && c.stores.NoManifest && !claimed[c.name] && made[c.name] == r.name {
+			it.outcome, it.folder = outUnfinished, c.name
+			claimed[c.name] = true
+			it.ask = setAsks(r)
+			refuseDeleted(it, c.path)
+			return
+		}
+	}
+	// A child that cannot be read now may be its archive under another name (F-07).
+	if unread {
+		it.outcome, it.why = outNotMade, notMadeUnread
+		return
+	}
+	name := used.free(r.name, takenNow)
+	if name == "" {
+		it.outcome, it.why = outNotMade, notMadeNoNumber
+		return
+	}
+	used.add(name)
+	it.outcome, it.folder = outNew, name
+	it.ask = setAsks(r)
+	refuseDeleted(it, filepath.Join(parent, name))
+}
+
+// containsID reports whether ids holds id.
+func containsID(ids []string, id string) bool {
+	for _, s := range ids {
+		if s == id {
+			return true
+		}
+	}
+	return false
+}
+
+// setJobFits reports whether the job file of the archive folder out, when there is one, has
+// auto-discovery off and exactly the one input in (C4): no job file fits; a job file that is there
+// but cannot be read fits too, with unreadable set (F-11).
+func setJobFits(out, in string) (fits, unreadable bool) {
+	p, err := job.PathFor(schedule.DefaultNameFor(out))
+	if err != nil {
+		return true, true
+	}
+	if _, err := os.Lstat(p); errors.Is(err, fs.ErrNotExist) {
+		return true, false
+	}
+	j, err := job.Read(p)
+	if err != nil {
+		return true, true
+	}
+	return !j.Auto && len(j.Inputs) == 1 && state.PathSourceID(j.Inputs[0]) == state.PathSourceID(in), false
+}
+
+// refuseDeleted makes it not made when the folder at out holds a delete that did not finish (§7,
+// app.RefuseUnfinishedDelete), keeping the delete's words.
+func refuseDeleted(it *setItem, out string) {
+	if err := app.RefuseUnfinishedDelete(out, ""); err != nil {
+		it.outcome, it.why, it.delWhy, it.ask = outNotMade, notMadeDelete, err.Error(), false
+	}
+}
+
+// setAsks reports whether a new archive of the mailbox of r asks about a full offline download (§8,
+// the rule today's flow asks by: a Thunderbird IMAP folder a live account uses). A row saved once is
+// never asked: no account downloads into a folder no account uses, and an older copy is not kept
+// current.
+func setAsks(r setRow) bool {
+	if r.once {
+		return false
+	}
+	fi, err := os.Stat(r.path)
+	return err == nil && fi.IsDir() && thunderbird.IsImapStore(r.path) && !storeUnused(r.path)
+}

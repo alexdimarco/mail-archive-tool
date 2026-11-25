@@ -6,6 +6,7 @@ import (
 	"errors"
 	"io"
 	"os"
+	"sort"
 	"strings"
 	"sync"
 
@@ -645,7 +646,27 @@ type recognised struct {
 	dir, man os.FileInfo
 	kind     string
 	ok       bool
-	outlook  bool // every store an Outlook data file (outlookFrom)
+	outlook  bool     // every store an Outlook data file (outlookFrom)
+	ids      []string // the store ids as a snapshot reads them (idsFrom), sorted; for Stores
+}
+
+// idsFrom are the ids of stores as LoadFrom keeps them: a token that is not one safe path segment
+// is dropped, and each id is read lexically (state.SnapshotStoreID), never resolved on disk. Sorted,
+// each once.
+func idsFrom(stores map[string]string) []string {
+	var ids []string
+	seen := map[string]bool{}
+	for id, tok := range stores {
+		if !state.SafeToken(tok) {
+			continue
+		}
+		if s := state.SnapshotStoreID(id); !seen[s] {
+			seen[s] = true
+			ids = append(ids, s)
+		}
+	}
+	sort.Strings(ids)
+	return ids
 }
 
 // recognisedMax bounds what is kept: far more archives than a person keeps.
