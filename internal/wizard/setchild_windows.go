@@ -35,6 +35,13 @@ func setChildMine(f *os.File, _ os.FileInfo) bool {
 	return !winsec.DACLWritableByOthers(sd.String(), owner.String())
 }
 
+// setForeign: Lstat says nothing of a folder's owner here; setChildMine judges the open folder.
+func setForeign(os.FileInfo) bool { return false }
+
+// setRefusedIsForeign: a folder this user is refused opening is someone else's here (the owner
+// cannot be read without opening it), never read, never written into.
+const setRefusedIsForeign = true
+
 // setReparse reports a reparse point (a junction, a mount folder, a link), which is never read nor
 // written into.
 func setReparse(fi os.FileInfo) bool {

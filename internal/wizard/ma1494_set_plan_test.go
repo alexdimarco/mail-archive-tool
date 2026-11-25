@@ -249,6 +249,15 @@ func TestASetsPlanLeavesWhatItCannotReadOrMustNotTouch(t *testing.T) {
 		if err := os.Chmod(shut, 0); err != nil {
 			t.Fatal(err)
 		}
+		// Someone else's folder that this user cannot open is never read, so it holds nothing back
+		// (the user stood in, as fault injection).
+		mine := setUID
+		setUID = func() int { return os.Geteuid() + 1 }
+		p, err = planSet(parent, rows, "darwin")
+		setUID = mine
+		if err != nil || p.unread != nil || p.items[0].outcome != outNew {
+			t.Errorf("someone else's folder is not cannot-read-now: %v %q %q", err, p.unread, outcomesOf(p))
+		}
 		p, err = planSet(parent, rows, "darwin")
 		os.Chmod(shut, 0o700)
 		got := outcomesOf(p)

@@ -124,8 +124,17 @@ func readSetChildren(parent string) (kids []setChild, more bool, err error) {
 // or is not the folder found.
 func readSetChild(root *os.Root, n string, fi os.FileInfo) (looked bool, st archindex.FolderStores) {
 	cannot := archindex.FolderStores{Answer: archindex.StoresCannotRead}
+	// Someone else's folder is never opened, so it never reads as cannot-read-now (which would hold
+	// back every new archive): judged from what Lstat found where that says it (unix), and an open
+	// this user is refused where it does not (Windows).
+	if setForeign(fi) {
+		return false, archindex.FolderStores{}
+	}
 	croot, err := root.OpenRoot(n)
 	if err != nil {
+		if setRefusedIsForeign && errors.Is(err, fs.ErrPermission) {
+			return false, archindex.FolderStores{}
+		}
 		return true, cannot
 	}
 	defer croot.Close()
