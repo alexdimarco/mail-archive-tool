@@ -2135,10 +2135,18 @@ func DiscoverInputs(inputs []string, auto bool) (files, skipped []string, err er
 	return DiscoverInputsFor(inputs, auto, nil)
 }
 
+// RecordedAccount is what an archive's previous record kept of the account of an input's folder: its
+// name (autoplace.RecordedName) and, since docs/design-per-mailbox-archives.md revision 3, its fixed
+// identity (autoplace.RecordedID). Either may be "".
+type RecordedAccount struct {
+	Name, ID string
+}
+
 // RecordedNamesAt reads the previous last-run record of the archive at out once and gives, for an
-// input, the account name it recorded for that folder (autoplace.RecordedName); nil when out is "".
-// The run and the command line's up-front check pass it to DiscoverInputsFor (RV2-01).
-func RecordedNamesAt(out string) func(string) string {
+// input, the account name it recorded for that folder (autoplace.RecordedName) and, since revision 3,
+// that account's identity (autoplace.RecordedID); nil when out is "". The run and the command line's
+// up-front check pass it to DiscoverInputsFor (RV2-01).
+func RecordedNamesAt(out string) func(string) RecordedAccount {
 	if out == "" {
 		return nil
 	}
@@ -2146,16 +2154,38 @@ func RecordedNamesAt(out string) func(string) string {
 	if st != state.LastRunPresent {
 		return nil
 	}
-	return func(in string) string { return autoplace.RecordedName(prev, in) }
+	return func(in string) RecordedAccount {
+		return RecordedAccount{Name: autoplace.RecordedName(prev, in), ID: autoplace.RecordedID(prev, in)}
+	}
 }
 
-// DiscoverInputsFor is DiscoverInputs with nameOf, the account name the archive's previous record
-// gave each input's folder (nil or "" for none), which decides first whether a gone Thunderbird
-// folder's account was moved or removed (autoplace.GoneSkippableAs; the 1.7.5 re-verify's RV2-01).
-func DiscoverInputsFor(inputs []string, auto bool, nameOf func(string) string) (files, skipped []string, err error) {
-	recorded := func(in string) string {
+// movedAway reports, for an archive of the one folder in (there, auto-discovery off) whose previous
+// record kept rec, where its account keeps its mail now when Thunderbird no longer uses in (C2, MA-1504):
+// the settings say for certain that no live account uses the folder (autoplace.NoLiveOwner, F-01), and
+// the account moved: by the identity the record kept (autoplace.MovedByID, revision 3: exactly one live
+// account has it, its folder elsewhere), else, for a record with a name and no identity (every record
+// before revision 3), by that name as revision 2.2 decides it (autoplace.MovedHowAs, decided by the
+// name).
+func movedAway(in string, rec RecordedAccount) (string, bool) {
+	if (rec.ID == "" && rec.Name == "") || !autoplace.NoLiveOwner(in) {
+		return "", false
+	}
+	if rec.ID != "" {
+		return autoplace.MovedByID(in, rec.ID)
+	}
+	dir, moved, byName := autoplace.MovedHowAs(in, rec.Name)
+	return dir, moved && byName
+}
+
+// DiscoverInputsFor is DiscoverInputs with nameOf, what the archive's previous record kept of each
+// input's folder's account (nil, or "" fields, for none): its name decides first whether a gone
+// Thunderbird folder's account was moved or removed (autoplace.GoneSkippableAs; the 1.7.5 re-verify's
+// RV2-01); for an archive of one listed folder, auto-discovery off, its identity decides C2, F-08 and
+// C13 where the record keeps one (docs/design-per-mailbox-archives.md revision 3).
+func DiscoverInputsFor(inputs []string, auto bool, nameOf func(string) RecordedAccount) (files, skipped []string, err error) {
+	recorded := func(in string) RecordedAccount {
 		if nameOf == nil {
-			return ""
+			return RecordedAccount{}
 		}
 		return nameOf(in)
 	}
@@ -2179,10 +2209,11 @@ func DiscoverInputsFor(inputs []string, auto bool, nameOf func(string) string) (
 		info, err := os.Stat(in)
 		if err != nil {
 			if errors.Is(err, fs.ErrNotExist) {
-				name := ""
+				var rec RecordedAccount
 				if auto || one {
-					name = recorded(in)
+					rec = recorded(in)
 				}
+				name := rec.Name
 				if auto && autoplace.GoneSkippableAs(in, name) {
 					skipped = append(skipped, in)
 					continue
@@ -2194,10 +2225,23 @@ func DiscoverInputsFor(inputs []string, auto bool, nameOf func(string) string) (
 						return nil, nil, &sourceUnreachableError{path: in, movedTo: dir, sameServer: !byName}
 					}
 				}
-				if one && name != "" {
-					// F-08: the folder gone, and the account the record named now keeps its mail
-					// elsewhere: the moved stop's words. C13: no live account has that name any more:
-					// the removed account's words. Either way the typed stop, as before.
+				switch {
+				case one && rec.ID != "":
+					// Revision 3: the account known by the identity the record kept. F-08: exactly one
+					// live account has it, keeping its mail elsewhere: the moved stop's words. C13: no
+					// live account has it (a renamed account is not removed, INS-05): the removed
+					// account's words. Either way the typed stop, as before.
+					if dir, moved := autoplace.MovedByID(in, rec.ID); moved {
+						return nil, nil, &sourceUnreachableError{path: in, movedTo: dir, one: true}
+					}
+					if autoplace.RemovedByID(in, rec.ID) {
+						return nil, nil, &sourceUnreachableError{path: in, removed: true}
+					}
+				case one && name != "":
+					// A record with a name and no identity (revision 2.2's rules). F-08: the folder gone,
+					// and the account the record named now keeps its mail elsewhere: the moved stop's
+					// words. C13: no live account has that name any more: the removed account's words.
+					// Either way the typed stop, as before.
 					if dir, moved, byName := autoplace.MovedHowAs(in, name); moved && byName {
 						return nil, nil, &sourceUnreachableError{path: in, movedTo: dir, one: true}
 					}
@@ -2227,12 +2271,11 @@ func DiscoverInputsFor(inputs []string, auto bool, nameOf func(string) string) (
 		// C2 (the owner's Q7 extended, MA-1504): the folder is still there, but Thunderbird no longer
 		// uses it. Stopped, as a moved account's run is, when the record names the folder's account,
 		// the profile's settings say for certain that no live account uses the folder (F-01), and
-		// exactly one live account has that name, with its folder elsewhere.
+		// exactly one live account is that account, with its folder elsewhere: by the identity the
+		// record kept (revision 3), else by its name (movedAway).
 		if one && info.IsDir() {
-			if name := recorded(in); name != "" && autoplace.NoLiveOwner(in) {
-				if dir, moved, byName := autoplace.MovedHowAs(in, name); moved && byName {
-					return nil, nil, &sourceUnreachableError{path: in, movedTo: dir, one: true}
-				}
+			if dir, moved := movedAway(in, recorded(in)); moved {
+				return nil, nil, &sourceUnreachableError{path: in, movedTo: dir, one: true}
 			}
 		}
 		if info.IsDir() {

@@ -335,6 +335,41 @@ func RemovedAs(path, recordedName string) bool {
 	return certain && n == 0
 }
 
+// MovedByID reports, for path's folder, where Thunderbird now keeps the mail of the account whose
+// identity the archive's record kept for it (id, RecordedID): thunderbird.MovedByIdentity, exactly one
+// live account with that identity, with a folder setting that does not name the folder
+// (docs/design-per-mailbox-archives.md revision 3's "moved"; C2 and F-08 by identity). False for no
+// identity, a path in no profile, and settings that cannot be read for certain. Whether the folder is
+// gone, or no live account uses it (NoLiveOwner), is the caller's to ask first.
+func MovedByID(path, id string) (string, bool) {
+	if id == "" {
+		return "", false
+	}
+	look(path)
+	profile, ok := thunderbird.FindProfileDir(path)
+	if !ok {
+		return "", false
+	}
+	return thunderbird.MovedByIdentity(profile, path, id)
+}
+
+// RemovedByID reports whether the account whose identity the archive's record kept for path's folder
+// (id) is gone from Thunderbird: its profile's settings, read for certain, list accounts and none has
+// that identity (revision 3's "removed", C13 by identity: a renamed account is not removed, INS-05).
+// False for no identity, a path in no profile, and settings that cannot be read for certain.
+func RemovedByID(path, id string) bool {
+	if id == "" {
+		return false
+	}
+	look(path)
+	profile, ok := thunderbird.FindProfileDir(path)
+	if !ok {
+		return false
+	}
+	n, certain := thunderbird.LiveWithIdentity(profile, id)
+	return certain && n == 0
+}
+
 // MovedHowAs is MovedToAs, also saying whether the recorded name decided (for the words).
 func MovedHowAs(path, recordedName string) (string, bool, bool) {
 	look(path)

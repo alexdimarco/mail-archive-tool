@@ -167,6 +167,31 @@ func TestThunderbirdNoLongerUsingAFolderStopsItsArchive(t *testing.T) {
 	renamed.extra = map[string]string{"name": `"qz-renamed@example.com"`}
 	tbWrite(t, prefs, tbPrefsJS(renamed, local))
 	discoversOK("no live account with the recorded name")
+	// Restated 2026-11-25 by design revision 3 (INS-04, the lead's call), beside the old text above,
+	// which is kept as written: "no live account with the recorded name must not stop" still holds for
+	// a record with no identity (this fixture's accounts have no user name, so the record above keeps
+	// none, as every record before revision 3), and for a record whose identity no live account has
+	// (below: the same record with an identity that no account here has, checked with the account
+	// renamed as above and with it showing the recorded name again, where the name alone would stop
+	// it). A record whose identity a live account has under another name now stops (INS-04, in
+	// TestAReAddedAccountUnderAnotherNameStopsByItsIdentity).
+	foreign := tmpDir(t)
+	lrID, _, _ := state.ReadLastRun(out)
+	lrID.ThunderbirdIDs = []state.TBID{{StoreID: autoplace.StoreID(f.profile, a), ID: "0123456789abcdef0123456789abcdef"}}
+	if err := state.WriteLastRun(foreign, lrID); err != nil {
+		t.Fatal(err)
+	}
+	if lr, _, _ := state.ReadLastRun(foreign); autoplace.RecordedID(lr, a) == "" {
+		t.Fatal("the restated twin's record must keep its identity")
+	}
+	if _, _, err := DiscoverInputsFor([]string{a}, false, RecordedNamesAt(foreign)); err != nil {
+		t.Errorf("positive twin, restated: a record whose identity no live account has must not stop: %v", err)
+	}
+	tbWrite(t, prefs, tbPrefsJS(reAdded, local))
+	if _, _, err := DiscoverInputsFor([]string{a}, false, RecordedNamesAt(foreign)); err != nil {
+		t.Errorf("positive twin, restated: a record whose identity no live account has must not stop, even beside an account with the recorded name: %v", err)
+	}
+	tbWrite(t, prefs, tbPrefsJS(renamed, local))
 	other := tbAcct{n: 4, host: "imap.qza.example", typ: "imap", dirRel: "ImapMail/imap.qza.example", extra: map[string]string{"name": `"qz-other@example.com"`}}
 	tbWrite(t, prefs, tbPrefsJS(reAdded, other, local))
 	discoversOK("another account on the same server still names the folder")
