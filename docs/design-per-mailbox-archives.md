@@ -17,6 +17,22 @@ F-number beside the text it changes, and §17 lists them. The lead checked each 
 check's wording (F-01's code claim read at `internal/thunderbird/thunderbird.go:840-890`). With
 that, the design review's conditions are met and the build may start, in §16's order.
 
+**Revision 2.2, 2026-11-24 (the lead's calls on the step 1 builder's findings):**
+- **The name is kept across a gap** (§11, C2). A run between "account removed" and "account added
+  again" finds no live account for the folder, so its record would name none, and C2 could never
+  fire after the re-add. For a run with `Auto` off and one listed folder, plaintext, when this run
+  finds no live account for that folder and the previous record named one, the new record keeps
+  that name for that folder (`thunderbird_names`). An `Auto` run never carries a name forward: a
+  combined archive finds the re-added account's new folder by itself, and a carried name would make
+  a later removal of the old folder look like a move. Row: MA-1504 gains the case "account removed, a
+  backup runs, the account added again at -1: the next run stops", and its negative twin for an
+  `Auto` run (no name carried).
+- **`source_reason: moved` is for one-folder archives only** (§11 "The later words for both
+  stops"). Its words advise "click Pause (make read-only) on this archive", which for a combined
+  archive would pause every account in it. So revision 2.1's sentence "the 1.7.5 moved stop of an
+  `Auto` run gets `moved` too" is withdrawn: that stop keeps 1.7.5's words, which advise running
+  All of them again into the same folder. MA-1481's amendment is narrowed to match.
+
 Sources this revision drew on, read on 2026-11-23 and 2026-11-24 unless said otherwise: the code at
 `10fcc2e` (the lines cited); the suggestion workflow of 2026-11-19
 (`.claude/notes/archive-per-account-workflow-2026-11-19.json`, untracked; its checker read the code
@@ -552,7 +568,9 @@ at 30 days the pause would say "reconnect the source, then … click Repair" (`w
 for these archives is a dead end: the folder may be there, and Repair says no
 (`mailboxgone.go:163-166`). So the refused record keeps a fixed reason code with no name in it,
 `source_reason`: `moved` (C2, F-08) or `removed` (C13); the 1.7.5 moved stop of an `Auto` run gets
-`moved` too. Status, the row's banner and the 30-day pause read it and use these words in place of
+`moved` too *(withdrawn in revision 2.2: an `Auto` run's stop records no reason and keeps 1.7.5's
+words, since "click Pause on this archive" would pause a combined archive's every account)*.
+Status, the row's banner and the 30-day pause read it and use these words in place of
 "reconnect the source":
 - `moved`, status and banner: "Thunderbird stopped using this archive's mail folder on DATE: its
   account now keeps its mail in another folder. The mail saved so far stays here. To back that
@@ -669,7 +687,8 @@ archive for each mailbox". New rows (MA-1482 to MA-1489 are left free for 1.7.5'
 Narrowed by the owner's ruling: S85 and MA-1288 ("written nowhere" holds except where an archive's
 own folder path is named by its mailbox, the owner's 2026-11-19 answer 3). Amended (nothing
 weakened): MA-696 (Make a new archive… may add several); MA-1474 (the set's schedule question uses
-the same rows and rule); MA-1481 (points at MA-1504; its stop records `source_reason: moved`);
+the same rows and rule); MA-1481 (points at MA-1504; its stop records `source_reason: moved`
+*(revision 2.2: withdrawn; an `Auto` run's stop records no reason)*);
 MA-693 and the 30-day pause's words (*Rev 2.1, F-03*: a record with a `source_reason` gets that
 reason's words; every other record keeps today's); MA-947 and MA-1267 (QA).
 
