@@ -49,7 +49,9 @@ func TestMA614_TheUpgradeAsksTheRunningCopyAndNeverForcesWork(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	inst := assure.Reached(t, string(b), "Install-RMM.ps1")
+	// A Windows checkout's line ends are CRLF: read as LF, as the multi-line checks below are
+	// written (the CI run of PR #10, 2026-11-25, said "the script lacks" on Windows only).
+	inst := assure.Reached(t, strings.ReplaceAll(string(b), "\r\n", "\n"), "Install-RMM.ps1")
 	if !strings.Contains(inst, `($cmdArgs -match '^start(\s|$)')`) || !regexp.MustCompile(`Get-Process mailarchive-desktop\b[^\n]*Stop-Process -Force`).MatchString(inst) {
 		t.Fatalf("twin: the dashboard rule or the former-name stop changed")
 	}

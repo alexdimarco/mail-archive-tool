@@ -489,11 +489,14 @@ func TestMA1431_TheChoiceWordsFitOneLine(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	body := string(src)
+	// A Windows checkout's line ends are CRLF: read as LF, or "\n}\n" is never found (the CI
+	// run of PR #10, 2026-11-25, panicked here on Windows and stopped the package).
+	body := strings.ReplaceAll(string(src), "\r\n", "\n")
 	if i := strings.Index(body, "func zenityChoose("); i < 0 {
 		t.Errorf("zenityChoose is gone")
-	} else if fn := body[i:]; !strings.Contains(fn[:strings.Index(fn, "\n}\n")], "zenity.DisallowEmpty()") ||
-		!strings.Contains(fn[:strings.Index(fn, "\n}\n")], "zenity.Context(ctx)") {
+	} else if end := strings.Index(body[i:], "\n}\n"); end < 0 {
+		t.Errorf("zenityChoose has no end that this check can find")
+	} else if fn := body[i : i+end]; !strings.Contains(fn, "zenity.DisallowEmpty()") || !strings.Contains(fn, "zenity.Context(ctx)") {
 		t.Errorf("the choice's list allows an empty pick or outlives the instance")
 	}
 }
