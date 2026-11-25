@@ -869,6 +869,10 @@ func localArchiveFlowHooks(chosen func(out string), finished func(), check func(
 			return err
 		}
 		if pick.each {
+			// The parent folder and the plan (step 3a); making the archives is step 3b's.
+			if _, err := chooseSet(pick.set, runtime.GOOS); err != nil {
+				return err
+			}
 			return errSetNotBuilt
 		}
 		choice.inputs, choice.auto = pick.inputs, pick.auto
