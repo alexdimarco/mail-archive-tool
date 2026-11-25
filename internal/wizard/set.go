@@ -214,8 +214,17 @@ func setSafeName(base, suffix string) string {
 const setPackageSuffix = " (mail)"
 
 // setPackageEndings are the endings macOS's Finder shows as an app, a document package or a bundle
-// rather than a folder (OUT-02, the lead's list).
-var setPackageEndings = []string{".app", ".bundle", ".pkg", ".rtfd", ".framework", ".plugin", ".kext"}
+// rather than a folder (OUT-02, the lead's list). The re-verify of rounds A and B (RV-04) added
+// ".download", a real domain ending, and the builder added every other candidate that macOS 26 typed
+// as a package (`mdls -name kMDItemContentTypeTree` on an empty folder with that ending listed
+// com.apple.package, 2026-11-25): ".band", ".menu", ".help", ".key", ".pages", ".numbers",
+// ".workflow", ".action", ".scptd", ".wdgt", ".prefpane", ".saver", ".xpc", ".appex", ".mpkg",
+// ".sparsebundle", ".photoslibrary" and ".logicx". Checked the same way and left
+// out, each a plain folder there: ".photos", ".music", ".movie", ".zip", ".mov", ".mbox",
+// ".component", ".xcodeproj", ".playground", ".docset", ".vst".
+var setPackageEndings = []string{".app", ".bundle", ".pkg", ".rtfd", ".framework", ".plugin", ".kext",
+	".download", ".band", ".menu", ".help", ".key", ".pages", ".numbers", ".workflow", ".action", ".scptd",
+	".wdgt", ".prefpane", ".saver", ".xpc", ".appex", ".mpkg", ".sparsebundle", ".photoslibrary", ".logicx"}
 
 // setShellFolderRe is the ".{GUID}" ending by which Windows' File Explorer opens a folder as a shell
 // folder (the Recycle Bin, Control Panel …) instead of what it holds.

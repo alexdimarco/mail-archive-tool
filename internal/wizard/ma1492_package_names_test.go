@@ -51,3 +51,30 @@ func TestAFolderNameNeverEndsAsAnAppOrAShellFolder(t *testing.T) {
 		t.Errorf("told apart: %q", got)
 	}
 }
+
+// covers: MA-1492, S90
+// RV-04 (the re-verify of rounds A and B): OUT-02's list missed ".download", a real domain ending that
+// macOS types as a package, so Finder showed a folder named "me@shop.download" as one item, not a
+// folder. The builder checked other candidates the same way (`mdls -name kMDItemContentTypeTree` on an
+// empty folder with the ending, on this Mac, 2026-11-25) and added each that listed com.apple.package.
+// Positive twin first: the candidates mdls typed as a plain folder (public.folder) are kept as they
+// are. Then each ending added gets " (mail)", in any letter case, and the name with it is no package
+// ending.
+func TestEveryEndingMacOSTypesAsAPackageGetsMail(t *testing.T) {
+	for _, n := range []string{"me@x.photos", "me@x.music", "me@x.movie", "me@x.zip", "me@x.mov", "me@x.mbox",
+		"me@x.component", "me@x.xcodeproj", "me@x.playground", "me@x.docset", "me@x.vst", "me@shop.downloads"} {
+		if got := setSafeName(n, ""); got != n {
+			t.Errorf("positive twin: %q, a plain folder, became %q", n, got)
+		}
+	}
+	for _, e := range []string{".download", ".band", ".menu", ".help", ".key", ".pages", ".numbers", ".workflow",
+		".action", ".scptd", ".wdgt", ".prefpane", ".saver", ".xpc", ".appex", ".mpkg", ".sparsebundle",
+		".photoslibrary", ".logicx"} {
+		for _, n := range []string{"me@shop" + e, strings.ToUpper("me@shop" + e)} {
+			got := setSafeName(n, "")
+			if got != n+setPackageSuffix || setPackageEnding(got) {
+				t.Errorf("RV-04: %q became %q, want %q", n, got, n+setPackageSuffix)
+			}
+		}
+	}
+}
