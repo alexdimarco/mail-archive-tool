@@ -87,14 +87,21 @@ func (d *dashboard) addArchive(w http.ResponseWriter, r *http.Request) {
 
 // The notes of a set's Make a new archive… (§10, revision 2's C8 and C11).
 const (
-	// setAddedLead is the lead when every archive finished (two or more), and, with the count of
-	// those that finished, when some did not.
+	// setAddedLead is the lead when every archive finished (two or more) and the page reloads.
 	setAddedLead = "%d archives added — they are now in Your archives."
-	// setAddedOneLead is the lead when exactly one archive finished and another did not (the
-	// builder's singular form).
-	setAddedOneLead = "1 archive added — it is now in Your archives."
+	// setAddedReloadLead and setAddedOneLead are the leads, with the count of the finished archives
+	// listed, when the note stays on the page (the friction review's F6: the list on screen shows
+	// them only once the page is reloaded).
+	setAddedReloadLead = "%d archives added — they are listed under Your archives once you reload this page."
+	setAddedOneLead    = "1 archive added — it is listed under Your archives once you reload this page."
 	// setAddedNoneLead is the lead when none finished (the builder's zero form).
 	setAddedNoneLead = "No archive was finished."
+	// setAddedNoneListed is the lead when archives finished but none could be listed now, their
+	// folders out of reach (the adversarial pass's CON-08; the builder's words).
+	setAddedNoneListed = "No archive was added to Your archives."
+	// setNotReached names an archive that finished whose folder could not be reached when it was to
+	// be listed (CON-08; the builder's words).
+	setNotReached = "%s finished, but its folder could not be reached just now, so it is not in Your archives yet."
 	// setNotListed replaces the lead when the list of archives could not be written (the builder's
 	// form of today's "Archive created. It could not be added to the list automatically …").
 	setNotListed = "The archives were made in %s, but they could not be added to the list automatically — they are safe; reload to see them."
@@ -123,25 +130,32 @@ const (
 func (d *dashboard) addedSet(w http.ResponseWriter, made []wizard.Made, flowErr error) {
 	parent := util.StripControl(made[0].Parent)
 	var (
-		folders  []string
-		finished int
-		notDone  []string
+		folders   []string
+		finished  int // finished, and its folder holds an archive now, so it is listed
+		reachless []string
+		notDone   []string
 	)
 	for _, m := range made {
-		if validArchiveFolder(m.Folder) != "" {
+		there := validArchiveFolder(m.Folder) != ""
+		if there {
 			folders = append(folders, m.Folder)
 		}
 		name := util.StripControl(m.Name)
-		switch m.Outcome {
-		case wizard.MadeFinished:
+		switch {
+		case m.Outcome == wizard.MadeFinished && there:
 			finished++
-		case wizard.MadeNotStarted:
+		case m.Outcome == wizard.MadeFinished:
+			// Finished, but its folder cannot be reached now (a drive unplugged after it): it is not
+			// listed, so the lead never counts it (CON-08).
+			reachless = append(reachless, fmt.Sprintf(setNotReached, name))
+		case m.Outcome == wizard.MadeNotStarted:
 			notDone = append(notDone, fmt.Sprintf(setWasNotStarted, name))
 		default:
 			notDone = append(notDone, fmt.Sprintf(setDidNotFinish, name, util.StripControl(m.Reason)))
 		}
 	}
 	rerr := d.cfg.registerArchives(folders, d.now())
+	ok := len(notDone) == 0 && len(reachless) == 0 && flowErr == nil && rerr == nil
 
 	var lead string
 	switch {
@@ -149,16 +163,21 @@ func (d *dashboard) addedSet(w http.ResponseWriter, made []wizard.Made, flowErr 
 		lead = "Archive created. It could not be added to the list automatically — it is safe; reload to see it."
 	case rerr != nil:
 		lead = fmt.Sprintf(setNotListed, parent)
-	case len(made) == 1 && finished == 1:
+	case len(made) == 1 && finished == 1 && ok:
 		lead = "Archive added — it is now in your list."
+	case finished == 0 && len(reachless) > 0:
+		lead = setAddedNoneListed
 	case finished == 0:
 		lead = setAddedNoneLead
 	case finished == 1:
 		lead = setAddedOneLead
-	default:
+	case ok:
 		lead = fmt.Sprintf(setAddedLead, finished)
+	default:
+		lead = fmt.Sprintf(setAddedReloadLead, finished)
 	}
-	parts := append([]string{lead}, notDone...)
+	parts := append([]string{lead}, reachless...)
+	parts = append(parts, notDone...)
 	switch len(notDone) {
 	case 0:
 	case 1:
@@ -170,7 +189,6 @@ func (d *dashboard) addedSet(w http.ResponseWriter, made []wizard.Made, flowErr 
 		parts = append(parts, fmt.Sprintf(setThenError, strings.TrimSuffix(util.StripControl(flowErr.Error()), ".")))
 	}
 	msg := strings.Join(parts, " ")
-	ok := len(notDone) == 0 && flowErr == nil && rerr == nil
 	reply := map[string]any{"ok": ok, "paths": folders, "message": msg}
 	if len(notDone) > 0 {
 		reply["stopped"] = true

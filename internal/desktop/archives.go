@@ -14,6 +14,7 @@ import (
 	"mail-archive-tool/internal/encmark"
 	"mail-archive-tool/internal/health"
 	"mail-archive-tool/internal/job"
+	"mail-archive-tool/internal/lockfile"
 	"mail-archive-tool/internal/schedule"
 	"mail-archive-tool/internal/seal"
 	"mail-archive-tool/internal/state"
@@ -191,8 +192,9 @@ func (cfg Config) madeLines() []job.Made {
 }
 
 // strikeFolded removes from the made-list, after a reconcile that read or wrote the list of
-// archives idx, each line whose folder is now listed in idx and holds an archive, or is gone
-// (§10, C10): so a row the person removes later stays removed. A line whose folder is there with no
+// archives idx, each line whose folder is now listed in idx and holds an archive, or is listed and
+// gone (§10, C10; INS-07: a folder never listed keeps its line, gone or not, until it is listed or
+// the 200-line cap drops it): so a row the person removes later stays removed. A line whose folder is there with no
 // archive yet (a copy that failed before its first save) is kept for the wizard's re-run (F-02),
 // as is one whose folder is not listed (the list was full) and one whose folder cannot be looked at
 // now (goneFolder). A strike that cannot be made now (another program holds the made-list) is
@@ -207,7 +209,14 @@ func (cfg Config) strikeFolded(idx archindex.Index, made []job.Made) {
 	}
 	var strike []string
 	for _, m := range made {
-		if (listed[m.Path] && archindex.IsArchive(m.Path)) || goneFolder(m.Path) {
+		// A line whose folder is gone is struck only once that folder was listed (the adversarial
+		// pass's INS-07): a folder never listed may be on a drive mounted at a folder that stays
+		// when the drive is out, and its line must list it when the drive is back. Listed is listed
+		// now, or deleted by MailArchive (its delete removed the row before the line could go).
+		switch {
+		case listed[m.Path] && archindex.IsArchive(m.Path):
+			strike = append(strike, m.Path)
+		case goneFolder(m.Path) && (listed[m.Path] || archdelete.DeletedHere(cfg.deletionsLogPath(), m.Path, cfg.goos())):
 			strike = append(strike, m.Path)
 		}
 	}
@@ -296,8 +305,10 @@ func (cfg Config) archiveRows(idx archindex.Index) []ArchiveRow {
 		}
 		isCurrent := current != "" && cleanPath(e.Path) == current
 		tb, notDone, notDoneOn := rowLastRun(e.Path, avail && kind != "" && kind != archindex.KindEncrypted && problem == "", time.Now())
-		if isCurrent {
-			notDone = false // the current archive's health view says why (§10)
+		if isCurrent || lostSince != "" {
+			// The current archive's health view says why (§10); a row whose source-loss words are
+			// shown already says why, so it is not sent to Switch to find it (the friction review's F7).
+			notDone = false
 		}
 		del := cfg.deleteRowFacts(e.Path, rc, avail && kind != "" && problem == "")
 		unlistWhy := ""
@@ -372,8 +383,10 @@ func runNowOnlyRecorded(out string) bool {
 // did not end ok
 // (docs/design-per-mailbox-archives.md §10, R1; MA-1505), and on is its date, when it ended, else
 // when it started, as "Jan 2" (with its year when it is not now's year; "" when the record holds no
-// time). A record that says a backup is running gives neither (revision 2.1's F-10b): it may be one
-// in progress. Only the record's times reach the page; its status and error text never do.
+// time). A record that says a backup is running gives neither while the archive lock is held
+// (revision 2.1's F-10b: one in progress); with the lock free it is a backup that never finished and
+// gives the line, dated when it started (CON-04). Only the record's times reach the page; its status
+// and error text never do.
 func rowLastRun(out string, plaintext bool, now time.Time) (tb string, notDone bool, on string) {
 	if !plaintext || encmark.MustMinimise(out) {
 		return "", false, ""
@@ -386,7 +399,12 @@ func rowLastRun(out string, plaintext bool, now time.Time) (tb string, notDone b
 	case state.RunOK:
 		return state.TBCardBanner(lr.Thunderbird), false, ""
 	case state.RunRunning:
-		return "", false, ""
+		// A backup in progress holds the archive lock; a record that says "running" while the lock
+		// is free is a run that never finished (a crash, a power cut: the adversarial pass's
+		// CON-04), so it gets the line. A lock that cannot be looked at says nothing.
+		if held, err := lockfile.Probe(filepath.Join(out, lockfile.Name)); held || err != nil {
+			return "", false, ""
+		}
 	}
 	when := lr.Finished
 	if when.IsZero() {

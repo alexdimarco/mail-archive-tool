@@ -11,6 +11,7 @@ import (
 
 	"mail-archive-tool/internal/archindex"
 	"mail-archive-tool/internal/assure"
+	"mail-archive-tool/internal/lockfile"
 	"mail-archive-tool/internal/state"
 )
 
@@ -37,6 +38,12 @@ func rowOf(page, path string) string {
 // this year); a record that says a backup is running says nothing new (one may be in progress); the
 // current archive's row says nothing new (its health view says why). A planted record's status and
 // error text never reach the page, only its date, and through the escaping template (X15).
+// Amended 2026-11-25 (round B of the adversarial pass's fold; nothing weakened): "a record that says
+// a backup is running says nothing new" now holds while the archive lock is held (CON-04: a backup in
+// progress holds it, so the running record below holds it, as an export's does); a running record
+// whose lock is free is a backup that never finished (a crash, a power cut) and says the line, dated
+// when it started. A row whose source-loss words are shown says no line too (the friction review's
+// F7: the row already says why).
 func TestARowWhoseLastBackupDidNotFinishSaysSo(t *testing.T) {
 	now := time.Now()
 	nov24 := time.Date(now.Year(), time.November, 24, 9, 30, 0, 0, time.Local)
@@ -57,13 +64,24 @@ func TestARowWhoseLastBackupDidNotFinishSaysSo(t *testing.T) {
 	failed := record("failed", state.LastRun{Status: state.RunFailed, Started: nov24.Add(-time.Minute), Finished: nov24, Error: "disk full"})
 	cancelled := record("cancelled", state.LastRun{Status: state.RunCancelled, Started: nov24.Add(-time.Minute), Finished: nov24})
 	running := record("running", state.LastRun{Status: state.RunRunning, Started: nov24})
+	held, err := lockfile.AcquireAs(filepath.Join(running, lockfile.Name), "export")
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = held.Release() })
+	crashed := record("crashed", state.LastRun{Status: state.RunRunning, Started: nov24})
+	lost := record("lost", state.LastRun{Status: state.RunFailed, Started: nov24.Add(-time.Minute), Finished: nov24})
+	first := time.Now().Add(-10 * 24 * time.Hour)
+	if err := state.WriteSourceStreak(lost, state.SourceStreak{ConsecutiveFails: 2, FirstUnreachable: first, LastUnreachable: first.Add(state.SurfaceAfter), LastKind: "local-source-unreachable"}); err != nil {
+		t.Fatal(err)
+	}
 	lastYear := record("last year", state.LastRun{Status: state.RunFailed, Started: nov24.AddDate(-1, 0, 0), Finished: nov24.AddDate(-1, 0, 0)})
 	current := record("current", state.LastRun{Status: state.RunFailed, Started: nov24.Add(-time.Minute), Finished: nov24})
 	planted := record("planted", state.LastRun{Status: `<img src=x onerror=alert(1)>`, Started: nov24.Add(-time.Minute), Finished: nov24, Error: `<script>alert(2)</script>`})
 
 	idxPath := filepath.Join(dir, archindex.Name)
 	var entries []archindex.Entry
-	for _, p := range []string{ok, failed, cancelled, running, lastYear, current, planted} {
+	for _, p := range []string{ok, failed, cancelled, running, crashed, lost, lastYear, current, planted} {
 		entries = append(entries, archindex.Entry{Path: p, AddedAt: at0, LastSeenAt: at0})
 	}
 	if err := archindex.WriteFile(idxPath, archindex.Index{Version: archindex.Version, Entries: entries}); err != nil {
@@ -82,7 +100,7 @@ func TestARowWhoseLastBackupDidNotFinishSaysSo(t *testing.T) {
 		t.Fatalf("positive twin: a row whose last backup ended ok says %q:\n%s", line, r)
 	}
 	want := "Last backup did not finish (Nov 24): switch to it to see why."
-	for _, p := range []string{failed, cancelled, planted} {
+	for _, p := range []string{failed, cancelled, planted, crashed} {
 		if r := rowOf(page, p); !strings.Contains(r, want) {
 			t.Errorf("%s: the row does not say %q:\n%s", filepath.Base(p), want, r)
 		}
@@ -96,12 +114,16 @@ func TestARowWhoseLastBackupDidNotFinishSaysSo(t *testing.T) {
 	if r := assure.Reached(t, rowOf(page, current), "the current archive's row"); strings.Contains(r, line) {
 		t.Errorf("the current archive's row says %q (its health view says why):\n%s", line, r)
 	}
+	if r := assure.Reached(t, rowOf(page, lost), "the source-lost archive's row"); strings.Contains(r, line) || !strings.Contains(r, "hasn't been reachable since") {
+		t.Errorf("the source-lost row says %q, or not its source-loss words:\n%s", line, r)
+	}
 	for _, bad := range []string{"<img", "onerror", "<script>alert", "alert(", "disk full"} {
 		if strings.Contains(page, bad) {
 			t.Errorf("a record's own text reached the page: %q", bad)
 		}
 	}
-	if n := strings.Count(page, line); n != 4 {
-		t.Errorf("%d rows say the line, want 4 (failed, cancelled, last year, planted)", n)
+	// (Read 4 before round B: failed, cancelled, last year, planted; the crashed backup adds one.)
+	if n := strings.Count(page, line); n != 5 {
+		t.Errorf("%d rows say the line, want 5 (failed, cancelled, crashed, last year, planted)", n)
 	}
 }

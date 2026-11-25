@@ -54,6 +54,11 @@ func madeNow(t *testing.T, file string) []string {
 // failed before its first save, which the wizard's re-run continues) and lists no row for it, and
 // keeps a line whose folder's parent is not there either (a drive unplugged). Once that unfinished
 // folder holds an archive, the next page load lists it and strikes its line.
+// Amended 2026-11-25 (the adversarial pass's INS-07; the lead's fold: "a made-list line is struck as
+// gone only for a folder that was once listed"; nothing weakened): "or is gone" above now reads "or
+// is gone after it was listed". A line whose folder is gone and was never listed (a drive mounted at
+// a folder that stays when the drive is out) is kept, and lists the archive once its folder is back;
+// a line whose folder was listed and is gone is still struck, at the same strength.
 func TestThePageListsTheMadeListsArchivesAndStrikesTheirLines(t *testing.T) {
 	e := newMadeEnv(t)
 	made := e.cfg.MadeList
@@ -80,17 +85,29 @@ func TestThePageListsTheMadeListsArchivesAndStrikesTheirLines(t *testing.T) {
 			t.Errorf("%s, which holds no archive, is listed", p)
 		}
 	}
-	if got, want := fmt.Sprint(madeNow(t, made)), fmt.Sprint([]string{unfinished, unplugged}); got != want {
+	// (Read first, before INS-07: []string{unfinished, unplugged}; the never-listed gone line is kept.)
+	if got, want := fmt.Sprint(madeNow(t, made)), fmt.Sprint([]string{unfinished, gone, unplugged}); got != want {
 		t.Fatalf("after the page load the made-list holds %s, want %s", got, want)
 	}
 
 	buildArchiveAt(t, unfinished) // the wizard's re-run finished it
+	buildArchiveAt(t, gone)       // its drive, mounted at a folder that stays, is back
 	e.page()
-	if !e.listed(unfinished) {
-		t.Fatalf("the finished folder is not listed: %v", e.rows())
+	if !e.listed(unfinished) || !e.listed(gone) {
+		t.Fatalf("the finished folder, or the one back, is not listed: %v", e.rows())
 	}
 	if got, want := fmt.Sprint(madeNow(t, made)), fmt.Sprint([]string{unplugged}); got != want {
 		t.Errorf("after it was listed the made-list holds %s, want %s", got, want)
+	}
+
+	// A folder listed, recorded again by a later wizard run, then gone: its line is struck.
+	record(t, made, gone)
+	if err := os.RemoveAll(gone); err != nil {
+		t.Fatal(err)
+	}
+	e.page()
+	if got, want := fmt.Sprint(madeNow(t, made)), fmt.Sprint([]string{unplugged}); got != want {
+		t.Errorf("a listed folder now gone keeps its line: %s, want %s", got, want)
 	}
 }
 

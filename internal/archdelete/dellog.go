@@ -434,6 +434,39 @@ func finishedEnds(l logLine) bool {
 	return l.Event == evFinished && l.Outcome != outRefused && !(l.Outcome == outPartial && l.Unfinished)
 }
 
+// DeletedHere reports whether the log at logPath ("" is MailArchive's own, DefaultLogPath) holds a
+// delete of folder, by its started line's folder or row, that finished (finishedEnds: any outcome
+// but refused, and not a partial that leaves the row "Delete not finished"): MailArchive itself
+// deleted that folder. MailArchive Desktop's page load strikes the made-list line of such a folder,
+// gone now though no row lists it any more (the adversarial pass's INS-07: a gone folder's line is
+// struck only for a folder once listed, and a delete removed this one's row). A log that cannot be
+// read holds none.
+func DeletedHere(logPath, folder, goos string) bool {
+	if logPath == "" {
+		p, err := DefaultLogPath()
+		if err != nil {
+			return false
+		}
+		logPath = p
+	}
+	lines, err := readLog(logPath)
+	if err != nil {
+		return false
+	}
+	runs := map[string]bool{}
+	for _, l := range lines {
+		if l.Event == evStarted && l.Run != "" && (sameFolder(l.Folder, folder, goos) || sameFolder(l.Row, folder, goos)) {
+			runs[l.Run] = true
+		}
+	}
+	for _, l := range lines {
+		if runs[l.Run] && finishedEnds(l) {
+			return true
+		}
+	}
+	return false
+}
+
 // ReadDeleteLog reads the log at path once; an absent log has no lines.
 func ReadDeleteLog(path string) (*DeleteLog, error) {
 	lines, err := readLog(path)

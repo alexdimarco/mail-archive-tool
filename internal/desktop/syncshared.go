@@ -23,10 +23,11 @@ import (
 // busy". A shared sync is later work (§13); until then the switch refuses the second. Archives
 // already set up both ways are left as they are: only switching the sync on is refused.
 
-// Its words (§11).
+// Its words (§11; the friction review's F13 says where: "switch it off there" and "Repair that
+// archive" did not).
 const (
-	syncSharedWords      = "Thunderbird sync is already on for %s, which backs up the same Thunderbird profile. Only one archive can sync a profile for now: switch it off there first."
-	syncSharedUnreadable = "Could not read the settings of %s: %s. Try again, or Repair that archive."
+	syncSharedWords      = "Thunderbird sync is already on for %s, which backs up the same Thunderbird profile. Only one archive can sync a profile for now: switch it off on that archive's Settings card first (Switch to this archive on its row)."
+	syncSharedUnreadable = "Could not read the settings of %s: %s. Try again, or switch to that archive (Switch to this archive on its row) and click Repair on its Scheduled backup card."
 )
 
 // findProfile is the one look that finds the Thunderbird profile a mail folder belongs to

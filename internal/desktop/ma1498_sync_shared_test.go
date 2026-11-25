@@ -197,7 +197,9 @@ func TestTheSyncSwitchRefusesASecondArchiveForOneProfile(t *testing.T) {
 		t.Fatalf("switched off again: %s", body)
 	}
 
-	words := "Thunderbird sync is already on for " + g.other + ", which backs up the same Thunderbird profile. Only one archive can sync a profile for now: switch it off there first."
+	// Amended 2026-11-25 (the friction review's F13; nothing weakened): the refusal says where to
+	// switch it off; it ended "… for now: switch it off there first." before.
+	words := "Thunderbird sync is already on for " + g.other + ", which backs up the same Thunderbird profile. Only one archive can sync a profile for now: switch it off on that archive's Settings card first (Switch to this archive on its row)."
 	for _, c := range []struct {
 		name string
 		j    job.Job
@@ -224,7 +226,8 @@ func TestTheSyncSwitchRefusesASecondArchiveForOneProfile(t *testing.T) {
 	still := g.still()
 	body := g.post(`{"interval":"weekly","time":"03:00","presync":true}`)
 	assure.Refused(t, refusedCode(body), said(body),
-		assure.Names("Could not read the settings of "+g.other+": "+g.otherJob+". Try again, or Repair that archive."),
+		// (F13: it ended "Try again, or Repair that archive." before; it now says where Repair is.)
+		assure.Names("Could not read the settings of "+g.other+": "+g.otherJob+". Try again, or switch to that archive (Switch to this archive on its row) and click Repair on its Scheduled backup card."),
 		assure.NoSideEffect(still))
 
 	// Passed over: its backup not set up; the archive paused.

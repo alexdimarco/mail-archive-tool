@@ -177,7 +177,10 @@ func TestMakeANewArchiveListsEveryArchiveOfASet(t *testing.T) {
 		setMade(failed, "dee@qz-d.example", wizard.MadeFailed, why, g.parent),
 		setMade("", "Local Folders", wizard.MadeNotStarted, "", g.parent),
 	}, nil)
-	want := "2 archives added — they are now in Your archives. cy@qz-c.example did not finish: the export was cancelled. dee@qz-d.example did not finish: " + why + ". Local Folders was not started. To finish them, click Make a new archive… again, choose One archive for each mailbox and choose the same folder, " + g.parent + "."
+	// Amended 2026-11-25 (the friction review's F6; nothing weakened): a note that stays on the page
+	// says the archives are listed once the page is reloaded; this lead read "2 archives added — they
+	// are now in Your archives." before, as did the leads below with "(read before round B: …)".
+	want := "2 archives added — they are listed under Your archives once you reload this page. cy@qz-c.example did not finish: the export was cancelled. dee@qz-d.example did not finish: " + why + ". Local Folders was not started. To finish them, click Make a new archive… again, choose One archive for each mailbox and choose the same folder, " + g.parent + "."
 	if r.OK || !r.Stopped || r.Message != want {
 		t.Errorf("some did not finish:\n got %+v\nwant %q", r, want)
 	}
@@ -199,7 +202,8 @@ func TestMakeANewArchiveListsEveryArchiveOfASet(t *testing.T) {
 		setMade(b, "bob@qz-b.example", wizard.MadeFinished, "", g.parent),
 		setMade(stopped, "cy@qz-c.example", wizard.MadeStopped, "the export was cancelled", g.parent),
 	}, nil)
-	want = "2 archives added — they are now in Your archives. cy@qz-c.example did not finish: the export was cancelled. To finish it, click Make a new archive… again, choose One archive for each mailbox and choose the same folder, " + g.parent + "."
+	// (Read before round B: "2 archives added — they are now in Your archives. …")
+	want = "2 archives added — they are listed under Your archives once you reload this page. cy@qz-c.example did not finish: the export was cancelled. To finish it, click Make a new archive… again, choose One archive for each mailbox and choose the same folder, " + g.parent + "."
 	if r.OK || r.Message != want || len(g.listed()) != 4 {
 		t.Errorf("stopped part way:\n got %+v\nwant %q", r, want)
 	}
@@ -211,7 +215,8 @@ func TestMakeANewArchiveListsEveryArchiveOfASet(t *testing.T) {
 		setMade(a, "ann@qz-a.example", wizard.MadeFinished, "", g.parent),
 		setMade("", "bob@qz-b.example", wizard.MadeNotStarted, "", g.parent),
 	}, nil)
-	if want := "1 archive added — it is now in Your archives. bob@qz-b.example was not started. To finish it, click Make a new archive… again, choose One archive for each mailbox and choose the same folder, " + g.parent + "."; r.Message != want {
+	// (Read before round B: "1 archive added — it is now in Your archives. …")
+	if want := "1 archive added — it is listed under Your archives once you reload this page. bob@qz-b.example was not started. To finish it, click Make a new archive… again, choose One archive for each mailbox and choose the same folder, " + g.parent + "."; r.Message != want {
 		t.Errorf("one finished:\n got %q\nwant %q", r.Message, want)
 	}
 	g = newSetRig(t)
@@ -231,8 +236,28 @@ func TestMakeANewArchiveListsEveryArchiveOfASet(t *testing.T) {
 		setMade(a, "ann@qz-a.example", wizard.MadeFinished, "", g.parent),
 		setMade(b, "bob@qz-b.example", wizard.MadeFinished, "", g.parent),
 	}, errors.New("the schedule question could not be shown."))
-	if want := "2 archives added — they are now in Your archives. The wizard then ended with an error: the schedule question could not be shown."; r.OK || r.Message != want || len(g.listed()) != 3 {
+	// (Read before round B: "2 archives added — they are now in Your archives. …")
+	if want := "2 archives added — they are listed under Your archives once you reload this page. The wizard then ended with an error: the schedule question could not be shown."; r.OK || r.Message != want || len(g.listed()) != 3 {
 		t.Errorf("an error after the archives:\n got %+v\nwant %q", r, want)
+	}
+
+	// A finished archive whose folder cannot be reached when it is to be listed (a drive unplugged
+	// after it; the adversarial pass's CON-08): the lead counts only the archives listed, the note
+	// names it, it is not listed, and the note stays on the page.
+	g = newSetRig(t)
+	a = g.archive("ann@qz-a.example", true)
+	away := filepath.Join(g.parent, "bob@qz-b.example") // never made here: its drive is out
+	_, r = g.add([]wizard.Made{
+		setMade(a, "ann@qz-a.example", wizard.MadeFinished, "", g.parent),
+		setMade(away, "bob@qz-b.example", wizard.MadeFinished, "", g.parent),
+	}, nil)
+	if want := "1 archive added — it is listed under Your archives once you reload this page. bob@qz-b.example finished, but its folder could not be reached just now, so it is not in Your archives yet."; r.OK || r.Message != want || len(g.listed()) != 2 {
+		t.Errorf("a finished archive out of reach:\n got %+v\nwant %q (listed %d)", r, want, len(g.listed()))
+	}
+	g = newSetRig(t)
+	_, r = g.add([]wizard.Made{setMade(away, "bob@qz-b.example", wizard.MadeFinished, "", g.parent)}, nil)
+	if want := "No archive was added to Your archives. bob@qz-b.example finished, but its folder could not be reached just now, so it is not in Your archives yet."; r.OK || r.Message != want || len(g.listed()) != 1 {
+		t.Errorf("the only archive out of reach:\n got %+v\nwant %q", r, want)
 	}
 
 	// A list that cannot be written: the archives are safe, and the note says so.
