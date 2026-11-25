@@ -151,7 +151,7 @@ const heldArchivesAdd = "To add a new mailbox to these archives instead, click C
 // child read finds them (only folders that are the person's own are read); 0 when the folder cannot
 // be read.
 func setArchivesIn(folder string) int {
-	kids, _, err := readSetChildren(folder)
+	kids, _, _, err := readSetChildren(folder)
 	if err != nil {
 		return 0
 	}
@@ -196,7 +196,8 @@ var errSetFolderChanged = errors.New("its folder is no longer the folder MailArc
 // folders lets other accounts change it, so a re-run would never look at it and another account
 // could put a link in its place). A restriction the drive cannot take (a FAT or exFAT drive keeps no
 // access list) leaves the folder as Mkdir made it: the export's identity proof still holds, and the
-// plan of a re-run names such a folder as not looked at. store is the mailbox's store id, which its
+// plan of a re-run reads it, as it reads every real folder on such a drive (the re-verify of rounds A
+// and B, RV-02; it was named as not looked at before). store is the mailbox's store id, which its
 // made-list line keeps (OUT-03; "" keeps none).
 func makeSetFolderAt(sp *app.SetParent, name, listName, store string) (string, os.FileInfo, error) {
 	path, err := setEnv().MakeSetFolder(sp, name)

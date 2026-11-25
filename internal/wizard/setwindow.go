@@ -32,6 +32,12 @@ const (
 	// never looked at (the adversarial pass's INS-01; the builder's words).
 	setUnlookedOne  = "Left as it is, not looked at (a link, or a folder another account owns or can change): "
 	setUnlookedMany = "Left as they are, not looked at (each a link, or a folder another account owns or can change): "
+	// setUnlookedLinkOne and setUnlookedLinkMany are said instead on a drive that keeps no access lists
+	// (FAT, exFAT on Windows), where every real folder is looked at whatever its owner and "another
+	// account owns or can change" would be untrue (the re-verify of rounds A and B, RV-02; the
+	// builder's words).
+	setUnlookedLinkOne  = "Left as it is, not looked at (a link): "
+	setUnlookedLinkMany = "Left as they are, not looked at (each a link): "
 	// setReusedKept follows the name of an archive kept as it is because Thunderbird now uses its
 	// mailbox's folder for another account (the re-verify of rounds A and B, RV-01: the lead's words,
 	// "kept as it is … another account uses its folder now; click Pause (make read-only) on its row
@@ -126,17 +132,22 @@ func setPlanText(p setPlan) string {
 	for _, u := range p.unread {
 		rest = append(rest, clean(u)+": could not be read just now")
 	}
-	// Every child never looked at, so a " (2)" beside one of their names is never unexplained (INS-01).
+	// Every child never looked at, so a " (2)" beside one of their names is never unexplained (INS-01);
+	// on a drive that keeps no access lists, said as links only (RV-02).
+	one, many := setUnlookedOne, setUnlookedMany
+	if p.noAccessLists {
+		one, many = setUnlookedLinkOne, setUnlookedLinkMany
+	}
 	switch len(p.unlooked) {
 	case 0:
 	case 1:
-		rest = append(rest, setUnlookedOne+clean(p.unlooked[0]))
+		rest = append(rest, one+clean(p.unlooked[0]))
 	default:
 		var names []string
 		for _, u := range p.unlooked {
 			names = append(names, clean(u))
 		}
-		rest = append(rest, setUnlookedMany+strings.Join(names, ", "))
+		rest = append(rest, many+strings.Join(names, ", "))
 	}
 	for _, g := range p.notFound {
 		// The friction review's F11: the line now says what to do ("In this folder, not found now:

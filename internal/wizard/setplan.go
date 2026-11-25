@@ -60,22 +60,32 @@ func (c setChild) archiveIDs() []string {
 	return c.stores.IDs
 }
 
+// setNoAccessLists reports whether the folder open as f is on a volume that keeps no persistent
+// access lists (setVolumeKeepsNoAccessLists: Windows' FAT and exFAT; never on unix). A seam, so a test
+// on any system drives the rule that judges a set's folders on such a volume (RV-02).
+var setNoAccessLists = setVolumeKeepsNoAccessLists
+
 // readSetChildren reads the folders directly inside parent (§7, C3, C12), sorted by name: at most
 // setChildMax are looked at, and more reports that others were left out. Each is read only when it
 // is a real directory, through the parent's os.Root, owned by this user and writable by no one else
 // (setChildMine, on the open folder), and the folder read is the folder checked (its identity is the
 // one archindex.Stores opened): what it holds is archindex.Stores' answer. A child that cannot be
-// looked at now (its facts not readable, swapped while it was read) is cannot-read-now.
-func readSetChildren(parent string) (kids []setChild, more bool, err error) {
+// looked at now (its facts not readable, swapped while it was read) is cannot-read-now. On a volume
+// that keeps no access lists (noACL: setNoAccessLists, asked once through the parent's open handle;
+// a folder on another volume is a mount folder, a reparse point, never read) no folder has an owner
+// to judge by, so each real folder is read whatever its owner (the re-verify of rounds A and B,
+// RV-02): it is still never a link, a junction or another reparse point, and still the folder checked.
+func readSetChildren(parent string) (kids []setChild, more, noACL bool, err error) {
 	root, err := os.OpenRoot(parent)
 	if err != nil {
-		return nil, false, err
+		return nil, false, false, err
 	}
 	defer root.Close()
 	d, err := root.Open(".")
 	if err != nil {
-		return nil, false, err
+		return nil, false, false, err
 	}
+	noACL = setNoAccessLists(d)
 	var names []string
 	entries := 0
 	for {
@@ -91,7 +101,7 @@ func readSetChildren(parent string) (kids []setChild, more bool, err error) {
 		}
 		if rerr != nil {
 			d.Close()
-			return nil, false, rerr
+			return nil, false, false, rerr
 		}
 		if entries >= setEntryMax {
 			more = true
@@ -115,30 +125,31 @@ func readSetChildren(parent string) (kids []setChild, more bool, err error) {
 		case fi.Mode().Type() != fs.ModeDir || setReparse(fi):
 			// A link, a junction, a file of another kind: never read, never written into.
 		default:
-			c.looked, c.stores, c.id = readSetChild(root, n, fi)
+			c.looked, c.stores, c.id = readSetChild(root, n, fi, noACL)
 			if !c.looked {
 				c.stores, c.id = archindex.FolderStores{}, nil
 			}
 		}
 		kids = append(kids, c)
 	}
-	return kids, more, nil
+	return kids, more, noACL, nil
 }
 
 // readSetChild reads the real directory n inside root, which Lstat found as fi: looked is false for a
 // folder that is not the person's own; else what it holds, cannot-read-now when it cannot be opened
-// or is not the folder found, and id, the folder it is (its open handle's).
-func readSetChild(root *os.Root, n string, fi os.FileInfo) (looked bool, st archindex.FolderStores, id os.FileInfo) {
+// or is not the folder found, and id, the folder it is (its open handle's). anyOwner (a volume that
+// keeps no access lists, RV-02) reads it whatever its owner says.
+func readSetChild(root *os.Root, n string, fi os.FileInfo, anyOwner bool) (looked bool, st archindex.FolderStores, id os.FileInfo) {
 	cannot := archindex.FolderStores{Answer: archindex.StoresCannotRead}
 	// Someone else's folder is never opened, so it never reads as cannot-read-now (which would hold
 	// back every new archive): judged from what Lstat found where that says it (unix), and an open
 	// this user is refused where it does not (Windows).
-	if setForeign(fi) {
+	if !anyOwner && setForeign(fi) {
 		return false, archindex.FolderStores{}, nil
 	}
 	croot, err := root.OpenRoot(n)
 	if err != nil {
-		if setRefusedIsForeign && errors.Is(err, fs.ErrPermission) {
+		if !anyOwner && setRefusedIsForeign && errors.Is(err, fs.ErrPermission) {
 			return false, archindex.FolderStores{}, nil
 		}
 		return true, cannot, nil
@@ -153,7 +164,7 @@ func readSetChild(root *os.Root, n string, fi os.FileInfo) (looked bool, st arch
 	if err != nil || !os.SameFile(fi, hfi) {
 		return true, cannot, nil
 	}
-	if !setChildMine(f, hfi) {
+	if !anyOwner && !setChildMine(f, hfi) {
 		return false, archindex.FolderStores{}, nil
 	}
 	st = archindex.Stores(filepath.Join(root.Name(), n))
@@ -292,6 +303,9 @@ type setPlan struct {
 	// unlooked are the children never looked at (a link, a junction, a folder another account owns
 	// or can change): the plan names them, so a " (2)" is never unexplained (INS-01).
 	unlooked []string
+	// noAccessLists: the parent is on a volume that keeps no access lists (RV-02), where no folder is
+	// left unread for its owner, so the plan's words for unlooked children name links only.
+	noAccessLists bool
 	// parentID is the parent folder the plan read, through its handle (INS-02, OUT-04).
 	parentID os.FileInfo
 }
@@ -303,7 +317,7 @@ type setPlan struct {
 // into a folder whose delete did not finish. It writes nothing. goos decides how names are told
 // apart (setToldApart's rule).
 func planSet(parent string, rows []setRow, goos string) (setPlan, error) {
-	kids, more, err := readSetChildren(parent)
+	kids, more, noACL, err := readSetChildren(parent)
 	if err != nil {
 		return setPlan{}, err
 	}
@@ -312,7 +326,7 @@ func planSet(parent string, rows []setRow, goos string) (setPlan, error) {
 		return setPlan{}, err
 	}
 	defer root.Close()
-	p := setPlan{parent: parent, more: more}
+	p := setPlan{parent: parent, more: more, noAccessLists: noACL}
 	if pfi, err := root.Stat("."); err == nil {
 		p.parentID = pfi
 	}

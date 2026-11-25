@@ -19,6 +19,11 @@ func setChildMine(f *os.File, fi os.FileInfo) bool {
 	return ok && int(st.Uid) == setUID() && fi.Mode().Perm()&0o022 == 0
 }
 
+// setVolumeKeepsNoAccessLists: never here. A unix system mounts a FAT or exFAT drive with an owner
+// and mode bits for every folder, so its folders are judged by them as any other (the re-verify of
+// rounds A and B checked a real exFAT image on macOS: a re-run brought every archive up to date).
+func setVolumeKeepsNoAccessLists(*os.File) bool { return false }
+
 // setForeign reports a folder Lstat found to be someone else's, or writable by someone else, before
 // it is opened (setChildMine checks the open folder again).
 func setForeign(fi os.FileInfo) bool {
