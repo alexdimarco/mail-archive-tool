@@ -330,10 +330,20 @@ func TestTheSyncEmailWordsComeFromTheClosedMaps(t *testing.T) {
 	// dash outside ASCII, so it is now sent as RFC 2047 encoded words; read back as a mail program
 	// reads it, it must be exactly the same words. (The list below read first:
 	// "Subject: MailArchive: Thunderbird not synced for 3 days — " + g.out + "\r\n", in the raw message.)
+	// Amended 2026-11-25 by OUT-01 (MA-1508), at the same strength: an encoded subject is now folded
+	// over several lines (CRLF and a space), so the header is unfolded as a mail program unfolds it
+	// before it is read back (it read the "Subject: " line alone).
 	head, _, _ := strings.Cut(msg, "\r\n\r\n")
 	subject := ""
-	for _, line := range strings.Split(head, "\r\n") {
+	lines := strings.Split(head, "\r\n")
+	for i, line := range lines {
 		if s, ok := strings.CutPrefix(line, "Subject: "); ok {
+			for _, more := range lines[i+1:] {
+				if !strings.HasPrefix(more, " ") && !strings.HasPrefix(more, "\t") {
+					break
+				}
+				s += more
+			}
 			subject, _ = new(mime.WordDecoder).DecodeHeader(s)
 		}
 	}

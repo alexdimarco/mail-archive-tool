@@ -6,18 +6,72 @@ import (
 	"testing"
 )
 
-// sentSubject is the message's Subject header line, without "Subject: ", and the whole header
-// section, from the message as the sender transmits it.
+// sentSubject is the message's Subject header, without "Subject: ", and the whole header section,
+// from the message as the sender transmits it. Amended 2026-11-25 (the adversarial pass's OUT-01;
+// nothing weakened): the header is unfolded as a mail program unfolds it (RFC 5322 §2.2.3: a CRLF
+// before a space or tab is taken away), since an encoded subject is now folded over several lines;
+// it read only the first line before.
 func sentSubject(t *testing.T, msg []byte) (subject, headers string) {
 	t.Helper()
 	headers, _, _ = strings.Cut(string(msg), "\r\n\r\n")
-	for _, line := range strings.Split(headers, "\r\n") {
+	lines := strings.Split(headers, "\r\n")
+	for i, line := range lines {
 		if s, ok := strings.CutPrefix(line, "Subject: "); ok {
+			for _, more := range lines[i+1:] {
+				if !strings.HasPrefix(more, " ") && !strings.HasPrefix(more, "\t") {
+					break
+				}
+				s += more
+			}
 			return s, headers
 		}
 	}
 	t.Fatalf("no Subject header in:\n%s", headers)
 	return "", headers
+}
+
+// covers: MA-1508
+// An encoded alert subject is folded into short lines (the adversarial pass's OUT-01; the lead's
+// fold: "The encoded Subject is folded into lines of at most 78 octets"). mime.QEncoding joined its
+// encoded words with plain spaces on one line: a folder named by 60 emoji under a long parent made a
+// Subject line of 1,022 octets, over the 998 a mail server may take, so the failure email could be
+// refused; one accent made 103 octets, over the 78 the standards recommend. Positive twin first: an
+// ASCII subject is still one line, byte for byte. Each subject holding letters outside ASCII is now
+// encoded words of whole characters, each at most 75 octets, folded with CRLF and a space, so every
+// header line is at most 78 octets ("Subject: " included), and it reads back as written once unfolded.
+func TestAnEncodedAlertSubjectIsFoldedIntoShortLines(t *testing.T) {
+	c := Config{From: "backup@example.org", To: "owner@example.org"}
+	if got := string(c.Message(Event{Result: ResultFailed, Archive: "/vol/StAugustine"})); !strings.Contains(got, "\r\nSubject: MailArchive backup FAILED: /vol/StAugustine\r\nMIME-Version: 1.0\r\n") {
+		t.Fatalf("positive twin: an ASCII subject is not one line as written:\n%s", got)
+	}
+	dec := new(mime.WordDecoder)
+	for _, tc := range []struct {
+		what string
+		ev   Event
+		want string
+	}{
+		{"60 emoji under a long parent", Event{Result: ResultFailed, Archive: "/Volumes/Family backup drive/Mail archives kept here for the whole family since 2019/" + strings.Repeat("\U0001F600", 60)}, "MailArchive backup FAILED: /Volumes/Family backup drive/Mail archives kept here for the whole family since 2019/" + strings.Repeat("\U0001F600", 60)},
+		{"60 CJK letters", Event{Result: ResultFailed, Archive: `D:\Mail archives\` + strings.Repeat("\u65e5", 60)}, `MailArchive backup FAILED: D:\Mail archives\` + strings.Repeat("\u65e5", 60)},
+		{"today's Thunderbird subject", Event{Result: ResultTBBehind, Archive: "/Volumes/Backup/Mail", TB: &TBBehind{Accounts: 1}}, "MailArchive: Thunderbird still downloading (backups OK) — Mail"},
+		{"one accent", Event{Result: ResultFailed, Archive: `D:\Mail archives\søren.qz@example.org`}, `MailArchive backup FAILED: D:\Mail archives\søren.qz@example.org`},
+	} {
+		msg := c.Message(tc.ev)
+		headers, _, _ := strings.Cut(string(msg), "\r\n\r\n")
+		for _, line := range strings.Split(headers, "\r\n") {
+			if len(line) > subjectLineMax {
+				t.Errorf("%s: a header line of %d octets, over %d: %q", tc.what, len(line), subjectLineMax, line)
+			}
+		}
+		raw, _ := sentSubject(t, msg)
+		for _, w := range strings.Fields(raw) {
+			if len(w) > encodedWordMax || !strings.HasPrefix(w, "=?utf-8?q?") || !strings.HasSuffix(w, "?=") {
+				t.Errorf("%s: an encoded word of %d octets, or not one: %q", tc.what, len(w), w)
+			}
+		}
+		if got, err := dec.DecodeHeader(raw); err != nil || got != tc.want {
+			t.Errorf("%s: reads back as %q (%v), want %q", tc.what, got, err, tc.want)
+		}
+	}
 }
 
 // covers: MA-1508
