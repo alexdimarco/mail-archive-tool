@@ -2,6 +2,9 @@ package desktop
 
 import (
 	"encoding/json"
+	"errors"
+	"io/fs"
+	"os"
 	"path/filepath"
 	"strings"
 	"time"
@@ -10,6 +13,7 @@ import (
 	"mail-archive-tool/internal/archindex"
 	"mail-archive-tool/internal/encmark"
 	"mail-archive-tool/internal/health"
+	"mail-archive-tool/internal/job"
 	"mail-archive-tool/internal/schedule"
 	"mail-archive-tool/internal/seal"
 	"mail-archive-tool/internal/state"
@@ -130,11 +134,15 @@ func (r ArchiveRow) KindLabel() string {
 
 // archivePointers are the archive folders the Desktop already knows about from its
 // own config, gathered for a reconcile: the archive in use (effectiveOut), the
-// wizard's last-touched breadcrumb (Config.LastArchive) and the folder a weekly
-// backup is named for (Settings.BackupFor). archindex reads none of these itself —
+// wizard's last-touched breadcrumb (Config.LastArchive), the folder a weekly
+// backup is named for (Settings.BackupFor) and each folder the stand-alone wizard's
+// made-list names (Config.MadeList, MA-1500). archindex reads none of these itself —
 // it is handed the list, staying a leaf. Blank and duplicate pointers are harmless
 // (Reconcile skips them).
-func (cfg Config) archivePointers() []string {
+func (cfg Config) archivePointers() []string { return cfg.pointersWith(cfg.madeLines()) }
+
+// pointersWith is archivePointers with the made-list's lines as already read.
+func (cfg Config) pointersWith(made []job.Made) []string {
 	var ps []string
 	add := func(p string) {
 		if p = strings.TrimSpace(p); p != "" {
@@ -146,7 +154,66 @@ func (cfg Config) archivePointers() []string {
 		add(cfg.LastArchive())
 	}
 	add(cfg.settings().BackupFor)
+	for _, m := range made {
+		add(m.Path)
+	}
 	return ps
+}
+
+// madeListPath is the stand-alone wizard's made-list the Desktop reads (job.MadeListFile), "" when
+// MailArchive's settings folder cannot be told.
+func madeListPath() string {
+	p, _ := job.MadeListFile()
+	return p
+}
+
+// madeLines are the made-list's lines (docs/design-per-mailbox-archives.md §10, MA-1500), none
+// when the Desktop has no made-list or it cannot be read: a list that cannot be read adds no row,
+// and is never struck.
+func (cfg Config) madeLines() []job.Made {
+	if strings.TrimSpace(cfg.MadeList) == "" {
+		return nil
+	}
+	ms, err := job.ReadMade(cfg.MadeList)
+	if err != nil {
+		return nil
+	}
+	return ms
+}
+
+// strikeFolded removes from the made-list, after a reconcile that read or wrote the list of
+// archives idx, each line whose folder is now listed in idx and holds an archive, or is gone
+// (§10, C10): so a row the person removes later stays removed. A line whose folder is there with no
+// archive yet (a copy that failed before its first save) is kept for the wizard's re-run (F-02),
+// as is one whose folder is not listed (the list was full) and one whose folder cannot be looked at
+// now (goneFolder). A strike that cannot be made now (another program holds the made-list) is
+// left for the next page load.
+func (cfg Config) strikeFolded(idx archindex.Index, made []job.Made) {
+	if len(made) == 0 {
+		return
+	}
+	listed := map[string]bool{}
+	for _, e := range idx.Entries {
+		listed[filepath.Clean(strings.TrimSpace(e.Path))] = true
+	}
+	var strike []string
+	for _, m := range made {
+		if (listed[m.Path] && archindex.IsArchive(m.Path)) || goneFolder(m.Path) {
+			strike = append(strike, m.Path)
+		}
+	}
+	_ = job.StrikeMade(cfg.MadeList, strike)
+}
+
+// goneFolder reports a made-list folder that is gone for good: nothing is at its path while its
+// parent folder is there. A folder whose parent is not there either (a drive unplugged, a share not
+// connected) is not gone: its line stays until it can be looked at again.
+func goneFolder(path string) bool {
+	if _, err := os.Lstat(path); !errors.Is(err, fs.ErrNotExist) {
+		return false
+	}
+	fi, err := os.Stat(filepath.Dir(path))
+	return err == nil && fi.IsDir()
 }
 
 // reconcileArchives folds the Desktop's known pointers into the folder-only index
@@ -165,9 +232,11 @@ func (cfg Config) reconcileArchives(now time.Time) (archindex.Index, error) {
 	if err != nil {
 		return archindex.Index{Version: archindex.Version}, err
 	}
-	pointers := cfg.archivePointers()
+	made := cfg.madeLines()
+	pointers := cfg.pointersWith(made)
 	after := archindex.Reconcile(before, pointers, now)
 	if len(after.Entries) == len(before.Entries) {
+		cfg.strikeFolded(after, made)
 		return after, nil
 	}
 	// It adds a row: read again and written under the list's lock, so a row another program
@@ -177,6 +246,11 @@ func (cfg Config) reconcileArchives(now time.Time) (archindex.Index, error) {
 		after = archindex.Reconcile(fresh, pointers, now)
 		return after, len(after.Entries) != n, nil
 	})
+	// The made-list's lines are struck only against a list that is on disk: a row this reconcile
+	// could not write keeps its line, so the next page load adds it (MA-1500).
+	if werr == nil {
+		cfg.strikeFolded(after, made)
+	}
 	return after, werr
 }
 

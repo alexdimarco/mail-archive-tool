@@ -116,6 +116,11 @@ type Config struct {
 	// LastArchive reports the archive the GUI wizard used last (OfferedArchive in the binary). When
 	// no archive location is set the dashboard offers it, never switching to it by itself. Nil: no offer.
 	LastArchive func() string
+	// MadeList is the stand-alone wizard's made-list (job.MadeListFile, wizard-made.txt beside
+	// last-archive.txt; docs/design-per-mailbox-archives.md §10, MA-1500): the archive folders it
+	// made, which the page's reconcile folds into Your archives and then strikes, and Remove from
+	// list and Delete strike their folder from. Empty (a test, the informational shell): none.
+	MadeList string
 
 	// Lifecycle is the process's own life (extraction design §4.3, XC6): its context is
 	// what the workspace's Graph session and every preview and run are built on, and its

@@ -940,7 +940,8 @@ func (cfg Config) deleteExecDeps(row string, busy func(string) bool, store vault
 func (cfg Config) deleteUnlistDeps(named []string) archdelete.UnlistDeps {
 	x := archdelete.UnlistDeps{Deps: cfg.deleteDeps(nil, nil), Scheduler: cfg.deleteScheduler(),
 		Pointers: &desktopPointers{settings: cfg.SettingsPath}, Named: named}
-	x.SettingsDir, x.ForgetRow = cfg.deleteListSeams()
+	x.SettingsDir, _ = cfg.deleteListSeams()
+	x.ForgetRow = cfg.forgetRow(true)
 	return x
 }
 
@@ -951,11 +952,41 @@ func (cfg Config) deleteListSeams() (string, func(string) error) {
 	if strings.TrimSpace(cfg.SettingsPath) != "" {
 		dir = filepath.Dir(cfg.SettingsPath)
 	}
-	var forget func(string) error
-	if strings.TrimSpace(cfg.IndexPath) != "" {
-		forget = func(row string) error { return archdelete.ForgetRowAt(cfg.IndexPath, row, runtime.GOOS) }
+	return dir, cfg.forgetRow(false)
+}
+
+// forgetRow removes a row from the Desktop's own list (nil with no list), first striking its folder
+// from the stand-alone wizard's made-list (strikeMadeFor, MA-1500), so the next page load does not
+// list it again. For Remove from list (unlist) a strike that cannot be made keeps the row: the
+// folder still holds its archive, which the made-list's line would add back. For a delete's step 9
+// it is only a tidy-up and never keeps the row: the folder is gone, and the page load strikes the
+// line of a folder that is gone.
+func (cfg Config) forgetRow(unlist bool) func(string) error {
+	if strings.TrimSpace(cfg.IndexPath) == "" {
+		return nil
 	}
-	return dir, forget
+	return func(row string) error {
+		if err := cfg.strikeMadeFor(row); err != nil && unlist {
+			return err
+		}
+		return archdelete.ForgetRowAt(cfg.IndexPath, row, runtime.GOOS)
+	}
+}
+
+// strikeMadeFor removes from the made-list every line naming row's folder, in any spelling of it
+// (sameArchiveFolder). A made-list that is not there, or cannot be read, has no line to strike:
+// the page cannot list a row from it either.
+func (cfg Config) strikeMadeFor(row string) error {
+	var strike []string
+	for _, m := range cfg.madeLines() {
+		if sameArchiveFolder(m.Path, row) {
+			strike = append(strike, m.Path)
+		}
+	}
+	if len(strike) == 0 {
+		return nil
+	}
+	return job.StrikeMade(cfg.MadeList, strike)
 }
 
 // desktopPointers are the Desktop's settings and the wizard's note as a delete clears them
