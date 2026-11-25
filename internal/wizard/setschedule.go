@@ -242,9 +242,11 @@ const (
 	// setNoteKeptOff and setNoteKeptManual follow the name of an archive brought up to date that has
 	// its own settings but no scheduled backup now (CON-01, the lead's fold's words, with where
 	// Repair is: on the Scheduled backup card of the archive switched to, never on its row; "Run now
-	// only" has no Repair, so its remedy is its own).
-	setNoteKeptOff    = " has its own settings but no scheduled backup now: in MailArchive Desktop, switch to it and click Repair on its Scheduled backup card."
-	setNoteKeptManual = " has its own settings but no scheduled backup now: it is backed up only when you click Run now."
+	// only" has no Repair, so its remedy is its own). The re-verify of rounds A and B (RF-05, its
+	// words) names the buttons: they read "…: in MailArchive Desktop, switch to it and click Repair on
+	// its Scheduled backup card." and "…: it is backed up only when you click Run now." before.
+	setNoteKeptOff    = " has its own settings but no scheduled backup now: in MailArchive Desktop, click Switch to this archive on its row, then Repair on its Scheduled backup card."
+	setNoteKeptManual = " has its own settings but no scheduled backup now: it is backed up only when you click Run now on its Scheduled backup card in MailArchive Desktop."
 )
 
 // setScheduleNote is the end note after a Yes (§11): what was scheduled ("Scheduled: daily from

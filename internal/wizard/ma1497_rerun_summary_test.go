@@ -87,8 +87,12 @@ func TestARerunWithNothingNewSaysWhatIsNotScheduled(t *testing.T) {
 		}
 		return false
 	}
-	if !has(rows[2].name+" has its own settings but no scheduled backup now: in MailArchive Desktop, switch to it and click Repair on its Scheduled backup card.") ||
-		!has(rows[1].name+" has its own settings but no scheduled backup now: it is backed up only when you click Run now.") {
+	// Restated 2026-11-25 (the re-verify of rounds A and B, RF-05, its words: the buttons named), beside
+	// the old lines, kept here: "… now: in MailArchive Desktop, switch to it and click Repair on its
+	// Scheduled backup card." and "… now: it is backed up only when you click Run now." Each still a
+	// whole line of the summary.
+	if !has(rows[2].name+" has its own settings but no scheduled backup now: in MailArchive Desktop, click Switch to this archive on its row, then Repair on its Scheduled backup card.") ||
+		!has(rows[1].name+" has its own settings but no scheduled backup now: it is backed up only when you click Run now on its Scheduled backup card in MailArchive Desktop.") {
 		t.Errorf("the re-run's summary must say each member with no scheduled backup now:\n%s", summary)
 	}
 	if strings.Contains(summary, rows[0].name+notNow) || asked(lists) {

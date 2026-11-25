@@ -113,8 +113,12 @@ func TestAKeptScheduleCountsOnlyWhenTheSchedulerRunsIt(t *testing.T) {
 	if made[2].Schedule == ScheduleKeptOff && made[2].Outcome == MadeFinished {
 		code, msg = 1, note
 	}
+	// Restated 2026-11-25 (the re-verify of rounds A and B, RF-05, its words: the buttons named),
+	// beside the old needle, kept here: "… has its own settings but no scheduled backup now: in
+	// MailArchive Desktop, switch to it and click Repair on its Scheduled backup card." Still required
+	// whole.
 	assure.Refused(t, code, msg, assure.Code(1),
-		assure.Names(rows[2].name+" has its own settings but no scheduled backup now: in MailArchive Desktop, switch to it and click Repair on its Scheduled backup card.",
+		assure.Names(rows[2].name+" has its own settings but no scheduled backup now: in MailArchive Desktop, click Switch to this archive on its row, then Repair on its Scheduled backup card.",
 			together+" "+existingKeep),
 		assure.Forbid(rows[2].name+setNoteKept, existingPause),
 		assure.NoSideEffect(func() bool {
@@ -144,9 +148,11 @@ func TestAKeptScheduleCountsOnlyWhenTheSchedulerRunsIt(t *testing.T) {
 	if made[0].Schedule == ScheduleKeptOff && made[1].Schedule == ScheduleKeptManual && made[2].Schedule == ScheduleKept {
 		code, msg = 1, note
 	}
+	// Restated 2026-11-25 (RF-05), beside the old needle, kept here: "… has its own settings but no
+	// scheduled backup now: it is backed up only when you click Run now." Still required whole.
 	assure.Refused(t, code, msg, assure.Code(1),
 		assure.Names(rows[0].name+setNoteKeptOff,
-			rows[1].name+" has its own settings but no scheduled backup now: it is backed up only when you click Run now.",
+			rows[1].name+" has its own settings but no scheduled backup now: it is backed up only when you click Run now on its Scheduled backup card in MailArchive Desktop.",
 			rows[2].name+setNoteKept, together+" "+existingKeep),
 		assure.Forbid(rows[0].name+setNoteKept, rows[1].name+setNoteKept, existingPause),
 		assure.NoSideEffect(func() bool {
