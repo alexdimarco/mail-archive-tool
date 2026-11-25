@@ -720,6 +720,18 @@ reason's words; every other record keeps today's); MA-947 and MA-1267 (QA).
 4. The Desktop: `AddArchives`, the handler, the rows' last-backup line, the Settings guard
    (MA-1498, MA-1499, MA-1505).
 
+**Build status, 2026-11-25:** all four steps BUILT on `per-mailbox-archives`, each test-first with
+its rows: step 1 `99ad1bda`..`8706c96d` (with revision 2.2's two follow-ups); step 2
+`72b91f41`..`6377c899`; step 3a `f81d92d1`..`504b8753`; step 3b `3a65daec`..`79beabbd` (its first
+commit fixes a dialog-front gate step 3a broke); step 4 `f81ddd1e`..`06756340`, which switches the
+feature on (`perMailboxBuilt = true`). The unfiltered suite passed on macOS at step 3b's and step
+4's tips; GitHub CI is green on Linux and macOS for steps 1 to 3b, and Windows CI shows only main's
+own failures (its `internal/app` and `internal/wizard` runs stop before the new tests, so the
+Windows lab runs them). Still owed before release: the adversarial pass, the friction review, and
+the Windows lab (MA-1503), each named in this section above. Known gap: no test answers "Yes,
+prepare" (those windows are real dialogs pinned by MA-1204 and MA-1260), so "Full mode only for
+prepared archives" is proven by reading only; the lab and the adversarial pass take it.
+
 ## 17. Revision 2: each condition and where it is carried
 
 | Condition | Where |
